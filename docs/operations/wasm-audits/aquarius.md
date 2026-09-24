@@ -120,10 +120,12 @@ fails the arity check, which is **good** — fail-loud beats silent.
 Aquarius supports volatile / stableswap / concentrated pool types.
 The decoder is pool-agnostic — every pool type publishes the same
 4-topic + 3-tuple-body shape, so one decoder covers all three.
-**Concentrated pools** are tagged `ErrConcentratedWIP` in the source
-(found as a feature-branch, no live mainnet
-pools). If concentrated pools ship live, this audit needs to
-re-verify the trade event shape — contract authors might extend the
+**Concentrated pools** (found as a feature-branch, no live mainnet
+pools) have no decoder guard: the router's `add_pool` registers any
+announced pool without a WASM-hash or pool-type check, and a
+registered pool's 4-topic, 3×i128 `trade` decodes. If concentrated
+pools ship live, this audit needs to re-verify the trade event shape
+before their trades are trusted — contract authors might extend the
 body with concentrated-tick info.
 
 ## Failure modes specific to Aquarius
@@ -149,8 +151,9 @@ Drawing the generic checklist into Aquarius-specific tripwires:
    amounts shouldn't go negative so this is an unlikely change.
 6. **New pool type with extended body** — concentrated pools (and
    any v2 pool architecture) might publish a longer body or
-   different topics. ErrConcentratedWIP is the current safety net
-   for one specific case; new pool types need new audit entries.
+   different topics. Nothing in the decoder refuses a new family
+   whose body is still 3×i128; this audit is the only check, so new
+   pool types need new audit entries.
 7. **User topic moved or removed** — currently topic[3] is
    `Address(user)`. Removal would change topic arity from 4 to 3,
    tripping the arity check (good — fail-loud).
@@ -313,9 +316,8 @@ shared event emitter is compiled in unchanged.
   pool WASM compiled from the aquarius-amm tree.
 - **New pools deployed after 2026-04-29 not in this audit.**
   Re-run the enumeration when extending `last_verified`.
-- **`ErrConcentratedWIP` is reserved but not currently fired.**
-  The decoder constant exists for documentation but the
-  classification path doesn't gate on pool type — it matches
+- **No pool-type gate.** The classification path doesn't gate on
+  pool type or WASM hash — it matches
   topic[0] = Symbol("trade") regardless of pool variant. All
   three pool types observed in production (including the 6
   rewards-enhanced pools) emit the same trade-event shape via the

@@ -15,8 +15,13 @@ groups are analytics — never VWAP inputs):
 
 1. **Volatile** — constant-product pools (2 tokens).
 2. **Stableswap** — stablecoin-oriented pools (2/3/4 tokens).
-3. **Future variants** — any pool/event shape that does not match a
-   known topic contract is rejected until explicitly audited and added.
+3. **Future variants** — nothing in the decoder refuses a new pool
+   family. The router's `add_pool` registers every announced pool with
+   no WASM-hash or pool-type check, and a registered pool's 4-topic,
+   3×i128 `trade` decodes as `(sold, bought, fee)`. A family whose body
+   is positionally different but still 3×i128 would decode wrongly; the
+   per-WASM audit in `docs/operations/wasm-audits/aquarius.md` is the
+   only check, so re-run it before trusting a new family.
 
 The decoder emits one `canonical.Trade` per accepted `trade` event,
 one `ReservesEvent` / `LiquidityEvent` per accepted reserves / liquidity
@@ -45,7 +50,9 @@ more than fabricated trades. The seven POOL-EMITTABLE governance kinds
 `apply_transfer_ownership`, `commit_transfer_ownership`,
 `enable_emergency_mode`, `disable_emergency_mode`) gate on the SAME
 boundary PLUS the router (`d.reg.Has || d.reg.IsFactory`) — the
-registered pools legitimately emit them. The two ROUTER-SCOPED kinds
+registered pools legitimately emit them — and so do the protocol-fee
+(`set_protocol_fee`, `claim_protocol_fee`) and `kill_*` / `unkill_*`
+kinds, which the router's own census also lists. The two ROUTER-SCOPED kinds
 (`config_rewards`, `pool_gauge_switch_token`) gate on the CANONICAL
 ROUTER trust root only — see "Rewards-gauge + governance topics"
 below. Reserves/liquidity/rewards/admin are ADDITIVE analytics —
@@ -211,11 +218,10 @@ deposit / swap / claim / gauges_claim) project to `aquarius_kill_switches`
 (migration 0130). They carry a single topic and an SCV_VOID body — pure
 toggle signals — so the row is the identity + action.
 
-**Every Aquarius topic is now projected or intentionally registered**
-(add_pool). The prior "already handled" wording (corrected 2026-08-03)
-overstated coverage while `reserves_sync` / protocol-fee / kill-unkill
-were still recognized-only; the every-event completion pass closed all
-three (migrations 0128–0130). No recognized-but-unstored residual
+**Every Aquarius pool topic is projected or intentionally registered**
+(add_pool); the router's flow topics are not — see "Known gap" below.
+The every-event completion pass closed `reserves_sync` / protocol-fee /
+kill-unkill (migrations 0128–0130). No recognized-but-unstored residual
 remains.
 
 **Data-quality caveat:** `stellar.contract_events_daily` (the fast
@@ -230,3 +236,17 @@ operational finding outside this audit's scope, flagged here because
 it means any consumer of the fast rollup (including the protocol
 detail page) is currently under-reporting event volume for
 long-lived sources.
+
+## ⚠️ Known gap — router `swap` / `deposit` / `withdraw` are undecoded
+
+The canonical router's lake census (`docs/protocols/aquarius.md`,
+"Router") lists `swap`, `deposit` and `withdraw` among its own events.
+None of them match: `swap` and `withdraw` have no `classify()` entry,
+and a router `deposit` classifies as the pool-scoped rewards-gauge
+`deposit`, whose gate (`d.reg.Has`) excludes the router. No trade or
+liquidity change is lost — the pools the router calls emit their own
+`trade` / `deposit_liquidity` / `withdraw_liquidity` — but the router's
+user-level view (the caller and the whole route) is not stored, and the
+ADR-0033 recognition audit reports these shapes as unrecognised, which
+is accurate. `TestRouterCensusTopics_matchedOrKnownGap` fails if a
+router census topic neither matches nor is named in this section.
