@@ -23,6 +23,23 @@
 -- NULL = not (yet) tagged, or a non-AMM/non-Soroban trade the tagger
 -- does not touch (SDEX already carries a real maker; classic trades have
 -- no contract tx to attribute).
+--
+-- ── APPLYING TO AN ALREADY-POPULATED DATABASE ──
+-- Unlike 0037/0123, `trades_signer_idx` below is a plain in-transaction
+-- CREATE INDEX with no `IF NOT EXISTS` and no `SET LOCAL lock_timeout`
+-- (it predates README rule 10; a shipped up body cannot change). On a
+-- populated node it holds a SHARE lock that blocks every write to
+-- `trades` for a full-table scan (a partial index still reads every
+-- row), and it waits indefinitely behind any open transaction while
+-- every later writer queues behind it.
+--
+-- Do NOT pre-build it: hypertables reject CONCURRENTLY, and a per-chunk
+-- build (`WITH (timescaledb.transaction_per_chunk)`, 0123's recipe)
+-- under the same name makes this migration fail on the duplicate and
+-- leaves schema_migrations dirty. Instead apply 0150 with
+-- ingest writers stopped, after checking pg_stat_activity for
+-- long-open transactions.
+-- A fresh database pays nothing (`trades` is empty).
 
 BEGIN;
 
