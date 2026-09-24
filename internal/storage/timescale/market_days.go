@@ -120,6 +120,10 @@ type MarketDay struct {
 // An empty `assets` or `quotes` returns (nil, nil) — no keys is not a
 // query. Closed buckets only (ADR-0015).
 //
+// `to` names a DAY, and the table is at hour grain: the upper bound is
+// the end of that day, or the last day would be read from its 00:00
+// hour alone. Both bounds are floored to their UTC day first.
+//
 // dailyMarketDaysQuery is hoisted to package level (rather than an
 // in-function `const q`) so its sargability can be pinned by a
 // query-shape test the way [closedVWAPAtOrBeforeQueryTemplate] and
@@ -138,7 +142,7 @@ const dailyMarketDaysQuery = `
            AND quote_asset = ANY($2)
            AND bucket <= now() - INTERVAL '1 hour'
            AND bucket >= $3
-           AND bucket <= $4
+           AND bucket <  $4::timestamptz + INTERVAL '1 day'
            AND vwap IS NOT NULL
            AND volume > 0
          GROUP BY day, base_asset
@@ -165,7 +169,8 @@ func (s *Store) DailyMarketDays(
 	// at the SESSION timezone, so a server whose TimeZone is not UTC
 	// would cut days somewhere other than midnight UTC — and the two
 	// legs of a premium would then be bucketed on different clocks.
-	rows, err := s.db.QueryContext(ctx, dailyMarketDaysQuery, baseKeys, quoteKeys, from.UTC(), to.UTC())
+	rows, err := s.db.QueryContext(ctx, dailyMarketDaysQuery, baseKeys, quoteKeys,
+		from.UTC().Truncate(24*time.Hour), to.UTC().Truncate(24*time.Hour))
 	if err != nil {
 		return nil, fmt.Errorf("timescale: DailyMarketDays: %w", err)
 	}
