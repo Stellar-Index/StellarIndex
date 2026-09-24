@@ -95,7 +95,7 @@ func FuzzSelectGuardedVWAP1m(f *testing.F) {
 		var older []timescale.Vwap1mRow
 		var trailing []*big.Rat
 		for _, r := range rows {
-			if r.Bucket.Before(candidate.Bucket) {
+			if r.Bucket.Before(candidate.Bucket) && candidate.Bucket.Sub(r.Bucket) <= BaselineMaxAge {
 				older = append(older, r)
 				v, ok := new(big.Rat).SetString(r.VWAP)
 				if !ok {

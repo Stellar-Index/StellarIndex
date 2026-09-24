@@ -57,8 +57,17 @@ import (
 // latest bucket ([aggregate.GuardServedVWAP]). 40 is a few tens of minutes
 // for an active pair — enough to clear the guard's minimum-sample floor
 // while staying a cheap, index-driven LIMIT-N read (only ever run for a
-// pair already confirmed populated).
+// pair already confirmed populated). A thin pair's 40 buckets can span
+// months; [BaselineMaxAge] is what keeps the baseline trailing.
 const SampleFetch = 40
+
+// BaselineMaxAge is the furthest before the judged bucket a trailing
+// bucket may start and still count toward its baseline. A price from
+// before a dormancy says nothing about a relisting one — judging against
+// it rejects a real move and serves the dormant row as a confident price.
+// One day keeps a pair that trades at least daily fully validated; a
+// candidate with nothing in the horizon is the empty-baseline case.
+const BaselineMaxAge = 24 * time.Hour
 
 // TrailingReader is the storage seam the guard needs: the trailing
 // combined-direction closed-bucket fetch. *timescale.Store satisfies it;
@@ -106,7 +115,8 @@ func GuardServedVWAP1m(
 // substituted signal a serving path needs to withhold enrichment that
 // isn't ABOUT the served bucket. lowConfidence is true when the served
 // bucket had NO usable trailing baseline to validate against (a pair's
-// first-ever served minute): [aggregate.GuardServedVWAP] FAILS OPEN there,
+// first-ever served minute, or its first after more than [BaselineMaxAge]
+// dormant): [aggregate.GuardServedVWAP] FAILS OPEN there,
 // so a single manipulated / fat-finger print would otherwise be served
 // with stale=false and no volume floor (adversarial-review W6-fresh-1).
 // The value is STILL served (never a blackout of a legitimate new pair) —
@@ -187,8 +197,8 @@ func GuardServedVWAP1mConfidence(
 // baseline holds nothing older than a historical candidate, so every
 // instant outside the last few dozen minutes would pass unjudged.
 //
-// An empty baseline (nothing traded before the candidate — the pair's
-// first-ever bucket) is ok=false here, where [GuardServedVWAP1m] serves it
+// An empty baseline (nothing traded within [BaselineMaxAge] before the
+// candidate — the pair's first-ever bucket, or a relisting) is ok=false here, where [GuardServedVWAP1m] serves it
 // flagged low-confidence: a point-in-time answer has no stale flag to
 // carry that doubt. A trailing-fetch error still fails open.
 func GuardServedVWAP1mAt(
@@ -300,8 +310,8 @@ func SelectGuardedVWAP1m(candidate timescale.Vwap1mRow, rows []timescale.Vwap1mR
 // selectGuardedVWAP1m is [SelectGuardedVWAP1m] plus the low-confidence
 // (empty-baseline) signal. lowConfidence is true only when the candidate
 // is ACCEPTED against an empty/unvalidated baseline
-// ([aggregate.ServedBaselineValidated] is false — the pair's first-ever
-// served minute, GuardServedVWAP's fail-open). A rejected candidate, an
+// ([aggregate.ServedBaselineValidated] is false — nothing within
+// [BaselineMaxAge] before it, GuardServedVWAP's fail-open). A rejected candidate, an
 // unparseable candidate, and any accept validated against a populated or
 // thin baseline are all lowConfidence=false. Kept store-free so the
 // selection is unit-testable without a database. Exact-rational (ADR-0003).
@@ -311,12 +321,13 @@ func selectGuardedVWAP1m(candidate timescale.Vwap1mRow, rows []timescale.Vwap1mR
 		return candidate, false, false // unparseable candidate → can't judge, serve as-is
 	}
 	// Trailing baseline = combined-direction closed buckets STRICTLY older
-	// than the candidate bucket, kept index-aligned with their rows so the
-	// guard's last-known-good index maps straight back to a servable row.
+	// than the candidate bucket and within [BaselineMaxAge] of it, kept
+	// index-aligned with their rows so the guard's last-known-good index
+	// maps straight back to a servable row.
 	trailingRows := make([]timescale.Vwap1mRow, 0, len(rows))
 	trailing := make([]*big.Rat, 0, len(rows))
 	for i := range rows {
-		if !rows[i].Bucket.Before(candidate.Bucket) {
+		if !rows[i].Bucket.Before(candidate.Bucket) || candidate.Bucket.Sub(rows[i].Bucket) > BaselineMaxAge {
 			continue
 		}
 		trailingRows = append(trailingRows, rows[i])
