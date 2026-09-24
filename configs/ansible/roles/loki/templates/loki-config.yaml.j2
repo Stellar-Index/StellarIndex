@@ -1,6 +1,11 @@
 {# Render-time — managed by ansible (loki role). Don't edit. #}
 
-# Internal-only deploy; no multi-tenancy.
+# T643: no multi-tenancy, and unlike prometheus_listen/alertmanager_listen
+# (0.0.0.0, defense relies on the firewall) loki_listen_address defaults
+# to 127.0.0.1 (see defaults/main.yml) — the HTTP API is loopback-only,
+# not network-reachable, so skipping auth here doesn't carry the same
+# exposure. If loki_listen_address is ever widened off loopback this
+# needs revisiting.
 auth_enabled: false
 
 server:

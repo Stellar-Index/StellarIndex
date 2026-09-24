@@ -13,6 +13,9 @@ Group={{ alertmanager_group }}
 ExecStart=/usr/local/bin/alertmanager \
   --config.file=/etc/alertmanager/alertmanager.yml \
   --storage.path=/var/lib/alertmanager \
+{% if alertmanager_basic_auth_password_hash %}
+  --web.config.file=/etc/alertmanager/web-config.yml \
+{% endif %}
   --web.listen-address={{ alertmanager_listen }} \
   --cluster.listen-address={{ ansible_host }}:{{ alertmanager_cluster_listen_port }} \
 {% for h in groups['prometheus_pair'] %}

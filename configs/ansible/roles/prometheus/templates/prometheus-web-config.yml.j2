@@ -1,0 +1,5 @@
+{# Render-time — managed by ansible (prometheus role). #}
+# Prometheus --web.config.file (T643). Only rendered/wired when
+# prometheus_basic_auth_password_hash is set — see defaults/main.yml.
+basic_auth_users:
+  {{ prometheus_basic_auth_username }}: {{ prometheus_basic_auth_password_hash }}

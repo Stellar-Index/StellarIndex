@@ -17,6 +17,9 @@ ExecStart=/usr/local/bin/prometheus \
 {% if prometheus_retention_size and prometheus_retention_size != "0" %}
   --storage.tsdb.retention.size={{ prometheus_retention_size }} \
 {% endif %}
+{% if prometheus_basic_auth_password_hash %}
+  --web.config.file=/etc/prometheus/web-config.yml \
+{% endif %}
   --web.listen-address={{ prometheus_listen }} \
   --web.external-url=http://{{ inventory_hostname }}:9090/
 
