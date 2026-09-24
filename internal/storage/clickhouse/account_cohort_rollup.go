@@ -347,6 +347,12 @@ type AccountCohort struct {
 	Flows          []AccountCohortFlow // ascending by month, then asset
 	Contracts      []AccountCohortContract
 	Positions      []AccountCohortPosition
+	// FlowPricesUnavailable is true when Flows was served without
+	// then-prices because asset_month_usd_prices (an OPTIONAL
+	// enrichment, not the flows' own table) does not exist on this
+	// deployment (GH-1078). Flows themselves are never withheld for
+	// this: PriceUSDThen is simply nil on every row.
+	FlowPricesUnavailable bool
 }
 
 // AccountCohortCycle dates the snapshot every figure comes from.
@@ -497,15 +503,14 @@ func (r *ExplorerReader) readCohortHoldings(ctx context.Context, out *AccountCoh
 	return rows.Err()
 }
 
-// readCohortFlows serves every month for the CohortFlowAssetsLimit assets it
-// moved most, plus the all-assets row. Assets past the cap are not
-// summed into an "other" bucket — their units differ — so the view says
-// how many were left out. Each row carries the month's own USD price
-// where the served tier had a USD-quoted market for the asset that
-// month (a LEFT JOIN on (asset, month); the empty string is the miss,
-// read as nil).
-func (r *ExplorerReader) readCohortFlows(ctx context.Context, out *AccountCohort) error {
-	rows, err := r.conn.Query(ctx, `
+// cohortFlowsSQL and cohortFlowsFallbackSQL differ only in the
+// price_usd_then projection: the fallback drops the LEFT JOIN entirely
+// and literals it empty (read as nil, same as a joined-but-unpriced
+// month) so the same Scan below serves both. Used when
+// asset_month_usd_prices — an OPTIONAL enrichment of the flows, not
+// their source of truth — is absent (GH-1078): a missing enrichment
+// table must not take the whole cohort-flows read down with it.
+const cohortFlowsSQL = `
 		SELECT f.month, f.asset, f.inflow, f.outflow, f.movements, f.active_accounts,
 		       ifNull(p.vwap_usd, '') AS price_usd_then
 		FROM stellar.account_cohort_flows AS f
@@ -518,8 +523,37 @@ func (r *ExplorerReader) readCohortFlows(ctx context.Context, out *AccountCohort
 		      ORDER BY sum(movements) DESC, asset
 		      LIMIT ?
 		  ))
-		ORDER BY f.month, f.asset`,
+		ORDER BY f.month, f.asset`
+
+const cohortFlowsFallbackSQL = `
+		SELECT f.month, f.asset, f.inflow, f.outflow, f.movements, f.active_accounts,
+		       '' AS price_usd_then
+		FROM stellar.account_cohort_flows AS f
+		WHERE f.rel = ? AND f.root = ?
+		  AND (f.asset = ? OR f.asset IN (
+		      SELECT asset FROM stellar.account_cohort_flows
+		      WHERE rel = ? AND root = ? AND asset != ?
+		      GROUP BY asset
+		      ORDER BY sum(movements) DESC, asset
+		      LIMIT ?
+		  ))
+		ORDER BY f.month, f.asset`
+
+// readCohortFlows serves every month for the CohortFlowAssetsLimit assets it
+// moved most, plus the all-assets row. Assets past the cap are not
+// summed into an "other" bucket — their units differ — so the view says
+// how many were left out. Each row carries the month's own USD price
+// where the served tier had a USD-quoted market for the asset that
+// month (a LEFT JOIN on (asset, month); the empty string is the miss,
+// read as nil).
+func (r *ExplorerReader) readCohortFlows(ctx context.Context, out *AccountCohort) error {
+	rows, err := r.conn.Query(ctx, cohortFlowsSQL,
 		out.Relation, out.Root, CohortAllAssets, out.Relation, out.Root, CohortAllAssets, CohortFlowAssetsLimit)
+	if err != nil && isSchemaAbsent(err) {
+		out.FlowPricesUnavailable = true
+		rows, err = r.conn.Query(ctx, cohortFlowsFallbackSQL,
+			out.Relation, out.Root, CohortAllAssets, out.Relation, out.Root, CohortAllAssets, CohortFlowAssetsLimit)
+	}
 	if err != nil {
 		return fmt.Errorf("clickhouse: account cohort flows: %w", err)
 	}
