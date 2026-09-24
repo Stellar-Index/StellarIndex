@@ -390,12 +390,13 @@ Subcommands:
                           scam-class tag withholds the issuer's price, and a
                           recognition tag admits it to the RWA surface.
                           Run daily from a timer.
-  directory-override -config PATH -address G|C… (-clear-scam-flag -reason TEXT | -delete) [-write]
+  directory-override -config PATH -address G|C… (-clear-scam-flag -reason TEXT [-actor NAME] | -delete) [-write]
                           Durable correction of a false-positive directory scam
                           flag. -clear-scam-flag takes the row over as
                           operator-override with only the scam-class tags
                           removed (name, domain, recognition tags kept) and
-                          stores -reason as its override_reason;
+                          stores -reason as its override_reason and -actor
+                          (default: the OS user) as its override_by;
                           directory-sync never updates or prunes it. -delete
                           hands the address back to the next sync. Dry run
                           unless -write.

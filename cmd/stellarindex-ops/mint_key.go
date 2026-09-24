@@ -176,7 +176,7 @@ func parseMintKeyFlags(args []string) (mintKeyOpts, error) {
 	if err := validateOpsKeyReason(opts.reason); err != nil {
 		return mintKeyOpts{}, err
 	}
-	a, err := resolveOpsActor(*actor)
+	a, err := opsutil.ResolveActor(*actor)
 	if err != nil {
 		return mintKeyOpts{}, err
 	}

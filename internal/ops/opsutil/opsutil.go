@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"os/user"
 	"strings"
 	"syscall"
 	"time"
@@ -212,6 +213,19 @@ func SignalContext() (context.Context, context.CancelFunc) {
 		}
 	}()
 	return ctx, stop
+}
+
+// ResolveActor names who ran a privileged ops command: the -actor flag,
+// else the OS login. A recorded action with no actor is refused.
+func ResolveActor(flagActor string) (string, error) {
+	if a := strings.TrimSpace(flagActor); a != "" {
+		return a, nil
+	}
+	u, err := user.Current()
+	if err != nil || strings.TrimSpace(u.Username) == "" {
+		return "", errors.New("-actor is required (the OS user could not be resolved)")
+	}
+	return u.Username, nil
 }
 
 // SplitCSV splits a comma-separated flag value into trimmed,
