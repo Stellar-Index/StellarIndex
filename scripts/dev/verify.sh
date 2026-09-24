@@ -308,6 +308,7 @@ echo "=== Textfile-collector exposition self-test ===" && ./scripts/ci/lint-text
 echo "=== Ansible task lint (pipefail/bash, secret-on-argv) ===" && ./scripts/ci/lint-ansible-tasks.sh
 echo "=== Ansible task lint self-test ===" && ./scripts/ci/lint-ansible-tasks-test.sh
 echo "=== Ansible-drift decision-core self-test ===" && ./scripts/ci/check-ansible-drift-test.sh
+echo "=== Ansible collection pin parity self-test ===" && ./scripts/ci/ansible-collection-pin-parity-test.sh
 echo "=== run-heavy-job wrapper self-test ===" && ./scripts/ci/run-heavy-job-test.sh
 echo "=== Deploy playbook jump/backup-gate lint ===" && ./scripts/ci/lint-deploy-playbook.sh
 echo "=== EnvironmentFile verbatim-reader self-test ===" && ./scripts/ci/envfile-loader-test.sh

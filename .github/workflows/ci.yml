@@ -2069,6 +2069,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+      - name: ansible-collection-pin-parity self-test
+        # F146 (audit-2026-09-02): this job and ansible-drift.yml both used
+        # to install only the `ansible` pipx bundle, never
+        # configs/ansible/requirements.yml — so CI lint and the drift
+        # controller ran against different collection versions than
+        # deploy.yml applies to r1. The install steps below now pin
+        # requirements.yml too; this asserts that stays true against the
+        # PR-head workflow files, no ansible install needed.
+        run: ./scripts/ci/ansible-collection-pin-parity-test.sh
       - name: Install ansible + lint
         if: needs.preflight.outputs.ansible == 'true'
         # DEP-01 (audit-2026-07-23): exact pins, same reasoning as
