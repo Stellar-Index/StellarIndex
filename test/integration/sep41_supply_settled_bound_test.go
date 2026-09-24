@@ -122,6 +122,9 @@ func TestSEP41SupplyRollup_SettledBoundIsTheDurableCursor(t *testing.T) {
 		t.Errorf("advance with NO projector cursor = {Advanced:%v To:%d}; want {false 0} — nothing has provably settled",
 			advNoCursor.Advanced, advNoCursor.ToLedger)
 	}
+	if !advNoCursor.CursorAbsent {
+		t.Error("advance with NO projector cursor reported CursorAbsent=false; the pinned fold must be distinguishable from a steady-state no-op")
+	}
 	assertTotals("no-cursor reader", uncursored, 1000, 12, 0)
 
 	// ─── Clean cycles: the projector has committed through ledger 999. ──
@@ -135,6 +138,9 @@ func TestSEP41SupplyRollup_SettledBoundIsTheDurableCursor(t *testing.T) {
 	}
 	if adv1.ToLedger != 900 {
 		t.Errorf("advance 1 ToLedger = %d; want 900 (tip 950 deferred by the < max(ledger) guard)", adv1.ToLedger)
+	}
+	if adv1.CursorAbsent {
+		t.Error("advance 1 reported CursorAbsent=true with the projector cursor committed through 999")
 	}
 	assertTotals("after clean fold", contractID, 5000, 700_000, 100_000)
 

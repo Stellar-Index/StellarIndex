@@ -84,3 +84,59 @@ tests:
       - eval_time: 70m
         alertname: stellarindex_aggregator_supply_refresh_stalled
         exp_alerts: []
+
+  # ── sep41 rollup pinned by an absent projector cursor (GH-1153) ──
+  # Rollup cadence 5m. Every pass for CPINNED reports no_cursor, so its
+  # fold never moves and supply reads run the full-history scan.
+  - interval: 5m
+    name: a rollup pinned by an absent projector cursor trips no_cursor
+    input_series:
+      - series: 'stellarindex_sep41_supply_rollup_advances_total{contract_id="CPINNED",outcome="no_cursor"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_sep41_supply_rollup_no_cursor
+        exp_alerts:
+          - exp_labels:
+              contract_id: CPINNED
+              severity: ticket
+              team: stellarindex
+              component: supply
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sep41-supply-rollup-no-cursor.md
+              summary: "sep41 supply rollup for CPINNED pinned for ≥ 30m: projector cursor (projector, sep41_supply) is absent"
+              description: |
+                Every rollup pass for CPINNED in the last
+                30m folded nothing because ingestion_cursors has no
+                (projector, sep41_supply) row. Served supply stays exact,
+                but each supply read for this contract sums its whole
+                sep41_supply_events history instead of checkpoint + delta —
+                the unbounded scan behind the 2026-07-06 Postgres saturation.
+                Usual causes: the projector has not committed its first
+                sep41_supply cycle (not running, sep41_supply not enabled,
+                or quarantined), or ingestion_cursors was lost in a restore.
+
+  # ── a dormant token's steady-state noop is not an absent cursor ──
+  - interval: 5m
+    name: a dormant token reporting noop never trips no_cursor
+    input_series:
+      - series: 'stellarindex_sep41_supply_rollup_advances_total{contract_id="CDORMANT",outcome="noop"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_sep41_supply_rollup_no_cursor
+        exp_alerts: []
+
+  # ── the projector commits its first cycle: the fold resumes ──────
+  # no_cursor for 20m, then the cursor appears and passes report ok.
+  - interval: 5m
+    name: a cursor that appears clears no_cursor
+    input_series:
+      - series: 'stellarindex_sep41_supply_rollup_advances_total{contract_id="CPINNED",outcome="no_cursor"}'
+        values: '0+1x4 4+0x20'
+      - series: 'stellarindex_sep41_supply_rollup_advances_total{contract_id="CPINNED",outcome="ok"}'
+        values: '0+0x4 0+1x20'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_sep41_supply_rollup_no_cursor
+        exp_alerts: []

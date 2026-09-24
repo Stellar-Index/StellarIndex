@@ -398,7 +398,7 @@ func (s *Store) UpsertSEP41GenesisBaseline(ctx context.Context, contractID strin
 	); err != nil {
 		return fmt.Errorf("timescale: UpsertSEP41GenesisBaseline %s: %w", contractID, err)
 	}
-	if _, _, err := foldSEP41RollupLocked(ctx, tx, contractID); err != nil {
+	if _, _, _, err := foldSEP41RollupLocked(ctx, tx, contractID); err != nil {
 		return fmt.Errorf("timescale: UpsertSEP41GenesisBaseline %s re-fold: %w", contractID, err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -770,6 +770,10 @@ type SEP41RollupAdvance struct {
 	FromLedger uint32 // checkpoint ledger before the pass
 	ToLedger   uint32 // checkpoint ledger after the pass
 	Advanced   bool   // true when newly-settled rows were folded in
+	// CursorAbsent is true when the projector's sep41_supply cursor row does
+	// not exist, so the pass folded nothing and the reader stays on the
+	// full-sum path until it appears. Distinct from a steady-state no-op.
+	CursorAbsent bool
 }
 
 // AdvanceSEP41SupplyRollup folds a contract's newly-SETTLED
@@ -810,13 +814,16 @@ type SEP41RollupAdvance struct {
 //
 // Fail-closed when the cursor row is ABSENT (the projector has never
 // committed a cycle for this domain): the pass folds nothing and
-// reports Advanced=false. Nothing is lost or wrong — with last_ledger
-// unmoved the reader answers from the exact full-sum/delta path, the
-// same answer at a higher query cost — and the fold resumes by itself
-// on the projector's first cursor commit. The alternative (assume
-// settlement with no evidence of it) is the defect above. Same posture
-// as the density projection's refusal to credit a cursor span it cannot
-// evidence (see [Cursor] / migration 0046).
+// reports Advanced=false with CursorAbsent=true. Nothing is lost or
+// wrong — with last_ledger unmoved the reader answers from the exact
+// full-sum/delta path, the same answer at a higher query cost — and the
+// fold resumes by itself on the projector's first cursor commit. The
+// alternative (assume settlement with no evidence of it) is the defect
+// above. CursorAbsent keeps that state distinguishable from a healthy
+// no-op: pinned at 0 the reader pays the full-history scan migration
+// 0085 exists to prevent, so the worker must be able to surface it.
+// Same posture as the density projection's refusal to credit a cursor
+// span it cannot evidence (see [Cursor] / migration 0046).
 //
 // Idempotent + monotonic: re-running with no newly-settled rows is a
 // no-op (zero delta, unchanged last_ledger); the per-kind totals only
@@ -864,7 +871,7 @@ func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string)
 	if err := lockSEP41RollupRow(ctx, tx, contractID); err != nil {
 		return SEP41RollupAdvance{}, fmt.Errorf("timescale: AdvanceSEP41SupplyRollup %s: %w", contractID, err)
 	}
-	fromLedger, toLedger, err := foldSEP41RollupLocked(ctx, tx, contractID)
+	fromLedger, toLedger, cursorAbsent, err := foldSEP41RollupLocked(ctx, tx, contractID)
 	if err != nil {
 		return SEP41RollupAdvance{}, fmt.Errorf("timescale: AdvanceSEP41SupplyRollup %s: %w", contractID, err)
 	}
@@ -872,10 +879,11 @@ func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string)
 		return SEP41RollupAdvance{}, fmt.Errorf("timescale: AdvanceSEP41SupplyRollup %s commit: %w", contractID, err)
 	}
 	return SEP41RollupAdvance{
-		ContractID: contractID,
-		FromLedger: uint32(fromLedger),
-		ToLedger:   uint32(toLedger),
-		Advanced:   toLedger > fromLedger,
+		ContractID:   contractID,
+		FromLedger:   uint32(fromLedger),
+		ToLedger:     uint32(toLedger),
+		Advanced:     toLedger > fromLedger,
+		CursorAbsent: cursorAbsent,
 	}, nil
 }
 
@@ -904,8 +912,9 @@ func beginSEP41RollupTx(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 
 // foldSEP41RollupLocked adds a contract's newly-settled events into its fold,
 // on a transaction that ALREADY holds the row lock ([lockSEP41RollupRow]).
-// Returns the checkpoint ledger before and after.
-func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (fromLedger, toLedger int64, err error) {
+// Returns the checkpoint ledger before and after, and whether the projector's
+// cursor row was absent (so nothing could be folded).
+func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (fromLedger, toLedger int64, cursorAbsent bool, err error) {
 	// One statement, run under the caller's lock:
 	//   locked   — this pass's OWN input boundary + floor. The row cannot
 	//              change while we hold its lock, and this statement's
@@ -917,8 +926,9 @@ func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (
 	//              below it so the (possibly mid-write) tip is deferred.
 	//   settled  — the sep41_supply domain's durable ingestion cursor:
 	//              every ledger at-or-below it has fully committed, so
-	//              nothing can still arrive there. 0 (fold nothing) when
-	//              the projector has never committed a cycle.
+	//              nothing can still arrive there. NULL when the
+	//              projector has never committed a cycle: the delta
+	//              treats it as 0 (fold nothing) and RETURNING reports it.
 	//   delta    — the settled tail sum over (from_ledger, settled bound),
 	//              floored.
 	//   UPDATE   — add the delta into the running totals and move
@@ -938,11 +948,9 @@ func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (
              WHERE contract_id = $1
         ),
         settled AS (
-            SELECT COALESCE(
-                       (SELECT last_ledger
-                          FROM ingestion_cursors
-                         WHERE source = $2 AND sub_source = $3),
-                       0) AS through
+            SELECT (SELECT last_ledger
+                      FROM ingestion_cursors
+                     WHERE source = $2 AND sub_source = $3) AS through
         ),
         delta AS (
             SELECT
@@ -950,13 +958,14 @@ func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (
                 COALESCE(sum(e.amount) FILTER (WHERE e.event_kind = 'mint'),     0) AS d_mint,
                 COALESCE(sum(e.amount) FILTER (WHERE e.event_kind = 'burn'),     0) AS d_burn,
                 COALESCE(sum(e.amount) FILTER (WHERE e.event_kind = 'clawback'), 0) AS d_clawback,
-                COALESCE(max(e.ledger), (SELECT from_ledger FROM locked))           AS to_ledger
+                COALESCE(max(e.ledger), (SELECT from_ledger FROM locked))           AS to_ledger,
+                (SELECT through IS NULL FROM settled)                              AS cursor_absent
               FROM sep41_supply_events e
              WHERE e.contract_id = $1
                AND e.ledger       > (SELECT from_ledger  FROM locked)
                AND e.ledger      >= (SELECT floor_ledger FROM locked)
                AND e.ledger       < (SELECT mx FROM bound)
-               AND e.ledger      <= (SELECT through FROM settled)
+               AND e.ledger      <= (SELECT COALESCE(through, 0) FROM settled)
         )
         UPDATE sep41_supply_rollup r
            SET mint_total     = r.mint_total     + d.d_mint,
@@ -966,14 +975,14 @@ func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (
                updated_at     = now()
           FROM delta d
          WHERE r.contract_id = $1
-        RETURNING d.from_ledger, r.last_ledger
+        RETURNING d.from_ledger, r.last_ledger, d.cursor_absent
     `
 	if err := tx.QueryRowContext(ctx, q, contractID,
 		sep41SupplyCursorSource, sep41SupplyCursorSub,
-	).Scan(&fromLedger, &toLedger); err != nil {
-		return 0, 0, fmt.Errorf("fold: %w", err)
+	).Scan(&fromLedger, &toLedger, &cursorAbsent); err != nil {
+		return 0, 0, false, fmt.Errorf("fold: %w", err)
 	}
-	return fromLedger, toLedger, nil
+	return fromLedger, toLedger, cursorAbsent, nil
 }
 
 // lockSEP41RollupRow materialises a contract's sep41_supply_rollup row and

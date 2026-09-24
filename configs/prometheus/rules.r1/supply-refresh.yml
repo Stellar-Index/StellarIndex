@@ -28,6 +28,11 @@
 #     rate of `ok` outcomes. Indicates the refresher is running
 #     but consistently producing wrong results — operator config
 #     drift, observer not backfilled, or storage layer broken.
+#
+#   - `stellarindex_sep41_supply_rollup_no_cursor` — a watched
+#     SEP-41 contract's rollup has been pinned for ≥ 30 min because
+#     the projector's sep41_supply cursor is absent, so its supply
+#     reads run the full-history scan.
 
 groups:
   - name: stellarindex.supply_refresh
@@ -142,6 +147,35 @@ groups:
             Runbook: split by outcome, inspect the dominant kind; for
             sustained `stale_component` on one asset, see
             WithStaleComponentLedgersFor.
+
+      # GH-1153: the sep41 rollup fails closed when the projector's
+      # sep41_supply cursor row is absent — the fold stays pinned and every
+      # supply read for the contract runs the full-history scan migration 0085
+      # exists to prevent (incident 2026-07-06). The worker labels those passes
+      # `no_cursor`, distinct from the dormant-token `noop`. Per contract: one
+      # pinned contract is the whole incident for that contract. A projector
+      # that commits its first sep41_supply cycle clears it on the next pass.
+      - alert: stellarindex_sep41_supply_rollup_no_cursor
+        expr: |
+          sum by (contract_id) (increase(stellarindex_sep41_supply_rollup_advances_total{outcome="no_cursor"}[15m])) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: supply
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sep41-supply-rollup-no-cursor.md
+          summary: "sep41 supply rollup for {{ $labels.contract_id }} pinned for ≥ 30m: projector cursor (projector, sep41_supply) is absent"
+          description: |
+            Every rollup pass for {{ $labels.contract_id }} in the last
+            30m folded nothing because ingestion_cursors has no
+            (projector, sep41_supply) row. Served supply stays exact,
+            but each supply read for this contract sums its whole
+            sep41_supply_events history instead of checkpoint + delta —
+            the unbounded scan behind the 2026-07-06 Postgres saturation.
+            Usual causes: the projector has not committed its first
+            sep41_supply cycle (not running, sep41_supply not enabled,
+            or quarantined), or ingestion_cursors was lost in a restore.
 
       # ch-supply.service (daily supply_flows gap-fill) failed its last run.
       # Added 2026-07-17: this unit failed SILENTLY for weeks (a /var/log
