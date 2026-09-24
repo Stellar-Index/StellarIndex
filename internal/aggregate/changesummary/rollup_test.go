@@ -94,10 +94,73 @@ func TestValueAt_BinarySearch(t *testing.T) {
 		{t0.Add(2 * time.Hour), 3, true},
 		{t0.Add(10 * time.Hour), 4, true}, // after last
 	} {
-		got, ok := valueAt(series, tc.target)
+		got, ok := valueAt(series, tc.target, time.Time{})
 		if ok != tc.ok || (ok && got != tc.want) {
 			t.Errorf("valueAt(%v) = (%v, %v), want (%v, %v)", tc.target, got, ok, tc.want, tc.ok)
 		}
+	}
+}
+
+// TestValueAt_RejectsBaselineOlderThanNotBefore — the found observation
+// must not predate notBefore, or it describes a different period.
+func TestValueAt_RejectsBaselineOlderThanNotBefore(t *testing.T) {
+	t0 := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	series := []TimedValue{{At: t0, Value: "1"}, {At: t0.Add(5 * time.Hour), Value: "2"}}
+	if _, ok := valueAt(series, t0.Add(3*time.Hour), t0.Add(time.Hour)); ok {
+		t.Error("valueAt accepted a baseline 3h before target with a 2h tolerance")
+	}
+	if got, ok := valueAt(series, t0.Add(3*time.Hour), t0); !ok || got != 1 {
+		t.Errorf("valueAt at the tolerance edge = (%v, %v), want (1, true)", got, ok)
+	}
+}
+
+// TestComputeSummary_DormantPairLeavesHorizonsNull — a pair whose newest
+// observation is five days old has no price information inside the 1h or
+// 24h period; those horizons must be NULL, not a present 0%. The 7d
+// horizon still spans the newest observation and keeps its real delta.
+func TestComputeSummary_DormantPairLeavesHorizonsNull(t *testing.T) {
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	series := []TimedValue{
+		{At: now.Add(-20 * 24 * time.Hour), Value: "100"},
+		{At: now.Add(-8 * 24 * time.Hour), Value: "110"},
+		{At: now.Add(-5 * 24 * time.Hour), Value: "121"},
+	}
+	row := computeSummary(Entity{Type: "pair", ID: "dormant"}, series, now)
+
+	if row.H1Value != nil || row.H1DeltaPct != nil {
+		t.Errorf("H1 = (%v, %v), want nil (no observation in the last hour)", row.H1Value, row.H1DeltaPct)
+	}
+	if row.H24Value != nil || row.H24DeltaPct != nil {
+		t.Errorf("H24 = (%v, %v), want nil (no observation in the last 24h)", row.H24Value, row.H24DeltaPct)
+	}
+	// (121 - 110) / 110 * 100 = 10
+	if row.D7DeltaPct == nil || *row.D7DeltaPct < 9.99 || *row.D7DeltaPct > 10.01 {
+		t.Errorf("D7DeltaPct = %v, want 10", row.D7DeltaPct)
+	}
+	if row.D30Value != nil {
+		t.Errorf("D30Value = %v, want nil (no observation 30d ago)", row.D30Value)
+	}
+	if row.CurrentValue != 121 {
+		t.Errorf("CurrentValue = %v, want 121", row.CurrentValue)
+	}
+}
+
+// TestComputeSummary_StaleBaselineLeavesHorizonNull — a live pair whose
+// previous observation is three days old has no baseline for the 1h or
+// 24h period; a 3-day move must not be published as a 1h or 24h delta.
+func TestComputeSummary_StaleBaselineLeavesHorizonNull(t *testing.T) {
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	series := []TimedValue{
+		{At: now.Add(-3 * 24 * time.Hour), Value: "100"},
+		{At: now, Value: "150"},
+	}
+	row := computeSummary(Entity{Type: "pair", ID: "thin"}, series, now)
+
+	if row.H1DeltaPct != nil {
+		t.Errorf("H1DeltaPct = %v, want nil (baseline is 3 days old)", *row.H1DeltaPct)
+	}
+	if row.H24DeltaPct != nil {
+		t.Errorf("H24DeltaPct = %v, want nil (baseline is 3 days old)", *row.H24DeltaPct)
 	}
 }
 
