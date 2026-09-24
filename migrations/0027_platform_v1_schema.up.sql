@@ -111,9 +111,11 @@ CREATE INDEX users_staff_idx ON users (is_staff) WHERE is_staff = true;
 -- consults this table; the API auth middleware (handling
 -- Authorization: Bearer <key>) consults `api_keys`.
 --
--- Geo + IP fields drive the "new login from a new country" email
--- alert. We update last_seen_at on every authenticated request
--- (debounced to once-per-minute to avoid hot-row contention).
+-- Geo + IP fields are captured (from CF-IPCountry / the client IP)
+-- for session forensics and support lookups only; no alert is fired
+-- on country change today. We update last_seen_at on every
+-- authenticated request (debounced to once-per-minute to avoid
+-- hot-row contention).
 
 CREATE TABLE sessions (
     id              uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
