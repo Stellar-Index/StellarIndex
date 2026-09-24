@@ -3560,7 +3560,8 @@ export interface paths {
          *     is fine) creates a free-tier platform account and mints its
          *     first API key:
          *
-         *         curl -X POST https://api.stellarindex.io/v1/register
+         *         curl -X POST https://api.stellarindex.io/v1/register \
+         *             -H 'Content-Type: application/json'
          *
          *     `name` and `email` are both optional. The email is
          *     contact-only: no verification email is sent, nothing is keyed
@@ -3572,9 +3573,10 @@ export interface paths {
          *
          *     Abuse posture: rides the same per-IP signup throttle as
          *     `POST /v1/signup` (shared budget, default 5/hour/IP → 429),
-         *     underneath the global anonymous rate limit. When a
-         *     Content-Type header is present it must be
-         *     `application/json`.
+         *     underneath the global anonymous rate limit. The
+         *     `Content-Type: application/json` header is REQUIRED — not
+         *     merely validated when present — because a header-less POST is
+         *     itself a CORS *simple* request that no preflight would catch.
          *
          *     Already-authenticated callers receive 400 — they should mint
          *     additional keys via POST /v1/account/keys instead.

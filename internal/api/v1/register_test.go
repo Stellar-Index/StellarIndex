@@ -11,6 +11,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -663,5 +665,61 @@ func TestRegister_RequiresContentType(t *testing.T) {
 	}
 	if n := len(accounts.created); n != 0 {
 		t.Errorf("refused request still created %d account(s)", n)
+	}
+}
+
+// repoRootForRegisterDocsTest walks up from cwd to find go.mod — this
+// test runs from internal/api/v1/ under `go test ./...` from any
+// directory.
+func repoRootForRegisterDocsTest(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		dir = filepath.Dir(dir)
+	}
+	t.Fatal("could not locate repo root (go.mod) from cwd")
+	return ""
+}
+
+// TestRegisterDocsCurlExamplesIncludeContentTypeHeader guards
+// CA2-A06-correct-0 / CA2-A06-harden-5: requireJSONContentType
+// (csrf.go) unconditionally 415s a header-less POST /v1/register — the
+// header is REQUIRED, not merely validated when present (a header-less
+// POST is itself a CORS *simple* request no preflight would catch), as
+// TestRegister_RequiresContentType above pins. Every published curl
+// one-liner for this endpoint must therefore carry the header, or an
+// agent following it gets 415 on its first call.
+func TestRegisterDocsCurlExamplesIncludeContentTypeHeader(t *testing.T) {
+	root := repoRootForRegisterDocsTest(t)
+	const marker = "curl -X POST https://api.stellarindex.io/v1/register"
+	for _, rel := range []string{
+		"openapi/stellar-index.v1.yaml",
+		"docs/getting-started.md",
+		"docs/agent-onboarding.md",
+	} {
+		path := filepath.Join(root, rel)
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		text := string(body)
+		idx := strings.Index(text, marker)
+		if idx < 0 {
+			t.Fatalf("%s: no %q curl example found — update the marker if the example moved", rel, marker)
+		}
+		// The header may be on the same line or a backslash-continued
+		// next line.
+		window := text[idx:min(idx+200, len(text))]
+		if !strings.Contains(window, "-H 'Content-Type: application/json'") {
+			t.Errorf("%s: curl example for /v1/register has no -H 'Content-Type: application/json' — "+
+				"requireJSONContentType (csrf.go) 415s a header-less POST, so this published example "+
+				"fails on its first call:\n%s", rel, window)
+		}
 	}
 }

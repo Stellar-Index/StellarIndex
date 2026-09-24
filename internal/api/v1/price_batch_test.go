@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -335,6 +336,61 @@ func TestPriceBatch_ReaderError500(t *testing.T) {
 	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids=native&quote=fiat:USD")
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500", resp.StatusCode)
+	}
+}
+
+// A server-side request deadline (middleware.RequestTimeout) firing mid-
+// batch must NOT be treated as a client abort. Pre-fix, lookupPriceBatch
+// tested `ctx.Err() != nil` after wg.Wait() and returned without writing
+// anything on ANY done context — including DeadlineExceeded — so net/http
+// answered with an implicit 200 and an empty body: an authoritative-
+// looking empty result for what is actually a blown server budget.
+//
+// This holds the reader open past a deliberately tiny RequestTimeout so
+// the blanket deadline fires while the client is still connected (not
+// cancelled), then releases it — mirroring the CanceledRequestWritesNothing
+// / ExpiredRequestDeadlineUpgrades500To503 split in
+// request_deadline_problem_test.go, at the batch endpoint.
+func TestPriceBatch_ExpiredRequestDeadlineReturns503NotBlank200(t *testing.T) {
+	// No startedCh: `native` walks multiple aliases (assetAliases), each
+	// alias a SEPARATE sequential LatestPrice call once released — a
+	// buffered startedCh drained only once would fill back up on a later
+	// alias's send and deadlock. A flat sleep before closing release is
+	// simpler and sufficient: it only needs to outlast both the request
+	// reaching the reader and the 20ms deadline below.
+	release := make(chan struct{})
+	reader := &stubPriceReader{
+		err:       errors.New("boom"),
+		releaseCh: release,
+	}
+	srv := v1.New(v1.Options{Prices: reader, RequestTimeout: 20 * time.Millisecond})
+	ts := startHTTPTest(t, srv.Handler())
+
+	done := make(chan *http.Response, 1)
+	go func() {
+		done <- mustGet(t, ts.URL+"/v1/price/batch?asset_ids=native&quote=fiat:USD")
+	}()
+
+	// Let the 20ms RequestTimeout deadline actually pass before releasing
+	// the reader, so the handler observes DeadlineExceeded, not a live
+	// context racing the release.
+	time.Sleep(200 * time.Millisecond)
+	close(release)
+
+	resp := <-done
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("status = 200 (body %q) — a blown server-side request deadline must not read as "+
+			"an authoritative empty result; want a retryable 503", body)
+	}
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503 (body %q)", resp.StatusCode, body)
+	}
+	if len(body) == 0 {
+		t.Errorf("empty body on a %d — client cannot distinguish this from success", resp.StatusCode)
+	}
+	if ra := resp.Header.Get("Retry-After"); ra == "" {
+		t.Errorf("missing Retry-After on the deadline-upgraded 503")
 	}
 }
 
