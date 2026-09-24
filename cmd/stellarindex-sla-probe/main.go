@@ -86,7 +86,15 @@ const (
 // fixed query params (if any) and counts the HTTP status code
 // against the SLA's success classes (2xx).
 type endpoint struct {
-	Name     string
+	Name string
+	// Pair disambiguates Name across -pair flags: staticEndpoints leaves
+	// it empty, pairEndpoints sets it to "asset/quote". Name alone
+	// collides across pairs (every pair's /price/tip is named
+	// "price-tip"), so every place that indexes samples or stats by
+	// endpoint identity must key on (Name, Pair), never Name alone —
+	// otherwise a second -pair's samples silently merge into the
+	// first's and a stale pair's freshness hides behind a fresh one's.
+	Pair     string
 	Path     string
 	Query    map[string]string
 	Critical bool // when true, a single failure here fails the whole run
@@ -149,16 +157,31 @@ func pairEndpoints(asset, quote string, closedBucketFresh time.Duration) []endpo
 		}
 		return out
 	}
+	pair := asset + "/" + quote
 	return []endpoint{
-		{Name: "price", Path: "/price", Query: q(nil), Critical: true, FreshTarget: closedBucketFresh, WantObservedAt: true},
-		{Name: "price-tip", Path: "/price/tip", Query: q(nil), Critical: true, WantObservedAt: true},
-		{Name: "oracle-latest", Path: "/oracle/latest", Query: map[string]string{"asset": asset}, WantData: true},
+		{Name: "price", Pair: pair, Path: "/price", Query: q(nil), Critical: true, FreshTarget: closedBucketFresh, WantObservedAt: true},
+		{Name: "price-tip", Pair: pair, Path: "/price/tip", Query: q(nil), Critical: true, WantObservedAt: true},
+		{Name: "oracle-latest", Pair: pair, Path: "/oracle/latest", Query: map[string]string{"asset": asset}, WantData: true},
 	}
+}
+
+// sampleKey is the samples-map key for ep: Name alone collides across
+// -pair flags (see endpoint.Pair), so every endpoint carrying a Pair
+// is keyed on both.
+func sampleKey(ep endpoint) string {
+	if ep.Pair == "" {
+		return ep.Name
+	}
+	return ep.Name + "|" + ep.Pair
 }
 
 // stats holds per-endpoint sampling output.
 type stats struct {
-	Endpoint        string  `json:"endpoint"`
+	Endpoint string `json:"endpoint"`
+	// Pair is the "asset/quote" this row was sampled for, empty for
+	// static (non-per-pair) endpoints. Distinguishes otherwise-identical
+	// Endpoint rows when more than one -pair is configured.
+	Pair            string  `json:"pair,omitempty"`
 	Path            string  `json:"path"`
 	Samples         int     `json:"samples"`
 	Successes       int     `json:"successes"`
@@ -385,7 +408,7 @@ func runProbe(baseURL, apiKey string, endpoints []endpoint, duration time.Durati
 		SLA:         sla,
 	}
 	for _, ep := range endpoints {
-		rep.PerEndpoint = append(rep.PerEndpoint, aggregateEndpointStats(ep, samples[ep.Name]))
+		rep.PerEndpoint = append(rep.PerEndpoint, aggregateEndpointStats(ep, samples[sampleKey(ep)]))
 	}
 	computeVerdict(&rep, sla)
 	return rep
@@ -436,7 +459,8 @@ func collectSamples(ctx context.Context, baseURL, apiKey string, endpoints []end
 				// the end-of-run aggregation can see.
 				receivedAt := time.Now()
 				mu.Lock()
-				samples[ep.Name] = append(samples[ep.Name], probeSample{
+				key := sampleKey(ep)
+				samples[key] = append(samples[key], probeSample{
 					latency:    lat,
 					ok:         ok,
 					observedAt: observedAt,
@@ -454,7 +478,7 @@ func collectSamples(ctx context.Context, baseURL, apiKey string, endpoints []end
 // row.
 func aggregateEndpointStats(ep endpoint, ss []probeSample) stats {
 	if len(ss) == 0 {
-		return stats{Endpoint: ep.Name, Path: ep.Path}
+		return stats{Endpoint: ep.Name, Pair: ep.Pair, Path: ep.Path}
 	}
 	// Failures stay out of the latency percentiles, as they do from the
 	// server's success histogram (internal/obs/http_middleware.go): a
@@ -476,6 +500,7 @@ func aggregateEndpointStats(ep endpoint, ss []probeSample) stats {
 	successes := len(latencies)
 	st := stats{
 		Endpoint:           ep.Name,
+		Pair:               ep.Pair,
 		Path:               ep.Path,
 		FreshnessTargetSec: ep.FreshTarget.Seconds(),
 		Samples:            len(ss),
@@ -511,28 +536,40 @@ func computeVerdict(rep *report, sla slaTargets) {
 	}
 }
 
+// statsLabel is st's identity for human-readable output: the endpoint
+// name alone when it has no pair, "name[pair]" when it does — needed
+// so two pairs' otherwise-identical "price-tip" rows read as distinct
+// lines instead of two unlabelled duplicates.
+func statsLabel(st stats) string {
+	if st.Pair == "" {
+		return st.Endpoint
+	}
+	return fmt.Sprintf("%s[%s]", st.Endpoint, st.Pair)
+}
+
 // endpointFailures returns the human-readable SLA-violation strings
 // for one endpoint. Empty slice = endpoint passes.
 func endpointFailures(st stats, sla slaTargets) []string {
+	label := statsLabel(st)
 	if st.Samples == 0 {
-		return []string{fmt.Sprintf("%s: no samples", st.Endpoint)}
+		return []string{fmt.Sprintf("%s: no samples", label)}
 	}
 	var out []string
 	if st.LatencyMS != nil && st.LatencyMS.P95 > sla.P95MS {
-		out = append(out, fmt.Sprintf("%s: p95=%.1fms > target %.1fms", st.Endpoint, st.LatencyMS.P95, sla.P95MS))
+		out = append(out, fmt.Sprintf("%s: p95=%.1fms > target %.1fms", label, st.LatencyMS.P95, sla.P95MS))
 	}
 	if st.LatencyMS != nil && st.LatencyMS.P99 > sla.P99MS {
-		out = append(out, fmt.Sprintf("%s: p99=%.1fms > target %.1fms", st.Endpoint, st.LatencyMS.P99, sla.P99MS))
+		out = append(out, fmt.Sprintf("%s: p99=%.1fms > target %.1fms", label, st.LatencyMS.P99, sla.P99MS))
 	}
 	if st.AvailabilityPct < sla.AvailabilityPct {
-		out = append(out, fmt.Sprintf("%s: availability=%.2f%% < target %.2f%%", st.Endpoint, st.AvailabilityPct, sla.AvailabilityPct))
+		out = append(out, fmt.Sprintf("%s: availability=%.2f%% < target %.2f%%", label, st.AvailabilityPct, sla.AvailabilityPct))
 	}
 	freshTarget := sla.FreshnessSec
 	if st.FreshnessTargetSec > 0 {
 		freshTarget = st.FreshnessTargetSec
 	}
 	if st.ObservedAtFreshSec != nil && *st.ObservedAtFreshSec > freshTarget {
-		out = append(out, fmt.Sprintf("%s: freshness=%.1fs > target %.1fs", st.Endpoint, *st.ObservedAtFreshSec, freshTarget))
+		out = append(out, fmt.Sprintf("%s: freshness=%.1fs > target %.1fs", label, *st.ObservedAtFreshSec, freshTarget))
 	}
 	return out
 }
@@ -697,7 +734,7 @@ func printText(w io.Writer, rep *report) {
 			p99 = fmt.Sprintf("%.1f", st.LatencyMS.P99)
 		}
 		fmt.Fprintf(w, "%-15s %-25s %7s %7s %7s %6.2f%% %9s\n",
-			st.Endpoint, st.Path, p50, p95, p99, st.AvailabilityPct, fresh)
+			statsLabel(st), st.Path, p50, p95, p99, st.AvailabilityPct, fresh)
 	}
 	fmt.Fprintf(w, "\nverdict: %s\n", rep.Verdict)
 	if len(rep.FailedReasons) > 0 {
