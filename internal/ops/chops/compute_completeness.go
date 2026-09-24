@@ -594,6 +594,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// served-tier claim as reaching back to it. 0 stays "not
 		// evaluated" — the else branches below leave it alone.
 		var projVerifiedFrom uint32
+		// Set only when the CH reconcile FOUND a failure; carried to the
+		// write so a lower-tip run still records it.
+		var projFound bool
 		var w completeness.Watermark
 		// Incremental: only reconcile [projFrom, srW.Ledger], trusting
 		// [genesis, projFrom] as previously verified. In -pass mode projFrom is
@@ -631,6 +634,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 				if perr != nil {
 					return fmt.Errorf("%s: projection: %w", src.name, perr)
 				}
+				projFound = projectionFoundProblem(delta, blind, floorLoss)
 				// Only a clean reconcile earns the right to record verified
 				// ground; a run that found a mismatch must not enshrine its
 				// range as verified. A run that DETECTED loss must not record
@@ -740,6 +744,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			Watermark: w.Ledger, CoveragePct: w.CoveragePct, Complete: w.Complete,
 			LakeComplete:           lakeComplete,
 			FirstProblem:           w.FirstProblem,
+			FoundProblem:           projFound,
 			ProjectionVerifiedFrom: projVerifiedFrom,
 			SubstrateOK:            substrateOK, RecognitionOK: recOK, ProjectionOK: projOK,
 			Detail: strings.Join(detail, "; "),
@@ -1073,6 +1078,14 @@ func recognitionClaim(recOK, skipRecognition bool) string {
 	default:
 		return "recognition: verified — every on-chain event shape recognized by a decoder"
 	}
+}
+
+// projectionFoundProblem reports whether the CH aggregate reconcile FOUND a
+// failure. It localises none to a ledger, so combineWatermark leaves
+// FirstProblem at zero and the snapshot must carry this instead; a
+// projection that was not evaluated, or failed only on scope, is not a find.
+func projectionFoundProblem(delta int, blind completeness.BlindSpots, floorLoss []string) bool {
+	return delta != 0 || blind.Any() || len(floorLoss) > 0
 }
 
 // combineWatermark applies the served-tier projection gate to the lake
