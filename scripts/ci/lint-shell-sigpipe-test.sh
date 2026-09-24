@@ -152,6 +152,16 @@ check "pipe into grep -m is caught" 1 "$TMP/grepm"
 mk col0pipe offender.sh $'set -euo pipefail\nmc ls bucket/ \\\n| head -n 4 > /tmp/out.txt'   # sigpipe-ok: fixture text, scanned by the gate and never executed
 check "continuation line starting with a pipe into head is caught" 1 "$TMP/col0pipe"
 
+# The OTHER legal continuation: the pipe opens at end of the producer's
+# line and the consumer starts clean on the next, with no leading `|` for
+# the one-line regex to see — ch-schema-snapshot.sh:229 was exactly this
+# shape and scanned clean before the joiner (#560).
+mk trailingpipe offender.sh $'set -euo pipefail\nmc ls bucket/ |\n  head -n 4 > /tmp/out.txt'   # sigpipe-ok: fixture text, scanned by the gate and never executed
+check "trailing-pipe continuation (producer | / consumer on the next line) is caught" 1 "$TMP/trailingpipe"
+
+mk trailingpipeok ok.sh $'set -euo pipefail\nmc ls bucket/ |\n  sort > /tmp/all.txt'
+check "a trailing-pipe continuation into a non-early-exit consumer passes" 0 "$TMP/trailingpipeok"
+
 mk orgrepq ok.sh $'set -euo pipefail\nprobe || grep -q x /etc/hosts'
 check "|| followed by grep -q is not a pipe" 0 "$TMP/orgrepq"
 

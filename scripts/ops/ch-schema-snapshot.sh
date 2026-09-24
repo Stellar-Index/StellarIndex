@@ -233,8 +233,13 @@ if [[ -n "$SNAPSHOT_MC_TARGET" ]]; then
   offsite_alias="${SNAPSHOT_MC_TARGET%%/*}"
   alias_url=""
   if command -v mc >/dev/null 2>&1 && "${mc_clean[@]}" mc alias list "$offsite_alias" >/dev/null 2>&1; then
-    alias_url=$("${mc_clean[@]}" mc alias list "$offsite_alias" 2>/dev/null |
-      awk '/URL/ { print $3; exit }')
+    # Land the output before slicing it: `mc alias list` on one alias is a
+    # handful of lines, but piping it straight into an early-exit `awk`
+    # under this script's pipefail is the exact class scripts/ci/
+    # lint-shell-sigpipe.sh exists to catch (#475), and the gate does not
+    # get to assume this call site is small enough to be exempt.
+    alias_out=$("${mc_clean[@]}" mc alias list "$offsite_alias" 2>/dev/null)
+    alias_url=$(awk '/URL/ { print $3; exit }' <<<"$alias_out")
   fi
   if [[ -z "$alias_url" ]]; then
     note "OFFSITE PUSH REFUSED — '$offsite_alias' is not a configured mc alias, so the target would be written to LOCAL DISK on this host"

@@ -134,13 +134,61 @@ wf_skipped_shell=0
 wf_skipped_nopipefail=0
 wf_note=""
 
+# join_pipe_continuations <src> <dst> — merge a line ending in a bare
+# trailing pipe with the line(s) that follow it, so
+#     producer |
+#         consumer
+# reads as one logical pipeline to the matcher, the same as the one-line
+# form. This is the OTHER legal continuation, distinct from the leading-pipe
+# form (`producer \` then `| consumer`), which the early-exit regex already
+# matches on its own line via its `^` alternative and needs no joining. The
+# joined text is placed on the line the pipe OPENS; the line(s) it absorbed
+# are blanked, so a report still resolves at the line number of the original
+# file (mirrors the workflow shadow above). A line ending in `|` inside a
+# comment (e.g. a fenced example) is never joined.
+join_pipe_continuations() {
+  local src="$1" dst="$2"
+  awk '
+    function is_comment(s) {
+      sub(/^[ \t]*/, "", s)
+      return substr(s, 1, 1) == "#"
+    }
+    function trailing_pipe(s) {
+      return (!is_comment(s)) && s ~ /(^|[^|])\|[ \t]*$/
+    }
+    {
+      raw = $0
+      if (open) {
+        buf = buf " " raw
+        out[NR] = ""
+      } else {
+        buf = raw
+        start = NR
+      }
+      if (trailing_pipe(raw)) {
+        open = 1
+      } else {
+        out[start] = buf
+        open = 0
+        buf = ""
+      }
+    }
+    END {
+      for (i = 1; i <= NR; i++) print (i in out ? out[i] : "")
+    }
+  ' "$src" > "$dst"
+}
+
 # scan_subject <file-to-scan> <path-to-report> — the one matcher, and the one
 # notion of "guarded". For a .sh file the two arguments are the same file; for
 # a workflow the first is the extracted, line-aligned shell and the second is
 # the YAML the reader has open.
 scan_subject() {
   local scan="$1" label="$2"
-  local line body prev back pl
+  local line body prev back pl joined
+  joined="$TMPD/pipe-joined.tmp"
+  join_pipe_continuations "$scan" "$joined"
+  scan="$joined"
   while IFS=: read -r line _; do
     [ -n "$line" ] || continue
     body=$(sed -n "${line}p" "$scan")
