@@ -13,6 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/notify"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // SignupTracker is the v1 boundary for "has this email already
@@ -219,6 +220,9 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		Label:           req.Label,
 		Tier:            auth.TierAPIKey,
 		RateLimitPerMin: signupDefaultRateLimitPerMin,
+		// Explicit free-tier cap: an omitted quota persists 0, which
+		// middleware.MonthlyQuota reads as unmetered.
+		MonthlyQuota: platform.TierFree.MaxMonthlyQuota(),
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
