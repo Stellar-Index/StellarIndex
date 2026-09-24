@@ -392,8 +392,10 @@
   # Serialises + host-protects heavy ops one-shots. Two jobs:
   #   1. Singleton lock (C4-14 / INF-11): a per-job flock so overlapping
   #      timer fires (or a manual run racing a timer run) can't stack
-  #      and exhaust the single R1 host — a second run is skipped while
-  #      the first is still going.
+  #      and exhaust the single R1 host — while the first is still
+  #      going, a unit's second fire and any other caller are both
+  #      skipped with exit 75, never 0. The lock is per NAME: give a
+  #      job the same name on every attempt, never a per-attempt one.
   #   2. For root callers, wraps the command in a systemd transient
   #      scope with a hard memory budget + batch-class CPU/IO so a
   #      ballooning job gets killed before it can starve galexie/CH/PG
@@ -437,11 +439,26 @@
       # path below the wrapper blocks on systemd-run until the payload
       # exits; in the exec path fd 9 is inherited across exec (flock
       # survives exec) and the payload holds it until it exits.
+      #
+      # A held lock means a run of this NAME is alive. A skip always
+      # exits 75 (EX_TEMPFAIL), never 0: a caller must be able to tell
+      # "declined to run" from "ran and succeeded" — the trap that
+      # pushed runbooks to per-attempt names, which bypass this lock
+      # entirely. Every unit that ExecStarts this wrapper declares
+      # SuccessExitStatus=75 so the skip is not a unit failure, yet
+      # ExecMainStatus=75 still records it. A systemd unit's
+      # overlapping fire ($INVOCATION_ID, systemd.exec(5)) gets a plain
+      # skip message; any other caller gets a diagnostic on where to
+      # look.
       LOCK="${HEAVY_JOB_LOCK_DIR:-/run/lock}/stellarindex-heavy-${NAME}.lock"
       exec 9>"$LOCK"
       if ! flock -n 9; then
-        echo "run-heavy-job: ${NAME} already running (lock ${LOCK} held) — skipping this fire" >&2
-        exit 0
+        if [ -n "${INVOCATION_ID:-}" ]; then
+          echo "run-heavy-job: ${NAME} already running (lock ${LOCK} held) — skipping this fire, exit 75" >&2
+          exit 75
+        fi
+        echo "run-heavy-job: refusing to start ${NAME}: lock ${LOCK} is held, so a previous run of ${NAME} is still alive (find it: fuser -v ${LOCK}). Wait for it or stop it, then re-run under the SAME name — a different name bypasses this lock and runs the two at once." >&2
+        exit 75
       fi
 
       # ── ClickHouse ops-batch identity (2026-08-28 r1) ─────────────
@@ -531,6 +548,9 @@
       if ! df --output=avail -k "$POOL_PATH" >/dev/null 2>&1; then
         echo "run-heavy-job: WARNING POOL_PATH '${POOL_PATH}' is not statable — the DATA-POOL watchdog is INACTIVE for this job (root-FS guard still active). Set HEAVY_JOB_POOL_PATH to a path on the data pool." >&2
       fi
+      # 9>&-: the watchdog (and its `sleep`, which a kill of the subshell
+      # orphans) must not hold the lock past the job, or a prompt
+      # relaunch finds it held.
       (
         # This subshell MUST NOT inherit errexit/pipefail: a single
         # transient `df` failure (EBUSY/EIO under the very I/O pressure a
@@ -558,7 +578,7 @@
             *) [ "$pool_kb" -lt "$POOL_MIN_KB" ] && stop_job "data pool ${POOL_PATH} below $((POOL_MIN_KB / 1048576)) GiB (${pool_kb} KiB avail)" ;;
           esac
         done
-      ) &
+      ) 9>&- &
       WATCHDOG=$!
       trap 'kill "$WATCHDOG" 2>/dev/null || true' EXIT
 
@@ -1227,7 +1247,7 @@
 # lock, the 20G MemoryMax scope and the disk watchdog. The lock name is
 # its own (`verify-archive-tier-d`), not tier A/B's `verify-archive`: a
 # multi-hour tier-A bootstrap walk would otherwise swallow the weekly
-# fork check with an exit-0 "skipping this fire". Sunday 10:23 keeps it
+# fork check with a "skipping this fire" exit 75. Sunday 10:23 keeps it
 # clear of the nightly heavy band (02:17 archive-completeness through
 # 06:00 ch-supply, incl. tier A 03:23 and tier B 04:37). Both pinned by
 # scripts/ci/verify-archive-tier-d-test.sh.

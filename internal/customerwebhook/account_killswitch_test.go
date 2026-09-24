@@ -97,9 +97,8 @@ func killSwitchFixture(
 
 	store := &killSwitchStore{fakeStore: base, status: status, err: statusErr}
 	// The production client's SSRF guard rejects 127.0.0.1, which is
-	// where httptest lives; the package's other tests use the same
-	// permissive client for that reason.
-	w := customerwebhook.New(store, customerwebhook.Options{
+	// where httptest lives, so build the worker without it.
+	w := customerwebhook.NewUnguardedForTest(store, customerwebhook.Options{
 		PollInterval: 30 * time.Millisecond,
 		HTTPClient:   &http.Client{Timeout: 10 * time.Second},
 	})

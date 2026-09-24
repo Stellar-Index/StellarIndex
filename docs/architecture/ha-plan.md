@@ -1,7 +1,7 @@
 ---
 title: High-Availability Infrastructure Plan
 last_verified: 2026-07-25
-status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for ClickHouse (§4.3's hardware-expansion claim corrected 2026-07-24, §8/§3.3's backup deployment status corrected 2026-07-25, audit-2026-07-23 DOC-05/DOC-06). 2026-09-02 (#361): §2 diagram, §3.4, §3.8, §6 and the §8/restore-drill "reality check" blocks corrected against code — those blocks had INVERTED (repo2 + restore drill are live). §3 still lacks a CH tier (see top amendment); cost/RTO tables NOT re-verified. 2026-09-03: §3.3's retention block no longer claims daily OHLC back to 2015 — `prices_1d` starts 2018-07-01. 2026-09-20 (HO-361): every `file:line` citation in this doc re-checked against HEAD; two had drifted from code moving underneath them (§0 availability banner's `sla-probe.sh` line, §3.3's `18-pgbackrest-backup.yml` restore-drill-enable range) and are corrected — no prose claim changed
+status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for ClickHouse (§4.3's hardware-expansion claim corrected 2026-07-24, §8/§3.3's backup deployment status corrected 2026-07-25, audit-2026-07-23 DOC-05/DOC-06). 2026-09-02 (#361): §2 diagram, §3.4, §3.8, §6 and the §8/restore-drill "reality check" blocks corrected against code — those blocks had INVERTED (repo2 + restore drill are live). §3 still lacks a CH tier (see top amendment); cost/RTO tables NOT re-verified. 2026-09-03: §3.3's retention block no longer claims daily OHLC back to 2015 — `prices_1d` starts 2018-07-01. 2026-09-20 (HO-361): every `file:line` citation in this doc re-checked against HEAD; two had drifted from code moving underneath them (§0 availability banner's `sla-probe.sh` line, §3.3's `18-pgbackrest-backup.yml` restore-drill-enable range) and are corrected — no prose claim changed. 2026-09-24 (T639): the §2 diagram and the §5 failure-matrix aggregator row still showed the leader-elected active/standby aggregator that §3.7 had retracted; both now match §3.7 (one instance, Postgres instance lock, no standby)
 ---
 
 > ⚠️ **Multi-region content superseded by ADR-0050 / [`multi-region-ha.md`](multi-region-ha.md) (2026-08-21).** This plan's multi-region framing (and its "active/active out of scope for v1" stance) is overturned. The **single-region HA design** below (HAProxy / Patroni / Redis-Sentinel) remains current and is **Phase 1** of the multi-region plan — read it for that, not for the multi-region shape.
@@ -149,8 +149,9 @@ provider's storage economics.
        └──────────────────────────────┼────────────────────────────┘
                                       │
                       ┌───────────────┴──────────────┐
-                      │   stellarindex-aggregator     │   one active, one
-                      │   (leader-elected via Redis) │   standby
+                      │   stellarindex-aggregator    │   ONE process; a
+                      │   (Postgres instance lock)   │   second refuses to
+                      │                              │   start; no standby
                       └───────────────┬──────────────┘
                                       │
                       ┌───────────────┴──────────────┐
@@ -417,12 +418,13 @@ provisioned; cloud is pay-as-you-use for DR.
 ### 3.7 stellarindex-aggregator
 
 - **Instances (corrected 2026-09-22):** **one**. There is no
-  leader-election path in `cmd/stellarindex-aggregator` — no lock
-  acquisition, no `SET key NX EX`, no Sentinel-aware failover code —
+  leader-election path in `cmd/stellarindex-aggregator` — no Redis
+  lease, no `SET key NX EX`, no Sentinel-aware failover code —
   and `deploy/systemd/stellarindex-aggregator.service` runs it as a
   single long-running daemon on one host. The Redis `SET key NX EX 30`
-  leader-election description below was never implemented; treat it
-  as removed, not as the target design.
+  active/standby pair this section used to prescribe was never
+  implemented and is not the Phase-1 target: a second aggregator
+  against the same database refuses to start (below).
 - **Enforcement:** the one-instance rule is enforced, not assumed.
   At startup the aggregator takes the Postgres session advisory lock
   `hashtext('instance:stellarindex-aggregator')`
@@ -560,11 +562,13 @@ Detail + live capacity table: `docs/operations/runbooks/phase-a-capacity-relief-
 | MinIO 1–3 nodes | EC(6+3) preserves reads/writes | auto-heal on replacement | hours |
 | MinIO 4–6 nodes | Writes fail; reads OK | alert SEV-1 | hours–days |
 | HAProxy active | Keepalived VIP failover to peer | < 2 s drop | < 2 s |
-| Aggregator leader | Standby acquires leadership | stale hot-keys for ≤ 30 s | 30 s |
+| Aggregator process | Price hot keys stop refreshing; reads serve `stale: true` | No standby (§3.7). systemd `Restart=on-failure`, `RestartSec=10s` | ~10 s; until an operator intervenes if it crash-loops |
 | Colo power | Full primary outage | manual DR activation to cloud | 4 h (per DR runbook) |
 | Internet link to colo | API unreachable | DNS failover to cloud DR | 5 min |
 
-No single-component failure breaches 99.9% monthly (≤ 43 min/month).
+No single-component failure breaches 99.9% monthly (≤ 43 min/month),
+with one exception: the aggregator has no standby, so a crash-looping
+aggregator leaves prices stale until an operator fixes it.
 Two-component failures can breach; catalogued above with response
 times.
 

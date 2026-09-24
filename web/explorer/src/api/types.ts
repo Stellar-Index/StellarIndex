@@ -7770,9 +7770,9 @@ export interface components {
             lower_bound: boolean;
             /**
              * @description The distinct PUBLISHERS whose published values make up the
-             *     total, sorted. Not "oracles": the total can mix two
-             *     provenances, and calling a listing platform an oracle would
-             *     misdescribe the weaker half of its own figure. A dollar
+             *     total, sorted. Not "oracles": the total can mix three
+             *     provenances, and calling a listing platform or a prospectus
+             *     an oracle would misdescribe part of its own figure. A dollar
              *     figure that cannot be traced to a publisher is worse than an
              *     absent one here; each contributing row carries the full
              *     provenance — kind, publisher, key, denominator and vintage —
@@ -7800,7 +7800,7 @@ export interface components {
              *       "oracle_instrument_nav"
              *     ]
              */
-            provenances?: ("oracle_instrument_nav" | "listing_platform_price")[];
+            provenances?: ("oracle_instrument_nav" | "listing_platform_price" | "prospectus_constant_nav")[];
             /** @description Prose statement of what was measured and, as importantly, what it is not. */
             basis: string;
         };
@@ -7998,9 +7998,15 @@ export interface components {
              *     the whole-token float that `valuation.price_usd` and
              *     `reference.price_usd` each multiply — rather than leaving a
              *     reader to assume a scale that is only sometimes 7.
+             *
+             *     `null` when a contract's scale could not be read from its
+             *     on-chain metadata. `circulating_supply` is still served in
+             *     the smallest unit, but it has no whole-token reading, and
+             *     neither valuation is computed from it: a row that would
+             *     otherwise be valued reports `decimals_unavailable`.
              * @example 7
              */
-            decimals: number;
+            decimals: number | null;
             /** @description Trailing-24h USD trade volume, as /assets serves it. */
             volume_24h_usd?: string;
             /**

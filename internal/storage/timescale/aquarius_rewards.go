@@ -157,19 +157,16 @@ var aquariusRewardsAllKinds = []AquariusRewardsKind{
 }
 
 // AquariusRewardsKindCount is one kind's LIFETIME (all-time, unwindowed)
-// event count + summed amount. Amount is 0 for kinds that never carry a
-// user-facing amount (pool_state, set_rewards_config, position_update,
-// rewards_gauge_schedule_reward, set_rewards_state, rewards_gauge_add,
-// config_rewards) — see the per-kind doc in migration 0099.
+// event count. It carries no amount: one kind's rows are denominated in
+// many different tokens (per-claim reward token, per-pool share token), so
+// a per-kind sum of base units has no unit.
 type AquariusRewardsKindCount struct {
 	Kind   AquariusRewardsKind
 	Events int64
-	Amount canonical.Amount
 }
 
-// AquariusRewardsLifetimeByKind reads the LIFETIME per-kind event count +
-// summed amount for all twelve rewards-gauge kinds, in migration-0099
-// census order.
+// AquariusRewardsLifetimeByKind reads the LIFETIME per-kind event count
+// for all twelve rewards-gauge kinds, in migration-0099 census order.
 //
 // "Lifetime" over a multi-million-row hypertable would be a genuinely
 // unbounded scan as a plain `GROUP BY event_kind` (visiting every row to
@@ -192,10 +189,10 @@ func (s *Store) AquariusRewardsLifetimeByKind(ctx context.Context) ([]AquariusRe
 		WITH kinds AS (
 		    SELECT k, ordinality FROM unnest($1::text[]) WITH ORDINALITY AS t(k, ordinality)
 		)
-		SELECT kinds.k, COALESCE(agg.events, 0), COALESCE(agg.amount, '0')
+		SELECT kinds.k, COALESCE(agg.events, 0)
 		  FROM kinds
 		  LEFT JOIN LATERAL (
-		         SELECT count(*) AS events, COALESCE(sum(amount), 0)::text AS amount
+		         SELECT count(*) AS events
 		           FROM aquarius_rewards_events
 		          WHERE event_kind = kinds.k
 		       ) agg ON true
@@ -212,7 +209,7 @@ func (s *Store) AquariusRewardsLifetimeByKind(ctx context.Context) ([]AquariusRe
 			c    AquariusRewardsKindCount
 			kind string
 		)
-		if err := rows.Scan(&kind, &c.Events, &c.Amount); err != nil {
+		if err := rows.Scan(&kind, &c.Events); err != nil {
 			return nil, fmt.Errorf("timescale: AquariusRewardsLifetimeByKind scan: %w", err)
 		}
 		c.Kind = AquariusRewardsKind(kind)
@@ -226,22 +223,34 @@ func (s *Store) AquariusRewardsLifetimeByKind(ctx context.Context) ([]AquariusRe
 
 // AquariusClaimRewardWindow is the windowed claim_reward drill-down —
 // Aquarius's dominant user-facing rewards action (a user claiming accrued
-// gauge rewards). Amount is reward-token base units (canonical.Amount,
-// ADR-0003) — Aquarius reward tokens have no published price at this
-// layer, so this is never USD and never feeds VWAP.
+// gauge rewards). Volume is only available per reward token (ByToken):
+// claim_reward rows name different reward tokens with different decimals
+// and no price at this layer, so there is no meaningful cross-token total.
 type AquariusClaimRewardWindow struct {
 	Events            int64
-	Amount            canonical.Amount
 	DistinctClaimants int64
+	ByToken           []AquariusClaimRewardTokenVolume
+}
+
+// AquariusClaimRewardTokenVolume is one reward token's share of the claim
+// window. Amount is base units of RewardToken (canonical.Amount, ADR-0003)
+// — never USD and never fed to VWAP. RewardToken is "" for a row whose
+// attributes carry no reward_token.
+type AquariusClaimRewardTokenVolume struct {
+	RewardToken string
+	Events      int64
+	Amount      canonical.Amount
 }
 
 // AquariusRewardsClaimWindow reads the windowed claim_reward summary: event
-// count, summed amount, and distinct claimant addresses. Bounded by BOTH
-// event_kind = 'claim_reward' (equality, the leading column of
-// aquarius_rewards_events_kind_ts_idx) AND ledger_close_time > now() -
+// count and distinct claimant addresses overall, plus event count and
+// summed amount per reward token (busiest token first, ties by token id).
+// Bounded by BOTH event_kind = 'claim_reward' (equality, the leading column
+// of aquarius_rewards_events_kind_ts_idx) AND ledger_close_time > now() -
 // windowDays (the trailing range on that same index) — one sargable,
 // fully-indexed predicate; neither side wraps the indexed columns in a
-// function.
+// function. The overall and per-token figures come from one scan via
+// GROUPING SETS.
 //
 // Empty-safe: returns (nil, nil) when no claim_reward fired in the window.
 // windowDays <= 0 is treated as 30 (the bespoke block's drill-down window).
@@ -251,13 +260,37 @@ func (s *Store) AquariusRewardsClaimWindow(ctx context.Context, windowDays int) 
 	}
 	since := fmt.Sprintf("%d days", windowDays)
 
-	var out AquariusClaimRewardWindow
-	if err := s.db.QueryRowContext(ctx, `
-		SELECT count(*), COALESCE(sum(amount), 0)::text, count(DISTINCT user_address)
-		  FROM aquarius_rewards_events
-		 WHERE event_kind = 'claim_reward' AND ledger_close_time > now() - $1::interval`, since).
-		Scan(&out.Events, &out.Amount, &out.DistinctClaimants); err != nil {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT GROUPING(reward_token) = 1, COALESCE(reward_token, ''), count(*),
+		       COALESCE(sum(amount), 0)::text, count(DISTINCT user_address)
+		  FROM (SELECT COALESCE(attributes->>'reward_token', '') AS reward_token, amount, user_address
+		          FROM aquarius_rewards_events
+		         WHERE event_kind = 'claim_reward' AND ledger_close_time > now() - $1::interval) w
+		 GROUP BY GROUPING SETS ((reward_token), ())
+		 ORDER BY 1 DESC, 3 DESC, 2 ASC`, since)
+	if err != nil {
 		return nil, fmt.Errorf("timescale: AquariusRewardsClaimWindow: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out AquariusClaimRewardWindow
+	for rows.Next() {
+		var (
+			isTotal   bool
+			v         AquariusClaimRewardTokenVolume
+			claimants int64
+		)
+		if err := rows.Scan(&isTotal, &v.RewardToken, &v.Events, &v.Amount, &claimants); err != nil {
+			return nil, fmt.Errorf("timescale: AquariusRewardsClaimWindow scan: %w", err)
+		}
+		if isTotal {
+			out.Events, out.DistinctClaimants = v.Events, claimants
+			continue
+		}
+		out.ByToken = append(out.ByToken, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: AquariusRewardsClaimWindow rows: %w", err)
 	}
 	if out.Events == 0 {
 		return nil, nil

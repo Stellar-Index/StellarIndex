@@ -142,7 +142,7 @@ func TestTick_TimedOutPOSTStillRecordsTheAttempt(t *testing.T) {
 	defer close(release)
 
 	store := newLifetimeStore(hang.URL)
-	w := New(store, Options{HTTPClient: &http.Client{Timeout: 60 * time.Millisecond}})
+	w := newWorker(store, Options{HTTPClient: &http.Client{Timeout: 60 * time.Millisecond}}, unguardedClient)
 
 	markErrBefore := testutil.ToFloat64(obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("mark_error"))
 	netErrBefore := testutil.ToFloat64(obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("network_error"))
@@ -203,10 +203,10 @@ func TestTick_ShutdownDuringDeliveryStillRecordsIt(t *testing.T) {
 	defer cancel()
 
 	store := newLifetimeStore("http://customer.invalid/hook")
-	w := New(store, Options{HTTPClient: &http.Client{
+	w := newWorker(store, Options{HTTPClient: &http.Client{
 		Timeout:   time.Second,
 		Transport: cancelOnResponse{cancel: cancel},
-	}})
+	}}, unguardedClient)
 
 	markErrBefore := testutil.ToFloat64(obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("mark_error"))
 	w.tick(ctx)

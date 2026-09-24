@@ -1,11 +1,12 @@
 -- 0149 down — drop the asset_volume_character rollup.
 --
--- Correctness-safe: with the table absent, the /v1/assets listing's
--- LEFT JOIN returns no rows (volume_character renders absent →
--- omitempty; the default volume sort falls back to raw volume, no
--- demotion) and the /v1/assets/{id} detail's keyed lookup misses
--- (volume_character omitted). The pre-0149 live per-request roll is not
--- auto-restored (the detail now reads the rollup), so a full rollback
--- also needs the code reverted; on its own this only blanks the
--- volume_character overlay.
+-- Revert the code FIRST; this down is not safe under a binary that reads
+-- the table. The /v1/assets listing SQL LEFT JOINs asset_volume_character,
+-- and a join against a missing relation is a 42P01 (undefined_table) query
+-- error, not an empty join: with the table absent the listing query fails
+-- instead of rendering volume_character absent. ContractCatalogueRows and
+-- the refresher (RefreshAssetVolumeCharacter) fail the same way. Only the
+-- /v1/assets/{id} detail degrades: its keyed lookup errors and the handler
+-- omits volume_character. The pre-0149 live per-request roll is not
+-- auto-restored: deploy a binary predating 0149, then run this down.
 DROP TABLE IF EXISTS asset_volume_character;

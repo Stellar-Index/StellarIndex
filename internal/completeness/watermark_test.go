@@ -75,3 +75,40 @@ func TestComputeWatermark(t *testing.T) {
 		})
 	}
 }
+
+// Stellar ledgers start at 1, so FirstProblem == 0 is the "no problem"
+// sentinel every consumer reads (CompletenessSnapshot.IsFoundProblem). A zero
+// genesis must still publish a located, non-zero FirstProblem and must not
+// count the nonexistent ledger 0 as verified coverage.
+func TestComputeWatermarkZeroGenesisKeepsSentinelSound(t *testing.T) {
+	tests := []struct {
+		name         string
+		problems     []uint32
+		wantLedger   uint32
+		wantComplete bool
+		wantCoverage float64
+		wantFirst    uint32
+	}{
+		{"problem reported at ledger 0", []uint32{0}, 0, false, 0, 1},
+		{"problem at the first real ledger", []uint32{1}, 0, false, 0, 1},
+		{"problem mid-range", []uint32{51}, 50, false, 50.0 / 200.0, 51},
+		{"no problems", nil, 200, true, 1, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := ComputeWatermark(0, 200, tc.problems)
+			if w.Ledger != tc.wantLedger {
+				t.Errorf("Ledger = %d, want %d", w.Ledger, tc.wantLedger)
+			}
+			if w.Complete != tc.wantComplete {
+				t.Errorf("Complete = %v, want %v", w.Complete, tc.wantComplete)
+			}
+			if math.Abs(w.CoveragePct-tc.wantCoverage) > 1e-9 {
+				t.Errorf("CoveragePct = %v, want %v", w.CoveragePct, tc.wantCoverage)
+			}
+			if w.FirstProblem != tc.wantFirst {
+				t.Errorf("FirstProblem = %d, want %d", w.FirstProblem, tc.wantFirst)
+			}
+		})
+	}
+}

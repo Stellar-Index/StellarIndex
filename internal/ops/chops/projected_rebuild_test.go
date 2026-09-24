@@ -304,6 +304,21 @@ func TestDecodeProjectedEvent_PanicIsRecoveredAsSoftFail(t *testing.T) {
 	}
 }
 
+// RLT-133: the soft-fail skips the row, so the decode error must be logged.
+func TestDecodeProjectedEvent_DecodeErrorIsLogged(t *testing.T) {
+	var buf strings.Builder
+	dec := &fakeDecoder{matches: true, decodeErr: errors.New("unknown map field amount_v9")}
+	_, softFail := decodeProjectedEvent("fake", dec, events.Event{Ledger: 61234567}, slog.New(slog.NewTextHandler(&buf, nil)))
+	if !softFail {
+		t.Fatal("decode error: softFail = false, want true")
+	}
+	for _, want := range []string{"unknown map field amount_v9", "source=fake", "ledger=61234567"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("log %q missing %q", buf.String(), want)
+		}
+	}
+}
+
 // ─── writeModeLabel ─────────────────────────────────────────────────────
 
 func TestWriteModeLabel(t *testing.T) {

@@ -149,7 +149,7 @@ migration 0085).
 **There is nothing to do here by hand.** The step-2 `ch-rebuild -sep41
 -write -contracts …` run already reset the fold checkpoint for exactly
 those contracts, as its last act after the events were fully written
-(`internal/ops/chops/ch_rebuild.go:631-640`). Confirm it happened:
+(`chRebuild`'s `sep41RollupResetPlan` gate in `internal/ops/chops/ch_rebuild.go`). Confirm it happened:
 
 ```
 ch-rebuild: reset 3 sep41_supply_rollup fold row(s) [SCOPED — 3 contract(s)];
@@ -160,7 +160,7 @@ If that line is absent from the step-2 output, step 2 ran **without**
 `-write` (dry run is the default) or without `-sources sep41_supply` —
 re-run it correctly. The reset is an `UPDATE … SET mint_total = 0,
 burn_total = 0, clawback_total = 0, last_ledger = 0`
-(`internal/storage/timescale/sep41_supply_events.go:959-985`); with
+(`Store.ResetSEP41SupplyRollupFold` in `internal/storage/timescale/sep41_supply_events.go`); with
 `last_ledger` back at 0 the reader serves the exact full-sum fallback
 until the worker re-folds, so correctness is restored immediately and
 the fast path shortly after.
@@ -181,7 +181,7 @@ the fast path shortly after.
 > re-fold from Soroban history alone and recreate the row with
 > `genesis_mint_total = 0` and `genesis_baseline_ledger = NULL`, which
 > the reader treats as "not yet seeded"
-> (`SEP41GenesisBaselineSeeded`, `sep41_supply_events.go:256-264`) and
+> (`SEP41GenesisBaselineSeeded` in `sep41_supply_events.go`) and
 > contributes nothing — so lifetime supply silently **under-reports**
 > for those contracts until someone re-seeds the baseline by hand
 > (`stellarindex-ops supply seed-sep41-genesis`). That is the

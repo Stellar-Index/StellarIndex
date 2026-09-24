@@ -97,14 +97,20 @@ spec per board #33 / ADR-0042 `x-stability: experimental`) now carries,
 alongside the pre-existing trade-volume and reserve-depth content:
 
 - **KPIs:** `Rewards-gauge events (lifetime)` (sum of all 12 kinds,
-  all-time), `Reward claims (30d)` / `Reward volume (30d)` / `Distinct
-  claimants (30d)` (the `claim_reward` drill-down, fixed at a trailing 30
-  days regardless of the page's overall analytics window), and
-  `Governance events (lifetime)` (sum of all 8 `aquarius_admin` kinds).
+  all-time), `Reward claims (30d)` / `Distinct claimants (30d)` (the
+  `claim_reward` drill-down, fixed at a trailing 30 days regardless of the
+  page's overall analytics window), `Reward volume (30d)` only when every
+  claim in that window paid the same reward token (its hint names the
+  token), and `Governance events (lifetime)` (sum of all 8
+  `aquarius_admin` kinds).
+- **`Reward volume by token (30d)` table:** one row per `claim_reward`
+  reward token (`attributes.reward_token`) — token / claims / summed amount
+  in that token's base units, busiest first. Base units of different
+  tokens are never added together.
 - **`Rewards events by kind (lifetime)` table:** all 12 rewards-gauge
   kinds with a nonzero lifetime count, in migration-0099 census order
-  (busiest first) — kind / event count / summed amount (reward-token base
-  units).
+  (busiest first) — kind / event count. No amount column: a kind's rows
+  span many reward and pool-share tokens.
 - **`Recent governance events` table:** the most recent 25 rows across all
   8 `aquarius_admin` kinds — when / kind / contract / admin / target /
   ledger, newest first, unwindowed (governance actions are rare enough
@@ -211,11 +217,14 @@ pools have not yet traded directly** (routed-only or new).
 ### WASM cross-check
 
 Every pool announced by the canonical router (and its parallel deployment,
-below) that still has a live contract instance runs one of exactly three
-pool code hashes — the aquarius pool families
-(`AE0DA5A8…` ×318, `F1077E0B…` ×55, `12FCA5A7…` ×31, matching the
-constant-product / stableswap / concentrated split). The two router-WASM
-deployments share code hash `06F4207B…`.
+below) that still has a live contract instance runs genuine aquarius pool
+WASM. The per-hash inventory — the never-upgraded cohort on
+`ae0da5a8…` (volatile) / `f1077e0b…` (stableswap) / `8875f0c7…`
+(rewards-enhanced), the upgraded cohort's five-WASM chain, and the decoder
+verdict for each — is [wasm-audits/aquarius.md](../operations/wasm-audits/aquarius.md).
+No concentrated-liquidity pool has been observed (`ErrConcentratedWIP` is
+reserved and has not fired).
+The two router-WASM deployments share code hash `06F4207B…`.
 
 ### ⚠️ Flagged — excluded from the gate (NOT silently dropped)
 

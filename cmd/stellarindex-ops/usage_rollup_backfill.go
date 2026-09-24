@@ -108,11 +108,7 @@ func usageRollupBackfill(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	var sink usage.RollupSink = store
-	if dryRun {
-		sink = &countingUsageSink{}
-	}
-	return runUsageRollupBackfill(ctx, rdb, sink, days, dryRun)
+	return runUsageRollupBackfill(ctx, rdb, store, days, dryRun)
 }
 
 // usageRollupDays expands the -from/-to flags into the inclusive list
@@ -162,6 +158,9 @@ func runUsageRollupBackfill(
 ) error {
 	logger := opsutil.MkBackfillLogger()
 	if dryRun {
+		// Swapped here, not by the caller, so the function that owns
+		// -dry-run is the one that guarantees the real sink is never written.
+		sink = &countingUsageSink{}
 		fmt.Fprintln(os.Stderr, "DRY RUN — scanning Redis, no usage_daily writes")
 	}
 	fmt.Fprintf(os.Stderr, "Re-folding %d day(s): %s .. %s (plus %s, the worker's trailing window day)\n",

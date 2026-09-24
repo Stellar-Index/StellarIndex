@@ -50,6 +50,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"html/template"
 	"log/slog"
 	"math"
 	"math/big"
@@ -1027,18 +1028,22 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// round trip. Table is tiny (offenders should be near-zero), so the
 	// full read is cheap; refresh cadence controls how quickly a fix
 	// (row removed) or a new confirmation propagates.
+	//
+	// The initial refresh is fatal, as in the aggregator: a cold cache
+	// has no last-good snapshot, so every confirmed non-7-decimals leg
+	// would be served unnormalized (wrong by 10^(7-decimals)) until the
+	// first successful tick. Only the periodic refresh fails open.
+	const nonstandardDecimalsRefreshTimeout = 30 * time.Second
 	nonstandardDecimalsCache := v1.NewNonstandardDecimalsCache(store, logger.With("component", "nonstandard-decimals-cache"))
+	decimalsInitCtx, decimalsInitCancel := context.WithTimeout(rootCtx, nonstandardDecimalsRefreshTimeout)
+	defer decimalsInitCancel()
+	if err := nonstandardDecimalsCache.Refresh(decimalsInitCtx); err != nil {
+		return fmt.Errorf("nonstandard-decimals cache initial refresh (refusing to serve unnormalized prices): %w", err)
+	}
 	bgWG.Add(1)
 	go func() {
 		defer bgWG.Done()
 		defer recoverBackgroundWorker(logger, "nonstandard-decimals-cache")
-		const refreshTimeout = 30 * time.Second
-
-		initCtx, initCancel := context.WithTimeout(rootCtx, refreshTimeout)
-		defer initCancel()
-		if err := nonstandardDecimalsCache.Refresh(initCtx); err != nil {
-			logger.Warn("nonstandard-decimals cache initial refresh", "err", err)
-		}
 		tick := time.NewTicker(v1.NonstandardDecimalsRefreshInterval)
 		defer tick.Stop()
 		for {
@@ -1046,7 +1051,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			case <-rootCtx.Done():
 				return
 			case <-tick.C:
-				refreshCtx, cancel := context.WithTimeout(rootCtx, refreshTimeout)
+				refreshCtx, cancel := context.WithTimeout(rootCtx, nonstandardDecimalsRefreshTimeout)
 				if err := nonstandardDecimalsCache.Refresh(refreshCtx); err != nil {
 					logger.Warn("nonstandard-decimals cache periodic refresh", "err", err)
 				}
@@ -4682,6 +4687,18 @@ type signupVerifyEmailerAdapter struct {
 	from   string
 }
 
+// signupVerifyHTMLTemplate escapes verifyURL contextually: it embeds the
+// client-supplied Host header, so it is not trusted markup.
+var signupVerifyHTMLTemplate = template.Must(template.New("signup_verify.html").Parse(
+	"<p>Welcome to the Stellar Index API.</p>" +
+		"<p>Click the link below to confirm your email address. " +
+		"The link is single-use and expires in 24 hours.</p>" +
+		`<p><a href="{{.}}">{{.}}</a></p>` +
+		"<p>You can use the API key returned in the signup response " +
+		"immediately. Confirmation flips an <code>email_verified=true</code> " +
+		"flag on the key so the dashboard can surface it as a verified account.</p>" +
+		"<p>If you didn't sign up, you can safely ignore this email.</p>"))
+
 func (a *signupVerifyEmailerAdapter) SendSignupVerification(ctx context.Context, toEmail, verifyURL string) error {
 	if a == nil || a.sender == nil {
 		return errors.New("signupVerifyEmailer: not configured")
@@ -4696,14 +4713,11 @@ func (a *signupVerifyEmailerAdapter) SendSignupVerification(ctx context.Context,
 		"flag on the key so the dashboard can surface it as a\n" +
 		"verified account.\n\n" +
 		"If you didn't sign up, you can safely ignore this email.\n"
-	htmlBody := "<p>Welcome to the Stellar Index API.</p>" +
-		"<p>Click the link below to confirm your email address. " +
-		"The link is single-use and expires in 24 hours.</p>" +
-		`<p><a href="` + verifyURL + `">` + verifyURL + `</a></p>` +
-		"<p>You can use the API key returned in the signup response " +
-		"immediately. Confirmation flips an <code>email_verified=true</code> " +
-		"flag on the key so the dashboard can surface it as a verified account.</p>" +
-		"<p>If you didn't sign up, you can safely ignore this email.</p>"
+	var hb strings.Builder
+	if err := signupVerifyHTMLTemplate.Execute(&hb, verifyURL); err != nil {
+		return fmt.Errorf("signupVerifyEmailer: render html body: %w", err)
+	}
+	htmlBody := hb.String()
 	msg := notify.Message{
 		From:    a.from,
 		To:      []string{toEmail},

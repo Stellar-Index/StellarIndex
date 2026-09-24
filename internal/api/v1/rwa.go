@@ -699,9 +699,9 @@ type RWAReferenceSummary struct {
 	// reference-priced value of the set.
 	LowerBound bool `json:"lower_bound"`
 	// Sources names the distinct PUBLISHERS whose published values are
-	// in the total, sorted. Not "oracles": the total now mixes two
-	// provenances, and a field that called a listing platform an oracle
-	// would misdescribe the weaker half of its own figure.
+	// in the total, sorted. Not "oracles": the total can mix three
+	// provenances, and a field that called a listing platform or a
+	// prospectus an oracle would misdescribe part of its own figure.
 	//
 	// A dollar figure that cannot be traced back to a publisher is
 	// worse than an absent one on this surface, and the per-row
@@ -849,12 +849,6 @@ type RWAAsset struct {
 	// A consumer that wants only directory-attested rows can filter on
 	// this field rather than having to reconstruct the rule.
 	Recognition string `json:"recognition,omitempty"`
-	// DecimalsUnresolved is true when Decimals is the hardcoded default
-	// rather than a reading from the token's own on-chain metadata.
-	// INTERNAL — never serialised. It exists to stop a figure being
-	// published, and both valuation bases consult it before they
-	// divide by 10^Decimals.
-	DecimalsUnresolved bool `json:"-"`
 	// AnchorClass is the closed-vocabulary class, present only under
 	// the declaration basis.
 	AnchorClass string `json:"anchor_class,omitempty"`
@@ -909,7 +903,11 @@ type RWAAsset struct {
 	// re-derived by hand — circulating_supply / 10^decimals is the
 	// whole-token float that each price multiplies — rather than
 	// leaving a reader to assume a scale that is only sometimes 7.
-	Decimals int `json:"decimals"`
+	//
+	// nil (JSON null) when a contract's scale could not be read: the
+	// catalogue's default of 7 is a convention, not a reading. Both
+	// valuation bases refuse to divide when it is nil.
+	Decimals *int `json:"decimals"`
 	// Volume24hUSD is the trailing-24h USD trade volume as served on
 	// /v1/assets.
 	Volume24hUSD *string `json:"volume_24h_usd,omitempty"`
@@ -1936,7 +1934,7 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]R
 			// reference valuation divides by it, and a constant in its
 			// place would be the hardcoded-decimals defect the
 			// market-cap path already had to fix, in a new coordinate.
-			Decimals:     d.Decimals,
+			Decimals:     rwaDecimalsOf(d),
 			Volume24hUSD: d.VolumeUSD24h,
 		}
 		a.SupplyBasis, a.CirculatingSupplyLowerBound = rwaSupplyProvenance(d)
@@ -2002,6 +2000,16 @@ func rwaSortAssets(out []RWAAsset) {
 		}
 		return out[i].AssetID < out[j].AssetID
 	})
+}
+
+// rwaDecimalsOf is the row's scale as served: nil when it is the
+// catalogue default rather than a reading.
+func rwaDecimalsOf(d AssetDetail) *int {
+	if d.DecimalsUnresolved {
+		return nil
+	}
+	v := d.Decimals
+	return &v
 }
 
 // rwaValuationOf reads the valuation OFF the already-gated listing row.
@@ -2181,9 +2189,7 @@ func rwaSummariseReference(assets []RWAAsset) RWAReferenceSummary {
 // rwaReferenceProvenanceProse describes WHAT KIND of claim is in the
 // total, from the provenances actually present in it.
 //
-// This exists because the basis string used to describe one provenance
-// and the total now admits two, which are different claims about
-// different subjects:
+// The provenances are different claims about different subjects:
 //
 //   - an ORACLE NAV values the INSTRUMENT, and the step from there to
 //     the token rests on the issuer's own domain-bound declaration that
@@ -2191,7 +2197,9 @@ func rwaSummariseReference(assets []RWAAsset) RWAReferenceSummary {
 //   - a LISTING PRICE values the TOKEN directly, and makes no claim
 //     about the backing at all — which is weaker in one way (nobody
 //     independent has said what is behind the token) and stronger in
-//     another (no unstated one-for-one assumption sits inside it).
+//     another (no unstated one-for-one assumption sits inside it);
+//   - a PROSPECTUS CONSTANT NAV is the issuer's own statement of a
+//     value its fund rules prescribe, which nobody independent measured.
 //
 // The sentence is derived from the rows rather than written once for
 // all cases, because a total that is entirely oracle-priced today must
@@ -2201,23 +2209,37 @@ func rwaSummariseReference(assets []RWAAsset) RWAReferenceSummary {
 // provenance the total does not contain is exactly as wrong as one that
 // omits a provenance it does.
 func rwaReferenceProvenanceProse(provenances []string) string {
-	var (
-		oracle  bool
-		listing bool
-	)
+	present := make(map[string]bool, len(provenances))
 	for _, p := range provenances {
-		switch p {
-		case RWAReferenceOracleNAV:
-			oracle = true
-		case RWAReferenceListingPrice:
-			listing = true
+		present[p] = true
+	}
+	var kinds []string
+	for _, k := range rwaReferenceProvenanceProseOrder {
+		if present[k.provenance] {
+			kinds = append(kinds, k.prose)
 		}
 	}
-	const oracleProse = "Oracle-priced rows (`provenance: oracle_instrument_nav`) are what an independent oracle says one unit " +
+	// Zero kinds means no contributing rows and no claim to describe;
+	// the callers state the absence.
+	if len(kinds) < 2 {
+		return strings.Join(kinds, "")
+	}
+	return "The total MIXES " + rwaReferenceKindCount[len(kinds)] + " KINDS OF CLAIM and the per-row `provenance` field says which is which. " +
+		strings.Join(kinds, "")
+}
+
+var rwaReferenceKindCount = map[int]string{2: "TWO", 3: "THREE"}
+
+// rwaReferenceProvenanceProseOrder is every provenance a verified row
+// can carry into the summary total, in the order the basis describes
+// them. Curated rows never enter that total, so the curator provenance
+// is absent.
+var rwaReferenceProvenanceProseOrder = []struct{ provenance, prose string }{
+	{RWAReferenceOracleNAV, "Oracle-priced rows (`provenance: oracle_instrument_nav`) are what an independent oracle says one unit " +
 		"of the BACKING is worth, multiplied by the tokens in circulation, resting on the issuer's own domain-bound " +
 		"declaration that one token is one unit of that instrument. On those rows nobody was seen paying it: it is an " +
-		"assertion about the value of the backing, and no gate on this platform can corroborate an assertion. "
-	const listingProse = "Listing-priced rows (`provenance: listing_platform_price`) are an independent listing platform's own USD price " +
+		"assertion about the value of the backing, and no gate on this platform can corroborate an assertion. "},
+	{RWAReferenceListingPrice, "Listing-priced rows (`provenance: listing_platform_price`) are an independent listing platform's own USD price " +
 		"for the TOKEN, bound to the exact address it was published against and never matched on a code. On a " +
 		"contract-issued row it comes from the same source that corroborated the address at C2; on a classic row it " +
 		"corroborated nothing and supplies only the price, because that row was admitted by its issuer's own " +
@@ -2226,20 +2248,13 @@ func rwaReferenceProvenanceProse(provenances []string) string {
 		"is published against it, because a premium measured against an aggregate of the same markets our own price " +
 		"samples would be the market compared with itself. Somebody WAS seen paying something like it — on venues this " +
 		"index does not gate — which is precisely why it may not be added to market_cap_usd, whose whole meaning is a " +
-		"price that survived those gates. "
-	switch {
-	case oracle && listing:
-		return "The total MIXES TWO KINDS OF CLAIM and the per-row `provenance` field says which is which. " +
-			oracleProse + listingProse
-	case listing:
-		return listingProse
-	case oracle:
-		return oracleProse
-	default:
-		// No contributing rows, so no claim to describe. The callers
-		// below state the absence.
-		return ""
-	}
+		"price that survived those gates. "},
+	{RWAReferenceProspectusCNAV, "Prospectus-priced rows (`provenance: prospectus_constant_nav`) are the net asset value a constant-NAV " +
+		"share class's authorised prospectus fixes, as the issuer publishes it, bound on the exact (code, issuer) and " +
+		"multiplied by the tokens in circulation. Nobody independent measured it: it is the issuer's own statement of a " +
+		"value its fund rules prescribe, used only where neither an oracle nor a usable listing price exists for the row, " +
+		"and served `stale: true` once the binding is past its review date. No premium is published against it, because " +
+		"it is not an independent valuation of the instrument. "},
 }
 
 // rwaReferenceBasis states what the reference total measured and, at

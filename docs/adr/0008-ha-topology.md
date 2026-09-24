@@ -54,8 +54,12 @@ superseded_by: null
 >   (one active + one standby) is not implemented. The binary run
 >   today (`cmd/stellarindex-aggregator/main.go`) has no leader
 >   election and no standby instance; it ships as a single process.
->   `ha-plan.md` §3.7 still describes the two-instance design as a
->   target, not a shipped state.
+>   The active/standby pair is **not part of Phase 1** either, even
+>   though the banner above carries the rest of this topology forward:
+>   the aggregator holds the Postgres instance lock
+>   `hashtext('instance:stellarindex-aggregator')`, so a second copy
+>   against the same database refuses to start. That lock gives
+>   exclusivity, not failover — see `ha-plan.md` §3.7.
 >
 > The decision below is preserved as the original record.
 
@@ -325,7 +329,10 @@ goroutine seam was deleted in 2026-07 —
 [`ha-plan.md` §3.8](../architecture/ha-plan.md) records this
 correction as of 2026-09-02. `stellarindex-aggregator`
 (`cmd/stellarindex-aggregator/main.go`) has no leader-election code
-path and runs as a single instance; the Redis-lease active/standby
-pair in
-[`ha-plan.md` §3.7](../architecture/ha-plan.md) remains a design
-target, not a shipped state.
+path and runs as a single instance. The Redis-lease active/standby
+pair is not part of Phase 1: a second aggregator against the same
+database refuses to start because the first holds the Postgres
+instance lock (`timescale.Store.HoldInstanceLock`). This gives
+exclusivity, not failover. If the process dies, systemd restarts it
+and nothing stands by —
+[`ha-plan.md` §3.7](../architecture/ha-plan.md).

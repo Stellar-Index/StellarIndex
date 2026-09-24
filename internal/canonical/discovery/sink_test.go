@@ -208,6 +208,26 @@ func TestAsyncSink_StopIsIdempotent(t *testing.T) {
 	wg.Wait() // must not deadlock or panic
 }
 
+// TestAsyncSink_StartTwice_IsNoOp pins Start's documented idempotency:
+// without a once-guard a second Start launched a second run() goroutine,
+// and on Stop the loser of the close(s.done) race panicked the process
+// after worker.Recover had already unwound.
+func TestAsyncSink_StartTwice_IsNoOp(t *testing.T) {
+	rec := &fakeRecorder{}
+	sink := discovery.NewAsyncSink(rec, discovery.AsyncSinkOptions{BufferSize: 4})
+	sink.Start()
+	sink.Start()
+	sink.Push(discovery.Hit{ContractID: "C1", EventType: discovery.EventMint})
+	sink.Stop()
+	// The duplicate worker's panic lands asynchronously after Stop
+	// returns; give it the chance to, so the unguarded code fails here.
+	time.Sleep(50 * time.Millisecond)
+
+	if got := rec.records.Load(); got != 1 {
+		t.Errorf("records = %d, want 1", got)
+	}
+}
+
 // TestAsyncSink_DedupsAcrossKindsIndependently — the widened dedup
 // key (ContractID + Kind + EventType + Symbol) must treat a
 // KindOracleEvent hit and a KindOracleCall hit on the SAME contract

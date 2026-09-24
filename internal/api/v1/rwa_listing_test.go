@@ -193,8 +193,8 @@ func TestRWAListing_CorroboratedBindingIsAdmittedAndValued(t *testing.T) {
 	if a.Basis != rwa.BasisCuratedContract {
 		t.Errorf("basis = %q, want %q", a.Basis, rwa.BasisCuratedContract)
 	}
-	if a.Decimals != 5 {
-		t.Fatalf("decimals = %d, want 5 — the exponent is the valuation", a.Decimals)
+	if a.Decimals == nil || *a.Decimals != 5 {
+		t.Fatalf("decimals = %s, want 5 — the exponent is the valuation", decimalsText(a.Decimals))
 	}
 	// The name comes from the in-repo curated binding, never from the
 	// listing platform's display text — that source corroborates the
@@ -712,6 +712,11 @@ func TestRWAListing_UnreadDecimalsPublishNoFigure(t *testing.T) {
 			// verifiable number to protect a derived one.
 			if a.CirculatingSupply == nil || *a.CirculatingSupply != "28327867109034" {
 				t.Errorf("circulating_supply = %v, want the raw lake figure", a.CirculatingSupply)
+			}
+			// ...but the default scale is not served beside it as though
+			// it were a reading.
+			if a.Decimals != nil {
+				t.Errorf("decimals = %d served for a scale nobody read, want null", *a.Decimals)
 			}
 			// And the refusal is attributed in the funnel rather than
 			// counted as a successful valuation.

@@ -191,6 +191,8 @@ oneshot_baseline() { # oneshot_baseline <unit>
 #      not advance past the baseline — a stale result, a run that never
 #      started (a failed Condition), or a reboot mid-wait
 #   4  usage or precondition error (no unit, not loaded, no systemctl)
+#   5  a NEW run completed with ExecMainStatus=75: run-heavy-job.sh found
+#      the job's lock held and skipped — the payload never ran
 #
 # Which stamp proves a terminal state is NEW depends on the state
 # reached, not on RemainAfterExit: ActiveEnterTimestampMonotonic only
@@ -315,6 +317,11 @@ wait_for_oneshot() { # wait_for_oneshot <unit> [timeout_s] [baseline]
     echo "wait_for_oneshot: unit=$unit verdict=failed state=$state result=${result:-?}" \
       "exec_status=${status:-?} waited=${waited}s" >&2
     return 1
+  fi
+  if [ "$status" = 75 ]; then
+    echo "wait_for_oneshot: unit=$unit verdict=skipped state=$state result=$result" \
+      "exec_status=75 waited=${waited}s — run-heavy-job.sh found the lock held; the payload did not run" >&2
+    return 5
   fi
   echo "wait_for_oneshot: unit=$unit verdict=success state=$state result=$result" \
     "exec_status=${status:-?} waited=${waited}s $token_name=$stamp"

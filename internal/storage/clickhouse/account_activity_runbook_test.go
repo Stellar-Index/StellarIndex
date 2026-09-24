@@ -22,8 +22,10 @@ import (
 // the SHIPPED /usr/local/sbin/run-heavy-job.sh, extracted from the ansible
 // task that installs it (the technique of scripts/ci/run-heavy-job-test.sh).
 // A pass-through stand-in for the wrapper cannot see the wrapper's own
-// fail-open: when the per-job lock is held it prints "skipping this fire"
-// and exits 0 without running the payload.
+// lock branch: when the per-job lock is held every caller is refused
+// with exit 75 (a manual run prints "refusing to start", a
+// systemd-launched one prints "skipping this fire") without running
+// the payload.
 //
 // Every way the runbook can end WITHOUT covering (Step 2) or checking
 // (Step 3) every window must end non-zero and without its success line.
@@ -212,7 +214,9 @@ func runRunbook(t *testing.T, section string, nested bool, env ...string) runboo
 	cmd := exec.Command("bash")
 	cmd.Stdin = strings.NewReader(stdin)
 	cmd.Stdout, cmd.Stderr = outFile, outFile
-	cmd.Env = append(os.Environ(),
+	// An operator's paste runs outside systemd; a CI runner that is itself a
+	// unit must not flip the wrapper into its unit-fire branch.
+	cmd.Env = append(envWithout(os.Environ(), "INVOCATION_ID"),
 		"PATH="+bin+":"+os.Getenv("PATH"), "TMPDIR="+dir,
 		"HEAVY_JOB_LOCK_DIR="+filepath.Join(dir, "lock"), "HEAVY_JOB_OPS_ENV="+filepath.Join(dir, "absent"),
 		"AA_LOG="+logPath, "AA_FLOCK_COUNT="+filepath.Join(dir, "flock.count"))
@@ -228,6 +232,16 @@ func runRunbook(t *testing.T, section string, nested bool, env ...string) runboo
 		res.queries = strings.Split(strings.TrimSpace(string(logged)), "\n")
 	}
 	return res
+}
+
+func envWithout(env []string, key string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, key+"=") {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 func runbookQueryCount(queries []string, substr string) int {
@@ -298,10 +312,14 @@ func TestAccountActivityRunbook_Step2FailsClosed(t *testing.T) {
 			want: []string{"is not a ledger number"},
 		},
 		{name: "TIP below the first window", env: []string{"AA_TIP_OUT=1"}, want: []string{"0 of 0 jobs"}},
-		// The shipped wrapper exits 0 here without running the payload.
+		// The shipped wrapper exits 75 here in both branches, without running the payload.
 		{
 			name: "per-job lock held", env: []string{tip, "AA_FLOCK_FAIL_ON=2"}, inserts: 1,
-			want: []string{"skipping this fire", "tx window 2 DID NOT RUN"},
+			want: []string{"refusing to start acct-activity-tx-2", "tx window 2 DID NOT RUN (the wrapper exited 75"},
+		},
+		{
+			name: "per-job lock held, systemd-launched", env: []string{tip, "AA_FLOCK_FAIL_ON=2", "INVOCATION_ID=0123456789abcdef"},
+			inserts: 1, want: []string{"skipping this fire", "tx window 2 DID NOT RUN (the wrapper exited 75"},
 		},
 		{
 			name: "job fails, pasted into a nested shell", nested: true,
@@ -338,7 +356,11 @@ func TestAccountActivityRunbook_Step3FailsClosed(t *testing.T) {
 		},
 		{
 			name: "per-job lock held", env: []string{tip, "AA_FLOCK_FAIL_ON=2"}, checks: 1,
-			want: []string{"skipping this fire", "window 2000002 answered '', not a count"},
+			want: []string{"refusing to start acct-activity-verify-2000002", "window 2000002 DID NOT RUN (the wrapper exited 75"},
+		},
+		{
+			name: "per-job lock held, systemd-launched", env: []string{tip, "AA_FLOCK_FAIL_ON=2", "INVOCATION_ID=0123456789abcdef"},
+			checks: 1, want: []string{"skipping this fire", "window 2000002 DID NOT RUN (the wrapper exited 75"},
 		},
 		{name: "sample modulus 0", env: []string{tip, "AA_MOD=0"}, want: []string{"is not a positive integer"}},
 		{

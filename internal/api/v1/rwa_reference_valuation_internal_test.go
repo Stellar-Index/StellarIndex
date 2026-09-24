@@ -148,7 +148,7 @@ func TestRWAReferenceValuation_RefusesANonPositiveOracleValue(t *testing.T) {
 		a := admittedRow("USTRY", "")
 		supply := "12336218000000"
 		a.CirculatingSupply = &supply
-		a.Decimals = 7
+		a.Decimals = intPtr(7)
 		rwaApplyReference(&a, snap, nil, nil, now)
 
 		if a.ReferenceValuation.Status != RWAPremiumReferenceNotPositive {
@@ -171,7 +171,7 @@ func TestRWAReferenceValuation_NoSupplyIsNotZero(t *testing.T) {
 		refUpdate(t, "redstone", "rwa:USTRY", "fiat:USD", "107403800", 8, now),
 	})
 	a := admittedRow("USTRY", "")
-	a.Decimals = 7
+	a.Decimals = intPtr(7)
 	rwaApplyReference(&a, snap, nil, nil, now)
 
 	if a.Reference == nil {
@@ -199,7 +199,7 @@ func TestRWAReferenceValuation_UnboundPairGetsNothing(t *testing.T) {
 	a := admittedRowFor("USTRY", unboundIssuer, "1.0400")
 	supply := "12336218000000"
 	a.CirculatingSupply = &supply
-	a.Decimals = 7
+	a.Decimals = intPtr(7)
 	rwaApplyReference(&a, snap, nil, nil, now)
 
 	if a.ReferenceValuation.Status != RWAPremiumNotBound {
@@ -380,7 +380,7 @@ func TestRWAReferenceValuation_ContractMemberIsRefusedByName(t *testing.T) {
 		Symbol:     "USTRY",
 		Basis:      rwa.BasisContractOracleFeed,
 		Valuation:  RWAValuation{Status: RWAValuationUnpriced},
-		Decimals:   6,
+		Decimals:   intPtr(6),
 	}
 	supply := "8500000000000"
 	a.CirculatingSupply = &supply

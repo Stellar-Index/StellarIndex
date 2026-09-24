@@ -379,17 +379,17 @@ skew was live before normalization/suppression.
 - A token could legitimately declare non-7 decimals and still be low-value /
   low-volume. Check step 2's volume before deciding urgency — but the served
   price is wrong until the row lands, so confirmation is correct regardless.
-- **The API-side normalization fails OPEN, never closed.** A nil
-  `NonstandardDecimalsCache` (not wired in `cmd/stellarindex-api/main.go`), a
-  cold cache (never refreshed yet), or a refresh error (Postgres blip —
-  tracked by `stellarindex_nonstandard_decimals_cache_refresh_failures_total`,
-  which retains the last-good snapshot rather than clearing it) all mean
-  every asset resolves to the 7dp default and prices serve RAW rather than
-  corrected. This is deliberate — availability wins over the guard for
-  infra errors — but it means a confirmed offender can still serve its raw
-  (skewed) value briefly during an API-process restart before the initial
-  cache refresh completes, or indefinitely on a deployment that predates
-  migration 0093 / hasn't wired `NonstandardDecimals`.
+- **The API refuses to start without the offender list; after that it fails
+  OPEN.** The initial `NonstandardDecimalsCache` refresh in
+  `cmd/stellarindex-api/main.go` is fatal: a cold cache has no last-good
+  snapshot, so serving from it would publish every confirmed offender RAW
+  (wrong by 10^(7-decimals)). A boot that dies with `nonstandard-decimals
+  cache initial refresh` is a Postgres reachability problem (or a schema
+  that predates migration 0093), not a guard bug. Once the process is up, a
+  periodic refresh error (Postgres blip — tracked by
+  `stellarindex_nonstandard_decimals_cache_refresh_failures_total`) retains
+  the last-good snapshot rather than clearing it: availability wins over the
+  guard for infra errors, and the snapshot kept is a real one.
 
 ## Related
 

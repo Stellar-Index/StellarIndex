@@ -1997,8 +1997,9 @@ type RWAAsset struct {
 	// Decimals is the on-chain smallest-unit scale — 7 for classic, and
 	// whatever a SEP-41 contract declares for a contract-issued row — so
 	// both valuations can be re-derived: CirculatingSupply /
-	// 10^Decimals is the whole-token float each price multiplies.
-	Decimals         int     `json:"decimals"`
+	// 10^Decimals is the whole-token float each price multiplies. nil
+	// when a contract's scale could not be read.
+	Decimals         *int    `json:"decimals"`
 	Volume24hUSD     *string `json:"volume_24h_usd,omitempty"`
 	FirstSeenLedger  uint32  `json:"first_seen_ledger,omitempty"`
 	ObservationCount int64   `json:"observation_count"`

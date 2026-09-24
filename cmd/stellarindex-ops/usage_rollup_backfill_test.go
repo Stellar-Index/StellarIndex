@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -126,7 +129,9 @@ func TestUsageRollupBackfill_RecoversADaySweepCannotReach(t *testing.T) {
 
 // TestUsageRollupBackfill_DryRunWritesNothing — -dry-run must size the
 // recovery without touching usage_daily, so an operator can check the
-// blast radius of a range before committing to it.
+// blast radius of a range before committing to it. The REAL sink is
+// handed in (as the production wiring does) and fails any write, so a
+// dry run that reaches it errors instead of passing silently.
 func TestUsageRollupBackfill_DryRunWritesNothing(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -136,16 +141,41 @@ func TestUsageRollupBackfill_DryRunWritesNothing(t *testing.T) {
 	seedUsageDetail(t, rdb, day, "key:kid_dryrun", "/v1/price", usage.ClassOK, 5)
 
 	realSink := &recordingUsageSink{err: errors.New("the real sink must never be called under -dry-run")}
-	counting := &countingUsageSink{}
-	if err := runUsageRollupBackfill(context.Background(), rdb, counting, []time.Time{day}, true); err != nil {
-		t.Fatalf("dry-run backfill: %v", err)
-	}
-	if counting.rows == 0 {
-		t.Error("dry-run counted 0 rows; it must still scan and report what would be written")
+	var runErr error
+	out := captureOpsStderr(t, func() {
+		runErr = runUsageRollupBackfill(context.Background(), rdb, realSink, []time.Time{day}, true)
+	})
+	if runErr != nil {
+		t.Fatalf("dry-run backfill reached the real sink: %v", runErr)
 	}
 	if len(realSink.rows) != 0 {
 		t.Errorf("real sink received %d row(s) under -dry-run", len(realSink.rows))
 	}
+	const wantSummary = "would upsert 1 row(s) across 1 day(s)"
+	if !strings.Contains(out, wantSummary) {
+		t.Errorf("dry-run must still scan and report what would be written: want %q in output:\n%s", wantSummary, out)
+	}
+}
+
+// captureOpsStderr runs fn with os.Stderr redirected and returns what it wrote.
+func captureOpsStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- b
+	}()
+	orig := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = orig }()
+	fn()
+	os.Stderr = orig
+	_ = w.Close()
+	return string(<-done)
 }
 
 // TestUsageRollupDays covers the flag-expansion guards: a range wider

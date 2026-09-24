@@ -92,6 +92,9 @@ EnvironmentFile=-/etc/default/stellarindex-ops
 # runs as User=stellarindex (non-root) so it takes the lock then `exec`s the
 # binary in place — the payload stays the unit's MAIN pid, keeping Type=notify
 # + NotifyAccess=main + WatchdogSec intact (a systemd-run scope would break it).
+# 75 = run-heavy-job.sh skipped this fire (per-job lock held): not a
+# failure, but ExecMainStatus=75 keeps it distinct from a run.
+SuccessExitStatus=75
 ExecStart=/usr/local/sbin/run-heavy-job.sh verify-archive \
   /usr/local/bin/stellarindex-ops verify-archive \
   -config /etc/stellarindex.toml \

@@ -82,8 +82,11 @@ type ChunkProgress struct {
 	From uint32 `json:"from"`
 	To   uint32 `json:"to"`
 	Done bool   `json:"done"`
-	// LastVerifiedHash is the hex hash of the chunk's final
-	// (chunk.to) ledger, captured when Done flips true.
+	// LastVerifiedHash is the hex hash of the last ledger the chunk's
+	// walk actually verified (Stitch.LastSeq), captured when Done
+	// flips true. That is below To when TolerateTrailingMissing let
+	// the walk end short of an absent tail, and all zeros for a chunk
+	// that verified no ledgers; it does not identify its own ledger.
 	//
 	// It is written and never read. The comment it replaces said it
 	// was "used for the cross-run chain-continuity proof", which was

@@ -262,17 +262,20 @@ func TestBuildRegistry_IncludesInScopeSources(t *testing.T) {
 }
 
 // TestAdaptiveWindow pins the shrink/recover arithmetic for the
-// 2026-07-10 dense-window stall: deadline-exceeded halves toward
-// MinBatchLimit and never below; success doubles back to BatchLimit.
+// 2026-07-10 dense-window stall: deadline-exceeded halves exactly toward
+// MinBatchLimit and never below; success doubles back to BatchLimit. The
+// cycle-level sink-budget arm is pinned by
+// TestCycle_SinkBudgetExhaustionShrinksWindowAndHoldsCursor.
 func TestAdaptiveWindow(t *testing.T) {
 	w := uint32(BatchLimit)
 	for i := 0; i < 20; i++ {
 		next, shrunk := shrinkWindow(w, context.DeadlineExceeded)
-		if w > MinBatchLimit && !shrunk {
-			t.Fatalf("expected shrink at window %d", w)
+		want, wantShrunk := w, false
+		if w > MinBatchLimit {
+			want, wantShrunk = max(w/2, MinBatchLimit), true
 		}
-		if w <= MinBatchLimit && shrunk {
-			t.Fatalf("shrunk below floor from %d", w)
+		if next != want || shrunk != wantShrunk {
+			t.Fatalf("shrinkWindow(%d) = (%d, %v), want (%d, %v)", w, next, shrunk, want, wantShrunk)
 		}
 		w = next
 	}
@@ -287,22 +290,5 @@ func TestAdaptiveWindow(t *testing.T) {
 	}
 	if w != BatchLimit {
 		t.Fatalf("recovered to %d, want %d", w, BatchLimit)
-	}
-}
-
-// TestSinkSideShrink_BudgetExhaustedHalvesWindow pins the 2026-08-01
-// incident class: a window whose CH scan completes but whose sink writes
-// exhaust the cycle budget must SHRINK the adaptive window (the stream-side
-// shrink alone retried the identical dense range forever — aquarius
-// reserves wedged 3.5h at ledger 63,488,687).
-func TestSinkSideShrink_BudgetExhaustedHalvesWindow(t *testing.T) {
-	next, shrunk := shrinkWindow(BatchLimit, context.DeadlineExceeded)
-	if !shrunk || next != BatchLimit/2 {
-		t.Fatalf("expected halved window on deadline, got next=%d shrunk=%v", next, shrunk)
-	}
-	// The floor holds.
-	next, shrunk = shrinkWindow(MinBatchLimit, context.DeadlineExceeded)
-	if shrunk || next != MinBatchLimit {
-		t.Fatalf("expected floor hold, got next=%d shrunk=%v", next, shrunk)
 	}
 }

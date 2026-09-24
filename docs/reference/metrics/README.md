@@ -552,7 +552,9 @@ error (#371 F1). Incremented in `internal/dispatcher/panic_guard.go`
 from all four dispatch seams — Soroban events, contract calls, classic
 ops, ledger-entry changes — and covering `Matches` as well as `Decode`,
 because a decoder that crashes deciding whether it owns an input is as
-broken as one that crashes parsing it.
+broken as one that crashes parsing it. The projector and
+`stellarindex-ops projected-rebuild` count a panic on a lake row here too, through
+`dispatcher.DecodeRow`.
 
 **When to look at this:** the moment it is non-zero. A recovered panic
 means a decoder is dropping every event of that shape, silently, and
@@ -1801,10 +1803,11 @@ Counter, label `reason` (`caller_quota` / `global_ceiling`).
 Tip-stream producer mints refused. `caller_quota` rising means one
 client (IPv4 address or IPv6 /64) is enumerating the key space against
 `api.streaming.max_tip_producers_per_caller`; `global_ceiling` rising
-means the registry is full at `api.streaming.max_tip_producers`, either
-from a distributed flood or because the deployment has outgrown the
-ceiling. Existing producers are always joinable; only new ones are
-refused.
+means the registry is full of subscribed producers at
+`api.streaming.max_tip_producers` (lingering ones are evicted,
+longest-idle first, before a mint is refused), either from a distributed
+flood or because the deployment has outgrown the ceiling. Existing
+producers are always joinable; only new ones are refused.
 
 ### `stellarindex_api_cors_decisions_total`
 

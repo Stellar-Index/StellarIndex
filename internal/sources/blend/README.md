@@ -214,8 +214,10 @@ helper V2's `new_auction`/`fill_auction` use) since the `AuctionData`
 Map shape is identical. Real-lake-bytes golden tests:
 `v1_pool_factory_test.go`.
 
-Historical replay from the V1 factory's genesis (51,499,915) via
-`projector-replay -source blend -from 51499915` is a follow-up, not
+Historical replay from the source genesis (`FactoryGenesisLedger`,
+51,499,546 — 369 ledgers before the V1 factory's first deploy at
+51,499,915) via `projector-replay -source blend -from 51499546` is a
+follow-up, not
 done this pass (778 events is 0.14% of this source's ~570k total lake
 volume — live ingest captures every new V1 event going forward
 regardless).

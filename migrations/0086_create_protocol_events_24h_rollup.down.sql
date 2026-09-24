@@ -1,8 +1,11 @@
 -- 0086 down — drop the protocol_events_24h rollup.
 --
--- Correctness-safe: with the table absent, CountRecentEventsBySource
--- returns an empty map and /v1/protocols renders events_24h = 0. The
--- pre-0086 live census path is not auto-restored (the reader was moved
--- to the rollup), so a full rollback also needs the code reverted; on
--- its own this only blanks the events_24h column.
+-- Revert the code FIRST. With the table absent CountRecentEventsBySource
+-- does not return an empty map: it fails with 42P01 (undefined_table). The
+-- /v1/protocols handlers catch that error and serve events_24h = 0 for
+-- every protocol (the detail view also marks its analytics degraded), so
+-- the endpoint stays up, but every request logs the failure and the
+-- refresher (RefreshProtocolEventCounts) fails on every tick. The pre-0086
+-- live census path is not auto-restored (the reader was moved to the
+-- rollup): deploy a binary predating 0086, then run this down.
 DROP TABLE IF EXISTS protocol_events_24h;
