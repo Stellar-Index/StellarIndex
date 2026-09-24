@@ -46,8 +46,12 @@ nothing is evaluated. Common causes:
 3. **Query timeout** under heavy DB load. Usually transient.
 
 `partial_error` (a subset of alerts hit a price-read / enqueue error)
-is intentionally NOT part of this alert — it is narrower and self-heals
-per-alert.
+is intentionally NOT part of THIS alert — it is narrower and usually
+self-heals per-alert. But a sweep where every alert errors also lands
+on `partial_error` (the list step still returns "ok"), and that shape
+does NOT self-heal. That case is covered by the separate
+`stellarindex_price_alert_eval_no_successful_sweeps` alert (GH #749):
+zero `ok` sweeps with sustained `partial_error` for 30+ min.
 
 ## Quick diagnosis (≤ 5 min)
 
