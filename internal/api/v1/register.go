@@ -86,7 +86,8 @@ const registerBodyMaxBytes = 4 * 1024
 // Public, anonymous-tier, and deliberately friction-free: the
 // canonical AGENT onboarding path. One curl —
 //
-//	curl -X POST https://api.stellarindex.io/v1/register
+//	curl -X POST https://api.stellarindex.io/v1/register \
+//	    -H 'Content-Type: application/json'
 //
 // — creates a free-tier platform account and mints its first API
 // key. Name and email are both optional (email is contact-only; no
@@ -103,12 +104,12 @@ const registerBodyMaxBytes = 4 * 1024
 //     mint, sharing one budget across both endpoints so an abuser
 //     can't double-dip. The global anonymous rate limit applies
 //     upstream of that.
-//   - CSRF/browser relay: when a Content-Type header is present it
-//     must be application/json (a non-simple CORS type, so cross-site
-//     browser POSTs get preflighted and refused — same reasoning as
-//     /v1/signup). A body-less POST is allowed for curl ergonomics;
-//     unlike signup there is no email side-effect to relay, and the
-//     response is unreadable cross-origin.
+//   - CSRF/browser relay: Content-Type: application/json is REQUIRED
+//     (requireJSONContentType, not merely validated-when-present — a
+//     header-less POST is itself a CORS *simple* request that no
+//     preflight would catch). A body-less POST is fine (an empty
+//     body still satisfies parsing), but the header itself is not
+//     optional — same reasoning as /v1/signup.
 //   - No enumeration surface: there is no per-email uniqueness, so
 //     there is nothing to probe — every accepted call mints a fresh
 //     account.

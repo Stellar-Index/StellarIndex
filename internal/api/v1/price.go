@@ -3228,8 +3228,13 @@ func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []
 	}
 	wg.Wait()
 
-	// Client disconnected mid-batch — nothing meaningful to write.
-	if ctx.Err() != nil {
+	// Client disconnected mid-batch — nothing meaningful to write. A
+	// server-side deadline (the blanket middleware.RequestTimeout) is
+	// NOT a client abort and must fall through to the fail-scan below,
+	// so writeProblem's deadline upgrade can answer with a retryable
+	// 503 instead of net/http's implicit bodyless 200 — see
+	// clientAborted's doc comment for the conflation this avoids.
+	if clientAborted(r, nil) {
 		return
 	}
 	// First failure in INPUT order aborts the batch — deterministic

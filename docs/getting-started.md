@@ -86,7 +86,8 @@ the canonical path for agents and scripts (full walkthrough:
 [agent-onboarding.md](agent-onboarding.md)):
 
 ```sh
-curl -X POST https://api.stellarindex.io/v1/register
+curl -X POST https://api.stellarindex.io/v1/register \
+    -H 'Content-Type: application/json'
 ```
 
 The response carries `data.api_key` (shown **once**) plus the
