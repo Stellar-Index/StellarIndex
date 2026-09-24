@@ -282,3 +282,49 @@ groups:
             {{ $labels.reason }} continuously for 30 min. The indexer
             logs "kraken trade entry skipped" once per reason per minute
             with the offending symbol or field value.
+
+      # GH-941: the half-open-socket detector (wsclient's stall reason,
+      # C2-017) is the operationally important disconnect reason — the
+      # connection LOOKS alive but has stopped answering pings. A single
+      # stall is worth a ticket, so `for` is shorter than the `increase`
+      # window (`for` == window would make the pending period unable to
+      # complete before the event ages out — lint-tripwire-window);
+      # routine reset/broken_pipe/dial reconnects are not alerted here.
+      - alert: stellarindex_cex_stream_stalled
+        expr: |
+          sum by (source) (increase(stellarindex_cex_stream_disconnect_total{reason="stall"}[15m])) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: external-poller
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cex-stream-disconnect-storm.md
+          summary: "{{ $labels.source }} CEX stream stalled (half-open socket)"
+          description: |
+            {{ $labels.source }}'s WebSocket stream has stopped
+            answering pings for 15+ min without the OS noticing the
+            socket is dead. The venue's own error text is on the
+            indexer's WARN log line "stream stalled" for
+            {{ $labels.source }}.
+
+      # GH-941: a sustained high dust-drop rate means a venue is
+      # mis-scaling amounts (e.g. a decimals regression) rather than
+      # genuinely streaming sub-$0.001 fills — dust drops are otherwise
+      # a routine, low, nonzero background rate.
+      - alert: stellarindex_external_dust_dropped_high
+        expr: |
+          sum by (source) (rate(stellarindex_external_dust_dropped_total[15m])) > 1
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: external-poller
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cex-stream-disconnect-storm.md
+          summary: "{{ $labels.source }} dropping trades as dust at a high sustained rate"
+          description: |
+            {{ $labels.source }} has dropped more than 1 trade/s as
+            sub-$0.001 dust, sustained over 30 min. Check whether the
+            venue's amount scaling changed (e.g. a symbol's decimals)
+            rather than assuming this is the normal dust background.

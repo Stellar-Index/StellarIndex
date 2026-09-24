@@ -266,3 +266,53 @@ groups:
             false fleet-wide. Check which outcome the pass IS producing
             (no_vwap = every pair frozen or below min_usd_volume; nothing
             at all = the pass is not completing); see the runbook.
+
+      # GH-641: a Chainlink feed's configured decimals disagrees with the
+      # AggregatorV3 proxy's on-chain decimals() view. The reader REFUSES
+      # the feed until they agree (ErrPriceUnavailable), rather than scale
+      # every reading wrong by 10^(configured-actual) — see
+      # docs/reference/metrics/README.md's entry for the metric. Zero
+      # forever is healthy; a mis-scaled feed increments this on EVERY
+      # refused reading, so 15m is plenty to catch it fast.
+      - alert: stellarindex_chainlink_feed_decimals_mismatch
+        expr: |
+          sum by (consumer, pair) (increase(stellarindex_chainlink_feed_decimals_mismatch_total[15m])) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: divergence
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/chainlink-feed-decimals.md
+          summary: "Chainlink feed {{ $labels.pair }} ({{ $labels.consumer }}) refused — configured decimals disagree with decimals()"
+          description: |
+            {{ $labels.consumer }}'s Chainlink reader has refused
+            {{ $labels.pair }} for 5+ min because the configured
+            `decimals` disagrees with the AggregatorV3 proxy's on-chain
+            decimals(). The feed serves nothing until they agree. Check
+            the operator's `decimals` entry for this pair against the
+            feed's actual decimals() (or omit the field to adopt it).
+
+      # GH-641: the fail-OPEN sibling — decimals() RPC calls keep
+      # failing, so the reader keeps serving at the last known scale
+      # with no divergence signal of its own. Sustained failures mean
+      # the RPC endpoint (or the feed) is unhealthy even though pricing
+      # keeps flowing; only this counter would otherwise show it.
+      - alert: stellarindex_chainlink_feed_decimals_verify_failed
+        expr: |
+          sum by (consumer, pair) (rate(stellarindex_chainlink_feed_decimals_verify_failed_total[15m])) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: divergence
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/chainlink-feed-decimals.md
+          summary: "Chainlink feed {{ $labels.pair }} ({{ $labels.consumer }}) decimals() verification failing"
+          description: |
+            {{ $labels.consumer }}'s decimals() RPC call for
+            {{ $labels.pair }} has failed repeatedly for 30+ min and is
+            falling back to the last known decimals value. Pricing is
+            still flowing, but the scale is unverified — check the
+            configured Chainlink RPC endpoint's reachability for this
+            feed.
