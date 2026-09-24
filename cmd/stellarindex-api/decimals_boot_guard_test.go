@@ -1,16 +1,19 @@
 package main
 
 // Source-level tripwire, the API twin of
-// cmd/stellarindex-aggregator/decimals_boot_guard_test.go: the
-// nonstandard-decimals cache's BOOT-time refresh must abort startup.
+// cmd/stellarindex-aggregator/decimals_boot_guard_test.go — but the two
+// have DIFFERENT verdicts. The aggregator's boot refresh is fatal (#368
+// M9): it has no readiness surface between it and the orchestrator loop
+// that publishes prices. The API sits behind `/v1/readyz`, so RLT-366's
+// original fatal-on-boot version (make run() return an error) was
+// replaced by Q198's synchronous prime + critical readiness check
+// (primeNonstandardDecimalsCache, see nonstandard_decimals_ready_test.go):
+// a failed first load now keeps the process up but red, instead of
+// putting systemd into a restart loop on a Postgres blip.
 //
-// The cache is fail-open, which is right for a periodic refresh (the
-// last-good snapshot stays). At boot there is no last-good snapshot, so a
-// failed first refresh leaves Lookup answering "not flagged" for every
-// confirmed non-7-decimals asset and /v1/price, /v1/history, the SSE
-// stream and every other normalizing surface serve those legs raw — wrong
-// by 10^(7-decimals). run() needs a config file, Postgres and Redis before
-// it reaches this line, so this asserts on the wiring itself.
+// This guards the other direction: run() must NOT reintroduce a direct,
+// fatal `nonstandardDecimalsCache.Refresh` call, since that would bring
+// the restart-loop failure mode back.
 
 import (
 	"go/ast"
@@ -19,7 +22,7 @@ import (
 	"testing"
 )
 
-func TestNonstandardDecimalsCacheInitialRefreshIsFatal(t *testing.T) {
+func TestNonstandardDecimalsCacheInitialRefreshIsNotFatal(t *testing.T) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "main.go", nil, 0)
 	if err != nil {
@@ -35,10 +38,9 @@ func TestNonstandardDecimalsCacheInitialRefreshIsFatal(t *testing.T) {
 		t.Fatal("no top-level run() in main.go — re-derive where the API boots")
 	}
 
-	found := 0
 	ast.Inspect(run.Body, func(n ast.Node) bool {
-		// A refresh inside a goroutine or closure is the periodic loop, and
-		// a return there leaves the goroutine, not run().
+		// A refresh inside a goroutine or closure is the periodic loop —
+		// its Warn-and-continue is fine and out of scope here.
 		if _, ok := n.(*ast.FuncLit); ok {
 			return false
 		}
@@ -46,20 +48,15 @@ func TestNonstandardDecimalsCacheInitialRefreshIsFatal(t *testing.T) {
 		if !ok || !initCallsRefreshOn(ifStmt, "nonstandardDecimalsCache") {
 			return true
 		}
-		found++
-		if !blockReturns(ifStmt.Body) {
-			t.Errorf("main.go:%d — the nonstandard-decimals cache's initial refresh no longer "+
-				"aborts startup on failure. A cold cache serves every confirmed non-7-decimals "+
-				"leg unnormalized (wrong by 10^(7-decimals)); refusing to start is the "+
-				"recoverable failure.", fset.Position(ifStmt.Pos()).Line)
+		if blockReturns(ifStmt.Body) {
+			t.Errorf("main.go:%d — run() aborts startup directly on a failed "+
+				"nonstandardDecimalsCache.Refresh again. That was reverted (RLT-366 -> Q198): "+
+				"it puts systemd into a restart loop on a Postgres blip. Cold-cache safety "+
+				"belongs in the critical readiness check (primeNonstandardDecimalsCache), not "+
+				"a fatal return here.", fset.Position(ifStmt.Pos()).Line)
 		}
 		return true
 	})
-	if found != 1 {
-		t.Fatalf("found %d boot-time nonstandardDecimalsCache.Refresh call(s) directly in run(), "+
-			"want exactly 1 — a refresh only inside the background goroutine lets the API "+
-			"serve from a cold cache", found)
-	}
 }
 
 // initCallsRefreshOn matches `if err := <recv>.Refresh(ctx); err != nil`.
