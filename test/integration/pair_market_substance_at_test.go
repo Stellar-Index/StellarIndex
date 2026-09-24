@@ -107,7 +107,7 @@ func TestPairMarketSubstanceAt_MeasuresTheMarketAtTheInstant(t *testing.T) {
 	day := 24 * time.Hour
 	measure := func(pair c.Pair, asOf time.Time, g timescale.HistoryGranularity) timescale.MarketSubstance {
 		t.Helper()
-		sub, err := store.PairMarketSubstanceAt(ctx, pair, asOf, day, g)
+		sub, err := store.PairMarketSubstanceAt(ctx, c.AssetAliases(pair.Base), c.AssetAliases(pair.Quote), asOf, day, g)
 		if err != nil {
 			t.Fatalf("PairMarketSubstanceAt(%s, %s, %s): %v", pair, asOf, g, err)
 		}
@@ -139,7 +139,7 @@ func TestPairMarketSubstanceAt_MeasuresTheMarketAtTheInstant(t *testing.T) {
 
 	// The trailing reader agrees with the point-in-time one AT now — the
 	// new query is the old one with the window moved, nothing else.
-	live, err := store.PairMarketSubstance(ctx, seedXLM, day)
+	live, err := store.PairMarketSubstance(ctx, c.AssetAliases(seedXLM.Base), c.AssetAliases(seedXLM.Quote), day)
 	if err != nil {
 		t.Fatalf("PairMarketSubstance: %v", err)
 	}

@@ -98,11 +98,15 @@ func TestPopularPriceless_Census(t *testing.T) {
 // substanceStore answers every pair's trailing substance with one reading.
 type substanceStore struct{ m timescale.MarketSubstance }
 
-func (f substanceStore) PairMarketSubstance(context.Context, canonical.Pair, time.Duration) (timescale.MarketSubstance, error) {
+func (f substanceStore) PairMarketSubstance(
+	context.Context, []canonical.Asset, []canonical.Asset, time.Duration,
+) (timescale.MarketSubstance, error) {
 	return f.m, nil
 }
 
-func (f substanceStore) PairMarketSubstanceAt(context.Context, canonical.Pair, time.Time, time.Duration, timescale.HistoryGranularity) (timescale.MarketSubstance, error) {
+func (f substanceStore) PairMarketSubstanceAt(
+	context.Context, []canonical.Asset, []canonical.Asset, time.Time, time.Duration, timescale.HistoryGranularity,
+) (timescale.MarketSubstance, error) {
 	return f.m, nil
 }
 

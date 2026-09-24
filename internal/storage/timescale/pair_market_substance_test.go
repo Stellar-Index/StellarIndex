@@ -7,10 +7,13 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // [Store.PairMarketSubstance] (aggregates.go:2071) is the SQL half of the
@@ -37,6 +40,22 @@ import (
 // it. The scripted driver can: it records the SQL text the store actually
 // issued along with the bound args.
 
+// testXLMUSDCLegs is the spelling sets the substance gate asks about for
+// XLM/USDC: every alias of each leg.
+func testXLMUSDCLegs(t *testing.T) (bases, quotes []canonical.Asset) {
+	t.Helper()
+	pair := testXLMUSDCPair(t)
+	return canonical.AssetAliases(pair.Base), canonical.AssetAliases(pair.Quote)
+}
+
+func assetKeys(set []canonical.Asset) []string {
+	out := make([]string, len(set))
+	for i, a := range set {
+		out[i] = a.String()
+	}
+	return out
+}
+
 // substanceQuery runs PairMarketSubstance against one canned row and
 // returns the statement the store issued plus the decoded result.
 func substanceQuery(t *testing.T, window time.Duration, row []driver.Value) (recordedStmt, MarketSubstance) {
@@ -45,7 +64,8 @@ func substanceQuery(t *testing.T, window time.Duration, row []driver.Value) (rec
 		cols: []string{"volume_usd", "buckets", "span_seconds"},
 		rows: [][]driver.Value{row},
 	})
-	sub, err := store.PairMarketSubstance(context.Background(), testXLMUSDCPair(t), window)
+	bases, quotes := testXLMUSDCLegs(t)
+	sub, err := store.PairMarketSubstance(context.Background(), bases, quotes, window)
 	if err != nil {
 		t.Fatalf("PairMarketSubstance: %v", err)
 	}
@@ -89,8 +109,8 @@ func TestPairMarketSubstance_ReadsBothStoredDirections(t *testing.T) {
 
 	norm := regexp.MustCompile(`\s+`).ReplaceAllString(stmt.sql, " ")
 	for _, arm := range []string{
-		"base_asset = $1 AND quote_asset = $2",
-		"base_asset = $2 AND quote_asset = $1",
+		"base_asset = ANY($1) AND quote_asset = ANY($2)",
+		"base_asset = ANY($2) AND quote_asset = ANY($1)",
 	} {
 		if !strings.Contains(norm, arm) {
 			t.Errorf(`substance query does not read the %s direction.
@@ -103,33 +123,38 @@ SQL:
 %s`, arm, indent(stmt.sql))
 		}
 	}
-	if !strings.Contains(norm, "quote_asset = $2 AND bucket <= now() - INTERVAL '1 minute'") ||
-		!strings.Contains(norm, "quote_asset = $1 AND bucket <= now() - INTERVAL '1 minute'") {
+	if !strings.Contains(norm, "quote_asset = ANY($2) AND bucket <= now() - INTERVAL '1 minute'") ||
+		!strings.Contains(norm, "quote_asset = ANY($1) AND bucket <= now() - INTERVAL '1 minute'") {
 		t.Errorf("each direction arm must carry its own closed-bucket bound:\n%s", indent(stmt.sql))
 	}
 	if !strings.Contains(norm, "UNION ALL") || orientationDisjunction.MatchString(stmt.sql) {
 		t.Errorf("the two direction arms must be UNION ALL'd, not OR'd:\n%s", indent(stmt.sql))
 	}
+	if !strings.Contains(norm, "AND NOT (base_asset = ANY($1) AND quote_asset = ANY($2))") {
+		t.Errorf("the reverse arm must exclude rows the forward arm already selected, "+
+			"or a spelling shared by both sets counts its minutes twice:\n%s", indent(stmt.sql))
+	}
 }
 
 // TestPairMarketSubstance_BindsPairAndLiteralLowerBound pins the split
-// the #nosec note at aggregates.go:2075 depends on: the pair strings BIND
-// as $1/$2, and the only interpolated value is the trailing-window lower
+// the #nosec note on the method depends on: the spelling sets BIND as
+// $1/$2, and the only interpolated value is the trailing-window lower
 // bound, rendered as a literal timestamptz for plan-time chunk pruning.
 func TestPairMarketSubstance_BindsPairAndLiteralLowerBound(t *testing.T) {
 	pair := testXLMUSDCPair(t)
+	bases, quotes := testXLMUSDCLegs(t)
 	before := time.Now().UTC()
 	stmt, _ := substanceQuery(t, 6*time.Hour, []driver.Value{"0", int64(0), int64(0)})
 	after := time.Now().UTC()
 
 	if len(stmt.args) != 2 {
-		t.Fatalf("bound %d args, want exactly 2 (base, quote): %v", len(stmt.args), stmt.args)
+		t.Fatalf("bound %d args, want exactly 2 (bases, quotes): %v", len(stmt.args), stmt.args)
 	}
-	if got := stmt.arg(t, 1); got != pair.Base.String() {
-		t.Errorf("$1 = %v, want the base asset %s", got, pair.Base)
+	if got := stmt.arg(t, 1); !reflect.DeepEqual(got, assetKeys(bases)) {
+		t.Errorf("$1 = %v, want every base spelling %v", got, assetKeys(bases))
 	}
-	if got := stmt.arg(t, 2); got != pair.Quote.String() {
-		t.Errorf("$2 = %v, want the quote asset %s", got, pair.Quote)
+	if got := stmt.arg(t, 2); !reflect.DeepEqual(got, assetKeys(quotes)) {
+		t.Errorf("$2 = %v, want every quote spelling %v", got, assetKeys(quotes))
 	}
 	// The asset ids must never reach the SQL text; that is the whole
 	// reason the interpolation is confined to the timestamp.
@@ -221,7 +246,8 @@ func TestPairMarketSubstance_EmptyPairIsZeroNotError(t *testing.T) {
 func TestPairMarketSubstance_NonPositiveWindowErrorsBeforeQuerying(t *testing.T) {
 	for _, w := range []time.Duration{0, -time.Minute} {
 		store, conn := newScriptedStore(t)
-		_, err := store.PairMarketSubstance(context.Background(), testXLMUSDCPair(t), w)
+		bases, quotes := testXLMUSDCLegs(t)
+		_, err := store.PairMarketSubstance(context.Background(), bases, quotes, w)
 		if err == nil {
 			t.Fatalf("window=%v returned no error; a non-positive window measures "+
 				"an empty interval and would withhold every price", w)
@@ -242,7 +268,8 @@ func TestPairMarketSubstance_QueryErrorIsWrapped(t *testing.T) {
 	boom := errors.New("connection reset")
 	store, _ := newScriptedStore(t, scriptedResult{err: boom})
 
-	sub, err := store.PairMarketSubstance(context.Background(), testXLMUSDCPair(t), time.Hour)
+	bases, quotes := testXLMUSDCLegs(t)
+	sub, err := store.PairMarketSubstance(context.Background(), bases, quotes, time.Hour)
 	if err == nil {
 		t.Fatal("a failed substance query returned no error; the gate cannot " +
 			"distinguish a broken measurement from a thin market")
@@ -255,5 +282,25 @@ func TestPairMarketSubstance_QueryErrorIsWrapped(t *testing.T) {
 	}
 	if sub != (MarketSubstance{}) {
 		t.Errorf("error path returned %+v, want the zero MarketSubstance", sub)
+	}
+}
+
+// TestPairMarketSubstance_EmptySpellingSetErrorsBeforeQuerying — an empty
+// set selects no rows and would read as "no market", withholding the pair
+// on a caller's mistake. It is rejected up front instead.
+func TestPairMarketSubstance_EmptySpellingSetErrorsBeforeQuerying(t *testing.T) {
+	bases, quotes := testXLMUSDCLegs(t)
+	for _, tc := range []struct{ bases, quotes []canonical.Asset }{{nil, quotes}, {bases, nil}} {
+		store, conn := newScriptedStore(t)
+		if _, err := store.PairMarketSubstance(context.Background(), tc.bases, tc.quotes, time.Hour); err == nil {
+			t.Errorf("bases=%d quotes=%d: want an error, got nil", len(tc.bases), len(tc.quotes))
+		}
+		if _, err := store.PairMarketSubstanceAt(context.Background(), tc.bases, tc.quotes,
+			time.Now(), time.Hour, Granularity1h); err == nil {
+			t.Errorf("At: bases=%d quotes=%d: want an error, got nil", len(tc.bases), len(tc.quotes))
+		}
+		if len(conn.stmts) != 0 {
+			t.Errorf("issued %d statements for an empty spelling set, want 0", len(conn.stmts))
+		}
 	}
 }

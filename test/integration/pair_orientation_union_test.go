@@ -111,14 +111,15 @@ func TestPairReadersFoldBothOrientationsAsUnion(t *testing.T) {
 	}
 	near("change-summary VWAP, two-sided bucket", pts[0].Value, 0.5)
 
-	sub, err := f.store.PairMarketSubstance(ctx, f.twoXLM, 24*time.Hour)
+	sub, err := f.store.PairMarketSubstance(ctx, c.AssetAliases(f.twoXLM.Base), c.AssetAliases(f.twoXLM.Quote), 24*time.Hour)
 	if err != nil {
 		t.Fatalf("PairMarketSubstance: %v", err)
 	}
 	if mustFloat(t, sub.VolumeUSD) != 200 || sub.Buckets != 1 {
 		t.Errorf("substance = {%s, %d buckets}, want {200, 1}: both directions, one bucket", sub.VolumeUSD, sub.Buckets)
 	}
-	subAt, err := f.store.PairMarketSubstanceAt(ctx, f.flipXLM, time.Now().UTC(), 24*time.Hour, timescale.Granularity1m)
+	subAt, err := f.store.PairMarketSubstanceAt(ctx, c.AssetAliases(f.flipXLM.Base), c.AssetAliases(f.flipXLM.Quote),
+		time.Now().UTC(), 24*time.Hour, timescale.Granularity1m)
 	if err != nil {
 		t.Fatalf("PairMarketSubstanceAt: %v", err)
 	}
