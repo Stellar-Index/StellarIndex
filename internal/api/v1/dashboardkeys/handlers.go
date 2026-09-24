@@ -429,6 +429,15 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "key not found", r.URL.Path)
 		return
 	}
+	// GH-1320: canManageKeys lets owner, admin AND member through, but
+	// only owner/admin manage every key on the account — a member's
+	// grant is "own keys" (see the role docstring and canManageKeys).
+	// Without this, a member could revoke any other user's key,
+	// including the owner's.
+	if !canManageAnyKey(sc.User.Role) && existing.CreatedByUserID != sc.User.ID {
+		writeProblem(w, http.StatusForbidden, "your role can't revoke keys you didn't create", r.URL.Path)
+		return
+	}
 
 	if err := h.cfg.Keys.Revoke(r.Context(), id, sc.User.ID, "revoked from dashboard"); err != nil {
 		h.cfg.Logger.Error("revoke key in postgres", "err", err, "key_id", id)
@@ -684,6 +693,18 @@ func (h *Handlers) checkQuota(r *http.Request, accountID uuid.UUID, maxKeys int)
 func canManageKeys(role platform.Role) bool {
 	switch role {
 	case platform.RoleOwner, platform.RoleAdmin, platform.RoleMember:
+		return true
+	default:
+		return false
+	}
+}
+
+// canManageAnyKey reports whether role may act on every key in the
+// account rather than only the ones it created itself. Owner and admin
+// administer the whole account; member is scoped to its own keys.
+func canManageAnyKey(role platform.Role) bool {
+	switch role {
+	case platform.RoleOwner, platform.RoleAdmin:
 		return true
 	default:
 		return false
