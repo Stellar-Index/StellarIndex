@@ -1,0 +1,10 @@
+go test fuzz v1
+byte('f')
+[]byte("0")
+bool(false)
+[]byte(" ")
+[]byte("0")
+int64(9007199254740916)
+bool(true)
+uint32(8)
+uint32(107)

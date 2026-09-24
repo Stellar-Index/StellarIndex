@@ -119,8 +119,9 @@ func FuzzObserverLifecycle(f *testing.F) {
 		ct := bodyChangeTypes[int(sel)%len(bodyChangeTypes)]
 		asset := fuzzCBAsset(native, code, issuer)
 
-		watched := []string{"SENTINEL:GSENTINEL"}
+		watched := []string{"SENTINEL:" + gIssuer}
 		var key string
+		invalidWatched := false
 		if native {
 			if _, err := assetKeyFromAsset(asset); !errors.Is(err, ErrUnsupportedClaimableAsset) {
 				t.Fatalf("native key err = %v, want ErrUnsupportedClaimableAsset", err)
@@ -131,14 +132,23 @@ func FuzzObserverLifecycle(f *testing.F) {
 			if err != nil || got != key {
 				t.Fatalf("assetKeyFromAsset = %q, %v; want %q", got, err, key)
 			}
-			if ca, cerr := canonical.AssetFromXDR(asset); cerr == nil && ca.Code+":"+ca.Issuer != key {
+			ca, cerr := canonical.AssetFromXDR(asset)
+			if cerr == nil && ca.Code+":"+ca.Issuer != key {
 				t.Fatalf("key %q disagrees with canonical %s:%s", key, ca.Code, ca.Issuer)
 			}
 			if watch {
 				watched = append(watched, key)
+				invalidWatched = cerr != nil
 			}
 		}
 		o, err := NewObserver(watched)
+		// A code stellar-core would reject can never be configured: the watch list must refuse it.
+		if invalidWatched {
+			if err == nil {
+				t.Fatalf("NewObserver accepted non-canonical watched key %q", key)
+			}
+			return
+		}
 		if err != nil {
 			t.Fatalf("NewObserver: %v", err)
 		}

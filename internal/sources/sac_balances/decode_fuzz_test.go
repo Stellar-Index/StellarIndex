@@ -67,7 +67,7 @@ func FuzzSACBalanceObservation(f *testing.F) {
 	f.Add(int64(^uint64(0)>>1), ^uint64(0), uint8(0), uint8(1), ^uint32(0), ^uint32(0))
 	f.Add(int64(-1), ^uint64(0), uint8(1), uint8(2), uint32(2), uint32(7))
 
-	o, err := NewObserver(map[string]string{cSAC: "USDC:G..."})
+	o, err := NewObserver(map[string]string{cSAC: usdcKey})
 	if err != nil {
 		f.Fatalf("NewObserver: %v", err)
 	}
@@ -124,8 +124,8 @@ func FuzzSACBalanceObservation(f *testing.F) {
 		if obs.Ledger != ledger || !obs.ObservedAt.Equal(closedAt) {
 			t.Fatalf("Ledger/ObservedAt = %d/%v, want %d/%v", obs.Ledger, obs.ObservedAt, ledger, closedAt)
 		}
-		if obs.ContractID != cSAC || obs.Holder != gHolder || obs.AssetKey != "USDC:G..." {
-			t.Fatalf("identity = (%q, %q, %q), want (%q, %q, USDC:G...)", obs.ContractID, obs.Holder, obs.AssetKey, cSAC, gHolder)
+		if obs.ContractID != cSAC || obs.Holder != gHolder || obs.AssetKey != usdcKey {
+			t.Fatalf("identity = (%q, %q, %q), want (%q, %q, %q)", obs.ContractID, obs.Holder, obs.AssetKey, cSAC, gHolder, usdcKey)
 		}
 	})
 }
@@ -134,7 +134,7 @@ func FuzzSACBalanceObservation(f *testing.F) {
 // its within-ledger position, or a same-ledger delete-then-recreate can be
 // resolved to the wrong final state.
 func TestObserver_RemovalCarriesIntraLedgerSeq(t *testing.T) {
-	o, _ := NewObserver(map[string]string{cSAC: "USDC:G..."})
+	o, _ := NewObserver(map[string]string{cSAC: usdcKey})
 	cid := mustContractID(t, cSAC)
 	change := xdr.LedgerEntryChange{
 		Type: xdr.LedgerEntryChangeTypeLedgerEntryRemoved,
@@ -165,7 +165,7 @@ func TestObserver_RemovalCarriesIntraLedgerSeq(t *testing.T) {
 // with an empty key would write an orphan supply slice.
 func TestObserver_DecodeRejectsUnwatchedContract(t *testing.T) {
 	const cOther = "CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526"
-	o, _ := NewObserver(map[string]string{cSAC: "USDC:G..."})
+	o, _ := NewObserver(map[string]string{cSAC: usdcKey})
 	change := makeContractDataChange(t, cOther, makeBalanceKey(t, gHolder), makeI128Val(1))
 	if o.Matches(change) {
 		t.Fatalf("Matches accepted unwatched contract %s", cOther)
@@ -180,7 +180,7 @@ func TestObserver_DecodeRejectsUnwatchedContract(t *testing.T) {
 // neither i128 nor a map with an i128 `amount` must be refused, not read
 // as zero or as a different width.
 func TestObserver_DecodeRejectsForeignBalanceShapes(t *testing.T) {
-	o, _ := NewObserver(map[string]string{cSAC: "USDC:G..."})
+	o, _ := NewObserver(map[string]string{cSAC: usdcKey})
 	u128 := xdr.ScVal{Type: xdr.ScValTypeScvU128, U128: &xdr.UInt128Parts{Lo: 5}}
 	u64v := xdr.Uint64(5)
 	u64 := xdr.ScVal{Type: xdr.ScValTypeScvU64, U64: &u64v}
