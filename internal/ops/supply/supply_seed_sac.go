@@ -82,6 +82,9 @@ import (
 //	                 genesis) instead of the floor-limited
 //	                 stellar.ledger_entries_current. Heavier; closes the
 //	                 ~62M current-state coverage floor.
+//	-timeout DUR     Whole-run deadline (default 12h). All writes happen
+//	                 after the scan, so a deadline that expires mid-scan
+//	                 loses the whole pass.
 //	-dry-run         Read + print per-contract holder count + summed
 //	                 balance without writing.
 func supplySeedSACBalances(args []string) error {
@@ -89,6 +92,7 @@ func supplySeedSACBalances(args []string) error {
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	fullHistory := fs.Bool("full-history", false, "Read stellar.ledger_entry_changes (complete to genesis) instead of the floor-limited stellar.ledger_entries_current — closes the ~62M current-state coverage floor (heavier; run-heavy-job.sh only)")
+	timeout := fs.Duration("timeout", 12*time.Hour, "Whole-run deadline; every insert lands after the lake scan, so an expiring deadline loses the entire pass")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -110,9 +114,7 @@ func supplySeedSACBalances(args []string) error {
 	gate.Banner()
 	dryRun := gate.DryRun()
 
-	// The scan is a full-history FINAL read over every contract_data
-	// entry — generous budget; the heavy-job wrapper bounds memory.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
 	var store *timescale.Store

@@ -430,29 +430,11 @@ func StreamSACBalanceSeedsFullHistory(ctx context.Context, addr string, watched 
 	// per-window server-side reduction plus the Go reduction across windows is
 	// exactly the reduction the single unbounded GROUP BY performed.
 	red := newSACSeedReducer(watched)
-	window := uint32(sacSeedLedgerWindow)
-	for start := minLedger; ; {
-		end := start + window - 1
-		if end < start || end > maxLedger { // uint32 overflow guard + clamp
-			end = maxLedger
-		}
-		switch err := scanSACSeedWindow(ctx, conn, needles, start, end, red); {
-		case err == nil:
-		case isMemoryLimitExceeded(err) && window > sacSeedMinLedgerWindow:
-			// Bisect and retry the SAME start: a window whose key space
-			// still doesn't fit is a signal to narrow, never to raise the
-			// ceiling (chasing the ceiling is what failed three times).
-			// Monotonic — a narrowed window is never widened again, so one
-			// dense stretch can't be re-hit window after window.
-			window /= 2
-			continue
-		default:
-			return err
-		}
-		if end >= maxLedger {
-			break
-		}
-		start = end + 1
+	err = walkSACSeedWindows(minLedger, maxLedger, func(from, to uint32) error {
+		return scanSACSeedWindow(ctx, conn, needles, from, to, red)
+	})
+	if err != nil {
+		return err
 	}
 	// Liveness is judged at the lake's own tip: the seed reconstructs CURRENT
 	// state, so an entry archived before that tip is not part of it.
@@ -465,6 +447,15 @@ func StreamSACBalanceSeedsFullHistory(ctx context.Context, addr string, watched 
 			"retracted", retracted, "distinct_keys", len(red.best), "as_of_ledger", maxLedger)
 	}
 	return red.emit(fn)
+}
+
+// walkSACSeedWindows walks the full-history seed's ledger windows. A memory-
+// limit error bisects and retries the same start (never raises the ceiling —
+// chasing the ceiling is what failed three times); sustained success widens
+// back, so one dense Soroban stretch cannot pin the rest of the chain at the floor.
+func walkSACSeedWindows(minLedger, maxLedger uint32, scan func(from, to uint32) error) error {
+	win := newAdaptiveLedgerWindow(sacSeedLedgerWindow, sacSeedMinLedgerWindow, sacSeedWidenAfter)
+	return walkLedgerWindows(minLedger, maxLedger, win, scan)
 }
 
 const (
@@ -493,6 +484,9 @@ const (
 	// window holds a few thousand keys and tens of MiB — if THAT doesn't fit,
 	// the window size is not the problem and the error should surface.
 	sacSeedMinLedgerWindow = sacSeedLedgerWindow >> 4
+	// sacSeedWidenAfter re-widens after this many consecutive clean windows
+	// (doubling, capped at sacSeedLedgerWindow); same policy as the claimable seed.
+	sacSeedWidenAfter = 4
 
 	// chMemoryLimitExceeded is ClickHouse's MEMORY_LIMIT_EXCEEDED.
 	chMemoryLimitExceeded = 241

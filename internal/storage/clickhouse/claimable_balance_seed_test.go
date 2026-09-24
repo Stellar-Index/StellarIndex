@@ -701,10 +701,9 @@ func TestClaimableSeedWindowConstants(t *testing.T) {
 // below it, and must recover toward the initial width after sustained success
 // so one dense range cannot pin the rest of the walk at the floor.
 func TestClaimableSeedWindowPolicy(t *testing.T) {
-	var w claimableSeedWindow
-	w.reset()
+	w := newAdaptiveLedgerWindow(claimableSeedLedgerWindow, claimableSeedMinLedgerWindow, claimableSeedWidenAfter)
 	if w.width != claimableSeedLedgerWindow {
-		t.Fatalf("reset width = %d, want %d", w.width, claimableSeedLedgerWindow)
+		t.Fatalf("initial width = %d, want %d", w.width, claimableSeedLedgerWindow)
 	}
 
 	// Narrow until it refuses: must land exactly on the floor.
