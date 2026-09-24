@@ -1,10 +1,12 @@
 package v1
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -58,6 +60,10 @@ const tipProducerLinger = 30 * time.Second
 // explorer requests a single default window — while capping the worst
 // case well short of what could starve the DB pool. Tune with
 // [Server.SetMaxTipProducers].
+//
+// A lingering producer (no subscriber) still counts, because it still
+// computes — but at either global bound the oldest lingering entries are
+// evicted to admit a new one, so only subscribed demand can refuse a mint.
 const defaultMaxTipProducers = 512
 
 // defaultMaxTipProducersPerCaller caps how many producers ONE caller may
@@ -204,6 +210,9 @@ type tipProducer struct {
 	// ticks is the compute rate charged for this entry, per
 	// [tipTicksPerMinute], held and released alongside minter's charge.
 	ticks int
+	// idleSeq orders lingering entries for eviction (lower = idle longer);
+	// meaningful only while refs == 0.
+	idleSeq uint64
 }
 
 // tipProducerRestartBackoff bounds how fast a producer that keeps
@@ -247,6 +256,8 @@ type tipProducerRegistry struct {
 	// bound — the shape that says "one client is enumerating the key
 	// space" rather than "the deployment has outgrown its ceiling".
 	refusedPerCaller uint64
+	// idleSeq is the last [tipProducer.idleSeq] handed out.
+	idleSeq uint64
 }
 
 // limit is the effective producer ceiling; <= 0 from the operator means
@@ -312,16 +323,14 @@ func overBudget(lim, held, cost int) bool {
 // reached by many callers rather than by one.
 func (r *tipProducerRegistry) admitLocked(caller string, ticks int) tipProducerOutcome {
 	attributed := caller != unattributedTipCaller
-	outcome := tipProducerAdmitted
+	var outcome tipProducerOutcome
 	switch {
 	case attributed && overBudget(r.callerLimit(), r.minted[caller], 1):
 		outcome = tipProducerAtCallerQuota
 	case attributed && overBudget(r.callerTickLimit(), r.mintedTicks[caller], ticks):
 		outcome = tipProducerAtCallerRateBudget
-	case overBudget(r.limit(), len(r.active), 1):
-		outcome = tipProducerAtGlobalCeiling
-	case overBudget(r.tickLimit(), r.ticks, ticks):
-		outcome = tipProducerAtGlobalRateBudget
+	default:
+		outcome = r.makeRoomLocked(ticks)
 	}
 	if outcome != tipProducerAdmitted {
 		r.refused++
@@ -331,6 +340,71 @@ func (r *tipProducerRegistry) admitLocked(caller string, ticks int) tipProducerO
 		return refuseTipProducer(outcome)
 	}
 	return outcome
+}
+
+// makeRoomLocked fits a new producer costing ticks under the global
+// bounds, evicting the longest-idle lingering producers when that is
+// what it takes. A lingering entry is a reconnect optimisation serving
+// nobody; letting it refuse a real viewer made the ceiling bound past
+// demand, not current demand. Subscribed producers are never evicted,
+// and nothing is evicted unless the eviction actually makes room.
+func (r *tipProducerRegistry) makeRoomLocked(ticks int) tipProducerOutcome {
+	slots, held := len(r.active), r.ticks
+	fits := func() bool {
+		return !overBudget(r.limit(), slots, 1) && !overBudget(r.tickLimit(), held, ticks)
+	}
+	var victims []tipProducerKey
+	if !fits() {
+		for _, key := range r.lingeringLocked() {
+			victims = append(victims, key)
+			slots--
+			held -= r.active[key].ticks
+			if fits() {
+				break
+			}
+		}
+	}
+	switch {
+	case overBudget(r.limit(), slots, 1):
+		return tipProducerAtGlobalCeiling
+	case overBudget(r.tickLimit(), held, ticks):
+		return tipProducerAtGlobalRateBudget
+	}
+	for _, key := range victims {
+		r.removeLocked(key, r.active[key])
+	}
+	return tipProducerAdmitted
+}
+
+// lingeringLocked lists the keys of zero-subscriber entries, longest idle
+// first.
+func (r *tipProducerRegistry) lingeringLocked() []tipProducerKey {
+	var keys []tipProducerKey
+	for key, p := range r.active {
+		if p.refs == 0 {
+			keys = append(keys, key)
+		}
+	}
+	slices.SortFunc(keys, func(a, b tipProducerKey) int {
+		return cmp.Compare(r.active[a].idleSeq, r.active[b].idleSeq)
+	})
+	return keys
+}
+
+// removeLocked stops p and deletes its entry. The minter's quota slot
+// comes back only HERE, when the entry actually leaves the registry:
+// releasing it when the connection closed would hand the slot back while
+// the producer is still running out its linger — precisely the window
+// the abort-loop flood exploits.
+func (r *tipProducerRegistry) removeLocked(key tipProducerKey, p *tipProducer) {
+	if p.linger != nil {
+		p.linger.Stop()
+		p.linger = nil
+	}
+	p.cancel()
+	delete(r.active, key)
+	r.producersGauge().Dec()
+	r.dischargeLocked(p)
 }
 
 // chargeLocked records that caller minted one more producer costing ticks.
@@ -459,6 +533,8 @@ func (r *tipProducerRegistry) release(key tipProducerKey) {
 	if linger <= 0 {
 		linger = tipProducerLinger
 	}
+	r.idleSeq++
+	p.idleSeq = r.idleSeq
 	// Last subscriber gone: linger, then stop — unless someone re-acquires.
 	p.linger = time.AfterFunc(linger, func() {
 		r.mu.Lock()
@@ -467,15 +543,7 @@ func (r *tipProducerRegistry) release(key tipProducerKey) {
 		if !still || cur != p || cur.refs > 0 {
 			return
 		}
-		cur.cancel()
-		delete(r.active, key)
-		r.producersGauge().Dec()
-		// The minter's quota slot comes back only HERE, when the entry
-		// actually leaves the registry. Releasing it when the connection
-		// closed would hand the slot back while the producer is still
-		// running out its linger — which is precisely the window the
-		// abort-loop flood exploits.
-		r.dischargeLocked(cur)
+		r.removeLocked(key, cur)
 	})
 }
 

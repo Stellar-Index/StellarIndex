@@ -41,9 +41,15 @@ func TestTipProducerRegistry_AggregateQueryRateIsBoundedNotJustTheCount(t *testi
 	reg := &tipProducerRegistry{lingerFor: time.Hour}
 
 	sawRateRefusal := false
-	// Many addresses (RFC 5737 TEST-NET-3), each minting 1s-window
-	// producers on distinct pairs and aborting at once — the shape that
-	// leaves every producer lingering while the count caps still admit it.
+	var held []func()
+	t.Cleanup(func() {
+		for _, rel := range held {
+			rel()
+		}
+	})
+	// Many addresses (RFC 5737 TEST-NET-3), each minting and holding
+	// 1s-window producers on distinct pairs — a lingering producer yields
+	// its rate to a new mint, so only subscribed ones reach the budget.
 	for c := 1; c <= 64; c++ {
 		caller := "203.0.113." + strconv.Itoa(c)
 		for j := 0; j < 30; j++ {
@@ -54,7 +60,7 @@ func TestTipProducerRegistry_AggregateQueryRateIsBoundedNotJustTheCount(t *testi
 			release, outcome := reg.acquireFor(key, caller, nil,
 				func(ctx context.Context) { <-ctx.Done() })
 			if outcome == tipProducerAdmitted {
-				release()
+				held = append(held, release)
 				continue
 			}
 			if outcome.String() == "global_rate_budget" {

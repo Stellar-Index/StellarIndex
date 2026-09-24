@@ -139,18 +139,54 @@ func TestTipProducerRegistry_ReacquireDuringLingerKeepsProducer(t *testing.T) {
 // it without needing distinct assets. Without a ceiling, running() grows
 // without bound and each entry polls the database on its own ticker.
 //
+// A lingering producer yields its slot to a new mint, so the abort loop
+// is admitted — but it can only ever replace lingering compute loops,
+// never add to them. Refusal (and its count) is for a registry whose
+// every slot is subscribed.
+//
 // Proven red against the pre-fix registry: acquire always succeeded, so
 // running() reached the full attempt count.
 func TestTipProducerRegistry_CeilingBoundsDetachedProducers(t *testing.T) {
 	const ceiling = 8
 	reg := &tipProducerRegistry{maxProducers: ceiling}
+	var live atomic.Int32
+	start := func(ctx context.Context) {
+		live.Add(1)
+		defer live.Add(-1)
+		<-ctx.Done()
+	}
 
-	admitted := 0
 	// Enumerate the window dimension of the key alone, exactly as the
 	// cheapest attack would: one asset, one quote, many windows.
 	for w := 1; w <= ceiling*4; w++ {
 		key := tipProducerKey{asset: "native", quote: "fiat:USD", window: w}
-		release, ok := reg.acquire(key, nil, func(ctx context.Context) { <-ctx.Done() })
+		release, ok := reg.acquire(key, nil, start)
+		if !ok {
+			t.Fatalf("window %d refused while every slot was lingering", w)
+		}
+		// The attack shape: abort immediately. The producer survives via
+		// linger, which is precisely why the connection cap cannot see it.
+		release()
+		if got := reg.running(); got > ceiling {
+			t.Fatalf("running() = %d, exceeds ceiling %d — a detached producer "+
+				"escaped the bound, which is the whole finding", got, ceiling)
+		}
+	}
+	if !waitFor(time.Second, func() bool { return live.Load() <= ceiling }) {
+		t.Errorf("%d compute loops still running, want at most the ceiling %d — "+
+			"an evicted producer was deregistered but never stopped", live.Load(), ceiling)
+	}
+
+	// Every slot subscribed: now a new pair is refused, and counted.
+	var held []func()
+	t.Cleanup(func() {
+		for _, rel := range held {
+			rel()
+		}
+	})
+	for w := 1; w <= ceiling*2; w++ {
+		key := tipProducerKey{asset: "native", quote: "fiat:EUR", window: w}
+		release, ok := reg.acquire(key, nil, start)
 		if !ok {
 			if release != nil {
 				t.Fatal("refused acquire must not hand back a release func — " +
@@ -158,23 +194,14 @@ func TestTipProducerRegistry_CeilingBoundsDetachedProducers(t *testing.T) {
 			}
 			continue
 		}
-		admitted++
-		// The attack shape: abort immediately. The producer survives via
-		// linger, which is precisely why the connection cap cannot see it.
-		release()
+		held = append(held, release)
 	}
-
-	if admitted != ceiling {
-		t.Errorf("admitted %d producers, want exactly the ceiling %d", admitted, ceiling)
+	if len(held) != ceiling {
+		t.Errorf("admitted %d subscribed producers, want exactly the ceiling %d", len(held), ceiling)
 	}
-	if got := reg.running(); got > ceiling {
-		t.Errorf("running() = %d, exceeds ceiling %d — a detached producer "+
-			"escaped the bound, which is the whole finding", got, ceiling)
-	}
-	if got := reg.refusedCount(); got != uint64(ceiling*4-ceiling) {
+	if got := reg.refusedCount(); got != uint64(ceiling) {
 		t.Errorf("refusedCount() = %d, want %d — refusals must be counted, "+
-			"or a flood is survived silently instead of being visible",
-			got, ceiling*4-ceiling)
+			"or a flood is survived silently instead of being visible", got, ceiling)
 	}
 }
 
