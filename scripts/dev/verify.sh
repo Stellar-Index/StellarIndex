@@ -653,6 +653,8 @@ lane_d() { # everything else
             gitleaks detect --no-git --no-banner --redact --config .gitleaks.worktree.toml
         echo "=== Secrets (gitleaks, history — CI parity) ===" && \
             gitleaks detect --no-banner --redact --config .gitleaks.toml
+        echo "=== Secrets allowlist scope self-test ===" && \
+            ./scripts/ci/gitleaks-allowlist-scope-test.sh
     else
         defer_check_lane "$LANEDIR/d.deferred" "Secrets" "gitleaks is not installed"
     fi
