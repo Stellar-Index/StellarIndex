@@ -8,6 +8,7 @@
 
 import { NextResponse } from 'next/server';
 
+import { escapeXml as esc, toCdata } from '@/lib/atom';
 import { loadBlogPosts, type BlogPost } from '@/lib/blog';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
@@ -54,7 +55,7 @@ function renderEntry(p: BlogPost): string {
     <published>${published}</published>
     <updated>${published}</updated>
     <summary type="text">${esc(p.summary)}</summary>
-    <content type="text"><![CDATA[${p.body}]]></content>
+    <content type="text">${toCdata(p.body)}</content>
   </entry>`;
 }
 
@@ -70,12 +71,4 @@ function atomDate(date?: string): string {
   const d = new Date(`${date}T00:00:00Z`);
   if (Number.isNaN(d.getTime())) return new Date().toISOString();
   return d.toISOString();
-}
-
-function esc(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
