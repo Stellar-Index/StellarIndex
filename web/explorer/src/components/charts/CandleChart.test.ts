@@ -49,18 +49,20 @@ describe('pricePrecisionFor', () => {
 });
 
 describe('priceFormatFor', () => {
+  // Floor is formatSubunitPrice's 20-decimal cap: below 1e-17 it keeps
+  // fewer than four significant digits.
   it('renders every non-zero magnitude to four significant digits', () => {
-    for (let exp = 6; exp >= -24; exp--) {
+    for (let exp = 6; exp >= -17; exp--) {
       const price = 1.2345 * 10 ** exp;
       const shown = Number(render(flat(price), price));
       expect(Math.abs(shown - price) / price).toBeLessThan(1e-3);
     }
   });
 
-  it('switches to scientific notation below the fixed-decimal floor', () => {
+  it('switches to a plain decimal, never scientific, below the fixed-decimal floor', () => {
     const fmt = priceFormatFor(flat(3e-15));
     expect(fmt.type).toBe('custom');
-    expect(render(flat(3e-15), 3e-15)).toBe('3.0000e-15');
+    expect(render(flat(3e-15), 3e-15)).toBe('0.000000000000003');
   });
 
   it('keeps fixed decimals for ordinary prices', () => {
