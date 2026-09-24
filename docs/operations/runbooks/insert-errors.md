@@ -69,7 +69,7 @@ Post-ADR-0041 (2026-07-06) infra-fault writes retry with backpressure and are NO
       -from <FIRST_LEDGER> -to <LAST_LEDGER> \
       -source <SOURCE_NAME> -dry-run
   # 3. Drop -dry-run to commit.
-  stellarindex-ops backfill -config /etc/stellarindex.toml \
+  stellarindex-ops backfill -write -config /etc/stellarindex.toml \
       -from <FIRST_LEDGER> -to <LAST_LEDGER> \
       -source <SOURCE_NAME> -resume
   ```

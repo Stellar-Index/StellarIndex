@@ -96,8 +96,8 @@ func TestWriteFindDataGapsText_WithGaps(t *testing.T) {
 		"2 gap(s), totalling 103396 missing ledgers",
 		"[62642781, 62735517]  size=92737",
 		"[62746866, 62757524]  size=10659",
-		"stellarindex-ops backfill --config /etc/stellarindex.toml --from 62642781 --to 62735517 --source soroban-events",
-		"stellarindex-ops backfill --config /etc/stellarindex.toml --from 62746866 --to 62757524 --source soroban-events",
+		"stellarindex-ops backfill -write --config /etc/stellarindex.toml --from 62642781 --to 62735517 --source soroban-events",
+		"stellarindex-ops backfill -write --config /etc/stellarindex.toml --from 62746866 --to 62757524 --source soroban-events",
 	}
 	for _, w := range want {
 		if !strings.Contains(out, w) {

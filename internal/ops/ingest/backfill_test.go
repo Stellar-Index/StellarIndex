@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -342,7 +344,7 @@ func TestPlanBackfillChunks(t *testing.T) {
 func TestParseBackfillFlags_Parallel(t *testing.T) {
 	cfgPath := writeMinimalConfig(t, []string{"sdex"})
 	t.Run("default is 1", func(t *testing.T) {
-		opts, _, err := parseBackfillFlags([]string{"-config", cfgPath, "-from", "100", "-to", "200"})
+		opts, _, err := parseBackfillFlags([]string{"-config", cfgPath, "-from", "100", "-to", "200", "-dry-run"})
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
@@ -351,7 +353,7 @@ func TestParseBackfillFlags_Parallel(t *testing.T) {
 		}
 	})
 	t.Run("explicit 8 accepted", func(t *testing.T) {
-		opts, _, err := parseBackfillFlags([]string{"-config", cfgPath, "-from", "100", "-to", "200", "-parallel", "8"})
+		opts, _, err := parseBackfillFlags([]string{"-config", cfgPath, "-from", "100", "-to", "200", "-parallel", "8", "-dry-run"})
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
@@ -360,13 +362,13 @@ func TestParseBackfillFlags_Parallel(t *testing.T) {
 		}
 	})
 	t.Run("zero rejected", func(t *testing.T) {
-		_, _, err := parseBackfillFlags([]string{"-config", cfgPath, "-from", "100", "-to", "200", "-parallel", "0"})
+		_, _, err := parseBackfillFlags([]string{"-config", cfgPath, "-from", "100", "-to", "200", "-parallel", "0", "-dry-run"})
 		if err == nil {
 			t.Fatal("expected error for parallel=0")
 		}
 	})
 	t.Run("negative rejected", func(t *testing.T) {
-		_, _, err := parseBackfillFlags([]string{"-config", cfgPath, "-from", "100", "-to", "200", "-parallel", "-3"})
+		_, _, err := parseBackfillFlags([]string{"-config", cfgPath, "-from", "100", "-to", "200", "-parallel", "-3", "-dry-run"})
 		if err == nil {
 			t.Fatal("expected error for parallel=-3")
 		}
@@ -578,5 +580,37 @@ func TestRefreshCAGGsForChunk_TimeoutIsFatalAndNamed(t *testing.T) {
 	if len(fake.refreshedViews) != len(timescale.CAGGsLiveForever) {
 		t.Errorf("every other view must still be attempted after a timeout, got %d/%d: %v",
 			len(fake.refreshedViews), len(timescale.CAGGsLiveForever), fake.refreshedViews)
+	}
+}
+
+// TestParseBackfillFlags_WriteGate pins the fail-closed mode contract
+// (#868): backfill used to WRITE unless -dry-run was passed. Omitting both
+// flags now refuses, -dry-run previews, and only -write applies.
+func TestParseBackfillFlags_WriteGate(t *testing.T) {
+	cfgPath := writeMinimalConfig(t, []string{"sdex"})
+	base := []string{"-config", cfgPath, "-from", "100", "-to", "200"}
+
+	if _, _, err := parseBackfillFlags(base); !errors.Is(err, opsutil.ErrWriteModeUnstated) {
+		t.Fatalf("no mode flag: err = %v, want opsutil.ErrWriteModeUnstated — "+
+			"a backfill that names neither -write nor -dry-run must refuse, not write", err)
+	}
+	for _, tc := range []struct {
+		name    string
+		extra   []string
+		wantDry bool
+	}{
+		{"dry-run previews", []string{"-dry-run"}, true},
+		{"write applies", []string{"-write"}, false},
+		{"write wins over the dry-run alias", []string{"-dry-run", "-write"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, _, err := parseBackfillFlags(append(append([]string{}, base...), tc.extra...))
+			if err != nil {
+				t.Fatalf("parse %v: %v", tc.extra, err)
+			}
+			if opts.dryRun != tc.wantDry {
+				t.Errorf("%v: opts.dryRun = %v, want %v", tc.extra, opts.dryRun, tc.wantDry)
+			}
+		})
 	}
 }

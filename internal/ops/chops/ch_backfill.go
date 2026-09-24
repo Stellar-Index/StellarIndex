@@ -3,7 +3,6 @@ package chops
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"sync"
@@ -29,7 +28,7 @@ import (
 // well — this is the throughput unlock Postgres couldn't give us). N=1 is
 // the plain single-walker path.
 func chBackfill(args []string) error {
-	fs := flag.NewFlagSet("ch-backfill", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("ch-backfill")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	from := fs.Uint("from", 0, "first ledger sequence (inclusive, required)")
 	to := fs.Uint("to", 0, "last ledger sequence (inclusive, required)")
@@ -37,7 +36,6 @@ func chBackfill(args []string) error {
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	flushEvery := fs.Int("flush-every", 500, "flush to ClickHouse every N ledgers (per worker)")
 	parallel := fs.Int("parallel", 1, "number of concurrent range-walkers")
-	dryRun := fs.Bool("dry-run", false, "re-derive WITHOUT writing: fetch + decode every ledger in the range and report coverage/throughput, but open no ClickHouse Sink. The ADR-0043 §2.2 restore-drill mode — proves the recovery machinery and measures RTO without adding rows to the live lake")
 	heartbeat := fs.String("heartbeat", "", "node_exporter textfile path for the liveness/progress gauges (C6-020). Empty = "+opsutil.DefaultTextfileDir+"/ops_job_ch_backfill.prom when that directory exists (r1), otherwise no heartbeat at all")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -45,9 +43,16 @@ func chBackfill(args []string) error {
 	if *cfgPath == "" || *from == 0 || *to == 0 || *to < *from {
 		return fmt.Errorf("-config, -from, -to are required; -to must be >= -from")
 	}
+	if err := gate.RequireStatedMode(); err != nil {
+		return fmt.Errorf("ch-backfill: %w", err)
+	}
+	// A dry run still fetches + decodes every ledger and opens no Sink: the
+	// ADR-0043 §2.2 restore-drill mode, measuring RTO without adding rows.
+	dryRun := gate.DryRun()
 	if *parallel < 1 {
 		*parallel = 1
 	}
+	gate.Banner()
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
@@ -66,7 +71,7 @@ func chBackfill(args []string) error {
 
 	chunks := opsutil.SplitRange(uint32(*from), uint32(*to), *parallel)
 	sinkDesc := fmt.Sprintf("ClickHouse %s", *chAddr)
-	if *dryRun {
+	if dryRun {
 		sinkDesc = "DRY RUN (decode only, nothing written)"
 	}
 	fmt.Fprintf(os.Stderr, "ch-backfill: streaming ledgers %d..%d from %q -> %s (%d worker(s))\n",
@@ -79,7 +84,7 @@ func chBackfill(args []string) error {
 	for i, chunk := range chunks {
 		i, chunk := i, chunk // capture
 		g.Go(func() error {
-			return chBackfillChunk(gctx, i, chunk, lsCfg, passphrase, *chAddr, *flushEvery, *dryRun, prog.record)
+			return chBackfillChunk(gctx, i, chunk, lsCfg, passphrase, *chAddr, *flushEvery, dryRun, prog.record)
 		})
 	}
 	walkErr := g.Wait()
@@ -95,7 +100,7 @@ func chBackfill(args []string) error {
 		return fmt.Errorf("ch-backfill: %w", cerr)
 	}
 	prog.markOK()
-	if *dryRun {
+	if dryRun {
 		fmt.Fprintf(os.Stderr, "ch-backfill: done — [%d,%d] re-derived from %q (DRY RUN, nothing written)\n", *from, *to, streamBucket)
 		return nil
 	}

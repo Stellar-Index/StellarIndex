@@ -46,7 +46,7 @@ for (( lo=START; lo<BAND_END; lo+=CHUNK )); do
   hi=$(( lo + CHUNK ))
   [ "$hi" -gt "$BAND_END" ] && hi=$BAND_END
   echo "=== chunk [$lo,$hi) $(date -u +%H:%M:%SZ) ==="
-  "$OPS" ch-backfill -config "$CONFIG" -ch-addr "$CH_ADDR" \
+  "$OPS" ch-backfill -write -config "$CONFIG" -ch-addr "$CH_ADDR" \
         -from "$lo" -to "$hi" -parallel 3 -flush-every 100
   rc=$?
   if [ "$rc" -ne 0 ]; then

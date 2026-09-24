@@ -51,6 +51,10 @@ done
 # Declared: every fs.<Type>("name", …) in ch-backfill's FlagSet.
 declared="$(grep -oE 'fs\.(String|Bool|Int|Uint|Int64|Uint64|Duration|Float64)\("[a-z0-9-]+"' "$CH_BACKFILL_GO" \
   | sed -E 's/.*\("([a-z0-9-]+)"/\1/' | sort -u)"
+# The shared opsutil write gate declares -write and -dry-run on its FlagSet.
+if grep -qE 'opsutil\.(NewMutatingFlagSet|RegisterWriteGate)\(' "$CH_BACKFILL_GO"; then
+  declared="$(printf '%s\nwrite\ndry-run\n' "$declared" | sort -u)"
+fi
 if [[ -z "$declared" ]]; then
   echo "restore-drill-test: parsed ZERO flags out of $CH_BACKFILL_GO — the extraction" >&2
   echo "  broke (renamed FlagSet? different helper?), and a vacuous pass here is exactly" >&2
@@ -142,6 +146,7 @@ fi
 while IFS= read -r line; do
   [[ -z "$line" ]] && continue
   name="${line#echo \"}"; name="${name%%[\$\{ ]*}"
+  # shellcheck disable=SC2016 # the literal text ${lbl} in the drill source
   if [[ "$line" == *'${lbl}'* ]]; then
     ok "$name is emitted with the repo label"
   else
@@ -153,6 +158,7 @@ done <<<"$emitted"
 
 # (b) one file per repo, so the two timers cannot rewrite each other's
 # verdict. repo1 keeps the historical name; every other repo gets its own.
+# shellcheck disable=SC2016 # the literal text ${DRILL_REPO} in the drill source
 if grep -q 'restore_drill_repo${DRILL_REPO}.prom' "$DRILL"; then
   ok "repos other than 1 write their own textfile (restore_drill_repo<N>.prom)"
 else

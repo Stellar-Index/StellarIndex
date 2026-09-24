@@ -5,9 +5,13 @@ package opsutil
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -226,4 +230,63 @@ func TestNewBoundedLedgerStreamConfig_BufferShrinksWithParallelism(t *testing.T)
 type ledgerstreamBufferedConfigLike struct {
 	bufferSize uint32
 	numWorkers uint32
+}
+
+// TestWriteGate_RequireStatedMode: a run naming neither flag is refused;
+// either flag states the mode.
+func TestWriteGate_RequireStatedMode(t *testing.T) {
+	for _, tc := range []struct {
+		args    []string
+		wantErr bool
+	}{
+		{nil, true},
+		{[]string{"-dry-run"}, false},
+		{[]string{"-write"}, false},
+		{[]string{"-dry-run", "-write"}, false},
+	} {
+		fset, gate := NewMutatingFlagSet("t")
+		if err := fset.Parse(tc.args); err != nil {
+			t.Fatalf("parse %v: %v", tc.args, err)
+		}
+		err := gate.RequireStatedMode()
+		if got := errors.Is(err, ErrWriteModeUnstated); got != tc.wantErr {
+			t.Errorf("%v: RequireStatedMode() = %v, want refused=%v", tc.args, err, tc.wantErr)
+		}
+	}
+}
+
+// dryRunFlagDecl matches a hand-declared -dry-run flag, including one split
+// across lines after the opening parenthesis.
+var dryRunFlagDecl = regexp.MustCompile(`Bool\(\s*"dry-run"`)
+
+// TestNoOpsSubcommandDeclaresADryRunOptOut is the structural guard for the
+// default-WRITE shape (#868): a subcommand that declares its own -dry-run
+// and no -write writes unless the operator remembers to opt out. Mutating
+// subcommands build their FlagSet with NewMutatingFlagSet instead.
+func TestNoOpsSubcommandDeclaresADryRunOptOut(t *testing.T) {
+	scanned := 0
+	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		if path == filepath.Join("..", "opsutil", "opsutil.go") {
+			return nil // the shared gate's own -dry-run alias
+		}
+		src, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		scanned++
+		if dryRunFlagDecl.Match(src) && !strings.Contains(string(src), `Bool("write"`) {
+			t.Errorf("%s declares a -dry-run flag with no -write: it WRITES unless the operator "+
+				"opts out. Build its FlagSet with opsutil.NewMutatingFlagSet instead", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk internal/ops: %v", err)
+	}
+	if scanned < 50 {
+		t.Fatalf("scanned %d non-test files under internal/ops — the walk is not seeing the tree", scanned)
+	}
 }

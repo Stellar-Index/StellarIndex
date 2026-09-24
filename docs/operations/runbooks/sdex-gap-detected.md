@@ -14,7 +14,7 @@ severity: P1
 - **Detected by:** `configs/prometheus/rules.r1/ingestion.yml` (group `stellarindex.ingestion`, `severity: page`, `for: 15m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/ingestion.yml`
 - **Time to act:** within 30 min
 - **Owner:** stellarindex on-call
-- **TL;DR fix:** confirm writer health → `stellarindex-ops backfill -config /etc/stellarindex.toml -from $GAP_START -to $GAP_END -source sdex -dry-run`, then re-run with `-resume` (on r1, under `/usr/local/sbin/run-heavy-job.sh`)
+- **TL;DR fix:** confirm writer health → `stellarindex-ops backfill -config /etc/stellarindex.toml -from $GAP_START -to $GAP_END -source sdex -dry-run`, then re-run with `-write -resume` (on r1, under `/usr/local/sbin/run-heavy-job.sh`)
 
 This is the SDEX-specific surface of [ingest-gap-detected](ingest-gap-detected.md). SDEX is classic-DEX and does NOT flow through `soroban_events`; its rows land in the unified `trades` hypertable filtered by `source = 'sdex'`. Symmetric to the Soroban path, an SDEX-side cascade (Postgres back-pressure halting the SDEX writer goroutine while the rest of ingest stays healthy) used to be invisible at the data layer. This alert closes that gap.
 
@@ -59,7 +59,7 @@ This is the SDEX-specific surface of [ingest-gap-detected](ingest-gap-detected.m
 
 ## Remediation
 
-Targeted SDEX backfill (re-decodes the range via the dispatcher). There is no `-parallel` flag, and `-config` is required — dry-run first to confirm scope, then re-run with `-resume`:
+Targeted SDEX backfill (re-decodes the range via the dispatcher). There is no `-parallel` flag, and `-config` is required — dry-run first to confirm scope, then re-run with `-write -resume`:
 
 ```
 # On r1, wrap heavy one-shots in the mandatory memory-capped scope:
@@ -70,9 +70,9 @@ Targeted SDEX backfill (re-decodes the range via the dispatcher). There is no `-
     -source sdex \
     -dry-run
 
-# Then drop -dry-run and commit:
+# Then swap -dry-run for -write to apply:
 /usr/local/sbin/run-heavy-job.sh sdex-backfill \
-  stellarindex-ops backfill \
+  stellarindex-ops backfill -write \
     -config /etc/stellarindex.toml \
     -from $GAP_START -to $GAP_END \
     -source sdex \

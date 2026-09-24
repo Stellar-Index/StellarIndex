@@ -201,7 +201,7 @@ range straddles.
 
 ```sh
 /usr/local/sbin/run-heavy-job.sh backfill-50000000-50100000 \
-  /usr/local/bin/stellarindex-ops backfill \
+  /usr/local/bin/stellarindex-ops backfill -write \
     -config /etc/stellarindex.toml \
     -from 50000000 \
     -to   50100000
@@ -223,7 +223,7 @@ Stream the output to a log so a stuck run is diagnosable:
 
 ```sh
 /usr/local/sbin/run-heavy-job.sh backfill-50000000-50100000 \
-  /usr/local/bin/stellarindex-ops backfill ... 2>&1 \
+  /usr/local/bin/stellarindex-ops backfill -write ... 2>&1 \
   | tee backfill-50000000-50100000.log
 ```
 
@@ -234,7 +234,7 @@ replays in ~10-30 minutes.
 ### 4. Resume after a crash
 
 ```sh
-stellarindex-ops backfill \
+stellarindex-ops backfill -write \
   -config /etc/stellarindex.toml \
   -from 50000000 \
   -to   50100000 \
@@ -251,7 +251,7 @@ to the trades-hypertable primary-key dedupe).
 ### 5. Narrow the source set (optional)
 
 ```sh
-stellarindex-ops backfill \
+stellarindex-ops backfill -write \
   -config /etc/stellarindex.toml \
   -from 50000000 -to 50100000 \
   -source soroswap,phoenix
@@ -425,7 +425,7 @@ wall-clock on a single R1 box at `-parallel 4`.
    # Adapt to your range; each chunk is ~120k ledgers.
    for week_from in $(seq -w 50000000 120000 56000000); do
      week_to=$((week_from + 120000))
-     stellarindex-ops backfill \
+     stellarindex-ops backfill -write \
        -config /etc/stellarindex.toml \
        -from "$week_from" -to "$week_to" \
        -resume \

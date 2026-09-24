@@ -152,7 +152,7 @@ if [ -n "$GAPS" ]; then
   while IFS=$'\t' read -r gstart gend; do
     [ -z "$gstart" ] && continue
     echo "$(date -u) ch-live-catchup: heal [$gstart,$gend] ($((gend - gstart + 1)) ledgers)"
-    "$OPS" ch-backfill -config "$CFG" -from "$gstart" -to "$gend" -parallel "$PAR" || rc=1
+    "$OPS" ch-backfill -write -config "$CFG" -from "$gstart" -to "$gend" -parallel "$PAR" || rc=1
   done <<< "$GAPS"
 elif [ "$scan_rc" -eq 0 ]; then
   echo "$(date -u) ch-live-catchup: no holes in [$LIVE_ERA_FROM,$CH_MAX]"
@@ -162,7 +162,7 @@ fi
 if [ "$TIP" -gt "$CH_MAX" ]; then
   FROM=$((CH_MAX + 1))
   echo "$(date -u) ch-live-catchup: tip-extend [$FROM,$TIP] ($((TIP - CH_MAX)) ledgers)"
-  "$OPS" ch-backfill -config "$CFG" -from "$FROM" -to "$TIP" -parallel "$PAR" || rc=1
+  "$OPS" ch-backfill -write -config "$CFG" -from "$FROM" -to "$TIP" -parallel "$PAR" || rc=1
 else
   echo "$(date -u) ch-live-catchup: tip current (max=$CH_MAX tip=$TIP)"
 fi

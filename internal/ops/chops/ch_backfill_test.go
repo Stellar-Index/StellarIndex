@@ -4,10 +4,13 @@
 package chops
 
 import (
+	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
 // testBackfillConfig is the r1-shaped storage block: both buckets named,
@@ -150,5 +153,25 @@ func TestBackfillCoverage_FullWalkPasses(t *testing.T) {
 	}
 	if err := backfillCoverage(5, 5, 1, "galexie-archive", false); err != nil {
 		t.Fatalf("a single-ledger walk must pass, got: %v", err)
+	}
+}
+
+// TestCHBackfill_RefusesWithoutAStatedMode pins #868: ch-backfill used to
+// WRITE unless -dry-run was passed. A run naming neither -write nor -dry-run
+// must now refuse before loading config, so a caller written for the old
+// contract (ch-live-catchup.sh on a timer) fails loudly instead of silently
+// previewing and exiting 0.
+func TestCHBackfill_RefusesWithoutAStatedMode(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "absent.toml")
+	base := []string{"-config", cfgPath, "-from", "2", "-to", "3"}
+
+	if err := chBackfill(base); !errors.Is(err, opsutil.ErrWriteModeUnstated) {
+		t.Fatalf("no mode flag: err = %v, want opsutil.ErrWriteModeUnstated", err)
+	}
+	for _, mode := range []string{"-write", "-dry-run"} {
+		err := chBackfill(append(append([]string{}, base...), mode))
+		if err == nil || errors.Is(err, opsutil.ErrWriteModeUnstated) || !strings.Contains(err.Error(), "absent.toml") {
+			t.Errorf("%s: err = %v, want the mode accepted and the run to reach config load", mode, err)
+		}
 	}
 }

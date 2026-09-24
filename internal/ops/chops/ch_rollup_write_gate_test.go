@@ -15,15 +15,14 @@ import (
 	"time"
 )
 
-// rollupWriteGatedSubcommands are the two chops mutating rollups (F079,
-// narrowed): they declared no -write/-dry-run pair at all and wrote to
-// ClickHouse unconditionally on every invocation. Every other mutating
-// stellarindex-ops subcommand previews by default (opsutil.WriteGate);
-// ch-backfill and backfill are the two deliberate exceptions tracked
-// separately in write_gate_ch_backfill_evidence_test.go.
+// rollupWriteGatedSubcommands are the chops ClickHouse writers that carry
+// the shared opsutil.WriteGate. The two rollups (F079) declared no
+// -write/-dry-run pair and wrote unconditionally; ch-backfill (#868)
+// wrote unless -dry-run was passed.
 var rollupWriteGatedSubcommands = []string{
 	"ch-census-rollup",
 	"ch-holders-rollup",
+	"ch-backfill",
 }
 
 // TestRollupSubcommandsRegisterTheSharedWriteGate drives each subcommand

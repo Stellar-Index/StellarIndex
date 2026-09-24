@@ -101,7 +101,7 @@ curl -s http://indexer:9464/metrics | grep insert_errors_total
           -from <FIRST_LEDGER> -to <LAST_LEDGER> \
           -source <SOURCE_NAME> -dry-run
       # 3. Drop -dry-run to commit.
-      stellarindex-ops backfill -config /etc/stellarindex.toml \
+      stellarindex-ops backfill -write -config /etc/stellarindex.toml \
           -from <FIRST_LEDGER> -to <LAST_LEDGER> \
           -source <SOURCE_NAME> -resume
       ```
