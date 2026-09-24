@@ -38,7 +38,7 @@ func (s *Store) bespokeLending(ctx context.Context, source string, windowDays in
 	blk := &BespokeBlock{
 		Category: "lending",
 		Notes: []string{
-			"Per-asset net supplied / net borrowed are signed running sums of unsigned blend_positions.token_amount over the window — supply/supply_collateral add, withdraw/withdraw_collateral subtract for supplied; borrow adds, repay subtracts for borrowed. They are WINDOW deltas scoped to ONE asset each, not all-time TVL (the served tier is retention-scoped); flash_loan is excluded. Amounts are never summed across assets: tokens carry different decimals, so a cross-asset sum would be a meaningless number.",
+			"Per-asset net supplied / net borrowed are signed running sums of unsigned blend_positions.token_amount over the window — supply/supply_collateral add, withdraw/withdraw_collateral subtract for supplied; borrow and flash_loan add, repay subtracts for borrowed (a flash loan mints debt that stays open until a repay settles it). They are WINDOW deltas scoped to ONE asset each, not all-time TVL (the served tier is retention-scoped). Amounts are never summed across assets: tokens carry different decimals, so a cross-asset sum would be a meaningless number.",
 			"Asset is a Soroban token contract id, shown shortened; amounts are in the token's base units (per-asset decimals).",
 			"Pool-level figures are event/user COUNTS only. Real current-state TVL, utilisation and supply/borrow APYs need the Soroban pool-storage reader (reserve b_rate/d_rate + totals from contract storage); this block is event-derived and window-scoped until that ships.",
 		},
@@ -97,6 +97,17 @@ func (s *Store) bespokeLending(ctx context.Context, source string, windowDays in
 const (
 	lendingSupplySideKinds = `'supply','supply_collateral','withdraw','withdraw_collateral'`
 	lendingBorrowSideKinds = `'borrow','repay','flash_loan'`
+)
+
+// blendSupplyNetExpr / blendBorrowNetExpr sign blend_positions.token_amount
+// into each leg's running net; every blend fold sums through these. A
+// flash_loan mints d-tokens to its user (0045 body: tokens_out,
+// d_tokens_minted) that only a later repay burns, so it opens debt as borrow does.
+const (
+	blendSupplyNetExpr = `CASE WHEN event_kind IN ('supply','supply_collateral') THEN token_amount
+	                          WHEN event_kind IN ('withdraw','withdraw_collateral') THEN -token_amount END`
+	blendBorrowNetExpr = `CASE WHEN event_kind IN ('borrow','flash_loan') THEN token_amount
+	                          WHEN event_kind = 'repay' THEN -token_amount END`
 )
 
 // lendingBackstopInflowKinds / lendingBackstopOutflowKinds are the

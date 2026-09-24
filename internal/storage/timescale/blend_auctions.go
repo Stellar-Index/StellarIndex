@@ -390,14 +390,8 @@ func (s *Store) ListBlendPools(ctx context.Context) ([]BlendPoolSummary, error) 
         ),
         pos AS (
             SELECT pool,
-                   COALESCE(sum(CASE
-                     WHEN event_kind IN ('supply','supply_collateral')    THEN token_amount
-                     WHEN event_kind IN ('withdraw','withdraw_collateral') THEN -token_amount
-                     ELSE 0 END) FILTER (WHERE ledger_close_time > NOW() - INTERVAL '30 days'),0) AS net_supplied,
-                   COALESCE(sum(CASE
-                     WHEN event_kind = 'borrow' THEN token_amount
-                     WHEN event_kind = 'repay'  THEN -token_amount
-                     ELSE 0 END) FILTER (WHERE ledger_close_time > NOW() - INTERVAL '30 days'),0) AS net_borrowed,
+                   COALESCE(sum(` + blendSupplyNetExpr + `) FILTER (WHERE ledger_close_time > NOW() - INTERVAL '30 days'),0) AS net_supplied,
+                   COALESCE(sum(` + blendBorrowNetExpr + `) FILTER (WHERE ledger_close_time > NOW() - INTERVAL '30 days'),0) AS net_borrowed,
                    COUNT(DISTINCT user_address)
                      FILTER (WHERE ledger_close_time > NOW() - INTERVAL '30 days') AS pos_users30,
                    MAX(ledger_close_time) AS last_position

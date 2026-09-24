@@ -374,14 +374,5 @@ func TestListBlendPools_ValuesAndWindows(t *testing.T) {
 	// Net flow must be signed by direction: a withdraw subtracts from
 	// supplied and a repay subtracts from borrowed. Summing them all
 	// positive would render outflow as inflow.
-	for _, sub := range []string{
-		"WHEN event_kind IN ('supply','supply_collateral')    THEN token_amount",
-		"WHEN event_kind IN ('withdraw','withdraw_collateral') THEN -token_amount",
-		"WHEN event_kind = 'borrow' THEN token_amount",
-		"WHEN event_kind = 'repay'  THEN -token_amount",
-	} {
-		if !strings.Contains(stmt.sql, sub) {
-			t.Errorf("ListBlendPools net-flow sign convention missing %q:\n%s", sub, stmt.sql)
-		}
-	}
+	assertBlendFold(t, "ListBlendPools", stmt.sql, blendBothLegSigns)
 }

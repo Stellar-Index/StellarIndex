@@ -75,12 +75,10 @@ func queryFold[T any](ctx context.Context, db *sql.DB, label, query string, args
 // (withdraw/withdraw_collateral)" — the UNDERLYING asset amount, NOT
 // `b_or_d_amount`, the b-token amount) signed +supply/+supply_collateral,
 // -withdraw/-withdraw_collateral. BorrowNet sums the same `token_amount`
-// column signed +borrow, -repay. `flash_loan` is EXCLUDED from both:
-// its `token_amount` is `tokens_out` (a same-tx, fully-repaid draw per
-// Blend's flash-loan contract invariant — funds must be returned within
-// the same transaction or it reverts), not a lasting position; including
-// it would misrepresent a transient intra-tx draw as a standing
-// borrow-side balance.
+// column signed +borrow/+flash_loan, -repay: a flash_loan mints
+// d-tokens to the user (`tokens_out`, `d_tokens_minted`) that stay owed
+// until a `repay` burns them, so excluding it would net that repay to a
+// negative debt.
 //
 // Because these are summed UNDERLYING amounts observed at each
 // historical event, NOT a live read of the pool's current b/d-token
@@ -102,11 +100,9 @@ type BlendPositionFold struct {
 }
 
 // BlendPositionsByUser folds blend_positions into one row per (pool,
-// asset) the user has ever touched via supply/withdraw/
-// supply_collateral/withdraw_collateral/borrow/repay, computing an
-// independent net for the supply side and the borrow side (see
-// BlendPositionFold's doc comment for exactly which column/sign
-// convention each uses and why flash_loan is excluded).
+// asset) the user has ever touched via any blend_positions event,
+// computing an independent net for the supply side and the borrow side
+// (see BlendPositionFold's doc comment for the column/sign convention).
 //
 // Sargable: `WHERE user_address = $1` is served by
 // blend_positions_user_ts_idx (migration 0107); the GROUP BY then
@@ -114,19 +110,16 @@ type BlendPositionFold struct {
 func (s *Store) BlendPositionsByUser(ctx context.Context, address string) ([]BlendPositionFold, error) {
 	const q = `
 		SELECT pool, asset,
-		       (COUNT(*) FILTER (WHERE event_kind IN ('supply','withdraw','supply_collateral','withdraw_collateral'))) > 0,
-		       COALESCE(SUM(CASE WHEN event_kind IN ('supply','supply_collateral') THEN token_amount
-		                         WHEN event_kind IN ('withdraw','withdraw_collateral') THEN -token_amount END),0)::text,
-		       MAX(ledger_close_time) FILTER (WHERE event_kind IN ('supply','withdraw','supply_collateral','withdraw_collateral')),
-		       MAX(ledger) FILTER (WHERE event_kind IN ('supply','withdraw','supply_collateral','withdraw_collateral')),
-		       (COUNT(*) FILTER (WHERE event_kind IN ('borrow','repay'))) > 0,
-		       COALESCE(SUM(CASE WHEN event_kind = 'borrow' THEN token_amount
-		                         WHEN event_kind = 'repay' THEN -token_amount END),0)::text,
-		       MAX(ledger_close_time) FILTER (WHERE event_kind IN ('borrow','repay')),
-		       MAX(ledger) FILTER (WHERE event_kind IN ('borrow','repay'))
+		       (COUNT(*) FILTER (WHERE event_kind IN (` + lendingSupplySideKinds + `))) > 0,
+		       COALESCE(SUM(` + blendSupplyNetExpr + `),0)::text,
+		       MAX(ledger_close_time) FILTER (WHERE event_kind IN (` + lendingSupplySideKinds + `)),
+		       MAX(ledger) FILTER (WHERE event_kind IN (` + lendingSupplySideKinds + `)),
+		       (COUNT(*) FILTER (WHERE event_kind IN (` + lendingBorrowSideKinds + `))) > 0,
+		       COALESCE(SUM(` + blendBorrowNetExpr + `),0)::text,
+		       MAX(ledger_close_time) FILTER (WHERE event_kind IN (` + lendingBorrowSideKinds + `)),
+		       MAX(ledger) FILTER (WHERE event_kind IN (` + lendingBorrowSideKinds + `))
 		  FROM blend_positions
 		 WHERE user_address = $1
-		   AND event_kind IN ('supply','withdraw','supply_collateral','withdraw_collateral','borrow','repay')
 		 GROUP BY pool, asset
 		 LIMIT $2`
 	return queryFold(ctx, s.db, "BlendPositionsByUser", q, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (BlendPositionFold, error) {
