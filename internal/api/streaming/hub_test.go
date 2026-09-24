@@ -1,15 +1,118 @@
 package streaming_test
 
 import (
+	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
+
+// TestHub_SlowSubscriberDropIsMetered — a slow-consumer disconnect is
+// counted exactly once, even for a subscriber on two topics, and an
+// ordinary client cancel is not counted at all.
+func TestHub_SlowSubscriberDropIsMetered(t *testing.T) {
+	hub := streaming.NewHub(0)
+	before := testutil.ToFloat64(obs.APIStreamSubscriberDropsTotal)
+
+	slow, cancelSlow := hub.Subscribe([]string{"a", "b"}, "")
+	defer cancelSlow()
+	_, cancelQuiet := hub.Subscribe([]string{"c"}, "")
+	cancelQuiet()
+
+	for i := 0; i < 64; i++ {
+		hub.Publish("a", "x", []byte("payload"))
+		hub.Publish("b", "x", []byte("payload"))
+	}
+	for range slow {
+	}
+
+	if got := testutil.ToFloat64(obs.APIStreamSubscriberDropsTotal) - before; got != 1 {
+		t.Fatalf("stellarindex_api_stream_subscriber_drops_total delta = %v, want 1 "+
+			"(one slow subscriber, dropped once)", got)
+	}
+}
+
+// TestHub_TopicMetricsTrackReaping — the topic gauge and reaped counter
+// are exported, not only readable through the Hub's accessors.
+func TestHub_TopicMetricsTrackReaping(t *testing.T) {
+	hub := streaming.NewHub(0)
+	before := testutil.ToFloat64(obs.APIStreamHubTopicsReapedTotal)
+
+	churnTopics(hub, 300)
+
+	if got := testutil.ToFloat64(obs.APIStreamHubTopicsReapedTotal) - before; got != float64(hub.TopicsReaped()) || got == 0 {
+		t.Fatalf("reaped counter delta = %v, want TopicsReaped() = %d (> 0)", got, hub.TopicsReaped())
+	}
+	if got := testutil.ToFloat64(obs.APIStreamHubTopics); got != float64(hub.TopicCount()) {
+		t.Fatalf("topics gauge = %v, want TopicCount() = %d", got, hub.TopicCount())
+	}
+}
+
+// TestStream_ActiveAndRejectedStreamsAreMetered — the concurrency caps'
+// state is exported: an open stream holds the active gauge up, a
+// per-IP refusal is counted under its reason, and closing the stream
+// releases the gauge.
+func TestStream_ActiveAndRejectedStreamsAreMetered(t *testing.T) {
+	streaming.SetMaxStreamsPerIP(1)
+	defer streaming.SetMaxStreamsPerIP(0)
+	streaming.SetStreamClientIPResolver(func(*http.Request) string { return "metered-client" })
+	defer streaming.SetStreamClientIPResolver(nil)
+
+	hub := streaming.NewHub(0)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		streaming.Stream(w, r, hub, []string{"topic"}, streaming.StreamOptions{HeartbeatInterval: 30 * time.Second})
+	}))
+	defer srv.Close()
+
+	activeBefore := testutil.ToFloat64(obs.APISSEStreamsActive)
+	rejected := obs.APISSEStreamsRejectedTotal.WithLabelValues("per_ip_cap")
+	rejectedBefore := testutil.ToFloat64(rejected)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	held, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("open first stream: %v", err)
+	}
+	defer held.Body.Close()
+	if got := testutil.ToFloat64(obs.APISSEStreamsActive) - activeBefore; got != 1 {
+		t.Fatalf("active streams gauge delta with one open stream = %v, want 1", got)
+	}
+
+	resp, err := srv.Client().Get(srv.URL)
+	if err != nil {
+		t.Fatalf("open over-cap stream: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("over-cap status = %d, want 503", resp.StatusCode)
+	}
+	if got := testutil.ToFloat64(rejected) - rejectedBefore; got != 1 {
+		t.Fatalf("rejected{per_ip_cap} delta = %v, want 1", got)
+	}
+
+	cancel()
+	held.Body.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for testutil.ToFloat64(obs.APISSEStreamsActive) != activeBefore {
+		if time.Now().After(deadline) {
+			t.Fatalf("active streams gauge = %v after close, want %v",
+				testutil.ToFloat64(obs.APISSEStreamsActive), activeBefore)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 // drainNonblocking returns events from ch until either it has
 // accumulated `want` items or `timeout` elapses. Used to assert

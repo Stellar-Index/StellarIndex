@@ -624,9 +624,9 @@ func (r *tipProducerRegistry) mintedFor(caller string) int {
 }
 
 // TipProducersRunning reports the number of live shared tip producers.
-// Exported for the operator diagnostics surface — a producer count that
-// climbs while connections do not is the signature of the abort-loop
-// flood the ceiling exists to stop.
+// Operators read the same quantity as stellarindex_api_tip_producers — a
+// producer count that climbs while connections do not is the signature
+// of the abort-loop flood the ceiling exists to stop.
 func (s *Server) TipProducersRunning() int { return s.tipProducers.running() }
 
 // TipProducersRefused reports the cumulative count of tip producers
@@ -717,20 +717,7 @@ func (s *Server) runSharedTipProducer(ctx context.Context, key tipProducerKey, a
 	defer s.recoverStreamProducer("price_tip_shared")
 	var gen streaming.Generator
 	emit := func() {
-		// This budget covers the compute; the event's divergence lookup
-		// takes its own shorter one inside it, like the per-connection
-		// producer's tick.
-		tickCtx, cancel := context.WithTimeout(ctx, tipStreamTickTimeout)
-		defer cancel()
-		snap, sources, err := s.computeTip(tickCtx, asset, quote, window)
-		if err != nil {
-			if ctx.Err() == nil {
-				s.logger.Warn("shared tip producer compute failed — skipping emit",
-					"err", err, "asset", key.asset, "quote", key.quote)
-			}
-			return
-		}
-		if ev, ok := s.tipStreamEvent(tickCtx, &gen, asset, quote, snap, sources); ok {
+		if ev, ok := s.tipTickEvent(ctx, &gen, asset, quote, window); ok {
 			s.hub.Publish(key.topic(), ev.Type, ev.Data)
 		}
 	}

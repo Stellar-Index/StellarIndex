@@ -5,6 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // DefaultBufferSize is the per-topic ring-buffer capacity used when
@@ -313,8 +315,8 @@ func (h *Hub) Publish(topic, eventType string, data []byte) string {
 		// the send here is deliberately off the topic lock, so a
 		// cancel()/drop on another goroutine (or another topic, for a
 		// multi-topic sub) could otherwise close sub.ch mid-send.
-		if full := s.trySend(ev); full {
-			h.dropSubscriber(topic, s)
+		if full := s.trySend(ev); full && h.dropSubscriber(topic, s) {
+			obs.APIStreamSubscriberDropsTotal.Inc()
 		}
 	}
 	return ev.ID
@@ -389,13 +391,14 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 
 // dropSubscriber removes sub from the named topic's subscriber set
 // and closes its channel exactly once. Called when a subscription
-// is cancelled or its queue fills up.
-func (h *Hub) dropSubscriber(topic string, sub *subscription) {
+// is cancelled or its queue fills up. Reports whether THIS call closed
+// the subscription, so a multi-topic subscriber is counted once.
+func (h *Hub) dropSubscriber(topic string, sub *subscription) bool {
 	h.mu.RLock()
 	t, ok := h.topics[topic]
 	h.mu.RUnlock()
 	if !ok {
-		return
+		return false
 	}
 	t.mu.Lock()
 	_, present := t.subs[sub]
@@ -412,9 +415,7 @@ func (h *Hub) dropSubscriber(topic string, sub *subscription) {
 	t.mu.Unlock()
 	// Close outside the topic lock; sub.close() is idempotent and
 	// mutually exclusive with trySend via the subscription's own mutex.
-	if present {
-		sub.close()
-	}
+	return present && sub.close()
 }
 
 // withTopic runs fn under the named topic's lock, creating the topic
@@ -472,6 +473,7 @@ func (h *Hub) getOrCreateTopic(name string) *topicState {
 		lastUsed: now,
 	}
 	h.topics[name] = t
+	obs.APIStreamHubTopics.Set(float64(len(h.topics)))
 	return t
 }
 
@@ -530,8 +532,7 @@ func (h *Hub) reapLocked(now time.Time) {
 		t.mu.Unlock()
 		switch {
 		case expired:
-			delete(h.topics, name)
-			h.reaped.Add(1)
+			h.evictLocked(name)
 		case unused:
 			idle = append(idle, candidate{name: name, lastUsed: lastUsed})
 		}
@@ -560,10 +561,17 @@ func (h *Hub) reapLocked(now time.Time) {
 		}
 		t.mu.Unlock()
 		if unused {
-			delete(h.topics, c.name)
-			h.reaped.Add(1)
+			h.evictLocked(c.name)
 		}
 	}
+}
+
+// evictLocked removes a reaped topic and counts it. Caller holds h.mu
+// for writing.
+func (h *Hub) evictLocked(name string) {
+	delete(h.topics, name)
+	h.reaped.Add(1)
+	obs.APIStreamHubTopicsReapedTotal.Inc()
 }
 
 // subscription is one active stream's per-Hub state.
@@ -620,13 +628,16 @@ func (s *subscription) sendReplay(ev Event) bool {
 	}
 }
 
-// close closes the subscriber channel exactly once. Idempotent and
-// mutually exclusive with trySend.
-func (s *subscription) close() {
+// close closes the subscriber channel exactly once, reporting whether
+// this call was the one that closed it. Idempotent and mutually
+// exclusive with trySend.
+func (s *subscription) close() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.closed {
-		s.closed = true
-		close(s.ch)
+	if s.closed {
+		return false
 	}
+	s.closed = true
+	close(s.ch)
+	return true
 }

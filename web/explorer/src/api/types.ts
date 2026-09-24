@@ -690,6 +690,16 @@ export interface paths {
          *     - Pre-flight 404 when the pair has no observations: SSE
          *       can't change status mid-stream, so emptiness is detected
          *       before the response body switches to `text/event-stream`.
+         *       A pair already withheld at connect gets the same
+         *       `price-withheld` 404 as `/v1/price/tip`.
+         *     - A pair withheld AFTER the stream opened emits a
+         *       `price_withheld` event on each tick in place of
+         *       `tip_update`, with data
+         *       `{"asset_id","quote","reason","as_of"}`; `reason` is the
+         *       vocabulary of the `price-withheld` 404 (`substance`,
+         *       `scam_issuer`, …). `tip_update` resumes when the pair is
+         *       served again. Keepalives alone therefore mean no tick has
+         *       completed, never that the price is being withheld.
          *     - Heartbeats every 15 s as comment lines (`:keepalive`) so
          *       intermediate proxies don't idle out the connection.
          *     - Resume after disconnect by setting `Last-Event-ID` on the
@@ -12872,7 +12882,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE stream of tip_update events. */
+            /** @description SSE stream of tip_update (and price_withheld) events. */
             200: {
                 headers: {
                     [name: string]: unknown;
