@@ -10,6 +10,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
@@ -89,6 +90,7 @@ const schemaProbeStaleLeases = 4
 // sync.Once was the wrong primitive here, and for which verdicts latch
 // for the process lifetime and which are only leased.
 type schemaProbe struct {
+	name    string // the `probe` metric label; assigned in [newExplorerReader]
 	mu      sync.Mutex
 	settled bool      // an authoritative answer was received
 	present bool      // meaningful only when settled
@@ -483,13 +485,34 @@ func NewExplorerReaderAuth(ctx context.Context, addr, username, password string)
 		_ = conn.Close()
 		return nil, fmt.Errorf("clickhouse: ping explorer reader %s: %w", addr, err)
 	}
+	return newExplorerReader(conn), nil
+}
+
+// newExplorerReader wires a reader over an open connection. Every
+// schemaProbe is named here: the name is its metric label, and
+// TestNewExplorerReader_EverySchemaProbeIsNamed fails on a probe left out.
+func newExplorerReader(conn driver.Conn) *ExplorerReader {
 	return &ExplorerReader{
-		conn:        conn,
-		wealthCache: newAccountsWealthCache(),
-		stateCache:  newAccountStateCache(),
-		stateFlight: newPerKeyFlight(),
-		refreshGate: NewRefreshGate(DefaultDetachedRefreshLimit),
-		disasmCache: newWasmDisasmCache(),
+		conn:                     conn,
+		txIndexProbe:             schemaProbe{name: "tx_hash_index"},
+		contractLedgersProbe:     schemaProbe{name: "contract_active_ledgers"},
+		instanceChangesProbe:     schemaProbe{name: "contract_instance_changes"},
+		instanceKeyProbe:         schemaProbe{name: "contract_instance_changes_tx_key"},
+		censusProbe:              schemaProbe{name: "contracts_census_daily"},
+		accountsStatsProbe:       schemaProbe{name: "accounts_stats"},
+		accountCreatorsProbe:     schemaProbe{name: "account_creators_rollup"},
+		accountSponsorsProbe:     schemaProbe{name: "account_sponsors_rollup"},
+		accountCreatorEdgesProbe: schemaProbe{name: "account_creator_edges"},
+		accountSponsorEdgesProbe: schemaProbe{name: "account_sponsor_edges"},
+		holdersRollupProbe:       schemaProbe{name: "asset_holders_rollup"},
+		opsBySourceProbe:         schemaProbe{name: "ops_by_source"},
+		accountActivityProbe:     schemaProbe{name: "account_activity"},
+		lecVersionProbe:          schemaProbe{name: "ledger_entries_current_version"},
+		wealthCache:              newAccountsWealthCache(),
+		stateCache:               newAccountStateCache(),
+		stateFlight:              newPerKeyFlight(),
+		refreshGate:              NewRefreshGate(DefaultDetachedRefreshLimit),
+		disasmCache:              newWasmDisasmCache(),
 		ttlVerdicts: newTTLLivenessCache(func(ctx context.Context, keys []string) (map[string]TTLLiveness, error) {
 			// Verdicts are judged at the lake's tip AS OF compute time —
 			// "current" means current relative to what the lake holds now.
@@ -499,7 +522,7 @@ func NewExplorerReaderAuth(ctx context.Context, addr, username, password string)
 			}
 			return ClassifyTTLLiveness(ctx, conn, keys, asOf)
 		}),
-	}, nil
+	}
 }
 
 // Close releases the connection pool.
@@ -2017,7 +2040,24 @@ func (r *ExplorerReader) probeSchema(ctx context.Context, p *schemaProbe, query 
 		}
 		_ = rows.Close()
 	}
-	return p.record(err, empty, requireRows)
+	verdict := p.record(err, empty, requireRows)
+	p.observe(err, verdict)
+	return verdict
+}
+
+// observe exports one probe outcome. Only an ANSWER moves the gauge: a
+// non-answer says nothing about the object, so it is counted instead and
+// the last answer stands.
+func (p *schemaProbe) observe(err error, verdict bool) {
+	if err != nil && !isSchemaAbsent(err) {
+		obs.CHSchemaProbeUnansweredTotal.WithLabelValues(p.name).Inc()
+		return
+	}
+	present := 0.0
+	if verdict {
+		present = 1
+	}
+	obs.CHSchemaProbePresent.WithLabelValues(p.name).Set(present)
 }
 
 // txByHashIndexed is the two-step fast path: hash → ledger_seq via the
