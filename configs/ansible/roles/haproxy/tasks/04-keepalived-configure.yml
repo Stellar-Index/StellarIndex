@@ -1,4 +1,33 @@
 ---
+# SL16: chk_haproxy used to be a bare `pgrep haproxy`, which stays
+# green for a wedged/hung process that is still resident but not
+# actually routing — this host would then keep MASTER (and the VIP)
+# while traffic blackholes. Query the stats CSV instead and require
+# at least one UP server in the real backend pool.
+- name: install chk_haproxy.sh (backend-pool reachability probe)
+  copy:
+    dest: /usr/local/bin/chk_haproxy.sh
+    owner: root
+    group: root
+    mode: "0750"
+    content: |
+      #!/bin/sh
+      # Managed by ansible (haproxy role). Don't edit.
+      #
+      # keepalived vrrp_script for chk_haproxy. A process-existence
+      # check (pgrep) misses a haproxy that is running but wedged:
+      # this instead confirms the stats endpoint answers AND that
+      # the api_pool backend has at least one UP server.
+      set -eu
+
+      csv=$(/usr/bin/curl -fsS --max-time 1 "http://{{ haproxy_stats_listen }}/;csv") || exit 1
+
+      echo "$csv" | awk -F, '
+          $1 == "api_pool" && $2 != "BACKEND" && $2 != "FRONTEND" && $18 == "UP" { found=1 }
+          END { exit(found ? 0 : 1) }
+      '
+  notify: "keepalived config changed"
+
 - name: render /etc/keepalived/keepalived.conf
   template:
     src: keepalived.conf.j2
