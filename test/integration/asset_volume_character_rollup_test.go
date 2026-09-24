@@ -10,6 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stellar/go-stellar-sdk/strkey"
+	"github.com/stellar/go-stellar-sdk/xdr"
+
 	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -43,6 +46,19 @@ func mustClassicID(t *testing.T, code, issuer string) string {
 		t.Fatalf("NewClassicAsset(%s,%s): %v", code, issuer, err)
 	}
 	return a.String()
+}
+
+// charAccount is a checksum-valid G-strkey for fixture account n: the
+// account-structure signals only treat a G-strkey maker as an account.
+func charAccount(n byte) string {
+	raw := [32]byte{0: 0xA5, 31: n}
+	return strkey.MustEncode(strkey.VersionByteAccountID, raw[:])
+}
+
+// charPoolMaker is trades.maker exactly as the sdex decoder writes it for a
+// classic liquidity-pool fill: the hex pool id, not an account.
+func charPoolMaker(n byte) string {
+	return fmt.Sprintf("%x", xdr.PoolId([32]byte{0: 0x5A, 31: n}))
 }
 
 // insertCharTrade raw-inserts one priced trade with an explicit
@@ -101,28 +117,28 @@ func TestAssetVolumeCharacterRollup_OracleMatchesPerAsset(t *testing.T) {
 	next := func() int { nonce++; return nonce }
 
 	// (1) Scam-AUD volume-painting wash: 9/10 of the AUD/USD volume is the
-	// single (acct-01, issuer) pair with the issuer as taker; market-styled
+	// single (account 1, issuer) pair with the issuer as taker; market-styled
 	// (fiat:USD counterpart) → concentrated.
 	for i := 0; i < 9; i++ {
-		insertCharTrade(t, ctx, db, next(), ts, audID, "fiat:USD", "acct-01", audIssuer, 1000)
+		insertCharTrade(t, ctx, db, next(), ts, audID, "fiat:USD", charAccount(1), audIssuer, 1000)
 	}
-	insertCharTrade(t, ctx, db, next(), ts, audID, "fiat:USD", "acct-02", "acct-03", 100)
+	insertCharTrade(t, ctx, db, next(), ts, audID, "fiat:USD", charAccount(2), charAccount(3), 100)
 
 	// (2) AUDD wrap/redeem corridor: issuer-side (maker == issuer) on a
 	// NON-market-styled sibling pair (AUDR) → operational.
 	for i := 0; i < 5; i++ {
-		insertCharTrade(t, ctx, db, next(), ts, auddID, audrID, auddIssuer, "acct-04", 2000)
+		insertCharTrade(t, ctx, db, next(), ts, auddID, audrID, auddIssuer, charAccount(4), 2000)
 	}
 
 	// (3) Healthy market asset: six distinct account pairs on fiat:USD, no
 	// pair dominant, issuer uninvolved → market.
 	marketPairs := [][2]string{
-		{"acct-05", "acct-06"},
-		{"acct-07", "acct-08"},
-		{"acct-09", "acct-10"},
-		{"acct-11", "acct-12"},
-		{"acct-13", "acct-14"},
-		{"acct-15", "acct-16"},
+		{charAccount(5), charAccount(6)},
+		{charAccount(7), charAccount(8)},
+		{charAccount(9), charAccount(10)},
+		{charAccount(11), charAccount(12)},
+		{charAccount(13), charAccount(14)},
+		{charAccount(15), charAccount(16)},
 	}
 	for _, p := range marketPairs {
 		insertCharTrade(t, ctx, db, next(), ts, goodID, "fiat:USD", p[0], p[1], 1000)
@@ -227,6 +243,68 @@ func TestAssetVolumeCharacterRollup_OracleMatchesPerAsset(t *testing.T) {
 	}
 	if stale != 0 {
 		t.Errorf("stale sentinel survived the prune")
+	}
+}
+
+// TestAssetVolumeCharacter_ClassicPoolMakerIsNotAnAccount: a classic
+// liquidity-pool fill carries the hex pool id in trades.maker. One account
+// round-tripping an asset through two classic pools must read as ONE
+// concentrated actor, and neither pool may count as a distinct maker — in
+// the per-asset read and the rollup alike. Unfixed, the two (pool, taker)
+// pairs split the volume into 0.495 halves (character market) and the two
+// pools inflate distinct_makers to 3.
+func TestAssetVolumeCharacter_ClassicPoolMakerIsNotAnAccount(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	c.InstallAliasRegistry(nil)
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+
+	poolxID := mustClassicID(t, "POOLX", tieIssuerA)
+	ts := time.Now().UTC().Add(-1 * time.Hour).Truncate(time.Second)
+	nonce := 1000
+	next := func() int { nonce++; return nonce }
+
+	trader := charAccount(40)
+	for i := 0; i < 10; i++ {
+		insertCharTrade(t, ctx, db, next(), ts, poolxID, "native", charPoolMaker(byte(1+i%2)), trader, 1000)
+	}
+	insertCharTrade(t, ctx, db, next(), ts, poolxID, "native", charAccount(41), charAccount(42), 100)
+
+	if err := store.RefreshAssetVolumeCharacter(ctx); err != nil {
+		t.Fatalf("RefreshAssetVolumeCharacter: %v", err)
+	}
+	per, err := store.AssetVolumeCharacter(ctx, poolxID)
+	if err != nil {
+		t.Fatalf("AssetVolumeCharacter: %v", err)
+	}
+	roll, found, err := store.AssetVolumeCharacterRollup(ctx, poolxID)
+	if err != nil || !found {
+		t.Fatalf("AssetVolumeCharacterRollup: found=%v err=%v", found, err)
+	}
+	for name, got := range map[string]timescale.AssetVolumeCharacter{"per-asset": per, "rollup": roll} {
+		if got.DistinctMakers != 1 {
+			t.Errorf("%s distinct_makers = %d, want 1 (the pools are not accounts)", name, got.DistinctMakers)
+		}
+		if got.DistinctTakers != 2 {
+			t.Errorf("%s distinct_takers = %d, want 2", name, got.DistinctTakers)
+		}
+		if got.TopAccountPairVolShare != 0.9901 {
+			t.Errorf("%s top_account_pair_vol_share = %v, want 0.9901 (10000/10100 on the lone taker)", name, got.TopAccountPairVolShare)
+		}
+		if got.SelfCrossShare != 0 {
+			t.Errorf("%s self_cross_share = %v, want 0", name, got.SelfCrossShare)
+		}
+		if got.Character != timescale.VolumeCharacterConcentrated {
+			t.Errorf("%s character = %q, want %q", name, got.Character, timescale.VolumeCharacterConcentrated)
+		}
 	}
 }
 

@@ -1,8 +1,15 @@
 package timescale
 
 import (
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stellar/go-stellar-sdk/strkey"
+	"github.com/stellar/go-stellar-sdk/xdr"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // TestDeriveVolumeCharacter_Census pins the §2 classifier against the
@@ -122,7 +129,7 @@ func TestAssetVolumeCharacterSQL_Shape(t *testing.T) {
 		// Alias-complete, matched on BOTH sides.
 		"base_asset = ANY($1) OR quote_asset = ANY($1)",
 		// UNORDERED account pair so a round-trip folds to one pair.
-		"GROUP BY LEAST(maker, taker), GREATEST(maker, taker)",
+		"GROUP BY LEAST(COALESCE(maker, taker), taker), GREATEST(COALESCE(maker, taker), taker)",
 		// Self-cross share.
 		"maker IS NOT NULL AND maker = taker",
 		// Issuer-side predicate, no-op when the issuer param is empty.
@@ -144,5 +151,59 @@ func TestAssetVolumeCharacterSQL_Shape(t *testing.T) {
 func TestVolumeCharacterWindow(t *testing.T) {
 	if d := int(volumeCharacterWindow.Hours()) / 24; d != 14 {
 		t.Errorf("volumeCharacterWindow = %d days, want 14", d)
+	}
+}
+
+// TestVolumeCharacterSQL_PoolMakerIsNotAnAccount: a classic liquidity-pool
+// fill stores the hex pool id in trades.maker (sdex decode). Both the
+// per-asset query and the rollup must project maker through an account
+// discriminator that keeps a G-strkey and drops the pool id, and key a pool
+// fill on its lone taker rather than on the raw (pool, taker) pair, or the
+// pool counts as a distinct market maker and a round-trip through pools
+// splits into per-pool halves.
+func TestVolumeCharacterSQL_PoolMakerIsNotAnAccount(t *testing.T) {
+	var raw [32]byte
+	for i := range raw {
+		raw[i] = byte(i + 1)
+	}
+	account, err := strkey.Encode(strkey.VersionByteAccountID, raw[:])
+	if err != nil || !canonical.IsAccountID(account) {
+		t.Fatalf("fixture account %q invalid: %v", account, err)
+	}
+	contract, err := strkey.Encode(strkey.VersionByteContract, raw[:])
+	if err != nil {
+		t.Fatalf("fixture contract: %v", err)
+	}
+	// The exact form the sdex decoder writes for a pool fill's Maker.
+	poolMaker := fmt.Sprintf("%x", xdr.PoolId(raw))
+
+	accountPattern := regexp.MustCompile(`maker ~ '([^']+)' THEN maker END AS maker`)
+	for name, q := range map[string]string{
+		"assetVolumeCharacterSQL":               assetVolumeCharacterSQL,
+		"assetVolumeCharacterRollupSQLTemplate": assetVolumeCharacterRollupSQLTemplate,
+	} {
+		m := accountPattern.FindStringSubmatch(q)
+		if m == nil {
+			t.Errorf("%s: maker is not projected through an account discriminator", name)
+			continue
+		}
+		isAccount := regexp.MustCompile(m[1])
+		if !isAccount.MatchString(account) {
+			t.Errorf("%s: account pattern %q rejects the account maker %s", name, m[1], account)
+		}
+		for _, notAccount := range []string{poolMaker, contract, ""} {
+			if isAccount.MatchString(notAccount) {
+				t.Errorf("%s: account pattern %q accepts non-account maker %q", name, m[1], notAccount)
+			}
+		}
+		if !strings.Contains(q, "(maker IS NOT NULL AND maker !~ '"+m[1]+"') AS pool_fill") {
+			t.Errorf("%s: pool fills are not flagged with the same pattern", name)
+		}
+		if !strings.Contains(q, "LEAST(COALESCE(maker, taker), taker), GREATEST(COALESCE(maker, taker), taker)") {
+			t.Errorf("%s: a pool fill is not keyed on its lone taker", name)
+		}
+		if strings.Contains(q, "LEAST(maker, taker)") {
+			t.Errorf("%s: still pairs the raw maker, so a pool reads as an account", name)
+		}
 	}
 }
