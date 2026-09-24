@@ -105,7 +105,7 @@ changed_watched() {
 # value: non-empty, and not a bare `none` (a "none" must give its reason).
 # Both greps read from here-strings, not a pipeline, so `grep -q`
 # closing its input early can never surface as a SIGPIPE'd writer under
-# `set -o pipefail` — the trap lint-baseline-growth.sh (PR #38) documents.
+# `set -o pipefail` — the trap lint-baseline-growth.sh (PR #39) documents.
 has_replay_plan() {
   local body="$1" trailers
   trailers="$(grep -iE '^Replay-Plan:[[:space:]]*\S' <<<"$body" || true)"
@@ -178,6 +178,9 @@ log_body="$(git log --format=%B "${BASE_SHA}..HEAD")"
 if has_replay_plan "$log_body"; then
   echo "lint-replay-plan: decoder / asset allow-list change declared its replay plan:"
   declared="$(grep -iE '^Replay-Plan:' <<<"$log_body")"
+  # shellcheck disable=SC2001  # per-LINE indent of a multi-line variable;
+  # ${var//…} has no line anchor, so the suggested parameter expansion
+  # cannot express this (see lint-docs.sh for the same annotation).
   sed 's/^/  /' <<<"$declared"
   warn_wrong_replay_command "$declared"
   exit 0
