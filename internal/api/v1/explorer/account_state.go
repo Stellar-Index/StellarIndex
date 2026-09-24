@@ -293,6 +293,9 @@ type AccountStateView struct {
 	// CoverageNote declares the holding domains this view serves, so a
 	// missing claimable or contract balance is not read as a zero one.
 	CoverageNote string `json:"coverage_note,omitempty"`
+	// DirectoryUnavailable is true when the directory read failed, so an
+	// absent `directory` means "not checked", not "not listed".
+	DirectoryUnavailable bool `json:"directory_unavailable,omitempty"`
 }
 
 // accountStateCoverageNote is the holding scope of a live account's view.
@@ -392,7 +395,9 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 	// Directory labels apply regardless of Exists — a listed address
 	// whose AccountEntry predates the captured window (or was merged
 	// away) is exactly where a label helps most.
-	out.Directory = h.directoryFor(ctx, g)
+	var dirOK bool
+	out.Directory, dirOK = h.directoryFor(ctx, g)
+	out.DirectoryUnavailable = !dirOK
 	if st.Exists {
 		fillAccountStateView(&out, st)
 	}

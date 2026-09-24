@@ -10558,6 +10558,7 @@ paths:
                       events: { type: array, items: { $ref: "#/components/schemas/ContractEvent" } }
                       next_cursor: { type: string, description: Opaque cursor for the next (older) page; absent on the last page. }
                       directory: { $ref: "#/components/schemas/DirectoryInfo" }
+                      directory_unavailable: { type: boolean, description: "True when the directory read failed, so an absent `directory` means the contract was NOT checked (a malicious/unsafe label may exist), not that it is unlisted. Omitted on a successful read." }
                       activity:
                         type: object
                         description: Liveness card — lifetime bounds + a 30-day daily active-ledger series. Absent when the activity index isn't provisioned.
@@ -11482,6 +11483,7 @@ paths:
                       as_of_ledger: { type: integer, format: int64, description: "Lake watermark this read is fresh to (ADR-0041) — the highest captured ledger at serve time, NOT the account's last_modified_ledger. Omitted when no watermark reader is wired. Pairs with flags.stale." }
                       directory: { $ref: "#/components/schemas/DirectoryInfo" }
                       coverage_note: { type: string, description: "The holding domains this view serves. Claimable balances and Soroban contract (including SAC) balances are not included, so their absence is not a zero balance. Omitted when exists is false." }
+                      directory_unavailable: { type: boolean, description: "True when the directory read failed, so an absent `directory` means the address was NOT checked (a malicious/unsafe label may exist), not that it is unlisted. Omitted on a successful read." }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 

@@ -27,10 +27,10 @@ type AssetCoverageSignals struct {
 	// discounts wash — see TopAccountPairVolShare).
 	Volume7dUSD float64
 	Trades7d    int64
-	// Volume24hUSD is the trailing-24h priced volume — the substance-gate
-	// serve-floor input. A recent market below the floor is one the gate
-	// withholds fail-closed, so its pricelessness is EXPECTED (a recorded
-	// withheld verdict), not a coverage gap.
+	// Volume24hUSD is the trailing-24h priced volume, logged beside a
+	// withheld verdict. It is not that verdict: the substance gate
+	// decides on three floors over the alias union, so the tripwire asks
+	// the gate itself.
 	Volume24hUSD float64
 	// TopAccountPairVolShare is the fraction of the asset's 7d priced
 	// volume that trades in the single busiest UNORDERED counterparty

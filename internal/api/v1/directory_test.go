@@ -145,6 +145,9 @@ func TestAccountState_CarriesDirectoryLabel(t *testing.T) {
 	if got := env.Data.Directory.Tags; len(got) != 2 || got[0] != "sdf" {
 		t.Errorf("tags = %v, want [sdf custodian]", got)
 	}
+	if strings.Contains(body, "directory_unavailable") {
+		t.Errorf("directory_unavailable present on a successful read: %s", body)
+	}
 }
 
 func TestAccountState_DirectoryReadFailureDegradesToOmission(t *testing.T) {
@@ -171,7 +174,36 @@ func TestAccountState_DirectoryReadFailureDegradesToOmission(t *testing.T) {
 	if env.Data.Directory != nil {
 		t.Errorf("directory = %+v, want omitted on read failure", env.Data.Directory)
 	}
+	// The omission must not be wire-identical to "not listed": a
+	// #malicious label may exist unseen.
+	if !strings.Contains(body, `"directory_unavailable":true`) {
+		t.Errorf("body lacks directory_unavailable:true on read failure: %s", body)
+	}
 	if env.Data.Balance != "42" {
 		t.Errorf("balance = %q — account payload must be intact", env.Data.Balance)
+	}
+}
+
+// The contract view shares directoryFor and must carry the same signal.
+func TestContractDetail_DirectoryReadFailureIsFlagged(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		dir  *stubDirectoryReader
+		want bool
+	}{
+		{"read failed", &stubDirectoryReader{err: context.DeadlineExceeded}, true},
+		{"unlisted", &stubDirectoryReader{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := v1.New(v1.Options{Explorer: &stubExplorerReader{}, Directory: tc.dir})
+			resp := mustGet(t, httpTestServer(t, srv).URL+"/v1/contracts/"+wasmTestCID)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (directory outage must not fail the contract view)", resp.StatusCode)
+			}
+			body, _ := readAll(resp)
+			if got := strings.Contains(body, `"directory_unavailable":true`); got != tc.want {
+				t.Errorf("directory_unavailable:true present = %v, want %v: %s", got, tc.want, body)
+			}
+		})
 	}
 }

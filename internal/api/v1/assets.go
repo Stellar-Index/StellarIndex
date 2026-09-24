@@ -17,6 +17,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
@@ -1602,47 +1603,13 @@ func (s *Server) listingPriceAllowed(ctx context.Context, asset canonical.Asset)
 	return allowed
 }
 
-// listingSubstanceVerdict is the listing's per-row verdict: allowed
-// when the row is out of gate scope (fiat/crypto catalogue rows), is
-// native (definitionally liquid; identity pairs degenerate under the
-// alias union), or when ANY of its plausible backing pairs — vs XLM,
-// vs fiat:USD (alias union covers the CEX series), or vs an
-// operator-declared USD peg — clears the substance floor. measured is
-// false when no pair cleared and at least one could not be measured:
-// the row is then unverified rather than withheld on evidence.
+// listingSubstanceVerdict is the listing's per-row verdict, the shared
+// [pricingguard.AssetSubstanceVerdict] over the operator's USD pegs.
+// measured is false when no backing quote cleared and at least one could
+// not be measured: the row is then unverified rather than withheld on
+// evidence.
 func (s *Server) listingSubstanceVerdict(ctx context.Context, asset canonical.Asset) (allowed, measured bool) {
-	if !pricingSubstanceGated(asset) {
-		return true, true
-	}
-	native := canonical.NativeAsset()
-	if asset.Equal(native) {
-		return true, true
-	}
-	quotes := append([]canonical.Asset{native, defaultPriceQuote}, s.usdPeggedClassics...)
-	measured = true
-	for _, quote := range quotes {
-		ok, m := s.substance.Verdict(ctx, asset, quote, "listing")
-		if ok && m {
-			return true, true
-		}
-		if !m {
-			measured = false
-		}
-	}
-	return false, measured
-}
-
-// pricingSubstanceGated mirrors pricingguard.SubstanceGated's
-// applicability rule (at least one on-chain leg) for the listing's
-// single-asset shape without importing pricingguard (which imports
-// this package's storage sibling — keep the api layer decoupled).
-func pricingSubstanceGated(a canonical.Asset) bool {
-	switch a.Type {
-	case canonical.AssetNative, canonical.AssetClassic, canonical.AssetSoroban:
-		return true
-	default:
-		return false
-	}
+	return pricingguard.AssetSubstanceVerdict(ctx, s.substance, asset, s.usdPeggedClassics, "listing")
 }
 
 // priceBasisDeclaredPeg is the wire value [AssetDetail.PriceBasis]

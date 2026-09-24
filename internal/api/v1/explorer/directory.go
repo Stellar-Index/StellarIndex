@@ -41,23 +41,26 @@ func dirInfoV(e timescale.DirectoryEntry) *DirectoryInfoV {
 	return &DirectoryInfoV{Name: e.Name, Domain: e.Domain, Tags: tags, Source: e.Source}
 }
 
-// directoryFor best-effort resolves one address's label. nil when no
-// reader is wired, the address isn't listed (the overwhelmingly common
-// case), or the read fails — a directory outage must never fail the
-// account/contract view it decorates.
-func (h *Handler) directoryFor(ctx context.Context, address string) *DirectoryInfoV {
+// directoryFor resolves one address's label, reporting whether the read
+// answered at all. The label is nil when no reader is wired or the
+// address isn't listed (the overwhelmingly common case). ok=false is NOT
+// "unlisted": the read failed, so a #malicious/#unsafe label may exist
+// unseen, and the caller must say so on the wire rather than render the
+// silence of an unlisted address. A directory outage still never fails
+// the account/contract view it decorates.
+func (h *Handler) directoryFor(ctx context.Context, address string) (*DirectoryInfoV, bool) {
 	if h.Directory == nil {
-		return nil
+		return nil, true
 	}
-	e, ok, err := h.Directory.DirectoryEntryByAddress(ctx, address)
+	e, found, err := h.Directory.DirectoryEntryByAddress(ctx, address)
 	if err != nil {
 		h.Logger.Warn("directory lookup failed", "address", address, "err", err)
-		return nil
+		return nil, false
 	}
-	if !ok {
-		return nil
+	if !found {
+		return nil, true
 	}
-	return dirInfoV(e)
+	return dirInfoV(e), true
 }
 
 // directoryBatchMax bounds GET /v1/directory's address list. 100 covers

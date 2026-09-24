@@ -32,10 +32,13 @@ hold (the classifier is `internal/pricelesscoverage.popularPriceless`):
 1. **Priceless** — no servable USD/XLM-proxy price
    (`prices_1m` has no non-null VWAP against USDC / its SAC / `fiat:USD`
    / `native` / the XLM SAC in the last 24 h).
-2. **Not withheld** — its trailing-24 h priced volume is ABOVE the
-   substance serve floor ($1,000). A below-floor market is one the
-   substance gate withholds *by design* (fail-closed), so its
-   pricelessness is expected and does NOT count.
+2. **Not withheld** — the serving substance gate does not withhold its
+   USD price. The tripwire asks the gate itself
+   (`pricingguard.AssetSubstanceVerdict`, the verdict the `/v1/assets`
+   listing applies): all three floors (volume, distinct minutes, span)
+   over the alias union, against XLM, `fiat:USD` and each declared USD
+   peg. A withheld market's pricelessness is expected and does NOT
+   count; an asset the gate could not measure DOES count.
 3. **Not wash** — the busiest single unordered `(maker, taker)` account
    pair owns **< 90 %** of its 7 d priced volume. A volume-painting wash
    farm (the reported scam AUD: ~108/109 of its trades one wallet pair)
@@ -180,8 +183,8 @@ them drift.
 
 - `internal/pricelesscoverage/` — the tripwire worker + classifier.
 - `internal/storage/timescale/priceless_coverage.go` — the candidate SQL.
-- `internal/pricingguard/substance.go` — the substance serve floor the
-  withheld verdict tracks.
+- `internal/pricingguard/substance.go` — `AssetSubstanceVerdict`, the
+  withheld verdict the tripwire asks.
 - PR #152 (`assets:` USDC/SAC stablecoin-proxy bridge) — the class of fix
   a firing alert usually needs.
 - `feat/scam-labels-and-volume-character` (PR #161) — the volume-character

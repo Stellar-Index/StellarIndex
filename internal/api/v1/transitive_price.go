@@ -19,7 +19,8 @@ type TransitivePricer interface {
 }
 
 // transitivePriceFor returns a USD price derived through ONE intermediate
-// hop, but ONLY when both legs independently clear the substance floors.
+// hop, but ONLY when neither the asset nor the hop is scam-withheld and
+// both legs independently clear the substance floors.
 // Returns ("", false) whenever the price must not be served — including
 // every error path, because a price we cannot fully verify is worse than
 // no price.
@@ -56,8 +57,16 @@ func (s *Server) transitivePriceFor(ctx context.Context, asset canonical.Asset, 
 		return "", false
 	}
 
-	// The substance gate is the whole safety property here — with it not
-	// wired we must NOT invent a price the gate never saw.
+	// The scam gate, asked about the asset AND the hop through the
+	// package's one pair spelling. A price derived through a flagged
+	// issuer's market is that market's price; /v1/price refuses it for
+	// the hop itself, so it must not reappear here one conversion removed.
+	if scamWithheld(ctx, s.scam, asset, hop, "transitive") {
+		return "", false
+	}
+
+	// The substance gate is the other half — with it not wired we must
+	// NOT invent a price the gate never saw.
 	if s.substance == nil {
 		return "", false
 	}
