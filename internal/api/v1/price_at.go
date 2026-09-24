@@ -115,18 +115,14 @@ func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
-	snap, found, withheld := s.lookupPriceAt(ctx, asset, quote, ts)
+	snap, flags, found, withheld, err := s.resolvePriceAt(ctx, asset, quote, ts)
+	if err != nil {
+		s.writePriceAtReadFailure(ctx, w, r, "/v1/price/at", err)
+		return
+	}
 	if found {
-		writeJSON(w, snap, Flags{})
+		writeJSON(w, snap, flags)
 		return
-	}
-	fbSnap, fbFound, fbWithheld := s.lookupPriceAtStablecoinFallback(ctx, asset, quote, ts)
-	if fbFound {
-		writeJSON(w, fbSnap, Flags{Triangulated: true})
-		return
-	}
-	if withheld == nil {
-		withheld = fbWithheld
 	}
 	if withheld != nil {
 		// At least one orientation HAS a closed bucket at-or-before ts
@@ -160,14 +156,36 @@ func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 		coverageFrom, outside)
 }
 
+// resolvePriceAt is the direct alias walk, then the stablecoin
+// fallback (flagged triangulated). withheld is the first withheld-class
+// refusal either stage saw; err is a reader failure that ended the walk.
+func (s *Server) resolvePriceAt(
+	ctx context.Context, asset, quote canonical.Asset, ts time.Time,
+) (PriceSnapshot, Flags, bool, error, error) {
+	snap, found, withheld, err := s.lookupPriceAt(ctx, asset, quote, ts)
+	if err != nil || found {
+		return snap, Flags{}, found, nil, err
+	}
+	fbSnap, fbFound, fbWithheld, err := s.lookupPriceAtStablecoinFallback(ctx, asset, quote, ts)
+	if err != nil || fbFound {
+		return fbSnap, Flags{Triangulated: true}, fbFound, nil, err
+	}
+	if withheld == nil {
+		withheld = fbWithheld
+	}
+	return PriceSnapshot{}, Flags{}, false, withheld, nil
+}
+
 // lookupPriceAt walks the alias combinations (F-1340, same as every
 // other price surface) and returns the first in-lookback bucket.
 // withheld is the first ErrPriceWithheld-class error any orientation
 // returned (a substance/scam gate or the serving-sanity guard refused an
 // existing bucket), nil when none did — the caller needs it to choose the
 // correct 404 type and wording once every orientation (and, via
-// lookupPriceAtStablecoinFallback, every peg) is exhausted.
-func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset, ts time.Time) (PriceSnapshot, bool, error) {
+// lookupPriceAtStablecoinFallback, every peg) is exhausted. err is a
+// reader failure ([isPriceAtMiss] false): it ends the walk, because a
+// later orientation's hit would stand in for an unknown answer.
+func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset, ts time.Time) (PriceSnapshot, bool, error, error) {
 	var withheld error
 	for _, a := range assetAliases(asset) {
 		for _, q := range assetAliases(quote) {
@@ -180,8 +198,8 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 			}
 			value, bucketAt, resSec, lookErr := s.priceAt.PriceAt(ctx, pair, ts, priceAtMaxLookback)
 			if lookErr != nil {
-				if withheld == nil && errors.Is(lookErr, ErrPriceWithheld) {
-					withheld = lookErr
+				if failErr := notePriceAtMiss(&withheld, lookErr); failErr != nil {
+					return PriceSnapshot{}, false, nil, failErr
 				}
 				continue
 			}
@@ -205,10 +223,10 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 				PriceType:     "vwap",
 				ObservedAt:    WireTime(bucketAt),
 				WindowSeconds: resSec,
-			}, true, nil
+			}, true, nil, nil
 		}
 	}
-	return PriceSnapshot{}, false, withheld
+	return PriceSnapshot{}, false, withheld, nil
 }
 
 // lookupPriceAtStablecoinFallback is the CAGG sibling of the
@@ -223,13 +241,17 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 // in-lookback bucket wins. The snapshot echoes the REQUESTED quote —
 // flags.triangulated (stamped by the caller) marks the proxy, same
 // contract as tryStablecoinFiatProxy on /v1/price. withheld carries
-// [Server.lookupPriceAt]'s withheld signal up across every peg tried.
+// [Server.lookupPriceAt]'s withheld signal up across every peg tried;
+// a reader failure on any peg ends the walk as err.
 func (s *Server) lookupPriceAtStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, ts time.Time,
-) (PriceSnapshot, bool, error) {
+) (PriceSnapshot, bool, error, error) {
 	var withheld error
 	for _, proxied := range s.priceAtUSDPegPairs(asset, quote) {
-		snap, found, w := s.lookupPriceAt(ctx, proxied.Base, proxied.Quote, ts)
+		snap, found, w, err := s.lookupPriceAt(ctx, proxied.Base, proxied.Quote, ts)
+		if err != nil {
+			return PriceSnapshot{}, false, nil, err
+		}
 		if withheld == nil {
 			withheld = w
 		}
@@ -238,9 +260,50 @@ func (s *Server) lookupPriceAtStablecoinFallback(
 		}
 		snap.AssetID = asset.String()
 		snap.Quote = quote.String()
-		return snap, true, nil
+		return snap, true, nil, nil
 	}
-	return PriceSnapshot{}, false, withheld
+	return PriceSnapshot{}, false, withheld, nil
+}
+
+// isPriceAtMiss reports whether a [PriceAtReader] error is an answer —
+// no bucket in range, or a bucket a serving gate refused — rather than a
+// failed read. Only a miss lets a walk move on to the next orientation.
+func isPriceAtMiss(err error) bool {
+	return errors.Is(err, ErrPriceAtUnavailable) || errors.Is(err, ErrPriceWithheld)
+}
+
+// notePriceAtMiss folds a [PriceAtReader] miss into a walk's sticky
+// withheld verdict (first withheld-class error wins) and returns nil, or
+// returns err unchanged when it is a read failure the walk must stop on.
+func notePriceAtMiss(withheld *error, err error) error {
+	if !isPriceAtMiss(err) {
+		return err
+	}
+	if *withheld == nil && errors.Is(err, ErrPriceWithheld) {
+		*withheld = err
+	}
+	return nil
+}
+
+// writePriceAtReadFailure answers a [PriceAtReader] read failure on the
+// point-in-time routes. Never the 404 / available:false a miss gets: a
+// timed-out or failed read says nothing about whether a bucket exists.
+func (s *Server) writePriceAtReadFailure(callCtx context.Context, w http.ResponseWriter, r *http.Request, route string, err error) {
+	if clientAborted(r, err) {
+		return
+	}
+	if handlerTimedOut(callCtx, err) || transientStorageErr(err) {
+		s.logger.Warn("point-in-time price read unavailable", "route", route, "err", err)
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/price-unavailable",
+			"Point-in-time price read unavailable", http.StatusServiceUnavailable,
+			"the price store did not answer in time or hit a transient error; retry shortly. This is not a finding that no price exists.")
+		return
+	}
+	s.logger.Error("point-in-time price read failed", "route", route, "err", err)
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/internal",
+		"Internal error", http.StatusInternalServerError, "")
 }
 
 // priceAtUSDPegPairs is the ordered proxy list

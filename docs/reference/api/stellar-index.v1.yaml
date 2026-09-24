@@ -1282,9 +1282,11 @@ paths:
         gate, or by the serving-sanity guard when a 1-minute bucket
         deviates grossly from the buckets before it (or has none to be
         checked against) and no clean bucket falls within the lookback —
-        is a 404 of type `price-withheld`, never `price-not-found`.
-        Current price: /v1/price or /v1/price/tip. Multi-horizon change:
-        /v1/price/changes.
+        is a 404 of type `price-withheld`, never `price-not-found`. A
+        failed store read is never a 404: a timeout or transient storage
+        error is a 503 `price-unavailable` (retry), any other failure a
+        500. Current price: /v1/price or /v1/price/tip. Multi-horizon
+        change: /v1/price/changes.
       parameters:
         - { name: asset, in: query, required: true, schema: { type: string }, description: "Canonical asset id (native | CODE-G... | C... | fiat:XXX)." }
         - { name: quote, in: query, required: false, schema: { type: string }, description: "Quote asset id; default fiat:USD." }
@@ -1312,6 +1314,8 @@ paths:
               schema: { $ref: "#/components/schemas/PriceEnvelope" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /price/changes:
     get:
@@ -1337,7 +1341,10 @@ paths:
         carries `reference_at` + `resolution` so callers see exactly
         which bucket (and at what granularity) the delta was measured
         against. A 404 only when the pair has no CURRENT price to anchor
-        on. `quote` defaults to `fiat:USD`; when no direct fiat:USD
+        on. A failed store read — of the anchor or of any horizon — is
+        never a 404 or `available: false`: a timeout or transient storage
+        error is a 503 `price-unavailable` (retry), any other failure a
+        500. `quote` defaults to `fiat:USD`; when no direct fiat:USD
         bucket exists the same stablecoin-proxy chain as /v1/price
         resolves it via an operator-declared USD peg (`flags.triangulated`).
       parameters:
