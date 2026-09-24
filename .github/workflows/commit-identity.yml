@@ -59,17 +59,9 @@ jobs:
           grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$allow" | sed 's/[[:space:]]*$//' > /tmp/allow.txt
           [ -s /tmp/allow.txt ] || { echo "::error::$allow lists no identities — refusing to pass vacuously"; exit 1; }
 
-          if [ "$EVENT" = pull_request ]; then
-            range="${BASE_SHA}..${HEAD_SHA}"
-          elif [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
-            range="${BEFORE}..${SHA}"
-          else
-            # A new branch, or a force-push whose predecessor is gone. Fall
-            # back to what this ref adds over every OTHER ref, so a new
-            # branch is judged on its own commits rather than the whole
-            # history it inherited.
-            range="$SHA --not --exclude=refs/heads/$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo _) --all"
-          fi
+          # See scripts/ci/commit-identity-range.sh (RLT-374) for why the
+          # new-branch/force-push fallback lives there rather than inline.
+          range="$(scripts/ci/commit-identity-range.sh)"
 
           # shellcheck disable=SC2086
           git log $range --format='%H%x09%ae%x09%ce' > /tmp/commits.tsv 2>/dev/null || : > /tmp/commits.tsv
@@ -124,16 +116,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "$EVENT" = pull_request ]; then
-            range="${BASE_SHA}..${HEAD_SHA}"
-          elif [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
-            range="${BEFORE}..${SHA}"
-          else
-            # A new branch, or a force-push whose predecessor is gone. Fall
-            # back to what this ref adds over every OTHER ref, so a new
-            # branch is judged on its own commits rather than the whole
-            # history it inherited.
-            range="$SHA --not --exclude=refs/heads/$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo _) --all"
-          fi
+          # See scripts/ci/commit-identity-range.sh (RLT-374) for why the
+          # new-branch/force-push fallback lives there rather than inline.
+          range="$(scripts/ci/commit-identity-range.sh)"
 
           ./scripts/ci/lint-attribution.sh "$range"
