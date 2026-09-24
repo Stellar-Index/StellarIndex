@@ -4399,7 +4399,7 @@ var DEXTradeNonstandardDecimalsTotal = prometheus.NewCounterVec(
 var DecimalsGuardSweepLastSuccessUnix = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_decimals_guard_sweep_last_success_unix",
-		Help: "Unix seconds of the most recent successful decimals-guard Sweep pass, stamped whether or not an offender was found. Staleness (vs the sweep interval) means the guard never armed or has wedged, not that no offenders exist.",
+		Help: "Unix seconds of the most recent successful decimals-guard Sweep pass, stamped whether or not an offender was found; seeded with the guard's enable time before the first pass, 0 when the guard is disabled (no lake). Staleness (vs the sweep interval) means the guard never armed or has wedged, not that no offenders exist.",
 	},
 )
 

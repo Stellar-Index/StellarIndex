@@ -1029,7 +1029,13 @@ func run(cfgPath string, dryRun bool) error {
 	// until someone restarted it (audit-2026-09-02 F040). The dial now
 	// lives inside the guard's own goroutine and retries with backoff
 	// until it succeeds or the process is shutting down.
+	//
+	// MarkEnabled seeds the sweep heartbeat BEFORE the dial and Backfill, so
+	// stellarindex_decimals_guard_sweep_stale measures a cold boot from now
+	// (never-armed arm) and a lake-less aggregator, whose gauge stays 0, is
+	// distinguishable as "disabled" rather than "stale".
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
+		decimalsguard.MarkEnabled(time.Now())
 		backfillWindow := decimalsguard.DefaultBackfillWindow
 		if days := cfg.DecimalsGuard.BackfillWindowDays; days > 0 {
 			backfillWindow = time.Duration(days) * 24 * time.Hour
@@ -1068,6 +1074,8 @@ func run(cfgPath string, dryRun bool) error {
 				logger.Error("decimals-guard exited with error", "err", err)
 			}
 		}()
+	} else {
+		logger.Warn("decimals-guard: disabled — no ClickHouse lake configured (storage.clickhouse_addr); non-7-decimal DEX-token detection is OFF for this process")
 	}
 
 	// ─── Price-alert evaluator (BACKLOG #60) ────────────────────

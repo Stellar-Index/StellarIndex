@@ -503,7 +503,16 @@ groups:
       # goroutine panicking past worker.Recover or the process losing
       # its lake for good). internal/decimalsguard.Guard.Sweep stamps
       # stellarindex_decimals_guard_sweep_last_success_unix on every
-      # completed pass, whether or not it finds an offender. Threshold
+      # completed pass, whether or not it finds an offender, and the
+      # aggregator seeds it with its start time (decimalsguard.MarkEnabled)
+      # before the lake dial and the startup Backfill — so a cold boot is
+      # measured from process start, and "never armed" (dial still
+      # retrying, Backfill still running) fires on the same 60m budget
+      # as a wedge instead of 15m after every restart. A gauge still at 0
+      # on the aggregator means the guard is DISABLED (lake-less config,
+      # logged at startup as `decimals-guard: disabled`), not stale; the
+      # `> 0` arm keeps that deliberate configuration from holding a
+      # permanent ticket. Threshold
       # is three sweep intervals (decimalsguard.DefaultInterval = 15m,
       # so 45m) plus a 15m for-duration, and the query is scoped to
       # job="stellarindex-aggregator" so the indexer/api binaries
@@ -515,6 +524,7 @@ groups:
       - alert: stellarindex_decimals_guard_sweep_stale
         expr: |
           (time() - stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex-aggregator"}) > 2700
+            and stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex-aggregator"} > 0
         for: 15m
         labels:
           severity: ticket
@@ -527,12 +537,17 @@ groups:
             The aggregator's decimals-assumption guard
             (internal/decimalsguard) has not completed a Sweep pass in
             over 45 minutes (three sweep intervals) plus a 15-minute
-            for-duration. The offender counters
+            for-duration, counted from its last completed pass or, if it
+            has never completed one, from aggregator start: either it
+            never armed (the ClickHouse lake dial is still retrying or
+            the startup Backfill is still running) or it has wedged.
+            The offender counters
             (stellarindex_dex_trade_nonstandard_decimals_total,
             stellarindex_nonstandard_decimals_lockstep_mismatch_total)
             are now UNTRUSTWORTHY: a healthy zero and "the guard never
             armed" look identical without this heartbeat. Check the
-            aggregator's `decimals-guard started` / `decimals-guard
+            aggregator's `decimals-guard: ClickHouse decimals resolver
+            unavailable` / `decimals-guard started` / `decimals-guard
             exited with error` log lines and ClickHouse reachability,
             then the runbook.
 
