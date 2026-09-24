@@ -127,3 +127,70 @@ func TestDiscoveryRoundTrip(t *testing.T) {
 		t.Errorf("ListDiscovered(limit=1): %d rows, err=%v", len(rows), err)
 	}
 }
+
+// TestDiscoveryRoundTrip_EventCountDelta is the CA2-A10-correct-4
+// regression at the storage layer: a Hit with Count set (as
+// AsyncSink.flushPending produces when it flushes an accumulated
+// in-process-dedup delta) must increment event_count by that many,
+// not by a flat 1 — otherwise event_count/last_seen_ledger only ever
+// reflect the first observation per process lifetime, not the true
+// event volume.
+func TestDiscoveryRoundTrip_EventCountDelta(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const contractC = "CCCZGGNOEUZG4CAAE7TGTQQHETZMKUT4OIPFHHPKEUX46U4KXBBZ3GLH"
+
+	first := discovery.Hit{
+		ContractID:        contractC,
+		EventType:         discovery.EventTransfer,
+		Ledger:            60_000_000,
+		ObservedAtRFC3339: "2026-05-01T00:00:00Z",
+	}
+	if err := store.RecordDiscovered(ctx, first); err != nil {
+		t.Fatalf("RecordDiscovered (first): %v", err)
+	}
+
+	// Simulates AsyncSink.flushPending: one call carrying the true
+	// accumulated count of 999 skipped repeat observations, stamped
+	// with the LATEST ledger/time, not the first.
+	delta := discovery.Hit{
+		ContractID:        contractC,
+		EventType:         discovery.EventTransfer,
+		Ledger:            60_004_999,
+		ObservedAtRFC3339: "2026-05-01T02:00:00Z",
+		Count:             999,
+	}
+	if err := store.RecordDiscovered(ctx, delta); err != nil {
+		t.Fatalf("RecordDiscovered (delta): %v", err)
+	}
+
+	rows, err := store.ListDiscovered(ctx, 0)
+	if err != nil {
+		t.Fatalf("ListDiscovered: %v", err)
+	}
+	var row *timescale.DiscoveredAsset
+	for i := range rows {
+		if rows[i].ContractID == contractC {
+			row = &rows[i]
+		}
+	}
+	if row == nil {
+		t.Fatal("contract C missing from ListDiscovered")
+	}
+	if row.EventCount != 1000 {
+		t.Errorf("EventCount = %d, want 1000 (1 + delta of 999, not a flat +1)", row.EventCount)
+	}
+	if row.LastSeenLedger != 60_004_999 {
+		t.Errorf("LastSeenLedger = %d, want 60_004_999 (the delta's true last-observed ledger)", row.LastSeenLedger)
+	}
+}

@@ -15,17 +15,38 @@ import (
 // fakeRecorder counts Record + IsKnown calls and lets tests inject
 // errors / slow paths without spinning up Postgres.
 type fakeRecorder struct {
-	records atomic.Int64
-	hold    chan struct{} // when non-nil, Record blocks on it
-	err     error
+	records    atomic.Int64
+	totalCount atomic.Int64  // sum of hit.Count (0 treated as 1), across every Record call
+	hold       chan struct{} // when non-nil, Record blocks on it
+	err        error
+
+	mu   sync.Mutex
+	last map[string]discovery.Hit // last Record call per ContractID
 }
 
-func (r *fakeRecorder) Record(_ context.Context, _ discovery.Hit) error {
+func (r *fakeRecorder) Record(_ context.Context, hit discovery.Hit) error {
 	r.records.Add(1)
+	c := hit.Count
+	if c <= 0 {
+		c = 1
+	}
+	r.totalCount.Add(c)
+	r.mu.Lock()
+	if r.last == nil {
+		r.last = make(map[string]discovery.Hit)
+	}
+	r.last[hit.ContractID] = hit
+	r.mu.Unlock()
 	if r.hold != nil {
 		<-r.hold
 	}
 	return r.err
+}
+
+func (r *fakeRecorder) lastHit(contractID string) discovery.Hit {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.last[contractID]
 }
 
 func (r *fakeRecorder) IsKnown(_ context.Context, _ string) (bool, error) {
@@ -58,11 +79,14 @@ func TestAsyncSink_DrainsToRecorder(t *testing.T) {
 }
 
 // TestAsyncSink_DedupsRepeatedHits — repeat pushes for the same
-// (ContractID, EventType) inside a single process resolve to a
-// single Record call, with the rest counted in SkippedCount. This
-// is the production-rate-protection path: r1 evidence (PR #620)
-// showed 99% of Pushes were duplicates of already-discovered
-// contracts.
+// (ContractID, EventType) inside a single process don't each occupy a
+// channel slot (the rest are counted in SkippedCount, this is the
+// production-rate-protection path: r1 evidence (PR #620) showed 99%
+// of Pushes were duplicates of already-discovered contracts), but the
+// skipped observations are NOT discarded: Stop flushes them as one
+// extra Record call per key carrying the true accumulated count
+// (CA2-A10-correct-4) — so every push is still accounted for in
+// totalCount even though most never touch the channel.
 func TestAsyncSink_DedupsRepeatedHits(t *testing.T) {
 	rec := &fakeRecorder{}
 	sink := discovery.NewAsyncSink(rec, discovery.AsyncSinkOptions{BufferSize: 16})
@@ -80,14 +104,19 @@ func TestAsyncSink_DedupsRepeatedHits(t *testing.T) {
 
 	sink.Stop()
 
-	if got := rec.records.Load(); got != 2 {
-		t.Errorf("Recorder.Record called %d times, want 2 (one per unique (contract,event_type))", got)
+	// 2 initial enqueues (one per unique key) + 1 flushed delta for the
+	// 999 skipped "transfer" repeats.
+	if got := rec.records.Load(); got != 3 {
+		t.Errorf("Recorder.Record called %d times, want 3 (2 initial + 1 flushed delta)", got)
 	}
 	if got := sink.SkippedCount(); got != 999 {
 		t.Errorf("SkippedCount = %d, want 999", got)
 	}
 	if got := sink.DroppedCount(); got != 0 {
 		t.Errorf("DroppedCount = %d, want 0 (dedup keeps the channel from filling)", got)
+	}
+	if got := rec.totalCount.Load(); got != 1001 {
+		t.Errorf("totalCount = %d, want 1001 (1000 transfer pushes + 1 mint push, none lost to dedup)", got)
 	}
 }
 
@@ -253,11 +282,16 @@ func TestAsyncSink_DedupsAcrossKindsIndependently(t *testing.T) {
 
 	sink.Stop()
 
-	if got := rec.records.Load(); got != 3 {
-		t.Errorf("Recorder.Record called %d times, want 3 (2 oracle_event symbols + 1 oracle_call, repeat deduped)", got)
+	// 3 initial enqueues (2 oracle_event symbols + 1 oracle_call) + 1
+	// flushed delta for the repeated price_update push.
+	if got := rec.records.Load(); got != 4 {
+		t.Errorf("Recorder.Record called %d times, want 4 (3 initial + 1 flushed delta)", got)
 	}
 	if got := sink.SkippedCount(); got != 1 {
 		t.Errorf("SkippedCount = %d, want 1 (the repeated price_update push)", got)
+	}
+	if got := rec.totalCount.Load(); got != 4 {
+		t.Errorf("totalCount = %d, want 4 (every push accounted for, none lost to dedup)", got)
 	}
 }
 
@@ -278,8 +312,13 @@ func TestAsyncSink_LegacySEP41DedupKeyUnchanged(t *testing.T) {
 
 	sink.Stop()
 
-	if got := rec.records.Load(); got != 2 {
-		t.Errorf("Recorder.Record called %d times, want 2 (transfer deduped, mint distinct)", got)
+	// 2 initial enqueues (transfer once, mint once) + 1 flushed delta
+	// for the repeated transfer push.
+	if got := rec.records.Load(); got != 3 {
+		t.Errorf("Recorder.Record called %d times, want 3 (2 initial + 1 flushed delta)", got)
+	}
+	if got := rec.totalCount.Load(); got != 3 {
+		t.Errorf("totalCount = %d, want 3 (every push accounted for, none lost to dedup)", got)
 	}
 }
 
@@ -429,6 +468,49 @@ func (r *stallRecorder) Record(ctx context.Context, _ discovery.Hit) error {
 }
 
 func (r *stallRecorder) IsKnown(_ context.Context, _ string) (bool, error) { return false, nil }
+
+// TestAsyncSink_StopFlushesTrueEventCountAndLastLedger is the
+// CA2-A10-correct-4 regression: before this fix, a contract's
+// event_count and last_seen_ledger only ever reflected the FIRST
+// observation per process lifetime — every repeat Push for the same
+// key was silently skipped by in-process dedup and never reached the
+// Recorder at all, so a token that emitted thousands of events
+// between restarts was recorded with event_count stuck at 1 and
+// last_seen_ledger frozen at the first-sighting ledger. Stop must now
+// flush one delta Record call per deduped key carrying the true
+// accumulated count and the LATEST observed ledger, not the first.
+func TestAsyncSink_StopFlushesTrueEventCountAndLastLedger(t *testing.T) {
+	rec := &fakeRecorder{}
+	sink := discovery.NewAsyncSink(rec, discovery.AsyncSinkOptions{BufferSize: 16})
+	sink.Start()
+
+	const pushes = 500
+	for i := 0; i < pushes; i++ {
+		sink.Push(discovery.Hit{
+			ContractID:        "C-volume",
+			EventType:         discovery.EventTransfer,
+			Ledger:            uint32(1_000_000 + i),
+			ObservedAtRFC3339: "2026-04-28T12:00:00Z",
+		})
+	}
+	sink.Stop()
+
+	if got := rec.totalCount.Load(); got != pushes {
+		t.Fatalf("totalCount = %d, want %d — event volume must not be discarded by in-process dedup", got, pushes)
+	}
+	if got := rec.records.Load(); got != 2 {
+		t.Fatalf("Record called %d times, want 2 (1 initial enqueue + 1 flushed delta)", got)
+	}
+	last := rec.lastHit("C-volume")
+	wantLedger := uint32(1_000_000 + pushes - 1)
+	if last.Ledger != wantLedger {
+		t.Errorf("last flushed hit Ledger = %d, want %d — last_seen_ledger must track the true last "+
+			"observation, not freeze at the first post-restart sighting", last.Ledger, wantLedger)
+	}
+	if last.Count != pushes-1 {
+		t.Errorf("flushed delta Count = %d, want %d (the initial enqueue already carried 1)", last.Count, pushes-1)
+	}
+}
 
 // TestAsyncSink_StopBoundedByDrainTimeout — #1018. Stop used to drain
 // every buffered hit at RecordTimeout each (1024 × 2s ≈ 34 min in

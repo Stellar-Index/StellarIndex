@@ -14,7 +14,10 @@ import (
 // `discovered_assets` table. Idempotent on contract_id via
 // ON CONFLICT — the first observation per contract preserves
 // first_seen_*, subsequent observations update last_seen_* and
-// increment event_count.
+// increment event_count by hit.Count (1 when unset) — AsyncSink
+// flushes accumulated in-process-dedup deltas with Count set to the
+// true number of observations they represent, so this is not always
+// a plain +1 (CA2-A10-correct-4).
 //
 // discovery_kind (migration 0103) distinguishes which sniffer
 // produced the hit ([discovery.KindSEP41] / [discovery.KindOracleEvent]
@@ -47,16 +50,20 @@ func (s *Store) RecordDiscovered(ctx context.Context, hit discovery.Hit) error {
 	if symbol == "" {
 		symbol = string(hit.EventType)
 	}
+	delta := hit.Count
+	if delta <= 0 {
+		delta = 1
+	}
 
 	const q = `
 		INSERT INTO discovered_assets
 		    (contract_id, first_seen_at, first_seen_ledger, first_seen_event,
 		     last_seen_at, last_seen_ledger, event_count, discovery_kind)
-		VALUES ($1, $2, $3, $4, $2, $3, 1, $5)
+		VALUES ($1, $2, $3, $4, $2, $3, $6, $5)
 		ON CONFLICT (contract_id) DO UPDATE SET
 		    last_seen_at     = EXCLUDED.last_seen_at,
 		    last_seen_ledger = EXCLUDED.last_seen_ledger,
-		    event_count      = discovered_assets.event_count + 1
+		    event_count      = discovered_assets.event_count + EXCLUDED.event_count
 	`
 	_, err = s.db.ExecContext(ctx, q,
 		hit.ContractID,
@@ -64,6 +71,7 @@ func (s *Store) RecordDiscovered(ctx context.Context, hit discovery.Hit) error {
 		int64(hit.Ledger),
 		symbol,
 		string(kind),
+		delta,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: RecordDiscovered %s: %w", hit.ContractID, err)
