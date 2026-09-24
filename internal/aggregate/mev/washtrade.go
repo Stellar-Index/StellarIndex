@@ -61,19 +61,28 @@ type washDetail struct {
 //     bucketed by UTC day so re-scans of overlapping windows dedup
 //     deterministically. One candidate per (pair, account-pair, day).
 //
-// Both variants only fire where maker is populated — i.e. SDEX rows;
-// AMM rows carry the pool as maker and can't self-cross this way.
+// Both variants only fire where maker is an account (see accountMaker):
+// SDEX order-book fills. Soroban AMM rows leave maker empty and SDEX
+// liquidity-pool fills carry the pool's hex id; a pool is not a party
+// that can wash-trade, so those rows are excluded explicitly.
 func DetectWashTrades(trades []canonical.Trade, usdVolume []string) []Candidate {
 	out := detectSelfTrades(trades, usdVolume)
 	out = append(out, detectRoundTrips(trades, usdVolume)...)
 	return out
 }
 
+// accountMaker reports whether t's maker is an account (G-strkey). The
+// maker column is shared with pool identities, so emptiness alone does not
+// make a row eligible for the account-structure wash signatures.
+func accountMaker(t canonical.Trade) bool {
+	return canonical.IsAccountID(t.Maker)
+}
+
 func detectSelfTrades(trades []canonical.Trade, usdVolume []string) []Candidate {
 	groups := map[string][]int{}
 	order := []string{}
 	for i, t := range trades {
-		if !orderableTrade(t) || t.Maker == "" || t.Maker != t.Taker {
+		if !orderableTrade(t) || !accountMaker(t) || t.Maker != t.Taker {
 			continue
 		}
 		key := t.TxHash + "\x00" + t.Taker
@@ -117,7 +126,7 @@ func detectRoundTrips(trades []canonical.Trade, usdVolume []string) []Candidate 
 	groups := map[string][]int{}
 	order := []string{}
 	for i, t := range trades {
-		if !orderableTrade(t) || t.Maker == "" || t.Maker == t.Taker {
+		if !orderableTrade(t) || !accountMaker(t) || t.Maker == t.Taker {
 			continue
 		}
 		a, b := t.Maker, t.Taker
