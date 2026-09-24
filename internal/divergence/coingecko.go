@@ -22,10 +22,10 @@ import (
 // transient 429s bubble up as transport failures and the caller
 // just treats this run's CoinGecko response as missing.
 //
-// The reference batches per-tick lookups: the first LookupPrice in
+// The reference batches per-tick lookups: the first LookupQuote in
 // a tick burst issues a single `/simple/price?ids=A,B,C&vs_currencies=usd,eur`
 // covering EVERY configured (id, quote) pair, then caches the
-// response for [batchTTL]. Subsequent LookupPrice calls within the
+// response for [batchTTL]. Subsequent LookupQuote calls within the
 // TTL hit the cache and issue zero HTTP requests. With the default
 // 25s TTL and the orchestrator's 30s tick, each tick produces ONE
 // HTTP call regardless of how many pairs the operator has
@@ -110,7 +110,7 @@ type CoinGeckoOptions struct {
 	QuoteMap map[string]string
 
 	// BatchTTL is the window over which a single batched
-	// /simple/price response is reused across per-pair LookupPrice
+	// /simple/price response is reused across per-pair LookupQuote
 	// calls. Default 25s (less than the orchestrator's 30s tick so
 	// each tick triggers a fresh fetch). Operators can set it
 	// shorter for higher freshness at the cost of more HTTP calls,
@@ -238,7 +238,8 @@ func defaultCoinGeckoIDMap() map[string]string {
 // Name implements [Reference].
 func (c *CoinGeckoReference) Name() string { return "coingecko" }
 
-// LookupPrice implements [Reference].
+// LookupQuote implements [Reference]; AsOf is the id's upstream
+// last_updated_at.
 //
 // CS-089 staleness gate: CoinGecko's /simple/price returns the latest
 // CACHED price, so a frozen upstream keeps serving a stale number with
@@ -255,36 +256,36 @@ func (c *CoinGeckoReference) Name() string { return "coingecko" }
 // first call within batchTTL issues ONE HTTP request covering every
 // configured (id, quote) pair; subsequent calls within the TTL read
 // from the in-memory map without touching the network.
-func (c *CoinGeckoReference) LookupPrice(ctx context.Context, pair canonical.Pair, observedAt time.Time) (float64, error) {
+func (c *CoinGeckoReference) LookupQuote(ctx context.Context, pair canonical.Pair, observedAt time.Time) (Quote, error) {
 	cgID, ok := c.idMap[pair.Base.String()]
 	if !ok {
-		return 0, fmt.Errorf("%w: base %q has no CoinGecko slug in idMap", ErrAssetUnsupported, pair.Base.String())
+		return Quote{}, fmt.Errorf("%w: base %q has no CoinGecko slug in idMap", ErrAssetUnsupported, pair.Base.String())
 	}
 	cgQuote, ok := c.quoteMap[pair.Quote.String()]
 	if !ok {
-		return 0, fmt.Errorf("%w: quote %q has no CoinGecko vs_currency", ErrAssetUnsupported, pair.Quote.String())
+		return Quote{}, fmt.Errorf("%w: quote %q has no CoinGecko vs_currency", ErrAssetUnsupported, pair.Quote.String())
 	}
 
 	data, updatedAt, err := c.ensureBatch(ctx)
 	if err != nil {
-		return 0, err
+		return Quote{}, err
 	}
 
 	idEntry, ok := data[cgID]
 	if !ok {
-		return 0, fmt.Errorf("%w: coingecko id %q absent in response", ErrAssetUnsupported, cgID)
+		return Quote{}, fmt.Errorf("%w: coingecko id %q absent in response", ErrAssetUnsupported, cgID)
 	}
 	price, ok := idEntry[cgQuote]
 	if !ok {
-		return 0, fmt.Errorf("%w: coingecko vs_currency %q absent for id %q", ErrAssetUnsupported, cgQuote, cgID)
+		return Quote{}, fmt.Errorf("%w: coingecko vs_currency %q absent for id %q", ErrAssetUnsupported, cgQuote, cgID)
 	}
 	if !isFinitePositive(price) {
-		return 0, fmt.Errorf("%w: coingecko returned non-positive price %g", ErrPriceUnavailable, price)
+		return Quote{}, fmt.Errorf("%w: coingecko returned non-positive price %g", ErrPriceUnavailable, price)
 	}
 	if err := c.staleness(cgID, updatedAt, observedAt); err != nil {
-		return 0, err
+		return Quote{}, err
 	}
-	return price, nil
+	return Quote{Price: price, AsOf: updatedAt[cgID]}, nil
 }
 
 // staleness enforces the CS-089 gate for one id's upstream
@@ -329,9 +330,9 @@ func (c *CoinGeckoReference) staleness(cgID string, updatedAt map[string]time.Ti
 // error and an empty/partial map.
 //
 // Use this when you have a known pair set up-front and want to
-// avoid the per-pair LookupPrice indirection. The underlying HTTP
-// call is identical to what LookupPrice triggers on cache miss; the
-// per-pair LookupPrice path remains available for the [Reference]
+// avoid the per-pair LookupQuote indirection. The underlying HTTP
+// call is identical to what LookupQuote triggers on cache miss; the
+// per-pair LookupQuote path remains available for the [Reference]
 // interface contract.
 func (c *CoinGeckoReference) LookupPrices(ctx context.Context, pairs []canonical.Pair) (map[canonical.Pair]float64, error) {
 	out := make(map[canonical.Pair]float64, len(pairs))

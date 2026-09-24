@@ -2629,7 +2629,7 @@ func buildSEP10Validator(cfg config.SEP10Config, passphrase string, rdb redis.Un
 // Chainlink is on only when both Enabled=true AND a non-empty
 // FeedMap is set. An empty FeedMap with Enabled=true logs a WARN
 // and skips Chainlink rather than wiring it as a no-op (every
-// LookupPrice call would return ErrAssetUnsupported, which is
+// LookupQuote call would return ErrAssetUnsupported, which is
 // noisy and a misconfiguration signal).
 //
 // The on-chain oracle references (reflector-dex/cex/fx, redstone,

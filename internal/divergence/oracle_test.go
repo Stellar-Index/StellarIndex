@@ -131,9 +131,9 @@ func TestOracleReference_ScaleExactness(t *testing.T) {
 			reader := &fakeOracleReader{row: oracleRow(t, tc.source, tc.price, tc.decimals, now)}
 			ref := newOracleRef(t, tc.source, reader, time.Hour)
 
-			got, err := ref.LookupPrice(context.Background(), xlmUSD(t), now)
+			got, err := priceOf(ref.LookupQuote(context.Background(), xlmUSD(t), now))
 			if err != nil {
-				t.Fatalf("LookupPrice: %v", err)
+				t.Fatalf("LookupQuote: %v", err)
 			}
 			want, err := strconv.ParseFloat(tc.expected, 64)
 			if err != nil {
@@ -158,8 +158,8 @@ func TestOracleReference_PairMapping_XLMDualIdentity(t *testing.T) {
 	ref := newOracleRef(t, divergence.OracleSourceReflectorCEX, reader, time.Hour)
 
 	// native base expands to crypto:XLM and the XLM SAC.
-	if _, err := ref.LookupPrice(context.Background(), xlmUSD(t), now); err != nil {
-		t.Fatalf("LookupPrice: %v", err)
+	if _, err := priceOf(ref.LookupQuote(context.Background(), xlmUSD(t), now)); err != nil {
+		t.Fatalf("LookupQuote: %v", err)
 	}
 	if reader.gotSource != divergence.OracleSourceReflectorCEX {
 		t.Errorf("source = %q, want reflector-cex", reader.gotSource)
@@ -180,8 +180,8 @@ func TestOracleReference_PairMapping_XLMDualIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse USD: %v", err)
 	}
-	if _, err := ref.LookupPrice(context.Background(), canonical.Pair{Base: xlm, Quote: usd}, now); err != nil {
-		t.Fatalf("LookupPrice crypto:XLM: %v", err)
+	if _, err := priceOf(ref.LookupQuote(context.Background(), canonical.Pair{Base: xlm, Quote: usd}, now)); err != nil {
+		t.Fatalf("LookupQuote crypto:XLM: %v", err)
 	}
 	if got, want := strings.Join(reader.gotBaseKeys, ","), "crypto:XLM,native,"+canonical.XLMSacContractID; got != want {
 		t.Errorf("base keys = %q, want %q", got, want)
@@ -192,8 +192,8 @@ func TestOracleReference_PairMapping_XLMDualIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse EUR: %v", err)
 	}
-	if _, err := ref.LookupPrice(context.Background(), canonical.Pair{Base: eur, Quote: usd}, now); err != nil {
-		t.Fatalf("LookupPrice EUR/USD: %v", err)
+	if _, err := priceOf(ref.LookupQuote(context.Background(), canonical.Pair{Base: eur, Quote: usd}, now)); err != nil {
+		t.Fatalf("LookupQuote EUR/USD: %v", err)
 	}
 	if got := strings.Join(reader.gotBaseKeys, ","); got != "fiat:EUR" {
 		t.Errorf("base keys = %q, want fiat:EUR", got)
@@ -238,8 +238,8 @@ func TestOracleReference_BaseKeysCoverEveryAliasFamily(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse %q: %v", member, err)
 			}
-			if _, err := ref.LookupPrice(context.Background(), canonical.Pair{Base: base, Quote: usd}, now); err != nil {
-				t.Fatalf("LookupPrice %s/USD: %v", member, err)
+			if _, err := priceOf(ref.LookupQuote(context.Background(), canonical.Pair{Base: base, Quote: usd}, now)); err != nil {
+				t.Fatalf("LookupQuote %s/USD: %v", member, err)
 			}
 			bound := make(map[string]bool, len(reader.gotBaseKeys))
 			for _, k := range reader.gotBaseKeys {
@@ -260,7 +260,7 @@ func TestOracleReference_BaseKeysCoverEveryAliasFamily(t *testing.T) {
 func TestOracleReference_NoObservationIsUnsupported(t *testing.T) {
 	reader := &fakeOracleReader{row: nil}
 	ref := newOracleRef(t, divergence.OracleSourceBand, reader, time.Hour)
-	_, err := ref.LookupPrice(context.Background(), xlmUSD(t), time.Now().UTC())
+	_, err := priceOf(ref.LookupQuote(context.Background(), xlmUSD(t), time.Now().UTC()))
 	if !errors.Is(err, divergence.ErrAssetUnsupported) {
 		t.Errorf("err = %v, want ErrAssetUnsupported", err)
 	}
@@ -275,14 +275,14 @@ func TestOracleReference_StaleObservationIsUnavailable(t *testing.T) {
 		row: oracleRow(t, divergence.OracleSourceReflectorCEX, "11000000000000", 14, now.Add(-45*time.Minute)),
 	}
 	ref := newOracleRef(t, divergence.OracleSourceReflectorCEX, reader, 30*time.Minute)
-	_, err := ref.LookupPrice(context.Background(), xlmUSD(t), now)
+	_, err := priceOf(ref.LookupQuote(context.Background(), xlmUSD(t), now))
 	if !errors.Is(err, divergence.ErrPriceUnavailable) {
 		t.Errorf("err = %v, want ErrPriceUnavailable", err)
 	}
 
 	// Just inside the ceiling passes.
 	reader.row = oracleRow(t, divergence.OracleSourceReflectorCEX, "11000000000000", 14, now.Add(-29*time.Minute))
-	if _, err := ref.LookupPrice(context.Background(), xlmUSD(t), now); err != nil {
+	if _, err := priceOf(ref.LookupQuote(context.Background(), xlmUSD(t), now)); err != nil {
 		t.Errorf("fresh-enough observation rejected: %v", err)
 	}
 }
@@ -293,7 +293,7 @@ func TestOracleReference_StaleObservationIsUnavailable(t *testing.T) {
 func TestOracleReference_ReaderErrorSurfaces(t *testing.T) {
 	reader := &fakeOracleReader{err: errors.New("pg down")}
 	ref := newOracleRef(t, divergence.OracleSourceRedstone, reader, time.Hour)
-	_, err := ref.LookupPrice(context.Background(), xlmUSD(t), time.Now().UTC())
+	_, err := priceOf(ref.LookupQuote(context.Background(), xlmUSD(t), time.Now().UTC()))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -308,7 +308,7 @@ func TestOracleReference_NonPositivePriceRejected(t *testing.T) {
 	now := time.Now().UTC()
 	reader := &fakeOracleReader{row: oracleRow(t, divergence.OracleSourceBand, "0", 9, now)}
 	ref := newOracleRef(t, divergence.OracleSourceBand, reader, time.Hour)
-	if _, err := ref.LookupPrice(context.Background(), xlmUSD(t), now); err == nil {
+	if _, err := priceOf(ref.LookupQuote(context.Background(), xlmUSD(t), now)); err == nil {
 		t.Error("expected error for zero price")
 	}
 }

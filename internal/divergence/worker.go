@@ -265,6 +265,20 @@ type Service struct {
 	firingSince  map[string]time.Time
 }
 
+// independentReferences drops references that cannot corroborate our
+// VWAP because they price the same book (see [CorrelatedWithOurVWAP]).
+// Filtering here, the one constructor, keeps them out of the median, the
+// quorum and the agreement count whichever binary built the list.
+func independentReferences(refs []Reference) []Reference {
+	out := make([]Reference, 0, len(refs))
+	for _, r := range refs {
+		if !CorrelatedWithOurVWAP(safeName(r)) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // NewService constructs a divergence service. Returns an error when
 // required options are missing.
 func NewService(opts ServiceOptions) (*Service, error) {
@@ -293,7 +307,7 @@ func NewService(opts ServiceOptions) (*Service, error) {
 		persistence = DefaultWarningPersistence
 	}
 	return &Service{
-		refs:         opts.References,
+		refs:         independentReferences(opts.References),
 		cache:        opts.Cache,
 		threshold:    threshold,
 		minSources:   minSources,

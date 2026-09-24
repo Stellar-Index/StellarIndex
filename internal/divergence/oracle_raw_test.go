@@ -19,7 +19,7 @@ import (
 // of three separate facts that live in three different packages —
 //
 //  1. canonical.Pair.Validate refuses a raw asset as either leg;
-//  2. OracleReference.LookupPrice takes a canonical.Pair, so its keys
+//  2. OracleReference.LookupQuote takes a canonical.Pair, so its keys
 //     are derived from legs that already passed (1);
 //  3. Store.LatestOracleObservation matches `asset = ANY($2)`, an exact
 //     set membership, so it can only return what it was asked for.
@@ -107,7 +107,7 @@ func TestDivergenceNeverAsksTheOracleForARawKey(t *testing.T) {
 
 	// The (nil, nil) response maps to ErrAssetUnsupported; the return
 	// value is not what this test is about — the REQUEST is.
-	_, _ = ref.LookupPrice(context.Background(), pair, time.Now().UTC())
+	_, _ = priceOf(ref.LookupQuote(context.Background(), pair, time.Now().UTC()))
 
 	if len(rec.allKeys()) == 0 {
 		t.Fatal("the reader was never called, so this test proved nothing about " +

@@ -66,7 +66,7 @@ func driftedReturns(days, driftDays int, driftPerDay, noiseAmp float64) []float6
 // publication. Do not rename this back to something that reads like
 // a single unified "anomaly z".
 func confidenceScoringZ(mb baseline.MultiBaseline, freshReturn float64) float64 {
-	z, _, valid := mb.MaxZScore(freshReturn)
+	z, _, valid := mb.MaxZScore(bucketReturn(freshReturn))
 	if !valid {
 		z = 0
 	}
@@ -131,7 +131,7 @@ func TestFrogBoiling_SlowDriftReachesFreezeThreshold(t *testing.T) {
 			got, freezeThreshold)
 	}
 
-	spikeZ, _, _ := mb.MaxZScore(freshReturn)
+	spikeZ, _, _ := mb.MaxZScore(bucketReturn(freshReturn))
 	driftZ, window, ok := mb.MaxDriftZScore()
 	if !ok {
 		t.Fatal("MaxDriftZScore valid=false with three fully-populated windows")
@@ -340,7 +340,7 @@ func TestMaxDriftZScore_PersistsLongAfterTheMoveEnds(t *testing.T) {
 		t.Fatal("MaxDriftZScore valid=false")
 	}
 	// A perfectly ordinary next bucket for a flat asset.
-	observedZ, _, _ := mb.MaxZScore(0.0001)
+	observedZ, _, _ := mb.MaxZScore(bucketReturn(0.0001))
 	t.Logf("%d days after the move ended: drift z=%.2f (%v), observed z=%.2f",
 		quietDaysAfter, driftZ, window, observedZ)
 

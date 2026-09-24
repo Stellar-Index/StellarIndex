@@ -83,50 +83,60 @@ func NewSyntheticCrossReference(opts SyntheticCrossOptions) (*SyntheticCrossRefe
 // Name implements [Reference].
 func (s *SyntheticCrossReference) Name() string { return SyntheticCrossName }
 
-// LookupPrice implements [Reference]. Only pairs quoted in a non-USD
+// LookupQuote implements [Reference]. Only pairs quoted in a non-USD
 // fiat are in scope; everything else is ErrAssetUnsupported (USD-quoted
 // pairs already have the direct oracle references — a synthetic reading
 // there would double-count the very feeds it is built from).
-func (s *SyntheticCrossReference) LookupPrice(ctx context.Context, pair canonical.Pair, observedAt time.Time) (float64, error) {
+//
+// Each leg is held to its own pair's [MaxComparableAge], and the cross
+// is as old as its base leg: the FX leg's age is bounded by the FX
+// ceiling, and FX moves far less per day than the divergence threshold.
+func (s *SyntheticCrossReference) LookupQuote(ctx context.Context, pair canonical.Pair, observedAt time.Time) (Quote, error) {
 	if pair.Quote.Type != canonical.AssetFiat || pair.Quote.Code == "USD" {
-		return 0, fmt.Errorf("%w: %s: synthetic cross covers non-USD-fiat quotes only",
+		return Quote{}, fmt.Errorf("%w: %s: synthetic cross covers non-USD-fiat quotes only",
 			ErrAssetUnsupported, SyntheticCrossName)
 	}
 
 	baseUSD, err := s.lookupLeg(ctx, s.usdLegs, canonical.Pair{Base: pair.Base, Quote: s.usd}, observedAt)
 	if err != nil {
-		return 0, fmt.Errorf("%s: base leg %s/USD: %w", SyntheticCrossName, pair.Base.String(), err)
+		return Quote{}, fmt.Errorf("%s: base leg %s/USD: %w", SyntheticCrossName, pair.Base.String(), err)
 	}
 	fiatUSD, err := s.lookupLeg(ctx, s.fxLegs, canonical.Pair{Base: pair.Quote, Quote: s.usd}, observedAt)
 	if err != nil {
-		return 0, fmt.Errorf("%s: fx leg %s/USD: %w", SyntheticCrossName, pair.Quote.String(), err)
+		return Quote{}, fmt.Errorf("%s: fx leg %s/USD: %w", SyntheticCrossName, pair.Quote.String(), err)
 	}
 
-	price := baseUSD / fiatUSD
+	price := baseUSD.Price / fiatUSD.Price
 	if !isUsablePrice(price) {
-		return 0, fmt.Errorf("%w: %s: cross %v/%v is not a usable price",
-			ErrPriceUnavailable, SyntheticCrossName, baseUSD, fiatUSD)
+		return Quote{}, fmt.Errorf("%w: %s: cross %v/%v is not a usable price",
+			ErrPriceUnavailable, SyntheticCrossName, baseUSD.Price, fiatUSD.Price)
 	}
-	return price, nil
+	return Quote{Price: price, AsOf: baseUSD.AsOf}, nil
 }
 
 // lookupLeg tries each candidate in order and returns the first usable
-// answer. Error semantics preserve Compare's unsupported-vs-degraded
+// answer; one older than the leg pair's [MaxComparableAge] counts as
+// unavailable, so a stale first candidate falls through to the next. Error semantics preserve Compare's unsupported-vs-degraded
 // distinction: if ANY leg failed transiently the leg is "unavailable"
 // (a reading should have existed); only when every candidate reports
 // unsupported is the leg — and so the cross — unsupported for the pair.
-func (s *SyntheticCrossReference) lookupLeg(ctx context.Context, legs []Reference, pair canonical.Pair, observedAt time.Time) (float64, error) {
+func (s *SyntheticCrossReference) lookupLeg(ctx context.Context, legs []Reference, pair canonical.Pair, observedAt time.Time) (Quote, error) {
 	sawTransient := false
 	var lastErr error
 	for _, ref := range legs {
-		price, err := ref.LookupPrice(ctx, pair, observedAt)
+		q, err := ref.LookupQuote(ctx, pair, observedAt)
 		if err == nil {
-			if !isUsablePrice(price) {
+			if !isUsablePrice(q.Price) {
 				sawTransient = true
-				lastErr = fmt.Errorf("%s returned unusable %v", ref.Name(), price)
+				lastErr = fmt.Errorf("%s returned unusable %v", ref.Name(), q.Price)
 				continue
 			}
-			return price, nil
+			if err := checkComparable(q, pair, observedAt); err != nil {
+				sawTransient = true
+				lastErr = fmt.Errorf("%s: %w", ref.Name(), err)
+				continue
+			}
+			return q, nil
 		}
 		if errors.Is(err, ErrAssetUnsupported) {
 			lastErr = err
@@ -141,9 +151,9 @@ func (s *SyntheticCrossReference) lookupLeg(ctx context.Context, legs []Referenc
 		// ErrAssetUnsupported, and double-wrapping would make this
 		// error match BOTH sentinels — Compare's unsupported-vs-
 		// degraded classification must see exactly ErrPriceUnavailable.
-		return 0, fmt.Errorf("%w: %s", ErrPriceUnavailable, lastErr.Error())
+		return Quote{}, fmt.Errorf("%w: %s", ErrPriceUnavailable, lastErr.Error())
 	}
-	return 0, fmt.Errorf("%w: no leg lists %s", ErrAssetUnsupported, pair.String())
+	return Quote{}, fmt.Errorf("%w: no leg lists %s", ErrAssetUnsupported, pair.String())
 }
 
 // isUsablePrice rejects the values that would poison a division or a

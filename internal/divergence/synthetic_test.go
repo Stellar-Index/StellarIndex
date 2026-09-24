@@ -18,20 +18,27 @@ type pairStub struct {
 	prices map[string]float64
 	err    error // when set, returned for EVERY lookup
 	asked  []string
+	age    time.Duration // how long before observedAt each price was observed
 }
 
 func (p *pairStub) Name() string { return p.name }
 
-func (p *pairStub) LookupPrice(_ context.Context, pair canonical.Pair, _ time.Time) (float64, error) {
+func (p *pairStub) LookupQuote(_ context.Context, pair canonical.Pair, observedAt time.Time) (Quote, error) {
 	p.asked = append(p.asked, pair.String())
 	if p.err != nil {
-		return 0, p.err
+		return Quote{}, p.err
+	}
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
 	}
 	if v, ok := p.prices[pair.String()]; ok {
-		return v, nil
+		return Quote{Price: v, AsOf: observedAt.Add(-p.age)}, nil
 	}
-	return 0, ErrAssetUnsupported
+	return Quote{}, ErrAssetUnsupported
 }
+
+// priceOf drops a quote's as-of for assertions on the price alone.
+func priceOf(q Quote, err error) (float64, error) { return q.Price, err }
 
 func synthPair(t *testing.T, quoteCode string) canonical.Pair {
 	t.Helper()
@@ -67,9 +74,9 @@ func TestSyntheticCross_DerivesNonUSDFiatQuote(t *testing.T) {
 		t.Fatalf("construct: %v", err)
 	}
 
-	got, err := syn.LookupPrice(context.Background(), synthPair(t, "EUR"), time.Now())
+	got, err := priceOf(syn.LookupQuote(context.Background(), synthPair(t, "EUR"), time.Now()))
 	if err != nil {
-		t.Fatalf("LookupPrice: %v", err)
+		t.Fatalf("LookupQuote: %v", err)
 	}
 	want := 0.35 / 1.09
 	if math.Abs(got-want) > 1e-12 {
@@ -94,13 +101,13 @@ func TestSyntheticCross_USDAndNonFiatQuotesUnsupported(t *testing.T) {
 		USDLegs: []Reference{usdLeg}, FXLegs: []Reference{fxLeg},
 	})
 
-	if _, err := syn.LookupPrice(context.Background(), synthPair(t, "USD"), time.Now()); !errors.Is(err, ErrAssetUnsupported) {
+	if _, err := priceOf(syn.LookupQuote(context.Background(), synthPair(t, "USD"), time.Now())); !errors.Is(err, ErrAssetUnsupported) {
 		t.Errorf("USD quote: err = %v, want ErrAssetUnsupported", err)
 	}
 	base, _ := canonical.ParseAsset("crypto:XLM")
 	native := canonical.NativeAsset()
 	cryptoQuote := canonical.Pair{Base: native, Quote: base}
-	if _, err := syn.LookupPrice(context.Background(), cryptoQuote, time.Now()); !errors.Is(err, ErrAssetUnsupported) {
+	if _, err := priceOf(syn.LookupQuote(context.Background(), cryptoQuote, time.Now())); !errors.Is(err, ErrAssetUnsupported) {
 		t.Errorf("crypto quote: err = %v, want ErrAssetUnsupported", err)
 	}
 	if len(usdLeg.asked)+len(fxLeg.asked) != 0 {
@@ -121,7 +128,7 @@ func TestSyntheticCross_ErrorSemantics(t *testing.T) {
 		USDLegs: []Reference{&pairStub{name: "u1"}, &pairStub{name: "u2"}},
 		FXLegs:  []Reference{fxOK},
 	})
-	if _, err := syn.LookupPrice(context.Background(), synthPair(t, "EUR"), time.Now()); !errors.Is(err, ErrAssetUnsupported) {
+	if _, err := priceOf(syn.LookupQuote(context.Background(), synthPair(t, "EUR"), time.Now())); !errors.Is(err, ErrAssetUnsupported) {
 		t.Errorf("all-unsupported USD legs: err = %v, want ErrAssetUnsupported", err)
 	}
 
@@ -134,7 +141,7 @@ func TestSyntheticCross_ErrorSemantics(t *testing.T) {
 		},
 		FXLegs: []Reference{fxOK},
 	})
-	if _, err := syn.LookupPrice(context.Background(), synthPair(t, "EUR"), time.Now()); !errors.Is(err, ErrPriceUnavailable) {
+	if _, err := priceOf(syn.LookupQuote(context.Background(), synthPair(t, "EUR"), time.Now())); !errors.Is(err, ErrPriceUnavailable) {
 		t.Errorf("transient USD leg: err = %v, want ErrPriceUnavailable", err)
 	}
 
@@ -143,7 +150,7 @@ func TestSyntheticCross_ErrorSemantics(t *testing.T) {
 		USDLegs: []Reference{&pairStub{name: "u", prices: map[string]float64{"crypto:XLM/fiat:USD": 0.35}}},
 		FXLegs:  []Reference{&pairStub{name: "f"}},
 	})
-	if _, err := syn.LookupPrice(context.Background(), synthPair(t, "GBP"), time.Now()); !errors.Is(err, ErrAssetUnsupported) {
+	if _, err := priceOf(syn.LookupQuote(context.Background(), synthPair(t, "GBP"), time.Now())); !errors.Is(err, ErrAssetUnsupported) {
 		t.Errorf("unsupported FX leg: err = %v, want ErrAssetUnsupported", err)
 	}
 
@@ -152,7 +159,7 @@ func TestSyntheticCross_ErrorSemantics(t *testing.T) {
 		USDLegs: []Reference{&pairStub{name: "u", prices: map[string]float64{"crypto:XLM/fiat:USD": 0}}},
 		FXLegs:  []Reference{fxOK},
 	})
-	if _, err := syn.LookupPrice(context.Background(), synthPair(t, "EUR"), time.Now()); !errors.Is(err, ErrPriceUnavailable) {
+	if _, err := priceOf(syn.LookupQuote(context.Background(), synthPair(t, "EUR"), time.Now())); !errors.Is(err, ErrPriceUnavailable) {
 		t.Errorf("zero-price leg: err = %v, want ErrPriceUnavailable", err)
 	}
 }
@@ -166,7 +173,7 @@ func TestSyntheticCross_LegOrderFirstAnswerWins(t *testing.T) {
 	syn, _ := NewSyntheticCrossReference(SyntheticCrossOptions{
 		USDLegs: []Reference{first, second}, FXLegs: []Reference{fxLeg},
 	})
-	got, err := syn.LookupPrice(context.Background(), synthPair(t, "EUR"), time.Now())
+	got, err := priceOf(syn.LookupQuote(context.Background(), synthPair(t, "EUR"), time.Now()))
 	if err != nil || got != 0.35 {
 		t.Errorf("got %v, %v — want the FIRST leg's 0.35", got, err)
 	}
@@ -188,5 +195,32 @@ func TestSyntheticCross_ConstructionRequiresBothLegs(t *testing.T) {
 		FXLegs: []Reference{&pairStub{name: "f"}},
 	}); err == nil {
 		t.Error("constructed with no USD leg")
+	}
+}
+
+// A base leg past the comparability ceiling falls through to the next
+// candidate, while a 20h-old FX leg (FX ceiling) still serves, and the
+// cross is dated by its base leg so Compare can vote it.
+func TestSyntheticCross_StaleBaseLegFallsThroughFXLegKeepsFXBudget(t *testing.T) {
+	staleUSD := &pairStub{name: "redstone", age: 20 * time.Hour, prices: map[string]float64{"crypto:XLM/fiat:USD": 0.50}}
+	freshUSD := &pairStub{name: "reflector-cex", age: time.Minute, prices: map[string]float64{"crypto:XLM/fiat:USD": 0.35}}
+	fxLeg := &pairStub{name: "chainlink", age: 20 * time.Hour, prices: map[string]float64{"fiat:EUR/fiat:USD": 1.09}}
+	syn, err := NewSyntheticCrossReference(SyntheticCrossOptions{
+		USDLegs: []Reference{staleUSD, freshUSD},
+		FXLegs:  []Reference{fxLeg},
+	})
+	if err != nil {
+		t.Fatalf("construct: %v", err)
+	}
+	at := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	q, err := syn.LookupQuote(context.Background(), synthPair(t, "EUR"), at)
+	if err != nil {
+		t.Fatalf("LookupQuote: %v", err)
+	}
+	if want := 0.35 / 1.09; math.Abs(q.Price-want) > 1e-12 {
+		t.Errorf("cross = %v, want %v from the fresh base leg", q.Price, want)
+	}
+	if want := at.Add(-time.Minute); !q.AsOf.Equal(want) {
+		t.Errorf("AsOf = %v, want the base leg's %v", q.AsOf, want)
 	}
 }

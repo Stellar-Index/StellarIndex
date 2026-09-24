@@ -74,6 +74,6 @@
 //
 // All exported types are safe for concurrent use after
 // construction. [Reference] implementations MUST be safe for
-// concurrent LookupPrice calls (Compare invokes them in
+// concurrent LookupQuote calls (Compare invokes them in
 // parallel goroutines).
 package divergence

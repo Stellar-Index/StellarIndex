@@ -280,6 +280,26 @@ func MAD(xs []float64) float64 {
 	return MADScale * Median(devs)
 }
 
+// BucketReturn is the fractional change of one closed bucket's VWAP over
+// the previous non-empty bucket's VWAP: the unit every [Baseline] is trained
+// in (see [ReturnsFromVWAPs]), and so the only observation
+// [MultiBaseline.MaxZScore] accepts. A tick-to-tick delta of an overlapping
+// rolling window is damped by bucket/window and must never be scored against
+// it.
+type BucketReturn struct{ frac float64 }
+
+// NewBucketReturn returns curr's return over prev, both bucket VWAPs.
+// ok is false when prev is zero (no defined return).
+func NewBucketReturn(prev, curr float64) (r BucketReturn, ok bool) {
+	if prev == 0 {
+		return BucketReturn{}, false
+	}
+	return BucketReturn{frac: (curr - prev) / prev}, true
+}
+
+// Fraction is the return as a fraction (0.1 = +10%).
+func (r BucketReturn) Fraction() float64 { return r.frac }
+
 // ReturnsFromVWAPs converts a chronologically-ordered slice of
 // bucket VWAP values into bucket-to-bucket percent changes:
 //
@@ -298,11 +318,9 @@ func ReturnsFromVWAPs(vwaps []float64) []float64 {
 	}
 	out := make([]float64, 0, len(vwaps)-1)
 	for i := 0; i < len(vwaps)-1; i++ {
-		prev := vwaps[i]
-		if prev == 0 {
-			continue
+		if r, ok := NewBucketReturn(vwaps[i], vwaps[i+1]); ok {
+			out = append(out, r.Fraction())
 		}
-		out = append(out, (vwaps[i+1]-prev)/prev)
 	}
 	return out
 }
