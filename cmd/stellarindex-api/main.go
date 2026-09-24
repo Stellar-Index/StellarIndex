@@ -3357,12 +3357,13 @@ func (r redisConfidenceLooker) LookupConfidence(ctx context.Context, asset, quot
 // Per the marker contract, "triangulated" means the aggregator's
 // triangulation worker wrote this value (vs. the direct per-pair
 // refresh, which doesn't write the marker). Absence of the marker
-// → isTriangulated=false; the handler then preserves the original
-// 404 rather than serving a direct VWAP from cache (Timescale is
-// the source of truth for direct VWAPs).
+// → isTriangulated=false; the handler still serves the cached value,
+// labelled flags.triangulated=false, because aggregator-rewritten
+// pairs (XLM/fiat:USD) have no prices_1m row to fall back on.
 //
 // Cache miss returns (found=false, no error). Read errors
-// propagate so the handler can log; the response 404s.
+// propagate so the handler can log and fall through to its other
+// fallbacks.
 type redisTriangulatedLooker struct{ rdb redis.UniversalClient }
 
 func (r redisTriangulatedLooker) LookupTriangulatedVWAP(
@@ -3385,7 +3386,7 @@ func (r redisTriangulatedLooker) LookupTriangulatedVWAP(
 		return "", false, false, nil
 	}
 	// A missing marker means a direct VWAP (per the marker contract):
-	// found=true, isTriangulated=false, so the handler preserves the 404.
+	// found=true, isTriangulated=false — served, but not labelled triangulated.
 	prov, _ := got[1].(string)
 	return val, prov == cachekeys.VWAPProvenanceTriangulated, true, nil
 }
