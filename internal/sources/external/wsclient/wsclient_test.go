@@ -254,3 +254,62 @@ func TestLoop_DialTimeoutDoesNotLimitConnection(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// TestLoop_ReadsFrameLargerThanDefaultLimit pins CA2-A18: coder/websocket's
+// undocumented-to-callers 32 KiB default message limit must not survive
+// Dial. Kraken's v2 trade channel batches every fill of one match into a
+// single `update` frame array; a liquidity sweep of ~175+ fills alone
+// exceeds 32 KiB. Without runOnce raising the limit, conn.Read fails with
+// "read limited at 32769 bytes", the connection drops, and every fill in
+// that frame — the highest-volume prints — is lost with only a disconnect
+// counter as the signal.
+func TestLoop_ReadsFrameLargerThanDefaultLimit(t *testing.T) {
+	// One byte over coder/websocket's defaultReadLimit (32768); a real
+	// Kraken burst frame is larger still, but this is the exact boundary
+	// the unfixed code cannot cross.
+	big := strings.Repeat("a", 32769)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		if err := c.Write(r.Context(), websocket.MessageText, []byte(big)); err != nil {
+			return
+		}
+		_, _, _ = c.Read(r.Context()) // hold open until the client leaves
+	}))
+	defer srv.Close()
+
+	var gotLen int
+	l := &Loop{
+		Source: "bigframevenue",
+		URL:    "ws" + strings.TrimPrefix(srv.URL, "http"),
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		HandleFrame: func(data []byte) ([]canonical.Trade, error) {
+			gotLen = len(data)
+			return []canonical.Trade{{Source: "bigframevenue"}}, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan canonical.Trade, 1)
+	done := make(chan error, 1)
+	go func() { done <- l.runOnce(ctx, out) }()
+
+	select {
+	case <-out:
+		if gotLen != len(big) {
+			t.Errorf("HandleFrame saw %d bytes, want %d — frame truncated", gotLen, len(big))
+		}
+	case err := <-done:
+		t.Fatalf("runOnce returned %v before the oversized frame was parsed — the default 32 KiB "+
+			"read limit dropped the connection instead of delivering the frame", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("no frame received within 3s")
+	}
+	cancel()
+	<-done
+}

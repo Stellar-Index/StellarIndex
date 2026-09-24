@@ -52,6 +52,14 @@ const (
 // accepts the connection but never answers the upgrade wedges the loop.
 const DefaultDialTimeout = 30 * time.Second
 
+// DefaultReadLimit overrides coder/websocket's 32 KiB default message size
+// (CA2-A18, audit-2026-09-23). Kraken's v2 trade channel batches every fill
+// of one match into a single `update` frame array; a liquidity sweep of
+// ~175+ ~185-byte fills alone exceeds 32 KiB, so the default limit dropped
+// the connection mid-frame and lost every fill in it. 4 MiB comfortably
+// covers any plausible single-match batch across venues.
+const DefaultReadLimit = 4 * 1024 * 1024
+
 // Loop is the shared connect → subscribe → read → reconnect lifecycle
 // used by every external WS streamer (binance / kraken / coinbase /
 // bitstamp). It owns the dial (via [KeepAliveHTTPClient]), the read
@@ -105,6 +113,12 @@ type Loop struct {
 	// handshake; exceeding it returns a "dial" disconnect and the loop
 	// reconnects with backoff. <=0 defaults to [DefaultDialTimeout].
 	DialTimeout time.Duration
+
+	// ReadLimit caps a single WebSocket message in bytes, set on the
+	// connection right after dial. <=0 defaults to [DefaultReadLimit].
+	// coder/websocket's own default (32 KiB) is too small for a
+	// venue that batches many fills into one frame (CA2-A18).
+	ReadLimit int64
 
 	// Subscribe, if non-nil, is called once per connection immediately
 	// after a successful dial to register channels (venues whose
@@ -309,6 +323,11 @@ func (l *Loop) dial(ctx context.Context) (*websocket.Conn, error) {
 	if resp != nil && resp.Body != nil {
 		_ = resp.Body.Close()
 	}
+	readLimit := l.ReadLimit
+	if readLimit <= 0 {
+		readLimit = DefaultReadLimit
+	}
+	conn.SetReadLimit(readLimit)
 	return conn, nil
 }
 
