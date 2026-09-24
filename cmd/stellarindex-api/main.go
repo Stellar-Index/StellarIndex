@@ -455,13 +455,13 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		)
 	}
 
-	// Failed-auth per-IP throttle (C3-5, audit-2026-07-16). Auth runs
+	// Failed-auth throttle (C3-5, audit-2026-07-16). Auth runs
 	// BEFORE the rate-limit middleware — deliberately, so per-tier
 	// limits key off the AUTHENTICATED subject — which means a request
 	// with an INVALID credential is rejected (401) before it ever
 	// reaches the limiter, leaving credential-stuffing / key-guessing
 	// unthrottled. This dedicated bucket throttles ONLY credential
-	// FAILURES, keyed on the resolved client IP, inside the Auth
+	// FAILURES, keyed on the client IP and the presented key prefix, inside the Auth
 	// middleware; valid requests are untouched and still limited by
 	// subject downstream. Redis-backed when available, in-process
 	// fallback otherwise (same C3-13 fallback as above). Only engaged
@@ -2032,8 +2032,8 @@ type authValidatorOptions struct {
 	Rdb               redis.UniversalClient
 	PostgresValidator *auth.PostgresAPIKeyValidator // non-nil when dashboard wired
 	SEP10             auth.SEP10Validator
-	// FailedAuthLimiter throttles invalid-credential attempts per IP
-	// (C3-5). Nil disables it. Attached to the Auth middleware for every
+	// FailedAuthLimiter throttles invalid-credential attempts per IP and
+	// per API-key prefix (C3-5). Nil disables it. Attached to the Auth middleware for every
 	// mode that can actually fail auth (i.e. not mode=none).
 	FailedAuthLimiter *ratelimit.Bucket
 	// AccountStatus wires the C3-010 account kill switch into the

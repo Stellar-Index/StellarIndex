@@ -214,7 +214,7 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 		KeyID:           keyID,
 		Identifier:      req.Identifier,
 		Label:           req.Label,
-		KeyPrefix:       keyPrefix(plaintext),
+		KeyPrefix:       KeyPrefix(plaintext),
 		Tier:            tier,
 		Scopes:          req.Scopes,
 		RateLimitPerMin: req.RateLimitPerMin,
@@ -282,8 +282,8 @@ func (s *RedisAPIKeyStore) inheritedMonthlyQuota(ctx context.Context, identifier
 	return lapsed, nil
 }
 
-// keyPrefix returns the human-friendly identifier portion of a
-// freshly-minted plaintext API key — the first 12 characters,
+// KeyPrefix returns the human-friendly identifier portion of a
+// plaintext API key — the first 12 characters,
 // covering the `sip_` namespace prefix plus 8 hex chars of
 // entropy. Safe to log: 32 bits is far short of authentication-
 // material; the secret tail is what makes the key. Customers
@@ -293,7 +293,7 @@ func (s *RedisAPIKeyStore) inheritedMonthlyQuota(ctx context.Context, identifier
 //
 // Returns "" for inputs shorter than 12 chars (defensive — never
 // happens in practice; generateID always emits long enough).
-func keyPrefix(plaintext string) string {
+func KeyPrefix(plaintext string) string {
 	const prefixLen = 12
 	if len(plaintext) < prefixLen {
 		return ""

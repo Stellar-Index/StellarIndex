@@ -1331,15 +1331,15 @@ type APIConfig struct {
 	AnonRateLimitPerMin int      `toml:"anon_rate_limit_per_min" doc:"Per-IP rate limit for anonymous requests. 0 DISABLES the anonymous tier entirely (fail-open, unbounded) — Validate() accepts 0 as a deliberate opt-out, but the API binary logs a boot-time WARN so the choice isn't silent (CFG-08, audit-2026-07-23)." default:"60"`
 	KeyRateLimitPerMin  int      `toml:"key_rate_limit_per_min" doc:"Per-API-key rate limit, default tier. 0 DISABLES the authenticated tier entirely (fail-open, unbounded) — Validate() accepts 0 as a deliberate opt-out, but the API binary logs a boot-time WARN so the choice isn't silent (CFG-08, audit-2026-07-23)." default:"1000"`
 
-	// FailedAuthRateLimitPerMin caps invalid-credential attempts per IP
-	// (C3-5, audit-2026-07-16). Auth runs before the main rate limiter,
-	// so a wrong API key / SEP-10 token is rejected (401) before it
-	// reaches the limiter — leaving credential-stuffing / key-guessing
-	// otherwise unthrottled. This is a dedicated per-IP throttle applied
-	// inside the Auth middleware to credential FAILURES only; valid
-	// requests are unaffected. Only engaged when auth_mode != none (mode
-	// none never fails auth). 0 disables it.
-	FailedAuthRateLimitPerMin int `toml:"failed_auth_rate_limit_per_min" doc:"Per-IP cap on INVALID-credential (failed-auth) attempts per minute, enforced inside the Auth middleware so credential-stuffing / API-key guessing is throttled even though auth rejects before the main rate limiter (C3-5). Only active when auth_mode != none. Keyed on the resolved client IP; Redis-backed when available, in-process fixed-window fallback otherwise. 0 disables the failed-auth throttle." default:"20"`
+	// FailedAuthRateLimitPerMin caps invalid-credential attempts (C3-5).
+	// Auth runs before the main rate limiter, so a wrong API key / SEP-10
+	// token is rejected (401) before it reaches the limiter. The same cap
+	// applies independently per client IP and, in the API-key modes, per
+	// presented key prefix — so rotating source IPs does not reset the
+	// budget for guesses aimed at one key. Credential FAILURES only;
+	// valid requests are unaffected. Only engaged when auth_mode != none.
+	// 0 disables it.
+	FailedAuthRateLimitPerMin int `toml:"failed_auth_rate_limit_per_min" doc:"Cap on INVALID-credential (failed-auth) attempts per minute, enforced inside the Auth middleware so credential-stuffing / API-key guessing is throttled even though auth rejects before the main rate limiter (C3-5). Only active when auth_mode != none. Applied independently per resolved client IP and, in the apikey / apikey_optional modes, per presented key prefix (the 12-char display prefix), so guessing aimed at one key from many IPs is still capped; a valid key is never throttled by it. Redis-backed when available, in-process fixed-window fallback otherwise. 0 disables the failed-auth throttle." default:"20"`
 
 	// SingleInstance asserts the deployment runs exactly ONE API
 	// instance, unlocking the per-process Redis-less fallbacks for the

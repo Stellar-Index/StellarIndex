@@ -1652,6 +1652,19 @@ credential. Both values are pre-seeded at zero.
 Alert: `stellarindex_passkey_clone_warning` (on `clone_warning` only) →
 [passkey-clone-warning](../../operations/runbooks/passkey-clone-warning.md).
 
+### `stellarindex_failed_auth_total`
+
+Counter, label `outcome` (`rejected` / `throttled`).
+
+Presented credentials the API's Auth middleware rejected. `rejected` was
+answered 401/403; `throttled` was answered 429 by the failed-auth
+throttle, which caps each client IP and, for API keys, each key prefix
+at `api.failed_auth_rate_limit_per_min`. Server-side misconfiguration
+(503) is not counted. Both values are pre-seeded at zero.
+
+Alert: `stellarindex_failed_auth_rate_high` (on `rejected` only) →
+[failed-auth-rate-high](../../operations/runbooks/failed-auth-rate-high.md).
+
 ### `stellarindex_admin_key_budget_clamps_total`
 
 Counter, label `outcome` (`lowered` / `failed`).

@@ -526,6 +526,34 @@ groups:
             account and credential; contact the owner and have them remove
             that passkey.
 
+      # The failed-auth throttle caps each client IP and each API-key
+      # prefix at failed_auth_rate_limit_per_min (20/min by default), so
+      # guessing spread across many IPs and many prefixes never fills a
+      # bucket and never 429s. This fleet-wide rate is the only place that
+      # pattern shows. It counts only outcome="rejected": a throttled
+      # attempt is already capped, and the per-IP cap holds any one source
+      # (a client looping a revoked key, say) to 0.33/s rejected. Over 1/s
+      # for 15 minutes therefore needs more than three sources failing at
+      # their cap, or many failing under it.
+      - alert: stellarindex_failed_auth_rate_high
+        expr: sum(rate(stellarindex_failed_auth_total{outcome="rejected"}[5m])) > 1
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/failed-auth-rate-high.md
+          summary: "Credentials rejected at {{ $value | humanize }}/s fleet-wide for 15 minutes"
+          description: |
+            The API has been rejecting presented credentials at more than
+            one per second, summed across every instance, for 15 minutes.
+            The per-IP and per-key-prefix failed-auth throttles only see
+            their own bucket; this total catches credential guessing spread
+            thinly enough to stay under both. Group the access log's 401s
+            by remote_ip to tell a handful of capped sources from a
+            distributed guess.
+
       # C3-032 follow-up: the durable login-code lockout's table is
       # written by an UNAUTHENTICATED endpoint under an ATTACKER-CHOSEN
       # key. POST /v1/auth/verify-code with a synthetic address inserts a

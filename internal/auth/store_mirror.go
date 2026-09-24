@@ -84,7 +84,7 @@ func (s *RedisAPIKeyStore) CreateWithSecret(ctx context.Context, k MirroredKey) 
 	}
 
 	rec := k.Record
-	rec.KeyPrefix = keyPrefix(k.Plaintext)
+	rec.KeyPrefix = KeyPrefix(k.Plaintext)
 	if rec.Tier == "" {
 		rec.Tier = TierAPIKey
 	}
