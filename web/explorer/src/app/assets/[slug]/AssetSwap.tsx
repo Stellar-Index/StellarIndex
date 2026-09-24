@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowDownUp, ChevronDown, Search, X } from 'lucide-react';
 
@@ -12,6 +12,7 @@ import { CURRENT_NETWORK } from '@/lib/networks';
 import { formatRelative, formatSubunitPrice } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { isSafePublicImageUrl } from '@/lib/safe-domain';
+import { useDialog } from '@/lib/useDialog';
 
 /**
  * AssetSwap — the asset page's swap/convert widget. Two stacked amount
@@ -283,6 +284,9 @@ export function AssetSwap({
 
   const fiatTokens = useFiatTokens(pickerEverOpened);
 
+  // Stable: useDialog re-runs (and re-steals focus) whenever onClose changes.
+  const closePicker = useCallback(() => setPicker(null), []);
+
   function openPicker(side: 'from' | 'to') {
     setPicker(side);
     setPickerEverOpened(true);
@@ -391,7 +395,7 @@ export function AssetSwap({
             side={picker}
             fiat={fiatTokens}
             pageToken={pageToken}
-            onClose={() => setPicker(null)}
+            onClose={closePicker}
             onPick={pick}
           />
         )}
@@ -520,12 +524,10 @@ function TokenPicker({
 }) {
   const [query, setQuery] = useState('');
   const debounced = useDebounced(query.trim(), 200);
-  const inputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+  // Escape, focus-in (the search field is the first focusable), Tab trap and
+  // focus restore to the leg trigger.
+  const dialogRef = useDialog<HTMLDivElement>(true, onClose);
 
   // Cap the scroll area to what fits above the viewport bottom, leaving a 10px
   // gap, so a long list never overflows the page. Set imperatively (no state)
@@ -546,15 +548,6 @@ function TokenPicker({
       window.removeEventListener('scroll', fit, true);
     };
   }, []);
-
-  // Close on Escape.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
   // Mirror the global search modal's proven pattern: a warm top-N list (no q,
   // no order_by — the pre-warmed default tuple; an order_by or a cold search
@@ -654,6 +647,13 @@ function TokenPicker({
     // gap (space-y-1.5 = 6px) down. The search field fills that box exactly and
     // the results list overflows below the whole widget.
     <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={
+        side === 'from' ? 'Choose asset to pay' : 'Choose asset to receive'
+      }
+      tabIndex={-1}
       className={cn(
         'border-line-strong bg-surface shadow-elevated absolute right-0 left-0 z-20 flex flex-col rounded-lg border',
         side === 'from' ? 'top-0' : 'top-[72px]',
@@ -664,7 +664,6 @@ function TokenPicker({
       <div className="border-line flex h-[66px] shrink-0 items-center gap-2 border-b px-3.5">
         <Search className="text-ink-faint h-4 w-4 shrink-0" />
         <input
-          ref={inputRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search assets & currencies…"

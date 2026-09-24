@@ -111,3 +111,62 @@ describe('AssetSwap fiat leg basis', () => {
     expect(await screen.findByDisplayValue(/^0\.1697/)).toBeInTheDocument();
   });
 });
+
+// T267. TokenPicker hand-rolled an Escape listener instead of the shared
+// useDialog contract: no dialog role, no focus trap, and focus fell to
+// <body> on close instead of returning to the leg the user opened it from.
+describe('AssetSwap token picker dialog contract', () => {
+  it('is announced as a modal dialog', async () => {
+    stubApi();
+    renderSwap();
+    fireEvent.click(await screen.findByRole('button', { name: /USD/ }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog).toHaveAccessibleName();
+  });
+
+  it('returns focus to the leg trigger when closed with Escape', async () => {
+    stubApi();
+    renderSwap();
+    const trigger = await screen.findByRole('button', { name: /USD/ });
+    trigger.focus();
+    fireEvent.click(trigger);
+    await screen.findByRole('button', { name: /EUR/ });
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    expect(
+      screen.queryByPlaceholderText(/Search assets/),
+    ).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('returns focus to the leg trigger after a token is picked', async () => {
+    stubApi();
+    renderSwap();
+    const trigger = await screen.findByRole('button', { name: /USD/ });
+    trigger.focus();
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole('button', { name: /EUR/ }));
+
+    expect(
+      screen.queryByPlaceholderText(/Search assets/),
+    ).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(
+      await screen.findByRole('button', { name: /EUR/ }),
+    );
+  });
+
+  it('keeps Tab inside the picker', async () => {
+    stubApi();
+    renderSwap();
+    fireEvent.click(await screen.findByRole('button', { name: /USD/ }));
+    const search = await screen.findByPlaceholderText(/Search assets/);
+
+    // The trap claims the key (preventDefault) so the browser's default
+    // move to the next page control never happens.
+    const notCancelled = fireEvent.keyDown(search, { key: 'Tab' });
+    expect(notCancelled).toBe(false);
+  });
+});
