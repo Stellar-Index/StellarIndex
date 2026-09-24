@@ -33,6 +33,18 @@ any PR, provided consumers in this repo are updated in the same
 PR. Changes to `pkg/*` break only on major version bumps (see
 CHANGELOG).
 
+### Changelog
+
+Don't edit `CHANGELOG.md` in a feature or fix PR. `[Unreleased]` is
+written once, at the release cut, from the commit subjects since the
+previous tag (`git log vPREV..HEAD --format=%s`, filtered to
+`feat`/`fix`/`perf` with a user-visible scope; `!` and
+`BREAKING CHANGE:` footers become the Breaking/Deprecated entries).
+One line per change, no evidence paragraphs — the why lives in the
+commit body. Only the newest five release sections stay in the file;
+older ones live at their tags and on GitHub Releases.
+`scripts/ci/lint-docs.sh` enforces the window and a size cap.
+
 ---
 
 ## Development setup

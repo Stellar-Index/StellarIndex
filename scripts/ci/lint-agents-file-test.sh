@@ -58,8 +58,11 @@ for h in "## Directory structure" "## Repository map" "## Where things live" \
   restore
 done
 
-# The false positive that made a legitimate commands file red.
-{ cat "$BAK"; printf '\n```sh\n# changelog entry goes under [Unreleased]\nmake verify\n```\n'; } > AGENTS.md
+# The false positive that made a legitimate commands file red. Length-neutral (the
+# fixture adds 5 lines) so a full AGENTS.md trips the ceiling check, not this one.
+keep=$(( $(wc -l < "$BAK") - 5 ))
+# shellcheck disable=SC2016 # the backticks are a markdown fence, not a command substitution
+{ head -n "$keep" "$BAK"; printf '\n```sh\n# changelog entry goes under [Unreleased]\nmake verify\n```\n'; } > AGENTS.md
 check "the word changelog inside a fenced block is NOT a heading" ok
 restore
 

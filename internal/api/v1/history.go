@@ -345,8 +345,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 
 	// 8s ceiling on the trades hypertable range query, part of the
 	// cold-path timeout pattern applied across every aggregation
-	// endpoint (CHANGELOG.md: "Cold-path 8-second response ceiling
-	// on every aggregation endpoint"). Long `from` windows (no
+	// endpoint. Long `from` windows (no
 	// `from` set, or month-spanning) can take
 	// 5–10s on a cold cache scanning per-trade rows. One ceiling spans
 	// every alias scan below — the fan-in must not multiply the

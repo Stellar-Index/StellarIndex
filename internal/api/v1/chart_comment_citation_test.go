@@ -12,10 +12,8 @@ import (
 // never a live tracking reference (the repo's issue/PR count was #803 when
 // the comment was written) and the tracker has since grown past it, so a
 // reader following the citation lands on an unrelated, already-fixed issue
-// with no signal anything is off. The comment must instead point at a
-// durable, content-addressed anchor (the CHANGELOG entry's own heading
-// text) that can be grepped and verified rather than resolved through an
-// external, renumberable tracker.
+// with no signal anything is off. The comment must
+// describe the pattern in prose instead.
 func TestChartTimeoutComment_NoDanglingIssueCitation(t *testing.T) {
 	src, err := os.ReadFile("chart.go")
 	if err != nil {
@@ -28,16 +26,6 @@ func TestChartTimeoutComment_NoDanglingIssueCitation(t *testing.T) {
 			"these renumber and silently start pointing at unrelated "+
 			"issues (RSWP-078) — describe the pattern in prose instead", stale)
 	}
-
-	changelog, err := os.ReadFile("../../../CHANGELOG.md")
-	if err != nil {
-		t.Fatalf("read CHANGELOG.md: %v", err)
-	}
-	anchor := "Cold-path 8-second response ceiling"
-	if !regexp.MustCompile(regexp.QuoteMeta(anchor)).Match(changelog) {
-		t.Fatalf("CHANGELOG.md no longer contains the %q heading that "+
-			"chart.go's timeout comment now cites in its place", anchor)
-	}
 }
 
 // TestChartVWAPTimeoutComment_NoDanglingIssueCitation pins RSWP-079: the 8s
@@ -46,10 +34,8 @@ func TestChartTimeoutComment_NoDanglingIssueCitation(t *testing.T) {
 // in RSWP-080) 404s today and can silently start resolving to an unrelated
 // issue once the tracker grows past it, which is worse than a 404 because a
 // reader following the citation lands on the wrong history with no signal
-// anything is off. The comment must instead point at a durable, content-
-// addressed anchor (the CHANGELOG entry's own heading text) that can be
-// grepped and verified rather than resolved through an external,
-// renumberable tracker.
+// anything is off. The comment must
+// describe the pattern in prose instead.
 func TestChartVWAPTimeoutComment_NoDanglingIssueCitation(t *testing.T) {
 	src, err := os.ReadFile("chart.go")
 	if err != nil {
@@ -69,15 +55,5 @@ func TestChartVWAPTimeoutComment_NoDanglingIssueCitation(t *testing.T) {
 			"reference %q; these renumber and silently start pointing at "+
 			"unrelated issues (RSWP-079/RSWP-080) — describe the pattern in "+
 			"prose instead", m)
-	}
-
-	changelog, err := os.ReadFile("../../../CHANGELOG.md")
-	if err != nil {
-		t.Fatalf("read CHANGELOG.md: %v", err)
-	}
-	anchor := "Cold-path 8-second response ceiling"
-	if !regexp.MustCompile(regexp.QuoteMeta(anchor)).Match(changelog) {
-		t.Fatalf("CHANGELOG.md no longer contains the %q heading that "+
-			"chart.go's timeout comment now cites in its place", anchor)
 	}
 }
