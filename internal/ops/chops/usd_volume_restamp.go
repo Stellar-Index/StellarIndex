@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -174,6 +175,10 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	if err != nil {
 		return err
 	}
+	allow := restampSourceAllowList(*sources)
+	if err := validateRestampSourceAllowList(*tier, allow); err != nil {
+		return err
+	}
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
@@ -236,7 +241,7 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 
 	if restampTierIsEstimated(*tier) {
 		xopts := xlmBaseRestampOptions{
-			Allow:         restampSourceAllowList(*sources),
+			Allow:         allow,
 			FillNull:      *fillNull,
 			Slice:         *slice,
 			Batch:         *batch,
@@ -270,7 +275,7 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	run := &restampRun{
 		store:      store,
 		spec:       spec,
-		allow:      restampSourceAllowList(*sources),
+		allow:      allow,
 		fillNull:   *fillNull,
 		slice:      *slice,
 		write:      write,
@@ -521,6 +526,53 @@ func restampSourceAllowList(csv string) map[string]bool {
 		out[s] = true
 	}
 	return out
+}
+
+// validateRestampSourceAllowList refuses a -sources name that is not in
+// the tier's own registry (CA2-A13). The estimated tiers resolve their
+// allow-list through [timescale.restampScanSources], which silently
+// DROPS an unregistered name rather than erroring — so
+// `-tier cex-fx -sources sdex` (a DEX source on the CEX tier) or a plain
+// typo scans nothing, plans zero changes, and exits 0 with per-day
+// output shaped identically to a genuinely clean window. Mirrors the
+// already-shipped `ch-rebuild -sources` guard (checkCHRebuildSources).
+//
+// The exact tier is not gated here: its allow-list filters groups the
+// scan actually found in the data (restampRun.exactTierGroups), so a
+// typo there yields a visibly empty "0 exact-tier target(s)" day rather
+// than a silently narrowed registry scan.
+func validateRestampSourceAllowList(tier string, allow map[string]bool) error {
+	if len(allow) == 0 || !restampTierIsEstimated(tier) {
+		return nil
+	}
+	known := restampTierSourceUniverse(tier)
+	inUniverse := make(map[string]bool, len(known))
+	for _, name := range known {
+		inUniverse[name] = true
+	}
+	var unknown []string
+	for name := range allow {
+		if !inUniverse[name] {
+			unknown = append(unknown, name)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	return fmt.Errorf("usd-volume-restamp: -sources names %v, which -tier %s does not recognise — "+
+		"the filter would silently drop them and scan nothing for them, reporting a clean window it never checked. Known sources: %s",
+		unknown, tier, strings.Join(known, ", "))
+}
+
+// restampTierSourceUniverse is the registry an estimated tier's
+// -sources allow-list is validated against: DEX names for the two XLM
+// anchor tiers, CEX names for the off-chain fiat tier.
+func restampTierSourceUniverse(tier string) []string {
+	if tier == restampTierCEXFX {
+		return timescale.CEXSourceNames()
+	}
+	return timescale.DEXSourceNames()
 }
 
 // exactRestampStore is the slice of [timescale.Store] the exact-tier walk
