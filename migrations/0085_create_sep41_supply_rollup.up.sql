@@ -47,8 +47,12 @@
 -- live delta covers everything above the checkpoint up to the request
 -- ledger, so a conservatively-lagging checkpoint never loses events.
 -- A `sep41_supply_events` re-derive/backfill that rewrites history
--- below an existing checkpoint requires a `TRUNCATE sep41_supply_rollup`
--- so the worker re-folds from zero (documented alongside the re-derive).
+-- below an existing checkpoint must reset the fold columns so the
+-- worker re-folds from zero: `ch-rebuild -sep41 -write` and
+-- `projector-replay -source sep41_supply` do it themselves via
+-- Store.ResetSEP41SupplyRollupFold. Never TRUNCATE or DELETE rows of
+-- this table — that also drops migration 0088's seeded genesis
+-- baseline (docs/operations/sep41-mint-recovery.md).
 --
 -- Old-binary-safe: purely additive — a new standalone table, no
 -- existing table/column/policy touched. A pre-0085 binary keeps using

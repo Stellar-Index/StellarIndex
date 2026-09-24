@@ -17,7 +17,7 @@ import (
 // INCREMENTALLY by a watermark worker (AdvanceSEP41SupplyRollup: sum only
 // `ledger > last_ledger`, add in). A full-history re-derive rewrote a
 // contract's raw `sep41_supply_events` BELOW an existing checkpoint
-// without the mandated `TRUNCATE sep41_supply_rollup`, so the worker
+// without resetting the rollup's fold checkpoint, so the worker
 // re-folded already-counted history and the served supply came out
 // exactly 2×. The row-count reconciles (reconcile.go) could NOT catch it:
 // the raw rows were correct — only the derived checkpoint was doubled.
