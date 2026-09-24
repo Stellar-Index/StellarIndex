@@ -491,6 +491,27 @@ func (c *WebhookStore) MarkAttemptFailed(ctx context.Context, id uuid.UUID, errM
 	return nil
 }
 
+// SweepFinishedDeliveries deletes delivery rows created before
+// olderThan that are finished — delivered, or failed permanently
+// (next_attempt_at cleared) — returning how many were removed. Drives
+// the webhook-delivery reaper (internal/retentionreaper).
+//
+// A row still carrying next_attempt_at is never touched at any age:
+// that includes deliveries parked behind a suspended account, which
+// resume if the account is reinstated.
+func (c *WebhookStore) SweepFinishedDeliveries(ctx context.Context, olderThan time.Time) (int64, error) {
+	const q = `
+		DELETE FROM webhook_deliveries
+		 WHERE id IN (
+		     SELECT id FROM webhook_deliveries
+		      WHERE created_at < $1
+		        AND (delivered_at IS NOT NULL OR next_attempt_at IS NULL)
+		      LIMIT $2
+		 )
+	`
+	return c.s.deleteInBatches(ctx, "postgresstore: SweepFinishedDeliveries", q, olderThan, defaultSweepBatchRows)
+}
+
 // ─── helpers ────────────────────────────────────────────────────
 
 // rowScanner is the subset of *sql.Row + *sql.Rows that
