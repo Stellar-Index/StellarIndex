@@ -803,13 +803,13 @@ SELECT asset_id, SUM(volume_usd) AS vol_usd, now()
     SELECT base_asset  AS asset_id, volume_usd
       FROM prices_1m
      WHERE bucket >= now() - INTERVAL '24 hours'
-       AND bucket  <  now()
+       AND bucket <= now() - INTERVAL '1 minute'
        AND volume_usd IS NOT NULL
     UNION ALL
     SELECT quote_asset AS asset_id, volume_usd
       FROM prices_1m
      WHERE bucket >= now() - INTERVAL '24 hours'
-       AND bucket  <  now()
+       AND bucket <= now() - INTERVAL '1 minute'
        AND volume_usd IS NOT NULL
   ) t
  GROUP BY asset_id
@@ -1712,13 +1712,13 @@ const getAssetBySlugSQL = `
 		      SELECT volume_usd FROM prices_1m
 		       WHERE base_asset = (SELECT asset_id FROM chosen)
 		         AND bucket >= now() - INTERVAL '24 hours'
-		         AND bucket  <  now()
+		         AND bucket <= now() - INTERVAL '1 minute'
 		         AND volume_usd IS NOT NULL
 		      UNION ALL
 		      SELECT volume_usd FROM prices_1m
 		       WHERE quote_asset = (SELECT asset_id FROM chosen)
 		         AND bucket >= now() - INTERVAL '24 hours'
-		         AND bucket  <  now()
+		         AND bucket <= now() - INTERVAL '1 minute'
 		         AND volume_usd IS NOT NULL
 		    ) t
 		),
@@ -2100,13 +2100,13 @@ const getNativeAssetSQL = `
 		      SELECT volume_usd FROM prices_1m
 		       WHERE base_asset = 'native'
 		         AND bucket >= now() - INTERVAL '24 hours'
-		         AND bucket  <  now()
+		         AND bucket <= now() - INTERVAL '1 minute'
 		         AND volume_usd IS NOT NULL
 		      UNION ALL
 		      SELECT volume_usd FROM prices_1m
 		       WHERE quote_asset = 'native'
 		         AND bucket >= now() - INTERVAL '24 hours'
-		         AND bucket  <  now()
+		         AND bucket <= now() - INTERVAL '1 minute'
 		         AND volume_usd IS NOT NULL
 		    ) t
 		),
@@ -2245,12 +2245,12 @@ func (s *Store) LatestAssetStats(ctx context.Context, assetID string) (AssetRow,
 		    SELECT volume_usd FROM prices_1m
 		     WHERE base_asset = ANY($1)
 		       AND bucket >= now() - INTERVAL '24 hours'
-		       AND bucket  <  now()
+		       AND bucket <= now() - INTERVAL '1 minute'
 		    UNION ALL
 		    SELECT volume_usd FROM prices_1m
 		     WHERE quote_asset = ANY($1)
 		       AND bucket >= now() - INTERVAL '24 hours'
-		       AND bucket  <  now()
+		       AND bucket <= now() - INTERVAL '1 minute'
 		  ) t
 	`
 	var vol string
