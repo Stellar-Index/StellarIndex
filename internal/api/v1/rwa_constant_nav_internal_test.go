@@ -29,8 +29,8 @@ func TestRWAApplyReference_ProspectusConstantNAV(t *testing.T) {
 	if a.ReferenceValuation.ValueUSD == nil || *a.ReferenceValuation.ValueUSD != "56674272.12" {
 		t.Errorf("gBENJI reference valuation = %+v, want 56674272.12", a.ReferenceValuation)
 	}
-	if a.Premium.Status != RWAPremiumReferenceNotOracle {
-		t.Errorf("premium = %+v, want the not-an-oracle status", a.Premium)
+	if a.Premium.Status != RWAPremiumReferenceNotOracleCNAV {
+		t.Errorf("premium = %+v, want the not-an-oracle-CNAV status", a.Premium)
 	}
 
 	b := mk("gBENJI", "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP")
@@ -73,8 +73,8 @@ func TestRWAApplyReference_ProspectusConstantNAV_StaleAfterReviewBy(t *testing.T
 		if a.ReferenceValuation.ValueUSD == nil || *a.ReferenceValuation.ValueUSD != "56674272.12" {
 			t.Errorf("at %s: valuation = %+v, want 56674272.12 — the bound labels, it does not withhold", now.Format(time.RFC3339), a.ReferenceValuation)
 		}
-		if a.Premium.Status != RWAPremiumReferenceNotOracle {
-			t.Errorf("at %s: premium = %+v, want the not-an-oracle status", now.Format(time.RFC3339), a.Premium)
+		if a.Premium.Status != RWAPremiumReferenceNotOracleCNAV {
+			t.Errorf("at %s: premium = %+v, want the not-an-oracle-CNAV status", now.Format(time.RFC3339), a.Premium)
 		}
 		return a
 	}
@@ -138,8 +138,8 @@ func TestRWAApplyReference_UnusableListingPriceFallsToConstantNAV(t *testing.T) 
 			if a.ReferenceValuation.ValueUSD == nil || *a.ReferenceValuation.ValueUSD != "56674272.12" {
 				t.Errorf("reference valuation = %+v, want 56674272.12", a.ReferenceValuation)
 			}
-			if a.Premium.Status != RWAPremiumReferenceNotOracle {
-				t.Errorf("premium = %+v, want the not-an-oracle status", a.Premium)
+			if a.Premium.Status != RWAPremiumReferenceNotOracleCNAV {
+				t.Errorf("premium = %+v, want the not-an-oracle-CNAV status", a.Premium)
 			}
 
 			const other = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"

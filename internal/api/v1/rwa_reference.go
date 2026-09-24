@@ -160,18 +160,22 @@ type RWAReference struct {
 	// not age, but the reading of it does, and past
 	// [rwa.ConstantNAVReviewInterval] the row says so.
 	Stale bool `json:"stale,omitempty"`
-	// Provenance names WHAT KIND of figure this is. Two are published
+	// Provenance names WHAT KIND of figure this is. Four are published
 	// and they are not the same claim, so the field is mandatory on
 	// every served reference rather than defaulted.
 	//
 	// [RWAReferenceOracleNAV] is an oracle's published valuation of the
 	// INSTRUMENT, which the token declares it anchors to one-for-one.
 	// [RWAReferenceListingPrice] is a listing platform's aggregate of
-	// what the TOKEN trades at across the venues it tracks. The first
-	// is a statement about the backing; the second is a statement about
-	// the token. Folding them under one name would let a summary total
-	// describe itself with the wrong provenance, which is the exact
-	// defect the summary basis prose exists to prevent.
+	// what the TOKEN trades at across the venues it tracks.
+	// [RWAReferenceProspectusCNAV] is the issuer's own prescribed NAV
+	// for a share class whose fund rules fix it. [RWAReferenceCuratorPrice]
+	// is a curator's own uploaded price, weaker still — a party's typed
+	// figure rather than a market aggregate. The first is a statement
+	// about the backing; the other three are statements about the
+	// token or its curator. Folding them under one name would let a
+	// summary total describe itself with the wrong provenance, which
+	// is the exact defect the summary basis prose exists to prevent.
 	Provenance string `json:"provenance"`
 }
 
@@ -382,8 +386,8 @@ const (
 	// it is a LISTING PRICE rather than an oracle's valuation of the
 	// instrument, so no premium may be computed against it.
 	//
-	// This is R-C applied to the new arm, and it is the one status on
-	// this list that refuses the premium while the reference valuation
+	// This is R-C applied to the new arm, and it is one of the statuses
+	// on this list that refuse the premium while the reference valuation
 	// beside it is PUBLISHED. A premium is the gap between what the
 	// market pays and what the backing is independently worth. A
 	// listing price is an aggregate of the same markets our own price
@@ -395,7 +399,27 @@ const (
 	// reason [RWAPremiumContractNotBound] refuses the symbol join: a
 	// number that can be computed is not thereby a number that means
 	// something.
+	//
+	// Reserved for rows whose reference is actually a listing price.
+	// [RWAPremiumReferenceNotOracleCNAV] and
+	// [RWAPremiumReferenceNotOracleCurator] carry the same refusal for
+	// the two other non-oracle provenances, so the wire value always
+	// names the figure that was actually refused rather than collapsing
+	// three different claims into one string.
 	RWAPremiumReferenceNotOracle = "reference_is_a_listing_price"
+	// RWAPremiumReferenceNotOracleCNAV — the row carries a reference,
+	// and it is a prospectus's constant NAV rather than an oracle's
+	// valuation of the instrument, so no premium may be computed
+	// against it. [RWAPremiumReferenceNotOracle] applied here would
+	// tell a reader the figure was a listing price, which it is not —
+	// see [RWAReferenceProspectusCNAV].
+	RWAPremiumReferenceNotOracleCNAV = "reference_is_a_prospectus_nav"
+	// RWAPremiumReferenceNotOracleCurator — the row carries a
+	// reference, and it is a curator's uploaded price rather than an
+	// oracle's valuation of the instrument, so no premium may be
+	// computed against it. See [RWAReferenceCuratorPrice] in
+	// rwa_curated.go.
+	RWAPremiumReferenceNotOracleCurator = "reference_is_a_curator_price"
 )
 
 // ─── snapshot ───────────────────────────────────────────────────────
@@ -921,7 +945,7 @@ func rwaApplyConstantNAVReference(a *RWAAsset, b rwa.ConstantNAVBinding, now tim
 		Provenance: RWAReferenceProspectusCNAV,
 	}
 	a.ReferenceValuation = rwaReferenceValuationOf(a, rwaReference{priceUSD: price})
-	a.Premium = RWAPremium{Status: RWAPremiumReferenceNotOracle}
+	a.Premium = RWAPremium{Status: RWAPremiumReferenceNotOracleCNAV}
 }
 
 func rwaRefuseReference(a *RWAAsset, status string) {

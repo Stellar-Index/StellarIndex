@@ -378,6 +378,9 @@ func rwaApplyCuratorReference(a *RWAAsset, e timescale.CuratedRWAEntry, now time
 	if a.Reference != nil {
 		a.Reference.Provenance = RWAReferenceCuratorPrice
 		a.Reference.Feed = rwaCuratorDune
+		// The shared helper left the listing-price refusal; keep it in
+		// step with the curator provenance set above.
+		a.Premium.Status = RWAPremiumReferenceNotOracleCurator
 	}
 }
 
