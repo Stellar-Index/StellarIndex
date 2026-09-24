@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/divergence"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/obstest"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
@@ -554,5 +556,82 @@ func TestDivergenceLedgerAdapter_LatestLedger_FailsOpenOnError(t *testing.T) {
 	}}
 	if got := a.LatestLedger(); got != 0 {
 		t.Fatalf("LatestLedger() = %d, want 0 on cursor-read error", got)
+	}
+}
+
+// TestLazyCloseTimeReader_RetriesTransientDialFailure covers GH-902: the
+// supply refresher's ClickHouse close-time reader used to dial once,
+// synchronously, at boot — any error (including the transient cold-boot
+// race clickhouse-server's metadata load causes) aborted the whole
+// aggregator process. newLazyCloseTimeReader must instead retry in the
+// background until the dial succeeds, exactly like the decimals-guard
+// (K024) and SAC-resolver readers already do. A dial stub that fails twice
+// then succeeds proves the retry happened: on the pre-fix single-shot
+// behavior there is no such loop to observe.
+func TestLazyCloseTimeReader_RetriesTransientDialFailure(t *testing.T) {
+	origMin, origMax := decimalsResolverRetryMin, decimalsResolverRetryMax
+	decimalsResolverRetryMin = time.Millisecond
+	decimalsResolverRetryMax = 5 * time.Millisecond
+	t.Cleanup(func() { decimalsResolverRetryMin, decimalsResolverRetryMax = origMin, origMax })
+
+	var attempts int32
+	dial := func(ctx context.Context, addr string) (*clickhouse.ExplorerReader, error) {
+		if atomic.AddInt32(&attempts, 1) < 3 {
+			return nil, errors.New("transient dial failure")
+		}
+		return &clickhouse.ExplorerReader{}, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	r := newLazyCloseTimeReader(ctx, "fake-addr:9000", logger, dial)
+
+	select {
+	case <-r.ready:
+	case <-time.After(2 * time.Second):
+		t.Fatal("lazyCloseTimeReader never became ready — the retry loop must not hang")
+	}
+	if got := atomic.LoadInt32(&attempts); got < 3 {
+		t.Fatalf("dial attempts = %d, want >= 3: a transient failure must retry, not abort after the first attempt", got)
+	}
+	if r.reader == nil {
+		t.Fatal("reader not armed after a successful retry — supply-refresh ticks would keep erroring even though the lake answered")
+	}
+}
+
+// TestLazyCloseTimeReader_LatestLedgerAtOrBefore_UnblocksOnShutdown proves
+// a refresh tick that runs before the lake ever answers does not hang
+// forever: it must return once the caller's ctx is done, not block on a
+// dial that will never succeed.
+func TestLazyCloseTimeReader_LatestLedgerAtOrBefore_UnblocksOnShutdown(t *testing.T) {
+	blockDial := make(chan struct{})
+	dial := func(ctx context.Context, addr string) (*clickhouse.ExplorerReader, error) {
+		<-blockDial
+		return nil, errors.New("unreachable")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	r := newLazyCloseTimeReader(ctx, "fake-addr:9000", logger, dial)
+
+	callCtx, callCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer callCancel()
+	done := make(chan error, 1)
+	go func() {
+		_, _, _, err := r.LatestLedgerAtOrBefore(callCtx, 100)
+		done <- err
+	}()
+
+	cancel() // shutdown before the lake ever answered
+	close(blockDial)
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected an error once the caller's ctx is canceled before the dial succeeds")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("LatestLedgerAtOrBefore blocked past shutdown instead of returning")
 	}
 }
