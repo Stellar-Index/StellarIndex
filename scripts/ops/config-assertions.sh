@@ -401,6 +401,39 @@ else
   skip ch_drop_guard_live
 fi
 
+# ── galexie-archive-trim delete identity (CA2-A37-harden-6) ──────────
+# Without this, trim ran as stellarindex-reader (read-only) and every
+# DeleteObject came back AccessDenied — "deleted 0/N" on every run,
+# silently, since the unit's own exit code covers list/enumerate
+# failures but not a delete that "succeeds" by being denied per-object.
+# Two checks: (1) the rendered policy actually grants s3:DeleteObject —
+# catches a policy edit that regresses to read-only; (2) the trim env
+# file sets a DIFFERENT access key than stellarindex-reader's — catches
+# the exact bug this finding reported (both files present, both wired,
+# but pointing at the same read-only identity). Skipped where the trim
+# unit isn't installed at all (cold tiering never enabled on this host).
+if [[ -f /etc/default/galexie-archive-trim ]]; then
+  assert_grep archive_trimmer_policy_has_delete \
+    /etc/minio/policies/stellarindex-archive-trimmer.json \
+    's3:DeleteObject'
+  # shellcheck disable=SC2016  # the body is a script for the INNER bash
+  assert_cmd archive_trimmer_uses_distinct_identity bash -c '
+    export HOME=/root
+    reader_key=""; trimmer_key=""
+    [[ -r /etc/default/stellarindex-ops ]] || exit 1
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      case "$line" in STELLARINDEX_S3_ACCESS_KEY=*) reader_key="${line#*=}" ;; esac
+    done < /etc/default/stellarindex-ops
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      case "$line" in STELLARINDEX_S3_ACCESS_KEY=*) trimmer_key="${line#*=}" ;; esac
+    done < /etc/default/galexie-archive-trim
+    [[ -n "$reader_key" && -n "$trimmer_key" && "$reader_key" != "$trimmer_key" ]]
+  '
+else
+  skip archive_trimmer_policy_has_delete
+  skip archive_trimmer_uses_distinct_identity
+fi
+
 mv "$TMP" "$OUT"
 chmod 644 "$OUT"
 echo "config-assertions: $fails failure(s)" >&2

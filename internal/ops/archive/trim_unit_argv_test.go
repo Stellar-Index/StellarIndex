@@ -52,6 +52,58 @@ func TestTrimUnits_ExecStartParses(t *testing.T) {
 	}
 }
 
+// TestTrimUnits_UsesDeleteCapableIdentity pins CA2-A37-harden-6: the trim
+// unit's only credential source used to be /etc/default/stellarindex-ops,
+// which carries the read-only stellarindex-reader identity (List/Get, no
+// s3:DeleteObject — 09-minio.yml). Every DeleteObject call in
+// trim_galexie_archive.go therefore returned AccessDenied, and a monthly
+// run silently "deleted 0/N" forever. The fix loads a second,
+// trim-dedicated EnvironmentFile carrying the stellarindex-archive-trimmer
+// identity AFTER stellarindex-ops, so it overrides STELLARINDEX_S3_*
+// without touching the AWS_* pair the read/list path still needs from
+// stellarindex-reader. Order matters — systemd's later EnvironmentFile
+// wins — so this checks both presence and position, not just presence.
+func TestTrimUnits_UsesDeleteCapableIdentity(t *testing.T) {
+	t.Parallel()
+	for _, rel := range trimUnitFiles {
+		t.Run(rel, func(t *testing.T) {
+			t.Parallel()
+			lines := environmentFileLines(readRepoFile(t, rel))
+			opsIdx := slices.Index(lines, "-/etc/default/stellarindex-ops")
+			if opsIdx < 0 {
+				t.Fatalf("%s: no EnvironmentFile for /etc/default/stellarindex-ops (lines=%v)", rel, lines)
+			}
+			trimIdx := slices.Index(lines, "-/etc/default/galexie-archive-trim")
+			if trimIdx < 0 {
+				t.Fatalf("%s: no EnvironmentFile for the delete-capable stellarindex-archive-trimmer identity "+
+					"(/etc/default/galexie-archive-trim) — every DeleteObject in trim_galexie_archive.go runs as "+
+					"stellarindex-reader (read-only) and returns AccessDenied", rel)
+			}
+			if trimIdx < opsIdx {
+				t.Errorf("%s: /etc/default/galexie-archive-trim (index %d) loads BEFORE "+
+					"/etc/default/stellarindex-ops (index %d) — systemd's LATER EnvironmentFile wins, so the "+
+					"read-only stellarindex-reader creds would still shadow the trimmer identity", rel, trimIdx, opsIdx)
+			}
+		})
+	}
+}
+
+// environmentFileLines extracts the value of every EnvironmentFile=
+// directive, in file order, skipping comment lines.
+func environmentFileLines(body string) []string {
+	var out []string
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if v, ok := strings.CutPrefix(trimmed, "EnvironmentFile="); ok {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 // unitExecStartArgv splices a unit's ExecStart= directive, including its
 // backslash continuation lines, into one argv. Comment lines are skipped so
 // a flag merely discussed in the header does not count.

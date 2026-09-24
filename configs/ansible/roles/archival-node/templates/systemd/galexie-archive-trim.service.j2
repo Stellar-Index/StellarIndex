@@ -36,6 +36,11 @@ User=root
 ExecStartPre=/usr/local/sbin/compute-trim-cutoff.sh
 EnvironmentFile=-/run/galexie-archive-trim.env
 EnvironmentFile=-/etc/default/stellarindex-ops
+# Loaded LAST so it wins: overrides STELLARINDEX_S3_ACCESS_KEY/_SECRET_KEY
+# with the delete-capable stellarindex-archive-trimmer identity
+# (CA2-A37-harden-6) — stellarindex-ops above carries the read-only
+# stellarindex-reader pair, which DeleteObject rejects with AccessDenied.
+EnvironmentFile=-/etc/default/galexie-archive-trim
 
 # 75 = run-heavy-job.sh skipped this fire (per-job lock held): not a
 # failure, but ExecMainStatus=75 keeps it distinct from a run.

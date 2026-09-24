@@ -72,7 +72,7 @@ upgraded, WAL archiving to both repos, first repo2 full taken by hand).
 > textfile metrics. A hand-run `pgbackrest --stanza=stellarindex backup`
 > only refreshes repo1; add `--repo=2` for the off-site copy.
 
-This also lets us safely prune repo1 (local) diffs (the deferred Phase A step) now that repo2 exists — the off-site copy becomes the deep-retention tier.
+This also lets us safely prune repo1 (local) diffs (the deferred Phase A step) now that repo2 exists. **Not yet true on r1**: repo2 ships lean (1 full + 7-day diffs, #298 / ADR-0043 §1 amendment), shallower than repo1's 2 fulls, and repo1 pruning has not happened — so repo2 is not currently the deep-retention tier it was meant to become. That statement only holds once repo1's diffs are actually pruned; until then repo1 stays the deeper copy.
 
 ### 3. Config / vault / secrets → encrypted tarball (high)
 Small, high-value, non-re-derivable. A daily job tars `/etc/stellarindex*`, `/etc/pgbackrest*`, systemd units, the ansible vault, and CH/PG DDL snapshots; `age`/`gpg`-encrypts; uploads to S3. Codify as a systemd timer in the archival-node role.
@@ -96,8 +96,9 @@ Back up the full lake so recovery is a **restore (~hours)**, not a re-walk (~wee
 
 ## ADR-0043 §2.3 "tail insurance" — assessment + recommended amendment
 
-**Status (2026-07-25): ASSESSED — do not implement §2.3 as written. §2.1
-(the ClickHouse schema+state snapshot) now ships and covers the part of
+**Status (2026-07-25 assessed, 2026-09-24 landed): §2.3 as written was
+never implemented and ADR-0043 §2.3 now carries the amendment below.
+§2.1 (the ClickHouse schema+state snapshot) ships and covers the part of
 the tail that is genuinely irreplaceable.**
 
 ADR-0043 §2.3 commits to:
@@ -150,8 +151,7 @@ and `schema.sql` in the §2.1 daily snapshot
 (`scripts/ops/ch-schema-snapshot.sh`, shipped 2026-07-25). §2.1 is the
 tail insurance that was worth buying.
 
-**Recommended ADR-0043 amendment** (an ADR edit, not made here — it needs
-the ADR owner):
+**ADR-0043 amendment (landed 2026-09-24, §2.3):**
 
 > **§2.3 amended 2026-07-25.** Tail insurance is satisfied without a
 > ClickHouse data push. galexie-archive is filled from

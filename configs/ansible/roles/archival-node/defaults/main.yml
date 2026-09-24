@@ -1193,6 +1193,20 @@ minio_buckets:
 stellarindex_reader_access_key: "stellarindex-reader"
 # stellarindex_reader_secret_key ← vault
 
+# ───── stellarindex-archive-trimmer (List+Delete, galexie-archive only) ──
+# trim-galexie-archive (galexie-archive-trim.service) is the ONLY caller
+# that deletes hot archive objects. It must NOT run as stellarindex-reader
+# (read-only, DeleteObject denied — CA2-A37-harden-6) and must NOT run as
+# root/galexie-archive-writer either: the fill/write identity keeping its
+# authority separate from the delete path is the same invariant
+# galexie-archive-writer's policy comment documents. Rendered into its own
+# 0600 root:root EnvironmentFile (14-stellarindex-services.yml), loaded
+# AFTER /etc/default/stellarindex-ops so it overrides only the
+# STELLARINDEX_S3_* pair the raw delete client reads — the hot-read client
+# (list/verify) keeps using stellarindex-reader's creds via AWS_*.
+stellarindex_archive_trimmer_access_key: "stellarindex-archive-trimmer"
+# stellarindex_archive_trimmer_secret_key ← vault
+
 # ───── Firewall ──────────────────────────────────────────────────────
 # Ports open on the public interface. Everything else rejects.
 # Port 11625 (SCP peer) is only added when run_stellar_core=true —
@@ -1483,6 +1497,9 @@ caddy_site_addresses: "api.stellarindex.io"
 # (2026-07-03 drift audit; renamed from the pre-rebrand var name).
 stellarindex_reader_secret_key: "{{ vault_stellarindex_reader_secret_key }}"
 
+# Same alias pattern for the trimmer identity (CA2-A37-harden-6).
+stellarindex_archive_trimmer_secret_key: "{{ vault_stellarindex_archive_trimmer_secret_key }}"
+
 # mc (MinIO client) pinned version — was a bare "<required>" comment;
 # pinned 2026-07-03 to the version already on r1.
 mc_version: "RELEASE.2025-08-13T08-35-41Z"
@@ -1582,10 +1599,10 @@ zfs_snapshot_min_free_bytes: 2199023255552
 # 01:45 UTC: before pgbackrest-backup (02:00) and the ch-schema-snapshot
 # (03:40), so the day's snapshot predates the day's other ops jobs.
 zfs_snapshot_on_calendar: "*-*-* 01:45:00 UTC"
-# pgBackRest repo2 (off-site S3) retention — deliberately LEAN (ADR-0043
-# amendment 2026-08-29): one full + 7 days of diffs/WAL ≈ 460–670 GB in
-# S3 Standard ≈ $12–17/month. Raising these multiplies storage cost
-# roughly linearly; PITR window = the diff/WAL retention.
+# pgBackRest repo2 (off-site S3) retention — deliberately LEAN (#298,
+# ADR-0043 §1 amendment 2026-09-24): one full + 7 days of diffs/WAL ≈
+# 460–670 GB in S3 Standard ≈ $12–17/month. Raising these multiplies
+# storage cost roughly linearly; PITR window = the diff/WAL retention.
 pgbackrest_repo2_retention_full: 1
 pgbackrest_repo2_retention_diff: 7
 

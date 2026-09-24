@@ -40,6 +40,19 @@ superseded_by: null
   is a no-op until credentials exist). Async archiving to both repos;
   retention: repo1 keeps 2 fulls (fast local restore), repo2 keeps 4
   fulls (survival copy).
+
+> **§1 amended 2026-09-24 (#298).** The 4-full repo2 target above was
+> never shipped. `pgbackrest_repo2_retention_full`/`_diff` (rendered
+> into `pgbackrest.conf` `repo2-retention-*`) ship at `1` full + `7`
+> days of diffs/WAL — a cost-driven call, not an oversight — so repo2's
+> recovery horizon is ~7 days, not ~4 weeks. repo1 (2 fulls, local)
+> is currently the deeper of the two copies; `off-site-backup-plan.md`'s
+> "repo2 becomes the deep-retention tier" language assumes repo1's diffs
+> are pruned once repo2 is proven, which has not happened on r1. A
+> responder recovering data older than repo2's ~7-day window has no
+> off-site copy predating the damage; the ClickHouse §2.4 lake backup
+> (below) does not cover Postgres. REVISIT the retention numbers if the
+> recovery horizon this buys is ever found insufficient.
 - `scripts/ops/restore-drill.sh` (ships with this ADR) performs a
   NON-DESTRUCTIVE scratch restore on r1: `pgbackrest restore` into a
   throwaway data dir, start a disposable postgres on port 5499,
@@ -111,6 +124,22 @@ derived data is poor spend. Instead, three cheaper guarantees:
    `ledgers` (the window between Galexie-archive certification and
    live) are included in the daily offsite push — the only window
    where the lake could hold data the archives don't yet.
+
+> **§2.3 amended 2026-09-24 (assessed 2026-07-25,
+> `off-site-backup-plan.md`).** Tail insurance is satisfied without a
+> ClickHouse data push. `galexie-archive-fill.sh` fills
+> `galexie-archive` from `aws-public-blockchain`, not from
+> `galexie-live`, so recent raw LCM is independently held off-box from
+> the moment it is published; and the newest ledgers are the ones the
+> public history archives are most certain to still serve. The
+> irreplaceable part of the tail — the tip, the banked-window set and
+> the live DDL — is captured daily by §2.1. The daily offsite push of
+> `contract_events`/`ledgers` rows described above was never
+> implemented and will not be. REVISIT if either (a) the lake gains a
+> table whose contents are NOT a deterministic decode of LCM, or (b)
+> `stellarindex_galexie_archive_tip_lag_ledgers` develops a sustained
+> floor above one partition, meaning the local mirror has stopped
+> converging.
 
 If the measured full-rebuild RTO exceeds what we can tolerate
 post-launch (verification + explorer lake surfaces dark for that

@@ -176,8 +176,10 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 	// call DeleteObject directly. Auth comes from the standard AWS
 	// env vars (or the operator's ~/.aws/credentials if running
 	// interactively). Hot is local MinIO; the env vars
-	// STELLARINDEX_S3_ACCESS_KEY + STELLARINDEX_S3_SECRET_KEY map
-	// to MinIO's root creds via the systemd EnvironmentFile.
+	// STELLARINDEX_S3_ACCESS_KEY + STELLARINDEX_S3_SECRET_KEY map to
+	// the dedicated stellarindex-archive-trimmer MinIO identity
+	// (List+Delete, galexie-archive only — CA2-A37-harden-6) via the
+	// systemd EnvironmentFile, NOT to MinIO's root creds.
 	//
 	// This client is HOT-ONLY and therefore does NOT share the
 	// cold-tier credential bug (2026-07-25): every argument below
