@@ -523,8 +523,8 @@ func TestRWAAssets_EveryReferenceValuationCarriesItsProvenance(t *testing.T) {
 		// The reference price and the row's own decimals are both on the
 		// wire, so the figure can be re-derived by hand from the
 		// published supply.
-		if a.Decimals != 7 {
-			t.Errorf("%s: decimals = %d, want 7 for a classic asset", a.Code, a.Decimals)
+		if a.Decimals == nil || *a.Decimals != 7 {
+			t.Errorf("%s: decimals = %s, want 7 for a classic asset", a.Code, decimalsText(a.Decimals))
 		}
 		if a.CirculatingSupply == nil {
 			t.Errorf("%s: a valuation was published with no supply on the wire to back it", a.Code)
@@ -866,8 +866,8 @@ func TestRWAAssets_ContractMemberStatesWhyItIsNotReferenceValued(t *testing.T) {
 	// The market basis is untouched by any of that: the row still
 	// carries the market cap the pipeline computed for it, at the
 	// contract's REAL decimals.
-	if a.Decimals != 6 {
-		t.Errorf("decimals = %d, want the contract's declared 6 — a 7 here is a tenth of the real figure", a.Decimals)
+	if a.Decimals == nil || *a.Decimals != 6 {
+		t.Errorf("decimals = %s, want the contract's declared 6 — a 7 here is a tenth of the real figure", decimalsText(a.Decimals))
 	}
 	// 8,500,000,000,000 smallest units at 6dp is 8,500,000 tokens, at
 	// 1.074 a share.

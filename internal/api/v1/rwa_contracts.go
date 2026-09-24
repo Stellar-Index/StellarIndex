@@ -774,14 +774,9 @@ func rwaContractAssetRows(members []rwaContractMember, rows map[string]AssetDeta
 			CirculatingSupply:   d.CirculatingSupply,
 			// The contract's REAL declared scale, overlaid by
 			// fillContractDecimals — not the 7 assetDetailFromAssetRow
-			// starts every row at. It is on the wire because a
-			// contract-issued row is the case where assuming 7 is
-			// actually wrong.
-			Decimals: d.Decimals,
-			// Carried so both valuation bases can refuse to multiply by
-			// an exponent nobody read. Never serialised.
-			DecimalsUnresolved: d.DecimalsUnresolved,
-			Volume24hUSD:       d.VolumeUSD24h,
+			// starts every row at, which is served as null instead.
+			Decimals:     rwaDecimalsOf(d),
+			Volume24hUSD: d.VolumeUSD24h,
 		}
 		a.SupplyBasis, a.CirculatingSupplyLowerBound = rwaSupplyProvenance(d)
 		if len(a.IssuerDirectoryTags) == 0 {

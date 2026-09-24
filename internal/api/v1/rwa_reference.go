@@ -973,13 +973,12 @@ func rwaReferenceValuationOf(a *RWAAsset, ref rwaReference) RWAReferenceValuatio
 		return RWAReferenceValuation{Status: RWAReferenceValuationNoSupply}
 	}
 	// The exponent, before the arithmetic that uses it. A contract row
-	// whose scale could not be read carries the catalogue's default of
-	// 7, which is a convention and not a reading — see
+	// whose scale could not be read carries none — see
 	// [RWAReferenceValuationDecimalsUnknown].
-	if a.DecimalsUnresolved {
+	if a.Decimals == nil {
 		return RWAReferenceValuation{Status: RWAReferenceValuationDecimalsUnknown}
 	}
-	value := rwaReferenceValueUSD(*a.CirculatingSupply, a.Decimals, ref.priceUSD)
+	value := rwaReferenceValueUSD(*a.CirculatingSupply, *a.Decimals, ref.priceUSD)
 	if value == "" {
 		return RWAReferenceValuation{Status: RWAReferenceValuationNoSupply}
 	}

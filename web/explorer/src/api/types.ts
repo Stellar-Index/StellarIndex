@@ -7985,9 +7985,15 @@ export interface components {
              *     the whole-token float that `valuation.price_usd` and
              *     `reference.price_usd` each multiply — rather than leaving a
              *     reader to assume a scale that is only sometimes 7.
+             *
+             *     `null` when a contract's scale could not be read from its
+             *     on-chain metadata. `circulating_supply` is still served in
+             *     the smallest unit, but it has no whole-token reading, and
+             *     neither valuation is computed from it: a row that would
+             *     otherwise be valued reports `decimals_unavailable`.
              * @example 7
              */
-            decimals: number;
+            decimals: number | null;
             /** @description Trailing-24h USD trade volume, as /assets serves it. */
             volume_24h_usd?: string;
             /**

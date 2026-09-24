@@ -849,12 +849,6 @@ type RWAAsset struct {
 	// A consumer that wants only directory-attested rows can filter on
 	// this field rather than having to reconstruct the rule.
 	Recognition string `json:"recognition,omitempty"`
-	// DecimalsUnresolved is true when Decimals is the hardcoded default
-	// rather than a reading from the token's own on-chain metadata.
-	// INTERNAL — never serialised. It exists to stop a figure being
-	// published, and both valuation bases consult it before they
-	// divide by 10^Decimals.
-	DecimalsUnresolved bool `json:"-"`
 	// AnchorClass is the closed-vocabulary class, present only under
 	// the declaration basis.
 	AnchorClass string `json:"anchor_class,omitempty"`
@@ -909,7 +903,11 @@ type RWAAsset struct {
 	// re-derived by hand — circulating_supply / 10^decimals is the
 	// whole-token float that each price multiplies — rather than
 	// leaving a reader to assume a scale that is only sometimes 7.
-	Decimals int `json:"decimals"`
+	//
+	// nil (JSON null) when a contract's scale could not be read: the
+	// catalogue's default of 7 is a convention, not a reading. Both
+	// valuation bases refuse to divide when it is nil.
+	Decimals *int `json:"decimals"`
 	// Volume24hUSD is the trailing-24h USD trade volume as served on
 	// /v1/assets.
 	Volume24hUSD *string `json:"volume_24h_usd,omitempty"`
@@ -1936,7 +1934,7 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]R
 			// reference valuation divides by it, and a constant in its
 			// place would be the hardcoded-decimals defect the
 			// market-cap path already had to fix, in a new coordinate.
-			Decimals:     d.Decimals,
+			Decimals:     rwaDecimalsOf(d),
 			Volume24hUSD: d.VolumeUSD24h,
 		}
 		a.SupplyBasis, a.CirculatingSupplyLowerBound = rwaSupplyProvenance(d)
@@ -2002,6 +2000,16 @@ func rwaSortAssets(out []RWAAsset) {
 		}
 		return out[i].AssetID < out[j].AssetID
 	})
+}
+
+// rwaDecimalsOf is the row's scale as served: nil when it is the
+// catalogue default rather than a reading.
+func rwaDecimalsOf(d AssetDetail) *int {
+	if d.DecimalsUnresolved {
+		return nil
+	}
+	v := d.Decimals
+	return &v
 }
 
 // rwaValuationOf reads the valuation OFF the already-gated listing row.

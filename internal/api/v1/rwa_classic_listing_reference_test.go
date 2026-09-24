@@ -37,7 +37,7 @@ func TestClassicRowTakesItsListingPrice(t *testing.T) {
 		Code:              "WTGX",
 		Issuer:            "GDMBNMFJ3TRFLASJ6UGETFME3PJPNKPU24C7KFDBEBPQFG2CI6UC3JG6",
 		CirculatingSupply: supplyOf("22987932026782"),
-		Decimals:          7,
+		Decimals:          intPtr(7),
 	}
 	rwaApplyReference(&a, rwaReferenceSnapshotFrom(nil), nil, listings, now)
 
@@ -79,7 +79,7 @@ func TestImpersonatorDoesNotInheritAListingPrice(t *testing.T) {
 		Code:              "BENJI",
 		Issuer:            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 		CirculatingSupply: supplyOf("10000000000"),
-		Decimals:          7,
+		Decimals:          intPtr(7),
 	}
 	rwaApplyReference(&a, rwaReferenceSnapshotFrom(nil), nil, listings, now)
 
@@ -120,7 +120,7 @@ func TestClassicRowTakesItsListingPriceUnderTheSACForm(t *testing.T) {
 		Code:              "WTGX",
 		Issuer:            "GDMBNMFJ3TRFLASJ6UGETFME3PJPNKPU24C7KFDBEBPQFG2CI6UC3JG6",
 		CirculatingSupply: supplyOf("22987932026782"),
-		Decimals:          7,
+		Decimals:          intPtr(7),
 	}
 	rwaApplyReference(&a, rwaReferenceSnapshotFrom(nil), nil, listings, now)
 
@@ -148,7 +148,7 @@ func TestClassicRowTakesItsListingPriceUnderTheSACForm(t *testing.T) {
 		Code:              "gBENJI",
 		Issuer:            "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP",
 		CirculatingSupply: supplyOf("10000000000"),
-		Decimals:          7,
+		Decimals:          intPtr(7),
 	}
 	rwaApplyReference(&cnav, rwaReferenceSnapshotFrom(nil), nil, map[string]timescale.ListingEntry{
 		gSAC: {Address: gSAC, ListingID: "franklin-onchain-us-government-money-fund", PriceUSD: "1.0", PricedAt: now, Source: "coingecko"},
@@ -175,7 +175,7 @@ func TestListingDoesNotOverturnAnOracleFinding(t *testing.T) {
 		Code:              "USDY",
 		Issuer:            "GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6",
 		CirculatingSupply: supplyOf("10000000000"),
-		Decimals:          7,
+		Decimals:          intPtr(7),
 	}
 	rwaApplyReference(&a, rwaReferenceSnapshotFrom([]canonical.OracleUpdate{
 		refUpdate(t, "redstone", "rwa:USDY", "fiat:USD", "0", 8, now),
