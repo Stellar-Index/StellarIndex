@@ -30,7 +30,7 @@ describe('EmbedCurrencyPage — live price refresh (W8.10)', () => {
       'fetch',
       vi.fn(async (input: string | URL) => {
         const url = String(input);
-        if (url.includes('/v1/assets/EUR')) {
+        if (url.includes('/v1/external/assets/EUR')) {
           return jsonResponse({
             data: {
               ticker: 'EUR',
@@ -62,7 +62,7 @@ describe('EmbedCurrencyPage — live price refresh (W8.10)', () => {
       'fetch',
       vi.fn(async (input: string | URL) => {
         const url = String(input);
-        if (url.includes('/v1/assets/EUR')) {
+        if (url.includes('/v1/external/assets/EUR')) {
           return jsonResponse({
             data: {
               ticker: 'EUR',
@@ -83,5 +83,52 @@ describe('EmbedCurrencyPage — live price refresh (W8.10)', () => {
 
     const el = await screen.findByTitle('as baked at deploy');
     expect(el).toHaveTextContent('$1.1000');
+  });
+});
+
+describe('EmbedCurrencyPage — resolves fiat identity via /v1/external/assets (CA2-A35-correct-0)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('renders the baked FX rate for a fiat ticker even though /v1/assets/{ticker} 404s asset-is-external', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL) => {
+        const url = String(input);
+        // LC-001 Phase 3: fiat has no Stellar issuance, so the non-external
+        // route 404s. The corrected fetcher must not call it for its data.
+        if (url.includes('/v1/assets/EUR')) {
+          return jsonResponse(
+            {
+              type: 'https://api.stellarindex.io/errors/asset-is-external',
+              title: 'Asset is external (non-Stellar)',
+              status: 404,
+            },
+            404,
+          );
+        }
+        if (url.includes('/v1/external/assets/EUR')) {
+          return jsonResponse({
+            data: {
+              ticker: 'EUR',
+              name: 'Euro',
+              class: 'fiat',
+              price_usd: '1.10',
+            },
+          });
+        }
+        if (url.includes('/v1/chart'))
+          return jsonResponse({ data: { points: [] } });
+        if (url.includes('/v1/price')) throw new Error('offline');
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+
+    await renderPage('EUR');
+
+    const el = await screen.findByTitle('as baked at deploy');
+    expect(el).toHaveTextContent('$1.1000');
+    expect(screen.queryByText('No data for EUR')).not.toBeInTheDocument();
   });
 });
