@@ -35,7 +35,7 @@ ExecStop=/bin/kill -TERM $MAINPID
 
 LimitNOFILE=1048576
 Restart=on-failure
-RestartSec=10s
+RestartSec=5s
 
 # Memory ceiling — bounds a leak so it can't starve Postgres/ClickHouse
 # on this shared, memory-tight host (188 GiB total, already running
