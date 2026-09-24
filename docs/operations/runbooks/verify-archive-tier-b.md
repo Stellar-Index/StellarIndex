@@ -62,6 +62,7 @@ The journal's last lines indicate the failure mode:
 | ------- | ----- |
 | `checkpoint anchor ... MISMATCH` | Our LCM header-hash disagrees with the mirror's canonical hash. Single-source corruption — escalate. |
 | `checkpoint anchor inconclusive — N missed, 0 matched` | The local mirror is missing the checked range (not synced far enough). Not corruption — a mirror-sync gap. |
+| `N checkpoint(s) missing from cross-anchor archive (with -fail-on-missed ...)` | A partial miss (some matched, some missed) inside the mirror's own coverage — a real hole, not a sync lag. Only raised when `-fail-on-missed` is passed; see note below. |
 | `context deadline exceeded` / watchdog | Run hit its runtime bound; investigate per-chunk progress. |
 | `access denied` / `403` | galexie-archive S3 creds in `/etc/default/stellarindex-ops` rotated/wrong. |
 
@@ -75,14 +76,19 @@ The journal's last lines indicate the failure mode:
 - [ ] **Inconclusive / all-missed (mirror gap)**: the `/srv/history-archive`
   mirror hasn't synced the checked range. Advance the mirror (the
   rs-stellar-archivist sync that backfills `/srv/history-archive`), then
-  re-run Tier B manually:
+  re-run Tier B manually. Pass `-fail-on-missed`, as both nightly tier-B
+  units do (ADR-0017 X1.7). Without it, a partial miss (some matched,
+  some missed) inside the mirror's own coverage span still exits 0 and
+  prints `checkpoint anchor OK`, so the mitigation looks resolved while
+  an in-coverage hole goes unreported:
   ```sh
   ssh r1
   set -a; source /etc/default/stellarindex-ops; set +a
   /usr/local/bin/stellarindex-ops verify-archive \
     -config /etc/stellarindex.toml \
     -tier checkpoint -archive-root /srv/history-archive \
-    -from 2 -workers 8 -max-runtime 1h
+    -from 2 -workers 8 -max-runtime 1h \
+    -fail-on-missed
   ```
 - [ ] **`run_stale`**: confirm the timer is enabled
   (`systemctl enable --now verify-archive-tier-b.timer`). Note that during a
@@ -105,5 +111,8 @@ The journal's last lines indicate the failure mode:
 
 ## Changelog
 
+- 2026-09-24 — manual re-run command now passes `-fail-on-missed`, matching
+  both nightly units, so a hand re-run no longer exits 0 on a partial miss
+  the automated path would fail on.
 - 2026-08-25 — initial draft alongside the task #33 / W8 recon 14a Tier B
   timer.

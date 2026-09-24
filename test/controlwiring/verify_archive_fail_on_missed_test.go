@@ -70,6 +70,63 @@ func TestK023_VerifyArchiveCheckpointUnitsFailOnMissed(t *testing.T) {
 	}
 }
 
+// TestVerifyArchiveTierBRunbook_ManualRerunFailsOnMissed holds the
+// tier-b runbook's manual re-run commands to the nightly units'
+// strictness. The mitigation hands an on-call operator a command for
+// exactly the case where checkpoints were missed; without
+// -fail-on-missed, checkpointAnchorDecision (verify_archive.go)
+// accepts a partial miss (some matched, some missed) inside the
+// mirror's own coverage span, so the run exits 0 and prints
+// "checkpoint anchor OK" while an in-coverage hole goes unreported.
+// Every checkpoint-tier invocation in the runbook is checked, so a
+// command added later cannot drop the flag either.
+func TestVerifyArchiveTierBRunbook_ManualRerunFailsOnMissed(t *testing.T) {
+	t.Parallel()
+	const rel = "docs/operations/runbooks/verify-archive-tier-b.md"
+	checkpointCmds := 0
+	for _, argv := range verifyArchiveRunbookCommands(readRepoFile(t, rel)) {
+		tier, ok := flagValue(argv, "-tier")
+		if !ok || (tier != "checkpoint" && tier != "all") {
+			continue
+		}
+		checkpointCmds++
+		if !hasFlag(argv, "-fail-on-missed") {
+			t.Errorf("%s: manual `verify-archive -tier %s` omits -fail-on-missed: a partial miss "+
+				"inside the mirror's own coverage exits 0 and reports the checkpoint anchor OK, "+
+				"so the in-coverage hole goes unreported (argv=%v)", rel, tier, argv)
+		}
+	}
+	if checkpointCmds == 0 {
+		t.Fatalf("%s: no manual `stellarindex-ops verify-archive -tier checkpoint` command found "+
+			"— this test is asserting nothing", rel)
+	}
+}
+
+// verifyArchiveRunbookCommands returns the argv after
+// `stellarindex-ops verify-archive` of every runbook line that starts
+// that invocation, following backslash continuations. Prose that
+// mentions the command inline does not start a line with it.
+func verifyArchiveRunbookCommands(body string) [][]string {
+	var cmds [][]string
+	lines := strings.Split(body, "\n")
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		fields := strings.Fields(strings.TrimSuffix(line, "\\"))
+		if len(fields) < 2 || fields[1] != "verify-archive" ||
+			(fields[0] != "stellarindex-ops" && !strings.HasSuffix(fields[0], "/stellarindex-ops")) {
+			continue
+		}
+		argv := fields[2:]
+		for strings.HasSuffix(line, "\\") && i+1 < len(lines) {
+			i++
+			line = strings.TrimSpace(lines[i])
+			argv = append(argv, strings.Fields(strings.TrimSuffix(line, "\\"))...)
+		}
+		cmds = append(cmds, argv)
+	}
+	return cmds
+}
+
 // TestVerifyArchiveBinaryArgs_WrapperPrefixIsNotTheBinary pins the
 // property a text-scan matcher lacks, on synthetic ExecStart lines so
 // it needs no unit file: a flag sitting among run-heavy-job.sh's
