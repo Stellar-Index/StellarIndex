@@ -636,6 +636,8 @@ func ledgerContiguityFrom(ctx context.Context, conn driver.Conn, from uint32) (l
 // the 24.8 server the integration harness runs, and an unknown setting is a
 // hard error. On a newer server the ratio can still spill near the ceiling —
 // at which point the bisection below takes over.)
+// PREWHERE on entry_type, as in claimable_balance_seed.go: WHERE does not stop
+// ClickHouse running base64Decode on other entry types' key_xdr first.
 func scanSACSeedWindow(ctx context.Context, conn driver.Conn, needles []string, from, to uint32, red *sacSeedReducer) error {
 	q := `SELECT key_xdr,
 		       tupleElement(win, 1) AS win_ledger_seq,
@@ -652,8 +654,8 @@ func scanSACSeedWindow(ctx context.Context, conn driver.Conn, needles []string, 
 		                   entry_xdr, toString(change_type), close_time),
 		                  (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS win
 		    FROM stellar.ledger_entry_changes
-		    WHERE entry_type = 'contract_data'
-		      AND ledger_seq BETWEEN ? AND ?
+		    PREWHERE entry_type = 'contract_data'
+		    WHERE ledger_seq BETWEEN ? AND ?
 		      AND multiSearchAny(base64Decode(key_xdr), [` + strings.Join(needles, ", ") + `])
 		    GROUP BY key_xdr
 		)
