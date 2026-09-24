@@ -25,7 +25,10 @@ type stubPriceReader struct {
 	// Same key shape as `snapshots`. Empty/missing yields []v1.PriceSnapshot{}
 	// (no observations) — matches the production reader's contract.
 	recent map[string][]v1.PriceSnapshot
-	err    error
+	// err fails EVERY call; errByPair fails only the listed pairs, for
+	// states where one pair is refused while a fallback leg still serves.
+	err       error
+	errByPair map[string]error
 
 	// calls counts LatestPrice invocations (HO-344 coalescing check).
 	calls int32
@@ -49,6 +52,9 @@ func (r *stubPriceReader) LatestPrice(_ context.Context, a, q canonical.Asset) (
 		return v1.PriceSnapshot{}, nil, false, r.err
 	}
 	key := a.String() + "/" + q.String()
+	if err := r.errByPair[key]; err != nil {
+		return v1.PriceSnapshot{}, nil, false, err
+	}
 	snap, ok := r.snapshots[key]
 	if !ok {
 		return v1.PriceSnapshot{}, nil, false, v1.ErrPriceNotFound

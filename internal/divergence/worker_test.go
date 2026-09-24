@@ -3,7 +3,13 @@ package divergence_test
 import (
 	"context"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"go/types"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +37,30 @@ func newTestService(t *testing.T, refs []divergence.Reference, opts divergence.S
 		t.Fatalf("NewService: %v", err)
 	}
 	return svc, rdb, mr
+}
+
+// refreshQuiet is the only sound "must not fire" check under the default
+// WarningPersistence debounce, which holds WarningFired false on a pair's
+// first raw firing whatever the gate under test decides. It refreshes twice,
+// a full default window apart, and after each asserts that neither the
+// published verdict nor the raw condition (FiringSince, zero while clear)
+// fired. Returns the last cached result.
+func refreshQuiet(t *testing.T, svc *divergence.Service, rdb *redis.Client,
+	pair canonical.Pair, ourPrice float64, t0 time.Time,
+) divergence.CachedResult {
+	t.Helper()
+	var cached divergence.CachedResult
+	for i, at := range []time.Time{t0, t0.Add(divergence.DefaultWarningPersistence + time.Minute)} {
+		if err := svc.RefreshPair(context.Background(), pair, ourPrice, at); err != nil {
+			t.Fatalf("RefreshPair #%d: %v", i+1, err)
+		}
+		cached = readDivergence(t, rdb, pair)
+		if cached.WarningFired || !cached.FiringSince.IsZero() {
+			t.Errorf("refresh #%d of %s at our=%g: WarningFired=%v FiringSince=%v, want quiet "+
+				"(no published warning and no raw firing)", i+1, pair, ourPrice, cached.WarningFired, cached.FiringSince)
+		}
+	}
+	return cached
 }
 
 // TestNewService_RequiresCache — operator misconfig that omits the
@@ -66,21 +96,7 @@ func TestRefreshPair_HappyPath(t *testing.T) {
 	}
 	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{})
 
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now()); err != nil {
-		t.Fatalf("RefreshPair: %v", err)
-	}
-
-	body, err := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
-	if err != nil {
-		t.Fatalf("redis get: %v", err)
-	}
-	var cached divergence.CachedResult
-	if err := json.Unmarshal(body, &cached); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if cached.WarningFired {
-		t.Errorf("WarningFired = true on consensus, want false")
-	}
+	cached := refreshQuiet(t, svc, rdb, xlmUSD(t), 1.00, time.Now())
 	if cached.SuccessCount != 3 {
 		t.Errorf("SuccessCount = %d, want 3", cached.SuccessCount)
 	}
@@ -179,15 +195,8 @@ func TestRefreshPair_BelowMinSourcesNoWarning(t *testing.T) {
 		Threshold:            5.0,
 		MinSourcesForWarning: 2, // require 2+ agreeing sources
 	})
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.50, time.Now()); err != nil {
-		t.Fatalf("RefreshPair: %v", err)
-	}
-	body, _ := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
-	var cached divergence.CachedResult
-	_ = json.Unmarshal(body, &cached)
-	if cached.WarningFired {
-		t.Errorf("WarningFired = true with single source; should require ≥ 2")
-	}
+	// A single source 50% away must not fire; it should require ≥ 2.
+	cached := refreshQuiet(t, svc, rdb, xlmUSD(t), 1.50, time.Now())
 	// But the comparator's data should still be cached so operators
 	// can see what one source thinks.
 	if cached.SuccessCount != 1 {
@@ -366,15 +375,13 @@ func TestLookupCached_PerPairOR_AllClean(t *testing.T) {
 		&stubReference{name: "a", price: 1.00},
 		&stubReference{name: "b", price: 1.00},
 	}
-	svc, _, _ := newTestService(t, refs, divergence.ServiceOptions{
+	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{
 		Threshold:            5.0,
 		MinSourcesForWarning: 2,
 	})
 	ctx := context.Background()
 	for _, p := range []canonical.Pair{xlmPair(t, "USD"), xlmPair(t, "GBP")} {
-		if err := svc.RefreshPair(ctx, p, 1.00, time.Now()); err != nil {
-			t.Fatalf("RefreshPair %s: %v", p, err)
-		}
+		refreshQuiet(t, svc, rdb, p, 1.00, time.Now())
 	}
 	cached, found, err := svc.LookupCached(ctx, canonical.NativeAsset())
 	if err != nil {
@@ -399,28 +406,21 @@ func TestRefreshPair_DefaultsApplied(t *testing.T) {
 	// Zero-value options: defaults should kick in (5% threshold,
 	// 2 min sources). 4% deviation → no warning.
 	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{})
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.04, time.Now()); err != nil {
-		t.Fatalf("RefreshPair: %v", err)
-	}
-	body, _ := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
-	var cached divergence.CachedResult
-	_ = json.Unmarshal(body, &cached)
-	if cached.WarningFired {
-		t.Errorf("4%% deviation should not fire under default 5%% threshold")
-	}
+	base := time.Now()
+	refreshQuiet(t, svc, rdb, xlmUSD(t), 1.04, base)
 
 	// 6% deviation → warning fires, but only once the divergence has
 	// PERSISTED past the default debounce window (W3-guards-2). The
 	// first refresh must NOT fire — that is the fast-move false-warning
 	// class the debounce removes; a sustained 6% gap must clear it.
-	t0 := time.Now()
+	t0 := base.Add(time.Hour)
 	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.06, t0); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
-	body, _ = rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
-	_ = json.Unmarshal(body, &cached)
-	if cached.WarningFired {
-		t.Errorf("6%% deviation should NOT fire on the first refresh under the default debounce")
+	cached := readDivergence(t, rdb, xlmUSD(t))
+	if cached.WarningFired || cached.FiringSince.IsZero() {
+		t.Errorf("6%% deviation on the first refresh: WarningFired=%v FiringSince=%v, want the raw "+
+			"condition recorded but the warning held by the default debounce", cached.WarningFired, cached.FiringSince)
 	}
 
 	// Second refresh, same 6% gap, one debounce window later → fires.
@@ -428,8 +428,7 @@ func TestRefreshPair_DefaultsApplied(t *testing.T) {
 		t0.Add(divergence.DefaultWarningPersistence+time.Minute)); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
-	body, _ = rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
-	_ = json.Unmarshal(body, &cached)
+	cached = readDivergence(t, rdb, xlmUSD(t))
 	if !cached.WarningFired {
 		t.Errorf("6%% deviation should fire under default 5%% threshold once it persists past the debounce")
 	}
@@ -571,4 +570,85 @@ func TestRefreshPair_ObservationFallsBackWhenNoComparisonTime(t *testing.T) {
 	if got.Before(before) {
 		t.Errorf("ObservedAt = %v, want at/after the call start %v", got, before)
 	}
+}
+
+// TestNoUnfalsifiableWarningNegatives keeps the single-refresh "must not
+// fire" out of this package: under the default WarningPersistence debounce,
+// `if x.WarningFired {` after fewer than two refreshes passes whatever the
+// gate under test decides. Use refreshQuiet, or also assert FiringSince.
+func TestNoUnfalsifiableWarningNegatives(t *testing.T) {
+	files, err := filepath.Glob("*_test.go")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("glob test files: %v (found %d)", err, len(files))
+	}
+	fset := token.NewFileSet()
+	scanned := 0
+	for _, name := range files {
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		for _, d := range f.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Body == nil || !strings.HasPrefix(fn.Name.Name, "Test") {
+				continue
+			}
+			scanned++
+			for _, pos := range unfalsifiableWarningNegatives(fn) {
+				t.Errorf("%s: %s asserts WarningFired is false after fewer than two refreshes without "+
+					"observing FiringSince — unfalsifiable under the default debounce; use refreshQuiet",
+					fset.Position(pos), fn.Name.Name)
+			}
+		}
+	}
+	if scanned == 0 {
+		t.Fatal("no Test functions scanned")
+	}
+}
+
+// unfalsifiableWarningNegatives returns each `if <x>.WarningFired {` in fn
+// preceded by fewer than two refreshes, unless fn disables the debounce.
+func unfalsifiableWarningNegatives(fn *ast.FuncDecl) []token.Pos {
+	var refreshAt, negatives []token.Pos
+	debounceOff := false
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.CallExpr:
+			switch fun := x.Fun.(type) {
+			case *ast.SelectorExpr:
+				if fun.Sel.Name == "RefreshPair" {
+					refreshAt = append(refreshAt, x.Pos())
+				}
+			case *ast.Ident:
+				if fun.Name == "refreshQuiet" {
+					refreshAt = append(refreshAt, x.Pos(), x.Pos())
+				}
+			}
+		case *ast.KeyValueExpr:
+			if k, ok := x.Key.(*ast.Ident); ok && k.Name == "WarningPersistence" && types.ExprString(x.Value) == "-1" {
+				debounceOff = true
+			}
+		case *ast.IfStmt:
+			if sel, ok := x.Cond.(*ast.SelectorExpr); ok && sel.Sel.Name == "WarningFired" {
+				negatives = append(negatives, x.Pos())
+			}
+		}
+		return true
+	})
+	if debounceOff {
+		return nil
+	}
+	var out []token.Pos
+	for _, neg := range negatives {
+		before := 0
+		for _, r := range refreshAt {
+			if r < neg {
+				before++
+			}
+		}
+		if before < 2 {
+			out = append(out, neg)
+		}
+	}
+	return out
 }

@@ -261,22 +261,10 @@ func TestRefreshPair_OneDissenterDoesNotFireWarning(t *testing.T) {
 		MinSourcesForWarning: 2,
 	})
 
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now()); err != nil {
-		t.Fatalf("RefreshPair: %v", err)
-	}
-	body, err := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
-	if err != nil {
-		t.Fatalf("redis get: %v", err)
-	}
-	var cached divergence.CachedResult
-	if uerr := json.Unmarshal(body, &cached); uerr != nil {
-		t.Fatalf("unmarshal: %v", uerr)
-	}
+	// The agreement leg must require that NO reference corroborates us, so
+	// one dissenter leaves the pair quiet.
+	cached := refreshQuiet(t, svc, rdb, xlmUSD(t), 1.00, time.Now())
 	if cached.AgreementCount != 2 {
 		t.Fatalf("AgreementCount = %d, want 2", cached.AgreementCount)
-	}
-	if cached.WarningFired {
-		t.Error("WarningFired = true on a single dissenting reference; the agreement leg must " +
-			"require that NO reference corroborates us")
 	}
 }
