@@ -6,6 +6,7 @@ package timescale
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -285,6 +286,77 @@ func TestRefreshAssetListingRollups_priceFailureRollsBackVolume(t *testing.T) {
 	}
 	if script.committed() {
 		t.Error("a failed pass must not COMMIT the volume half")
+	}
+}
+
+// TestRefreshAssetListingRollups_zeroRowPassKeepsLastGood: an upsert that
+// wrote nothing (prices_1m empty, rebuilt WITH NO DATA, refresh stalled)
+// must not run the pass prune, which on a now()-stamped transaction would
+// delete every row. It runs the expiry prune instead; each half decides on
+// its own upsert's count.
+func TestRefreshAssetListingRollups_zeroRowPassKeepsLastGood(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name               string
+		volRows, priceRows int64
+		wantVolPrune       string
+		wantPricePrune     string
+	}{
+		{"both empty", 0, 0, refreshAssetVolumePruneExpired, refreshAssetPriceSnapshotPruneExpired},
+		{"price empty", 10, 0, refreshAssetVolumePrune, refreshAssetPriceSnapshotPruneExpired},
+		{"volume empty", 0, 10, refreshAssetVolumePruneExpired, refreshAssetPriceSnapshotPrune},
+		{"both populated", 10, 10, refreshAssetVolumePrune, refreshAssetPriceSnapshotPrune},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store, script := newScriptedStore(t,
+				scriptedResult{}, // SET LOCAL work_mem
+				scriptedResult{}, // SET LOCAL statement_timeout
+				scriptedResult{rowsAffected: tc.volRows},
+				scriptedResult{},
+				scriptedResult{rowsAffected: tc.priceRows},
+				scriptedResult{},
+			)
+			if err := store.RefreshAssetListingRollups(context.Background()); err != nil {
+				t.Fatalf("RefreshAssetListingRollups: %v", err)
+			}
+			got := script.statements()
+			if len(got) != 6 {
+				t.Fatalf("expected 6 statements, got %d: %v", len(got), got)
+			}
+			if got[3] != tc.wantVolPrune {
+				t.Errorf("volume prune = %q, want %q", got[3], tc.wantVolPrune)
+			}
+			if got[5] != tc.wantPricePrune {
+				t.Errorf("price prune = %q, want %q", got[5], tc.wantPricePrune)
+			}
+			if !script.committed() {
+				t.Error("a zero-row pass still commits the other half")
+			}
+		})
+	}
+}
+
+// TestRollupExpiryPrunes_boundedByValidityWindow: the expiry prune keeps
+// a row no longer than the window the rollup describes, so a lasting
+// upstream outage ends in an empty rollup, never an indefinitely stale one.
+func TestRollupExpiryPrunes_boundedByValidityWindow(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ prune, window string }{
+		{refreshAssetVolumePruneExpired, "24 hours"},
+		{refreshAssetPriceSnapshotPruneExpired, assetPriceSnapshotMaxAge},
+		{refreshAssetVolumeCharacterPruneExpired, fmt.Sprintf("%d days", int(volumeCharacterWindow.Hours())/24)},
+	} {
+		want := "computed_at < now() - INTERVAL '" + tc.window + "'"
+		if !strings.HasSuffix(tc.prune, want) {
+			t.Errorf("expiry prune %q must end with %q", tc.prune, want)
+		}
+	}
+	if !strings.Contains(refreshAssetVolumeUpsert, "bucket >= now() - INTERVAL '24 hours'") {
+		t.Error("asset_volume_24h window moved; move refreshAssetVolumePruneExpired with it")
 	}
 }
 

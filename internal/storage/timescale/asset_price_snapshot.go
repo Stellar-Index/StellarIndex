@@ -5,6 +5,7 @@ package timescale
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 )
 
@@ -607,6 +608,34 @@ ON CONFLICT (asset_id) DO UPDATE
 // current.
 const refreshAssetPriceSnapshotPrune = `DELETE FROM asset_price_snapshot WHERE computed_at < now()`
 
+// refreshAssetPriceSnapshotPruneExpired is the zero-row pass's prune (see
+// [pruneRollup]): past assetPriceSnapshotMaxAge the listing join already
+// ignores a row, so nothing older is worth keeping.
+const refreshAssetPriceSnapshotPruneExpired = `DELETE FROM asset_price_snapshot WHERE computed_at < now() - INTERVAL '` + assetPriceSnapshotMaxAge + `'`
+
+// pruneRollup drops the rows this pass did not re-write. An upsert that
+// wrote NOTHING is an upstream fault (prices_1m empty, rebuilt WITH NO
+// DATA, its refresh stalled), not evidence that every asset lapsed at
+// once, so it must not empty the served rollup: it runs pruneExpired,
+// which drops only rows already past the rollup's own validity bound.
+func pruneRollup(ctx context.Context, tx *sql.Tx, upserted int64, prune, pruneExpired string) error {
+	q := prune
+	if upserted == 0 {
+		q = pruneExpired
+	}
+	_, err := tx.ExecContext(ctx, q)
+	return err
+}
+
+// execRowCount runs an upsert and returns how many rows it wrote.
+func execRowCount(ctx context.Context, tx *sql.Tx, q string) (int64, error) {
+	res, err := tx.ExecContext(ctx, q)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // RefreshAssetListingRollups recomputes BOTH rollups the /v1/assets
 // listing LEFT JOINs — asset_volume_24h (migration 0087, #43) and
 // asset_price_snapshot (migration 0154, #331 F1) — and atomically
@@ -658,16 +687,18 @@ func (s *Store) RefreshAssetListingRollups(ctx context.Context) error {
 		return fmt.Errorf("timescale: RefreshAssetListingRollups set timeout: %w", err)
 	}
 
-	if _, err := tx.ExecContext(ctx, refreshAssetVolumeUpsert); err != nil {
+	volN, err := execRowCount(ctx, tx, refreshAssetVolumeUpsert)
+	if err != nil {
 		return fmt.Errorf("timescale: RefreshAssetListingRollups volume upsert: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, refreshAssetVolumePrune); err != nil {
+	if err := pruneRollup(ctx, tx, volN, refreshAssetVolumePrune, refreshAssetVolumePruneExpired); err != nil {
 		return fmt.Errorf("timescale: RefreshAssetListingRollups volume prune: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, refreshAssetPriceSnapshotUpsert); err != nil {
+	priceN, err := execRowCount(ctx, tx, refreshAssetPriceSnapshotUpsert)
+	if err != nil {
 		return fmt.Errorf("timescale: RefreshAssetListingRollups price upsert: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, refreshAssetPriceSnapshotPrune); err != nil {
+	if err := pruneRollup(ctx, tx, priceN, refreshAssetPriceSnapshotPrune, refreshAssetPriceSnapshotPruneExpired); err != nil {
 		return fmt.Errorf("timescale: RefreshAssetListingRollups price prune: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

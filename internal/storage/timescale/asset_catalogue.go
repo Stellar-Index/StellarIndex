@@ -825,6 +825,11 @@ ON CONFLICT (asset_id) DO UPDATE
 // and are dropped.
 const refreshAssetVolumePrune = `DELETE FROM asset_volume_24h WHERE computed_at < now()`
 
+// refreshAssetVolumePruneExpired is the prune a pass whose upsert wrote no
+// rows runs instead (see [pruneRollup]): it keeps last-good rows but never
+// one older than the 24h window it summed, which is false by construction.
+const refreshAssetVolumePruneExpired = `DELETE FROM asset_volume_24h WHERE computed_at < now() - INTERVAL '24 hours'`
+
 // RefreshAssetVolume24h is the aggregator's wired entry point into the
 // /v1/assets rollup refresh. It delegates to
 // [Store.RefreshAssetListingRollups], which refreshes asset_volume_24h

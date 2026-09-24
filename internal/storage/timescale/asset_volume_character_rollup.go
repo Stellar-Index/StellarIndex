@@ -188,6 +188,10 @@ func volumeCharacterFromSums(total, topPair, selfCross, issuerSide, marketStyled
 // survive; stale rows carry an older timestamp and are deleted.
 const refreshAssetVolumeCharacterPrune = `DELETE FROM asset_volume_character WHERE computed_at < now()`
 
+// refreshAssetVolumeCharacterPruneExpired is the zero-row pass's prune (see
+// [pruneRollup]); the interval is volumeCharacterWindow, pinned by test.
+const refreshAssetVolumeCharacterPruneExpired = `DELETE FROM asset_volume_character WHERE computed_at < now() - INTERVAL '14 days'`
+
 // RefreshAssetVolumeCharacter recomputes the per-asset volume-character
 // rollup from the live trailing-window trades roll and atomically replaces
 // its contents. Called on a slow cadence by the aggregator's
@@ -214,7 +218,7 @@ func (s *Store) RefreshAssetVolumeCharacter(ctx context.Context) error {
 	if err := upsertAssetVolumeCharacter(ctx, tx, rows); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, refreshAssetVolumeCharacterPrune); err != nil {
+	if err := pruneRollup(ctx, tx, int64(len(rows)), refreshAssetVolumeCharacterPrune, refreshAssetVolumeCharacterPruneExpired); err != nil {
 		return fmt.Errorf("timescale: RefreshAssetVolumeCharacter prune: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
