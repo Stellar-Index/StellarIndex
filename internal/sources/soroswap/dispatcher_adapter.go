@@ -2,6 +2,7 @@ package soroswap
 
 import (
 	"errors"
+	"sort"
 	"sync"
 	"time"
 
@@ -335,6 +336,23 @@ func (d *Decoder) pairTokensFor(contractID string) (PairTokens, bool) {
 	defer d.mu.RUnlock()
 	tokens, ok := d.pairTokens[contractID]
 	return tokens, ok
+}
+
+// GatedContractSet returns every contract Matches can accept: the verified
+// factories plus every registered pair, sorted. The completeness re-derive
+// scopes its lake read to this set, so it must never be narrower than the gate.
+func (d *Decoder) GatedContractSet() []string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	out := make([]string, 0, len(MainnetFactories)+len(d.pairTokens))
+	out = append(out, MainnetFactories...)
+	for pair := range d.pairTokens {
+		if !IsMainnetFactory(pair) {
+			out = append(out, pair)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // emitLiquidity decodes a pair-contract deposit/withdraw event into a

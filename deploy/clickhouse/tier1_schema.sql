@@ -554,7 +554,7 @@ GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
 -- caution in docs/operations/perf-todo.md §4):
 --
 --   stellarindex-ops ch-txindex-backfill -ch-addr 127.0.0.1:9300 \
---     -from 2 -to <lake tip> -window 5000000
+--     -from 2 -to <lake tip> -window 5000000 -write
 --
 -- CORRECTNESS, not just speed, depends on the backfill (2026-09
 -- reverification, F106 — this comment previously said the opposite and was
@@ -576,7 +576,7 @@ GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
 -- optimisation you can defer:
 --
 --   stellarindex-ops ch-txindex-backfill -ch-addr 127.0.0.1:9300 \
---     -from 2 -to <lake tip> -window 5000000
+--     -from 2 -to <lake tip> -window 5000000 -write
 --
 -- KNOWN GAP (NEEDS-COORDINATION, tracked under F106): the reader's
 -- availability probe only proves the index is non-empty, not that the
@@ -1371,7 +1371,7 @@ AS stellar.account_cohort_positions;
 --
 --   /usr/local/sbin/run-heavy-job.sh instance-changes-backfill \
 --     /usr/local/bin/stellarindex-ops ch-instance-backfill \
---     -ch-addr 127.0.0.1:9300 -from 2 -window 2000000
+--     -ch-addr 127.0.0.1:9300 -from 2 -window 2000000 -write
 --
 -- Do NOT leave the table applied-but-unbackfilled on a lake with
 -- history: cold contracts would resolve "no wasm" / truncated upgrade

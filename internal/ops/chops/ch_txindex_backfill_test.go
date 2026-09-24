@@ -15,7 +15,7 @@ import (
 // kicked off the entire history — a heavy job the runbook says must be
 // babysat. The full run is still available, but only with an explicit word.
 func TestParseTxIndexBackfillFlags_RefusesBareFullHistory(t *testing.T) {
-	_, err := parseTxIndexBackfillFlags(nil)
+	_, err := parseTxIndexBackfillFlags([]string{"-write"})
 	if err == nil {
 		t.Fatal("bare invocation (no -from/-to/-full) was accepted — it must refuse the " +
 			"implicit full-history backfill")
@@ -34,10 +34,10 @@ func TestParseTxIndexBackfillFlags_ExplicitOptInsAreAccepted(t *testing.T) {
 		wantFrom uint32
 		wantTo   uint32
 	}{
-		{"full opts into 2..tip", []string{"-full"}, 2, 0},
-		{"explicit from is a resume point", []string{"-from", "80000000"}, 80_000_000, 0},
-		{"explicit to bounds the range", []string{"-to", "1000000"}, 2, 1_000_000},
-		{"explicit from+to", []string{"-from", "500000", "-to", "1000000"}, 500_000, 1_000_000},
+		{"full opts into 2..tip", []string{"-full", "-write"}, 2, 0},
+		{"explicit from is a resume point", []string{"-from", "80000000", "-write"}, 80_000_000, 0},
+		{"explicit to bounds the range", []string{"-to", "1000000", "-dry-run"}, 2, 1_000_000},
+		{"explicit from+to", []string{"-from", "500000", "-to", "1000000", "-write"}, 500_000, 1_000_000},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -58,10 +58,10 @@ func TestParseTxIndexBackfillFlags_ExplicitOptInsAreAccepted(t *testing.T) {
 // TestParseTxIndexBackfillFlags_ZeroFromStillRejected keeps the pre-existing
 // invariant: -from 0 and -window 0 are invalid regardless of the new guard.
 func TestParseTxIndexBackfillFlags_ZeroFromStillRejected(t *testing.T) {
-	if _, err := parseTxIndexBackfillFlags([]string{"-from", "0"}); err == nil {
+	if _, err := parseTxIndexBackfillFlags([]string{"-from", "0", "-write"}); err == nil {
 		t.Error("-from 0 must be rejected")
 	}
-	if _, err := parseTxIndexBackfillFlags([]string{"-full", "-window", "0"}); err == nil {
+	if _, err := parseTxIndexBackfillFlags([]string{"-full", "-window", "0", "-write"}); err == nil {
 		t.Error("-window 0 must be rejected")
 	}
 }

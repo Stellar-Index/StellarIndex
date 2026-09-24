@@ -82,7 +82,7 @@ func TestCatalogueConsumers_WarmBeforeAnythingReadsTheDecoders(t *testing.T) {
 			file:     "compute_completeness.go",
 			fn:       "computeCompleteness",
 			warm:     "applyGatedOptions(catalogue, gatedOpts)",
-			firstUse: "for _, src := range catalogue {",
+			firstUse: "evalSource := func(src reconSource) error {",
 			why: "the EXPECTED side of /v1/coverage: an unwarmed re-derive expects none of " +
 				"an operator-admitted contract's rows, so its real served rows publish as phantoms",
 		},

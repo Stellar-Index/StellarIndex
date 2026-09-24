@@ -373,7 +373,7 @@ Subcommands:
                           snapshot is read from Postgres (-config), which
                           is why this one carries a config path. Backs
                           /v1/accounts/{g}/graph/cohort.
-  ch-contract-ledgers-backfill -ch-addr ADDR [-from N] [-to N] [-window N]
+  ch-contract-ledgers-backfill -ch-addr ADDR (-write | -dry-run) [-from N] [-to N] [-window N]
                           One-time historical fill of
                           stellar.contract_active_ledgers (the per-contract
                           activity index behind fast contract pages) from
@@ -922,7 +922,7 @@ Subcommands:
                           history so substrate continuity + hash-chain
                           checks cover [genesis, tip]. Idempotent
                           (ON CONFLICT DO UPDATE); checkpoints for resume.
-  ch-instance-backfill    -ch-addr ADDR [-from N] [-to N] [-window N] [-table NAME]
+  ch-instance-backfill    -ch-addr ADDR (-write | -dry-run) [-from N] [-to N] [-window N] [-table NAME]
                           One-time historical fill of
                           stellar.contract_instance_changes (the keyed
                           instance-executable timeline behind fast
@@ -1003,7 +1003,7 @@ Subcommands:
                           top-N report; -seed-flows writes one decoded row
                           per flow event into stellar.supply_flows
                           (idempotent). Read-only unless -seed-flows.
-  ch-txindex-backfill (-full | -from N | -to N) [-ch-addr H:P] [-window N]
+  ch-txindex-backfill (-full | -from N | -to N) (-write | -dry-run) [-ch-addr H:P] [-window N]
                           Fill stellar.tx_hash_index (the hash-ordered
                           GET /v1/tx/{hash} lookup table, perf-todo §4)
                           from stellar.transactions history in windowed,
