@@ -31,9 +31,9 @@ type lkgPairs map[string]string
 
 func (l lkgPairs) LookupTriangulatedVWAP(
 	_ context.Context, base, quote canonical.Asset, window time.Duration,
-) (string, bool, bool, error) {
+) (v1.CachedVWAP, bool, error) {
 	v, ok := l[base.String()+"/"+quote.String()+"/"+strconv.Itoa(int(window/time.Second))]
-	return v, false, ok, nil
+	return v1.CachedVWAP{Value: v, ObservedAt: time.Now().UTC()}, ok, nil
 }
 
 // frozenPairs is the freeze-marker set, keyed "<asset>/<quote>" exactly

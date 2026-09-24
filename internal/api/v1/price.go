@@ -549,28 +549,44 @@ type PriceSnapshotConfidence struct {
 // marked triangulated.
 //
 // Production wiring: a Redis-backed adapter that reads
-// [cachekeys.VWAP] and [cachekeys.VWAPProvenance]. Nil leaves
-// /v1/price returning 404 for triangulated-only pairs (the
-// existing behaviour) — wire when the aggregator's triangulation
-// chains are configured + Redis is reachable.
+// [cachekeys.VWAP], [cachekeys.VWAPProvenance] and
+// [cachekeys.VWAPObservedAt]. Nil leaves /v1/price returning 404 for
+// triangulated-only pairs (the existing behaviour) — wire when the
+// aggregator's triangulation chains are configured + Redis is
+// reachable.
 type TriangulatedPriceLooker interface {
-	// LookupTriangulatedVWAP returns the cached VWAP for the
-	// pair + window and whether the provenance marker says it came
-	// from triangulation (vs. a direct per-pair or rewritten value
-	// written to the same key).
-	//
-	// Return values:
-	//   value           — decimal string when found.
-	//   isTriangulated  — true when the provenance marker says so.
-	//                     false means the cache had a direct VWAP;
-	//                     the handler still serves it, with
-	//                     flags.triangulated=false (see
-	//                     tryRedisVWAPFallback).
-	//   found           — true when any value was in the cache.
-	//   err             — propagates Redis errors so the handler
-	//                     can log them; cache misses are NOT errors
-	//                     (found=false, err=nil).
-	LookupTriangulatedVWAP(ctx context.Context, base, quote canonical.Asset, window time.Duration) (value string, isTriangulated, found bool, err error)
+	// LookupTriangulatedVWAP returns the cached VWAP for the pair +
+	// window. found is true when a value AND its observed-at stamp
+	// were in the cache; a value without a readable stamp is a miss,
+	// since nothing else can say how old it is. Cache misses are NOT
+	// errors (found=false, err=nil); err propagates Redis errors so
+	// the handler can log them.
+	LookupTriangulatedVWAP(ctx context.Context, base, quote canonical.Asset, window time.Duration) (vwap CachedVWAP, found bool, err error)
+}
+
+// CachedVWAP is one aggregator-published VWAP read from the Redis
+// cache.
+type CachedVWAP struct {
+	// Value is the decimal-string VWAP.
+	Value string
+	// Triangulated is true when the provenance marker says the
+	// triangulation worker wrote the value; false is a direct VWAP.
+	Triangulated bool
+	// ObservedAt is when the aggregator observed the value — the end of
+	// the closed bucket its window ends at. A freeze keeps a value
+	// served long after this, so it is the only honest observed_at.
+	ObservedAt time.Time
+}
+
+// lookupCachedVWAP is the one read of the aggregator's VWAP cache every
+// serve path goes through. It refuses a value whose looker reported no
+// observation time: stamping one would be inventing it.
+func (s *Server) lookupCachedVWAP(ctx context.Context, base, quote canonical.Asset, window time.Duration) (CachedVWAP, bool, error) {
+	v, found, err := s.triangulated.LookupTriangulatedVWAP(ctx, base, quote, window)
+	if err != nil || !found || v.ObservedAt.IsZero() {
+		return CachedVWAP{}, false, err
+	}
+	return v, true, nil
 }
 
 // CompositeMetaLooker is an OPTIONAL capability the wired
@@ -906,9 +922,9 @@ const confidenceLookupWindow = 5 * time.Minute
 // fresh value to serve. A 1-minute lookup (the previous value)
 // missed every read because no upstream writer emits at 1m.
 //
-// The aggregator's tick cadence (default 30s, [Config.Interval])
-// overwrites the 5m key well inside its TTL, so the served
-// `observed_at` is at most ~30s stale relative to bucket-end.
+// The served `observed_at` is the aggregator's own stamp for the value
+// ([cachekeys.VWAPObservedAt]), not the read time: a freeze keeps a
+// value in the cache for its whole hold without rewriting it.
 const triangulationLookupWindow = 5 * time.Minute
 
 // tryRedisVWAPFallback consults the wired [TriangulatedPriceLooker]
@@ -933,26 +949,21 @@ const triangulationLookupWindow = 5 * time.Minute
 // The synthesised snapshot has:
 //   - Price       — the cached value
 //   - PriceType   — "vwap" (rewritten + triangulated values are both VWAPs)
-//   - ObservedAt  — time.Now() rounded down to the window. The
-//     aggregator overwrites the cache key on each
-//     tick at the same cadence, so "now-aligned-to-
-//     window-end" is a faithful approximation
-//     without round-tripping a separate timestamp.
+//   - ObservedAt  — the aggregator's observed-at stamp for the value
+//     (the closed bucket its window ends at), never the read time
 //   - WindowSec   — [triangulationLookupWindow] in seconds
 //   - Sources     — empty []string{} — Redis VWAP keys carry the
 //     value alone; per-source provenance is only available via the
 //     prices_1m CAGG path, which is preferred when populated
-//   - Stale       — false; cache TTL is bound to window, so a
-//     non-expired key is by construction within-window
+//
+// Staleness is the caller's call: each surface's flags.stale contract
+// differs (ADR-0018).
 func (s *Server) tryRedisVWAPFallback(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, bool) {
 	// Returns: snapshot, sources, triangulated, ok.
-	// Stale is intentionally NOT returned (always false here) —
-	// the cache TTL is bound to the lookup window so a non-expired
-	// key is by construction within-window.
 	if s.triangulated == nil {
 		return PriceSnapshot{}, nil, false, false
 	}
-	value, isTriangulated, found, err := s.triangulated.LookupTriangulatedVWAP(ctx, asset, quote, triangulationLookupWindow)
+	v, found, err := s.lookupCachedVWAP(ctx, asset, quote, triangulationLookupWindow)
 	if err != nil {
 		s.logger.Warn("vwap cache lookup failed",
 			"err", err, "asset", asset.String(), "quote", quote.String())
@@ -961,27 +972,15 @@ func (s *Server) tryRedisVWAPFallback(ctx context.Context, asset, quote canonica
 	if !found {
 		return PriceSnapshot{}, nil, false, false
 	}
-	now := time.Now().UTC()
-	// F-1305 (codex audit-2026-05-13): observed_at = now, not
-	// now.Truncate(window). The cache TTL is bound to the lookup
-	// window AND the aggregator overwrites the key on every tick
-	// (30s cadence per orchestrator.DefaultInterval), so a
-	// non-expired key was written ≤ tick-cadence ago. Window-
-	// truncated observed_at stamped responses with 0-5min
-	// staleness despite the value being fresh — that's what
-	// drove F-1305's 83-186s probe freshness even though the
-	// aggregator was writing every 30s. Honest stamp: the value
-	// is current as of read time.
-	observedAt := now
 	snap := PriceSnapshot{
 		AssetID:       asset.String(),
 		Quote:         quote.String(),
-		Price:         value,
+		Price:         v.Value,
 		PriceType:     "vwap",
-		ObservedAt:    WireTime(observedAt),
+		ObservedAt:    WireTime(v.ObservedAt),
 		WindowSeconds: int(triangulationLookupWindow.Seconds()),
 	}
-	return snap, []string{}, isTriangulated, true
+	return snap, []string{}, v.Triangulated, true
 }
 
 // assetAliases is the api/v1 spelling of [canonical.AssetAliases] —
@@ -2659,7 +2658,7 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 		return frozenResolution{outcome: frozenServeNothingHeld, checked: checked}
 	}
 	for _, window := range frozenHeldWindows {
-		value, isTriangulated, found, err := s.triangulated.LookupTriangulatedVWAP(r.Context(), pairBase, quote, window)
+		v, found, err := s.lookupCachedVWAP(r.Context(), pairBase, quote, window)
 		if err != nil {
 			if !clientAborted(r, err) {
 				s.logger.Warn("frozen pair: held-value lookup failed",
@@ -2673,17 +2672,15 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 		return frozenResolution{
 			outcome:      frozenServeHeld,
 			checked:      true,
-			triangulated: isTriangulated,
+			triangulated: v.Triangulated,
 			snapshot: PriceSnapshot{
 				AssetID:   requested.String(),
 				Quote:     quote.String(),
-				Price:     value,
+				Price:     v.Value,
 				PriceType: "vwap",
-				// Same stamp every VWAP-cache serve carries (F-1305). For
-				// a held value it is the READ time, not the time the value
-				// was fresh — which the cache does not record — so the
-				// caller marks the response stale as well as frozen.
-				ObservedAt:    WireTime(time.Now().UTC()),
+				// When the held value was observed, not when it was read:
+				// the hold is what makes those differ by tens of minutes.
+				ObservedAt:    WireTime(v.ObservedAt),
 				WindowSeconds: int(window / time.Second),
 			},
 		}
@@ -3368,26 +3365,19 @@ func (s *Server) handlePriceWindowed(w http.ResponseWriter, r *http.Request, ass
 			if a.Equal(q) {
 				continue
 			}
-			value, triangulated, found, err := s.triangulated.LookupTriangulatedVWAP(r.Context(), a, q, window)
+			v, found, err := s.lookupCachedVWAP(r.Context(), a, q, window)
 			if err != nil || !found {
 				continue
 			}
 			snap := PriceSnapshot{
-				AssetID:   asset.String(),
-				Quote:     quote.String(),
-				Price:     value,
-				PriceType: "vwap",
-				// F-1305 semantics: the value is re-published every
-				// aggregator tick, and its key cannot outlive that
-				// publisher by more than cachekeys.VWAPMaxAge — a
-				// stopped aggregator's value expires and this surface
-				// 404s below rather than stamping a fresh observed_at
-				// on a value hours old. So request time is accurate to
-				// within the silence grace, not to within the window.
-				ObservedAt:    WireTime(time.Now().UTC()),
+				AssetID:       asset.String(),
+				Quote:         quote.String(),
+				Price:         v.Value,
+				PriceType:     "vwap",
+				ObservedAt:    WireTime(v.ObservedAt),
 				WindowSeconds: int(window / time.Second),
 			}
-			writeJSON(w, snap, s.windowedPriceFlags(r, a, q, window, triangulated))
+			writeJSON(w, snap, s.windowedPriceFlags(r, a, q, window, v.Triangulated))
 			return
 		}
 	}

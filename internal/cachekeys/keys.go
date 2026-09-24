@@ -180,6 +180,50 @@ func VWAPProvenance(base, quote canonical.Asset, window time.Duration) VWAPProve
 // typed-family treatment).
 const VWAPProvenanceTriangulated = "triangulated"
 
+// ─── VWAP Observed-At — when the served value was observed ─────────
+//
+// Wire shape: `vwap:<base>:<quote>:<window-seconds>:observed_at`
+// Value: RFC 3339 UTC timestamp ([FormatVWAPObservedAt]) — the closed
+// bucket boundary the value's window ends at.
+// TTL: matches the VWAP value key, including the freeze keep-alive.
+//
+// Writer: both writers of the value key (the direct per-pair refresh
+// and the triangulation pass) write it in the value's MULTI/EXEC.
+//
+// Reader: the API stamps `observed_at` from it on every VWAP-cache
+// serve. The value key alone cannot say how old it is: a freeze
+// extends its TTL to cover the hold (tens of minutes) without
+// rewriting it, so key existence is not freshness. A value with no
+// readable stamp is not served.
+
+// VWAPObservedAtKey is the typed Redis key for the
+// `vwap:<base>:<quote>:<window>:observed_at` family.
+type VWAPObservedAtKey string
+
+// String returns the wire-format key.
+func (k VWAPObservedAtKey) String() string { return string(k) }
+
+// VWAPObservedAt returns the cache key for the observation time of the
+// `vwap:<base>:<quote>:<window>` value.
+func VWAPObservedAt(base, quote canonical.Asset, window time.Duration) VWAPObservedAtKey {
+	return VWAPObservedAtKey(fmt.Sprintf("vwap:%s:%s:%d:observed_at",
+		base.String(), quote.String(), int(window.Seconds())))
+}
+
+// FormatVWAPObservedAt encodes t as the [VWAPObservedAt] cache value.
+func FormatVWAPObservedAt(t time.Time) string {
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+// ParseVWAPObservedAt decodes a [VWAPObservedAt] cache value.
+func ParseVWAPObservedAt(raw string) (time.Time, error) {
+	t, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("cachekeys: decode vwap observed_at: %w", err)
+	}
+	return t.UTC(), nil
+}
+
 // ─── VWAP Composite Meta — router quality flags for a composite ────
 //
 // Wire shape: `vwap:<base>:<quote>:<window-seconds>:composite_meta`

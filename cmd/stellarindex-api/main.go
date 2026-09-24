@@ -3374,6 +3374,7 @@ func (r redisConfidenceLooker) LookupConfidence(ctx context.Context, asset, quot
 //
 //   - cachekeys.VWAP(base, quote, window) — the value
 //   - cachekeys.VWAPProvenance(...)        — the marker
+//   - cachekeys.VWAPObservedAt(...)        — when the value was observed
 //
 // Per the marker contract, "triangulated" means the aggregator's
 // triangulation worker wrote this value (vs. the direct per-pair
@@ -3382,34 +3383,45 @@ func (r redisConfidenceLooker) LookupConfidence(ctx context.Context, asset, quot
 // labelled flags.triangulated=false, because aggregator-rewritten
 // pairs (XLM/fiat:USD) have no prices_1m row to fall back on.
 //
-// Cache miss returns (found=false, no error). Read errors
-// propagate so the handler can log and fall through to its other
-// fallbacks.
+// Cache miss returns (found=false, no error), and so does a value with
+// no readable observed-at stamp: its age is unknowable, and a freeze
+// keeps a value alive for its whole hold. Read errors propagate so the
+// handler can log and fall through to its other fallbacks.
 type redisTriangulatedLooker struct{ rdb redis.UniversalClient }
 
 func (r redisTriangulatedLooker) LookupTriangulatedVWAP(
 	ctx context.Context, base, quote canonical.Asset, window time.Duration,
-) (string, bool, bool, error) {
+) (v1.CachedVWAP, bool, error) {
 	if r.rdb == nil {
-		return "", false, false, nil
+		return v1.CachedVWAP{}, false, nil
 	}
-	// One MGET: the aggregator writes value and marker in one MULTI/EXEC,
-	// and two GETs could straddle a write and pair a value with another
-	// write's provenance.
+	// One MGET: the aggregator writes value, marker and stamp in one
+	// MULTI/EXEC, and separate GETs could straddle a write and pair a
+	// value with another write's provenance or stamp.
 	valKey := cachekeys.VWAP(base, quote, window)
 	provKey := cachekeys.VWAPProvenance(base, quote, window)
-	got, err := r.rdb.MGet(ctx, valKey.String(), provKey.String()).Result()
+	atKey := cachekeys.VWAPObservedAt(base, quote, window)
+	got, err := r.rdb.MGet(ctx, valKey.String(), provKey.String(), atKey.String()).Result()
 	if err != nil {
-		return "", false, false, fmt.Errorf("vwap cache mget %s: %w", valKey, err)
+		return v1.CachedVWAP{}, false, fmt.Errorf("vwap cache mget %s: %w", valKey, err)
 	}
 	val, ok := got[0].(string)
 	if !ok {
-		return "", false, false, nil
+		return v1.CachedVWAP{}, false, nil
+	}
+	rawAt, _ := got[2].(string)
+	observedAt, err := cachekeys.ParseVWAPObservedAt(rawAt)
+	if err != nil {
+		return v1.CachedVWAP{}, false, nil //nolint:nilerr // no readable stamp is a miss, not a Redis error
 	}
 	// A missing marker means a direct VWAP (per the marker contract):
 	// found=true, isTriangulated=false — served, but not labelled triangulated.
 	prov, _ := got[1].(string)
-	return val, prov == cachekeys.VWAPProvenanceTriangulated, true, nil
+	return v1.CachedVWAP{
+		Value:        val,
+		Triangulated: prov == cachekeys.VWAPProvenanceTriangulated,
+		ObservedAt:   observedAt,
+	}, true, nil
 }
 
 // LookupCompositeMeta reads the router quality-flags blob the
@@ -3528,22 +3540,15 @@ func (g globalPriceReader) LookupTriangulated(ctx context.Context, base, quote c
 	if priceWithheld(ctx, nil, g.scam, base, quote, "asset_headline") != pricingguard.NotWithheld {
 		return "", time.Time{}, false, nil
 	}
-	val, isTri, found, err := g.tri.LookupTriangulatedVWAP(ctx, base, quote, window)
-	if err != nil || !found || !isTri {
-		// `found && !isTri` means the cache had a direct (non-
+	v, found, err := g.tri.LookupTriangulatedVWAP(ctx, base, quote, window)
+	if err != nil || !found || !v.Triangulated {
+		// `found && !Triangulated` means the cache had a direct (non-
 		// triangulated) value — per the marker contract we shouldn't
 		// serve that as the triangulation tier. Tell the caller the
 		// tier missed.
 		return "", time.Time{}, false, err
 	}
-	// The Redis cache doesn't store an observed-at timestamp alongside
-	// the VWAP value (the producer's `vwap:` key is a bare string).
-	// Use the request time as the as_of — the cache's TTL means the
-	// value is at most the configured window old, so this is an
-	// upper-bound approximation rather than the exact observation
-	// timestamp. Future improvement: have the producer also write a
-	// sibling `:observed_at` key.
-	return val, time.Now().UTC(), true, nil
+	return v.Value, v.ObservedAt, true, nil
 }
 
 // storeHistoryReader adapts *timescale.Store to v1.HistoryReader.
