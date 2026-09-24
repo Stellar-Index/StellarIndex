@@ -116,27 +116,32 @@ func Auth(opts AuthOptions) Middleware {
 			}
 			subject, err := authenticate(r, mode, opts)
 			if err != nil {
-				// C3-5: throttle per-IP and per-key-prefix on a CREDENTIAL
-				// FAILURE so a bad key/token can't be retried without bound.
-				// Server-misconfig 503s (ErrNotImplemented) don't count.
-				rejected := isCredentialRejection(err)
-				if opts.FailedAuthLimiter != nil && rejected {
-					if throttled, retryAfter := takeFailedAuth(r, mode, opts.FailedAuthLimiter); throttled { //nolint:contextcheck // takeFailedAuth intentionally detaches via throttleContext(r) — see its doc (REL-06 F059/Q153)
-						obs.FailedAuthTotal.WithLabelValues(obs.FailedAuthThrottled).Inc()
-						writeAuthThrottleProblem(w, retryAfter)
-						return
-					}
-				}
-				if rejected {
-					obs.FailedAuthTotal.WithLabelValues(obs.FailedAuthRejected).Inc()
-				}
-				writeAuthError(w, err)
+				rejectAuth(w, r, mode, opts, err) //nolint:contextcheck // takeFailedAuth intentionally detaches via throttleContext(r) — see its doc (REL-06 F059/Q153)
 				return
 			}
 			r = r.WithContext(auth.WithSubject(r.Context(), subject))
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// rejectAuth writes the response for a failed authenticate call.
+// C3-5: throttle per-IP and per-key-prefix on a CREDENTIAL FAILURE so a bad
+// key/token can't be retried without bound. Server-misconfig 503s
+// (ErrNotImplemented) don't count.
+func rejectAuth(w http.ResponseWriter, r *http.Request, mode AuthMode, opts AuthOptions, err error) {
+	rejected := isCredentialRejection(err)
+	if opts.FailedAuthLimiter != nil && rejected {
+		if throttled, retryAfter := takeFailedAuth(r, mode, opts.FailedAuthLimiter); throttled { //nolint:contextcheck // takeFailedAuth intentionally detaches via throttleContext(r) — see its doc (REL-06 F059/Q153)
+			obs.FailedAuthTotal.WithLabelValues(obs.FailedAuthThrottled).Inc()
+			writeAuthThrottleProblem(w, retryAfter)
+			return
+		}
+	}
+	if rejected {
+		obs.FailedAuthTotal.WithLabelValues(obs.FailedAuthRejected).Inc()
+	}
+	writeAuthError(w, err)
 }
 
 // isUnauthenticatedInfraPath reports whether a path is operational
