@@ -136,7 +136,7 @@ func TestWriter_MarkHoldRoundTrip(t *testing.T) {
 		FiredAt:        firedAt,
 		HoldUntil:      firedAt.Add(30 * time.Minute),
 		ExtensionsUsed: 3,
-		Escalated:      false,
+		Escalated:      true,
 		UnfreezeStreak: 1,
 		Corroborated:   true,
 	}
@@ -163,7 +163,7 @@ func TestWriter_MarkHoldRoundTrip(t *testing.T) {
 	if !m.State.FiredAt.Equal(state.FiredAt) || !m.State.HoldUntil.Equal(state.HoldUntil) {
 		t.Errorf("marker state times = %+v, want %+v", m.State, state)
 	}
-	if m.State.ExtensionsUsed != 3 || m.State.UnfreezeStreak != 1 || !m.State.Corroborated {
+	if m.State.ExtensionsUsed != 3 || m.State.UnfreezeStreak != 1 || !m.State.Corroborated || !m.State.Escalated {
 		t.Errorf("marker state = %+v, want %+v", m.State, state)
 	}
 
@@ -176,6 +176,11 @@ func TestWriter_MarkHoldRoundTrip(t *testing.T) {
 	}
 	if got.ExtensionsUsed != state.ExtensionsUsed || !got.HoldUntil.Equal(state.HoldUntil) {
 		t.Errorf("LoadState = %+v, want %+v", got, state)
+	}
+	// An escalated freeze holds until manual unfreeze (ADR-0019); losing
+	// the flag on rehydrate would let two healthy buckets auto-release it.
+	if !got.Escalated {
+		t.Errorf("LoadState Escalated = false, want true (escalation lost across the marker round-trip)")
 	}
 }
 

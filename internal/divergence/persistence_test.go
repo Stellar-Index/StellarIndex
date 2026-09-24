@@ -75,9 +75,10 @@ func TestRefreshPair_FastMoveDoesNotFalseWarn(t *testing.T) {
 	}
 	// ...yet the WARNING must be held: a single-tick over-threshold gap
 	// is exactly the fast-move artefact the debounce suppresses.
-	if cached.WarningFired {
-		t.Error("WarningFired = true on a single-refresh 10% gap: a fast-move VWAP-vs-spot lag " +
-			"must not raise a false divergence warning before it has persisted past the debounce window")
+	if cached.WarningFired || cached.FiringSince.IsZero() {
+		t.Errorf("single-refresh 10%% gap: WarningFired=%v FiringSince=%v, want the raw streak started "+
+			"but the warning held — a fast-move VWAP-vs-spot lag must not raise a false divergence warning "+
+			"before it has persisted past the debounce window", cached.WarningFired, cached.FiringSince)
 	}
 }
 
@@ -102,8 +103,9 @@ func TestRefreshPair_SustainedDivergenceStillWarns(t *testing.T) {
 	if err := svc.RefreshPair(context.Background(), pair, 1.10, t0); err != nil {
 		t.Fatalf("RefreshPair #1: %v", err)
 	}
-	if readDivergence(t, rdb, pair).WarningFired {
-		t.Fatal("WarningFired = true on the first observation; the debounce must hold it for one window")
+	if got := readDivergence(t, rdb, pair); got.WarningFired || got.FiringSince.IsZero() {
+		t.Fatalf("first observation: WarningFired=%v FiringSince=%v; the raw streak must start and "+
+			"the debounce must hold the warning for one window", got.WarningFired, got.FiringSince)
 	}
 
 	// Same gap, one debounce window later — a genuine sustained
@@ -142,8 +144,9 @@ func TestRefreshPair_TransientDivergenceSelfClears(t *testing.T) {
 	if err := svc.RefreshPair(context.Background(), pair, 1.10, t0); err != nil {
 		t.Fatalf("RefreshPair spike#1: %v", err)
 	}
-	if readDivergence(t, rdb, pair).WarningFired {
-		t.Fatal("WarningFired = true on spike #1; must be held")
+	if got := readDivergence(t, rdb, pair); got.WarningFired || got.FiringSince.IsZero() {
+		t.Fatalf("spike #1: WarningFired=%v FiringSince=%v; the raw streak must start and the warning be held",
+			got.WarningFired, got.FiringSince)
 	}
 
 	// Recovery: prices agree again → streak resets.

@@ -37,23 +37,43 @@ func TestPrice_Withheld_Distinct404Type(t *testing.T) {
 // TestPrice_Withheld_SkipsFallbackChain — the read-time stablecoin
 // proxy (one arm of priceFallback) must NOT rescue a withheld pair:
 // falling back would re-serve the same substanceless market through a
-// side door. The stub returns withheld on the direct read; if the
-// handler ran priceFallback, the configured USD peg's snapshot would
-// serve a 200.
+// side door. The verdict is per pair, as at the production reader seam:
+// native/fiat:USD is withheld while native/<USD peg> holds a servable
+// snapshot, so a handler that ran priceFallback (first, or at all) would
+// serve the peg's price with a 200.
 func TestPrice_Withheld_SkipsFallbackChain(t *testing.T) {
 	peg, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := v1.New(v1.Options{
-		Prices:            &stubPriceReader{err: v1.ErrPriceWithheld},
-		USDPeggedClassics: []canonical.Asset{peg},
-	})
-	ts := startHTTPTest(t, srv.Handler())
+	serverURL := func(errByPair map[string]error) string {
+		reader := &stubPriceReader{
+			snapshots: map[string]v1.PriceSnapshot{
+				"native/" + peg.String(): {Price: "0.12", PriceType: "vwap"},
+			},
+			errByPair: errByPair,
+		}
+		srv := v1.New(v1.Options{Prices: reader, USDPeggedClassics: []canonical.Asset{peg}})
+		return startHTTPTest(t, srv.Handler()).URL
+	}
 
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
+	// Control: without the verdict the peg fallback serves, so the fixture
+	// can build the 200 the withheld arm exists to prevent.
+	control := mustGet(t, serverURL(nil)+"/v1/price?asset=native&quote=fiat:USD")
+	if control.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(control.Body)
+		t.Fatalf("control: status = %d, want 200 via the USD peg fallback: %s", control.StatusCode, body)
+	}
+
+	withheld := map[string]error{"native/fiat:USD": v1.ErrPriceWithheld}
+	resp := mustGet(t, serverURL(withheld)+"/v1/price?asset=native&quote=fiat:USD")
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status = %d, want 404 (withheld must not fall back to the stablecoin proxy)", resp.StatusCode)
+		t.Errorf("status = %d, want 404 (withheld must not fall back to the stablecoin proxy): %s",
+			resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "errors/price-withheld") {
+		t.Errorf("body missing price-withheld problem type: %s", body)
 	}
 }
 

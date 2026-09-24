@@ -364,8 +364,11 @@ func TestRefreshPair_OnChainOracleReferences(t *testing.T) {
 	if got := cached.Failures[divergence.OracleSourceBand]; got != "price_unavailable" {
 		t.Errorf("band failure = %q, want price_unavailable", got)
 	}
-	if cached.WarningFired {
-		t.Error("agreeing references must not fire the warning")
+	// FiringSince is the raw condition; WarningFired alone is held false
+	// on a first refresh by the default debounce whatever the gate says.
+	if cached.WarningFired || !cached.FiringSince.IsZero() {
+		t.Errorf("agreeing references must not fire: WarningFired=%v FiringSince=%v",
+			cached.WarningFired, cached.FiringSince)
 	}
 
 	// Observation sink got one row per SUCCESSFUL reference, labeled

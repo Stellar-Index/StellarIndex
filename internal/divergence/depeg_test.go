@@ -155,14 +155,6 @@ func TestStablecoinPegHolds_DivergenceWorkerStaysQuiet(t *testing.T) {
 		MinSourcesForWarning: 2,
 	})
 
-	if err := svc.RefreshPair(context.Background(), proxied.Pair, ourPrice, time.Now()); err != nil {
-		t.Fatalf("RefreshPair: %v", err)
-	}
-	body, _ := rdb.Get(context.Background(), cachekeys.Divergence(proxied.Pair).String()).Bytes()
-	var cached divergence.CachedResult
-	_ = json.Unmarshal(body, &cached)
-	if cached.WarningFired {
-		t.Errorf("WarningFired = true on peg-holds steady state; "+
-			"divergence safety net is over-firing (our=%g vs ref=0.10)", ourPrice)
-	}
+	// Over-firing on the peg-holds steady state would trip refreshQuiet.
+	refreshQuiet(t, svc, rdb, proxied.Pair, ourPrice, time.Now())
 }
