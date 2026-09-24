@@ -35,6 +35,7 @@ type txIndexBackfillPlan struct {
 	from   uint32
 	to     uint32 // 0 = resolve to the contiguous lake tip at run time
 	window uint32
+	write  bool // -write; without it the run previews the range and fills nothing
 }
 
 // parseTxIndexBackfillFlags parses the ch-txindex-backfill flags and enforces
@@ -42,7 +43,7 @@ type txIndexBackfillPlan struct {
 // run. It does not touch ClickHouse (tip resolution happens in the runner),
 // so the guard is unit-testable without a live lake.
 func parseTxIndexBackfillFlags(args []string) (txIndexBackfillPlan, error) {
-	fs := flag.NewFlagSet("ch-txindex-backfill", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("ch-txindex-backfill")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	from := fs.Uint("from", 2, "first ledger (inclusive; resume point from a previous run's output)")
 	to := fs.Uint("to", 0, "last ledger (inclusive; 0 = the contiguous lake tip from -from)")
@@ -63,12 +64,16 @@ func parseTxIndexBackfillFlags(args []string) (txIndexBackfillPlan, error) {
 		return txIndexBackfillPlan{}, fmt.Errorf(
 			"refusing an implicit full-history backfill (ledger 2..tip, ~10.2B rows on r1): pass -from (a resume point / lower bound), -to (an upper bound), or -full to run the entire history from scratch")
 	}
+	if err := gate.RequireStatedMode(); err != nil {
+		return txIndexBackfillPlan{}, fmt.Errorf("ch-txindex-backfill: %w", err)
+	}
 
 	return txIndexBackfillPlan{
 		chAddr: *chAddr,
 		from:   uint32(*from),
 		to:     uint32(*to),
 		window: uint32(*window),
+		write:  gate.Enabled(),
 	}, nil
 }
 
@@ -89,6 +94,11 @@ func chTxIndexBackfill(args []string) error {
 		return fmt.Errorf("-to (%d) is below -from (%d)", last, plan.from)
 	}
 
+	if !opsutil.PrintWriteBanner(plan.write) {
+		fmt.Fprintf(os.Stderr, "ch-txindex-backfill: would fill stellar.tx_hash_index for ledgers %d..%d (window %d) on %s\n",
+			plan.from, last, plan.window, plan.chAddr)
+		return nil
+	}
 	fmt.Fprintf(os.Stderr, "ch-txindex-backfill: filling stellar.tx_hash_index for ledgers %d..%d (window %d) on %s\n",
 		plan.from, last, plan.window, plan.chAddr)
 	return clickhouse.BackfillTxHashIndex(ctx, plan.chAddr, plan.from, last, plan.window,

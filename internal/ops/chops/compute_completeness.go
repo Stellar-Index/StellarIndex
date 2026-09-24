@@ -3,6 +3,7 @@ package chops
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -134,7 +135,9 @@ func substrateForGenesis(ctx context.Context, scan substrateScanner, cache map[u
 //
 // Exit status reports whether the pass ran, not the verdict: an incomplete
 // verdict alerts via stellarindex_completeness_incomplete. A per-source error
-// aborts the pass, leaving later sources' prior verdicts (with their own tip).
+// does not stop the pass: that source keeps its prior verdict, every other
+// source is still evaluated, and the run exits non-zero naming each failure
+// (evaluateEachSource).
 func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo // linear computor; one block per claim.
 	fs := flag.NewFlagSet("compute-completeness", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -413,10 +416,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	}
 
 	// ── Per-source watermark ────────────────────────────────────────
-	for _, src := range catalogue {
-		if *only != "" && src.name != *only {
-			continue
-		}
+	evalSource := func(src reconSource) error {
 		genesis := src.genesis
 		var problems []uint32
 		var detail []string
@@ -728,7 +728,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		fmt.Fprintf(os.Stderr, "compute-completeness: %-14s watermark=%d coverage=%.4f complete=%v lake_complete=%v (%s)%s\n",
 			src.name, w.Ledger, w.CoveragePct, w.Complete, lakeComplete, strings.Join(detail, "; "),
 			verdictNotStoredNote(pub, tip, hasDirty))
+		return nil
 	}
+	srcErr := evaluateEachSource(ctx, catalogue, *only, evalSource)
 
 	// ── System recognition snapshot (gaps on contracts no source owns) ──
 	//
@@ -767,7 +769,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			FirstProblem: recW.FirstProblem, SubstrateOK: true, RecognitionOK: census.Shapes == 0, ProjectionOK: true,
 			Detail: detail,
 		}); err != nil {
-			return fmt.Errorf("upsert recognition snapshot: %w", err)
+			return errors.Join(srcErr, fmt.Errorf("upsert recognition snapshot: %w", err))
 		}
 		fmt.Fprintf(os.Stderr, "compute-completeness: recognition  unattributed=%d contracts=%d coverage=%.4f\n",
 			census.Shapes, census.Contracts, recW.CoveragePct)
@@ -783,13 +785,36 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			names = append(names, e.Source)
 		}
 		if n, derr := store.DeleteCompletenessSnapshots(ctx, names); derr != nil {
-			return fmt.Errorf("compute-completeness: clear not-applicable snapshots: %w", derr)
+			return errors.Join(srcErr, fmt.Errorf("compute-completeness: clear not-applicable snapshots: %w", derr))
 		} else if n > 0 {
 			fmt.Fprintf(os.Stderr, "compute-completeness: network=%s — cleared %d stale snapshot row(s) for pubnet-only sources\n", cfg.Stellar.Network, n)
 		}
 	}
 
-	return nil
+	return srcErr
+}
+
+// evaluateEachSource runs eval for every catalogue source the -source filter
+// selects and joins the failures, so one source's error cannot withhold a
+// fresh verdict from every source after it. An errored source publishes
+// nothing and keeps its prior verdict. A done ctx stops the walk, since every
+// remaining eval would fail the same way.
+func evaluateEachSource(ctx context.Context, catalogue []reconSource, only string, eval func(reconSource) error) error {
+	var errs []error
+	for _, src := range catalogue {
+		if only != "" && src.name != only {
+			continue
+		}
+		if cerr := ctx.Err(); cerr != nil {
+			errs = append(errs, fmt.Errorf("%s and every later source: not evaluated: %w", src.name, cerr))
+			break
+		}
+		if err := eval(src); err != nil {
+			fmt.Fprintf(os.Stderr, "compute-completeness: %s: NO VERDICT this run, prior verdict stands: %v\n", src.name, err)
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // projectionFloor is the incremental projection reconcile floor for ONE source.

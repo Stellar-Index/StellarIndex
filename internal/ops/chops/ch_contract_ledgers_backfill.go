@@ -1,7 +1,6 @@
 package chops
 
 import (
-	"flag"
 	"fmt"
 	"os"
 
@@ -20,7 +19,7 @@ import (
 // operator contract). Same r1 cautions as ch-txindex-backfill: serialize,
 // run under run-heavy-job.sh, resume with the printed -from.
 func chContractLedgersBackfill(args []string) error {
-	fs := flag.NewFlagSet("ch-contract-ledgers-backfill", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("ch-contract-ledgers-backfill")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	from := fs.Uint("from", 2, "first ledger (inclusive; resume point from a previous run's output)")
 	to := fs.Uint("to", 0, "last ledger (inclusive; 0 = the contiguous lake tip from -from)")
@@ -30,6 +29,9 @@ func chContractLedgersBackfill(args []string) error {
 	}
 	if *from == 0 || *window == 0 {
 		return fmt.Errorf("-from and -window must be > 0")
+	}
+	if err := gate.RequireStatedMode(); err != nil {
+		return fmt.Errorf("ch-contract-ledgers-backfill: %w", err)
 	}
 
 	ctx, cancel := opsutil.SignalContext()
@@ -43,6 +45,11 @@ func chContractLedgersBackfill(args []string) error {
 		return fmt.Errorf("-to (%d) is below -from (%d)", last, *from)
 	}
 
+	if !gate.Banner() {
+		fmt.Fprintf(os.Stderr, "ch-contract-ledgers-backfill: would fill stellar.contract_active_ledgers for ledgers %d..%d (window %d) on %s\n",
+			*from, last, *window, *chAddr)
+		return nil
+	}
 	fmt.Fprintf(os.Stderr, "ch-contract-ledgers-backfill: filling stellar.contract_active_ledgers for ledgers %d..%d (window %d) on %s\n",
 		*from, last, *window, *chAddr)
 	return clickhouse.BackfillContractActiveLedgers(ctx, *chAddr, uint32(*from), last, uint32(*window),
