@@ -387,7 +387,7 @@ stale_lines=()
 while IFS= read -r line || [ -n "$line" ]; do
   [ -n "$line" ] && stale_lines+=("$line")
 done < "$STALE"
-for line in "${stale_lines[@]}"; do
+for line in ${stale_lines[@]+"${stale_lines[@]}"}; do  # bash 3.2 + set -u: empty "${a[@]}" is unbound
   read -r slo shi extra <<<"$line"
   if ! { is_ledger "${slo:-}" && is_ledger "${shi:-}" && [ -z "${extra:-}" ]; }; then
     echo "REFUSED: corrupt line in $STALE: '$line' — repair it by hand before re-running"; exit 2
