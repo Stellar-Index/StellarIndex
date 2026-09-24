@@ -1696,6 +1696,22 @@ PY
   fi
 fi
 
+# ─── CHANGELOG.md stays a rolling window ─────────────────────────────────────
+#
+# A multi-MB changelog is read by every agent that edits it and was the
+# repo's top rebase-conflict file. Newest five release sections only; the
+# 1 MiB cap drops to 200 KiB once [Unreleased] is regenerated at the cut.
+if [ -f CHANGELOG.md ]; then
+  sections=$(grep -c '^## \[v' CHANGELOG.md || true)
+  if [ "$sections" -gt 5 ]; then
+    err "CHANGELOG.md keeps $sections release sections; the rolling window is 5 — older ones live at their tags (CONTRIBUTING.md §Changelog)"
+  fi
+  bytes=$(wc -c < CHANGELOG.md | tr -d ' ')
+  if [ "$bytes" -gt 1048576 ]; then
+    err "CHANGELOG.md is $bytes bytes, over the 1 MiB cap; [Unreleased] is written at the release cut, not per PR (CONTRIBUTING.md §Changelog)"
+  fi
+fi
+
 # ─── Summary────────────────────────────────────────────────────────────────
 
 count=$(cat "$ERROR_FILE")

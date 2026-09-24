@@ -153,6 +153,8 @@ Full evidence for each: [docs/architecture/domain-traps.md](docs/architecture/do
   `git branch -r | grep`, the runbook, and the backlog. Record the result in the PR body.
 - Every pushed branch gets a PR in the same session. A branch with no PR is not work, it is loss.
 - Commit messages: see [CONTRIBUTING.md](CONTRIBUTING.md#commit-messages).
+- NEVER add a `CHANGELOG.md` entry in a PR; `[Unreleased]` is generated at the release cut and the file
+  keeps only the newest five releases ([CONTRIBUTING.md §Changelog](CONTRIBUTING.md#changelog)).
 
 ## Where the reference material is
 
