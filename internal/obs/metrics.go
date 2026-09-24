@@ -203,6 +203,8 @@ func registerFreezeLifecycleMetrics() {
 // registerAppMetrics).
 func registerAppMetricsTail() {
 	Registry.MustRegister(
+		CEXStreamEntrySkipsTotal, CEXStreamSubscriptionRejected,
+
 		VerifyArchiveLedgersVerified,
 		VerifyArchiveCurrentLedger,
 		VerifyArchiveCheckpointsTotal,
@@ -1443,6 +1445,38 @@ var CEXStreamLastTradeUnix = prometheus.NewGaugeVec(
 		Help: "UNIX timestamp of the most recent trade forwarded from a CEX WebSocket streamer, by source.",
 	},
 	[]string{"source"},
+)
+
+// CEXStreamEntrySkipsTotal — trade entries a CEX WebSocket parser
+// could not convert inside an otherwise well-formed multi-trade frame
+// (kraken). The frame parses, so SourceDecodeErrorsTotal never moves;
+// this is the only signal that a venue renamed a symbol or changed a
+// field's encoding. Dust drops are not counted here.
+var CEXStreamEntrySkipsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_cex_stream_entry_skips_total",
+		Help: "CEX WebSocket trade entries skipped inside a parsed frame, by source and reason (" +
+			strings.Join(CEXStreamEntrySkipReasons, " | ") + ").",
+	},
+	[]string{"source", "reason"},
+)
+
+// CEXStreamEntrySkipReasons is the full label set of
+// CEXStreamEntrySkipsTotal's "reason" label.
+var CEXStreamEntrySkipReasons = []string{
+	"unknown_symbol", "bad_qty", "bad_price", "bad_timestamp", "bad_trade_id", "other",
+}
+
+// CEXStreamSubscriptionRejected — 1 while the venue has refused the
+// trade subscription for (source, symbol), 0 once it acknowledges it.
+// A refused symbol leaves the socket healthy and the pair silent, so
+// neither the disconnect counter nor the last-trade gauge sees it.
+var CEXStreamSubscriptionRejected = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_cex_stream_subscription_rejected",
+		Help: "1 when a CEX WebSocket venue rejected the trade subscription for a symbol, 0 once the venue acknowledges it.",
+	},
+	[]string{"source", "symbol"},
 )
 
 // ExternalPollerLastSuccessUnix — per-source UNIX-seconds timestamp

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
@@ -37,7 +38,8 @@ func TestParseFrame_TradeUpdate_HappyPath(t *testing.T) {
         }
       ]
     }`)
-	trades, err := parseFrame(raw, buildPairMap(t))
+	res, err := parseFrame(raw, buildPairMap(t))
+	trades := res.Trades
 	if err != nil {
 		t.Fatalf("parseFrame: %v", err)
 	}
@@ -82,7 +84,8 @@ func TestParseFrame_TradeSnapshot_MultipleEntries(t *testing.T) {
         {"symbol":"XLM/USD","side":"sell","qty":75,"price":0.17572,"ord_type":"limit","trade_id":2,"timestamp":"2026-04-24T00:00:01Z"}
       ]
     }`)
-	trades, err := parseFrame(raw, buildPairMap(t))
+	res, err := parseFrame(raw, buildPairMap(t))
+	trades := res.Trades
 	if err != nil {
 		t.Fatalf("parseFrame: %v", err)
 	}
@@ -98,7 +101,8 @@ func TestParseFrame_HeartbeatIgnored(t *testing.T) {
 	// Kraken sends periodic heartbeats — parseFrame must not
 	// treat these as errors.
 	raw := []byte(`{"channel":"heartbeat"}`)
-	trades, err := parseFrame(raw, buildPairMap(t))
+	res, err := parseFrame(raw, buildPairMap(t))
+	trades := res.Trades
 	if err != nil {
 		t.Errorf("heartbeat should return nil err, got %v", err)
 	}
@@ -109,7 +113,8 @@ func TestParseFrame_HeartbeatIgnored(t *testing.T) {
 
 func TestParseFrame_StatusIgnored(t *testing.T) {
 	raw := []byte(`{"channel":"status","data":[{"system":"online","api_version":"v2"}]}`)
-	trades, err := parseFrame(raw, buildPairMap(t))
+	res, err := parseFrame(raw, buildPairMap(t))
+	trades := res.Trades
 	if err != nil {
 		t.Errorf("status should return nil err, got %v", err)
 	}
@@ -118,17 +123,81 @@ func TestParseFrame_StatusIgnored(t *testing.T) {
 	}
 }
 
-func TestParseFrame_SubscribeAckIgnored(t *testing.T) {
-	// After our subscribe request, Kraken replies with:
+func TestParseFrame_SubscribeAckAccepted(t *testing.T) {
+	// After our subscribe request, Kraken replies per symbol with:
 	//   {"method":"subscribe","result":{...},"success":true,"time_in":"...","time_out":"..."}
-	// No channel field. parseFrame should shrug it off.
+	// No channel field: no trades, but the verdict is reported.
 	raw := []byte(`{"method":"subscribe","success":true,"result":{"channel":"trade","symbol":"XLM/USD"}}`)
-	trades, err := parseFrame(raw, buildPairMap(t))
+	res, err := parseFrame(raw, buildPairMap(t))
 	if err != nil {
-		t.Errorf("subscribe-ack should return nil err, got %v", err)
+		t.Fatalf("subscribe-ack should return nil err, got %v", err)
 	}
-	if trades != nil {
-		t.Errorf("subscribe-ack should return nil trades, got %v", trades)
+	if res.Trades != nil {
+		t.Errorf("subscribe-ack should return nil trades, got %v", res.Trades)
+	}
+	want := subscribeAck{Symbol: "XLM/USD", Accepted: true}
+	if res.Ack == nil || *res.Ack != want {
+		t.Errorf("Ack = %+v, want %+v", res.Ack, want)
+	}
+}
+
+// TestParseFrame_SubscribeRejectedReported pins GH-995 (2): a
+// success:false ack is the venue saying the pair does not exist, and
+// must reach the streamer with the venue's own error text.
+func TestParseFrame_SubscribeRejectedReported(t *testing.T) {
+	raw := []byte(`{"error":"Currency pair not supported XLM/GBP","method":"subscribe","success":false,` +
+		`"symbol":"XLM/GBP","time_in":"2026-09-24T00:00:00.000000Z","time_out":"2026-09-24T00:00:00.000100Z"}`)
+	res, err := parseFrame(raw, buildPairMap(t))
+	if err != nil {
+		t.Fatalf("parseFrame: %v", err)
+	}
+	want := subscribeAck{Symbol: "XLM/GBP", Accepted: false, Message: "Currency pair not supported XLM/GBP"}
+	if res.Ack == nil || *res.Ack != want {
+		t.Fatalf("Ack = %+v, want %+v", res.Ack, want)
+	}
+	if len(res.Trades) != 0 || len(res.Skips) != 0 {
+		t.Errorf("rejection carried trades/skips: %+v", res)
+	}
+}
+
+// TestParseFrame_SkippedEntriesReported pins GH-995 (1): every entry
+// buildTrade refuses inside a well-formed frame is reported with its
+// reason, the good entries still come through, and dust is not a skip.
+func TestParseFrame_SkippedEntriesReported(t *testing.T) {
+	raw := []byte(`{"channel":"trade","type":"update","data":[
+      {"symbol":"XLM/USD","qty":10,"price":0.175,"trade_id":1,"timestamp":"2026-04-24T00:00:01Z"},
+      {"symbol":"XLMUSD","qty":10,"price":0.175,"trade_id":2,"timestamp":"2026-04-24T00:00:01Z"},
+      {"symbol":"XLM/USD","qty":1e3,"price":0.175,"trade_id":3,"timestamp":"2026-04-24T00:00:01Z"},
+      {"symbol":"XLM/USD","qty":10,"price":1.75e-1,"trade_id":4,"timestamp":"2026-04-24T00:00:01Z"},
+      {"symbol":"XLM/USD","qty":10,"price":0.175,"trade_id":5,"timestamp":"1714000000"},
+      {"symbol":"XLM/USD","qty":0.00000001,"price":0.16,"trade_id":6,"timestamp":"2026-04-24T00:00:01Z"}
+    ]}`)
+	res, err := parseFrame(raw, buildPairMap(t))
+	if err != nil {
+		t.Fatalf("parseFrame: %v", err)
+	}
+	if len(res.Trades) != 1 {
+		t.Fatalf("want 1 trade, got %d", len(res.Trades))
+	}
+	got := make([]string, 0, len(res.Skips))
+	for _, sk := range res.Skips {
+		got = append(got, sk.Reason)
+		if sk.Err == nil {
+			t.Errorf("skip %q carries no error", sk.Reason)
+		}
+	}
+	want := []string{skipUnknownSymbol, skipBadQty, skipBadPrice, skipBadTimestamp}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("skip reasons = %v, want %v", got, want)
+	}
+}
+
+// TestSkipReasons_MatchObsEnum keeps the parser's reason labels and the
+// metric's documented label set in lockstep.
+func TestSkipReasons_MatchObsEnum(t *testing.T) {
+	if strings.Join(skipReasons, ",") != strings.Join(obs.CEXStreamEntrySkipReasons, ",") {
+		t.Errorf("kraken skip reasons %v != obs.CEXStreamEntrySkipReasons %v",
+			skipReasons, obs.CEXStreamEntrySkipReasons)
 	}
 }
 
@@ -145,7 +214,8 @@ func TestParseFrame_UnknownSymbolSkipped(t *testing.T) {
         {"symbol":"XLM/USD","side":"buy","qty":10,"price":0.175,"ord_type":"market","trade_id":101,"timestamp":"2026-04-24T00:00:01Z"}
       ]
     }`)
-	trades, err := parseFrame(raw, buildPairMap(t))
+	res, err := parseFrame(raw, buildPairMap(t))
+	trades := res.Trades
 	if err != nil {
 		t.Fatalf("parseFrame: %v", err)
 	}

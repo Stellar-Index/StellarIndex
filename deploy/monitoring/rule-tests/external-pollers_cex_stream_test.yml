@@ -1,0 +1,84 @@
+---
+# promtool unit tests for the CEX stream silent-pair alerts.
+#
+#   promtool test rules deploy/monitoring/rule-tests/external-pollers_cex_stream_test.yml
+#
+# A rejected subscription must ticket while it holds and clear once the
+# venue acknowledges the symbol; entry skips must ticket only when
+# sustained, never on one odd fill.
+
+rule_files:
+  - ../rules/external-pollers.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: a rejected subscription tickets, an acknowledged one does not
+    input_series:
+      - series: 'stellarindex_cex_stream_subscription_rejected{job="stellarindex_indexer",instance="r1:9100",source="kraken",symbol="XLM/GBP"}'
+        values: '1x20 0x20'
+      - series: 'stellarindex_cex_stream_subscription_rejected{job="stellarindex_indexer",instance="r1:9100",source="kraken",symbol="XLM/USD"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: stellarindex_cex_stream_subscription_rejected
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: stellarindex_cex_stream_subscription_rejected
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: external-poller
+              source: kraken
+              symbol: XLM/GBP
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cex-stream-silent-pair.md
+              summary: "kraken rejected the trade subscription for XLM/GBP"
+              description: |
+                The venue answered our subscribe request for
+                XLM/GBP with success:false, so that pair
+                delivers no trades while the connection looks healthy. The
+                venue's own error text is on the indexer's ERROR log line
+                "kraken rejected the trade subscription".
+      - eval_time: 30m
+        alertname: stellarindex_cex_stream_subscription_rejected
+        exp_alerts: []
+
+  - interval: 1m
+    name: one skipped entry does not ticket
+    input_series:
+      - series: 'stellarindex_cex_stream_entry_skips_total{job="stellarindex_indexer",instance="r1:9100",source="kraken",reason="bad_qty"}'
+        values: '0x10 1x80'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_cex_stream_entry_skips
+        exp_alerts: []
+
+  - interval: 1m
+    name: sustained entry skips ticket
+    input_series:
+      - series: 'stellarindex_cex_stream_entry_skips_total{job="stellarindex_indexer",instance="r1:9100",source="kraken",reason="unknown_symbol"}'
+        values: '0+1x90'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_cex_stream_entry_skips
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: stellarindex_cex_stream_entry_skips
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: external-poller
+              source: kraken
+              reason: unknown_symbol
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cex-stream-silent-pair.md
+              summary: "kraken is skipping trade entries (unknown_symbol)"
+              description: |
+                kraken has dropped trade entries with reason
+                unknown_symbol continuously for 30 min. The indexer
+                logs "kraken trade entry skipped" once per reason per minute
+                with the offending symbol or field value.

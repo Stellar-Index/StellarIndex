@@ -27,7 +27,7 @@ enforced 2026-04-23 onward).
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 60 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 184 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 186 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -120,6 +120,8 @@ enforced 2026-04-23 onward).
 | `stellarindex_projector_replay_stalled` | `stellarindex_projector_replay_window_active == 1` AND `stellarindex_projector_lag_ledgers > 256` AND `max_over_time(stellarindex_projector_lag_ledgers[15m]) <= stellarindex_projector_lag_ledgers` | replay window open, lag still over the same 256-ledger bound `lag_high` uses, and lag has not fallen for 15 min, for 5 min (the operator's rewind has stopped advancing — the served-row deficit it was started to repair is still open). The lag floor is what stops a caught-up source with an open window ticketing as a stalled replay | ticket | [projector-replay](runbooks/projector-replay.md) |
 | `stellarindex_external_poller_stale` | `time() - stellarindex_external_poller_last_success_unix{source!="ecb"}` | > 1800 s for > 5 min | ticket | [external-poller-stale](runbooks/external-poller-stale.md) |
 | `stellarindex_external_poller_stale_ecb` | `time() - stellarindex_external_poller_last_success_unix{source="ecb"}` | > 43200 s (12h) for > 10 min | ticket | [external-poller-stale](runbooks/external-poller-stale.md) |
+| `stellarindex_cex_stream_subscription_rejected` | `max by (source, symbol) (stellarindex_cex_stream_subscription_rejected)` | == 1 for 5 min (the venue refused the trade subscription for one symbol; the socket stays healthy and that pair delivers nothing) | ticket | [cex-stream-silent-pair](runbooks/cex-stream-silent-pair.md) |
+| `stellarindex_cex_stream_entry_skips` | `sum by (source, reason) (rate(stellarindex_cex_stream_entry_skips_total[15m]))` | > 0 sustained 30 min (trade entries inside well-formed frames are being dropped — a venue symbol rename or field re-encoding) | ticket | [cex-stream-silent-pair](runbooks/cex-stream-silent-pair.md) |
 | `stellarindex_external_poller_error_rate_high` | `rate(stellarindex_external_poller_polls_total{outcome="error"}[15m]) / sum(...) ` | > 0.5 sustained 15 min | informational | [external-poller-error-rate-high](runbooks/external-poller-error-rate-high.md) |
 | `stellarindex_external_fx_feed_stale` | `time() - max(stellarindex_external_fx_last_quote_unix)` | > 21600 s (6h) for > 15 min | ticket | [fx-feed-stale](runbooks/fx-feed-stale.md) |
 | `stellarindex_external_fx_feed_absent` | `absent(stellarindex_external_fx_last_quote_unix)` | series missing for 30 min | ticket | [fx-feed-stale](runbooks/fx-feed-stale.md) |

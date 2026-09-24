@@ -1,17 +1,22 @@
 package kraken
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // newTestKrakenServer plays back a scripted Kraken v2 session:
@@ -136,6 +141,88 @@ loop:
 	if !seen["XLM/USD"] || !seen["XLM/EUR"] {
 		t.Errorf("subscribe symbols missing XLM/USD or XLM/EUR; got %v",
 			capturedSub.Params.Symbol)
+	}
+}
+
+// lockedBuffer is a goroutine-safe log sink for the streamer's logger.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// TestStreamer_SurfacesRejectionAndSkips is the GH-995 end-to-end
+// guard: a rejected subscription and an unparsable trade entry each
+// leave a metric and a log line instead of vanishing on a healthy
+// socket.
+func TestStreamer_SurfacesRejectionAndSkips(t *testing.T) {
+	frames := []string{
+		`{"error":"Currency pair not supported XLM/GBP","method":"subscribe","success":false,"symbol":"XLM/GBP"}`,
+		`{"method":"subscribe","success":true,"result":{"channel":"trade","symbol":"XLM/USD"}}`,
+		`{"channel":"trade","type":"update","data":[` +
+			`{"symbol":"XLM/USDX","qty":5,"price":0.5,"trade_id":1,"timestamp":"2026-04-24T00:00:00Z"},` +
+			`{"symbol":"XLM/USD","qty":10,"price":0.175,"trade_id":2,"timestamp":"2026-04-24T00:00:01Z"}]}`,
+	}
+	srv := newTestKrakenServer(t, frames, nil)
+	defer srv.Close()
+
+	skips := obs.CEXStreamEntrySkipsTotal.WithLabelValues(SourceName, "unknown_symbol")
+	skipsBefore := testutil.ToFloat64(skips)
+	obs.CEXStreamSubscriptionRejected.WithLabelValues(SourceName, "XLM/USD").Set(1)
+
+	var logs lockedBuffer
+	s := NewStreamer(mustPairMap(t))
+	s.Endpoint = replaceScheme(srv.URL)
+	s.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	gbp, _ := canonical.NewFiatAsset("GBP")
+	xlmUsd, _ := canonical.NewPair(xlm, usd)
+	xlmGbp, _ := canonical.NewPair(xlm, gbp)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := s.Start(ctx, []canonical.Pair{xlmUsd, xlmGbp})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	select {
+	case tr := <-out:
+		if tr.Pair.String() != xlmUsd.String() {
+			t.Fatalf("trade pair = %s, want %s", tr.Pair, xlmUsd)
+		}
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for the XLM/USD trade")
+	}
+	got := logs.String()
+	cancel()
+
+	if v := testutil.ToFloat64(obs.CEXStreamSubscriptionRejected.WithLabelValues(SourceName, "XLM/GBP")); v != 1 {
+		t.Errorf("subscription_rejected{symbol=XLM/GBP} = %v, want 1", v)
+	}
+	if v := testutil.ToFloat64(obs.CEXStreamSubscriptionRejected.WithLabelValues(SourceName, "XLM/USD")); v != 0 {
+		t.Errorf("subscription_rejected{symbol=XLM/USD} = %v, want 0 after the accepted ack", v)
+	}
+	if d := testutil.ToFloat64(skips) - skipsBefore; d != 1 {
+		t.Errorf("entry_skips{reason=unknown_symbol} delta = %v, want 1", d)
+	}
+	if !strings.Contains(got, "level=ERROR") || !strings.Contains(got, "Currency pair not supported XLM/GBP") {
+		t.Errorf("no ERROR log carrying the venue's rejection text; logs:\n%s", got)
+	}
+	if !strings.Contains(got, "level=WARN") || !strings.Contains(got, "reason=unknown_symbol") {
+		t.Errorf("no WARN log for the skipped entry; logs:\n%s", got)
 	}
 }
 
