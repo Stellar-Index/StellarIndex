@@ -306,7 +306,7 @@ function RowSparkline({
     .join(' ');
   const positive = values[values.length - 1] >= values[0];
   // Use the up/down semantic tokens via currentColor so the sparkline
-  // tracks the palette (tailwind.config.ts) rather than a frozen hex.
+  // tracks the palette (@theme in globals.css) rather than a frozen hex.
   return (
     <svg
       width={W}

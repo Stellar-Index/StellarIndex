@@ -142,7 +142,7 @@
    Shared with the explorer (web/explorer/src/app/globals.css) so the status
    page reads as one product with the main site. Fonts (Inter / JetBrains
    Mono) are loaded via next/font in layout.tsx and exposed as --font-sans /
-   --font-mono on <html>. Design tokens live in tailwind.config.ts; see
+   --font-mono on <html>. Design tokens live in the @theme block above; see
    docs/architecture/design-system.md.
    ───────────────────────────────────────────────────────────────────────── */
 
