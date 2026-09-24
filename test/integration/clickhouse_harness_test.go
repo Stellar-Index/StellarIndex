@@ -166,13 +166,24 @@ func applyClickHouseSchema(ctx context.Context, addr string) error {
 // comments are stripped FIRST (the schema has no string literals containing
 // `--`), then the remainder is split on `;`.
 func clickHouseSchemaStatements() ([]string, error) {
-	_, thisFile, _, _ := runtime.Caller(0)
-	schemaPath := filepath.Join(filepath.Dir(thisFile), "..", "..", "deploy", "clickhouse", "tier1_schema.sql")
-	raw, err := os.ReadFile(schemaPath)
+	return clickHouseDeployStatements("tier1_schema.sql")
+}
+
+// clickHouseDeployStatements reads one deploy/clickhouse artifact and splits
+// it into individually-executable statements.
+func clickHouseDeployStatements(name string) ([]string, error) {
+	path := filepath.Join(clickHouseDeployDir(), name)
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: read schema %s: %w", schemaPath, err)
+		return nil, fmt.Errorf("clickhouse: read schema %s: %w", path, err)
 	}
 	return splitSQLStatements(string(raw)), nil
+}
+
+// clickHouseDeployDir is the repo's deploy/clickhouse directory.
+func clickHouseDeployDir() string {
+	_, thisFile, _, _ := runtime.Caller(0)
+	return filepath.Join(filepath.Dir(thisFile), "..", "..", "deploy", "clickhouse")
 }
 
 // splitSQLStatements strips `--` line comments then splits on `;`, dropping
