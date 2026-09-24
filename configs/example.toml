@@ -120,6 +120,24 @@ s3_secret_key_env  = "STELLARINDEX_S3_SECRET_KEY"
 # behavior. The password is injected via the
 # STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD env var, never this file.
 # clickhouse_serving_user      = "api_serving"
+# clickhouse_serving_password_env is a MISNOMER kept for backward
+# compat (audit C3-15): it holds the password VALUE itself (via the
+# STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD env override), not an
+# env-var name to dereference.
+# clickhouse_serving_password_env = ""
+
+# background_statement_timeout — session-level Postgres
+# statement_timeout for the long-running indexer/aggregator pools
+# (REC-08), separate from api.serving_statement_timeout.
+# background_statement_timeout = "30m"
+
+# Cold-tier S3 (ADR-0027, aws-public-blockchain Open Data
+# Sponsorship). Empty leaves the cold tier unconfigured.
+# s3_cold_endpoint       = ""
+# s3_cold_region         = ""
+# s3_cold_bucket_archive = ""
+# s3_cold_access_key_env = ""
+# s3_cold_secret_key_env = ""
 
 # ──────────────────────────────────────────────────────────────────
 # Ingestion — which on-chain source connectors to run on this
@@ -147,6 +165,12 @@ cursor_store_scheme   = "postgres"
 # under [oracle.reflector] below — the indexer fails at startup if
 # you enable a variant without setting its address.
 
+# persist_per_source — Phase 4+ cutover knob (ADR-0031/0032): when
+# false, the dispatcher's events-goroutine skips Soroban-derived
+# events for a projected source so the projector is its sole writer.
+# [ingestion.projector]
+# persist_per_source = true
+
 # ──────────────────────────────────────────────────────────────────
 # Oracle — on-chain oracle contract addresses.
 # Mainnet Reflector addresses are public (DEX/CEX/FX variants).
@@ -157,6 +181,25 @@ cursor_store_scheme   = "postgres"
 # dex_contract = "C…"   # set when enabling reflector-dex
 # cex_contract = "C…"   # set when enabling reflector-cex
 # fx_contract  = "C…"   # set when enabling reflector-fx
+
+[oracle.redstone]
+# adapter_contract — RedStone's single Adapter contract; its 19
+# per-feed proxies emit no events, so this one address is the whole
+# surface (docs/discovery/oracles/redstone.md).
+# adapter_contract = "CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG"
+
+[oracle.band]
+# standard_reference_contract — Band's StandardReference contract.
+# Emits zero events; observed via relay()/force_relay() call args
+# (docs/discovery/oracles/band.md).
+# standard_reference_contract = "CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3NFBGG5M"
+
+[oracle.soroswap]
+# factory_contract — seeds the pair→tokens registry at boot via
+# stellar-rpc view calls; without it, pairs created before the
+# dispatcher's first ledger are invisible to the decoder.
+# factory_contract  = "CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2"
+# seed_rpc_endpoint = ""   # falls back to stellar.rpc_endpoints[0] when empty
 
 # Per-asset oracle-staleness budgets. The `stellarindex_oracle_stale`
 # alert compares each (source, asset) pair's age against
@@ -256,6 +299,7 @@ cursor_store_scheme   = "postgres"
   [external.coingecko]
   enabled = false   # /simple/price — needs COINGECKO_DEMO_API_KEY env (post-2024)
   # poll_interval = "300s"   # default; demo-tier-safe
+  # demo_api_key  = ""       # sent as x-cg-demo-api-key; prefer env COINGECKO_DEMO_API_KEY
 
   [external.coinmarketcap]
   enabled = false
@@ -269,6 +313,18 @@ cursor_store_scheme   = "postgres"
   [external.ecb]
   enabled = false   # daily TARGET-business-day fix — free, no auth
 
+  # ClassOracle — Chainlink Data Feeds via EVM JSON-RPC. Ingest-side
+  # poller, parallel to the synchronous [divergence.chainlink]
+  # cross-check below; each has its own feed_map.
+  [external.chainlink]
+  enabled = false
+  # rpc_url = ""   # Alchemy/Infura URL (embeds an API key) — prefer env CHAINLINK_RPC_URL
+  # poll_interval = "30s"
+  # [external.chainlink.feed_map."crypto:BTC/fiat:USD"]
+  # address  = "0x..."
+  # decimals = 8
+  # invert   = false
+
 # ──────────────────────────────────────────────────────────────────
 # Aggregate — VWAP/TWAP windows + filters (aggregator binary only).
 # ──────────────────────────────────────────────────────────────────
@@ -281,6 +337,7 @@ max_market_cap_volume_ratio  = 50000.0  # valuation-integrity ceiling: market_ca
 outlier_sigma_threshold      = 4.0
 triangulation_enabled        = true
 interval_seconds             = 30
+# divergence_min_interval_seconds = 300   # min wall-clock gap between divergence-refresh passes
 max_trades_per_window        = 10000
 max_hops                     = 3       # router route length cap (LEGS); 0 = default (3), accepted range [2,4]
 min_route_confidence         = 0.0     # weakest-link confidence floor [0,1] a route must clear to set a confident cross; 0 = disabled (pre-router behaviour)
@@ -302,6 +359,13 @@ windows = [
   # "24h",
 ]
 
+# Operator-configured chain-pricing entries: each row defines a
+# target pair plus an ordered chain of leg pairs, consulted by the
+# composite-reference corroboration below. Empty = no chains.
+# [[aggregate.triangulations]]
+# target = "crypto:XLM/fiat:GBP"
+# legs   = ["crypto:XLM/fiat:USD", "fiat:GBP/fiat:USD"]
+
 # Composite-reference corroboration of the phase-2 freeze for
 # structurally single-venue targets (2026-08-29, design doc §10.1).
 # On a single-venue bucket of a listed target the aggregator rebuilds
@@ -320,6 +384,37 @@ min_leg_sources  = 2     # distinct real venues the crypto/USD leg needs on the 
 leg_dispersion_bps = 0   # every leg venue's VWAP must be within this of the leg VWAP; 0 = tolerance_bps
 release_band_pct = 2.0   # mid-hold auto-release band vs the composite (tighter than the shared 5%)
 fx_max_age_hours = 76    # fx_quotes buckets are daily + pause over market closes (Chainlink FX precedent)
+
+# ──────────────────────────────────────────────────────────────────
+# Anomaly — ADR-0019 anomaly detection. Phase 1 (per-class thresholds)
+# + Phase 2 (per-asset MAD baseline + confidence). Both run; freeze
+# fires only when both agree. Off by default during roll-out.
+# ──────────────────────────────────────────────────────────────────
+[anomaly]
+enabled = false
+# thresholds — per-class (warn_pct, freeze_pct). Empty/partial falls
+# back to package defaults; the "default" row is required (filled
+# from package defaults if omitted).
+# [anomaly.thresholds.crypto]
+# warn_pct   = 20.0
+# freeze_pct = 50.0
+
+# classifications — canonical asset_id -> asset class
+# (stablecoin/treasury/crypto/governance). Unmapped falls to default.
+# [anomaly.classifications]
+# "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" = "stablecoin"
+
+[anomaly.phase2]
+confidence_max_freeze               = 0.45
+z_score_min_freeze                  = 5.0
+source_count_max_freeze             = 1
+initial_hold_minutes                = 30   # 0 = use ADR-0019 default
+uncorroborated_initial_hold_minutes = 10   # 0 = use ADR-0019 default
+extension_minutes                   = 30   # 0 = use ADR-0019 default
+max_extensions                      = 4    # 0 = use ADR-0019 default
+unfreeze_confidence_min             = 0.30
+unfreeze_z_score_max                = 3.0
+unfreeze_buckets                    = 2
 
 # ──────────────────────────────────────────────────────────────────
 # API — public serving plane (api binary only).
@@ -406,6 +501,49 @@ allowed_origins          = ["*"]
 # that proxy, or a direct attacker can spoof XFF.
 trusted_proxy_cidrs      = []
 
+# auth_backend — 'redis' (legacy /v1/signup records) or 'postgres'
+# (platform.api_keys, required for dashboard-minted keys to
+# authenticate against the runtime API; falls back to Postgres on
+# Redis cache miss). See internal/config/config.go for the soak/
+# rollback cutover procedure before flipping this on a live API.
+# auth_backend = "redis"
+
+# failed_auth_rate_limit_per_min (C3-5) caps INVALID-credential
+# attempts per minute, independent of the main rate limiter (auth
+# rejects before it). Only active when auth_mode != none. 0 disables.
+# failed_auth_rate_limit_per_min = 20
+
+# single_instance — assert this deployment runs exactly ONE API
+# instance. Only consulted when Redis is disabled: without it the
+# auth throttles + passkey replay guard fall back to per-process
+# state, unsafe across more than one instance, so the API refuses to
+# start unless this is set. No effect when Redis is configured.
+# single_instance = false
+
+# request_timeout / serving_statement_timeout — the two layers of the
+# unauth-DoS chokepoint (C3-1/C3-2/P1, audit-2026-07-16). Keep
+# serving_statement_timeout LONGER than request_timeout so the
+# app-layer deadline fires first. request_timeout must EXCEED 12s
+# (config.APIMaxHandlerBudget) or the API refuses to boot.
+# request_timeout          = "15s"
+# serving_statement_timeout = "30s"
+
+# allow_credentials — emit Access-Control-Allow-Credentials: true on
+# CORS responses (needed for the cookie-bearing dashboard session).
+# Browser-incompatible with allowed_origins = ["*"]; the API panics
+# at boot if both are set.
+# allow_credentials = false
+
+# tls_cert_probe_hosts — hostnames whose TLS leaf cert NotAfter is
+# periodically probed and surfaced as
+# stellarindex_tls_cert_not_after_unix{host} (F-0051). Empty disables
+# the probe.
+# tls_cert_probe_hosts = ["api.stellarindex.io", "status.stellarindex.io", "stellarindex.io"]
+
+# prometheus_url — Prometheus HTTP API root backing /v1/status. Empty
+# leaves /v1/status serving an in-process surface (uptime + region).
+# prometheus_url = "http://localhost:9090"
+
 # signup_require_email_verification (F-1218, codex audit-2026-05-13).
 # Default true (post-2026-05-13): /v1/signup-minted API keys cannot
 # authenticate until the verification link emailed at signup is
@@ -433,6 +571,45 @@ pairs = []
 #   ["native", "fiat:USD"],
 #   ["credit:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", "fiat:USD"],
 # ]
+# max_streams_per_ip           = 20     # per-client-IP concurrent SSE cap (C3-8/CS-013); 0 disables
+# max_concurrent_streams        = 8192   # global concurrent SSE cap; <= 0 disables
+# max_tip_producers             = 512    # global cap on distinct shared tip-stream producers; negative disables
+# max_tip_producers_per_caller  = 24     # per-caller share of max_tip_producers; negative disables
+
+# SEP-10 Web Auth. Active when auth_mode = "sep10" or when the
+# /v1/auth/sep10/* endpoints are exposed. Seed + JWT secret are env
+# var NAMES, not values — never put the secrets themselves here.
+[api.sep10]
+seed_env        = "STELLARINDEX_SEP10_SEED"
+jwt_secret_env  = "STELLARINDEX_SEP10_JWT_SECRET"
+web_auth_domain = "api.stellarindex.io"
+home_domain     = "stellarindex.io"
+challenge_ttl   = "15m"
+jwt_ttl         = "1h"
+
+# Customer dashboard auth — passwordless email login (6-digit code +
+# magic link) + cookie sessions for stellarindex.io/account. Empty
+# base_url leaves /v1/auth/{login,callback,verify-code,logout} 503.
+# The Resend API key lives in an env var (resend_api_key_env NAMES
+# it; the value is never written here).
+[api.dashboard]
+# base_url             = "https://stellarindex.io"
+email_from             = "Stellar Index <hello@stellarindex.io>"
+resend_api_key_env     = "STELLARINDEX_RESEND_API_KEY"
+code_secret_env        = "STELLARINDEX_DASHBOARD_CODE_SECRET"
+magic_link_ttl_minutes = 15
+session_ttl_days       = 30
+cookie_secure           = true
+# cookie_domain         = ""   # host-only cookie unless set
+
+# ──────────────────────────────────────────────────────────────────
+# Metadata — asset metadata overlay (issuer -> home-domain).
+# Layered behind the live LCM-derived resolver as a fallback for
+# issuers not yet observed on-chain, or whose home_domain is empty.
+# ──────────────────────────────────────────────────────────────────
+[metadata]
+# [metadata.issuer_home_domains]
+# "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" = "centre.io"
 
 # ──────────────────────────────────────────────────────────────────
 # Divergence — cross-check references for the divergence service.
@@ -637,6 +814,18 @@ enabled = false
 # timers. When true, freshness-less snapshots are rejected with
 # `OutcomeKindMissingFreshness` instead of published.
 # strict_freshness_required = false
+#
+# max_supply_overrides — per-asset max_supply override, beating the
+# SEP-1 declaration and the per-algorithm default. Key mirrors
+# per_asset_locked_sets; value is a decimal string in base units.
+# [supply.max_supply_overrides]
+# "XLM" = "50001803000.0000000"
+#
+# stale_component_ledgers_by_asset (F-0040) — per-asset override of
+# the F-1236 stale-component-ledger threshold. Empty keeps every
+# asset on the global 1000-ledger threshold.
+# [supply.stale_component_ledgers_by_asset]
+# "XLM" = 1000
 
 # ──────────────────────────────────────────────────────────────────
 # Trades — trade-insert policy. Per launch-readiness L2.2 phase 1,
@@ -674,6 +863,12 @@ enabled = false
 # is never overwritten and a stale FX rate does not fill.
 # ──────────────────────────────────────────────────────────────────
 [pricing_guard]
+# disable_substance_gate = false   # diagnostic escape hatch — serves every pair, pre-2026-08 behaviour
+# substance_min_volume_usd   = 1000   # 0 = library default
+# substance_min_buckets      = 20     # 0 = library default
+# substance_min_span_minutes = 360    # 0 = library default
+# substance_window_hours     = 24     # 0 = library default
+# fx_cross_max_age_hours     = 76     # staleness budget for the fiat-cross-rate fallback; 0 = library default
 # [pricing_guard.fiat_pegged_classic_assets]
 # "AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU" = "AUD"
 
@@ -690,6 +885,27 @@ enabled = false
 # ──────────────────────────────────────────────────────────────────
 [decimals_guard]
 backfill_window_days = 90
+
+# ──────────────────────────────────────────────────────────────────
+# Price alerts — customer price-threshold alert evaluator
+# (BACKLOG #60). Off by default; when enabled the aggregator sweeps
+# price_alerts against the latest closed VWAP every tick and enqueues
+# price.alert webhook deliveries. The CRUD surface mounts regardless.
+# ──────────────────────────────────────────────────────────────────
+[price_alerts]
+enabled          = false
+interval_seconds = 30   # 0 = library default
+
+# ──────────────────────────────────────────────────────────────────
+# Signup reaper — F-1255 speculative-account reaper. Deletes orphan
+# `accounts` rows left by a lost signup race (Suspended, no user, no
+# key) — unambiguous garbage. Runs in the API binary when the
+# dashboard is wired. On by default.
+# ──────────────────────────────────────────────────────────────────
+[signup_reaper]
+enabled              = true
+interval_minutes     = 60     # 0 = library default
+min_age_minutes      = 1440   # 0 = library default (24h)
 
 # ──────────────────────────────────────────────────────────────────
 # HashDB — ADR-0016 drift detector. The indexer's live LCM read loop
