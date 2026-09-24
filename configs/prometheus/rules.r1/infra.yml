@@ -12,8 +12,20 @@ groups:
       # (configs/prometheus/prometheus.r1.yml) configs — there is no
       # `node` job, so `up{job="node"}` matched nothing and this alert
       # was dead. (The r1 overlay twin already used `node_exporter`.)
+      #
+      # Q015: `up == 0` only fires while the target is still known to
+      # Prometheus and merely failing to respond. If the target drops
+      # out of service discovery entirely (host deregistered, scrape
+      # config change), the `up{job="node_exporter"}` series itself
+      # goes absent and this alert never fires — same gap meta.yml's
+      # redis/postgres/pgbackrest/minio exporter-down alerts close with
+      # the `absent_over_time(...) == 1` arm; node_exporter had no
+      # equivalent.
       - alert: stellarindex_host_down
-        expr: up{job="node_exporter"} == 0
+        expr: |
+          up{job="node_exporter"} == 0
+          OR
+          absent_over_time(up{job="node_exporter"}[5m]) == 1
         for: 2m
         labels:
           severity: ticket
