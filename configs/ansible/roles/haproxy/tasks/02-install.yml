@@ -4,6 +4,7 @@
     name:
       - haproxy
       - keepalived
+      - curl
     state: present
     update_cache: yes
 

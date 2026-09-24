@@ -1,9 +1,11 @@
 {# Render-time — managed by ansible (haproxy role). Don't edit. #}
 
-# chk_haproxy fires if haproxy isn't running, demoting this host
-# from MASTER even if the network is otherwise healthy.
+# chk_haproxy fires if haproxy isn't actually routing traffic
+# (stats endpoint unreachable, or the api_pool backend has no UP
+# server), demoting this host from MASTER even if the process is
+# still resident. See chk_haproxy.sh for the reachability probe.
 vrrp_script chk_haproxy {
-    script "/usr/bin/pgrep haproxy"
+    script "/usr/local/bin/chk_haproxy.sh"
     interval 2
     fall 2
     rise 2

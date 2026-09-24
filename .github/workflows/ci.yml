@@ -2210,6 +2210,13 @@ jobs:
         # Text only, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-readme-parity-test.sh
+      - name: ansible keepalived chk_haproxy reachability-probe test (SL16)
+        # chk_haproxy was a bare `pgrep haproxy` — process-existence only.
+        # A wedged-but-resident haproxy (or an api_pool with every server
+        # DOWN) still passed, so this host kept MASTER (and the VIP) while
+        # traffic blackholed. Structural, no hosts.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-keepalived-healthcheck-test.sh
       - name: verify-archive Tier D cron-argument test (#362)
         # r1 2026-09-02: the Tier D fork-detection cron rendered
         # `-to -1` (stellarindex_live_seam_ledger defaults to 0, minus 1),

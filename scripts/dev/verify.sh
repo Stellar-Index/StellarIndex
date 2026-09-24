@@ -563,6 +563,7 @@ lane_d() { # everything else
     echo "=== Ansible node-exporter-collectors install self-test ===" && ./scripts/ci/ansible-node-exporter-collectors-install-test.sh
     echo "=== Ansible Caddy signing-key pipefail self-test ===" && ./scripts/ci/ansible-caddy-key-pipefail-test.sh
     echo "=== Ansible README parity self-test ===" && ./scripts/ci/ansible-readme-parity-test.sh
+    echo "=== Ansible keepalived healthcheck self-test ===" && ./scripts/ci/ansible-keepalived-healthcheck-test.sh
     # CI's import-checks job runs these gate scripts too; verify.sh must mirror
     # them or it issues a green CI won't honour (W5-ci-6, enforced by the parity
     # check above). All are deterministic + network-free.
