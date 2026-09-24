@@ -13,7 +13,7 @@ severity: P1
 |---|---|
 | **Alert** | `stellarindex_decoder_panicked` — `stellarindex_decoder_panics_total > 0` |
 | **Severity** | page |
-| **What it means** | A source decoder's `Matches` or `Decode` PANICKED on a ledger input. The dispatcher recovered it, skipped that one input, and ingest continued — the process is up and the cursor is advancing. A panic in `Decode` costs one event for one source; a panic in `Matches` aborts that whole dispatch chain, so other decoders that would have matched the SAME input are skipped too — one input, not one source. |
+| **What it means** | A source decoder's `Matches` or `Decode` PANICKED on a ledger input. The dispatcher recovered it, skipped that one input, and ingest continued — the process is up and the cursor is advancing. A panic in `Decode` costs one event for one source; a panic in `Matches` aborts that whole dispatch chain, so other decoders that would have matched the SAME input are skipped too — one input, not one source. The projector counts a panic on a lake row here too (journal `decoder panicked; row SKIPPED`, attrs `source` / `ledger` / `tx`); it skips that row and advances its cursor. |
 | **First action** | Read the `source` label, pull the `decoder panicked` journal line (it carries `ledger` / `tx_hash` / `op_index` / `stack`), and treat it as a decoder bug. |
 | **Why page** | The decoder will keep silently dropping **every** event of that shape until a fixed binary ships. Nothing else fires: the ledger completes, the cursor advances, and only the ADR-0033 coverage verdict eventually notices. |
 | **Data loss** | None permanent. The raw event is already in the ClickHouse lake — re-derive after the fix. |

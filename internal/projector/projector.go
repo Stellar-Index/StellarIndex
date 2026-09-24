@@ -495,8 +495,9 @@ func (p *Projector) observedCursor(source string) (uint32, bool) {
 }
 
 // processEventSafely runs one raw lake row through a source's decoder + sink
-// under a per-row recover (X9, audit-2026-06-14). The dispatcher path recovers
-// decoder panics in pipeline.ProcessLedger; the projector runs the SAME
+// under a per-row recover ([dispatcher.DecodeRow], which also logs every
+// decode failure and counts a panic in DecoderPanicsTotal). The dispatcher
+// path recovers decoder panics in pipeline.ProcessLedger; the projector runs the SAME
 // decoders on raw lake rows (including historical / upgraded-WASM shapes —
 // "backfill sees every prior version") in a bare goroutine inside the LIVE
 // indexer. Without this, a panic on one poison row crashes the whole indexer,
@@ -510,7 +511,7 @@ func (p *Projector) observedCursor(source string) (uint32, bool) {
 //   - decodeFail: true when the row is a DECODE failure — a returned decode
 //     error OR a recovered panic. A deterministically broken row would only
 //     re-fail on retry, so the caller advances the cursor regardless (the
-//     failure is counted for visibility).
+//     failure is logged by DecodeRow and counted by the caller).
 //   - sinkErr:    nil when every output landed, otherwise a *[rowSinkFaults]
 //     carrying every sink (downstream write) fault of the row. A PERMANENT
 //     fault ([dispositionSkip]) drops that one output and the loop CONTINUES;
@@ -527,18 +528,10 @@ func (p *Projector) observedCursor(source string) (uint32, bool) {
 // the completed one), and one deterministically bad output says nothing about
 // its siblings.
 func processEventSafely(src Source, ev events.Event, sink func(consumer.Event) error, log *slog.Logger) (emitted int, decodeFail bool, sinkErr error) {
-	defer func() {
-		if rec := recover(); rec != nil {
-			emitted, decodeFail, sinkErr = 0, true, nil
-			log.Error("projector decode panicked; skipping row",
-				"source", src.Name, "ledger", ev.Ledger, "tx", ev.TxHash,
-				"op_index", ev.OperationIndex, "event_index", ev.EventIndex, "panic", rec)
-		}
-	}()
-	if !src.Decoder.Matches(ev) {
+	outs, matched, derr := dispatcher.DecodeRow(src.Name, src.Decoder, ev, log)
+	if !matched {
 		return 0, false, nil
 	}
-	outs, derr := src.Decoder.Decode(ev)
 	if derr != nil {
 		return 0, true, nil
 	}

@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"runtime/debug"
 
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
@@ -103,4 +105,44 @@ func (d *Dispatcher) log() *slog.Logger {
 		return d.logger
 	}
 	return slog.Default()
+}
+
+// DecodeRow runs one lake row through dec for a caller outside the dispatch
+// loop (the projector, projected-rebuild) under the same panic discipline as
+// recordDecoderPanic. Those callers skip a failed row and advance past it, so
+// the skip must be loud here, where no caller can forget it: a recovered panic
+// is counted in DecoderPanicsTotal and logged with its stack, and a returned
+// decode error is logged with the row coordinate.
+//
+// matched is false when dec does not claim ev (outs and err are then nil). A
+// panic in Matches counts as that decoder's failure, exactly as in the
+// dispatcher. err is the decoder's own error or an [ErrDecoderPanic] wrap.
+func DecodeRow(name string, dec Decoder, ev events.Event, log *slog.Logger) (outs []consumer.Event, matched bool, err error) {
+	if name == "" {
+		name = "unknown"
+	}
+	if log == nil {
+		log = slog.Default()
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			obs.DecoderPanicsTotal.WithLabelValues(name).Inc()
+			log.Error("decoder panicked; row SKIPPED",
+				"source", name, "ledger", ev.Ledger, "tx", ev.TxHash,
+				"op_index", ev.OperationIndex, "event_index", ev.EventIndex,
+				"panic", fmt.Sprintf("%v", r), "stack", string(debug.Stack()))
+			outs, matched, err = nil, true, fmt.Errorf("%w: %s: %v", ErrDecoderPanic, name, r)
+		}
+	}()
+	if !dec.Matches(ev) {
+		return nil, false, nil
+	}
+	outs, err = dec.Decode(ev)
+	if err != nil {
+		log.Warn("decode failed; row SKIPPED",
+			"source", name, "ledger", ev.Ledger, "tx", ev.TxHash,
+			"op_index", ev.OperationIndex, "event_index", ev.EventIndex, "err", err)
+		return nil, true, err
+	}
+	return outs, true, nil
 }
