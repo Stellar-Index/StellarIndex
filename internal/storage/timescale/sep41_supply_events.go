@@ -1174,9 +1174,8 @@ func (s *Store) SEP41SupplyEventKindResum(ctx context.Context, contractID string
 // corrects at-or-below the checkpoint permanently invisible to the fold
 // (finding F024/F107).
 //
-// This is the automated form of the manual "TRUNCATE sep41_supply_rollup" the
-// migration-0085 header prescribed — but it PRESERVES the migration-0088
-// pre-Soroban genesis-baseline columns (genesis_mint_total / genesis_burn_total
+// It replaces a bare `TRUNCATE sep41_supply_rollup` because it PRESERVES the
+// migration-0088 pre-Soroban genesis-baseline columns (genesis_mint_total / genesis_burn_total
 // / genesis_clawback_total / genesis_baseline_ledger / genesis_seeded_at),
 // which a bare TRUNCATE would drop. Those are seeded separately
 // (`stellarindex-ops supply seed-sep41-genesis`, from the ClickHouse lake) and
