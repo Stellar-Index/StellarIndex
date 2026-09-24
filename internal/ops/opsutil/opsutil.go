@@ -221,6 +221,13 @@ func MkBackfillLogger() *slog.Logger {
 // RangeChunk is one worker's slice of an overall [From,To] ledger range.
 type RangeChunk struct{ From, To uint32 }
 
+// RangeCursorKey is the ingestion_cursors sub_source for a range-scoped
+// resume checkpoint. UpsertCursor is monotone-forward, so a key without its
+// range lets a finished later range turn an earlier one into "nothing to do".
+func RangeCursorKey(from, to uint32) string {
+	return fmt.Sprintf("%d-%d", from, to)
+}
+
 // SplitRange divides [from,to] into n contiguous chunks. The last
 // chunk absorbs any remainder so the union exactly covers [from,to].
 //

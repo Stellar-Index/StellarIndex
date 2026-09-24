@@ -895,8 +895,10 @@ Subcommands:
                           (default 500k) so each UPDATE prunes trades
                           chunks; first-wins (never overwrites an existing
                           tag) so re-runs are no-ops. Checkpoints into
-                          ingestion_cursors for resume. The live indexer
-                          keeps the trailing 30 min tagged going forward.
+                          ingestion_cursors per -from/-to pair; -resume
+                          (default true) resumes only a run of the same
+                          range. The live indexer keeps the trailing 30
+                          min tagged going forward.
   tag-signer -config PATH -from N -to N [-window N] [-ch-addr H:P] [-resume]
                           Back-tag trades.signer (the AMM/Soroban swap tx
                           source account) over a ledger range, reading the
@@ -904,8 +906,10 @@ Subcommands:
                           (migration 0150). The recovery half of the live
                           pipeline.RunSignerTagger sweeper — run it when an
                           indexer/ClickHouse outage or projector lag exceeded
-                          the sweeper's 30-min lookback. First-wins +
-                          checkpointed for resume.
+                          the sweeper's 30-min lookback. First-wins;
+                          checkpointed per -from/-to pair, and -resume
+                          (default true) resumes only a run of the same
+                          range.
   census-backfill -config PATH -from N -to N [-bucket NAME] [-resume]
                           Populate ledger_ingest_log (ADR-0033 substrate
                           record) for a historical range. Pure structural

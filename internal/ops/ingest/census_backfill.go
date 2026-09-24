@@ -65,7 +65,7 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	defer func() { _ = store.Close() }()
 
 	cursorSrc := "census-backfill"
-	cursorSub := fmt.Sprintf("%d-%d", *from, *to)
+	cursorSub := opsutil.RangeCursorKey(uint32(*from), uint32(*to))
 	startLedger := uint32(*from)
 	if *resume {
 		prior, gerr := store.GetCursor(ctx, cursorSrc, cursorSub)

@@ -93,7 +93,7 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	// from/to pair the operator passed — separate runs with different
 	// ranges get separate cursors.
 	cursorSrc := "backfill-router"
-	cursorSub := fmt.Sprintf("%d-%d", *from, *to)
+	cursorSub := opsutil.RangeCursorKey(uint32(*from), uint32(*to))
 	startLedger := uint32(*from)
 	if *resume {
 		prior, gerr := store.GetCursor(ctx, cursorSrc, cursorSub)
