@@ -3,9 +3,12 @@ package middleware_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	"gopkg.in/yaml.v3"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -344,4 +347,129 @@ func TestCORS_AllowCredentialsPanicOnWildcard(t *testing.T) {
 		AllowedOrigins:   []string{"*"},
 		AllowCredentials: true,
 	})
+}
+
+// specHeaderNames walks the OpenAPI document and returns every header
+// it tells a client to SEND (`in: header` parameters and header-borne
+// security schemes) and every header it tells a client to READ
+// (response `headers:` maps).
+func specHeaderNames(t *testing.T) (send, read map[string]bool) {
+	t.Helper()
+	raw, err := os.ReadFile("../../../../openapi/stellar-index.v1.yaml")
+	if err != nil {
+		t.Fatalf("read spec: %v", err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse spec: %v", err)
+	}
+	send, read = map[string]bool{}, map[string]bool{}
+	var walk func(any)
+	walk = func(n any) {
+		switch v := n.(type) {
+		case map[string]any:
+			if name, ok := v["name"].(string); ok && v["in"] == "header" {
+				send[name] = true
+			}
+			if hs, ok := v["headers"].(map[string]any); ok {
+				for h := range hs {
+					read[h] = true
+				}
+			}
+			for _, c := range v {
+				walk(c)
+			}
+		case []any:
+			for _, c := range v {
+				walk(c)
+			}
+		}
+	}
+	walk(doc)
+	comps, _ := doc["components"].(map[string]any)
+	schemes, _ := comps["securitySchemes"].(map[string]any)
+	for _, s := range schemes {
+		sm, _ := s.(map[string]any)
+		if sm["type"] == "http" {
+			send["Authorization"] = true
+		}
+	}
+	// A browser never exposes Set-Cookie to script (Fetch "forbidden
+	// response-header name"), so listing it would be meaningless.
+	delete(read, "Set-Cookie")
+	return send, read
+}
+
+func headerListHas(list, name string) bool {
+	for _, h := range strings.Split(list, ",") {
+		if strings.EqualFold(strings.TrimSpace(h), name) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestCORS_DefaultPreflightAllowsEveryDocumentedRequestHeader — a
+// header the spec (or the auth middleware) tells a client to send but
+// the preflight does not allow is blocked by the browser before the
+// server sees it: X-API-Key auth and X-Reason on admin PATCHes.
+func TestCORS_DefaultPreflightAllowsEveryDocumentedRequestHeader(t *testing.T) {
+	send, _ := specHeaderNames(t)
+	if !send["X-Reason"] || !send["Authorization"] {
+		t.Fatalf("spec walk found %v — expected at least X-Reason and Authorization; the walker is broken", send)
+	}
+	send[middleware.HeaderAPIKey] = true
+	send[middleware.IdempotencyKeyHeader] = true
+	send[middleware.HeaderRequestID] = true
+
+	h := middleware.CORS(middleware.CORSOptions{
+		AllowedOrigins: []string{"https://wallet.example.com"},
+		AllowedMethods: []string{"GET", "HEAD", "OPTIONS", "POST", "PATCH", "DELETE"},
+	})(corsOK())
+	r := httptest.NewRequest(http.MethodOptions, "/v1/admin/accounts/1", nil)
+	r.Header.Set("Origin", "https://wallet.example.com")
+	r.Header.Set("Access-Control-Request-Method", "PATCH")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	got := w.Header().Get("Access-Control-Allow-Headers")
+	for name := range send {
+		if !headerListHas(got, name) {
+			t.Errorf("Access-Control-Allow-Headers = %q, missing documented request header %q", got, name)
+		}
+	}
+}
+
+// TestCORS_ExposesEveryDocumentedResponseHeader — outside the Fetch
+// safelist a cross-origin script reads only what Expose-Headers names,
+// so a 429's Retry-After / X-RateLimit-* are null to it otherwise.
+func TestCORS_ExposesEveryDocumentedResponseHeader(t *testing.T) {
+	_, read := specHeaderNames(t)
+	if !read["Retry-After"] {
+		t.Fatalf("spec walk found %v — expected Retry-After; the walker is broken", read)
+	}
+	read[middleware.HeaderRequestID] = true
+
+	h := middleware.CORS(middleware.CORSOptions{
+		AllowedOrigins: []string{"https://wallet.example.com"},
+	})(corsOK())
+	r := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+	r.Header.Set("Origin", "https://wallet.example.com")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	got := w.Header().Get("Access-Control-Expose-Headers")
+	for name := range read {
+		if !headerListHas(got, name) {
+			t.Errorf("Access-Control-Expose-Headers = %q, missing documented response header %q", got, name)
+		}
+	}
+
+	r = httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+	r.Header.Set("Origin", "https://evil.example.com")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if got := w.Header().Get("Access-Control-Expose-Headers"); got != "" {
+		t.Errorf("Expose-Headers = %q on a denied origin, want empty", got)
+	}
 }
