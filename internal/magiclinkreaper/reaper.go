@@ -27,7 +27,7 @@
 //	expires_at < now() - Retention
 //
 // Every row past `expires_at` is TERMINAL: both ConsumeMagicLinkToken
-// and ConsumableLoginCandidates require `expires_at > now`, so an
+// and ReserveLoginCodeCandidates require `expires_at > now`, so an
 // expired row can never again be redeemed, consumed or not. Retention
 // keeps expired rows a while — long enough to preserve the
 // expired-vs-absent distinction classifyMagicLinkMiss draws for a slow
