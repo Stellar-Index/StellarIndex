@@ -487,7 +487,7 @@ func (o *Orchestrator) engageFreeze(
 	// on this counter ("a sustained freeze keeps the counter
 	// incrementing"), and a lifecycle hold is precisely a sustained
 	// freeze — incrementing only on the fire would silently disarm
-	// stellarindex_anomaly_freeze_sustained, a severity:page rule.
+	// stellarindex_anomaly_freeze_engaged, a severity:ticket rule.
 	obs.AnomalyFreezeEngagedTotal.WithLabelValues(string(decision.Class)).Inc()
 
 	o.logFreezeTransition(pair, window, decision, out)

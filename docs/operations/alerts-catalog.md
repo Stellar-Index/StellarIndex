@@ -28,8 +28,8 @@ enforces it); any per-alert detail page follows it.
 
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
-  | `page` | 61 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 199 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `page` | 60 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
+  | `ticket` | 207 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -518,9 +518,9 @@ Operator runbook walks through review + override.
 
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
+| `stellarindex_anomaly_warn_rate` | `stellarindex_anomaly_warn_total` per class | rate > 0 sustained 15m | ticket | [anomaly-freeze-engaged](runbooks/anomaly-freeze-engaged.md) |
 | `stellarindex_anomaly_freeze_engaged` | `stellarindex_anomaly_freeze_engaged_total` per class | rate > 0 over 5m | ticket | [anomaly-freeze-engaged](runbooks/anomaly-freeze-engaged.md) |
-| `stellarindex_anomaly_freeze_sustained` | `stellarindex_anomaly_freeze_escalated_total` per class | increase > 0 over 1h, for 5m — a freeze exhausted its extension ladder and is now operator-only (engagement alone does not page) | page | [anomaly-freeze-engaged](runbooks/anomaly-freeze-engaged.md) + per-alert detail [anomaly-freeze-sustained](runbooks/anomaly-freeze-sustained.md) |
-| `stellarindex_anomaly_freeze_recovery_stalled` | `stellarindex_anomaly_freeze_engaged_total` vs `_recovered_total` + `_recovery_sweeps_total{outcome!="ok"}` | engaged > recovered for 2h+ AND sweep errors in last 15m | ticket | [freeze-recovery-stalled](runbooks/freeze-recovery-stalled.md) |
+| `stellarindex_anomaly_freeze_recovery_stalled` | `stellarindex_anomaly_freeze_active` + `_recovery_sweeps_total{outcome!="ok"}` | at least one freeze held active for 2h+ AND sweep errors in last 15m | ticket | [freeze-recovery-stalled](runbooks/freeze-recovery-stalled.md) |
 | `stellarindex_amm_self_pair_swap_burst` | `stellarindex_amm_self_pair_swap_total` per source | increase > 10 over 15m, sustained 2m — a burst of self-pair (token_in==token_out) swaps, the 2026-08 Blend/Comet exploit primitive; normally zero | ticket | [amm-self-pair-swap-burst](runbooks/amm-self-pair-swap-burst.md) |
 
 ### Freeze lifecycle (ADR-0019 §"Freeze duration")
@@ -537,6 +537,8 @@ auto-unfreeze at all. Rules in
 | `stellarindex_aggregator_composite_freeze_suppression_dominant` | `stellarindex_aggregator_composite_freeze_suppressed_total` vs `stellarindex_anomaly_freeze_engaged_total` | suppression rate > 2x engaged rate over 1h, sustained 30m — composite-reference corroboration is disarming more phase-2 fires than are getting through | ticket | [anomaly-freeze-engaged](runbooks/anomaly-freeze-engaged.md) |
 | `stellarindex_anomaly_freeze_escalated` | `stellarindex_anomaly_freeze_escalated_total` | increase > 0 over 15m — a freeze exhausted the 4-extension ladder and will NOT auto-unfreeze | page | [anomaly-freeze-sustained](runbooks/anomaly-freeze-sustained.md) |
 | `stellarindex_anomaly_freeze_extension_rate` | `stellarindex_anomaly_freeze_extensions_total` | increase >= 3 over 1h, sustained 10m — freezes are climbing toward escalation | ticket | [anomaly-freeze-sustained](runbooks/anomaly-freeze-sustained.md) |
+| `stellarindex_anomaly_freeze_ladder_write_failures` | `stellarindex_anomaly_freeze_ladder_write_failures_total` per op | increase > 0 over 15m — a durable ladder write (migration 0119) did not land | ticket | [anomaly-freeze-sustained](runbooks/anomaly-freeze-sustained.md) |
+| `stellarindex_anomaly_freeze_operator_unfreeze_rate` | `stellarindex_anomaly_freeze_released_total{mode="operator"}` | increase >= 3 over 1h, sustained 10m — operators are manually unfreezing at a rising rate | ticket | [anomaly-freeze-sustained](runbooks/anomaly-freeze-sustained.md) |
 | `stellarindex_anomaly_freeze_active` | `stellarindex_anomaly_freeze_active` | > 0 for 5m — informational "N (pair, window) freezes held right now" | informational | [anomaly-freeze-engaged](runbooks/anomaly-freeze-engaged.md) |
 
 ## Divergence / quality alerts
@@ -584,6 +586,11 @@ auto-unfreeze at all. Rules in
 | `stellarindex_price_alert_eval_never_initialized` | `absent_over_time(stellarindex_price_alert_eval_total{outcome="ok"}[36h])` | == 1 for ≥ 5 min (the two rules above read `rate()`, which is "no data" — not zero — over a counter with no increments, so they can't see a disabled or never-started evaluator) | ticket | [price-alert-eval-failing](runbooks/price-alert-eval-failing.md) |
 | `stellarindex_assets_popular_priceless` | `stellarindex_assets_popular_priceless > 0` (count of market-popular, priceless, non-withheld assets; market-character volume — single-account-pair wash excluded) | > 0 for ≥ 1 h (a genuinely-traded asset renders priceless with no recorded reason) | ticket | [assets-popular-priceless](runbooks/assets-popular-priceless.md) |
 | `stellarindex_priceless_coverage_check_stale` | `(time() - stellarindex_priceless_coverage_check_last_success_unix{job="stellarindex_aggregator"}) > 1800` (r1: `job="stellarindex-aggregator"`; the matcher keeps the api/indexer zero-valued copies of the shared-registry gauge out) | for ≥ 30 min (the coverage tripwire wedged — blind to new gaps) | ticket | [assets-popular-priceless](runbooks/assets-popular-priceless.md) |
+| `stellarindex_priceless_coverage_check_errors` | `increase(stellarindex_priceless_coverage_check_runs_total{outcome="error"}[15m])` | > 0, sustained 15m (the catalogue read itself is failing) | ticket | [assets-popular-priceless](runbooks/assets-popular-priceless.md) |
+| `stellarindex_api_cors_wildcard_in_prod` | `sum(increase(stellarindex_api_cors_decisions_total{outcome="allowed_wildcard"}[15m]))` | > 0 for ≥ 5 min (r1 production tree — a wildcard CORS policy is matching real cross-origin traffic, F-1244) | ticket | [api-cors-wildcard](runbooks/api-cors-wildcard.md) |
+| `stellarindex_cross_region_divergence` | `sum by (pair, metric) (rate(stellarindex_cross_region_divergences_total[15m]))` | > 0 for ≥ 5 min (two regions disagreed on a closed bucket) | ticket | [cross-region-divergence](runbooks/cross-region-divergence.md) |
+| `stellarindex_cross_region_fetch_errors` | `sum by (region, pair, metric) (rate(stellarindex_cross_region_fetch_errors_total[15m]))` | > 0 for ≥ 10 min (a region fetch is failing; that region isn't being compared) | ticket | [cross-region-divergence](runbooks/cross-region-divergence.md) |
+| `stellarindex_cross_region_check_stale` | `time() - stellarindex_cross_region_last_run_timestamp_seconds` | > 300s for ≥ 5 min (the check loop has stopped completing sweeps; every comparison is blind) | ticket | [cross-region-divergence](runbooks/cross-region-divergence.md) |
 | `stellarindex_signup_reaper_failing` | `rate(stellarindex_signup_reaper_runs_total{outcome="error"}[6h]) > rate(...{outcome="ok"}[6h])` | sustained 30 min | ticket | [signup-reaper-failing](runbooks/signup-reaper-failing.md) |
 | `stellarindex_ratelimit_fail_open` | `sum(rate(stellarindex_ratelimit_fail_open_total[5m]))` | > 0 for ≥ 10 min (rate limiter bypassing on a Redis error) | ticket | [ratelimit-fail-open](runbooks/ratelimit-fail-open.md) |
 | `stellarindex_monthly_quota_fail_open` | `sum(rate(stellarindex_monthly_quota_fail_open_total[5m]))` | > 0 for ≥ 10 min (metered-spend ceiling bypassing on a counter read error) | ticket | [monthly-quota-fail-open](runbooks/monthly-quota-fail-open.md) |

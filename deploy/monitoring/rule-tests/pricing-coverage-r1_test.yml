@@ -127,3 +127,41 @@ tests:
       - eval_time: 70m
         alertname: stellarindex_priceless_coverage_check_stale
         exp_alerts: []
+
+  # ── GH-1039: outcome="error" is now read by a real alert ───────────
+  - interval: 1m
+    name: sustained coverage-sweep errors page a ticket
+    input_series:
+      - series: 'stellarindex_priceless_coverage_check_runs_total{outcome="error"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: stellarindex_priceless_coverage_check_errors
+        exp_alerts:
+          - exp_labels:
+              outcome: error
+              severity: ticket
+              team: stellarindex
+              component: pricing-coverage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/assets-popular-priceless.md
+              summary: "Priceless-popular coverage sweep is erroring (P3)"
+              description: |
+                stellarindex_priceless_coverage_check_runs_total{outcome="error"}
+                has incremented within the last 15 minutes and stayed
+                non-zero for 15 minutes straight: the tripwire's catalogue
+                read is failing (Postgres unreachable / query error), so
+                the popular-priceless count gauge is not being refreshed
+                and a fresh coverage gap would go unseen. Check the
+                aggregator's `candidate read failed` warn logs, then the
+                runbook.
+
+  - interval: 1m
+    name: clean sweeps never trip the error alert
+    input_series:
+      - series: 'stellarindex_priceless_coverage_check_runs_total{outcome="ok"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: stellarindex_priceless_coverage_check_errors
+        exp_alerts: []

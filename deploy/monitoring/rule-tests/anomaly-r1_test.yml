@@ -1,0 +1,128 @@
+---
+# promtool unit tests for anomaly.yml (GH-1121, GH-1039).
+#
+#   promtool test rules deploy/monitoring/rule-tests/anomaly-r1_test.yml
+#
+# PROVEN-RED: reverting the anomaly.yml fix (restoring the duplicate
+# `stellarindex_anomaly_freeze_sustained` P1, or dropping the new
+# `stellarindex_anomaly_warn_rate` alert) makes the matching case below
+# FAIL — either an unexpected extra alert fires, or promtool reports "no
+# rule with alertname" for the removed one. These exercise the real
+# rules, not a mock.
+
+rule_files:
+  - ../../../configs/prometheus/rules.r1/anomaly.yml
+
+evaluation_interval: 30s
+
+tests:
+  # ── GH-1121: escalation no longer double-pages from this file ──────
+  # stellarindex_anomaly_freeze_escalated_total climbing must NOT
+  # produce a `stellarindex_anomaly_freeze_sustained` alert from
+  # anomaly.yml any more — that page now lives solely in
+  # freeze-lifecycle.yml. `stellarindex_anomaly_freeze_engaged` (this
+  # file's real P3) is unaffected by the escalated counter.
+  - interval: 30s
+    name: an escalation does not also page from anomaly.yml
+    input_series:
+      - series: 'stellarindex_anomaly_freeze_escalated_total'
+        values: '0+1x120'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_anomaly_freeze_sustained
+        exp_alerts: []
+
+  # ── GH-1039: a sustained ActionWarn rate pages a ticket ────────────
+  - interval: 30s
+    name: sustained warn decisions on one class page a ticket
+    input_series:
+      - series: 'stellarindex_anomaly_warn_total{class="fiat"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_anomaly_warn_rate
+        exp_alerts:
+          - exp_labels:
+              class: fiat
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+              summary: "Anomaly ActionWarn sustained on class fiat (P3)"
+              description: |
+                The aggregator's anomaly checker has emitted ActionWarn
+                (deviation past warn_pct, short of the freeze threshold)
+                for asset class fiat continuously over the
+                last 15 minutes. No customer-facing effect — ActionWarn
+                does not freeze or flag /v1/price — but a sustained rate
+                means either a real, building market move or warn_pct is
+                tuned too tight for this class's normal volatility.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+
+  # ── a one-off warn decision (no sustained rate) never fires ─────────
+  - interval: 30s
+    name: a single warn blip does not page
+    input_series:
+      - series: 'stellarindex_anomaly_warn_total{class="fiat"}'
+        values: '0 1 1x58'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_anomaly_warn_rate
+        exp_alerts: []
+
+  # ── GH-1124: freeze_recovery_stalled no longer fires on ordinary,
+  # healthy freeze activity — the pre-fix left clause
+  # (rate(engaged) > rate(recovered)) was true any time a freeze was
+  # simply ongoing, because engaged increments every 30s tick and
+  # recovered only once per release. Healthy activity with recovery
+  # sweeps reporting ok must NOT alert even after 2h.
+  - interval: 30s
+    name: ordinary ongoing freeze activity with healthy recovery sweeps never stalls
+    input_series:
+      - series: 'stellarindex_anomaly_freeze_active'
+        values: '1+0x300'
+      - series: 'stellarindex_anomaly_freeze_recovery_sweeps_total{outcome="ok"}'
+        values: '0+1x300'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: stellarindex_anomaly_freeze_recovery_stalled
+        exp_alerts: []
+
+  # ── freeze_recovery_stalled DOES fire when a freeze stays active and
+  # the recovery worker is actively erroring ─────────────────────────
+  - interval: 30s
+    name: an active freeze plus failing recovery sweeps pages a ticket
+    input_series:
+      - series: 'stellarindex_anomaly_freeze_active'
+        values: '1+0x300'
+      - series: 'stellarindex_anomaly_freeze_recovery_sweeps_total{outcome="error"}'
+        values: '0+1x300'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: stellarindex_anomaly_freeze_recovery_stalled
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-recovery-stalled.md
+              summary: "Freeze recovery worker is stalled (P3)"
+              description: |
+                At least one (pair, window) freeze has stayed active
+                (stellarindex_anomaly_freeze_active > 0) for 2h+, AND
+                the recovery worker reported sweep failures within the
+                last 15 min. The durable freeze_events table is
+                accumulating open rows that the explorer /anomalies
+                timeline will show as forever-firing.
+
+                The API itself is unaffected — flags.frozen is driven by
+                the Redis marker, not the durable mirror. Customer-facing
+                data is correct; only the explorer history is wrong.
+
+                Most common cause: postgres connection pool exhaustion
+                or a Redis ACL drift. Check the recovery worker logs
+                (component=freeze-recovery) for the specific transport
+                error.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-recovery-stalled.md

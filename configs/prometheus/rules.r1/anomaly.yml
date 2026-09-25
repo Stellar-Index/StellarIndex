@@ -25,6 +25,35 @@ groups:
     interval: 30s
     rules:
 
+      # ─── P3: ActionWarn is firing (the previously-inert warn_pct knob) ──
+      #
+      # stellarindex_anomaly_warn_total (internal/obs/metrics.go) exists
+      # so the operator's warn_pct threshold has somewhere to surface —
+      # before it, ActionWarn was computed and discarded (audit COR-09 /
+      # AGT-06). A sustained non-zero rate is exactly the "called out,
+      # not frozen" signal warn_pct exists to catch.
+      # lint-tripwire-window:sustained: warn_rate exists to catch a CONTINUING elevated ActionWarn rate, not a single decision; a lone warn is expected noise
+      - alert: stellarindex_anomaly_warn_rate
+        expr: |
+          sum by (class) (rate(stellarindex_anomaly_warn_total[15m])) > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+          summary: "Anomaly ActionWarn sustained on class {{ $labels.class }} (P3)"
+          description: |
+            The aggregator's anomaly checker has emitted ActionWarn
+            (deviation past warn_pct, short of the freeze threshold)
+            for asset class {{ $labels.class }} continuously over the
+            last 15 minutes. No customer-facing effect — ActionWarn
+            does not freeze or flag /v1/price — but a sustained rate
+            means either a real, building market move or warn_pct is
+            tuned too tight for this class's normal volatility.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+
       - alert: stellarindex_anomaly_freeze_engaged
         expr: |
           sum by (class) (rate(stellarindex_anomaly_freeze_engaged_total[5m])) > 0
@@ -51,82 +80,14 @@ groups:
             policy YAML if confirmed false-positive.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
 
-      - alert: stellarindex_anomaly_freeze_sustained
-        # Reshaped 2026-08-06: the old expr paged whenever ANY pair
-        # freeze-cycled for an hour — including fire → extend → auto-
-        # release cycles that resolve themselves exactly as ADR-0019
-        # designs (live: XLM/EUR + XLM/GBP single-venue z-spikes cycled
-        # and auto-released overnight, paging a human for the system
-        # working). A PAGE means a human is needed; the lifecycle
-        # defines that moment precisely — ESCALATION (ladder exhausted,
-        # freeze now operator-only). Engaged/active remain
-        # ticket/informational for cycle visibility.
-        expr: |
-          sum by (class) (increase(stellarindex_anomaly_freeze_escalated_total[1h])) > 0
-        for: 5m
-        labels:
-          severity: page
-          team: stellarindex
-          component: aggregator
-        annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
-          summary: "Anomaly freeze ESCALATED to operator-only on class {{ $labels.class }} (P1)"
-          description: |
-            A freeze on asset class {{ $labels.class }} exhausted its
-            extension ladder in the last hour and escalated: it is
-            operator-only and will not auto-release. Three common
-            patterns behind a freeze that never recovers:
-
-            1. Real market event — typically resolves in minutes.
-            2. Threshold mis-tune — Phase 1 fires on legitimate
-               volatility; widen the class threshold + reload.
-            3. **Cold baseline (Phase 2)** — when historical trades
-               are sparse (e.g. backfill is still mid-run, only
-               7d of prices_1h available), the per-asset baseline's
-               z-score is unstable and Phase 2 false-fires across
-               every pair. Symptom: counter rate increases steadily
-               while flags.frozen never sticks (the per-pair Redis
-               marker is empty even though the counter is climbing).
-               In this case the runbook is to widen the Phase 2
-               z-score floor OR wait for the catch-up backfill to
-               complete (docs/operations/backfill-procedure.md
-               §"one-year retention catch-up").
-
-            Triage:
-              - `journalctl -u stellarindex-aggregator | grep "phase2 freeze"`
-                lists the per-pair decisions with confidence + z-score.
-              - `redis-cli KEYS 'freeze:*' | wc -l` — if this is 0
-                while the counter climbs, no marker is being written
-                (writer_wired=false in the log line). Do NOT read that
-                as "no customer impact": a freeze suppresses the VWAP
-                cache write and the SSE publish regardless of whether
-                the marker lands, so the pair is serving a pinned
-                last-known-good with flags.frozen=false. There are
-                TWO distinct causes and they need opposite responses:
-                (a) [anomaly].enabled is false, so buildAnomalyChecker
-                returned nil and the freeze writer was never wired —
-                but stepPhase2Freeze is still called unconditionally
-                and still refuses publication. Confirm with
-                `stellarindex_anomaly_warn_total` (absent => Phase 1
-                never ran) and the class="default" label, which is
-                classOf()'s nil-checker fallback. This is the state r1
-                is in as of 2026-08-04: 91 engagements, zero markers,
-                zero freeze_events rows. (b) [anomaly] IS enabled and
-                the marker write failed (Redis) — check the aggregator
-                log's writer_wired field.
-                A previous version of this text claimed the freeze step
-                stands down when [anomaly] is disabled. It does not:
-                that change was reverted before it landed (it broke six
-                tests that deliberately exercise Phase 2 with a nil
-                checker, and whether Phase 2 belongs to the anomaly
-                feature or is independent of it is an open design
-                question). Corrected 2026-08-04 — the claim would have
-                sent the on-call chasing a Redis fault that isn't
-                there.
-              - `SELECT COUNT(*) FROM freeze_events WHERE recovered_at IS NULL`
-                — durable mirror; should track Redis when both wire.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
-
+      # The P1 page for a freeze that exhausted its extension
+      # ladder lives ONLY in freeze-lifecycle.yml
+      # (stellarindex_anomaly_freeze_escalated). A duplicate lived
+      # here until GH-1121: same expr on the same unlabelled counter,
+      # so `sum by (class)` grouped nothing and every page's summary
+      # interpolated a blank `{{ $labels.class }}`, and every
+      # escalation paged twice. Engagement (below) stays ticket-level
+      # here; escalation pages exactly once, from freeze-lifecycle.yml.
       # Recovery-side health: the freeze recovery worker closes
       # durable freeze_events rows once the Redis marker TTL elapses.
       # When it stalls, the explorer /anomalies timeline shows
@@ -134,8 +95,7 @@ groups:
       # rather than an outage. F-1229.
       - alert: stellarindex_anomaly_freeze_recovery_stalled
         expr: |
-          sum(rate(stellarindex_anomaly_freeze_engaged_total[1h]))
-            > sum(rate(stellarindex_anomaly_freeze_recovered_total[1h]))
+          stellarindex_anomaly_freeze_active > 0
             and on() (sum(rate(stellarindex_anomaly_freeze_recovery_sweeps_total{outcome!="ok"}[15m])) > 0)
         for: 2h
         labels:
@@ -146,8 +106,8 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-recovery-stalled.md
           summary: "Freeze recovery worker is stalled (P3)"
           description: |
-            stellarindex_anomaly_freeze_engaged_total has outpaced
-            stellarindex_anomaly_freeze_recovered_total for 2h+, AND
+            At least one (pair, window) freeze has stayed active
+            (stellarindex_anomaly_freeze_active > 0) for 2h+, AND
             the recovery worker reported sweep failures within the
             last 15 min. The durable freeze_events table is
             accumulating open rows that the explorer /anomalies

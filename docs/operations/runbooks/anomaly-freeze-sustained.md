@@ -5,15 +5,15 @@ status: draft
 severity: P1
 ---
 
-# Runbook — `stellarindex_anomaly_freeze_sustained`
+# Runbook — `stellarindex_anomaly_freeze_escalated`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_anomaly_freeze_sustained` (companion: `stellarindex_anomaly_freeze_escalated`) |
+| Alert | `stellarindex_anomaly_freeze_escalated` — also the runbook for the P3 companions `stellarindex_anomaly_freeze_extension_rate`, `stellarindex_anomaly_freeze_ladder_write_failures` and `stellarindex_anomaly_freeze_operator_unfreeze_rate` |
 | Severity | P1 (page) |
-| Detected by | `configs/prometheus/rules.r1/anomaly.yml` (what r1 loads; `deploy/monitoring/rules/anomaly.yml` is the mirror). The same escalation is also paged by `stellarindex_anomaly_freeze_escalated` in `configs/prometheus/rules.r1/freeze-lifecycle.yml`, whose `runbook_url` points here. |
+| Detected by | `configs/prometheus/rules.r1/freeze-lifecycle.yml` (mirror: `deploy/monitoring/rules/freeze-lifecycle.yml`). `anomaly.yml` used to carry a duplicate P1 on the same expr (`stellarindex_anomaly_freeze_sustained`) — removed (GH-1121): it grouped an unlabelled counter (`sum by (class)` on a series with no `class` label), so its summary always interpolated blank, and every escalation paged twice. |
 | Typical MTTR | 30–90 min |
 | Impact | At least one `(asset, quote, window)` freeze has EXHAUSTED the ADR-0019 extension ladder (initial hold + 4 × 30 min extensions) and is now held operator-only: it will NOT auto-unfreeze. The API serves the LKG (last-known-good) value with `flags.frozen=true` for that pair until a human lifts it. Either real market distress persisted for > 2 h, the pair has no corroborating reference and so can never auto-release, or the Phase-2 thresholds are too tight. |
 

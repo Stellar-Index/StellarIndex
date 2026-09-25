@@ -3077,7 +3077,7 @@ cardinality stays bound to the small AssetClass enum.
 Incremented on every FROZEN TICK, not once per freeze: a freeze
 held through its ADR-0019 duration keeps this counter climbing for
 as long as it is held, which is what makes the `rate()`-based
-`stellarindex_anomaly_freeze_sustained` rule work. Use
+`stellarindex_anomaly_freeze_engaged` rule work. Use
 `stellarindex_anomaly_freeze_active` to count freezes rather than
 frozen ticks.
 

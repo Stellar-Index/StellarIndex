@@ -1,0 +1,43 @@
+---
+# API-plane security tripwires. Currently one: the CORS wildcard-in-prod
+# guard (F-1244).
+#
+# stellarindex_api_cors_decisions_total (internal/obs/metrics.go) counts
+# every per-request CORS decision by outcome (no_origin | allowed_origin |
+# allowed_wildcard | denied). The startup warning in warnOpenCORS
+# (cmd/stellarindex-api/main.go) fires once at boot and is forgotten;
+# this is the per-request, always-on version of the same guard.
+
+groups:
+  - name: stellarindex.api_security
+    interval: 1m
+    rules:
+
+      # allowed_wildcard means `STELLARINDEX_ALLOWED_ORIGINS=*` is
+      # configured on THIS instance and at least one cross-origin request
+      # actually matched it — not merely that the policy is set. This
+      # tree (configs/prometheus/rules.r1) is the r1 production tree, so
+      # any non-zero rate here is a wildcard CORS policy live in prod,
+      # which is incompatible with credentialed auth_mode (F-1244).
+      - alert: stellarindex_api_cors_wildcard_in_prod
+        expr: |
+          sum(increase(stellarindex_api_cors_decisions_total{outcome="allowed_wildcard"}[15m])) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-cors-wildcard.md
+          summary: "Wildcard CORS policy is serving real cross-origin requests in prod (P3)"
+          description: |
+            stellarindex_api_cors_decisions_total{outcome="allowed_wildcard"}
+            has incremented within the last 15 minutes on the r1
+            production tree: `STELLARINDEX_ALLOWED_ORIGINS=*` is
+            configured and matching real cross-origin traffic. A
+            wildcard policy paired with credentialed auth_mode lets any
+            origin read authenticated responses (F-1244).
+
+            Check the api instance's STELLARINDEX_ALLOWED_ORIGINS env
+            var and auth_mode; if credentials are in play, replace the
+            wildcard with an explicit allow-list.
