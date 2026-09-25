@@ -239,8 +239,15 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 	if s.changeSummaryWithheld(w, r, row) {
 		return
 	}
-	writeJSON(w, s.changeSummaryResponse(row), Flags{})
+	stale := time.Since(row.RefreshedAt) > changeSummaryStaleAfter
+	writeJSON(w, s.changeSummaryResponse(row), Flags{Stale: stale})
 }
+
+// changeSummaryStaleAfter is the row-age past which a served change
+// summary is flagged stale. Matches the openapi contract for this
+// surface: the worker refreshes every 5 minutes, and a row older than
+// 10 minutes means it is lagging.
+const changeSummaryStaleAfter = 10 * time.Minute
 
 // changeSummaryGateSurface labels this surface on the withholding metrics.
 const changeSummaryGateSurface = "change_summary"
