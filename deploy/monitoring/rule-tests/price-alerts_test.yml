@@ -125,3 +125,95 @@ tests:
       - eval_time: 2160m
         alertname: stellarindex_price_alert_eval_never_initialized
         exp_alerts: []
+
+  # ══ stellarindex_price_alert_evaluations_failing (GH-749) ═════════
+  # ── firing: every alert fails every sweep ────────────────────────
+  - interval: 1m
+    name: every alert erroring tickets evaluations_failing
+    input_series:
+      - series: 'stellarindex_price_alert_evaluated_total{job="stellarindex_aggregator",instance="r1:9102",outcome="error"}'
+        values: '0+20x80'
+      - series: 'stellarindex_price_alert_evaluated_total{job="stellarindex_aggregator",instance="r1:9102",outcome="not_crossed"}'
+        values: '0+0x80'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_price_alert_evaluations_failing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: price-alerts
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-alert-eval-failing.md
+              summary: "Most price-alert evaluations failing (P3)"
+              description: |
+                More than half of per-alert evaluations ended in error or
+                timeout over 15 min, sustained 30+ min — customers' price
+                alerts are mostly not being delivered, not just one bad row.
+                Break stellarindex_price_alert_evaluated_total down by
+                outcome, check aggregator logs for `price-alert evaluate
+                failed`, then the runbook.
+
+  # ── one bad alert among many stays silent ────────────────────────
+  - interval: 1m
+    name: one timing-out alert among twenty raises nothing
+    input_series:
+      - series: 'stellarindex_price_alert_evaluated_total{job="stellarindex_aggregator",instance="r1:9102",outcome="timeout"}'
+        values: '0+2x80'
+      - series: 'stellarindex_price_alert_evaluated_total{job="stellarindex_aggregator",instance="r1:9102",outcome="not_crossed"}'
+        values: '0+38x80'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_price_alert_evaluations_failing
+        exp_alerts: []
+
+  # ══ stellarindex_price_alert_sweep_stale (GH-749) ═════════════════
+  # ── firing: the last completed sweep is frozen at t=0 ────────────
+  # The gauge holds a unix time; promtool's clock starts at 0, so a
+  # value of 1 is "completed a sweep at t=1s" and never again.
+  - interval: 1m
+    name: a sweep that never completes again tickets after 20m
+    input_series:
+      - series: 'stellarindex_price_alert_last_sweep_unix{job="stellarindex_aggregator",instance="r1:9102"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_price_alert_sweep_stale
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_aggregator
+              instance: r1:9102
+              severity: ticket
+              team: stellarindex
+              component: price-alerts
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-alert-eval-failing.md
+              summary: "Price-alert evaluator has not completed a sweep in 15+ min (P3)"
+              description: |
+                stellarindex_price_alert_last_sweep_unix is more than 15 min
+                old, sustained 5+ min: the evaluator is wedged mid-sweep or
+                its loop has stopped, and no customer price alert is being
+                evaluated. Check the aggregator's goroutine state and
+                `price-alert evaluate failed` timeouts, then the runbook.
+
+  # ── a sweeping evaluator stays silent ────────────────────────────
+  - interval: 1m
+    name: a gauge advancing every minute raises nothing
+    input_series:
+      - series: 'stellarindex_price_alert_last_sweep_unix{job="stellarindex_aggregator",instance="r1:9102"}'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_price_alert_sweep_stale
+        exp_alerts: []
+
+  # ── a process that never started the evaluator stays silent ──────
+  - interval: 1m
+    name: a zero gauge on a binary without the evaluator raises nothing
+    input_series:
+      - series: 'stellarindex_price_alert_last_sweep_unix{job="stellarindex_api",instance="r1:8080"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_price_alert_sweep_stale
+        exp_alerts: []

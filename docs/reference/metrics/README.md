@@ -2153,12 +2153,32 @@ stopped firing. `list_error` = the `ListEnabledPriceAlerts` read
 failed, so the WHOLE sweep was skipped — nothing is being evaluated
 (Postgres unreachable, or the `price_alerts` table is superuser-owned
 per migrations/README rule 7). `partial_error` = the sweep ran but at
-least one alert hit a price-read / parse / enqueue error; narrower and
-self-heals per-alert. Notifications-only degradation — the public
+least one alert hit a price-read / parse / enqueue error or its
+per-alert deadline — one alert or all of them;
+`stellarindex_price_alert_evaluated_total` says which. Notifications-only degradation — the public
 pricing surface is unaffected. Alert:
 `stellarindex_price_alert_eval_failing`
 (deploy/monitoring/rules/price-alerts.yml +
 configs/prometheus/rules.r1/price-alerts.yml).
+
+### `stellarindex_price_alert_evaluated_total`
+
+Counter, label `outcome` (`fired` / `not_crossed` / `no_price` /
+`cooling_down` / `no_subscriber` / `claim_lost` / `error` / `timeout`),
+every child seeded when the evaluator is built.
+
+One increment per alert per sweep. `timeout` is the alert's own deadline
+(a third of the sweep interval) expiring on its reads or its fan-out.
+More than half of evaluations ending in `error` / `timeout` for 30 min
+fires `stellarindex_price_alert_evaluations_failing`.
+
+### `stellarindex_price_alert_last_sweep_unix`
+
+Gauge, no labels. Unix time the price-alert evaluator last completed a
+sweep (any outcome), seeded with its start time; 0 on a process that
+never started it. More than 15 min old for 5 min fires
+`stellarindex_price_alert_sweep_stale` — the only signal for a sweep
+wedged mid-flight, which emits no outcome sample.
 
 ### `stellarindex_price_alert_eval_duration_seconds`
 
@@ -2944,6 +2964,30 @@ with; 0 when every reference is disabled. Set on every pass before the
 min-interval gate, so it arms `stellarindex_divergence_no_ok_outcomes`
 even when the pass never counts an outcome, and keeps a deliberate
 opt-out from paging.
+
+### `stellarindex_divergence_reference_total`
+
+Counter, labels `reference` (the reference's `Name()`: `coingecko`,
+`chainlink`, the on-chain oracle sources, …) and `outcome` (`ok` /
+`asset_unsupported` / `price_unavailable` / `too_stale_to_compare` /
+`invalid_price` / `timeout` / `overall_deadline_exceeded` / `panicked` /
+`error`). Every child is seeded when the divergence Service is built.
+
+One increment per (reference, pair) lookup in a divergence refresh.
+`stellarindex_divergence_refresh_total` is per pair and only leaves
+`ok` when EVERY reference fails, so one reference going dark is visible
+only here. More than half of a reference's lookups failing (coverage and
+comparability classes excluded) for 30 min fires
+`stellarindex_divergence_reference_failing`.
+
+### `stellarindex_divergence_pair_quorum_met`
+
+Gauge, label `pair`. 1 when the pair's latest divergence refresh had at
+least `min_sources_for_warning` responding references, 0 when it did
+not. Below quorum the warning verdict is carried forward rather than
+re-evaluated, so a 0 means divergence detection is disarmed for the pair
+even though the pass counts `ok`. A pair at 0 across every refresh for
+an hour fires `stellarindex_divergence_pair_below_quorum`.
 
 ### `stellarindex_aggregator_baseline_refresh_total`
 

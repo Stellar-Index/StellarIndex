@@ -94,6 +94,35 @@ curl -fs 'https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencie
   daily-heartbeat feeds (Redstone, Band) reads `no_reference` between their
   pushes. Not an outage; add a fresher reference for the pair.
 
+## Partial outage — `stellarindex_divergence_reference_failing` / `stellarindex_divergence_pair_below_quorum`
+
+`no_reference` needs EVERY reference dark for a pair. One reference going
+dark leaves every pass `ok`, yet a pair covered by exactly
+`min_sources_for_warning` references then drops below quorum: its verdict
+is carried forward, never re-evaluated, and a live depeg on it cannot warn.
+These two alerts read the per-reference signal the pass-level counter lacks.
+
+- `stellarindex_divergence_reference_failing{reference}` — more than half of
+  that reference's lookups failed for 30+ min (`asset_unsupported` and
+  `too_stale_to_compare` excluded: coverage and feed cadence, not outages).
+- `stellarindex_divergence_pair_below_quorum{pair}` — every refresh of the
+  pair for an hour had fewer responders than `min_sources_for_warning`.
+
+```promql
+# Which outcome is the reference producing?
+sum by (reference, outcome) (rate(stellarindex_divergence_reference_total[15m]))
+# Which pairs are disarmed right now?
+stellarindex_divergence_pair_quorum_met == 0
+```
+
+`price_unavailable` from CoinGecko is its freshness gate failing closed (a
+missing or stale `last_updated_at`); `timeout` /
+`overall_deadline_exceeded` is a slow upstream; `panicked` also moves
+`stellarindex_worker_panics_total`. Remediate the reference as in
+*Mitigation* above. A pair whose only other coverage is a daily-heartbeat
+feed sits below quorum between pushes; that is structural, not an outage —
+add a fresher reference for the pair.
+
 ## Related
 
 - [`docs/operations/runbooks/divergence-refresh-error-dominant.md`](divergence-refresh-error-dominant.md) — the erroring (not dark) sibling.
@@ -104,3 +133,4 @@ curl -fs 'https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencie
 
 - 2026-07-01 — initial draft alongside the CS-088 `no_reference` outcome.
 - 2026-09-23 — references older than the comparability ceiling no longer vote.
+- 2026-09-25 — partial-outage section for the per-reference and quorum alerts (GH-679).

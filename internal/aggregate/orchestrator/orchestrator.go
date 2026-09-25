@@ -542,11 +542,11 @@ type Config struct {
 	// Rationale (F-0030 follow-up, 2026-05-27): the CMC free tier is
 	// 10,000 calls / MONTH. Even with the per-tick batched lookup
 	// shipped earlier, refreshing every 30 s × 12 pairs is ~2,880
-	// calls/day = ~86,000/month — 8.6 × over cap. The
-	// `div:<base>/<quote>` Redis entry has a 5-minute TTL
-	// (cachekeys.DivergenceTTL), so a 5-minute refresh interval
-	// keeps the cache continuously populated while burning roughly
-	// one-tenth the external quota. The divergence warning is an
+	// calls/day = ~86,000/month — 8.6 × over cap. A 5-minute refresh
+	// interval burns roughly one-tenth the external quota; the
+	// `div:<base>/<quote>` entry's TTL is sized from this cadence plus
+	// a worst-case pass (divergence.ServiceOptions.PairCount), so the
+	// cache stays populated between passes. The divergence warning is an
 	// anomaly signal, not a price input — 5-minute detection
 	// latency is acceptable per ADR-0019.
 	DivergenceMinInterval time.Duration

@@ -15,7 +15,7 @@ severity: P3
 | Severity | P3 (`severity: ticket`) |
 | Detected by | `configs/prometheus/rules.r1/divergence.yml` (group `stellarindex.divergence`, `severity: ticket`, `for: 30m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/divergence.yml`. |
 | Typical MTTR | 5–60 min (usually upstream-reference recovery) |
-| Impact | The API's `flags.divergence_warning` stops updating. After the 5-min cache TTL elapses, consumers see no warning even when prices DO diverge — false-negative window. Aggregate price endpoints continue serving; only the divergence flag is degraded. |
+| Impact | The API's `flags.divergence_warning` stops updating. After the cache TTL (refresh cadence plus one worst-case pass, never under 5 min) elapses, consumers see no warning even when prices DO diverge — false-negative window. Aggregate price endpoints continue serving; only the divergence flag is degraded. |
 
 ## Symptoms
 
@@ -38,14 +38,14 @@ severity: P3
 
 The aggregator's orchestrator calls `divergence.Service.RefreshPair`
 per configured pair, rate-limited by
-`[aggregate] divergence_min_interval_seconds` (default 300s =
-`cachekeys.DivergenceTTL`): the Tick still fires every 30s, but the
-divergence pass is skipped while elapsed < the min interval, so
-refreshes run roughly 5-minutely (F-0030 follow-up — ~10× less
-external quota while keeping the `div:<asset>` cache continuously
-populated). Each pass queries the configured references
-concurrently, computes the median, and writes `div:<asset>` in
-Redis with a 5-min TTL.
+`[aggregate] divergence_min_interval_seconds` (default 300s): the
+Tick still fires every 30s, but the divergence pass is skipped while
+elapsed < the min interval, so refreshes run roughly 5-minutely
+(F-0030 follow-up — ~10× less external quota). Each pass queries the
+configured references concurrently, computes the median, and writes
+`div:<asset>` in Redis with a TTL of the refresh cadence plus one
+worst-case pass (every pair spending Compare's whole budget), never
+under 5 min, so an entry outlives the gap to its next write.
 
 The reference set is broader than the original CoinGecko +
 Chainlink pair: since the oracle-reference wiring, the on-chain

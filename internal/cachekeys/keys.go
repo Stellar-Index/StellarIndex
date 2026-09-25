@@ -530,7 +530,9 @@ func DivergenceBaseIndex(base canonical.Asset) DivergenceIndexKey {
 	return DivergenceIndexKey("div:idx:" + base.String())
 }
 
-// DivergenceTTL is the expiry for div: keys.
+// DivergenceTTL is the floor expiry for div: keys. The aggregator's
+// divergence Service extends it to its refresh cadence plus a worst-case
+// pass, so a key never expires before its next write.
 const DivergenceTTL = 5 * time.Minute
 
 // ─── Anomaly freeze marker (ADR-0019) ─────────────────────────────
