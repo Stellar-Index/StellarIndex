@@ -20,6 +20,12 @@ const (
 	// below the substance floor). /v1/assets/{asset} serves
 	// price_usd: null for it, and so does this leg.
 	DEXTVLLegWithheld = "withheld"
+	// DEXTVLLegUnverifiedAsset — the asset is not native XLM, an
+	// operator-declared USD peg, or a verified-currency catalogue entry
+	// (reached classic or through its SAC). Pools are permissionless, so
+	// a self-listed token's reserve AND its VWAP are authored by whoever
+	// deploys and trades it; neither is a valuation we can stand behind.
+	DEXTVLLegUnverifiedAsset = "unverified_asset"
 	// DEXTVLLegNoServedPrice — no USD price is served for this asset
 	// through the price tiers (declared peg → direct VWAP → XLM bridge).
 	DEXTVLLegNoServedPrice = "no_served_price"
@@ -270,6 +276,8 @@ func (a *tvlProtocolAccumulator) finish() (ProtocolTVLView, []DEXTVLPoolView) {
 //   - unknown protocol → 404 (same problem as /v1/protocols/{name});
 //   - a known protocol with no pooled-liquidity derivation → 404 naming
 //     the reason (the standing scope exclusion where one applies);
+//   - a derived protocol with no figure this cycle (first read failed,
+//     or the read returned no pools) → 404 saying exactly that;
 //   - no cache wired, or wired but not yet refreshed → 503 problem.
 //
 // A protocol whose figure is carried forward from an earlier cycle is
@@ -301,6 +309,13 @@ func (s *Server) handleProtocolTVL(w http.ResponseWriter, r *http.Request) {
 	}
 	snap, ok := s.dexTVL.Protocol(meta.Name)
 	if !ok {
+		if reason, down := s.dexTVL.Unavailable(meta.Name); down {
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/protocol-tvl-not-derived",
+				"No TVL figure for this protocol this cycle", http.StatusNotFound,
+				"this protocol's TVL is derived on this deployment, but "+reason)
+			return
+		}
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/protocol-tvl-not-derived",
 			"No TVL derivation for this protocol", http.StatusNotFound,

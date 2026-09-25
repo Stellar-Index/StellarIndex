@@ -256,10 +256,16 @@ type AquariusPoolReserve struct {
 // carries no token address — AGENTS.md / migration 0089); a leg with no
 // observed liquidity event keeps an empty Token.
 //
-// This is the READ side of the Aquarius TVL / liquidity-depth signal that
-// InsertAquariusReserves captures. Reserves are per-asset base units, not
-// USD — Aquarius pools have no independently published price, so a clean
-// USD TVL is not derived here; callers surface depth in native units.
+// Two limits callers must carry: token identity is positional recovery,
+// not a captured address; and aquarius_reserves has no transaction
+// application order, so when two transactions touch a pool in its latest
+// ledger at the same op_index and event_index the snapshot is either
+// one's post-state, not provably the final one.
+//
+// This is the READ side of the Aquarius liquidity-depth signal that
+// InsertAquariusReserves captures, in per-asset base units. The DEX TVL
+// snapshot (internal/api/v1 refreshAquarius) values these reserves in USD
+// through the served price tiers, and its Basis restates both limits.
 //
 // Empty-safe: returns (nil, nil) when no reserves have been captured in the
 // window. windowDays <= 0 is treated as 90.

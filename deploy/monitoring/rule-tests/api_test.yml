@@ -170,7 +170,7 @@ tests:
               description: |
                 Every DEX TVL refresh in the last 15 min errored, sustained
                 30+ min, with zero successes interleaved. The served TVL on
-                /v1/dexes and the per-protocol pages is a carried-forward
+                /v1/protocols and the per-protocol pages is a carried-forward
                 snapshot growing stale behind an honest-looking page. Usual
                 causes: lake reserve reads failing (ClickHouse down / part
                 churn) or the served-tier prices_1m reads failing.

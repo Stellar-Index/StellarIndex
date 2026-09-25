@@ -7148,6 +7148,11 @@ export interface components {
              *     gates withhold a USD valuation of this asset (directory-flagged
              *     issuer, or a market below the substance floor) —
              *     `/assets/{asset}` serves `price_usd: null` for it.
+             *     `unverified_asset`: the asset is not native XLM, an
+             *     operator-declared USD peg, or an entry of the verified currency
+             *     catalogue (classic or through its SAC). Pools are
+             *     permissionless, so a self-listed token's reserve and its price
+             *     are both authored by whoever deploys and trades it.
              *     `no_served_price`: no USD price is served through the price
              *     tiers. `unresolved_token`: the pool reports a position whose
              *     token address is unknown (Aquarius `update_reserves` carries
@@ -7157,7 +7162,7 @@ export interface components {
              *     negative.
              * @enum {string}
              */
-            excluded?: "withheld" | "no_served_price" | "unresolved_token" | "malformed_token" | "invalid_reserve";
+            excluded?: "withheld" | "unverified_asset" | "no_served_price" | "unresolved_token" | "malformed_token" | "invalid_reserve";
         };
         /**
          * @description Reconciled headline pooled-liquidity total across the protocols

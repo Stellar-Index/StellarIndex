@@ -352,6 +352,11 @@ groups:
             and stellarindex_tls_cert_not_after_unix > 0
           )
           or absent_over_time(stellarindex_tls_cert_not_after_unix[1h]) == 1
+          or (
+            sum by (host) (increase(stellarindex_tls_cert_probe_total{outcome!="ok"}[13h])) > 0
+            unless on (host)
+            sum by (host) (increase(stellarindex_tls_cert_probe_total{outcome="ok"}[13h])) > 0
+          )
         for: 1h
         labels:
           severity: ticket
@@ -368,7 +373,11 @@ groups:
             (rate limit, DNS issue, ACME quota, Caddy stuck). If the
             gauge is ABSENT (the absent_over_time branch fires alone),
             the TLS prober itself is down — check it before assuming
-            the cert is fine.
+            the cert is fine. If the probe-outcome arm fires, the host
+            had failed probes and no successful one in 13 h (unreachable,
+            or a cert failing verification: wrong name, broken chain,
+            expired) and the value is a failure count, not a timestamp —
+            read stellarindex_tls_cert_probe_total{host} by outcome.
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
 
@@ -648,7 +657,7 @@ groups:
 
       # v0.21.4 background cache workers. The DEX TVL refresher
       # recomputes per-protocol TVL every 10 min; a failed protocol
-      # keeps its previous entry, so /v1/dexes + /v1/protocols keep
+      # keeps its previous entry, so /v1/protocols + /v1/protocols/{name}/tvl keep
       # LOOKING healthy while the figure ages — this alert is the only
       # place sustained failure is visible before the data is hours
       # old. Isolated errors during lake merges self-heal.
@@ -668,7 +677,7 @@ groups:
           description: |
             Every DEX TVL refresh in the last 15 min errored, sustained
             30+ min, with zero successes interleaved. The served TVL on
-            /v1/dexes and the per-protocol pages is a carried-forward
+            /v1/protocols and the per-protocol pages is a carried-forward
             snapshot growing stale behind an honest-looking page. Usual
             causes: lake reserve reads failing (ClickHouse down / part
             churn) or the served-tier prices_1m reads failing.
