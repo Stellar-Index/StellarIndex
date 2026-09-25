@@ -232,6 +232,10 @@ export function ThroughputPanel({
       </div>
       {tpQ.isLoading ? (
         <Skeleton className="h-60 w-full" />
+      ) : tpQ.isError ? (
+        <p className="text-ink-muted text-sm">
+          Throughput data is unavailable right now.
+        </p>
       ) : points.length === 0 ? (
         <EmptyState title="No throughput data for this window." />
       ) : (
