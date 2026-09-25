@@ -4,8 +4,12 @@
 # per-workload datasets with tuned recordsize + compression.
 #
 # IMPORTANT: creating the pool is DESTRUCTIVE. The task guards against
-# re-creation with `creates:` — if the pool already exists, nothing
-# happens. To re-create, operator must manually `zpool destroy` first.
+# re-creation by checking `zpool list` (skipped if already imported) AND
+# by scanning `zpool import` for an unimported pool of the same name on
+# these devices (see the "Fail if the target pool is importable" assert
+# below) — `zpool list` alone only sees imported pools, and `zpool create
+# -f` would otherwise silently overwrite an exported or not-yet-imported
+# pool. There is no `creates:` guard on the create task itself.
 
 # GATE (2026-07-03, after the stage-A apply nearly broke the live pool):
 # r1 runs upstream OpenZFS 2.3.4 from locally-built debs
@@ -106,6 +110,32 @@
   register: zpool_list
   failed_when: false
   changed_when: false
+
+# `zpool list` above only sees IMPORTED pools. A pool that is exported, or
+# was never imported after a boot where /etc/zfs/zpool.cache was missing
+# (e.g. the OS mirror got reinstalled but the data drives were left
+# intact), is invisible to it — and `zpool create -f` below overrides
+# zpool's own exported/potentially-active refusal. `zpool import` with no
+# target is read-only: it scans and reports, it does not import anything.
+- name: Scan for an importable "{{ zfs_data_pool_name }}" pool not currently imported
+  ansible.builtin.command: "zpool import -d /dev/disk/by-id"
+  register: zpool_import_scan
+  when: zpool_list.rc != 0
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "Fail if the target pool is importable-but-unimported (zpool create -f would destroy it)"
+  ansible.builtin.assert:
+    that:
+      - "('pool: ' + zfs_data_pool_name not in zpool_import_scan.stdout) or (zfs_data_pool_recreate_ack | default(false) | bool)"
+    fail_msg: >-
+      zpool import found an existing '{{ zfs_data_pool_name }}' pool on these devices that
+      is not currently imported. `zpool create -f` would silently overwrite it, destroying
+      Postgres, the ClickHouse lake and MinIO. Investigate with `zpool import` and `zdb -l
+      <device>` before proceeding. If this really is a fresh build and the name collision
+      is coincidental, re-run with -e zfs_data_pool_recreate_ack=true.
+  when: zpool_list.rc != 0
 
 # -f bypasses zpool's refusal to create raidz across differently-
 # sized vdevs. We use it deliberately because our layout mixes

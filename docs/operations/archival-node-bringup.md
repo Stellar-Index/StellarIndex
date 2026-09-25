@@ -330,6 +330,19 @@ it, and the projected Postgres tables are projected from the lake. A
 node that lost more than one restores them in that order — MinIO, then
 ClickHouse, then Postgres.
 
+### OS mirror reinstalled, data drives left intact
+
+Before re-applying the ansible role: run `zpool list -H data`. If it
+exits non-zero the pool is not imported (no `zpool.cache` survives an
+OS reinstall) — `03-zfs.yml`'s create task will refuse to proceed until
+you resolve this, because `zpool create -f` would otherwise silently
+overwrite the existing pool (all three stores) on the same devices. Run
+`zpool import -d /dev/disk/by-id` (read-only) to confirm `data` is
+listed, then `zpool import data` to bring it back before re-applying
+the role. Only pass `-e zfs_data_pool_recreate_ack=true` if you have
+independently confirmed with `zdb -l <device>` that the pool the scan
+found is not the one you need.
+
 ### Galexie service is down
 
 ```sh
