@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -79,12 +80,18 @@ func (s *stubRWAContractReader) DirectoryRecognisedIssuersWithoutAsset(
 
 // stubContractCatalogue answers the volume-gate-free catalogue read.
 type stubContractCatalogue struct {
-	rows map[string]timescale.AssetRow
+	rows  map[string]timescale.AssetRow
+	err   error
+	calls int
 }
 
 func (s *stubContractCatalogue) ContractCatalogueRows(
 	_ context.Context, ids []string,
 ) (map[string]timescale.AssetRow, error) {
+	s.calls++
+	if s.err != nil {
+		return nil, s.err
+	}
 	out := map[string]timescale.AssetRow{}
 	for _, id := range ids {
 		if r, ok := s.rows[id]; ok {
@@ -469,6 +476,39 @@ func TestRWAContracts_UnwiredReaderSaysNotMeasured(t *testing.T) {
 	}
 	if !strings.Contains(view.Funnel.Basis, "NOT MEASURED") {
 		t.Errorf("funnel basis does not say the contract arm was unmeasured:\n%s", view.Funnel.Basis)
+	}
+}
+
+// TestRWAContracts_CatalogueReadFailureFailsTheResponse pins that an
+// unread contract arm is never served as an absent one: dropping the
+// admitted members would shrink the published totals with no lower_bound
+// and book them as "never observed on chain".
+func TestRWAContracts_CatalogueReadFailureFailsTheResponse(t *testing.T) {
+	catalogue := &stubContractCatalogue{err: errors.New("catalogue read: connection reset")}
+	srv := v1.New(v1.Options{
+		Sep1Cache: &stubSep1BoundReader{},
+		Directory: &stubDirectoryReader{},
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{},
+			byIssuer:            map[string][]timescale.AssetRow{},
+		},
+		RWAContracts: &stubRWAContractReader{
+			contracts: []timescale.DirectoryEntry{recognisedContract(rwaContractGood, "Example Treasury Fund")},
+			accounts:  18000,
+		},
+		ContractCatalogue:     catalogue,
+		TokenSymbol:           &stubTokenSymbols{byID: map[string]string{rwaContractGood: "USTRY"}},
+		TokenSupply:           &stubTokenSupplies{byID: map[string]string{rwaContractGood: "1000000000000"}},
+		TokenDecimals:         &stubTokenDecimalsRdr{byID: map[string]uint32{rwaContractGood: 6}},
+		MinMarketCapVolumeUSD: 1000,
+	})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/rwa/assets")
+	if catalogue.calls == 0 {
+		t.Fatal("contract catalogue never read: the admitted member did not reach the contract arm")
+	}
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500: a failed contract-arm read was served as a complete set", resp.StatusCode)
 	}
 }
 
