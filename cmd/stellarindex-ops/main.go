@@ -863,6 +863,9 @@ Subcommands:
                           per-WASM-hash audit (stellarindex-ops
                           wasm-history) must land first per AGENTS.md
                           "Soroban DeFi contracts upgrade in place".
+                          Also refuses projector-owned sources (AGENTS.md
+                          invariant [7]); re-derive those with
+                          projector-replay or projected-rebuild.
                           Idempotent: the trades hypertable's unique
                           index on (source, ledger, tx_hash, op_index)
                           makes re-runs over the same range a no-op.
@@ -870,7 +873,7 @@ Subcommands:
                             stellarindex-ops backfill \
                               -config /etc/stellarindex.toml \
                               -from 21000000 -to 25000000 \
-                              -source soroswap,aquarius
+                              -source sdex,band -write
   backfill-router -config PATH -from N -to N [-resume] [-bucket NAME] [-write]
                           Reconstruct soroswap_router_swaps for a ledger
                           range by replaying the soroswap-router
@@ -886,6 +889,9 @@ Subcommands:
                           'to' ledger encoded in its sub_source. One-shot
                           replacement for a hand-rolled SQL+shell loop over
                           stalled cursors. -dry-run prints the plan only.
+                          Skips (with the reason) any cursor whose sources
+                          backfill would refuse today: projector-owned, or
+                          no longer BackfillSafe.
   find-data-gaps -config PATH [-from N] [-to N] [-min-gap-size N] [-source S] [-output text|json]
                           Data-derived gap detector: scan the soroban_events
                           hypertable directly and report contiguous
@@ -961,11 +967,12 @@ Subcommands:
                           if the completeness gate fails.
   ch-reproject -config PATH -from N -to N [-ch-addr H:P] [-max-list N]
                           ADR-0034 Phase 4 validation: re-derive the range
-                          from BOTH the ClickHouse lake and Postgres
-                          soroban_events using the SAME decoders, and assert
-                          per-kind/per-ledger output counts match exactly —
-                          proving decoders read ClickHouse identically. Writes
-                          nothing; exits non-zero on any divergence.
+                          from the ClickHouse lake with the production
+                          decoders and compare per-ledger counts with the
+                          served protocol tables. Writes nothing; exits
+                          non-zero on any divergence. soroswap is re-derived
+                          without pair seeding, so a range holding pairs
+                          created before -from diverges by construction.
   ch-rebuild -config PATH -from N -to N [-ch-addr H:P] [-sources CSV] [-sdex] [-sep41] [-contract-calls] [-contracts CSV] [-bulk-trades]
                           Re-derive event-based served tables (Timescale)
                           from the ClickHouse lake for a range by re-running
@@ -1107,7 +1114,7 @@ Subcommands:
                           ON CONFLICT DO NOTHING. -source names: see
                           internal/projector/registry.go. Referenced by the
                           migration 0137/0139 operator follow-ups.
-  projected-rebuild -config PATH -source NAME -from N [-to N] [-workers K] [-window N] [-resume] [-write] [-ch-addr H:P] [-allow-live-overlap]
+  projected-rebuild -config PATH -source NAME -from N [-to N] [-workers K] [-window N] [-resume] [-write] [-ch-addr H:P] [-heartbeat PATH] [-allow-live-overlap]
                           ADR-0048 D3: bulk catch-up for a projected
                           (Soroban-derived) source, replacing
                           projector-replay for any rewind beyond
@@ -1141,7 +1148,10 @@ Subcommands:
                           CONFLICT DO NOTHING) — safe to re-run or to
                           overlap with a retried window. Defaults to
                           DRY-RUN (count + report only); pass -write to
-                          persist. Prints per-topic emitted counts on
+                          persist. A held window or dropped trade exits
+                          non-zero and writes last_exit_ok=0 to the
+                          -heartbeat textfile (stellarindex_ops_job_run_failed).
+                          Prints per-topic emitted counts on
                           completion for an operator eyeball-check
                           against the census tables — the ADR-0033
                           compute-completeness verdict remains

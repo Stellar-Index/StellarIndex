@@ -2,12 +2,16 @@ package ingest
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -798,5 +802,99 @@ func TestNewDataGapGateContext_HasDeadline(t *testing.T) {
 	remaining := time.Until(deadline)
 	if remaining <= 0 || remaining > dataGapGateTimeout {
 		t.Fatalf("gate context deadline out of expected bound: remaining=%s want (0, %s]", remaining, dataGapGateTimeout)
+	}
+}
+
+// withdrawBackfillSafe models an audit attestation withdrawn after a
+// backfill cursor was written: the source stays registered but is no
+// longer BackfillSafe.
+func withdrawBackfillSafe(t *testing.T, source string) {
+	t.Helper()
+	orig, ok := external.Registry[source]
+	if !ok || !orig.BackfillSafe {
+		t.Fatalf("fixture: %q must be a registered BackfillSafe source", source)
+	}
+	m := orig
+	m.BackfillSafe = false
+	external.Registry[source] = m
+	t.Cleanup(func() { external.Registry[source] = orig })
+}
+
+// TestResumeChunkPathEnforcesSourcePolicy pins that the chunk path
+// resume-stalled drives (runBackfillChunk -> buildChunkDispatcher)
+// refuses what `backfill` refuses, rather than relying on backfill's
+// flag parser, which resume-stalled never calls.
+func TestResumeChunkPathEnforcesSourcePolicy(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	t.Run("withdrawn attestation", func(t *testing.T) {
+		withdrawBackfillSafe(t, "sdex")
+		opts := backfillOpts{from: 100, to: 200, sources: []string{"sdex"}}
+		_, _, err := buildChunkDispatcher(context.Background(), logger, opts, config.Config{}, nil, false)
+		if err == nil || !strings.Contains(err.Error(), "not BackfillSafe") {
+			t.Fatalf("want BackfillSafe refusal, got %v", err)
+		}
+	})
+	t.Run("projector-owned source", func(t *testing.T) {
+		opts := backfillOpts{from: 100, to: 200, sources: []string{"aquarius"}}
+		_, _, err := buildChunkDispatcher(context.Background(), logger, opts, config.Config{}, nil, false)
+		if err == nil || !strings.Contains(err.Error(), "written only by the projector") {
+			t.Fatalf("want projector-owned refusal, got %v", err)
+		}
+	})
+	t.Run("safe sources stay admissible", func(t *testing.T) {
+		if err := checkBackfillSourcePolicy([]string{"sdex", "band", SorobanEventsPseudoSource}, config.Config{}, 100, 200); err != nil {
+			t.Fatalf("sdex, band and the raw-event pseudo-source must stay admissible: %v", err)
+		}
+	})
+}
+
+// TestGateSourcePolicySkipsRefusedCursors pins that the plan (and so the
+// dry-run) marks a refused cursor SKIP with the refusal as its reason,
+// instead of listing it as RESUME.
+func TestGateSourcePolicySkipsRefusedCursors(t *testing.T) {
+	withdrawBackfillSafe(t, "sdex")
+	plans := []stalledCursorPlan{
+		{sources: []string{"sdex"}, rangeFrom: 10, rangeTo: 20},
+		{sources: []string{"aquarius"}, rangeFrom: 10, rangeTo: 20},
+		{sources: []string{"band"}, rangeFrom: 10, rangeTo: 20},
+		{sources: []string{"sdex"}, skip: true, skipReason: "earlier reason"},
+	}
+	got := gateSourcePolicy(plans, config.Config{})
+	if !got[0].skip || !strings.Contains(got[0].skipReason, "not BackfillSafe") {
+		t.Errorf("withdrawn attestation: skip=%v reason=%q", got[0].skip, got[0].skipReason)
+	}
+	if !got[1].skip || !strings.Contains(got[1].skipReason, "written only by the projector") {
+		t.Errorf("projector-owned: skip=%v reason=%q", got[1].skip, got[1].skipReason)
+	}
+	if got[2].skip {
+		t.Errorf("band is admissible, got skip reason %q", got[2].skipReason)
+	}
+	if got[3].skipReason != "earlier reason" {
+		t.Errorf("an existing skip reason must be kept, got %q", got[3].skipReason)
+	}
+	if plans[0].skip {
+		t.Error("gateSourcePolicy must not mutate its input")
+	}
+}
+
+// TestRunResumeForCursorContainsChunkPanic pins NS27 on the resume path:
+// a panic in one chunk (here a nil store dereferenced by the resume
+// cursor lookup) becomes that cursor's error instead of killing the
+// process and every cursor still queued behind it.
+func TestRunResumeForCursorContainsChunkPanic(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	opts := backfillOpts{resume: true, sources: []string{"sdex"}}
+	for _, chunks := range [][]chunkRange{
+		{{from: 100, to: 200}},
+		{{from: 100, to: 149}, {from: 150, to: 200}},
+	} {
+		err := runResumeForCursor(context.Background(), logger, opts, config.Config{}, nil, chunks)
+		if err == nil {
+			t.Fatalf("%d chunk(s): want a panic error, got nil", len(chunks))
+		}
+		if n := strings.Count(err.Error(), "panic:"); n != len(chunks) {
+			t.Fatalf("%d chunk(s): want %d contained panics, got %d: %v", len(chunks), len(chunks), n, err)
+		}
 	}
 }

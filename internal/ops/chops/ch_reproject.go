@@ -1,10 +1,12 @@
 package chops
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
@@ -201,7 +203,7 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 	fmt.Printf("range: %d..%d  (CH > served ⇒ lake recovers silently-dropped rows; CH < served ⇒ CH-side gap)\n\n", lo, hi)
 	fmt.Printf("%-34s %12s %12s  %s\n", "source/table", "CH-rederive", "served", "verdict")
 
-	anyDiff := false
+	var diverged []string
 	for _, src := range cat {
 		if src.dec == nil {
 			// sdex: op-based re-derivation (sdexByLedger, above). One target
@@ -209,7 +211,7 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 			// served tier is missing.
 			if src.name == "sdex" {
 				if sdexBlind.Any() {
-					anyDiff = true
+					diverged = append(diverged, "sdex (undecodable)")
 					fmt.Printf("%-34s %s\n", "sdex (undecodable)", sdexBlind.Detail())
 				}
 				for _, tgt := range src.targets {
@@ -224,7 +226,7 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 						fmt.Printf("%-34s %12d %12d  OK\n", label, chTotal, servedTotal)
 						continue
 					}
-					anyDiff = true
+					diverged = append(diverged, label)
 					fmt.Printf("%-34s %12d %12d  %d ledger(s) differ\n", label, chTotal, servedTotal, len(gaps))
 					for i, g := range gaps {
 						if i >= *maxList {
@@ -250,7 +252,7 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 				fmt.Printf("%-34s %12d %12d  OK\n", label, chTotal, servedTotal)
 				continue
 			}
-			anyDiff = true
+			diverged = append(diverged, label)
 			note := ""
 			if src.name == "soroswap" {
 				note = " (soroswap unseeded — undercount expected)"
@@ -266,11 +268,20 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 		}
 	}
 
-	if anyDiff {
-		// Not an error per se — differences are the point of the report (they
-		// quantify what rebuilding from CH changes). Surface for the operator.
+	return chReprojectVerdict(diverged)
+}
+
+// errChReprojectDiverged marks a range whose lake re-derivation disagrees
+// with the served tables.
+var errChReprojectDiverged = errors.New("ch-reproject: CH re-derivation diverges from the served tables")
+
+// chReprojectVerdict maps the compared targets to the exit status. The report
+// is on stdout, but a caller scripting $? must not read a divergence as a
+// match — the contract ch-gate keeps and this command's help promises.
+func chReprojectVerdict(diverged []string) error {
+	if len(diverged) > 0 {
 		fmt.Printf("\nch-reproject: differences found — review above (CH>served = recovered loss; CH<served = CH gap)\n")
-		return nil
+		return fmt.Errorf("%w: %d target(s): %s", errChReprojectDiverged, len(diverged), strings.Join(diverged, ", "))
 	}
 	fmt.Printf("\n✅ ch-reproject: CH re-derivation matches the served tables exactly\n")
 	return nil
