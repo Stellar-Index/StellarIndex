@@ -211,9 +211,9 @@ func (f *windowIsolationFixture) freezeTheLongWindow() {
 	if !f.orch.freezeStates[f.key(f.long)].Active() {
 		f.t.Fatal("setup: the manipulated long-window bucket did not freeze")
 	}
-	if _, cached := f.orch.freezeStates[f.key(f.short)]; cached {
-		f.t.Fatal("setup: the thin short window reached the freeze step — it must be " +
-			"dropped by the MinUSDVolume floor, which is what makes its key cold")
+	if f.orch.freezeStates[f.key(f.short)].Active() {
+		f.t.Fatal("setup: the thin short window holds a ladder — it must be dropped " +
+			"by the MinUSDVolume floor and own no freeze of its own")
 	}
 
 	// Bucket 2, past the (uncorroborated) initial hold with the
@@ -265,6 +265,9 @@ func (f *windowIsolationFixture) assertShortWindowStartsClean(wantValue string) 
 func TestFreezeWindowIsolation_ColdThinWindowDoesNotAdoptASiblingsLadder(t *testing.T) {
 	f := newWindowIsolationFixture(t)
 	f.freezeTheLongWindow()
+	// Unpriced buckets advance a window's lifecycle, so the thin window's
+	// key is warm here; a first-ever evaluation still arrives cold.
+	delete(f.orch.freezeStates, f.key(f.short))
 
 	// The 5m window's book thickens: same (healthy, last-known-good)
 	// price, now with volume above the floor. First time this stateKey

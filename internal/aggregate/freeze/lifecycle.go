@@ -106,6 +106,13 @@ const (
 	// DefaultUnfreezeBuckets — ADR-0019 §"Auto-unfreeze trigger":
 	// "for two consecutive buckets".
 	DefaultUnfreezeBuckets = 2
+
+	// DefaultOverrideMemory is how long a force-unfrozen ladder is
+	// remembered: ADR-0019's escalation budget ("up to 4 extensions (2
+	// hours total)"). A pair that re-fires inside it resumes the ladder
+	// the override ended, so an escalated pair returns escalated instead of
+	// restarting a fresh first hold that will not page again for two hours.
+	DefaultOverrideMemory = 2 * time.Hour
 )
 
 // DefaultMarkerGrace is how long the Redis marker outlives the hold
@@ -150,6 +157,10 @@ type Policy struct {
 	// MarkerGrace is how far past the hold the Redis marker's TTL is
 	// set — see [DefaultMarkerGrace].
 	MarkerGrace time.Duration
+
+	// OverrideMemory is how long a re-fire after an override resumes the
+	// overridden ladder — see [DefaultOverrideMemory].
+	OverrideMemory time.Duration
 }
 
 // WithDefaults returns a copy with every unset (zero-valued) field
@@ -196,6 +207,9 @@ func (p Policy) WithDefaults() Policy {
 	if p.UnfreezeBuckets == 0 {
 		p.UnfreezeBuckets = DefaultUnfreezeBuckets
 	}
+	if p.OverrideMemory <= 0 {
+		p.OverrideMemory = DefaultOverrideMemory
+	}
 	if p.MarkerGrace <= 0 {
 		p.MarkerGrace = DefaultMarkerGrace
 	}
@@ -241,6 +255,18 @@ type State struct {
 	// reading a marker can tell WHY this freeze's first hold was 10
 	// minutes rather than 30.
 	Corroborated bool `json:"corroborated,omitempty"`
+
+	// OverriddenAt is when an out-of-band override last ended this pair's
+	// ladder. On an inactive State it is the remembered ladder
+	// ([DefaultOverrideMemory]); on an active one it marks a freeze that
+	// resumed that ladder rather than starting from the bottom.
+	OverriddenAt time.Time `json:"overridden_at,omitempty"`
+}
+
+// Overridden returns the inactive State an override leaves behind: the
+// ladder it ended, remembered from `now`.
+func (s State) Overridden(now time.Time) State {
+	return State{ExtensionsUsed: s.ExtensionsUsed, Escalated: s.Escalated, OverriddenAt: now}
 }
 
 // Active reports whether the state describes a live freeze.
@@ -374,11 +400,7 @@ func (p Policy) Evaluate(prev State, sig Signal) Outcome {
 		if !sig.Fires {
 			return Outcome{Transition: TransitionNone}
 		}
-		return p.frozen(State{
-			FiredAt:      sig.Now,
-			HoldUntil:    sig.Now.Add(p.initialHold(sig.Corroborated)),
-			Corroborated: sig.Corroborated,
-		}, TransitionFired, sig.Now)
+		return p.fire(prev, sig)
 	}
 
 	st := prev
@@ -450,6 +472,30 @@ func (p Policy) Evaluate(prev State, sig Signal) Outcome {
 		st.HoldUntil = sig.Now.Add(p.Extension)
 		return p.frozen(st, TransitionEscalated, sig.Now)
 	}
+}
+
+// fire opens a freeze on an inactive `prev`. Inside [Policy.OverrideMemory]
+// of an override it resumes the overridden ladder: the override was a
+// human's call on THAT anomaly, and a pair still anomalous after it is not a
+// fresh first hold. An escalated ladder comes back escalated, so the P1
+// pages again rather than going quiet for another two hours.
+func (p Policy) fire(prev State, sig Signal) Outcome {
+	st := State{
+		FiredAt:      sig.Now,
+		HoldUntil:    sig.Now.Add(p.initialHold(sig.Corroborated)),
+		Corroborated: sig.Corroborated,
+	}
+	if prev.OverriddenAt.IsZero() || !sig.Now.Before(prev.OverriddenAt.Add(p.OverrideMemory)) {
+		return p.frozen(st, TransitionFired, sig.Now)
+	}
+	st.ExtensionsUsed = prev.ExtensionsUsed
+	st.OverriddenAt = prev.OverriddenAt
+	if prev.Escalated {
+		st.Escalated = true
+		st.HoldUntil = sig.Now.Add(p.Extension)
+		return p.frozen(st, TransitionEscalated, sig.Now)
+	}
+	return p.frozen(st, TransitionFired, sig.Now)
 }
 
 // initialHold picks between the two initial-hold durations.

@@ -344,5 +344,28 @@ case "$out" in
   *) echo "  FAIL real tree did not report its atomicity file count"; indent "$out"; fail=$((fail + 1)) ;;
 esac
 
+echo "lint-migrations-test: register row shape"
+
+# Fixture registers are the real one with a single row damaged, so the
+# presence checks stay clean and only the shape check can fire.
+reg_with() { # reg_with <name> <number> <cell> -> echoes the fixture path
+  local out="$TMP/$1.md"
+  NUM="$2" CELL="$3" awk '
+    index($0, "| " ENVIRON["NUM"] " | ") == 1 {
+      p = index(substr($0, 10), " | ") + 11
+      print substr($0, 1, p) ENVIRON["CELL"] " |"; next
+    }
+    { print }' migrations/README.md > "$out"
+  echo "$out"
+}
+REGISTER="$(reg_with head-cut 0016 'Persists the pair_contract → (token0, token1) mapping that the')" \
+  catches "a row cut off mid-sentence is caught" deploy/clickhouse \
+  "0016 (does not end in a full stop"
+REGISTER="$(reg_with tail-cut 0060 '(F-1324).')" \
+  catches "a row holding only a sentence's tail is caught" deploy/clickhouse \
+  "0060 (does not start a sentence"
+REGISTER="$(reg_with bold-end 0016 '**Operator warning ends in bold.**')" \
+  clean "a row ending in a bold full stop passes" deploy/clickhouse
+
 echo "lint-migrations-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ]

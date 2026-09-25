@@ -835,6 +835,30 @@
     force: false
   when: (vault_dune_api_key | default('')) | length == 0
 
+# /etc/default/galexie-archive-trim — the ONLY place the delete-capable
+# stellarindex-archive-trimmer identity's secret lands on disk
+# (CA2-A37-harden-6). galexie-archive-trim.service loads this AFTER
+# /etc/default/stellarindex-ops, so it overrides only STELLARINDEX_S3_*
+# (the raw client trim_galexie_archive.go uses for ListObjectsV2 /
+# DeleteObject); AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY stay
+# stellarindex-reader's, so the hot-datastore read/verify path is
+# unaffected. root:root 0600 — nothing but systemd (as PID 1, before
+# User=root is irrelevant here since the unit already runs as root)
+# needs to read it, so it is not group-readable like the shared
+# stellarindex-ops file.
+- name: Render /etc/default/galexie-archive-trim from the vault
+  ansible.builtin.copy:
+    dest: /etc/default/galexie-archive-trim
+    content: |
+      # Rendered by Ansible. Do not edit by hand — regenerate via
+      # `ansible-playbook ... --tags stellarindex`.
+      STELLARINDEX_S3_ACCESS_KEY={{ stellarindex_archive_trimmer_access_key }}
+      STELLARINDEX_S3_SECRET_KEY={{ stellarindex_archive_trimmer_secret_key }}
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
 - name: Install verify-archive-tier-a / supply-snapshot / galexie-archive-trim units
   ansible.builtin.template:
     src: "systemd/{{ item }}.j2"

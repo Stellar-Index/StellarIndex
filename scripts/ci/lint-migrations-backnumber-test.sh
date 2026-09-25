@@ -43,7 +43,7 @@ mkfixture() {
 }
 
 register_row() {
-  printf '| %s | fixture | x |\n' "$1" >>"$TMP/migrations/README.md"
+  printf '| %s | fixture | Fixture migration. |\n' "$1" >>"$TMP/migrations/README.md"
 }
 
 # ─── build the scratch repo: base has 0001 and 0005, a gap at 0002-0004 ───

@@ -193,6 +193,15 @@ type WindowedFreezeMarker interface {
 	ReleaseWindow(ctx context.Context, asset, quote canonical.Asset, window time.Duration) (kept bool, err error)
 }
 
+// FreezeOverrideReader tells an operator's force-unfreeze from a marker
+// that lapsed on its own: both look like a live freeze's marker going
+// missing. `stellarindex-ops freeze-unfreeze` records a tombstone before it
+// clears the marker; this reads it. Optional like [WindowedFreezeMarker];
+// production's freeze.Writer implements it.
+type FreezeOverrideReader interface {
+	OverrideRecorded(ctx context.Context, asset, quote canonical.Asset) (bool, error)
+}
+
 // Config controls the orchestrator's behaviour. Built from config.go
 // at startup; the orchestrator itself doesn't know about TOML.
 type Config struct {
@@ -964,6 +973,11 @@ type Orchestrator struct {
 	// rather than type-asserted per tick.
 	windowedFreeze WindowedFreezeMarker
 
+	// overrideReader is [Config.FreezeWriter] when it can tell an
+	// operator's force-unfreeze from a lapse ([FreezeOverrideReader]),
+	// nil otherwise.
+	overrideReader FreezeOverrideReader
+
 	// clock is the orchestrator's time source, injectable so the
 	// freeze lifecycle's hold/extension/escalation ladder — which is
 	// measured in tens of minutes — is testable without sleeping.
@@ -1029,6 +1043,9 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 	// sibling's — see [WindowedFreezeMarker].
 	if windowed, ok := cfg.FreezeWriter.(WindowedFreezeMarker); ok {
 		o.windowedFreeze = windowed
+	}
+	if reader, ok := cfg.FreezeWriter.(FreezeOverrideReader); ok {
+		o.overrideReader = reader
 	}
 	return o
 }
@@ -1416,7 +1433,7 @@ func (o *Orchestrator) decideBucket(
 		o.emptyWindows++
 		o.mu.Unlock()
 		obs.AggregatorEmptyWindowsTotal.Inc()
-		return nil, nil
+		return o.unpricedBucket(ctx, pair, window, now)
 	}
 
 	// F-1260 (codex audit-2026-05-12): sum USD across the SURVIVOR
@@ -1427,7 +1444,7 @@ func (o *Orchestrator) decideBucket(
 	// sets out, so the input it evaluates must be the survivor set.
 	survivorUSD := survivorUSDVolume(trades, tradeUSD)
 	if o.dropForMinUSDVolume(pair, trades, survivorUSD) {
-		return nil, nil
+		return o.unpricedBucket(ctx, pair, window, now)
 	}
 
 	vwap, err := o.computeNormalizedVWAP(trades, pair)
@@ -1437,7 +1454,7 @@ func (o *Orchestrator) decideBucket(
 			o.emptyWindows++
 			o.mu.Unlock()
 			obs.AggregatorEmptyWindowsTotal.Inc()
-			return nil, nil
+			return o.unpricedBucket(ctx, pair, window, now)
 		}
 		return nil, fmt.Errorf("vwap %s %v: %w", pair.String(), window, err)
 	}
@@ -1801,16 +1818,14 @@ func (o *Orchestrator) markFrozenThisTick(pair canonical.Pair, window time.Durat
 // tick, OR still inside a freeze this process is holding for it.
 //
 // The second arm is not redundant with the first. frozenThisTick is
-// rebuilt every tick and written only from the freeze step, and
-// refreshPairWindow returns BEFORE that step when the window is empty,
-// under [Config.MinUSDVolume], or has no VWAP. A pair that froze a tick
-// ago and whose next bucket is empty — the ordinary aftermath of a thin
-// venue being manipulated — is therefore in nobody's per-tick set, while
-// its hold runs for tens of minutes and its last-known-good value is
-// still in Redis because the freeze deliberately kept it there
-// ([Orchestrator.keepFrozenVWAPAlive]). Reading that value as a leg
-// laundered it into a derived price with no frozen flag (MNY-22, one tick
-// later than the case the per-tick set closes).
+// rebuilt every tick and written only from the freeze step, which a
+// bucket whose fetch or VWAP fails with an error never reaches. A frozen
+// pair in that state is in nobody's per-tick set, while its hold runs on
+// and its last-known-good value is still in Redis because the freeze
+// deliberately kept it there ([Orchestrator.keepFrozenVWAPAlive]).
+// Reading that value as a leg laundered it into a derived price with no
+// frozen flag (MNY-22, one tick later than the case the per-tick set
+// closes).
 //
 // Bounded by the hold plus the marker grace, which is exactly how long the
 // freeze keeps the marker and the LKG alive. An in-memory ladder that is

@@ -405,6 +405,85 @@
   changed_when: false
   failed_when: false   # mc returns non-zero if policy already attached
 
+# ──── stellarindex-archive-trimmer (list+delete, galexie-archive only) ──
+# CA2-A37-harden-6: galexie-archive-trim.service's only prior credential
+# source was stellarindex-reader (read-only — every DeleteObject came
+# back AccessDenied, so a run "deleted 0/N" every time). Root and
+# galexie-archive-writer both have delete authority on this bucket but
+# are deliberately not used here either: galexie-archive-writer's policy
+# comment above documents the invariant that the fill/write identity
+# must not also authorize the destructive trim path, and running trim as
+# root would reintroduce the same "delete path = full admin" problem the
+# galexie-archive-writer codification fixed for writes. This identity is
+# scoped to exactly what trim needs: list the bucket and delete from it,
+# nothing else.
+- name: Render stellarindex-archive-trimmer MinIO policy
+  ansible.builtin.copy:
+    dest: /etc/minio/policies/stellarindex-archive-trimmer.json
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": [
+              "s3:ListBucket",
+              "s3:GetBucketLocation",
+              "s3:DeleteObject"
+            ],
+            "Resource": [
+              "arn:aws:s3:::galexie-archive",
+              "arn:aws:s3:::galexie-archive/*"
+            ]
+          }
+        ]
+      }
+
+- name: Install / update stellarindex-archive-trimmer MinIO policy
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/mc
+      - admin
+      - policy
+      - create
+      - local
+      - stellarindex-archive-trimmer
+      - /etc/minio/policies/stellarindex-archive-trimmer.json
+  changed_when: false
+
+- name: Create stellarindex-archive-trimmer MinIO user (vault-supplied creds)
+  # SECRETKEY omitted from argv on purpose: `mc admin user add ALIAS
+  # ACCESSKEY` reads the secret from stdin, so it never appears in
+  # /proc/<pid>/cmdline (secret-on-argv, scripts/ci/lint-ansible-tasks.sh).
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/mc
+      - admin
+      - user
+      - add
+      - local
+      - "{{ stellarindex_archive_trimmer_access_key }}"
+    stdin: "{{ stellarindex_archive_trimmer_secret_key }}"
+  changed_when: false
+  no_log: true
+
+- name: Attach stellarindex-archive-trimmer policy to stellarindex-archive-trimmer user
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/mc
+      - admin
+      - policy
+      - attach
+      - local
+      - stellarindex-archive-trimmer
+      - --user
+      - "{{ stellarindex_archive_trimmer_access_key }}"
+  changed_when: false
+  failed_when: false   # mc returns non-zero if policy already attached
+
 - name: Template /etc/default/stellarindex-ops (env vars for stellarindex-ops batch jobs)
   # Sourced by interactive `stellarindex-ops` invocations, by
   # run-heavy-job.sh (which imports the CH ops-batch pair below into

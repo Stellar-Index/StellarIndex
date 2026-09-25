@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -17,12 +18,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 type recordingClearer struct {
-	calls []string
-	err   error
+	calls     []string
+	overrides []string
+	err       error
+}
+
+func (c *recordingClearer) RecordOverride(_ context.Context, asset, quote canonical.Asset, actor, reason string) error {
+	c.overrides = append(c.overrides, asset.String()+"/"+quote.String()+" "+actor+": "+reason)
+	return nil
 }
 
 func (c *recordingClearer) Clear(_ context.Context, asset, quote canonical.Asset) error {
@@ -64,7 +72,7 @@ func TestUnfreezePair_ClearsMarkerAndClosesDurableRow(t *testing.T) {
 	clearer := &recordingClearer{}
 	recoverer := &recordingRecoverer{}
 
-	if err := unfreezePair(context.Background(), recoverer, clearer, asset, quote, "oracle recovered", false); err != nil {
+	if err := unfreezePair(context.Background(), &recordingAudit{}, recoverer, clearer, unfreezeRequest{asset: asset, quote: quote, actor: "oncall", reason: "oracle recovered", dryRun: false}); err != nil {
 		t.Fatalf("unfreezePair: %v", err)
 	}
 	want := asset.String() + "/" + quote.String()
@@ -85,7 +93,7 @@ func TestUnfreezePair_MarkerFirstAndNothingElseOnFailure(t *testing.T) {
 	clearer := &recordingClearer{err: errors.New("redis: connection refused")}
 	recoverer := &recordingRecoverer{}
 
-	err := unfreezePair(context.Background(), recoverer, clearer, asset, quote, "why", false)
+	err := unfreezePair(context.Background(), &recordingAudit{}, recoverer, clearer, unfreezeRequest{asset: asset, quote: quote, actor: "oncall", reason: "why", dryRun: false})
 	if err == nil {
 		t.Fatal("a failed Redis clear must fail the run — the pair is still frozen")
 	}
@@ -106,7 +114,7 @@ func TestUnfreezePair_AlreadyClosedRowIsNotAFailure(t *testing.T) {
 	clearer := &recordingClearer{}
 	recoverer := &recordingRecoverer{err: timescale.ErrNotFound}
 
-	if err := unfreezePair(context.Background(), recoverer, clearer, asset, quote, "repeat", false); err != nil {
+	if err := unfreezePair(context.Background(), &recordingAudit{}, recoverer, clearer, unfreezeRequest{asset: asset, quote: quote, actor: "oncall", reason: "repeat", dryRun: false}); err != nil {
 		t.Fatalf("an already-closed freeze_events row must not fail the run: %v", err)
 	}
 	if len(clearer.calls) != 1 {
@@ -120,7 +128,7 @@ func TestUnfreezePair_DryRunTouchesNothing(t *testing.T) {
 	clearer := &recordingClearer{}
 	recoverer := &recordingRecoverer{}
 
-	if err := unfreezePair(context.Background(), recoverer, clearer, asset, quote, "look only", true); err != nil {
+	if err := unfreezePair(context.Background(), &recordingAudit{}, recoverer, clearer, unfreezeRequest{asset: asset, quote: quote, actor: "oncall", reason: "look only", dryRun: true}); err != nil {
 		t.Fatalf("dry run: %v", err)
 	}
 	if len(clearer.calls) != 0 || len(recoverer.calls) != 0 {
@@ -363,8 +371,9 @@ func TestUnfreezePair_OperatorWinsTheRehydrateRace(t *testing.T) {
 	}
 	recoverer := &tickProbingRecoverer{aggregator: aggregator, ladder: ladder}
 
-	if err := unfreezePair(context.Background(), recoverer, opsWriter,
-		asset, quote, "oracle recovered, verified by hand", false); err != nil {
+	if err := unfreezePair(context.Background(), &recordingAudit{}, recoverer, opsWriter, unfreezeRequest{
+		asset: asset, quote: quote, actor: "oncall", reason: "oracle recovered, verified by hand",
+	}); err != nil {
 		t.Fatalf("unfreezePair: %v", err)
 	}
 
@@ -380,6 +389,54 @@ func TestUnfreezePair_OperatorWinsTheRehydrateRace(t *testing.T) {
 	// End state: both authorities agree the freeze is over.
 	if _, present, err := aggregator.LoadState(context.Background(), asset, quote); err != nil || present {
 		t.Errorf("after the unfreeze the pair still reads frozen (present=%v, err=%v)", present, err)
+	}
+	// The aggregator must be able to count this release as an operator one.
+	if recorded, err := aggregator.OverrideRecorded(context.Background(), asset, quote); err != nil || !recorded {
+		t.Errorf("no override tombstone after the unfreeze (recorded=%v, err=%v): the aggregator "+
+			"cannot tell this release from a lapse", recorded, err)
+	}
+}
+
+// TestUnfreezePair_AuditsWhoAndWhyBeforeTheServingPathChanges — the command
+// overrides a safety control on a money surface, and its -reason used to go
+// to stderr only: no actor, no audit_log row. The row must land, name the
+// actor and reason, and come before anything changes; with no row, nothing
+// may change.
+func TestUnfreezePair_AuditsWhoAndWhyBeforeTheServingPathChanges(t *testing.T) {
+	asset, quote := testPair(t)
+	audit := &recordingAudit{}
+	clearer := &recordingClearer{}
+	req := unfreezeRequest{asset: asset, quote: quote, actor: "alice", reason: "oracle recovered"}
+
+	if err := unfreezePair(context.Background(), audit, &recordingRecoverer{}, clearer, req); err != nil {
+		t.Fatalf("unfreezePair: %v", err)
+	}
+	if len(audit.entries) != 1 {
+		t.Fatalf("audit_log rows = %d, want 1", len(audit.entries))
+	}
+	e := audit.entries[0]
+	target := asset.String() + "/" + quote.String()
+	if e.Action != "freeze.unfreeze" || e.ActorKind != platform.ActorStaff || e.TargetKind != "freeze_pair" || e.TargetID != target {
+		t.Errorf("audit row = %s/%s/%s/%s, want freeze.unfreeze/staff/freeze_pair/%s",
+			e.Action, e.ActorKind, e.TargetKind, e.TargetID, target)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(e.Metadata, &meta); err != nil || meta["actor"] != "alice" || meta["reason"] != "oracle recovered" {
+		t.Errorf("audit metadata = %s (err %v), want actor alice and the reason", e.Metadata, err)
+	}
+	if want := target + " alice: oracle recovered"; len(clearer.overrides) != 1 || clearer.overrides[0] != want {
+		t.Errorf("override tombstones = %v, want [%s]", clearer.overrides, want)
+	}
+
+	failing := &recordingAudit{err: errors.New("postgres: connection refused")}
+	clearer, recoverer := &recordingClearer{}, &recordingRecoverer{}
+	err := unfreezePair(context.Background(), failing, recoverer, clearer, req)
+	if err == nil || !strings.Contains(err.Error(), "NOTHING was changed") {
+		t.Fatalf("an unaudited unfreeze must be refused with nothing changed, got: %v", err)
+	}
+	if len(clearer.calls)+len(clearer.overrides)+len(recoverer.calls) != 0 {
+		t.Errorf("state changed without an audit row: clear=%v override=%v recover=%v",
+			clearer.calls, clearer.overrides, recoverer.calls)
 	}
 }
 

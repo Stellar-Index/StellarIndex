@@ -1,6 +1,6 @@
 ---
 title: Runbook — anomaly-freeze-engaged
-last_verified: 2026-08-29
+last_verified: 2026-09-24
 status: ratified
 severity: P3
 ---
@@ -71,18 +71,27 @@ condition, by ADR-0019 design.
 
 On freeze the orchestrator: skips the pair's VWAP cache write (the
 prior bucket's value keeps serving, its TTL refreshed for the freeze
-lifetime), writes a `freeze:<asset>:<quote>` Redis marker
-(`cachekeys.FreezeTTL` = 5 min, refreshed while the condition keeps
-firing), INSERTs an open `freeze_events` row (durable mirror for the
-explorer /anomalies timeline), and increments
-`stellarindex_anomaly_freeze_engaged_total{class}`.
+lifetime), writes a `freeze:<asset>:<quote>` Redis marker carrying the
+ADR-0019 ladder, INSERTs an open `freeze_events` row (durable mirror
+for the explorer /anomalies timeline, which also holds the ladder),
+and increments `stellarindex_anomaly_freeze_engaged_total{class}`.
+The marker's TTL is the remaining hold plus `cachekeys.FreezeTTL`
+(5 min). That 5 min is only how long the freeze survives aggregator
+silence. The freeze's duration is the ladder. Every bucket refreshes
+it, including empty buckets and buckets under `min_usd_volume`.
 
-**Auto-clear:** when the condition stops firing, the marker's 5-min
-TTL elapses, `/v1/price` returns to live serving, and the freeze
-recovery worker (60s poll) stamps `recovered_at` on the durable row.
-There is no operator-facing `unfreeze` CLI today — the ADR's
-30-min-extension state machine is not implemented; the `_sustained`
-1h P1 alert plays the escalation role instead.
+**Lifecycle (ADR-0019):** a freeze holds for its initial hold (30 min
+when a corroborating lens was consulted, 10 min when none was). It
+auto-releases only once that hold is served AND two consecutive
+scored buckets read healthy with a lens agreeing with the new price.
+On release the orchestrator deletes the marker and retires the
+ladder, and the recovery worker (60s poll) stamps `recovered_at`.
+Each hold expiry without release extends by 30 min, up to 4 times.
+An expiry on a bucket that could not be scored slides the hold
+without using an extension. After the fourth extension the freeze
+escalates (P1). An escalated freeze does not auto-release and is held
+until `stellarindex-ops freeze-unfreeze` (see
+[Force-unfreeze](#force-unfreeze-the-operator-override)).
 
 ## Symptoms
 
@@ -183,10 +192,14 @@ Decision tree:
       'freeze:*'` empty while the counter climbs).
 
 - [ ] **Verification:** `rate(stellarindex_anomaly_freeze_engaged_total[5m])`
-      returns to 0; the `freeze:*` marker expires;
-      `flags.frozen` disappears from `/v1/price`; the recovery
-      worker closes the `freeze_events` row within ~6 min
-      (marker TTL + 60s sweep).
+      returns to 0; `stellarindex_anomaly_freeze_released_total`
+      increments with `mode="auto"` (or `operator` after a
+      force-unfreeze); the `freeze:<asset>:<quote>` marker is deleted
+      and `flags.frozen` disappears from `/v1/price`; the recovery
+      worker closes the `freeze_events` row within ~60 s. A
+      `mode="lapsed"` release is NOT a resolution. It means the
+      aggregator stopped refreshing the freeze for its hold plus 5 min.
+      Investigate the aggregator.
 
 ## Root cause analysis
 
@@ -222,8 +235,9 @@ For the postmortem, capture:
   decomposition and leave frozen or reclassify.
 - **Source feed restarting.** A connector restart can briefly drop a
   multi-source pair to single-source; a normal move during that
-  window can fire. Auto-clears within one marker TTL; no minimum-
-  duration guard exists yet (tracked follow-up).
+  window can fire. The freeze still serves its initial hold (10 min
+  with no corroborating lens) before two healthy buckets can release
+  it.
 - **Asset class mis-classification (Phase 1).** A stablecoin
   classified `crypto` gets a 20/50% threshold instead of 1/3% (or
   vice versa — a governance token classed `stablecoin` freezes
@@ -244,22 +258,38 @@ stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml -list
 stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml \
   -asset native -quote fiat:USD -reason "..." -dry-run
 
-# Do it (-reason is REQUIRED for a mutation; -write actually applies it):
+# Do it (-reason is REQUIRED for a mutation; -write actually applies it;
+# -actor defaults to your OS user):
 stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml \
   -asset native -quote fiat:USD \
   -reason "oracle recovered, verified by hand against Reflector + Kraken" \
   -write
 ```
 
-It does both halves in the right order: clears the Redis marker (the
-serving path's authority, so the price republishes immediately) and
-stamps `recovered_at` on the open `freeze_events` row (the durable
-timeline `/v1/anomalies` reads). It is idempotent, and it reports
-which half failed if one does.
+First it appends a `freeze.unfreeze` row to `audit_log` (actor and
+reason in `metadata`). If that fails, nothing changes. Then it writes
+a `freeze:override:<asset>:<quote>` tombstone (5 min TTL) so the
+aggregator counts the release as `mode="operator"` and not as
+`lapsed`. Then it does both halves in order: it clears the Redis
+marker (the serving path's authority, so the price republishes
+immediately) and stamps `recovered_at` on the open `freeze_events` row
+(the durable timeline `/v1/anomalies` reads). It is idempotent, and it
+reports which half failed if one does. `audit_log` is the record of
+who and why. The `freeze_events` row looks the same as an automatic
+release.
 
-`-list`'s MARKER column reads `live` (Redis marker present),
+**If the pair is still anomalous** it re-freezes on its next bucket.
+Within 2 hours of the override the re-freeze resumes the ladder the
+override ended, so an escalated pair returns escalated and pages again
+(`stellarindex_anomaly_freeze_refired_after_override_total`
+increments). An override does not buy a fresh first hold.
+
+`-list`'s STATE column reads `live` (Redis marker present),
 `rehydrated` (marker gone but the durable ladder is still holding —
-Redis lost it, and the aggregator will re-write the marker), or `GONE`.
+Redis lost it, and the aggregator will re-write the marker), `GONE`
+(neither holds it; the row is waiting for the recovery worker), or
+`err` (the tool could not read the marker or the ladder for that pair;
+the reason is on stderr).
 
 ### Do NOT `redis-cli DEL` the marker
 
@@ -311,6 +341,12 @@ escalated ones that had already paged a human.
 
 ## Changelog
 
+- 2026-09-24 — lifecycle section rewritten against the shipped ADR-0019
+  ladder (the 5-min TTL is the silence grace, not the duration).
+  Verification now expects a ~60 s row close and treats
+  `mode="lapsed"` as a fault. Documented the force-unfreeze
+  `audit_log` row, the override tombstone, the resumed ladder on
+  re-fire, and the `-list` STATE column including `err`.
 - 2026-08-29 — phase-2 reason string gains the composite-reference
   suffix (`corroboration_basis=…`, `composite_leg_sources={…}`);
   corroborated buckets no longer freeze (see design doc §10.1).

@@ -15,8 +15,8 @@
 #      deployment already past that number and silently divergent on a
 #      fresh one.
 #   3. register completeness — every NNNN_*.up.sql has a row in
-#      migrations/README.md's register, and no row names a file that does
-#      not exist.
+#      migrations/README.md's register, no row names a file that does
+#      not exist, and every row's description is a whole sentence.
 #   4. ClickHouse money-column — the lake DDL under deploy/clickhouse/
 #      must never hold a monetary column in Float32/Float64 (ADR-0003
 #      applied to the substrate; see the pass for the type rule).
@@ -40,8 +40,12 @@
 # that case: it leaves nine CAGGs empty, and the fact that r1 already ran
 # it in v0.40.0 does nothing for a new node.
 #
-# The register is prose, so this pass checks only PRESENCE, in both
-# directions. It cannot check that a row says anything true.
+# The register is prose, so this pass checks PRESENCE, in both
+# directions, and SHAPE: a description starts with a capital, digit,
+# backtick or `**` and ends with a full stop (optionally inside `**`).
+# ~65 rows were once lifted from one wrapped header line and stopped
+# mid-sentence ("... mapping that the") or kept only a tail ("(F-1324).");
+# presence passed them all. Shape cannot check that a row is true.
 #
 # ── money-column detail ──
 #
@@ -220,7 +224,7 @@ else
 fi
 
 # ── pass 3: register completeness ──────────────────────────────────
-REGISTER="migrations/README.md"
+REGISTER="${REGISTER:-migrations/README.md}"
 if [ ! -f "$REGISTER" ]; then
   echo "lint-migrations: $REGISTER is missing — the register cannot be checked." >&2
   fail=1
@@ -253,6 +257,20 @@ else
   done
   if [ -n "$orphans" ]; then
     echo "lint-migrations: register row(s) naming a migration that does not exist: ${orphans}" >&2
+    fail=1
+  fi
+  malformed="$(awk '
+    /^\| 0[0-9][0-9][0-9] \| / {
+      c = $0
+      sub(/^\| 0[0-9][0-9][0-9] \| [^|]* \| /, "", c); sub(/ \|[[:space:]]*$/, "", c)
+      e = c; sub(/\**$/, "", e)
+      if (e !~ /\.$/) printf "  %s (does not end in a full stop: ...%s)\n", substr($0, 3, 4), substr(c, length(c) - 39)
+      else if (c !~ /^([A-Z0-9`]|\*\*)/) printf "  %s (does not start a sentence: %s...)\n", substr($0, 3, 4), substr(c, 1, 40)
+    }' "$REGISTER")"
+  if [ -n "$malformed" ]; then
+    echo "lint-migrations: register row(s) whose description is not a whole sentence:" >&2
+    echo "$malformed" >&2
+    echo "                 Write the full description from the migration's header." >&2
     fail=1
   fi
 fi

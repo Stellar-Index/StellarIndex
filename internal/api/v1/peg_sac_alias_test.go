@@ -4,7 +4,9 @@
 package v1_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -398,5 +400,121 @@ func TestChart_FiatFallback_XLMCrossRunsLast(t *testing.T) {
 	}
 	if at := callIndex(reader.calls, pegAliasAquaClassic+"/native"); at >= 0 {
 		t.Errorf("XLM leg read at %d although a proxy already answered (calls=%v)", at, reader.calls)
+	}
+}
+
+// legFailingHistoryReader serves pairKeyedHistoryReader's fixture but
+// returns failFor's error for the pairs it names, so one leg of the
+// through-XLM cross can fail while every other read succeeds.
+type legFailingHistoryReader struct {
+	*pairKeyedHistoryReader
+	failFor func(base, quote string) error
+}
+
+func (r *legFailingHistoryReader) HistoryPointsInRange(ctx context.Context, p canonical.Pair, g string, from, to time.Time, limit int) ([]v1.HistoryPoint, error) {
+	if err := r.failFor(p.Base.String(), p.Quote.String()); err != nil {
+		return nil, err
+	}
+	return r.pairKeyedHistoryReader.HistoryPointsInRange(ctx, p, g, from, to, limit)
+}
+
+func isXLMSpelling(id string) bool {
+	return id == "native" || id == "crypto:XLM" || id == canonical.XLMSacContractID
+}
+
+func isUSDCSpelling(id string) bool {
+	return id == pegAliasUSDCClassic || id == pegAliasUSDCSAC
+}
+
+// throughXLMLegChartURL serves the declared-peg cross fixture of
+// TestChart_DeclaredPeg_FiatUSD_CrossesThroughXLM — the asset leg under
+// USDC-SAC/XLM-SAC and, when withPivot, the pivot under crypto:XLM —
+// behind a reader that fails the reads failFor names.
+func throughXLMLegChartURL(t *testing.T, withPivot bool, failFor func(base, quote string) error) string {
+	t.Helper()
+	usdc := installPegAliasRegistry(t)
+	t0 := time.Unix(1_770_000_000, 0).UTC()
+	byPair := map[string][]v1.HistoryPoint{
+		pegAliasUSDCSAC + "/" + canonical.XLMSacContractID: {{Bucket: t0, VWAP: "5"}},
+	}
+	if withPivot {
+		byPair["crypto:XLM/fiat:USD"] = []v1.HistoryPoint{{Bucket: t0, VWAP: "0.2"}}
+	}
+	reader := &legFailingHistoryReader{
+		pairKeyedHistoryReader: &pairKeyedHistoryReader{byPair: byPair},
+		failFor:                failFor,
+	}
+	srv := v1.New(v1.Options{History: reader, USDPeggedClassics: []canonical.Asset{usdc}})
+	ts := httpTestServer(t, srv)
+	return ts.URL + "/v1/chart?asset=USDC:" + pegAliasUSDCIssuer +
+		"&quote=fiat:USD&timeframe=24h&granularity=1h"
+}
+
+// TestChart_DeclaredPeg_ThroughXLM_LegReadFailureIsNotAnEmptySeries pins
+// that a failed alias read on either leg of the derived through-XLM
+// series is answered as the failure it is — 503 on a deadline, 500 on a
+// store error — as the same failure on the requested pair's own read is,
+// never as a cacheable, unflagged `200 points: []`.
+//
+// RED without the fix: 200 with 0 points and flags.stale=false.
+func TestChart_DeclaredPeg_ThroughXLM_LegReadFailureIsNotAnEmptySeries(t *testing.T) {
+	cases := []struct {
+		name    string
+		failFor func(base, quote string) error
+		want    int
+	}{
+		{
+			name: "asset leg deadline",
+			failFor: func(base, quote string) error {
+				if isUSDCSpelling(base) && isXLMSpelling(quote) {
+					return context.DeadlineExceeded
+				}
+				return nil
+			},
+			want: http.StatusServiceUnavailable,
+		},
+		{
+			name: "pivot leg store error",
+			failFor: func(base, quote string) error {
+				if isXLMSpelling(base) && quote == "fiat:USD" {
+					return errors.New("pq: connection reset")
+				}
+				return nil
+			},
+			want: http.StatusInternalServerError,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := mustGet(t, throughXLMLegChartURL(t, true, tc.failFor))
+			if resp.StatusCode != tc.want {
+				var env chartEnvelope
+				_ = json.NewDecoder(resp.Body).Decode(&env)
+				t.Fatalf("status=%d, want %d (points=%d stale=%v) — a failed leg read was served as an empty series",
+					resp.StatusCode, tc.want, len(env.Data.Points), env.Flags.Stale)
+			}
+		})
+	}
+}
+
+// TestChart_DeclaredPeg_ThroughXLM_DegradedEmptyLegFlagsStale pins that
+// a pivot leg left empty by failed PROXY reads (a degraded walk, not an
+// answer-class error) marks the empty reply flags.stale=true: the empty
+// series may be the failure's doing, not the market's.
+//
+// RED without the fix: flags.stale=false.
+func TestChart_DeclaredPeg_ThroughXLM_DegradedEmptyLegFlagsStale(t *testing.T) {
+	url := throughXLMLegChartURL(t, false, func(base, quote string) error {
+		if isXLMSpelling(base) && isUSDCSpelling(quote) {
+			return errors.New("pq: connection reset")
+		}
+		return nil
+	})
+	env := getChart(t, url)
+	if len(env.Data.Points) != 0 {
+		t.Fatalf("got %d points, want 0", len(env.Data.Points))
+	}
+	if !env.Flags.Stale {
+		t.Error("flags.stale = false; a cross left empty by a failed leg read must be flagged degraded")
 	}
 }

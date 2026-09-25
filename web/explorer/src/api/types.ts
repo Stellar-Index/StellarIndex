@@ -1526,7 +1526,9 @@ export interface paths {
          *     USD values (`supplied_usd` / `borrowed_usd`, and the pool
          *     `tvl_usd` = Σ supplied_usd) are BEST-EFFORT: present when we hold
          *     a USD price for the reserve's underlying token, null otherwise —
-         *     the token-unit amounts + utilization + APR are always exact.
+         *     the token-unit amounts + utilization + APR are always exact. A
+         *     `tvl_usd` that leaves out an unpriced reserve carries
+         *     `lower_bound: true`.
          *     Coverage = the live contract-storage capture window; a reserve
          *     with no captured entry is absent.
          *
@@ -14481,6 +14483,7 @@ export interface operations {
                      *       "data": {
                      *         "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
                      *         "tvl_usd": "189548299.92",
+                     *         "lower_bound": false,
                      *         "reserves": [
                      *           {
                      *             "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
@@ -14520,8 +14523,10 @@ export interface operations {
                     "application/json": {
                         data?: {
                             pool?: string;
-                            /** @description Σ supplied_usd across priced reserves; null when none priced. */
+                            /** @description Σ supplied_usd across priced reserves; null when none priced. A lower bound when `lower_bound` is true. */
                             tvl_usd?: string | null;
+                            /** @description True when `tvl_usd` is rendered but leaves out at least one reserve with no USD value — the `reserves[]` entries whose `supplied_usd` is null — so the pool holds at least `tvl_usd`. False when every reserve is priced or when `tvl_usd` is null. */
+                            lower_bound?: boolean;
                             reserves?: {
                                 /** @description Reserve underlying token (C-strkey). */
                                 asset?: string;

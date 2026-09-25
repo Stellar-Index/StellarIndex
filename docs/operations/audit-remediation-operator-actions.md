@@ -149,10 +149,17 @@ missing the classic trustline component entirely). Code fix landed
   implement as written**; the ADR's premise no longer holds (galexie-archive is filled
   from aws-public-blockchain, not from galexie-live, so recent raw LCM is off-box the
   moment it is published, and the newest ledgers are the ones the public history
-  archives are most certain to serve). Derivation, cost/benefit and the proposed ADR
-  amendment text: [off-site-backup-plan.md](off-site-backup-plan.md)
-  §"ADR-0043 §2.3 tail insurance". **Your half: land the ADR-0043 §2.3 amendment**
-  (ADR-owner edit, not made by the remediation).
+  archives are most certain to serve). Derivation, cost/benefit and the ADR amendment
+  text: [off-site-backup-plan.md](off-site-backup-plan.md) §"ADR-0043 §2.3 tail
+  insurance amendment". Landed 2026-09-24 in `docs/adr/0043-backup-and-restore-strategy.md`
+  §2.3 — no further operator action.
+- [x] **Postgres repo2 retention vs. ADR-0043 §1** — the shipped lean retention
+  (1 full + 7-day diffs, #298) never matched the ADR's "repo2 keeps 4 fulls" text, and
+  the role comment cited the unrelated §2 amendment as its authority. Landed 2026-09-24:
+  ADR-0043 §1 amendment records the actual retention and recovery horizon;
+  `configs/ansible/roles/archival-node/defaults/main.yml` comment corrected to cite it.
+  No config change — the lean retention (#298) was a deliberate cost call, this closes
+  the doc/deployment gap only.
 - [ ] **Full-CH-backup decision** — still waits on the drill's measured re-derive
   throughput, deliberately. The drill's CH stage is now runnable (it never was — see
   the drill log entry for 2026-07-25).

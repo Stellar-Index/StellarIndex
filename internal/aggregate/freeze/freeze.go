@@ -1279,6 +1279,44 @@ func (w *Writer) Clear(ctx context.Context, asset, quote canonical.Asset) error 
 	return nil
 }
 
+// overrideRecord is the body of the [cachekeys.FreezeOverride] tombstone.
+type overrideRecord struct {
+	Actor  string    `json:"actor"`
+	Reason string    `json:"reason"`
+	At     time.Time `json:"at"`
+}
+
+// RecordOverride writes the operator-override tombstone for (asset, quote).
+// `stellarindex-ops freeze-unfreeze` calls it before [Writer.Clear]: the
+// orchestrator sees only a missing marker, and without the tombstone it
+// cannot tell a human's force-unfreeze from a marker and ladder that
+// expired with nobody refreshing them.
+func (w *Writer) RecordOverride(ctx context.Context, asset, quote canonical.Asset, actor, reason string) error {
+	key := cachekeys.FreezeOverride(asset, quote)
+	body, err := json.Marshal(overrideRecord{Actor: actor, Reason: reason, At: w.now().UTC()})
+	if err != nil {
+		return fmt.Errorf("freeze: marshal override: %w", err)
+	}
+	if err := w.cache.Set(ctx, key.String(), body, cachekeys.FreezeTTL).Err(); err != nil {
+		return fmt.Errorf("freeze: cache set %s: %w", key, err)
+	}
+	return nil
+}
+
+// OverrideRecorded reports whether [Writer.RecordOverride]'s tombstone is
+// live for (asset, quote).
+func (w *Writer) OverrideRecorded(ctx context.Context, asset, quote canonical.Asset) (bool, error) {
+	key := cachekeys.FreezeOverride(asset, quote)
+	err := w.cache.Get(ctx, key.String()).Err()
+	switch {
+	case errors.Is(err, redis.Nil):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("freeze: cache get %s: %w", key, err)
+	}
+	return true, nil
+}
+
 // Looker reads the freeze marker for a pair. Implements the
 // behaviour of internal/api/v1.FrozenLooker (the API package
 // declares its own interface to avoid the import cycle; Looker

@@ -1697,7 +1697,7 @@ Subcommands:
                             stellarindex-ops usage-rollup-backfill \
                               -config /etc/stellarindex.toml \
                               -from 2026-07-19 -to 2026-07-21 -write
-  freeze-unfreeze -config PATH [-list] [-asset A -quote Q -reason "..."] [-dry-run]
+  freeze-unfreeze -config PATH [-list] [-asset A -quote Q -reason "..." [-actor NAME]] [-dry-run]
                           Manually lift an ADR-0019 price freeze. An
                           ESCALATED freeze (the 4x30m extension
                           ladder ran out) never auto-unfreezes by
@@ -1710,7 +1710,10 @@ Subcommands:
                           freeze_events row, so the explorer
                           /anomalies timeline agrees. -reason is
                           required for the mutation, mirroring the
-                          admin API's X-Reason discipline. -list
+                          admin API's X-Reason discipline; it lands
+                          in a "freeze.unfreeze" audit_log row with
+                          -actor (default: the OS user) before
+                          anything changes. -list
                           shows every open freeze with its ladder
                           state and whether its marker is still live.
                           Example:

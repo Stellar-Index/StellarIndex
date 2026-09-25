@@ -110,9 +110,13 @@ func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
 // GET /v1/lending/pools/{pool}/reserves — real per-reserve current
 // state (ADR-0039), read from the lake's Soroban contract storage.
 type LendingPoolReservesView struct {
-	Pool     string        `json:"pool"`
-	TVLUSD   *string       `json:"tvl_usd"` // sum of priced reserves; null when none priced
-	Reserves []ReserveView `json:"reserves"`
+	Pool   string  `json:"pool"`
+	TVLUSD *string `json:"tvl_usd"` // sum of priced reserves; null when none priced
+	// LowerBound is true when TVLUSD is rendered but leaves out at least
+	// one reserve with no USD value — the reserves[] entries whose
+	// supplied_usd is null — so the pool holds at least TVLUSD.
+	LowerBound bool          `json:"lower_bound"`
+	Reserves   []ReserveView `json:"reserves"`
 	// AsOfLedger is the lake watermark this current-state read is fresh
 	// to (ADR-0041 Decision 4): the highest ledger the ClickHouse lake
 	// had captured at serve time. The reserve state is decoded from the
@@ -230,20 +234,8 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 		views[i], suppliedUSD[i] = s.buildReserveView(ctx, states[i]) // distinct indices — no mutex needed
 	})
 
-	out := LendingPoolReservesView{Pool: pool, Reserves: make([]ReserveView, 0, len(states))}
-	tvl := new(big.Rat)
-	anyPriced := false
-	for i, rv := range views {
-		if suppliedUSD[i] != nil {
-			tvl.Add(tvl, suppliedUSD[i])
-			anyPriced = true
-		}
-		out.Reserves = append(out.Reserves, rv)
-	}
-	if anyPriced {
-		tvlStr := tvl.FloatString(2)
-		out.TVLUSD = &tvlStr
-	}
+	out := LendingPoolReservesView{Pool: pool, Reserves: views}
+	out.TVLUSD, out.LowerBound = reservesTVLUSD(suppliedUSD)
 	// ADR-0041 Decision 4: stamp the lake watermark this current-state
 	// read is fresh to, and flip `flags.stale` when the sink is wedged —
 	// same disclosure the sibling /v1/pools/reserves + account-state
@@ -251,6 +243,26 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 	wmLedger, stale, _ := s.lakeWatermark(ctx)
 	out.AsOfLedger = wmLedger
 	writeJSON(w, out, Flags{Stale: stale})
+}
+
+// reservesTVLUSD sums the priced reserves' supplied USD in reserve order.
+// The total is nil when no reserve is priced, and lowerBound is true when
+// it is rendered but excludes a reserve that has no USD value (AGENTS.md
+// money invariant: a partial total is a lower bound, never a total).
+func reservesTVLUSD(suppliedUSD []*big.Rat) (total *string, lowerBound bool) {
+	tvl := new(big.Rat)
+	priced := 0
+	for _, v := range suppliedUSD {
+		if v != nil {
+			tvl.Add(tvl, v)
+			priced++
+		}
+	}
+	if priced == 0 {
+		return nil, false
+	}
+	s := tvl.FloatString(2)
+	return &s, priced < len(suppliedUSD)
 }
 
 // writeLendingReservesTimeout is the 503 the reserves handler owes a
