@@ -97,15 +97,44 @@ func TestBackfill_RejectsMissingFlags(t *testing.T) {
 // the regression coverage for "an unaudited source must be refused"
 // lives. This test is the positive-side counterpart.
 func TestBackfill_AllSorobanSourcesPass(t *testing.T) {
-	// Use the DEX subset — oracle sources need oracle.* contract
-	// IDs in config which writeMinimalConfig doesn't populate.
-	// (Oracle sources also flipped 2026-04-29; the gate logic is
-	// the same.)
-	cfg := writeMinimalConfig(t, []string{"soroswap", "phoenix", "aquarius", "comet", "sdex"})
+	// Only the audited on-chain sources the projector does NOT own reach
+	// the BackfillSafe gate; projected ones are refused first (see
+	// TestBackfill_RefusesProjectedSources).
+	cfg := writeMinimalConfig(t, []string{"soroswap-router", "sdex"})
 	args := []string{"-config", cfg, "-from", "21000000", "-to", "21001000", "-dry-run"}
 	_, _, err := parseBackfillFlags(args)
 	if err != nil {
-		t.Fatalf("expected acceptance — every Soroban DEX source has been audited; got: %v", err)
+		t.Fatalf("expected acceptance — soroswap-router and sdex are audited and not projected; got: %v", err)
+	}
+}
+
+// TestBackfill_RefusesProjectedSources pins invariant [7]: backfill
+// persists with SinkModeAll and an empty identity gate, so every source
+// the projector owns must be refused (blend would otherwise write zero
+// rows and exit 0; the rest would be a second writer), while the
+// dispatcher-written sources stay accepted.
+func TestBackfill_RefusesProjectedSources(t *testing.T) {
+	cfg := writeMinimalConfig(t, []string{"sdex"})
+	for _, name := range []string{
+		"blend", "soroswap", "aquarius", "phoenix", "comet", "defindex",
+		"blend_emitter", "cctp", "rozo", "sorocredit", "reflector-dex", "redstone",
+	} {
+		t.Run(name, func(t *testing.T) {
+			args := []string{"-config", cfg, "-from", "60000000", "-to", "60100000", "-source", name, "-dry-run"}
+			_, _, err := parseBackfillFlags(args)
+			if err == nil {
+				t.Fatalf("backfill -source %s accepted; want refusal (projector-owned)", name)
+			}
+			if !strings.Contains(err.Error(), "projector-replay") {
+				t.Fatalf("refusal for %s should point at projector-replay; got %v", name, err)
+			}
+		})
+	}
+	for _, name := range []string{"sdex", "soroswap-router", "binance", SorobanEventsPseudoSource} {
+		args := []string{"-config", cfg, "-from", "60000000", "-to", "60100000", "-source", name, "-dry-run"}
+		if _, _, err := parseBackfillFlags(args); err != nil {
+			t.Errorf("backfill -source %s refused; want acceptance (not projector-owned): %v", name, err)
+		}
 	}
 }
 

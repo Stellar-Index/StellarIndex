@@ -330,10 +330,11 @@ func flushTradeBatch(ctx context.Context, logger *slog.Logger, w tradeWriter, ex
 // persistWorker carries those rows into its shutdown drain instead,
 // and an ERROR here would send an operator re-deriving a range that
 // lands a moment later.
-func reportAbandonedTrades(logger *slog.Logger, phase string, abandoned []canonical.Trade, err error) {
+func reportAbandonedTrades(logger *slog.Logger, lt *lossTracker, phase string, abandoned []canonical.Trade, err error) {
 	if len(abandoned) == 0 {
 		return
 	}
+	lt.trades(abandoned)
 	lo, hi := ledgerRange(abandoned)
 	// Counted by ROW, not by batch: the alert's value is the size of the
 	// served-tier gap the cursor has already advanced past.

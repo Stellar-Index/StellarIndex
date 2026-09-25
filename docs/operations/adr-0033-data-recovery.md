@@ -151,14 +151,14 @@ COMMIT;
 > aquarius,comet,soroswap,phoenix`. That combination deletes your rows
 > and then writes nothing back.**
 >
-> All four of those are ADR-0035 **gated** sources. `backfill.go` builds
-> gated decoders with an EMPTY identity registry — its own comment says
-> so: *"gated=nil: backfill runs every gated decoder with an EMPTY
-> identity registry."* With no admitted contracts, every event fails the
-> `Matches()` identity check, nothing decodes, and the command **exits
-> 0** having written zero trades. Following the old sequence leaves the
-> served range permanently empty with a success exit code and no error
-> to notice.
+> All four of those are ADR-0035 **gated** sources, and `backfill`
+> builds gated decoders with an EMPTY identity registry. With no
+> admitted contracts, every event failed the `Matches()` identity check,
+> nothing decoded, and the command **exited 0** having written zero
+> trades. `backfill` now refuses every projector-owned source at flag
+> parse and names `projector-replay`; if you are on an older binary,
+> the old sequence still leaves the served range empty with a success
+> exit code.
 >
 > These are projected sources (ADR-0031/0032), so the correct catch-up
 > is a projector replay, which reads the ClickHouse lake through the

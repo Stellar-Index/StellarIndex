@@ -21,6 +21,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ledgerstream"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
+	"github.com/Stellar-Index/StellarIndex/internal/projector"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
@@ -330,35 +331,10 @@ func buildChunkDispatcher(
 			return nil, nil, fmt.Errorf("soroswap registry: %w", err)
 		}
 	}
-	// gated=nil: backfill runs every gated decoder with an EMPTY identity
-	// registry.
-	//
-	// The previous rationale here — that projected sources' output "is
-	// dropped by pipeline.IsProjectedEvent, so an empty gate only
-	// suppresses output that would be discarded anyway" — was FALSE, and
-	// the correction matters: this function persists with
-	// pipeline.SinkModeAll (see PersistEvents below), and skipInSink
-	// returns false for SinkModeAll, so NOTHING is discarded. Gated
-	// output would have been written.
-	//
-	// The live consequence is a silent no-op rather than corruption.
-	// Blend is the only gated source with no in-code curated seed (its
-	// decoder installs WithFactories alone), so above its factory
-	// deploys Matches() rejects every pool event and a blend backfill
-	// writes ZERO blend_* rows and still exits 0. Sources carrying an
-	// in-code MainnetGatedSet (aquarius / phoenix / comet / defindex /
-	// blend_emitter) keep that set, but lose every child that exists
-	// only in protocol_contracts — live-registered aquarius pools,
-	// self-registered defindex strategies, any operator-admitted comet
-	// pool (cold audit 2026-08-03).
-	//
-	// Warming the gate here is deliberately NOT done as a drive-by: it
-	// would make this command write directly into the projector's
-	// exclusive tables (ADR-0031/0032, AGENTS.md invariant 7). The
-	// ADR-consistent catch-up for projected sources is
-	// `stellarindex-ops projector-replay` / `projected-rebuild`, which
-	// warms the gate correctly. Refusing projected sources outright here
-	// is the other candidate; both are maintainer decisions.
+	// gated=nil is safe only because checkBackfillNotProjected refused
+	// every projector-owned source at flag parse: an empty identity gate
+	// here would otherwise make blend write zero rows and exit 0, and
+	// SinkModeAll would make the rest a second writer (invariant [7]).
 	disp, err := pipeline.BuildDispatcher(realSources, cfg.Oracle, nil, soroswapOpts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build dispatcher: %w", err)
@@ -428,13 +404,14 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 
 	events := make(chan consumer.Event, 256)
 	sinkDone := make(chan struct{})
+	var persistLoss pipeline.ShutdownLoss // read only after <-sinkDone
 	go func() {
 		defer close(sinkDone)
 		// Backfill always uses SinkModeAll — the projector only runs
 		// in the indexer, not in `stellarindex-ops backfill`, so this
 		// subcommand keeps writing every event class itself. See
 		// ADR-0032 § "Out of scope for projector".
-		pipeline.PersistEvents(ctx, logger, store, events, pipeline.SinkModeAll)
+		persistLoss = pipeline.PersistEvents(ctx, logger, store, events, pipeline.SinkModeAll)
 	}()
 
 	// Ctx-cancel safety net for the raw-event sink (ADR-0029).
@@ -504,42 +481,19 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	close(events)
 	<-sinkDone
 
-	// Drain the soroban-events sink (if wired). PushEvent applies
-	// back-pressure on a full buffer so the producer above (the
-	// ledgerstream callback) slows down to match storage throughput;
-	// produced rows are durably enqueued before the cursor advances.
-	// Stop() signals the worker to drain the residual buffer and
-	// flush the final batch, with the AsyncSink's per-batch timeout
-	// capping the wait. DroppedCount only ticks up if a producer
-	// raced past the stopping signal — investigate as a bug if
-	// non-zero outside a forced shutdown.
-	if rawSink != nil {
-		rawSink.Stop()
-		logger.Info("soroban-events sink drained",
-			"written", rawSink.WrittenCount(),
-			"dropped", rawSink.DroppedCount(),
-			"skipped", rawSink.SkippedCount(),
-			"lost", rawSink.LostCount(),
-		)
-		if dropped := rawSink.DroppedCount(); dropped > 0 {
-			logger.Warn("soroban-events: rows dropped at shutdown race",
-				"dropped", dropped,
-				"impact", "the dropped rows are NOT in soroban_events — investigate; only expected on hard kill")
-		}
-		if lost := rawSink.LostCount(); lost > 0 {
-			logger.Error("soroban-events: rows permanently lost — re-derive the logged ledger ranges from the CH lake (ADR-0034)",
-				"lost", lost,
-				"impact", "a permanent data fault or an expired drain abandoned rows; the cursor still advances, so re-walk the range")
-		}
-	}
+	rawMin, rawUnlanded := drainRawSink(logger, rawSink)
+	// A dropped or abandoned row means lastFullyEnqueued overstates what
+	// is durable; every checkpoint below uses the capped value.
+	lastFullyEnqueued, lossErr := capCheckpointAtLoss(lastFullyEnqueued, startFrom, persistLoss, rawMin, rawUnlanded)
 
 	// C2-14 (durability): the resume cursor advances ONLY after this
 	// point, and (DAT-09 / REL-08) ONLY after a successful — or
 	// explicitly-skipped — CAGG refresh below. The sink goroutine has
 	// fully drained (<-sinkDone: every enqueued event either committed
 	// or block-and-retried per ADR-0041) and the soroban rawSink has
-	// flushed its final batch (Stop above), so every row for ledgers
-	// [startFrom, lastFullyEnqueued] is durably persisted — but a chunk
+	// flushed its final batch (Stop above), and lastFullyEnqueued is
+	// capped below anything either dropped or abandoned, so every row
+	// for ledgers [startFrom, lastFullyEnqueued] is durable — but a chunk
 	// is not "complete" for resume purposes until its CAGGs are
 	// materialised too: the resume gate below (`c.LastLedger >=
 	// chunk.to` → short-circuit, skip re-walk AND re-refresh) would
@@ -548,8 +502,10 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	// the old early cursor-advance and materialisation left them
 	// un-refreshed forever (the May 2026 ~80M-trade loss this refresh
 	// exists to prevent, reintroduced one layer up).
-	if streamErr != nil && !errors.Is(streamErr, context.Canceled) {
-		// The stream itself aborted. Still checkpoint whatever fully
+	streamFailed := streamErr != nil && !errors.Is(streamErr, context.Canceled)
+	if streamFailed || (lossErr != nil && ctx.Err() == nil) {
+		// The stream itself aborted, or a sink left rows unlanded (the
+		// cursor is already capped below them). Still checkpoint whatever fully
 		// drained before the abort — those rows are durably committed
 		// above — so a resume continues from the failure point instead
 		// of restarting the whole chunk. This does NOT wait for a CAGG
@@ -557,7 +513,10 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		// the run visibly), and a subsequent successful resume performs
 		// its own CAGG refresh before ITS checkpoint.
 		checkpointBackfillChunk(logger, store, cursorSub, lastFullyEnqueued, startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment (F-1318)
-		return fmt.Errorf("stream: %w", streamErr)
+		if !streamFailed {
+			return lossErr
+		}
+		return errors.Join(fmt.Errorf("stream: %w", streamErr), lossErr)
 	}
 	if ierr := backfillChunkInterrupted(ctx.Err(), chunk, lastFullyEnqueued); ierr != nil {
 		// Graceful shutdown (SIGINT/SIGTERM): checkpoint what fully
@@ -565,6 +524,9 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		// below would fail spuriously. The chunk is NOT complete, so it
 		// fails the run; see backfillChunkInterrupted.
 		checkpointBackfillChunk(logger, store, cursorSub, interruptedCheckpoint(chunk, lastFullyEnqueued), startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment (F-1318)
+		if lossErr != nil {
+			ierr = errors.Join(ierr, lossErr)
+		}
 		return ierr
 	}
 
@@ -697,6 +659,63 @@ func backfillChunkCoverage(chunk chunkRange, startFrom uint32, walked uint64, bu
 		)
 	}
 	return nil
+}
+
+// drainRawSink stops the soroban-events sink (nil when not wired),
+// letting it flush its residual buffer under its own drain grace, and
+// reports the lowest ledger it dropped or abandoned. A drop is not only
+// a hard-kill artefact: a graceful SIGINT while the sink applies
+// back-pressure drops the rest of the in-flight ledger's rows.
+func drainRawSink(logger *slog.Logger, rawSink *sorobanevents.AsyncSink) (uint32, bool) {
+	if rawSink == nil {
+		return 0, false
+	}
+	rawSink.Stop()
+	logger.Info("soroban-events sink drained",
+		"written", rawSink.WrittenCount(),
+		"dropped", rawSink.DroppedCount(),
+		"skipped", rawSink.SkippedCount(),
+		"lost", rawSink.LostCount(),
+	)
+	if dropped := rawSink.DroppedCount(); dropped > 0 {
+		logger.Warn("soroban-events: rows dropped at shutdown",
+			"dropped", dropped,
+			"impact", "the dropped rows are NOT in soroban_events; the resume cursor is held below them so a resume re-walks their ledger")
+	}
+	if lost := rawSink.LostCount(); lost > 0 {
+		logger.Error("soroban-events: rows permanently lost — re-derive the logged ledger ranges from the CH lake (ADR-0034)",
+			"lost", lost,
+			"impact", "rows abandoned at shutdown hold the resume cursor below them; permanent data faults do not")
+	}
+	return rawSink.LowestUnlandedLedger()
+}
+
+// capCheckpointAtLoss lowers the resume checkpoint below the first row a
+// sink failed to land, and returns an error naming the loss so the chunk
+// fails. An abandoned row with no ledger (a non-trade served-tier event)
+// gives no safe cap, so the checkpoint falls below startFrom: nothing new
+// is recorded and a resume re-walks the chunk's remainder (idempotent).
+func capCheckpointAtLoss(lastFullyEnqueued, startFrom uint32, loss pipeline.ShutdownLoss, rawMin uint32, rawUnlanded bool) (uint32, error) {
+	if loss.Rows == 0 && !rawUnlanded {
+		return lastFullyEnqueued, nil
+	}
+	capAt := lastFullyEnqueued
+	lower := func(l uint32) {
+		if l > 0 && l-1 < capAt {
+			capAt = l - 1
+		}
+	}
+	if loss.LedgerUnknown {
+		lower(startFrom)
+	}
+	lower(loss.MinLedger)
+	if rawUnlanded {
+		lower(rawMin)
+	}
+	return capAt, fmt.Errorf(
+		"sinks did not land every enqueued row (served-tier rows abandoned: %d, lowest ledger %d, ledger-less: %t; "+
+			"soroban-events lowest unlanded ledger: %d); resume checkpoint held at %d",
+		loss.Rows, loss.MinLedger, loss.LedgerUnknown, rawMin, capAt)
 }
 
 // backfillChunkInterrupted fails a chunk whose walk was stopped by
@@ -992,6 +1011,9 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 		return opts, cfg, errors.New("no sources to backfill — set -source or cfg.Ingestion.EnabledSources")
 	}
 
+	if err := checkBackfillNotProjected(sources, cfg); err != nil {
+		return opts, cfg, err
+	}
 	if err := checkBackfillSources(sources, uint32(*from), uint32(*to)); err != nil {
 		return opts, cfg, err
 	}
@@ -1111,6 +1133,30 @@ func checkBackfillSources(sources []string, fromLedger, toLedger uint32) error {
 			"internal/sources/external/registry.go in the same PR (see docs/architecture/domain-traps.md, \"Soroban DeFi contracts "+
 			"upgrade in place\")",
 		sorobanPending, fromLedger, toLedger)
+}
+
+// checkBackfillNotProjected refuses any source the projector writes.
+// backfill persists with SinkModeAll and builds gated decoders with an
+// empty registry, so a projected source here is either a second writer
+// to the projector's tables (invariant [7]) or, for blend, a run that
+// writes nothing and exits 0.
+func checkBackfillNotProjected(sources []string, cfg config.Config) error {
+	var projected, rest []string
+	for _, s := range sources {
+		if projector.IsProjectedSource(s, cfg.Oracle, cfg.Supply.WatchedSEP41Contracts) {
+			projected = append(projected, s)
+		} else {
+			rest = append(rest, s)
+		}
+	}
+	if len(projected) == 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"refusing to backfill — these sources are written only by the projector (AGENTS.md invariant [7]): %v; "+
+			"re-derive them with `stellarindex-ops projector-replay -config PATH -source <name> -from <ledger>` "+
+			"(docs/operations/adr-0033-data-recovery.md). Pass -source with the remaining sources to backfill them: %v",
+		projected, rest)
 }
 
 // unsafeBackfillSources filters `sources` to those whose registry
