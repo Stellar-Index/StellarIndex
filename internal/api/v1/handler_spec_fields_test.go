@@ -40,6 +40,9 @@ import (
 // AssetDetail) — that covered the field display_decimals shipped invisible
 // on, but left every other response struct with the same blind spot. Add a
 // pair here whenever a new top-level response struct is introduced.
+//
+// schema is a components.schemas name, or "METHOD /path" for a route whose
+// response schema is written inline (see specSchemaNode).
 var handlerSpecFieldPairs = []struct {
 	schema string
 	typ    reflect.Type
@@ -64,6 +67,7 @@ var handlerSpecFieldPairs = []struct {
 	{"BespokeBreakdownRow", reflect.TypeOf(BespokeBreakdownRow{})},
 	{"BespokeTable", reflect.TypeOf(BespokeTable{})},
 	{"RWAAsset", reflect.TypeOf(RWAAsset{})},
+	{"GET /diagnostics/ingestion", reflect.TypeOf(IngestionDiagnostics{})},
 }
 
 // TestHandlerRequiredFieldsAreAlwaysServed is the other direction: a
@@ -94,8 +98,8 @@ func structJSONTagOptions(t reflect.Type) map[string]string {
 	out := map[string]string{}
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
-		if f.Anonymous && f.Type.Kind() == reflect.Struct {
-			for k, v := range structJSONTagOptions(f.Type) {
+		if embedded := embeddedStruct(f); embedded != nil {
+			for k, v := range structJSONTagOptions(embedded) {
 				out[k] = v
 			}
 			continue
@@ -113,12 +117,31 @@ func structJSONTagOptions(t reflect.Type) map[string]string {
 	return out
 }
 
-// specSchemaRequired returns a named schema's top-level `required` list.
-func specSchemaRequired(t *testing.T, schema string) []string {
+// embeddedStruct returns the struct type encoding/json promotes into the
+// parent for field f — an untagged embedded struct or pointer to one — or
+// nil when f is an ordinary (or tag-named, or `json:"-"`) field.
+func embeddedStruct(f reflect.StructField) reflect.Type {
+	if !f.Anonymous || f.Tag.Get("json") != "" && !strings.HasPrefix(f.Tag.Get("json"), ",") {
+		return nil
+	}
+	t := f.Type
+	if t.Kind() == reflect.Pointer {
+		if !f.IsExported() {
+			return nil // encoding/json ignores an embedded pointer to an unexported type
+		}
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
+	return t
+}
+
+// specSchemaRequired returns the `required` list of a pair's schema, with
+// $ref and allOf resolved (see specSchemaNode).
+func specSchemaRequired(t *testing.T, locator string) []string {
 	t.Helper()
-	schemas, _ := loadSpecDoc(t)["components"].(map[string]any)["schemas"].(map[string]any)
-	s, _ := schemas[schema].(map[string]any)
-	raw, _ := s["required"].([]any)
+	raw, _ := specSchemaNode(t, locator)["required"].([]any)
 	out := make([]string, 0, len(raw))
 	for _, r := range raw {
 		if name, ok := r.(string); ok {
@@ -205,8 +228,8 @@ func structJSONTags(t reflect.Type) map[string]bool {
 	}
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
-		if f.Anonymous {
-			for k := range structJSONTags(f.Type) {
+		if embedded := embeddedStruct(f); embedded != nil {
+			for k := range structJSONTags(embedded) {
 				out[k] = true
 			}
 			continue
@@ -227,16 +250,153 @@ func structJSONTags(t reflect.Type) map[string]bool {
 	return out
 }
 
-// specSchemaProps returns the property names of a named schema under
-// components.schemas.
-func specSchemaProps(t *testing.T, schema string) map[string]bool {
+// specSchemaProps returns the property names of a pair's schema, with
+// $ref and allOf resolved (see specSchemaNode).
+func specSchemaProps(t *testing.T, locator string) map[string]bool {
 	t.Helper()
-	schemas, _ := loadSpecDoc(t)["components"].(map[string]any)["schemas"].(map[string]any)
-	s, _ := schemas[schema].(map[string]any)
-	props, _ := s["properties"].(map[string]any)
+	props, _ := specSchemaNode(t, locator)["properties"].(map[string]any)
 	out := make(map[string]bool, len(props))
 	for k := range props {
 		out[k] = true
 	}
 	return out
+}
+
+// specSchemaNode resolves a pair locator to one flattened schema. A bare
+// name is a components.schemas entry; "METHOD /path" is a route whose 200
+// application/json body is the standard envelope, and the served struct is
+// its `data` member (array items unwrapped) — the only way an inline route
+// schema gets reconciled at all.
+func specSchemaNode(t *testing.T, locator string) map[string]any {
+	t.Helper()
+	doc := loadSpecDoc(t)
+	method, path, isRoute := strings.Cut(locator, " ")
+	if !isRoute {
+		return resolveSpecSchema(doc, map[string]any{"$ref": "#/components/schemas/" + locator}, 0)
+	}
+	body := specDig(doc, "paths", path, strings.ToLower(method), "responses", "200",
+		"content", "application/json", "schema")
+	if body == nil {
+		t.Fatalf("spec has no 200 application/json schema for %s", locator)
+	}
+	props, _ := resolveSpecSchema(doc, body, 0)["properties"].(map[string]any)
+	data := resolveSpecSchema(doc, props["data"], 0)
+	if items, ok := data["items"]; ok && data["type"] == "array" {
+		data = resolveSpecSchema(doc, items, 0)
+	}
+	return data
+}
+
+// specDig walks nested maps by key, returning nil on the first miss.
+func specDig(node any, keys ...string) any {
+	for _, k := range keys {
+		m, ok := node.(map[string]any)
+		if !ok {
+			return nil
+		}
+		node = m[k]
+	}
+	return node
+}
+
+// resolveSpecSchema follows local $refs and merges allOf members, so a
+// property contributed by a referenced or composed schema counts the same
+// as one written inline. The result carries the merged `properties` and
+// `required` alongside the node's other keys.
+func resolveSpecSchema(doc map[string]any, node any, depth int) map[string]any {
+	m, _ := node.(map[string]any)
+	if m == nil || depth > 32 {
+		return map[string]any{}
+	}
+	if ref, ok := m["$ref"].(string); ok {
+		name, local := strings.CutPrefix(ref, "#/components/schemas/")
+		if !local {
+			return map[string]any{}
+		}
+		return resolveSpecSchema(doc, specDig(doc, "components", "schemas", name), depth+1)
+	}
+	members, _ := m["allOf"].([]any)
+	if len(members) == 0 {
+		return m
+	}
+	out := map[string]any{}
+	props := map[string]any{}
+	var required []any
+	merge := func(r map[string]any) {
+		p, _ := r["properties"].(map[string]any)
+		for k, v := range p {
+			props[k] = v
+		}
+		req, _ := r["required"].([]any)
+		required = append(required, req...)
+	}
+	for k, v := range m {
+		if k != "allOf" {
+			out[k] = v
+		}
+	}
+	merge(out)
+	for _, part := range members {
+		merge(resolveSpecSchema(doc, part, depth+1))
+	}
+	out["properties"] = props
+	out["required"] = required
+	return out
+}
+
+type specWalkInner struct {
+	Promoted string `json:"promoted"`
+}
+
+type specWalkOuter struct {
+	*specWalkInner
+	Own string `json:"own,omitempty"`
+}
+
+type SpecWalkExportedInner struct {
+	Promoted string `json:"promoted"`
+}
+
+type specWalkOuterExported struct {
+	*SpecWalkExportedInner
+	Own string `json:"own,omitempty"`
+}
+
+// TestStructJSONWalkers_MatchEncodingJSONPromotion pins the walkers to what
+// encoding/json actually serves: an embedded pointer to an exported struct
+// promotes its fields (the walker used to follow only value embeds, so
+// those fields were invisible to both directions of the gate), and an
+// embedded pointer to an unexported type is dropped.
+func TestStructJSONWalkers_MatchEncodingJSONPromotion(t *testing.T) {
+	got := structJSONTags(reflect.TypeOf(specWalkOuterExported{}))
+	if !got["promoted"] || !got["own"] || len(got) != 2 {
+		t.Errorf("structJSONTags(embedded exported pointer) = %v, want {promoted, own}", got)
+	}
+	opts := structJSONTagOptions(reflect.TypeOf(specWalkOuterExported{}))
+	if o, ok := opts["promoted"]; !ok || o != "" {
+		t.Errorf("structJSONTagOptions missed the promoted field: %v", opts)
+	}
+	unexported := structJSONTags(reflect.TypeOf(specWalkOuter{}))
+	if unexported["promoted"] || !unexported["own"] {
+		t.Errorf("structJSONTags(embedded unexported pointer) = %v, want {own} only", unexported)
+	}
+}
+
+// TestSpecSchemaResolver_FollowsRefAllOfAndRoutes: a schema composed with
+// allOf, or reached through a $ref, must resolve to the properties it
+// serves — a flat `.properties` read sees none of them, and a pair that
+// resolves to nothing is a check that cannot fail.
+func TestSpecSchemaResolver_FollowsRefAllOfAndRoutes(t *testing.T) {
+	env := specSchemaProps(t, "LakeHealthEnvelope")
+	if !env["data"] || !env["as_of"] {
+		t.Errorf("LakeHealthEnvelope (allOf EnvelopeMeta + data) resolved to %v, want data and as_of", env)
+	}
+	route := specSchemaProps(t, "GET /livez/lake")
+	want := specSchemaProps(t, "LakeHealth")
+	if len(want) == 0 || !reflect.DeepEqual(route, want) {
+		t.Errorf("GET /livez/lake data resolved to %v, want the LakeHealth properties %v", route, want)
+	}
+	if req := specSchemaRequired(t, "GET /livez/lake"); !reflect.DeepEqual(req, []string{"status"}) {
+		t.Errorf("GET /livez/lake data required = %v, want [status]", req)
+	}
 }

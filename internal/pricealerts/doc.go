@@ -13,8 +13,10 @@
 //
 // Each tick the [Worker] lists every enabled row from `price_alerts`,
 // compares each against the latest CLOSED 1-minute VWAP for its pair
-// (the same reader the API price surface uses, which combines both
-// stored orientations), and — for alerts whose condition holds and
+// (the closed-bucket read the API price surface uses, which combines
+// both stored orientations, walked across every canonical.AssetAliases
+// spelling of both legs; it has no last-trade or triangulation
+// fallback), and — for alerts whose condition holds and
 // whose cooldown has elapsed since last_fired_at — enqueues a
 // `price.alert` delivery into the existing customer-webhook queue
 // (`webhook_deliveries`) for the OWNING account's subscribed webhooks.

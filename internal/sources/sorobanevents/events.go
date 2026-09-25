@@ -219,7 +219,11 @@ func topicAt(xs [][]byte, i int) []byte {
 // returns "" otherwise (the catch-all sink writes SQL NULL).
 //
 // This is purely a convenience for index fast-paths — downstream
-// correctness reads topic_0_xdr.
+// correctness reads topic_0_xdr. The result is persisted as a
+// Postgres text column, so a String topic goes through AsText: a
+// contract-supplied String is arbitrary bytes and may carry a NUL or
+// invalid UTF-8, which a raw AsString would hand to the server as
+// SQLSTATE 22021 (a permanent, batch-poisoning data error).
 func tryDecodeSymbolOrString(b64Topic string) string {
 	sv, err := scval.Parse(b64Topic)
 	if err != nil {
@@ -228,7 +232,7 @@ func tryDecodeSymbolOrString(b64Topic string) string {
 	if s, err := scval.AsSymbol(sv); err == nil {
 		return s
 	}
-	if s, err := scval.AsString(sv); err == nil {
+	if s, err := scval.AsText(sv); err == nil {
 		return s
 	}
 	return ""

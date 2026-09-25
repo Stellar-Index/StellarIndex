@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowDownUp, ChevronDown, Search, X } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
-import { apiGet, asExample } from '@/api/client';
+import { asExample } from '@/api/client';
 import type { components } from '@/api/types';
 import { useCoins, coinSlug } from '@/api/hooks';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -13,6 +13,7 @@ import { formatRelative, formatSubunitPrice } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { isSafePublicImageUrl } from '@/lib/safe-domain';
 import { useDialog } from '@/lib/useDialog';
+import { fetchPriceBatchChunked } from '@/lib/price-batch';
 
 /**
  * AssetSwap — the asset page's swap/convert widget. Two stacked amount
@@ -37,7 +38,6 @@ import { useDialog } from '@/lib/useDialog';
  * where every asset is $0.
  */
 
-type PriceBatchEnvelope = components['schemas']['PriceBatchEnvelope'];
 type PriceType = components['schemas']['Price']['price_type'];
 
 export interface SwapToken {
@@ -730,46 +730,30 @@ function useFiatTokens(enabled: boolean): SwapToken[] {
     queryKey: ['/v1/price/batch', 'swapFiat'],
     enabled: enabled && CURRENT_NETWORK.pricing,
     queryFn: async () => {
-      // GET /v1/price/batch caps at 100 asset_ids, so the list is split into
-      // ≤100-id chunks fetched in parallel and merged. GET (not POST) keeps the
-      // responses edge-cacheable. allSettled (not all): the batch 400s the
-      // whole request on a single unrecognised code, so an off-allow-list
-      // ticker must fail only its own chunk, never blank out every fiat.
-      const CHUNK = 100;
-      const chunks: string[][] = [];
-      for (let i = 0; i < FIAT_TICKERS.length; i += CHUNK) {
-        chunks.push(FIAT_TICKERS.slice(i, i + CHUNK));
-      }
-      const settled = await Promise.allSettled(
-        chunks.map((chunk) => {
-          const ids = chunk.map((t) => `fiat:${t}`).join(',');
-          return apiGet<PriceBatchEnvelope>(
-            `/v1/price/batch?asset_ids=${encodeURIComponent(ids)}&quote=fiat:USD`,
-            {},
-          );
-        }),
+      // Chunked and settled per chunk: an off-allow-list ticker fails only
+      // its own chunk, never blanks out every fiat.
+      const { rows } = await fetchPriceBatchChunked(
+        FIAT_TICKERS.map((t) => `fiat:${t}`),
+        'fiat:USD',
       );
       const out: SwapToken[] = [];
-      for (const res of settled) {
-        if (res.status !== 'fulfilled') continue;
-        for (const row of res.value.data ?? []) {
-          const ticker = row.asset_id.replace(/^fiat:/, '');
-          const price = row.price ? Number(row.price) : 0;
-          if (!(price > 0)) continue;
-          out.push({
-            key: `fiat:${ticker}`,
-            symbol: ticker,
-            name: fiatName(ticker),
-            usdPrice: price,
-            // RLT-384: the basis and the observation time ride with the
-            // rate. Dropping them made a declared peg and an hours-old
-            // FX print indistinguishable from a fresh market quote in a
-            // widget whose whole output is a money amount.
-            basis: row.price_type ?? null,
-            observedAt: row.observed_at ?? null,
-            kind: 'fiat',
-          });
-        }
+      for (const row of rows) {
+        const ticker = row.asset_id.replace(/^fiat:/, '');
+        const price = row.price ? Number(row.price) : 0;
+        if (!(price > 0)) continue;
+        out.push({
+          key: `fiat:${ticker}`,
+          symbol: ticker,
+          name: fiatName(ticker),
+          usdPrice: price,
+          // RLT-384: the basis and the observation time ride with the
+          // rate. Dropping them made a declared peg and an hours-old
+          // FX print indistinguishable from a fresh market quote in a
+          // widget whose whole output is a money amount.
+          basis: row.price_type ?? null,
+          observedAt: row.observed_at ?? null,
+          kind: 'fiat',
+        });
       }
       return out;
     },

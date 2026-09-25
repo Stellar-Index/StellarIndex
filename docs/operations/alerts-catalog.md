@@ -29,7 +29,7 @@ enforces it); any per-alert detail page follows it.
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 60 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 208 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 209 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -507,6 +507,15 @@ and
 | `stellarindex_verify_archive_run_stale` | `time() - node_systemd_timer_last_trigger_seconds{name="verify-archive-tier-a.timer"}` | > 36 h for > 10 min | page | [verify-archive-run-stale](runbooks/verify-archive-run-stale.md) |
 | `stellarindex_verify_archive_tier_b_unit_failed` | `node_systemd_unit_state{name="verify-archive-tier-b.service",state="failed"}` | == 1 for > 5 min | ticket | [verify-archive-tier-b](runbooks/verify-archive-tier-b.md) |
 | `stellarindex_verify_archive_tier_b_run_stale` | `time() - node_systemd_timer_last_trigger_seconds{name="verify-archive-tier-b.timer"}` | > 36 h for > 10 min | ticket | [verify-archive-tier-b](runbooks/verify-archive-tier-b.md) |
+| `stellarindex_verify_archive_tier_e_run_stale` | `time() - stellarindex_verify_archive_last_success_unix{tier="archivist"}` (+ `absent_over_time(...[35d])`) | > 35 d for > 30 min | ticket | [verify-archive-tier-e](runbooks/verify-archive-tier-e.md) |
+
+Tier E (`stellar-archivist scan --verify`, re-hashing the local
+`/srv/history-archive` mirror) is a **monthly cron entry** (the 15th,
+12:43 UTC), not a systemd timer, so it has no `unit_failed` pair — no
+`node_systemd_unit_state` series exists for it. Staleness on the
+textfile-published `last_success` gauge is the only signal, covering
+both "every recent scan failed" and "the cron entry was never
+installed" (GH-726).
 
 ## Anomaly + freeze alerts
 

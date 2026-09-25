@@ -1043,6 +1043,10 @@ func (a APIConfig) validate() error {
 		return fmt.Errorf("%w: api.key_rate_limit_per_min must be >= 0",
 			ErrInvalidConfig)
 	}
+	if a.RequestTimeout < 0 {
+		return fmt.Errorf("%w: api.request_timeout must be >= 0 (0 disables the request deadline)",
+			ErrInvalidConfig)
+	}
 	for i, raw := range a.TrustedProxyCIDRs {
 		if _, err := netip.ParsePrefix(strings.TrimSpace(raw)); err != nil {
 			return fmt.Errorf("%w: api.trusted_proxy_cidrs[%d] %q must be a valid CIDR: %w",

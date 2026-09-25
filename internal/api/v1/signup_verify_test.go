@@ -78,8 +78,115 @@ func newSignupVerifyTestServer(t *testing.T, verifier v1.SignupVerifier) *httpte
 	return ts
 }
 
-// TestSignupVerify_HappyPath — token consumed → 200 +
-// {verified:true, key_id:"…"}; second click returns 404
+// recordingEmailMarker is a v1.APIKeyEmailVerifier that records every key
+// it is asked to flag verified.
+type recordingEmailMarker struct {
+	mu     sync.Mutex
+	marked []string
+}
+
+func (m *recordingEmailMarker) MarkEmailVerified(_ context.Context, keyID string, _ time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.marked = append(m.marked, keyID)
+	return nil
+}
+
+func (m *recordingEmailMarker) keys() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.marked...)
+}
+
+func postSignupVerify(t *testing.T, ts *httptest.Server, token string) *http.Response {
+	t.Helper()
+	resp, err := http.PostForm(ts.URL+"/v1/signup/verify", url.Values{"token": {token}})
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	return resp
+}
+
+// TestSignupVerify_GetLinkDoesNotConsume: mail-security scanners (Safe
+// Links, Mimecast, Proofpoint) GET every emailed link. If that GET
+// consumed the token, the scanner would prove ownership of the mailbox on
+// behalf of whoever signed up with the address. The GET must only render
+// the confirmation page: the token stays live and no key is marked.
+func TestSignupVerify_GetLinkDoesNotConsume(t *testing.T) {
+	verifier := newFakeSignupVerifier(map[string]string{"tok_abc": "kid_alpha"})
+	marker := &recordingEmailMarker{}
+	srv := v1.New(v1.Options{
+		Auth:                fakeAuthMiddleware(auth.Subject{}),
+		SignupVerifier:      verifier,
+		APIKeyEmailVerifier: marker,
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	for range 2 { // a scanner, then the customer's own click
+		resp, err := http.Get(ts.URL + "/v1/signup/verify?token=tok_abc")
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		body, _ := readAll(resp)
+		resp.Body.Close()
+		if got := marker.keys(); len(got) != 0 {
+			t.Fatalf("GET marked key(s) %v email-verified; only the confirmation POST may", got)
+		}
+		if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
+			t.Fatalf("GET = %d %q, want 200 text/html confirmation page", resp.StatusCode, resp.Header.Get("Content-Type"))
+		}
+		if !strings.Contains(body, `method="post"`) || !strings.Contains(body, `value="tok_abc"`) {
+			t.Fatalf("confirmation page does not carry the token into a POST form: %s", body)
+		}
+	}
+	verifier.mu.Lock()
+	_, live := verifier.tokens["tok_abc"]
+	verifier.mu.Unlock()
+	if !live {
+		t.Fatal("GET consumed the single-use token")
+	}
+
+	resp := postSignupVerify(t, ts, "tok_abc")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST status = %d, want 200", resp.StatusCode)
+	}
+	if got := marker.keys(); len(got) != 1 || got[0] != "kid_alpha" {
+		t.Errorf("POST marked %v, want [kid_alpha]", got)
+	}
+}
+
+// TestSignupVerify_PageEscapesToken: the token reaches the page from the
+// query string, so a hostile value must be escaped, and the page must not
+// leak it onward in a Referer or be cached.
+func TestSignupVerify_PageEscapesToken(t *testing.T) {
+	ts := newSignupVerifyTestServer(t, newFakeSignupVerifier(nil))
+	q := url.Values{"token": {`"><script>alert(1)</script>`}}
+	resp, err := http.Get(ts.URL + "/v1/signup/verify?" + q.Encode())
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := readAll(resp)
+	if strings.Contains(body, "<script>") {
+		t.Errorf("token rendered unescaped: %s", body)
+	}
+	for h, want := range map[string]string{
+		"Cache-Control":   "no-store",
+		"Referrer-Policy": "no-referrer",
+	} {
+		if got := resp.Header.Get(h); got != want {
+			t.Errorf("%s = %q, want %q", h, got, want)
+		}
+	}
+	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "form-action 'self'") {
+		t.Errorf("Content-Security-Policy = %q, want form-action 'self'", csp)
+	}
+}
+
+// TestSignupVerify_HappyPath — POSTed token consumed → 200 +
+// {verified:true, key_id:"…"}; second submit returns 404
 // (single-use).
 func TestSignupVerify_HappyPath(t *testing.T) {
 	verifier := newFakeSignupVerifier(map[string]string{
@@ -87,11 +194,7 @@ func TestSignupVerify_HappyPath(t *testing.T) {
 	})
 	ts := newSignupVerifyTestServer(t, verifier)
 
-	resp, err := http.Get(ts.URL + "/v1/signup/verify?token=tok_abc")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
+	resp := postSignupVerify(t, ts, "tok_abc")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -108,43 +211,44 @@ func TestSignupVerify_HappyPath(t *testing.T) {
 		t.Errorf("key_id = %q, want kid_alpha", got.Data.KeyID)
 	}
 
-	// Second call → 404 (token already consumed).
-	resp2, err := http.Get(ts.URL + "/v1/signup/verify?token=tok_abc")
-	if err != nil {
-		t.Fatalf("second GET: %v", err)
-	}
-	defer resp2.Body.Close()
-	if resp2.StatusCode != http.StatusNotFound {
-		t.Errorf("second click status = %d, want 404 (single-use)", resp2.StatusCode)
+	// Second submit → 404 (token already consumed).
+	if resp2 := postSignupVerify(t, ts, "tok_abc"); resp2.StatusCode != http.StatusNotFound {
+		t.Errorf("second submit status = %d, want 404 (single-use)", resp2.StatusCode)
 	}
 }
 
 // TestSignupVerify_UnknownToken — a never-Reserved token gets 404.
 func TestSignupVerify_UnknownToken(t *testing.T) {
-	verifier := newFakeSignupVerifier(nil)
-	ts := newSignupVerifyTestServer(t, verifier)
-	resp, err := http.Get(ts.URL + "/v1/signup/verify?token=tok_unknown")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
+	ts := newSignupVerifyTestServer(t, newFakeSignupVerifier(nil))
+	if resp := postSignupVerify(t, ts, "tok_unknown"); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", resp.StatusCode)
 	}
 }
 
-// TestSignupVerify_MissingToken — `?token=` empty / absent is
-// a 400 with a Problem-JSON body.
+// TestSignupVerify_MissingToken — an absent token is a 400 on both the
+// link and the confirmation, and a token only in the POST's query string
+// does not count: the confirmation reads the form body alone.
 func TestSignupVerify_MissingToken(t *testing.T) {
-	verifier := newFakeSignupVerifier(nil)
+	verifier := newFakeSignupVerifier(map[string]string{"tok_q": "kid_q"})
 	ts := newSignupVerifyTestServer(t, verifier)
 	resp, err := http.Get(ts.URL + "/v1/signup/verify")
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
+		t.Errorf("GET status = %d, want 400", resp.StatusCode)
+	}
+	if resp := postSignupVerify(t, ts, ""); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("POST status = %d, want 400", resp.StatusCode)
+	}
+	resp, err = http.Post(ts.URL+"/v1/signup/verify?token=tok_q", "application/x-www-form-urlencoded", strings.NewReader(""))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("POST with query-only token status = %d, want 400", resp.StatusCode)
 	}
 }
 
@@ -157,31 +261,29 @@ func TestSignupVerify_NoVerifierConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", resp.StatusCode)
+		t.Errorf("GET status = %d, want 503", resp.StatusCode)
+	}
+	if resp := postSignupVerify(t, ts, "anything"); resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("POST status = %d, want 503", resp.StatusCode)
 	}
 }
 
 // TestSignupVerify_StoreError — a verifier-side non-NotFound
 // error surfaces as 500 (so operators can alert), distinct from
 // the 404 happy-path-loser surface customers should expect on
-// click-twice.
+// submit-twice.
 func TestSignupVerify_StoreError(t *testing.T) {
 	verifier := newFakeSignupVerifier(nil)
 	verifier.err = errors.New("redis blip")
 	ts := newSignupVerifyTestServer(t, verifier)
-	resp, err := http.Get(ts.URL + "/v1/signup/verify?token=anything")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusInternalServerError {
+	if resp := postSignupVerify(t, ts, "anything"); resp.StatusCode != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500", resp.StatusCode)
 	}
 }
 
-// TestSignupVerify_TokenWithSpecialChars — query-escaped tokens
+// TestSignupVerify_TokenWithSpecialChars — form-escaped tokens
 // round-trip cleanly. Defence-in-depth: the actual tokens are
 // hex-only, but the handler shouldn't break on a customer
 // pasting a quoted URL.
@@ -189,14 +291,7 @@ func TestSignupVerify_TokenWithSpecialChars(t *testing.T) {
 	const tok = "tok with spaces"
 	verifier := newFakeSignupVerifier(map[string]string{tok: "kid_x"})
 	ts := newSignupVerifyTestServer(t, verifier)
-	q := url.Values{}
-	q.Set("token", tok)
-	resp, err := http.Get(ts.URL + "/v1/signup/verify?" + q.Encode())
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp := postSignupVerify(t, ts, tok); resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
 	}
 }

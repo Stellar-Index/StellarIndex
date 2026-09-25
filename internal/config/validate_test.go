@@ -264,6 +264,10 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			func(c *config.Config) { c.API.RequestTimeout = config.APIMaxHandlerBudget - time.Second },
 			"request_timeout",
 		},
+		"request timeout negative": {
+			func(c *config.Config) { c.API.RequestTimeout = -time.Second },
+			"request_timeout",
+		},
 
 		// CFG-03 (audit-2026-07-23): the two conflicting `_env`
 		// conventions (value-vs-name) getting swapped.

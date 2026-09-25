@@ -2434,9 +2434,10 @@ func olderNonZero(a, b time.Time) time.Time {
 // places comfortably covers the precision an ECB-class FX rate carries
 // while keeping the exact-rational computation off the wire as a
 // bounded decimal (a non-terminating ratio like 1/3 would otherwise
-// have no finite form).
+// have no finite form). A rate too small for 15 places gets more
+// ([priceRenderScale]) so a positive cross-rate never serves as "0".
 func formatCrossRate(r *big.Rat) string {
-	s := r.FloatString(15)
+	s := r.FloatString(priceRenderScale(r, 15))
 	if strings.Contains(s, ".") {
 		s = strings.TrimRight(s, "0")
 		s = strings.TrimRight(s, ".")

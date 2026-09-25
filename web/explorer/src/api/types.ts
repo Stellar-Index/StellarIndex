@@ -2032,8 +2032,7 @@ export interface paths {
          * Per-region ingestion snapshot — ledger tip, backfill, FX, supply, sources.
          * @description One snapshot of the region's ingest state, composed from
          *     the cursors table, network_stats CAGG, fx_quotes hypertable,
-         *     asset_supply_history, the in-memory market-cap cache, and
-         *     the static source registry. Designed as the single fetch
+         *     asset_supply_history, and the static source registry. Designed as the single fetch
          *     the public status page makes for its "Ingestion · <region>"
          *     panel — so the page renders the whole panel without scraping
          *     five separate endpoints.
@@ -2044,7 +2043,6 @@ export interface paths {
          *       - `ledger`         — live tip, lag, 24h volume, indexed assets/markets.
          *       - `backfill`       — per-decoder ranges in progress, oldest lag.
          *       - `fx_backfill`    — fx_quotes coverage (earliest/latest, total quotes).
-         *       - `market_cap`     — CoinGecko cache age + entries.
          *       - `supply`         — counts per asset domain + most recent observation.
          *       - `sources`        — every source in the registry joined with
          *                            its trailing-24h trades/volume/markets.
@@ -3663,31 +3661,38 @@ export interface paths {
             cookie?: never;
         };
         /**
+         * Confirmation page for the emailed signup-verification link.
+         * @description The link in the verification email. Renders an HTML page
+         *     with a single "Confirm email" button that submits the token
+         *     to `POST /v1/signup/verify`; it changes nothing on its own.
+         *
+         *     Mail-security scanners (Safe Links, Mimecast, Proofpoint)
+         *     fetch every emailed link, so a link that consumed the token
+         *     would let the scanner prove ownership of the mailbox on
+         *     behalf of whoever signed up with the address. Only the
+         *     deliberate POST verifies. The page is served `no-store`,
+         *     `Referrer-Policy: no-referrer`, and with a CSP that only
+         *     lets its form submit back to this origin.
+         */
+        get: operations["verifySignupPage"];
+        put?: never;
+        /**
          * Confirm email ownership for a signup-issued API key.
          * @description F-1218 (codex audit-2026-05-12): closes the email-
          *     ownership-proof loop on `POST /v1/signup`. The signup
-         *     handler issues a single-use token and emails it to the
-         *     submitted address; this endpoint consumes the token from
-         *     the click-through link.
+         *     handler issues a single-use token and emails a link to
+         *     `GET /v1/signup/verify`; that page's button submits the
+         *     token here, which consumes it and flags the key minted at
+         *     signup as email-verified (what the default-on
+         *     `signup_require_email_verification` gate checks).
          *
-         *     Single-use semantics via Redis GETDEL — the second
-         *     click on the link returns 404, the same shape as a
-         *     forged or expired token. Token TTL defaults to 24h to
-         *     match the dashboard magic-link convention.
-         *
-         *     Subsequent waves layer:
-         *       1. The email-send step on POST /v1/signup that
-         *          populates the verifier with the issued token.
-         *       2. An optional validator gate (operator opt-in via
-         *          config) that rejects unverified keys with 403.
-         *
-         *     Today this endpoint just consumes the token; the
-         *     success path returns the key_id so the customer's
-         *     dashboard / CLI can correlate the verified key.
+         *     The token is read from the form body only, never the query
+         *     string. Single-use semantics via Redis GETDEL — a second
+         *     submit returns 404, the same shape as a forged or expired
+         *     token. Token TTL defaults to 24h to match the dashboard
+         *     magic-link convention.
          */
-        get: operations["verifySignup"];
-        put?: never;
-        post?: never;
+        post: operations["verifySignup"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9261,7 +9266,7 @@ export interface components {
                 name: string;
                 /** @description True when the dependency answered its ping within the deadline. */
                 ok: boolean;
-                /** @description Failure reason; present only when `ok` is false. */
+                /** @description Failure reason; present only when `ok` is false. A fixed pointer to the server log, never the dependency's driver error; only a condition of this binary itself (e.g. a schema/binary mismatch) is described here. */
                 error?: string;
             }[];
             /**
@@ -15983,11 +15988,6 @@ export interface operations {
                      *           "total_quotes": 244477,
                      *           "currencies_count": 132
                      *         },
-                     *         "market_cap": {
-                     *           "entries_count": 187,
-                     *           "oldest_fetched_at": "2026-07-03T21:38:00Z",
-                     *           "newest_fetched_at": "2026-07-03T22:38:00Z"
-                     *         },
                      *         "supply": {
                      *           "classic_assets_with_supply": 9,
                      *           "sep41_assets_with_supply": 0,
@@ -16146,13 +16146,6 @@ export interface operations {
                                 /** Format: int64 */
                                 total_quotes: number;
                                 currencies_count: number;
-                            };
-                            market_cap: {
-                                entries_count: number;
-                                /** Format: date-time */
-                                oldest_fetched_at?: string;
-                                /** Format: date-time */
-                                newest_fetched_at?: string;
                             };
                             supply: {
                                 classic_assets_with_supply: number;
@@ -19871,7 +19864,7 @@ export interface operations {
             };
         };
     };
-    verifySignup: {
+    verifySignupPage: {
         parameters: {
             query: {
                 /** @description The plaintext token from the verification email. */
@@ -19882,6 +19875,51 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Confirmation page (does not consume the token). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description Missing `?token=` query parameter. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description SignupVerifier not configured (Redis unavailable). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    verifySignup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": {
+                    /** @description The plaintext token from the verification email. */
+                    token: string;
+                };
+            };
+        };
         responses: {
             /** @description Token consumed; email ownership confirmed. */
             200: {
@@ -19894,7 +19932,7 @@ export interface operations {
                      *       "data": {
                      *         "verified": true,
                      *         "key_id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
-                     *         "detail": "email verified; API key activated"
+                     *         "detail": "email ownership confirmed; the API key minted at signup is now flagged as verified"
                      *       },
                      *       "as_of": "2026-07-03T09:00:00Z",
                      *       "flags": {
@@ -19915,7 +19953,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Missing `?token=` query parameter. */
+            /** @description Missing `token` form field, or an unreadable / oversized body. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -19926,6 +19964,15 @@ export interface operations {
             };
             /** @description Unknown / consumed / expired token. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Verification store error. */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

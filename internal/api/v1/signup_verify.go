@@ -6,6 +6,7 @@ package v1
 import (
 	"context"
 	"errors"
+	htmltemplate "html/template"
 	"net/http"
 	"strings"
 	"time"
@@ -56,8 +57,8 @@ type APIKeyEmailVerifier interface {
 	MarkEmailVerified(ctx context.Context, keyID string, at time.Time) error
 }
 
-// SignupVerifyResult is the wire shape for `GET /v1/signup/
-// verify?token=…` responses. The key_id surfaces so the
+// SignupVerifyResult is the wire shape for `POST /v1/signup/verify`
+// responses. The key_id surfaces so the
 // dashboard / CLI can correlate the verified key with the
 // account's other metadata; no plaintext is returned (the
 // original signup response carried that exactly once).
@@ -67,33 +68,52 @@ type SignupVerifyResult struct {
 	Detail   string `json:"detail,omitempty"`
 }
 
-// handleSignupVerify serves `GET /v1/signup/verify?token=…`.
-//
-// F-1218 (codex audit-2026-05-12): proves the customer owns
-// the email address they signed up with by consuming the
-// token the signup handler emailed them. Single-use semantics
-// via Redis GETDEL — the second click on the link returns
-// 404, the same shape as a forged token.
-//
-// Surfaces:
-//
-//   - 200 + `{"verified":true,"key_id":"…"}` on success
-//   - 404 + Problem-JSON on unknown / consumed / expired token
-//   - 503 + Problem-JSON when no SignupVerifier is configured
-//     (Redis-less deployment); customers see a clear "this
-//     deployment doesn't run the verification flow" instead of
-//     the silent-no-op surprise
-//
-// In subsequent waves the success path also flips the API key
-// row's `EmailVerified` flag and (when the operator opts in
-// via config) gates the validator on that flag. This wave
-// just lands the consumer; the gate ships separately.
-func (s *Server) handleSignupVerify(w http.ResponseWriter, r *http.Request) {
-	if s.signupVerifier == nil {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/signup-verify-unavailable",
-			"Signup verification not configured", http.StatusServiceUnavailable,
-			"this deployment doesn't run the email-ownership-proof flow; the original signup response is the only proof of issuance")
+// signupVerifyBodyMaxBytes bounds the confirmation POST: one form field.
+const signupVerifyBodyMaxBytes = 4 * 1024
+
+// signupVerifyPageCSP locks the confirmation page down to its own inline
+// style and a form that may only submit back to this origin.
+const signupVerifyPageCSP = "default-src 'none'; style-src 'unsafe-inline'; " +
+	"form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+
+// signupVerifyPageTmpl is the confirmation page. html/template escapes the
+// token (it arrives from the query string) into the hidden field.
+var signupVerifyPageTmpl = htmltemplate.Must(htmltemplate.New("signupverify").Parse(
+	`<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+		`<meta name="viewport" content="width=device-width,initial-scale=1">` +
+		`<meta name="robots" content="noindex">` +
+		`<title>Confirm your email · Stellar Index</title>` +
+		`<style>body{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#1a1a1a}` +
+		`button{font:inherit;padding:.5em 1.2em;cursor:pointer}</style></head><body>` +
+		`<h1>Confirm your email address</h1>` +
+		`<p>Press the button to confirm you own this address and verify the API key issued at signup. ` +
+		`The link is single-use.</p>` +
+		`<form method="post" action="/v1/signup/verify">` +
+		`<input type="hidden" name="token" value="{{.}}">` +
+		`<button type="submit">Confirm email</button></form>` +
+		`</body></html>`))
+
+// requireSignupVerifier writes the 503 when this deployment runs no
+// verification flow (Redis-less), and reports whether to continue.
+func (s *Server) requireSignupVerifier(w http.ResponseWriter, r *http.Request) bool {
+	if s.signupVerifier != nil {
+		return true
+	}
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/signup-verify-unavailable",
+		"Signup verification not configured", http.StatusServiceUnavailable,
+		"this deployment doesn't run the email-ownership-proof flow; the original signup response is the only proof of issuance")
+	return false
+}
+
+// handleSignupVerifyPage serves `GET /v1/signup/verify?token=…`, the link
+// in the verification email, as a confirmation page that changes nothing.
+// Mail-security scanners (Safe Links, Mimecast, Proofpoint) fetch every
+// emailed link; a GET that consumed the token let the scanner prove
+// ownership of the mailbox for whoever signed up with the address. Only
+// the page's POST, a deliberate press, consumes it.
+func (s *Server) handleSignupVerifyPage(w http.ResponseWriter, r *http.Request) {
+	if !s.requireSignupVerifier(w, r) {
 		return
 	}
 	token := strings.TrimSpace(r.URL.Query().Get("token"))
@@ -101,7 +121,51 @@ func (s *Server) handleSignupVerify(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/missing-token",
 			"Missing token", http.StatusBadRequest,
-			"the verify endpoint requires a `token` query parameter (the value emailed to you on signup)")
+			"the verify link requires a `token` query parameter (the value emailed to you on signup)")
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("Cache-Control", "no-store")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("Content-Security-Policy", signupVerifyPageCSP)
+	_ = signupVerifyPageTmpl.Execute(w, token)
+}
+
+// handleSignupVerify serves `POST /v1/signup/verify` (form field `token`).
+//
+// F-1218 (codex audit-2026-05-12): proves the customer owns
+// the email address they signed up with by consuming the
+// token the signup handler emailed them. Single-use semantics
+// via Redis GETDEL — a second submit returns 404, the same
+// shape as a forged token. The token is read from the form
+// body only, never the query string.
+//
+// Surfaces:
+//
+//   - 200 + `{"verified":true,"key_id":"…"}` on success
+//   - 400 + Problem-JSON on a missing token or unreadable body
+//   - 404 + Problem-JSON on unknown / consumed / expired token
+//   - 503 + Problem-JSON when no SignupVerifier is configured
+//     (Redis-less deployment)
+func (s *Server) handleSignupVerify(w http.ResponseWriter, r *http.Request) {
+	if !s.requireSignupVerifier(w, r) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, signupVerifyBodyMaxBytes)
+	if err := r.ParseForm(); err != nil {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-body",
+			"Invalid body", http.StatusBadRequest,
+			"the confirmation must be an application/x-www-form-urlencoded body of at most 4 KiB")
+		return
+	}
+	token := strings.TrimSpace(r.PostForm.Get("token"))
+	if token == "" {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/missing-token",
+			"Missing token", http.StatusBadRequest,
+			"the confirmation requires a `token` form field (the value from the emailed link)")
 		return
 	}
 	keyID, err := s.signupVerifier.Consume(r.Context(), token)

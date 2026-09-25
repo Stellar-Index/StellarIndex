@@ -192,3 +192,67 @@ groups:
               - is the /srv/history-archive mirror synced to the checked range?
 
             Runbook: docs/operations/runbooks/verify-archive-tier-b.md
+
+      # Tier E (archivist scan, GH-726). `-tier archivist` runs
+      # `stellar-archivist scan --verify` over the local /srv/history-archive
+      # mirror — the only tier that re-hashes the mirror's own bytes rather
+      # than trusting its manifest (Tier B anchors AGAINST that manifest and
+      # would inherit bit rot in it). Installed as a monthly CRON entry
+      # (the 15th, 12:43 UTC — configs/ansible/.../14-stellarindex-services.yml),
+      # not a systemd unit, so there is no node_systemd_unit_state series to
+      # alert a "run failed" pair off of the way Tier A/B do — staleness on
+      # stellarindex_verify_archive_last_success_unix{tier="archivist"} is
+      # the only signal a failed-every-month run and a never-scheduled cron
+      # are both visible through, same shape as the restore-drill monthly
+      # timers (restore-drill.yml).
+      #
+      # 35d = one ~30d monthly cycle (fixed day-of-month) plus slack, same
+      # window as the restore-drill off-site check. Ticket, not page: Tier E
+      # is defence-in-depth behind Tier A (chain-link, page) and Tier B
+      # (checkpoint anchor, ticket) — a stale Tier E does not by itself
+      # degrade the cross-region trust model those anchor.
+      #
+      # absent_over_time branch (OBS-2 pattern, same as the two rules above):
+      # a cron entry that was never installed (verify_archive_tier_b_enabled
+      # false — Tier E is gated the same as Tier B, same pubnet-only mirror)
+      # leaves the series absent, not old; the bare `time() - x` comparison
+      # over an empty vector can never fire without it.
+      - alert: stellarindex_verify_archive_tier_e_run_stale
+        expr: |
+          (
+            time()
+            -
+            (stellarindex_verify_archive_last_success_unix{
+              tier="archivist"
+            } > 0)
+          ) > (35 * 24 * 3600)
+          or
+          absent_over_time(stellarindex_verify_archive_last_success_unix{tier="archivist"}[35d])
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: archive
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-tier-e.md
+          summary: "verify-archive Tier E (archivist scan) has recorded no success in >35d (monthly cron, the 15th)"
+          description: |
+            The monthly stellar-archivist scan (`-tier archivist`,
+            stellarindex-verify-archive-tier-e cron, the 15th 12:43 UTC) has
+            not recorded a clean exit in over 35 days — one missed monthly
+            cycle plus slack — or has never recorded one. Either the cron
+            entry isn't installed (check verify_archive_tier_b_enabled in
+            inventory — Tier E is gated the same as Tier B) or every recent
+            scan failed/timed out. While this is stale, Tier B's checkpoint
+            anchor is unconfirmed against a freshly re-hashed local mirror:
+            bit rot in /srv/history-archive would pass Tier B silently.
+            Diagnosis:
+              - `crontab -l -u root | grep verify-archive-tier-e` — is the
+                entry present?
+              - `grep stellarindex-tier-e /var/log/syslog` (or journald,
+                depending on syslog routing) — what did the last run log?
+              - re-run by hand: `stellarindex-ops verify-archive -tier
+                archivist -archive-root /srv/history-archive
+                -archivist-timeout 48h`.
+
+            Runbook: docs/operations/runbooks/verify-archive-tier-e.md
