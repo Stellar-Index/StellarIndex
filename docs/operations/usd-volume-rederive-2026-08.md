@@ -143,8 +143,17 @@ Operational discipline (ALL are prior-incident lessons):
   hours wall.
 - Chunks in the span older than 7 days are compressed. `ch-rebuild`
   writes through the normal upsert (no bulk-UPDATE GUC needed by the Go
-  path); if you fall back to any SQL step, per-session
-  `SET timescaledb.max_tuples_decompressed_per_dml_transaction = 0;`
+  path); if you fall back to any SQL step, scope the cap like the Go
+  tool does (INV-3, #312) — one transaction per window, `SET LOCAL` (never
+  session-wide `SET`, which rides the pooled connection past COMMIT), and
+  the UPDATE/DELETE predicate bound to that window's `[<W_LO_TS>, <W_HI_TS>]`
+  close-time range, never an unbounded chunk-wide statement:
+  ```sql
+  BEGIN;
+  SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0;
+  -- your UPDATE/DELETE here, scoped to ts BETWEEN <W_LO_TS> AND <W_HI_TS>
+  COMMIT;
+  ```
   and ship SQL by `scp` + `-f file.sql` — never inline `$$` over ssh.
 - After each window, **refresh `prices_1m` over that window's time
   range before starting the next** (step 3 command, scoped) — this
