@@ -49,16 +49,18 @@ func TestTradesForArbScan_ValuesAndParallelUSDSlice(t *testing.T) {
 			"base_asset", "quote_asset", "base_amount", "quote_amount",
 			"maker", "taker", "usd",
 		},
+		// Delivered newest-first, as the DESC query returns them; the store
+		// must hand them to the detector ascending.
 		rows: [][]driver.Value{
-			{
-				"sdex", int64(58_000_001), mevTxHashA, int64(3), ts,
-				"native", mevUSDC, "1000000000", "1250000",
-				"GMAKER", "GTAKER", "12.50",
-			},
 			{
 				"soroswap", int64(58_000_001), mevTxHashA, int64(4), ts,
 				mevUSDC, mevXLMSAC, "1250000", "1000000000",
 				"", "GTAKER", "",
+			},
+			{
+				"sdex", int64(58_000_001), mevTxHashA, int64(3), ts,
+				"native", mevUSDC, "1000000000", "1250000",
+				"GMAKER", "GTAKER", "12.50",
 			},
 		},
 	})
@@ -132,8 +134,9 @@ func TestTradesForArbScan_ExplicitLimitIsBound(t *testing.T) {
 //	ledger > 0 + taker present — off-chain CEX/FX prints carry neither,
 //	  and an "atomic arbitrage" assembled across exchange prints would be
 //	  a fabricated public accusation;
-//	the (ledger, tx_hash, op_index) ordering — the grouping the detector
-//	  relies on to see one transaction's legs together;
+//	the (ledger, tx_hash, op_index) ordering, NEWEST first — the cap must
+//	  keep the newest rows (the store reverses them back to ascending for
+//	  the detector); an ascending LIMIT drops the same burst tail every tick;
 //	the XLM-leg USD fallback — SDEX arb legs quote XLM/token and carry a
 //	  NULL usd_volume, so without it the feed reported "$0" notionals on
 //	  real cycles (2026-06-19).
@@ -152,7 +155,7 @@ func TestTradesForArbScanQueryShape(t *testing.T) {
 		"ts > $1",
 		"ledger > 0",
 		"taker IS NOT NULL AND taker <> ''",
-		"ORDER BY ledger ASC, tx_hash ASC, op_index ASC",
+		"ORDER BY ledger DESC, tx_hash DESC, op_index DESC",
 		"LIMIT $2",
 	} {
 		if !strings.Contains(q, want) {
@@ -203,9 +206,10 @@ func TestOracleUpdatesForMEVScan_ValuesAndArgs(t *testing.T) {
 	ts := time.Date(2026, 8, 29, 9, 30, 0, 0, time.UTC)
 	store, conn := newScriptedStore(t, scriptedResult{
 		cols: []string{"source", "contract_id", "ledger", "tx_hash", "op_index", "asset", "quote", "ts"},
+		// Delivered newest-first (DESC query); returned ascending.
 		rows: [][]driver.Value{
-			{"reflector-dex", "CORACLE", int64(58_000_010), mevTxHashB, int64(1), mevUSDC, "fiat:USD", ts},
 			{"reflector-cex", "", int64(58_000_011), mevTxHashB, int64(2), "native", "fiat:USD", ts},
+			{"reflector-dex", "CORACLE", int64(58_000_010), mevTxHashB, int64(1), mevUSDC, "fiat:USD", ts},
 		},
 	})
 
@@ -235,14 +239,11 @@ func TestOracleUpdatesForMEVScan_ValuesAndArgs(t *testing.T) {
 // built from, so a refactor that stops using the const cannot drop the
 // guard unnoticed.
 //
-// Why it matters: this scan feeds the liquidation_cascade correlator,
-// the one oracle_updates consumer with no asset keying — ANY oracle row
-// inside a fill's ledger bracket becomes evidence. `raw:<symbol>` rows
-// are unmapped oracle symbols recorded verbatim for capture totality
-// (canonical.AssetOracleRaw): orientation-unknown reference data that
-// must never become interpretation input. Without the predicate a busy
-// unmapped feed manufactures cascade candidates, and the /v1/mev feed
-// publicly accuses real accounts on that evidence.
+// Why it matters: this scan feeds the oracle-correlated MEV detectors.
+// `raw:<symbol>` rows are unmapped oracle symbols recorded verbatim for
+// capture totality (canonical.AssetOracleRaw): orientation-unknown
+// reference data that must never become interpretation input, and the
+// /v1/mev feed publicly names accounts on that evidence.
 //
 // This assertion was RED on origin/main at 0f13aa14: PR #305's squash
 // merge silently reverted PR #248's predicate.
@@ -255,11 +256,14 @@ func TestOracleUpdatesForMEVScan_ExcludesRawRowsFromTheIssuedSQL(t *testing.T) {
 	}
 	q := conn.only(t).sql
 	if !strings.Contains(q, "asset NOT LIKE 'raw:%'") {
-		t.Errorf("the MEV oracle scan must exclude unmapped raw: rows — the cascade "+
-			"correlator has no asset keying, so they would manufacture evidence:\n%s", q)
+		t.Errorf("the MEV oracle scan must exclude unmapped raw: rows — they are "+
+			"never MEV evidence:\n%s", q)
 	}
 	if !strings.Contains(q, "ledger > 0") {
 		t.Errorf("the MEV oracle scan must stay on-chain-only (ledger > 0):\n%s", q)
+	}
+	if !strings.Contains(q, "ORDER BY ledger DESC, tx_hash DESC, op_index DESC") {
+		t.Errorf("the MEV oracle scan must cap to the NEWEST updates, not the oldest:\n%s", q)
 	}
 }
 
@@ -275,10 +279,11 @@ func TestOracleUpdatesForMEVScan_ExcludesRawRowsFromTheIssuedSQL(t *testing.T) {
 func TestBlendFillsForMEVScan_ValuesArgsAndLiquidationOnlyFilter(t *testing.T) {
 	ts := time.Date(2026, 8, 29, 8, 15, 0, 0, time.UTC)
 	store, conn := newScriptedStore(t, scriptedResult{
-		cols: []string{"pool", "user_address", "filler", "auction_type", "ledger", "tx_hash", "op_index", "ts"},
+		cols: []string{"pool", "user_address", "filler", "auction_type", "ledger", "tx_hash", "op_index", "ts", "assets"},
+		// Delivered newest-first (DESC query); returned ascending.
 		rows: [][]driver.Value{
-			{"CPOOL", "GUSER", "GFILLER", int64(0), int64(58_000_020), mevTxHashA, int64(0), ts},
-			{"CPOOL", "GUSER2", "", int64(1), int64(58_000_021), mevTxHashB, int64(1), ts},
+			{"CPOOL", "GUSER2", "", int64(1), int64(58_000_021), mevTxHashB, int64(1), ts, "{}"},
+			{"CPOOL", "GUSER", "GFILLER", int64(0), int64(58_000_020), mevTxHashA, int64(0), ts, "{" + mevXLMSAC + ",CUSDC}"},
 		},
 	})
 
@@ -288,8 +293,8 @@ func TestBlendFillsForMEVScan_ValuesArgsAndLiquidationOnlyFilter(t *testing.T) {
 		t.Fatalf("BlendFillsForMEVScan: %v", err)
 	}
 	want := []domain.MEVAuctionFill{
-		{Pool: "CPOOL", User: "GUSER", Filler: "GFILLER", AuctionType: 0, Ledger: 58_000_020, TxHash: mevTxHashA, OpIndex: 0, Timestamp: ts},
-		{Pool: "CPOOL", User: "GUSER2", Filler: "", AuctionType: 1, Ledger: 58_000_021, TxHash: mevTxHashB, OpIndex: 1, Timestamp: ts},
+		{Pool: "CPOOL", User: "GUSER", Filler: "GFILLER", AuctionType: 0, Ledger: 58_000_020, TxHash: mevTxHashA, OpIndex: 0, Timestamp: ts, Assets: []string{mevXLMSAC, "CUSDC"}},
+		{Pool: "CPOOL", User: "GUSER2", Filler: "", AuctionType: 1, Ledger: 58_000_021, TxHash: mevTxHashB, OpIndex: 1, Timestamp: ts, Assets: []string{}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("fills = %+v\nwant %+v", got, want)
@@ -307,6 +312,9 @@ func TestBlendFillsForMEVScan_ValuesArgsAndLiquidationOnlyFilter(t *testing.T) {
 		t.Errorf("BlendFillsForMEVScan must restrict to the liquidation auction types 0/1 "+
 			"— Interest auctions (2) are not liquidations:\n%s", stmt.sql)
 	}
+	if !strings.Contains(stmt.sql, "ORDER BY ledger DESC, tx_hash DESC, op_index DESC") {
+		t.Errorf("BlendFillsForMEVScan must cap to the NEWEST fills, not the oldest:\n%s", stmt.sql)
+	}
 }
 
 // ─── InsertMEVEvent ───────────────────────────────────────────────────
@@ -318,14 +326,15 @@ func TestBlendFillsForMEVScan_ValuesArgsAndLiquidationOnlyFilter(t *testing.T) {
 func TestInsertMEVEvent_ArgsAndIdempotency(t *testing.T) {
 	ts := time.Date(2026, 8, 29, 7, 0, 0, 0, time.UTC)
 	ev := domain.MEVStoredEvent{
-		Kind:             "arbitrage",
+		Kind:             "sandwich",
 		DetectedAtLedger: 58_000_030,
 		Timestamp:        ts,
+		AssetID:          "native",
+		QuoteID:          mevUSDC,
 		TxHashes:         []string{mevTxHashA},
 		Accounts:         []string{"GTAKER"},
-		NotionalUSD:      "1234.56",
-		DedupKey:         "arbitrage:" + mevTxHashA + ":GTAKER",
-		DetailJSON:       []byte(`{"legs":2}`),
+		DedupKey:         "sandwich:" + mevTxHashA + ":GTAKER",
+		DetailJSON:       []byte(`{"legs":2,"notional_usd":"1234.56"}`),
 	}
 
 	store, conn := newScriptedStore(t,
@@ -354,51 +363,59 @@ func TestInsertMEVEvent_ArgsAndIdempotency(t *testing.T) {
 	if v := stmt.arg(t, 2); v != 58_000_030 {
 		t.Errorf("$2 = %v, want the detected-at ledger 58000030", v)
 	}
-	if v := stmt.arg(t, 3); v != "arbitrage" {
+	if v := stmt.arg(t, 3); v != "sandwich" {
 		t.Errorf("$3 = %v, want the kind", v)
 	}
-	if v, ok := stmt.arg(t, 4).([]string); !ok || !reflect.DeepEqual(v, []string{mevTxHashA}) {
-		t.Errorf("$4 = %#v, want the tx_hashes []string (pgx encodes Go slices as Postgres arrays)", stmt.arg(t, 4))
+	if v := stmt.arg(t, 4); v != (sql.NullString{String: "native", Valid: true}) {
+		t.Errorf("$4 = %#v, want asset_id bound from AssetID", v)
 	}
-	if v, ok := stmt.arg(t, 5).([]string); !ok || !reflect.DeepEqual(v, []string{"GTAKER"}) {
-		t.Errorf("$5 = %#v, want the accounts []string", stmt.arg(t, 5))
+	if v := stmt.arg(t, 5); v != (sql.NullString{String: mevUSDC, Valid: true}) {
+		t.Errorf("$5 = %#v, want quote_id bound from QuoteID", v)
 	}
-	if v := stmt.arg(t, 6); v != `{"legs":2}` {
-		t.Errorf("$6 = %v, want the detail JSON text", v)
+	if v, ok := stmt.arg(t, 6).([]string); !ok || !reflect.DeepEqual(v, []string{mevTxHashA}) {
+		t.Errorf("$6 = %#v, want the tx_hashes []string (pgx encodes Go slices as Postgres arrays)", stmt.arg(t, 6))
 	}
-	wantProfit := sql.NullString{String: "1234.56", Valid: true}
-	if v := stmt.arg(t, 7); v != wantProfit {
-		t.Errorf("$7 = %#v, want profit_usd bound from NotionalUSD %#v", v, wantProfit)
+	if v, ok := stmt.arg(t, 7).([]string); !ok || !reflect.DeepEqual(v, []string{"GTAKER"}) {
+		t.Errorf("$7 = %#v, want the accounts []string", stmt.arg(t, 7))
 	}
-	if v := stmt.arg(t, 8); v != ev.DedupKey {
-		t.Errorf("$8 = %v, want the dedup key %q", v, ev.DedupKey)
+	if v := stmt.arg(t, 8); v != `{"legs":2,"notional_usd":"1234.56"}` {
+		t.Errorf("$8 = %v, want the detail JSON text", v)
+	}
+	if v := stmt.arg(t, 9); v != ev.DedupKey {
+		t.Errorf("$9 = %v, want the dedup key %q", v, ev.DedupKey)
+	}
+	// profit_usd is attacker profit, which no detector estimates; a
+	// trade notional must never be written into it.
+	if len(stmt.args) != 9 || !strings.Contains(stmt.sql, "$8, NULL, $9") {
+		t.Errorf("profit_usd must be written NULL (9 binds, literal NULL):\n%s", stmt.sql)
 	}
 	if !strings.Contains(stmt.sql, "ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING") {
 		t.Errorf("InsertMEVEvent lost its idempotency arm — a re-scanned window would mint duplicate public accusations:\n%s", stmt.sql)
 	}
 }
 
-// TestInsertMEVEvent_EmptyNotionalUSDStoresNull: a wash-trade or other
-// no-profit-semantic candidate carries NotionalUSD == "" (see
-// domain.MEVStoredEvent's doc comment: '"" → stored NULL'). profit_usd
-// must bind to SQL NULL for that case, not the literal string "".
-func TestInsertMEVEvent_EmptyNotionalUSDStoresNull(t *testing.T) {
+// TestInsertMEVEvent_CrossAssetKindStoresNullAsset: a cross-asset kind
+// (arbitrage, cascade) carries AssetID/QuoteID == "" (see
+// domain.MEVStoredEvent). asset_id / quote_id must bind SQL NULL, not
+// the empty string, so the partial per-asset index skips the row.
+func TestInsertMEVEvent_CrossAssetKindStoresNullAsset(t *testing.T) {
 	ev := domain.MEVStoredEvent{
-		Kind:             "wash_trade",
+		Kind:             "arbitrage",
 		DetectedAtLedger: 58_000_031,
 		Timestamp:        time.Date(2026, 8, 29, 7, 0, 0, 0, time.UTC),
 		TxHashes:         []string{mevTxHashB},
-		Accounts:         []string{"GWASHER"},
-		NotionalUSD:      "",
-		DedupKey:         "wash_trade:" + mevTxHashB + ":GWASHER",
+		Accounts:         []string{"GARB"},
+		DedupKey:         "arbitrage:" + mevTxHashB + ":GARB",
 		DetailJSON:       []byte(`{}`),
 	}
 	store, conn := newScriptedStore(t, scriptedResult{rowsAffected: 1})
 	if _, err := store.InsertMEVEvent(context.Background(), ev); err != nil {
 		t.Fatalf("InsertMEVEvent: %v", err)
 	}
-	if v := conn.stmts[0].arg(t, 7); v != (sql.NullString{}) {
-		t.Errorf("$7 = %#v, want an invalid sql.NullString (binds SQL NULL) for empty NotionalUSD", v)
+	for _, n := range []int{4, 5} {
+		if v := conn.stmts[0].arg(t, n); v != (sql.NullString{}) {
+			t.Errorf("$%d = %#v, want an invalid sql.NullString (binds SQL NULL)", n, v)
+		}
 	}
 }
 

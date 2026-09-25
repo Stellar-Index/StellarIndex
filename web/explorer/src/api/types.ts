@@ -1583,12 +1583,22 @@ export interface paths {
          *     (not yet detected).
          *
          *     **Read `sandwich` and `oracle_sandwich` candidates with care.**
-         *     These detectors do not check trade DIRECTION, so a large
-         *     majority of published candidates have both bracket legs on the
-         *     same side — which cannot be a sandwich. The roles named in
-         *     `detail.legs` (`bracket` / `victim`) describe POSITION in the
-         *     ledger, not established behaviour, and the accounts listed are
-         *     not accusations. Most notionals are sub-dollar.
+         *     Both require the account's bracketing trades to run in OPPOSITE
+         *     directions (read from each venue's base-asset convention; legs
+         *     whose direction is unknown are dropped), but that is still a
+         *     structural signature, not proof. The roles named in
+         *     `detail.legs` (`bracket` / `victim` / `before` / `after`)
+         *     describe POSITION in the ledger, not established behaviour, and
+         *     the accounts listed are not accusations. `liquidation_cascade`
+         *     lists only the fillers in `accounts`; the liquidated position
+         *     owners appear in `detail` as `liquidated`. Most notionals are
+         *     sub-dollar.
+         *
+         *     Evidence legs carry `op_index` (the operation's index in the
+         *     transaction) and `sub_index` (the trade's position inside that
+         *     operation), decoded from the stored trade key, which is kept as
+         *     `trade_op_index`; the decoded pair is omitted for a venue whose
+         *     key encoding is unknown.
          *
          *     200 + empty array when nothing's been detected or the reader
          *     isn't wired (feature-gated, like /v1/lending/pools).
@@ -14615,6 +14625,8 @@ export interface operations {
                      *                 "quote": "native",
                      *                 "source": "sdex",
                      *                 "op_index": 0,
+                     *                 "sub_index": 0,
+                     *                 "trade_op_index": 0,
                      *                 "base_amount": "33238825",
                      *                 "quote_amount": "413237"
                      *               }
@@ -14650,13 +14662,15 @@ export interface operations {
                             /** Format: int64 */
                             detected_at_ledger?: number;
                             kind?: string;
+                            /** @description Primary asset of a pair-scoped event (sandwich, oracle_sandwich, wash_trade). Omitted for cross-asset kinds (arbitrage, liquidation_cascade). */
                             asset_id?: string;
+                            /** @description Primary quote paired with asset_id; omitted with it. */
                             quote_id?: string;
                             tx_hashes?: string[];
                             accounts?: string[];
-                            /** @description Pattern evidence (arbitrage: assets/sources/legs/notional). */
+                            /** @description Pattern evidence: every kind carries assets, sources and a note, plus its own legs / roles / oracle refs / fills. */
                             detail?: Record<string, never>;
-                            /** @description Attacker-profit estimate; null for arbitrage (not estimated). */
+                            /** @description Reserved attacker-profit estimate; null for every kind (profit is not estimated, and trade notional is in detail.notional_usd). */
                             profit_usd?: string | null;
                         }[];
                     };

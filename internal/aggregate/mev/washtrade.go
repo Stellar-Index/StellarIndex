@@ -27,10 +27,10 @@ const (
 
 // washLeg is one trade in a wash-trading candidate's evidence.
 type washLeg struct {
-	Source      string `json:"source"`
-	Ledger      uint32 `json:"ledger"`
-	TxHash      string `json:"tx_hash"`
-	OpIndex     uint32 `json:"op_index"`
+	Source string `json:"source"`
+	Ledger uint32 `json:"ledger"`
+	TxHash string `json:"tx_hash"`
+	OpRef
 	Maker       string `json:"maker"`
 	Taker       string `json:"taker"`
 	Base        string `json:"base"`
@@ -97,6 +97,7 @@ func detectSelfTrades(trades []canonical.Trade, usdVolume []string) []Candidate 
 		idxs := groups[key]
 		t0 := trades[idxs[0]]
 		notional := sumUSD(usdVolume, idxs)
+		assetID, quoteID := pairIDs(t0)
 		out = append(out, Candidate{
 			Kind:             KindWashTrade,
 			Ledger:           t0.Ledger,
@@ -105,6 +106,8 @@ func detectSelfTrades(trades []canonical.Trade, usdVolume []string) []Candidate 
 			TxHash:           t0.TxHash,
 			Taker:            t0.Taker,
 			Assets:           pairAssets(t0),
+			AssetID:          assetID,
+			QuoteID:          quoteID,
 			Sources:          distinctSources(trades, idxs),
 			NotionalUSD:      notional,
 			// Default dedup (kind:tx:actor) is exactly the self-trade
@@ -182,7 +185,10 @@ func buildRoundTripCandidate(trades []canonical.Trade, usdVolume []string, key s
 	t0 := trades[idxs[0]]
 	accounts := sortedKeys(map[string]struct{}{t0.Maker: {}, t0.Taker: {}})
 	notional := sumUSD(usdVolume, idxs)
+	assetID, quoteID := pairIDs(t0)
 	c := Candidate{
+		AssetID:          assetID,
+		QuoteID:          quoteID,
 		Kind:             KindWashTrade,
 		Ledger:           t0.Ledger,
 		DetectedAtLedger: t0.Ledger,
@@ -224,7 +230,7 @@ func washLegs(trades []canonical.Trade, idxs []int) []washLeg {
 			Source:      t.Source,
 			Ledger:      t.Ledger,
 			TxHash:      t.TxHash,
-			OpIndex:     t.OpIndex,
+			OpRef:       opRefOf(t),
 			Maker:       t.Maker,
 			Taker:       t.Taker,
 			Base:        t.Pair.Base.String(),

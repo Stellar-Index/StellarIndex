@@ -3609,6 +3609,23 @@ counts genuine first-detections, not re-observations. A flat line is
 normal (arbitrage is intermittent on Stellar); use it to confirm the
 detector is wired, not as an alert.
 
+### `stellarindex_mev_scan_truncated_total`
+
+Counter, label `input` ∈ `trades | oracle_updates | auction_fills`.
+
+A detector input scan returned exactly the worker's `ScanLimit` rows,
+so that tick's detection ran over only the newest `ScanLimit` rows of
+the trailing window. The scans keep the newest rows, so a truncated tick
+still covers the tip; rows between the cap and the window start were
+seen only if an earlier tick reached them. On a truncated trades scan
+the worker also drops the oldest (possibly partial) ledger before
+detection.
+
+**When to look:** any sustained rate means bursts are outrunning the
+cap and some patterns in those bursts are going undetected; the fix is
+a code change to `mev.WorkerConfig` (`ScanLimit`, `Window`) in the
+aggregator.
+
 ### `stellarindex_mev_detect_duration_seconds`
 
 Histogram, label `outcome` (same set as the runs counter).

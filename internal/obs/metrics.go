@@ -278,6 +278,7 @@ func registerAppMetricsTail() {
 		MEVDetectRunsTotal,
 		MEVEventsInsertedTotal,
 		MEVDetectDurationSeconds,
+		MEVScanTruncatedTotal,
 
 		PostgresPingTotal,
 		PostgresPingFailureStreak,
@@ -451,6 +452,9 @@ func seedBoundedLabelSeries() {
 	for _, outcome := range []string{"ok", "scan_error", "write_error"} {
 		MEVDetectRunsTotal.WithLabelValues(outcome)
 	}
+	MEVScanTruncatedTotal.WithLabelValues("trades")
+	MEVScanTruncatedTotal.WithLabelValues("oracle_updates")
+	MEVScanTruncatedTotal.WithLabelValues("auction_fills")
 	for _, outcome := range []string{"ok", "scan_error", "sink_error"} {
 		UsageRollupSweepsTotal.WithLabelValues(outcome)
 	}
@@ -2688,6 +2692,17 @@ var MEVDetectDurationSeconds = prometheus.NewHistogramVec(
 		Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 	},
 	[]string{"outcome"},
+)
+
+// MEVScanTruncatedTotal — MEV detector input scans that hit the worker's
+// ScanLimit, so detection ran over only the newest ScanLimit rows of the
+// window. Label `input` ∈ trades | oracle_updates | auction_fills.
+var MEVScanTruncatedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_mev_scan_truncated_total",
+		Help: "MEV detector input scans that hit ScanLimit — detection ran over a partial (newest-N) slice of the window.",
+	},
+	[]string{"input"},
 )
 
 // OracleStreamRowsUnparsedTotal counts oracle_updates rows dropped by

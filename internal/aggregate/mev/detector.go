@@ -31,15 +31,10 @@
 // direction-dependent claims (front-run vs back-run) are never
 // asserted.
 //
-// CORRECTION (cold audit 2026-08-04): this package's comments used to
-// justify that by saying the served rows "don't carry trade direction".
-// They do — trades.base_asset is the direction. The detectors simply
-// don't check it, so a large majority of published sandwich and
-// oracle_sandwich candidates are same-direction and structurally
-// impossible. Adding the check needs a per-source sign convention
-// (sdex base = the asset the maker sold; aquarius base = token_in, what
-// the taker sold), which is why it has not been done here. See each
-// detail Note.
+// The served rows DO carry trade direction: trades.base_asset under a
+// per-source convention (takerBaseIsReceived). sandwich and
+// oracle_sandwich both require their bracket legs to run in opposite
+// directions and drop direction-unknown brackets. See each detail Note.
 package mev
 
 import (
@@ -65,7 +60,7 @@ type Leg struct {
 	Quote       string `json:"quote"`
 	BaseAmount  string `json:"base_amount"`
 	QuoteAmount string `json:"quote_amount"`
-	OpIndex     uint32 `json:"op_index"`
+	OpRef
 }
 
 // Candidate is one detected MEV event before persistence.
@@ -78,8 +73,10 @@ type Candidate struct {
 	Taker            string   // primary actor
 	TxHashes         []string // all involved txs; nil → [TxHash]
 	Accounts         []string // all involved accounts; nil → [Taker]
-	Assets           []string // sorted distinct assets in the cycle
+	Assets           []string // sorted distinct assets in the pattern
 	Sources          []string // sorted distinct venues spanned
+	AssetID          string   // primary asset → mev_events.asset_id; "" for cross-asset kinds
+	QuoteID          string   // primary quote → mev_events.quote_id; "" for cross-asset kinds
 	Legs             []Leg
 	NotionalUSD      string // summed USD volume across legs ("" when none priced)
 	Dedup            string // explicit dedup key; "" → kind:tx:taker
@@ -112,9 +109,10 @@ func (c Candidate) DedupKey() string {
 //
 // usdVolume[i] is the optional USD notional of trades[i] (parallel
 // slice; nil or short → no notional). It's summed across a cycle's
-// legs into Candidate.NotionalUSD purely as a size signal — v1 does
-// not estimate attacker profit (direction is ambiguous in the served
-// rows), so profit_usd stays null downstream.
+// legs into Candidate.NotionalUSD purely as a size signal carried in
+// the detail — attacker profit is not estimated, so profit_usd stays
+// null downstream. A cycle spans several assets, so it has no primary
+// AssetID/QuoteID.
 func DetectArbitrage(trades []canonical.Trade, usdVolume []string) []Candidate {
 	type group struct {
 		idxs []int
@@ -171,7 +169,7 @@ func buildArbCandidate(trades []canonical.Trade, usdVolume []string, idxs []int)
 			Quote:       quote,
 			BaseAmount:  t.BaseAmount.String(),
 			QuoteAmount: t.QuoteAmount.String(),
-			OpIndex:     t.OpIndex,
+			OpRef:       opRefOf(t),
 		})
 	}
 
@@ -188,8 +186,9 @@ func buildArbCandidate(trades []canonical.Trade, usdVolume []string, idxs []int)
 		return Candidate{}, false
 	}
 
-	// Stable evidence ordering: legs by op_index.
-	sort.Slice(legs, func(a, b int) bool { return legs[a].OpIndex < legs[b].OpIndex })
+	// Stable evidence ordering: legs in on-chain (operation, position)
+	// order — the packed keys of different sources do not compare.
+	sort.SliceStable(legs, func(a, b int) bool { return legs[a].before(legs[b].OpRef) })
 
 	first := trades[idxs[0]]
 	c := Candidate{

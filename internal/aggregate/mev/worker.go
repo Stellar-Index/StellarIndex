@@ -84,7 +84,8 @@ type arbDetail struct {
 // storedFrom converts a detected Candidate into its persistence form,
 // marshalling the evidence into the detail jsonb. Candidates without
 // an explicit Detail get the arbitrage evidence shape (the original
-// v1 behaviour).
+// v1 behaviour); every kind's detail carries the candidate's assets
+// and sources (detailWithAssets).
 func storedFrom(c Candidate) (StoredEvent, error) {
 	detail := c.Detail
 	if detail == nil {
@@ -96,9 +97,9 @@ func storedFrom(c Candidate) (StoredEvent, error) {
 			Note:        "Atomic cyclic trade by one taker in a single transaction — an arbitrage signature. Detection is structural; profit is not estimated (leg direction is ambiguous in the served rows).",
 		}
 	}
-	dj, err := json.Marshal(detail)
+	dj, err := detailWithAssets(detail, c)
 	if err != nil {
-		return StoredEvent{}, fmt.Errorf("mev: marshal detail: %w", err)
+		return StoredEvent{}, err
 	}
 	txs := c.TxHashes
 	if txs == nil {
@@ -113,12 +114,39 @@ func storedFrom(c Candidate) (StoredEvent, error) {
 		Ledger:           c.Ledger,
 		DetectedAtLedger: c.DetectedAtLedger,
 		Timestamp:        c.Timestamp,
+		AssetID:          c.AssetID,
+		QuoteID:          c.QuoteID,
 		TxHashes:         txs,
 		Accounts:         accts,
-		NotionalUSD:      c.NotionalUSD,
 		DedupKey:         c.DedupKey(),
 		DetailJSON:       dj,
 	}, nil
+}
+
+// detailWithAssets marshals a kind's detail and adds the candidate's
+// `assets` / `sources` when the kind's own payload does not carry them,
+// so no kind's detail loses the per-asset evidence only arbDetail used
+// to keep. A detail that is not a JSON object is an error.
+func detailWithAssets(detail any, c Candidate) ([]byte, error) {
+	dj, err := json.Marshal(detail)
+	if err != nil {
+		return nil, fmt.Errorf("mev: marshal detail: %w", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(dj, &fields); err != nil || fields == nil {
+		return nil, fmt.Errorf("mev: %s detail is not a JSON object", c.Kind)
+	}
+	for key, vals := range map[string][]string{"assets": c.Assets, "sources": c.Sources} {
+		if _, has := fields[key]; has || len(vals) == 0 {
+			continue
+		}
+		b, mErr := json.Marshal(vals)
+		if mErr != nil {
+			return nil, fmt.Errorf("mev: marshal detail %s: %w", key, mErr)
+		}
+		fields[key] = b
+	}
+	return json.Marshal(fields)
 }
 
 // Worker runs the MEV detectors on a schedule: each tick it scans the
@@ -149,13 +177,22 @@ type Worker struct {
 const defaultRetention = 90 * 24 * time.Hour
 
 // Observer records per-run outcomes. nil → no-op (NopObserver).
+// Truncated fires once per input scan (ScanInput*) that hit ScanLimit.
 type Observer interface {
 	Run(outcome string, dur time.Duration, detected, inserted int)
+	Truncated(input string)
 }
 
+// Input names reported to Observer.Truncated.
+const (
+	ScanInputTrades   = "trades"
+	ScanInputOracles  = "oracle_updates"
+	ScanInputAuctions = "auction_fills"
+)
+
 // WorkerConfig configures a Worker. Window defaults to 30m, ScanLimit
-// to 50_000 — a 30-minute window of on-chain DEX trades is well under
-// that cap, and the cap is a backstop against a runaway scan.
+// to 50_000. The scanners return the NEWEST ScanLimit rows of the
+// window; a scan that fills the cap is reported via Observer.Truncated.
 //
 // Oracles / Auctions / Order are optional inputs: each nil seam
 // simply disables the detectors that need it (see the interface docs)
@@ -230,7 +267,7 @@ func (w *Worker) SetOrder(o TxOrderResolver) {
 func (w *Worker) RunOnce(ctx context.Context, now time.Time) (detected, inserted int, err error) {
 	start := now
 	since := now.Add(-w.window)
-	trades, usd, err := w.scanner.TradesForArbScan(ctx, since, w.scanLimit)
+	trades, usd, err := w.scanTrades(ctx, since)
 	if err != nil {
 		w.obs.Run("scan_error", time.Since(start), 0, 0)
 		return 0, 0, fmt.Errorf("mev: scan trades: %w", err)
@@ -313,6 +350,29 @@ func (w *Worker) Run(ctx context.Context, interval time.Duration) error {
 	}
 }
 
+// scanTrades reads the window's newest scanLimit trades. When the scan
+// fills the cap it is reported, and the oldest ledger is dropped: the
+// cap may have cut that ledger mid-transaction, and a partial
+// transaction can pass the arbitrage checks a complete one fails (a
+// dropped leg can lift the single-venue leg-count rejection).
+func (w *Worker) scanTrades(ctx context.Context, since time.Time) ([]canonical.Trade, []string, error) {
+	trades, usd, err := w.scanner.TradesForArbScan(ctx, since, w.scanLimit)
+	if err != nil || len(trades) < w.scanLimit {
+		return trades, usd, err
+	}
+	w.obs.Truncated(ScanInputTrades)
+	w.logger.Warn("mev: trade scan hit the cap — detecting over the newest rows only",
+		"cap", w.scanLimit, "window", w.window)
+	cut := 0
+	for cut < len(trades) && trades[cut].Ledger == trades[0].Ledger {
+		cut++
+	}
+	if cut > len(usd) {
+		return trades[cut:], nil, nil
+	}
+	return trades[cut:], usd[cut:], nil
+}
+
 // scanOracles fetches the window's on-chain oracle updates.
 // Best-effort: nil scanner or an error → nil (the oracle-correlated
 // detectors just don't run this tick).
@@ -326,6 +386,9 @@ func (w *Worker) scanOracles(ctx context.Context, since time.Time) []OracleRef {
 			w.logger.Warn("mev: oracle scan failed — skipping oracle-correlated detectors this tick", "err", err)
 		}
 		return nil
+	}
+	if len(oracles) >= w.scanLimit {
+		w.obs.Truncated(ScanInputOracles)
 	}
 	return oracles
 }
@@ -369,9 +432,14 @@ func (w *Worker) cascadeCandidates(ctx context.Context, since time.Time, oracles
 		}
 		return nil
 	}
+	if len(fills) >= w.scanLimit {
+		w.obs.Truncated(ScanInputAuctions)
+	}
 	return DetectLiquidationCascades(fills, oracles)
 }
 
 type nopObserver struct{}
 
 func (nopObserver) Run(string, time.Duration, int, int) {}
+
+func (nopObserver) Truncated(string) {}

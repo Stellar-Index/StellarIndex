@@ -28,6 +28,9 @@ type MEVAuctionFill struct {
 	TxHash      string
 	OpIndex     uint32
 	Timestamp   time.Time
+	// Assets are the distinct reserve assets in the fill's bid + lot:
+	// the liquidated position's debt and collateral.
+	Assets []string
 }
 
 // MEVStoredEvent is the persistence-ready form of a detected MEV
@@ -38,9 +41,14 @@ type MEVStoredEvent struct {
 	Ledger           uint32
 	DetectedAtLedger uint32
 	Timestamp        time.Time
-	TxHashes         []string
-	Accounts         []string
-	NotionalUSD      string // "" → stored NULL
-	DedupKey         string
-	DetailJSON       []byte
+	// AssetID / QuoteID are the event's primary asset and quote ("" →
+	// stored NULL, for cross-asset kinds). Notional stays in DetailJSON:
+	// it is trade size, not the profit estimate mev_events.profit_usd
+	// holds, which no detector computes.
+	AssetID    string
+	QuoteID    string
+	TxHashes   []string
+	Accounts   []string
+	DedupKey   string
+	DetailJSON []byte
 }

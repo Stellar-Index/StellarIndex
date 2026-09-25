@@ -29,6 +29,59 @@ type AuctionFill = domain.MEVAuctionFill
 // id, SDEX emits "native").
 const xlmSAC = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
 
+// sdexOpIndexStride is internal/sources/sdex's opIndexFanoutStride: sdex
+// stores op_index = operation index × 1024 + claim-atom index. Pinned
+// against that constant by TestSDEXOpIndexStrideMatchesSource.
+const sdexOpIndexStride = 1024
+
+// OpRef locates a trade leg on chain. trades.op_index is not an
+// operation index for the MEV-eligible sources — it packs the op with
+// the trade's position inside it — so evidence publishes it decoded:
+// OpIndex is the operation's index within the transaction, SubIndex the
+// trade's position within the operation (Soroban contract-event index,
+// or SDEX claim-atom index). Both are omitted for a source whose
+// encoding is unknown. TradeOpIndex is the stored trades.op_index.
+type OpRef struct {
+	OpIndex      *uint32 `json:"op_index,omitempty"`
+	SubIndex     *uint32 `json:"sub_index,omitempty"`
+	TradeOpIndex uint32  `json:"trade_op_index"`
+}
+
+// opRefOf decodes t.OpIndex under t.Source's encoding.
+func opRefOf(t canonical.Trade) OpRef {
+	ref := OpRef{TradeOpIndex: t.OpIndex}
+	var op, sub uint32
+	switch t.Source {
+	case "sdex":
+		op, sub = t.OpIndex/sdexOpIndexStride, t.OpIndex%sdexOpIndexStride
+	case "aquarius", "comet", "phoenix", "soroswap", "sushiswap_v3":
+		// canonical.FanoutOpIndex: opIndex<<16 | eventIndex.
+		op, sub = t.OpIndex>>16, t.OpIndex&0xFFFF
+	default:
+		return ref
+	}
+	ref.OpIndex, ref.SubIndex = &op, &sub
+	return ref
+}
+
+// before orders two refs by decoded (operation, position), falling back
+// to the stored key where a source's encoding is unknown.
+func (r OpRef) before(o OpRef) bool {
+	rOp, rSub := r.sortKey()
+	oOp, oSub := o.sortKey()
+	if rOp != oOp {
+		return rOp < oOp
+	}
+	return rSub < oSub
+}
+
+func (r OpRef) sortKey() (op, sub uint32) {
+	if r.OpIndex == nil || r.SubIndex == nil {
+		return r.TradeOpIndex, 0
+	}
+	return *r.OpIndex, *r.SubIndex
+}
+
 // normAsset collapses the native-XLM SAC onto "native" so pair
 // grouping and oracle-asset matching see one XLM identity.
 func normAsset(a string) string {
@@ -42,12 +95,20 @@ func normAsset(a string) string {
 // same pool pair can appear as A/B or B/A across trades, so grouping
 // keys on the sorted asset strings.
 func unorderedPairKey(t canonical.Trade) string {
-	b := normAsset(t.Pair.Base.String())
-	q := normAsset(t.Pair.Quote.String())
-	if b > q {
-		b, q = q, b
+	lo, hi := pairIDs(t)
+	return lo + "|" + hi
+}
+
+// pairIDs is the trade's pair as (low, high) normalised asset ids — the
+// orientation-independent primary asset/quote the pair-scoped kinds
+// persist to mev_events.asset_id / quote_id.
+func pairIDs(t canonical.Trade) (lo, hi string) {
+	lo = normAsset(t.Pair.Base.String())
+	hi = normAsset(t.Pair.Quote.String())
+	if lo > hi {
+		lo, hi = hi, lo
 	}
-	return b + "|" + q
+	return lo, hi
 }
 
 // tradeTouches reports whether the (normalised) asset is either side

@@ -12,9 +12,12 @@ const KindOracleSandwich = "oracle_sandwich"
 
 const oracleSandwichNote = "One account traded an asset in transactions on BOTH sides " +
 	"(tx_index application order from the raw lake) of an on-chain oracle update " +
-	"for that asset, all within a single ledger. Positional signature only: the " +
-	"this detector does not check trade direction (it IS available in the rows) so the trade/update relationship is " +
-	"not proven profitable — treat as a candidate, not proof."
+	"for that asset, all within a single ledger, and its nearest trades before and " +
+	"after the update run in OPPOSITE directions on that asset (bought on one side, " +
+	"sold on the other). Direction is read from the underlying rows' base asset " +
+	"under a per-source convention; same-direction and direction-unknown brackets " +
+	"are rejected. Profit is not estimated, so treat as a candidate, not proof, and " +
+	"not an accusation."
 
 // oracleSandwichDetail is the mev_events.detail payload for an
 // oracle_sandwich candidate.
@@ -118,6 +121,13 @@ func buildOracleSandwichCandidate(trades []canonical.Trade, usdVolume []string, 
 	if before == -1 || after == -1 {
 		return Candidate{}, false
 	}
+	// Same rule as buildSandwichCandidate: a bracket whose legs run the
+	// same way on the oracle's asset (a market maker quoting it on both
+	// sides of an update) is not a sandwich, and an unknown direction
+	// cannot prove one.
+	if !oppositeOnAsset(trades[before], trades[after], o.Asset) {
+		return Candidate{}, false
+	}
 
 	involved := []int{before, after}
 	legs := []OrderedLeg{
@@ -136,6 +146,8 @@ func buildOracleSandwichCandidate(trades []canonical.Trade, usdVolume []string, 
 		TxHashes:         []string{tb.TxHash, o.TxHash, trades[after].TxHash},
 		Accounts:         []string{taker},
 		Assets:           []string{normAsset(o.Asset)},
+		AssetID:          normAsset(o.Asset),
+		QuoteID:          o.Quote,
 		Sources:          distinctSources(trades, involved),
 		NotionalUSD:      notional,
 		Dedup: KindOracleSandwich + ":" + o.TxHash + ":" + strconv.FormatUint(uint64(o.OpIndex), 10) +
