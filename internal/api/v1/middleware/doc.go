@@ -1,8 +1,19 @@
 // Package middleware has the HTTP middleware the v1 API Server wraps
 // its mux in. Order (outermost first, per
-// `internal/api/v1/server.go`'s `Server.Handler` build):
+// `internal/api/v1/server.go`'s `Server.middlewareStack`), with every
+// optional entry wired:
 //
-//	RequestID → HTTPMetrics → Logger → Recoverer → SecurityHeaders → CacheControl → CORS → Auth → RateLimit
+//	RequestID → HTTPMetrics → Logger → Recoverer → SecurityHeaders →
+//	CacheControl → Envelope404 → CORS → TrailingSlashRedirect →
+//	ResolveRoute → RequestTimeout → PublicRoutes → Auth → KeyPolicy →
+//	RequireEmailVerified → UsageTracker → MonthlyQuota → RateLimit →
+//	TouchUsage → SessionAuth → CaptureRoute
+//
+// CORS, RequestTimeout, PublicRoutes + Auth, KeyPolicy,
+// RequireEmailVerified, UsageTracker, MonthlyQuota, RateLimit,
+// TouchUsage and SessionAuth are present only when configured.
+// TestMiddlewareStackMatchesPackageDoc (package v1) fails when this list
+// and the built stack disagree.
 //
 // Each middleware is a tiny file. They're composable via [Chain]
 // which wraps them innermost-last so the request-path order matches

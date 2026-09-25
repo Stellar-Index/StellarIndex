@@ -46,8 +46,9 @@ var ErrThrottleUnavailable = errors.New("ratelimit: throttle layer unavailable (
 // see [DefaultDwellTime]); callers fall open as before. Once Redis
 // has been failing continuously for longer than the dwell-time,
 // Take returns [ErrThrottleUnavailable] and callers should switch
-// to fail-CLOSED (HTTP 503 + Retry-After). A single Redis success
-// resets the clock so transient blips never trip the threshold.
+// to fail-CLOSED (HTTP 503 + Retry-After). Only a sustained recovery —
+// a full dwell-time of unbroken successes — resets the clock; a stray
+// success under a flapping Redis does not (see healthySince).
 type Bucket struct {
 	rdb    redis.Cmdable
 	max    int
@@ -271,8 +272,11 @@ var luaScript = redis.NewScript(lua)
 // Take increments the counter for key in the current window and
 // returns whether the request is allowed. One Redis round-trip.
 //
-// Callers should fail open on error — a Redis outage must not take
-// the whole API offline.
+// On error the caller must branch on [ErrThrottleUnavailable]: a
+// wrapped Redis error (still inside the dwell-time) fails OPEN, while
+// ErrThrottleUnavailable fails CLOSED with 503 + Retry-After. Treating
+// every error as fail-open re-opens the sustained-outage bypass — see
+// the package doc's "Failure mode" section.
 func (b *Bucket) Take(ctx context.Context, key string) (Result, error) {
 	return b.TakeN(ctx, key, 0)
 }

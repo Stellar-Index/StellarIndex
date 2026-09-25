@@ -1367,9 +1367,9 @@ type Options struct {
 	KeyPolicy middleware.Middleware
 
 	// RateLimit, when non-nil, is appended to the middleware stack
-	// as the innermost wrapper — so the Logger + Auth middlewares
-	// have already populated remote_ip + Subject into the request
-	// context. Typically constructed via
+	// inside Logger, Auth, KeyPolicy, RequireEmailVerified,
+	// UsageTracker and MonthlyQuota — so remote_ip + Subject are
+	// already on the request context (full order: middleware/doc.go). Typically constructed via
 	// middleware.RateLimitBySubject(anonBucket, authBucket, ...)
 	// so the per-tier limits (api.anon_rate_limit_per_min vs
 	// api.key_rate_limit_per_min) actually take effect; the older
@@ -1957,9 +1957,27 @@ func (s *Server) streamOptions() streaming.StreamOptions {
 	return streaming.StreamOptions{Drain: s.streamDrain}
 }
 
-// Handler returns the mux wrapped in the standard middleware stack
-// (outermost-first): RequestID → HTTPMetrics → Logger → Recoverer
-// → SecurityHeaders → [optional CORS] → [optional RateLimit].
+// Handler returns the mux wrapped in [Server.middlewareStack], outermost
+// first.
+func (s *Server) Handler() http.Handler {
+	entries := s.middlewareStack()
+	stack := make([]middleware.Middleware, len(entries))
+	for i, e := range entries {
+		stack[i] = e.mw
+	}
+	return middleware.Chain(s.mux, stack...)
+}
+
+// stackEntry is one middleware in [Server.middlewareStack], named as the
+// order in internal/api/v1/middleware/doc.go names it.
+type stackEntry struct {
+	name string
+	mw   middleware.Middleware
+}
+
+// middlewareStack is the request-path middleware order, outermost first.
+// middleware/doc.go documents it and TestMiddlewareStackMatchesPackageDoc
+// fails when the two disagree.
 //
 // HTTPMetrics sits inside RequestID so future trace-exemplar links
 // work, and outside Logger+Recoverer so metrics count every
@@ -1972,19 +1990,20 @@ func (s *Server) streamOptions() streaming.StreamOptions {
 // what panics, not the middleware around it.
 //
 // CORS runs outside RateLimit so preflight OPTIONS requests don't
-// consume rate-limit budget. RateLimit runs innermost — AFTER
-// Logger populates remote_ip into the context, so
-// middleware.RemoteIPFrom returns a meaningful key.
-func (s *Server) Handler() http.Handler {
-	stack := []middleware.Middleware{
-		middleware.RequestID,
-		obs.HTTPMetrics,
-		middleware.Logger(s.logger),
-		middleware.Recoverer(s.logger),
+// consume rate-limit budget. RateLimit runs inside Logger, Auth,
+// KeyPolicy, RequireEmailVerified, UsageTracker and MonthlyQuota — so
+// middleware.RemoteIPFrom and the Subject are populated when it keys —
+// and outside TouchUsage, SessionAuth and CaptureRoute.
+func (s *Server) middlewareStack() []stackEntry {
+	stack := []stackEntry{
+		{"RequestID", middleware.RequestID},
+		{"HTTPMetrics", obs.HTTPMetrics},
+		{"Logger", middleware.Logger(s.logger)},
+		{"Recoverer", middleware.Recoverer(s.logger)},
 		// Security headers live inside Recoverer so even a panic's
 		// 500 problem+json response carries nosniff. Cheap, always
 		// safe, idempotent with any edge-proxy that also sets it.
-		middleware.SecurityHeaders,
+		{"SecurityHeaders", middleware.SecurityHeaders},
 		// Cache-Control directives per route — set BEFORE handlers
 		// run so writeJSON / writeProblem responses inherit the
 		// directive. Handlers may override (Etag flows, immutable
@@ -1992,16 +2011,16 @@ func (s *Server) Handler() http.Handler {
 		// CDN-tier `s-maxage` is gated on s.cdnEnabled so deployments
 		// without a CDN don't emit a directive a CDN they don't run
 		// could later honour.
-		middleware.CacheControlWithCDN(s.cdnEnabled),
+		{"CacheControl", middleware.CacheControlWithCDN(s.cdnEnabled)},
 		// Convert Go's default text/plain 404 / 405 from the mux into
 		// problem+json so unknown paths and method mismatches use the
 		// same wire shape as the rest of our error surface. Sits AFTER
 		// CacheControl so the override gets the same Cache-Control
 		// directive a regular handler-side response would.
-		middleware.Envelope404,
+		{"Envelope404", middleware.Envelope404},
 	}
 	if s.cors != nil {
-		stack = append(stack, s.cors)
+		stack = append(stack, stackEntry{"CORS", s.cors})
 	}
 	// 308-redirect trailing-slash paths to their no-slash form
 	// (e.g. /v1/assets/native/ → /v1/assets/native). Every v1
@@ -2013,7 +2032,7 @@ func (s *Server) Handler() http.Handler {
 	// the 308 carried no Access-Control-Allow-Origin, so a browser
 	// fetch of a trailing-slash URL died at the redirect — exactly
 	// as dead as the 404 this middleware exists to prevent.
-	stack = append(stack, middleware.TrailingSlashRedirect(s.mux))
+	stack = append(stack, stackEntry{"TrailingSlashRedirect", middleware.TrailingSlashRedirect(s.mux)})
 	// ResolveRoute pre-matches the route pattern via a read-only
 	// mux.Handler lookup, BEFORE Auth/KeyPolicy/MonthlyQuota/RateLimit
 	// can reject the request short of the mux. Those gates run outside
@@ -2021,7 +2040,7 @@ func (s *Server) Handler() http.Handler {
 	// used to leave UsageTracker's endpointFamily() with no route
 	// info at all and bucket it under "unmatched" (Q177) — this fills
 	// that gap without moving any gate's position.
-	stack = append(stack, middleware.ResolveRoute(s.mux))
+	stack = append(stack, stackEntry{"ResolveRoute", middleware.ResolveRoute(s.mux)})
 	// RequestTimeout bounds every non-streaming request's context so
 	// EVERY handler inherits a deadline even when it forgets to wrap its
 	// own DB/ClickHouse read (C3-1/C3-2/P1, audit-2026-07-16).
@@ -2046,7 +2065,7 @@ func (s *Server) Handler() http.Handler {
 	// SSE endpoints are exempt inside the middleware. Skipped entirely
 	// when requestTimeout <= 0 (the middleware also self-guards on that).
 	if s.requestTimeout > 0 {
-		stack = append(stack, middleware.RequestTimeout(s.requestTimeout))
+		stack = append(stack, stackEntry{"RequestTimeout", middleware.RequestTimeout(s.requestTimeout)})
 	}
 	// Auth runs INSIDE CORS (so preflight OPTIONS short-circuits
 	// before any credential check) but OUTSIDE RateLimit (so
@@ -2054,13 +2073,13 @@ func (s *Server) Handler() http.Handler {
 	// publicRoutes.Mark sits directly outside it so routes mounted via
 	// handlePublic are credential-optional under every auth_mode.
 	if s.auth != nil {
-		stack = append(stack, s.publicRoutes.Mark(), s.auth)
+		stack = append(stack, stackEntry{"PublicRoutes", s.publicRoutes.Mark()}, stackEntry{"Auth", s.auth})
 	}
 	// KeyPolicy runs after Auth (so the Subject is on context) but
 	// before RateLimit (so a policy-denied 403 never spends a
 	// rate-limit token). F-1226 (codex audit-2026-05-12).
 	if s.keyPolicy != nil {
-		stack = append(stack, s.keyPolicy)
+		stack = append(stack, stackEntry{"KeyPolicy", s.keyPolicy})
 	}
 	// RequireEmailVerified runs after KeyPolicy (same "Subject
 	// already resolved" precondition) and BEFORE rate-limit (so
@@ -2069,7 +2088,7 @@ func (s *Server) Handler() http.Handler {
 	// deployment via the api binary's
 	// cfg.API.SignupRequireEmailVerification flag.
 	if s.requireEmailVerified != nil {
-		stack = append(stack, s.requireEmailVerified)
+		stack = append(stack, stackEntry{"RequireEmailVerified", s.requireEmailVerified})
 	}
 	// Usage tracker runs OUTSIDE both quota and rate-limit so it
 	// observes BOTH kinds of 429 rejection and records them under the
@@ -2086,17 +2105,17 @@ func (s *Server) Handler() http.Handler {
 	// throttled request nor an outage on our side eats billing quota.
 	// Best-effort; failures log at debug and never block.
 	if s.usageTracker != nil {
-		stack = append(stack, s.usageTracker)
+		stack = append(stack, stackEntry{"UsageTracker", s.usageTracker})
 	}
 	// MonthlyQuota runs AFTER auth/key-policy (so the Subject is
 	// on context) but BEFORE rate-limit (so a quota-rejected
 	// request doesn't also spend a per-minute token). F-1226
 	// (codex audit-2026-05-12).
 	if s.monthlyQuota != nil {
-		stack = append(stack, s.monthlyQuota)
+		stack = append(stack, stackEntry{"MonthlyQuota", s.monthlyQuota})
 	}
 	if s.rateLimit != nil {
-		stack = append(stack, s.rateLimit)
+		stack = append(stack, stackEntry{"RateLimit", s.rateLimit})
 	}
 	// TouchUsage runs INSIDE rate-limit (and after the usage
 	// tracker for ordering symmetry) so a denied (429) request
@@ -2105,7 +2124,7 @@ func (s *Server) Handler() http.Handler {
 	// fires post-handler with a SETNX debounce so per-request
 	// cost is bounded. F-1226 (codex audit-2026-05-12) wave 39.
 	if s.touchUsage != nil {
-		stack = append(stack, s.touchUsage)
+		stack = append(stack, stackEntry{"TouchUsage", s.touchUsage})
 	}
 	// Session resolver runs INSIDE rate-limit so the per-account
 	// rate limit could observe the dashboard subject in the future
@@ -2114,7 +2133,7 @@ func (s *Server) Handler() http.Handler {
 	// info too). Either way the cookie is parsed once per request
 	// and the result stays attached for the rest of the chain.
 	if s.sessionAuth != nil {
-		stack = append(stack, s.sessionAuth)
+		stack = append(stack, stackEntry{"SessionAuth", s.sessionAuth})
 	}
 	// CaptureRoute MUST be innermost — directly above the mux — so
 	// r.Pattern is populated before it reads. It writes the matched
@@ -2123,8 +2142,7 @@ func (s *Server) Handler() http.Handler {
 	// route even though Logger's r.WithContext between them shadows
 	// the original request struct. See obs.HTTPMetrics docstring
 	// for the why.
-	stack = append(stack, obs.CaptureRoute)
-	return middleware.Chain(s.mux, stack...)
+	return append(stack, stackEntry{"CaptureRoute", obs.CaptureRoute})
 }
 
 // Uptime returns how long this server has been running. Exposed

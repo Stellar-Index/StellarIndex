@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -297,8 +298,8 @@ func writeMonthlyQuotaDenied(w http.ResponseWriter, r *http.Request, quota, used
 	// (overrides the route directive CacheControl pre-set; matches
 	// the rate limiter's 429 handling in ratelimit.go).
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-StellarIndex-Monthly-Quota", itoa(quota))
-	w.Header().Set("X-StellarIndex-Monthly-Used", itoa(used))
+	w.Header().Set("X-StellarIndex-Monthly-Quota", strconv.FormatInt(quota, 10))
+	w.Header().Set("X-StellarIndex-Monthly-Used", strconv.FormatInt(used, 10))
 	w.WriteHeader(http.StatusTooManyRequests)
 	_, _ = w.Write(body)
 }
@@ -335,34 +336,8 @@ func writeMonthlyQuotaUnavailable(w http.ResponseWriter, r *http.Request, quota 
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-StellarIndex-Monthly-Quota", itoa(quota))
-	w.Header().Set("Retry-After", itoa(int64(retryAfter)))
+	w.Header().Set("X-StellarIndex-Monthly-Quota", strconv.FormatInt(quota, 10))
+	w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 	w.WriteHeader(http.StatusTooManyRequests)
 	_, _ = w.Write(body)
-}
-
-// itoa is the tiny non-allocating int64-to-decimal-string helper
-// the response-header values use. strconv is fine but the header
-// is small + on the cap-hit path; this keeps the formatter
-// trivial.
-func itoa(n int64) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	pos := len(buf)
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	for n > 0 {
-		pos--
-		buf[pos] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		pos--
-		buf[pos] = '-'
-	}
-	return string(buf[pos:])
 }
