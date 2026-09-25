@@ -6,10 +6,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
@@ -398,7 +400,13 @@ func (r *ExplorerReader) holdersBoard(ctx context.Context, holdersQ string, hold
 // AccountWealth is one row of the wealth-ranked accounts directory.
 type AccountWealth struct {
 	AccountID string
-	USD       float64
+	// USD is the ranking key: sum(balance × price) in float64. On the usd basis
+	// it is dollars; on the native_xlm basis read NativeStroops instead.
+	USD float64
+	// NativeStroops is the account entry's exact XLM balance in stroops — the
+	// served value on the native_xlm basis, where USD's float64 cannot carry
+	// the 7th decimal above 2^53 stroops (~900.7M XLM).
+	NativeStroops canonical.Amount
 	// Locked marks a provably-unspendable account (a locked burn address —
 	// master weight 0 and all thresholds 0). Resolved by the background
 	// refresh so it is served from cache; do NOT resolve it on the request
@@ -411,7 +419,9 @@ type AccountWealth struct {
 // accountsByWealthQuery is AccountsByWealth's SQL. balance is stroops (1e7);
 // k = "native" for the account entry, else the trustline asset.
 // has(assets, k) keeps only priced rows; indexOf maps the key to its price.
-// Sum per account, rank desc.
+// Sum per account, rank desc. native_stroops carries the exact XLM balance
+// (widened before summing) and breaks float ties, so the native_xlm order is
+// exact too.
 //
 // This is a background-refresh query (never on a request deadline — see
 // accounts_wealth_cache.go). The FINAL scan of 43.6M current-state rows
@@ -430,7 +440,8 @@ type AccountWealth struct {
 // clickhouse.WithSettings) so the pin is test-assertable and immune to the
 // driver's observed context-settings drop (see cbLookupCreatesQuery).
 const accountsByWealthQuery = `SELECT account_id,
-		sum(toFloat64(balance) / 1e7 * arrayElement(?, indexOf(?, k))) AS usd
+		sum(toFloat64(balance) / 1e7 * arrayElement(?, indexOf(?, k))) AS usd,
+		sumIf(toInt128(balance), k = 'native') AS native_stroops
 		FROM (
 			SELECT account_id, balance, if(entry_type = 'account', 'native', asset) AS k
 			FROM stellar.ledger_entries_current FINAL
@@ -439,7 +450,7 @@ const accountsByWealthQuery = `SELECT account_id,
 		WHERE has(?, k)
 		GROUP BY account_id
 		HAVING usd > 0
-		ORDER BY usd DESC
+		ORDER BY usd DESC, native_stroops DESC
 		LIMIT ?
 		SETTINGS max_threads = 4, max_memory_usage = 8589934592, max_execution_time = 150`
 
@@ -464,10 +475,14 @@ func (r *ExplorerReader) AccountsByWealth(ctx context.Context, assets []string, 
 	defer func() { _ = rows.Close() }()
 	var out []AccountWealth
 	for rows.Next() {
-		var w AccountWealth
-		if err := rows.Scan(&w.AccountID, &w.USD); err != nil {
+		var (
+			w      AccountWealth
+			native big.Int
+		)
+		if err := rows.Scan(&w.AccountID, &w.USD, &native); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan account wealth: %w", err)
 		}
+		w.NativeStroops = canonical.NewAmount(&native)
 		out = append(out, w)
 	}
 	return out, rows.Err()

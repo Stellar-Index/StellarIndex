@@ -68,6 +68,7 @@ type stubExplorerReader struct {
 	holders          []clickhouse.AssetHolder
 	holderCount      int64
 	wealth           []clickhouse.AccountWealth
+	wealthLedger     uint32 // the cached ranking snapshot's AsOfLedger
 	pairStates       map[string]clickhouse.SoroswapPairState
 	tokenDisplays    map[string]clickhouse.TokenDisplayMeta
 	// tokenDisplaysErr fails ONLY TokenDisplays, so tests can exercise a
@@ -297,11 +298,13 @@ func (s *stubExplorerReader) AccountsByWealth(_ context.Context, _ []string, _ [
 // the stub isn't configured to fail, so existing expectations are
 // unchanged. An error case reports cold, which is how the real cache
 // signals "nothing ever computed" (site-audit S3).
-func (s *stubExplorerReader) AccountsByWealthCached(_ context.Context, _ []string, _ []float64, _ int) ([]clickhouse.AccountWealth, string, time.Time, bool) {
+func (s *stubExplorerReader) AccountsByWealthCached(_ context.Context, _ []string, _ []float64, _ int) (clickhouse.AccountWealthSnapshot, bool) {
 	if s.err != nil {
-		return nil, "", time.Time{}, false
+		return clickhouse.AccountWealthSnapshot{}, false
 	}
-	return s.wealth, clickhouse.WealthBasisUSD, time.Now(), true
+	return clickhouse.AccountWealthSnapshot{
+		Rows: s.wealth, Basis: clickhouse.WealthBasisUSD, AsOf: time.Now(), AsOfLedger: s.wealthLedger,
+	}, true
 }
 
 func (s *stubExplorerReader) AccountTransactions(_ context.Context, _ string, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, error) {

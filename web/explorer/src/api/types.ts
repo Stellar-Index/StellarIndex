@@ -4597,15 +4597,19 @@ export interface paths {
          *       list. `priced_assets` is 0 and `usd_value` is omitted.
          *
          *     Each row's `value` is the ranked wealth expressed in the `ranked_by`
-         *     unit — USD dollars (2dp) or whole XLM. `usd_value` is a backward-compatible
+         *     unit — USD dollars (2dp) or whole XLM (exact to the stroop, up to 7
+         *     decimals). `usd_value` is a backward-compatible
          *     alias populated only on the `usd` basis. Computed in one pass over the
          *     current-state projection (latest `ledger_entry_changes` per key, ADR-0038
          *     Phase C); coverage tracks the entry-change capture + Phase-C backfill.
          *
-         *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark this
-         *     current-state ranking is fresh to (the highest captured ledger at
-         *     serve time); `flags.stale` fires when the watermark's close time
-         *     trails now by more than 300s (a wedged sink).
+         *     Freshness (ADR-0041): the ranking is a background-computed snapshot
+         *     (refreshed every few minutes, served for up to 15 minutes). The
+         *     envelope `as_of` is when it was computed and `as_of_ledger` is the
+         *     lake watermark read immediately before its scan — the snapshot's own
+         *     vintage, never a later serve-time read. `flags.stale` fires when the
+         *     snapshot has outlived its 15-minute refresh contract or the lake
+         *     watermark's close time trails now by more than 300s (a wedged sink).
          */
         get: operations["listAccounts"];
         put?: never;
@@ -12717,7 +12721,7 @@ export interface operations {
                             }[];
                             /**
                              * Format: int64
-                             * @description Lake watermark this read is fresh to (ADR-0041). Omitted when no watermark reader is wired. Pairs with flags.stale.
+                             * @description The board snapshot's vintage (ADR-0041): the lake watermark read immediately before the snapshot's scan, paired with the envelope as_of. Omitted when no watermark was available. Pairs with flags.stale.
                              */
                             as_of_ledger?: number;
                         };
@@ -22326,7 +22330,7 @@ export interface operations {
                             ranked_by?: "usd" | "native_xlm";
                             accounts?: {
                                 account_id?: string;
-                                /** @description Ranked wealth in the ranked_by unit — USD dollars (2dp) or whole XLM (decimal string). */
+                                /** @description Ranked wealth in the ranked_by unit — USD dollars (2dp) or whole XLM (decimal string, exact to the stroop, up to 7 decimals). */
                                 value?: string;
                                 /** @description Backward-compatible alias, populated only on the usd basis (equals value there); omitted on native_xlm. */
                                 usd_value?: string;
@@ -22335,7 +22339,7 @@ export interface operations {
                             }[];
                             /**
                              * Format: int64
-                             * @description Lake watermark this current-state ranking is fresh to (ADR-0041) — the highest captured ledger at serve time. Omitted when no watermark reader is wired. Pairs with flags.stale.
+                             * @description The ranking snapshot's vintage (ADR-0041): the lake watermark read immediately before the snapshot's scan, paired with the envelope as_of. Omitted when no watermark was available. Pairs with flags.stale.
                              */
                             as_of_ledger?: number;
                             /** @description Always true: each value counts only the holding domains coverage_note names, so it can under-state an account, never over-state it. */

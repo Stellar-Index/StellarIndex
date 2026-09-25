@@ -131,8 +131,8 @@ func (downReader) AccountsByWealth(context.Context, []string, []float64, int) ([
 	return nil, errLakeDown
 }
 
-func (downReader) AccountsByWealthCached(context.Context, []string, []float64, int) ([]clickhouse.AccountWealth, string, time.Time, bool) {
-	return nil, "", time.Time{}, false
+func (downReader) AccountsByWealthCached(context.Context, []string, []float64, int) (clickhouse.AccountWealthSnapshot, bool) {
+	return clickhouse.AccountWealthSnapshot{}, false
 }
 
 func (downReader) SoroswapPairReserves(context.Context, []string) (map[string]clickhouse.SoroswapPairState, error) {
