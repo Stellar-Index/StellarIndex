@@ -8,7 +8,7 @@ import { AssetLink } from '@/components/AssetLink';
 import { DonutChart } from '@/components/charts/DonutChart';
 import { HBarList, PairedBars } from '@/components/charts/Bars';
 import { apiGet, asExample } from '@/api/client';
-import { formatCompact } from '@/lib/format';
+import { formatCompact, sumDecimalStrings } from '@/lib/format';
 import { scaledUnits } from '../../explorer-shared';
 import { shortAssetText } from '@/lib/asset-label';
 
@@ -72,7 +72,10 @@ export function PoolReserves({ pool }: { pool: string }) {
   const priced = reserves
     .filter((rv) => rv.supplied_usd != null && Number(rv.supplied_usd) > 0)
     .sort((a, b) => Number(b.supplied_usd) - Number(a.supplied_usd));
-  const totalUsd = priced.reduce((sum, rv) => sum + Number(rv.supplied_usd), 0);
+  // Summed exactly; converted once, for the chart label only.
+  const totalUsd = Number(
+    sumDecimalStrings(priced.map((rv) => rv.supplied_usd)) ?? 0,
+  );
 
   return (
     <Panel

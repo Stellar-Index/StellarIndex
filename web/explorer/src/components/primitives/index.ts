@@ -25,3 +25,6 @@ export { AccelerationArrow } from './AccelerationArrow';
 export type { AccelerationArrowProps } from './AccelerationArrow';
 
 export { RollingNumber } from './RollingNumber';
+
+export { FreshnessMarker } from './FreshnessMarker';
+export type { FreshnessMarkerProps } from './FreshnessMarker';

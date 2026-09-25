@@ -6,7 +6,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { useAsset, useAssetSupply, type AssetSupply } from '@/api/hooks';
-import { formatCompact } from '@/lib/format';
+import { FreshnessMarker } from '@/components/primitives';
+import { formatBaseUnits, formatCompact, scaleBaseUnits } from '@/lib/format';
 import { type Envelope } from '../../explorer-shared';
 import { SupplyFlowsBar, buildSupplyFlowRows } from './SupplyFlowsBar';
 
@@ -60,7 +61,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
     );
   }
 
-  const a = asset.data;
+  const a = asset.data?.data;
   if (!a) {
     return (
       <Panel
@@ -91,8 +92,9 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
       source={asExample('/v1/assets/{asset_id}', { asset_id: assetID })}
       bodyClassName="space-y-4"
     >
-      {onchain.data && (
-        <OnChainSupply data={onchain.data} decimals={decimals} />
+      <FreshnessMarker flags={asset.data?.flags} className="block" />
+      {onchain.data?.data && (
+        <OnChainSupply env={onchain.data} assetDecimals={a.decimals} />
       )}
       {noSupply ? (
         <p className="text-ink-muted text-sm">
@@ -230,68 +232,120 @@ function MarketCapChart({ assetID }: { assetID: string }) {
   );
 }
 
+/**
+ * onChainSupplyDecimals — the exponent for the live supply block. The
+ * contract's own declared scale wins; on the contract-storage arm the API
+ * omits it when the chain declares none, and substituting a default there
+ * would publish a figure wrong by a power of ten, so the answer is null
+ * (render base units). The flow and native arms carry no scale of their
+ * own and use the asset's resolved decimals.
+ */
+export function onChainSupplyDecimals(
+  supply: AssetSupply,
+  assetDecimals: number | undefined,
+): number | null {
+  if (supply.decimals != null) return supply.decimals;
+  if (supply.source === 'contract_storage_balances') return null;
+  return assetDecimals ?? 7;
+}
+
+function formatSupply(raw: string | undefined, decimals: number | null) {
+  if (decimals == null) return formatBaseUnits(raw, 0, 0);
+  const n = scaleBaseUnits(raw, decimals);
+  return n != null ? formatCompact(n) : '—';
+}
+
 // OnChainSupply renders the live decode-at-ingest supply (ADR-0034):
 // Σmint − Σburn − Σclawback from the supply_flows lake, current to the
 // latest ledger with no rollup refresh. This is the universal supply
 // number available for every token (vs the ADR-0011 F2 fields below,
 // which only exist for tracked assets). For native XLM the source is the
-// ledger header's total_coins (no mint/burn breakdown).
+// ledger header's total_coins (no mint/burn breakdown); for a token with
+// no event log it is the per-holder balances read from contract storage,
+// which can only be a floor once state expiry archives a balance.
 function OnChainSupply({
-  data,
-  decimals,
+  env,
+  assetDecimals,
 }: {
-  data: AssetSupply;
-  decimals: number;
+  env: Envelope<AssetSupply>;
+  assetDecimals: number | undefined;
 }) {
+  const data = env.data;
   const native = data.source === 'ledger_total_coins';
-  const total = parseSmallest(data.total_supply, decimals);
-  const mint = parseSmallest(data.mint_total, decimals);
-  const burn = parseSmallest(data.burn_total, decimals);
-  const clawback = parseSmallest(data.clawback_total, decimals);
+  const storage = data.source === 'contract_storage_balances';
+  const decimals = onChainSupplyDecimals(data, assetDecimals);
+  const floor = data.circulating_supply_lower_bound === true;
+  const total = formatSupply(data.total_supply, decimals);
   return (
     <div className="border-up/30 bg-up-subtle/50 rounded-lg border p-3">
-      <h3 className="text-up mb-2 text-xs font-semibold tracking-wider uppercase">
+      <h3 className="text-up mb-2 flex flex-wrap items-center gap-2 text-xs font-semibold tracking-wider uppercase">
         On-chain supply (live)
+        <FreshnessMarker flags={env.flags} />
       </h3>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Metric
-          label="Total"
-          value={total != null ? formatCompact(total) : '—'}
-          sublabel={
-            native
-              ? 'ledger total_coins'
-              : `${data.flow_count.toLocaleString('en-US')} flows`
-          }
+          label={floor ? 'Total (at least)' : 'Total'}
+          value={total !== '—' && floor ? `≥ ${total}` : total}
+          sublabel={supplySublabel(data, decimals)}
         />
-        {!native && (
+        {!native && !storage && decimals != null && (
           <>
             <Metric
               label="Minted"
-              value={mint != null ? formatCompact(mint) : '—'}
+              value={formatSupply(data.mint_total, decimals)}
             />
             <Metric
               label="Burned"
-              value={burn != null ? formatCompact(burn) : '—'}
+              value={formatSupply(data.burn_total, decimals)}
             />
             <Metric
               label="Clawed back"
-              value={clawback != null ? formatCompact(clawback) : '—'}
+              value={formatSupply(data.clawback_total, decimals)}
             />
           </>
         )}
       </div>
-      {!native && (
+      {!native && !storage && decimals != null && (
         <div className="mt-3">
           <SupplyFlowsBar rows={buildSupplyFlowRows(data, decimals)} />
         </div>
       )}
+      {floor && (
+        <p className="text-warn-700 mt-2 text-xs">
+          A floor, not the exact supply: only balances that are ledger entries
+          right now are counted, and state expiry can archive a real balance out
+          of view
+          {data.supply_consistent === false
+            ? ' — the contract itself reports more than is visible.'
+            : '.'}
+        </p>
+      )}
       <p className="text-up/80 mt-2 text-[11px]">
-        {native
-          ? 'Native XLM total from the ledger header — current to the latest ledger.'
-          : 'Σ mint − burn − clawback from the supply_flows lake (ADR-0034), current to the latest ledger — no refresh lag.'}
+        {supplyFootnote(data)}
+        {data.as_of_ledger != null &&
+          ` Fresh to ledger ${data.as_of_ledger.toLocaleString('en-US')}.`}
       </p>
     </div>
   );
+}
+
+function supplySublabel(data: AssetSupply, decimals: number | null): string {
+  if (decimals == null) return 'base units — the contract declares no scale';
+  if (data.source === 'ledger_total_coins') return 'ledger total_coins';
+  if (data.source === 'contract_storage_balances') {
+    return `${(data.balance_entries ?? 0).toLocaleString('en-US')} balances`;
+  }
+  return `${data.flow_count.toLocaleString('en-US')} flows`;
+}
+
+function supplyFootnote(data: AssetSupply): string {
+  if (data.source === 'ledger_total_coins') {
+    return 'Native XLM total from the ledger header — current to the latest ledger.';
+  }
+  if (data.source === 'contract_storage_balances') {
+    return 'Σ per-holder balances read from the contract’s own storage — the token emits no supply events.';
+  }
+  return 'Σ mint − burn − clawback from the supply_flows lake (ADR-0034), current to the latest ledger — no refresh lag.';
 }
 
 function Metric({

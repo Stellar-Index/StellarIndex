@@ -18,7 +18,13 @@
 'use client';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { API_BASE_URL, apiGet, timeoutSignal } from './client';
+import {
+  API_BASE_URL,
+  apiGet,
+  timeoutSignal,
+  type Envelope,
+  type EnvelopeFlags,
+} from './client';
 import { clearSessionHint, useSessionHint } from './sessionHint';
 import type { components, paths } from './types';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -385,15 +391,17 @@ export function useChangeSummary(
 ) {
   return useQuery<ChangeSummary>({
     queryKey: ['/v1/changes', entityType, entityID],
-    queryFn: () =>
+    queryFn: async () =>
       // A `pair` id is the literal `base/quote` form (per the OpenAPI
       // `id` parameter doc) and must occupy one path segment — an
       // unencoded `/` splits the request across two segments and
       // matches no route. `coin` ids never contain `/`, so this is a
       // no-op for every existing caller.
-      apiGet<ChangeSummary>(
-        `/v1/changes/${entityType}/${encodeURIComponent(entityID)}`,
-      ),
+      (
+        await apiGet<Envelope<ChangeSummary>>(
+          `/v1/changes/${entityType}/${encodeURIComponent(entityID)}`,
+        )
+      ).data,
     enabled: !!entityID,
     staleTime: 60_000,
   });
@@ -464,9 +472,16 @@ export function useSources(
  * that pulled "the first coin" or searched `q=XLM` resolved to USDC
  * (top by observation) and showed ~$1.00 mislabelled as XLM. Always
  * source XLM's price from /v1/price?asset=native, never the coins list.
+ *
+ * `price` stays the served decimal string (ADR-0003) and `flags` is the
+ * whole envelope: /v1/price is the only route that sets `frozen`.
  */
 export function useNativeUsdPrice() {
-  const price = useQuery<{ price: number | null; stale: boolean }>({
+  const price = useQuery<{
+    price: string | null;
+    flags: EnvelopeFlags;
+    asOf: string | null;
+  }>({
     queryKey: ['/v1/price', 'native', 'fiat:USD'],
     retry: false,
     enabled: PRICING_ENABLED, // no aggregator on test nets → /v1/price 404s
@@ -476,17 +491,15 @@ export function useNativeUsdPrice() {
     // matches useNetworkStats' refetchInterval convention below.
     refetchInterval: 60_000,
     queryFn: async () => {
-      const env = await apiGet<{
-        data: { price?: string | null };
-        flags?: { stale?: boolean };
-      }>('/v1/price', {
-        asset: 'native',
-        quote: 'fiat:USD',
-      });
-      const p = env.data?.price ? Number(env.data.price) : null;
+      const env = await apiGet<Envelope<{ price?: string | null }>>(
+        '/v1/price',
+        { asset: 'native', quote: 'fiat:USD' },
+      );
+      const p = env.data?.price;
       return {
-        price: p != null && Number.isFinite(p) && p > 0 ? p : null,
-        stale: Boolean(env.flags?.stale),
+        price: p != null && Number(p) > 0 ? p : null,
+        flags: env.flags ?? {},
+        asOf: env.as_of ?? null,
       };
     },
   });
@@ -514,7 +527,8 @@ export function useNativeUsdPrice() {
   });
   return {
     price: price.data?.price ?? null,
-    stale: price.data?.stale ?? false,
+    flags: price.data?.flags ?? {},
+    asOf: price.data?.asOf ?? null,
     change24hPct: change.data ?? null,
     isLoading: price.isLoading,
     isError: price.isError,
@@ -572,10 +586,7 @@ export type CoinsPage = {
  * market_cap_usd / circulating_supply when the aggregator has
  * computed them.
  */
-type AssetsListEnvelope = {
-  data: Coin[];
-  pagination?: { next?: string };
-};
+type AssetsListEnvelope = Envelope<Coin[]>;
 
 export type AssetClassFilter = 'all' | 'fiat' | 'blockchain' | 'stablecoin';
 
@@ -583,6 +594,8 @@ export type AssetsPage = {
   assets: Coin[];
   next_cursor: string;
   limit: number;
+  /** The envelope's flags — `filters_ignored` names what was not applied. */
+  flags?: EnvelopeFlags;
 };
 
 /**
@@ -636,6 +649,7 @@ export function useAssets(
         assets: env.data ?? [],
         next_cursor: env.pagination?.next ?? '',
         limit,
+        flags: env.flags,
       };
     },
     placeholderData: (prev) => prev,
@@ -852,10 +866,7 @@ export function useIssuer(gStrkey: string | undefined) {
 
 export type Market = Schemas['MarketRow'];
 
-type MarketsEnvelope = {
-  data: Market[];
-  pagination?: { next?: string };
-};
+type MarketsEnvelope = Envelope<Market[]>;
 
 /**
  * useMarkets — fetches the recently-active markets directory from
@@ -871,7 +882,11 @@ export function useMarkets(
 ) {
   const include = options?.sparkline ? 'sparkline' : undefined;
   const asset = options?.asset;
-  return useQuery<{ markets: Market[]; nextCursor?: string }>({
+  return useQuery<{
+    markets: Market[];
+    nextCursor?: string;
+    flags?: EnvelopeFlags;
+  }>({
     queryKey: [
       '/v1/markets',
       limit,
@@ -887,7 +902,11 @@ export function useMarkets(
         ...(asset ? { asset } : {}),
       });
       if (Array.isArray(env)) return { markets: env };
-      return { markets: env.data, nextCursor: env.pagination?.next };
+      return {
+        markets: env.data,
+        nextCursor: env.pagination?.next,
+        flags: env.flags,
+      };
     },
     staleTime: 60_000,
     placeholderData: (prev) => prev,
@@ -896,7 +915,7 @@ export function useMarkets(
 
 export type Pool = Schemas['PoolRow'];
 
-type PoolsEnvelope = { data: Pool[]; pagination?: { next?: string } };
+type PoolsEnvelope = Envelope<Pool[]>;
 
 /**
  * usePools — fetches Stellar on-chain DEX pools from `/v1/pools`.
@@ -909,14 +928,16 @@ export function usePools(
   limit = 100,
   orderBy: 'pair' | 'volume_24h_usd_desc' = 'volume_24h_usd_desc',
 ) {
-  return useQuery<Pool[]>({
+  return useQuery<{ pools: Pool[]; flags?: EnvelopeFlags }>({
     queryKey: ['/v1/pools', limit, orderBy],
     queryFn: async () => {
       const env = await apiGet<PoolsEnvelope | Pool[]>('/v1/pools', {
         limit,
         order_by: orderBy,
       });
-      return Array.isArray(env) ? env : env.data;
+      return Array.isArray(env)
+        ? { pools: env }
+        : { pools: env.data, flags: env.flags };
     },
     staleTime: 60_000,
     placeholderData: (prev) => prev,
@@ -1088,18 +1109,17 @@ export type AssetDetail = Schemas['Asset'];
 /**
  * useAsset — fetches the rich asset-detail surface from
  * `/v1/assets/{id}`. Backs the Supply tab's F2 fields and any
- * panel that needs SEP-1 metadata for an asset.
+ * panel that needs SEP-1 metadata for an asset. Returns the envelope so
+ * its flags (stale, unverified_ticker_collision) reach the page.
  */
 export function useAsset(assetID: string | undefined) {
-  return useQuery<AssetDetail>({
+  return useQuery<Envelope<AssetDetail>>({
     queryKey: ['/v1/assets/{id}', assetID],
     enabled: !!assetID,
-    queryFn: async () => {
-      const env = await apiGet<{ data: AssetDetail }>(
+    queryFn: () =>
+      apiGet<Envelope<AssetDetail>>(
         `/v1/assets/${encodeURIComponent(assetID ?? '')}`,
-      );
-      return env.data;
-    },
+      ),
     staleTime: 60_000,
   });
 }
@@ -1117,19 +1137,18 @@ export type AssetSupply = Schemas['AssetSupply'];
  * useAssetSupply — live on-chain supply (mint − burn − clawback),
  * always current (the indexer dual-sink feeds it; no rollup refresh).
  * 404s for a classic asset without a configured SAC wrapper, in which
- * case the caller degrades gracefully (omits the section).
+ * case the caller degrades gracefully (omits the section). Returns the
+ * whole envelope: `flags.stale` is the only staleness signal supply emits.
  */
 export function useAssetSupply(assetID: string | undefined) {
-  return useQuery<AssetSupply>({
+  return useQuery<Envelope<AssetSupply>>({
     queryKey: ['/v1/assets/{id}/supply', assetID],
     enabled: !!assetID,
     retry: false,
-    queryFn: async () => {
-      const env = await apiGet<{ data: AssetSupply }>(
+    queryFn: () =>
+      apiGet<Envelope<AssetSupply>>(
         `/v1/assets/${encodeURIComponent(assetID ?? '')}/supply`,
-      );
-      return env.data;
-    },
+      ),
     staleTime: 30_000,
   });
 }

@@ -13,6 +13,7 @@ import { useMarkets } from '@/api/hooks';
 import { formatCompact, formatRelative } from '@/lib/format';
 import { useLedgerStream } from '@/lib/live/hooks';
 import { LastPriceCell } from '@/components/LastPriceCell';
+import { FreshnessMarker } from '@/components/primitives';
 import { Input, TBody, TR, Table, Td, Th, THead } from '@/components/ui';
 
 /** Minimum gap between live refetches of /v1/markets. Ledgers close
@@ -177,6 +178,7 @@ export function MarketsTable() {
       })}
       bodyClassName="-mx-4"
     >
+      <FreshnessMarker flags={data.flags} className="mx-4 mb-3 block" />
       {!assetParam && (
         <div className="mx-4 mb-3 flex gap-1">
           {(

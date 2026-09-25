@@ -12,8 +12,14 @@ import {
   type Coin,
 } from '@/api/hooks';
 import { useTableSort, SortableTh, type SortColumn } from '@/lib/useTableSort';
-import { formatCompact, formatPriceSmall, truncateMiddle } from '@/lib/format';
+import {
+  formatCompact,
+  formatPriceSmall,
+  scaleBaseUnits,
+  truncateMiddle,
+} from '@/lib/format';
 import { demoteFlaggedLast, scamFlagTags } from '@/lib/directory-tags';
+import { FreshnessMarker } from '@/components/primitives';
 import {
   Badge,
   Button,
@@ -51,11 +57,6 @@ import { CURRENT_NETWORK } from '@/lib/networks';
  * numerics. Issuer is intentionally NOT a column — issuer detail
  * is surfaced inline on the `/assets/{slug}` detail page.
  */
-
-// MARKET_CAP_VOLUME_THRESHOLD_USD — below this 24h USD volume, the
-// market-cap column shows "—" because the price feed underlying it
-// is too thin for the cap to be a confident number.
-const MARKET_CAP_VOLUME_THRESHOLD_USD = 1_000;
 
 function parseAssetClass(raw: string | null): AssetClassFilter {
   switch (raw) {
@@ -198,7 +199,7 @@ export function AssetsTable({
           { key: 'volume', value: (c) => parseDec(c.volume_24h_usd) },
         ] satisfies SortColumn<Coin, string>[])
       : []),
-    { key: 'circulating', value: (c) => parseDec(c.circulating_supply) },
+    { key: 'circulating', value: circulatingUnits },
   ];
   // Default: leave the API's incoming order (market-cap-ish rank) until the
   // user clicks a header.
@@ -274,6 +275,14 @@ export function AssetsTable({
           })
         }
       />
+
+      <FreshnessMarker flags={data?.flags} className="block" />
+      {data?.flags?.filters_ignored?.length ? (
+        <Callout tone="warn" title="Some filters were not applied">
+          This listing serves its whole class and ignored{' '}
+          {data.flags.filters_ignored.join(', ')}.
+        </Callout>
+      ) : null}
 
       {!isLoading && assets.length === 0 ? (
         <EmptyState
@@ -535,29 +544,16 @@ function AssetRow({
   pricing: boolean;
 }) {
   const price = parseDec(coin.price_usd);
-  const marketCapRaw = parseDec(coin.market_cap_usd);
+  // The server owns the dust-liquidity gate (single venue AND sub-floor
+  // volume, native carved out): it serves market_cap_usd null and says why
+  // in market_cap_low_liquidity. Render its verdict; never re-decide it.
+  const marketCap = parseDec(coin.market_cap_usd);
   const volume = parseDec(coin.volume_24h_usd);
   // circulating_supply is a RAW smallest-unit integer string; render it
   // in whole asset units by scaling down 10^decimals (7 for classic /
   // native, 0 for catalogue / fiat rows). market_cap / volume / price are
   // already server-pre-scaled — do NOT divide those.
-  const supplyRaw = parseDec(coin.circulating_supply);
-  const supply =
-    supplyRaw != null ? supplyRaw / 10 ** (coin.decimals ?? 7) : null;
-  // Suppress market cap when 24h volume is below the confidence
-  // threshold — without enough recent trade volume the price
-  // underlying the cap is too thin to publish a believable number.
-  // Catalogue fiat rows are EXEMPT: their market_cap is computed
-  // from a static M2 × current FX rate; trade volume is meaningless
-  // for fiat-as-money-supply.
-  const marketCap =
-    coin.class === 'fiat'
-      ? marketCapRaw
-      : marketCapRaw != null &&
-          volume != null &&
-          volume >= MARKET_CAP_VOLUME_THRESHOLD_USD
-        ? marketCapRaw
-        : null;
+  const supply = circulatingUnits(coin);
   // The raw canonical identifier, when it says something the code above
   // does not: `JFKBANK2-GB7KFNUR…` next to code `JFKBANK2`, but nothing
   // extra for a catalogue row whose slug IS its ticker (XLM / "xlm").
@@ -675,6 +671,8 @@ function AssetRow({
             <span className="text-ink-body font-mono tabular-nums">
               ${formatCompact(marketCap)}
             </span>
+          ) : coin.market_cap_low_liquidity ? (
+            <Dash title="Withheld: the price behind it comes from negligible liquidity" />
           ) : (
             <Dash title="Awaiting circulating supply via SEP-1 / on-chain observer" />
           )}
@@ -849,6 +847,13 @@ function ChangePct({ raw }: { raw: string | null | undefined }) {
       {n.toFixed(2)}%
     </span>
   );
+}
+
+// circulatingUnits — the row's circulating supply in whole units. The sort
+// accessor and the cell share it: decimals vary per row, so ranking the raw
+// smallest-unit integers would order an 18-decimal token by 10^11 too much.
+function circulatingUnits(c: Coin): number | null {
+  return scaleBaseUnits(c.circulating_supply, c.decimals ?? 7);
 }
 
 function parseDec(s: string | null | undefined): number | null {

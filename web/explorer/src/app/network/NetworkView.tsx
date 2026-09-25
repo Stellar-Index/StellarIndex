@@ -27,6 +27,7 @@ import { usePools, useSources, isOnChainSource } from '@/api/hooks';
 import type { AssetDetail, NetworkStats } from '@/api/hooks';
 import type { paths } from '@/api/types';
 import { DonutChart } from '@/components/charts/DonutChart';
+import { FreshnessMarker } from '@/components/primitives';
 import { OperationMixPanel } from '@/components/NetworkInsight';
 import { formatCompact } from '@/lib/format';
 import {
@@ -657,7 +658,7 @@ function LatestLedgers({
 // feeds (BTC/USDT etc.) that aren't Stellar markets at all.
 function TopMarkets() {
   const { data, isLoading, isError } = usePools(8, 'volume_24h_usd_desc');
-  const rows = (data ?? []).slice(0, 8);
+  const rows = (data?.pools ?? []).slice(0, 8);
   return (
     <Panel
       headingLevel={2}
@@ -669,6 +670,7 @@ function TopMarkets() {
       })}
       bodyClassName="-mx-4 -mb-4"
     >
+      <FreshnessMarker flags={data?.flags} className="mx-4 mb-3 block" />
       {isLoading && (
         <div className="px-4 pb-4">
           <Skeleton className="h-40 w-full" />
