@@ -35,13 +35,14 @@ func TestLowerBoundNamesEveryBasisInTheVocabulary(t *testing.T) {
 		// Observer readings and operator statements. Complete by their
 		// own definition; whether that definition is the one a consumer
 		// wants is what the basis name is for.
-		BasisXLMSDFReserveExclusion: false,
-		BasisXLMTotalOnly:           false,
-		BasisIssuerExclusion:        false,
-		BasisAdminExclusion:         false,
-		BasisSEP41TotalOnly:         false,
-		BasisOverride:               false,
-		BasisSEP1DeclaredMax:        false,
+		BasisXLMSDFReserveExclusion:       false,
+		BasisXLMSDFReserveExclusionStatic: false,
+		BasisXLMTotalOnly:                 false,
+		BasisIssuerExclusion:              false,
+		BasisAdminExclusion:               false,
+		BasisSEP41TotalOnly:               false,
+		BasisOverride:                     false,
+		BasisSEP1DeclaredMax:              false,
 
 		// Not a reading at all — there is no figure to bound.
 		BasisNoMetadata: false,
@@ -148,6 +149,7 @@ func declaredBasisValues(t *testing.T) map[string]bool {
 func allBases() []Basis {
 	return []Basis{
 		BasisXLMSDFReserveExclusion,
+		BasisXLMSDFReserveExclusionStatic,
 		BasisXLMTotalOnly,
 		BasisIssuerExclusion,
 		BasisAdminExclusion,

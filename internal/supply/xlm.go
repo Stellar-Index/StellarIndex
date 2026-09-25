@@ -95,6 +95,16 @@ type ReserveBalanceReader interface {
 	ReserveBalanceTotal(ctx context.Context, accounts []string, ledger uint32) (*big.Int, error)
 }
 
+// readReserveTotal reads the reserve total and which source answered;
+// a reader without [ReserveBalanceSourcedReader] is live.
+func readReserveTotal(ctx context.Context, r ReserveBalanceReader, accounts []string, ledger uint32) (*big.Int, ReserveSource, error) {
+	if sr, ok := r.(ReserveBalanceSourcedReader); ok {
+		return sr.ReserveBalanceTotalSourced(ctx, accounts, ledger)
+	}
+	v, err := r.ReserveBalanceTotal(ctx, accounts, ledger)
+	return v, ReserveSourceLive, err
+}
+
 // ReserveBalanceFreshnessReader is the optional extension to
 // [ReserveBalanceReader] that reports the lowest observation
 // ledger across the configured SDF reserve accounts at or
@@ -114,8 +124,9 @@ type ReserveBalanceReader interface {
 //     non-removal accounts.
 //   - [ConfigReserveBalanceReader] DELIBERATELY does NOT
 //     implement this — the static config has no per-ledger
-//     freshness concept, so the legacy permissive posture is
-//     preserved when the static fallback fires.
+//     freshness concept. The computer never probes when the balance
+//     came from the static arm, so that snapshot has no anchor and
+//     strict mode refuses it.
 //
 // The XLM computer probes for this interface via a type
 // assertion; if not satisfied, MinComponentLedger stays 0 and
@@ -212,9 +223,10 @@ func (c *XLMComputer) Compute(ctx context.Context, ledger uint32, observedAt tim
 	total := new(big.Int).Set(c.total)
 
 	reserved := big.NewInt(0)
+	source := ReserveSourceLive
 	if len(c.reserveAccounts) > 0 {
 		var err error
-		reserved, err = c.reader.ReserveBalanceTotal(ctx, c.reserveAccounts, ledger)
+		reserved, source, err = readReserveTotal(ctx, c.reader, c.reserveAccounts, ledger)
 		if err != nil {
 			return Supply{}, fmt.Errorf("supply: read SDF reserve balances at ledger %d: %w", ledger, err)
 		}
@@ -246,8 +258,11 @@ func (c *XLMComputer) Compute(ctx context.Context, ledger uint32, observedAt tim
 	// overstating circulating supply + market cap. Emit an honest basis
 	// instead so the misconfiguration is self-evident on the API.
 	basis := BasisXLMSDFReserveExclusion
-	if len(c.reserveAccounts) == 0 {
+	switch {
+	case len(c.reserveAccounts) == 0:
 		basis = BasisXLMTotalOnly
+	case source == ReserveSourceStatic:
+		basis = BasisXLMSDFReserveExclusionStatic
 	}
 
 	// F-1236 (codex audit-2026-05-12): if the reader implements
@@ -255,11 +270,11 @@ func (c *XLMComputer) Compute(ctx context.Context, ledger uint32, observedAt tim
 	// per-account observation freshness signal. A failure here
 	// is non-fatal — the gate falls back to legacy permissive
 	// (MinComponentLedger=0) the same way classic/SEP41 do on
-	// transient freshness-query errors. The reader's WARN log
-	// path is the operator-facing signal; we don't surface it
-	// here to keep the supply hot path lean.
+	// transient freshness-query errors. Never probed for a static-arm
+	// balance: the observer watermark says nothing about a hand-entered
+	// map, and anchoring it would let strict mode publish it.
 	var minLedger uint32
-	if fr, ok := c.reader.(ReserveBalanceFreshnessReader); ok && len(c.reserveAccounts) > 0 {
+	if fr, ok := c.reader.(ReserveBalanceFreshnessReader); ok && len(c.reserveAccounts) > 0 && source == ReserveSourceLive {
 		if got, ferr := fr.MinReserveAccountLedger(ctx, c.reserveAccounts, ledger); ferr == nil {
 			minLedger = got
 		}

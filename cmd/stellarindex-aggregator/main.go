@@ -1371,14 +1371,14 @@ func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, closeTimes 
 }
 
 func buildXLMRefresher(cfg config.Config, store *timescale.Store, closeTimes ledgerCloseTimeReader, logger *slog.Logger) (*supply.Refresher, string, error) {
-	staticReader, err := supply.NewConfigReserveBalanceReader(cfg.Supply.ReserveBalancesStroops)
+	staticReader, err := cfg.Supply.NewStaticReserveReader()
 	if err != nil {
 		return nil, "", fmt.Errorf("config reserve reader: %w", err)
 	}
-	chained := supplyAggregatorChainReader{
-		live:   supply.NewLCMReserveBalanceReader(supplyAggregatorStoreLookup{s: store}),
-		static: staticReader,
-	}
+	chained := supply.NewChainedReserveBalanceReader(
+		supply.NewLCMReserveBalanceReader(supplyAggregatorStoreLookup{s: store}),
+		staticReader,
+	)
 	// Network-aware: a testnet / futurenet aggregator must snapshot
 	// against ITS ledger's native total (100 B genesis), not the
 	// frozen pubnet 50.0 B constant.
@@ -1721,50 +1721,6 @@ func (a supplyAggregatorStoreLookup) LatestAccountObservationAtOrBefore(ctx cont
 // the XLM freshness gate (CS-102).
 func (a supplyAggregatorStoreLookup) MaxAccountObservationLedger(ctx context.Context, asOfLedger uint32) (uint32, error) {
 	return a.s.MaxAccountObservationLedger(ctx, asOfLedger)
-}
-
-// supplyAggregatorChainReader is the same chained-fallback reader
-// pattern from internal/ops/supply/supply.go::supplyChainReader.
-// Inlined here because the aggregator is its own binary and we
-// don't want to lift the helper into a shared package — the
-// indirection cost outweighs the duplication for a 20-line struct.
-type supplyAggregatorChainReader struct {
-	live   supply.ReserveBalanceReader
-	static supply.ReserveBalanceReader
-}
-
-func (c supplyAggregatorChainReader) ReserveBalanceTotal(ctx context.Context, accounts []string, ledger uint32) (*big.Int, error) {
-	out, err := c.live.ReserveBalanceTotal(ctx, accounts, ledger)
-	if err == nil {
-		return out, nil
-	}
-	if errors.Is(err, supply.ErrNoObservation) {
-		return c.static.ReserveBalanceTotal(ctx, accounts, ledger)
-	}
-	return nil, err
-}
-
-// MinReserveAccountLedger forwards the freshness probe to the
-// live reader when it implements [supply.ReserveBalanceFreshnessReader].
-// Static fallback callers don't have a per-ledger freshness
-// concept; in that case we return 0 (the gate-permissive bypass)
-// to preserve the legacy posture. F-1236 (codex audit-2026-05-12).
-func (c supplyAggregatorChainReader) MinReserveAccountLedger(ctx context.Context, accounts []string, ledger uint32) (uint32, error) {
-	if fr, ok := c.live.(supply.ReserveBalanceFreshnessReader); ok {
-		got, err := fr.MinReserveAccountLedger(ctx, accounts, ledger)
-		if err == nil {
-			return got, nil
-		}
-		if errors.Is(err, supply.ErrNoObservation) {
-			// Live reader couldn't satisfy → mirror the
-			// ReserveBalanceTotal fallback semantics (drop to
-			// static). Static has no freshness, so the gate
-			// stays permissive.
-			return 0, nil
-		}
-		return 0, err
-	}
-	return 0, nil
 }
 
 // supplyAggregatorInserter adapts *timescale.Store to

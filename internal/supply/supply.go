@@ -16,6 +16,15 @@ const (
 	// circulating.
 	BasisXLMSDFReserveExclusion Basis = "xlm_sdf_reserve_exclusion"
 
+	// BasisXLMSDFReserveExclusionStatic — Algorithm 1 where the reserve
+	// balances came from the operator's dated static map
+	// ([ConfigReserveBalanceReader]) because the live account observer
+	// could not answer. Distinct from BasisXLMSDFReserveExclusion so a
+	// consumer can tell a hand-entered snapshot from a per-ledger read;
+	// such a snapshot carries no freshness anchor, so
+	// strict_freshness_required refuses it.
+	BasisXLMSDFReserveExclusionStatic Basis = "xlm_sdf_reserve_exclusion_static"
+
 	// BasisXLMTotalOnly — Algorithm 1 with NO reserve accounts
 	// configured: circulating == total (nothing was excluded). Kept
 	// distinct from BasisXLMSDFReserveExclusion so the wire never

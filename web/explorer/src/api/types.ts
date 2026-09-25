@@ -8099,7 +8099,7 @@ export interface components {
              *     totals or a total against a floor.
              * @enum {string}
              */
-            supply_basis?: "xlm_sdf_reserve_exclusion" | "xlm_total_only" | "issuer_exclusion" | "admin_exclusion" | "sep41_total_only" | "override" | "sep1_declared_max" | "sep41_lake_flows" | "classic_lake_flows" | "classic_trustline_sum" | "contract_storage_balances";
+            supply_basis?: "xlm_sdf_reserve_exclusion" | "xlm_sdf_reserve_exclusion_static" | "xlm_total_only" | "issuer_exclusion" | "admin_exclusion" | "sep41_total_only" | "override" | "sep1_declared_max" | "sep41_lake_flows" | "classic_lake_flows" | "classic_trustline_sum" | "contract_storage_balances";
             /**
              * @description True when `circulating_supply` is a provable FLOOR rather than
              *     a complete reading — the per-row sibling of the `lower_bound`
@@ -9690,6 +9690,11 @@ export interface components {
              *     `xlm_sdf_reserve_exclusion` and the rest) means a LIVE
              *     observation no older than six hours, the same reading
              *     `/v1/assets/{asset_id}` publishes for that asset.
+             *     `xlm_sdf_reserve_exclusion_static` is the exception: the
+             *     SDF reserve balances came from the operator's dated static
+             *     snapshot because the live account observer could not
+             *     answer, so the exclusion is only as current as that
+             *     snapshot.
              *     `classic_lake_flows` sums mint minus burn minus clawback
              *     over the asset's Stellar Asset Contract: it sees every
              *     holding domain, but over-counts an asset whose historical
@@ -9723,7 +9728,7 @@ export interface components {
              *     supply snapshot is available.
              * @enum {string|null}
              */
-            supply_basis?: "xlm_sdf_reserve_exclusion" | "xlm_total_only" | "issuer_exclusion" | "admin_exclusion" | "sep41_total_only" | "override" | "sep1_declared_max" | "sep41_lake_flows" | "classic_lake_flows" | "classic_trustline_sum" | "contract_storage_balances" | "no_metadata" | null;
+            supply_basis?: "xlm_sdf_reserve_exclusion" | "xlm_sdf_reserve_exclusion_static" | "xlm_total_only" | "issuer_exclusion" | "admin_exclusion" | "sep41_total_only" | "override" | "sep1_declared_max" | "sep41_lake_flows" | "classic_lake_flows" | "classic_trustline_sum" | "contract_storage_balances" | "no_metadata" | null;
             /**
              * @description Trailing-24h USD-denominated trade volume across every
              *     pair this asset participates in (as base OR quote).

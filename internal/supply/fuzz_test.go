@@ -348,7 +348,7 @@ func FuzzXLMCompute(f *testing.F) {
 	f.Add("-1", "1", uint8(2), uint8(0))
 	f.Fuzz(func(t *testing.T, balA, balB string, nAccounts, network uint8) {
 		accounts := []string{"GA", "GB"}[:nAccounts%3]
-		reader, err := supply.NewConfigReserveBalanceReader(map[string]string{"GA": balA, "GB": balB})
+		reader, err := supply.NewConfigReserveBalanceReader(map[string]string{"GA": balA, "GB": balB}, time.Now(), time.Hour)
 		a, aok := new(big.Int).SetString(balA, 10)
 		b, bok := new(big.Int).SetString(balB, 10)
 		if !aok || !bok || a.Sign() < 0 || b.Sign() < 0 {
@@ -383,7 +383,7 @@ func FuzzXLMCompute(f *testing.F) {
 		if !eqBig(got.CirculatingSupply, refMaxZero(total, reserved)) {
 			t.Fatalf("circulating = %s, want max(0, %s-%s)", got.CirculatingSupply, total, reserved)
 		}
-		wantBasis := supply.BasisXLMSDFReserveExclusion
+		wantBasis := supply.BasisXLMSDFReserveExclusionStatic // the reader under test is the static map
 		if len(accounts) == 0 {
 			wantBasis = supply.BasisXLMTotalOnly
 		}

@@ -136,7 +136,9 @@ groups:
             More than half of the supply refresher's ticks for
             asset {{ $labels.asset_key }} are failing — outcome ∈
             {no_ledger, no_observation, compute_error, write_error,
-            stale_component, missing_freshness} (the benign `dormant`
+            stale_component, missing_freshness, static_reserve} (the
+            last is XLM published from the dated static reserve map
+            because the live account observer could not answer; the benign `dormant`
             and `missing_baseline` outcomes are excluded). Steady-state
             should be mostly `ok`; a single asset stuck here is usually a
             stalled freshness producer (sustained `stale_component`) or

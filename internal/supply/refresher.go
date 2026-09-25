@@ -54,6 +54,7 @@ const (
 	OutcomeKindMissingBaseline  OutcomeKind = "missing_baseline"  // incident 2026-07-06 / migration 0088: SEP-41 total negative because the pre-Soroban genesis baseline hasn't been seeded yet — a range-scoped-baseline-missing condition (needs `stellarindex-ops supply seed-sep41-genesis`), NOT indexer corruption. Benign: excluded from error_dominant.
 	OutcomeKindDormant          OutcomeKind = "dormant"           // F-1320: MinComponentLedger lags past threshold but is UNCHANGED tick-over-tick — the asset simply had no balance change, so its last observation IS the current supply; accepted (snapshot inserted). BOUNDED by [DefaultMaxDormantComponentLedgers] since R-002 — past that horizon the same signal is indistinguishable from a dead observer and we fail closed to stale_component instead.
 	OutcomeKindWriteError       OutcomeKind = "write_error"       // InsertSupply failed
+	OutcomeKindStaticReserve    OutcomeKind = "static_reserve"    // snapshot inserted, but its reserve balances came from the dated static map (BasisXLMSDFReserveExclusionStatic), not the live observer. Not benign: counted by the error_dominant alert so a sustained fallback pages.
 )
 
 // DefaultStaleComponentLedgers is the F-1236 freshness threshold
@@ -290,10 +291,12 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 	// freshness producers. Operators turn it on once every
 	// producer is wired + every reader is shown to never
 	// fail-open under steady-state load.
-	if r.strictFreshnessRequired && snap.MinComponentLedger == 0 {
-		err := fmt.Errorf("supply: strict-freshness mode — snapshot has no MinComponentLedger anchor")
+	staticReserve := snap.Basis == BasisXLMSDFReserveExclusionStatic
+	if r.strictFreshnessRequired && (snap.MinComponentLedger == 0 || staticReserve) {
+		err := fmt.Errorf("supply: strict-freshness mode — snapshot has no MinComponentLedger anchor (basis %s)", snap.Basis)
 		r.logger.Warn("supply refresh: rejecting freshness-less snapshot under strict mode",
 			"asset", snap.AssetKey,
+			"basis", string(snap.Basis),
 			"snapshot_ledger", snap.LedgerSequence)
 		return Outcome{Kind: OutcomeKindMissingFreshness, Err: err, Snapshot: snap}
 	}
@@ -319,6 +322,13 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 		return Outcome{Kind: OutcomeKindWriteError, Err: err, Snapshot: snap}
 	}
 
+	if staticReserve {
+		r.logger.Warn("supply refresh: published from the static reserve-balance map, live account observer could not answer",
+			"asset", snap.AssetKey,
+			"ledger", snap.LedgerSequence,
+			"circulating", snap.CirculatingSupply.String())
+		return Outcome{Kind: OutcomeKindStaticReserve, Snapshot: snap}
+	}
 	r.logger.Debug("supply refresh ok",
 		"asset", snap.AssetKey,
 		"ledger", snap.LedgerSequence,

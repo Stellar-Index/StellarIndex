@@ -2,8 +2,10 @@ package supply
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
+	"time"
 )
 
 // ConfigReserveBalanceReader is a [ReserveBalanceReader] backed by a
@@ -24,19 +26,31 @@ import (
 //
 // Limitations (as a fallback):
 //
-//   - Static map — no automatic balance refresh. Stale entries
-//     would yield a stale circulating-supply number rather than a
-//     wrong-by-fabrication one. Mitigated by the writer's stale-
-//     ledger guard: the snapshot is attributed to the ledger the
-//     operator passes to the CLI, not to "now".
+//   - Static map — no automatic balance refresh. The map carries its
+//     own as-of date and the reader refuses to answer once that date
+//     is more than maxAge old (or was never set), so a forgotten
+//     snapshot fails closed instead of being re-stamped at every new
+//     ledger as the current reserve.
 //   - No per-account ledger versioning. The reader returns whatever
 //     the config says for the requested account regardless of the
 //     `ledger` argument. The live [LCMReserveBalanceReader] is the
 //     ledger-aware path; this fallback is intentionally
 //     ledger-agnostic since its purpose is bring-up only.
+//
+// Its answers are tagged [ReserveSourceStatic], which the
+// [XLMComputer] publishes as [BasisXLMSDFReserveExclusionStatic] with
+// no freshness anchor.
 type ConfigReserveBalanceReader struct {
 	balances map[string]*big.Int
+	asOf     time.Time
+	maxAge   time.Duration
+	now      func() time.Time
 }
+
+// ErrStaticReserveSnapshotExpired is returned by
+// [ConfigReserveBalanceReader] when the static balance map is undated
+// or older than its configured maximum age.
+var ErrStaticReserveSnapshotExpired = errors.New("supply: static reserve-balance snapshot is undated or older than its maximum age")
 
 // NewConfigReserveBalanceReader constructs a reader from a balance
 // map. Stroop values are decimal strings (NUMERIC-safe per
@@ -48,7 +62,14 @@ type ConfigReserveBalanceReader struct {
 // XLMComputer treats a zero-account input as a configuration where
 // the operator hasn't enumerated reserves yet; circulating equals
 // total.
-func NewConfigReserveBalanceReader(balancesStroops map[string]string) (*ConfigReserveBalanceReader, error) {
+//
+// asOf is when the balances were taken. A zero asOf is accepted here,
+// so an undated map does not stop the process booting, but every
+// non-empty read then refuses. maxAge must be positive.
+func NewConfigReserveBalanceReader(balancesStroops map[string]string, asOf time.Time, maxAge time.Duration) (*ConfigReserveBalanceReader, error) {
+	if maxAge <= 0 {
+		return nil, fmt.Errorf("supply: ConfigReserveBalanceReader: max age %v must be positive", maxAge)
+	}
 	parsed := make(map[string]*big.Int, len(balancesStroops))
 	for acc, raw := range balancesStroops {
 		if acc == "" {
@@ -63,18 +84,24 @@ func NewConfigReserveBalanceReader(balancesStroops map[string]string) (*ConfigRe
 		}
 		parsed[acc] = v
 	}
-	return &ConfigReserveBalanceReader{balances: parsed}, nil
+	return &ConfigReserveBalanceReader{balances: parsed, asOf: asOf, maxAge: maxAge, now: time.Now}, nil
 }
 
 // ReserveBalanceTotal sums the configured balances for the supplied
 // account list. Missing accounts return an error — silently treating
 // an unknown account as zero would yield an over-stated circulating
 // supply, which is exactly the failure mode ADR-0011 says we don't
-// publish.
+// publish. A non-empty request against an undated or over-age map
+// returns [ErrStaticReserveSnapshotExpired].
 //
 // The `ledger` argument is currently unused; see type-level docstring
-// for why. Future LCM-observer reader will consume it.
+// for why.
 func (r *ConfigReserveBalanceReader) ReserveBalanceTotal(_ context.Context, accounts []string, _ uint32) (*big.Int, error) {
+	if len(accounts) > 0 {
+		if err := r.checkAge(); err != nil {
+			return nil, err
+		}
+	}
 	total := big.NewInt(0)
 	for _, acc := range accounts {
 		v, ok := r.balances[acc]
@@ -84,4 +111,25 @@ func (r *ConfigReserveBalanceReader) ReserveBalanceTotal(_ context.Context, acco
 		total = new(big.Int).Add(total, v)
 	}
 	return total, nil
+}
+
+// ReserveBalanceTotalSourced implements [ReserveBalanceSourcedReader]:
+// every answer from this reader is the static snapshot.
+func (r *ConfigReserveBalanceReader) ReserveBalanceTotalSourced(ctx context.Context, accounts []string, ledger uint32) (*big.Int, ReserveSource, error) {
+	v, err := r.ReserveBalanceTotal(ctx, accounts, ledger)
+	if err != nil {
+		return nil, "", err
+	}
+	return v, ReserveSourceStatic, nil
+}
+
+func (r *ConfigReserveBalanceReader) checkAge() error {
+	if r.asOf.IsZero() {
+		return fmt.Errorf("%w: no as-of date configured", ErrStaticReserveSnapshotExpired)
+	}
+	if age := r.now().Sub(r.asOf); age > r.maxAge {
+		return fmt.Errorf("%w: taken %s, %s old, max age %s",
+			ErrStaticReserveSnapshotExpired, r.asOf.UTC().Format(time.DateOnly), age.Round(time.Hour), r.maxAge)
+	}
+	return nil
 }

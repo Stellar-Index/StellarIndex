@@ -145,7 +145,7 @@ func TestCrossCheckRefresher_WithinTolerance(t *testing.T) {
 	t.Parallel()
 	classic := supply.Supply{
 		AssetKey:    "USDC:G...",
-		TotalSupply: big.NewInt(100_000_000_000),
+		TotalSupply: big.NewInt(100_000_000_000), SACWrappedStroops: big.NewInt(100_000_000_000),
 	}
 	sac := supply.Supply{
 		AssetKey:    "CCONTRACT",
@@ -187,7 +187,7 @@ func TestCrossCheckRefresher_WithinTolerance(t *testing.T) {
 func TestCrossCheckRefresher_PartialWrapClassicExceedsSacIsBenign(t *testing.T) {
 	t.Parallel()
 	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
-		"AQUA:G...": {AssetKey: "AQUA:G...", TotalSupply: big.NewInt(86_400_000_000_0000000)},
+		"AQUA:G...": {AssetKey: "AQUA:G...", TotalSupply: big.NewInt(86_400_000_000_0000000), SACWrappedStroops: big.NewInt(0)},
 		"CAQUASAC":  {AssetKey: "CAQUASAC", TotalSupply: big.NewInt(0)},
 	}}
 	emitter := &captureEmitter{}
@@ -220,7 +220,8 @@ func TestCrossCheckRefresher_PartialWrapClassicExceedsSacIsBenign(t *testing.T) 
 func TestCrossCheckRefresher_PartialWrapOverMintIsDiagnostic(t *testing.T) {
 	t.Parallel()
 	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
-		"USDC:G...": {AssetKey: "USDC:G...", TotalSupply: big.NewInt(100_000_000_000)},
+		// Escrow equals the SAC total, so leg 2 is evaluated and clean.
+		"USDC:G...": {AssetKey: "USDC:G...", TotalSupply: big.NewInt(100_000_000_000), SACWrappedStroops: big.NewInt(100_000_000_002)},
 		"CCONTRACT": {AssetKey: "CCONTRACT", TotalSupply: big.NewInt(100_000_000_002)},
 	}}
 	emitter := &captureEmitter{}
@@ -243,6 +244,36 @@ func TestCrossCheckRefresher_PartialWrapOverMintIsDiagnostic(t *testing.T) {
 	}
 	if emitter.outcomes[0].WrapClass != supply.WrapClassPartial {
 		t.Fatalf("outcome wrap_class: got %q, want %q", emitter.outcomes[0].WrapClass, supply.WrapClassPartial)
+	}
+}
+
+// A partial-wrap pair whose classic snapshot carries no escrow
+// (SACWrappedStroops nil — any asset with no sac_balance_observations
+// row) evaluated no paging leg. It must report unchecked and clear the
+// gauge, never publish "within" with a divergence of 0.
+func TestCrossCheckRefresher_PartialWrapWithoutEscrowIsUnchecked(t *testing.T) {
+	t.Parallel()
+	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
+		"USDC:G...": {AssetKey: "USDC:G...", TotalSupply: big.NewInt(100_000_000_000)},
+		"CCONTRACT": {AssetKey: "CCONTRACT", TotalSupply: big.NewInt(100_000_000_002)},
+	}}
+	emitter := &captureEmitter{}
+	r, _ := supply.NewCrossCheckRefresher(
+		[]supply.CrossCheckPair{{ClassicKey: "USDC:G...", SACKey: "CCONTRACT", WrapClass: supply.WrapClassPartial}},
+		reader, emitter, newSilentLogger(),
+	)
+	got := r.Tick(context.Background())
+	if len(got) != 1 || got[0].Kind != supply.CrossCheckOutcomeUnchecked {
+		t.Fatalf("Tick: got %#v, want one Unchecked", got)
+	}
+	if len(emitter.outcomes) != 1 || emitter.outcomes[0].Kind != supply.CrossCheckOutcomeUnchecked {
+		t.Fatalf("emitted outcomes %#v, want one unchecked", emitter.outcomes)
+	}
+	if len(emitter.divergences) != 0 {
+		t.Fatalf("divergence gauge written %#v; an unchecked pair must not publish a verdict", emitter.divergences)
+	}
+	if _, ok := emitter.gauge[gaugeSeries("USDC:G...", supply.WrapClassPartial)]; ok {
+		t.Fatal("divergence gauge series still present; want it cleared")
 	}
 }
 
@@ -290,7 +321,7 @@ func TestCrossCheckRefresher_MisalignedLedgersNeitherPassesNorPages(t *testing.T
 func TestCrossCheckRefresher_AlignedLedgersStillCompare(t *testing.T) {
 	t.Parallel()
 	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
-		"USDC:G...": {AssetKey: "USDC:G...", TotalSupply: big.NewInt(100_000_000_000), LedgerSequence: 50_000_000},
+		"USDC:G...": {AssetKey: "USDC:G...", TotalSupply: big.NewInt(100_000_000_000), LedgerSequence: 50_000_000, SACWrappedStroops: big.NewInt(100_000_000_002)},
 		"CCONTRACT": {AssetKey: "CCONTRACT", TotalSupply: big.NewInt(100_000_000_002), LedgerSequence: 50_000_000 + supply.CrossCheckLedgerTolerance},
 	}}
 	emitter := &captureEmitter{}
@@ -455,7 +486,7 @@ func TestCrossCheckRefresher_PerPairIsolation(t *testing.T) {
 	t.Parallel()
 	reader := &fakeSnapshotReader{
 		supplies: map[string]supply.Supply{
-			"BTC:G...": {AssetKey: "BTC:G...", TotalSupply: big.NewInt(50)},
+			"BTC:G...": {AssetKey: "BTC:G...", TotalSupply: big.NewInt(50), SACWrappedStroops: big.NewInt(50)},
 			"CSACBTC":  {AssetKey: "CSACBTC", TotalSupply: big.NewInt(50)},
 		},
 		errs: map[string]error{
@@ -512,7 +543,7 @@ func TestCrossCheckRefresher_NonEvaluableOutcomeClearsGauge(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
-				classicKey: {AssetKey: classicKey, TotalSupply: big.NewInt(100), LedgerSequence: 50_000_000},
+				classicKey: {AssetKey: classicKey, TotalSupply: big.NewInt(100), LedgerSequence: 50_000_000, SACWrappedStroops: big.NewInt(100)},
 				sacKey:     {AssetKey: sacKey, TotalSupply: big.NewInt(100), LedgerSequence: 50_000_000},
 			}}
 			emitter := &captureEmitter{}
