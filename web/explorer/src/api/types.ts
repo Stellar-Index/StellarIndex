@@ -18479,6 +18479,20 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             500: components["responses"]["InternalError"];
+            /**
+             * @description No series is published: no assembly has succeeded in this
+             *     process (membership or a read leg did not answer), or the
+             *     deployment has not wired a leg. Served `no-store`; a failed
+             *     assembly also carries `Retry-After`.
+             */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     getRWAPremiumHistory: {
@@ -18596,6 +18610,20 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             500: components["responses"]["InternalError"];
+            /**
+             * @description No series is published: no assembly has succeeded in this
+             *     process (membership or a read leg did not answer), or the
+             *     deployment has not wired a leg. Served `no-store`; a failed
+             *     assembly also carries `Retry-After`.
+             */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     listPairs: {

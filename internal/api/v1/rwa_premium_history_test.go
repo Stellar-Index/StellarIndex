@@ -167,16 +167,13 @@ func TestRWAPremium_RefusesASubDailyTimeframe(t *testing.T) {
 // TestRWAPremium_NoMarketReaderPublishesNoSeriesAndSaysWhy — an empty
 // chart here would read as "no token has ever traded away from its
 // instrument's value", which is a finding. Without the market leg the
-// surface states the absence in `basis` instead.
+// surface states the absence instead.
 func TestRWAPremium_NoMarketReaderPublishesNoSeriesAndSaysWhy(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	srv := rwaPremiumServer(t, bound, dir, rows, &stubOracleHistory{}, nil)
-	v := getRWAPremium(t, srv, "")
-	if len(v.Series) != 0 {
-		t.Fatalf("series = %d, want none", len(v.Series))
-	}
-	if !containsFold(v.Basis, "No premium series is published") {
-		t.Errorf("basis = %q — it must state the absence", v.Basis)
+	p, _ := getRWAUnavailable(t, srv, "/v1/rwa/premium")
+	if !containsFold(p.Detail, "No premium series is published") {
+		t.Errorf("detail = %q — it must state the absence", p.Detail)
 	}
 }
 
@@ -188,12 +185,12 @@ func TestRWAPremium_AFailedReadIsNotAnEmptySeries(t *testing.T) {
 		&stubOracleHistory{},
 		&stubMarketHistory{err: errors.New("lake unreachable")},
 	)
-	v := getRWAPremium(t, srv, "")
-	if len(v.Series) != 0 {
-		t.Fatalf("series = %+v, want none", v.Series)
+	p, h := getRWAUnavailable(t, srv, "/v1/rwa/premium")
+	if !containsFold(p.Detail, "No premium series is published") {
+		t.Errorf("detail = %q — a failed read must say so", p.Detail)
 	}
-	if !containsFold(v.Basis, "No premium series is published") {
-		t.Errorf("basis = %q — a failed read must say so", v.Basis)
+	if ra := h.Get("Retry-After"); ra != "30" {
+		t.Errorf("Retry-After = %q, want 30", ra)
 	}
 }
 

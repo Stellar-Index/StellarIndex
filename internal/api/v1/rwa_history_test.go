@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"math/big"
 	"net/http"
 	"testing"
@@ -36,7 +37,9 @@ import (
 
 // stubOracleHistory serves canned day buckets. It records the assets it
 // was asked about so a test can prove the handler joined on the FEED
-// rather than on the Stellar asset code.
+// rather than on the Stellar asset code, and applies the store's
+// inclusive `bucket >= from AND bucket <= to` window so the bound the
+// handler passes is the bound it gets.
 type stubOracleHistory struct {
 	rows  []timescale.OracleDayPoint
 	err   error
@@ -44,7 +47,7 @@ type stubOracleHistory struct {
 }
 
 func (s *stubOracleHistory) DailyOraclePrices(
-	_ context.Context, assets []canonical.Asset, _ canonical.Asset, _, _ time.Time,
+	_ context.Context, assets []canonical.Asset, _ canonical.Asset, from, to time.Time,
 ) ([]timescale.OracleDayPoint, error) {
 	for _, a := range assets {
 		s.asked = append(s.asked, a.String())
@@ -52,7 +55,13 @@ func (s *stubOracleHistory) DailyOraclePrices(
 	if s.err != nil {
 		return nil, s.err
 	}
-	return s.rows, nil
+	out := []timescale.OracleDayPoint{}
+	for _, row := range s.rows {
+		if !row.Bucket.Before(from) && !row.Bucket.After(to) {
+			out = append(out, row)
+		}
+	}
+	return out, nil
 }
 
 // stubFlowSupply is a TokenSupplyReader that ALSO answers the daily
@@ -164,6 +173,39 @@ func getRWAHistory(t *testing.T, srv *v1.Server, query string) v1.RWAHistoryView
 	return env.Data
 }
 
+// getRWAUnavailable requires the no-assembly answer on path: an
+// uncacheable 503 problem, never a 200 envelope whose set counts and
+// membership date are zeros no read produced.
+func getRWAUnavailable(t *testing.T, srv *v1.Server, path string) (v1.Problem, http.Header) {
+	t.Helper()
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+path)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store — a CDN must not replay a failed assembly", cc)
+	}
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for _, k := range []string{"data", "assets", "members", "membership_as_of"} {
+		if _, ok := body[k]; ok {
+			t.Errorf("body carries %q — nothing was measured to fill it", k)
+		}
+	}
+	var p v1.Problem
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	return p, resp.Header
+}
+
 // oneBoundMember wires the single positive fixture every test below
 // varies: USTRY from the Etherfuse issuer, which internal/rwa binds to
 // the `rwa:USTRY` feed.
@@ -208,17 +250,33 @@ func TestRWAHistory_RefusesAnUnknownGroupBy(t *testing.T) {
 
 // TestRWAHistory_NoPriceReaderPublishesNoSeriesAndSaysWhy — an empty
 // chart is a claim about the sector. Without the price leg the surface
-// states the absence in `basis` rather than serving a flat nothing that
-// reads as "the sector is worth zero".
+// states the absence rather than serving a flat nothing that reads as
+// "the sector is worth zero".
 func TestRWAHistory_NoPriceReaderPublishesNoSeriesAndSaysWhy(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	srv := rwaHistoryServer(t, bound, dir, rows, &stubFlowSupply{}, nil)
-	v := getRWAHistory(t, srv, "")
-	if len(v.Points) != 0 {
-		t.Fatalf("points = %d, want none", len(v.Points))
+	p, _ := getRWAUnavailable(t, srv, "/v1/rwa/history")
+	if !containsFold(p.Detail, "No series is published") {
+		t.Errorf("detail = %q — it must state the absence", p.Detail)
 	}
-	if v.Basis == "" || !containsFold(v.Basis, "No series is published") {
-		t.Errorf("basis = %q — it must state the absence", v.Basis)
+}
+
+// TestRWAHistory_AColdFailedBuildIsNotASectorOfZero — a process whose
+// first assembly failed has no last-good history to fall back on. The
+// answer is a retryable 503, not assets 0 / members 0 dated year 1 that
+// the route's public CDN band would replay for five minutes.
+func TestRWAHistory_AColdFailedBuildIsNotASectorOfZero(t *testing.T) {
+	bound, dir, rows := oneBoundMember()
+	srv := rwaHistoryServer(t, bound, dir, rows,
+		&stubFlowSupply{err: errors.New("lake unreachable")},
+		&stubOracleHistory{rows: []timescale.OracleDayPoint{histOracle("redstone", "USTRY", 1, 107000000)}},
+	)
+	p, h := getRWAUnavailable(t, srv, "/v1/rwa/history")
+	if !containsFold(p.Detail, "No series is published") {
+		t.Errorf("detail = %q — a failed read must say so", p.Detail)
+	}
+	if ra := h.Get("Retry-After"); ra != "30" {
+		t.Errorf("Retry-After = %q, want 30", ra)
 	}
 }
 
@@ -234,12 +292,9 @@ func TestRWAHistory_NoSupplySeamPublishesNoSeries(t *testing.T) {
 		&stubTokenSupplies{byID: map[string]string{sac: "10000000"}},
 		&stubOracleHistory{rows: []timescale.OracleDayPoint{histOracle("redstone", "USTRY", 1, 107000000)}},
 	)
-	v := getRWAHistory(t, srv, "")
-	if len(v.Points) != 0 {
-		t.Fatalf("points = %+v, want none", v.Points)
-	}
-	if !containsFold(v.Basis, "No series is published") {
-		t.Errorf("basis = %q — it must state the absence", v.Basis)
+	p, _ := getRWAUnavailable(t, srv, "/v1/rwa/history")
+	if !containsFold(p.Detail, "No series is published") {
+		t.Errorf("detail = %q — it must state the absence", p.Detail)
 	}
 }
 
@@ -285,6 +340,42 @@ func TestRWAHistory_ValuesSupplyTimesTheDaysOracleClose(t *testing.T) {
 	// The join must run on the FEED, never on the Stellar asset code.
 	if len(oracle.asked) != 1 || oracle.asked[0] != "rwa:USTRY" {
 		t.Errorf("asked the oracle for %v, want [rwa:USTRY]", oracle.asked)
+	}
+}
+
+// TestRWAHistory_TodayIsNotAClosedDay — the last point is yesterday's
+// close. Today's oracle bucket is still being re-materialised and today's
+// flows are still arriving, so a point on today would move under a reader
+// who fetched it twice. /v1/rwa/premium stops at the same day.
+func TestRWAHistory_TodayIsNotAClosedDay(t *testing.T) {
+	bound, dir, rows := oneBoundMember()
+	sac := rwaHistSAC(t, "USTRY", rwaGoodIssuer)
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	yesterday := today.Add(-24 * time.Hour)
+	oracleRow := func(day time.Time, price int64) timescale.OracleDayPoint {
+		p := histOracle("redstone", "USTRY", 1, price)
+		p.Bucket = day
+		return p
+	}
+	srv := rwaHistoryServer(t, bound, dir, rows,
+		&stubFlowSupply{days: []clickhouse.SupplyFlowDay{
+			{ContractID: sac, Day: yesterday, Net: big.NewInt(200000000), Flows: 1}, // 20 tokens
+			{ContractID: sac, Day: today, Net: big.NewInt(50000000), Flows: 1},      // +5 today
+		}},
+		&stubOracleHistory{rows: []timescale.OracleDayPoint{
+			oracleRow(yesterday, 107000000), // 1.07
+			oracleRow(today, 108000000),     // partial bucket
+		}},
+	)
+	v := getRWAHistory(t, srv, "?timeframe=all")
+	if len(v.Points) != 1 {
+		t.Fatalf("points = %+v, want exactly yesterday's", v.Points)
+	}
+	if got := v.Points[0].T.Time(); !got.Equal(yesterday) {
+		t.Errorf("last point t = %s, want %s — today is not a closed day", got, yesterday)
+	}
+	if v.Points[0].ValueUSD != "21.40" {
+		t.Errorf("value = %q, want 21.40 (yesterday's 20 tokens × 1.07)", v.Points[0].ValueUSD)
 	}
 }
 

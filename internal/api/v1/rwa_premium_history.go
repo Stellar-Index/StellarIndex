@@ -391,15 +391,14 @@ func (s *Server) handleRWAPremiumHistory(w http.ResponseWriter, r *http.Request)
 		Series:      []RWAPremiumSeries{},
 	}
 	if s.assetsReader == nil || s.oracleHistory == nil || s.marketHistory == nil {
-		view.Basis = rwaPremiumBasisUnavailable
-		writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
+		writeRWASeriesUnavailable(w, r, rwaPremiumBasisUnavailable)
 		return
 	}
 
 	hist := s.cachedRWAPremiumHistory(r.Context())
 	if !hist.available {
-		view.Basis = rwaPremiumBasisUnavailable
-		writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
+		w.Header().Set("Retry-After", rwaSeriesRetryAfter)
+		writeRWASeriesUnavailable(w, r, rwaPremiumBasisUnavailable)
 		return
 	}
 
@@ -672,7 +671,7 @@ func (s *Server) buildRWAPremiumHistory(ctx context.Context) rwaPremiumHistory {
 	// leg has finished: a partial day's VWAP is not the day's price,
 	// and holding it to a floor measured over a whole day would report
 	// every morning as a thin market.
-	to := time.Now().UTC().Truncate(24 * time.Hour).Add(-24 * time.Hour)
+	to := rwaClosedDayCeiling(time.Now())
 
 	prices, ok := s.rwaPremiumReferenceDays(ctx, cands, to)
 	if !ok {

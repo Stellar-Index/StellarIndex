@@ -363,15 +363,14 @@ func (s *Server) handleRWAHistory(w http.ResponseWriter, r *http.Request) {
 		Points:      []RWAHistoryPoint{},
 	}
 	if s.assetsReader == nil || s.oracleHistory == nil {
-		view.Basis = rwaHistoryBasisUnavailable
-		writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
+		writeRWASeriesUnavailable(w, r, rwaHistoryBasisUnavailable)
 		return
 	}
 
 	hist := s.cachedRWAValueHistory(r.Context())
 	if !hist.available {
-		view.Basis = rwaHistoryBasisUnavailable
-		writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
+		w.Header().Set("Retry-After", rwaSeriesRetryAfter)
+		writeRWASeriesUnavailable(w, r, rwaHistoryBasisUnavailable)
 		return
 	}
 
@@ -386,6 +385,21 @@ func (s *Server) handleRWAHistory(w http.ResponseWriter, r *http.Request) {
 	view.Groups = rwaHistoryGroups(hist, groupBy, from)
 	writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
 }
+
+// writeRWASeriesUnavailable answers an RWA series that has no assembly
+// to serve. A problem rather than an envelope: a 200 would have to fill
+// assets, members and membership_as_of with zeros no read produced, and
+// would keep the route's public CDN band. writeProblem sets no-store.
+func writeRWASeriesUnavailable(w http.ResponseWriter, r *http.Request, detail string) {
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/rwa-series-unavailable",
+		"Series unavailable", http.StatusServiceUnavailable, detail)
+}
+
+// rwaSeriesRetryAfter is sent when an assembly failed. A failure is not
+// cached, so every request retries the heavy build; 30s is the
+// dependency-outage figure writeCacheUnavailableProblem uses.
+const rwaSeriesRetryAfter = "30"
 
 // parseRWAHistoryParams validates `timeframe` and `group_by`. ok=false
 // after writing a problem response on any parse error.
@@ -911,14 +925,24 @@ func (s *Server) rwaHistoryPrices(
 	}
 	// Open-ended at the start: the series reaches as far back as the
 	// oracle has ever published, and oracle_prices_1d carries no
-	// retention policy, so there is nothing to bound it to.
-	to := time.Now().UTC().Truncate(24 * time.Hour)
+	// retention policy, so there is nothing to bound it to. Closed at
+	// the end on the last complete day. The supply leg needs no ceiling
+	// of its own: a level reaches the series only through a price day,
+	// and today's flows must still feed rwaCumulateSupply's negative check.
+	to := rwaClosedDayCeiling(time.Now())
 	rows, err := s.oracleHistory.DailyOraclePrices(ctx, assets, rwaHistoryQuote, time.Time{}, to)
 	if err != nil {
 		s.logger.Warn("rwa history: oracle day-bucket read failed", "err", err)
 		return nil, false
 	}
 	return rwaReduceFeedSeries(rows), true
+}
+
+// rwaClosedDayCeiling is the last UTC day either RWA series may publish:
+// yesterday. Today's oracle bucket is a continuous aggregate re-materialised
+// through the day, so a point on it would be a "closing value" that moves.
+func rwaClosedDayCeiling(now time.Time) time.Time {
+	return now.UTC().Truncate(24 * time.Hour).Add(-24 * time.Hour)
 }
 
 // rwaReduceFeedSeries keeps only oracle-class publishers and reduces

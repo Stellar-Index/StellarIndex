@@ -23967,6 +23967,60 @@
                   "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "No series is published: no assembly has succeeded in this\nprocess (membership or a read leg did not answer), or the\ndeployment has not wired a leg. Served `no-store`; a failed\nassembly also carries `Retry-After`.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "rwa",
+                        "history"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Window ending at the most recent complete day. The series is\ndaily, so the sub-daily tokens the chart endpoint accepts\n(`1h`, `24h`) are REJECTED here rather than answered with a\none- or two-point series.\n (This can only be one of 1w,1mo,1y,all)",
+                            "type": "text/plain"
+                          },
+                          "key": "timeframe",
+                          "value": "1y"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Decompose the total into per-asset or per-issuer series in\n`groups[]`. The group series do not necessarily sum to\n`points[]` on every day: a member absent from a day is\nabsent from both, which is what the per-point counts expose.\n (This can only be one of none,asset,issuer)",
+                            "type": "text/plain"
+                          },
+                          "key": "group_by",
+                          "value": "none"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "Service Unavailable",
+                  "code": 503,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
                 }
               ],
               "event": [],
@@ -24145,6 +24199,51 @@
                   },
                   "status": "Internal Server Error",
                   "code": 500,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "No series is published: no assembly has succeeded in this\nprocess (membership or a read leg did not answer), or the\ndeployment has not wired a leg. Served `no-store`; a failed\nassembly also carries `Retry-After`.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "rwa",
+                        "premium"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Window ending at the most recent COMPLETE UTC day. Today is\nexcluded from both legs: a partial day's VWAP is not the\nday's price, and holding it to a floor measured over a whole\nday would report every morning as a thin market.\n (This can only be one of 1w,1mo,1y,all)",
+                            "type": "text/plain"
+                          },
+                          "key": "timeframe",
+                          "value": "1y"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "Service Unavailable",
+                  "code": 503,
                   "header": [
                     {
                       "key": "Content-Type",
