@@ -222,8 +222,8 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 	// on `!= 0` conflated that with "no catalogue row at all" and
 	// dropped the field, so a client could not tell "we have no data"
 	// from "we have data and it is zero". Presence is already proven
-	// here (a non-nil err returned above), so report the count
-	// unconditionally.
+	// here (a non-nil err returned above), so report the count unless
+	// the row says it holds none (native XLM).
 	if row.FirstSeenLedger != 0 {
 		v := row.FirstSeenLedger
 		detail.FirstSeenLedger = &v
@@ -232,8 +232,18 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 		v := row.LastSeenLedger
 		detail.LastSeenLedger = &v
 	}
+	detail.ObservationCount = observationCountWire(row)
+}
+
+// observationCountWire is the served observation_count: the registry's
+// count, including a legitimate 0, or absent when the row carries no
+// count at all (native XLM — see timescale.AssetRow).
+func observationCountWire(row timescale.AssetRow) *int64 {
+	if row.ObservationCountUnmeasured {
+		return nil
+	}
 	obs := row.ObservationCount
-	detail.ObservationCount = &obs
+	return &obs
 }
 
 // applyAssetExtensionResults populates the array-shaped fields from

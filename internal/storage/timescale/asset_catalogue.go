@@ -47,6 +47,9 @@ type AssetRow struct {
 	FirstSeenLedger  uint32
 	LastSeenLedger   uint32
 	ObservationCount int64
+	// ObservationCountUnmeasured marks ObservationCount as not a count at
+	// all (native XLM has no registry row); the API omits the field.
+	ObservationCountUnmeasured bool
 
 	// Latest VWAP-against-USD if available. Nil when:
 	//   - no off-chain peg (illiquid Soroban-only token), or
@@ -1525,24 +1528,16 @@ type AssetTopMarket struct {
 	TradeCount24h int64
 }
 
-// GetAssetMarketsCount returns the count of distinct (base, quote)
-// pairs the asset participated in over the trailing 24h with a
-// non-null prices_1m bucket. Cheaper than GetAssetTopMarkets — no
-// volume aggregation, no limit, no ordering. Powers the asset
-// detail page's "Markets: 12" header chip.
+// GetAssetMarketsCount returns the count of distinct markets the asset
+// participated in over the trailing 24h with a non-null prices_1m
+// bucket. A market is its canonical (base, quote) orientation, as on
+// /v1/markets, so a market stored in both directions counts once.
+// Powers the asset detail page's "Markets: 12" header chip.
 //
 // Returns 0 cleanly when the asset has no rows in the window.
 func (s *Store) GetAssetMarketsCount(ctx context.Context, assetID string) (int64, error) {
-	const q = `
-		SELECT COUNT(*) FROM (
-		  SELECT DISTINCT base_asset, quote_asset
-		    FROM prices_1m
-		   WHERE bucket >= now() - INTERVAL '24 hours'
-		     AND (base_asset = ANY($1) OR quote_asset = ANY($1))
-		) t
-	`
 	var n int64
-	if err := s.db.QueryRowContext(ctx, q, assetAliasArray(assetID)).Scan(&n); err != nil {
+	if err := s.db.QueryRowContext(ctx, assetMarketsCountQuery(), assetAliasArray(assetID)).Scan(&n); err != nil {
 		return 0, fmt.Errorf("timescale: GetAssetMarketsCount: %w", err)
 	}
 	return n, nil
@@ -1584,41 +1579,7 @@ func (s *Store) GetAssetTopMarkets(ctx context.Context, assetID string, limit in
 	if limit <= 0 || limit > 20 {
 		limit = 5
 	}
-	// Alias-complete: a market where ANY canonical form of the asset is
-	// base or quote counts, and the counterparty/side CASE tests
-	// membership so a pair keyed by the asset's crypto:XLM or SAC form is
-	// labelled as the asset's own market (side base/quote) rather than
-	// being mislabelled as a counterparty.
-	const q = `
-		WITH per_pair_24h AS (
-		  SELECT base_asset, quote_asset,
-		         SUM(volume_usd)::text AS vol_usd
-		    FROM prices_1m
-		   WHERE bucket >= now() - INTERVAL '24 hours'
-		     AND volume_usd IS NOT NULL
-		     AND (base_asset = ANY($1) OR quote_asset = ANY($1))
-		   GROUP BY base_asset, quote_asset
-		),
-		per_pair_count AS (
-		  SELECT base_asset, quote_asset,
-		         COUNT(*) FILTER (WHERE ts > now() - INTERVAL '24 hours') AS n
-		    FROM trades
-		   WHERE ts >= now() - INTERVAL '24 hours'
-		     AND (base_asset = ANY($1) OR quote_asset = ANY($1))
-		   GROUP BY base_asset, quote_asset
-		)
-		SELECT
-		    CASE WHEN p.base_asset = ANY($1) THEN p.quote_asset ELSE p.base_asset END AS counterparty,
-		    CASE WHEN p.base_asset = ANY($1) THEN 'base' ELSE 'quote' END             AS side,
-		    p.vol_usd                                                                 AS vol_24h_usd,
-		    COALESCE(c.n, 0)                                                          AS n_24h
-		  FROM per_pair_24h p
-		  LEFT JOIN per_pair_count c
-		    ON c.base_asset = p.base_asset AND c.quote_asset = p.quote_asset
-		 ORDER BY p.vol_usd::numeric DESC NULLS LAST
-		 LIMIT $2
-	`
-	rows, err := s.db.QueryContext(ctx, q, assetAliasArray(assetID), limit)
+	rows, err := s.db.QueryContext(ctx, assetTopMarketsQuery(), assetAliasArray(assetID), limit)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetTopMarkets: %w", err)
 	}
@@ -1640,6 +1601,63 @@ func (s *Store) GetAssetTopMarkets(ctx context.Context, assetID string, limit in
 		return nil, fmt.Errorf("timescale: GetAssetTopMarkets rows: %w", err)
 	}
 	return out, nil
+}
+
+// assetMarketsCountQuery builds GetAssetMarketsCount's query: DISTINCT
+// on canonOrientSQL's folded (base, quote), never the raw stored pair.
+func assetMarketsCountQuery() string {
+	canonBase, canonQuote, _ := canonOrientSQL()
+	return `
+		SELECT COUNT(*) FROM (
+		  SELECT DISTINCT ` + canonBase + `, ` + canonQuote + `
+		    FROM prices_1m
+		   WHERE bucket >= now() - INTERVAL '24 hours'
+		     AND (base_asset = ANY($1) OR quote_asset = ANY($1))
+		) t
+	`
+}
+
+// assetTopMarketsQuery builds GetAssetTopMarkets's query. Both stored
+// orientations of a market fold into its canonical (base, quote) before
+// volume and trade count are summed, so one market fills one preview
+// slot with its whole volume; side is the asset's side of that
+// canonical pair.
+//
+// Alias-complete: a market where ANY canonical form of the asset is base
+// or quote counts, and the counterparty/side CASE tests membership so a
+// pair keyed by the asset's crypto:XLM or SAC form is labelled as the
+// asset's own market rather than being mislabelled as a counterparty.
+func assetTopMarketsQuery() string {
+	canonBase, canonQuote, _ := canonOrientSQL()
+	return `
+		WITH per_pair_24h AS (
+		  SELECT ` + canonBase + ` AS base_asset, ` + canonQuote + ` AS quote_asset,
+		         SUM(volume_usd) AS vol_usd
+		    FROM prices_1m
+		   WHERE bucket >= now() - INTERVAL '24 hours'
+		     AND volume_usd IS NOT NULL
+		     AND (base_asset = ANY($1) OR quote_asset = ANY($1))
+		   GROUP BY 1, 2
+		),
+		per_pair_count AS (
+		  SELECT ` + canonBase + ` AS base_asset, ` + canonQuote + ` AS quote_asset,
+		         COUNT(*) FILTER (WHERE ts > now() - INTERVAL '24 hours') AS n
+		    FROM trades
+		   WHERE ts >= now() - INTERVAL '24 hours'
+		     AND (base_asset = ANY($1) OR quote_asset = ANY($1))
+		   GROUP BY 1, 2
+		)
+		SELECT
+		    CASE WHEN p.base_asset = ANY($1) THEN p.quote_asset ELSE p.base_asset END AS counterparty,
+		    CASE WHEN p.base_asset = ANY($1) THEN 'base' ELSE 'quote' END             AS side,
+		    p.vol_usd::text                                                           AS vol_24h_usd,
+		    COALESCE(c.n, 0)                                                          AS n_24h
+		  FROM per_pair_24h p
+		  LEFT JOIN per_pair_count c
+		    ON c.base_asset = p.base_asset AND c.quote_asset = p.quote_asset
+		 ORDER BY p.vol_usd DESC NULLS LAST, p.base_asset, p.quote_asset
+		 LIMIT $2
+	`
 }
 
 // GetAssetBySlug returns one row matching the given slug. Returns
@@ -1803,10 +1821,9 @@ func (s *Store) GetAssetByAssetID(ctx context.Context, assetID string) (AssetRow
 //   - Slug / Code: hardcoded "XLM"
 //   - AssetID: "native" (the canonical pair-side identifier)
 //   - IssuerGStrkey: "" (native has no issuer)
-//   - First/Last seen ledger: the trades hypertable's min/max for
-//     base_asset='native' OR quote_asset='native'
-//   - ObservationCount: total trades touching native in the
-//     hypertable, capped at int64
+//   - First/Last seen ledger: 0 (unset; see ledger_bounds)
+//   - ObservationCount: 0 with ObservationCountUnmeasured set — no
+//     registry row counts native's trades, and no cheap read does
 //   - PriceUSD + Change*Pct: same xlm_usd / xlm_usd_{1h,24h,7d}
 //     stablecoin-proxy chain used by GetAssetBySlug + the listing
 //     query for non-native assets
@@ -1818,7 +1835,12 @@ func (s *Store) GetAssetByAssetID(ctx context.Context, assetID string) (AssetRow
 // Always returns a populated row (no sql.ErrNoRows path) — the
 // underlying CTEs LEFT JOIN out to NULL when there's no data.
 func (s *Store) GetNativeAssetRow(ctx context.Context) (AssetRow, error) {
-	return scanAssetRow(s.db.QueryRowContext(ctx, getNativeAssetSQL))
+	row, err := scanAssetRow(s.db.QueryRowContext(ctx, getNativeAssetSQL))
+	if err != nil {
+		return row, err
+	}
+	row.ObservationCountUnmeasured = true
+	return row, nil
 }
 
 // getNativeAssetSQL is GetNativeAssetRow's query, hoisted to a
@@ -1861,7 +1883,7 @@ const getNativeAssetSQL = `
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
 		       'fiat:USD'
 		     )
-		     AND bucket BETWEEN now() - INTERVAL '90 minutes'
+		     AND bucket BETWEEN now() - INTERVAL '65 minutes'
 		                   AND now() - INTERVAL '55 minutes'
 		     AND vwap IS NOT NULL
 		   ORDER BY bucket DESC LIMIT 1
@@ -1873,7 +1895,7 @@ const getNativeAssetSQL = `
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
 		       'fiat:USD'
 		     )
-		     AND bucket BETWEEN now() - INTERVAL '26 hours'
+		     AND bucket BETWEEN now() - INTERVAL '24 hours 30 minutes'
 		                   AND now() - INTERVAL '23 hours 30 minutes'
 		     AND vwap IS NOT NULL
 		   ORDER BY bucket DESC LIMIT 1
@@ -1885,7 +1907,7 @@ const getNativeAssetSQL = `
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
 		       'fiat:USD'
 		     )
-		     AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
+		     AND bucket BETWEEN now() - INTERVAL '7 days 2 hours'
 		                   AND now() - INTERVAL '6 days 22 hours'
 		     AND vwap IS NOT NULL
 		   ORDER BY bucket DESC LIMIT 1
@@ -1897,18 +1919,12 @@ const getNativeAssetSQL = `
 		  -- rows on a busy ledger and timed out under lock-table
 		  -- pressure (53200). Native XLM is well-known; the
 		  -- explorer doesn't need an accurate first_seen_ledger
-		  -- for it. observation_count uses prices_1m row count
-		  -- as a cheap proxy.
+		  -- for it. observation_count is unmeasured for native (no
+		  -- registry row counts its trades); GetNativeAssetRow flags it.
 		  SELECT
 		    0::bigint AS first_ledger,
 		    0::bigint AS last_ledger,
-		    COALESCE(
-		      (SELECT COUNT(*)::bigint
-		         FROM prices_1m
-		        WHERE bucket >= now() - INTERVAL '24 hours'
-		          AND (base_asset = 'native' OR quote_asset = 'native')),
-		      0
-		    ) AS obs_count
+		    0::bigint AS obs_count
 		)
 		SELECT
 		    'XLM'                                  AS slug,

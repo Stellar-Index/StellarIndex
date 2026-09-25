@@ -187,7 +187,7 @@ func dexWindowKPIQuery(windowDays int) string {
 		       (SELECT count(*) FROM (
 		          SELECT 1 FROM dex_volume_by_pair_1d
 		           WHERE source = $1 AND bucket > now() - $2::interval
-		           GROUP BY base_asset, quote_asset) q)::text
+		           GROUP BY ` + marketKeySQL + `) q)::text
 		FROM dex_volume_by_pair_1d WHERE source = $1 AND bucket > now() - $2::interval`
 }
 
@@ -200,7 +200,7 @@ func dexWindowKPIQuery(windowDays int) string {
 func dexRawKPIQuery() string {
 	return `
 		SELECT count(DISTINCT taker)::text, count(usd_volume)::text,
-		       count(DISTINCT (base_asset, quote_asset))::text,
+		       count(DISTINCT (` + marketKeySQL + `))::text,
 		       COALESCE(round(sum(usd_volume) / NULLIF(count(usd_volume),0), 2), 0)::text
 		FROM trades WHERE source = $1 AND ts > now() - $2::interval`
 }
