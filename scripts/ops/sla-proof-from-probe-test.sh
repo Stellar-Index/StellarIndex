@@ -182,6 +182,16 @@ gapped["series_gaps"] = [{"after": gapped["first_sample"] + 3600,
                           "seconds": 14400}]
 write("gapped", gapped)
 
+# `masked` — byte-identical numbers to `clean`, no scrape gaps, but the
+# probe's own liveness facts say it was dead (or failing) for most of the
+# window. node_exporter kept re-serving the last textfile it was given,
+# so scrape coverage and series_gaps see nothing wrong — this is exactly
+# the "masked timer" failure GH-744 exists to catch.
+masked = copy.deepcopy(clean)
+each(masked, "no_pass_max_sec", lambda v, m: 999999.0)
+each(masked, "unit_failed_frac", lambda v, m: 0.9)
+write("masked", masked)
+
 # `thin` — same as `clean` but only a fraction of the expected scrapes
 # landed. Distinct from `gapped`: no single hole is wide enough to be
 # reported, yet most of the window is missing.
@@ -296,6 +306,25 @@ nanpass = copy.deepcopy(clean)
 each(nanpass, "passing_runs", lambda v, m: float("nan"))
 write("passing_runs_nan", nanpass)
 
+# `samples_avg_nan` (GH-649) — one endpoint's samples_avg reads Prometheus's
+# literal 'NaN' (a zero denominator upstream). Before the fix this reached
+# `int()`/`sum()` unfiltered and crashed the generator with rc 1 and no
+# report written at all — the worst outcome, worse than a wrong number.
+samples_nan = copy.deepcopy(clean)
+set_cell(samples_nan, "samples_avg", "healthz", "NaN")
+write("samples_avg_nan", samples_nan)
+
+# `descriptive_over_missing` (GH-649) — the p95_over_frac series (the
+# "window over target" descriptive column) carries no row for `assets`,
+# the same shape a probe relabel or an endpoint that exports latency but
+# not a breach fraction would produce. Before the fix `(frac or 0.0)`
+# turned the missing series into a claimed 0.000 % breach rate instead of
+# the "n/a" `pct()`'s own evaluable() gate would render for every other
+# unmeasured cell in this document.
+descr_missing = copy.deepcopy(clean)
+drop_endpoint(descr_missing, "p95_over_frac", "assets")
+write("descriptive_over_missing", descr_missing)
+
 # `public` — the same window measured against a public name instead of
 # loopback. The network-path caveat must follow the configuration.
 write("public", clean)
@@ -365,6 +394,24 @@ expect 'every endpoint at 0 samples/run → rc 2 REFUSED' 2 'measured nothing'
 render "$TMP/passing_runs_nan.json" "$TMP/out-nanpass"
 expect 'a NaN passing_runs scalar does not crash the generator' 0 'PROVEN — wrote'
 
+# A NaN `samples_avg` cell must not crash the generator either (GH-649):
+# it still writes a report, and the sample-size sentence reads "n/a"
+# rather than raising out of `int()`/`sum()`.
+render "$TMP/samples_avg_nan.json" "$TMP/out-samplesnan"
+expect 'a NaN samples_avg cell does not crash the generator' 0 'wrote'
+SAMPLESNAN="$TMP/out-samplesnan/$(ls "$TMP/out-samplesnan")"
+assert_contains 'the NaN samples/run cell reads n/a, not a raised error' \
+  "$SAMPLESNAN" "| \`healthz\` | n/a |"
+
+# A headline series can be present while one endpoint's descriptive
+# breach-fraction cell is absent; `pct()`'s own n/a gate must render it,
+# not a masked 0.000 % (GH-649).
+render "$TMP/descriptive_over_missing.json" "$TMP/out-descrmissing"
+expect 'a missing descriptive breach-fraction cell still renders' 0 'wrote'
+DESCRMISSING="$TMP/out-descrmissing/$(ls "$TMP/out-descrmissing")"
+assert_absent 'the missing cell is not reported as a 0.000 % breach rate' \
+  "$DESCRMISSING" "| \`assets\` | 8.0 ms | 12.0 ms | 20.0 ms | 1.0 ms | 0.000 % |"
+
 render "$TMP/twohosts.json" "$TMP/out-hosts"
 expect 'two hosts merged into one table → rc 2 REFUSED' 2 'span 2 hosts'
 render "$TMP/twohosts.json" "$TMP/out-hosts-ok" --host r1
@@ -418,6 +465,20 @@ if [ "$(grep -c '| PROVEN |' "$CLEAN")" -eq 10 ]; then
   pass=$((pass + 1))
 else
   echo "FAIL: the PASS report does not carry 10 PROVEN endpoint rows" >&2
+  fail=$((fail + 1))
+fi
+
+# The digest is self-referential: zero the digest line's value, hash the
+# rest of the document, and it must equal what got embedded (GH-744 —
+# before the fix there was no digest line at all, so evidence tampering
+# after render was undetectable to anything except a byte diff).
+embedded_digest="$(grep -m1 '^digest: sha256:' "$CLEAN" | sed 's/^digest: sha256://')"
+recomputed_digest="$(sed "s/^digest: sha256:.*/digest: sha256:$(printf '0%.0s' $(seq 1 64))/" "$CLEAN" | shasum -a 256 | cut -d' ' -f1)"
+if [ -n "$embedded_digest" ] && [ "$embedded_digest" = "$recomputed_digest" ]; then
+  echo "ok: the embedded digest reproduces from the document's own bytes"
+  pass=$((pass + 1))
+else
+  echo "FAIL: embedded digest '$embedded_digest' != recomputed '$recomputed_digest'" >&2
   fail=$((fail + 1))
 fi
 
@@ -496,6 +557,22 @@ expect 'coverage below the floor with no single wide hole → rc 1' 1 'window no
 THIN="$TMP/out-thin/$(ls "$TMP/out-thin")"
 assert_contains 'the thin report reports its coverage' "$THIN" \
   'Scrapes of the probe series in the window'
+
+# ── A masked timer is not a clean window either (GH-744) ────────────────
+# `masked` carries byte-identical numbers and full scrape coverage to
+# `clean` — the only difference is the probe-liveness facts, which say the
+# probe was effectively dead. Before the fix, window_clean read only
+# coverage and series_gaps, so this fixture rendered PROVEN.
+render "$TMP/masked.json" "$TMP/out-masked"
+expect 'clean coverage + dead probe-liveness facts → rc 1, NOT PROVEN' 1 \
+  'window not clean'
+MASKED="$TMP/out-masked/$(ls "$TMP/out-masked")"
+assert_contains 'the masked report refuses the PASS' "$MASKED" \
+  '**Verdict: NOT PROVEN.**'
+assert_contains 'the masked report names the no-pass stretch as the reason' \
+  "$MASKED" 'no passing run is'
+assert_contains 'the masked report names the FAIL fraction as a reason' \
+  "$MASKED" "under the probe's own FAIL verdict (floor"
 
 # ── The labelling the whole change exists for ───────────────────────────
 base_env

@@ -106,6 +106,8 @@ usage() {
 usage: sla-proof-from-probe.sh [--prom-url URL] [--window 7d] [--host NAME]
                                [--out-dir DIR] [--extract-out FILE]
                                [--min-window 24h] [--min-coverage 0.95]
+                               [--max-no-pass-sec 1800]
+                               [--max-unit-failed-frac 0.05]
        sla-proof-from-probe.sh --extract FILE [--out-dir DIR]
 
 Renders docs/operations/sla-proof-<YYYY-MM-DD>.md from the
@@ -123,6 +125,12 @@ EXTRACT_IN=""
 EXTRACT_OUT=""
 MIN_WINDOW="24h"
 MIN_COVERAGE="0.95"
+# A dead probe (masked by a textfile collector that keeps re-serving the
+# last file it was given) leaves the scrape series continuous, so
+# coverage alone cannot catch it. no_pass_max_sec / unit_failed_frac are
+# the probe-liveness facts that do; see the window_clean fold below.
+MAX_NO_PASS_SEC="1800"
+MAX_UNIT_FAILED_FRAC="0.05"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -134,6 +142,8 @@ while [ $# -gt 0 ]; do
     --extract-out)  EXTRACT_OUT="${2:-}"; shift 2 ;;
     --min-window)   MIN_WINDOW="${2:-}"; shift 2 ;;
     --min-coverage) MIN_COVERAGE="${2:-}"; shift 2 ;;
+    --max-no-pass-sec)       MAX_NO_PASS_SEC="${2:-}"; shift 2 ;;
+    --max-unit-failed-frac)  MAX_UNIT_FAILED_FRAC="${2:-}"; shift 2 ;;
     -h|--help)      usage; exit 0 ;;
     *) echo "sla-proof-from-probe: unknown argument '$1'" >&2; usage; exit 2 ;;
   esac
@@ -193,6 +203,8 @@ export SLA_PROBE_EXTRACT_IN="$EXTRACT_IN"
 export SLA_PROBE_EXTRACT_OUT="$EXTRACT_OUT"
 export SLA_PROBE_MIN_WINDOW="$MIN_WINDOW"
 export SLA_PROBE_MIN_COVERAGE="$MIN_COVERAGE"
+export SLA_PROBE_MAX_NO_PASS_SEC="$MAX_NO_PASS_SEC"
+export SLA_PROBE_MAX_UNIT_FAILED_FRAC="$MAX_UNIT_FAILED_FRAC"
 
 # Export explicitly so the renderer below sees them whether the caller
 # exported them, set them inline, or assigned them as plain shell
@@ -590,11 +602,28 @@ try:
     min_coverage = float(os.environ.get("SLA_PROBE_MIN_COVERAGE", "0.95"))
 except ValueError:
     refuse("--min-coverage is not a number.")
+try:
+    max_no_pass_sec = float(os.environ.get("SLA_PROBE_MAX_NO_PASS_SEC", "1800"))
+except ValueError:
+    refuse("--max-no-pass-sec is not a number.")
+try:
+    max_unit_failed_frac = float(
+        os.environ.get("SLA_PROBE_MAX_UNIT_FAILED_FRAC", "0.05"))
+except ValueError:
+    refuse("--max-unit-failed-frac is not a number.")
 
 # A window the probe did not cover cannot prove a claim about that window.
 # It does not refuse the report — the measurement is real and worth
-# retaining — it refuses the PASS.
-window_clean = bool(coverage >= min_coverage and not gaps)
+# retaining — it refuses the PASS. Coverage and gaps only catch a SCRAPE
+# outage; a masked timer (the probe stopped running or kept failing while
+# node_exporter re-served its last textfile) leaves the scrape series
+# perfectly continuous, so no_pass_max/unit_failed_frac — computed above
+# for exactly this reason — have to gate the verdict too, not just the
+# descriptive table.
+no_pass_clean = no_pass_max is None or no_pass_max <= max_no_pass_sec
+unit_failed_clean = unit_failed_frac <= max_unit_failed_frac
+window_clean = bool(coverage >= min_coverage and not gaps
+                     and no_pass_clean and unit_failed_clean)
 
 
 # ── Verdicts ────────────────────────────────────────────────────────────
@@ -666,6 +695,15 @@ def pct(value, places=3):
     return "n/a" if not evaluable(value) else ("%." + str(places) + "f %%") % value
 
 
+def pct_frac(frac, places=3):
+    # frac is a 0..1 ratio, possibly absent (None) or non-finite (NaN from
+    # a zero denominator). `(frac or 0.0)` before this call used to turn
+    # an unmeasured endpoint into a claimed 0 % breach rate, defeating
+    # pct()'s own evaluable() gate — so the gate has to run BEFORE the
+    # multiply, not after a masking `or`.
+    return pct(frac * 100.0, places) if evaluable(frac) else "n/a"
+
+
 def secs(value):
     return "n/a" if not evaluable(value) else "%.1f s" % value
 
@@ -698,10 +736,16 @@ api_versions = sorted({
 out = []
 w = out.append
 
+DIGEST_PLACEHOLDER = "0" * 64
+
 w("---")
 w("title: SLA proof report — %s" % report_date)
 w("status: evidence (generated — do not hand-edit)")
 w("generator: scripts/ops/sla-proof-from-probe.sh")
+# Self-referential: computed over the document with this line's value
+# zeroed, then substituted in below. A verifier reproduces it by zeroing
+# the line the same way before hashing — see scripts/ci/check-sla-evidence.sh.
+w("digest: sha256:%s" % DIGEST_PLACEHOLDER)
 w("related:")
 w("  - docs/adr/0009-latency-budget.md")
 w("  - docs/operations/sla-proof-procedure.md")
@@ -819,12 +863,30 @@ w("")
 if window_clean:
     w("The window is continuous at the configured floor (coverage ≥ %g %%, no"
       % (min_coverage * 100.0))
-    w("holes), so the aggregates below cover it rather than a surviving")
-    w("fraction of it.")
+    w("holes, no stretch without a passing run longer than %s, no more than"
+      % human_duration(max_no_pass_sec))
+    w("%s under the probe's own FAIL verdict), so the aggregates below cover"
+      % pct(max_unit_failed_frac * 100.0, 2))
+    w("it rather than a surviving fraction of it.")
 else:
-    w("**This window is not clean.** Coverage is %s against a floor of %g %%%s."
-      % (pct(coverage * 100.0, 2), min_coverage * 100.0,
-         " and the series has %d hole(s)" % len(gaps) if gaps else ""))
+    reasons = []
+    if coverage < min_coverage:
+        reasons.append("coverage is %s against a floor of %g %%"
+                        % (pct(coverage * 100.0, 2), min_coverage * 100.0))
+    if gaps:
+        reasons.append("the series has %d hole(s)" % len(gaps))
+    if not no_pass_clean:
+        reasons.append("the longest stretch with no passing run is %s "
+                        "(floor %s) — the probe may have been dead while "
+                        "node_exporter kept re-serving its last result"
+                        % (human_duration(no_pass_max),
+                           human_duration(max_no_pass_sec)))
+    if not unit_failed_clean:
+        reasons.append("%s of the window ran under the probe's own FAIL "
+                        "verdict (floor %s)"
+                        % (pct(unit_failed_frac * 100.0, 2),
+                           pct(max_unit_failed_frac * 100.0, 2)))
+    w("**This window is not clean.** %s." % "; ".join(reasons))
     w("The aggregates below describe the samples that exist; they do not")
     w("describe the missing minutes, and the verdict is therefore NOT PROVEN")
     w("regardless of how the bounds read.")
@@ -841,7 +903,8 @@ w("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
 for ep in endpoints:
     w("| `%s` | %s | %s | %s | %s | %s | %s | %s | %s |"
       % (ep,
-         "%.0f" % samples_avg[ep] if ep in samples_avg else "n/a",
+         "%.0f" % samples_avg[ep]
+         if ep in samples_avg and evaluable(samples_avg[ep]) else "n/a",
          ms(p95_max.get(ep)), bound_verdict(p95_max.get(ep), P95_TARGET_MS),
          ms(p99_max.get(ep)), bound_verdict(p99_max.get(ep), P99_TARGET_MS),
          pct(avail_window.get(ep)),
@@ -867,11 +930,20 @@ if unevaluated:
     w("n/a beside NOT PROVEN: an unmeasured cell is not a pass, and the")
     w("verdict is NOT PROVEN for the window while any such cell stands.")
     w("")
-total_n = sum(samples_avg.values()) * (passing_runs or 0)
+# A NaN/Inf sample count is not zero and must not be summed or truncated
+# as one — filter every samples_* family through evaluable() before any
+# arithmetic touches it, the same gate the headline cells use.
+samples_avg_finite = [v for v in samples_avg.values() if evaluable(v)]
+samples_min_finite = [v for v in by_endpoint("samples_min").values()
+                       if evaluable(v)]
+samples_max_finite = [v for v in by_endpoint("samples_max").values()
+                       if evaluable(v)]
+total_n = sum(samples_avg_finite) * (passing_runs or 0)
 w("Sample size: **%s per endpoint per run** on average (min %s, max %s over"
-  % ("%.0f" % (sum(samples_avg.values()) / len(samples_avg)),
-     "%.0f" % min(by_endpoint("samples_min").values() or [0]),
-     "%.0f" % max(by_endpoint("samples_max").values() or [0])))
+  % ("%.0f" % (sum(samples_avg_finite) / len(samples_avg_finite))
+     if samples_avg_finite else "n/a",
+     "%.0f" % min(samples_min_finite) if samples_min_finite else "n/a",
+     "%.0f" % max(samples_max_finite) if samples_max_finite else "n/a"))
 w("the window), across at least **%d recorded passing runs** — on the order of"
   % int(passing_runs))
 w("**%s requests across all %d endpoints** over %s. That is a real n, and it"
@@ -904,9 +976,9 @@ for ep in endpoints:
     w("| `%s` | %s | %s | %s | %s | %s | %s | %s |"
       % (ep, ms(p50_max.get(ep)),
          ms(p95_typ.get(ep)), ms(p99_typ.get(ep)), ms(p95_min.get(ep)),
-         pct((p95_over.get(ep) or 0.0) * 100.0, 3),
-         pct((p99_over.get(ep) or 0.0) * 100.0, 3),
-         pct((avail_under.get(ep) or 0.0) * 100.0, 3)))
+         pct_frac(p95_over.get(ep), 3),
+         pct_frac(p99_over.get(ep), 3),
+         pct_frac(avail_under.get(ep), 3)))
 w("")
 w("`worst-run p50` is the largest per-run p50 in the window. It sits in the")
 w("descriptive table rather than the headline one because ADR-0009 makes no")
@@ -1014,10 +1086,17 @@ w("document with no network access at all; the only line that differs is the")
 w("`Extract` row above, which records that the second pass was a re-render.")
 
 body = "\n".join(out) + "\n"
+digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+digest_line = "digest: sha256:%s" % DIGEST_PLACEHOLDER
+if body.count(digest_line) != 1:
+    refuse("the digest placeholder line appears %d time(s) in the rendered "
+           "body, expected exactly 1. Something upstream is emitting the "
+           "literal placeholder text; the embedded digest would not be "
+           "self-referential." % body.count(digest_line))
+body = body.replace(digest_line, "digest: sha256:%s" % digest, 1)
 with open(out_path, "w") as fh:
     fh.write(body)
 
-digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
 print("sla-proof-from-probe: %s — wrote %s (sha256 %s)"
       % (overall, out_path, digest[:16]))
 if not_proven:

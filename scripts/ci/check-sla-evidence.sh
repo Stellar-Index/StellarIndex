@@ -152,6 +152,15 @@ to_epoch() {
   date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%d" "$1" +%s 2>/dev/null || echo 0
 }
 
+# Portable SHA-256 — same idiom as scripts/ci/lint-migration-immutability.sh.
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -- "$1" | awk '{print $1}'
+  else
+    shasum -a 256 -- "$1" | awk '{print $1}'
+  fi
+}
+
 proof_fresh=false
 if [ -z "$newest_proof" ]; then
   echo "sla-evidence: NO PROOF — no sla-proof-<YYYY-MM-DD>.md has ever landed in ${SLA_EVIDENCE_DIR}/."
@@ -170,6 +179,46 @@ else
   fi
 fi
 echo "sla-evidence: threshold SLA_PROOF_MAX_AGE_DAYS=${SLA_PROOF_MAX_AGE_DAYS}."
+
+# ── Leg 2b: is the freshest filename actually evidence? ─────────────────
+# A filename matching sla-proof-<date>.md is not itself proof of anything
+# — a masked timer, a hand-edited file, or a truncated write would still
+# match it. Two things a real report must carry:
+#   1. a `generator:` front-matter line naming which producer wrote it
+#      (the only place that fact is recorded at all);
+#   2. IF it carries a self-referential `digest: sha256:<hex>` line (only
+#      scripts/ops/sla-proof-from-probe.sh embeds one; the k6-driven
+#      scripts/ci/render-sla-proof.sh predates it), that digest must
+#      reproduce from the file's own bytes with the digest line zeroed —
+#      the same scheme the generator uses to write it.
+# Neither check runs unless a candidate file exists; an absent proof was
+# already reported above and stays reported as NO PROOF, not corrupted.
+proof_integrity_ok=true
+if [ -n "$newest_proof" ]; then
+  if ! grep -q '^generator: .\+$' "$newest_proof"; then
+    proof_integrity_ok=false
+    echo "sla-evidence: NO PROOF — ${newest_proof} carries no 'generator:'" \
+         "front-matter line, so it cannot be attributed to either producer."
+  fi
+  digest_line="$(grep -m1 '^digest: sha256:' "$newest_proof" || true)"
+  if [ -n "$digest_line" ]; then
+    declared="${digest_line#digest: sha256:}"
+    placeholder="$(printf '0%.0s' $(seq 1 64))"
+    zeroed="$(mktemp)"
+    sed "s/^digest: sha256:.*/digest: sha256:${placeholder}/" \
+      "$newest_proof" > "$zeroed"
+    recomputed="$(sha256_of "$zeroed")"
+    rm -f "$zeroed"
+    if [ "$declared" != "$recomputed" ]; then
+      proof_integrity_ok=false
+      echo "sla-evidence: NO PROOF — ${newest_proof}'s embedded digest" \
+           "(${declared}) does not match its own bytes (${recomputed})." \
+           "The file was edited, truncated, or corrupted after render."
+    else
+      echo "sla-evidence: ${newest_proof}'s embedded digest matches its own bytes."
+    fi
+  fi
+fi
 
 # ── Verdict ─────────────────────────────────────────────────────────────
 if [ "$target_ready" != true ]; then
@@ -205,6 +254,17 @@ if [ "$SLA_EVIDENCE_SOURCE" = "probe" ]; then
   speak_probe=true
 elif [ "$SLA_EVIDENCE_SOURCE" = "any" ] && [ "$k6_ready" != true ]; then
   speak_probe=true
+fi
+
+if [ "$proof_integrity_ok" != true ]; then
+  cat <<EOF
+sla-evidence: RED (rc=2) — ${newest_proof} matches the dated-filename
+  shape but failed integrity verification (see above): a filename is not
+  evidence, and a report with no attributable generator or a digest that
+  does not reproduce from its own bytes must be treated the same as no
+  report at all.
+EOF
+  exit 2
 fi
 
 if [ "$proof_fresh" != true ]; then

@@ -54,10 +54,15 @@ expect() {
 }
 
 mkdir -p "$TMP/empty" "$TMP/fresh" "$TMP/stale" "$TMP/decoys" "$TMP/mixed"
-: > "$TMP/fresh/sla-proof-2026-08-20.md"                   # 9 days old
-: > "$TMP/stale/sla-proof-2026-01-01.md"                   # ~240 days old
-: > "$TMP/mixed/sla-proof-2026-01-01.md"
-: > "$TMP/mixed/sla-proof-2026-07-15.md"                   # ~45 days: inside
+# Leg 2b (GH-744) opens the file and requires a `generator:` line, so
+# every fixture standing in for a REAL landed report needs one — an
+# empty file is no longer indistinguishable from evidence, which is the
+# defect this leg exists to close.
+gen_line='generator: scripts/ops/sla-proof-from-probe.sh'
+printf '%s\n' "$gen_line" > "$TMP/fresh/sla-proof-2026-08-20.md"   # 9 days old
+printf '%s\n' "$gen_line" > "$TMP/stale/sla-proof-2026-01-01.md"   # ~240 days old
+printf '%s\n' "$gen_line" > "$TMP/mixed/sla-proof-2026-01-01.md"
+printf '%s\n' "$gen_line" > "$TMP/mixed/sla-proof-2026-07-15.md"   # ~45 days: inside
 # The two files that really do sit in docs/operations/ next to the reports
 # — the recipe and the blank form. Neither is evidence.
 : > "$TMP/decoys/sla-proof-procedure.md"
@@ -111,6 +116,40 @@ expect 'stale proof is rc 2, not rc 1 (the run must still execute)' 2 'the load 
 # gate permanently, silently green.
 run "$TMP/decoys"
 expect 'procedure/template/undated files are not evidence → rc 2' 2 'has ever landed'
+
+# ── Leg 2b (GH-744): a matching filename is not itself evidence ─────────
+# Before the fix, Leg 2 matched only the sla-proof-<date>.md filename and
+# never opened the file — so a masked timer, a hand-edited stub, or a
+# truncated write with the right name and mtime read HEALTHY.
+mkdir -p "$TMP/no-generator" "$TMP/bad-digest" "$TMP/good-digest"
+: > "$TMP/no-generator/sla-proof-2026-08-20.md"
+run "$TMP/no-generator"
+expect 'a dated file with no generator: line → rc 2, not HEALTHY' 2 \
+  'carries no'
+
+printf 'generator: scripts/ops/sla-proof-from-probe.sh\ndigest: sha256:%s\nHAND-EDITED AFTER RENDER\n' \
+  "$(printf '0%.0s' $(seq 1 64))" > "$TMP/bad-digest/sla-proof-2026-08-20.md"
+run "$TMP/bad-digest"
+expect 'a digest that does not match its own bytes → rc 2, not HEALTHY' 2 \
+  'does not match its own bytes'
+
+# A digest computed the same way the generator computes it (zero the
+# digest line, hash the rest) must verify clean.
+body="generator: scripts/ops/sla-proof-from-probe.sh
+digest: sha256:$(printf '0%.0s' $(seq 1 64))
+Verdict: PROVEN.
+"
+printf '%s' "$body" > "$TMP/good-digest/sla-proof-2026-08-20.md"
+if command -v sha256sum >/dev/null 2>&1; then
+  real_digest="$(printf '%s' "$body" | sha256sum | awk '{print $1}')"
+else
+  real_digest="$(printf '%s' "$body" | shasum -a 256 | awk '{print $1}')"
+fi
+printf '%s' "$body" | sed "s/^digest: sha256:.*/digest: sha256:${real_digest}/" \
+  > "$TMP/good-digest/sla-proof-2026-08-20.md"
+run "$TMP/good-digest"
+expect 'a digest that DOES match its own bytes → rc 0 HEALTHY' 0 \
+  'OK — target configured'
 
 # Threshold is real and configurable, not decorative.
 OUT="$(SLA_EVIDENCE_DIR="$TMP/stale" SLA_EVIDENCE_NOW="$NOW_EPOCH" SLA_PROOF_MAX_AGE_DAYS=400 bash "$CHECK" 2>&1)"; RC=$?
