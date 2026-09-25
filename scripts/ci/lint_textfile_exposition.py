@@ -649,6 +649,38 @@ def same_emit_run(text: str, first_line: int, second_line: int) -> bool:
     return not any(RE_BRANCH.match(line) for line in body)
 
 
+RE_TEXTFILE_MTIME_FILE = re.compile(
+    r"node_textfile_mtime_seconds\{[^}]*\bfile=\"[^\"]*/textfile_collector/([^\"]+)\""
+)
+RE_TEXTFILE_MTIME_GENERIC = re.compile(r"node_textfile_mtime_seconds(?!\{[^}]*\bfile=)")
+
+
+def load_rule_coverage(rules_dir: str) -> tuple[set[str], bool]:
+    """Which .prom basenames a Prometheus rule selects via
+    node_textfile_mtime_seconds, and whether any rule is a file-unscoped
+    catch-all (selects every producer, present or future).
+
+    Static text scan, not YAML-aware: the manifest and the rules live in
+    different files by design (GH-899), so this is the only way to prove a
+    producer someone added to the manifest is not silently unalarmed.
+    """
+    covered: set[str] = set()
+    generic = False
+    if not os.path.isdir(rules_dir):
+        return covered, generic
+    for name in sorted(os.listdir(rules_dir)):
+        if not name.endswith((".yml", ".yaml")):
+            continue
+        raw = io.open(os.path.join(rules_dir, name), encoding="utf-8", errors="ignore").read()
+        # Drop YAML comment lines first: a prose mention of the metric name
+        # (e.g. explaining what it reflects) must not count as a rule.
+        text = "\n".join(line for line in raw.split("\n") if not line.strip().startswith("#"))
+        covered.update(RE_TEXTFILE_MTIME_FILE.findall(text))
+        if RE_TEXTFILE_MTIME_GENERIC.search(text):
+            generic = True
+    return covered, generic
+
+
 def load_manifest(path: str) -> dict[str, tuple[str, str]]:
     """producer -> (output-spec, self-test-path-or-'-')."""
     entries: dict[str, tuple[str, str]] = {}
@@ -721,6 +753,7 @@ def main() -> int:
 
     root = os.environ.get("TEXTFILE_LINT_ROOT") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     manifest_path = os.environ.get("TEXTFILE_LINT_MANIFEST") or os.path.join(root, "scripts/ci/textfile-producers.manifest")
+    rules_dir = os.environ.get("TEXTFILE_LINT_RULES_DIR") or os.path.join(root, "configs/prometheus/rules.r1")
     fails = 0
 
     found = discover(root)
@@ -785,6 +818,33 @@ def main() -> int:
                 f"lint-textfile-exposition: {rel}: manifest names self-test {selftest}, which does "
                 "not exist. Point it at the test that drives this producer's shipped bytes, or "
                 "set `-` to record that nothing does.",
+                file=sys.stderr,
+            )
+
+    # ── 1b. alert coverage: every manifest producer's .prom output(s) must
+    #        be selected by at least one Prometheus staleness rule, either
+    #        by name or by a file-unscoped catch-all (GH-899: 60/66
+    #        producers had neither, so a stuck or crashed producer went
+    #        unalarmed forever). `operator-supplied` outputs have no
+    #        literal basename to check here. Skipped entirely when no rules
+    #        directory exists (e.g. a fixture root unrelated to alerting) —
+    #        this check is additive, not a requirement to ship a rules
+    #        tree.
+    covered, generic = load_rule_coverage(rules_dir)
+    for rel in sorted(manifest) if os.path.isdir(rules_dir) else ():
+        outputs, _selftest = manifest[rel]
+        for out in outputs.split(","):
+            if not out.endswith(".prom"):
+                continue
+            if generic or out in covered:
+                continue
+            fails += 1
+            print(
+                f"lint-textfile-exposition: {rel}: {out} is not selected by any "
+                f"node_textfile_mtime_seconds alert rule under {os.path.relpath(rules_dir, root)} "
+                "— a stuck or crashed producer would go unalarmed. Add a "
+                'file="…/textfile_collector/'
+                f'{out}" staleness rule, or a file-unscoped catch-all.',
                 file=sys.stderr,
             )
 

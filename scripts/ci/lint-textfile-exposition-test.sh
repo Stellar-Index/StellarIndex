@@ -69,10 +69,12 @@ new_tree() {
   echo "$root"
 }
 
-# run_gate <root> <manifest> — runs the gate against a fixture tree;
-# leaves stderr+stdout in $OUT and the exit code in $RC.
+# run_gate <root> <manifest> [rules-dir] — runs the gate against a fixture
+# tree; leaves stderr+stdout in $OUT and the exit code in $RC. rules-dir
+# defaults to a nonexistent path so fixtures unrelated to alert coverage
+# see zero rule files, not the real repo's.
 run_gate() {
-  OUT="$(TEXTFILE_LINT_ROOT="$1" TEXTFILE_LINT_MANIFEST="$2" bash "$GATE" 2>&1)"
+  OUT="$(TEXTFILE_LINT_ROOT="$1" TEXTFILE_LINT_MANIFEST="$2" TEXTFILE_LINT_RULES_DIR="${3:-"$1/no-rules-dir"}" bash "$GATE" 2>&1)"
   RC=$?
 }
 
@@ -384,6 +386,60 @@ sed -i.bak 's/"} .||round/"}||round/' "$root/configs/ansible/roles/fixture/files
 rm -f "$root/configs/ansible/roles/fixture/files/freshness.sh.bak"
 run_gate "$root" "$root/manifest"
 expect "an SQL-composed line with no space before its value is RED" red
+
+# ─── 7b. alert coverage (GH-899) ─────────────────────────────────────
+#
+# A manifest producer whose .prom output no Prometheus rule selects (by
+# name or by a file-unscoped catch-all) must be RED: a dead producer would
+# otherwise go unalarmed forever. Skipped entirely when no rules dir is
+# given (sections 1-7 above), so this is additive, not a new requirement
+# on every fixture.
+root="$(new_tree alertcoverage)"
+cat > "$root/configs/ansible/roles/fixture/files/freshness.sh" <<'SH'
+#!/usr/bin/env bash
+DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
+TMP=$(mktemp)
+{
+  echo '# HELP stellarindex_fixture_ok 1 if the fixture producer ran.'
+  echo '# TYPE stellarindex_fixture_ok gauge'
+  echo 'stellarindex_fixture_ok 1'
+} > "$TMP"
+mv "$TMP" "$DIR/fixture.prom"
+SH
+printf 'configs/ansible/roles/fixture/files/freshness.sh fixture.prom -\n' > "$root/manifest"
+
+mkdir -p "$root/rules"
+cat > "$root/rules/other.yml" <<'YML'
+groups:
+  - name: unrelated
+    rules:
+      - alert: SomethingElse
+        expr: up == 0
+YML
+run_gate "$root" "$root/manifest" "$root/rules"
+expect "a manifest producer with no alert rule selecting its .prom file is RED" red
+says "…and names the missing file" "fixture.prom is not selected by any"
+
+cat > "$root/rules/textfile.yml" <<'YML'
+groups:
+  - name: textfile
+    rules:
+      - alert: TextfileStale
+        expr: time() - node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/fixture.prom"} > 600
+YML
+run_gate "$root" "$root/manifest" "$root/rules"
+expect "a dedicated file-scoped rule covers it: GREEN" green
+
+rm -f "$root/rules/textfile.yml"
+cat > "$root/rules/catchall.yml" <<'YML'
+groups:
+  - name: textfile
+    rules:
+      - alert: TextfileProducerStale
+        expr: time() - node_textfile_mtime_seconds > 86400
+YML
+run_gate "$root" "$root/manifest" "$root/rules"
+expect "a file-unscoped catch-all rule covers it too: GREEN" green
 
 # ─── 8. the real tree ───────────────────────────────────────────────
 # Fixtures prove the gate can fail; this proves the sweep it actually runs
