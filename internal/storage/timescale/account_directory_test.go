@@ -2,6 +2,7 @@ package timescale
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -128,5 +129,62 @@ func TestDirectoryTagsWithoutScamFlags(t *testing.T) {
 	}
 	if got := DirectoryTagsWithoutScamFlags(nil); got == nil || len(got) != 0 {
 		t.Errorf("DirectoryTagsWithoutScamFlags(nil) = %#v, want a non-nil empty set (tags is NOT NULL)", got)
+	}
+}
+
+// TestBuildDirectoryUpsert_BindsCanonicalTags: the SQL scam predicates
+// fold case but do not trim, so a padded upstream tag must be stored
+// canonical or the churn guard, the rank tier and the explorer miss a
+// flag the trimming Go price gate still acts on.
+func TestBuildDirectoryUpsert_BindsCanonicalTags(t *testing.T) {
+	chunk := directoryEntriesN(1)
+	chunk[0].Tags = []string{"scam ", " Exchange", "", "exchange", "\tPHISHING\n", "  "}
+	_, args := buildDirectoryUpsert(chunk, "stellar-expert")
+	got, ok := args[3].([]string)
+	if !ok {
+		t.Fatalf("tags arg is %T, want []string", args[3])
+	}
+	if want := []string{"scam", "exchange", "phishing"}; !slices.Equal(got, want) {
+		t.Fatalf("bound tags = %q, want %q", got, want)
+	}
+	for _, tag := range got {
+		if isDirectoryScamFlagTag(tag) && !slices.Contains(DirectoryScamFlagTags, strings.ToLower(tag)) {
+			t.Errorf("stored tag %q is flagged by the Go rule but not by the lower(t) SQL rule", tag)
+		}
+	}
+	if got := CanonicalDirectoryTags(nil); got == nil || len(got) != 0 {
+		t.Errorf("CanonicalDirectoryTags(nil) = %#v, want a non-nil empty set (tags is NOT NULL)", got)
+	}
+}
+
+// TestDirectoryChurn_BoundsUnflagged: a snapshot that keeps every row
+// but strips the scam tags un-withholds every flagged issuer, the same
+// harm as pruning them, so it must hit the ceiling too.
+func TestDirectoryChurn_BoundsUnflagged(t *testing.T) {
+	before := &directoryChurn{rows: 4000, flagged: map[string]struct{}{}}
+	for i := range 1000 {
+		before.flagged[fmt.Sprintf("G%055d", i)] = struct{}{}
+	}
+
+	newly, cleared := before.tally(nil)
+	if newly != 0 || cleared != 1000 {
+		t.Fatalf("tags stripped: newly=%d cleared=%d, want 0/1000", newly, cleared)
+	}
+	err := before.check(DefaultDirectoryChurnLimit, DirectorySyncResult{NewlyFlagged: newly, Unflagged: cleared})
+	if !errors.Is(err, ErrDirectoryChurnExceeded) {
+		t.Fatalf("1000 of 4000 un-flagged in place: err = %v, want ErrDirectoryChurnExceeded", err)
+	}
+
+	// Ordinary churn: 150 cleared, 3 newly flagged, under the 200 cap.
+	after := []string{"G" + strings.Repeat("7", 55), "G" + strings.Repeat("6", 55), "G" + strings.Repeat("5", 55)}
+	for i := 150; i < 1000; i++ {
+		after = append(after, fmt.Sprintf("G%055d", i))
+	}
+	newly, cleared = before.tally(after)
+	if newly != 3 || cleared != 150 {
+		t.Fatalf("ordinary churn: newly=%d cleared=%d, want 3/150", newly, cleared)
+	}
+	if err := before.check(DefaultDirectoryChurnLimit, DirectorySyncResult{NewlyFlagged: newly, Unflagged: cleared}); err != nil {
+		t.Fatalf("ordinary churn refused: %v", err)
 	}
 }

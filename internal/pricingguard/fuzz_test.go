@@ -4,6 +4,7 @@ import (
 	"math"
 	"math/big"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -316,8 +317,19 @@ func FuzzPairCacheKey(f *testing.F) {
 
 // FuzzIsDirectoryScamFlagged: every scam-class tag is recognised whatever
 // its case and surrounding whitespace, among any other tags, in any
-// position; a tag set with no scam-class member is never flagged.
+// position; a tag set with no scam-class member is never flagged. The
+// SQL predicates' rule (lower(t), no trim) over the stored canonical
+// form must agree with it, or the churn guard and rank tier split from
+// the price gate.
 func FuzzIsDirectoryScamFlagged(f *testing.F) {
+	sqlRule := func(stored []string) bool {
+		for _, t := range stored {
+			if slices.Contains(timescale.DirectoryScamFlagTags, strings.ToLower(t)) {
+				return true
+			}
+		}
+		return false
+	}
 	f.Add("verified,exchange", uint8(0), uint8(0), true)
 	f.Add("", uint8(1), uint8(3), false)
 	f.Add(" x ", uint8(2), uint8(255), true)
@@ -334,6 +346,9 @@ func FuzzIsDirectoryScamFlagged(f *testing.F) {
 		if got := IsDirectoryScamFlagged(tags); got != base {
 			t.Fatalf("IsDirectoryScamFlagged(%q) = %v, want %v", tags, got, base)
 		}
+		if got := sqlRule(timescale.CanonicalDirectoryTags(tags)); got != base {
+			t.Fatalf("SQL rule over stored %q = %v, want %v", timescale.CanonicalDirectoryTags(tags), got, base)
+		}
 		if !inject || len(timescale.DirectoryScamFlagTags) == 0 {
 			return
 		}
@@ -348,6 +363,9 @@ func FuzzIsDirectoryScamFlagged(f *testing.F) {
 		withTag := append(append(append([]string{}, tags[:pos]...), mangled), tags[pos:]...)
 		if !IsDirectoryScamFlagged(withTag) {
 			t.Fatalf("scam tag %q not recognised in %q", mangled, withTag)
+		}
+		if !sqlRule(timescale.CanonicalDirectoryTags(withTag)) {
+			t.Fatalf("scam tag %q not recognised by the SQL rule once stored", mangled)
 		}
 	})
 }
