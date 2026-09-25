@@ -1071,20 +1071,19 @@ galexie_expected_version_string: "stellar-galexie v0.0.0-20260827205142-72ee2a96
 # 07-galexie.yml skip (`| default('') | length > 0`); it is SET below,
 # so the sha256 assert is LIVE.
 #
-# ── RESOLVED 2026-07-27 (was "OPEN OPERATOR ACTION"; audit deps
-#    F-002 / C6-003). Probed live on r1: `/usr/local/bin/galexie
-#    version` prints exactly the pinned v0.0.0-20260610… stamp (rc=0).
-#    The 2026-07-09 v27.0.0 emergency build embeds the module
-#    pseudo-version, not the tag — so ALL THREE constants describe the
-#    same build and the version assert passes against live. The earlier
-#    "assert fails on r1" was the probe being skipped in check mode
-#    (fixed in 07-galexie.yml with check_mode: false).
+# ── SUPERSEDED. The 2026-07-27 resolution note that used to live here
+#    (audit deps F-002 / C6-003) probed r1 against the v27.0.0 pin and
+#    found the live binary matched. Two deliberate upgrades have
+#    happened since (27→28 on 2026-08-27, 28.0.0→28.0.1 on 2026-09-13)
+#    and neither carried a matching live probe, so that resolution no
+#    longer describes the current pin — do not read it as current
+#    status.
 #
 # For a FUTURE deliberate upgrade, read both values off the ONE real
 # artifact you deploy:
 #
 #   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-#     go install -trimpath github.com/stellar/go/exp/services/galexie@galexie-v27.0.0
+#     go install -trimpath github.com/stellar/stellar-galexie@{{ galexie_version }}
 #   ./galexie version        # -> galexie_expected_version_string
 #   sha256sum ./galexie      # -> galexie_expected_binary_sha256
 #
@@ -1093,10 +1092,11 @@ galexie_expected_version_string: "stellar-galexie v0.0.0-20260827205142-72ee2a96
 # stdout, the 07-galexie.yml guard now reads either stream, so the
 # fail_msg will show you what it actually printed.
 #
-# Until then the version assert is EXPECTED RED on r1 and that red is
-# the correct signal — do not stand it down by editing the constant to
-# match whatever the box happens to report; that would codify an
-# uncodified binary, which is the drift this guard exists to catch.
+# Until a live probe against the current v28.0.1 pin is recorded here,
+# the version assert is EXPECTED RED on r1 and that red is the correct
+# signal — do not stand it down by editing the constant to match
+# whatever the box happens to report; that would codify an uncodified
+# binary, which is the drift this guard exists to catch.
 galexie_expected_binary_sha256: "3ca291300f1b646ae43a217697b9a3d112d4c9a422895292c4f9b9f57a1f9810"   # galexie-v28.0.1, 2026-09-13. Stamped from a REPRODUCIBLE build: `go install -trimpath`
 #   twice on r1 produced this sha both times. NOTE the -trimpath: without it two builds of the
 #   SAME tag differ (measured: 72d443a6... then e4bd4960...), so a sha taken from a non-trimpath
