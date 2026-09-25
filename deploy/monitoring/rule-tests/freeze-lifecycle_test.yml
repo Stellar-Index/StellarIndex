@@ -1,0 +1,96 @@
+---
+# promtool unit tests for freeze-lifecycle.yml (GH-1124).
+#
+#   promtool test rules deploy/monitoring/rule-tests/freeze-lifecycle_test.yml
+#
+# PROVEN-RED: reverting the GH-1124 fix (removing the ladder-write-
+# failures / operator-unfreeze-rate alerts) makes the matching case
+# below FAIL with "no rule with alertname …" — these exercise the real
+# rules, not a mock.
+
+rule_files:
+  - ../rules/freeze-lifecycle.yml
+
+evaluation_interval: 30s
+
+tests:
+  # ── ladder_write_failures_total is now read by a real alert ────────
+  - interval: 30s
+    name: a durable ladder write failure pages a ticket
+    input_series:
+      - series: 'stellarindex_anomaly_freeze_ladder_write_failures_total{op="mark_hold"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: stellarindex_anomaly_freeze_ladder_write_failures
+        exp_alerts:
+          - exp_labels:
+              op: mark_hold
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
+              summary: "Durable ADR-0019 freeze-ladder write failed on mark_hold (P3)"
+              description: |
+                A durable freeze-ladder write (migration 0119) did not
+                land on call site `mark_hold` (mark_hold|clear) in
+                the last 15 minutes. `mark_hold` failing is the dangerous
+                direction — the ladder was never recorded, so a Redis
+                flush during this freeze would rehydrate nothing and an
+                escalated pair would silently release. `clear` failing
+                only widens the pre-existing recovery-worker window.
+
+                Check the aggregator's Postgres connectivity and confirm
+                migration 0119 is applied in this environment.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
+
+  - interval: 30s
+    name: no ladder write failures never fires
+    input_series:
+      - series: 'stellarindex_anomaly_freeze_ladder_write_failures_total{op="mark_hold"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: stellarindex_anomaly_freeze_ladder_write_failures
+        exp_alerts: []
+
+  # ── freeze_released_total{mode="operator"} is now read by a real
+  # alert instead of only appearing in annotation prose ───────────────
+  - interval: 30s
+    name: a rising manual-unfreeze rate pages a ticket
+    input_series:
+      - series: 'stellarindex_anomaly_freeze_released_total{mode="operator"}'
+        values: '0+1x80'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: stellarindex_anomaly_freeze_operator_unfreeze_rate
+        exp_alerts:
+          - exp_labels:
+              mode: operator
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
+              summary: "Operators are manually unfreezing at a rising rate (P3)"
+              description: |
+                Three or more freezes were cleared via `stellarindex-ops
+                freeze-unfreeze` in the last hour. Each one is a pair the
+                ADR-0019 auto-unfreeze condition never satisfied on its
+                own, so a human intervened. A sustained rate here means
+                the calibration is producing freezes that need repeated
+                manual correction — the durable fix is a threshold or
+                baseline change, not more unfreezes.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
+
+  # ── auto-released freezes (mode="auto") never trip the operator rule ─
+  - interval: 30s
+    name: auto-released freezes do not trip the operator-unfreeze alert
+    input_series:
+      - series: 'stellarindex_anomaly_freeze_released_total{mode="auto"}'
+        values: '0+1x80'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: stellarindex_anomaly_freeze_operator_unfreeze_rate
+        exp_alerts: []

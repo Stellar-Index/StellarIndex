@@ -73,3 +73,29 @@ groups:
             `priceless-popular coverage tripwire: wired` startup log and its
             `candidate read failed` warns (Postgres reachability), then the
             runbook.
+
+      # The sweep itself is erroring (catalogue read failed) rather than
+      # merely going stale. `_check_stale` above only fires once staleness
+      # crosses three sweep intervals; this catches a flapping/erroring
+      # sweep earlier, from the outcome counter directly.
+      # lint-tripwire-window:sustained: the sweep runs every 60s, so only a CONTINUING error streak (not one flapping retry) should page
+      - alert: stellarindex_priceless_coverage_check_errors
+        expr: |
+          increase(stellarindex_priceless_coverage_check_runs_total{outcome="error"}[15m]) > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: pricing-coverage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/assets-popular-priceless.md
+          summary: "Priceless-popular coverage sweep is erroring (P3)"
+          description: |
+            stellarindex_priceless_coverage_check_runs_total{outcome="error"}
+            has incremented within the last 15 minutes and stayed
+            non-zero for 15 minutes straight: the tripwire's catalogue
+            read is failing (Postgres unreachable / query error), so
+            the popular-priceless count gauge is not being refreshed
+            and a fresh coverage gap would go unseen. Check the
+            aggregator's `candidate read failed` warn logs, then the
+            runbook.

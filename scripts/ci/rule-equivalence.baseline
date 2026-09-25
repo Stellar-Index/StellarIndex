@@ -18,7 +18,6 @@ meta.yml:stellarindex_alertmanager_notifications_failing:expr  # same cause: the
 # second correction sitting on one tree only, unlike the F-0154/SELECT
 # drifts this same issue fixed in storage.yml/api.yml/ingestion.yml.
 cache.yml:stellarindex_redis_replication_broken:annotations  # covered by the :expr entry above; description also differs on replica count for the same reason
-anomaly.yml:stellarindex_anomaly_freeze_sustained:annotations  # rich multi-paragraph runbook prose, wording only
 external-pollers.yml:stellarindex_external_poller_stale_ecb:annotations  # wording only
 ingestion.yml:stellarindex_ingest_gap_detector_silent:annotations  # each tree documents its own false-fire incident evidence for the same three clauses
 ingestion.yml:stellarindex_ingestion_source_stopped:annotations  # wording only

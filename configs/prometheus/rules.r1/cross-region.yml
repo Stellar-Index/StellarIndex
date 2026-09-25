@@ -1,0 +1,80 @@
+---
+# Cross-region archive-divergence tripwires (internal/ops/archive/
+# cross_region_monitor.go, cmd .../cross-region-check). The monitor polls
+# every configured region's served surface on a fixed interval, compares
+# closed buckets, and exports seven metrics; none of them had a rule.
+#
+# Default -interval is 60s: the staleness threshold below (5m) is five
+# intervals, well past the monitor's own healthStaleAfter (3*interval +
+# timeout) so this alert fires only once /healthz itself would already
+# be reporting 503.
+
+groups:
+  - name: stellarindex.cross_region
+    interval: 1m
+    rules:
+
+      # Regions disagreed on a closed bucket. Per the metric's own Help
+      # text: "Alert when rate > 0 for >5m".
+      - alert: stellarindex_cross_region_divergence
+        expr: |
+          sum by (pair, metric) (rate(stellarindex_cross_region_divergences_total[15m])) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: archive
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cross-region-divergence.md
+          summary: "Cross-region divergence on {{ $labels.pair }}/{{ $labels.metric }} (P3)"
+          description: |
+            stellarindex_cross_region_divergences_total has been
+            incrementing for {{ $labels.pair }} / {{ $labels.metric }}
+            for 5+ minutes: two regions disagreed on a closed bucket's
+            served value. Check stellarindex_cross_region_checks_total
+            (outcome="divergence") per region for which side moved.
+
+      # A region fetch is failing — the comparison itself can't run for
+      # that region, which is a precursor to the monitor going blind
+      # (see the staleness alert below).
+      - alert: stellarindex_cross_region_fetch_errors
+        expr: |
+          sum by (region, pair, metric) (rate(stellarindex_cross_region_fetch_errors_total[15m])) > 0
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: archive
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cross-region-divergence.md
+          summary: "Cross-region fetch failing against {{ $labels.region }} (P3)"
+          description: |
+            stellarindex_cross_region_fetch_errors_total has been
+            incrementing against region {{ $labels.region }} for
+            {{ $labels.pair }} / {{ $labels.metric }} for 10+ minutes
+            (timeout, 5xx, or parse error). That region is not being
+            compared while this persists.
+
+      # The loop itself has stopped completing sweeps — every region
+      # comparison for every pair is blind, not just one. Derived from
+      # the monitor's own last-completed-sweep gauge rather than a
+      # specific region, so it catches a wedged loop even when every
+      # individual fetch would otherwise look fine.
+      - alert: stellarindex_cross_region_check_stale
+        expr: |
+          time() - stellarindex_cross_region_last_run_timestamp_seconds > 300
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: archive
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cross-region-divergence.md
+          summary: "Cross-region check loop has stopped completing sweeps (P3)"
+          description: |
+            stellarindex_cross_region_last_run_timestamp_seconds has
+            not advanced in 5+ minutes: the check loop is stuck or the
+            process is down. No region comparisons are running, so a
+            real divergence would go unseen. Check
+            stellarindex_cross_region_check_in_flight (persistent 1
+            means a stuck sweep) and the process logs.

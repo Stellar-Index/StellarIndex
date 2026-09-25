@@ -11,8 +11,8 @@ severity: P3
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `stellarindex_anomaly_freeze_engaged` (P3 / ticket) · `stellarindex_anomaly_freeze_sustained` (P1 / page once sustained ≥ 1h) |
-| Severity | P3 on first 5m window; escalates to P1 at 1h sustained |
+| Alerts | `stellarindex_anomaly_freeze_engaged` (P3 / ticket) · `stellarindex_anomaly_warn_rate` (P3 / ticket) |
+| Severity | P3. Escalation to operator-only pages separately as `stellarindex_anomaly_freeze_escalated` (freeze-lifecycle.yml) — see [anomaly-freeze-sustained](anomaly-freeze-sustained.md). |
 | Detected by | Prometheus rules in `deploy/monitoring/rules/anomaly.yml` + `configs/prometheus/rules.r1/anomaly.yml` |
 | Runbook routing | Both alerts' `runbook_url` lands on this page. Per-alert detail for the escalated case: [anomaly-freeze-sustained](anomaly-freeze-sustained.md). |
 | Typical MTTR | 5–30 min for a confirmed decision (confirm or override); cold-baseline false-fires resolve with a config tune |
