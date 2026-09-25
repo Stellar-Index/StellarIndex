@@ -30,7 +30,7 @@ import (
 // prices_1m's `volume_usd` column — so even the PLAIN
 // Volume24hUSDForAsset reader (which only ever summed the insert-time
 // column) now reports the anchored figure, and the anchored
-// SorobanVolume24hUSDForAsset reader's `volume_usd > 0` branch picks
+// SorobanVolume24hUSDForAsset reader's per-trade COALESCE(usd_volume, …) takes
 // the same row without re-deriving it — no double count.
 func TestInsertTrade_L76XLMBaseAnchorPopulatesUSDVolume(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -130,7 +130,7 @@ func TestInsertTrade_L76XLMBaseAnchorPopulatesUSDVolume(t *testing.T) {
 		t.Errorf("plain Volume24hUSDForAsset = %s (%.4f), want ~5.00", plain, got)
 	}
 
-	// Anchored reader's volume_usd>0 branch picks up the SAME row —
+	// Anchored reader takes the stored usd_volume for the SAME row —
 	// no double count against its own base_asset='native' CASE.
 	anchored, err := store.SorobanVolume24hUSDForAsset(ctx, token.String())
 	if err != nil {
