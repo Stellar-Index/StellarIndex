@@ -244,6 +244,76 @@ func TestLakeSupplyDegradesToTrustlineSumOnReadFailure(t *testing.T) {
 	}
 }
 
+// failingClassicExplorer is the broad-coverage reader after its GROUP BY
+// has started failing: every refresh errors, so the last good map is all
+// the cache holds.
+type failingClassicExplorer struct {
+	ExplorerReader // nil embedded — only ClassicCirculatingSupply is called
+}
+
+func (failingClassicExplorer) ClassicCirculatingSupply(context.Context) (map[string]string, error) {
+	return nil, errors.New("classic supply GROUP BY exceeded its budget")
+}
+
+// TestStaleTrustlineSumCannotOutrankALowerLakeReading — the trustline-sum
+// map is the one supply arm the listing max()es against a live reading, so
+// it is the one arm whose age decides the answer. Once its refresh starts
+// failing, the last good map used to be served forever: a pre-burn sum then
+// beat the post-burn lake total and published supply that no longer exists.
+// Past classicSupplyMaxAge the map is not served, whether the refresh is
+// rate-limited (no attempt this request) or attempted and failed.
+func TestStaleTrustlineSumCannotOutrankALowerLakeReading(t *testing.T) {
+	const postBurnLake = "400000000"
+	for _, tc := range []struct {
+		name      string
+		attemptAt time.Time
+	}{
+		{"retry gap still open", time.Now()},
+		{"refresh attempted and failed", time.Time{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := lakeSupplyServer(t, postBurnLake)
+			s.explorer = failingClassicExplorer{}
+			s.classicSupplyCache = map[string]string{cetesAsset: cetesTrueSupply}
+			s.classicSupplyAt = time.Now().Add(-classicSupplyMaxAge - time.Minute)
+			s.classicSupplyAttemptAt = tc.attemptAt
+			rows := cetesRow()
+
+			s.fillMarketCapsFromSupply(context.Background(), rows, map[string]int{})
+
+			if rows[0].CirculatingSupply == nil || rows[0].SupplyBasis == nil {
+				t.Fatalf("no supply served; row=%+v", rows[0])
+			}
+			if got := *rows[0].CirculatingSupply; got != postBurnLake {
+				t.Errorf("circulating_supply = %s, want the live lake total %s — the trustline "+
+					"sum %s is older than classicSupplyMaxAge and predates the burn",
+					got, postBurnLake, cetesTrueSupply)
+			}
+			if got := *rows[0].SupplyBasis; got != supply.BasisClassicLakeFlows.String() {
+				t.Errorf("supply_basis = %s, want %s", got, supply.BasisClassicLakeFlows)
+			}
+		})
+	}
+}
+
+// TestFreshTrustlineSumStillFloorsTheLake — the age bound must not disarm
+// the floor guard: within classicSupplyMaxAge the cached map is served
+// while its refresh fails, and a lake figure below it is still refused.
+func TestFreshTrustlineSumStillFloorsTheLake(t *testing.T) {
+	s, _ := lakeSupplyServer(t, "400000000")
+	s.explorer = failingClassicExplorer{}
+	s.classicSupplyCache = map[string]string{cetesAsset: cetesTrueSupply}
+	s.classicSupplyAt = time.Now().Add(-classicSupplyTTL - time.Minute)
+	s.classicSupplyAttemptAt = time.Now()
+	rows := cetesRow()
+
+	s.fillMarketCapsFromSupply(context.Background(), rows, map[string]int{})
+
+	if rows[0].CirculatingSupply == nil || *rows[0].CirculatingSupply != cetesTrueSupply {
+		t.Fatalf("circulating_supply = %v, want the in-bound trustline floor %s", rows[0].CirculatingSupply, cetesTrueSupply)
+	}
+}
+
 // TestLakeSupplyRefusesIncompleteFlows — Σ(burn+clawback) > Σmint means the
 // contract's flows are incompletely seeded, NOT that supply is negative. The
 // listing must refuse the reading and keep the trustline sum, mirroring the

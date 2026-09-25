@@ -1749,6 +1749,13 @@ func assetRowSourceCounts(rows []timescale.AssetRow) map[string]int {
 // totals move slowly, so a 10-minute TTL keeps it off the API hot path.
 const classicSupplyTTL = 10 * time.Minute
 
+// classicSupplyMaxAge bounds how old the broad map may be and still be served
+// while its refresh keeps failing. It matches classicLakeSupplyTTL because
+// higherClassicSupply max()es the two readings: a floor only holds against a
+// reading of comparable vintage, and a sum from before a burn is no floor
+// under the supply after it.
+const classicSupplyMaxAge = classicLakeSupplyTTL
+
 // classicSupplyRetryGap rate-limits refresh ATTEMPTS after a failure. The
 // backing query is a full-table GROUP BY; retrying it on every request once it
 // starts failing is what turned one slow query into a sustained outage.
@@ -1778,7 +1785,7 @@ type classicSupplyReader interface {
 // GROUP BY is far too heavy to run per request. Returns nil when no
 // explorer reader exposing the method is wired (test stubs) — callers then
 // degrade to the precise supply set only. Serves the last good map on a
-// refresh error.
+// refresh error until it is classicSupplyMaxAge old, then nothing.
 func (s *Server) cachedClassicSupply(ctx context.Context) map[string]string {
 	er, ok := s.explorer.(classicSupplyReader)
 	if !ok {
@@ -1793,7 +1800,7 @@ func (s *Server) cachedClassicSupply(ctx context.Context) map[string]string {
 	// Stale (or never filled). Kick off a DETACHED refresh — at most one in
 	// flight, and at most one attempt per classicSupplyRetryGap — then serve
 	// the last-good map immediately without blocking on it.
-	last := s.classicSupplyCache
+	last := s.servableClassicSupplyLocked()
 	flight := s.classicSupplyFlight
 	if flight == nil && time.Since(s.classicSupplyAttemptAt) >= classicSupplyRetryGap {
 		s.classicSupplyAttemptAt = time.Now() // advances on failure too
@@ -1814,7 +1821,7 @@ func (s *Server) cachedClassicSupply(ctx context.Context) map[string]string {
 	if last != nil {
 		return last
 	}
-	// Cold start with nothing cached (a fresh process): wait BRIEFLY for the
+	// Nothing servable (a fresh process, or a map past classicSupplyMaxAge): wait BRIEFLY for the
 	// in-flight refresh so a healthy, fast query still fills this first
 	// response — but never hold the request for its whole budget. The backing
 	// query currently runs longer than the 15s request timeout, so waiting on
@@ -1832,7 +1839,7 @@ func (s *Server) cachedClassicSupply(ctx context.Context) map[string]string {
 	select {
 	case <-flight:
 		s.classicSupplyMu.Lock()
-		m := s.classicSupplyCache
+		m := s.servableClassicSupplyLocked()
 		s.classicSupplyMu.Unlock()
 		return m
 	case <-timer.C:
@@ -1840,6 +1847,15 @@ func (s *Server) cachedClassicSupply(ctx context.Context) map[string]string {
 	case <-ctx.Done():
 		return nil
 	}
+}
+
+// servableClassicSupplyLocked returns the cached broad map, or nil once it is
+// classicSupplyMaxAge old. Caller holds classicSupplyMu.
+func (s *Server) servableClassicSupplyLocked() map[string]string {
+	if s.classicSupplyCache == nil || time.Since(s.classicSupplyAt) >= classicSupplyMaxAge {
+		return nil
+	}
+	return s.classicSupplyCache
 }
 
 // PrewarmClassicSupply fills the classic circulating-supply cache out of band,
@@ -2513,7 +2529,6 @@ func (s *Server) handleAssetListFromCatalogue(
 	matched := filterCatalogueByClass(s.verifiedCurrencies.StellarIssued(), currency.AssetClass(class))
 	caps := s.computeCatalogueMarketCaps(r.Context(), matched, class)
 	rows := s.projectCatalogueRows(r.Context(), matched, caps)
-	sortAssetDetailsByMarketCapDesc(rows)
 	s.writeCataloguePage(w, r, rows, limit, cursor, flags)
 }
 
@@ -2559,7 +2574,6 @@ func (s *Server) handleExternalAssetList(w http.ResponseWriter, r *http.Request)
 	}
 	caps := s.computeAllCatalogueMarketCaps(r.Context(), entries)
 	rows := s.projectCatalogueRows(r.Context(), entries, caps)
-	sortAssetDetailsByMarketCapDesc(rows)
 	// /v1/external/assets reads no row filters at all, so it has none to
 	// report as dropped.
 	s.writeCataloguePage(w, r, rows, limit, cursor, Flags{})
@@ -2676,16 +2690,12 @@ func parseOffsetCursor(w http.ResponseWriter, r *http.Request, cursor string) (i
 	return n, true
 }
 
-// writeCataloguePage applies offset-cursor pagination + writes the
-// envelope. Catalogue paging is small (≤45 rows per class) so offset
-// is sufficient.
+// writeCataloguePage ranks the rows by market cap, applies offset-cursor
+// pagination and writes the envelope. Catalogue paging is small (≤45 rows
+// per class) so offset is sufficient.
 //
-// Fills the headline USD price on the sliced page (not the whole
-// catalogue) before writing, so a class-filtered listing row carries
-// the same price_usd as the single-asset /v1/assets/{slug} view —
-// previously these rows came from the price-less catalogue projection,
-// so every crypto/stablecoin row (even XLM) listed price_usd: null
-// (audit 2026-06-19 item 4).
+// The rows are filled (price, then the twin merge) BEFORE they are ranked
+// and sliced — see [Server.fillAndRankCatalogueRows].
 //
 // `flags` is the caller's envelope flags, carried onto every page this
 // writer emits including the empty one — the class-scoped listing puts
@@ -2703,19 +2713,18 @@ func (s *Server) writeCataloguePage(
 		writeJSON(w, []AssetDetail{}, flags)
 		return
 	}
+	// No filters: the class-scoped listings and /v1/external/assets share
+	// this writer and neither applies the row filters (stated on all four
+	// parameters in the spec), so no arm has been selected away and the
+	// cross-arm total is the only figure a row here can honestly carry.
+	if s.fillAndRankCatalogueRows(r.Context(), rows, assetListFilters{}) {
+		flags.Stale = true
+	}
 	end := offset + limit
 	if end > len(rows) {
 		end = len(rows)
 	}
 	page := rows[offset:end]
-	s.fillCataloguePricesForPage(r.Context(), page)
-	// No filters: the class-scoped listings and /v1/external/assets share
-	// this writer and neither applies the row filters (stated on all four
-	// parameters in the spec), so no arm has been selected away and the
-	// cross-arm total is the only figure a row here can honestly carry.
-	if s.fillCatalogueStatsForPage(r.Context(), page, assetListFilters{}) {
-		flags.Stale = true
-	}
 	s.attachSparkline7dIfRequested(r, page)
 	env := Envelope{Data: page, Flags: flags}
 	if end < len(rows) {
@@ -2725,15 +2734,27 @@ func (s *Server) writeCataloguePage(
 	writeEnvelope(w, env)
 }
 
+// fillAndRankCatalogueRows fills every row's served money — its own price,
+// then the twin merge that may add a cap or suppress one — and only then
+// ranks by market cap, so the order is decided on the figures the rows
+// publish. Ranking first ordered Stellar-issued rows on caps that were nil
+// for all of them. The catalogue is a few dozen in-memory rows and the
+// default page already holds all of them, so filling before the slice
+// adds no reads on that path. unmeasured is fillCatalogueStatsForPage's.
+func (s *Server) fillAndRankCatalogueRows(ctx context.Context, rows []AssetDetail, filters assetListFilters) (unmeasured bool) {
+	s.fillCataloguePricesForPage(ctx, rows)
+	unmeasured = s.fillCatalogueStatsForPage(ctx, rows, filters)
+	sortAssetDetailsByMarketCapDesc(rows)
+	return unmeasured
+}
+
 // fillCataloguePricesForPage resolves the headline USD price for each
-// row on an already-sliced catalogue page, reusing buildGlobalAssetView's
+// catalogue row, reusing buildGlobalAssetView's
 // three-tier fallback chain so listing rows match the single-asset view.
 //
-// Bounded to the page (≤limit rows), NOT the whole catalogue, so the
-// unified "all" listing's first page doesn't fan a price computation
-// over every catalogue entry on every request. Each lookup is a point
-// read on prices_1m / the triangulated FX cache (cheap); the fan-out is
-// parallel under the caller's request context. Rows that already carry a
+// Each lookup is a point read on prices_1m / the triangulated FX cache
+// (cheap); the fan-out is bounded and parallel under the caller's request
+// context. Rows that already carry a
 // price (or whose slug no longer resolves) are skipped. Market cap is
 // adopted from the view only when the row doesn't already have one (fiat
 // rows are pre-filled by the catalogue market-cap path).
@@ -2838,14 +2859,18 @@ func projectCatalogueRow(vc *currency.VerifiedCurrency) AssetDetail {
 }
 
 // sortAssetDetailsByMarketCapDesc sorts rows in place by
-// market_cap_usd descending. Nil market_cap sinks to the bottom
+// market_cap_usd descending. An absent cap sinks to the bottom
 // (preserves the catalogue's source order among equally-unknown
 // rows via stable sort). Used by the catalogue-listing path; the
 // classic-assets path orders server-side in SQL.
+//
+// A zero cap ranks as absent: computeMarketCapUSD emits "0.00" for a
+// zero-supply asset, and a fully burned asset is no evidence of size
+// that an unknown one lacks.
 func sortAssetDetailsByMarketCapDesc(rows []AssetDetail) {
 	sort.SliceStable(rows, func(i, j int) bool {
-		ai := bigFloatFromOptionalString(rows[i].MarketCapUSD)
-		aj := bigFloatFromOptionalString(rows[j].MarketCapUSD)
+		ai := rankableMarketCap(rows[i].MarketCapUSD)
+		aj := rankableMarketCap(rows[j].MarketCapUSD)
 		switch {
 		case ai == nil && aj == nil:
 			return false
@@ -2857,6 +2882,16 @@ func sortAssetDetailsByMarketCapDesc(rows []AssetDetail) {
 			return ai.Cmp(aj) > 0
 		}
 	})
+}
+
+// rankableMarketCap is the cap sortAssetDetailsByMarketCapDesc ranks on:
+// nil when absent, unparseable, or not positive.
+func rankableMarketCap(s *string) *big.Float {
+	f := bigFloatFromOptionalString(s)
+	if f == nil || f.Sign() <= 0 {
+		return nil
+	}
+	return f
 }
 
 func bigFloatFromOptionalString(s *string) *big.Float {
@@ -2946,9 +2981,9 @@ func parseUnifiedCursor(cursor string) (phase, inner string) {
 	return "classic", cursor
 }
 
-// serveCatalogueUnifiedPage projects the catalogue, computes
-// market_cap, sorts, slices to the requested offset/limit, and
-// writes the envelope with the appropriate next-cursor.
+// serveCatalogueUnifiedPage projects the catalogue, fills and ranks it by
+// market cap, slices to the requested offset/limit, and writes the
+// envelope with the appropriate next-cursor.
 func (s *Server) serveCatalogueUnifiedPage(
 	w http.ResponseWriter, r *http.Request,
 	filters assetListFilters, limit int, innerCursor string,
@@ -2968,7 +3003,6 @@ func (s *Server) serveCatalogueUnifiedPage(
 	entries := filterCatalogueEntries(s.verifiedCurrencies.StellarIssued(), filters)
 	caps := s.computeAllCatalogueMarketCaps(r.Context(), entries)
 	rows := s.projectCatalogueRows(r.Context(), entries, caps)
-	sortAssetDetailsByMarketCapDesc(rows)
 	// q= filter over the catalogue phase (S-011). The classic phase
 	// filters server-side via ListAssetsOptions.Q; the catalogue is a
 	// ~30-row in-process slice. Applied to the ROWS, not the entries
@@ -2994,22 +3028,14 @@ func (s *Server) serveCatalogueUnifiedPage(
 		s.serveClassicUnifiedPage(w, r, filters, limit, "")
 		return
 	}
+	// Price + AM-10 twin-stats merge, then the rank, over every catalogue
+	// row BEFORE the slice — writeCataloguePage makes the same call.
+	unmeasured := s.fillAndRankCatalogueRows(r.Context(), rows, filters)
 	end := offset + limit
 	if end > len(rows) {
 		end = len(rows)
 	}
 	page := rows[offset:end]
-	// Fill the headline USD price on the sliced page (same bounded
-	// fan-out as the class-filtered path) so the unified "all" listing's
-	// catalogue rows (XLM, USDC, …) carry price_usd instead of null
-	// (audit 2026-06-19 item 4).
-	s.fillCataloguePricesForPage(r.Context(), page)
-	// AM-10 twin-stats merge — THIS is the function that serves the
-	// unified page 1; the first three attempts landed in
-	// writeCataloguePage (the class-filtered path) because both share
-	// a byte-identical price-fill line and the edits anchored on the
-	// first occurrence. Keep both call sites.
-	unmeasured := s.fillCatalogueStatsForPage(r.Context(), page, filters)
 	s.attachSparkline7dIfRequested(r, page)
 	env := Envelope{Data: page, Flags: Flags{Stale: unmeasured}}
 	if end < len(rows) {

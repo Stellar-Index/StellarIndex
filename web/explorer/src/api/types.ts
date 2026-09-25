@@ -8093,7 +8093,9 @@ export interface components {
              *     ADR-0011 vocabulary `Asset.supply_basis` uses. Absent when no
              *     arm answered, and absent on the rows whose supply another
              *     branch attached without one — an arm that did not answer is
-             *     never named.
+             *     never named. `classic_lake_flows`, `classic_trustline_sum`
+             *     and `sep41_lake_flows` are not exclusion-netted: under them
+             *     `circulating_supply` is the un-excluded total.
              *
              *     It is load-bearing on THIS surface in a way it is not on a
              *     plain listing. Every `reference_valuation` here is
@@ -9661,7 +9663,7 @@ export interface components {
             max_number?: string | null;
             /** @description Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all; false when they declared a bounded supply. */
             is_unlimited?: boolean | null;
-            /** @description Raw integer in asset's smallest unit (per ADR-0011 supply derivation). Null when no snapshot exists. */
+            /** @description Raw integer in asset's smallest unit (per ADR-0011 supply derivation). Issuer and locked-set balances are netted out only under an exclusion basis; under `classic_lake_flows`, `classic_trustline_sum` and `sep41_lake_flows` it is the un-excluded total (see supply_basis). Null when no snapshot exists. */
             circulating_supply?: string | null;
             /** @description Raw integer in asset's smallest unit. Null when no snapshot exists. */
             total_supply?: string | null;
@@ -9708,6 +9710,11 @@ export interface components {
              *     `classic_trustline_sum` is trustline balances ONLY — a
              *     LOWER BOUND, blind by construction to claimable balances,
              *     liquidity-pool reserves and SAC-held balances.
+             *     Neither classic arm is exclusion-netted: like
+             *     `sep41_lake_flows`, each subtracts no issuer or locked-set
+             *     balance, so `circulating_supply` under them is the
+             *     un-excluded total and can exceed what an exclusion basis
+             *     reports for the same asset.
              *     `contract_storage_balances` sums the per-holder Balance
              *     entries out of a contract's own storage, for a token whose
              *     event log is empty. Also a lower bound, but blind to TIME
@@ -11949,7 +11956,11 @@ export interface operations {
                 /**
                  * @description Ranking for the listing. One of:
                  *     - `observation_count_desc` — all-time observation count,
-                 *       descending. The default when omitted.
+                 *       descending. What an omitted `order_by` ranks by when
+                 *       `asset_class` is also omitted; with `asset_class` the
+                 *       listing's own scheme applies (below). Deliberately not a
+                 *       schema `default`, so a client that fills defaults does not
+                 *       send it alongside `asset_class` and draw the 400.
                  *     - `volume_24h_usd_desc` — trailing-24h USD volume,
                  *       descending. Ranks on a concentration-ADJUSTED volume so
                  *       wash / operational assets don't sit atop the directory;
@@ -13077,7 +13088,7 @@ export interface operations {
             content: {
                 "application/json": {
                     asset_ids: string[];
-                    /** @default USD */
+                    /** @default fiat:USD */
                     quote?: string;
                 };
             };

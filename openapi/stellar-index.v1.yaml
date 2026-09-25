@@ -466,7 +466,11 @@ paths:
           description: |
             Ranking for the listing. One of:
             - `observation_count_desc` — all-time observation count,
-              descending. The default when omitted.
+              descending. What an omitted `order_by` ranks by when
+              `asset_class` is also omitted; with `asset_class` the
+              listing's own scheme applies (below). Deliberately not a
+              schema `default`, so a client that fills defaults does not
+              send it alongside `asset_class` and draw the 400.
             - `volume_24h_usd_desc` — trailing-24h USD volume,
               descending. Ranks on a concentration-ADJUSTED volume so
               wash / operational assets don't sit atop the directory;
@@ -489,7 +493,6 @@ paths:
           schema:
             type: string
             enum: [observation_count_desc, volume_24h_usd_desc]
-            default: observation_count_desc
         - name: asset_class
           in: query
           required: false
@@ -1663,7 +1666,7 @@ paths:
                   maxItems: 1000
                 quote:
                   type: string
-                  default: USD
+                  default: "fiat:USD"
               required: [asset_ids]
       responses:
         "200":
@@ -15793,7 +15796,9 @@ components:
             ADR-0011 vocabulary `Asset.supply_basis` uses. Absent when no
             arm answered, and absent on the rows whose supply another
             branch attached without one — an arm that did not answer is
-            never named.
+            never named. `classic_lake_flows`, `classic_trustline_sum`
+            and `sep41_lake_flows` are not exclusion-netted: under them
+            `circulating_supply` is the un-excluded total.
 
             It is load-bearing on THIS surface in a way it is not on a
             plain listing. Every `reference_valuation` here is
@@ -17678,7 +17683,7 @@ components:
         # available (no supply snapshot yet, no USD price for the
         # pair, max_supply unknown for an uncapped issuer) emits null
         # rather than fabricating per ADR-0011 "we don't fabricate".
-        circulating_supply: { type: [string, "null"], description: "Raw integer in asset's smallest unit (per ADR-0011 supply derivation). Null when no snapshot exists." }
+        circulating_supply: { type: [string, "null"], description: "Raw integer in asset's smallest unit (per ADR-0011 supply derivation). Issuer and locked-set balances are netted out only under an exclusion basis; under `classic_lake_flows`, `classic_trustline_sum` and `sep41_lake_flows` it is the un-excluded total (see supply_basis). Null when no snapshot exists." }
         total_supply:       { type: [string, "null"], description: "Raw integer in asset's smallest unit. Null when no snapshot exists." }
         max_supply:         { type: [string, "null"], description: "Raw integer in asset's smallest unit. Null for uncapped issuers without operator override or SEP-1 declaration." }
         price_usd:          { type: [string, "null"], description: "Current per-asset USD price as a fixed-precision decimal string — same value `/v1/price?asset=…&quote=fiat:USD` returns. Inlined so wallet UIs don't need a second round-trip. Null when no USD price can be derived. When `price_basis` is present the value is NOT a market observation — see that field." }
@@ -17715,6 +17720,11 @@ components:
             `classic_trustline_sum` is trustline balances ONLY — a
             LOWER BOUND, blind by construction to claimable balances,
             liquidity-pool reserves and SAC-held balances.
+            Neither classic arm is exclusion-netted: like
+            `sep41_lake_flows`, each subtracts no issuer or locked-set
+            balance, so `circulating_supply` under them is the
+            un-excluded total and can exceed what an exclusion basis
+            reports for the same asset.
             `contract_storage_balances` sums the per-holder Balance
             entries out of a contract's own storage, for a token whose
             event log is empty. Also a lower bound, but blind to TIME
