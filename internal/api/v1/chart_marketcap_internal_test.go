@@ -163,6 +163,11 @@ func TestFormatCrossRate(t *testing.T) {
 		{new(big.Rat).SetFrac64(25, 23), "1.08695652173913"}, // 1/0.92 exact, 15dp, trailing zero trimmed
 		{new(big.Rat).SetInt64(155), "155"},                  // integer trims to no dot
 		{new(big.Rat).SetFrac64(1, 8), "0.125"},              // terminating, trailing zeros trimmed
+		// Below 15 places: FloatString(15) served these as "0".
+		{new(big.Rat).SetFrac64(1, 3_000_000_000_000_000), "0.0000000000000003333333333333"},
+		{new(big.Rat).SetFrac64(1, 1_000_000_000_000_000_000), "0.000000000000000001"},
+		// First significant digit at the 15th place keeps the fixed scale.
+		{new(big.Rat).SetFrac64(1, 1_000_000_000_000_000), "0.000000000000001"},
 	}
 	for _, c := range cases {
 		if got := formatCrossRate(c.r); got != c.want {
