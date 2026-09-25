@@ -38,41 +38,62 @@ SDF_HAS_URL="${SDF_HAS_URL:-https://history.stellar.org/prd/core-live/core_live_
 # CHECKPOINT_MARGIN applies only to the fresh-deploy fallback.
 CHECKPOINT_MARGIN="${CHECKPOINT_MARGIN:-128}"
 
+# MC_BIN / GALEXIE_BIN are overridable for tests only; production always
+# gets the hardcoded defaults (predictable binary location for the
+# service account, not a PATH lookup).
+MC_BIN="${MC_BIN:-/usr/local/bin/mc}"
+GALEXIE_BIN="${GALEXIE_BIN:-/usr/local/bin/galexie}"
+
 # --- 1. Probe galexie-live for the highest exported LCM ----------
 # galexie-writer's MinIO policy includes ListBucket on galexie-live.
 # mc binary lives at /usr/local/bin/mc; we create a temp alias from
 # the AWS env vars systemd loaded for us so this works without a
 # persistent ~/.mc config on the galexie user.
-last_exported=""
-if [[ -x /usr/local/bin/mc && -n "${AWS_ENDPOINT_URL:-}" ]]; then
-  MC_ALIAS_DIR=$(mktemp -d)
-  trap 'rm -rf "$MC_ALIAS_DIR"' EXIT
-  export MC_CONFIG_DIR="$MC_ALIAS_DIR"
-
-  # Keys go in on stdin (mc reads ACCESSKEY then SECRETKEY, one per line,
-  # when they are omitted from argv) so the bucket-writer secret never
-  # sits in /proc/<pid>/cmdline — this runs on EVERY galexie restart
-  # (secret-on-argv, scripts/ci/lint-ansible-tasks.sh).
-  if printf '%s\n%s\n' "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" \
-       | /usr/local/bin/mc alias set live "$AWS_ENDPOINT_URL" >/dev/null 2>&1; then
-    # List all chunk-dirs at top, find the highest-numbered LCM inside
-    # the latest chunk. Filenames look like FC43AFEC--62672915.xdr.zst;
-    # the integer after `--` is the ledger sequence.
-    last_exported=$(
-      /usr/local/bin/mc ls --recursive live/galexie-live/ 2>/dev/null \
-        | awk '{
-            n = split($NF, parts, "--")
-            if (n >= 2) {
-              # last segment is "<hex>--<ledger>.xdr.zst" — take the
-              # final field, drop ".xdr.zst", treat as integer
-              ledger = parts[n]
-              sub(/\.xdr\.zst$/, "", ledger)
-              if (ledger ~ /^[0-9]+$/ && ledger+0 > max) max = ledger+0
-            }
-          } END { if (max > 0) print max }'
-    )
-  fi
+# A missing mc binary, an unset AWS_ENDPOINT_URL, or a failed `mc alias set`
+# all mean we CANNOT know whether galexie-live already holds exported
+# ledgers. Treat each as fatal (exit non-zero, let systemd's
+# Restart=on-failure retry) rather than silently falling through to the
+# fresh-deploy fallback below — that fallback can skip past ledgers this
+# deploy already exported, opening a gap (see #50 in the header comment).
+if [[ ! -x "$MC_BIN" ]]; then
+  echo "galexie-append.sh: $MC_BIN not found or not executable" >&2
+  exit 1
 fi
+if [[ -z "${AWS_ENDPOINT_URL:-}" ]]; then
+  echo "galexie-append.sh: AWS_ENDPOINT_URL not set" >&2
+  exit 1
+fi
+
+MC_ALIAS_DIR=$(mktemp -d)
+trap 'rm -rf "$MC_ALIAS_DIR"' EXIT
+export MC_CONFIG_DIR="$MC_ALIAS_DIR"
+
+# Keys go in on stdin (mc reads ACCESSKEY then SECRETKEY, one per line,
+# when they are omitted from argv) so the bucket-writer secret never
+# sits in /proc/<pid>/cmdline — this runs on EVERY galexie restart
+# (secret-on-argv, scripts/ci/lint-ansible-tasks.sh).
+if ! printf '%s\n%s\n' "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" \
+     | "$MC_BIN" alias set live "$AWS_ENDPOINT_URL" >/dev/null 2>&1; then
+  echo "galexie-append.sh: mc alias set failed against $AWS_ENDPOINT_URL" >&2
+  exit 1
+fi
+
+# List all chunk-dirs at top, find the highest-numbered LCM inside
+# the latest chunk. Filenames look like FC43AFEC--62672915.xdr.zst;
+# the integer after `--` is the ledger sequence.
+last_exported=$(
+  "$MC_BIN" ls --recursive live/galexie-live/ 2>/dev/null \
+    | awk '{
+        n = split($NF, parts, "--")
+        if (n >= 2) {
+          # last segment is "<hex>--<ledger>.xdr.zst" — take the
+          # final field, drop ".xdr.zst", treat as integer
+          ledger = parts[n]
+          sub(/\.xdr\.zst$/, "", ledger)
+          if (ledger ~ /^[0-9]+$/ && ledger+0 > max) max = ledger+0
+        }
+      } END { if (max > 0) print max }'
+)
 
 if [[ -n "$last_exported" && "$last_exported" -gt 1 ]]; then
   start=$(( last_exported + 1 ))
@@ -88,7 +109,7 @@ elif [[ -n "${GALEXIE_START:-}" && "${GALEXIE_START}" -gt 1 ]]; then
 else
   # --- 2b. Fresh-deploy fallback: archive tip minus margin -------
   archive_tip=""
-  for i in $(seq 1 30); do
+  for _ in $(seq 1 30); do
     if body=$(curl -sfm10 "$SDF_HAS_URL" 2>/dev/null); then
       archive_tip=$(echo "$body" | jq -r '.currentLedger // empty')
       if [[ -n "$archive_tip" && "$archive_tip" -gt 1 ]]; then
@@ -107,4 +128,4 @@ else
   echo "galexie-append.sh: empty bucket — archive tip=$archive_tip, starting at $start (margin=$CHECKPOINT_MARGIN)"
 fi
 
-exec /usr/local/bin/galexie append --config-file "$CONF" --start "$start"
+exec "$GALEXIE_BIN" append --config-file "$CONF" --start "$start"
