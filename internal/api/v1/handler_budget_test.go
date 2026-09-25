@@ -451,6 +451,9 @@ var inlineDetachments = map[string]string{
 	"rwa_curated.go#rwaCuratedSnapshotWithin": "the curated snapshot refresh on /v1/rwa/assets, " +
 		"at most once per rwaCuratedSnapshotTTL and bounded by rwaCuratedReadBudget (5s). The " +
 		"inline-build shape the contract-protocol index used to have: a known residual, not a pattern to copy",
+	"asset_listing_valuation.go#assetListingSnapshotWithin": "the asset-listing directory refresh, " +
+		"at most once per assetListingSnapshotTTL and bounded by assetListingReadBudget (5s); the same " +
+		"known residual as rwaCuratedSnapshotWithin",
 	"dashboardauth/middleware.go#newTouchCtx": "constructor for the context the async " +
 		"TouchSession goroutine runs under; never used on the request goroutine",
 	"middleware/ratelimit.go#throttleContext": "the rate-limit take runs before the handler " +
