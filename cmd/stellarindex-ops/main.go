@@ -433,13 +433,16 @@ Subcommands:
                           COINGECKO_API_KEY (Pro, auto-selects
                           pro-api.coingecko.com) or COINGECKO_DEMO_API_KEY.
                           Run hourly from a timer.
-  verify-decoders -config PATH -from N -to N
+  verify-decoders -config PATH -from N -to N [-bucket NAME] [-fail-on-silent=BOOL]
                           Stream a bounded ledger range from Galexie through
                           every registered decoder and print a per-source tally
                           (events matched, outputs emitted, first sample). No
                           DB writes; dispatcher runs in a dry harness. Useful
                           as an end-to-end smoke test after a decoder change
                           and for proving each venue emits on the wire.
+                          Exits non-zero on a short walk, when every decoder
+                          is silent, and (-fail-on-silent, default true) when
+                          any registered decoder emitted nothing.
   scan-soroban-events -config PATH -from N -to N [-topic0 STR] [-contract CID] [-limit N] [-bucket NAME]
                           In-infra analogue of hubble-soroban-events (no
                           BigQuery): stream a galexie ledger range and dump
@@ -453,13 +456,15 @@ Subcommands:
                           schemas before writing/auditing a decoder). No DB
                           writes. -bucket defaults to s3_bucket_archive then
                           s3_bucket_live; -limit caps matches (default 50).
-  verify-external -config PATH [-timeout DUR]
+  verify-external -config PATH [-timeout DUR] [-fail-on-silent]
                           Start every enabled off-chain connector
                           (cfg.External.<venue>.enabled = true), drain the
                           shared sink for up to -timeout (default 60s), and
                           print per-venue first-trade/update samples. Exits
                           early once every enabled venue has emitted at
                           least one output. No DB, no Timescale, no cursors.
+                          Exits non-zero when every venue is silent, and with
+                          -fail-on-silent when any venue is.
   verify-archive -config PATH [-bucket NAME] [-from N] [-to N] [-tier MODE] [-archive-root PATH] [-peers URLs] [-peer-samples N] [-archivist-bin BIN] [-archivist-url URL] [-archivist-timeout DUR] [-fail-on-missed] [-max-runtime DUR] [-workers N] [-resume-from-hash HEX] [-metrics-listen ADDR] [-textfile-output PATH] [-state-file PATH] [-from-last-verified] [-safety-overlap N]
                           Verify a galexie bucket at one or more tiers:
                             chain      (Tier A) — chain-link hash integrity:

@@ -111,6 +111,42 @@ func redactQuery(rawURL string) string {
 	return u.String() + "?<redacted>"
 }
 
+// DefaultFXPairTargets is the G10-ish fiat cross-rate set the FX
+// pollers (ecb / exchangeratesapi) target against a configured base
+// currency. Shared between cmd/stellarindex-indexer's production
+// wiring and the verify-external diagnostic so the two can't drift
+// apart — a base currency present here but missing from one copy
+// silently drops that reference rate for that copy only (CA2-A26).
+var DefaultFXPairTargets = []string{
+	"USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "NZD", "SEK", "NOK", "MXN",
+}
+
+// DefaultFXPairs builds the fiat/base cross pairs described by
+// DefaultFXPairTargets, skipping base itself. An unrecognised base
+// (not on the ADR-0010 allow-list) returns nil — the caller no-ops.
+func DefaultFXPairs(base string) []canonical.Pair {
+	baseAsset, err := canonical.NewFiatAsset(base)
+	if err != nil {
+		return nil
+	}
+	out := make([]canonical.Pair, 0, len(DefaultFXPairTargets))
+	for _, code := range DefaultFXPairTargets {
+		if code == base {
+			continue
+		}
+		a, err := canonical.NewFiatAsset(code)
+		if err != nil {
+			continue
+		}
+		p, err := canonical.NewPair(a, baseAsset)
+		if err != nil {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 // FiatCodesFromPairs derives an FX poller's interest set from the
 // configured pair list: every fiat currency code appearing on either
 // side of any pair, uppercased and mapped to its Asset, excluding

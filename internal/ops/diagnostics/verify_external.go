@@ -47,6 +47,8 @@ func verifyExternal(args []string) error { //nolint:funlen,gocognit,gocyclo // d
 	fs := flag.NewFlagSet("verify-external", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	timeout := fs.Duration("timeout", 60*time.Second, "Max time to wait for every enabled venue to emit")
+	failOnSilent := fs.Bool("fail-on-silent", false,
+		"exit non-zero when ANY enabled venue emitted nothing within -timeout. Off by default because slow pollers (ECB, exchangeratesapi) can be legitimately silent in a short window; every venue silent always fails")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -150,7 +152,7 @@ DRAIN:
 			"exchangeratesapi minute; raise -timeout or inspect logs.\n",
 			silent, len(enabled))
 	}
-	return nil
+	return silentVerdict("verify-external", "enabled venues", silent, len(enabled), *failOnSilent)
 }
 
 // buildVerifyExternal mirrors cmd/stellarindex-indexer/main.go's
@@ -286,31 +288,11 @@ func buildVerifyExternal(cfg config.ExternalConfig) ([]external.StreamerSpec, []
 	return streamers, pollers, enabled, nil
 }
 
-// verifyDefaultFXPairs mirrors the indexer's defaultFXPairs; kept
-// local here so verify-external doesn't cross the cmd/ package
-// boundary.
+// verifyDefaultFXPairs mirrors the indexer's defaultFXPairs; both
+// delegate to external.DefaultFXPairs so the two can't drift apart
+// (CA2-A26).
 func verifyDefaultFXPairs(base string) []canonical.Pair {
-	baseAsset, err := canonical.NewFiatAsset(base)
-	if err != nil {
-		return nil
-	}
-	targets := []string{"EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "NZD", "SEK", "NOK", "MXN"}
-	out := make([]canonical.Pair, 0, len(targets))
-	for _, code := range targets {
-		if code == base {
-			continue
-		}
-		a, err := canonical.NewFiatAsset(code)
-		if err != nil {
-			continue
-		}
-		p, err := canonical.NewPair(a, baseAsset)
-		if err != nil {
-			continue
-		}
-		out = append(out, p)
-	}
-	return out
+	return external.DefaultFXPairs(base)
 }
 
 // verifyDefaultAggregatorPairs mirrors the indexer's

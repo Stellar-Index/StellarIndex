@@ -241,6 +241,19 @@ func SplitCSV(s string) []string {
 	return out
 }
 
+// AssertNonVacuous refuses to certify a verification that observed
+// nothing: of total things in scope, observed produced evidence. Nothing
+// in scope, or nothing observed, is an unexamined run, not a clean pass.
+func AssertNonVacuous(observed, total int, what string) error {
+	if total <= 0 {
+		return fmt.Errorf("0 %s in scope — nothing to verify; refusing to certify a pass vacuously", what)
+	}
+	if observed <= 0 {
+		return fmt.Errorf("0 of %d %s produced any observation — nothing was verified; refusing to certify a pass vacuously", total, what)
+	}
+	return nil
+}
+
 // Truncate shortens s to at most n bytes on a UTF-8 rune boundary,
 // appending "...(truncated)" when it does. Used to keep long values
 // (subscription refs, cursor blobs) out of one-line log/report output.

@@ -2054,28 +2054,7 @@ func defaultAggregatorPairs() []canonical.Pair {
 // / ECB — all FX pollers share the same target currency list.
 // Operator overrides via per-poller Symbols field when needed.
 func defaultFXPairs(base string) []canonical.Pair {
-	baseAsset, err := canonical.NewFiatAsset(base)
-	if err != nil {
-		// Base not on the ADR-0010 allow-list — poller will no-op.
-		return nil
-	}
-	targets := []string{"EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "NZD", "SEK", "NOK", "MXN"}
-	out := make([]canonical.Pair, 0, len(targets))
-	for _, code := range targets {
-		if code == base {
-			continue
-		}
-		a, err := canonical.NewFiatAsset(code)
-		if err != nil {
-			continue
-		}
-		p, err := canonical.NewPair(a, baseAsset)
-		if err != nil {
-			continue
-		}
-		out = append(out, p)
-	}
-	return out
+	return external.DefaultFXPairs(base)
 }
 
 // chainlinkFeedSetFromConfig is the tiny adapter that bridges the
