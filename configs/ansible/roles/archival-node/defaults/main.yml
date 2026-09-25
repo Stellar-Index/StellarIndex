@@ -358,6 +358,16 @@ postgres_db_stellarindex:    "stellarindex"
 postgres_user_stellarindex:  "stellarindex"
 # postgres_pass_stellarindex ← set in ansible-vault secrets file
 
+# The one DSN every consumer renders (/etc/default/stellarindex{,-ops}, the
+# migrate step). Its parts are percent-encoded because a raw '/', '#', '@',
+# '?' or ':' ends the URL's userinfo early and pgx/lib/pq refuse the DSN;
+# urlencode leaves '/' alone, hence the replace. Pinned by
+# scripts/ci/ansible-postgres-dsn-test.sh.
+postgres_dsn_stellarindex: >-
+  postgres://{{ postgres_user_stellarindex | urlencode | replace('/', '%2F') }}:{{
+  postgres_pass_stellarindex | urlencode | replace('/', '%2F') }}@127.0.0.1:5432/{{
+  postgres_db_stellarindex | urlencode | replace('/', '%2F') }}?sslmode=disable
+
 # ───── ClickHouse schema + state snapshot (ADR-0043 §2.1) ─────────────
 # The lake's METADATA backup (the rows are ch_lake_backup_* below, ADR-0043
 # §2.4) — SHOW CREATE for every
