@@ -14,6 +14,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 	"github.com/Stellar-Index/StellarIndex/internal/ledgerstream"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
@@ -28,7 +29,51 @@ import (
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
+
+// protocolContractsGatedSources are the curated-set decoders
+// (buildVerifyDispatcher) that also have an operator-admitted seam
+// in Postgres' protocol_contracts (see pipeline.GatedRegistryOptions).
+// verify-decoders defaults to the in-code curated set only — the tool
+// is documented as a dry harness with no Timescale dependency — so a
+// pool admitted only via protocol_contracts (not yet in the curated
+// set) looks falsely silent unless -seed-protocol-contracts unions it
+// in, mirroring production's gate (CA2-A28).
+var protocolContractsGatedSources = []string{
+	aquarius.SourceName,
+	phoenix.SourceName,
+	comet.SourceName,
+	sushiswap_v3.SourceName,
+	upshift.SourceName,
+}
+
+// loadProtocolContractSeeds unions protocol_contracts into the
+// curated-set decoders' gate over a short-lived connection, opened
+// and closed within this call — verify-decoders otherwise never
+// touches Postgres. Returns an error (fail closed) rather than a
+// silently empty seed, since a caller who asked for this coverage and
+// got none would draw the wrong conclusion from a clean run.
+func loadProtocolContractSeeds(ctx context.Context, dsn string) (map[string][]string, error) {
+	if dsn == "" {
+		return nil, fmt.Errorf("-seed-protocol-contracts requires a postgres DSN (storage.postgres_dsn in -config)")
+	}
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("protocol-contracts seed: connect: %w", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	out := make(map[string][]string, len(protocolContractsGatedSources))
+	for _, source := range protocolContractsGatedSources {
+		ids, err := store.LoadProtocolContracts(ctx, source)
+		if err != nil {
+			return nil, fmt.Errorf("protocol-contracts seed: %s: %w", source, err)
+		}
+		out[source] = ids
+	}
+	return out, nil
+}
 
 // verifyDecoders streams a bounded ledger range from the configured
 // Galexie datastore through a Dispatcher wired with EVERY registered
@@ -54,7 +99,11 @@ func verifyDecoders(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	from := fs.Uint("from", 0, "First ledger sequence (inclusive, required)")
 	to := fs.Uint("to", 0, "Last ledger sequence (inclusive, required)")
+	failOnSilent := fs.Bool("fail-on-silent", true,
+		"exit non-zero when any registered decoder emitted zero outputs over the range — the finding this command exists to produce. Pass -fail-on-silent=false for a range not chosen to contain every source's events")
 	bucket := fs.String("bucket", "", "galexie bucket override. Default: the range vs ingestion.live_seam_ledger picks archive-or-live; with no seam configured it stays cfg.Storage.S3BucketLive, which does NOT hold historic ranges — pass the archive bucket for those (see opsutil.ResolveStreamBucket)")
+	seedProtocolContracts := fs.Bool("seed-protocol-contracts", false,
+		"union protocol_contracts into the curated-set decoders' gate (aquarius/phoenix/comet/sushiswap_v3/upshift), mirroring production's GatedRegistryOptions warm. Off by default: verify-decoders is a dry harness with no Timescale dependency; a pool admitted only via protocol_contracts looks falsely silent without this, and a genuinely silent decoder looks the same as one whose pool simply isn't in the curated seed")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -67,10 +116,18 @@ func verifyDecoders(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 		return err
 	}
 
+	var protocolContractSeeds map[string][]string
+	if *seedProtocolContracts {
+		protocolContractSeeds, err = loadProtocolContractSeeds(context.Background(), cfg.Storage.PostgresDSN)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Build a dispatcher with every decoder we ship, not just the
 	// subset in cfg.Ingestion.EnabledSources. The whole point of
 	// verify is to confirm each one fires on the range.
-	disp, soroswapDec, registered := buildVerifyDispatcher(cfg.Oracle)
+	disp, soroswapDec, registered := buildVerifyDispatcher(cfg.Oracle, protocolContractSeeds)
 	if len(registered) == 0 {
 		return fmt.Errorf("no decoders registered — check oracle contract addresses in config")
 	}
@@ -220,7 +277,25 @@ func verifyDecoders(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	// that were actually delivered. A walk that covered a fraction of
 	// the range reports the same silent decoders as a decoder that is
 	// genuinely broken.
-	return verifyWalkCoverage(uint32(*from), uint32(*to), totalLedgers, streamBucket)
+	if err := verifyWalkCoverage(uint32(*from), uint32(*to), totalLedgers, streamBucket); err != nil {
+		return err
+	}
+	return silentVerdict("verify-decoders", "registered decoders", silent, len(registered), *failOnSilent)
+}
+
+// silentVerdict is verify-decoders' and verify-external's exit status
+// once the table is printed. Every member silent is always a failure —
+// nothing was verified; any member silent fails too under
+// -fail-on-silent. The stderr line above is for a human; this is the
+// only verdict a script or deploy gate can read.
+func silentVerdict(cmd, what string, silent, total int, failOnSilent bool) error {
+	if err := opsutil.AssertNonVacuous(total-silent, total, what); err != nil {
+		return fmt.Errorf("%s: %w", cmd, err)
+	}
+	if failOnSilent && silent > 0 {
+		return fmt.Errorf("%s: %d of %d %s emitted zero outputs (-fail-on-silent)", cmd, silent, total, what)
+	}
+	return nil
 }
 
 // verifyWalkCoverage turns a verify-decoders walk that did not deliver
@@ -262,16 +337,22 @@ func verifyWalkCoverage(from, to uint32, delivered int, bucket string) error {
 // dispatcher, the Soroswap decoder (so callers can seed it from the
 // factory RPC), and the list of source names that were actually
 // registered (oracle variants with an unset contract address are
-// skipped).
-func buildVerifyDispatcher(oracle config.OracleConfig) (*dispatcher.Dispatcher, *soroswap.Decoder, []string) {
+// skipped). protocolContractSeeds, when non-nil, unions each curated-
+// set decoder's protocol_contracts warm into its gate (see
+// loadProtocolContractSeeds); a nil/missing entry leaves the decoder
+// on its in-code curated set only, unchanged from before.
+func buildVerifyDispatcher(oracle config.OracleConfig, protocolContractSeeds map[string][]string) (*dispatcher.Dispatcher, *soroswap.Decoder, []string) {
+	seedOpt := func(source string) contractid.Option {
+		return contractid.WithSeed(protocolContractSeeds[source])
+	}
 	soroswapDec := soroswap.NewDecoder()
 	decoders := []dispatcher.Decoder{
 		soroswapDec,
-		aquarius.NewDecoder(),
-		phoenix.NewDecoder(),
-		comet.NewDecoder(),
-		sushiswap_v3.NewDecoder(),
-		upshift.NewDecoder(),
+		aquarius.NewDecoder(seedOpt(aquarius.SourceName)),
+		phoenix.NewDecoder(seedOpt(phoenix.SourceName)),
+		comet.NewDecoder(seedOpt(comet.SourceName)),
+		sushiswap_v3.NewDecoder(seedOpt(sushiswap_v3.SourceName)),
+		upshift.NewDecoder(seedOpt(upshift.SourceName)),
 	}
 	registered := []string{
 		soroswap.SourceName,
