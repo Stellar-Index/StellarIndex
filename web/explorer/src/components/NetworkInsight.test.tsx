@@ -58,6 +58,27 @@ describe('ThroughputPanel', () => {
     const chart = await screen.findByTestId('line-chart');
     expect(JSON.parse(chart.textContent ?? '[]')).toEqual([1000, 2000]);
   });
+
+  it('renders an unavailable message on fetch failure, not the empty-window state', async () => {
+    vi.mocked(apiGet).mockRejectedValue(new Error('network error'));
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <ThroughputPanel defaultMetric="ops" windowDays={3} />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Throughput data is unavailable right now\./),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByText(/No throughput data for this window\./),
+    ).not.toBeInTheDocument();
+  });
 });
 
 // Frontend-honesty sweep: `op_type_stats` is omitempty on the wire and
