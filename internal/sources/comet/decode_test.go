@@ -2,8 +2,11 @@ package comet
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"math/big"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -295,5 +298,125 @@ func TestDecodeSwap_MissingBodyField_Malformed(t *testing.T) {
 	_, err := decodeSwap(ev, time.Now())
 	if !errors.Is(err, ErrMalformedPayload) {
 		t.Errorf("expected ErrMalformedPayload, got %v", err)
+	}
+}
+
+// ─── Real mainnet bytes (GH-932) ─────────────────────────────────
+
+// cometSwapFixture mirrors internal/events.Event's wire shape, so a
+// fixture file unmarshals straight into one. Captured via getEvents
+// against the curated allowlisted pool — see test/fixtures/comet/README.md.
+type cometSwapFixture struct {
+	ContractID     string   `json:"contract_id"`
+	WasmHash       string   `json:"wasm_hash"`
+	Ledger         uint32   `json:"ledger"`
+	TxHash         string   `json:"tx_hash"`
+	OpIndex        int      `json:"op_index"`
+	LedgerClosedAt string   `json:"ledger_closed_at"`
+	Topics         []string `json:"topics"`
+	Value          string   `json:"value"`
+}
+
+// TestRealMainnetFixtures_comet replays a real captured Comet POOL
+// swap event through the full dispatcher-facing path (Matches +
+// Decode) — unlike every other test in this file, which synthesises
+// its event bytes from a seeded strkey. Proves the event schema this
+// package documents (events.go's SwapEvent Map shape) against a byte
+// the chain actually produced, not just against upstream Rust source.
+func TestRealMainnetFixtures_comet(t *testing.T) {
+	root := filepath.Join("..", "..", "..", "test", "fixtures", "comet")
+	dirs, err := os.ReadDir(root)
+	if err != nil {
+		t.Skipf("fixtures root unreadable: %v", err)
+	}
+	total := 0
+	for _, d := range dirs {
+		if !d.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, d.Name())
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range files {
+			if filepath.Ext(f.Name()) != ".json" {
+				continue
+			}
+			total++
+			t.Run(d.Name()+"/"+f.Name(), func(t *testing.T) {
+				runCometRealFixture(t, filepath.Join(dir, f.Name()))
+			})
+		}
+	}
+	if total == 0 {
+		t.Skip("no fixtures present")
+	}
+}
+
+func runCometRealFixture(t *testing.T, path string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var fx cometSwapFixture
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	closedAt, err := time.Parse(time.RFC3339, fx.LedgerClosedAt)
+	if err != nil {
+		t.Fatalf("parse ledger_closed_at: %v", err)
+	}
+
+	ev := events.Event{
+		Ledger:         fx.Ledger,
+		ContractID:     fx.ContractID,
+		OperationIndex: fx.OpIndex,
+		TxHash:         fx.TxHash,
+		Topic:          fx.Topics,
+		Value:          fx.Value,
+		LedgerClosedAt: fx.LedgerClosedAt,
+	}
+
+	d := NewDecoder()
+	if !d.Matches(ev) {
+		t.Fatal("Matches() = false for a real event from the curated allowlisted pool")
+	}
+	outs, err := d.Decode(ev)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(outs) != 1 {
+		t.Fatalf("got %d events, want 1", len(outs))
+	}
+	tradeEv, ok := outs[0].(TradeEvent)
+	if !ok {
+		t.Fatalf("output is %T, want TradeEvent", outs[0])
+	}
+	tr := tradeEv.Trade
+
+	if tr.Ledger != fx.Ledger || tr.TxHash != fx.TxHash {
+		t.Errorf("ledger/txhash = %d/%s, want %d/%s", tr.Ledger, tr.TxHash, fx.Ledger, fx.TxHash)
+	}
+	if !tr.Timestamp.Equal(closedAt) {
+		t.Errorf("Timestamp = %v, want %v", tr.Timestamp, closedAt)
+	}
+	if tr.BaseAmount.Sign() <= 0 || tr.QuoteAmount.Sign() <= 0 {
+		t.Errorf("amounts not positive: base=%s quote=%s", tr.BaseAmount, tr.QuoteAmount)
+	}
+	if tr.Pair.Base.Equal(tr.Pair.Quote) {
+		t.Error("Pair.Base == Pair.Quote on a real capture — should be an ordinary (non-self-pair) swap")
+	}
+	if tr.Taker == "" {
+		t.Error("Taker address empty")
+	}
+	// Sanity: i128 amounts shouldn't be > 2^100 for a real token.
+	maxSane := new(big.Int).Lsh(big.NewInt(1), 100)
+	if tr.BaseAmount.BigInt().Cmp(maxSane) > 0 || tr.QuoteAmount.BigInt().Cmp(maxSane) > 0 {
+		t.Errorf("amount unreasonably large — i128 misalign? base=%s quote=%s", tr.BaseAmount, tr.QuoteAmount)
+	}
+	if err := tr.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
 	}
 }
