@@ -69,9 +69,11 @@ func validSymbol(sym string) bool {
 // emitted row against an independently computed expectation:
 //   - the price is the exact u64 rate (no int64 wrap above 2^63);
 //   - USD and zero rates are never emitted;
-//   - the timestamp is the declared resolve_time only inside Band's own
-//     acceptance window (floor ≤ resolve_time < close + 3600, strict,
-//     as relay() applies it), else the ledger close;
+//   - inside Band's own acceptance window (floor ≤ resolve_time <
+//     close + 3600, strict, as relay() applies it) the timestamp is the
+//     declared resolve_time; outside it, relay() is dropped entirely
+//     (ErrEmptyRates — the contract would silently no-op it) and
+//     force_relay clamps to the ledger close (unconditional admin path);
 //   - a rate in any numeric shape other than u64 is refused.
 func FuzzDecodeRelayArgs(f *testing.F) {
 	f.Add("BTC", uint64(50_000_000_000_000), uint64(fuzzClose), false, uint8(0), uint8(0), true)
@@ -129,6 +131,13 @@ func FuzzDecodeRelayArgs(f *testing.F) {
 		case sym == "USD" || rate == 0:
 			if !errors.Is(err, ErrEmptyRates) || updates != nil {
 				t.Fatalf("USD/zero slot: got (%v, %v), want ErrEmptyRates", updates, err)
+			}
+			return
+		case !force && !(resolve >= 1_000_000_000 && resolve < uint64(fuzzClose)+3600):
+			// relay() would silently no-op outside its own acceptance
+			// window — the decoder must drop it, not clamp-and-write.
+			if !errors.Is(err, ErrEmptyRates) || updates != nil {
+				t.Fatalf("out-of-window relay resolve_time %d: got (%v, %v), want ErrEmptyRates", resolve, updates, err)
 			}
 			return
 		}

@@ -24,6 +24,14 @@ const opIndexFanoutStride = 1024
 // the same bound or it records prices the chain refused.
 const bandMaxFutureResolveTime = time.Hour
 
+// safeUnixEpochFloorSeconds mirrors canonical.SafeUnixSeconds's own
+// pre-2001 floor (unexported there). A raw resolve_time below it is
+// garbage SafeUnixSeconds itself would have clamped to closedAt; band
+// needs the raw comparison directly (not just the clamped result) to
+// tell "garbage" apart from a resolve_time that legitimately equals
+// the ledger close.
+const safeUnixEpochFloorSeconds = 1_000_000_000
+
 // decodeRelayArgs converts one Band relay/force_relay InvokeContract
 // call into a slice of canonical.OracleUpdate — one per (symbol,
 // rate) pair in symbol_rates.
@@ -116,31 +124,31 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 	// on garbage. Real-world Band payloads are post-2020 UNIX seconds
 	// ≤ the close.
 	ts := canonical.SafeUnixSeconds(resolveSeconds, closedAt)
-	// Then tighten to BAND's own acceptance window. The shared helper's
-	// generic +24h ceiling is far looser than the contract: relay()
-	// applies an update only while
-	// `resolve_time < ledger.timestamp + 3600` (OFFSET in the Band
-	// contract's ref_data.rs), and silently NO-OPs otherwise — the tx
-	// still succeeds, so a rejected relay is indistinguishable on the
-	// wire from an accepted one. Recording a future resolve_time the
-	// chain refused meant our `ORDER BY ts DESC` latest-read served a
-	// price Band never published, for as long as that future timestamp
-	// stayed ahead — up to a day (cold audit 2026-08-03).
+	// relay() (not force_relay) applies an update only while
+	// `resolve_time < ledger.timestamp + OFFSET` (ref_data.rs) — outside
+	// that, the on-chain call is a silent no-op though the tx succeeds.
+	// Clamping such a resolve_time to closedAt and still writing it let
+	// a rate the chain never applied win our `ORDER BY ts DESC`
+	// latest-read for up to one relay interval (previously up to 24h
+	// before ts was clamped instead of left future-dated: cold audit
+	// 2026-08-03). Drop it instead — see bandRelayWouldNoOp.
 	//
-	// This closes exactly the divergence that matters: the chain's
-	// applied state per symbol is the max ACCEPTED resolve_time, and
-	// every latest-read takes the max ts, so the only way our latest
-	// can disagree is a future-dated row the chain rejected. Older
-	// rejected relays (resolve_time <= stored) are inert — they can
-	// never win a ts DESC read.
+	// We can't see the per-symbol stored resolve_time the contract also
+	// gates on (on-chain state, not in the call args), so a genuine
+	// first write for a symbol with no live RefData entry (which the
+	// contract accepts with no resolve_time bound) is indistinguishable
+	// from a rejected relay and gets dropped too — an accepted
+	// false-negative over the false-positive of serving a rejected
+	// rate. Both cases surface via the existing decode-error counter
+	// (obs.SourceDecodeErrorsTotal{source="band"}).
 	//
-	// Nuance worth knowing: for a symbol with NO live RefData entry
-	// (TEMPORARY storage, TTL-expired or never set) the contract takes
-	// the RefDatum::new path, which applies with no resolve_time bound.
-	// Such a relay is clamped here; it lands stamped at the close
-	// rather than its declared future time, which is the conservative
-	// direction.
-	// Strict, like the contract: resolve_time == close + OFFSET is refused.
+	// force_relay is the unconditional admin path with no such gate to
+	// mirror, so it keeps the clamp-to-close fallback below.
+	//
+	// Checked here but applied after the symbol_rates loop below, so a
+	// structurally malformed pair still surfaces its own ErrMalformedArgs
+	// rather than being masked by this reject.
+	relayRejected := fnName == FnRelay && bandRelayWouldNoOp(resolveSeconds, closedAt)
 	if !ts.Before(closedAt.Add(bandMaxFutureResolveTime)) {
 		ts = closedAt.UTC()
 	}
@@ -211,6 +219,10 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 		// here.
 		return nil, ErrEmptyRates
 	}
+	if relayRejected {
+		return nil, fmt.Errorf("%w: resolve_time %d outside Band's acceptance window around close %v",
+			ErrEmptyRates, resolveSeconds, closedAt)
+	}
 	return out, nil
 }
 
@@ -226,6 +238,29 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 // the raw validator cannot represent (impossible for an ScSymbol).
 func symbolToAsset(sym string) (canonical.Asset, error) {
 	return canonical.MapOracleSymbol(sym)
+}
+
+// bandRelayWouldNoOp reports whether the Band contract's relay()
+// would silently reject resolveSeconds outside its own OFFSET window
+// (ref_data.rs: `resolve_time < ledger.timestamp + OFFSET`), checked
+// on the RAW value rather than canonical.SafeUnixSeconds's
+// already-clamped result — that helper's 24h ceiling is looser than
+// Band's 1h one, so a raw value inside canonical's window but outside
+// Band's would otherwise slip through unrejected.
+func bandRelayWouldNoOp(resolveSeconds uint64, closedAt time.Time) bool {
+	if resolveSeconds < safeUnixEpochFloorSeconds {
+		return true
+	}
+	ceil := closedAt.Add(bandMaxFutureResolveTime).Unix()
+	if ceil < 0 {
+		// Mirrors canonical.SafeUnixSeconds's own pre-1970 guard: no
+		// production closedAt is ever this old, but fail toward
+		// rejecting rather than let an unchecked uint64 cast wrap the
+		// ceiling and disable the check.
+		return true
+	}
+	// Strict, like the contract: resolve_time == close + OFFSET is refused.
+	return resolveSeconds >= uint64(ceil)
 }
 
 // pickObserver returns the best-effort attribution strkey for a
