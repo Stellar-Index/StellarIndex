@@ -295,9 +295,7 @@ fi
 # stale and FAILS, so this list only shrinks.
 CH_DIR="${CH_DIR:-deploy/clickhouse}"
 ch_float_baseline='account_cohort_rollup.sql:stellar.asset_month_usd_prices.volume_usd
-account_cohort_rollup.sql:stellar.account_cohort_positions.amount
-tier1_schema.sql:stellar.asset_month_usd_prices.volume_usd
-tier1_schema.sql:stellar.account_cohort_positions.amount'
+tier1_schema.sql:stellar.asset_month_usd_prices.volume_usd'
 
 # ch_money_floats prints one `line<TAB>table.column<TAB>raw` per money
 # column typed Float32/Float64 (Nullable or not) in $1. Table context

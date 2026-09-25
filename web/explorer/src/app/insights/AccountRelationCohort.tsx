@@ -28,6 +28,7 @@ import { RELATION, errorStatus, type Relation } from './accountRelation';
 type CohortResp = components['schemas']['AccountCohort'];
 type CohortHolding = components['schemas']['AccountCohortHolding'];
 type CohortPoint = components['schemas']['AccountCohortFlowPoint'];
+type CohortValuation = components['schemas']['AccountCohortValuation'];
 
 const numFmt = new Intl.NumberFormat('en-US');
 const usdFmt = new Intl.NumberFormat('en-US', {
@@ -51,6 +52,34 @@ function usd(s: string | undefined): string {
   if (s === undefined) return '—';
   const n = Number(s);
   return Number.isFinite(n) ? usdFmt.format(n) : s;
+}
+
+/** The priced-holdings total as a stat, and why it is a lower bound when
+ * it is one: a lookup cut short by the request deadline or a holding
+ * outside the price cap may have a live price the total leaves out. */
+function valuationSummary(v: CohortValuation): { value: string; sub: string; excluded: string[] } {
+  const excluded: string[] = [];
+  if (v.degraded) {
+    excluded.push(
+      'Price lookups were cut short by the request deadline, so some holdings counted as unpriced may have a live price that is not in the total. Reload to retry.',
+    );
+  }
+  if (v.unpriced_over_cap > 0) {
+    excluded.push(
+      `Only the ${numFmt.format(v.price_cap)} largest holdings are priced per request; ${numFmt.format(v.unpriced_over_cap)} smaller ${v.unpriced_over_cap === 1 ? 'holding was' : 'holdings were'} not looked up and ${v.unpriced_over_cap === 1 ? 'is' : 'are'} not in the total.`,
+    );
+  }
+  const total = v.total_usd !== undefined ? usd(v.total_usd) : '—';
+  const value = excluded.length > 0 && v.total_usd !== undefined ? `≥ ${total}` : total;
+  if (v.priced_holdings === 0 && excluded.length === 0) {
+    return { value, sub: 'nothing here has a live price', excluded };
+  }
+  const notLookedUp = v.unpriced_over_cap;
+  const inCap = v.unpriced_holdings - notLookedUp;
+  const parts = [`${v.priced_holdings} priced`];
+  if (inCap > 0) parts.push(v.degraded ? `${inCap} unpriced or not reached` : `${inCap} no live price`);
+  if (notLookedUp > 0) parts.push(`${notLookedUp} not looked up`);
+  return { value, sub: parts.join(' · '), excluded };
 }
 
 /** Which USD price a month's flows are valued at: today's live price (the
@@ -185,6 +214,7 @@ export function AccountRelationCohort({
       ? hasThen ? 'then' : hasToday ? 'today' : null
       : hasToday ? 'today' : hasThen ? 'then' : null;
   const usdLine = basis === 'then' ? then : today;
+  const valuation = valuationSummary(data.valuation);
   const labelled = data.contracts.filter((c) => c.protocol);
   const unlabelled = data.contracts.length - labelled.length;
 
@@ -198,16 +228,15 @@ export function AccountRelationCohort({
             <Stat label="Active 30d" value={numFmt.format(cohort.active_30d)} sub="seen in the last 30 days" />
             <Stat label="Active 90d" value={numFmt.format(cohort.active_90d)} />
             <Stat label="Active 1y" value={numFmt.format(cohort.active_365d)} />
-            <Stat
-              label="Holdings, priced"
-              value={data.valuation.total_usd !== undefined ? usd(data.valuation.total_usd) : '—'}
-              sub={
-                data.valuation.priced_holdings > 0
-                  ? `${data.valuation.priced_holdings} priced · ${data.valuation.unpriced_holdings} unpriced`
-                  : 'nothing here has a live price'
-              }
-            />
+            <Stat label="Holdings, priced" value={valuation.value} sub={valuation.sub} />
           </dl>
+        )}
+        {valuation.excluded.length > 0 && (
+          <Callout tone="info" title="The priced total is a lower bound">
+            {valuation.excluded.map((reason) => (
+              <p key={reason}>{reason}</p>
+            ))}
+          </Callout>
         )}
 
         <TableWrap>
@@ -253,7 +282,7 @@ export function AccountRelationCohort({
           </p>
         )}
         <p className="text-ink-faint text-[11px]">
-          Current balances of the cohort, valued at the live rate where one exists.
+          Current balances of the cohort, valued at the live rate where one was found.
           A pool share is a classic liquidity-pool position and is never priced;
           nothing unpriced is counted at zero.
         </p>
