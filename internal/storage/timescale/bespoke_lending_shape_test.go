@@ -114,13 +114,20 @@ func TestLendingSeriesQueriesCountBased(t *testing.T) {
 // TestLendingPerPoolSeriesQueryShape guards the top-5 cap and the
 // volume-descending fold order the per-pool series collector depends on
 // (rows for one pool must arrive contiguously, most-active pool first).
+// Both the top-5 selection and the outer fold order carry an explicit pool
+// tiebreak: two pools tied on window event count would otherwise sort by
+// bucket first and interleave, fragmenting collectLendingPoolSeries's
+// consecutive-key fold into duplicate one/two-point series per pool.
 func TestLendingPerPoolSeriesQueryShape(t *testing.T) {
 	q := lendingPerPoolSeriesQuery(30)
 	if !strings.Contains(q, "LIMIT 5") {
 		t.Error("per-pool series must cap at the top 5 pools by window events")
 	}
-	if !strings.Contains(q, "ORDER BY top.events DESC, 2 ASC") {
-		t.Error("per-pool series must order pools by window events descending, then bucket, so the fold groups rows per pool")
+	if !strings.Contains(q, "ORDER BY 2 DESC, 1 LIMIT 5") {
+		t.Error("top-5 pool selection must tiebreak on pool so which tied pool is chosen is deterministic")
+	}
+	if !strings.Contains(q, "ORDER BY top.events DESC, p.pool, 2 ASC") {
+		t.Error("per-pool series must order pools by window events descending, then pool, then bucket, so tied pools don't interleave and fragment the fold")
 	}
 }
 
