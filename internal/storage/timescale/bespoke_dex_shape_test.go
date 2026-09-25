@@ -89,8 +89,8 @@ func TestDexWindowKPIQueryShape(t *testing.T) {
 	if strings.Contains(q, "count(DISTINCT (base_asset, quote_asset))") {
 		t.Error("window KPI must not count pairs via count(DISTINCT row) — measured 6.0s on sdex 90d; use the GROUP BY subquery")
 	}
-	if !strings.Contains(q, "GROUP BY base_asset, quote_asset") {
-		t.Error("window KPI must count pairs via the hash-agg GROUP BY subquery")
+	if !strings.Contains(q, "GROUP BY "+marketKeySQL) {
+		t.Error("window KPI must count pairs via the hash-agg GROUP BY subquery on the unordered market key")
 	}
 	if !strings.Contains(q, "round(COALESCE(sum(vol),0),2)") {
 		t.Error("window KPI USD volume must be the CAGG vol sum rounded via exact NUMERIC round")

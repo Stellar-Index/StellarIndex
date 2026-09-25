@@ -17,9 +17,9 @@ type SourceStats struct {
 	// "" when no trades had populated usd_volume in the window
 	// (e.g. an oracle source whose decoder doesn't set usd_volume).
 	VolumeUSD24h sql.NullString
-	// MarketsCount24h is COUNT(DISTINCT (base_asset, quote_asset))
-	// — the number of unique (base, quote) pairs the source
-	// observed in the trailing 24h. A useful "pools per DEX"
+	// MarketsCount24h is the number of distinct markets the source
+	// observed in the trailing 24h, a market being its unordered
+	// {base, quote} pair (see marketKeySQL). A useful "pools per DEX"
 	// proxy for AMMs where each pair contract = one pool.
 	MarketsCount24h int64
 }
@@ -240,6 +240,13 @@ func (s *Store) sourceVolumeHistory(ctx context.Context, window string) ([]Sourc
 // live undercount on /v1/markets/sources?asset=native this note exists
 // to stop recurring: if you edit either the CASE's IN-list or
 // [canonical.AssetAliases], edit both.
+//
+// The pair query reads BOTH stored orientations, one UNION ALL arm each
+// as pairMarketQuery does: a venue that writes base = token_in stores
+// one market as (A,B) and (B,A). The second arm excludes the first's
+// rows, which only overlap when base and quote name the same asset.
+// markets_24h counts marketKeySQL's unordered pair (inlined, so the
+// strings stay static).
 const (
 	pairSourceStatsQuery = `
 		WITH xlm_usd AS (
@@ -268,10 +275,19 @@ const (
 		           ELSE NULL
 		         END
 		       )::text AS volume_usd_24h,
-		       COUNT(DISTINCT (base_asset, quote_asset))::bigint AS markets_24h
-		  FROM trades
-		 WHERE ts >= now() - INTERVAL '24 hours'
-		   AND base_asset = ANY($1) AND quote_asset = ANY($2)
+		       COUNT(DISTINCT (LEAST(base_asset, quote_asset), GREATEST(base_asset, quote_asset)))::bigint AS markets_24h
+		  FROM (
+		    SELECT source, base_asset, quote_asset, usd_volume, base_amount, quote_amount
+		      FROM trades
+		     WHERE ts >= now() - INTERVAL '24 hours'
+		       AND base_asset = ANY($1) AND quote_asset = ANY($2)
+		    UNION ALL
+		    SELECT source, base_asset, quote_asset, usd_volume, base_amount, quote_amount
+		      FROM trades
+		     WHERE ts >= now() - INTERVAL '24 hours'
+		       AND base_asset = ANY($2) AND quote_asset = ANY($1)
+		       AND NOT (base_asset = ANY($1) AND quote_asset = ANY($2))
+		  ) t
 		 GROUP BY source
 		 ORDER BY 2 DESC
 	`
@@ -302,7 +318,7 @@ const (
 		           ELSE NULL
 		         END
 		       )::text AS volume_usd_24h,
-		       COUNT(DISTINCT (base_asset, quote_asset))::bigint AS markets_24h
+		       COUNT(DISTINCT (LEAST(base_asset, quote_asset), GREATEST(base_asset, quote_asset)))::bigint AS markets_24h
 		  FROM trades
 		 WHERE ts >= now() - INTERVAL '24 hours'
 		   AND (base_asset = ANY($1) OR quote_asset = ANY($1))

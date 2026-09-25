@@ -478,7 +478,8 @@ type AssetDetail struct {
 	//   bound tightens, it does not break. Neither field means "last
 	//   traded".
 	//
-	// Absent means "no asset-catalogue row" for all three. The ledger
+	// Absent means "no asset-catalogue row" for all three; native XLM
+	// has none, so its ObservationCount is absent too. The ledger
 	// fields additionally stay absent when the registry holds 0 (not
 	// a real ledger — genesis is 1), but ObservationCount is emitted
 	// as 0 when the catalogued asset has no observations, because 0
@@ -2380,8 +2381,8 @@ func assetDetailFromAssetRow(row timescale.AssetRow) AssetDetail {
 	// genuinely "unset" and stays omitted. observation_count is a
 	// COUNT column (`NOT NULL DEFAULT 0`), so zero is a real reading
 	// and must be served as 0 rather than silently dropped — see
-	// applyAssetRowToDetail for the full rationale. We already have
-	// the row, so presence is not in question.
+	// applyAssetRowToDetail for the full rationale, and for the one row
+	// (native XLM) that carries no count.
 	if row.FirstSeenLedger != 0 {
 		v := row.FirstSeenLedger
 		d.FirstSeenLedger = &v
@@ -2390,8 +2391,7 @@ func assetDetailFromAssetRow(row timescale.AssetRow) AssetDetail {
 		v := row.LastSeenLedger
 		d.LastSeenLedger = &v
 	}
-	obs := row.ObservationCount
-	d.ObservationCount = &obs
+	d.ObservationCount = observationCountWire(row)
 	// Asset-catalogue overlay scalars (price / volume / change percentages).
 	//
 	// A LISTING row's price is copied verbatim ON PURPOSE: it comes from

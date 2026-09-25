@@ -281,3 +281,41 @@ func TestAssetGet_ZeroObservationCountIsServedNotDropped(t *testing.T) {
 		t.Errorf("last_seen_ledger = %v, want absent (ledger 0 does not exist)", *env.Data.LastSeenLedger)
 	}
 }
+
+// TestAssetGet_NativeObservationCountIsAbsent pins GH-701 item 3. Native
+// XLM has no registry row, so its row holds no trade count;
+// observation_count must be absent rather than whatever figure the
+// synthetic row carries (it once served a 24 h prices_1m bucket count
+// under a field documented as an all-time trade count).
+func TestAssetGet_NativeObservationCountIsAbsent(t *testing.T) {
+	assetsReader := &stubAssetsReaderExt{
+		row: timescale.AssetRow{
+			Slug:                       "XLM",
+			AssetID:                    "native",
+			Code:                       "XLM",
+			ObservationCount:           2880,
+			ObservationCountUnmeasured: true,
+		},
+	}
+	reader := &stubAssetReader{
+		byID: map[string]v1.AssetDetail{
+			"native": {AssetID: "native", Type: "native", Code: "XLM"},
+		},
+	}
+	srv := v1.New(v1.Options{Assets: reader, AssetsReader: assetsReader})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/assets/native")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if !bytes.Contains(body, []byte(`"asset_id":"native"`)) {
+		t.Fatalf("fixture did not reach the native detail path: %s", body)
+	}
+	if bytes.Contains(body, []byte(`"observation_count"`)) {
+		t.Errorf("observation_count served for native XLM, which has no trade count: %s", body)
+	}
+}

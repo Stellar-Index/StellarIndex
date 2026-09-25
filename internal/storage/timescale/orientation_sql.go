@@ -39,6 +39,26 @@ func quoteRankSQL(col string) string {
         ELSE 1 END)`, col, stablecoinInListSQL(), nativeXLMSAC)
 }
 
+// marketKeySQL is a market's identity for COUNTING: its unordered
+// {base, quote} pair. canonical.Orient is a function of that set alone,
+// so DISTINCT on this key counts exactly what DISTINCT on
+// canonOrientSQL's (base, quote) does, without the rank CASE.
+const marketKeySQL = `LEAST(base_asset, quote_asset), GREATEST(base_asset, quote_asset)`
+
+// canonLastPriceSQL is a canonical market's newest last_price across its
+// stored orientations, the flipped row's price inverted. Both
+// orientations routinely share a last_trade_at, so the tie goes to the
+// canonically stored row rather than to scan order. flipped is
+// canonOrientSQL's third expression.
+func canonLastPriceSQL(flipped string) string {
+	return `(array_agg(
+                    CASE WHEN ` + flipped + ` AND last_price IS NOT NULL
+                         THEN (1.0 / NULLIF(last_price::numeric, 0))::text
+                         ELSE last_price END
+                    ORDER BY last_trade_at DESC NULLS LAST, ` + flipped + `)
+                  FILTER (WHERE last_price IS NOT NULL))[1]`
+}
+
 // canonOrientSQL returns SQL expressions for the canonical (base,
 // quote) orientation of a market stored as (base_asset, quote_asset), plus a
 // boolean `flipped` — true when the stored row is reversed relative to

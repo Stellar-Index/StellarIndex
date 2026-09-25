@@ -432,12 +432,7 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
                  MAX(last_trade_at)             AS last_trade_at,
                  SUM(count_24h)                 AS count_24h,
                  SUM(vol_24h_usd::numeric)::text AS vol_24h_usd,
-                 (array_agg(
-                    CASE WHEN ` + flipped + ` AND last_price IS NOT NULL
-                         THEN (1.0 / NULLIF(last_price::numeric, 0))::text
-                         ELSE last_price END
-                    ORDER BY last_trade_at DESC NULLS LAST)
-                  FILTER (WHERE last_price IS NOT NULL))[1] AS last_price
+                 ` + canonLastPriceSQL(flipped) + ` AS last_price
             FROM pools
            GROUP BY source, ` + canonBase + `, ` + canonQuote + `
         )
@@ -583,12 +578,7 @@ func buildSourceMarketsQuery(since time.Time, source, cursor string, limit int, 
                  MAX(last_trade_at)              AS last_trade_at,
                  SUM(count_24h)                  AS count_24h,
                  SUM(vol_24h_usd::numeric)       AS vol_24h_num,
-                 (array_agg(
-                    CASE WHEN ` + flipped + ` AND last_price IS NOT NULL
-                         THEN (1.0 / NULLIF(last_price::numeric, 0))::text
-                         ELSE last_price END
-                    ORDER BY last_trade_at DESC NULLS LAST)
-                  FILTER (WHERE last_price IS NOT NULL))[1] AS last_price
+                 ` + canonLastPriceSQL(flipped) + ` AS last_price
             FROM pools
            GROUP BY ` + canonBase + `, ` + canonQuote + `
         )
@@ -988,12 +978,7 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
                    MAX(bucket_close_at) AS bucket_close_at,
                    SUM(count_24h)       AS count_24h,
                    SUM(vol_24h_num)     AS vol_24h_num,
-                   (array_agg(
-                      CASE WHEN ` + flipped + ` AND last_price IS NOT NULL
-                           THEN (1.0 / NULLIF(last_price::numeric, 0))::text
-                           ELSE last_price END
-                      ORDER BY last_trade_at DESC NULLS LAST)
-                    FILTER (WHERE last_price IS NOT NULL))[1] AS last_price
+                   ` + canonLastPriceSQL(flipped) + ` AS last_price
               FROM raw
              GROUP BY ` + canonBase + `, ` + canonQuote + `
         )

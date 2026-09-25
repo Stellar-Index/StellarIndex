@@ -223,13 +223,15 @@ const snapshotNormalizedPriceUSDExpr = `CASE WHEN nda.decimals IS NULL
 		    END`
 
 // Price-arm windows. The headline arms read the newest traded minute of
-// the last 7 days; each change arm reads the newest minute of a window
-// around 1 h / 24 h / 7 d ago.
+// the last 7 days; each change arm reads the newest minute within the
+// documented tolerance of 1 h / 24 h / 7 d ago (±5 min / ±30 min / ±2 h,
+// see AssetRow.Change1hPct), else the change is NULL. A wider window
+// published a 1.5-hour move as change_1h_pct.
 const (
 	priceWindowNow = `bucket >= now() - INTERVAL '7 days'`
-	priceWindow1h  = `bucket BETWEEN now() - INTERVAL '90 minutes' AND now() - INTERVAL '55 minutes'`
-	priceWindow24h = `bucket BETWEEN now() - INTERVAL '26 hours' AND now() - INTERVAL '23 hours 30 minutes'`
-	priceWindow7d  = `bucket BETWEEN now() - INTERVAL '7 days 12 hours' AND now() - INTERVAL '6 days 22 hours'`
+	priceWindow1h  = `bucket BETWEEN now() - INTERVAL '65 minutes' AND now() - INTERVAL '55 minutes'`
+	priceWindow24h = `bucket BETWEEN now() - INTERVAL '24 hours 30 minutes' AND now() - INTERVAL '23 hours 30 minutes'`
+	priceWindow7d  = `bucket BETWEEN now() - INTERVAL '7 days 2 hours' AND now() - INTERVAL '6 days 22 hours'`
 )
 
 // unionPriceArmCTE renders the CTE pair `<name>_rows` / `<name>` for one
@@ -377,7 +379,7 @@ const xlmUSDCTEs = `
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
 		       'fiat:USD'
 		     )
-		     AND bucket BETWEEN now() - INTERVAL '90 minutes'
+		     AND bucket BETWEEN now() - INTERVAL '65 minutes'
 		                   AND now() - INTERVAL '55 minutes'
 		     AND vwap IS NOT NULL
 		   ORDER BY bucket DESC
@@ -393,7 +395,7 @@ const xlmUSDCTEs = `
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
 		       'fiat:USD'
 		     )
-		     AND bucket BETWEEN now() - INTERVAL '26 hours'
+		     AND bucket BETWEEN now() - INTERVAL '24 hours 30 minutes'
 		                   AND now() - INTERVAL '23 hours 30 minutes'
 		     AND vwap IS NOT NULL
 		   ORDER BY bucket DESC
@@ -408,7 +410,7 @@ const xlmUSDCTEs = `
 		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
 		       'fiat:USD'
 		     )
-		     AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
+		     AND bucket BETWEEN now() - INTERVAL '7 days 2 hours'
 		                   AND now() - INTERVAL '6 days 22 hours'
 		     AND vwap IS NOT NULL
 		   ORDER BY bucket DESC
