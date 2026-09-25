@@ -3021,7 +3021,7 @@ a single aggregate signal across the watched-set.
 ### `stellarindex_aggregator_confidence_compute_total`
 
 Counter, label `outcome` (`ok` / `skipped` / `baseline_missing` /
-`marshal_error` / `write_error`).
+`baseline_stale` / `marshal_error` / `write_error`).
 
 Confidence-score compute outcomes per (pair, window) × tick (ADR-0019
 §"Multi-factor confidence score"). The aggregator computes a
@@ -3033,10 +3033,22 @@ startup until the comparator slot warms). `baseline_missing` covers
 pairs whose 30d baseline isn't yet computed — sustained values here
 indicate the L2.5 baseline-refresh worker isn't keeping up with the
 configured Pair set, and the API's confidence on those pairs falls
-back to bootstrap. `ok` should be the dominant value in steady state.
+back to bootstrap. `baseline_stale` covers a pair whose baseline row is
+more than one day old: it is read as bootstrap too, so Phase 2 cannot
+score (fire or release) that pair until the refresher rewrites the row.
+`ok` should be the dominant value in steady state.
 
 `marshal_error` / `write_error` indicate the JSON encoder or Redis
 itself misbehaved — both should be flat-zero in healthy operation.
+
+### `stellarindex_aggregator_baseline_age_seconds`
+
+Gauge, label `pair`. Age in seconds (now − `computed_at`) of the
+`volatility_baseline_1m` row the confidence step last read for the pair.
+The hourly refresher keeps it under ~3600 s; a pair climbing past that is
+one whose refresh keeps failing, which the aggregate
+`stellarindex_aggregator_baseline_refresh_total` counter does not show.
+Past 86400 s the pair reads as bootstrap (`baseline_stale` above).
 
 ### `stellarindex_anomaly_freeze_engaged_total`
 

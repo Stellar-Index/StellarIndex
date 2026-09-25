@@ -45,7 +45,7 @@ func TestMultiBaseline_AllValid(t *testing.T) {
 	d7 := vwapSeries(1.0, stableJitter(50, 0.001))
 	d30 := vwapSeries(1.0, stableJitter(200, 0.001))
 
-	mb := baseline.NewMultiBaseline(d1, d7, d30)
+	mb := baseline.NewMultiBaseline(minutely(d1...), minutely(d7...), minutely(d30...))
 	if mb.Day1 == nil {
 		t.Error("Day1 nil; expected populated")
 	}
@@ -69,7 +69,7 @@ func TestMultiBaseline_PartialBootstrap(t *testing.T) {
 	d7 := []float64{1.0}                           // bootstrap (n<2)
 	d30 := []float64{1.0}                          // bootstrap
 
-	mb := baseline.NewMultiBaseline(d1, d7, d30)
+	mb := baseline.NewMultiBaseline(minutely(d1...), minutely(d7...), minutely(d30...))
 	if mb.Day1 == nil {
 		t.Fatal("Day1 should be populated")
 	}
@@ -142,7 +142,7 @@ func TestMultiBaseline_FrogBoilingDefense(t *testing.T) {
 	d7 := full[len(full)-7*bucketsPerDay-1:]
 	d30 := full
 
-	mb := baseline.NewMultiBaseline(d1, d7, d30)
+	mb := baseline.NewMultiBaseline(minutely(d1...), minutely(d7...), minutely(d30...))
 	if mb.Day1 == nil || mb.Day7 == nil || mb.Day30 == nil {
 		t.Fatal("expected all three windows populated")
 	}
@@ -188,7 +188,7 @@ func TestMultiBaseline_SuddenSpikeFiresFromShortWindow(t *testing.T) {
 	d7 := vwapSeries(1.0, stableJitter(100, 0.0001))
 	d30 := vwapSeries(1.0, stableJitter(500, 0.0001))
 
-	mb := baseline.NewMultiBaseline(d1, d7, d30)
+	mb := baseline.NewMultiBaseline(minutely(d1...), minutely(d7...), minutely(d30...))
 
 	// Sudden 5% spike. All three windows have ~bp MAD, so all flag
 	// it — but the longest window's MAD is presumably the smallest
@@ -212,7 +212,7 @@ func TestMaxZScore_ThinWindowDoesNotOutvoteWellSampledOne(t *testing.T) {
 	d1 := []float64{1.0, 1.001, 1.0022}
 	d7 := vwapSeries(1.0, stableJitter(400, 0.02))
 	d30 := vwapSeries(1.0, stableJitter(1999, 0.02))
-	mb := baseline.NewMultiBaseline(d1, d7, d30)
+	mb := baseline.NewMultiBaseline(minutely(d1...), minutely(d7...), minutely(d30...))
 	if mb.Day1 == nil || mb.Day1.N != 2 || mb.Day30.N != 1999 {
 		t.Fatalf("setup: Day1=%+v Day30=%+v", mb.Day1, mb.Day30)
 	}
@@ -311,7 +311,7 @@ func TestMaxZScore_NaNObservationFiresFreeze(t *testing.T) {
 	d1Returns := []float64{0.001, -0.001, 0.002, -0.002, 0.001}
 	d7Returns := append([]float64{}, d1Returns...)
 	d30Returns := append([]float64{}, d1Returns...)
-	mb := baseline.NewMultiBaseline(d1Returns, d7Returns, d30Returns)
+	mb := baseline.NewMultiBaseline(minutely(d1Returns...), minutely(d7Returns...), minutely(d30Returns...))
 
 	z, window, valid := mb.MaxZScore(bucketReturn(math.NaN()))
 	if !valid {
@@ -335,7 +335,7 @@ func TestMaxZScore_NaNObservationFiresFreeze(t *testing.T) {
 // fire.
 func TestMaxZScore_PosInfObservationFiresFreeze(t *testing.T) {
 	d1Returns := []float64{0.001, -0.001, 0.002, -0.002, 0.001}
-	mb := baseline.NewMultiBaseline(d1Returns, d1Returns, d1Returns)
+	mb := baseline.NewMultiBaseline(minutely(d1Returns...), minutely(d1Returns...), minutely(d1Returns...))
 
 	z, _, valid := mb.MaxZScore(bucketReturn(math.Inf(1)))
 	if !valid {
@@ -356,7 +356,7 @@ func TestMaxZScore_PosInfObservationFiresFreeze(t *testing.T) {
 // IEEE-754 happens to handle the underlying math.
 func TestMaxZScore_NegInfObservationFiresFreeze(t *testing.T) {
 	d1Returns := []float64{0.001, -0.001, 0.002, -0.002, 0.001}
-	mb := baseline.NewMultiBaseline(d1Returns, d1Returns, d1Returns)
+	mb := baseline.NewMultiBaseline(minutely(d1Returns...), minutely(d1Returns...), minutely(d1Returns...))
 
 	z, _, valid := mb.MaxZScore(bucketReturn(math.Inf(-1)))
 	if !valid {
@@ -376,7 +376,7 @@ func TestMaxZScore_PathologicalAttributesToFirstAvailableWindow(t *testing.T) {
 	d30Returns := []float64{0.001, -0.001, 0.002, -0.002, 0.001}
 	// Pass empty slices for d1 + d7 — buildOrNil returns nil for
 	// each via the ErrNotEnoughSamples branch.
-	mb := baseline.NewMultiBaseline(nil, nil, d30Returns)
+	mb := baseline.NewMultiBaseline(nil, nil, minutely(d30Returns...))
 
 	z, window, valid := mb.MaxZScore(bucketReturn(math.NaN()))
 	if !valid {
@@ -392,6 +392,6 @@ func TestMaxZScore_PathologicalAttributesToFirstAvailableWindow(t *testing.T) {
 
 // bucketReturn builds the BucketReturn whose Fraction is x.
 func bucketReturn(x float64) baseline.BucketReturn {
-	r, _ := baseline.NewBucketReturn(1, 1+x)
+	r, _ := baseline.NewBucketReturn(1, 1+x, baseline.BucketWidth)
 	return r
 }

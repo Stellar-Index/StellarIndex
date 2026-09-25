@@ -1,9 +1,11 @@
 package baseline_test
 
 import (
+	"context"
 	"errors"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/baseline"
 )
@@ -232,9 +234,19 @@ func TestZScore_SymmetricAroundMedian(t *testing.T) {
 	}
 }
 
+// minutely spaces vwaps one bucket apart: a pair that prints every minute.
+func minutely(vwaps ...float64) []baseline.TimedVWAP {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	out := make([]baseline.TimedVWAP, len(vwaps))
+	for i, v := range vwaps {
+		out[i] = baseline.TimedVWAP{VWAP: v, BucketEnd: start.Add(time.Duration(i) * baseline.BucketWidth)}
+	}
+	return out
+}
+
 // TestReturnsFromVWAPs_BasicRollthrough — three VWAPs → two returns.
 func TestReturnsFromVWAPs_BasicRollthrough(t *testing.T) {
-	r := baseline.ReturnsFromVWAPs([]float64{100, 102, 99})
+	r := baseline.ReturnsFromVWAPs(minutely(100, 102, 99))
 	if len(r) != 2 {
 		t.Fatalf("got %d returns, want 2", len(r))
 	}
@@ -253,7 +265,7 @@ func TestReturnsFromVWAPs_ShortInput(t *testing.T) {
 	if got := baseline.ReturnsFromVWAPs(nil); got != nil {
 		t.Errorf("nil input → %v, want nil", got)
 	}
-	if got := baseline.ReturnsFromVWAPs([]float64{42}); got != nil {
+	if got := baseline.ReturnsFromVWAPs(minutely(42)); got != nil {
 		t.Errorf("single input → %v, want nil", got)
 	}
 }
@@ -262,7 +274,7 @@ func TestReturnsFromVWAPs_ShortInput(t *testing.T) {
 // zero (e.g. a bucket with no liquidity) is skipped rather than
 // producing a +/-Inf return that would poison downstream stats.
 func TestReturnsFromVWAPs_SkipsZeroPrev(t *testing.T) {
-	r := baseline.ReturnsFromVWAPs([]float64{0, 100, 102})
+	r := baseline.ReturnsFromVWAPs(minutely(0, 100, 102))
 	// First return would have been (100 - 0) / 0 = Inf — skipped.
 	// Remaining: (102 - 100) / 100 = 0.02
 	if len(r) != 1 {
@@ -270,6 +282,27 @@ func TestReturnsFromVWAPs_SkipsZeroPrev(t *testing.T) {
 	}
 	if !almostEqual(r[0], 0.02) {
 		t.Errorf("returns[0] = %v, want 0.02", r[0])
+	}
+}
+
+// A return across k empty minutes is scaled to one minute by sqrt(k); an
+// adjacent or out-of-order pair is never amplified.
+func TestNewBucketReturn_ScalesByElapsedBuckets(t *testing.T) {
+	for _, tc := range []struct {
+		elapsed time.Duration
+		want    float64
+	}{
+		{0, 0.21},
+		{-time.Minute, 0.21},
+		{30 * time.Second, 0.21},
+		{time.Minute, 0.21},
+		{4 * time.Minute, 0.105},
+		{time.Hour, 0.21 / math.Sqrt(60)},
+	} {
+		r, ok := baseline.NewBucketReturn(1, 1.21, tc.elapsed)
+		if !ok || math.Abs(r.Fraction()-tc.want) > 1e-12 {
+			t.Errorf("elapsed %v: Fraction = %v ok=%v, want %v", tc.elapsed, r.Fraction(), ok, tc.want)
+		}
 	}
 }
 
@@ -302,5 +335,68 @@ func TestEndToEnd_StableCoinClassThreshold(t *testing.T) {
 	z := b.ZScore(0.05)
 	if z < 5 {
 		t.Errorf("5%% depeg z = %v, want > 5σ", z)
+	}
+}
+
+// hourlyTimed spaces levels one hour apart ending at now: a pair that
+// prints once an hour.
+func hourlyTimed(now time.Time, levels []float64) []baseline.TimedVWAP {
+	out := make([]baseline.TimedVWAP, len(levels))
+	for i, v := range levels {
+		out[i] = baseline.TimedVWAP{VWAP: v, BucketEnd: now.Add(-time.Duration(len(levels)-1-i) * time.Hour)}
+	}
+	return out
+}
+
+// A pair that prints hourly has no row for its 59 empty minutes, so each
+// raw return spans an hour. The refreshed baseline must be in one-minute
+// units — the raw hourly MAD divided by sqrt(60) — or a genuinely
+// minute-on-minute observation is scored against a spread ~8x too wide.
+func TestRefreshPair_SparsePairTrainsInOneMinuteUnits(t *testing.T) {
+	pair := mustPair(t, "native", "fiat:USD")
+	now := time.Now().UTC()
+	src := newStubSource()
+	levels := vwapSeries(1.0, stableJitter(719, 0.01))
+	src.set(pair, hourlyTimed(now, levels))
+	sink := newStubSink()
+	if _, err := baseline.NewRefresher(src, sink, 0, nil).RefreshPair(context.Background(), pair); err != nil {
+		t.Fatalf("RefreshPair: %v", err)
+	}
+	got := sink.byPair[pair.String()].Day30
+	if got == nil {
+		t.Fatal("Day30 nil")
+	}
+	scaled := make([]float64, 0, 719)
+	for i := 0; i+1 < len(levels); i++ {
+		scaled = append(scaled, (levels[i+1]-levels[i])/levels[i]/math.Sqrt(60))
+	}
+	want := baseline.MAD(scaled)
+	if want == 0 {
+		t.Fatal("fixture MAD is 0; the assertion would be vacuous")
+	}
+	if got.N != 719 || math.Abs(got.MAD-want) > 1e-12 {
+		t.Errorf("Day30 = {N:%d MAD:%v}, want {N:719 MAD:%v} (hourly MAD / sqrt(60))", got.N, got.MAD, want)
+	}
+}
+
+// A zero-VWAP bucket carries no price: the return must span the buckets
+// either side of it, not record a -100% move into it.
+func TestRefreshPair_ZeroVWAPBucketIsSkippedNotAMinus100Return(t *testing.T) {
+	pair := mustPair(t, "native", "fiat:USD")
+	now := time.Now().UTC()
+	src := newStubSource()
+	src.set(pair, []baseline.TimedVWAP{
+		{VWAP: 1, BucketEnd: now.Add(-3 * time.Minute)},
+		{VWAP: 0, BucketEnd: now.Add(-2 * time.Minute)},
+		{VWAP: 1, BucketEnd: now.Add(-1 * time.Minute)},
+		{VWAP: 1, BucketEnd: now},
+	})
+	sink := newStubSink()
+	if _, err := baseline.NewRefresher(src, sink, 0, nil).RefreshPair(context.Background(), pair); err != nil {
+		t.Fatalf("RefreshPair: %v", err)
+	}
+	got := sink.byPair[pair.String()].Day30
+	if got == nil || got.N != 2 || got.Median != 0 {
+		t.Errorf("Day30 = %+v, want N=2 Median=0 (two flat returns, no -1.0)", got)
 	}
 }

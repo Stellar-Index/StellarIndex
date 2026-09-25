@@ -77,6 +77,9 @@ func confidenceCacheTTL(window time.Duration) time.Duration {
 type confidenceComputation struct {
 	Score  confidence.Score
 	ZScore float64
+	// ZWindow is the baseline window whose z is ZScore, so a freeze
+	// record can say which scale fired.
+	ZWindow time.Duration
 
 	// CrossOracleMedian is the reference median price (0 when the
 	// cross-oracle lens was unchecked this bucket). See
@@ -111,22 +114,26 @@ func (o *Orchestrator) computeConfidence(
 	vwap *big.Rat,
 	rets []baseline.BucketReturn,
 	trades []canonicalTrade,
+	now time.Time,
 ) (confidenceComputation, bool) {
 	if o.cfg.Baselines == nil || len(rets) == 0 {
 		obs.AggregatorConfidenceComputeTotal.WithLabelValues("skipped").Inc()
 		return confidenceComputation{}, false
 	}
 
-	// computedAt (when the refresher last WROTE the row) is
-	// deliberately unused: it measures the refresh loop's cadence, not
-	// the asset's maturity — see [baselineAgeDays].
-	multi, _, err := o.cfg.Baselines.LatestBaseline(ctx, pair)
+	// computedAt measures the refresh loop, not the asset's maturity (see
+	// [baselineAgeDays]), so it gates freshness only.
+	multi, computedAt, err := o.cfg.Baselines.LatestBaseline(ctx, pair)
 	if err != nil {
 		obs.AggregatorConfidenceComputeTotal.WithLabelValues("baseline_missing").Inc()
 		return confidenceComputation{}, false
 	}
+	if !baselineFresh(pair, computedAt, now) {
+		obs.AggregatorConfidenceComputeTotal.WithLabelValues("baseline_stale").Inc()
+		return confidenceComputation{}, false
+	}
 
-	observedZ, valid := maxBucketZ(multi, rets)
+	observedZ, zWindow, valid := maxBucketZ(multi, rets)
 	if !valid {
 		obs.AggregatorConfidenceComputeTotal.WithLabelValues("baseline_missing").Inc()
 		return confidenceComputation{}, false
@@ -210,6 +217,7 @@ func (o *Orchestrator) computeConfidence(
 	return confidenceComputation{
 		Score:                      score,
 		ZScore:                     observedZ,
+		ZWindow:                    zWindow,
 		CrossOracleMedian:          med,
 		TriangulationChecked:       triChecked,
 		TriangulationDivergencePct: triPct,
@@ -472,17 +480,51 @@ func baselineAgeDays(multi baseline.MultiBaseline) float64 {
 }
 
 // maxBucketZ is the largest [baseline.MultiBaseline.MaxZScore] over rets, so
-// the worst minute of a multi-minute decision is the one that is judged.
-func maxBucketZ(multi baseline.MultiBaseline, rets []baseline.BucketReturn) (float64, bool) {
+// the worst minute of a multi-minute decision is the one that is judged, with
+// the baseline window that scored it.
+func maxBucketZ(multi baseline.MultiBaseline, rets []baseline.BucketReturn) (float64, time.Duration, bool) {
 	var best float64
+	var bestWindow time.Duration
 	for i, r := range rets {
-		z, _, valid := multi.MaxZScore(r)
+		z, window, valid := multi.MaxZScore(r)
 		if !valid {
-			return 0, false
+			return 0, 0, false
 		}
 		if i == 0 || z > best {
-			best = z
+			best, bestWindow = z, window
 		}
 	}
-	return best, len(rets) > 0
+	return best, bestWindow, len(rets) > 0
+}
+
+// maxBaselineAge is the oldest baseline row still scored against. Past one
+// day the stored 1d window no longer overlaps the last day at all, and the
+// hourly refresher has missed 24 cycles for this pair.
+const maxBaselineAge = baseline.Window1d
+
+// baselineFresh exports the pair's baseline age and reports whether the row
+// is young enough to score against. A zero computedAt is unknown freshness
+// and fails closed; a row stamped ahead of now (clock skew) is fresh.
+func baselineFresh(pair canonical.Pair, computedAt, now time.Time) bool {
+	if computedAt.IsZero() {
+		return false
+	}
+	age := now.Sub(computedAt)
+	obs.AggregatorBaselineAgeSeconds.WithLabelValues(pair.String()).Set(age.Seconds())
+	return age <= maxBaselineAge
+}
+
+// baselineWindowLabel renders a [baseline.MultiBaseline] lookback as the
+// 1d / 7d / 30d name the freeze record uses.
+func baselineWindowLabel(w time.Duration) string {
+	switch w {
+	case baseline.Window1d:
+		return "1d"
+	case baseline.Window7d:
+		return "7d"
+	case baseline.Window30d:
+		return "30d"
+	default:
+		return w.String()
+	}
 }

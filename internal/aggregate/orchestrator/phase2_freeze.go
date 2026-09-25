@@ -288,8 +288,8 @@ func (o *Orchestrator) stepPhase2Freeze(
 		// `sources=` stays the REAL count whatever the composite says —
 		// the reference changes the verdict, never the independence
 		// claim (composite_reference.go invariants).
-		decision.Reason = fmt.Sprintf("phase2:3_signal_AND confidence=%.3f z=%.2f sources=%d",
-			input.Confidence, input.ZScore, input.SourceCount)
+		decision.Reason = fmt.Sprintf("phase2:3_signal_AND confidence=%.3f z=%.2f z_window=%s sources=%d",
+			input.Confidence, input.ZScore, baselineWindowLabel(conf.ZWindow), input.SourceCount)
 		if compositeRef.verdict != "" {
 			decision.Reason += compositeRef.reasonSuffix()
 			if sig.Fires && compositeRef.verdict == compositeVerdictCorroborated {

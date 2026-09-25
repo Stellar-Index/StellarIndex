@@ -6,14 +6,18 @@ import (
 	"errors"
 	"math"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/baseline"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/divergence"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // stubBaselineSource implements orchestrator.BaselineSource with a
@@ -24,7 +28,12 @@ type stubBaselineSource struct {
 	err        error
 }
 
+// LatestBaseline reports an unset computedAt as written just now, so a
+// fixture that is not about freshness is never read as stale.
 func (s stubBaselineSource) LatestBaseline(_ context.Context, _ canonical.Pair) (baseline.MultiBaseline, time.Time, error) {
+	if s.computedAt.IsZero() && s.err == nil {
+		return s.multi, time.Now(), nil
+	}
 	return s.multi, s.computedAt, s.err
 }
 
@@ -907,5 +916,70 @@ func TestBaselineAgeDays_SparseMaturePairStaysCapped(t *testing.T) {
 		t.Errorf("confidence on a calendar-mature but sparse baseline = %v, want the %v "+
 			"bootstrap cap — density, not calendar age, is the gate (W8.8)",
 			got.Confidence, confidence.BootstrapConfidenceCap)
+	}
+}
+
+// gaugeValue reads one labelled series of a gauge from obs.Registry by name;
+// ok is false when the series is not exported.
+func gaugeValue(t *testing.T, name, label, value string) (float64, bool) {
+	t.Helper()
+	families, err := obs.Registry.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	for _, f := range families {
+		if f.GetName() != name {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == label && l.GetValue() == value {
+					return m.GetGauge().GetValue(), true
+				}
+			}
+		}
+	}
+	return 0, false
+}
+
+// A baseline the refresher stopped rewriting is not scored against: past
+// the one-day ceiling the pair reads as bootstrap (outcome baseline_stale),
+// and its age is exported per pair either way.
+func TestComputeConfidence_StaleBaselineReadsAsBootstrap(t *testing.T) {
+	staleBefore := testutil.ToFloat64(obs.AggregatorConfidenceComputeTotal.WithLabelValues("baseline_stale"))
+	bucketEnd := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	bsrc := stubBaselineSource{
+		multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: 1000}},
+		computedAt: bucketEnd.Add(-25 * time.Hour),
+	}
+	bucketReturnCase(t, time.Minute, Config{Baselines: bsrc})
+	if got := testutil.ToFloat64(obs.AggregatorConfidenceComputeTotal.WithLabelValues("baseline_stale")) - staleBefore; got < 1 {
+		t.Errorf("confidence_compute_total{outcome=baseline_stale} rose by %v, want >= 1 for a 25h-old baseline", got)
+	}
+	age, ok := gaugeValue(t, "stellarindex_aggregator_baseline_age_seconds", "pair", xlmUSDPair(t).String())
+	if want := (25*time.Hour + 5*time.Second).Seconds() + 60; !ok || age != want {
+		t.Errorf("baseline_age_seconds = %v (exported=%v), want %v", age, ok, want)
+	}
+}
+
+// The freeze record names the window whose z fired: here the 30d window's
+// tighter MAD scores the +100% minute above the 1d window's.
+func TestPhase2_FreezeReasonNamesTheAttributingWindow(t *testing.T) {
+	marker := &recordingFreezeMarker{}
+	bsrc := stubBaselineSource{
+		multi: baseline.MultiBaseline{
+			Day1:  &baseline.Baseline{Median: 0, MAD: 0.05, N: 1439},
+			Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: 40000},
+		},
+		computedAt: time.Date(2026, 7, 25, 11, 0, 0, 0, time.UTC),
+	}
+	if _, frozen := bucketReturnCase(t, time.Minute, Config{Baselines: bsrc, FreezeWriter: marker}); !frozen {
+		t.Fatal("a +100% single-source minute did not freeze")
+	}
+	if len(marker.marks) == 0 {
+		t.Fatal("no freeze recorded")
+	}
+	if reason := marker.marks[0].decision.Reason; !strings.Contains(reason, " z_window=30d ") {
+		t.Errorf("freeze reason %q does not name the attributing window z_window=30d", reason)
 	}
 }

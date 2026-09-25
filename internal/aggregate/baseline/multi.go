@@ -54,14 +54,14 @@ type MultiBaseline struct {
 }
 
 // NewMultiBaseline builds a [MultiBaseline] from three pre-sliced
-// VWAP series — one per window. The caller is responsible for
+// timed VWAP series — one per window. The caller is responsible for
 // slicing to the right duration; this constructor just runs each
 // slice through [ReturnsFromVWAPs] → [FromReturns] and stores the
 // result (or `nil` when [ErrNotEnoughSamples] fires).
 //
 // Callers that have a single time-stamped VWAP series can use
 // [SplitByLookback] to derive the three sub-slices.
-func NewMultiBaseline(vwapsDay1, vwapsDay7, vwapsDay30 []float64) MultiBaseline {
+func NewMultiBaseline(vwapsDay1, vwapsDay7, vwapsDay30 []TimedVWAP) MultiBaseline {
 	return MultiBaseline{
 		Day1:  buildOrNil(vwapsDay1),
 		Day7:  buildOrNil(vwapsDay7),
@@ -73,7 +73,7 @@ func NewMultiBaseline(vwapsDay1, vwapsDay7, vwapsDay30 []float64) MultiBaseline 
 // either a pointer to the Baseline or nil if the window had too few
 // samples. Used internally so each window's bootstrap state is
 // observable on the wrapper struct.
-func buildOrNil(vwaps []float64) *Baseline {
+func buildOrNil(vwaps []TimedVWAP) *Baseline {
 	b, err := FromReturns(ReturnsFromVWAPs(vwaps))
 	if err != nil {
 		return nil
@@ -258,7 +258,8 @@ func (m MultiBaseline) MaxDriftZScore() (z float64, window time.Duration, valid 
 
 // SplitByLookback partitions a chronologically-ordered (oldest-first)
 // series of (vwap, bucketEnd) pairs into three slices: one for each
-// rolling lookback window ending at `now`.
+// rolling lookback window ending at `now`. Timestamps stay attached
+// because [ReturnsFromVWAPs] scales each return by its bucket spacing.
 //
 // The 1d slice contains entries with bucketEnd >= now-1d; the 7d
 // slice >= now-7d; the 30d slice >= now-30d. Slices share backing
@@ -268,7 +269,7 @@ func (m MultiBaseline) MaxDriftZScore() (z float64, window time.Duration, valid 
 // This is a helper for callers who store the full 30d series and
 // want to derive sub-window views without three round trips to the
 // storage layer.
-func SplitByLookback(timed []TimedVWAP, now time.Time) (day1, day7, day30 []float64) {
+func SplitByLookback(timed []TimedVWAP, now time.Time) (day1, day7, day30 []TimedVWAP) {
 	cut1 := now.Add(-Window1d)
 	cut7 := now.Add(-Window7d)
 	cut30 := now.Add(-Window30d)
@@ -276,13 +277,9 @@ func SplitByLookback(timed []TimedVWAP, now time.Time) (day1, day7, day30 []floa
 	// Find the first index >= each cutoff. Linear scans are fine —
 	// the 30-day series is bounded at 43,200 entries (1m buckets) and
 	// runs once per refresh cycle, not per request.
-	idx1 := firstAtOrAfter(timed, cut1)
-	idx7 := firstAtOrAfter(timed, cut7)
-	idx30 := firstAtOrAfter(timed, cut30)
-
-	day1 = vwapsFrom(timed, idx1)
-	day7 = vwapsFrom(timed, idx7)
-	day30 = vwapsFrom(timed, idx30)
+	day1 = timed[firstAtOrAfter(timed, cut1):]
+	day7 = timed[firstAtOrAfter(timed, cut7):]
+	day30 = timed[firstAtOrAfter(timed, cut30):]
 	return day1, day7, day30
 }
 
@@ -306,18 +303,4 @@ func firstAtOrAfter(timed []TimedVWAP, cutoff time.Time) int {
 		}
 	}
 	return len(timed)
-}
-
-// vwapsFrom extracts the VWAP column from a TimedVWAP slice
-// starting at `from`. Allocates — sub-windows aren't large enough
-// to warrant unsafe slicing tricks.
-func vwapsFrom(timed []TimedVWAP, from int) []float64 {
-	if from >= len(timed) {
-		return nil
-	}
-	out := make([]float64, len(timed)-from)
-	for i := range out {
-		out[i] = timed[from+i].VWAP
-	}
-	return out
 }

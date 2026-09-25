@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"sort"
+	"time"
 )
 
 // MADScale is the consistency factor that maps MAD to σ-equivalent
@@ -280,47 +281,69 @@ func MAD(xs []float64) float64 {
 	return MADScale * Median(devs)
 }
 
+// BucketWidth is the width of one baseline bucket (the prices_1m CAGG's
+// grain), and so the unit every [BucketReturn] is expressed in.
+const BucketWidth = time.Minute
+
 // BucketReturn is the fractional change of one closed bucket's VWAP over
-// the previous non-empty bucket's VWAP: the unit every [Baseline] is trained
-// in (see [ReturnsFromVWAPs]), and so the only observation
-// [MultiBaseline.MaxZScore] accepts. A tick-to-tick delta of an overlapping
-// rolling window is damped by bucket/window and must never be scored against
-// it.
+// the previous non-empty bucket's VWAP, scaled to one [BucketWidth]: the
+// unit every [Baseline] is trained in (see [ReturnsFromVWAPs]), and so the
+// only observation [MultiBaseline.MaxZScore] accepts. A tick-to-tick delta
+// of an overlapping rolling window is damped by bucket/window and must
+// never be scored against it.
 type BucketReturn struct{ frac float64 }
 
-// NewBucketReturn returns curr's return over prev, both bucket VWAPs.
-// ok is false when prev is zero (no defined return).
-func NewBucketReturn(prev, curr float64) (r BucketReturn, ok bool) {
+// NewBucketReturn returns curr's return over prev, two bucket VWAPs whose
+// bucket ends lie elapsed apart. ok is false when prev is zero (no defined
+// return).
+//
+// An empty minute has no bucket, so a sparse pair's returns span many
+// minutes, and under diffusion a return over k buckets has sqrt(k) times a
+// one-bucket return's spread. Dividing by sqrt(elapsed/BucketWidth) puts
+// an hourly printer's baseline and observations in the same one-minute
+// unit as a pair that prints every minute. elapsed at or below one bucket,
+// including an unknown zero, is left unscaled so a return is never
+// amplified.
+func NewBucketReturn(prev, curr float64, elapsed time.Duration) (r BucketReturn, ok bool) {
 	if prev == 0 {
 		return BucketReturn{}, false
 	}
-	return BucketReturn{frac: (curr - prev) / prev}, true
+	frac := (curr - prev) / prev
+	if elapsed > BucketWidth {
+		frac /= math.Sqrt(float64(elapsed) / float64(BucketWidth))
+	}
+	return BucketReturn{frac: frac}, true
 }
 
-// Fraction is the return as a fraction (0.1 = +10%).
+// Fraction is the one-bucket-scaled return as a fraction (0.1 = +10%).
 func (r BucketReturn) Fraction() float64 { return r.frac }
 
-// ReturnsFromVWAPs converts a chronologically-ordered slice of
-// bucket VWAP values into bucket-to-bucket percent changes:
+// ReturnsFromVWAPs converts a chronologically-ordered (oldest-first)
+// series of bucket VWAPs into one [BucketReturn] fraction per consecutive
+// pair of priced buckets, each scaled by the time between their bucket
+// ends (see [NewBucketReturn]).
 //
-//	returns[i] = (vwaps[i+1] - vwaps[i]) / vwaps[i]
-//
-// Returns nil when len(vwaps) < 2 — there's no return to compute
-// for a single observation. Buckets with vwaps[i] == 0 are skipped
-// (division by zero); the resulting slice may be shorter than
-// len(vwaps)-1.
+// A bucket whose VWAP is 0 carries no price and is skipped entirely: the
+// return spans the priced buckets either side of it rather than recording
+// a -100% move into it. Returns nil when fewer than two buckets are
+// priced.
 //
 // Used as the input to [FromReturns] when building a baseline from
 // a stored window of 1m VWAP buckets.
-func ReturnsFromVWAPs(vwaps []float64) []float64 {
-	if len(vwaps) < 2 {
-		return nil
-	}
-	out := make([]float64, 0, len(vwaps)-1)
-	for i := 0; i < len(vwaps)-1; i++ {
-		if r, ok := NewBucketReturn(vwaps[i], vwaps[i+1]); ok {
-			out = append(out, r.Fraction())
+func ReturnsFromVWAPs(timed []TimedVWAP) []float64 {
+	var out []float64
+	prev := -1
+	for i := range timed {
+		if timed[i].VWAP == 0 {
+			continue
 		}
+		if prev >= 0 {
+			elapsed := timed[i].BucketEnd.Sub(timed[prev].BucketEnd)
+			if r, ok := NewBucketReturn(timed[prev].VWAP, timed[i].VWAP, elapsed); ok {
+				out = append(out, r.Fraction())
+			}
+		}
+		prev = i
 	}
 	return out
 }
