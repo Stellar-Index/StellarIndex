@@ -942,7 +942,7 @@ type StellarConfig struct {
 	// timescale.SEP41MovementsFloorLedger) by TestP23BoundaryConstantsAgree
 	// so they cannot silently drift.
 	SorobanGenesisLedger uint32 `toml:"soroban_genesis_ledger" doc:"Soroban (protocol-20) activation ledger — the pre-Soroban↔Soroban-era boundary the SEP-41 supply observer floors at. Defaults to the pubnet value; set to 1 (genesis) on testnet/futurenet." default:"50457424"`
-	MovementsFloorLedger uint32 `toml:"movements_floor_ledger" doc:"P23 / CAP-67 boundary — at/above it the Postgres SEP-41 movements tail serves, below it the ClickHouse pre-P23 archive serves (ADR-0048 D5). Defaults to the pubnet value; set to 1 (genesis) on testnet/futurenet." default:"58762517"`
+	MovementsFloorLedger uint32 `toml:"movements_floor_ledger" doc:"P23 / CAP-67 boundary — at/above it the Postgres SEP-41 movements tail serves, below it the ClickHouse pre-P23 archive serves (ADR-0048 D5). Defaults to the pubnet value; set to 2 (ledger 1 has no predecessor) on testnet/futurenet." default:"58762517"`
 }
 
 // APIMaxHandlerBudget is the longest per-handler

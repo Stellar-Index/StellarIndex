@@ -405,12 +405,13 @@ Subcommands:
                           real-world assets on Stellar, and that party's own
                           USD price per token, into rwa_curated_directory for
                           the RWA surface's CURATED arm. First curator: the
-                          Stellar team's public Dune uploads
-                          (dune.stellar.dataset_recognized_assets joined to the
-                          latest day of dune.stellar.dataset_asset_prices), read
-                          with one SQL execution on the "small" tier; the
-                          execution's credit cost is printed and, with
-                          -textfile, emitted as a gauge. A row is the curator's
+                          Stellar team's "RWAs on Stellar" dashboard, read as the
+                          latest RESULT of its public queries (GET
+                          /api/v1/query/{id}/results) — the private upload
+                          tables behind it cannot be executed against by
+                          anyone else. Executes nothing; bills by datapoints
+                          (fractions of a credit), which are printed and,
+                          with -textfile, emitted as a gauge. A row is the curator's
                           word and is served under its own basis and total,
                           never inside the verified set. Malformed addresses
                           are skipped and counted; a price with no day is

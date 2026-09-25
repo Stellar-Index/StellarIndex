@@ -127,7 +127,7 @@ range produce multi-GB stdout that operators typically capture with
 shell redirection, e.g.:
 
 ```sh
-stellarindex-ops verify-archive --from 2 --to 0 > /tmp/va-full.log 2>&1
+stellarindex-ops verify-archive -config /etc/stellarindex.toml -from 2 -to 0 > /tmp/va-full.log 2>&1
 ```
 
 (The flag floor is `--from 2` — ledger 1 has no predecessor.)
@@ -144,7 +144,7 @@ operator is in the best position to do.
 LOGFILE=$(mktemp /tmp/va-XXXXXX.log)
 trap 'gzip -9 "$LOGFILE" >/dev/null 2>&1; mv "${LOGFILE}.gz" /var/log/stellarindex/ 2>/dev/null || rm -f "$LOGFILE" "${LOGFILE}.gz"' EXIT
 /usr/local/sbin/run-heavy-job.sh verify-archive \
-  stellarindex-ops verify-archive --from "$FROM" --to "$TO" > "$LOGFILE" 2>&1
+  stellarindex-ops verify-archive -config /etc/stellarindex.toml -from "$FROM" -to "$TO" > "$LOGFILE" 2>&1
 ```
 
 (Manual long-range scans are heavy jobs — always go through

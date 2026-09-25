@@ -101,7 +101,7 @@ ledger in the range it walked (`censusCoverage`, mirroring ch-backfill's
 ### 2. `soroban_events` re-backfill (recover the ~55% loss)
 
 ```
-GOMAXPROCS=2 nice -n 19 stellarindex-ops backfill -write -source soroban-events \
+GOMAXPROCS=2 nice -n 19 stellarindex-ops backfill -config /etc/stellarindex.toml -write -source soroban-events \
   -from 50457424 -to <tip> -bucket galexie-archive -parallel <2-4>
 ```
 

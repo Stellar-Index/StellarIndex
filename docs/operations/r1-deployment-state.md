@@ -353,7 +353,7 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
    at a verified tip of **62,249,727**; live galexie writes to
    `galexie-live` (per `/etc/galexie/galexie.toml`). Anything that
    reads from `galexie-archive` (eg `stellarindex-ops wasm-history`,
-   `stellarindex-ops backfill`, `stellarindex-ops verify-archive-chunks`)
+   `stellarindex-ops backfill`, `stellarindex-ops verify-archive`)
    MUST bound `-to` ≤ 62,249,727 OR fail with "ledger object …
    does not exist" on the partial trailing partition
    (FC49CDFF--62272000-62335999, currently 24,695/64,000 files).
