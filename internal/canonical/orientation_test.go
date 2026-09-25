@@ -53,6 +53,33 @@ func TestOrient_Symmetric(t *testing.T) {
 	}
 }
 
+// TestOrient_XLMAliasFamilyRanksIdentically is GH-1100: all three
+// canonical spellings of XLM (native, crypto:XLM, the SAC wrapper) must
+// orient identically against the same counter-asset. Before the fix,
+// quoteRank recognised only "native" and the SAC address, so a
+// crypto:XLM-spelled market could orient inversely to the same market
+// spelled native.
+func TestOrient_XLMAliasFamilyRanksIdentically(t *testing.T) {
+	for _, a := range xlmAliasFamily {
+		id := a.String()
+		if got := quoteRank(id); got != 2 {
+			t.Errorf("quoteRank(%q) = %d, want 2 (all XLM forms rank equally)", id, got)
+		}
+	}
+
+	// AQUA (rank 1) vs XLM: every XLM spelling must orient the same way
+	// (XLM as quote) — asserted on the returned quote, not base, so the
+	// check is independent of which literal happens to sort first.
+	const aqua = "AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AB"
+	for _, a := range xlmAliasFamily {
+		id := a.String()
+		if _, quote, flipped := Orient(aqua, id); quote != id || flipped {
+			t.Errorf("Orient(%q,%q) quote=%q flipped=%v, want quote=%q flipped=false",
+				aqua, id, quote, flipped, id)
+		}
+	}
+}
+
 // TestOrient_StablecoinRankIsIssuerAgnostic is the SEC-B12
 // characterization test. A classic token whose CODE collides with a
 // real stablecoin ticker but whose ISSUER is an unrelated (possibly
