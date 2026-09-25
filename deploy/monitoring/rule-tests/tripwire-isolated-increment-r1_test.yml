@@ -332,7 +332,9 @@ tests:
               summary: "Customer webhook deliveries permanently failed (budget exhausted)"
               description: |
                 A delivery hit the 15-attempt retry budget (~8h) and
-                was marked terminally failed.
+                was marked terminally failed. Customer hasn't received
+                the event. Operator should reach out before the
+                customer notices via their own monitoring.
       - eval_time: 60m
         alertname: stellarindex_customer_webhook_delivery_exhausted
         exp_alerts: *webhook_exhausted_alert

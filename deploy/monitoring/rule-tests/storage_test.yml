@@ -92,9 +92,10 @@ tests:
                 sustained Postgres ping failures (rate 0.05/s
                 over the last 5 m). The pool's 30 min lifetime
                 safety-net will refresh dead conns automatically, but
-                until then writes are likely stalled. Check the
-                primary postgres unit and the indexer journal for the
-                `pool may be wedged` log line.
+                until then writes are likely stalled. Check
+                `postgresql@15-main.service` (NOT the umbrella) and
+                the indexer journal for the `pool may be wedged` log
+                line.
 
   - interval: 1m
     name: a flat zero-seeded ping-error counter raises nothing
