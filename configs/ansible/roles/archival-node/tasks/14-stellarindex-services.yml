@@ -1296,8 +1296,16 @@
 # still installed everywhere, unconditionally — same drift class the
 # invalid-flag fix above closed, left open here. Same gating shape as
 # Tier E just below.
-
+#
+# Tagged ops-jobs like every other unit in this file (RLT-305): this task
+# was the one job install left untagged, so `--tags ops-jobs` converged
+# every sibling tier but silently skipped Tier D's cron.
+#
+# -textfile-output like Tier E just below, for the same reason: without it
+# stellarindex_verify_archive_last_success_unix{tier="peers"} never exists,
+# so no staleness alert can ever be written against this control.
 - name: Install Tier D verify-archive weekly cron
+  tags: [ops-jobs]
   ansible.builtin.cron:
     name: stellarindex-verify-archive-tier-d
     cron_file: stellarindex-verify-archive-tier-d
@@ -1318,6 +1326,7 @@
       -peer-samples 50
       -from {{ stellarindex_archive_hot_floor | default(2) }}
       {{ ('-to ' ~ (stellarindex_live_seam_ledger | default(0) | int - 1)) if (stellarindex_live_seam_ledger | default(0) | int) > 0 else '' }}
+      -textfile-output /var/lib/node_exporter/textfile_collector/verify_archive_tier_d.prom
       2>&1 | logger -t stellarindex-tier-d'
 
 # ── verify-archive Tier E — monthly archivist scan of the local mirror ──

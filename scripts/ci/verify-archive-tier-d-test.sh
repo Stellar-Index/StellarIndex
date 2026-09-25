@@ -311,6 +311,50 @@ else
   bad "Tier D cron installs on a network with no peer region (testnet/futurenet)"
 fi
 
+# ── 7. tagged ops-jobs + emits a textfile metric, like every sibling tier ──
+parity_ok=0
+"$PY" - "$TASK_FILE" <<'PY_PARITY_EOF' || parity_ok=1
+import sys
+
+import yaml
+
+TASK_NAME = "Install Tier D verify-archive weekly cron"
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    tasks = yaml.safe_load(fh)
+
+task = None
+for t in tasks or []:
+    if isinstance(t, dict) and t.get("name") == TASK_NAME:
+        task = t
+if not task:
+    print(f"  FAIL — task {TASK_NAME!r} not found; this gate must not pass vacuously")
+    sys.exit(1)
+
+failures = 0
+if "ops-jobs" in (task.get("tags") or []):
+    print("  ok   — Tier D cron is tagged ops-jobs, like every sibling job task")
+else:
+    print("  FAIL — Tier D cron is untagged: `--tags ops-jobs` converges every "
+          "other job in this file but silently skips this one")
+    failures += 1
+
+job = " ".join((task.get("ansible.builtin.cron") or {}).get("job", "").split())
+if "-textfile-output /var/lib/node_exporter/textfile_collector/verify_archive_tier_d.prom" in job:
+    print("  ok   — Tier D cron emits a textfile metric for staleness alerting")
+else:
+    print("  FAIL — Tier D cron has no -textfile-output: "
+          "stellarindex_verify_archive_last_success_unix{tier=\"peers\"} can never exist")
+    failures += 1
+
+sys.exit(1 if failures else 0)
+PY_PARITY_EOF
+if [ "$parity_ok" -eq 0 ]; then
+  ok "Tier D cron has tag + textfile-metric parity with its sibling tiers"
+else
+  bad "Tier D cron is missing tag or textfile-metric parity (see above)"
+fi
+
 echo
 echo "verify-archive-tier-d-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
