@@ -31,8 +31,13 @@ severity: P2
 
 ## Symptoms
 
-- `(pg_stat_activity_count / pg_settings_max_connections) * 100 > 80`
-  for ≥ 5 min.
+- `(sum by (instance) (pg_stat_activity_count) / on (instance) pg_settings_max_connections) * 100 > 80`
+  for ≥ 5 min. `pg_stat_activity_count` is per connection state
+  (`active`, `idle`, …), so summing by instance first is load-bearing:
+  the unaggregated form leaves several series per instance facing one
+  `pg_settings_max_connections` series, the division matches nothing,
+  and pasting it during a suspected saturation event returns no data —
+  reading as healthy when it may not be.
 - API latency climbs (connection acquisition becomes the bottleneck).
 - Postgres log shows `FATAL: sorry, too many clients already` if
   we've hit 100 %.

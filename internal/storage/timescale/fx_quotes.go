@@ -383,35 +383,3 @@ func (s *Store) FXQuoteBucketAtOrBefore(ctx context.Context, ticker string, at t
 	}
 	return bucket.UTC(), true, nil
 }
-
-// LatestFXBucketPerTicker returns the most-recent (ticker, bucket)
-// the table holds. Used by the forex worker's gap-detector to
-// resume backfill from the newest persisted date instead of
-// re-inserting everything.
-//
-// Empty map when the table is empty.
-func (s *Store) LatestFXBucketPerTicker(ctx context.Context) (map[string]time.Time, error) {
-	const stmt = `
-		SELECT ticker, MAX(bucket)
-		  FROM fx_quotes
-		 GROUP BY ticker
-	`
-	rows, err := s.db.QueryContext(ctx, stmt)
-	if err != nil {
-		return nil, fmt.Errorf("timescale: LatestFXBucketPerTicker: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	out := map[string]time.Time{}
-	for rows.Next() {
-		var ticker string
-		var bucket time.Time
-		if err := rows.Scan(&ticker, &bucket); err != nil {
-			return nil, fmt.Errorf("timescale: LatestFXBucketPerTicker scan: %w", err)
-		}
-		out[ticker] = bucket
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: LatestFXBucketPerTicker rows: %w", err)
-	}
-	return out, nil
-}

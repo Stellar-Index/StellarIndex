@@ -1119,6 +1119,19 @@ func waitBounded(ctx context.Context, logger *slog.Logger, name string, wait fun
 // function the shutdown path calls to drain cleanly. A nil-op wait
 // is returned when no external sources are enabled — keeps the
 // shutdown sequence unconditional.
+// newECBPoller builds the ECB poller, applying the operator's
+// poll_interval override when set. Extracted from
+// [startExternalConnectors] so the override (GH-999: previously
+// accepted in config and read by nothing) is unit-testable without
+// starting network egress.
+func newECBPoller(cfg config.ExternalVenueConfig) *externalecb.Poller {
+	p := externalecb.NewPoller()
+	if cfg.PollInterval > 0 {
+		p.Interval = cfg.PollInterval
+	}
+	return p
+}
+
 func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitting would reduce linearity
 	ctx context.Context,
 	cfg config.ExternalConfig,
@@ -1362,7 +1375,7 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 	}
 
 	if cfg.ECB.Enabled {
-		p := externalecb.NewPoller()
+		p := newECBPoller(cfg.ECB)
 		// ECB speaks fiat-only; derive the pair list from anything
 		// with a fiat side. defaultFXPairs builds fiat/<base>
 		// crosses; ECB's poller further filters to fiats it has
@@ -1374,7 +1387,8 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 		})
 		logger.Info("external poller enabled",
 			"source", externalecb.SourceName,
-			"pairs", len(pairs))
+			"pairs", len(pairs),
+			"poll_interval", p.PollInterval())
 		enabled = append(enabled, externalecb.SourceName)
 	}
 
