@@ -105,6 +105,19 @@
 # and fails until the line is deleted. The debt shrinks monotonically
 # and a NEW migration cannot join it quietly.
 #
+# ── DOCS FENCED SQL (GH-795) ──────────────────────────────────────────
+#
+# The same failure mode lives outside migrations/: a runbook's fenced
+# ```sql block is copy-pasted straight into psql, and a DELETE/UPDATE
+# against a hypertable with no time-bound predicate is a full-table
+# scan of `trades` waiting to happen (GH-795). This gate additionally
+# walks every fenced ```sql block under docs/, and for every DELETE or
+# UPDATE statement in one, requires a time-bound predicate: a
+# comparison against a `*_at`/`*_time`/`ts`/`ledger*` column, a
+# `BETWEEN`, or an `interval` literal. A block containing `DO NOT RUN`
+# anywhere is exempt, same rationale as the migration-header WARNING
+# class above.
+#
 # Usage: lint-migration-commands.sh [repo-root]
 #   The optional root exists for
 #   scripts/ci/lint-migration-commands-test.sh, which runs this gate
@@ -356,3 +369,77 @@ echo "lint-migration-commands: OK — ${#migs[@]} migration file(s), ${paragraph
      "paragraph(s); ${n_recipe} recipe(s) (${n_covered} test-covered," \
      "${uncovered} grandfathered), ${n_warning} DO-NOT-RUN warning(s)," \
      "${n_sketch} sketch(es)."
+
+# ── docs fenced ```sql DELETE/UPDATE time-bound check (GH-795) ────────
+DOCS="docs"
+docmds=()
+if [ -d "$DOCS" ]; then
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    docmds+=("$f")
+  done < <(find "$DOCS" -type f -name '*.md' 2>/dev/null | sed 's#^\./##' | sort)
+fi
+
+if [ "${#docmds[@]}" -gt 0 ]; then
+  doc_violations="$(
+    awk '
+      function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+
+      # Time-bound predicate: a *_at / *_time / ts / ledger* column
+      # compared, a BETWEEN, or an interval literal.
+      function time_bound(s) {
+        if (s ~ /(_at|_time|ledger[A-Za-z_]*)[ \t]*(>=|<=|>|<|=)/) return 1
+        if (s ~ /(^|[^A-Za-z0-9_])ts[ \t]*(>=|<=|>|<|=)/) return 1
+        if (s ~ /(^|[^A-Za-z0-9_])BETWEEN([^A-Za-z0-9_]|$)/) return 1
+        if (s ~ /interval[ \t]*'"'"'/) return 1
+        return 0
+      }
+
+      function flush(fname,   n, i, stmt, do_not_run) {
+        do_not_run = index(raw, "DO NOT RUN")
+        n = split(buf, stmts, ";")
+        for (i = 1; i < n; i++) {
+          stmt = trim(stmts[i])
+          gsub(/[ \t]+/, " ", stmt)
+          if (stmt == "") continue
+          if (stmt !~ /^(DELETE|UPDATE)([ \t]|$)/) continue
+          if (do_not_run) continue
+          if (!time_bound(stmt)) {
+            printf "%s\t%s\n", fname, stmt
+          }
+        }
+        buf = ""; raw = ""
+      }
+
+      FNR == 1 { inblock = 0; buf = ""; raw = "" }
+      /^```sql[ \t]*$/ { inblock = 1; buf = ""; raw = ""; next }
+      /^```[ \t]*$/ { if (inblock) flush(FILENAME); inblock = 0; next }
+      inblock {
+        raw = raw " " $0
+        line = $0
+        sub(/--.*$/, "", line)
+        buf = buf " " line
+      }
+    ' "${docmds[@]}"
+  )"
+
+  if [ -n "$doc_violations" ]; then
+    echo "lint-migration-commands: FAIL — fenced \`\`\`sql DELETE/UPDATE in docs/ with no time-bound predicate:" >&2
+    printf '%s\n' "$doc_violations" | while IFS=$'\t' read -r f cmd; do
+      echo "  $f" >&2
+      echo "    $cmd" >&2
+    done
+    cat >&2 <<'EOF'
+
+A DELETE/UPDATE pasted from a runbook into psql runs exactly as printed.
+Without a *_at/*_time/ts/ledger* predicate, a BETWEEN, or an interval
+bound, it is a full-hypertable statement (GH-795: the trades DELETE and
+defindex_flows DELETE that shipped with no time dimension). Add the
+bound, or mark the statement `DO NOT RUN` if it is quoted only to show
+operators the destructive form.
+EOF
+    exit 1
+  fi
+  echo "lint-migration-commands: OK — ${#docmds[@]} docs/ file(s) scanned for fenced" \
+       "\`\`\`sql DELETE/UPDATE time-bound predicates."
+fi
