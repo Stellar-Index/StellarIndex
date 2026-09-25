@@ -67,11 +67,8 @@ func TestBuildPoolsQuery_FiltersBindAliasSets(t *testing.T) {
 	}
 
 	_, args := buildPoolsQuery(since, PoolsFilter{Base: "native", Quote: usdc}, "", 100, MarketsOrderVolume24hDesc)
-	// >= 7 ($1..$7): the alias-fold VALUES rows (GH-1098) append further
-	// bound pairs after $7, so the base contract is a floor, not a fixed
-	// total.
-	if len(args) < 7 {
-		t.Fatalf("args = %d, want >= 7 ($1..$7)", len(args))
+	if len(args) != 7 {
+		t.Fatalf("args = %d, want 7 ($1..$7)", len(args))
 	}
 	for i, want := range map[int][]string{4: xlmForms, 5: {usdc}, 6: {}} {
 		got, ok := args[i].([]string)
