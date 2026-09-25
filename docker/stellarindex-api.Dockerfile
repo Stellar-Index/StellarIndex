@@ -7,7 +7,7 @@
 # Digest NOT inlined: unresolvable offline in this worktree (no registry
 # access) and must not be fabricated. Resolve with
 # `docker buildx imagetools inspect golang:1.26-alpine` and pin in the same PR.
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27-alpine AS builder
 RUN apk add --no-cache git ca-certificates tzdata
 WORKDIR /src
 # Cache modules separately so source-only edits don't invalidate
