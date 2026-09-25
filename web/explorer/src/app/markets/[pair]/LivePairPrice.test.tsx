@@ -122,3 +122,64 @@ describe('LivePairPrice — 24h change badge (K061)', () => {
     expect(screen.getByText(/\+2\.10%/)).toBeInTheDocument();
   });
 });
+
+// REGRESSION (GH-772): the withheld caption was a hardcoded liquidity
+// -only string regardless of WHY the server refused to serve a price,
+// and a live tip's own divergence/frozen flags never reached this
+// surface at all.
+describe('LivePairPrice — withheld wording + tip flags (GH-772)', () => {
+  it('sources the withheld caption from the server problem body, not a hardcoded liquidity string', async () => {
+    useTipStream.mockReturnValue(null);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        json: async () => ({
+          type: 'https://api.stellarindex.io/errors/price-withheld',
+          title: 'Price withheld — issuer flagged',
+          detail:
+            'a directory-flagged issuer is on one leg of crypto:XLM / fiat:USD, so no price is published',
+        }),
+      }),
+    );
+    renderPrice(
+      <LivePairPrice
+        base="crypto:XLM"
+        quote="fiat:USD"
+        initialPrice={0.17}
+        initialObservedAt={null}
+        quoteIsUsd
+        quoteSuffix="USD"
+      />,
+    );
+    expect(
+      await screen.findByText(/directory-flagged issuer/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/market too thin to aggregate/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it('marks a live tip tick as frozen when the stream flags it', () => {
+    useTipStream.mockReturnValue({
+      data: {
+        data: { price: '0.1745' },
+        as_of: '2026-09-25T00:00:00Z',
+        flags: { frozen: true, frozen_checked: true },
+      },
+      receivedAt: Date.now(),
+    });
+    renderPrice(
+      <LivePairPrice
+        base="crypto:XLM"
+        quote="fiat:USD"
+        initialPrice={0.17}
+        initialObservedAt={null}
+        quoteIsUsd
+        quoteSuffix="USD"
+      />,
+    );
+    expect(screen.getByText(/frozen/i)).toBeInTheDocument();
+  });
+});
