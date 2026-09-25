@@ -3,6 +3,7 @@
 import { useChangeSummary } from '@/api/hooks';
 import {
   isFrameStale,
+  tipCaveat,
   useLiveClock,
   usePriceFlash,
   usePricePoll,
@@ -147,6 +148,7 @@ export function LiveAssetPrice({
   const tipNumber = tipPriceStr != null ? Number(tipPriceStr) : NaN;
   const tipActive = Number.isFinite(tipNumber) && tipNumber > 0;
   const flash = usePriceFlash(tipActive ? tipPriceStr : undefined);
+  const caveat = tipActive && tip ? tipCaveat(tip.data.data, tip.data.flags) : null;
 
   const shown = tipActive ? tipNumber : price;
 
@@ -190,8 +192,10 @@ export function LiveAssetPrice({
         )}
       </div>
       <p className="text-ink-muted mt-1 text-[11px] tracking-wider uppercase">
-        {withheld && 'price withheld · market too thin to aggregate'}
+        {withheld &&
+          (poll.withheldDetail ?? poll.withheldTitle ?? 'price withheld')}
         {!withheld && tipActive && 'live tip price · USD · streaming'}
+        {!withheld && tipActive && caveat && ` · ${caveat}`}
         {!withheld &&
           !tipActive &&
           shown != null &&
