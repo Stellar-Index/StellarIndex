@@ -89,7 +89,8 @@ migrate -path migrations -database "${STELLARINDEX_POSTGRES_DSN}" down 1
 8. **Ratio aggregates use the single-division exact form.** A
    volume-weighted price in a CAGG is
    `sum(quote_amount) / sum(base_amount)` — one division at the
-   end, exact under NUMERIC. Never the per-row form
+   end, so one NUMERIC rounding (~16 significant digits), not one
+   per row. Never the per-row form
    `sum((quote/base) * base) / sum(base)`: each per-row division
    rounds at NUMERIC division scale, so the result is inexact by
    construction. The legacy `prices_*` CAGGs (migration 0002) used
@@ -97,8 +98,12 @@ migrate -path migrations -database "${STELLARINDEX_POSTGRES_DSN}" down 1
    ≤ 1.0e-16 relative (40,565 1h-bucket comparisons) — below the
    12-decimal wire truncation, so not worth a re-materialization on
    its own. Migration 0147 (which re-materialized anyway for the
-   deterministic open/close tie-break) switched them to the exact
-   form, so ALL price CAGGs now comply. Note
+   deterministic open/close tie-break) switched them to the
+   single-division form, so ALL price CAGGs now comply. They store
+   no Σ(quote): the OHLC reads rebuild it as `round(vwap * volume)`,
+   exact below 10^16 smallest units per row. A
+   `sum(quote_amount) AS volume_quote` column is the free rider for
+   the next re-materialization, not a reason for one. Note
    also the 0002 CAGGs materialize a `twap` column that is an
    equal-weight mean (`avg(quote/base)`), NOT time-weighted; on
    `prices_1m` migration 0166 floors it at $0.01 of notional. It is

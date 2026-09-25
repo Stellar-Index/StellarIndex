@@ -325,3 +325,35 @@ func TestDailyMarketDaysQueryReadsWholeLastDay(t *testing.T) {
 		t.Error("query missing the exclusive end-of-day upper bound `bucket < $4::timestamptz + INTERVAL '1 day'`")
 	}
 }
+
+var (
+	closedVWAPUpperLiteral = regexp.MustCompile(`bucket <= TIMESTAMPTZ '([^']+)'`)
+	closedVWAPLowerLiteral = regexp.MustCompile(`bucket >= TIMESTAMPTZ '([^']+)'`)
+)
+
+// closedVWAPAtOrBeforeBounds reads the upper and lower bucket literals
+// out of a statement [Store.ClosedVWAPAtOrBefore] actually issued. Every
+// arm repeats them, and every repetition must carry the same instant.
+func closedVWAPAtOrBeforeBounds(t *testing.T, sql string) (upper, lower time.Time) {
+	t.Helper()
+	return singleTimestamptzLiteral(t, sql, closedVWAPUpperLiteral, "upper"),
+		singleTimestamptzLiteral(t, sql, closedVWAPLowerLiteral, "lower")
+}
+
+func singleTimestamptzLiteral(t *testing.T, sql string, re *regexp.Regexp, name string) time.Time {
+	t.Helper()
+	ms := re.FindAllStringSubmatch(sql, -1)
+	if len(ms) == 0 {
+		t.Fatalf("statement has no literal %s bound (%s):\n%s", name, re, sql)
+	}
+	for _, m := range ms[1:] {
+		if m[1] != ms[0][1] {
+			t.Fatalf("%s bound differs between arms: %q vs %q:\n%s", name, ms[0][1], m[1], sql)
+		}
+	}
+	got, err := time.Parse("2006-01-02 15:04:05-07", ms[0][1])
+	if err != nil {
+		t.Fatalf("%s bound %q does not parse as the package's timestamptz layout: %v", name, ms[0][1], err)
+	}
+	return got
+}
