@@ -115,6 +115,64 @@ func TestScanLedgerEntryChange_CapturesWatchedUpgrade(t *testing.T) {
 	}
 }
 
+// TestScanLCMForWasmChanges_V2LedgerCloseMeta is the P23 regression:
+// pubnet emits LedgerCloseMetaV2 (TransactionMeta V4) after the P23
+// boundary, and the scanner must not silently skip it the way a
+// `lcm.V != 1` guard did.
+func TestScanLCMForWasmChanges_V2LedgerCloseMeta(t *testing.T) {
+	var watched sdkxdr.Hash
+	watched[0] = 0xAA
+	watch := map[sdkxdr.Hash]string{watched: "CDLZ_watched"}
+	state := map[sdkxdr.Hash]*wasmContractState{}
+
+	wasmHash := [32]byte{0xDE, 0xAD, 0xBE, 0xEF}
+	change := makeUpdateChange(t, watched, wasmHash)
+
+	lcm := sdkxdr.LedgerCloseMeta{
+		V: 2,
+		V2: &sdkxdr.LedgerCloseMetaV2{
+			LedgerHeader: sdkxdr.LedgerHeaderHistoryEntry{
+				Header: sdkxdr.LedgerHeader{LedgerSeq: 60000000},
+			},
+			TxProcessing: []sdkxdr.TransactionResultMetaV1{
+				{
+					TxApplyProcessing: sdkxdr.TransactionMeta{
+						V: 4,
+						V4: &sdkxdr.TransactionMetaV4{
+							Operations: []sdkxdr.OperationMetaV2{
+								{Changes: sdkxdr.LedgerEntryChanges{change}},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := scanLCMForWasmChanges(lcm, watch, state, lcm.LedgerSequence(), nil); err != nil {
+		t.Fatalf("scanLCMForWasmChanges returned error: %v", err)
+	}
+
+	if len(state) != 1 {
+		t.Fatalf("state has %d entries, want 1 (V2 LCM's TransactionMeta V4 change was dropped)", len(state))
+	}
+	got := state[watched].ranges
+	if len(got) != 1 || got[0].FromLedger != 60000000 {
+		t.Fatalf("ranges = %+v, want one range starting at 60000000", got)
+	}
+}
+
+// TestScanLCMForWasmChanges_UnsupportedVersionErrors confirms an
+// unknown LedgerCloseMeta or TransactionMeta arm fails loudly
+// instead of silently reporting zero changes.
+func TestScanLCMForWasmChanges_UnsupportedVersionErrors(t *testing.T) {
+	state := map[sdkxdr.Hash]*wasmContractState{}
+	lcm := sdkxdr.LedgerCloseMeta{V: 99}
+	if err := scanLCMForWasmChanges(lcm, nil, state, 1, nil); err == nil {
+		t.Fatal("expected an error for unsupported LedgerCloseMeta.V, got nil")
+	}
+}
+
 // makeUpdateChange constructs a synthetic LedgerEntryChange of type
 // Updated whose ContractData entry corresponds to the given
 // contract's instance row, with the given executable WASM hash.

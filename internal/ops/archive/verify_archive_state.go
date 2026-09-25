@@ -122,6 +122,15 @@ type ChunkStitch struct {
 	FirstPrevHash string `json:"first_prev_hash,omitempty"`
 	LastSeq       uint32 `json:"last_seq,omitempty"`
 	LastHash      string `json:"last_hash,omitempty"`
+	// CheckpointChecked records whether the run that produced this
+	// chunk had the checkpoint tier active. false means the
+	// Checkpoints* counts below are NOT "zero misses" — they are
+	// "never counted" — and planResumedWalk must not let a
+	// checkpoint-tier run skip this chunk on that evidence alone.
+	CheckpointChecked     bool `json:"checkpoint_checked,omitempty"`
+	CheckpointsOK         int  `json:"checkpoints_ok,omitempty"`
+	CheckpointsMissed     int  `json:"checkpoints_missed,omitempty"`
+	CheckpointsUnmirrored int  `json:"checkpoints_unmirrored,omitempty"`
 }
 
 // readVerifyArchiveState loads state from disk. Missing file returns
@@ -379,7 +388,7 @@ func markChunkDone(st VerifyArchiveState, tier string, idx int, lastHash sdkxdr.
 // run cannot check the boundaries either side of the chunk it skips,
 // and stitchChunks silently compares non-adjacent chunks instead
 // (RLT-265).
-func markChunkDoneStitch(st VerifyArchiveState, tier string, idx int, res chunkResult, now time.Time) VerifyArchiveState {
+func markChunkDoneStitch(st VerifyArchiveState, tier string, idx int, res chunkResult, now time.Time, doCheckpoint bool) VerifyArchiveState {
 	out := markChunkDone(st, tier, idx, res.LastHash, now)
 	ts, ok := out.Tiers[tier]
 	if !ok || ts.InProgress == nil || idx < 0 || idx >= len(ts.InProgress.Chunks) {
@@ -387,13 +396,20 @@ func markChunkDoneStitch(st VerifyArchiveState, tier string, idx int, res chunkR
 	}
 	// markChunkDone already deep-copied the RunProgress and its chunk
 	// slice, so writing through the pointer touches only `out`.
-	ts.InProgress.Chunks[idx].Stitch = &ChunkStitch{
+	stitch := &ChunkStitch{
 		Verified:      res.Verified,
 		FirstSeq:      res.FirstSeq,
 		FirstPrevHash: hashToHex(res.FirstPrevHash),
 		LastSeq:       res.LastSeq,
 		LastHash:      hashToHex(res.LastHash),
 	}
+	if doCheckpoint {
+		stitch.CheckpointChecked = true
+		stitch.CheckpointsOK = res.CheckpointsOK
+		stitch.CheckpointsMissed = res.CheckpointsMissed
+		stitch.CheckpointsUnmirrored = res.CheckpointsUnmirrored
+	}
+	ts.InProgress.Chunks[idx].Stitch = stitch
 	return out
 }
 
@@ -402,12 +418,15 @@ func markChunkDoneStitch(st VerifyArchiveState, tier string, idx int, res chunkR
 // label a boundary failure is reported under.
 func (s ChunkStitch) chunkResult(idx int, c ChunkProgress) (chunkResult, error) {
 	res := chunkResult{
-		Idx:      idx,
-		From:     c.From,
-		To:       c.To,
-		FirstSeq: s.FirstSeq,
-		LastSeq:  s.LastSeq,
-		Verified: s.Verified,
+		Idx:                   idx,
+		From:                  c.From,
+		To:                    c.To,
+		FirstSeq:              s.FirstSeq,
+		LastSeq:               s.LastSeq,
+		Verified:              s.Verified,
+		CheckpointsOK:         s.CheckpointsOK,
+		CheckpointsMissed:     s.CheckpointsMissed,
+		CheckpointsUnmirrored: s.CheckpointsUnmirrored,
 	}
 	if s.Verified == 0 {
 		// An empty chunk carries no hashes and stitchChunks skips it
@@ -543,7 +562,7 @@ func allChunkIdxs(chunks []opsutil.RangeChunk) []int {
 // the chunks that ran, compares non-adjacent ones instead. A chunk
 // recorded before the evidence existed is re-walked, which is
 // self-healing: the next run records it and resume works again.
-func planResumedWalk(st VerifyArchiveState, tier string, from, to uint32, workers int, chunks []opsutil.RangeChunk) ([]opsutil.RangeChunk, []int, string) {
+func planResumedWalk(st VerifyArchiveState, tier string, from, to uint32, workers int, chunks []opsutil.RangeChunk, doCheckpoint bool) ([]opsutil.RangeChunk, []int, string) {
 	keep, idxs, reason := resumeChunks(st, tier, from, to, workers, chunks)
 	if len(keep) == 0 {
 		return chunks, allChunkIdxs(chunks), reason +
@@ -553,7 +572,21 @@ func planResumedWalk(st VerifyArchiveState, tier string, from, to uint32, worker
 	prior := priorChunkProgress(st, tier)
 	var unstitchable int
 	for i := range chunks {
-		if i < len(prior) && prior[i].Done && prior[i].Stitch == nil {
+		if i >= len(prior) || !prior[i].Done {
+			continue
+		}
+		// No boundary evidence at all — chain stitch cannot check
+		// this chunk's edges.
+		if prior[i].Stitch == nil {
+			unstitchable++
+			continue
+		}
+		// This run wants the checkpoint tier, but the run that
+		// produced this Done marker didn't check checkpoints for
+		// this chunk — its persisted Checkpoints* counts are "never
+		// counted", not "zero misses" (RLT-... checkpoint tally
+		// loss). Skipping it would silently drop its contribution.
+		if doCheckpoint && !prior[i].Stitch.CheckpointChecked {
 			unstitchable++
 		}
 	}
@@ -561,8 +594,9 @@ func planResumedWalk(st VerifyArchiveState, tier string, from, to uint32, worker
 		return keep, idxs, reason
 	}
 	return chunks, allChunkIdxs(chunks), fmt.Sprintf(
-		"%s — but %d of them recorded no cross-chunk boundary evidence, so skipping them would "+
-			"leave their boundaries unchecked; re-walking the full plan", reason, unstitchable)
+		"%s — but %d of them recorded no cross-chunk boundary evidence (or none covering this run's "+
+			"checkpoint tier), so skipping them would leave their contribution unchecked; re-walking the full plan",
+		reason, unstitchable)
 }
 
 // priorChunkProgress returns the tier's recorded per-chunk progress,

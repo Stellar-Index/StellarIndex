@@ -525,7 +525,7 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	// last one left off, not from genesis. The state-file is owned
 	// by the runner inside this function for the in-flight period;
 	// main re-reads after we return to apply its own updateTierState.
-	filteredChunks, chunkIdxs, resumeReason := planResumedWalk(priorState, tier, from, to, workers, chunks)
+	filteredChunks, chunkIdxs, resumeReason := planResumedWalk(priorState, tier, from, to, workers, chunks, doCheckpoint)
 	if stateFile != "" {
 		fmt.Fprintf(os.Stderr, "verify-archive: %s\n", resumeReason)
 	}
@@ -570,7 +570,7 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 				}
 				stateMu.Lock()
 				defer stateMu.Unlock()
-				stateNow = markChunkDoneStitch(stateNow, tier, originalIdx, res, time.Now().UTC())
+				stateNow = markChunkDoneStitch(stateNow, tier, originalIdx, res, time.Now().UTC(), doCheckpoint)
 				if err := writeVerifyArchiveState(stateFile, stateNow); err != nil {
 					fmt.Fprintf(os.Stderr,
 						"verify-archive: warn: per-chunk state write failed (chunk[%d] Done): %v\n",
@@ -585,20 +585,14 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	// highestLedger / highestHash are reported back to the caller so
 	// it can persist incremental-run state via -state-file.
 	var (
-		verified              int
-		mismatches            int
-		checkpointsOK         int
-		checkpointsMissed     int
-		checkpointsUnmirrored int
-		highestLedger         uint32
-		highestHashHex        string
+		verified       int
+		mismatches     int
+		highestLedger  uint32
+		highestHashHex string
 	)
 	for _, r := range results {
 		verified += r.Verified
 		mismatches += r.Mismatches
-		checkpointsOK += r.CheckpointsOK
-		checkpointsMissed += r.CheckpointsMissed
-		checkpointsUnmirrored += r.CheckpointsUnmirrored
 		if r.LastSeq > highestLedger {
 			highestLedger = r.LastSeq
 			highestHashHex = fmt.Sprintf("%x", r.LastHash[:])
@@ -628,6 +622,23 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 			stitchErr = stitchChunks(planResults)
 		} else {
 			planResults = results
+		}
+	}
+
+	// Checkpoint tallies must reflect the FULL PLAN, not just the
+	// chunks this run walked: a resumed run's skipped chunks recorded
+	// their own checkpoint counts in ChunkStitch (via
+	// markChunkDoneStitch), and fullPlanStitchInput reconstructs them
+	// into planResults above. Summing over `results` instead silently
+	// dropped a skipped chunk's missed-checkpoint tally to 0, letting
+	// -fail-on-missed pass and the checkpoint high-water move past a
+	// real hole.
+	var checkpointsOK, checkpointsMissed, checkpointsUnmirrored int
+	if doCheckpoint {
+		for _, r := range planResults {
+			checkpointsOK += r.CheckpointsOK
+			checkpointsMissed += r.CheckpointsMissed
+			checkpointsUnmirrored += r.CheckpointsUnmirrored
 		}
 	}
 

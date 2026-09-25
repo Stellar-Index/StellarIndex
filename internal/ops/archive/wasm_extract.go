@@ -170,7 +170,9 @@ func extractWasmFromGalexie(args []string) error { //nolint:funlen,gocognit,gocy
 			err := ledgerstream.Stream(ctx, lsCfg, b.From, b.To,
 				func(lcm sdkxdr.LedgerCloseMeta) error {
 					seq := lcm.LedgerSequence()
-					scanLCMForWasmCode(lcm, wantHashes, *outputDir, wantHexes, &foundMu, found)
+					if err := scanLCMForWasmCode(lcm, wantHashes, *outputDir, wantHexes, &foundMu, found); err != nil {
+						return err
+					}
 					workerScanned++
 					if *progressEvery > 0 && workerScanned%uint64(*progressEvery) == 0 {
 						total := totalScanned.add(uint64(*progressEvery))
@@ -246,30 +248,35 @@ func scanLCMForWasmCode(
 	wantHexes map[sdkxdr.Hash]string,
 	foundMu *sync.Mutex,
 	found map[sdkxdr.Hash]string,
-) {
-	if lcm.V != 1 || lcm.V1 == nil {
-		return
+) error {
+	seq := lcm.LedgerSequence()
+	if lcm.V < 0 || lcm.V > 2 {
+		return fmt.Errorf("ledger %d: unsupported LedgerCloseMeta.V=%d", seq, lcm.V)
 	}
-	v1 := lcm.V1
-	for i := range v1.TxProcessing {
-		txMeta := &v1.TxProcessing[i].TxApplyProcessing
-		switch {
-		case txMeta.V3 != nil:
+	for i := 0; i < lcm.CountTransactions(); i++ {
+		txMeta := lcm.TxApplyProcessing(i)
+		switch txMeta.V {
+		case 0, 1, 2:
+			continue
+		case 3:
 			for j := range txMeta.V3.Operations {
 				changes := txMeta.V3.Operations[j].Changes
 				for k := range changes {
 					maybeWriteWasmCode(&changes[k], wantHashes, outputDir, wantHexes, foundMu, found)
 				}
 			}
-		case txMeta.V4 != nil:
+		case 4:
 			for j := range txMeta.V4.Operations {
 				changes := txMeta.V4.Operations[j].Changes
 				for k := range changes {
 					maybeWriteWasmCode(&changes[k], wantHashes, outputDir, wantHexes, foundMu, found)
 				}
 			}
+		default:
+			return fmt.Errorf("ledger %d tx %d: unsupported TransactionMeta.V=%d", seq, i, txMeta.V)
 		}
 	}
+	return nil
 }
 
 // maybeWriteWasmCode inspects a single LedgerEntryChange. If it's a

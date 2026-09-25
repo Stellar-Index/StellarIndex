@@ -78,7 +78,7 @@ func TestPlanResumedWalk_AllDoneRewalksRatherThanCertifying(t *testing.T) {
 		t.Fatalf("precondition: want the all-Done verdict from resumeChunks, got %d chunk(s) (%s)", len(keep), reason)
 	}
 
-	got, idxs, reason := planResumedWalk(st, "checkpoint", 2, 3000, 3, chunks)
+	got, idxs, reason := planResumedWalk(st, "checkpoint", 2, 3000, 3, chunks, true)
 	if len(got) != len(chunks) {
 		t.Fatalf("planResumedWalk returned %d chunk(s) to walk, want the full plan of %d: "+
 			"an all-Done prior run must be re-walked, not certified as a zero-ledger success (RLT-281)",
@@ -106,9 +106,9 @@ func TestPlanResumedWalk_PartialResumeStillSkipsDoneChunks(t *testing.T) {
 	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
 	chunks := threeChunkPlan()
 	st := startTierProgress(VerifyArchiveState{}, "checkpoint", 2, 3000, 3, chunks, now)
-	st = markChunkDoneStitch(st, "checkpoint", 0, walkedChunk(0, chunks[0], hashByte(0x10), hashByte(0x11)), now)
+	st = markChunkDoneStitch(st, "checkpoint", 0, walkedChunk(0, chunks[0], hashByte(0x10), hashByte(0x11)), now, true)
 
-	got, idxs, _ := planResumedWalk(st, "checkpoint", 2, 3000, 3, chunks)
+	got, idxs, _ := planResumedWalk(st, "checkpoint", 2, 3000, 3, chunks, true)
 	if len(got) != 2 || got[0] != chunks[1] || got[1] != chunks[2] {
 		t.Fatalf("plan = %+v, want the two not-Done chunks %+v", got, chunks[1:])
 	}
@@ -132,7 +132,7 @@ func TestPlanResumedWalk_DoneWithoutBoundaryEvidenceIsRewalked(t *testing.T) {
 	// hash, no FirstPrevHash and no verified count.
 	st = markChunkDone(st, "checkpoint", 0, hashByte(0x11), now)
 
-	got, idxs, reason := planResumedWalk(st, "checkpoint", 2, 3000, 3, chunks)
+	got, idxs, reason := planResumedWalk(st, "checkpoint", 2, 3000, 3, chunks, true)
 	if len(got) != len(chunks) || len(idxs) != len(chunks) {
 		t.Fatalf("plan = %+v idxs = %v, want the full plan: a Done chunk with no boundary "+
 			"evidence must be re-walked, not skipped (RLT-265)", got, idxs)
@@ -163,7 +163,7 @@ func TestFullPlanStitchInput_ChainBreakBesideSkippedChunkIsCaught(t *testing.T) 
 	// Prior run: chunk 0 walked to ledger 1000, ending on hash 0xaa.
 	chunk0 := walkedChunk(0, chunks[0], hashByte(0x01), hashByte(0xaa))
 	st := startTierProgress(VerifyArchiveState{}, "chain", 2, 3000, 3, chunks, now)
-	st = markChunkDoneStitch(st, "chain", 0, chunk0, now)
+	st = markChunkDoneStitch(st, "chain", 0, chunk0, now, false)
 
 	// This run: chunk 1 starts at ledger 1001 whose PreviousLedgerHash
 	// is 0xbb — it does NOT chain onto chunk 0's 0xaa. Chunks 1→2
@@ -229,7 +229,7 @@ func TestFullPlanStitchInput_IntactChainAcrossSkippedChunkPasses(t *testing.T) {
 
 	// Prior run finished the MIDDLE chunk.
 	st := startTierProgress(VerifyArchiveState{}, "chain", 2, 3000, 3, chunks, now)
-	st = markChunkDoneStitch(st, "chain", 1, chunk1, now)
+	st = markChunkDoneStitch(st, "chain", 1, chunk1, now, false)
 
 	live := []chunkResult{chunk0, chunk2}
 	liveIdxs := []int{0, 2}
@@ -288,7 +288,7 @@ func TestVerifyArchiveState_StitchSurvivesTheStateFile(t *testing.T) {
 	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
 	chunks := threeChunkPlan()
 	st := startTierProgress(VerifyArchiveState{}, "chain", 2, 3000, 3, chunks, now)
-	st = markChunkDoneStitch(st, "chain", 0, walkedChunk(0, chunks[0], hashByte(0x01), hashByte(0xaa)), now)
+	st = markChunkDoneStitch(st, "chain", 0, walkedChunk(0, chunks[0], hashByte(0x01), hashByte(0xaa)), now, false)
 
 	path := filepath.Join(t.TempDir(), "verify-archive-state.json")
 	if err := writeVerifyArchiveState(path, st); err != nil {
@@ -388,12 +388,75 @@ func TestChunkStitchRoundTrip(t *testing.T) {
 func TestPlanResumedWalk_NoPriorStateWalksEverything(t *testing.T) {
 	t.Parallel()
 	chunks := threeChunkPlan()
-	got, idxs, reason := planResumedWalk(VerifyArchiveState{}, "checkpoint", 2, 3000, 3, chunks)
+	got, idxs, reason := planResumedWalk(VerifyArchiveState{}, "checkpoint", 2, 3000, 3, chunks, true)
 	if len(got) != 3 || len(idxs) != 3 {
 		t.Fatalf("plan = %+v idxs = %v, want all three chunks", got, idxs)
 	}
 	if !strings.Contains(reason, "no prior in-progress") {
 		t.Errorf("reason = %q, want the cold-start reason", reason)
+	}
+}
+
+// TestFullPlanStitchInput_PreservesCheckpointTallyForSkippedChunk is
+// the checkpoint-tally-loss regression: a chunk the prior run walked
+// with the checkpoint tier active and recorded CheckpointsMissed>0
+// for must not silently reconstruct as CheckpointsMissed=0 just
+// because a resumed run skips it. verifyArchiveLCMWalk sums its
+// tier-verdict counters over exactly this reconstructed slice, so a
+// zero here is what let -fail-on-missed pass over a real hole.
+func TestFullPlanStitchInput_PreservesCheckpointTallyForSkippedChunk(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
+	chunks := threeChunkPlan()
+
+	missedChunk := walkedChunk(0, chunks[0], hashByte(0x01), hashByte(0xaa))
+	missedChunk.CheckpointsOK = 3
+	missedChunk.CheckpointsMissed = 2
+	missedChunk.CheckpointsUnmirrored = 1
+
+	st := startTierProgress(VerifyArchiveState{}, "checkpoint", 2, 3000, 3, chunks, now)
+	st = markChunkDoneStitch(st, "checkpoint", 0, missedChunk, now, true) // doCheckpoint=true: this run DID check
+
+	live := []chunkResult{
+		walkedChunk(1, chunks[1], hashByte(0xaa), hashByte(0xbb)),
+		walkedChunk(2, chunks[2], hashByte(0xbb), hashByte(0xcc)),
+	}
+	planInput, err := fullPlanStitchInput(st, "checkpoint", len(chunks), []int{1, 2}, live)
+	if err != nil {
+		t.Fatalf("fullPlanStitchInput: %v", err)
+	}
+	if planInput[0].CheckpointsMissed != 2 {
+		t.Errorf("reconstructed chunk[0].CheckpointsMissed = %d, want 2 — a skipped chunk's real "+
+			"missed-checkpoint count must survive reconstruction, not silently read as 0",
+			planInput[0].CheckpointsMissed)
+	}
+	if planInput[0].CheckpointsOK != 3 || planInput[0].CheckpointsUnmirrored != 1 {
+		t.Errorf("reconstructed chunk[0] checkpoint counts = ok:%d unmirrored:%d, want ok:3 unmirrored:1",
+			planInput[0].CheckpointsOK, planInput[0].CheckpointsUnmirrored)
+	}
+}
+
+// TestPlanResumedWalk_RefusesToSkipChunkCheckpointsNeverChecked: a
+// chunk marked Done by a run that did NOT have the checkpoint tier
+// active (doCheckpoint=false, e.g. a "chain"-only run reusing the
+// same InProgress record) has Checkpoints*=0 meaning "never counted",
+// not "zero misses". A checkpoint-tier run must not skip it on that
+// evidence — it must re-walk the full plan instead.
+func TestPlanResumedWalk_RefusesToSkipChunkCheckpointsNeverChecked(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
+	chunks := threeChunkPlan()
+
+	st := startTierProgress(VerifyArchiveState{}, "checkpoint", 2, 3000, 3, chunks, now)
+	st = markChunkDoneStitch(st, "checkpoint", 0, walkedChunk(0, chunks[0], hashByte(0x01), hashByte(0xaa)), now, false)
+
+	got, idxs, reason := planResumedWalk(st, "checkpoint", 2, 3000, 3, chunks, true)
+	if len(got) != len(chunks) || len(idxs) != len(chunks) {
+		t.Fatalf("plan = %+v idxs = %v, want the full plan: a Done chunk with no checkpoint "+
+			"coverage for this run's tier must be re-walked, not skipped", got, idxs)
+	}
+	if !strings.Contains(reason, "checkpoint") {
+		t.Errorf("reason = %q, want it to mention the missing checkpoint coverage", reason)
 	}
 }
 
@@ -420,7 +483,7 @@ func TestChunkProgressLastVerifiedHash_IsNotTheBoundaryProof(t *testing.T) {
 	liveIdxs := []int{1, 2}
 
 	base := startTierProgress(VerifyArchiveState{}, "chain", 2, 3000, 3, chunks, now)
-	base = markChunkDoneStitch(base, "chain", 0, chunk0, now)
+	base = markChunkDoneStitch(base, "chain", 0, chunk0, now, false)
 
 	// Precondition: the field the old comment named is in fact written.
 	if got := base.Tiers["chain"].InProgress.Chunks[0].LastVerifiedHash; got != hashToHex(hashByte(0xaa)) {
@@ -428,7 +491,7 @@ func TestChunkProgressLastVerifiedHash_IsNotTheBoundaryProof(t *testing.T) {
 	}
 
 	// Poisoning the mirror must not move the verdict.
-	poisonedMirror := markChunkDoneStitch(base, "chain", 0, chunk0, now)
+	poisonedMirror := markChunkDoneStitch(base, "chain", 0, chunk0, now, false)
 	poisonedMirror.Tiers["chain"].InProgress.Chunks[0].LastVerifiedHash = hashToHex(hashByte(0xff))
 	planInput, err := fullPlanStitchInput(poisonedMirror, "chain", len(chunks), liveIdxs, live)
 	if err != nil {
@@ -445,7 +508,7 @@ func TestChunkProgressLastVerifiedHash_IsNotTheBoundaryProof(t *testing.T) {
 
 	// Poisoning the term the proof DOES read must break it — otherwise
 	// the assertion above would hold for a stitch that reads nothing.
-	poisonedProof := markChunkDoneStitch(base, "chain", 0, chunk0, now)
+	poisonedProof := markChunkDoneStitch(base, "chain", 0, chunk0, now, false)
 	poisonedProof.Tiers["chain"].InProgress.Chunks[0].Stitch.LastHash = hashToHex(hashByte(0xff))
 	planInput, err = fullPlanStitchInput(poisonedProof, "chain", len(chunks), liveIdxs, live)
 	if err != nil {
@@ -472,7 +535,7 @@ func TestChunkProgressLastVerifiedHash_NamesTheLastWalkedLedger(t *testing.T) {
 	short.Verified = int(short.LastSeq-short.FirstSeq) + 1
 
 	st := startTierProgress(VerifyArchiveState{}, "chain", 2, 3000, 3, chunks, now)
-	st = markChunkDoneStitch(st, "chain", 0, short, now)
+	st = markChunkDoneStitch(st, "chain", 0, short, now, false)
 	c := st.Tiers["chain"].InProgress.Chunks[0]
 	if !c.Done || c.Stitch == nil {
 		t.Fatalf("precondition: chunk[0] Done=%v Stitch=%v, want Done with a Stitch record", c.Done, c.Stitch)
