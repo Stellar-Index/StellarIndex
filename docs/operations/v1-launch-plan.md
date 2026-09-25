@@ -3409,7 +3409,10 @@ one — they are lead-time items, not sequenced work.
   originally scoped as.
 
   **Not acted on: removing already-seeded phantom rows is a DELETE, so
-  it is parked per the guardrails.** See OPERATOR INBOX #5.
+  it is parked per the guardrails.** See OPERATOR INBOX #5. *(Executed
+  2026-07-29 after approval; see the 7/8 supply-gate entry. The SAC seed
+  now writes a retraction tombstone for every removed or archived
+  holder, so a re-seed clears such rows without a DELETE.)*
 
 - 2026-07-28 ~07:23Z — ✅ **AQUA CLAIMABLE FIX CONFIRMED LANDED**, and the
   full supply-vs-Horizon sweep now separates three distinct causes.

@@ -253,6 +253,13 @@ below is the generic path.
       62,000,000 is the evidence the floor was actually reached — a
       `full_history` label with a high `min_ledger_seen` means the scan
       ran but found nothing old, which is a different (real) finding.
+      The row does not record which binary wrote it. Passes before the
+      TTL-archival filter (2026-07-28) seeded archived balances as live:
+      that was PHO's +157 %, cleared by the approved DELETE of
+      2026-07-29. If `seeded_at` predates the binary you are running,
+      re-seed anyway. The current binary does not stamp a wrapper's row
+      when it could not check the TTL of every watched key, or when the
+      wrapper matched no Balance entry; the pass exits non-zero instead.
 - [ ] **Re-seed from the complete append-log.** Dry-run first, per the
       convention; the full-history scan reads
       `stellar.ledger_entry_changes` (complete to genesis) instead of
@@ -268,6 +275,21 @@ below is the generic path.
       ```
       The printed `sum=<stroops>` per contract should rise by the
       dormant pool holding; that delta is what the gauge was showing.
+      An error naming `no stellar.ttl_live_until row` means this host's
+      TTL projection is not backfilled: run Step 2 of
+      `deploy/clickhouse/ttl_live_until.sql`, then re-run. Do not work
+      around it, because keeping those keys would re-seed archived
+      balances as live. `matched no Balance entry` names a
+      `[supply.sac_wrappers]` contract id that found nothing; check it.
+      A holder whose entry was removed or TTL-archived is written as a
+      zero-balance tombstone at the removal or archival ledger and is
+      counted as `retracted=`, not as a holder. The tombstone supersedes
+      any row an earlier pass seeded for that holder, so a re-seed clears
+      phantom rows without a DELETE. If an earlier pass of the same
+      source seeded more holders than this pass re-seeded and retracted
+      together, the pass leaves that contract's provenance row unchanged
+      and exits non-zero (`neither re-seeded nor retracted`). The old rows
+      for those holders are still served; escalate and do not re-run.
 - [ ] **Verify convergence** after the aggregator's next refresher tick
       (`aggregator_refresh_cadence`, default 5m) — the gauge should
       drop to 0 for the re-seeded pair. If it does NOT drop and

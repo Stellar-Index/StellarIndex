@@ -53,7 +53,9 @@ import (
 //	-ch-addr ADDR       ClickHouse native address (default 127.0.0.1:9300).
 //	-genesis-ledger N   Exclusive upper ledger bound of the baseline sum
 //	                    (default clickhouse.SorobanGenesisLedger = 50457424).
-//	-dry-run            Read + print the per-contract baselines without writing.
+//	-write              Apply. Without it the pass is a dry run: read + print
+//	                    the per-contract baselines, nothing written (-dry-run
+//	                    is a no-op alias).
 func supplySeedSEP41Genesis(args []string) error {
 	fs := flag.NewFlagSet("supply seed-sep41-genesis", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

@@ -41,7 +41,8 @@ import (
 //	-config PATH   Required. Operator TOML config (provides
 //	               sdf_reserve_accounts + the Postgres DSN).
 //	-ch-addr ADDR  ClickHouse native address (default 127.0.0.1:9300).
-//	-dry-run       Read + print without writing.
+//	-write         Apply. Without it the pass is a dry run: read + print,
+//	               nothing written (-dry-run is a no-op alias).
 func supplySeedObservations(args []string) error {
 	fs := flag.NewFlagSet("supply seed-observations", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

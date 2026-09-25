@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
@@ -85,8 +86,9 @@ import (
 //	-timeout DUR     Whole-run deadline (default 12h). All writes happen
 //	                 after the scan, so a deadline that expires mid-scan
 //	                 loses the whole pass.
-//	-dry-run         Read + print per-contract holder count + summed
-//	                 balance without writing.
+//	-write           Apply. Without it the pass is a dry run: read + print
+//	                 per-contract holder count + summed balance, nothing
+//	                 written (-dry-run is a no-op alias).
 func supplySeedSACBalances(args []string) error {
 	fs := flag.NewFlagSet("supply seed-sac-balances", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -167,12 +169,13 @@ func supplySeedSACBalances(args []string) error {
 
 	printSACSeedSummary(watched, tallies, total, dryRun)
 
+	var provErr error
 	if !dryRun {
 		if err := writeSACSeedProvenance(ctx, store, watched, tallies, source); err != nil {
-			return fmt.Errorf("write seed provenance: %w", err)
+			provErr = fmt.Errorf("write seed provenance: %w", err)
 		}
 	}
-	return nil
+	return errors.Join(unmatchedSACWrappersErr(watched, tallies), provErr)
 }
 
 // sacSeedTally is a per-contract running tally for the seed summary +
@@ -217,34 +220,86 @@ func (t *sacSeedTally) observe(ledger uint32) {
 	}
 }
 
-// writeSACSeedProvenance upserts one sac_balance_seed_provenance row per
-// watched contract (migration 0102) — including wrappers with zero
-// holders found this pass, so an operator can see "we looked, found
-// nothing" distinctly from "never seeded". Best-effort per contract: a
-// provenance write failure is reported but does not unwind the
-// observations already committed above (the audit trail is secondary to
-// the supply data itself).
-func writeSACSeedProvenance(ctx context.Context, store *timescale.Store, watched map[string]string, tallies map[string]*sacSeedTally, source timescale.SACBalanceSeedSource) error {
-	var firstErr error
+// matched is how many of the wrapper's Balance keys this pass resolved, live
+// or retracted.
+func (t *sacSeedTally) matched() int {
+	if t == nil {
+		return 0
+	}
+	return t.holders + t.retracted
+}
+
+// unmatchedSACWrappersErr fails the pass for every watched wrapper that
+// matched no Balance entry at all. Such a wrapper gets no provenance row: a
+// row with zero holders and NULL bounds is indistinguishable from a mis-keyed
+// [supply.sac_wrappers] entry, and would read as a completed seed.
+func unmatchedSACWrappersErr(watched map[string]string, tallies map[string]*sacSeedTally) error {
+	var unmatched []string
 	for cid, ak := range watched {
-		t := tallies[cid]
-		p := timescale.SACBalanceSeedProvenance{
-			ContractID: cid,
-			AssetKey:   ak,
-			Source:     source,
-		}
-		if t != nil {
-			p.HoldersSeeded = t.holders
-			if t.haveLedgerBounds {
-				minL, maxL := t.minLedger, t.maxLedger
-				p.MinLedgerSeen, p.MaxLedgerSeen = &minL, &maxL
-			}
-		}
-		if err := store.UpsertSACBalanceSeedProvenance(ctx, p); err != nil && firstErr == nil {
-			firstErr = err
+		if tallies[cid].matched() == 0 {
+			unmatched = append(unmatched, cid+" ("+ak+")")
 		}
 	}
-	return firstErr
+	if len(unmatched) == 0 {
+		return nil
+	}
+	sort.Strings(unmatched)
+	return fmt.Errorf("%d watched SAC wrapper(s) matched no Balance entry and were not stamped in provenance — check the [supply.sac_wrappers] contract id: %s",
+		len(unmatched), strings.Join(unmatched, ", "))
+}
+
+// checkSACSeedShrink refuses a pass that accounts for fewer keys than the
+// previous same-source pass seeded. Each pass re-resolves every key its reader
+// has ever held, as a live holder or a tombstone, so holders + retracted cannot
+// fall; a shortfall is holders neither re-seeded nor retracted, whose old rows
+// the served tier still sums. A different source is not comparable:
+// current_state cannot see holders below its floor that full_history seeded.
+func checkSACSeedShrink(prev timescale.SACBalanceSeedProvenance, source timescale.SACBalanceSeedSource, t *sacSeedTally) error {
+	if prev.Source != source || t.matched() >= prev.HoldersSeeded {
+		return nil
+	}
+	return fmt.Errorf("%s: %s pass accounted for %d key(s) (%d holders, %d retracted) but the previous %s pass seeded %d holders; %d were neither re-seeded nor retracted and still serve their old balance — provenance left unchanged",
+		prev.ContractID, source, t.matched(), t.holders, t.retracted, prev.Source, prev.HoldersSeeded, prev.HoldersSeeded-t.matched())
+}
+
+// writeSACSeedProvenance upserts one sac_balance_seed_provenance row per
+// watched contract that matched at least one Balance key (migration 0102).
+// A contract that fails [checkSACSeedShrink] keeps its previous row. Best-effort
+// per contract: a failure is reported but does not unwind the observations
+// already committed (the audit trail is secondary to the supply data itself).
+func writeSACSeedProvenance(ctx context.Context, store *timescale.Store, watched map[string]string, tallies map[string]*sacSeedTally, source timescale.SACBalanceSeedSource) error {
+	var errs []error
+	for cid, ak := range watched {
+		t := tallies[cid]
+		if t.matched() == 0 {
+			continue // reported by unmatchedSACWrappersErr
+		}
+		prev, ok, err := store.SACBalanceSeedProvenanceFor(ctx, cid)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if ok {
+			if err := checkSACSeedShrink(prev, source, t); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+		}
+		p := timescale.SACBalanceSeedProvenance{
+			ContractID:    cid,
+			AssetKey:      ak,
+			Source:        source,
+			HoldersSeeded: t.holders,
+		}
+		if t.haveLedgerBounds {
+			minL, maxL := t.minLedger, t.maxLedger
+			p.MinLedgerSeen, p.MaxLedgerSeen = &minL, &maxL
+		}
+		if err := store.UpsertSACBalanceSeedProvenance(ctx, p); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // printSACSeedSummary prints one stable line per watched wrapper

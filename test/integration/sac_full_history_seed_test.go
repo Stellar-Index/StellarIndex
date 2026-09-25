@@ -83,6 +83,9 @@ func TestSACFullHistorySeed_RecoversDormantPoolHolder(t *testing.T) {
 	if written != 1 {
 		t.Fatalf("InsertEntryChanges wrote %d rows, want 1", written)
 	}
+	if _, err := chstore.InsertEntryChanges(ctx, addr, []chstore.LedgerEntryChangeRow{fhLiveTTLRow(keyXDR, dormantLedger)}, 0); err != nil {
+		t.Fatalf("InsertEntryChanges (ttl): %v", err)
+	}
 	// The live ledger_entries_current_mv mirrors the row we just inserted
 	// (a fresh test schema always has the MV in place before any insert —
 	// unlike r1, where it was created after ~62M-worth of ch-backfilled
@@ -173,6 +176,7 @@ func TestSACFullHistorySeed_LatestWriteWins(t *testing.T) {
 			ChangeType: "updated", EntryType: "contract_data", KeyXDR: keyXDR,
 			EntryXDR: fhEntryXDR(t, sacContract, holderKey, fhI128Val(newBal), 45_000_000),
 		},
+		fhLiveTTLRow(keyXDR, 45_000_000),
 	}
 	if _, err := chstore.InsertEntryChanges(ctx, addr, rows, 0); err != nil {
 		t.Fatalf("InsertEntryChanges: %v", err)
@@ -313,6 +317,7 @@ func TestSACFullHistorySeed_SameLedgerRecreateWins(t *testing.T) {
 			ChangeType: "created", EntryType: "contract_data", KeyXDR: keyXDR,
 			EntryXDR: fhEntryXDR(t, sacContract, holderKey, fhI128Val(recreated), ledger),
 		},
+		fhLiveTTLRow(keyXDR, ledger),
 	}
 	if _, err := chstore.InsertEntryChanges(ctx, addr, rows, 0); err != nil {
 		t.Fatalf("InsertEntryChanges: %v", err)
@@ -428,6 +433,15 @@ func fhI128Val(amount *big.Int) xdr.ScVal {
 		Type: xdr.ScValTypeScvI128,
 		I128: &xdr.Int128Parts{Hi: xdr.Int64(hi.Int64()), Lo: xdr.Uint64(lo.Uint64())},
 	}
+}
+
+// fhLiveTTLRow is the TTL change keeping a fixture Balance entry live past any
+// lake tip another test can raise: the SAC seed refuses a watched key with no
+// TTL row. The tx hash is per key so two fixtures' TTL rows never collapse.
+func fhLiveTTLRow(keyXDR string, ledger uint32) chstore.LedgerEntryChangeRow {
+	row := ttlChangeRow(keyXDR, ledger, 1, 4_000_000_000, 48)
+	row.TxHash = "fh-ttl-" + keyXDR[len(keyXDR)-24:]
+	return row
 }
 
 func fhKeyXDR(t *testing.T, contract xdr.ScAddress, key xdr.ScVal) string {

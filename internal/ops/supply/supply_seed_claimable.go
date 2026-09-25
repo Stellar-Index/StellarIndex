@@ -49,6 +49,8 @@ const claimableSeedBatchSize = 2000
 // [timescale.SeedIntraLedgerSeq], so a re-seed rewrites the same row and a
 // later live observation (notably the is_removal row a claim produces) always
 // wins the served reader's `DISTINCT ON (claimable_id) … ORDER BY ledger DESC`.
+// It only ADDS rows, though: a balance claimed while the live observer was not
+// recording keeps its earlier seeded row, and no re-seed retracts it.
 //
 // # Scope
 //
@@ -82,8 +84,9 @@ const claimableSeedBatchSize = 2000
 //	-timeout DUR     Whole-run deadline (default 12h). The scan is hours
 //	                 long and all writes happen at the end, so a deadline
 //	                 that expires mid-scan loses the whole pass.
-//	-dry-run         Read + print per-asset claimable count + summed
-//	                 balance without writing.
+//	-write           Apply. Without it the pass is a dry run: read + print
+//	                 per-asset claimable count + summed balance, nothing
+//	                 written (-dry-run is a no-op alias).
 func supplySeedClaimableBalances(args []string) error {
 	fs := flag.NewFlagSet("supply seed-claimable-balances", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -228,8 +231,8 @@ func (w *claimableSeedWriter) add(seed clickhouse.ClaimableBalanceSeed) error {
 		Balance:     seed.Balance,
 		// A live claimable balance, by construction: the reducer drops every
 		// key whose latest change is a removal, so a seeded row is never a
-		// tombstone. The claim that removes it arrives from the LIVE observer
-		// at a higher ledger and wins the served reader's at-or-before pick.
+		// tombstone. The claim that removes it must arrive from the LIVE
+		// observer at a higher ledger to win the served reader's pick.
 		IsRemoval: false,
 		// The seed is the authoritative reconstructed FINAL state for its
 		// ledger, so it sits at the top of the intra-ledger order — a live
