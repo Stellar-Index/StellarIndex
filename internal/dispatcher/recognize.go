@@ -57,7 +57,12 @@ func (d *Dispatcher) Recognize(ev events.Event) (name string, ok bool) {
 		}
 		if v, ok := dec.(Validator); ok {
 			if err := v.Validate(ev); err != nil {
-				continue
+				// dispatchOne commits to the first Matches()==true decoder
+				// and never falls through to a later one on decode failure
+				// (dispatcher.go dispatchOne). Recognize must report the
+				// same outcome for the same sample: a recognition gap, not
+				// a later decoder's name.
+				return "", false
 			}
 		}
 		return dec.Name(), true
