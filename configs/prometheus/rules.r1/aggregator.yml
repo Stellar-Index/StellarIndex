@@ -469,10 +469,11 @@ groups:
             request time). When the refresh sweep fails, newly-detected
             non-7-decimal tokens don't get their nonstandard_decimals_assets
             correction entry seeded/refreshed, so their pairs revert
-            to the raw, skewed ratio that
-            stellarindex_dex_nonstandard_decimals_detected exists to
-            warn about — this is the genuine action item behind that
-            latching detector. Investigate the aggregator's
+            to the raw, skewed ratio the retired
+            stellarindex_dex_nonstandard_decimals_detected alert (removed
+            2026-08-05, see above) used to flag — this alert is the
+            genuine action item behind that risk now. Investigate
+            the aggregator's
             decimals-guard component (internal/decimalsguard) and the
             nonstandard_decimals_assets table directly.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
