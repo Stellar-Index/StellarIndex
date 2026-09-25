@@ -5,7 +5,14 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
+
+// pinnedWindow freezes a limiter's clock so a request and the probe that
+// reads its charge cannot straddle a window boundary into a fresh bucket.
+var pinnedWindow = ratelimit.WithClock(func() time.Time { return time.Unix(1_800_000_000, 0) })
 
 // testServerImpl wraps httptest.Server so asset + server tests
 // share one construction path.
