@@ -329,6 +329,12 @@ type AssetListingDirectoryReader interface {
 // be the reason a correction takes longer to propagate.
 const assetListingSnapshotTTL = 60 * time.Second
 
+// assetListingReadBudget bounds one refresh read. The read is detached
+// from the triggering request and runs under the cache mutex every
+// listing-consulting request queues on, so it needs a deadline of its
+// own.
+const assetListingReadBudget = 5 * time.Second
+
 // assetListing is one read of the directory, reduced to what this
 // surface may consult.
 type assetListing struct {
@@ -356,20 +362,31 @@ type assetListingCache struct {
 // assetListingSnapshot returns the cached directory read, refreshing it
 // past [assetListingSnapshotTTL].
 //
-// Fails CLOSED in the strong sense, the same way [Server.rwaListingSnapshot]
+// Fails CLOSED in the strong sense, the same way [Server.rwaCuratedSnapshot]
 // does: a failed read yields an UNAVAILABLE snapshot and is CACHED as
 // such. Carrying the last good snapshot forward is the tempting move and
 // the wrong one — it would keep publishing dollar figures from a
 // directory nobody can currently read, with nothing on the wire to say
 // so, for as long as the outage lasted.
+//
+// The read runs on a context DETACHED from the caller's request, so the
+// request that triggers a refresh cannot poison the shared cache by
+// disconnecting mid-read, and under its own deadline, so a hung read
+// cannot hold the mutex indefinitely.
 func (s *Server) assetListingSnapshot(ctx context.Context) assetListing {
+	return s.assetListingSnapshotWithin(ctx, assetListingReadBudget)
+}
+
+func (s *Server) assetListingSnapshotWithin(ctx context.Context, budget time.Duration) assetListing {
 	s.assetListings.mu.Lock()
 	defer s.assetListings.mu.Unlock()
 	if !s.assetListings.at.IsZero() && time.Since(s.assetListings.at) < assetListingSnapshotTTL {
 		return s.assetListings.snap
 	}
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget)
+	defer cancel()
 	s.assetListings.at = time.Now()
-	s.assetListings.snap = s.readAssetListing(ctx)
+	s.assetListings.snap = s.readAssetListing(rctx)
 	return s.assetListings.snap
 }
 
