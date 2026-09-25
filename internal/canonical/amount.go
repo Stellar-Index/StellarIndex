@@ -239,10 +239,15 @@ func (a Amount) Value() (driver.Value, error) {
 
 // Scan implements sql.Scanner. Accepts the string form Postgres
 // NUMERIC returns, or []byte equivalent.
+//
+// SQL NULL is an ERROR, not a zero Amount, for the reason [Asset.Scan]
+// gives: Amount cannot distinguish absent from zero, so a LEFT JOIN miss
+// or an un-COALESCEd SUM would otherwise read as the money value 0.
+// Scan a nullable NUMERIC through sql.NullString and [FromString].
 func (a *Amount) Scan(src any) error {
 	if src == nil {
-		*a = Amount{value: new(big.Int)}
-		return nil
+		return fmt.Errorf("canonical: cannot scan SQL NULL into an Amount "+
+			"(scan a nullable NUMERIC column through sql.NullString and FromString): %w", ErrInvalidAmount)
 	}
 	switch v := src.(type) {
 	case string:
