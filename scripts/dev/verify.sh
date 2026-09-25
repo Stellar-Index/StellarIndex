@@ -318,6 +318,11 @@ echo "=== systemd unit hardening ===" && ./scripts/ci/lint-systemd-hardening.sh
 echo "=== systemd unit hardening self-test ===" && ./scripts/ci/lint-systemd-hardening-test.sh
 echo "=== Textfile-collector exposition ===" && ./scripts/ci/lint-textfile-exposition.sh
 echo "=== Textfile-collector exposition self-test ===" && ./scripts/ci/lint-textfile-exposition-test.sh
+# GH-545: registered in scripts/ci/textfile-producers.manifest but nothing
+# ran either self-test — the manifest's third column proved only that the
+# file existed, not that it executed.
+echo "=== ch-schema-snapshot self-test ===" && ./scripts/ops/ch-schema-snapshot-test.sh
+echo "=== ch-schema-drift self-test ===" && ./configs/ansible/roles/archival-node/files/ch-schema-drift-test.sh
 echo "=== Ansible task lint (pipefail/bash, secret-on-argv) ===" && ./scripts/ci/lint-ansible-tasks.sh
 echo "=== Ansible task lint self-test ===" && ./scripts/ci/lint-ansible-tasks-test.sh
 echo "=== Ansible-drift decision-core self-test ===" && ./scripts/ci/check-ansible-drift-test.sh
