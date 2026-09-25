@@ -53,6 +53,32 @@ does NOT self-heal. That case is covered by the separate
 `stellarindex_price_alert_eval_no_successful_sweeps` alert (GH #749):
 zero `ok` sweeps with sustained `partial_error` for 30+ min.
 
+Two more alerts read per-alert and liveness signals rather than the
+per-sweep outcome:
+
+- `stellarindex_price_alert_evaluations_failing` — more than half of the
+  per-alert evaluations (`stellarindex_price_alert_evaluated_total`)
+  ended in `error` or `timeout` for 30+ min. `partial_error` is one sample
+  per sweep whether one alert or every alert failed; this separates the
+  two, and still fires when an occasional sweep goes clean.
+- `stellarindex_price_alert_sweep_stale` — no sweep has completed for
+  15+ min (`stellarindex_price_alert_last_sweep_unix`, seeded with the
+  evaluator's start time). A sweep wedged behind slow alerts emits no
+  outcome sample, so every `rate()` rule reads no data.
+
+Each alert's reads (price probe, VWAP, webhook list) share one deadline,
+and its claim-and-enqueue fan-out gets a fresh one. Each deadline is a
+third of the sweep interval: 10 s at the default 30 s. An alert that
+runs out is counted `timeout` and the sweep moves on, so one cold pair
+no longer holds every other account's alerts behind a 30 m statement
+timeout. A pair that times out every sweep is usually never-traded: its
+VWAP probe walks evicted chunks. See `LatestClosedVWAP1mForPair`.
+
+```promql
+sum by (outcome) (rate(stellarindex_price_alert_evaluated_total[15m]))
+time() - stellarindex_price_alert_last_sweep_unix
+```
+
 ## Quick diagnosis (≤ 5 min)
 
 ```sh
@@ -112,3 +138,5 @@ Capture for the postmortem: the underlying error class, whether the
 
 - 2026-07-05 — initial draft alongside the price-alert evaluator
   (BACKLOG #60).
+- 2026-09-26 — per-alert deadline, `evaluations_failing` and
+  `sweep_stale` (GH #749).

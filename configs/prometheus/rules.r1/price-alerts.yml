@@ -85,6 +85,61 @@ groups:
             webhook_deliveries) is common to every alert, then the
             runbook.
 
+      # GH-749: most per-alert evaluations failing. partial_error above is
+      # one sample per sweep whether one alert or every alert failed; this
+      # reads the per-alert counter, so it separates "one bad row" from
+      # "customer alerts are not being delivered", and it keeps firing
+      # when an occasional sweep still goes clean. timeout is the
+      # per-alert deadline (a third of the sweep interval) expiring.
+      - alert: stellarindex_price_alert_evaluations_failing
+        expr: |
+          sum(rate(stellarindex_price_alert_evaluated_total{outcome=~"error|timeout"}[15m]))
+            >
+          0.5 * sum(rate(stellarindex_price_alert_evaluated_total[15m]))
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: price-alerts
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-alert-eval-failing.md
+          summary: "Most price-alert evaluations failing (P3)"
+          description: |
+            More than half of per-alert evaluations ended in error or
+            timeout over 15 min, sustained 30+ min — customers' price
+            alerts are mostly not being delivered, not just one bad row.
+            Break stellarindex_price_alert_evaluated_total down by
+            outcome, check aggregator logs for `price-alert evaluate
+            failed`, then the runbook.
+
+      # GH-749: the evaluator stopped completing sweeps. A sweep stuck
+      # behind slow alerts emits no outcome sample at all, so every rate()
+      # rule above reads "no data" and stays silent. The gauge is seeded
+      # with the evaluator's start time, so a first sweep that never
+      # completes ages it too; `> 0` keeps processes that never started
+      # the evaluator (disabled, or another binary) quiet —
+      # never_initialized below covers those. 900 s is 30 default sweep
+      # intervals.
+      - alert: stellarindex_price_alert_sweep_stale
+        expr: |
+          (time() - stellarindex_price_alert_last_sweep_unix) > 900
+          and
+          stellarindex_price_alert_last_sweep_unix > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: price-alerts
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-alert-eval-failing.md
+          summary: "Price-alert evaluator has not completed a sweep in 15+ min (P3)"
+          description: |
+            stellarindex_price_alert_last_sweep_unix is more than 15 min
+            old, sustained 5+ min: the evaluator is wedged mid-sweep or
+            its loop has stopped, and no customer price alert is being
+            evaluated. Check the aggregator's goroutine state and
+            `price-alert evaluate failed` timeouts, then the runbook.
+
       # Companion to the two rules above (RLT-226): both read `rate()`
       # over stellarindex_price_alert_eval_total, and a counter with no
       # increments is ABSENT, not zero, so neither can ever fire while

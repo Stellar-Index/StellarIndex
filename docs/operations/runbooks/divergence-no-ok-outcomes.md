@@ -15,7 +15,7 @@ severity: P3
 | Severity | P3 (ticket) |
 | Detected by | `deploy/monitoring/rules/divergence.yml` (+ R1 overlay) |
 | Typical MTTR | 15–60 min |
-| Impact | No pair has had a healthy divergence comparison for 45+ min, so no `div:<asset>` entry has been written and every cached one has expired (5-min TTL). `flags.divergence_warning` and `divergence_checked` read false fleet-wide, and the cross-oracle confidence lens has nothing to use. Aggregate prices keep serving. |
+| Impact | No pair has had a healthy divergence comparison for 45+ min, so no `div:<asset>` entry has been written and every cached one has expired (TTL: refresh cadence plus one worst-case pass). `flags.divergence_warning` and `divergence_checked` read false fleet-wide, and the cross-oracle confidence lens has nothing to use. Aggregate prices keep serving. |
 
 ## Why this exists (vs the two sibling alerts)
 

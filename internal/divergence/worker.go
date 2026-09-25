@@ -15,6 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // Cache is the Redis subset the [Service] needs. Declared as an
@@ -215,6 +216,12 @@ type ServiceOptions struct {
 	// Zero means the cadence is at most WarningPersistence.
 	RefreshInterval time.Duration
 
+	// PairCount is how many pairs one refresh pass visits. The caller
+	// refreshes them sequentially, so a pair's div: key is rewritten up
+	// to RefreshInterval plus a whole pass after its previous write;
+	// with RefreshInterval it sizes the key's TTL ([Service.cacheTTL]).
+	PairCount int
+
 	// PerReferenceTimeout is forwarded to [Compare] via
 	// [CompareOptions]. Default 5s.
 	PerReferenceTimeout time.Duration
@@ -268,6 +275,7 @@ type Service struct {
 	timeout     time.Duration
 	persistence time.Duration
 	maxGap      time.Duration
+	cacheTTL    time.Duration
 	sink        ObservationSink
 	// logger is optional — nil-safe. When set, sink failures are
 	// logged at WARN per (pair, reference) instead of being
@@ -349,9 +357,12 @@ func NewService(opts ServiceOptions) (*Service, error) {
 	if persistence == 0 {
 		persistence = DefaultWarningPersistence
 	}
+	refs := independentReferences(opts.References)
+	seedReferenceOutcomes(refs)
 	return &Service{
 		maxGap:       2 * max(persistence, opts.RefreshInterval),
-		refs:         independentReferences(opts.References),
+		cacheTTL:     cacheTTL(opts.RefreshInterval, opts.PairCount, timeout),
+		refs:         refs,
 		cache:        opts.Cache,
 		threshold:    threshold,
 		minSources:   minSources,
@@ -364,6 +375,49 @@ func NewService(opts ServiceOptions) (*Service, error) {
 		firingSince:  map[string]firingStreak{},
 		restored:     map[string]bool{},
 	}, nil
+}
+
+// cacheTTLSlack covers what a pass does besides Compare — the VWAP
+// read, the Redis writes and the observation sink — per pass.
+const cacheTTLSlack = time.Minute
+
+// cacheTTL is the div: key expiry. A pair's key must outlive the longest
+// gap between two of its writes — the pass cadence plus a pass in which
+// every pair spends Compare's whole overall budget — or the key expires
+// before its rewrite and every consumer reads "no cross-oracle data" in
+// between. Never below [cachekeys.DivergenceTTL].
+func cacheTTL(refreshInterval time.Duration, pairs int, perReference time.Duration) time.Duration {
+	if refreshInterval <= 0 {
+		return cachekeys.DivergenceTTL
+	}
+	worstPass := time.Duration(max(pairs, 1)) * overallTimeoutFactor * perReference
+	return max(cachekeys.DivergenceTTL, refreshInterval+worstPass+cacheTTLSlack)
+}
+
+// seedReferenceOutcomes pre-creates every (reference, outcome) child so a
+// failure class's first occurrence moves a rate() instead of creating it.
+func seedReferenceOutcomes(refs []Reference) {
+	for _, r := range refs {
+		for _, outcome := range ReferenceOutcomes {
+			obs.DivergenceReferenceTotal.WithLabelValues(safeName(r), outcome)
+		}
+	}
+}
+
+// recordReferenceHealth exports what the div: cache alone records: each
+// reference's outcome for the pair, and whether the pair met the quorum
+// the warning verdict needs. A reference outage that leaves fewer than
+// minSources responding disarms detection while every pass still counts
+// as ok, so it is only visible here.
+func recordReferenceHealth(pair canonical.Pair, res Result, quorumMet bool) {
+	for name, outcome := range res.Outcomes {
+		obs.DivergenceReferenceTotal.WithLabelValues(name, outcome).Inc()
+	}
+	met := 0.0
+	if quorumMet {
+		met = 1
+	}
+	obs.DivergencePairQuorumMet.WithLabelValues(pair.String()).Set(met)
 }
 
 // RefreshPair runs one divergence check for the supplied pair +
@@ -437,6 +491,7 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 	// "unchecked", not "unanimous disagreement".
 	checked := res.SuccessCount >= s.minSources
 	evaluated := checked && !pinned
+	recordReferenceHealth(pair, res, checked)
 
 	// W3-guards-2: our value is a shortest-window VWAP; the references
 	// are instantaneous spot quotes. On a fast price move the VWAP lags
@@ -490,7 +545,7 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 	// per-base key let the last pair in iteration order clobber the
 	// asset's divergence verdict. The per-pair key keeps each pair's
 	// result independent; the by-asset reader (LookupCached) ORs them.
-	if err := s.cache.Set(ctx, key.String(), body, cachekeys.DivergenceTTL).Err(); err != nil {
+	if err := s.cache.Set(ctx, key.String(), body, s.cacheTTL).Err(); err != nil {
 		return fmt.Errorf("divergence: cache set %s: %w", key, err)
 	}
 
@@ -498,13 +553,13 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 	// which per-pair keys to OR for a given base. SADD is idempotent;
 	// the Expire refreshes the set's TTL on every write so it drains
 	// in lock-step with the value keys (a base whose pairs stop
-	// refreshing loses its index after DivergenceTTL rather than
+	// refreshing loses its index after the key TTL rather than
 	// pinning dead quote members forever).
 	idxKey := cachekeys.DivergenceBaseIndex(pair.Base)
 	if err := s.cache.SAdd(ctx, idxKey.String(), pair.Quote.String()).Err(); err != nil {
 		return fmt.Errorf("divergence: index sadd %s: %w", idxKey, err)
 	}
-	if err := s.cache.Expire(ctx, idxKey.String(), cachekeys.DivergenceTTL).Err(); err != nil {
+	if err := s.cache.Expire(ctx, idxKey.String(), s.cacheTTL).Err(); err != nil {
 		return fmt.Errorf("divergence: index expire %s: %w", idxKey, err)
 	}
 

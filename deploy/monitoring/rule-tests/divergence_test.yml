@@ -449,7 +449,7 @@ tests:
                 More refresh_error outcomes than ok over the last 5 min for
                 30+ min sustained. CoinGecko / Chainlink RPC reachability is
                 the usual cause; the API's `flags.divergence_warning` stops
-                updating and goes stale once the 5-min cache TTL elapses.
+                updating and goes stale once the >= 5-min cache TTL elapses.
                 Check the upstream reference's status, then the aggregator's
                 `divergence refresher wired` startup log line for which
                 references are configured.
@@ -713,4 +713,112 @@ tests:
     alert_rule_test:
       - eval_time: 40m
         alertname: stellarindex_oracle_stream_rows_unparsed
+        exp_alerts: []
+
+  # ══ stellarindex_divergence_reference_failing (GH-679) ════════════
+  # ── firing: one reference fails 9 of 10 lookups; the other is fine ─
+  - interval: 1m
+    name: one reference failing most lookups tickets while the pass stays ok
+    input_series:
+      - series: 'stellarindex_divergence_reference_total{job="stellarindex_aggregator",instance="r1:9102",reference="coingecko",outcome="price_unavailable"}'
+        values: '0+9x80'
+      - series: 'stellarindex_divergence_reference_total{job="stellarindex_aggregator",instance="r1:9102",reference="coingecko",outcome="ok"}'
+        values: '0+1x80'
+      - series: 'stellarindex_divergence_reference_total{job="stellarindex_aggregator",instance="r1:9102",reference="chainlink",outcome="ok"}'
+        values: '0+10x80'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_divergence_reference_failing
+        exp_alerts:
+          - exp_labels:
+              reference: coingecko
+              severity: ticket
+              team: stellarindex
+              component: divergence
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-reference.md
+              summary: "Divergence reference coingecko failing most lookups (P3)"
+              description: |
+                More than half of coingecko's divergence lookups
+                (asset_unsupported and too_stale_to_compare excluded) failed
+                over 15 min, sustained 30+ min. The pass still counts `ok` while any other reference
+                answers, so this is the only signal for a partial reference
+                outage. Break the failures down by `outcome` on
+                stellarindex_divergence_reference_total, then the runbook.
+
+  # ── asset_unsupported is coverage, not an outage ──────────────────
+  - interval: 1m
+    name: a reference that does not list most assets raises nothing
+    input_series:
+      - series: 'stellarindex_divergence_reference_total{job="stellarindex_aggregator",instance="r1:9102",reference="chainlink",outcome="asset_unsupported"}'
+        values: '0+9x80'
+      - series: 'stellarindex_divergence_reference_total{job="stellarindex_aggregator",instance="r1:9102",reference="chainlink",outcome="ok"}'
+        values: '0+1x80'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_divergence_reference_failing
+        exp_alerts: []
+
+  # ── a daily-heartbeat feed between pushes is not an outage ────────
+  - interval: 1m
+    name: a heartbeat feed that is mostly too stale to compare raises nothing
+    input_series:
+      - series: 'stellarindex_divergence_reference_total{job="stellarindex_aggregator",instance="r1:9102",reference="redstone",outcome="too_stale_to_compare"}'
+        values: '0+9x80'
+      - series: 'stellarindex_divergence_reference_total{job="stellarindex_aggregator",instance="r1:9102",reference="redstone",outcome="ok"}'
+        values: '0+1x80'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_divergence_reference_failing
+        exp_alerts: []
+
+  # ── a minority of failures stays silent ───────────────────────────
+  - interval: 1m
+    name: a reference failing a minority of lookups raises nothing
+    input_series:
+      - series: 'stellarindex_divergence_reference_total{job="stellarindex_aggregator",instance="r1:9102",reference="coingecko",outcome="timeout"}'
+        values: '0+4x80'
+      - series: 'stellarindex_divergence_reference_total{job="stellarindex_aggregator",instance="r1:9102",reference="coingecko",outcome="ok"}'
+        values: '0+6x80'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_divergence_reference_failing
+        exp_alerts: []
+
+  # ══ stellarindex_divergence_pair_below_quorum (GH-679) ════════════
+  # ── firing: the pair lost quorum at 10m and never regained it ────
+  - interval: 1m
+    name: a pair below reference quorum for an hour tickets
+    input_series:
+      - series: 'stellarindex_divergence_pair_quorum_met{job="stellarindex_aggregator",instance="r1:9102",pair="native/fiat:USD"}'
+        values: '1x10 0x80'
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: stellarindex_divergence_pair_below_quorum
+        exp_alerts:
+          - exp_labels:
+              pair: native/fiat:USD
+              severity: ticket
+              team: stellarindex
+              component: divergence
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-reference.md
+              summary: "Divergence detection disarmed for native/fiat:USD — below reference quorum (P3)"
+              description: |
+                Every divergence refresh of native/fiat:USD for 60+ min had
+                fewer responding references than min_sources_for_warning, so
+                its divergence warning is frozen at its last evaluated value
+                and divergence_checked reads false. Check which reference
+                dropped out (stellarindex_divergence_reference_total by
+                outcome); see the runbook.
+
+  # ── an intermittent quorum (one refresh in 30m met it) stays silent ─
+  - interval: 1m
+    name: a pair that met quorum within the window raises nothing
+    input_series:
+      - series: 'stellarindex_divergence_pair_quorum_met{job="stellarindex_aggregator",instance="r1:9102",pair="native/fiat:USD"}'
+        values: '0x20 1 0x20 1 0x20 1 0x20'
+    alert_rule_test:
+      - eval_time: 80m
+        alertname: stellarindex_divergence_pair_below_quorum
         exp_alerts: []

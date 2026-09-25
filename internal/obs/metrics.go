@@ -229,6 +229,10 @@ func registerAppMetricsTail() {
 		PasskeyLoginRefusalsTotal,
 
 		AMMSwapReceivedDivergenceTotal,
+		// Per-reference divergence metrics, here rather than beside
+		// DivergenceRefreshTotal in [registerAppMetrics] for funlen.
+		DivergenceReferenceTotal,
+		DivergencePairQuorumMet,
 		// Readiness-check gauge (#371 F2) — the only alertable signal
 		// ClickHouse has, since it is the one dependency on r1 with no
 		// Prometheus exporter of its own.
@@ -307,6 +311,8 @@ func registerAppMetricsTail() {
 
 		PriceAlertEvalTotal,
 		PriceAlertEvalDurationSeconds,
+		PriceAlertEvaluatedTotal,
+		PriceAlertLastSweepUnix,
 
 		AssetsPopularPriceless,
 		PricelessCoverageCheckRunsTotal,
@@ -2136,6 +2142,35 @@ var DivergenceRefreshDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
+// DivergenceReferenceTotal — one increment per (reference, pair)
+// lookup in a divergence refresh, labelled by the reference's Name()
+// and its bounded outcome class (divergence.ReferenceOutcomes: ok,
+// asset_unsupported, price_unavailable, too_stale_to_compare,
+// invalid_price, timeout, overall_deadline_exceeded, panicked, error).
+// DivergenceRefreshTotal is per PAIR and only goes non-ok when EVERY
+// reference fails, so one reference going dark — which can drop a
+// pair below the warning quorum — is visible only here.
+var DivergenceReferenceTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_divergence_reference_total",
+		Help: "Divergence-refresh reference lookups by reference and outcome (ok|asset_unsupported|price_unavailable|too_stale_to_compare|invalid_price|timeout|overall_deadline_exceeded|panicked|error).",
+	},
+	[]string{"reference", "outcome"},
+)
+
+// DivergencePairQuorumMet is 1 when a pair's latest divergence refresh
+// had at least min_sources_for_warning responding references, 0 when
+// it did not. Below quorum the warning verdict is carried forward, not
+// re-evaluated, so a 0 means divergence detection is disarmed for the
+// pair while the pass still counts outcome="ok".
+var DivergencePairQuorumMet = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_divergence_pair_quorum_met",
+		Help: "1 when the pair's latest divergence refresh met the reference quorum (min_sources_for_warning), 0 when detection was disarmed.",
+	},
+	[]string{"pair"},
+)
+
 // UsageRollupSweepsTotal — per-outcome counter for the API binary's
 // usage-rollup worker (internal/usage.Rollup), which folds the Redis
 // per-endpoint request counters into the `usage_daily` Timescale
@@ -2321,15 +2356,38 @@ var AssetCharacterRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 //     sweep were still evaluated.
 //
 // A sustained `list_error` rate means NO alerts are being evaluated —
-// customers stop getting notified. `partial_error` is narrower (a
-// subset of alerts affected). Alerting: divergence-refresh-shaped
-// `list_error` > `ok` guard in the price-alerts rule group.
+// customers stop getting notified. `partial_error` says only that at
+// least one alert failed; [PriceAlertEvaluatedTotal] says how many.
 var PriceAlertEvalTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_alert_eval_total",
 		Help: "Price-alert evaluator sweep outcomes (ok|list_error|partial_error).",
 	},
 	[]string{"outcome"},
+)
+
+// PriceAlertEvaluatedTotal — one increment per alert per sweep, labelled
+// by that alert's outcome (pricealerts.AlertOutcomes): fired, not_crossed,
+// no_price, cooling_down, no_subscriber, claim_lost, error, timeout.
+// PriceAlertEvalTotal's `partial_error` is one sample per sweep whether
+// one alert or all of them failed; this counter separates the two.
+var PriceAlertEvaluatedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_price_alert_evaluated_total",
+		Help: "Per-alert price-alert evaluation outcomes (fired|not_crossed|no_price|cooling_down|no_subscriber|claim_lost|error|timeout).",
+	},
+	[]string{"outcome"},
+)
+
+// PriceAlertLastSweepUnix — unix time the price-alert evaluator last
+// completed a sweep (any outcome), seeded with its start time. 0 on a
+// process that never started the evaluator. A sweep stuck behind a slow
+// alert emits no outcome sample, so only this gauge's age shows it.
+var PriceAlertLastSweepUnix = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_price_alert_last_sweep_unix",
+		Help: "Unix time the price-alert evaluator last completed a sweep; seeded with its start time, 0 when the evaluator never started.",
+	},
 )
 
 // PriceAlertEvalDurationSeconds — latency histogram for one price-alert
