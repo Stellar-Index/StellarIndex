@@ -64,6 +64,7 @@ type Recovery struct {
 	grace    time.Duration
 	interval time.Duration
 	logger   *slog.Logger
+	clock    func() time.Time
 }
 
 // RecoveryOptions tunes a [Recovery] worker.
@@ -99,6 +100,10 @@ type RecoveryOptions struct {
 	// still treated as live. MUST match the [Writer]'s — the two are reading
 	// the same fact from opposite directions. Zero → [DefaultLadderGrace].
 	LadderGrace time.Duration
+
+	// Clock is the time a durable hold's liveness is judged at, so the
+	// grace boundary can be pinned without the wall clock. Nil → time.Now.
+	Clock func() time.Time
 }
 
 // NewRecovery constructs a recovery worker. cache + lister + closer
@@ -128,6 +133,9 @@ func NewRecovery(
 	if opts.LadderGrace <= 0 {
 		opts.LadderGrace = DefaultLadderGrace
 	}
+	if opts.Clock == nil {
+		opts.Clock = time.Now
+	}
 	return &Recovery{
 		cache:    cache,
 		lister:   lister,
@@ -136,6 +144,7 @@ func NewRecovery(
 		grace:    opts.LadderGrace,
 		interval: opts.Interval,
 		logger:   opts.Logger.With("component", "freeze-recovery"),
+		clock:    opts.Clock,
 	}
 }
 
@@ -261,7 +270,7 @@ func (r *Recovery) ladderStillHolds(ctx context.Context, p OpenFreezePair) bool 
 			"asset", p.Asset.String(), "quote", p.Quote.String(), "err", err)
 		return false
 	}
-	if !ok || !LadderStillLive(st, r.grace, time.Now()) {
+	if !ok || !LadderStillLive(st, r.grace, r.clock()) {
 		return false
 	}
 	r.logger.Info("freeze marker missing but the durable hold is still live — leaving the row OPEN for the orchestrator to rehydrate",

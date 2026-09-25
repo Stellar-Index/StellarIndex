@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/divergence"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
@@ -14,7 +15,9 @@ import (
 // refreshDivergenceAll iterates over every configured pair and asks
 // the [DivergenceRefresher] to update its `div:<base>/<quote>` cache entry
 // for the asset, using the shortest-window VWAP this Tick just
-// wrote as the "our price" input.
+// wrote as the "our price" input — or, for a pair frozen at that
+// window, the pinned last-known-good, refreshed as such
+// ([Orchestrator.refreshPairDivergence]).
 //
 // Best-effort: per-pair errors are counted via
 // `obs.DivergenceRefreshTotal{outcome=…}` and logged at WARN; the
@@ -24,7 +27,8 @@ import (
 // data while the worker recovers.
 //
 // Outcome labels:
-//   - `ok`            — refresh succeeded; cache entry written.
+//   - `ok`            — refresh succeeded; cache entry written
+//     (pinned or not).
 //   - `no_vwap`       — VWAP cache miss for this pair (frozen,
 //     empty window, transient cache error). Skip.
 //   - `parse_error`   — cached value couldn't be parsed as float.
@@ -108,7 +112,7 @@ func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) 
 				"pair", pair.String(), "raw", raw, "err", err)
 			continue
 		}
-		if err := o.cfg.DivergenceRefresher.RefreshPair(ctx, pair, ourPrice, now); err != nil {
+		if err := o.refreshPairDivergence(ctx, pair, shortest, ourPrice, now); err != nil {
 			// CS-088: distinguish "all references dark" from a real refresh
 			// error so a total reference outage is alertable, not silently
 			// folded into the healthy path. Both still `continue`.
@@ -125,4 +129,22 @@ func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) 
 		obs.DivergenceRefreshTotal.WithLabelValues("ok").Inc()
 		obs.DivergenceRefreshDurationSeconds.WithLabelValues("ok").Observe(time.Since(start).Seconds())
 	}
+}
+
+// refreshPairDivergence hands the refresher the pair's cached VWAP, as a
+// pinned price when the pair is frozen at that window. A freeze skips the
+// VWAP write and keeps the last-known-good alive ([Orchestrator.keepFrozenVWAPAlive]),
+// so the cached value is then the price the freeze refused to move off:
+// judged as a fresh price it reads as divergence from the market, which
+// fires divergence_warning and its webhook for a pair deliberately not
+// updating, and feeds a depressed cross-oracle input back into the
+// confidence that is itself a freeze leg. frozenLeg covers a freeze made
+// this tick and one still inside its hold.
+func (o *Orchestrator) refreshPairDivergence(
+	ctx context.Context, pair canonical.Pair, window time.Duration, price float64, now time.Time,
+) error {
+	if o.frozenLeg(pair, window) {
+		return o.cfg.DivergenceRefresher.RefreshPinnedPair(ctx, pair, price, now)
+	}
+	return o.cfg.DivergenceRefresher.RefreshPair(ctx, pair, price, now)
 }
