@@ -290,7 +290,7 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 		// for the mirror's full idle TTL.
 		if s.apiKeyBudgets.RedisMirror != nil {
 			rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			if rbErr := s.apiKeyBudgets.RedisMirror.RevokeKeyByID(rbCtx, auth.AccountIdentifier(acct.Slug), rec.ID); rbErr != nil {
+			if rbErr := s.apiKeyBudgets.RedisMirror.RevokeKeyByID(rbCtx, auth.AccountIdentifier(acct.Slug), rec.ID); rbErr != nil && !errors.Is(rbErr, auth.ErrKeyNotFound) {
 				s.logger.Error("register: mirror rollback after management-row create failed",
 					"err", rbErr, "account_id", acct.ID, "key_id", rec.ID)
 			}

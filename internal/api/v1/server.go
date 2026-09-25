@@ -2059,9 +2059,15 @@ func (s *Server) middlewareStack() []stackEntry {
 	// It stays INSIDE CORS/TrailingSlashRedirect (both allocation-free and
 	// I/O-free) so a preflight still short-circuits without a timer. The
 	// tighter per-handler 8s WithTimeout wrappers layer under it and fire
-	// first. Post-RESPONSE bookkeeping in UsageTracker/TouchUsage
-	// deliberately detaches from this deadline (context.WithoutCancel with
-	// its own bound) so moving the timeout out cannot drop a usage row.
+	// first. Five seams detach from the request's CANCELLATION
+	// (context.WithoutCancel), each for a stated reason. Post-RESPONSE
+	// bookkeeping in UsageTracker/TouchUsage also drops this deadline, with
+	// its own bound, so moving the timeout out cannot drop a usage row. The
+	// PRE-handler MonthlyQuota read and RateLimit take (and Auth's
+	// failed-auth throttle) detach so a client abort cannot arm their
+	// dwell clocks, but middleware.throttleContext re-applies this deadline
+	// to them. They are bounded by min(5s, time left), so they cannot push
+	// a request past it.
 	// SSE endpoints are exempt inside the middleware. Skipped entirely
 	// when requestTimeout <= 0 (the middleware also self-guards on that).
 	if s.requestTimeout > 0 {
@@ -3180,6 +3186,7 @@ var knownErrorSlugs = map[string]struct{}{
 	"issuers-timeout":                 {},
 	"issuers-transient":               {},
 	"issuers-unavailable":             {},
+	"key-not-found":                   {},
 	"key-quota-exceeded":              {},
 	"label-too-long":                  {},
 	"ledger-detail-timeout":           {},

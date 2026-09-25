@@ -3446,9 +3446,12 @@ export interface paths {
          *     Requires an `X-Reason` header captured into the audit log; every
          *     successful revoke lands a `key.revoke` audit row (staff actor).
          *
-         *     204 covers both "revoked" and "no such key for that identifier":
-         *     the two are deliberately indistinguishable so the endpoint can't
-         *     be used to enumerate key ids across accounts. To disable a whole
+         *     204 means a key was revoked. 404 means no live key with that id
+         *     is owned by `identifier` and nothing was revoked (no audit row is
+         *     written): a typo'd identifier fails loudly instead of reading as
+         *     a contained leak. "No such key" and "another owner's key" share
+         *     the 404, so the endpoint still can't be used to enumerate key ids
+         *     across accounts. To disable a whole
          *     account instead, PATCH its `status` on
          *     `/v1/admin/accounts/{id}`.
          */
@@ -19300,7 +19303,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Revoked (or no-op when no such key exists for that identifier). */
+            /** @description Revoked. */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -19318,6 +19321,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];
         };
