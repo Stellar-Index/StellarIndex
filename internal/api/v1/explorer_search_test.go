@@ -39,13 +39,12 @@ func TestExplorer_Search_Classifies(t *testing.T) {
 	}
 }
 
-// TestExplorer_Search_AccountNotClaimedSupported is T174: classifySearch
-// routes every valid-format G-address to /v1/issuers/{g}, but that endpoint
-// only serves accounts that are actually issuers — most G-addresses aren't,
-// and hit a 404 there. The classifier has no lake read (it's pure strkey
-// shape matching), so it can't know whether this address is an issuer, and
-// must not claim Supported=true for a lookup it hasn't verified resolves.
-func TestExplorer_Search_AccountNotClaimedSupported(t *testing.T) {
+// TestExplorer_Search_AccountRoutesToAccountState: classifySearch used to
+// route every G-address to /v1/issuers/{g}, which only serves accounts that
+// are actually issuers and 404s for ordinary ones. AccountState is now
+// mounted at /v1/accounts/{g_strkey} and covers both, so search can route
+// there and truthfully claim Supported=true.
+func TestExplorer_Search_AccountRoutesToAccountState(t *testing.T) {
 	base := explorerTestServer(t, &stubExplorerReader{})
 	q := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	resp := mustGet(t, base+"/v1/search?q="+url.QueryEscape(q))
@@ -59,8 +58,11 @@ func TestExplorer_Search_AccountNotClaimedSupported(t *testing.T) {
 	if body.Data.Kind != "account" {
 		t.Fatalf("kind = %q, want %q", body.Data.Kind, "account")
 	}
-	if body.Data.Supported {
-		t.Errorf("Supported = true, want false: classifier cannot verify %q is an issuer before claiming its /v1/issuers/ href resolves", q)
+	if body.Data.Href != "/v1/accounts/"+q {
+		t.Errorf("Href = %q, want %q", body.Data.Href, "/v1/accounts/"+q)
+	}
+	if !body.Data.Supported {
+		t.Errorf("Supported = false, want true: /v1/accounts/{g_strkey} is mounted for both ordinary accounts and issuers")
 	}
 }
 
@@ -80,12 +82,12 @@ func TestExplorer_Search_MuxedResolvesToAccount(t *testing.T) {
 	}
 	mustDecode(t, resp, &body)
 	d := body.Data
-	if d.Kind != "account" || d.Canonical != g || d.Query != m || d.Href != "/v1/issuers/"+g {
-		t.Fatalf("got kind=%q canonical=%q query=%q href=%q; want account/%s/%s//v1/issuers/%s",
+	if d.Kind != "account" || d.Canonical != g || d.Query != m || d.Href != "/v1/accounts/"+g {
+		t.Fatalf("got kind=%q canonical=%q query=%q href=%q; want account/%s/%s//v1/accounts/%s",
 			d.Kind, d.Canonical, d.Query, d.Href, g, m, g)
 	}
-	if d.Supported {
-		t.Errorf("Supported = true, want false (same unverified issuer href as a G query)")
+	if !d.Supported {
+		t.Errorf("Supported = false, want true: /v1/accounts/{g_strkey} is mounted")
 	}
 }
 
