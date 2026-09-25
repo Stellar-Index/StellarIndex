@@ -102,7 +102,6 @@ package pricingguard
 import (
 	"context"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -120,8 +119,9 @@ import (
 // (DIRECTORY_SCAM_FLAG_TAGS) so every asset that shows a scam BANNER
 // also has its price withheld and is demoted in the ranking — a
 // gate/warning/ranking split is exactly the drift this one set exists to
-// prevent. Matched case-insensitively; the paired tests (scam_test.go
-// here, directory-tags.test.ts there) pin each.
+// prevent. Matched on timescale.CanonicalDirectoryTag, the form every
+// directory writer stores; the paired tests (scam_test.go here,
+// directory-tags.test.ts there) pin each.
 var scamFlagTagSet = func() map[string]struct{} {
 	m := make(map[string]struct{}, len(timescale.DirectoryScamFlagTags))
 	for _, t := range timescale.DirectoryScamFlagTags {
@@ -136,7 +136,7 @@ var scamFlagTagSet = func() map[string]struct{} {
 // suppression share ONE predicate.
 func IsDirectoryScamFlagged(tags []string) bool {
 	for _, t := range tags {
-		if _, ok := scamFlagTagSet[strings.ToLower(strings.TrimSpace(t))]; ok {
+		if _, ok := scamFlagTagSet[timescale.CanonicalDirectoryTag(t)]; ok {
 			return true
 		}
 	}

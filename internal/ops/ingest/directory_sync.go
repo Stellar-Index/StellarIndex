@@ -94,7 +94,7 @@ func directorySync(args []string) error {
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	url := fs.String("url", directoryDefaultURL, "Tarball URL of the public-directory repo (https only)")
 	timeout := fs.Duration("timeout", 5*time.Minute, "Wall-clock timeout for the whole run")
-	acceptChurn := fs.Bool("accept-churn", false, "Accept a snapshot beyond the churn ceiling (prunes or newly scam-flags more rows than one day plausibly does) — only for a known upstream mass change")
+	acceptChurn := fs.Bool("accept-churn", false, "Accept a snapshot beyond the churn ceiling (prunes, newly scam-flags or un-flags more rows than one day plausibly does) — only for a known upstream mass change")
 	heartbeat := fs.String("heartbeat", "", "node_exporter textfile path for the run-outcome/progress gauges. Empty = "+opsutil.DefaultTextfileDir+"/ops_job_directory_sync.prom when that directory exists (r1), otherwise no heartbeat at all")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
@@ -169,8 +169,8 @@ func directorySync(args []string) error {
 	}
 	hb.Progress(uint64(res.Upserted+res.Existing), 0) //nolint:gosec // non-negative row counts
 	exitOK = true
-	fmt.Printf("Synced: %d upserted, %d pruned, %d newly scam-flagged, %d held before, %d shadowed by another owner (source=%s).\n",
-		res.Upserted, res.Pruned, res.NewlyFlagged, res.Existing, res.Shadowed, directorySource)
+	fmt.Printf("Synced: %d upserted, %d pruned, %d newly scam-flagged, %d un-flagged, %d held before, %d shadowed by another owner (source=%s).\n",
+		res.Upserted, res.Pruned, res.NewlyFlagged, res.Unflagged, res.Existing, res.Shadowed, directorySource)
 	return nil
 }
 

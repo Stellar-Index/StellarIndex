@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -143,5 +144,75 @@ func TestDirectorySync_ChurnCeiling(t *testing.T) {
 	}
 	if rows, flagged := dirSourceCounts(t, ctx, store, dirUpstreamSource); rows != 1000 || flagged != 0 {
 		t.Fatalf("after -accept-churn: rows=%d flagged=%d, want 1000/0", rows, flagged)
+	}
+}
+
+// dirPaddedEntries renders n rows under `prefix`, the first `flagged`
+// tagged with a whitespace-padded, upper-cased scam tag.
+func dirPaddedEntries(prefix string, n, flagged int) []timescale.DirectoryEntry {
+	out := make([]timescale.DirectoryEntry, 0, n)
+	for i := range n {
+		tags := []string{"exchange"}
+		if i < flagged {
+			tags = []string{" MALICIOUS ", "exchange"}
+		}
+		out = append(out, dirEntry(dirAddress(prefix+dirLetters(i)), fmt.Sprintf("Row %d", i), tags...))
+	}
+	return out
+}
+
+// A padded scam tag must count as newly flagged (the Go price gate trims
+// it and withholds), and a snapshot that strips the flags in place must
+// be refused like a mass prune: both un-withhold or withhold prices en
+// masse without moving the row count.
+func TestDirectorySync_ChurnCountsPaddedAndClearedFlags(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	c.InstallAliasRegistry(nil)
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	if _, err = store.ReplaceDirectoryWithin(ctx, dirUpstreamSource, dirPaddedEntries("PADS", 4000, 0), timescale.DefaultDirectoryChurnLimit); err != nil {
+		t.Fatalf("bootstrap sync: %v", err)
+	}
+	_, _, err = store.ReplaceDirectory(ctx, dirUpstreamSource, dirPaddedEntries("PADS", 4000, 1000))
+	if !errors.Is(err, timescale.ErrDirectoryChurnExceeded) {
+		t.Fatalf("1000 padded scam tags: err = %v, want ErrDirectoryChurnExceeded", err)
+	}
+	res, err := store.ReplaceDirectoryWithin(ctx, dirUpstreamSource, dirPaddedEntries("PADS", 4000, 1000), timescale.DirectoryChurnUnbounded)
+	if err != nil {
+		t.Fatalf("-accept-churn padded sync: %v", err)
+	}
+	if res.NewlyFlagged != 1000 {
+		t.Fatalf("padded sync: newlyFlagged=%d, want 1000", res.NewlyFlagged)
+	}
+	if _, flagged := dirSourceCounts(t, ctx, store, dirUpstreamSource); flagged != 1000 {
+		t.Fatalf("padded tags: %d rows match the SQL predicate, want 1000 (stored canonical)", flagged)
+	}
+	e, ok, err := store.DirectoryEntryByAddress(ctx, dirAddress("PADS"+dirLetters(0)))
+	if err != nil || !ok || !slices.Equal(e.Tags, []string{"malicious", "exchange"}) {
+		t.Fatalf("stored tags = %q (ok=%v err=%v), want [malicious exchange]", e.Tags, ok, err)
+	}
+
+	// Same 4000 rows, every tag stripped: 1000 un-flagged > 200.
+	_, _, err = store.ReplaceDirectory(ctx, dirUpstreamSource, dirPaddedEntries("PADS", 4000, 0))
+	if !errors.Is(err, timescale.ErrDirectoryChurnExceeded) {
+		t.Fatalf("mass un-flag snapshot: err = %v, want ErrDirectoryChurnExceeded", err)
+	}
+	if rows, flagged := dirSourceCounts(t, ctx, store, dirUpstreamSource); rows != 4000 || flagged != 1000 {
+		t.Fatalf("after refused un-flag: rows=%d flagged=%d, want 4000/1000 (the refusal must be a rollback)", rows, flagged)
+	}
+	res, err = store.ReplaceDirectoryWithin(ctx, dirUpstreamSource, dirPaddedEntries("PADS", 4000, 850), timescale.DefaultDirectoryChurnLimit)
+	if err != nil {
+		t.Fatalf("ordinary un-flag churn: %v", err)
+	}
+	if res.Unflagged != 150 || res.NewlyFlagged != 0 {
+		t.Fatalf("ordinary un-flag churn: %+v, want unflagged=150 newlyFlagged=0", res)
 	}
 }

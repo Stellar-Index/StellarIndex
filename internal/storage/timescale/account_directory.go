@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -44,7 +45,9 @@ type DirectoryEntry struct {
 // withheld" and "is demoted in the ranking" can never disagree —
 // a split between those three is exactly the drift that let a
 // pill-bearing scam token rank #12 on the /assets page (#356).
-// Matched case-insensitively; the frontend list is pinned equal by
+// Tags are stored in [CanonicalDirectoryTags] form, so the Go matcher
+// (which trims), the SQL predicates and the explorer (which only fold
+// case) see identical bytes; the frontend list is pinned equal by
 // pricingguard's TestScamFlagTagSet_MatchesFrontend.
 //
 // Lowercase-ASCII by construction — mustSQLTextArrayLiteral (which
@@ -120,11 +123,11 @@ func DirectoryTagsWithoutScamFlags(tags []string) []string {
 	return out
 }
 
-// isDirectoryScamFlagTag matches trimmed and case-folded, the widest of
-// the rules the consumers apply (pricingguard and rwa trim, the SQL
+// isDirectoryScamFlagTag matches the canonical form, the widest of the
+// rules the consumers apply (pricingguard and rwa trim, the SQL
 // predicates only fold), so a tag any of them would count is removed.
 func isDirectoryScamFlagTag(tag string) bool {
-	lt := strings.ToLower(strings.TrimSpace(tag))
+	lt := CanonicalDirectoryTag(tag)
 	for _, f := range DirectoryScamFlagTags {
 		if lt == f {
 			return true
@@ -133,17 +136,37 @@ func isDirectoryScamFlagTag(tag string) bool {
 	return false
 }
 
+// CanonicalDirectoryTag is the stored form of one directory tag:
+// trimmed and lowercased.
+func CanonicalDirectoryTag(tag string) string {
+	return strings.ToLower(strings.TrimSpace(tag))
+}
+
+// CanonicalDirectoryTags is the form every account_directory writer
+// stores: each tag canonical, blanks and repeats dropped, order kept,
+// never nil (tags is NOT NULL). Storing one form is what lets the SQL
+// predicates, which do not trim, agree with the Go matchers, which do.
+func CanonicalDirectoryTags(tags []string) []string {
+	out := make([]string, 0, len(tags))
+	for _, t := range tags {
+		if c := CanonicalDirectoryTag(t); c != "" && !slices.Contains(out, c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // DirectoryChurnLimit bounds how far ONE sync may move a source's
-// snapshot: the rows it prunes and the addresses it newly scam-flags
-// are each capped at max(Floor, ceil(Fraction × rows the source held
+// snapshot: the rows it prunes, the addresses it newly scam-flags and
+// the addresses it un-flags (pruned or tag cleared) are each capped at max(Floor, ceil(Fraction × rows the source held
 // before the sync)). A snapshot past either cap is refused whole with
 // [ErrDirectoryChurnExceeded] and the table is left as it was.
 //
 // The upstream is an unpinned branch of a third-party repo, and a
 // scam tag is not a label: it withholds the issuer's price and market
 // cap (pricingguard.ScamGate). A hijacked, truncated or mis-generated
-// snapshot could therefore prune the flags the gate withholds on, or
-// flag thousands of issuers and withhold their prices, in one
+// snapshot could therefore prune or clear the flags the gate withholds
+// on, or flag thousands of issuers and withhold their prices, in one
 // transaction with nothing failing. Real churn is a handful of rows a
 // day; a legitimate mass change ships with `directory-sync
 // -accept-churn`. The first sync of a source (nothing held yet) is
@@ -164,8 +187,8 @@ var DefaultDirectoryChurnLimit = DirectoryChurnLimit{Fraction: 0.05, Floor: 100}
 var DirectoryChurnUnbounded = DirectoryChurnLimit{}
 
 // ErrDirectoryChurnExceeded is returned (wrapped, with the numbers)
-// when a snapshot would prune or newly flag more rows than the limit
-// allows; nothing was written.
+// when a snapshot would prune, newly flag or un-flag more rows than the
+// limit allows; nothing was written.
 var ErrDirectoryChurnExceeded = errors.New("directory: snapshot exceeds the churn ceiling")
 
 // ceiling is the row cap for a source that held `existing` rows, or
@@ -182,6 +205,7 @@ type DirectorySyncResult struct {
 	Upserted     int64
 	Pruned       int64
 	NewlyFlagged int64 // addresses of this source carrying a scam tag now that did not before
+	Unflagged    int64 // addresses of this source that carried a scam tag before and do not now (pruned or cleared)
 	Existing     int64 // rows the source held before the sync
 	// Shadowed counts snapshot addresses another source (or an operator
 	// override) owns: the sync leaves those rows alone, so without this
@@ -274,7 +298,7 @@ func (s *Store) ReplaceDirectoryWithin(ctx context.Context, source string, entri
 
 	// Judged after the prune, inside the transaction: a refusal is a
 	// rollback, so the table is exactly as it was.
-	if res.NewlyFlagged, err = before.newlyFlagged(ctx, tx, source); err != nil {
+	if res.NewlyFlagged, res.Unflagged, err = before.flagDelta(ctx, tx, source); err != nil {
 		return res, err
 	}
 	if err = before.check(limit, res); err != nil {
@@ -306,17 +330,30 @@ func snapshotDirectoryChurn(ctx context.Context, tx *sql.Tx, source string) (*di
 	return c, nil
 }
 
-// newlyFlagged counts the source's scam-flagged addresses AFTER the
-// upsert + prune that were not flagged before it. Run after the prune,
-// every remaining row of the source is from this snapshot.
-func (c *directoryChurn) newlyFlagged(ctx context.Context, tx *sql.Tx, source string) (int64, error) {
-	var n int64
-	err := scanDirectoryFlaggedAddresses(ctx, tx, source, func(addr string) {
-		if _, was := c.flagged[addr]; !was {
-			n++
+// flagDelta counts the source's scam-flagged addresses AFTER the
+// upsert + prune that were not flagged before it, and the ones flagged
+// before that no longer are. Run after the prune, every remaining row
+// of the source is from this snapshot.
+func (c *directoryChurn) flagDelta(ctx context.Context, tx *sql.Tx, source string) (newly, cleared int64, err error) {
+	var after []string
+	err = scanDirectoryFlaggedAddresses(ctx, tx, source, func(addr string) { after = append(after, addr) })
+	newly, cleared = c.tally(after)
+	return newly, cleared, err
+}
+
+// tally splits the post-sync flagged set against the pre-sync one. A
+// pruned flagged row counts as cleared too: its price is un-withheld
+// just the same.
+func (c *directoryChurn) tally(after []string) (newly, cleared int64) {
+	var kept int64
+	for _, addr := range after {
+		if _, was := c.flagged[addr]; was {
+			kept++
+		} else {
+			newly++
 		}
-	})
-	return n, err
+	}
+	return newly, int64(len(c.flagged)) - kept
 }
 
 func (c *directoryChurn) check(limit DirectoryChurnLimit, res DirectorySyncResult) error {
@@ -330,13 +367,17 @@ func (c *directoryChurn) check(limit DirectoryChurnLimit, res DirectorySyncResul
 	if res.NewlyFlagged > maxRows {
 		return fmt.Errorf("%w: newly scam-flags %d addresses of %d rows (ceiling %d)", ErrDirectoryChurnExceeded, res.NewlyFlagged, c.rows, maxRows)
 	}
+	if res.Unflagged > maxRows {
+		return fmt.Errorf("%w: un-flags %d scam-flagged addresses of %d rows (ceiling %d)", ErrDirectoryChurnExceeded, res.Unflagged, c.rows, maxRows)
+	}
 	return nil
 }
 
 // scanDirectoryFlaggedAddresses visits every address of `source` that
 // carries a scam-class tag, through the same predicate the listing
-// rank and the RWA census use (directoryScamTaggedSQL), so "counts as
-// newly flagged" can never disagree with "has its price withheld".
+// rank and the RWA census use (directoryScamTaggedSQL); stored tags are
+// canonical, so "counts as newly flagged" agrees with "has its price
+// withheld".
 func scanDirectoryFlaggedAddresses(ctx context.Context, tx *sql.Tx, source string, visit func(addr string)) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT address FROM account_directory
@@ -416,7 +457,7 @@ func buildDirectoryUpsert(chunk []DirectoryEntry, source string) (string, []any)
 		base := i * 4
 		fmt.Fprintf(&sb, "($%d, $%d, $%d, $%d, $%d, now())",
 			base+1, base+2, base+3, base+4, srcParam)
-		args = append(args, e.Address, e.Name, e.Domain, e.Tags)
+		args = append(args, e.Address, e.Name, e.Domain, CanonicalDirectoryTags(e.Tags))
 	}
 	sb.WriteString(`
 		ON CONFLICT (address) DO UPDATE SET
@@ -475,9 +516,10 @@ func (s *Store) ClearDirectoryScamFlag(ctx context.Context, address, operator, r
 		return before, after, false, fmt.Errorf("directory: lock %s: %w", address, err)
 	}
 	after = before
-	after.Tags = DirectoryTagsWithoutScamFlags(before.Tags)
+	kept := DirectoryTagsWithoutScamFlags(before.Tags)
+	after.Tags = CanonicalDirectoryTags(kept)
 	after.Source = DirectoryOperatorOverrideSource
-	if len(after.Tags) == len(before.Tags) {
+	if len(kept) == len(before.Tags) {
 		return before, after, true, fmt.Errorf("%w: %s (tags %v)", ErrDirectoryNotScamFlagged, address, before.Tags)
 	}
 	if _, err = tx.ExecContext(ctx, `
