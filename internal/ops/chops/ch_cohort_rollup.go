@@ -19,6 +19,11 @@ import (
 // loaded, so a cohort's oldest flow can be valued at its own month.
 var cohortPricesFrom = time.Date(2015, time.September, 1, 0, 0, 0, 0, time.UTC)
 
+// cohortRollupLockPath is where chCohortRollup takes its exclusive
+// advisory lock. Same state directory as the other rollup locks (see
+// holdersRollupLockPath).
+const cohortRollupLockPath = "/var/lib/stellarindex/ch-cohort-rollup.lock"
+
 // ch-cohort-rollup — what the accounts an address created or sponsored
 // went on to hold and do: current holdings, monthly flows, the contracts
 // they moved value through, recent activity, and open DeFi positions,
@@ -38,16 +43,29 @@ var cohortPricesFrom = time.Date(2015, time.September, 1, 0, 0, 0, 0, time.UTC)
 //
 // Runs AFTER the creators and sponsors rollups: membership is their
 // edge tables, and the creator floor reads account_creators_rollup.
+//
+// Takes an exclusive advisory lock before it runs anything, for the same
+// reason ch-creators-rollup and ch-holders-rollup do: see
+// acquireRollupLock (rollup_lock.go).
 func chCohortRollup(args []string) error {
 	fs := flag.NewFlagSet("ch-cohort-rollup", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required — the DeFi position snapshot is read from Postgres)")
+	lockPath := fs.String("lock-file", cohortRollupLockPath,
+		"path to the exclusive advisory lock serializing this run against the timer or a second concurrent invocation")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *cfgPath == "" {
 		return errors.New("-config is required")
 	}
+
+	unlock, err := acquireRollupLock("ch-cohort-rollup", *lockPath)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
 		return err
