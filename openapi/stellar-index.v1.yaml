@@ -1568,10 +1568,11 @@ paths:
       summary: Current prices for up to 100 assets.
       description: |
         Latest price for each id in `asset_ids` (comma-separated,
-        max 100; duplicates de-duplicated server-side). Assets with
-        no observation are OMITTED from the response rather than
-        failing the batch — a caller asking for 5 assets and
-        getting 3 rows knows exactly which 2 lack data. The
+        max 100; duplicates de-duplicated server-side). Assets
+        without a served price are OMITTED from `data` rather than
+        failing the batch; those whose price is withheld by a serving
+        gate are named in the envelope's `withheld` list, and the rest
+        of the omitted ids have no price data. The
         envelope's `flags.stale` is the OR over per-row staleness.
         Above 100 ids, use the POST form (up to 1000 in the body).
 
@@ -1650,8 +1651,9 @@ paths:
         Body-parameter form of `GET /price/batch` for large
         watchlists — up to 1000 canonical asset ids in a JSON
         array (URLs would blow past query-string limits well
-        before that). Same semantics as the GET form: missing
-        observations are omitted, not errored; `flags.stale` is
+        before that). Same semantics as the GET form: unpriced ids
+        are omitted, not errored, and withheld ones are named in
+        `withheld`; `flags.stale` is
         the OR over returned rows. Metered like the GET form: one
         request unit per de-duplicated id.
       requestBody:
@@ -8008,6 +8010,16 @@ paths:
         keys keep working under `signup_require_email_verification`.
       security:
         - APIKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - name: X-Reason
+          in: header
+          required: false
+          schema: { type: string }
+          description: |
+            Required from an operator-tier caller (400 `missing-reason`
+            without it) and captured into the `key.mint` audit row;
+            ignored for customer tiers.
       requestBody:
         required: true
         content:
@@ -8052,6 +8064,9 @@ paths:
           description: |
             Active-key quota reached for this caller identifier. Revoke
             an existing key and retry.
+            A request whose `Idempotency-Key` matches one still being
+            processed also gets 409 (`idempotency-key-in-flight`,
+            retryable per `Retry-After`).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -9007,6 +9022,8 @@ paths:
         admin / member roles can mint; viewer + billing 403.
         Active-key quota is tier-aware (free 25, partner 250 —
         deployment-overridable); exceeding it returns 409.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -9046,7 +9063,11 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
         "409":
-          description: Account already at the active-key quota.
+          description: |
+            Account already at the active-key quota.
+            A request whose `Idempotency-Key` matches one still being
+            processed also gets 409 (`idempotency-key-in-flight`,
+            retryable per `Retry-After`).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -9145,6 +9166,8 @@ paths:
         viewer + billing 403. Webhook quota is tier-aware (free 10,
         partner 100 — deployment-overridable); exceeding it
         returns 409.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -9184,7 +9207,11 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
         "409":
-          description: Account at the 10-webhook quota.
+          description: |
+            Account at the 10-webhook quota.
+            A request whose `Idempotency-Key` matches one still being
+            processed also gets 409 (`idempotency-key-in-flight`,
+            retryable per `Retry-After`).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -9384,6 +9411,8 @@ paths:
         Owner / admin / member roles can register; viewer + billing
         403. Alert quota is tier-aware (free 25, partner 1000 —
         deployment-overridable); exceeding it returns 409.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -9421,7 +9450,11 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
         "409":
-          description: Account at the price-alert quota for its tier.
+          description: |
+            Account at the price-alert quota for its tier.
+            A request whose `Idempotency-Key` matches one still being
+            processed also gets 409 (`idempotency-key-in-flight`,
+            retryable per `Retry-After`).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -12502,6 +12535,25 @@ components:
         clients. It is never accepted as a credential.
 
   parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string, maxLength: 256 }
+      description: |
+        Optional client-chosen key (a UUID is ideal) that makes this
+        create safe to retry. Send the SAME value when retrying a request
+        whose outcome you never saw, such as a client timeout: within ten
+        minutes of a successful original, the retry receives the original
+        response verbatim (marked by an `Idempotency-Replayed: true`
+        response header) instead of creating a second resource. A retry
+        that arrives while the original is still running gets 409
+        `idempotency-key-in-flight` with `Retry-After`. Only 2xx
+        responses are replayed; a failed original may be retried with the
+        same key. Keys are scoped to the caller, and dedup is held per API
+        process, so it covers the retry window rather than surviving a
+        restart. Longer than 256 bytes returns 400
+        `idempotency-key-too-long`.
     AssetIdPath:
       name: asset_id
       in: path
@@ -18364,6 +18416,17 @@ components:
             data:
               type: array
               items: { $ref: "#/components/schemas/Price" }
+            withheld:
+              type: array
+              items: { type: string }
+              description: |
+                Requested ids omitted from `data` because a serving gate
+                WITHHELD their price (thin market, flagged issuer, withheld
+                upstream leg): the pair is observed but no price is
+                published, the batch form of the single-asset
+                `price-withheld` 404. An id in neither `data` nor
+                `withheld` has no price data. Input order; absent when
+                nothing was withheld.
           required: [data]
 
     PriceChangeHorizon:

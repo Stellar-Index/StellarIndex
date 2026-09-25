@@ -24,8 +24,11 @@ its full tag history while `.../pkg/client/@v/list` returns "no
 matching versions", and `go get …/pkg/client@v0.2.0` fails with
 `invalid version: unknown revision pkg/client/v0.2.0`. This
 document described that tag mechanism until 2026-08-31 (wave-D
-F-SDK-09, tracked in #361); it never worked, and no `pkg/*` tag has
-ever existed on the remote.
+F-SDK-09, tracked in #361); it never worked. One stray tag from that
+period, `pkg/client/v0.2.0`, does exist on the remote: it versions
+nothing a consumer can install, must not be extended with further
+`pkg/*` tags, and is scheduled for deletion by a maintainer
+(`git push origin :refs/tags/pkg/client/v0.2.0`).
 
 Consumers therefore pin the SDK on the root clock, which is what
 every install surface (README, the explorer's SDK page, llms.txt)

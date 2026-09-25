@@ -3086,7 +3086,11 @@ type batchRowResult struct {
 
 	ok   bool // a real price row — include in the envelope
 	skip bool // per-asset miss — omit, do NOT 404 the batch
-	fail *batchRowFailure
+	// withheld qualifies a skip: a serving gate declined to publish a
+	// price the server holds, so the id goes on the envelope's
+	// `withheld` list rather than reading as "no data".
+	withheld bool
+	fail     *batchRowFailure
 }
 
 // batchRowFailure means the whole batch must abort with a
@@ -3133,14 +3137,11 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 	// published under the crypto:XLM alias key.
 	snap, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, s.prices, asset, quote)
 	if errors.Is(err, ErrPriceWithheld) {
-		// Substance-gated pair: omit the row, exactly like a miss (the
-		// batch wire contract omits rather than nulls), and do NOT run
-		// priceFallback — the fallback chain would re-serve the
-		// withheld market via the Redis/proxy side doors. Single-asset
-		// /v1/price distinguishes withheld from not-found via its 404
-		// problem type; batch callers probe the single endpoint for
-		// the reason a row is absent.
-		return batchRowResult{skip: true}
+		// Gated pair: omit the row and name it on the envelope's
+		// `withheld` list, and do NOT run priceFallback — the fallback
+		// chain would re-serve the withheld market via the Redis/proxy
+		// side doors.
+		return batchRowResult{skip: true, withheld: true}
 	}
 	if errors.Is(err, ErrPriceNotFound) {
 		// Share the full three-layer fallback chain with /v1/price
@@ -3151,11 +3152,11 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 		// asymmetry caused asset_ids that returned 200 on
 		// /v1/price (e.g. USDT-G…) to be silently dropped from the
 		// batch envelope. R-005 in docs/review-2026-05-10.md.
-		// The batch envelope has no per-row problem shape — a row either
-		// carries a price or is omitted — so a withheld verdict is
-		// dropped here deliberately rather than reported (MSP-06 covers
-		// the single-asset and oracle surfaces, which DO have one).
-		if fs, fsrc, fserved, ftri, ok, _ := s.priceFallback(ctx, asset, quote); ok {
+		// A withheld verdict from any fallback leg is reported on the
+		// envelope's `withheld` list, as /v1/price reports it in its
+		// 404 type — never folded into "no data".
+		fs, fsrc, fserved, ftri, ok, fwithheld := s.priceFallback(ctx, asset, quote)
+		if ok {
 			// F-1254: priceFallback responses are by definition below
 			// the closed-bucket VWAP contract (last-trade / proxy /
 			// triangulation). Mark stale so callers can tell the
@@ -3173,7 +3174,7 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 				asset: asset, ok: true,
 			}, fserved, quote)
 		}
-		return batchRowResult{skip: true} // omit, do not 404 the batch
+		return batchRowResult{skip: true, withheld: fwithheld} // omit, do not 404 the batch
 	}
 	if err != nil {
 		if clientAborted(r, err) {
@@ -3280,7 +3281,15 @@ func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []
 		}
 	}
 
+	writeEnvelope(w, batchEnvelope(ids, results))
+}
+
+// batchEnvelope folds the per-id results (index-aligned with ids) into
+// the response envelope: price rows in input order, withheld ids named,
+// and each flag the OR over the served rows.
+func batchEnvelope(ids []string, results []batchRowResult) Envelope {
 	out := make([]PriceSnapshot, 0, len(ids))
+	var withheld []string
 	allSources := map[string]struct{}{}
 	anyStale := false
 	anyFrozen := false
@@ -3289,6 +3298,9 @@ func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []
 	for i := range results {
 		row := results[i]
 		if !row.ok {
+			if row.withheld {
+				withheld = append(withheld, ids[i])
+			}
 			continue // skip — per-asset miss
 		}
 		if row.stale {
@@ -3323,12 +3335,17 @@ func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []
 	// byte-identical contract for batch responses (F-1259 in
 	// audit-2026-05-12).
 	sort.Strings(srcs)
-	writeJSON(w, out, Flags{
-		Stale:        anyStale,
-		Frozen:       anyFrozen,
-		SingleSource: anySingleSource,
-		Triangulated: anyTriangulated,
-	}, srcs...)
+	return Envelope{
+		Data:     out,
+		Sources:  srcs,
+		Withheld: withheld,
+		Flags: Flags{
+			Stale:        anyStale,
+			Frozen:       anyFrozen,
+			SingleSource: anySingleSource,
+			Triangulated: anyTriangulated,
+		},
+	}
 }
 
 // ─── Helpers for PriceReader implementations ──────────────────────

@@ -19,8 +19,13 @@ type Envelope[T any] struct {
 	// dead" needs this field to tell that apart from a window that
 	// simply predates the server's data.
 	CoverageFrom *time.Time `json:"coverage_from,omitempty"`
-	Sources      []string   `json:"sources,omitempty"`
-	Flags        Flags      `json:"flags"`
+	// Withheld names the requested ids [Client.PriceBatch] omitted from
+	// Data because the server declined to publish their price (thin
+	// market, flagged issuer, withheld upstream leg). An id in neither
+	// Data nor Withheld has no price data. Only the batch surface sets it.
+	Withheld []string `json:"withheld,omitempty"`
+	Sources  []string `json:"sources,omitempty"`
+	Flags    Flags    `json:"flags"`
 	// Pagination is a POINTER so it matches the server's wire shape
 	// (internal/api/v1/envelope.go uses *Pagination): nil ⇒ the field
 	// is absent. A value type here made `omitempty` a no-op (omitempty
@@ -628,10 +633,10 @@ type AggregatorRow struct {
 // overstates every CEX-fed pair tenfold.
 //
 // `Truncated` is true when the window's trade count hit the
-// server's per-request cap. The bar's High / Low may not reflect
-// the actual extreme over the full window — only the
-// chronologically-first N trades. Treat truncated bars as a hint
-// to narrow the range.
+// server's per-request cap. The server keeps the NEWEST N trades and
+// drops the OLDEST, so Close is exact but Open / High / Low may be
+// incomplete for the full window. Treat truncated bars as a hint to
+// narrow the range.
 type OHLCBar struct {
 	From        time.Time `json:"from"`
 	To          time.Time `json:"to"`
@@ -1280,8 +1285,8 @@ type LendingPool struct {
 // window. Mirrors `internal/api/v1.VWAPResult`.
 //
 // Truncated is true when the window had MORE than the server's
-// max-trades cap (10000 today) — Price then only reflects the
-// chronologically-first 10000 trades and is NOT the true window
+// max-trades cap (10000 today) — the server drops the OLDEST trades,
+// so Price reflects only the newest 10000 and is NOT the true window
 // VWAP. Clients should narrow the window and retry. For fixed
 // cross-region-consistent VWAPs use [Client.Price] (closed-bucket
 // per ADR-0015) instead.

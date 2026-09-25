@@ -45,6 +45,12 @@ type Config struct {
 	// nil map, the production default) fall back to
 	// [platform.Tier.MaxWebhooks]. Non-positive values are ignored.
 	WebhookQuotas map[platform.Tier]int
+
+	// idempotency backs the optional Idempotency-Key header on
+	// HandleCreate: a client that retries a create after a timeout gets
+	// the original response (and signing secret) replayed instead of
+	// registering a second webhook. Lazily initialized by validate().
+	idempotency *middleware.IdempotencyStore
 }
 
 func (c *Config) validate() error {
@@ -56,6 +62,9 @@ func (c *Config) validate() error {
 	}
 	if c.Now == nil {
 		c.Now = func() time.Time { return time.Now().UTC() }
+	}
+	if c.idempotency == nil {
+		c.idempotency = middleware.NewIdempotencyStore(0)
 	}
 	return nil
 }
@@ -82,8 +91,9 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 // Reads stay unwrapped — safe methods change nothing.
 func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
+	idem := middleware.Idempotency(h.cfg.idempotency, dashboardauth.SessionAccountSubject)
 	mux.HandleFunc("GET /v1/dashboard/webhooks", h.HandleList)
-	mux.Handle("POST /v1/dashboard/webhooks", sameSite(http.HandlerFunc(h.HandleCreate)))
+	mux.Handle("POST /v1/dashboard/webhooks", sameSite(idem(http.HandlerFunc(h.HandleCreate))))
 	mux.Handle("PATCH /v1/dashboard/webhooks/{id}", sameSite(http.HandlerFunc(h.HandleUpdate)))
 	mux.Handle("DELETE /v1/dashboard/webhooks/{id}", sameSite(http.HandlerFunc(h.HandleDelete)))
 	mux.HandleFunc("GET /v1/dashboard/webhooks/{id}/deliveries", h.HandleListDeliveries)

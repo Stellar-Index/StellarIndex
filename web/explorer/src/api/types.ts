@@ -726,10 +726,11 @@ export interface paths {
         /**
          * Current prices for up to 100 assets.
          * @description Latest price for each id in `asset_ids` (comma-separated,
-         *     max 100; duplicates de-duplicated server-side). Assets with
-         *     no observation are OMITTED from the response rather than
-         *     failing the batch — a caller asking for 5 assets and
-         *     getting 3 rows knows exactly which 2 lack data. The
+         *     max 100; duplicates de-duplicated server-side). Assets
+         *     without a served price are OMITTED from `data` rather than
+         *     failing the batch; those whose price is withheld by a serving
+         *     gate are named in the envelope's `withheld` list, and the rest
+         *     of the omitted ids have no price data. The
          *     envelope's `flags.stale` is the OR over per-row staleness.
          *     Above 100 ids, use the POST form (up to 1000 in the body).
          *
@@ -749,8 +750,9 @@ export interface paths {
          * @description Body-parameter form of `GET /price/batch` for large
          *     watchlists — up to 1000 canonical asset ids in a JSON
          *     array (URLs would blow past query-string limits well
-         *     before that). Same semantics as the GET form: missing
-         *     observations are omitted, not errored; `flags.stale` is
+         *     before that). Same semantics as the GET form: unpriced ids
+         *     are omitted, not errored, and withheld ones are named in
+         *     `withheld`; `flags.stale` is
          *     the OR over returned rows. Metered like the GET form: one
          *     request unit per de-duplicated id.
          */
@@ -10259,6 +10261,16 @@ export interface components {
         };
         PriceBatchEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["Price"][];
+            /**
+             * @description Requested ids omitted from `data` because a serving gate
+             *     WITHHELD their price (thin market, flagged issuer, withheld
+             *     upstream leg): the pair is observed but no price is
+             *     published, the batch form of the single-asset
+             *     `price-withheld` 404. An id in neither `data` nor
+             *     `withheld` has no price data. Input order; absent when
+             *     nothing was withheld.
+             */
+            withheld?: string[];
         };
         PriceChangeHorizon: {
             /** @description Signed percentage move of the current price vs the reference price, two fractional digits with an explicit leading "+" on gains (e.g. "+3.62", "-1.04", "0.00"). Null when unavailable. */
@@ -11481,6 +11493,22 @@ export interface components {
         };
     };
     parameters: {
+        /**
+         * @description Optional client-chosen key (a UUID is ideal) that makes this
+         *     create safe to retry. Send the SAME value when retrying a request
+         *     whose outcome you never saw, such as a client timeout: within ten
+         *     minutes of a successful original, the retry receives the original
+         *     response verbatim (marked by an `Idempotency-Replayed: true`
+         *     response header) instead of creating a second resource. A retry
+         *     that arrives while the original is still running gets 409
+         *     `idempotency-key-in-flight` with `Retry-After`. Only 2xx
+         *     responses are replayed; a failed original may be retried with the
+         *     same key. Keys are scoped to the caller, and dedup is held per API
+         *     process, so it covers the retry window rather than surviving a
+         *     restart. Longer than 256 bytes returns 400
+         *     `idempotency-key-too-long`.
+         */
+        IdempotencyKey: string;
         /**
          * @description Canonical asset identifier. One of `native`, `<code>-<issuer>`,
          *     `<code>:<issuer>` (alias), or `<contract_id>`. Strkeys
@@ -19071,7 +19099,30 @@ export interface operations {
     createAccountKey: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /**
+                 * @description Optional client-chosen key (a UUID is ideal) that makes this
+                 *     create safe to retry. Send the SAME value when retrying a request
+                 *     whose outcome you never saw, such as a client timeout: within ten
+                 *     minutes of a successful original, the retry receives the original
+                 *     response verbatim (marked by an `Idempotency-Replayed: true`
+                 *     response header) instead of creating a second resource. A retry
+                 *     that arrives while the original is still running gets 409
+                 *     `idempotency-key-in-flight` with `Retry-After`. Only 2xx
+                 *     responses are replayed; a failed original may be retried with the
+                 *     same key. Keys are scoped to the caller, and dedup is held per API
+                 *     process, so it covers the retry window rather than surviving a
+                 *     restart. Longer than 256 bytes returns 400
+                 *     `idempotency-key-too-long`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /**
+                 * @description Required from an operator-tier caller (400 `missing-reason`
+                 *     without it) and captured into the `key.mint` audit row;
+                 *     ignored for customer tiers.
+                 */
+                "X-Reason"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -19123,6 +19174,9 @@ export interface operations {
             /**
              * @description Active-key quota reached for this caller identifier. Revoke
              *     an existing key and retry.
+             *     A request whose `Idempotency-Key` matches one still being
+             *     processed also gets 409 (`idempotency-key-in-flight`,
+             *     retryable per `Retry-After`).
              */
             409: {
                 headers: {
@@ -20056,7 +20110,24 @@ export interface operations {
     createDashboardKey: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /**
+                 * @description Optional client-chosen key (a UUID is ideal) that makes this
+                 *     create safe to retry. Send the SAME value when retrying a request
+                 *     whose outcome you never saw, such as a client timeout: within ten
+                 *     minutes of a successful original, the retry receives the original
+                 *     response verbatim (marked by an `Idempotency-Replayed: true`
+                 *     response header) instead of creating a second resource. A retry
+                 *     that arrives while the original is still running gets 409
+                 *     `idempotency-key-in-flight` with `Retry-After`. Only 2xx
+                 *     responses are replayed; a failed original may be retried with the
+                 *     same key. Keys are scoped to the caller, and dedup is held per API
+                 *     process, so it covers the retry window rather than surviving a
+                 *     restart. Longer than 256 bytes returns 400
+                 *     `idempotency-key-too-long`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path?: never;
             cookie?: never;
         };
@@ -20115,7 +20186,12 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Account already at the active-key quota. */
+            /**
+             * @description Account already at the active-key quota.
+             *     A request whose `Idempotency-Key` matches one still being
+             *     processed also gets 409 (`idempotency-key-in-flight`,
+             *     retryable per `Retry-After`).
+             */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -20230,7 +20306,24 @@ export interface operations {
     createDashboardWebhook: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /**
+                 * @description Optional client-chosen key (a UUID is ideal) that makes this
+                 *     create safe to retry. Send the SAME value when retrying a request
+                 *     whose outcome you never saw, such as a client timeout: within ten
+                 *     minutes of a successful original, the retry receives the original
+                 *     response verbatim (marked by an `Idempotency-Replayed: true`
+                 *     response header) instead of creating a second resource. A retry
+                 *     that arrives while the original is still running gets 409
+                 *     `idempotency-key-in-flight` with `Retry-After`. Only 2xx
+                 *     responses are replayed; a failed original may be retried with the
+                 *     same key. Keys are scoped to the caller, and dedup is held per API
+                 *     process, so it covers the retry window rather than surviving a
+                 *     restart. Longer than 256 bytes returns 400
+                 *     `idempotency-key-too-long`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path?: never;
             cookie?: never;
         };
@@ -20290,7 +20383,12 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Account at the 10-webhook quota. */
+            /**
+             * @description Account at the 10-webhook quota.
+             *     A request whose `Idempotency-Key` matches one still being
+             *     processed also gets 409 (`idempotency-key-in-flight`,
+             *     retryable per `Retry-After`).
+             */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -20531,7 +20629,24 @@ export interface operations {
     createDashboardPriceAlert: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /**
+                 * @description Optional client-chosen key (a UUID is ideal) that makes this
+                 *     create safe to retry. Send the SAME value when retrying a request
+                 *     whose outcome you never saw, such as a client timeout: within ten
+                 *     minutes of a successful original, the retry receives the original
+                 *     response verbatim (marked by an `Idempotency-Replayed: true`
+                 *     response header) instead of creating a second resource. A retry
+                 *     that arrives while the original is still running gets 409
+                 *     `idempotency-key-in-flight` with `Retry-After`. Only 2xx
+                 *     responses are replayed; a failed original may be retried with the
+                 *     same key. Keys are scoped to the caller, and dedup is held per API
+                 *     process, so it covers the retry window rather than surviving a
+                 *     restart. Longer than 256 bytes returns 400
+                 *     `idempotency-key-too-long`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path?: never;
             cookie?: never;
         };
@@ -20587,7 +20702,12 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Account at the price-alert quota for its tier. */
+            /**
+             * @description Account at the price-alert quota for its tier.
+             *     A request whose `Idempotency-Key` matches one still being
+             *     processed also gets 409 (`idempotency-key-in-flight`,
+             *     retryable per `Retry-After`).
+             */
             409: {
                 headers: {
                     [name: string]: unknown;

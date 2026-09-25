@@ -29,6 +29,7 @@ interface FetchOptions {
   method?: string;
   body?: unknown;
   signal?: AbortSignal;
+  idempotencyKey?: string;
 }
 
 async function accountFetch<T>(
@@ -36,6 +37,7 @@ async function accountFetch<T>(
   opts: FetchOptions = {},
 ): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' };
+  if (opts.idempotencyKey) headers['Idempotency-Key'] = opts.idempotencyKey;
   let body: BodyInit | undefined;
   if (opts.body !== undefined) {
     headers['Content-Type'] = 'application/json';
@@ -66,6 +68,37 @@ async function accountFetch<T>(
 
   if (res.status === 204) return undefined as unknown as T;
   return (await res.json()) as T;
+}
+
+// ─── Idempotent creates ───────────────────────────────────────────
+
+// One Idempotency-Key per (route, request body) until that create
+// succeeds. A create that times out may still commit server-side; the
+// user's natural retry of the same form then replays the original
+// resource instead of minting a second key / alert / webhook. A changed
+// body is a different request and gets a fresh key.
+const pendingCreateKeys = new Map<string, { body: string; key: string }>();
+
+function newIdempotencyKey(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+}
+
+async function idempotentCreate<T>(path: string, body: unknown): Promise<T> {
+  const serialized = JSON.stringify(body);
+  let pending = pendingCreateKeys.get(path);
+  if (!pending || pending.body !== serialized) {
+    pending = { body: serialized, key: newIdempotencyKey() };
+    pendingCreateKeys.set(path, pending);
+  }
+  const result = await accountFetch<T>(path, {
+    method: 'POST',
+    body,
+    idempotencyKey: pending.key,
+  });
+  if (pendingCreateKeys.get(path) === pending) pendingCreateKeys.delete(path);
+  return result;
 }
 
 // ─── Auth ──────────────────────────────────────────────────────────
@@ -227,10 +260,7 @@ export async function listKeysWithLimit(
 export async function createKey(
   body: CreateKeyRequest,
 ): Promise<CreateKeyResponse> {
-  return accountFetch<CreateKeyResponse>('/dashboard/keys', {
-    method: 'POST',
-    body,
-  });
+  return idempotentCreate<CreateKeyResponse>('/dashboard/keys', body);
 }
 
 /** DELETE /v1/dashboard/keys/{id} — soft-revoke (idempotent). */
@@ -313,10 +343,7 @@ export async function listPriceAlerts(
 export async function createPriceAlert(
   body: CreatePriceAlertRequest,
 ): Promise<DashboardPriceAlert> {
-  return accountFetch<DashboardPriceAlert>('/dashboard/price-alerts', {
-    method: 'POST',
-    body,
-  });
+  return idempotentCreate<DashboardPriceAlert>('/dashboard/price-alerts', body);
 }
 
 /**
@@ -378,10 +405,7 @@ export async function listDashboardWebhooks(
 export async function createDashboardWebhook(
   body: CreateWebhookRequest,
 ): Promise<CreateWebhookResponse> {
-  return accountFetch<CreateWebhookResponse>('/dashboard/webhooks', {
-    method: 'POST',
-    body,
-  });
+  return idempotentCreate<CreateWebhookResponse>('/dashboard/webhooks', body);
 }
 
 /**

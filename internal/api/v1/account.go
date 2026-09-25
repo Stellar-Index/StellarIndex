@@ -569,6 +569,25 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// accountKeyIdempotencySubject scopes an Idempotency-Key on
+// POST /v1/account/keys to the authenticating CREDENTIAL, not just its
+// identifier: sibling keys share an identifier but not scopes, and a
+// replay hands back a minted plaintext, so a narrower sibling must never
+// be able to replay a wider one's mint. Empty (no dedupe) for anonymous.
+func accountKeyIdempotencySubject(r *http.Request) string {
+	subject, ok := auth.SubjectFrom(r.Context())
+	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
+		return ""
+	}
+	if subject.KeyID != "" {
+		return "key:" + subject.KeyID
+	}
+	if subject.Identifier == "" {
+		return ""
+	}
+	return "sub:" + subject.Identifier
+}
+
 // parseCreateKeyRequest reads + validates the POST /v1/account/keys
 // body. ok=false means the 400 has already been written.
 func parseCreateKeyRequest(w http.ResponseWriter, r *http.Request) (createKeyRequest, bool) {

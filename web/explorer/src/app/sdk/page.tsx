@@ -44,7 +44,7 @@ const PATTERNS: { title: string; blurb: string; code: string }[] = [
     blurb:
       'Single round trip; the wire shape preserves the input order. Use this when feeding a watchlist or rendering a portfolio strip.',
     code: `prices, err := c.PriceBatch(ctx, client.PriceBatchQuery{
-    Assets: []string{
+    AssetIDs: []string{
         "native",
         "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
         "AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
@@ -124,10 +124,13 @@ fmt.Printf("O=%s H=%s L=%s C=%s vol=%s\\n",
 if err != nil {
     var apiErr *client.APIError
     if errors.As(err, &apiErr) {
-        switch apiErr.Status {
-        case 404:
+        switch {
+        case apiErr.IsWithheld():
+            // observed, but the server declines to publish a price
+            // (thin market / flagged issuer) — never show "no data"
+        case apiErr.IsNotFound():
             // pair not yet observed — render "no price"
-        case 400:
+        case apiErr.Status == 400:
             // bad asset id — fix call site
         default:
             log.Printf("api error: %d %s", apiErr.Status, apiErr.Detail)
@@ -153,7 +156,7 @@ export default function SDKPage() {
           Typed, SemVer-stable, no surprises. Anonymous mode for the public
           tier; bearer-token mode for API keys. The SDK covers the pricing/read
           surface — prices, history, OHLC, markets, the asset catalogue, and
-          account self-service — with ~36 typed methods; SSE streams and the
+          account self-service — with 40-plus typed methods; SSE streams and the
           explorer read surface are reachable over plain HTTP.
         </p>
       </header>

@@ -2549,7 +2549,9 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/account/me", s.handleAccountMe)
 	s.mux.HandleFunc("GET /v1/account/usage", s.handleAccountUsage)
 	s.mux.HandleFunc("GET /v1/account/keys", s.handleAccountKeysList)
-	s.mux.HandleFunc("POST /v1/account/keys", s.handleAccountKeysCreate)
+	s.mux.Handle("POST /v1/account/keys", middleware.Idempotency(
+		middleware.NewIdempotencyStore(0), accountKeyIdempotencySubject,
+	)(http.HandlerFunc(s.handleAccountKeysCreate)))
 	s.mux.HandleFunc("DELETE /v1/account/keys/{keyID}", s.handleAccountKeysRevoke)
 	// Operator surface: mint a key for ANOTHER identifier. Gated on
 	// TierOperator inside the handler; audit-logged via Options.Audit.
@@ -3172,6 +3174,7 @@ var knownErrorSlugs = map[string]struct{}{
 	"forbidden":                       {},
 	"history-timeout":                 {},
 	"history-unavailable":             {},
+	"idempotency-key-in-flight":       {},
 	"idempotency-key-too-long":        {},
 	"identity-pair":                   {},
 	"identity-price":                  {},
