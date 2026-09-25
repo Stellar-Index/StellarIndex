@@ -236,6 +236,13 @@ export function AccountPositions({ id }: { id: string }) {
   );
   const total = Number(totalCents) / 100;
   const pricedCount = holdings.filter((h) => h.valueUSD != null).length;
+  // An unpriced positive balance adds $0 to the sum, so the total is a floor
+  // (AGENTS.md invariant 1): mark it "≥" and name what it leaves out.
+  const unpricedCount = holdings.length - pricedCount;
+  const lowerBound = unpricedCount > 0;
+  const totalText = `${lowerBound ? '≥ ' : ''}${usdFmt.format(total)}`;
+  const excludedText = `excludes ${unpricedCount} unpriced`;
+  const shareOf = lowerBound ? 'of priced value' : 'of value';
   const slices = holdings
     .filter((h) => h.valueUSD != null && h.valueUSD > 0)
     .map((h) => {
@@ -270,7 +277,8 @@ export function AccountPositions({ id }: { id: string }) {
         <StatCell>
           <Stat
             label="Portfolio value"
-            value={total > 0 ? usdFmt.format(total) : '—'}
+            value={total > 0 ? totalText : '—'}
+            sub={lowerBound && total > 0 ? excludedText : undefined}
           />
         </StatCell>
         <StatCell>
@@ -286,7 +294,7 @@ export function AccountPositions({ id }: { id: string }) {
             value={slices[0] ? slices[0].label : '—'}
             sub={
               slices[0] && total > 0
-                ? `${((slices[0].value / total) * 100).toFixed(1)}% of value`
+                ? `${((slices[0].value / total) * 100).toFixed(1)}% ${shareOf}`
                 : undefined
             }
           />
@@ -306,8 +314,8 @@ export function AccountPositions({ id }: { id: string }) {
       {slices.length > 1 && total > 0 && (
         <DonutChart
           data={slices}
-          centerLabel={usdFmt.format(total).replace(/\.00$/, '')}
-          centerSub="value"
+          centerLabel={totalText.replace(/\.00$/, '')}
+          centerSub={lowerBound ? `value · ${excludedText}` : 'value'}
           formatValue={(n) => usdFmt.format(n)}
         />
       )}
@@ -320,7 +328,9 @@ export function AccountPositions({ id }: { id: string }) {
               <Th align="right">Balance</Th>
               <Th align="right">Price</Th>
               <Th align="right">Value</Th>
-              <Th align="right">Allocation</Th>
+              <Th align="right">
+                {lowerBound ? 'Allocation (priced)' : 'Allocation'}
+              </Th>
             </TR>
           </THead>
           <TBody>

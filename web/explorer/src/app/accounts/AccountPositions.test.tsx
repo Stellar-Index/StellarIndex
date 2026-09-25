@@ -21,6 +21,8 @@ import { AccountPositions } from './AccountPositions';
 // The envelope now rides through to the table.
 
 const USDC = 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+const UNPRICED_ASSET =
+  'AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA';
 const ACCOUNT = 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC';
 
 /** Balances are stroop integers (7 decimals, ADR-0003). */
@@ -187,5 +189,68 @@ describe('AccountPositions price envelope', () => {
 
     expect(await screen.findAllByText('$675,005.23')).not.toHaveLength(0);
     expect(screen.queryByText('$675,005.24')).not.toBeInTheDocument();
+  });
+
+  it('renders a total with an unpriced holding as a lower bound naming the exclusion', async () => {
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path.startsWith('/v1/accounts/')) {
+        return {
+          data: {
+            account_id: ACCOUNT,
+            exists: true,
+            balance: XLM_BALANCE,
+            trustlines: [
+              { asset: USDC, balance: USDC_BALANCE },
+              // A real positive balance the pricing API won't price.
+              { asset: UNPRICED_ASSET, balance: '70000000000' },
+            ],
+          },
+        };
+      }
+      if (path === '/v1/price/batch') {
+        return {
+          data: [
+            {
+              asset_id: 'crypto:XLM',
+              quote: 'fiat:USD',
+              price: '0.19498671210062048170',
+              price_type: 'vwap',
+              observed_at: hoursAgo(1),
+            },
+            {
+              asset_id: USDC,
+              quote: 'fiat:USD',
+              price: '1.000000000000',
+              price_type: 'vwap',
+              observed_at: hoursAgo(1),
+            },
+            { asset_id: UNPRICED_ASSET, quote: 'fiat:USD', price: null },
+          ],
+          as_of: new Date().toISOString(),
+          flags: { stale: false },
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    renderPanel();
+
+    // Stat tile and donut centre both carry the floor, never a bare total.
+    expect(await screen.findAllByText('≥ $69.50')).toHaveLength(2);
+    expect(screen.queryByText('$69.50')).not.toBeInTheDocument();
+    expect(screen.getByText('excludes 1 unpriced')).toBeInTheDocument();
+    expect(screen.getByText('value · excludes 1 unpriced')).toBeInTheDocument();
+    // Shares are of the priced subtotal, and say so.
+    expect(screen.getByText('71.9% of priced value')).toBeInTheDocument();
+    expect(screen.getByText('Allocation (priced)')).toBeInTheDocument();
+  });
+
+  it('keeps a fully priced total unqualified', async () => {
+    stubApi();
+    renderPanel();
+
+    expect(await screen.findAllByText('$69.50')).toHaveLength(2);
+    expect(screen.queryByText(/≥/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/unpriced/)).not.toBeInTheDocument();
+    expect(screen.getByText('71.9% of value')).toBeInTheDocument();
   });
 });
