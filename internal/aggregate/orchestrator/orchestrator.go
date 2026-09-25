@@ -2163,6 +2163,7 @@ func (o *Orchestrator) fetchForTarget(
 
 	var merged []canonical.Trade
 	var sumUSD float64
+	var fetchErrs []error
 	tradeUSD = map[string]float64{}
 	proxied = map[string]struct{}{}
 	for _, src := range sources {
@@ -2173,6 +2174,7 @@ func (o *Orchestrator) fetchForTarget(
 				"source_pair", src.String(),
 				"err", ferr,
 			)
+			fetchErrs = append(fetchErrs, fmt.Errorf("%s: %w", src.String(), ferr))
 			continue
 		}
 		// Per-trade USD value against the SOURCE pair's quote-decimal
@@ -2192,6 +2194,11 @@ func (o *Orchestrator) fetchForTarget(
 			proxied[batch[i].ID()] = struct{}{}
 			merged = append(merged, batch[i])
 		}
+	}
+	// One failing leg is tolerated; every leg failing means nothing was
+	// read, and reporting that as an empty window hides a store outage.
+	if len(fetchErrs) == len(sources) {
+		return nil, 0, nil, nil, fmt.Errorf("all %d source pairs failed: %w", len(sources), errors.Join(fetchErrs...))
 	}
 	return merged, sumUSD, tradeUSD, proxied, nil
 }

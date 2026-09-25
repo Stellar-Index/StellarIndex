@@ -778,6 +778,45 @@ func TestTick_StablecoinExpansion_SingleBackerFetchFailureDoesNotAbortWindow(t *
 	}
 }
 
+// A store outage under the proxy fails every expanded leg; that must
+// surface as a tick error, not as an "ok" tick with an empty window.
+func TestTick_StablecoinExpansion_AllSourcesFailingIsTickError(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pair func(*testing.T) canonical.Pair
+	}{
+		{"fiat target expands to backers", xlmUsdFiatPair},
+		{"non-fiat target has only the direct leg", xlmUsdtPair},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &mockStore{returnErr: context.DeadlineExceeded}
+			rdb, _ := newTestRedis(t)
+			orch := New(store, rdb, Config{
+				Pairs:                     []canonical.Pair{tc.pair(t)},
+				Windows:                   []time.Duration{5 * time.Minute},
+				EnableStablecoinFiatProxy: true,
+			})
+			beforeErr := testutil.ToFloat64(obs.AggregatorTicksTotal.WithLabelValues("error"))
+			beforeEmpty := testutil.ToFloat64(obs.AggregatorEmptyWindowsTotal)
+			if err := orch.Tick(context.Background()); err != nil {
+				t.Fatalf("Tick: %v", err)
+			}
+			if store.calls == 0 {
+				t.Fatal("store was never queried")
+			}
+			if got := orch.Stats().Errors; got != 1 {
+				t.Errorf("Errors = %d want 1", got)
+			}
+			if got := testutil.ToFloat64(obs.AggregatorTicksTotal.WithLabelValues("error")) - beforeErr; got != 1 {
+				t.Errorf("ticks{error} delta = %v want 1", got)
+			}
+			if got := testutil.ToFloat64(obs.AggregatorEmptyWindowsTotal) - beforeEmpty; got != 0 {
+				t.Errorf("empty_windows delta = %v want 0 (an outage is not an empty window)", got)
+			}
+		})
+	}
+}
+
 func TestTick_StablecoinExpansion_DisabledFetchesOnlyDirectPair(t *testing.T) {
 	// With the flag off the orchestrator should issue one fetch
 	// per configured pair, regardless of any backer rows in the
