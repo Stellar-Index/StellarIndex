@@ -165,8 +165,10 @@ extrapolation.
 
 ### 1.3 The row count is validated, not assumed
 
-`classic_trade_effect_count` predicts served `sdex` rows one-for-one.
-Measured on a bounded window:
+`classic_trade_effect_count` predicts served `sdex` rows one-for-one,
+less the one-side-zero fills it counts and the trades table cannot hold
+(`CHECK (base_amount > 0)`), so it is a sizing estimate, not a
+reconcile oracle. Measured on a bounded window:
 
 ```
 -- lake

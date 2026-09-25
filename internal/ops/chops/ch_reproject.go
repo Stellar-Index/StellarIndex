@@ -9,10 +9,8 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
-	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sdex"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -187,28 +185,12 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 
 	// ─── SDEX side: op-based re-derivation ───────────────────────────────
 	// SDEX trades are op-derived (operations + operation_results), NOT
-	// event-derived, so they don't flow through StreamContractEvents. A
-	// separate op pass feeds each trade-bearing op to the SDEX decoder; the
-	// passive-offer + one-side-zero fixes recover here for all history, so
-	// CH > served is expected (the live path dropped them).
-	sdexByLedger := make(map[uint32]int)
-	sdexDec := sdex.NewDecoder()
+	// event-derived, so they don't flow through StreamContractEvents. Count
+	// the served projection — decoder output the writer can store — not raw
+	// decoder output: a one-side-zero fill is decoded but never storable, so
+	// counting it would print a permanent CH > served no rebuild can clear.
 	sdexStart := time.Now()
-	serr := clickhouse.StreamSDEXOps(ctx, *chAddr, lo, hi, func(op clickhouse.SDEXOp) error {
-		// SDEX Decode never returns a non-nil error — it soft-fails per claim
-		// atom internally (drops malformed/both-zero, keeps the rest).
-		outs, _ := sdexDec.Decode(dispatcher.OpContext{
-			Ledger:   op.Ledger,
-			ClosedAt: op.ClosedAt,
-			TxHash:   op.TxHash,
-			TxSource: op.Source,
-			OpIndex:  int(op.OpIndex),
-			Op:       op.Op,
-			OpResult: op.OpResult,
-		})
-		sdexByLedger[op.Ledger] += len(outs)
-		return nil
-	})
+	sdexByLedger, sdexBlind, serr := reDeriveSDEXCensusViaDecoder(ctx, *chAddr, lo, hi)
 	if serr != nil {
 		return fmt.Errorf("ch-reproject: sdex op stream: %w", serr)
 	}
@@ -223,8 +205,13 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 	for _, src := range cat {
 		if src.dec == nil {
 			// sdex: op-based re-derivation (sdexByLedger, above). One target
-			// (trades WHERE source='sdex'); CH > served = recovered fills.
+			// (trades WHERE source='sdex'); CH > served = storable fills the
+			// served tier is missing.
 			if src.name == "sdex" {
+				if sdexBlind.Any() {
+					anyDiff = true
+					fmt.Printf("%-34s %s\n", "sdex (undecodable)", sdexBlind.Detail())
+				}
 				for _, tgt := range src.targets {
 					actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, lo, hi)
 					if aerr != nil {

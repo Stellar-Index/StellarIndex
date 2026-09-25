@@ -547,7 +547,8 @@ func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash stri
 }
 
 // claimAtomCount mirrors dispatcher.claimAtomCount exactly (same op types +
-// success gating) so classic_trade_effect_count equals the SDEX trade count.
+// success gating) so classic_trade_effect_count equals the SDEX decoder's
+// trade output — not COUNT(trades), which also excludes one-side-zero fills.
 // The per-atom predicate is [sdexclaim.IsRealTrade] on both sides — the same
 // rule sdex.decodeClaimAtom applies — so the mirror this comment claims is
 // enforced by a shared function, not by inspection (C2-010, audit-2026-07-23;
@@ -612,7 +613,8 @@ func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int { //nolint
 
 // (realTradeCount / claimAtomAmounts moved to internal/sdexclaim — shared with
 // the dispatcher census. Both-zero no-op crosses are excluded, one-side-zero
-// rounding-artifact fills kept, so the census equals COUNT(trades).)
+// rounding-artifact fills kept, so the census equals the decoder's output and
+// exceeds COUNT(trades) by the fills the writer cannot store.)
 
 func hashHex(h xdr.Hash) string { return hex.EncodeToString(h[:]) }
 

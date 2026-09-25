@@ -66,6 +66,12 @@ func canonLastPriceSQL(flipped string) string {
 // Mirrors canonical.Orient: the canonical quote is the higher-quoteRank
 // asset, ties broken by the greater asset_id string. Each returned
 // expression is fully parenthesised and safe to inline.
+//
+// Stored orientation is per source family and the families are INVERSE:
+// SDEX stores base = the resting offer's AssetSold (what the taker
+// received), Soroban AMMs (aquarius, comet, phoenix, soroswap) store
+// base = token_in (what the taker sold). The same economic trade lands in
+// opposite orientations, so a read combining sources must orient here.
 func canonOrientSQL() (canonBase, canonQuote, flipped string) {
 	const bcol, qcol = "base_asset", "quote_asset"
 	rb, rq := quoteRankSQL(bcol), quoteRankSQL(qcol)
