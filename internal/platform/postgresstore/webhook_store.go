@@ -256,6 +256,11 @@ func (c *WebhookStore) DeleteWebhook(ctx context.Context, id uuid.UUID) error {
 // wrapping [ErrWebhookAccountInactive] when the account is not active,
 // and [platform.ErrNotFound] when the webhook itself is gone (the
 // pre-gate behaviour a foreign-key violation produced).
+//
+// d.ID is inserted as the primary key, so a producer that derives it from
+// the event (customerwebhook.Fanout.PublishOnce) can re-run a partial
+// fan-out without re-notifying subscribers already queued: the conflict
+// inserts nothing and returns [platform.ErrDeliveryAlreadyEnqueued].
 func (c *WebhookStore) EnqueueDelivery(ctx context.Context, d platform.WebhookDelivery) error {
 	if d.WebhookID == uuid.Nil {
 		return errors.New("postgresstore: EnqueueDelivery: WebhookID is empty")
@@ -267,10 +272,13 @@ func (c *WebhookStore) EnqueueDelivery(ctx context.Context, d platform.WebhookDe
 	if len(payload) == 0 {
 		payload = []byte(`{}`)
 	}
+	if d.ID == uuid.Nil {
+		d.ID = uuid.New()
+	}
 	const q = `
 		INSERT INTO webhook_deliveries
-		    (webhook_id, event_type, payload, attempt_count, next_attempt_at)
-		SELECT cw.id, $2, $3, 0,
+		    (id, webhook_id, event_type, payload, attempt_count, next_attempt_at)
+		SELECT $5, cw.id, $2, $3, 0,
 		       COALESCE(NULLIF($4, '0001-01-01 00:00:00+00'::timestamptz), now())
 		  FROM customer_webhooks cw
 		 WHERE cw.id = $1
@@ -278,9 +286,10 @@ func (c *WebhookStore) EnqueueDelivery(ctx context.Context, d platform.WebhookDe
 		                 FROM accounts a
 		                WHERE a.id = cw.account_id
 		                  AND a.status = 'active')
+		ON CONFLICT (id) DO NOTHING
 	`
 	res, err := c.s.db.ExecContext(ctx, q,
-		d.WebhookID, string(d.EventType), payload, d.NextAttemptAt,
+		d.WebhookID, string(d.EventType), payload, d.NextAttemptAt, d.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("postgresstore: EnqueueDelivery: %w", err)
@@ -290,9 +299,32 @@ func (c *WebhookStore) EnqueueDelivery(ctx context.Context, d platform.WebhookDe
 		return fmt.Errorf("postgresstore: EnqueueDelivery rows affected: %w", err)
 	}
 	if n == 0 {
+		if dupErr := c.alreadyEnqueued(ctx, d.ID, d.WebhookID); dupErr != nil {
+			return dupErr
+		}
 		return c.refuseEnqueue(ctx, "EnqueueDelivery", d.WebhookID)
 	}
 	return nil
+}
+
+// alreadyEnqueued explains an EnqueueDelivery that inserted nothing
+// because d.ID already exists. It returns nil when no such row exists, so
+// the caller falls through to the kill-switch explanation. An existing ID
+// on a DIFFERENT webhook is a key collision, never an idempotent replay.
+func (c *WebhookStore) alreadyEnqueued(ctx context.Context, id, webhookID uuid.UUID) error {
+	var owner uuid.UUID
+	err := c.s.db.QueryRowContext(ctx,
+		`SELECT webhook_id FROM webhook_deliveries WHERE id = $1`, id).Scan(&owner)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil
+	case err != nil:
+		return fmt.Errorf("postgresstore: EnqueueDelivery: queued nothing and the existing-row check failed: %w", err)
+	case owner != webhookID:
+		return fmt.Errorf("postgresstore: EnqueueDelivery: delivery id %s already belongs to webhook %s, not %s", id, owner, webhookID)
+	}
+	return fmt.Errorf("postgresstore: EnqueueDelivery: delivery %s for webhook %s: %w",
+		id, webhookID, platform.ErrDeliveryAlreadyEnqueued)
 }
 
 // ErrWebhookAccountInactive is the sentinel the enqueue paths wrap when
@@ -364,8 +396,14 @@ func (c *WebhookStore) WebhookAccountStatus(ctx context.Context, webhookID uuid.
 	return platform.AccountStatus(status), nil
 }
 
+// maxClaimPerWebhook caps one endpoint's rows in a single claim. At the
+// worker's 10s attempt timeout, 5 rows bound a stalled endpoint's lane to
+// under a minute per poll; a healthy endpoint with a backlog drains at 5
+// rows per poll instead of a whole batch.
+const maxClaimPerWebhook = 5
+
 // ListPendingDeliveries atomically claims up to `limit` due
-// deliveries FIFO. F-1247 (codex audit-2026-05-12): claim happens
+// deliveries, fair-shared across endpoints (see below). F-1247 (codex audit-2026-05-12): claim happens
 // in the same statement as the read via UPDATE…RETURNING +
 // `FOR UPDATE SKIP LOCKED`, so two workers running concurrently
 // (horizontal scale or blue/green overlap during deploy) never
@@ -383,8 +421,14 @@ func (c *WebhookStore) WebhookAccountStatus(ctx context.Context, webhookID uuid.
 // catches it; and customer-side metrics treat
 // duplicate-post-after-worker-crash as the same class as 5xx-retry.
 //
-// FIFO ordering is preserved via the `ORDER BY next_attempt_at ASC`
-// inside the SELECT subquery.
+// Fair share (GH-663): the claim ranks each endpoint's due rows FIFO and
+// takes every endpoint's first row before any endpoint's second, and at
+// most maxClaimPerWebhook rows per endpoint per claim. One endpoint's
+// backlog — say a black-holing host with hundreds of queued events —
+// therefore cannot fill a batch and push every other customer's events
+// behind it; the worker delivers each endpoint's rows serially, so this
+// cap also bounds how long that endpoint's lane holds a poll. Within an
+// endpoint, order stays FIFO by next_attempt_at.
 //
 // SEC-06 / RLT-420: the claim also skips any delivery whose owning
 // account is not ACTIVE. Rows queued before a suspension are therefore
@@ -402,9 +446,15 @@ func (c *WebhookStore) ListPendingDeliveries(ctx context.Context, limit int) ([]
 	if limit > 1000 {
 		limit = 1000
 	}
+	// Window functions cannot share a SELECT with FOR UPDATE, so `due`
+	// ranks without locking and `claimed` locks; the due predicates are
+	// repeated on wd so a row another worker claimed since `due` read it
+	// is re-checked against its new version and dropped.
 	const q = `
-		WITH claimed AS (
-		    SELECT id
+		WITH due AS (
+		    SELECT id, next_attempt_at,
+		           row_number() OVER (PARTITION BY webhook_id
+		                              ORDER BY next_attempt_at, id) AS lane_rank
 		      FROM webhook_deliveries
 		     WHERE delivered_at IS NULL
 		       AND next_attempt_at IS NOT NULL
@@ -414,9 +464,16 @@ func (c *WebhookStore) ListPendingDeliveries(ctx context.Context, limit int) ([]
 		                     JOIN accounts a ON a.id = cw.account_id
 		                    WHERE cw.id = webhook_deliveries.webhook_id
 		                      AND a.status = 'active')
-		     ORDER BY next_attempt_at ASC
+		), claimed AS (
+		    SELECT wd.id
+		      FROM webhook_deliveries wd
+		      JOIN due ON due.id = wd.id
+		     WHERE due.lane_rank <= $2
+		       AND wd.delivered_at IS NULL
+		       AND wd.next_attempt_at <= now()
+		     ORDER BY due.lane_rank, due.next_attempt_at, wd.id
 		     LIMIT $1
-		     FOR UPDATE SKIP LOCKED
+		     FOR UPDATE OF wd SKIP LOCKED
 		)
 		UPDATE webhook_deliveries
 		   SET next_attempt_at = now() + interval '5 minutes'
@@ -433,7 +490,7 @@ func (c *WebhookStore) ListPendingDeliveries(ctx context.Context, limit int) ([]
 		          COALESCE(webhook_deliveries.last_response_status, 0),
 		          webhook_deliveries.created_at
 	`
-	rows, err := c.s.db.QueryContext(ctx, q, limit)
+	rows, err := c.s.db.QueryContext(ctx, q, limit, maxClaimPerWebhook)
 	if err != nil {
 		return nil, fmt.Errorf("postgresstore: ListPendingDeliveries: %w", err)
 	}

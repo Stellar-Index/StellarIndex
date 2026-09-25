@@ -3,6 +3,7 @@ package customerwebhook_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"sync"
@@ -63,6 +64,12 @@ func (s *fanoutStore) EnqueueDelivery(_ context.Context, d platform.WebhookDeliv
 	defer s.mu.Unlock()
 	if err := s.failFor[d.WebhookID]; err != nil {
 		return err
+	}
+	// Mirror the postgres store's contract: d.ID is the primary key.
+	for _, prev := range s.enqueued {
+		if prev.ID == d.ID {
+			return fmt.Errorf("fake: delivery %s: %w", d.ID, platform.ErrDeliveryAlreadyEnqueued)
+		}
 	}
 	s.enqueued = append(s.enqueued, d)
 	return nil
@@ -261,17 +268,12 @@ func TestFanoutPublish_NilReceiverIsTyped(t *testing.T) {
 // TestFanoutFailureSeries_ZeroSeeded — every platform.WebhookEventType is
 // pre-seeded against every reason. internal/obs cannot import
 // internal/platform (layering), so the seed list there is a literal copy of
-// this enum; this test is what keeps the two from drifting. A missing series
+// this enum; this test iterates platform.WebhookEventTypes() — itself
+// pinned to the declared constants — so a new type fails here until seeded. A missing series
 // reads as "no data" on the alert, which is exactly the silence C3-023 is
 // about.
 func TestFanoutFailureSeries_ZeroSeeded(t *testing.T) {
-	for _, evt := range []platform.WebhookEventType{
-		platform.WebhookEventIncidentSEV1,
-		platform.WebhookEventIncidentResolved,
-		platform.WebhookEventAnomalyFreeze,
-		platform.WebhookEventDivergenceFiring,
-		platform.WebhookEventPriceAlert,
-	} {
+	for _, evt := range platform.WebhookEventTypes() {
 		for _, reason := range []string{
 			obs.FanoutFailureInvalidPayload,
 			obs.FanoutFailureListSubscribers,

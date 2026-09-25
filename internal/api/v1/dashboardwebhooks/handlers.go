@@ -577,16 +577,14 @@ func blockedResolvedAddrError(host string, addrs []net.IPAddr) error {
 // canonical union blocklist shared with SEP-1 resolution + webhook delivery,
 // CS-008. Registration + delivery now agree by construction.)
 
-// validEventTypes pins the closed event set the worker fans out.
-// Mirrors the constants in `internal/platform/webhook.go` —
-// keeping the list local to the handler avoids importing the
-// constants for a value comparison.
-var validEventTypes = map[string]struct{}{
-	string(platform.WebhookEventIncidentSEV1):     {},
-	string(platform.WebhookEventIncidentResolved): {},
-	string(platform.WebhookEventAnomalyFreeze):    {},
-	string(platform.WebhookEventDivergenceFiring): {},
-	string(platform.WebhookEventPriceAlert):       {},
+// supportedEventList renders [platform.WebhookEventTypes] for the 400 body.
+func supportedEventList() string {
+	all := platform.WebhookEventTypes()
+	names := make([]string, len(all))
+	for i, e := range all {
+		names[i] = string(e)
+	}
+	return strings.Join(names, ", ")
 }
 
 func validateEvents(events []string) error {
@@ -594,9 +592,8 @@ func validateEvents(events []string) error {
 		return errors.New("events must contain at least one entry")
 	}
 	for _, e := range events {
-		if _, ok := validEventTypes[e]; !ok {
-			return fmt.Errorf("event %q is not in the supported set "+
-				"(incident.sev1, incident.resolved, anomaly.freeze, divergence.firing, price.alert)", e)
+		if !platform.IsWebhookEventType(e) {
+			return fmt.Errorf("event %q is not in the supported set (%s)", e, supportedEventList())
 		}
 	}
 	return nil

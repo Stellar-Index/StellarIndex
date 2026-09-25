@@ -60,6 +60,18 @@ func findIncidentForEmit(all []incidents.Incident, slug string, eventType platfo
 	return found, nil
 }
 
+// incidentEventKey is the identity PublishOnce keys each subscriber's
+// delivery on: the incident and the transition being announced, never the
+// emit time, so re-running the command after a partial fan-out enqueues
+// only the subscribers it missed instead of paging the rest twice.
+func incidentEventKey(found *incidents.Incident, eventType platform.WebhookEventType) string {
+	key := found.Slug + "@" + found.StartedAt.UTC().Format(time.RFC3339Nano)
+	if eventType == platform.WebhookEventIncidentResolved && found.ResolvedAt != nil {
+		key += "/resolved@" + found.ResolvedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return key
+}
+
 // incidentPayloadFields builds the webhook body a subscriber receives.
 // Extracted from [emitIncident] to keep that function under the funlen
 // cap; the shape is the same one the dashboard explorer + /v1/incidents
@@ -212,10 +224,10 @@ func emitIncident(args []string) error {
 		return fmt.Errorf("list subscribers: %w", err)
 	}
 
-	res, err := fanout.Publish(ctx, eventType, payload)
+	res, err := fanout.PublishOnce(ctx, eventType, incidentEventKey(found, eventType), payload)
 
-	fmt.Fprintf(os.Stderr, "emit-incident: event=%s slug=%s subscribers=%d enqueued=%d failed=%d\n",
-		eventType, *slug, len(subs), res.Enqueued, res.Failed)
+	fmt.Fprintf(os.Stderr, "emit-incident: event=%s slug=%s subscribers=%d enqueued=%d already_enqueued=%d failed=%d\n",
+		eventType, *slug, len(subs), res.Enqueued, res.AlreadyEnqueued, res.Failed)
 	if len(subs) == 0 {
 		fmt.Fprintln(os.Stderr, "emit-incident: no dashboard hooks subscribed — fan-out was a no-op")
 	}
@@ -223,8 +235,8 @@ func emitIncident(args []string) error {
 	// an incident. A partial or total fan-out failure means some of them
 	// were NOT told, and there is no retry row to drain — so the command
 	// must exit non-zero rather than printing a reassuring summary. Safe
-	// to re-run: the worker de-dupes nothing, but a re-emit is far
-	// cheaper than a silently un-notified customer.
+	// to re-run: deliveries are keyed on incidentEventKey, so a re-run
+	// queues only the subscribers the failed attempt missed.
 	if err != nil {
 		return fmt.Errorf("emit-incident: %w", err)
 	}

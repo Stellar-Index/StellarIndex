@@ -69,6 +69,11 @@ type PublishResult struct {
 	// folding a deliberate withholding into it would page an operator
 	// for the kill switch doing its job.
 	Suppressed int
+
+	// AlreadyEnqueued counts subscribers the store already held this
+	// event for — a [Fanout.PublishOnce] re-run after a partial fan-out.
+	// Neither lost nor newly queued, so it is neither Failed nor Enqueued.
+	AlreadyEnqueued int
 }
 
 // NewFanout constructs a Fanout. nil store returns nil — the
@@ -115,6 +120,15 @@ func NewFanout(store FanoutStore, logger *slog.Logger) *Fanout {
 func (f *Fanout) Publish(
 	ctx context.Context, eventType platform.WebhookEventType, payload []byte,
 ) (PublishResult, error) {
+	return f.publish(ctx, eventType, payload, func(uuid.UUID) uuid.UUID { return uuid.New() })
+}
+
+// publish is the fan-out both entry points share; deliveryID names each
+// subscriber's row.
+func (f *Fanout) publish(
+	ctx context.Context, eventType platform.WebhookEventType, payload []byte,
+	deliveryID func(webhookID uuid.UUID) uuid.UUID,
+) (PublishResult, error) {
 	if f == nil {
 		return PublishResult{}, ErrFanoutNotConfigured
 	}
@@ -136,40 +150,8 @@ func (f *Fanout) Publish(
 			"customerwebhook: fan-out %s: list subscribers: %w", eventType, err)
 	}
 	res := PublishResult{Subscribers: len(subs)}
-	if len(subs) == 0 {
-		return res, nil
-	}
 	for _, sub := range subs {
-		d := platform.WebhookDelivery{
-			ID:        uuid.New(),
-			WebhookID: sub.ID,
-			EventType: string(eventType),
-			Payload:   payload,
-			// NextAttemptAt zero is normalised by the store to "now"
-			// so the worker's next poll picks it up immediately.
-		}
-		if err := f.store.EnqueueDelivery(ctx, d); err != nil {
-			if suppressed(err) {
-				// The account kill switch closed between the resolve
-				// above and this insert. Nothing was lost that should
-				// have been delivered, so this is not a fan-out failure
-				// and must not touch the lost-event counter.
-				f.logger.Info("customerwebhook.fanout: delivery suppressed by account status",
-					"event_type", eventType, "webhook_id", sub.ID, "err", err)
-				res.Suppressed++
-				continue
-			}
-			f.logger.Warn("customerwebhook.fanout: enqueue failed",
-				"event_type", eventType, "webhook_id", sub.ID, "err", err)
-			// One increment per LOST delivery, not per fan-out: the
-			// count an operator needs is "how many customer events
-			// vanished", which is per-subscriber.
-			obs.CustomerWebhookFanoutFailuresTotal.
-				WithLabelValues(string(eventType), obs.FanoutFailureEnqueue).Inc()
-			res.Failed++
-			continue
-		}
-		res.Enqueued++
+		f.enqueueOne(ctx, eventType, payload, sub.ID, deliveryID(sub.ID), &res)
 	}
 	if res.Failed > 0 {
 		f.logger.Warn("customerwebhook.fanout: partial fan-out",
@@ -179,6 +161,80 @@ func (f *Fanout) Publish(
 			eventType, res.Failed, res.Subscribers)
 	}
 	return res, nil
+}
+
+// PublishOnce is [Fanout.Publish] for an event with a stable identity.
+// Each subscriber's delivery ID is derived from (eventType, eventKey,
+// webhook id) rather than drawn at random, and the store keys the row on
+// it, so re-running a fan-out that partially failed enqueues only the
+// subscribers it missed; the rest land in [PublishResult.AlreadyEnqueued].
+// Receivers also see one X-StellarIndex-Delivery-Id per logical event.
+//
+// eventKey must identify the event, not the attempt: two distinct events
+// sharing a key would collapse into one delivery. An empty key is refused.
+func (f *Fanout) PublishOnce(
+	ctx context.Context, eventType platform.WebhookEventType, eventKey string, payload []byte,
+) (PublishResult, error) {
+	if eventKey == "" {
+		return PublishResult{}, fmt.Errorf("customerwebhook: fan-out %s: empty event key", eventType)
+	}
+	return f.publish(ctx, eventType, payload, func(webhookID uuid.UUID) uuid.UUID {
+		return EventDeliveryID(eventType, eventKey, webhookID)
+	})
+}
+
+// EventDeliveryID is the delivery ID [Fanout.PublishOnce] assigns one
+// subscriber's copy of an event.
+func EventDeliveryID(eventType platform.WebhookEventType, eventKey string, webhookID uuid.UUID) uuid.UUID {
+	name := string(eventType) + "\x00" + eventKey + "\x00" + webhookID.String()
+	return uuid.NewSHA1(deliveryIDNamespace, []byte(name))
+}
+
+// deliveryIDNamespace scopes [EventDeliveryID]'s name-based UUIDs.
+// Changing it re-keys every event, so a re-run straddling the change
+// would re-notify.
+var deliveryIDNamespace = uuid.MustParse("5d1f7c52-8a3e-4f0b-9c61-2e7d4b8a0f13")
+
+// enqueueOne enqueues one subscriber's delivery and records its outcome
+// on res.
+func (f *Fanout) enqueueOne(
+	ctx context.Context, eventType platform.WebhookEventType, payload []byte,
+	webhookID, id uuid.UUID, res *PublishResult,
+) {
+	d := platform.WebhookDelivery{
+		ID:        id,
+		WebhookID: webhookID,
+		EventType: string(eventType),
+		Payload:   payload,
+		// NextAttemptAt zero is normalised by the store to "now"
+		// so the worker's next poll picks it up immediately.
+	}
+	err := f.store.EnqueueDelivery(ctx, d)
+	switch {
+	case err == nil:
+		res.Enqueued++
+	case errors.Is(err, platform.ErrDeliveryAlreadyEnqueued):
+		f.logger.Info("customerwebhook.fanout: delivery already enqueued",
+			"event_type", eventType, "webhook_id", webhookID, "delivery_id", id)
+		res.AlreadyEnqueued++
+	case suppressed(err):
+		// The account kill switch closed between the resolve and this
+		// insert. Nothing was lost that should have been delivered, so
+		// this is not a fan-out failure and must not touch the lost-event
+		// counter.
+		f.logger.Info("customerwebhook.fanout: delivery suppressed by account status",
+			"event_type", eventType, "webhook_id", webhookID, "err", err)
+		res.Suppressed++
+	default:
+		f.logger.Warn("customerwebhook.fanout: enqueue failed",
+			"event_type", eventType, "webhook_id", webhookID, "err", err)
+		// One increment per LOST delivery, not per fan-out: the count an
+		// operator needs is "how many customer events vanished", which is
+		// per-subscriber.
+		obs.CustomerWebhookFanoutFailuresTotal.
+			WithLabelValues(string(eventType), obs.FanoutFailureEnqueue).Inc()
+		res.Failed++
+	}
 }
 
 // deliverySuppressor is implemented by store errors that report an
