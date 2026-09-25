@@ -298,7 +298,7 @@ func (o *Orchestrator) routeTarget(
 		return st.hardErr
 	}
 	routeEdges := excludeDirectEdge(edges, chain.Target)
-	composite, combinedConf, pathCount, corroboration, diverged, lowConf, err := aggregate.CombineRoutes(
+	composite, combinedConf, servedRouteCount, pathCount, corroboration, diverged, lowConf, err := aggregate.CombineRoutes(
 		routeEdges, chain.Target.Base, chain.Target.Quote, o.cfg.MaxHops, o.cfg.MinRouteConfidence)
 	switch {
 	case errors.Is(err, aggregate.ErrNoRoute):
@@ -333,6 +333,7 @@ func (o *Orchestrator) routeTarget(
 	// derived price because [the target] was frozen" (H2).
 	if o.frozenLeg(chain.Target, window) {
 		o.writeCompositeMeta(ctx, chain.Target, window, compositeMeta{
+			ServedRouteCount:   servedRouteCount,
 			PathCount:          pathCount,
 			CombinedConfidence: combinedConf,
 			LowConfidence:      lowConf,
@@ -363,6 +364,7 @@ func (o *Orchestrator) routeTarget(
 			)
 		}
 		o.writeCompositeMeta(ctx, chain.Target, window, compositeMeta{
+			ServedRouteCount:   servedRouteCount,
 			PathCount:          pathCount,
 			CombinedConfidence: combinedConf,
 			LowConfidence:      true,
@@ -372,11 +374,11 @@ func (o *Orchestrator) routeTarget(
 		return "low_confidence"
 	}
 	if o.refuseProxyPivot(ctx, chain, window, compositeMeta{
-		PathCount: pathCount, CombinedConfidence: combinedConf, Diverged: diverged, Rerouted: rerouted,
+		ServedRouteCount: servedRouteCount, PathCount: pathCount, CombinedConfidence: combinedConf, Diverged: diverged, Rerouted: rerouted,
 	}) {
 		return outcomeProxyPivot
 	}
-	return o.publishComposite(ctx, chain, window, composite, pathCount, corroboration, combinedConf, diverged, rerouted)
+	return o.publishComposite(ctx, chain, window, composite, servedRouteCount, pathCount, corroboration, combinedConf, diverged, rerouted)
 }
 
 // publishComposite writes a CONFIDENT composite to the target's VWAP
@@ -390,7 +392,7 @@ func (o *Orchestrator) publishComposite(
 	chain TriangulationChain,
 	window time.Duration,
 	composite *big.Rat,
-	pathCount, corroboration int,
+	servedRouteCount, pathCount, corroboration int,
 	combinedConf float64,
 	diverged, rerouted bool,
 ) string {
@@ -417,6 +419,7 @@ func (o *Orchestrator) publishComposite(
 	ttl := cachekeys.VWAPTTL(window)
 	metaKey := cachekeys.VWAPCompositeMeta(chain.Target.Base, chain.Target.Quote, window)
 	metaBody, err := json.Marshal(o.withPivotComposition(chain, window, o.withCorroborationBasis(chain.Target, window, compositeMeta{
+		ServedRouteCount:   servedRouteCount,
 		PathCount:          pathCount,
 		CombinedConfidence: combinedConf,
 		LowConfidence:      false,
@@ -569,6 +572,16 @@ func edgeConfidence(conf confidenceComputation, confOK bool, trades []canonical.
 // can respect it without recomputing. Written to
 // [cachekeys.VWAPCompositeMeta].
 type compositeMeta struct {
+	// ServedRouteCount is the number of routes that actually produced the
+	// served composite — the highest-confidence tier's size after its own
+	// outlier omission (aggregate.CombineRoutes' servedRouteCount). PathCount
+	// below is the unrelated, and possibly disjoint, post-omission survivor
+	// count of the FULL gated route set (GH-1022): a thin divergent majority
+	// can survive median-relative omission into PathCount while the served
+	// value came from a single top-confidence outlier route ServedRouteCount
+	// names. Read PathCount as "surviving route population", never as "how
+	// many routes back this value" — that question is ServedRouteCount's.
+	ServedRouteCount   int     `json:"served_route_count"`
 	PathCount          int     `json:"path_count"`
 	CombinedConfidence float64 `json:"combined_confidence"`
 	LowConfidence      bool    `json:"low_confidence"`

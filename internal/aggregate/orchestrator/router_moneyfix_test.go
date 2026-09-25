@@ -219,7 +219,7 @@ func TestPublishComposite_DivergedNeverOverwritesDirectWithoutMeta(t *testing.T)
 
 	// composite 0.072, DIVERGED — must not be served without its diverged flag.
 	outcome := o.publishComposite(context.Background(), chain, window,
-		big.NewRat(72, 1000), 2 /*pathCount*/, 2 /*corroboration*/, 0.9 /*conf*/, true /*diverged*/, false)
+		big.NewRat(72, 1000), 2 /*servedRouteCount*/, 2 /*pathCount*/, 2 /*corroboration*/, 0.9 /*conf*/, true /*diverged*/, false)
 
 	if outcome == "ok" {
 		t.Errorf("publishComposite returned %q — a diverged composite published despite its "+
