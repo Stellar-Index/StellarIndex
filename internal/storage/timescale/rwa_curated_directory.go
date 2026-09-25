@@ -302,14 +302,26 @@ func (s *Store) CuratedRWADirectoryByAddress(
 	if curator == "" {
 		return nil, CuratedRWACensus{}, errors.New("curated rwa directory: curator must be non-empty")
 	}
+
+	// REPEATABLE READ, not the pool default: under READ COMMITTED each
+	// statement in a transaction still takes its OWN snapshot, so merely
+	// wrapping the two reads in a BeginTx would not deliver the "ONE
+	// snapshot" this method documents. Same isolation, same reason, as
+	// [Store.restampTradesUSDVolume]'s before-image/update pair.
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
+	if err != nil {
+		return nil, CuratedRWACensus{}, fmt.Errorf("curated rwa directory: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	var census CuratedRWACensus
-	if err := s.db.QueryRowContext(ctx, curatedRWACensusSQL, curator).Scan(
+	if err := tx.QueryRowContext(ctx, curatedRWACensusSQL, curator).Scan(
 		&census.Entries, &census.Contracts, &census.Classic,
 		&census.Priced, &census.PricedClassic, &census.Stale); err != nil {
 		return nil, CuratedRWACensus{}, fmt.Errorf("curated rwa directory: census: %w", err)
 	}
 
-	rows, err := s.db.QueryContext(ctx, curatedRWAByAddressSQL, curator)
+	rows, err := tx.QueryContext(ctx, curatedRWAByAddressSQL, curator)
 	if err != nil {
 		return nil, CuratedRWACensus{}, fmt.Errorf("curated rwa directory: by address: %w", err)
 	}

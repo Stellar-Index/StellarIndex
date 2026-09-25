@@ -5,6 +5,7 @@ package timescale
 
 import (
 	"context"
+	"database/sql/driver"
 	"fmt"
 	"strings"
 	"testing"
@@ -145,6 +146,56 @@ func TestCuratedRWADirectory_BothBoundsAreEnforcedInSQL(t *testing.T) {
 	// with, so the two cannot disagree.
 	if strings.Count(curatedRWAByAddressSQL, "CASE WHEN "+curatedRWAPriceFreshSQL) != 2 {
 		t.Error("the read does not gate BOTH price columns on the price bound")
+	}
+}
+
+// TestCuratedRWADirectoryByAddress_CensusAndRowsShareOneTransaction pins
+// the doc's claim (rwa_curated_directory.go:70-71) that the census and the
+// row read "come from ONE snapshot". Two autocommit statements on the pool
+// each take their own READ COMMITTED snapshot, so a sync landing between
+// them can leave the census reporting Stale=N while the rows served are
+// the N rows that just aged in (or out) — the fail-closed signal the
+// census exists to give would be lying beside a directory that disagrees
+// with it. The method must run both reads inside one transaction; the
+// scripted driver's rollback count is the only observable proof of that
+// without a real database.
+func TestCuratedRWADirectoryByAddress_CensusAndRowsShareOneTransaction(t *testing.T) {
+	t.Parallel()
+
+	pricedAt := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+	s, conn := newScriptedStore(t,
+		scriptedResult{
+			cols: []string{"entries", "contracts", "classic", "priced", "priced_classic", "stale"},
+			rows: [][]driver.Value{{int64(1), int64(1), int64(0), int64(1), int64(0), int64(0)}},
+		},
+		scriptedResult{
+			cols: []string{
+				"address", "asset_code", "asset_issuer", "company", "asset_subclass",
+				"price_usd", "priced_at", "source",
+			},
+			rows: [][]driver.Value{{
+				"CCURATEDADDRESS", "RWAT", "GISSUER", "Example Co", "US Treasuries",
+				"1.00", pricedAt, "dune",
+			}},
+		},
+	)
+
+	out, census, err := s.CuratedRWADirectoryByAddress(context.Background(), "dune:stellar")
+	if err != nil {
+		t.Fatalf("CuratedRWADirectoryByAddress: %v", err)
+	}
+	if census.Entries != 1 || len(out) != 1 {
+		t.Fatalf("census/rows mismatch: census=%+v out=%v", census, out)
+	}
+	if len(conn.stmts) != 2 {
+		t.Fatalf("issued %d statements, want 2 (census, by-address)", len(conn.stmts))
+	}
+
+	// The defect: no transaction at all wraps the two reads, so nothing
+	// commits or rolls back — they ran as two independent autocommit
+	// statements, each free to see a different snapshot.
+	if conn.rollbacks == 0 {
+		t.Error("census and row read did not share a transaction: both statements ran autocommit, so a sync between them can interleave with either read — the doc's ONE-snapshot claim (rwa_curated_directory.go:70-71) does not hold")
 	}
 }
 
