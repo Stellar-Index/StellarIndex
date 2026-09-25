@@ -371,7 +371,24 @@ func (s *Server) completenessVerdicts(ctx context.Context) ([]timescale.Complete
 	if err != nil {
 		return nil, false, err
 	}
-	return snaps, s.coverageVerdictsStale(ctx, snaps), nil
+	network := s.network
+	if network == "" {
+		network = sourcenet.Pubnet
+	}
+	// The staleness gate must judge only what this deployment actually
+	// publishes: a pubnet-only row surviving in the table on a testnet
+	// deployment (see the comment above the view-building loop) has no
+	// audit that will ever refresh it here, so leaving it in would flag
+	// flags.stale=true forever regardless of the published verdicts'
+	// own freshness.
+	applicable := make([]timescale.CompletenessSnapshot, 0, len(snaps))
+	for _, sn := range snaps {
+		if ok, _ := sourcenet.Applicable(sn.Source, network); !ok {
+			continue
+		}
+		applicable = append(applicable, sn)
+	}
+	return snaps, s.coverageVerdictsStale(ctx, applicable), nil
 }
 
 // recognitionAxisView projects the system recognition snapshot onto its
