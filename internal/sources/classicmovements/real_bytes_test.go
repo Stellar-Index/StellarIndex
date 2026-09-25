@@ -201,25 +201,21 @@ func TestRealBytes_pathPaymentStrictReceive_singleHop(t *testing.T) {
 		"GALHA4OVKNZ555C7VJFIXVXM4F2R7PPJNO7IZHIYE2SMKFYY5U7V254G",
 		time.Date(2022, 3, 12, 19, 33, 2, 0, time.UTC))
 
-	if len(movements) != 1 {
-		t.Fatalf("got %d movements, want 1", len(movements))
-	}
-	m := movements[0]
-	if m.Kind != KindPathPayment {
-		t.Errorf("Kind = %q, want %q", m.Kind, KindPathPayment)
-	}
+	src, m := pathPaymentLegs(t, movements)
 	wantDestAsset := "SONY-GC5QW4LWZA4IJLQ75JGFMVBXKP6OEOQJCRY7SECAPHFEP2EFACZ7QZW5"
 	if m.Asset != wantDestAsset || m.Amount.String() != "900000000000000" {
 		t.Errorf("dest leg = %s %s, want %s 900000000000000", m.Amount.String(), m.Asset, wantDestAsset)
 	}
-	if m.FromAddress != "GALHA4OVKNZ555C7VJFIXVXM4F2R7PPJNO7IZHIYE2SMKFYY5U7V254G" {
-		t.Errorf("FromAddress = %q", m.FromAddress)
+	// Self-pay via path: the account spends native on leg 0 and
+	// receives SONY on leg 1 — two legs, never one self row.
+	if src.FromAddress != "GALHA4OVKNZ555C7VJFIXVXM4F2R7PPJNO7IZHIYE2SMKFYY5U7V254G" || src.ToAddress != "" {
+		t.Errorf("source leg From/To = %q/%q", src.FromAddress, src.ToAddress)
 	}
-	if m.ToAddress != "GALHA4OVKNZ555C7VJFIXVXM4F2R7PPJNO7IZHIYE2SMKFYY5U7V254G" {
-		t.Errorf("ToAddress = %q, want same as FromAddress (self-pay via path)", m.ToAddress)
+	if m.ToAddress != "GALHA4OVKNZ555C7VJFIXVXM4F2R7PPJNO7IZHIYE2SMKFYY5U7V254G" || m.FromAddress != "" {
+		t.Errorf("dest leg From/To = %q/%q, want \"\"/the source account (self-pay via path)", m.FromAddress, m.ToAddress)
 	}
-	if m.Attributes["send_asset"] != "native" || m.Attributes["send_amount"] != "12000000" {
-		t.Errorf("Attributes = %+v, want send_asset=native send_amount=12000000", m.Attributes)
+	if src.Asset != "native" || src.Amount.String() != "12000000" {
+		t.Errorf("source leg = %s %s, want native 12000000", src.Amount.String(), src.Asset)
 	}
 }
 
@@ -242,18 +238,16 @@ func TestRealBytes_pathPaymentStrictReceive_twoHop(t *testing.T) {
 		"GAMMQJQ6O6KQWPBATHLQWYEDCYKLNAV2D3XG5SQSVHJ6BTMQLSM5MSLE",
 		time.Date(2022, 3, 12, 19, 33, 16, 0, time.UTC))
 
-	if len(movements) != 1 {
-		t.Fatalf("got %d movements, want 1", len(movements))
-	}
-	m := movements[0]
+	src, m := pathPaymentLegs(t, movements)
 	if m.Asset != "native" || m.Amount.String() != "83586584" {
 		t.Errorf("dest leg = %s %s, want native 83586584", m.Amount.String(), m.Asset)
 	}
 	// The hop-0-only source amount (83568489), NOT SendMax (83584774)
 	// and NOT the hop-1 leg amount (83586584) — this is the whole
 	// point of the fixture.
-	if m.Attributes["send_asset"] != "native" || m.Attributes["send_amount"] != "83568489" {
-		t.Errorf("Attributes = %+v, want send_asset=native send_amount=83568489", m.Attributes)
+	if src.Asset != "native" || src.Amount.String() != "83568489" ||
+		src.FromAddress != "GAMMQJQ6O6KQWPBATHLQWYEDCYKLNAV2D3XG5SQSVHJ6BTMQLSM5MSLE" {
+		t.Errorf("source leg = %s %s from %q, want native 83568489 from the tx source", src.Amount.String(), src.Asset, src.FromAddress)
 	}
 }
 
@@ -273,17 +267,14 @@ func TestRealBytes_pathPaymentStrictSend_success(t *testing.T) {
 		"GAN4CIBJHZWBXILII3LYXNNK5PEYPB7UW54FNU62JM4INNJQ66DFPWWG",
 		time.Date(2022, 3, 12, 19, 32, 55, 0, time.UTC))
 
-	if len(movements) != 1 {
-		t.Fatalf("got %d movements, want 1", len(movements))
-	}
-	m := movements[0]
+	src, m := pathPaymentLegs(t, movements)
 	wantDestAsset := "AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
 	if m.Asset != wantDestAsset || m.Amount.String() != "63545" {
 		t.Errorf("dest leg = %s %s, want %s 63545", m.Amount.String(), m.Asset, wantDestAsset)
 	}
 	wantSendAsset := "aiXDOGE-GAPGM7PVMHELZVRHNHPIAHVBDC2IY7FPFHGQTURLUTBRVH657Z466RAI"
-	if m.Attributes["send_asset"] != wantSendAsset || m.Attributes["send_amount"] != "200000000" {
-		t.Errorf("Attributes = %+v, want send_asset=%s send_amount=200000000", m.Attributes, wantSendAsset)
+	if src.Asset != wantSendAsset || src.Amount.String() != "200000000" {
+		t.Errorf("source leg = %s %s, want %s 200000000", src.Amount.String(), src.Asset, wantSendAsset)
 	}
 }
 

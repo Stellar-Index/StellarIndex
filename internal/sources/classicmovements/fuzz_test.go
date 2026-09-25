@@ -417,6 +417,10 @@ func FuzzDecodeOp(f *testing.F) {
 		if result.Code != xdr.OperationResultCodeOpInner && len(got) != 0 {
 			t.Fatalf("%s: result code %s moved %d rows", body.Type, result.Code, len(got))
 		}
+		if isPathPaymentOp(body.Type) && len(got) > 0 {
+			checkFuzzPathPayment(t, body, result, txSource, got)
+			return
+		}
 		if len(got) > 1 {
 			t.Fatalf("%s: op-only surface emitted %d rows, want at most 1", body.Type, len(got))
 		}
@@ -453,19 +457,6 @@ func checkFuzzMovement(t *testing.T, body xdr.OperationBody, result xdr.Operatio
 		if want := p.Destination.ToAccountId().Address(); mv.ToAddress != want {
 			t.Fatalf("payment to %q, want base account %q", mv.ToAddress, want)
 		}
-	case xdr.OperationTypePathPaymentStrictReceive:
-		last := tr.MustPathPaymentStrictReceiveResult().MustSuccess().Last
-		wantKind, wantAmount, wantAsset = KindPathPayment, int64(last.Amount), xdrjson.AssetID(last.Asset)
-		if mv.Attributes["send_asset"] != xdrjson.AssetID(body.MustPathPaymentStrictReceiveOp().SendAsset) {
-			t.Fatalf("strict receive send_asset=%v", mv.Attributes["send_asset"])
-		}
-	case xdr.OperationTypePathPaymentStrictSend:
-		last := tr.MustPathPaymentStrictSendResult().MustSuccess().Last
-		wantKind, wantAmount, wantAsset = KindPathPayment, int64(last.Amount), xdrjson.AssetID(last.Asset)
-		sa := int64(body.MustPathPaymentStrictSendOp().SendAmount)
-		if mv.Attributes["send_amount"] != big.NewInt(sa).String() {
-			t.Fatalf("strict send send_amount=%v, want %d", mv.Attributes["send_amount"], sa)
-		}
 	case xdr.OperationTypeCreateClaimableBalance:
 		c := body.MustCreateClaimableBalanceOp()
 		wantKind, wantAmount, wantAsset = KindClaimableBalanceCreate, int64(c.Amount), xdrjson.AssetID(c.Asset)
@@ -490,6 +481,44 @@ func checkFuzzMovement(t *testing.T, body xdr.OperationBody, result xdr.Operatio
 	}
 	if wantKind != KindClawback && mv.FromAddress != txSource {
 		t.Fatalf("%s: from %q, want tx source %q", body.Type, mv.FromAddress, txSource)
+	}
+}
+
+func isPathPaymentOp(t xdr.OperationType) bool {
+	return t == xdr.OperationTypePathPaymentStrictReceive || t == xdr.OperationTypePathPaymentStrictSend
+}
+
+// checkFuzzPathPayment pins a path payment's two legs: leg 0 is the tx
+// source's outflow in the send asset, leg 1 the destination's inflow of
+// exactly result.Last — never one row carrying Last for both sides.
+func checkFuzzPathPayment(t *testing.T, body xdr.OperationBody, result xdr.OperationResult, txSource string, got []Movement) {
+	t.Helper()
+	if len(got) != 2 {
+		t.Fatalf("%s: emitted %d rows, want exactly 2 legs", body.Type, len(got))
+	}
+	res := result.MustTr()
+	var sendAsset xdr.Asset
+	var last xdr.SimplePaymentResult
+	if body.Type == xdr.OperationTypePathPaymentStrictSend {
+		sendAsset, last = body.MustPathPaymentStrictSendOp().SendAsset, res.MustPathPaymentStrictSendResult().MustSuccess().Last
+		if sa := int64(body.MustPathPaymentStrictSendOp().SendAmount); got[0].Amount.BigInt().Cmp(big.NewInt(sa)) != 0 {
+			t.Fatalf("strict send source leg amount=%s, want %d", got[0].Amount.String(), sa)
+		}
+	} else {
+		sendAsset, last = body.MustPathPaymentStrictReceiveOp().SendAsset, res.MustPathPaymentStrictReceiveResult().MustSuccess().Last
+	}
+	for i, mv := range got {
+		if mv.Kind != KindPathPayment || mv.Provenance != ProvenanceClassicDerived || mv.Ledger != 7 || mv.TxHash != "tx" || mv.OpIndex != 5 || int(mv.LegIndex) != i {
+			t.Fatalf("%s: bad envelope on leg %d: %+v", body.Type, i, mv)
+		}
+	}
+	src, dst := got[0], got[1]
+	if src.FromAddress != txSource || src.ToAddress != "" || src.Asset != xdrjson.AssetID(sendAsset) || src.Amount.BigInt().Sign() <= 0 {
+		t.Fatalf("%s: source leg %+v, want positive %s from %q", body.Type, src, xdrjson.AssetID(sendAsset), txSource)
+	}
+	if dst.FromAddress != "" || !strkey.IsValidEd25519PublicKey(dst.ToAddress) || dst.Asset != xdrjson.AssetID(last.Asset) ||
+		dst.Amount.BigInt().Cmp(big.NewInt(int64(last.Amount))) != 0 {
+		t.Fatalf("%s: destination leg %+v, want %d %s to a G-strkey", body.Type, dst, last.Amount, xdrjson.AssetID(last.Asset))
 	}
 }
 

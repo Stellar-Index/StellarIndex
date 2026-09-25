@@ -5585,7 +5585,9 @@ export interface components {
             /**
              * @description The other side's address, when known. Empty for a claimable-
              *     balance escrow or a liquidity-pool leg (neither is a real
-             *     G-account) — see stellar.account_movements' DDL comment
+             *     G-account), and for both legs of a path_payment (each asset
+             *     crosses the path's offers/pools; attributes.from/to name both
+             *     accounts) — see stellar.account_movements' DDL comment
              *     (deploy/clickhouse/tier1_schema.sql) for the full per-kind
              *     cardinality table.
              */
