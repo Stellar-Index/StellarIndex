@@ -2312,12 +2312,37 @@ func rwaReferenceBasis(total, valued int, provenances []string) string {
 	return b.String()
 }
 
+// rwaIssuerCount is the single definition of "how many issuers" for the
+// RWA set, shared by every endpoint that publishes the count
+// (/v1/rwa/assets, /v1/rwa/history, /v1/rwa/premium). A contract-issued
+// member has no issuer G-address, but it is not the SAME issuer as any
+// other contract either — its address is the whole of its identity — so
+// each admitted contract counts as one issuer of its own, never
+// collapsed into a shared blank bucket.
+func rwaIssuerCount(distinctClassicIssuers, contractCount int) int {
+	return distinctClassicIssuers + contractCount
+}
+
+// rwaAssetIssuerCount applies rwaIssuerCount to the served /v1/rwa/assets
+// rows: distinct non-empty Issuer strings, plus distinct ContractIDs.
+func rwaAssetIssuerCount(assets []RWAAsset) int {
+	issuers := map[string]struct{}{}
+	contracts := map[string]struct{}{}
+	for _, a := range assets {
+		if a.Issuer != "" {
+			issuers[a.Issuer] = struct{}{}
+		}
+		if a.ContractID != "" {
+			contracts[a.ContractID] = struct{}{}
+		}
+	}
+	return rwaIssuerCount(len(issuers), len(contracts))
+}
+
 func rwaSummarise(assets []RWAAsset, truncated bool) RWASummary {
 	total, valued := rwaSumMarketCaps(assets)
-	issuers := map[string]struct{}{}
 	var earliest uint32
 	for _, a := range assets {
-		issuers[a.Issuer] = struct{}{}
 		if a.FirstSeenLedger != 0 && (earliest == 0 || a.FirstSeenLedger < earliest) {
 			earliest = a.FirstSeenLedger
 		}
@@ -2325,7 +2350,7 @@ func rwaSummarise(assets []RWAAsset, truncated bool) RWASummary {
 	referenced, compared := rwaReferenceCounts(assets)
 	return RWASummary{
 		Assets:                  len(assets),
-		Issuers:                 len(issuers),
+		Issuers:                 rwaAssetIssuerCount(assets),
 		MarketCapUSD:            total,
 		AssetsValued:            valued,
 		AssetsUnvalued:          len(assets) - valued,
