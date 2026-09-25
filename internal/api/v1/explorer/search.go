@@ -10,8 +10,8 @@ import (
 
 // SearchResultView classifies a free-text explorer query and points at the
 // canonical detail endpoint for it. The UI's single search box (ADR-0038)
-// uses Kind + Href to route. Supported=false marks kinds whose detail
-// endpoint isn't fully built yet (e.g. account state, Phase C).
+// uses Kind + Href to route. Supported=false marks kinds with no mounted
+// detail endpoint at all (currently only "unknown").
 type SearchResultView struct {
 	Query     string `json:"query"`
 	Kind      string `json:"kind"` // transaction|ledger|account|contract|asset|unknown
@@ -49,26 +49,25 @@ func classifySearch(q string) SearchResultView {
 		res.Kind, res.Canonical, res.Href, res.Supported = "ledger", q, "/v1/ledgers/"+q, true
 
 	case canonical.IsContractID(q):
-		// Contract: SEP-41 transfer trail is available today; full contract
-		// detail (events/invocations/state) lands with ADR-0038 unit 3 / Phase C.
-		res.Kind, res.Canonical, res.Href, res.Supported = "contract", q, "/v1/contracts/"+q+"/transfers", true
+		// Full contract detail (AccountState's contract counterpart) has
+		// been mounted at /v1/contracts/{contract_id} since server.go's
+		// explorer wiring; route there instead of the transfer-trail-only
+		// sub-resource.
+		res.Kind, res.Canonical, res.Href, res.Supported = "contract", q, "/v1/contracts/"+q, true
 
 	case canonical.IsAccountID(q):
-		// Issuer view is the only account surface today, but classification
-		// is a pure strkey-shape check with no lake read: most G-addresses
-		// are ordinary accounts, not issuers, and GET /v1/issuers/{g} 404s
-		// for them. Don't claim Supported=true for a lookup we haven't
-		// verified will resolve; leave the href as a hint only.
-		res.Kind, res.Canonical, res.Href, res.Supported = "account", q, "/v1/issuers/"+q, false
-		res.Note = "full account view isn't built yet; this may be an issuer — check the linked issuer view, which 404s if it isn't"
+		// AccountState (explorer/account_state.go) is mounted at
+		// /v1/accounts/{g_strkey} and covers ordinary accounts as well as
+		// issuers, so route there directly instead of the issuer-only view.
+		res.Kind, res.Canonical, res.Href, res.Supported = "account", q, "/v1/accounts/"+q, true
 
 	case canonical.IsMuxedAccount(q):
 		// A muxed M-address is a G-account plus an off-chain routing id (the
 		// shape exchanges hand out as deposit addresses); the ledger state
 		// belongs to the G, so resolve to it and keep the M in Query.
 		g, _ := canonical.MuxedAccountID(q)
-		res.Kind, res.Canonical, res.Href, res.Supported = "account", g, "/v1/issuers/"+g, false
-		res.Note = "muxed address resolved to its underlying account " + g + "; full account view isn't built yet — check the linked issuer view, which 404s if it isn't"
+		res.Kind, res.Canonical, res.Href, res.Supported = "account", g, "/v1/accounts/"+g, true
+		res.Note = "muxed address resolved to its underlying account " + g
 
 	default:
 		if a, err := canonical.ParseAsset(q); err == nil {
