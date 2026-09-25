@@ -9,39 +9,33 @@ import (
 // an asset, anchoring XLM-legged trades to the on-chain XLM/USD VWAP — the
 // L2.2 "phase 2" derivation, applied per-asset. It exists for
 // pure-Soroban SEP-41 tokens: [Store.Volume24hUSDForAsset] only sees the
-// insert-time `usd_volume` column, which is populated when a trade's quote
-// is a USD-pegged classic (or its SAC wrapper) — so a Soroban token that
-// trades against XLM (its primary liquidity route) or another SEP-41 token
-// contributes 0 there and shows a bogus "0" USD volume on its asset
-// detail. This query keeps every USD-pegged-quote leg via `volume_usd` AND
-// adds the XLM-quoted / XLM-based legs valued through `xlm_usd`.
+// insert-time `usd_volume` column, so a Soroban token whose XLM-legged
+// trades were stored unvalued shows a bogus "0" USD volume on its asset
+// detail.
 //
-// Reads the prices_1m CAGG, NOT the raw trades hypertable — same source +
-// same (base OR quote, 24h) window as Volume24hUSDForAsset — so it is
-// cheap and consistent. The math is exact in NUMERIC:
+// Valuation is per TRADE, never per prices_1m row: each trade contributes
+// its insert-time `usd_volume` when present, else its XLM leg valued at
+// query time. A prices_1m row sums every source's trades for one
+// (bucket, base, quote), so a bucket can be partly valued (one insert's FX
+// lookup failed, a neighbour's succeeded); an either/or choice on the
+// row's `volume_usd` would drop the unvalued trades, and prices_1m keeps
+// no residual volume to value them from. COALESCE per trade takes exactly
+// one valuation each, so nothing is dropped or double-counted.
 //
-//   - `volume`          = Σ(base_amount)              (base-leg stroops)
-//   - `vwap` * `volume` = Σ(quote_amount)             (quote-leg stroops)
-//     because the CAGG defines vwap = Σ(quote_amount)/Σ(base_amount),
-//     the same identity /v1/ohlc relies on to derive quote volume.
+// The XLM leg is `base_amount` for an XLM-base trade and `quote_amount`
+// for an XLM-quote one — the same stroop sums prices_1m exposes as
+// `volume` and `vwap * volume` — and `/1e7 * xlm_usd` converts it to USD.
+// Trades with no valuation and no XLM leg (pure SEP-41/SEP-41) still
+// contribute nothing — valuing those needs a per-token oracle, matching
+// the GetSourceStats boundary.
 //
-// So for an XLM-base pair (XLM/<token>) the XLM stroops are `volume`, and
-// for an XLM-quote pair (<token>/XLM) they are `vwap * volume`; either way
-// `/1e7 * xlm_usd` converts to USD. `volume_usd > 0` is the faithful
-// discriminator for a USD-pegged-quote pair: the CAGG's `volume_usd =
-// Σ(coalesce(usd_volume,0))` is >0 exactly when the quote was recognised
-// as USD-pegged at insert (quote_amount is always >0 per the trades CHECK),
-// and 0 otherwise — so the CASE picks exactly one valuation per pair and
-// never double-counts. Pairs with neither a USD-pegged quote nor an XLM
-// leg (pure SEP-41/SEP-41) still contribute nothing — valuing those needs
-// a per-token oracle (separate work), matching the GetSourceStats boundary.
-//
-// The `xlm_usd` CTE is the same bounded (24h, closed) most-recent XLM→USD
-// anchor GetSourceStats / GetSourceVolumeHistory use; a NULL anchor (no
-// XLM/USD bucket in 24h) degrades the XLM-leg CASEs to NULL, which SUM
-// skips — the USD-pegged legs still sum and the outer COALESCE floors the
-// all-NULL case to "0". $1 binds the asset's canonical key (base_asset /
-// quote_asset wire form, e.g. a `C…` contract id).
+// The window is the closed 1-minute buckets of the last 24h, the same
+// buckets prices_1m serves (ADR-0015); `ts >= now() - 24h` is the
+// index-usable superset of the bucket lower bound. The `xlm_usd` CTE is
+// the same bounded most-recent XLM→USD anchor GetSourceStats uses; a NULL
+// anchor degrades the XLM-leg fallback to NULL, which SUM skips, and the
+// outer COALESCE floors the all-NULL case to "0". $1 binds the asset's
+// canonical key (trades.base_asset / quote_asset form, e.g. a `C…` id).
 const sorobanVolume24hUSDQuery = `
         WITH xlm_usd AS (
           SELECT vwap
@@ -55,32 +49,35 @@ const sorobanVolume24hUSDQuery = `
              AND bucket >= now() - INTERVAL '24 hours'
            ORDER BY bucket DESC
            LIMIT 1
+        ),
+        asset_trades AS (
+          SELECT time_bucket('1 minute', ts) AS bucket,
+                 base_asset, quote_asset, base_amount, quote_amount, usd_volume
+            FROM trades
+           WHERE (base_asset = $1 OR quote_asset = $1)
+             AND ts >= now() - INTERVAL '24 hours'
         )
         SELECT COALESCE(sum(
-          CASE
-            WHEN volume_usd > 0
-              THEN volume_usd
+          COALESCE(usd_volume, CASE
             WHEN base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-              THEN (volume / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
+              THEN (base_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
             WHEN quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-              THEN (vwap * volume / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
+              THEN (quote_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
             ELSE NULL
-          END
+          END)
         ), 0)::text
-          FROM prices_1m
-         WHERE (base_asset = $1 OR quote_asset = $1)
-           AND bucket >= now() - INTERVAL '24 hours'
+          FROM asset_trades
+         WHERE bucket >= now() - INTERVAL '24 hours'
            AND bucket <= now() - INTERVAL '1 minute'
     `
 
 // SorobanVolume24hUSDForAsset is the XLM-anchored trailing-24h USD-volume
 // variant of [Store.Volume24hUSDForAsset], for pure-Soroban SEP-41 assets
 // whose liquidity is quoted in XLM (or another SEP-41 token) rather than a
-// USD-pegged classic. It sums USD-pegged-quote legs (via the insert-time
-// `usd_volume` the plain reader uses) AND XLM-legged trades valued through
-// the on-chain XLM/USD VWAP — see [sorobanVolume24hUSDQuery] for the exact
-// NUMERIC derivation + its scope boundary (pure SEP-41/SEP-41 legs still
-// need a per-token oracle and contribute 0).
+// USD-pegged classic. Each trade contributes its insert-time `usd_volume`,
+// or failing that its XLM leg valued through the on-chain XLM/USD VWAP —
+// see [sorobanVolume24hUSDQuery] for the NUMERIC derivation and its scope
+// boundary (pure SEP-41/SEP-41 legs still contribute 0).
 //
 // Returns "0" (not an error) when the asset had no valuable trades in the
 // window — same convention as Volume24hUSDForAsset. `assetKey` is the
