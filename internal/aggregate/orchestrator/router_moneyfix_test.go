@@ -68,6 +68,53 @@ func TestFormatRatFixed_TinyPositiveNeverReparsesToZero(t *testing.T) {
 	}
 }
 
+// TestFormatRatFixed_RelativeTruncationBounded — the fixed 12-place
+// render kept as few as ONE significant digit for a price in
+// [1e-12, 1e-10): 1.99e-12 published as "0.000000000001", 49.7% low.
+// Every strictly-positive magnitude must render within a relative
+// truncation error below 1e-5, while prices down to
+// 1e-7 keep their byte-identical 12-place output.
+func TestFormatRatFixed_RelativeTruncationBounded(t *testing.T) {
+	bound := new(big.Rat).SetFrac(big.NewInt(1),
+		new(big.Int).Exp(big.NewInt(10), big.NewInt(5), nil)) // six significant digits at 12 places
+	mantissas := []string{"1", "1.99", "5.5", "9.99999999"}
+	for exp := -45; exp <= 3; exp++ {
+		pow := new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(absInt(exp))), nil))
+		for _, m := range mantissas {
+			r := ratFromDecimal(t, m)
+			if exp < 0 {
+				r.Quo(r, pow)
+			} else {
+				r.Mul(r, pow)
+			}
+			got := formatRatFixed(r, 12)
+			parsed := ratFromDecimal(t, got)
+			rel := new(big.Rat).Quo(new(big.Rat).Sub(r, parsed), r)
+			if rel.Sign() < 0 || rel.Cmp(bound) >= 0 {
+				t.Errorf("formatRatFixed(%se%d,12)=%q: relative truncation error %s, want in [0, %s)",
+					m, exp, got, rel.FloatString(6), bound.FloatString(6))
+			}
+		}
+	}
+
+	unchanged := map[string]string{
+		"0.00000012345678": "0.000000123456", // 1e-7 band: six significant digits survive
+		"0.000001":         "0.000001000000",
+	}
+	for in, want := range unchanged {
+		if got := formatRatFixed(ratFromDecimal(t, in), 12); got != want {
+			t.Errorf("formatRatFixed(%s,12)=%q, want byte-identical %q", in, got, want)
+		}
+	}
+}
+
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
 // TestBuildWindowEdges_ZeroLegDoesNotCollapseWindow is the R-1 belt-and-
 // suspenders: a single leg whose cached VWAP parses to a non-positive
 // price must be dropped from the graph, NOT abort BuildEdges and nil the

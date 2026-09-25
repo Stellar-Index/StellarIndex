@@ -2492,6 +2492,16 @@ func filterForVWAP(trades []canonical.Trade) []canonical.Trade {
 // with the same fidelity a normal-magnitude price gets at 12 decimals.
 const formatRatSigDigits = 12
 
+// formatRatMinSigDigits is the fewest significant digits a render at
+// `decimals` places may keep before [renderScale] widens it: half the
+// requested places, so leading zeros never spend more than half of the
+// precision the caller asked for. At the published 12 places that is 6
+// digits — a relative truncation error under 1e-5 (0.1 bp, a hundredth of
+// baseline.MinMAD's 10 bp) with output byte-identical for prices >= 1e-7.
+func formatRatMinSigDigits(decimals int) int {
+	return (decimals + 1) / 2
+}
+
 // formatRatMaxScale caps the fractional places [renderScale] will
 // extend to, so a pathological (or hostile) micro-valued rational can
 // never make us render an unbounded string on the publish path. Mirrors
@@ -2555,17 +2565,18 @@ func zeroes(n int) string {
 
 // renderScale returns the number of fractional decimal places
 // [formatRatFixed] should render r with. It is the requested `decimals`
-// for any value that renders non-zero there (so normal-magnitude prices
-// keep byte-identical output), but for a strictly-positive magnitude
-// whose first significant digit falls BEYOND `decimals` places it
-// EXTENDS the scale to keep [formatRatSigDigits] significant digits — so
-// a tiny-but-non-zero price never truncates to a "0.000…0" string that
-// reparses to zero (R-1).
+// for any value that keeps at least [formatRatMinSigDigits] significant
+// digits there (so normal-magnitude prices keep byte-identical output),
+// but for a smaller strictly-positive magnitude it EXTENDS the scale to
+// keep [formatRatSigDigits] significant digits — so a tiny price neither
+// truncates to a "0.000…0" string that reparses to zero (R-1) nor loses
+// up to half its value to a one-digit render.
 //
 // Deliberately float-free (ADR-0003): a log10 to find the magnitude is
 // the obvious way to reintroduce float error into the money path. This
-// counts leading fractional zeros exactly, mirroring the proven
-// storage-tier rateScaleFor.
+// counts leading fractional zeros exactly, as the storage-tier
+// rateScaleFor does; unlike that purely relative scale, `decimals` here
+// is a floor.
 func renderScale(r *big.Rat, decimals int) int {
 	if r == nil || r.Sign() == 0 {
 		return decimals
@@ -2580,10 +2591,10 @@ func renderScale(r *big.Rat, decimals int) int {
 		x.Mul(x, ten)
 		firstSigPlace++
 	}
-	// The fixed `decimals` render is all-zeros exactly when that first
-	// significant digit lands beyond the last rendered place. Only then
-	// extend — otherwise leave the requested scale untouched.
-	if firstSigPlace <= decimals {
+	// The fixed render keeps decimals-firstSigPlace+1 significant digits
+	// (none once the first lands beyond the last place). Extend only when
+	// fewer than formatRatMinSigDigits would survive.
+	if decimals-firstSigPlace+1 >= formatRatMinSigDigits(decimals) {
 		return decimals
 	}
 	need := firstSigPlace + formatRatSigDigits

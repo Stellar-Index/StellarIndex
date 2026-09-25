@@ -193,7 +193,10 @@ func TestFreezeLifecycle_ReleaseDuringRedisLossKeepsEscalatedSibling(t *testing.
 
 	// The 1h window's next qualifying bucket: its first evaluation in this
 	// process, against the only record left.
-	st, overridden := o.loadFreezeState(ctx, f.pair, f.long, f.key(f.long))
+	st, overridden, err := o.loadFreezeState(ctx, f.pair, f.long, f.key(f.long))
+	if err != nil {
+		t.Fatalf("loadFreezeState: %v", err)
+	}
 	if overridden {
 		t.Error("a Redis loss read as the operator override for the 1h window")
 	}
@@ -223,7 +226,7 @@ func TestFreezeLifecycle_OperatorOverrideStillSticksWithADurableRecord(t *testin
 	}
 
 	for _, w := range []time.Duration{f.short, f.long} {
-		if _, overridden := o.loadFreezeState(ctx, f.pair, w, f.key(w)); !overridden {
+		if _, overridden, err := o.loadFreezeState(ctx, f.pair, w, f.key(w)); err != nil || !overridden {
 			t.Fatalf("window %s did not observe the operator override", w)
 		}
 		o.releaseFreeze(ctx, f.pair, w, f.key(w), o.freezeStates[f.key(w)], freeze.TransitionOverridden)

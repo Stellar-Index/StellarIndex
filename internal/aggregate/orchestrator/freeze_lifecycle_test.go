@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"math/big"
 	"testing"
@@ -652,6 +653,69 @@ func TestFreezeLifecycle_RehydratesLadderAcrossRestart(t *testing.T) {
 	}
 	if got := f.served(t); got != lkgFormatted {
 		t.Errorf("restarted aggregator published %q, want the held LKG %q", got, lkgFormatted)
+	}
+}
+
+// flakyLoadFreezeMarker fails the next `loadErrs` marker reads, the
+// shape of a Redis that is still loading its dataset (or failing over)
+// on the aggregator's first tick after a restart.
+type flakyLoadFreezeMarker struct {
+	*recordingFreezeMarker
+	loadErrs int
+}
+
+func (m *flakyLoadFreezeMarker) LoadState(ctx context.Context, asset, quote canonical.Asset) (freeze.State, bool, error) {
+	if m.loadErrs > 0 {
+		m.loadErrs--
+		return freeze.State{}, false, errors.New("LOADING Redis is loading the dataset in memory")
+	}
+	return m.recordingFreezeMarker.LoadState(ctx, asset, quote)
+}
+
+// TestFreezeLifecycle_ColdMarkerReadErrorWithholdsAndRetries — a marker
+// read that ERRORS on a restarted process's first evaluation is not
+// evidence the pair is unfrozen. That bucket is unscored (no prev-VWAP
+// comparator yet), so it cannot re-fire the freeze on its own signal:
+// caching "never frozen" there published the withheld manipulated
+// bucket and never re-read the marker for the life of the process.
+func TestFreezeLifecycle_ColdMarkerReadErrorWithholdsAndRetries(t *testing.T) {
+	f := newFreezeFixture(t)
+	f.feed(t, manipQuoteAmount, "soroswap")
+	f.tick(t, closedBucket)
+	if !f.state().Active() {
+		t.Fatal("setup: the manipulated bucket did not freeze the pair")
+	}
+
+	flaky := &flakyLoadFreezeMarker{recordingFreezeMarker: f.marker, loadErrs: 1}
+	restarted := New(f.store, f.rdb, Config{
+		Pairs:        []canonical.Pair{f.pair},
+		Windows:      []time.Duration{freezeTestWindow},
+		Interval:     time.Hour,
+		FreezeWriter: flaky,
+		Baselines: stubBaselineSource{
+			multi: baseline.MultiBaseline{
+				Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: maxDay30Returns},
+			},
+		},
+	})
+	restarted.clock = func() time.Time { return f.now }
+	f.orch = restarted
+
+	f.tick(t, closedBucket)
+	if got := f.served(t); got != lkgFormatted {
+		t.Fatalf("marker read failed on a cold key and the aggregator published %q; "+
+			"want the held LKG %q", got, lkgFormatted)
+	}
+	if !f.marker.present {
+		t.Error("a failed marker read cleared the freeze marker")
+	}
+
+	f.tick(t, closedBucket)
+	if !f.state().Active() {
+		t.Error("the marker was never re-read after the failed read: the freeze was not rehydrated")
+	}
+	if got := f.served(t); got != lkgFormatted {
+		t.Errorf("after the rehydrate the aggregator published %q, want the held LKG %q", got, lkgFormatted)
 	}
 }
 
