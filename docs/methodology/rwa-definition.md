@@ -854,7 +854,10 @@ market caps — add up what you can see and you land on that number. It is
 **absent**, not `"0.00"`, when no asset in the set publishes one, because
 a zero there reads as a real total of zero dollars. `summary.lower_bound`
 is true whenever any member is unvalued, so the total is less than the
-value of the set.
+value of the set. It is also true whenever a rebuild cap bound the set —
+the issuer cap, the contract scan cap, or a member issuer whose classic
+assets fill one listing page — because a member may then be missing
+entirely; `summary.truncated` is set and `summary.basis` names the cap.
 
 ## The second valuation: what the backing is claimed to be worth
 
@@ -917,7 +920,7 @@ membership funnel stage, across the two.
   market-basis pair beside them, because the two bases admit different
   rows.
 - **`lower_bound`** is true whenever any member carries no reference
-  valuation.
+  valuation, or a rebuild cap bound the set.
 - **No fallback is ever invented.** `XAU` and `AUMTL` are unvalued on
   this basis and stay unvalued. An oracle does publish a feed called
   `XAU`, but it prices a troy ounce of spot metal: multiplying a token

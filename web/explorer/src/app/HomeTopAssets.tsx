@@ -24,6 +24,8 @@ import {
 } from '@/components/ui';
 import { formatCompact, formatPriceSmall } from '@/lib/format';
 import { isSafePublicImageUrl } from '@/lib/safe-domain';
+import { demoteFlaggedLast } from '@/lib/directory-tags';
+import { ScamBadge } from '@/components/ScamBadge';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 /**
@@ -182,6 +184,7 @@ function Row({
             </span>
           )}
           <span className="text-ink-muted text-[11px]">{coin.slug}</span>
+          <ScamBadge tags={coin.issuer_directory_tags} />
         </Link>
       </Td>
       {pricing && (
@@ -253,14 +256,19 @@ function parseDec(s: string | null | undefined): number | null {
 // whose ranking value it exceeds. Native is XLM: never wash-flagged, so
 // its raw volume and its adjusted volume agree and the comparison is
 // sound for this one row.
+//
+// Directory-flagged rows are then demoted below every unflagged one (#356),
+// AFTER the splice: native is never flagged, so a flagged row the server
+// placed last must not end up above native merely by out-volume-ing it.
 function rankTopAssets(
   native: Coin | null | undefined,
   listed: Coin[] | undefined,
   pricing: boolean,
 ): Coin[] {
   const rows = [...(listed ?? [])];
+  const tagsOf = (c: Coin) => c.issuer_directory_tags;
   if (!native || rows.some((c) => c.asset_id === native.asset_id)) {
-    return rows.slice(0, 10);
+    return demoteFlaggedLast(rows, tagsOf).slice(0, 10);
   }
   // #328: compare on the SAME measure the request asked the API to order
   // by. On a net with no aggregator every volume is null, so comparing
@@ -272,7 +280,7 @@ function rankTopAssets(
   const nativeRank = rankOf(native);
   const at = rows.findIndex((c) => rankOf(c) < nativeRank);
   rows.splice(at === -1 ? rows.length : at, 0, native);
-  return rows.slice(0, 10);
+  return demoteFlaggedLast(rows, tagsOf).slice(0, 10);
 }
 
 function Dash() {

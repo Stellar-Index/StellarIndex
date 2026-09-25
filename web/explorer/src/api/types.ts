@@ -2824,10 +2824,18 @@ export interface paths {
          *        `home_domain` it set ON CHAIN, containing a `[[CURRENCIES]]`
          *        entry whose `code` matches and whose declared `issuer` equals
          *        the account that served the file.
-         *     3. The issuer G-address is named in the curated third-party
-         *        account directory with a recognition tag
-         *        (`definition.recognition_tags`) and carries no scam-class tag
-         *        (`definition.scam_flag_tags`). A self-declaration alone is
+         *     3. The issuer G-address carries no scam-class tag
+         *        (`definition.scam_flag_tags`) in the curated third-party
+         *        account directory, and is independently recognised by one of
+         *        two routes, named on each row in `recognition`: the directory
+         *        names this account with a recognition tag
+         *        (`definition.recognition_tags`) —
+         *        `curated_account_directory` — or the directory names another
+         *        unflagged account with a recognition tag that the SAME
+         *        issuer-bound SEP-1 binds on the same home domain —
+         *        `curated_account_directory_via_domain_sibling`. The sibling
+         *        route assumes one entity per domain; the directory never
+         *        looked at the account itself. A self-declaration alone is
          *        not evidence: on the production directory the large majority
          *        of accounts declaring a real-world `anchor_asset_type` are
          *        tagged `malicious`, publishing from lookalike domains that
@@ -7828,7 +7836,7 @@ export interface components {
             assets_valued: number;
             /** @description Assets whose valuation is withheld or unavailable; each contributes nothing. */
             assets_unvalued: number;
-            /** @description True whenever any member is unvalued, i.e. whenever the total is less than the value of the set. */
+            /** @description True whenever any member is unvalued or a rebuild cap bound the set (`truncated`), i.e. whenever the total may be less than the value of the set. */
             lower_bound: boolean;
             /**
              * Format: int64
@@ -7855,7 +7863,7 @@ export interface components {
             both_bases: components["schemas"]["RWABothBases"];
             /** @description One-line statement of what the total measured and how it was valued. */
             basis: string;
-            /** @description True when a rebuild cap bound the set, so it is known to be incomplete. Absent when false. */
+            /** @description True when a rebuild cap bound the set (the issuer cap, the contract scan cap, or a member issuer whose classic assets fill one listing page), so members may be missing; `basis` names which cap. Implies `lower_bound` on both totals. Absent when false. */
             truncated?: boolean;
         };
         /**
@@ -7903,7 +7911,7 @@ export interface components {
              *     `valuation` arm breaks this number down by reason.
              */
             assets_unvalued: number;
-            /** @description True whenever any member carries no reference valuation, i.e. whenever this total is less than the reference-priced value of the set. */
+            /** @description True whenever any member carries no reference valuation or a rebuild cap bound the set, i.e. whenever this total may be less than the reference-priced value of the set. */
             lower_bound: boolean;
             /**
              * @description The distinct PUBLISHERS whose published values make up the
@@ -8069,7 +8077,7 @@ export interface components {
              *     than reconstructing the rule.
              * @enum {string}
              */
-            recognition?: "curated_account_directory" | "independent_listing_corroborating_curated_binding" | "curated_account_directory_via_domain_sibling" | "third_party_curator";
+            recognition: "curated_account_directory" | "independent_listing_corroborating_curated_binding" | "curated_account_directory_via_domain_sibling" | "third_party_curator";
             /**
              * @description Declared class. Present under `sep1_anchor_declaration` and
              *     `curated_contract_instrument`. Absent under either oracle
