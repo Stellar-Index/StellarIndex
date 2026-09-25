@@ -75,17 +75,36 @@ func (s *IdempotencyStore) get(key string) (idempotencyRecord, bool) {
 // occupies key — first writer wins, so a burst of near-simultaneous
 // duplicate submissions converges on the FIRST response rather than
 // the last handler to finish clobbering it.
+//
+// Every call also sweeps expired entries from the whole map. A key
+// that's replayed keeps itself fresh via get()'s own eviction, but a
+// key used exactly once (create-then-never-replay) has no other
+// removal path — without this sweep it would live for the life of
+// the process. Sweeping here bounds the map to roughly TTL worth of
+// traffic instead of the process lifetime, with no extra goroutine.
 func (s *IdempotencyStore) put(key string, status int, header http.Header, body []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if existing, ok := s.entries[key]; ok && s.now().Before(existing.expiresAt) {
+	now := s.now()
+	if existing, ok := s.entries[key]; ok && now.Before(existing.expiresAt) {
 		return
 	}
+	s.sweepExpiredLocked(now)
 	s.entries[key] = idempotencyRecord{
 		status:    status,
 		header:    header,
 		body:      body,
-		expiresAt: s.now().Add(s.ttl),
+		expiresAt: now.Add(s.ttl),
+	}
+}
+
+// sweepExpiredLocked removes every entry whose TTL has passed as of
+// now. Callers must hold s.mu.
+func (s *IdempotencyStore) sweepExpiredLocked(now time.Time) {
+	for k, rec := range s.entries {
+		if now.After(rec.expiresAt) {
+			delete(s.entries, k)
+		}
 	}
 }
 
