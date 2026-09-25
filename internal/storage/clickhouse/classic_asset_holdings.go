@@ -107,7 +107,8 @@ const trustlineAssetsPageQuery = `
 	   AND asset > ?
 	   AND asset != ''
 	   AND asset != 'native'
-	   AND NOT startsWith(asset, 'pool')
+	   AND asset NOT LIKE 'pool:%'
+	   AND asset != 'pool'
 	 GROUP BY asset
 	 ORDER BY asset
 	 LIMIT ?`
@@ -129,9 +130,11 @@ const trustlineAssetsPageQuery = `
 // bigger pages mean fewer passes.
 //
 // Native XLM and pool-share trustlines are excluded in SQL because they
-// have no (code, issuer) identity — the registry is keyed on one. The
-// `pool` prefix covers both spellings TrustLineAssetID emits, the
-// `pool:<hex>` form and the bare `pool` fallback.
+// have no (code, issuer) identity — the registry is keyed on one. The two
+// exact-match predicates cover the two spellings TrustLineAssetID emits,
+// the `pool:<hex>` form and the bare `pool` fallback, without also
+// matching a real credit asset code that happens to start with "pool"
+// (asset codes are case-sensitive and "poolX" etc. are valid).
 func (h *HoldingsScanner) TrustlineAssetsAfter(ctx context.Context, after string, limit int) ([]TrustlineAssetSeed, error) {
 	if limit <= 0 {
 		return nil, fmt.Errorf("clickhouse: TrustlineAssetsAfter: limit must be positive, got %d", limit)
