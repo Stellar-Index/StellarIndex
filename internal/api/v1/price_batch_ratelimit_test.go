@@ -52,7 +52,7 @@ func newBatchLimitedServer(t *testing.T, anonLimit int) (*testServerImpl, *count
 	// exists to guarantee: that the work was NOT done. A 429 written
 	// after the fan-out would be a status code and nothing else.
 	reader := &countingPriceReader{}
-	anon := ratelimit.New(rdb, anonLimit, time.Minute)
+	anon := ratelimit.New(rdb, anonLimit, time.Minute, pinnedWindow)
 	srv := v1.New(v1.Options{
 		Prices:    reader,
 		RateLimit: middleware.RateLimitBySubject(anon, nil, middleware.SkipHealthAndMetrics, nil),

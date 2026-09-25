@@ -42,7 +42,7 @@ func newAssetsLimitedServer(t *testing.T, anonLimit int, withStore bool) (*testS
 
 	opts := v1.Options{
 		RateLimit: middleware.RateLimitBySubject(
-			ratelimit.New(rdb, anonLimit, time.Minute), nil, middleware.SkipHealthAndMetrics, nil),
+			ratelimit.New(rdb, anonLimit, time.Minute, pinnedWindow), nil, middleware.SkipHealthAndMetrics, nil),
 	}
 	reader := &listCountingAssetsReader{paginatingAssetsReader: paginatingAssetsReader{total: 3}}
 	if withStore {

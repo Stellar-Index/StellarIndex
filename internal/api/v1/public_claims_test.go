@@ -242,7 +242,9 @@ func emittedRateLimitProblem(t *testing.T) map[string]any {
 	t.Cleanup(func() { _ = rdb.Close() })
 	keyFn := func(*http.Request) string { return "doc-example" }
 	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	h := middleware.RateLimit(ratelimit.New(rdb, 1, time.Minute), keyFn, nil, nil)(ok)
+	// A pinned clock keeps both requests in one window.
+	pinned := ratelimit.WithClock(func() time.Time { return time.Unix(1_800_000_000, 0) })
+	h := middleware.RateLimit(ratelimit.New(rdb, 1, time.Minute, pinned), keyFn, nil, nil)(ok)
 
 	var w *httptest.ResponseRecorder
 	for i := 0; i < 2; i++ {
