@@ -197,6 +197,17 @@ Possible explanations, in rough order of likelihood:
    with `-output json` or `-output csv` to find the affected
    range, then inspect the decoder against that range's WASM
    hash via `stellarindex-ops wasm-history`.
+5. **Identical-event collision on Hubble's side.** The query
+   dedups with `COUNT(DISTINCT contract_event_xdr)` to strip
+   Hubble's overlapping-batch-load duplicates, but
+   `contract_event_xdr` carries no tx hash or operation index —
+   only contract id, type, topics and data. Two genuinely distinct
+   events in the same ledger with byte-identical contents (most
+   plausible for a bot issuing the same call twice) collapse to a
+   single counted event, under-reporting N. If a small, persistent
+   gap survives after ruling out 1–4, check for repeated identical
+   calls in that ledger before concluding the decoder dropped
+   something.
 
 ## Cost preview
 

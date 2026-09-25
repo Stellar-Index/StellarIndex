@@ -216,6 +216,14 @@ func buildSorobanEventsQuery(
 	// its identity — to match our one-row-per-event ClickHouse lake. Group by
 	// the ledger alone: the caller keys on it, and a wider key splits one
 	// ledger's duplicates into separate groups.
+	//
+	// Known gap: contract_event_xdr encodes only contract id + type + topics
+	// + data (xdr.ContractEvent has no tx hash or operation index), so two
+	// genuinely distinct events in the same ledger with byte-identical
+	// contents (e.g. a bot replaying the same call) collapse to one here.
+	// That under-counts Hubble's side and can make a real decoder gap look
+	// smaller than it is. See docs/operations/hubble-event-counts.md
+	// "When totals differ" for the operator-facing version of this caveat.
 	q := "SELECT ledger_sequence AS ledger, COUNT(DISTINCT contract_event_xdr) AS n " +
 		"FROM `crypto-stellar.crypto_stellar.history_contract_events` " +
 		"WHERE ledger_sequence BETWEEN @from AND @to " +
