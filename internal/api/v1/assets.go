@@ -3408,7 +3408,9 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// rendered "apay.io" + sep1_status=verified while its on-chain
 	// domain said ultracapital.xyz). R-016 in
 	// `docs/review-2026-05-10.md`; on-chain-first 2026-08-06.
-	s.backfillHomeDomain(r.Context(), &detail)
+	// A degraded read (deadline/error) is folded into the response's
+	// stale flag below rather than silently accepted (GH-582).
+	homeDomainDegraded := s.backfillHomeDomain(r.Context(), &detail)
 
 	// SEP-1 overlay — reads the cached payload `sep1-refresh` cron
 	// persisted in `issuers.sep1_payload`. NO live HTTPS fetch.
@@ -3497,6 +3499,9 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// issuer doesn't. No-op when no catalogue is wired or the asset
 	// isn't a classic Stellar asset.
 	flags := s.verifiedCurrencyFlags(&detail, parsed)
+	if homeDomainDegraded {
+		flags.Stale = true
+	}
 
 	// Render to bytes once, cache them, write them. The cache check at
 	// the top of this function short-circuits subsequent requests for
@@ -3970,7 +3975,9 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 
 	// Same on-chain-first backfill as handleAssetGet (R-016) — keeps
 	// the two surfaces in lockstep on the SEP-1 status they report.
-	s.backfillHomeDomain(r.Context(), &detail)
+	// A degraded read is folded into the response's stale flag below
+	// rather than silently accepted (GH-582).
+	homeDomainDegraded := s.backfillHomeDomain(r.Context(), &detail)
 
 	if s.sep1Cache != nil {
 		s.applySep1Overlay(r.Context(), &detail, parsed)
@@ -3993,7 +4000,7 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 		MaxNumber:       detail.MaxNumber,
 		IsUnlimited:     detail.IsUnlimited,
 	}
-	writeJSON(w, out, Flags{})
+	writeJSON(w, out, Flags{Stale: homeDomainDegraded})
 }
 
 // applySep1Overlay attaches the issuer's cached SEP-1 metadata to

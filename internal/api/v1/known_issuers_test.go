@@ -1,8 +1,11 @@
 package v1
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 // TestEnrichIssuer_DBWins — when both home_domain and org_name come
@@ -82,6 +85,45 @@ func TestKnownIssuers_AllFieldsPopulated(t *testing.T) {
 		if entry.OrgName == "" {
 			t.Errorf("knownIssuers[%s]: OrgName is empty", g)
 		}
+	}
+}
+
+// erroringAccountStateReader fails every AccountStateCached call, the
+// same shape as a store error or a context deadline reaching the
+// explorer seam.
+type erroringAccountStateReader struct{ ExplorerReader }
+
+func (erroringAccountStateReader) AccountStateCached(
+	context.Context, string,
+) (clickhouse.AccountState, bool, error) {
+	return clickhouse.AccountState{}, false, context.DeadlineExceeded
+}
+
+// TestBackfillHomeDomain_ReadFailureDoesNotFallBackToStaticMap
+// (GH-582): an on-chain read failure (deadline, store error) must
+// NOT be treated the same as a verified absence. Before the fix,
+// onChainHomeDomain collapsed "read failed" and "no domain" into the
+// same "" and backfillHomeDomain then filled from the curated
+// knownIssuers map — serving a potentially stale hand-maintained
+// domain as if it were a live-confirmed one, with SEP-1 verifying
+// against it. This asserts the corrected behaviour: on a read
+// failure, HomeDomain stays unset (nil) and the caller is told the
+// read degraded, rather than silently getting Circle's curated
+// "circle.com" for an issuer whose live state couldn't be read.
+func TestBackfillHomeDomain_ReadFailureDoesNotFallBackToStaticMap(t *testing.T) {
+	usdc := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	s := &Server{explorer: erroringAccountStateReader{}}
+	issuer := usdc
+	detail := &AssetDetail{Issuer: &issuer}
+
+	degraded := s.backfillHomeDomain(context.Background(), detail)
+
+	if !degraded {
+		t.Fatal("backfillHomeDomain reported degraded=false on an explorer read error; want true")
+	}
+	if detail.HomeDomain != nil {
+		t.Errorf("HomeDomain = %q; want nil — a failed read must not fall back to the curated map (would have served circle.com)",
+			*detail.HomeDomain)
 	}
 }
 

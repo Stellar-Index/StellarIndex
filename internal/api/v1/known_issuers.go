@@ -175,9 +175,14 @@ var knownIssuers = map[string]knownIssuer{
 }
 
 // onChainHomeDomain returns the issuer account's live self-declared
-// home_domain from the CH account state, or "" when the explorer
-// reader isn't wired, the account doesn't exist, the read fails, or
-// the field is unset. Callers use it AHEAD of the curated
+// home_domain from the CH account state, and whether an ATTEMPTED
+// read came back untrustworthy (the read errored — a deadline
+// included). No explorer reader wired is a deliberate deployment
+// shape, not a failure: it never attempts a read, so it reports
+// degraded=false and callers fall through to the curated map exactly
+// as before. "" with degraded=false also covers a read that
+// succeeded and found no domain (or no account); that is a verified
+// absence. Callers use on-chain-first AHEAD of the curated
 // knownIssuers map: the on-chain field is signed by the account's
 // own keys and follows anchor acquisitions/rebrands, while the map
 // is a hand-maintained snapshot that goes stale silently — the
@@ -185,15 +190,18 @@ var knownIssuers = map[string]knownIssuer{
 // (apay.io→ultracapital.xyz, centre.io→circle.com, a mis-attributed
 // FxDAO issuer, …), and the stale domain was also what SEP-1
 // verification resolved against.
-func (s *Server) onChainHomeDomain(ctx context.Context, issuer string) string {
+func (s *Server) onChainHomeDomain(ctx context.Context, issuer string) (domain string, degraded bool) {
 	if s.explorer == nil {
-		return ""
+		return "", false
 	}
 	st, _, err := s.explorer.AccountStateCached(ctx, issuer)
-	if err != nil || !st.Exists {
-		return ""
+	if err != nil {
+		return "", true
 	}
-	return st.HomeDomain
+	if !st.Exists {
+		return "", false
+	}
+	return st.HomeDomain, false
 }
 
 // backfillHomeDomain fills an empty detail.HomeDomain for a classic
@@ -201,20 +209,33 @@ func (s *Server) onChainHomeDomain(ctx context.Context, issuer string) string {
 // as last resort. Shared by both asset-detail surfaces
 // (handleAssetGet + the metadata route) so they stay in lockstep on
 // the domain their SEP-1 overlays verify against.
-func (s *Server) backfillHomeDomain(ctx context.Context, detail *AssetDetail) {
+//
+// Returns degraded=true when the on-chain read itself failed (reader
+// unwired, deadline, store error) rather than genuinely finding no
+// domain. On a degraded read the curated map is deliberately NOT
+// consulted: falling back to it would serve a stale hand-maintained
+// domain — and let SEP-1 verify against it — under the same 200 a
+// confirmed live read gets, indistinguishable from real data (GH-582).
+// The caller is expected to fold degraded into the response's stale
+// flag rather than silently accept a fallback value.
+func (s *Server) backfillHomeDomain(ctx context.Context, detail *AssetDetail) (degraded bool) {
 	if detail.HomeDomain != nil && *detail.HomeDomain != "" {
-		return
+		return false
 	}
 	if detail.Issuer == nil || *detail.Issuer == "" {
-		return
+		return false
 	}
-	hd := s.onChainHomeDomain(ctx, *detail.Issuer)
+	hd, degraded := s.onChainHomeDomain(ctx, *detail.Issuer)
+	if degraded {
+		return true
+	}
 	if hd == "" {
 		hd, _ = enrichIssuer(*detail.Issuer, "", "")
 	}
 	if hd != "" {
 		detail.HomeDomain = &hd
 	}
+	return false
 }
 
 // enrichIssuer fills empty home_domain / org_name fields on the
