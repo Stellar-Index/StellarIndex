@@ -548,6 +548,7 @@ func resumeStalled(args []string) error {
 	if err != nil {
 		return fmt.Errorf("plan: %w", err)
 	}
+	plans = gateSourcePolicy(plans, cfg)
 
 	// Gate Soroban-era plans against the data-derived soroban_events
 	// gap list. Cursors whose remaining range is fully covered by
@@ -717,11 +718,9 @@ func runOneCursorPlan(
 	return nil
 }
 
-// runResumeForCursor runs the chunk loop for a single cursor's
-// remaining range. Identical-shape to the regular `backfill`
-// subcommand's loop (sequential fast-path for single chunk; goroutine
-// fan-out for parallel > 1). Extracted so the outer cursor loop in
-// resumeStalled stays readable.
+// runResumeForCursor runs a single cursor's remaining range through the
+// same guarded fan-out as `backfill`. A single chunk is guarded too: a
+// panic is a failed cursor, not the end of every cursor after it.
 func runResumeForCursor(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -730,32 +729,27 @@ func runResumeForCursor(
 	store *timescale.Store,
 	chunks []chunkRange,
 ) error {
-	if len(chunks) == 1 {
-		return runBackfillChunk(ctx, logger, opts, cfg, store, chunks[0])
-	}
-	type result struct{ err error }
-	resultCh := make(chan result, len(chunks))
-	for i, c := range chunks {
-		go func(i int, c chunkRange) {
-			chunkLogger := logger.With("chunk", i, "chunk_from", c.from, "chunk_to", c.to)
-			err := runBackfillChunk(ctx, chunkLogger, opts, cfg, store, c)
-			if err != nil {
-				resultCh <- result{err: fmt.Errorf("chunk %d [%d, %d]: %w", i, c.from, c.to, err)}
-				return
-			}
-			resultCh <- result{}
-		}(i, c)
-	}
-	var combined []error
-	for range chunks {
-		if r := <-resultCh; r.err != nil {
-			combined = append(combined, r.err)
+	return runChunksGuarded(logger, "resume-chunk", chunks, func(chunkLogger *slog.Logger, c chunkRange) error {
+		return runBackfillChunk(ctx, chunkLogger, opts, cfg, store, c)
+	})
+}
+
+// gateSourcePolicy skips every plan whose decoder set `backfill` itself
+// would refuse today: an attestation withdrawn after the cursor was
+// written, or a source the projector now owns.
+func gateSourcePolicy(plans []stalledCursorPlan, cfg config.Config) []stalledCursorPlan {
+	out := make([]stalledCursorPlan, len(plans))
+	copy(out, plans)
+	for i := range out {
+		if out[i].skip {
+			continue
+		}
+		if err := checkBackfillSourcePolicy(out[i].sources, cfg, out[i].rangeFrom, out[i].rangeTo); err != nil {
+			out[i].skip = true
+			out[i].skipReason = err.Error()
 		}
 	}
-	if len(combined) > 0 {
-		return errors.Join(combined...)
-	}
-	return nil
+	return out
 }
 
 // planResumeStalled is the read-side of the subcommand: gather + filter
