@@ -3,7 +3,11 @@
 
 package archivecompleteness
 
-import "testing"
+import (
+	"os/user"
+	"strconv"
+	"testing"
+)
 
 // TestNewCrossAnchorFiller_NetworkGuard is the cross-network-corruption
 // proof (audit 2026-08-26): the built-in DefaultCrossAnchorSources are all
@@ -40,5 +44,43 @@ func TestNewCrossAnchorFiller_NetworkGuard(t *testing.T) {
 	// empty Network + no sources → allowed (back-compat: existing pubnet callers).
 	if _, err := NewCrossAnchorFiller(FillerOptions{ArchiveRoot: dir}); err != nil {
 		t.Errorf("NewCrossAnchorFiller(no Network, no Sources) = %v; want nil (pubnet back-compat)", err)
+	}
+}
+
+// TestNewCrossAnchorFiller_HalfBlankOwnerDoesNotDefaultToRoot is the
+// CA2-A29-correct-2 regression: setting only one of OwnerUser/OwnerGroup
+// must leave the OTHER half untouched (os.Chown's -1 sentinel), not fall
+// back to Go's int zero-value, which is uid/gid 0 (root).
+func TestNewCrossAnchorFiller_HalfBlankOwnerDoesNotDefaultToRoot(t *testing.T) {
+	dir := t.TempDir()
+
+	// Look up the current process's own group so the lookup itself
+	// succeeds without requiring root or a fixed test-fixture group.
+	self, err := user.Current()
+	if err != nil {
+		t.Fatalf("user.Current() = %v", err)
+	}
+	group, err := user.LookupGroupId(self.Gid)
+	if err != nil {
+		t.Fatalf("user.LookupGroupId(%q) = %v", self.Gid, err)
+	}
+
+	f, err := NewCrossAnchorFiller(FillerOptions{
+		ArchiveRoot: dir,
+		OwnerGroup:  group.Name,
+		// OwnerUser deliberately left blank.
+	})
+	if err != nil {
+		t.Fatalf("NewCrossAnchorFiller(OwnerGroup only) = %v; want nil", err)
+	}
+	if f.ownerUID != -1 {
+		t.Errorf("ownerUID = %d; want -1 (unset half must not default to root/uid 0)", f.ownerUID)
+	}
+	wantGID, err := strconv.Atoi(group.Gid)
+	if err != nil {
+		t.Fatalf("strconv.Atoi(%q) = %v", group.Gid, err)
+	}
+	if f.ownerGID != wantGID {
+		t.Errorf("ownerGID = %d; want %d", f.ownerGID, wantGID)
 	}
 }
