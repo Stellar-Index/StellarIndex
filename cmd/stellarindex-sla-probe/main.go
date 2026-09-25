@@ -203,6 +203,12 @@ type stats struct {
 	// records which bound the verdict held this endpoint to. Zero =
 	// the run-level sla.freshness_sec applied.
 	FreshnessTargetSec float64 `json:"freshness_target_sec,omitempty"`
+	// Critical mirrors endpoint.Critical: a Critical endpoint fails the
+	// whole run on ANY error, independent of whether the blanket
+	// availability target is still cleared. Carried through to the
+	// verdict so a single /readyz blip on a 2,400-sample run cannot
+	// hide behind 99.9%+ overall availability.
+	Critical bool `json:"critical,omitempty"`
 }
 
 type latencyStats struct {
@@ -483,7 +489,7 @@ func collectSamples(ctx context.Context, baseURL, apiKey string, endpoints []end
 // row.
 func aggregateEndpointStats(ep endpoint, ss []probeSample) stats {
 	if len(ss) == 0 {
-		return stats{Endpoint: ep.Name, Pair: ep.Pair, Path: ep.Path}
+		return stats{Endpoint: ep.Name, Pair: ep.Pair, Path: ep.Path, Critical: ep.Critical}
 	}
 	// Failures stay out of the latency percentiles, as they do from the
 	// server's success histogram (internal/obs/http_middleware.go): a
@@ -512,6 +518,7 @@ func aggregateEndpointStats(ep endpoint, ss []probeSample) stats {
 		Successes:          successes,
 		Errors:             len(ss) - successes,
 		AvailabilityPct:    100.0 * float64(successes) / float64(len(ss)),
+		Critical:           ep.Critical,
 	}
 	if successes > 0 {
 		st.LatencyMS = &latencyStats{
@@ -560,6 +567,14 @@ func endpointFailures(st stats, sla slaTargets) []string {
 		return []string{fmt.Sprintf("%s: no samples", label)}
 	}
 	var out []string
+	// A Critical endpoint fails the run on any error, independent of the
+	// blanket availability target: that target tolerates up to 0.1% of a
+	// large sample count failing, which would let a single /readyz or
+	// /price/tip outage pass silently on a long run (see doc comment on
+	// endpoint.Critical).
+	if st.Critical && st.Errors > 0 {
+		out = append(out, fmt.Sprintf("%s: %d/%d requests failed (critical endpoint)", label, st.Errors, st.Samples))
+	}
 	if st.LatencyMS != nil && st.LatencyMS.P95 > sla.P95MS {
 		out = append(out, fmt.Sprintf("%s: p95=%.1fms > target %.1fms", label, st.LatencyMS.P95, sla.P95MS))
 	}
