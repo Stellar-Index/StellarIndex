@@ -72,6 +72,14 @@ redis_sentinel_parallel_syncs: 1
 # instead. Only takes effect under lockdown; ignored otherwise.
 redis_sentinel_auth_user: sentinel
 
+# SL02 (reverification 2026-09-18): under `redis_acl_lockdown`, the
+# monitored primary's legacy `default` user is off, so a replica's
+# username-less masterauth AUTH is rejected the same way Sentinel's
+# was (SL03, above). `masteruser` in redis.conf.j2 names the ACL user
+# (defined in users.acl.j2) a replica authenticates as instead. Only
+# takes effect under lockdown; ignored otherwise.
+redis_replication_auth_user: replication
+
 # ── Idempotency knob ───────────────────────────────────────────
 # When true, on re-runs the role consults Sentinel for the
 # current primary and refuses to overwrite the existing replicaof

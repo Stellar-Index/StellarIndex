@@ -147,6 +147,16 @@ user sentinel on >{{ redis_password }} \
   +client|setname +client|getname +client|id +client|list \
   ~* &*
 
+# Replication user (SL02, reverification 2026-09-18). redis.conf.j2's
+# `masteruser` points here instead of the disabled `default` user, so a
+# replica's masterauth AUTH resolves. Replication needs PSYNC/REPLCONF
+# to stream the RDB + command backlog and PING for the master/replica
+# heartbeat — none of which fit the `stellarindex` application user's
+# key-pattern-scoped @read/@write surface.
+user replication on >{{ redis_password }} \
+  -@all +psync +replconf +ping \
+  ~* &*
+
 {# When the operator wants per-component lockdown they uncomment #}
 {# the three users below (rotating distinct passwords through the #}
 {# vault) and stop the API / aggregator / indexer binaries with #}

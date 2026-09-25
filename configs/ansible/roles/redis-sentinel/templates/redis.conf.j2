@@ -20,6 +20,12 @@ masterauth {{ redis_password }}
 #   - Operator CLI access uses a separate `cli` ACL or the
 #     unix-socket-bound admin user; not surfaced here by default.
 aclfile /etc/redis/users.acl
+
+# SL02: under lockdown, masterauth's username-less AUTH resolves
+# against the disabled `default` user (same failure as Sentinel's,
+# fixed by `sentinel auth-user` — SL03). masteruser names the ACL
+# user (defined in users.acl.j2) a replica authenticates as instead.
+masteruser {{ redis_replication_auth_user }}
 {% endif %}
 
 # Persistence (ha-plan §3.4: AOF every-second + RDB nightly)
