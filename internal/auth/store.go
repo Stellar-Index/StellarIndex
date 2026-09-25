@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -87,6 +88,58 @@ type CreateAPIKeyRequest struct {
 	// not of one record, and there is no path that can verify a
 	// non-signup KeyID after the fact. Signup leaves it zero.
 	EmailVerifiedAt time.Time
+
+	// MintedBy is the authenticated credential issuing this key. When
+	// set, Create refuses a request exceeding it ([ClampToMinter]). Nil
+	// only for mints with no HTTP subject: signup and the operator CLI.
+	MintedBy *Subject
+}
+
+// ErrMintExceedsCaller is [ClampToMinter]'s refusal: the request asked
+// for more authority than the minting credential holds.
+var ErrMintExceedsCaller = errors.New("auth: mint exceeds the minting credential's own authority")
+
+// ClampToMinter enforces the delegation invariant that a credential may
+// only mint a child no more privileged than itself, returning the scopes
+// to persist or an error wrapping [ErrMintExceedsCaller].
+//
+// Scopes:
+//   - A full-access minter (empty scope list) delegates freely.
+//   - A scoped minter with no explicit request passes on its OWN scopes,
+//     never an empty (full-access) list.
+//   - A scoped minter's explicit request must be a subset of its scopes
+//     (via [Subject.HasScope], so a "*" minter delegates freely); a scope
+//     it lacks is refused, not silently dropped.
+//
+// Rate limit (0 = the deployment default every key gets):
+//   - A minter with its own ceiling may set a child's up to that ceiling.
+//   - A minter on the default may set one only if it is full-access: it
+//     can already mint itself an unrestricted key, so a clamp would not
+//     bind it. A scoped minter on the default may only issue the default.
+func ClampToMinter(minter Subject, scopes []string, rateLimitPerMin int) ([]string, error) {
+	if rateLimitPerMin > 0 {
+		if minter.RateLimitPerMin > 0 && rateLimitPerMin > minter.RateLimitPerMin {
+			return nil, fmt.Errorf("%w: rate_limit_per_min %d exceeds this key's own %d",
+				ErrMintExceedsCaller, rateLimitPerMin, minter.RateLimitPerMin)
+		}
+		if minter.RateLimitPerMin == 0 && len(minter.Scopes) > 0 {
+			return nil, fmt.Errorf("%w: a scoped key on the deployment-default rate limit may only mint keys on that default (rate_limit_per_min 0)",
+				ErrMintExceedsCaller)
+		}
+	}
+	if len(minter.Scopes) == 0 {
+		return scopes, nil
+	}
+	if len(scopes) == 0 {
+		return append([]string(nil), minter.Scopes...), nil
+	}
+	for _, s := range scopes {
+		if !minter.HasScope(s) {
+			return nil, fmt.Errorf("%w: scope %q exceeds this key's own scopes (%s) — a key may only mint a child with a subset of its scopes",
+				ErrMintExceedsCaller, s, strings.Join(minter.Scopes, ", "))
+		}
+	}
+	return scopes, nil
 }
 
 // ChildKeyRequest builds the mint request for a key that parent delegates
@@ -94,9 +147,10 @@ type CreateAPIKeyRequest struct {
 // dimension is copied, so a field added to [CreateAPIKeyRequest] is pinned
 // by TestChildKeyRequest_InheritsEveryField instead of silently minting
 // as zero — zero means "unlimited" for quota and "never" for expiry.
-// scopes must already be clamped to parent's own (middleware.ClampMintScopes).
+// The store re-checks scopes against parent via MintedBy ([ClampToMinter]).
 func ChildKeyRequest(parent Subject, label string, scopes []string) CreateAPIKeyRequest {
 	return CreateAPIKeyRequest{
+		MintedBy:        &parent,
 		Identifier:      parent.Identifier,
 		Label:           label,
 		Tier:            parent.Tier,
@@ -212,6 +266,13 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 	}
 	if err := ValidateKeyBounds(req.RateLimitPerMin, req.Scopes); err != nil {
 		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: %w", err)
+	}
+	if req.MintedBy != nil {
+		scopes, err := ClampToMinter(*req.MintedBy, req.Scopes, req.RateLimitPerMin)
+		if err != nil {
+			return APIKeyRecord{}, "", fmt.Errorf("auth: Create: %w", err)
+		}
+		req.Scopes = scopes
 	}
 	monthlyQuota := req.MonthlyQuota
 	if monthlyQuota <= 0 {

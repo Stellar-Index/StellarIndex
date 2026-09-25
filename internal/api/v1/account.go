@@ -539,11 +539,8 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 	// scoped caller inherits the caller's scopes rather than defaulting
 	// to full access. Without this a key narrowed at mint could mint an
 	// unrestricted sibling and escape its own confinement.
-	scopes, problem = middleware.ClampMintScopes(subject, scopes)
-	if problem != "" {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/scope-exceeds-caller",
-			"Scope exceeds caller", http.StatusForbidden, problem)
+	scopes, ok = s.clampMintToCaller(w, r, subject, scopes, subject.RateLimitPerMin)
+	if !ok {
 		return
 	}
 
@@ -868,7 +865,8 @@ func (s *Server) handleAccountKeysList(w http.ResponseWriter, r *http.Request) {
 // scoped to the authenticated caller's Identifier. Anonymous → 401;
 // missing keyID → 400; store unwired → 503; everything else → 204
 // (including "key not found" — we don't leak whether a keyID
-// exists for a different account).
+// exists for a different account). An operator's audit row is written
+// only when a key was actually revoked.
 //
 // Caller cannot revoke the key they're authenticated with — that
 // would orphan the connection mid-request. We return 409 in that
@@ -912,7 +910,12 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 	// Postgres management row for a key that has one — a self-service
 	// caller can hold a /v1/register-minted key, which mirrors to both
 	// stores, alongside Redis-only keys minted via this same endpoint.
-	if err := s.revokeKeyEverywhere(r.Context(), subject.Identifier, keyID, reason); err != nil {
+	err := s.revokeKeyEverywhere(r.Context(), subject.Identifier, keyID, reason)
+	if errors.Is(err, auth.ErrKeyNotFound) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err != nil {
 		s.logger.Error("account keys revoke failed", "err", err,
 			"identifier", subject.Identifier, "key_id", keyID)
 		writeProblem(w, r,

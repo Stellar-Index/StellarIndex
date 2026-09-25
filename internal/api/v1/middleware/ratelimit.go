@@ -28,10 +28,12 @@ const throttleTakeTimeout = 5 * time.Second
 
 // throttleContext derives the context an abuse-prevention seam's
 // backend call runs under: the request's values, WITHOUT its
-// cancellation, bounded by [throttleTakeTimeout]. Shared by the two
-// pre-dispatch seams in this package — the rate-limit take and the
-// [MonthlyQuota] month-to-date read — because the hazard below is a
-// property of the dwell-clock design both mirror, not of either seam.
+// cancellation, bounded by [throttleTakeTimeout] or by whatever remains
+// of the request's own deadline, whichever is sooner. Shared by the
+// pre-dispatch seams in this package — the rate-limit take, the
+// [MonthlyQuota] month-to-date read and the failed-auth throttle —
+// because the hazard below is a property of the dwell-clock design they
+// mirror, not of any one seam.
 //
 // A client abort must not reach the limiter as an error. The bucket
 // cannot tell a caller-cancelled call from a Redis outage — every error
@@ -54,11 +56,24 @@ const throttleTakeTimeout = 5 * time.Second
 // counters, where not counting an aborted request is a quota-evasion
 // vector.
 //
-// The bound is only as hard as the backend's context honouring; go-redis
-// respects ctx cancellation on the wire, so it holds for the bucket as
-// wired today.
+// Detaching drops the request's DEADLINE along with its cancellation, so
+// the deadline is re-applied here. These seams run before the handler,
+// inside [RequestTimeout]; a flat 5 s per seam let the pre-handler stack
+// run past the request timeout and, stacked with the handler, past the
+// server's WriteTimeout, answering a client whose response could no
+// longer be written. A deadline is server-set, never client-set, so
+// honouring it hands a client no way to arm the dwell clock.
+//
+// The bound is only as hard as the backend's context honouring. go-redis
+// honours it for the pool wait but, with ContextTimeoutEnabled unset (as
+// wired today), bounds an in-flight command by its own ReadTimeout
+// (3 s default) instead.
 func throttleContext(r *http.Request) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(r.Context()), throttleTakeTimeout)
+	deadline := time.Now().Add(throttleTakeTimeout)
+	if reqDeadline, ok := r.Context().Deadline(); ok && reqDeadline.Before(deadline) {
+		deadline = reqDeadline
+	}
+	return context.WithDeadline(context.WithoutCancel(r.Context()), deadline)
 }
 
 // MaxRateLimitKeyLen caps the caller-supplied KeyFn output so a
@@ -307,16 +322,17 @@ func nextWindowResetUnix(window time.Duration) int64 {
 // callers use anonBucket and authenticated callers use authBucket.
 //
 // Keying semantics:
-//   - authenticated with KeyID: per-key bucket
-//   - authenticated without KeyID: per-subject Identifier bucket
-//   - anonymous with Subject: anonymous Identifier bucket
-//   - no Subject attached: fallback to RemoteIPFrom(r)
+//   - authenticated: the owner account's bucket ([authenticatedRateLimitKey])
+//   - anonymous with Subject: per-IP bucket (see below)
+//   - no Subject attached: per-IP bucket
 //
 // Per-subject overrides: an authenticated subject with
 // `Subject.RateLimitPerMin > 0` (a paid-tier override sourced from
-// the APIKey record) replaces authBucket's default max for THIS
-// caller's bucket. The override has no effect on anonymous callers —
-// anonRateLimitPerMin is a deployment knob, not a per-IP override.
+// the APIKey record) replaces authBucket's default max as the ceiling
+// THIS request is checked against; the counter it is checked against
+// is still the account's. The override has no effect on anonymous
+// callers — anonRateLimitPerMin is a deployment knob, not a per-IP
+// override.
 //
 // Nil buckets disable rate limiting for that class.
 func RateLimitBySubject(anonBucket, authBucket *ratelimit.Bucket, skip func(*http.Request) bool, logger *slog.Logger) Middleware {
@@ -407,11 +423,14 @@ func anonymousRateLimitKey(r *http.Request) string {
 	return "anon:" + ip
 }
 
+// authenticatedRateLimitKey counts every credential an account holds
+// against ONE per-minute bucket, derived by [UsageKeyForSubject] — the
+// derivation the monthly quota counts under — so the two budgets cannot
+// drift onto opposite identities again. Keyed per credential, an
+// account's per-minute ceiling multiplied by the number of keys it held
+// (a 25-key account with a 100k/min comp ran at 2.5M/min).
 func authenticatedRateLimitKey(subject auth.Subject) string {
-	if subject.KeyID != "" {
-		return "auth:" + subject.Tier.String() + ":key:" + subject.KeyID
-	}
-	return "auth:" + subject.Tier.String() + ":id:" + subject.Identifier
+	return "auth:" + UsageKeyForSubject(subject)
 }
 
 // SkipHealthAndMetrics is a convenience Skip predicate for operators

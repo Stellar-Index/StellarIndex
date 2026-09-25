@@ -186,8 +186,9 @@ func ChargeUsage(r *http.Request, units int) {
 //
 // # Why the ACCOUNT, not the credential (RLT-404)
 //
-// The counter this derives feeds [MonthlyQuota], and the ceiling it is
-// compared against is a PLAN budget, not a per-credential allowance:
+// The counter this derives feeds [MonthlyQuota] and keys the per-minute
+// rate-limit bucket ([authenticatedRateLimitKey]), and the ceiling each
+// is compared against is a PLAN budget, not a per-credential allowance:
 // platform.Tier.MaxMonthlyQuota is the ladder a dashboard-minted
 // key's quota is clamped to, and the account-level
 // `MonthlyRequestQuotaOverride` is the hard ceiling above it — the

@@ -240,7 +240,7 @@ func runMintKey(ctx context.Context, store keyMinter, audit keyAuditSink, opts m
 	if aerr == nil {
 		return rec, plaintext, nil
 	}
-	if rerr := store.RevokeKeyByID(ctx, rec.Identifier, rec.KeyID); rerr != nil {
+	if rerr := store.RevokeKeyByID(ctx, rec.Identifier, rec.KeyID); rerr != nil && !errors.Is(rerr, auth.ErrKeyNotFound) {
 		return auth.APIKeyRecord{}, "", fmt.Errorf("audit_log append failed (%w) and revoking the unaudited key %s also failed: %w — revoke it by hand",
 			aerr, rec.KeyID, rerr)
 	}

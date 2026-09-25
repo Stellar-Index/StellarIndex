@@ -387,10 +387,12 @@ func (s *RedisAPIKeyStore) ListKeysForIdentifier(ctx context.Context, identifier
 
 // RevokeKeyByID deletes the API key whose KeyID matches `keyID`,
 // constrained to the supplied `identifier` so a caller can only
-// revoke keys they own. Returns nil + nil for "not found / not
-// yours" — distinguishing those would let an attacker probe key-
-// id existence cross-account, and the v1 handler treats both as
-// 404 anyway.
+// revoke keys they own. Returns [ErrKeyNotFound] when nothing was
+// revoked — the key does not exist OR belongs to another identifier.
+// The two are deliberately the same error so the result is no
+// cross-account existence oracle, but it is never nil: a caller that
+// reports success on nil (the operator kill switch) must not report a
+// typo'd identifier as a contained leak.
 //
 // The ownership check is made against the RECORD, never against the
 // index: the index only says where to look.
@@ -406,9 +408,7 @@ func (s *RedisAPIKeyStore) RevokeKeyByID(ctx context.Context, identifier, keyID 
 		return fmt.Errorf("auth: RevokeKeyByID: %w", err)
 	}
 	if !found || rec.Identifier != identifier {
-		// Not found / not owned. Silent — the handler renders 404 either
-		// way and conflating the two prevents enumeration probes.
-		return nil
+		return ErrKeyNotFound
 	}
 	recordKey := cachekeys.APIKey(hash).String()
 	err = removeIndexedRecordScript.Run(ctx, s.rdb,
