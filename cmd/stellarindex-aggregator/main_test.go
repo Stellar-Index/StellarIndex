@@ -458,15 +458,22 @@ func TestSEP41RollupOutcome(t *testing.T) {
 // configured PerAsset locked-set entries and a working
 // MaxSupplyOverride lookup — not just "no error."
 func TestBuildSupplyPolicy_TranslatesConfig(t *testing.T) {
+	// Dash form, as watched_classic_assets spells it: the computers
+	// look entries up by the colon supply.AssetKey, so the built Policy
+	// must carry the colon key or the override silently never applies.
+	const (
+		usdcDash  = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		usdcColon = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	)
 	cfg := config.SupplyConfig{
 		PerAssetLockedSets: map[string]config.SupplyLockedSetConfig{
-			"XLM": {
+			usdcDash: {
 				Accounts:  []string{"GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4"},
 				Contracts: nil,
 			},
 		},
 		MaxSupplyOverrides: map[string]string{
-			"XLM": "1000000000000",
+			usdcDash: "1000000000000",
 		},
 	}
 
@@ -483,24 +490,40 @@ func TestBuildSupplyPolicy_TranslatesConfig(t *testing.T) {
 		t.Errorf("SDFReserveAccounts = %v, want nil (Algorithm 1 wires it independently)", policy.SDFReserveAccounts)
 	}
 
-	locked, ok := policy.PerAsset["XLM"]
+	locked, ok := policy.PerAsset[usdcColon]
 	if !ok {
-		t.Fatal("policy.PerAsset[\"XLM\"] missing — per_asset_locked_sets was not translated")
+		t.Fatalf("policy.PerAsset[%q] missing (keys %v) — per_asset_locked_sets was not re-keyed to asset_key form", usdcColon, policy.PerAsset)
 	}
 	if len(locked.Accounts) != 1 || locked.Accounts[0] != "GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4" {
-		t.Errorf("policy.PerAsset[\"XLM\"].Accounts = %v, want the one configured account", locked.Accounts)
+		t.Errorf("policy.PerAsset[%q].Accounts = %v, want the one configured account", usdcColon, locked.Accounts)
 	}
 
-	override, ok, err := policy.MaxSupplyOverride("XLM")
+	override, ok, err := policy.MaxSupplyOverride(usdcColon)
 	if err != nil {
 		t.Fatalf("MaxSupplyOverride: %v", err)
 	}
 	if !ok {
-		t.Fatal("MaxSupplyOverride(\"XLM\") not found — max_supply_overrides was not translated")
+		t.Fatalf("MaxSupplyOverride(%q) not found — max_supply_overrides was not re-keyed to asset_key form", usdcColon)
 	}
 	want := big.NewInt(1000000000000)
 	if override.Cmp(want) != 0 {
-		t.Errorf("MaxSupplyOverride(\"XLM\") = %s, want %s", override.String(), want.String())
+		t.Errorf("MaxSupplyOverride(%q) = %s, want %s", usdcColon, override.String(), want.String())
+	}
+}
+
+// TestBuildSupplyPolicy_RejectsXLMKey: only the classic and SEP-41
+// computers read these maps, so an XLM entry would load and apply
+// nothing; it must fail startup instead.
+func TestBuildSupplyPolicy_RejectsXLMKey(t *testing.T) {
+	for name, cfg := range map[string]config.SupplyConfig{
+		"per_asset_locked_sets": {PerAssetLockedSets: map[string]config.SupplyLockedSetConfig{
+			"XLM": {Accounts: []string{"GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4"}},
+		}},
+		"max_supply_overrides": {MaxSupplyOverrides: map[string]string{"native": "1000000000000"}},
+	} {
+		if _, err := buildSupplyPolicy(cfg); err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("%s: buildSupplyPolicy(XLM key) err = %v, want an error naming %s", name, err, name)
+		}
 	}
 }
 
@@ -510,10 +533,12 @@ func TestBuildSupplyPolicy_TranslatesConfig(t *testing.T) {
 // not silently degrade at first supply-snapshot time.
 func TestBuildSupplyPolicy_RejectsMalformedOverride(t *testing.T) {
 	cfg := config.SupplyConfig{
-		MaxSupplyOverrides: map[string]string{"XLM": "not-a-decimal-integer"},
+		MaxSupplyOverrides: map[string]string{
+			"USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN": "not-a-decimal-integer",
+		},
 	}
-	if _, err := buildSupplyPolicy(cfg); err == nil {
-		t.Fatal("expected an error for a non-decimal max_supply_overrides value, got nil")
+	if _, err := buildSupplyPolicy(cfg); err == nil || !strings.Contains(err.Error(), "decimal integer") {
+		t.Fatalf("buildSupplyPolicy err = %v, want the non-decimal max_supply_overrides value rejected", err)
 	}
 }
 

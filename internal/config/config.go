@@ -1739,9 +1739,10 @@ type SupplyConfig struct {
 	// admin-only balance for SEP-41 Algorithm 3) for specific
 	// assets — treasury/vesting accounts and contracts an operator
 	// wants excluded from circulating_supply beyond the default.
-	// Map key mirrors internal/supply.Policy.PerAsset's asset_key
-	// shape: "XLM" for native, "CODE:G..." for classic credit
-	// assets, "C..." for SEP-41 Soroban tokens. Missing key falls
+	// Map key names a watched_classic_assets entry (CODE-G... or
+	// CODE:G...) or a watched_sep41_contracts id; it is re-keyed to
+	// supply.AssetKey form at load. XLM, unwatched or unparseable keys
+	// fail Validate — Algorithm 1 never reads this map. Missing key falls
 	// back to the per-algorithm default; a present-but-empty entry
 	// means "no exclusions for this asset" (explicit opt-out of the
 	// default).
@@ -1753,12 +1754,13 @@ type SupplyConfig struct {
 	// sites (buildClassicRefreshers, buildSEP41Refreshers)
 	// hardcoded supply.Policy{}, so an operator-intended
 	// treasury/vesting exclusion silently never applied.
-	PerAssetLockedSets map[string]SupplyLockedSetConfig `toml:"per_asset_locked_sets" doc:"Per-asset override of the default locked-set (issuer-only for classic, admin-only for SEP-41) excluded from circulating_supply. Map key: 'XLM' | 'CODE:G...' | SEP-41 contract C-strkey. Empty map preserves the per-algorithm default for every asset." default:"{}"`
+	PerAssetLockedSets map[string]SupplyLockedSetConfig `toml:"per_asset_locked_sets" doc:"Per-asset override of the default locked-set (issuer-only for classic, admin-only for SEP-41) excluded from circulating_supply. Map key: a watched_classic_assets entry ('CODE-G...' or 'CODE:G...') or a watched_sep41_contracts C-strkey; 'XLM' and unwatched keys are rejected at startup. Empty map preserves the per-algorithm default for every asset." default:"{}"`
 
 	// MaxSupplyOverrides forces max_supply for a specific asset,
 	// beating both the SEP-1 declaration and the per-algorithm
-	// default. Value is a decimal string in the asset's base unit
-	// (stroops for XLM/classic, contract-defined units for SEP-41).
+	// default. Keyed like PerAssetLockedSets (no XLM). Value is a
+	// decimal string in the asset's base unit (stroops for classic,
+	// contract-defined units for SEP-41).
 	// Empty string means "fall through to the next source"
 	// (equivalent to omitting the key) — see
 	// internal/supply.Policy.MaxSupplyOverride.
@@ -1814,6 +1816,9 @@ type SupplyLockedSetConfig struct {
 //     asset a supply refresher watches — the per-asset gate is an
 //     exact-match lookup, so a typo'd or unwatched key would
 //     otherwise leave the global threshold silently in force.
+//  7. Every PerAssetLockedSets / MaxSupplyOverrides key resolves to
+//     exactly one watched classic or SEP-41 asset, for the same
+//     exact-match reason. XLM is rejected: Algorithm 1 reads neither.
 func (sc SupplyConfig) Validate() error {
 	for i, acc := range sc.SDFReserveAccounts {
 		if !canonical.IsAccountID(acc) {
@@ -1850,7 +1855,10 @@ func (sc SupplyConfig) Validate() error {
 	if sc.ReserveBalancesMaxAge < 0 {
 		return fmt.Errorf("supply: reserve_balances_max_age %v must not be negative", sc.ReserveBalancesMaxAge)
 	}
-	return sc.validateStaleComponentLedgersByAsset()
+	if err := sc.validateStaleComponentLedgersByAsset(); err != nil {
+		return err
+	}
+	return sc.validatePolicyOverrideKeys()
 }
 
 // DefaultReserveBalancesMaxAge is the reserve_balances_max_age default:
@@ -1899,13 +1907,38 @@ func (sc SupplyConfig) validateStaleComponentLedgersByAsset() error {
 	if err != nil {
 		return fmt.Errorf("supply: stale_component_ledgers_by_asset: %w", err)
 	}
-	if len(byAsset) == 0 {
-		return nil
-	}
-	watched := map[string]struct{}{}
+	watched := sc.watchedSupplyKeys()
 	if xlm, err := supply.AssetKey(canonical.NativeAsset()); err == nil {
 		watched[xlm] = struct{}{}
 	}
+	return requireWatchedSupplyKeys("stale_component_ledgers_by_asset", byAsset, watched,
+		"'XLM', a watched_classic_assets entry, or a watched_sep41_contracts id")
+}
+
+// validatePolicyOverrideKeys is check 7 of [SupplyConfig.Validate].
+// Only the classic and SEP-41 computers read these two maps, so XLM
+// is not a watched key here (CanonicalizePolicyKeys rejects it).
+func (sc SupplyConfig) validatePolicyOverrideKeys() error {
+	lockedSets, err := supply.CanonicalizePolicyKeys(sc.PerAssetLockedSets)
+	if err != nil {
+		return fmt.Errorf("supply: per_asset_locked_sets: %w", err)
+	}
+	maxSupply, err := supply.CanonicalizePolicyKeys(sc.MaxSupplyOverrides)
+	if err != nil {
+		return fmt.Errorf("supply: max_supply_overrides: %w", err)
+	}
+	const want = "a watched_classic_assets entry or a watched_sep41_contracts id"
+	watched := sc.watchedSupplyKeys()
+	if err := requireWatchedSupplyKeys("per_asset_locked_sets", lockedSets, watched, want); err != nil {
+		return err
+	}
+	return requireWatchedSupplyKeys("max_supply_overrides", maxSupply, watched, want)
+}
+
+// watchedSupplyKeys is the supply.AssetKey set of the watched classic
+// and SEP-41 assets.
+func (sc SupplyConfig) watchedSupplyKeys() map[string]struct{} {
+	watched := map[string]struct{}{}
 	for _, raw := range sc.WatchedClassicAssets {
 		// An unparseable entry is reported by the classic builder at startup.
 		if key, err := supply.ParseAssetKey(raw); err == nil {
@@ -1915,6 +1948,12 @@ func (sc SupplyConfig) validateStaleComponentLedgersByAsset() error {
 	for _, c := range sc.WatchedSEP41Contracts {
 		watched[c] = struct{}{}
 	}
+	return watched
+}
+
+// requireWatchedSupplyKeys rejects, in sorted order, the first key of
+// byAsset (already in supply.AssetKey form) that is not in watched.
+func requireWatchedSupplyKeys[V any](field string, byAsset map[string]V, watched map[string]struct{}, want string) error {
 	keys := make([]string, 0, len(byAsset))
 	for key := range byAsset {
 		keys = append(keys, key)
@@ -1922,8 +1961,7 @@ func (sc SupplyConfig) validateStaleComponentLedgersByAsset() error {
 	sort.Strings(keys)
 	for _, key := range keys {
 		if _, ok := watched[key]; !ok {
-			return fmt.Errorf("supply: stale_component_ledgers_by_asset key %q names no watched asset "+
-				"(want 'XLM', a watched_classic_assets entry, or a watched_sep41_contracts id)", key)
+			return fmt.Errorf("supply: %s key %q names no watched asset (want %s)", field, key, want)
 		}
 	}
 	return nil

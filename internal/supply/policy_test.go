@@ -242,3 +242,33 @@ func TestPolicyValidate_rejectsNonStrkeyEntries(t *testing.T) {
 		t.Fatalf("Validate rejected CRC-valid strkeys: %v", err)
 	}
 }
+
+// A Policy key the computers' exact AssetKey lookup can never hit —
+// the dash spelling, native XLM (Algorithm 1 reads neither map) or an
+// unparseable key — must fail Validate instead of silently leaving the
+// issuer-only / SEP-1 default in force.
+func TestPolicyValidate_RejectsUnmatchableKeys(t *testing.T) {
+	const (
+		aquaColon = "AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+		aquaDash  = "AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+	)
+	for _, key := range []string{aquaDash, "XLM", "native", "AQUA", "fiat:USD"} {
+		t.Run(key, func(t *testing.T) {
+			if err := (supply.Policy{PerAsset: map[string]supply.LockedSet{key: {}}}).Validate(); err == nil {
+				t.Errorf("Validate accepted PerAsset key %q", key)
+			}
+			if err := (supply.Policy{MaxSupplyOverrides: map[string]string{key: "1000"}}).Validate(); err == nil {
+				t.Errorf("Validate accepted MaxSupplyOverrides key %q", key)
+			}
+		})
+	}
+	for _, key := range []string{aquaColon, validContractID} {
+		p := supply.Policy{
+			PerAsset:           map[string]supply.LockedSet{key: {}},
+			MaxSupplyOverrides: map[string]string{key: "1000"},
+		}
+		if err := p.Validate(); err != nil {
+			t.Errorf("Validate rejected asset_key-form key %q: %v", key, err)
+		}
+	}
+}

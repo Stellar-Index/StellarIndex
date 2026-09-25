@@ -402,8 +402,8 @@ func FuzzMaxSupplyOverride(f *testing.F) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, raw string) {
-		pol := supply.Policy{MaxSupplyOverrides: map[string]string{"K": raw}}
-		got, ok, err := pol.MaxSupplyOverride("K")
+		pol := supply.Policy{MaxSupplyOverrides: map[string]string{validContractID: raw}}
+		got, ok, err := pol.MaxSupplyOverride(validContractID)
 		vErr := pol.Validate()
 		if raw == "" {
 			if got != nil || ok || err != nil || vErr != nil {

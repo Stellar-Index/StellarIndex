@@ -70,3 +70,34 @@ func TestCanonicalizeWatchedClassicRejectsInvalidColonForm(t *testing.T) {
 		t.Fatalf("valid colon form: got %v, %v; want [%s]", got, err, yxlm)
 	}
 }
+
+// TestCanonicalizePolicyKeys: the classic and SEP-41 computers look
+// per_asset_locked_sets / max_supply_overrides up by exact AssetKey
+// match, so the dash spelling watched_classic_assets documents must be
+// re-keyed to colon form, and a key nothing reads must fail loudly.
+func TestCanonicalizePolicyKeys(t *testing.T) {
+	const (
+		usdcDash      = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		usdcColon     = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		sep41Contract = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
+	)
+	got, err := CanonicalizePolicyKeys(map[string]string{usdcDash: "1", sep41Contract: "2"})
+	if err != nil {
+		t.Fatalf("CanonicalizePolicyKeys: %v", err)
+	}
+	if len(got) != 2 || got[usdcColon] != "1" || got[sep41Contract] != "2" {
+		t.Fatalf("CanonicalizePolicyKeys = %v, want {%s:1 %s:2}", got, usdcColon, sep41Contract)
+	}
+	for name, in := range map[string]map[string]string{
+		"XLM":            {"XLM": "1"},
+		"native":         {"native": "1"},
+		"garbage":        {"USDC_GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN": "1"},
+		"off-chain":      {"fiat:USD": "1"},
+		"two spellings":  {usdcDash: "1", usdcColon: "2"},
+		"bad issuer CRC": {"USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVM": "1"},
+	} {
+		if out, err := CanonicalizePolicyKeys(in); err == nil {
+			t.Errorf("%s: CanonicalizePolicyKeys(%v) = %v, want an error", name, in, out)
+		}
+	}
+}

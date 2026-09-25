@@ -1,11 +1,14 @@
 package supply
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
+
+const nativeAssetKey = "XLM"
 
 // AssetKey produces the supply-package canonical key for a
 // [canonical.Asset]. Output shape per ADR-0011:
@@ -25,7 +28,7 @@ import (
 func AssetKey(a canonical.Asset) (string, error) {
 	switch a.Type {
 	case canonical.AssetNative:
-		return "XLM", nil
+		return nativeAssetKey, nil
 	case canonical.AssetClassic:
 		return a.Code + ":" + a.Issuer, nil
 	case canonical.AssetSoroban:
@@ -82,6 +85,47 @@ func ParseAssetKey(raw string) (string, error) {
 // unparseable key, or two spellings of one asset, is an error: either
 // would otherwise leave the global threshold silently in force.
 func CanonicalizeStaleComponentLedgers(byAsset map[string]uint32) (map[string]uint32, error) {
+	return canonicalizeAssetKeys(byAsset)
+}
+
+// errNativePolicyKey rejects an XLM entry in [Policy.PerAsset] or
+// [Policy.MaxSupplyOverrides]: only the classic and SEP-41 computers
+// read those maps, so the entry would silently apply nothing.
+var errNativePolicyKey = errors.New("native XLM takes no per-asset locked set or max_supply override " +
+	"(Algorithm 1 reads neither; exclude XLM reserves via sdf_reserve_accounts)")
+
+// CanonicalizePolicyKeys re-keys an operator's per_asset_locked_sets
+// or max_supply_overrides map onto [AssetKey] form, the exact-match
+// key the classic and SEP-41 computers read. An unparseable key, two
+// spellings of one asset, or native XLM is an error.
+func CanonicalizePolicyKeys[V any](byAsset map[string]V) (map[string]V, error) {
+	out, err := canonicalizeAssetKeys(byAsset)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := out[nativeAssetKey]; ok {
+		return nil, fmt.Errorf("supply: %w", errNativePolicyKey)
+	}
+	return out, nil
+}
+
+// validatePolicyKey rejects a [Policy] map key the computers' exact
+// match can never hit: unparseable, native XLM, or not in [AssetKey]
+// form (e.g. the dash spelling of a classic asset).
+func validatePolicyKey(field, key string) error {
+	canon, err := ParseAssetKey(key)
+	switch {
+	case err != nil:
+		return fmt.Errorf("supply: %s key: %w", field, err)
+	case canon == nativeAssetKey:
+		return fmt.Errorf("supply: %s key %q: %w", field, key, errNativePolicyKey)
+	case canon != key:
+		return fmt.Errorf("supply: %s key %q is not in asset_key form (want %q) and would never match", field, key, canon)
+	}
+	return nil
+}
+
+func canonicalizeAssetKeys[V any](byAsset map[string]V) (map[string]V, error) {
 	if len(byAsset) == 0 {
 		return nil, nil
 	}
@@ -90,7 +134,7 @@ func CanonicalizeStaleComponentLedgers(byAsset map[string]uint32) (map[string]ui
 		raws = append(raws, raw)
 	}
 	sort.Strings(raws)
-	out := make(map[string]uint32, len(byAsset))
+	out := make(map[string]V, len(byAsset))
 	spelledAs := make(map[string]string, len(byAsset))
 	for _, raw := range raws {
 		key, err := ParseAssetKey(raw)
