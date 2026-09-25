@@ -395,3 +395,47 @@ func TestLadderStillLive_BoundaryIsShared(t *testing.T) {
 		t.Error("an inactive (zero) ladder must never read as live")
 	}
 }
+
+// TestRecovery_LadderGraceBoundaryOnInjectedClock pins the hold+grace
+// boundary of the marker-miss sweep on the injected clock. The hold is
+// dated in the past, so a sweep judging it on the wall clock closes the
+// row in every case.
+func TestRecovery_LadderGraceBoundaryOnInjectedClock(t *testing.T) {
+	holdUntil := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	grace := 5 * time.Minute
+	cases := []struct {
+		name      string
+		now       time.Time
+		wantClose bool
+	}{
+		{"inside grace", holdUntil.Add(grace - time.Second), false},
+		{"on the boundary", holdUntil.Add(grace), false},
+		{"past grace", holdUntil.Add(grace + time.Second), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, rdb := newRedis(t)
+			asset, quote := nativeUSD(t)
+			st := escalatedLadder(holdUntil)
+			st.HoldUntil = holdUntil
+			ladder := &ladderStub{state: st}
+			lister := &fakeOpenLister{pairs: []freeze.OpenFreezePair{{Asset: asset, Quote: quote}}}
+			closer := &ladderCloser{ladder: ladder}
+
+			now := tc.now
+			r := freeze.NewRecovery(rdb, lister, closer, freeze.RecoveryOptions{
+				Interval:    10 * time.Millisecond,
+				Ladder:      ladder,
+				LadderGrace: grace,
+				Clock:       func() time.Time { return now },
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+			_ = r.Run(ctx)
+
+			if closed := closer.callCount() > 0; closed != tc.wantClose {
+				t.Errorf("at hold+%v: row closed = %v, want %v", tc.now.Sub(holdUntil), closed, tc.wantClose)
+			}
+		})
+	}
+}

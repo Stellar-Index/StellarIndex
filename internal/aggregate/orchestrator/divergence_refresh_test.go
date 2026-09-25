@@ -30,13 +30,22 @@ type refreshCall struct {
 	Pair     canonical.Pair
 	OurPrice float64
 	At       time.Time
+	Pinned   bool
 }
 
 func (r *captureRefresher) RefreshPair(_ context.Context, pair canonical.Pair, ourPrice float64, at time.Time) error {
+	return r.record(refreshCall{Pair: pair, OurPrice: ourPrice, At: at})
+}
+
+func (r *captureRefresher) RefreshPinnedPair(_ context.Context, pair canonical.Pair, pinnedPrice float64, at time.Time) error {
+	return r.record(refreshCall{Pair: pair, OurPrice: pinnedPrice, At: at, Pinned: true})
+}
+
+func (r *captureRefresher) record(c refreshCall) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.calls = append(r.calls, refreshCall{Pair: pair, OurPrice: ourPrice, At: at})
-	if e, ok := r.errForCC[pair.String()]; ok {
+	r.calls = append(r.calls, c)
+	if e, ok := r.errForCC[c.Pair.String()]; ok {
 		return e
 	}
 	return nil

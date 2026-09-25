@@ -655,8 +655,13 @@ type ContributionRecord struct {
 // just computed; `observedAt` is the Tick's wall-clock time. The
 // implementation is responsible for fetching external references,
 // computing divergence percent, and writing the cache entry.
+//
+// RefreshPinnedPair is the call for a frozen pair, whose cached VWAP is
+// the pinned last-known-good rather than a fresh price: the references
+// are refreshed but no verdict is reached against the pinned value.
 type DivergenceRefresher interface {
 	RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice float64, observedAt time.Time) error
+	RefreshPinnedPair(ctx context.Context, pair canonical.Pair, pinnedPrice float64, observedAt time.Time) error
 }
 
 // StreamPublisher is the seam the orchestrator uses to fan out
