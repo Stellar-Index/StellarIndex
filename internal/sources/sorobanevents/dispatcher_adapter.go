@@ -422,11 +422,24 @@ const (
 //nolint:contextcheck // intentional fresh context; see godoc above.
 func (s *AsyncSink) run() {
 	defer close(s.done)
-	// An unrecovered panic in ANY goroutine kills the whole process this
-	// sink is linked into. Registered after close(s.done) so it unwinds
-	// first and done still closes: a contained panic must not leave Stop
-	// blocked forever on a worker that is already gone.
-	defer worker.Recover(s.logger, "soroban-events-sink-drain")
+	// Deliberately NOT worker.Recover: that helper's log-and-continue
+	// trade-off is right for a detached background worker whose halt
+	// only stops ITS OWN work, but run() is the sole drain for
+	// ADR-0029's raw landing zone and the dispatcher calls PushEvent
+	// SYNCHRONOUSLY on its hot path. A swallowed panic here leaves the
+	// channel undrained forever, so every source's PushEvent blocks on
+	// the full buffer with no restart and no operator signal beyond the
+	// panic page — CA2-A30-harden-2. Report (keeps the existing
+	// stellarindex_worker_panics_total page) then re-panic: registered
+	// after close(s.done) so that defer still runs on the way out, and
+	// the re-panic crashes the process so its supervisor restarts it
+	// from the durable ledger cursor instead of hanging invisibly.
+	defer func() {
+		if r := recover(); r != nil {
+			worker.Report(s.logger, "soroban-events-sink-drain", r)
+			panic(r)
+		}
+	}()
 	s.abortFlush = s.stopping
 	batch := make([]Row, 0, s.batchSz)
 	ticker := time.NewTicker(s.flush)
