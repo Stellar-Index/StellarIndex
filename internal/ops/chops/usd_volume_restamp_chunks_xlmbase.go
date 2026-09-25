@@ -6,6 +6,7 @@ package chops
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"sort"
 	"strings"
 	"time"
@@ -93,9 +94,20 @@ func xlmBaseResumeFlags(opts xlmBaseRestampOptions) string {
 		fmt.Fprintf(&b, " -max-generation %d", opts.MaxGeneration)
 	}
 	if opts.MinRelDelta != nil {
-		fmt.Fprintf(&b, " -min-rel-delta %s", opts.MinRelDelta.FloatString(6))
+		fmt.Fprintf(&b, " -min-rel-delta %s", exactRatFlag(opts.MinRelDelta))
 	}
 	return b.String()
+}
+
+// exactRatFlag renders r so [parseMinRelDelta] reads back exactly r: every
+// decimal digit when r has a finite expansion, else the a/b fraction. A
+// rounded threshold resumes over a different write set, and one rounded
+// to zero resumes with no threshold at all.
+func exactRatFlag(r *big.Rat) string {
+	if n, exact := r.FloatPrec(); exact {
+		return r.FloatString(n)
+	}
+	return r.RatString()
 }
 
 // defaultChunkBatch is -chunk-batch's default. Ten times the day walk's

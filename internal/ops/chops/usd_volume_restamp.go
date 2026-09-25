@@ -213,6 +213,9 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	}
 
 	write := gate.Banner()
+	if err := checkRestampPrices1mRetention(ctx, store, *tier, write); err != nil {
+		return err
+	}
 	// INV-3: one generation for the whole run, like ch-rebuild. A resumed
 	// chunk run may carry its predecessor's.
 	generation := time.Now().Unix()
@@ -477,6 +480,34 @@ func validateRestampFXStaleness(d time.Duration) error {
 			d, timescale.CEXFiatMaxQuoteStaleness)
 	}
 	return nil
+}
+
+// prices1mRetentionReader is the slice of *timescale.Store
+// [checkRestampPrices1mRetention] needs.
+type prices1mRetentionReader interface {
+	Prices1mRetentionArmed(ctx context.Context) (bool, error)
+}
+
+// checkRestampPrices1mRetention refuses a run while migration 0156's
+// prices_1m retention policy is armed. An estimated tier values rows from
+// prices_1m, so over a dropped range every row reads "anchor declined";
+// every -write obliges the CAGG follow-up, and the policy's next drop
+// undoes it. A dry exact-tier run touches neither and is allowed.
+func checkRestampPrices1mRetention(ctx context.Context, s prices1mRetentionReader, tier string, write bool) error {
+	if !write && !restampTierIsEstimated(tier) {
+		return nil
+	}
+	armed, err := s.Prices1mRetentionArmed(ctx)
+	if err != nil {
+		return fmt.Errorf("usd-volume-restamp: %w", err)
+	}
+	if !armed {
+		return nil
+	}
+	return fmt.Errorf("usd-volume-restamp: refuses to start: prices_1m's retention policy is armed. The estimated tiers value "+
+		"rows from prices_1m, and every -write must be followed by a forced prices_1m + twap refresh that the next retention "+
+		"drop undoes. Disarm it as migrations/0156_prices_1m_retention.up.sql states, confirm with its verification SELECT, "+
+		"force-refresh prices_1m over any range it already dropped, and re-run (tier %s, write=%v)", tier, write)
 }
 
 // restampLiveOverlapGuard resolves the window's top ledger and applies

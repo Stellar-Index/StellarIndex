@@ -4,6 +4,8 @@
 package chops
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -111,5 +113,53 @@ func TestValidateRestampSourceAllowList_knownNamesAccepted(t *testing.T) {
 	// The exact tier is data-driven, not registry-checked here.
 	if err := validateRestampSourceAllowList(restampTierExact, restampSourceAllowList("not-a-real-source")); err != nil {
 		t.Errorf("exact tier must not be registry-gated by this guard: %v", err)
+	}
+}
+
+type fakePrices1mRetention struct {
+	armed bool
+	err   error
+}
+
+func (f fakePrices1mRetention) Prices1mRetentionArmed(context.Context) (bool, error) {
+	return f.armed, f.err
+}
+
+// TestCheckRestampPrices1mRetention: an armed prices_1m retention policy
+// (migration 0156) refuses every -write, whose CAGG follow-up would rebuild
+// the TWAP rungs from dropped minute rows, and every estimated-tier run,
+// which values rows from prices_1m and would report a dropped range as
+// "anchor declined". Only a dry exact-tier run reads neither.
+func TestCheckRestampPrices1mRetention(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cases := []struct {
+		tier    string
+		write   bool
+		refused bool
+	}{
+		{restampTierExact, false, false},
+		{restampTierExact, true, true},
+		{restampTierXLMBase, false, true},
+		{restampTierXLMBase, true, true},
+		{restampTierXLMQuote, false, true},
+		{restampTierCEXFX, false, true},
+		{restampTierCEXFX, true, true},
+	}
+	for _, c := range cases {
+		err := checkRestampPrices1mRetention(ctx, fakePrices1mRetention{armed: true}, c.tier, c.write)
+		if c.refused != (err != nil) {
+			t.Errorf("armed, tier %s write=%v: err = %v, want refused=%v", c.tier, c.write, err, c.refused)
+		}
+		if err != nil && !strings.Contains(err.Error(), "0156_prices_1m_retention.up.sql") {
+			t.Errorf("tier %s write=%v: refusal %q does not name the disarm procedure", c.tier, c.write, err)
+		}
+		if err := checkRestampPrices1mRetention(ctx, fakePrices1mRetention{}, c.tier, c.write); err != nil {
+			t.Errorf("disarmed, tier %s write=%v: err = %v, want nil", c.tier, c.write, err)
+		}
+	}
+	boom := errors.New("jobs catalogue unreadable")
+	if err := checkRestampPrices1mRetention(ctx, fakePrices1mRetention{err: boom}, restampTierExact, true); !errors.Is(err, boom) {
+		t.Errorf("an unreadable policy state must fail closed with its cause, got %v", err)
 	}
 }
