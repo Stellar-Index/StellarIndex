@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // contractProtocolIndexTTL bounds how stale a COMPLETE contract → protocol
@@ -18,10 +20,11 @@ const contractProtocolIndexTTL = 10 * time.Minute
 // does not turn every request into seventeen failing reads.
 const contractProtocolIndexRetryTTL = 30 * time.Second
 
-// contractProtocolIndexBuildTimeout bounds one build. The build runs on
-// its own deadline, detached from the request that triggered it: a
-// request whose own budget is already spent must not produce a
-// statics-only map that is then served to everyone else.
+// contractProtocolIndexBuildTimeout bounds one build. A request never
+// waits on it: a request-triggered build runs on its own goroutine,
+// detached from the request that noticed the map was due, so a request
+// whose budget is spent can neither stall on the build nor cut it short
+// into a statics-only map served to everyone else.
 const contractProtocolIndexBuildTimeout = 5 * time.Second
 
 type contractProtocolIndex struct {
@@ -54,45 +57,60 @@ func (s *Server) contractProtocol(ctx context.Context, contractID string) (strin
 // any request needs it. Called from the API's 5-minute prewarm loop
 // (cmd/stellarindex-api/main.go) — under contractProtocolIndexTTL, so a
 // complete map is always refreshed before it expires and no request
-// builds it cold. A no-op while the map is fresh.
+// triggers it. Builds inline on ctx, so shutdown cancels it. A no-op
+// while the map is fresh or another build is running.
 func (s *Server) PrewarmContractProtocolIndex(ctx context.Context) {
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || !s.claimContractProtocolIndexBuild() {
 		return
 	}
-	s.contractProtocolIndexFor(ctx)
+	s.rebuildContractProtocolIndex(ctx)
 }
 
+// contractProtocolIndexFor serves the current map and, when it is due,
+// starts ONE rebuild in the background; it never builds on the caller's
+// goroutine. Until the first build lands the map is nil, which labels
+// nothing — the answer a contract no protocol claims gets.
 func (s *Server) contractProtocolIndexFor(ctx context.Context) map[string]string {
 	s.contractIndex.mu.Lock()
+	m := s.contractIndex.byID
+	s.contractIndex.mu.Unlock()
+	if s.claimContractProtocolIndexBuild() {
+		go func(bctx context.Context) {
+			defer worker.Recover(s.logger, "api-contract-protocol-index")
+			s.rebuildContractProtocolIndex(bctx)
+		}(context.WithoutCancel(ctx))
+	}
+	return m
+}
+
+// claimContractProtocolIndexBuild reports whether the map is due for a
+// build and, if so, marks one in flight so no other caller starts a
+// second.
+func (s *Server) claimContractProtocolIndexBuild() bool {
+	s.contractIndex.mu.Lock()
+	defer s.contractIndex.mu.Unlock()
 	ttl := contractProtocolIndexRetryTTL
 	if s.contractIndex.complete {
 		ttl = contractProtocolIndexTTL
 	}
 	fresh := s.contractIndex.byID != nil && time.Since(s.contractIndex.built) < ttl
 	if fresh || s.contractIndex.inFlight {
-		m := s.contractIndex.byID
-		s.contractIndex.mu.Unlock()
-		return m
+		return false
 	}
 	s.contractIndex.inFlight = true
-	s.contractIndex.mu.Unlock()
+	return true
+}
 
-	// A panic in the build (or anything it transitively calls) must not
-	// leave inFlight stuck true: every later call would then see it and
-	// serve the stale/nil map forever, never retrying.
+// rebuildContractProtocolIndex runs one claimed build and publishes it.
+// inFlight is cleared from a defer so a panic in the build cannot leave
+// it stuck true, with every later call serving the old map forever.
+func (s *Server) rebuildContractProtocolIndex(ctx context.Context) {
 	defer func() {
-		if r := recover(); r != nil {
-			s.contractIndex.mu.Lock()
-			s.contractIndex.inFlight = false
-			s.contractIndex.mu.Unlock()
-			panic(r)
-		}
+		s.contractIndex.mu.Lock()
+		s.contractIndex.inFlight = false
+		s.contractIndex.mu.Unlock()
 	}()
-
-	// Detached from the caller's deadline: the map outlives this request
-	// and is served to every other one, so it is built on its own budget,
-	// never on whatever the triggering request had left.
-	bctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), contractProtocolIndexBuildTimeout)
+	bctx, cancel := context.WithTimeout(ctx, contractProtocolIndexBuildTimeout)
 	defer cancel()
 	start := time.Now()
 	built, complete, failed := s.buildContractProtocolIndex(bctx)
@@ -102,11 +120,35 @@ func (s *Server) contractProtocolIndexFor(ctx context.Context) map[string]string
 
 	s.contractIndex.mu.Lock()
 	defer s.contractIndex.mu.Unlock()
-	s.contractIndex.inFlight = false
-	s.contractIndex.byID = built
+	s.contractIndex.byID = carryForwardFailedProtocols(s.contractIndex.byID, built, failed)
 	s.contractIndex.built = time.Now()
 	s.contractIndex.complete = complete
-	return s.contractIndex.byID
+}
+
+// carryForwardFailedProtocols keeps the previous map's labels for every
+// protocol whose roster read failed in this build, so a transient
+// registry error on a rebuild cannot unlabel contracts a complete map
+// already knew. A protocol that answered is taken as it answered (a
+// contract it no longer lists is dropped), and on a conflict the fresh
+// build wins. built is still private to the caller and is extended in
+// place; prev is published and is never written.
+func carryForwardFailedProtocols(prev, built map[string]string, failed []string) map[string]string {
+	if len(failed) == 0 || len(prev) == 0 {
+		return built
+	}
+	lost := make(map[string]struct{}, len(failed))
+	for _, name := range failed {
+		lost[name] = struct{}{}
+	}
+	for id, name := range prev {
+		if _, ok := lost[name]; !ok {
+			continue
+		}
+		if _, has := built[id]; !has {
+			built[id] = name
+		}
+	}
+	return built
 }
 
 // buildContractProtocolIndex walks the registry. Statics first, then the

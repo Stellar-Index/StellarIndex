@@ -125,7 +125,7 @@ func TestRWAContractListingRows_DirectoryReadFailureWithholds(t *testing.T) {
 		srv.contractCatalogue = capDecimalsContractCatalogue{rows: map[string]timescale.AssetRow{sorobanContract: row}}
 		srv.tokenSupply = capDecimalsTokenSupply{byID: map[string]string{sorobanContract: "10000000000"}}
 		srv.tokenDecimals = fixedTokenDecimals(7)
-		out, _, err := srv.rwaContractListingRows(t.Context(), []rwaContractMember{{contractID: sorobanContract}})
+		out, _, _, err := srv.rwaContractListingRows(t.Context(), []rwaContractMember{{contractID: sorobanContract}})
 		if err != nil {
 			t.Fatal(err)
 		}

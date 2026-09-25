@@ -61,12 +61,21 @@ const rwaContractScanCap = 256
 const rwaUnreachedSampleCap = 50
 
 // rwaContractMetadataBudget bounds the per-contract metadata reads a
-// rebuild will make (symbol, decimals, supply). It is a whole-phase
-// budget rather than a per-read timeout: the rebuild runs off the
-// request path behind the membership TTL, but an unbounded fan-out over
-// a suddenly-large candidate set would still hold the single-flight gate
-// open for every concurrent reader.
+// membership rebuild will make (symbol, decimals, supply). It is a
+// whole-phase budget rather than a per-read timeout: the rebuild runs off
+// the request path behind the membership TTL, but an unbounded fan-out
+// over a suddenly-large candidate set would still hold the single-flight
+// gate open for every concurrent reader. Rebuild only: a request never
+// runs under it (see rwaContractValuationBudget).
 const rwaContractMetadataBudget = 20 * time.Second
+
+// rwaContractValuationBudget bounds the contract valuation phase of one
+// /v1/rwa/assets request — both contract arms, verified and curated,
+// together. It sits inside maxHandlerBudget with room for the classic
+// arm's reads before it, so the handler, not the blanket deadline,
+// decides what a cut valuation looks like: the rows it reached, and
+// flags.stale.
+const rwaContractValuationBudget = 8 * time.Second
 
 // ─── storage seams ──────────────────────────────────────────────────
 
@@ -445,11 +454,16 @@ func (s *Server) rwaUnreachedEntities(ctx context.Context, tags []string) []rwaU
 //     turns hostile. The tags are re-read at valuation time, not reused
 //     from the membership build, so a flag acquired inside the ten
 //     minute membership TTL still suppresses.
+//
+// valuationCut reports that ctx ended while the contract fills were still
+// reading, so some rows lack a valuation because it was never read, not
+// because it was refused. The caller must say so rather than serve the
+// gap as the answer.
 func (s *Server) rwaContractListingRows(
 	ctx context.Context, members []rwaContractMember,
-) (map[string]AssetDetail, int, error) {
+) (byID map[string]AssetDetail, notObserved int, valuationCut bool, err error) {
 	if len(members) == 0 || s.contractCatalogue == nil {
-		return map[string]AssetDetail{}, 0, nil
+		return map[string]AssetDetail{}, 0, false, nil
 	}
 	ids := make([]string, 0, len(members))
 	for _, m := range members {
@@ -459,7 +473,7 @@ func (s *Server) rwaContractListingRows(
 
 	rows, err := s.contractCatalogue.ContractCatalogueRows(ctx, ids)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 
 	details := make([]AssetDetail, 0, len(rows))
@@ -470,9 +484,9 @@ func (s *Server) rwaContractListingRows(
 		}
 		details = append(details, assetDetailFromAssetRow(row))
 	}
-	notObserved := len(ids) - len(details)
+	notObserved = len(ids) - len(details)
 	if len(details) == 0 {
-		return map[string]AssetDetail{}, notObserved, nil
+		return map[string]AssetDetail{}, notObserved, false, nil
 	}
 
 	// The /v1/assets post-query pipeline, in its order — see
@@ -488,18 +502,18 @@ func (s *Server) rwaContractListingRows(
 	// BEFORE the market cap that divides by them (the same ordering
 	// contract handleAssetGet states between applyTokenDecimals and
 	// applyF2Fields), and the directory suppression LAST so it can empty
-	// a figure the fill just produced rather than racing it.
-	mctx, cancel := context.WithTimeout(ctx, rwaContractMetadataBudget)
-	defer cancel()
-	scaled := s.fillContractDecimals(mctx, details, rows)
-	s.fillContractMarketCaps(mctx, details, rows, scaled)
+	// a figure the fill just produced rather than racing it. The fills
+	// run on the caller's budget: a request-path caller bounds them with
+	// rwaContractValuationBudget.
+	scaled, decimalsCut := s.fillContractDecimals(ctx, details, rows)
+	capsCut := s.fillContractMarketCaps(ctx, details, rows, scaled)
 	s.fillContractDirectoryTags(ctx, details)
 
 	out := make(map[string]AssetDetail, len(details))
 	for _, d := range details {
 		out[d.AssetID] = d
 	}
-	return out, notObserved, nil
+	return out, notObserved, decimalsCut || capsCut, nil
 }
 
 // fillContractDecimals overlays each contract's real on-chain decimals.
@@ -536,25 +550,31 @@ func (s *Server) rwaContractListingRows(
 // declares both spellings with DIFFERENT values, which the lake reader
 // refuses outright. In every one of them the honest answer is that we
 // do not know the scale — which is a refusal, not a 7.
+//
+// A fifth way is not a refusal at all: ctx ending mid-walk. cut reports
+// it, and the walk stops there — every later read would fail the same way.
 func (s *Server) fillContractDecimals(
 	ctx context.Context, rows []AssetDetail, src map[string]timescale.AssetRow,
-) map[string]struct{} {
-	resolved := make(map[string]struct{}, len(rows))
+) (resolved map[string]struct{}, cut bool) {
+	resolved = make(map[string]struct{}, len(rows))
 	if s.tokenDecimals == nil {
-		return resolved
+		return resolved, false
 	}
 	for i := range rows {
 		if _, ok := src[rows[i].AssetID]; !ok {
 			continue
 		}
 		d, ok, err := s.tokenDecimals.TokenDecimals(ctx, rows[i].AssetID)
+		if err != nil && ctx.Err() != nil {
+			return resolved, true
+		}
 		if err != nil || !ok {
 			continue
 		}
 		rows[i].Decimals = int(d)
 		resolved[rows[i].AssetID] = struct{}{}
 	}
-	return resolved
+	return resolved, false
 }
 
 // fillContractMarketCaps fills circulating supply and market cap for
@@ -573,16 +593,22 @@ func (s *Server) fillContractDecimals(
 // applies it to. A single-venue price under the volume floor suppresses
 // the CAP and leaves the price and the supply — both of which are facts
 // the surface is willing to state — exactly as fillRowMarketCap does.
+//
+// cut reports that ctx ended mid-walk: the remaining rows were never
+// read, which is not the same as a supply that was read and refused.
 func (s *Server) fillContractMarketCaps(
 	ctx context.Context, rows []AssetDetail, src map[string]timescale.AssetRow,
 	scaled map[string]struct{},
-) {
+) (cut bool) {
 	if s.tokenSupply == nil {
-		return
+		return false
 	}
 	for i := range rows {
 		row := &rows[i]
 		circ, basis, ok := s.contractSupplyReading(ctx, row.AssetID)
+		if !ok && ctx.Err() != nil {
+			return true
+		}
 		if !ok {
 			continue
 		}
@@ -623,6 +649,7 @@ func (s *Server) fillContractMarketCaps(
 		}
 		row.MarketCapUSD = &mc
 	}
+	return false
 }
 
 // contractSupplyReading resolves one contract token's circulating supply and

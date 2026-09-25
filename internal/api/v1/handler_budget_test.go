@@ -356,3 +356,224 @@ func timeUnit(e ast.Expr) (time.Duration, bool) {
 	}
 	return 0, false
 }
+
+// apiSource is one parsed non-test file of the API tree, with the
+// duration constants of its package directory.
+type apiSource struct {
+	path   string
+	file   *ast.File
+	consts map[string]time.Duration
+}
+
+func parseAPISources(t *testing.T, fset *token.FileSet) []apiSource {
+	t.Helper()
+	dirs := map[string][]*ast.File{}
+	paths := map[*ast.File]string{}
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		f, perr := parser.ParseFile(fset, path, nil, 0)
+		if perr != nil {
+			return perr
+		}
+		dirs[filepath.Dir(path)] = append(dirs[filepath.Dir(path)], f)
+		paths[f] = filepath.ToSlash(path)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	var out []apiSource
+	for _, files := range dirs {
+		consts := durationConsts(files)
+		for _, f := range files {
+			out = append(out, apiSource{path: paths[f], file: f, consts: consts})
+		}
+	}
+	return out
+}
+
+// isContextCall reports whether e is a call to context.<name>(…).
+func isContextCall(e ast.Expr, name string) bool {
+	call, ok := e.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != name {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	return ok && pkg.Name == "context"
+}
+
+// siteKey names a function for the exemption maps below: its file path
+// and its own name. Exemptions are suffix-matched against it, so they
+// survive a move within the tree.
+func siteKey(path string, fd *ast.FuncDecl) string {
+	return path + "#" + fd.Name.Name
+}
+
+func matchSite(exemptions map[string]string, key string) (string, bool) {
+	for k := range exemptions {
+		if strings.HasSuffix(key, k) {
+			return k, true
+		}
+	}
+	return "", false
+}
+
+// funcDecls calls fn for every function with a body in the API tree.
+func funcDecls(t *testing.T, fset *token.FileSet, fn func(src apiSource, fd *ast.FuncDecl)) {
+	t.Helper()
+	for _, src := range parseAPISources(t, fset) {
+		for _, decl := range src.file.Decls {
+			if fd, ok := decl.(*ast.FuncDecl); ok && fd.Body != nil {
+				fn(src, fd)
+			}
+		}
+	}
+}
+
+// inlineDetachments names every function that detaches a context with
+// context.WithoutCancel on the goroutine it runs on, rather than inside a
+// `go` statement, and why the time that adds is acceptable. A detached
+// context is invisible to the request deadline, so time spent under one
+// on a request goroutine is time no handler budget and no
+// api.request_timeout accounts for. A detached cache build belongs on its
+// own goroutine; an entry here is a deliberate, bounded exception.
+var inlineDetachments = map[string]string{
+	"register.go#mintRegisterKey": "error path only: rolls back a mirror write the failed " +
+		"request left behind, which must not fail on that request's dead context; 5s",
+	"register.go#suspendRegisterOrphan": "error path only: quarantines an orphaned account " +
+		"before the 500; 5s",
+	"rwa_curated.go#rwaCuratedSnapshotWithin": "the curated snapshot refresh on /v1/rwa/assets, " +
+		"at most once per rwaCuratedSnapshotTTL and bounded by rwaCuratedReadBudget (5s). The " +
+		"inline-build shape the contract-protocol index used to have: a known residual, not a pattern to copy",
+	"dashboardauth/middleware.go#newTouchCtx": "constructor for the context the async " +
+		"TouchSession goroutine runs under; never used on the request goroutine",
+	"middleware/ratelimit.go#throttleContext": "the rate-limit take runs before the handler " +
+		"and must count an aborted request; bounded by throttleTakeTimeout",
+	"middleware/usage.go#UsageTracker": "post-response usage metering, which must count an " +
+		"aborted request; bounded by postResponseWriteTimeout",
+	"middleware/touch_usage.go#TouchUsage": "post-response key touch; bounded by postResponseWriteTimeout",
+	"explorer/operations.go#stampTxOutcomes": "the tx-outcome stitch keeps request values " +
+		"without the request's cancellation; bounded by txOutcomeStitchBudget (1s)",
+}
+
+// TestDetachedContextsLeaveTheRequestGoroutine covers what the budget
+// walker above cannot see: context.WithTimeout(context.WithoutCancel(ctx), d)
+// is not a request-derived budget, so that walker never evaluates it, yet
+// on a request goroutine its d is added to whatever the handler already
+// spent. The contract-protocol index built that way on the cohort request
+// path — its 5s on top of the 8s explorer read budget, past the ceiling.
+//
+// Every context.WithoutCancel in the API tree must sit inside a `go`
+// statement (the call or its arguments), or its function must be named
+// in inlineDetachments with a reason.
+func TestDetachedContextsLeaveTheRequestGoroutine(t *testing.T) {
+	fset := token.NewFileSet()
+	seen, used := 0, map[string]bool{}
+	funcDecls(t, fset, func(src apiSource, fd *ast.FuncDecl) {
+		var goStmts []*ast.GoStmt
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			if g, ok := n.(*ast.GoStmt); ok {
+				goStmts = append(goStmts, g)
+			}
+			return true
+		})
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			e, ok := n.(ast.Expr)
+			if !ok || !isContextCall(e, "WithoutCancel") {
+				return true
+			}
+			seen++
+			for _, g := range goStmts {
+				if e.Pos() >= g.Pos() && e.End() <= g.End() {
+					return true
+				}
+			}
+			key := siteKey(src.path, fd)
+			if k, ok := matchSite(inlineDetachments, key); ok {
+				used[k] = true
+				return true
+			}
+			t.Errorf("%s: context.WithoutCancel on the calling goroutine — time spent under it is "+
+				"invisible to the request deadline. Run the detached work in a `go` statement, or name "+
+				"%q in inlineDetachments with why the time it adds is acceptable",
+				fset.Position(e.Pos()), key)
+			return true
+		})
+	})
+	if seen == 0 {
+		t.Fatal("found no context.WithoutCancel at all — the guard has stopped recognising the code it protects")
+	}
+	for k := range inlineDetachments {
+		if !used[k] {
+			t.Errorf("inlineDetachments[%q] matches no inline context.WithoutCancel — remove the stale exemption", k)
+		}
+	}
+}
+
+// longBudgets names every function whose context.WithTimeout exceeds
+// maxHandlerBudget on a context that is not visibly detached, and why no
+// request goroutine ever runs it.
+var longBudgets = map[string]string{
+	"rwa_contracts.go#buildRWADirectoryMembership": "membership rebuild, run only on the " +
+		"refreshRWAMembership goroutine that readRWAMembership starts",
+	"rwa_contracts.go#buildRWAListingMembership": "membership rebuild, run only on the " +
+		"refreshRWAMembership goroutine that readRWAMembership starts",
+	"liquidity_pools.go#PrewarmNativeLiquidityPools": "prewarm, called only from the " +
+		"stellarindex-api prewarm loop on rootCtx",
+	"sdex_orderbook.go#MaintainTick": "order-book maintenance, called only from the " +
+		"stellarindex-api maintenance loop on rootCtx",
+	"sdex_orderbook.go#loadWithin": "the order-book load, reached only through MaintainTick",
+}
+
+// TestLongBudgetsAreDetached closes the other half of the walker's blind
+// spot: it matches context.WithTimeout(r.Context(), d) literally, so a
+// budget on a ctx PARAMETER a handler passes r.Context() into is never
+// checked. /v1/rwa/assets valued its contract rows under a 20s budget
+// that way, past the 15s blanket deadline, so a cut valuation could only
+// ever be served as if it were a refusal.
+//
+// A budget above maxHandlerBudget must hang off context.Background(),
+// context.TODO() or context.WithoutCancel(…), or its function must be
+// named in longBudgets with the reason no request goroutine runs it.
+func TestLongBudgetsAreDetached(t *testing.T) {
+	fset := token.NewFileSet()
+	used := map[string]bool{}
+	funcDecls(t, fset, func(src apiSource, fd *ast.FuncDecl) {
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || !isContextCall(call, "WithTimeout") || len(call.Args) != 2 {
+				return true
+			}
+			d, ok := durationValue(call.Args[1], src.consts)
+			if !ok || d <= maxHandlerBudget {
+				return true
+			}
+			parent := call.Args[0]
+			if isContextCall(parent, "Background") || isContextCall(parent, "TODO") ||
+				isContextCall(parent, "WithoutCancel") {
+				return true
+			}
+			key := siteKey(src.path, fd)
+			if k, ok := matchSite(longBudgets, key); ok {
+				used[k] = true
+				return true
+			}
+			t.Errorf("%s: budget %s exceeds maxHandlerBudget %s on %s, which a handler can pass "+
+				"r.Context() into — give the request path its own budget within the ceiling, detach "+
+				"this one explicitly, or name %q in longBudgets with why no request runs it",
+				fset.Position(call.Pos()), d, maxHandlerBudget, exprString(parent), key)
+			return true
+		})
+	})
+	for k := range longBudgets {
+		if !used[k] {
+			t.Errorf("longBudgets[%q] matches no long budget — remove the stale exemption", k)
+		}
+	}
+}

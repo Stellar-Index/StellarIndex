@@ -6,8 +6,13 @@ package v1
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -133,7 +138,7 @@ func TestRWAContractListingRows_EarlyCapIsNotOnTheHardcodedSevenScale(t *testing
 		nonstandardDecimals: decimalsCacheFlagging(t, map[string]int{sorobanContract: 9}),
 		// tokenDecimals deliberately unwired: the scale is never READ.
 	}
-	out, _, err := s.rwaContractListingRows(context.Background(), []rwaContractMember{{contractID: sorobanContract}})
+	out, _, _, err := s.rwaContractListingRows(context.Background(), []rwaContractMember{{contractID: sorobanContract}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,5 +148,60 @@ func TestRWAContractListingRows_EarlyCapIsNotOnTheHardcodedSevenScale(t *testing
 	}
 	if got.MarketCapUSD != nil && *got.MarketCapUSD != "2500.00" {
 		t.Errorf("market_cap_usd = %s, want 2500.00 or none — 250000.00 is supply / 10^7 x a true-scale price", *got.MarketCapUSD)
+	}
+}
+
+// stalledTokenDecimals never answers before its ctx ends: a lake that has
+// stopped responding.
+type stalledTokenDecimals struct{}
+
+func (stalledTokenDecimals) TokenDecimals(ctx context.Context, _ string) (uint32, bool, error) {
+	<-ctx.Done()
+	return 0, false, ctx.Err()
+}
+
+// A contract valuation the request budget cut short is not a refusal: the
+// row has no cap because nothing was read, and /v1/rwa/assets must say so
+// (flags.stale) instead of serving the gap as the answer.
+func TestRWAContractListingRows_ReportsAValuationCutShort(t *testing.T) {
+	const sorobanContract = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
+	price, volume := "2.5000000000", "250000.00"
+	sources := 3
+	row := timescale.AssetRow{AssetID: sorobanContract, PriceUSD: &price, Volume24hUSD: &volume, SourceCount: &sources}
+	members := []rwaContractMember{{contractID: sorobanContract}}
+	newServer := func(decimals TokenDecimalsReader) *Server {
+		return &Server{
+			logger:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+			contractCatalogue: capDecimalsContractCatalogue{rows: map[string]timescale.AssetRow{sorobanContract: row}},
+			tokenSupply:       capDecimalsTokenSupply{byID: map[string]string{sorobanContract: "10000000000"}},
+			tokenDecimals:     decimals,
+		}
+	}
+
+	// Instrument check: a reader that answers values the row, uncut.
+	out, _, cut, err := newServer(fixedTokenDecimals(7)).rwaContractListingRows(t.Context(), members)
+	if err != nil || cut {
+		t.Fatalf("answering reader: cut=%v err=%v, want an uncut valuation", cut, err)
+	}
+	if out[sorobanContract].MarketCapUSD == nil {
+		t.Fatal("answering reader left no market cap — the fixture no longer values the row")
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	s := newServer(stalledTokenDecimals{})
+	out, _, cut, err = s.rwaContractListingRows(ctx, members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cut {
+		t.Fatal("the decimals walk ran out of budget but the valuation was not reported cut")
+	}
+	if mc := out[sorobanContract].MarketCapUSD; mc != nil {
+		t.Fatalf("market_cap_usd = %s on a row whose scale was never read", *mc)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/rwa/assets", nil)
+	if _, degraded, live := s.rwaVerifiedContractRows(ctx, req, members); !live || !degraded {
+		t.Fatalf("verified arm: degraded=%v live=%v, want a live, degraded (flags.stale) response", degraded, live)
 	}
 }

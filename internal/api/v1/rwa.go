@@ -1648,14 +1648,15 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	// pipeline. A failure here degrades to zero contract rows rather
 	// than failing the response: the classic arm is a complete answer to
 	// its own question, and emptying it because a second population
-	// could not be read would publish less than we know.
-	contractRows, _, contractErr := s.rwaContractListingRows(r.Context(), m.contracts)
-	if contractErr != nil {
-		if clientAborted(r, contractErr) {
-			return
-		}
-		s.logger.Error("rwa contract listing read failed", "err", contractErr)
-		contractRows = map[string]AssetDetail{}
+	// could not be read would publish less than we know. Both contract
+	// arms, this one and the curated one below, share one valuation
+	// budget inside the handler ceiling; a cut or failed valuation is
+	// served as what it is, under flags.stale.
+	vctx, cancel := context.WithTimeout(r.Context(), rwaContractValuationBudget)
+	defer cancel()
+	contractRows, degraded, live := s.rwaVerifiedContractRows(vctx, r, m.contracts)
+	if !live {
+		return
 	}
 	// Attributed per C2 arm, from the same two values the projection
 	// reads. The two arms narrow separate populations and each has to
@@ -1708,8 +1709,26 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	// The curated arm runs LAST, over the finished verified view, so it
 	// can say which of its rows the verified set already carries and can
 	// never feed a figure back into the totals above.
-	s.attachRWACurated(r, &view, now)
-	writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
+	curatedDegraded := s.attachRWACurated(vctx, &view, now)
+	writeEnvelope(w, Envelope{Data: view, Flags: Flags{Stale: degraded || curatedDegraded}})
+}
+
+// rwaVerifiedContractRows values the verified contract arm. A failed read
+// degrades to no contract rows rather than failing the response, and is
+// reported as degraded, as is a valuation ctx cut short. live is false
+// only when the client has gone and nothing should be written.
+func (s *Server) rwaVerifiedContractRows(
+	ctx context.Context, r *http.Request, members []rwaContractMember,
+) (rows map[string]AssetDetail, degraded, live bool) {
+	rows, _, cut, err := s.rwaContractListingRows(ctx, members)
+	if err == nil {
+		return rows, cut, true
+	}
+	if clientAborted(r, err) {
+		return nil, false, false
+	}
+	s.logger.Error("rwa contract listing read failed", "err", err)
+	return map[string]AssetDetail{}, true, true
 }
 
 // rwaBasisUnavailable is the summary basis when the attestation or

@@ -6,7 +6,6 @@ package v1
 import (
 	"context"
 	"math/big"
-	"net/http"
 	"strconv"
 	"sync"
 	"time"
@@ -333,9 +332,12 @@ func sortCuratedMembers(m []rwaCuratedMember) {
 // rwaCuratedRows turns members into served rows through the SAME
 // catalogue, supply and decimals path the contract arm uses, so a
 // curated row's supply is the lake's reading and not the curator's.
-func (s *Server) rwaCuratedRows(ctx context.Context, members []rwaCuratedMember, now time.Time) ([]RWAAsset, int) {
+// degraded reports a failed read or a valuation ctx cut short.
+func (s *Server) rwaCuratedRows(
+	ctx context.Context, members []rwaCuratedMember, now time.Time,
+) (rows []RWAAsset, notObserved int, degraded bool) {
 	if len(members) == 0 {
-		return nil, 0
+		return nil, 0, false
 	}
 	cm := make([]rwaContractMember, 0, len(members))
 	for _, m := range members {
@@ -349,12 +351,12 @@ func (s *Server) rwaCuratedRows(ctx context.Context, members []rwaCuratedMember,
 			recognition: rwa.RecognitionThirdPartyCurator,
 		})
 	}
-	details, notObserved, err := s.rwaContractListingRows(ctx, cm)
+	details, notObserved, cut, err := s.rwaContractListingRows(ctx, cm)
 	if err != nil {
 		s.logger.Error("rwa curated listing read failed", "err", err)
-		return nil, len(members)
+		return nil, len(members), true
 	}
-	rows := rwaContractAssetRows(cm, details)
+	rows = rwaContractAssetRows(cm, details)
 	byID := make(map[string]rwaCuratedMember, len(members))
 	for _, m := range members {
 		byID[m.contractID] = m
@@ -370,7 +372,7 @@ func (s *Server) rwaCuratedRows(ctx context.Context, members []rwaCuratedMember,
 		rwaApplyCuratorReference(&rows[i], m.entry, now)
 	}
 	rwaSortAssets(rows)
-	return rows, notObserved
+	return rows, notObserved, cut
 }
 
 // rwaApplyCuratorReference attaches the curator's price as the row's
@@ -540,11 +542,17 @@ func rwaCuratedPublishedSplit(p *timescale.CuratedRWAPublished, now time.Time) (
 // ─── handler hook ───────────────────────────────────────────────────
 
 // attachRWACurated runs the curated arm after the verified view is
-// complete and attaches its rows and total to the view, apart.
-func (s *Server) attachRWACurated(r *http.Request, view *RWAAssetsView, now time.Time) {
-	snap := s.rwaCuratedSnapshot(r.Context())
+// complete and attaches its rows and total to the view, apart. The rows
+// are valued on valuationCtx, the request's contract valuation budget
+// (the snapshot read detaches from it); degraded reports that their read
+// failed or was cut short.
+func (s *Server) attachRWACurated(
+	valuationCtx context.Context, view *RWAAssetsView, now time.Time,
+) (degraded bool) {
+	snap := s.rwaCuratedSnapshot(valuationCtx)
 	members := rwaCuratedMembership(snap, view.Assets)
-	rows, _ := s.rwaCuratedRows(r.Context(), members, now)
+	rows, _, degraded := s.rwaCuratedRows(valuationCtx, members, now)
 	view.CuratedAssets = rows
 	view.Curated = rwaCuratedSummarise(snap, rows, view.Summary.ReferenceValuation.ValueUSD, now)
+	return degraded
 }
