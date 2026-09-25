@@ -2121,35 +2121,8 @@ func Default() Config {
 			// writes down a per-asset exception.
 			StalenessOverrides: []OracleStalenessOverrideConfig{},
 		},
-		External: defaultExternalConfig(),
-		Aggregate: AggregateConfig{
-			VWAPWindowSeconds:            300,
-			TWAPWindowSeconds:            300,
-			MinUSDVolume:                 10_000,
-			MinMarketCapVolumeUSD:        1_000,
-			MaxMarketCapVolumeRatio:      50_000,
-			OutlierSigmaThreshold:        4,
-			TriangulationEnabled:         true,
-			IntervalSeconds:              30,
-			DivergenceMinIntervalSeconds: 300,
-			MaxTradesPerWindow:           10_000,
-			MaxHops:                      3,
-			MinRouteConfidence:           0,
-			CompositeReference: CompositeReferenceConfig{
-				// ON by default (maintainer, 2026-08-29): the mechanism is
-				// fail-closed on every leg (thin, stale, wrong class)
-				// and evaluated only on single-venue buckets of the
-				// listed targets — the pairs the design doc (§3) records
-				// as structurally single-venue with a deep USD leg.
-				Enabled:       true,
-				Targets:       []string{"crypto:XLM/fiat:GBP", "crypto:XLM/fiat:EUR"},
-				ToleranceBps:  75,
-				MinLegSources: 2,
-				FXMaxAgeHours: 76,
-				// leg_dispersion_bps 0 = tolerance_bps.
-				ReleaseBandPct: 2.0,
-			},
-		},
+		External:     defaultExternalConfig(),
+		Aggregate:    defaultAggregateConfig(),
 		Anomaly:      defaultAnomalyConfig(),
 		API:          defaultAPIConfig(),
 		Divergence:   defaultDivergenceConfig(),
@@ -2189,6 +2162,40 @@ func Default() Config {
 			LogFormat:     "json",
 			TraceExporter: "none",
 			TraceSample:   0.1,
+		},
+	}
+}
+
+// defaultAggregateConfig returns the price-aggregator defaults, including
+// the composite-reference cross-check. Split out of Default() to keep it
+// under funlen.
+func defaultAggregateConfig() AggregateConfig {
+	return AggregateConfig{
+		VWAPWindowSeconds:            300,
+		TWAPWindowSeconds:            300,
+		MinUSDVolume:                 10_000,
+		MinMarketCapVolumeUSD:        1_000,
+		MaxMarketCapVolumeRatio:      50_000,
+		OutlierSigmaThreshold:        4,
+		TriangulationEnabled:         true,
+		IntervalSeconds:              30,
+		DivergenceMinIntervalSeconds: 300,
+		MaxTradesPerWindow:           10_000,
+		MaxHops:                      3,
+		MinRouteConfidence:           0,
+		CompositeReference: CompositeReferenceConfig{
+			// ON by default (maintainer, 2026-08-29): the mechanism is
+			// fail-closed on every leg (thin, stale, wrong class)
+			// and evaluated only on single-venue buckets of the
+			// listed targets — the pairs the design doc (§3) records
+			// as structurally single-venue with a deep USD leg.
+			Enabled:       true,
+			Targets:       []string{"crypto:XLM/fiat:GBP", "crypto:XLM/fiat:EUR"},
+			ToleranceBps:  75,
+			MinLegSources: 2,
+			FXMaxAgeHours: 76,
+			// leg_dispersion_bps 0 = tolerance_bps.
+			ReleaseBandPct: 2.0,
 		},
 	}
 }

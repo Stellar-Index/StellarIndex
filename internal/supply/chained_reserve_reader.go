@@ -60,11 +60,13 @@ func (c *ChainedReserveBalanceReader) ReserveBalanceTotalSourced(ctx context.Con
 	}
 	// The static reader's own errors (missing account, expired snapshot)
 	// are operator-config conditions, so they bubble as themselves; the
-	// live cause is kept as text only so the refresher classes the tick
+	// live cause is kept as text only (err.Error(), not err — err always
+	// satisfies errors.Is(_, ErrNoObservation) here, and wrapping it would
+	// make the combined error do too) so the refresher classes the tick
 	// by the static failure, not as a benign no_observation.
 	out, serr := c.static.ReserveBalanceTotal(ctx, accounts, ledger)
 	if serr != nil {
-		return nil, "", fmt.Errorf("supply: live reserve read fell through (%v); static fallback: %w", err, serr)
+		return nil, "", fmt.Errorf("supply: live reserve read fell through (%s); static fallback: %w", err.Error(), serr)
 	}
 	return out, ReserveSourceStatic, nil
 }
