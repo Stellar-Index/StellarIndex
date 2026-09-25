@@ -109,6 +109,8 @@ function UsageBody({ me }: { me: MeResponse }) {
           </Callout>
         ) : (
           <>
+            <MonthlyQuota me={me} usage={usage} />
+
             <DailyRequests usage={usage} />
 
             <EndpointBreakdown usage={usage} />
@@ -228,6 +230,59 @@ function aggregateByEndpoint(rows: UsageRow[]): EndpointAgg[] {
   return [...byEndpoint.values()].sort((a, b) => b.requests - a.requests);
 }
 
+/** UTC calendar-month prefix ("YYYY-MM") `date` falls in, defaulting to now. */
+function utcMonthPrefix(now: Date = new Date()): string {
+  return now.toISOString().slice(0, 7);
+}
+
+/**
+ * Sum of `billable` for rows in the given UTC calendar month (the current
+ * one by default) — the figure a monthly-quota 429 reports as
+ * `month_to_date`. Never sums `requests`: that column includes 5xx, which
+ * never consumes quota.
+ */
+export function monthToDateBillable(
+  rows: UsageRow[],
+  monthPrefix: string = utcMonthPrefix(),
+): number {
+  return rows
+    .filter((r) => r.date.startsWith(monthPrefix))
+    .reduce((sum, r) => sum + (r.billable || 0), 0);
+}
+
+/** Month-to-date billable usage against the account's monthly quota. */
+function MonthlyQuota({
+  me,
+  usage,
+}: {
+  me: MeResponse;
+  usage: UsageRow[] | null;
+}) {
+  const quota = me.account?.monthly_request_quota;
+  const used = usage === null ? null : monthToDateBillable(usage);
+
+  return (
+    <StatGrid cols={2}>
+      <StatCell>
+        <Stat
+          icon={<BarChart3 className="h-3.5 w-3.5" />}
+          label="Month-to-date"
+          value={used === null ? '—' : fmtInt(used)}
+          sub="billable requests, UTC month"
+        />
+      </StatCell>
+      <StatCell>
+        <Stat
+          icon={<Gauge className="h-3.5 w-3.5" />}
+          label="Monthly quota"
+          value={quota ? fmtInt(quota) : 'Unlimited'}
+          sub="account-wide, per calendar month"
+        />
+      </StatCell>
+    </StatGrid>
+  );
+}
+
 function HeadroomStrip({
   me,
   keys,
@@ -293,11 +348,11 @@ function DailyRequests({ usage }: { usage: UsageRow[] | null }) {
     <Card>
       <CardHeader
         title="Requests (last 30 days, UTC)"
-        description="Per-account daily request counts recorded by the API, bucketed by UTC calendar day."
+        description="Per-account request counts recorded by the API, bucketed by UTC calendar day."
         actions={
           days && days.length > 0 ? (
             <span className="tnum text-ink-muted font-mono text-sm">
-              {fmtInt(total)} total
+              {fmtInt(total)} requests (incl. errors, not the billable total)
             </span>
           ) : undefined
         }
@@ -308,8 +363,8 @@ function DailyRequests({ usage }: { usage: UsageRow[] | null }) {
         ) : days.length === 0 ? (
           <p className="text-ink-muted text-sm">
             No tracked requests yet for this account in the last 30 days.
-            Requests count against the per-account daily window once you start
-            calling the API with one of your keys.
+            Requests count against your account&apos;s monthly quota once you
+            start calling the API with one of your keys.
           </p>
         ) : (
           <UsageBars rows={days} />

@@ -95,6 +95,7 @@ describe('/dashboard/usage request history', () => {
         date: '2026-09-20',
         endpoint: '/v1/assets',
         requests: 1200,
+        billable: 1200,
         errors: 3,
         throttled: 0,
       },
@@ -102,6 +103,7 @@ describe('/dashboard/usage request history', () => {
         date: '2026-09-21',
         endpoint: '/v1/assets',
         requests: 34,
+        billable: 34,
         errors: 0,
         throttled: 1,
       },
@@ -110,8 +112,35 @@ describe('/dashboard/usage request history', () => {
     renderUsagePage();
 
     await waitFor(() =>
-      expect(screen.getByText(/1,234 total/)).toBeInTheDocument(),
+      expect(screen.getByText(/1,234 requests/)).toBeInTheDocument(),
     );
     expect(screen.queryByText(EMPTY_COPY)).not.toBeInTheDocument();
+  });
+
+  // GH-1280: the enforced quota window is monthly, not daily, and the
+  // rendered month-to-date figure must reconcile against `billable` —
+  // never the 5xx-inclusive `requests` column.
+  it('surfaces month-to-date billable usage against the monthly quota, not the 5xx-inclusive request count', async () => {
+    listKeys.mockResolvedValue([]);
+    // Day 1 of the real current UTC month — MonthlyQuota buckets by the
+    // real clock, not a fixture date, so this must track it.
+    const today = new Date().toISOString().slice(0, 7) + '-01';
+    fetchUsage.mockResolvedValue([
+      {
+        date: today,
+        endpoint: '/v1/assets',
+        requests: 120,
+        billable: 100,
+        errors: 20,
+        throttled: 0,
+      },
+    ]);
+
+    renderUsagePage();
+
+    expect(await screen.findByText('Month-to-date')).toBeInTheDocument();
+    expect(await screen.findByText('100')).toBeInTheDocument();
+    expect(screen.getByText('Monthly quota')).toBeInTheDocument();
+    expect(screen.queryByText(/daily window/)).not.toBeInTheDocument();
   });
 });
