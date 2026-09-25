@@ -6,12 +6,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 // ─── SCVal encode helpers ───────────────────────────────────────
@@ -233,6 +235,46 @@ func TestCapture_StringTopic(t *testing.T) {
 	}
 	if row.Topic0Sym != "some-string-topic" {
 		t.Errorf("Topic0Sym = %q, want %q", row.Topic0Sym, "some-string-topic")
+	}
+}
+
+// TestCapture_NULStringTopic — a contract-supplied String topic
+// carrying a NUL byte must not be stored raw: Postgres text rejects
+// a NUL with SQLSTATE 22021, which would poison the whole ingest
+// batch (CA2-A30-correct-5). Topic0Sym must be the scval.ToText
+// hex-escaped form, not the raw bytes.
+func TestCapture_NULStringTopic(t *testing.T) {
+	t.Parallel()
+
+	contractID := mkContractStrkey(t, 0x20)
+	txHash := mkTxHashHex(0x02)
+
+	raw := "swap\x00evil"
+	topicStr := b64SV(t, stringSV(raw))
+	body := b64SV(t, u32SV(0))
+
+	ev := events.Event{
+		Type:           "contract",
+		Ledger:         50_000_001,
+		LedgerClosedAt: "2025-12-01T00:00:00Z",
+		ContractID:     contractID,
+		TxHash:         txHash,
+		Topic:          []string{topicStr},
+		Value:          body,
+	}
+	row, err := Capture(ev)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	want := scval.ToText(raw)
+	if want == raw {
+		t.Fatalf("test setup broken: ToText did not transform the NUL-bearing input")
+	}
+	if row.Topic0Sym != want {
+		t.Errorf("Topic0Sym = %q, want %q (scval.ToText form)", row.Topic0Sym, want)
+	}
+	if strings.Contains(row.Topic0Sym, "\x00") {
+		t.Errorf("Topic0Sym still contains a NUL byte, would hit SQLSTATE 22021: %q", row.Topic0Sym)
 	}
 }
 
