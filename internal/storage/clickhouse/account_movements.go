@@ -93,8 +93,9 @@ type AccountMovementRow struct {
 //     collision between them.
 //   - Exactly one of FromAddress/ToAddress is non-empty: the other
 //     side isn't a real G-account for this leg (a claimable balance's
-//     escrow at creation/claim/clawback time, or a liquidity pool's
-//     leg). ONE row for the known side, Counterparty="". This is the
+//     escrow at creation/claim/clawback time, a liquidity pool's leg,
+//     or a path payment's per-asset leg, whose asset crosses the path's
+//     offers/pools). ONE row for the known side, Counterparty="". This is the
 //     "acting side" rule (ADR-0048 D2 / the classic-movements-backfill
 //     task doc): claimable_balance_create emits one 'sent' row for the
 //     creator; claimable_balance_claim/clawback and each LP-withdraw

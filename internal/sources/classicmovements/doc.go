@@ -37,14 +37,14 @@
 // coverage so a future phase's author must extend all three
 // deliberately (ADR-0047 D4.2).
 //
-// A path payment emits exactly ONE 'path_payment' row per op
-// (leg_index always 0) — never a row per hop; the per-hop ClaimAtoms
-// already live in `trades` via internal/sources/sdex and are
-// deliberately NOT duplicated here. The row's primary Asset/Amount
-// columns hold the destination leg; Movement.Attributes carries the
-// source leg (send_asset/send_amount) since the schema has one
-// asset per row. Every Phase 1-3 kind is one row per op (leg_index
-// always 0) — none of these ops have a second asset leg.
+// A path payment moves two assets, so it emits TWO 'path_payment'
+// rows per op: leg_index 0 is the source leg (FromAddress only, the
+// send asset and amount that left the sender) and leg_index 1 the
+// destination leg (ToAddress only, the asset and amount delivered) —
+// never a row per hop; the per-hop ClaimAtoms already live in
+// `trades` via internal/sources/sdex and are deliberately NOT
+// duplicated here. Every other Phase 1-3 kind is one row per op
+// (leg_index always 0) — none of those ops have a second asset leg.
 //
 // Phase 4 adds AccountMerge to this op-only surface (research §2 path
 // (b): the exact amount is AccountMergeResult.SourceAccountBalance,

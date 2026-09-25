@@ -633,12 +633,18 @@ WHERE inner_tx_hash != '';
 -- cardinality per movement_kind (mirrors internal/sources/classicmovements'
 -- exact FromAddress/ToAddress decode semantics — see that package's doc.go
 -- and README.md for the full per-op derivation):
---   payment / create_account / path_payment / clawback / account_merge
+--   payment / create_account / clawback / account_merge
 --     -> 2 rows (from_address != to_address, both known: one 'sent' row for
 --        the source, one 'received' row for the destination)
 --   payment, degenerate self-payment (from_address == to_address)
 --     -> 1 row, direction='self' (never sent+received for the same address —
 --        see FanOutAccountMovement's doc)
+--   path_payment
+--     -> 2 rows per op, one per asset leg: leg_index 0 'sent' for the source
+--        in the send asset, leg_index 1 'received' for the destination in the
+--        delivered asset — also for a path payment to self (counterparty=''
+--        on both: each asset crosses the path's offers/pools, not the other
+--        account; attributes.from/to name both accounts)
 --   claimable_balance_create
 --     -> 1 row (creator known, claimant unset at creation time — a create can
 --        name zero, one, or many eventual claimants; direction='sent',
@@ -682,7 +688,7 @@ WHERE inner_tx_hash != '';
 --
 -- attributes: JSON-as-String (not a native JSON/Map type), mirroring
 -- migration 0105's `attributes jsonb` remainder 1:1 (balance_id, claimants,
--- send_asset/send_amount, pool_id, revocation, …) — read via
+-- send_asset/send_amount, dest_asset/dest_amount, pool_id, revocation, …) — read via
 -- JSONExtractString/JSONExtract at query time, never a SQL predicate target
 -- in the hot path here (FindClaimableBalanceCreates' balance_id lookup is the
 -- one exception, backed by idx_cb_balance_id below — see that function's doc

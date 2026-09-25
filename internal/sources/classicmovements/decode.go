@@ -249,23 +249,27 @@ func baseAccountAddress(m xdr.MuxedAccount) (string, error) {
 
 // ─── Phase 2: PathPaymentStrictReceive / PathPaymentStrictSend ────
 //
-// ADR-0047 D3 Phase 2 / research §2 path (b): both path-payment op
-// types emit ONE 'path_payment' movement per op, keyed
-// (ledger, tx_hash, op_index, leg_index=0) — never two rows, and
-// never a row per hop (the per-hop ClaimAtoms already live in
-// `trades` via internal/sources/sdex; duplicating them here would
-// double-count the same on-chain event under a different table).
+// ADR-0047 D3 Phase 2 / research §2 path (b): a path payment moves
+// TWO assets, so both op types emit two 'path_payment' legs per op —
+// the same shape as the two-asset LP ops (entrychanges.go):
+//   - leg_index 0: the SOURCE leg, FromAddress only — what actually
+//     left the sender (send asset / source amount);
+//   - leg_index 1: the DESTINATION leg, ToAddress only — what
+//     actually reached the destination (result.Success.Last).
+// One row per op would have to put one asset on both participants'
+// rows, booking the sender an outflow in an asset it never held. Neither
+// leg names the other side as its counterparty: the send asset went
+// to the offers/pools on the path, not to the destination. Both legs'
+// Attributes carry the whole op (send_*/dest_* and both accounts) so
+// either row still describes the payment. Never a row per hop: the
+// per-hop ClaimAtoms already live in `trades` via internal/sources/
+// sdex, and duplicating them here would double-count the same event.
 //
-// The primary Asset/Amount columns hold the DESTINATION leg —
-// result.Success.Last.{Asset,Amount} — for BOTH op types uniformly,
-// never a body field: PathPaymentStrictReceiveOp.DestAmount and
-// PathPaymentStrictSendOp.DestMin are exact/floor respectively in
-// the body, but reading the amount that ACTUALLY reached the
-// destination from the result's SimplePaymentResult is correct
-// either way and needs no per-type branching (research §2's
-// PathPaymentStrictReceive/Send table rows). Attributes carries the
-// SOURCE leg (send_asset / send_amount) since the schema's Asset/
-// Amount columns hold exactly one asset per row (migration 0105).
+// The destination amount is always result.Success.Last.Amount, never
+// a body field: PathPaymentStrictReceiveOp.DestAmount and
+// PathPaymentStrictSendOp.DestMin are exact/floor respectively in the
+// body, but the result's SimplePaymentResult is what actually landed
+// and needs no per-type branching.
 //
 // Source-leg amount derivation is the one place the two op types
 // genuinely differ:
@@ -342,11 +346,10 @@ func decodePathPaymentStrictSend(ledger uint32, closedAt time.Time, txHash strin
 		body.SendAsset, body.SendAmount, succ.Last)
 }
 
-// buildPathPaymentMovement assembles the single 'path_payment' row
-// shared by both StrictReceive and StrictSend once each has resolved
-// its own source amount: primary Asset/Amount = the destination leg
-// (last.Asset / last.Amount, exact from the result for both types);
-// Attributes.send_asset / send_amount = the source leg.
+// buildPathPaymentMovement assembles the two 'path_payment' legs
+// shared by StrictReceive and StrictSend once each has resolved its
+// own source amount: leg 0 = the sender's outflow in sendAsset, leg 1
+// = the destination's inflow in last.Asset.
 func buildPathPaymentMovement(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, sendAsset xdr.Asset, sendAmount xdr.Int64, last xdr.SimplePaymentResult) ([]Movement, error) {
 	if last.Amount <= 0 {
 		return nil, fmt.Errorf("%w: non-positive dest Amount %d (ledger %d tx %s op %d)",
@@ -363,23 +366,38 @@ func buildPathPaymentMovement(ledger uint32, closedAt time.Time, txHash string, 
 			ErrMalformedMovement, derr, ledger, txHash, opIndex)
 	}
 
-	return []Movement{{
-		Kind:            KindPathPayment,
-		Provenance:      ProvenanceClassicDerived,
-		Ledger:          ledger,
-		LedgerCloseTime: closedAt,
-		TxHash:          txHash,
-		OpIndex:         opIndex,
-		LegIndex:        0,
-		Asset:           xdrjson.AssetID(last.Asset),
-		Amount:          canonical.NewAmount(big.NewInt(int64(last.Amount))),
-		FromAddress:     fromAddr,
-		ToAddress:       destAddr,
-		Attributes: map[string]any{
-			"send_asset":  xdrjson.AssetID(sendAsset),
-			"send_amount": canonical.NewAmount(big.NewInt(int64(sendAmount))).String(),
-		},
-	}}, nil
+	sendAssetID, sendAmt := xdrjson.AssetID(sendAsset), canonical.NewAmount(big.NewInt(int64(sendAmount)))
+	destAssetID, destAmt := xdrjson.AssetID(last.Asset), canonical.NewAmount(big.NewInt(int64(last.Amount)))
+	attrs := func() map[string]any {
+		return map[string]any{
+			"send_asset":  sendAssetID,
+			"send_amount": sendAmt.String(),
+			"dest_asset":  destAssetID,
+			"dest_amount": destAmt.String(),
+			"from":        fromAddr,
+			"to":          destAddr,
+		}
+	}
+	leg := func(legIndex uint32, asset string, amount canonical.Amount, from, to string) Movement {
+		return Movement{
+			Kind:            KindPathPayment,
+			Provenance:      ProvenanceClassicDerived,
+			Ledger:          ledger,
+			LedgerCloseTime: closedAt,
+			TxHash:          txHash,
+			OpIndex:         opIndex,
+			LegIndex:        legIndex,
+			Asset:           asset,
+			Amount:          amount,
+			FromAddress:     from,
+			ToAddress:       to,
+			Attributes:      attrs(),
+		}
+	}
+	return []Movement{
+		leg(0, sendAssetID, sendAmt, fromAddr, ""),
+		leg(1, destAssetID, destAmt, "", destAddr),
+	}, nil
 }
 
 // pathPaymentStrictReceiveSourceAmount derives the exact amount of

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"reflect"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sdex"
 )
@@ -357,6 +359,70 @@ func mkPathPaymentStrictSendSuccessResult(t *testing.T, destSeed byte, destAsset
 	}
 }
 
+func eventMovements(outs []consumer.Event) []Movement {
+	ms := make([]Movement, 0, len(outs))
+	for _, ev := range outs {
+		ms = append(ms, ev.(MovementEvent).Movement)
+	}
+	return ms
+}
+
+// pathPaymentLegs asserts ms is exactly one path payment's two legs
+// and returns them as (source leg 0, destination leg 1).
+func pathPaymentLegs(t *testing.T, ms []Movement) (src, dst Movement) {
+	t.Helper()
+	if len(ms) != 2 {
+		t.Fatalf("got %d movements, want 2 path_payment legs", len(ms))
+	}
+	src, dst = ms[0], ms[1]
+	if src.Kind != KindPathPayment || dst.Kind != KindPathPayment || src.LegIndex != 0 || dst.LegIndex != 1 {
+		t.Fatalf("legs = {%q leg %d, %q leg %d}, want {%q leg 0, %q leg 1}",
+			src.Kind, src.LegIndex, dst.Kind, dst.LegIndex, KindPathPayment, KindPathPayment)
+	}
+	return src, dst
+}
+
+// TestDecoder_pathPayment_senderLegCarriesSendAsset pins GH-1062: the
+// sender's leg must carry the asset and amount that LEFT the sender,
+// and only the destination's leg carries the delivered asset — else the
+// sender's 'sent' feed row books an outflow in an asset it never held.
+func TestDecoder_pathPayment_senderLegCarriesSendAsset(t *testing.T) {
+	fromAddr, _ := mkAccount(t, 0x6A)
+	destAddr, _ := mkAccount(t, 0x6B)
+	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	usdc := mkAlphanum4Asset(t, "USDC", 0x6C)
+	usdcID := "USDC-" + usdc.MustAlphaNum4().Issuer.Address()
+	offers := []xdr.ClaimAtom{mkOrderBookClaimAtom(t, 0x6D, usdc, 2_500_0000000, native, 10_000_0000000)}
+	op := mkPathPaymentStrictSendOp(t, native, 10_000_0000000, 0x6B, usdc, 2_400_0000000)
+	result := mkPathPaymentStrictSendSuccessResult(t, 0x6B, usdc, 2_500_0000000, offers)
+
+	outs, err := NewDecoder().Decode(dispatcher.OpContext{
+		Ledger: 40_000_000, TxHash: "txpp-1062", TxSource: fromAddr, Op: op, OpResult: result,
+	})
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	src, dst := pathPaymentLegs(t, eventMovements(outs))
+	if src.FromAddress != fromAddr || src.ToAddress != "" || src.Asset != "native" || src.Amount.String() != "100000000000" {
+		t.Errorf("source leg = %s %s %q->%q, want 100000000000 native %q->\"\"",
+			src.Amount.String(), src.Asset, src.FromAddress, src.ToAddress, fromAddr)
+	}
+	if dst.FromAddress != "" || dst.ToAddress != destAddr || dst.Asset != usdcID || dst.Amount.String() != "25000000000" {
+		t.Errorf("destination leg = %s %s %q->%q, want 25000000000 %s \"\"->%q",
+			dst.Amount.String(), dst.Asset, dst.FromAddress, dst.ToAddress, usdcID, destAddr)
+	}
+	want := map[string]any{
+		"send_asset": "native", "send_amount": "100000000000",
+		"dest_asset": usdcID, "dest_amount": "25000000000",
+		"from": fromAddr, "to": destAddr,
+	}
+	for _, m := range []Movement{src, dst} {
+		if !reflect.DeepEqual(m.Attributes, want) {
+			t.Errorf("leg %d Attributes = %+v, want %+v", m.LegIndex, m.Attributes, want)
+		}
+	}
+}
+
 // TestDecoder_pathPaymentStrictReceive_direct_noOffers covers the
 // degenerate SendAsset==DestAsset case: no order book / pool
 // crossed, so the source amount consumed equals exactly what was
@@ -375,21 +441,15 @@ func TestDecoder_pathPaymentStrictReceive_direct_noOffers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	if len(outs) != 1 {
-		t.Fatalf("got %d outputs, want 1", len(outs))
-	}
-	m := outs[0].(MovementEvent).Movement
-	if m.Kind != KindPathPayment {
-		t.Errorf("Kind = %q, want %q", m.Kind, KindPathPayment)
-	}
+	src, m := pathPaymentLegs(t, eventMovements(outs))
 	if m.Asset != "native" || m.Amount.String() != "100" {
 		t.Errorf("dest leg = %s %s, want native 100", m.Amount.String(), m.Asset)
 	}
-	if m.FromAddress != fromAddr || m.ToAddress != destAddr {
-		t.Errorf("From/To = %q/%q, want %q/%q", m.FromAddress, m.ToAddress, fromAddr, destAddr)
+	if src.FromAddress != fromAddr || m.ToAddress != destAddr {
+		t.Errorf("From/To = %q/%q, want %q/%q", src.FromAddress, m.ToAddress, fromAddr, destAddr)
 	}
-	if m.Attributes["send_asset"] != "native" || m.Attributes["send_amount"] != "100" {
-		t.Errorf("Attributes = %+v, want send_asset=native send_amount=100", m.Attributes)
+	if src.Asset != "native" || src.Amount.String() != "100" {
+		t.Errorf("source leg = %s %s, want native 100", src.Amount.String(), src.Asset)
 	}
 }
 
@@ -412,12 +472,12 @@ func TestDecoder_pathPaymentStrictReceive_singleHop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	m := outs[0].(MovementEvent).Movement
+	src, m := pathPaymentLegs(t, eventMovements(outs))
 	if m.Amount.String() != "900000000000" {
 		t.Errorf("dest amount = %s, want 900000000000", m.Amount.String())
 	}
-	if m.Attributes["send_amount"] != "12000000" {
-		t.Errorf("send_amount = %v, want 12000000", m.Attributes["send_amount"])
+	if src.Amount.String() != "12000000" {
+		t.Errorf("source amount = %s, want 12000000", src.Amount.String())
 	}
 }
 
@@ -444,12 +504,12 @@ func TestDecoder_pathPaymentStrictReceive_multiHop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	m := outs[0].(MovementEvent).Movement
+	src, m := pathPaymentLegs(t, eventMovements(outs))
 	if m.Asset != "native" || m.Amount.String() != "83586584" {
 		t.Errorf("dest leg = %s %s, want native 83586584", m.Amount.String(), m.Asset)
 	}
-	if m.Attributes["send_asset"] != "native" || m.Attributes["send_amount"] != "83568489" {
-		t.Errorf("Attributes = %+v, want send_asset=native send_amount=83568489 (hop0 only, not the 83586584 hop1 leg)", m.Attributes)
+	if src.Asset != "native" || src.Amount.String() != "83568489" {
+		t.Errorf("source leg = %s %s, want native 83568489 (hop0 only, not the 83586584 hop1 leg)", src.Amount.String(), src.Asset)
 	}
 }
 
@@ -474,9 +534,9 @@ func TestDecoder_pathPaymentStrictReceive_multiOfferSameHop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	m := outs[0].(MovementEvent).Movement
-	if m.Attributes["send_amount"] != "50000000" {
-		t.Errorf("send_amount = %v, want 50000000 (sum of both offers)", m.Attributes["send_amount"])
+	src, _ := pathPaymentLegs(t, eventMovements(outs))
+	if src.Amount.String() != "50000000" {
+		t.Errorf("source amount = %s, want 50000000 (sum of both offers)", src.Amount.String())
 	}
 }
 
@@ -522,15 +582,12 @@ func TestDecoder_pathPaymentStrictSend_success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	m := outs[0].(MovementEvent).Movement
-	if m.Kind != KindPathPayment {
-		t.Errorf("Kind = %q, want %q", m.Kind, KindPathPayment)
-	}
+	src, m := pathPaymentLegs(t, eventMovements(outs))
 	if m.Asset != "AQUA-"+aqua.MustAlphaNum4().Issuer.Address() || m.Amount.String() != "63545" {
 		t.Errorf("dest leg = %s %s", m.Amount.String(), m.Asset)
 	}
-	if m.Attributes["send_asset"] != "native" || m.Attributes["send_amount"] != "1100" {
-		t.Errorf("Attributes = %+v, want send_asset=native send_amount=1100", m.Attributes)
+	if src.Asset != "native" || src.Amount.String() != "1100" {
+		t.Errorf("source leg = %s %s, want native 1100", src.Amount.String(), src.Asset)
 	}
 	if m.ToAddress != destAddr {
 		t.Errorf("ToAddress = %q, want %q", m.ToAddress, destAddr)
@@ -538,8 +595,8 @@ func TestDecoder_pathPaymentStrictSend_success(t *testing.T) {
 }
 
 // TestDispatcher_pathPayment_reachesBothSDEXAndMovements pins GH-1312:
-// one path payment is both SDEX trades (its claim atoms) and a movement
-// (its delivered leg), and sdex and this package both claim the two
+// one path payment is both SDEX trades (its claim atoms) and movements
+// (its sent and delivered legs), and sdex and this package both claim the two
 // path-payment op types. Whatever the registration order, the dispatcher
 // must hand the op to both decoders and count it against both.
 func TestDispatcher_pathPayment_reachesBothSDEXAndMovements(t *testing.T) {
@@ -573,8 +630,8 @@ func TestDispatcher_pathPayment_reachesBothSDEXAndMovements(t *testing.T) {
 			for _, ev := range outs {
 				bySource[ev.Source()]++
 			}
-			if bySource[sdex.SourceName] != 1 || bySource[SourceName] != 1 {
-				t.Errorf("outputs by source = %v, want one %s trade and one %s movement",
+			if bySource[sdex.SourceName] != 1 || bySource[SourceName] != 2 {
+				t.Errorf("outputs by source = %v, want one %s trade and two %s legs",
 					bySource, sdex.SourceName, SourceName)
 			}
 			seen := disp.Stats().EventsSeen

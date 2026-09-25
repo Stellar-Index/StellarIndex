@@ -119,9 +119,10 @@ type Movement struct {
 	// Attributes is the kind-specific remainder, written straight to
 	// migration 0105's `attributes jsonb` column (empty/nil marshals
 	// to '{}', matching the column DEFAULT). Phase 1's two kinds
-	// never populate it. From Phase 2 on: path_payment carries the
-	// source leg (send_asset/send_amount) here since Asset/Amount
-	// above hold the DESTINATION leg (ADR-0047 Phase 2); claimable
+	// never populate it. From Phase 2 on: both path_payment legs
+	// carry the whole op (send_asset/send_amount, dest_asset/
+	// dest_amount, from/to) since each leg's Asset/Amount holds only
+	// its own side (ADR-0047 Phase 2); claimable
 	// balance kinds carry balance_id (+ a claimants summary on
 	// create); the CAP-0038 liquidity_pool_withdraw revocation edge
 	// case (Phase 4) marks its provenance here. Values are strings

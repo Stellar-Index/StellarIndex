@@ -30,8 +30,8 @@ for the full decision + evidence base.
 | --- | --- | --- | --- |
 | `Payment` | `OperationTypePayment` | `payment` | 1 row/op |
 | `CreateAccount` | `OperationTypeCreateAccount` | `create_account` | 1 row/op |
-| `PathPaymentStrictReceive` | `OperationTypePathPaymentStrictReceive` | `path_payment` | 1 row/op (leg_index always 0) |
-| `PathPaymentStrictSend` | `OperationTypePathPaymentStrictSend` | `path_payment` | 1 row/op (leg_index always 0) |
+| `PathPaymentStrictReceive` | `OperationTypePathPaymentStrictReceive` | `path_payment` | 2 rows/op (leg 0 source, leg 1 destination) |
+| `PathPaymentStrictSend` | `OperationTypePathPaymentStrictSend` | `path_payment` | 2 rows/op (leg 0 source, leg 1 destination) |
 | `CreateClaimableBalance` | `OperationTypeCreateClaimableBalance` | `claimable_balance_create` | 1 row/op |
 | `ClaimClaimableBalance` | `OperationTypeClaimClaimableBalance` | `claimable_balance_claim` | 1 row/op (0 if unresolved — see Q5) |
 | `ClawbackClaimableBalance` | `OperationTypeClawbackClaimableBalance` | `claimable_balance_clawback` | 1 row/op (0 if unresolved — see Q5) |
@@ -43,21 +43,23 @@ reconstruct from the operation **body** alone once the operation
 **result**'s success code is confirmed (research §2 path (a)) — none
 need `ledger_entry_changes`. The two path-payment types and
 `AccountMerge` reconstruct from the operation **result** (path (b)):
-path payments' `asset`/`amount` columns hold the **destination** leg
-(`result.Success.Last.{Asset,Amount}`, exact for both types);
-`attributes.send_asset`/`attributes.send_amount` hold the **source**
-leg — exact from the body (`SendAmount`) for StrictSend, derived from
-the result's `Offers` for StrictReceive (`SendMax` is only a ceiling
-— see `decode.go`'s `pathPaymentStrictReceiveSourceAmount` for the
-hop-order derivation). `AccountMerge`'s amount is
+a path payment moves two assets, so it emits two legs: `leg_index` 0
+is the **source** leg (sender only, the send asset and the amount that
+left — exact from the body's `SendAmount` for StrictSend, derived from
+the result's `Offers` for StrictReceive, where `SendMax` is only a
+ceiling; see `decode.go`'s `pathPaymentStrictReceiveSourceAmount` for
+the hop-order derivation) and `leg_index` 1 is the **destination** leg
+(destination only, `result.Success.Last.{Asset,Amount}`, exact for both
+types). Both legs' `attributes` carry `send_asset`/`send_amount`,
+`dest_asset`/`dest_amount` and the `from`/`to` accounts. `AccountMerge`'s amount is
 `AccountMergeResult.SourceAccountBalance` — never derivable from the
 body, which carries only the destination. `ClaimClaimableBalance`/
 `ClawbackClaimableBalance` reconstruct via research's "b+own-index"
 path: neither op carries an asset/amount, only a `BalanceId`,
 resolved against the `CreateClaimableBalance` row this package itself
-derived earlier — see Q5. Every kind above is exactly one row per op
-(`leg_index` always 0) — none of these ops have a second asset leg,
-and the per-hop `ClaimAtom` trade legs of a path payment stay in
+derived earlier — see Q5. Every kind above except the path payments
+is exactly one row per op (`leg_index` always 0) — none of those ops
+have a second asset leg — and the per-hop `ClaimAtom` trade legs of a path payment stay in
 `trades` via `internal/sources/sdex` and are never duplicated here. A
 failed op (bare result code that never reached the op's own result
 union, OR an inner union whose own code is a failure) decodes to

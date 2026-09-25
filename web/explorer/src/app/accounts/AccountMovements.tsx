@@ -426,7 +426,7 @@ function CounterpartyCell({ counterparty }: { counterparty?: string }) {
     return (
       <span
         className="text-ink-faint"
-        title="No counterparty G-account for this movement — a claimable-balance escrow or a liquidity-pool leg, neither of which is a real account"
+        title="No counterparty G-account for this movement — a claimable-balance escrow, a liquidity-pool leg, or a path-payment leg routed through offers/pools"
       >
         —
       </span>
