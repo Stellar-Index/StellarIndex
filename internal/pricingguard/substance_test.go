@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"math/big"
 	"reflect"
 	"slices"
@@ -275,6 +276,24 @@ func TestSubstancePolicyFromValues(t *testing.T) {
 	}
 	if gate.policy.MinBuckets != DefaultSubstanceMinBuckets || gate.policy.MinSpan != DefaultSubstanceMinSpan || gate.policy.Window != DefaultSubstanceWindow {
 		t.Errorf("defaults = %+v", gate.policy)
+	}
+}
+
+// TestSubstancePolicyFromValues_OverflowFallsBackToDefault: a window or
+// span too large for time.Duration must not wrap negative (a negative
+// window fails the gate open for every pair); it resolves to the default.
+func TestSubstancePolicyFromValues_OverflowFallsBackToDefault(t *testing.T) {
+	gate := NewSubstanceGate(&fakeSubstanceReader{}, SubstanceGateOptions{
+		Policy: SubstancePolicyFromValues(0, 0, math.MaxInt64/int(time.Minute)+1, 3_000_000),
+	})
+	if gate.policy.Window != DefaultSubstanceWindow {
+		t.Errorf("window_hours=3,000,000: Window = %v, want default %v", gate.policy.Window, DefaultSubstanceWindow)
+	}
+	if gate.policy.MinSpan != DefaultSubstanceMinSpan {
+		t.Errorf("overflowing span: MinSpan = %v, want default %v", gate.policy.MinSpan, DefaultSubstanceMinSpan)
+	}
+	if got := SubstancePolicyFromValues(0, 0, 0, 2_562_047).Window; got != 2_562_047*time.Hour {
+		t.Errorf("largest representable window_hours: Window = %v, want %v", got, 2_562_047*time.Hour)
 	}
 }
 
