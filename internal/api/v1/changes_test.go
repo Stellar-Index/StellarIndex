@@ -348,6 +348,52 @@ func TestHandleChangeSummary_ReaderError500(t *testing.T) {
 	}
 }
 
+// TestHandleChangeSummary_StaleFlag pins flags.stale to row age against
+// the openapi contract (5-minute refresh, >10min lagging): a fresh row
+// serves stale=false, a row well past the 10-minute line serves
+// stale=true even though the data itself is otherwise valid.
+func TestHandleChangeSummary_StaleFlag(t *testing.T) {
+	cases := []struct {
+		name        string
+		refreshedAt time.Time
+		wantStale   bool
+	}{
+		{"fresh", time.Now().UTC().Add(-1 * time.Minute), false},
+		{"lagging", time.Now().UTC().Add(-30 * time.Minute), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := &stubChangeSummaryReader{
+				row: timescale.ChangeSummaryRow{
+					EntityType:   "coin",
+					EntityID:     "XLM",
+					RefreshedAt:  tc.refreshedAt,
+					CurrentValue: "0.1675",
+				},
+			}
+			srv := v1.New(v1.Options{ChangeSummary: reader})
+			ts := startHTTPTest(t, srv.Handler())
+
+			resp := mustGet(t, ts.URL+"/v1/changes/coin/XLM")
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			var env struct {
+				Flags struct {
+					Stale bool `json:"stale"`
+				} `json:"flags"`
+			}
+			body, _ := readAll(resp)
+			if err := json.NewDecoder(strings.NewReader(body)).Decode(&env); err != nil {
+				t.Fatalf("decode: %v (body=%s)", err, body)
+			}
+			if env.Flags.Stale != tc.wantStale {
+				t.Errorf("flags.stale = %v, want %v (refreshed_at age)", env.Flags.Stale, tc.wantStale)
+			}
+		})
+	}
+}
+
 // TestChangeSummary_MoneyFieldsAreJSONStrings is the M7 (INV-2) guard: the
 // /v1/changes *_value fields are MONEY and must serialize as JSON STRINGS
 // (like every other money field the API serves), while the *_delta_pct
