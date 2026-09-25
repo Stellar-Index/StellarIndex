@@ -2,7 +2,6 @@ package timescale
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 )
 
@@ -41,8 +40,9 @@ type TransitivePrice struct {
 	// Hop is the intermediate asset_id the price was derived through.
 	// The caller substance-gates this leg separately.
 	Hop string
-	// HopVolume24hUSD is the intermediate market's trailing-24h USD
-	// volume — the reason this hop was chosen over the alternatives.
+	// HopVolume24hUSD is the trailing-24h USD volume of the asset<->hop
+	// market (the near leg) — the key candidates are ranked by. It says
+	// nothing about the hop's own USD/XLM market; the caller gates that.
 	HopVolume24hUSD string
 }
 
@@ -61,41 +61,59 @@ const usdProxyQuotes = `'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34
 // xlm_usd.
 const xlmQuotes = `'native', '` + nativeXLMSAC + `'`
 
-// TransitiveUSDPrice derives a USD price for `assetID` through its
-// deepest counterparty that itself has a USD price.
+// transitiveHopCandidates bounds how many ranked hops
+// TransitiveUSDPriceCandidates returns: enough that a thin top hop cannot
+// hide a sound one behind it, few enough that the caller's per-hop gating
+// stays a small fixed cost on a serving path.
+const transitiveHopCandidates = 5
+
+// TransitiveUSDPriceCandidates derives USD prices for `assetID` through
+// each counterparty that itself has a USD price, best candidate first.
 //
-// Returns ok=false (nil error) when no such path exists — absence of a
-// route is a measurement, not a failure.
+// Returns an empty slice (nil error) when no such path exists — absence
+// of a route is a measurement, not a failure.
 //
-// Mechanics, and the two details that make it correct:
+// Mechanics, and the details that make it correct:
 //
 //   - DIRECTION. prices_1m stores a pair in BOTH directions, and `vwap`
 //     is always "price of base in quote". A row (asset, hop) is used as
 //     is; a row (hop, asset) is INVERTED. Reading either without
 //     inverting would produce a reciprocal price — off by orders of
 //     magnitude, not a rounding error.
-//   - HOP CHOICE. Ordered by the hop market's 24h USD volume, so the
-//     deepest available intermediate wins. A tie or a thin winner is
-//     still the caller's problem to gate; this picks the best candidate,
-//     it does not decide publishability.
+//   - HOP RANKING. Ordered by the 24h USD volume of the asset<->hop
+//     market (the near leg, the market trusted to convert one into the
+//     other), then by hop id so ties are deterministic. The hop's OWN
+//     USD/XLM market is neither ranked nor gated here.
+//   - SEVERAL CANDIDATES. Up to [transitiveHopCandidates] hops, because
+//     publishability is the caller's decision: a deep near leg whose hop
+//     fails the caller's gate must not hide a shallower hop that passes.
 //
 // Closed buckets only (ADR-0015): every read excludes the in-flight
 // minute, matching every other price surface.
-func (s *Store) TransitiveUSDPrice(ctx context.Context, assetID string) (TransitivePrice, bool, error) {
-	var out TransitivePrice
-	err := s.db.QueryRowContext(ctx, transitiveUSDPriceSQL, assetID).Scan(&out.PriceUSD, &out.Hop, &out.HopVolume24hUSD)
-	switch {
-	case err == sql.ErrNoRows:
-		return TransitivePrice{}, false, nil
-	case err != nil:
-		return TransitivePrice{}, false, fmt.Errorf("timescale: TransitiveUSDPrice[%s]: %w", assetID, err)
+func (s *Store) TransitiveUSDPriceCandidates(ctx context.Context, assetID string) ([]TransitivePrice, error) {
+	rows, err := s.db.QueryContext(ctx, transitiveUSDPriceSQL, assetID, transitiveHopCandidates)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: TransitiveUSDPriceCandidates[%s]: %w", assetID, err)
 	}
-	return out, true, nil
+	defer func() { _ = rows.Close() }()
+	var out []TransitivePrice
+	for rows.Next() {
+		var tp TransitivePrice
+		if err := rows.Scan(&tp.PriceUSD, &tp.Hop, &tp.HopVolume24hUSD); err != nil {
+			return nil, fmt.Errorf("timescale: TransitiveUSDPriceCandidates[%s]: scan: %w", assetID, err)
+		}
+		out = append(out, tp)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: TransitiveUSDPriceCandidates[%s]: %w", assetID, err)
+	}
+	return out, nil
 }
 
-// transitiveUSDPriceSQL is TransitiveUSDPrice's query, hoisted to a
-// package constant so the function body stays under the funlen
-// threshold (same convention as getNativeAssetSQL). $1 = asset_id.
+// transitiveUSDPriceSQL is TransitiveUSDPriceCandidates' query, hoisted
+// to a package constant so the function body stays under the funlen
+// threshold (same convention as getNativeAssetSQL). $1 = asset_id,
+// $2 = candidate limit.
 const transitiveUSDPriceSQL = `
 WITH xlm_usd AS (
     SELECT vwap
@@ -109,7 +127,7 @@ WITH xlm_usd AS (
      LIMIT 1
 ),
 -- Every counterparty this asset traded against in the window, in BOTH
--- stored directions, with the depth of that market.
+-- stored directions, with the depth of the asset<->hop market.
 hops AS (
     SELECT CASE WHEN base_asset = $1 THEN quote_asset ELSE base_asset END AS hop,
            SUM(volume_usd) AS hop_vol
@@ -189,5 +207,5 @@ leg AS (
 SELECT (leg_vwap * hop_usd)::text, hop, COALESCE(hop_vol, 0)::text
   FROM leg
  WHERE leg_vwap IS NOT NULL AND leg_vwap > 0
- ORDER BY hop_vol DESC NULLS LAST
- LIMIT 1`
+ ORDER BY hop_vol DESC NULLS LAST, hop
+ LIMIT $2`

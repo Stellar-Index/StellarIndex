@@ -15,17 +15,87 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// stubPricer implements TransitivePricer with a canned answer.
+// stubPricer implements TransitivePricer with a canned answer: the ranked
+// `candidates` when set, else `tp` alone when ok, else no route.
 type stubPricer struct {
-	tp    timescale.TransitivePrice
-	ok    bool
-	err   error
-	calls int
+	tp         timescale.TransitivePrice
+	ok         bool
+	candidates []timescale.TransitivePrice
+	err        error
+	calls      int
 }
 
-func (p *stubPricer) TransitiveUSDPrice(context.Context, string) (timescale.TransitivePrice, bool, error) {
+func (p *stubPricer) TransitiveUSDPriceCandidates(context.Context, string) ([]timescale.TransitivePrice, error) {
 	p.calls++
-	return p.tp, p.ok, p.err
+	switch {
+	case p.err != nil:
+		return nil, p.err
+	case p.candidates != nil:
+		return p.candidates, nil
+	case p.ok:
+		return []timescale.TransitivePrice{p.tp}, nil
+	}
+	return nil, nil
+}
+
+// A top-ranked hop that fails a gate must not hide a lower-ranked hop
+// that clears every gate: the resolver ranks by near-leg volume only, so
+// the deepest near leg can run into a hop too thin to stand on its own.
+func TestTransitivePriceFor_FallsBackToNextHopWhenTopHopGated(t *testing.T) {
+	const (
+		assetID  = "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
+		thinHop  = "CBIJBDNZNF4X35BJ4FFZWCDBSCKOP5NB4PLG4SNENRMLAPYG4P5FM6VN"
+		deepHop  = "AQUA-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"
+		flagHop  = "SCAM-GDM4RQUQQUVSKQA7S6EM7XBZP3FCGH4Q7CL6TABQ7B2BEJ5ERARM2M5M"
+		deepUSD  = "0.4200"
+		thinUSD  = "9.9900"
+		flagUSD  = "5.5500"
+		wantNone = ""
+	)
+	asset, err := canonical.ParseAsset(assetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Near legs clear for every hop; only deepHop's own market clears.
+	gate := &stubListingGate{allow: map[string]bool{
+		assetID + "|" + thinHop: true,
+		assetID + "|" + deepHop: true,
+		assetID + "|" + flagHop: true,
+		deepHop + "|native":     true,
+		flagHop + "|native":     true,
+	}}
+	ranked := func(hops ...timescale.TransitivePrice) *stubPricer {
+		return &stubPricer{candidates: hops}
+	}
+	thin := timescale.TransitivePrice{PriceUSD: thinUSD, Hop: thinHop, HopVolume24hUSD: "50000"}
+	flagged := timescale.TransitivePrice{PriceUSD: flagUSD, Hop: flagHop, HopVolume24hUSD: "20000"}
+	deep := timescale.TransitivePrice{PriceUSD: deepUSD, Hop: deepHop, HopVolume24hUSD: "5000"}
+
+	tests := []struct {
+		name   string
+		pricer *stubPricer
+		want   string
+	}{
+		{"far leg of top hop too thin", ranked(thin, deep), deepUSD},
+		{"top hop scam-flagged, then far leg too thin", ranked(flagged, thin, deep), deepUSD},
+		{"every candidate gated", ranked(thin, flagged), wantNone},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{
+				transitive: tc.pricer,
+				substance:  gate,
+				scam:       transitiveScamGate{flagged: map[string]bool{flagHop: true}},
+			}
+			got, ok := s.transitivePriceFor(context.Background(), asset, assetID)
+			if got != tc.want || ok != (tc.want != wantNone) {
+				t.Fatalf("transitivePriceFor = (%q, %v), want %q", got, ok, tc.want)
+			}
+			if tc.pricer.calls != 1 {
+				t.Errorf("resolver calls = %d, want 1", tc.pricer.calls)
+			}
+		})
+	}
 }
 
 // The whole safety property of transitive pricing lives in this one

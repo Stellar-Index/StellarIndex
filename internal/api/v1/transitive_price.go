@@ -12,16 +12,19 @@ import (
 // it is today, so wiring this on is the whole behaviour change.
 //
 // Production wiring is timescale.Store. See
-// [timescale.Store.TransitiveUSDPrice] for why the hop is returned
-// alongside the price rather than hidden.
+// [timescale.Store.TransitiveUSDPriceCandidates] for why the hop is
+// returned alongside the price rather than hidden. Candidates arrive
+// best-first; an empty slice means no route.
 type TransitivePricer interface {
-	TransitiveUSDPrice(ctx context.Context, assetID string) (timescale.TransitivePrice, bool, error)
+	TransitiveUSDPriceCandidates(ctx context.Context, assetID string) ([]timescale.TransitivePrice, error)
 }
 
 // transitivePriceFor returns a USD price derived through ONE intermediate
-// hop, but ONLY when neither the asset nor the hop is scam-withheld and
-// both legs independently clear the substance floors.
-// Returns ("", false) whenever the price must not be served — including
+// hop: the first ranked candidate whose asset and hop are not
+// scam-withheld and whose two legs both clear the substance floors. A
+// candidate that fails a gate falls through to the next, so a deep near
+// leg into a thin hop cannot hide a sound route behind it.
+// Returns ("", false) whenever no candidate may be served — including
 // every error path, because a price we cannot fully verify is worse than
 // no price.
 //
@@ -41,20 +44,33 @@ func (s *Server) transitivePriceFor(ctx context.Context, asset canonical.Asset, 
 	if s.transitive == nil {
 		return "", false
 	}
-	tp, ok, err := s.transitive.TransitiveUSDPrice(ctx, assetID)
-	if err != nil || !ok || tp.PriceUSD == "" {
-		if err != nil && s.logger != nil {
+	candidates, err := s.transitive.TransitiveUSDPriceCandidates(ctx, assetID)
+	if err != nil {
+		if s.logger != nil {
 			s.logger.Debug("transitive price lookup failed",
 				"asset_id", assetID, "err", err)
 		}
 		return "", false
 	}
+	for _, tp := range candidates {
+		if s.transitiveCandidateAllowed(ctx, asset, tp) {
+			return s.normalizeTransitiveUSD(tp.PriceUSD, asset), true
+		}
+	}
+	return "", false
+}
 
+// transitiveCandidateAllowed reports whether one candidate hop's price
+// may be served: both legs scam-clear and substance-cleared.
+func (s *Server) transitiveCandidateAllowed(ctx context.Context, asset canonical.Asset, tp timescale.TransitivePrice) bool {
+	if tp.PriceUSD == "" {
+		return false
+	}
 	hop, err := canonical.ParseAsset(tp.Hop)
 	if err != nil {
 		// An unparseable hop cannot be substance-gated, so it cannot be
 		// trusted. Never serve on the strength of a hop we can't name.
-		return "", false
+		return false
 	}
 
 	// The scam gate, asked about the asset AND the hop through the
@@ -62,28 +78,25 @@ func (s *Server) transitivePriceFor(ctx context.Context, asset canonical.Asset, 
 	// issuer's market is that market's price; /v1/price refuses it for
 	// the hop itself, so it must not reappear here one conversion removed.
 	if scamWithheld(ctx, s.scam, asset, hop, "transitive") {
-		return "", false
+		return false
 	}
 
 	// The substance gate is the other half — with it not wired we must
 	// NOT invent a price the gate never saw.
 	if s.substance == nil {
-		return "", false
+		return false
 	}
 
 	// Near leg: the market converting asset into hop.
 	if !s.substance.Allowed(ctx, asset, hop, "transitive") {
-		return "", false
+		return false
 	}
 	// Far leg: the hop must stand on its own against the SAME quote set
 	// the catalogue prices through — native/XLM-SAC, fiat:USD, or an
 	// operator-declared USD peg. listingPriceAllowed already encodes
 	// exactly that policy, so reuse it rather than restate it and risk
 	// the two drifting.
-	if !s.listingPriceAllowed(ctx, hop) {
-		return "", false
-	}
-	return s.normalizeTransitiveUSD(tp.PriceUSD, asset), true
+	return s.listingPriceAllowed(ctx, hop)
 }
 
 // normalizeTransitiveUSD applies the dex-nonstandard-decimals forward
