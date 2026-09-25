@@ -196,9 +196,7 @@ func TestReadyz_CriticalFailureReturns503(t *testing.T) {
 	if !strings.Contains(body, `"status":"unready"`) {
 		t.Errorf("body should report unready when critical check fails: %s", body)
 	}
-	if !strings.Contains(body, "postgres: connection refused") {
-		t.Errorf("body should include failing-check error: %s", body)
-	}
+	assertReadyzErrorRedacted(t, body, "postgres", "postgres: connection refused")
 	if !strings.Contains(body, `"stale":true`) {
 		t.Errorf("body should set stale flag: %s", body)
 	}
@@ -229,9 +227,7 @@ func TestReadyz_NonCriticalFailureReturns200Degraded(t *testing.T) {
 	if !strings.Contains(body, `"status":"degraded"`) {
 		t.Errorf("body should report degraded: %s", body)
 	}
-	if !strings.Contains(body, "redis: connection refused") {
-		t.Errorf("body should include failing-check error: %s", body)
-	}
+	assertReadyzErrorRedacted(t, body, "redis", "redis: connection refused")
 	if !strings.Contains(body, `"stale":true`) {
 		t.Errorf("body should set stale flag: %s", body)
 	}
@@ -480,6 +476,39 @@ func TestMiddlewareStackAppliedEndToEnd(t *testing.T) {
 	if id := resp2.Header.Get("X-Request-ID"); len(id) != 32 {
 		t.Errorf("minted X-Request-ID len = %d, want 32 hex chars", len(id))
 	}
+}
+
+// assertReadyzErrorRedacted: /v1/readyz is unauthenticated and exempt from
+// the anonymous limiter, so a failed check must name the dependency and
+// point at the server log without echoing the driver error, which carries
+// the endpoint (and, from pgx, user and database).
+func assertReadyzErrorRedacted(t *testing.T, body, check, rawErr string) {
+	t.Helper()
+	if strings.Contains(body, rawErr) {
+		t.Errorf("readyz echoed the raw %s error %q to an unauthenticated caller: %s", check, rawErr, body)
+	}
+	var env struct {
+		Data struct {
+			Checks []struct {
+				Name  string `json:"name"`
+				OK    bool   `json:"ok"`
+				Error string `json:"error"`
+			} `json:"checks"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(body), &env); err != nil {
+		t.Fatalf("decode readyz body: %v", err)
+	}
+	for _, c := range env.Data.Checks {
+		if c.Name != check {
+			continue
+		}
+		if c.OK || !strings.Contains(c.Error, "see the API server log") {
+			t.Errorf("check %s = {ok:%v error:%q}, want ok=false with the fixed server-log hint", check, c.OK, c.Error)
+		}
+		return
+	}
+	t.Errorf("readyz body has no %s check: %s", check, body)
 }
 
 func readAll(resp *http.Response) (string, error) {

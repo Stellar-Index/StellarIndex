@@ -4627,8 +4627,7 @@ paths:
       description: |
         One snapshot of the region's ingest state, composed from
         the cursors table, network_stats CAGG, fx_quotes hypertable,
-        asset_supply_history, the in-memory market-cap cache, and
-        the static source registry. Designed as the single fetch
+        asset_supply_history, and the static source registry. Designed as the single fetch
         the public status page makes for its "Ingestion · <region>"
         panel — so the page renders the whole panel without scraping
         five separate endpoints.
@@ -4639,7 +4638,6 @@ paths:
           - `ledger`         — live tip, lag, 24h volume, indexed assets/markets.
           - `backfill`       — per-decoder ranges in progress, oldest lag.
           - `fx_backfill`    — fx_quotes coverage (earliest/latest, total quotes).
-          - `market_cap`     — CoinGecko cache age + entries.
           - `supply`         — counts per asset domain + most recent observation.
           - `sources`        — every source in the registry joined with
                                its trailing-24h trades/volume/markets.
@@ -4696,10 +4694,6 @@ paths:
                     latest_quote: '2026-07-03'
                     total_quotes: 244477
                     currencies_count: 132
-                  market_cap:
-                    entries_count: 187
-                    oldest_fetched_at: '2026-07-03T21:38:00Z'
-                    newest_fetched_at: '2026-07-03T22:38:00Z'
                   supply:
                     classic_assets_with_supply: 9
                     sep41_assets_with_supply: 0
@@ -4728,7 +4722,7 @@ paths:
                       data:
                         type: object
                         description: "Operator diagnostics — the documented properties are the stable core; the handler also serves per-source coverage fields (density_pct, gap_free_pct, covered_ledgers, coverage_snapshot_at, entries_24h) and ADR-0033 completeness fields that evolve with the pipeline (board #33; x-stability: experimental per ADR-0042)."
-                        required: [region, version, ledger, backfill, backfill_coverage, fx_backfill, market_cap, supply, sources]
+                        required: [region, version, ledger, backfill, backfill_coverage, fx_backfill, supply, sources]
                         properties:
                           region:
                             type: object
@@ -4822,13 +4816,6 @@ paths:
                               latest_quote:     { type: string, example: "2026-05-13" }
                               total_quotes:     { type: integer, format: int64 }
                               currencies_count: { type: integer }
-                          market_cap:
-                            type: object
-                            required: [entries_count]
-                            properties:
-                              entries_count:     { type: integer }
-                              oldest_fetched_at: { type: string, format: date-time }
-                              newest_fetched_at: { type: string, format: date-time }
                           supply:
                             type: object
                             required: [classic_assets_with_supply, sep41_assets_with_supply]
@@ -8835,6 +8822,45 @@ paths:
 
   /signup/verify:
     get:
+      operationId: verifySignupPage
+      tags: [account]
+      security: []
+      summary: Confirmation page for the emailed signup-verification link.
+      description: |
+        The link in the verification email. Renders an HTML page
+        with a single "Confirm email" button that submits the token
+        to `POST /v1/signup/verify`; it changes nothing on its own.
+
+        Mail-security scanners (Safe Links, Mimecast, Proofpoint)
+        fetch every emailed link, so a link that consumed the token
+        would let the scanner prove ownership of the mailbox on
+        behalf of whoever signed up with the address. Only the
+        deliberate POST verifies. The page is served `no-store`,
+        `Referrer-Policy: no-referrer`, and with a CSP that only
+        lets its form submit back to this origin.
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema: { type: string }
+          description: The plaintext token from the verification email.
+      responses:
+        "200":
+          description: Confirmation page (does not consume the token).
+          content:
+            text/html:
+              schema: { type: string }
+        "400":
+          description: Missing `?token=` query parameter.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "503":
+          description: SignupVerifier not configured (Redis unavailable).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+    post:
       operationId: verifySignup
       tags: [account]
       security: []
@@ -8842,30 +8868,26 @@ paths:
       description: |
         F-1218 (codex audit-2026-05-12): closes the email-
         ownership-proof loop on `POST /v1/signup`. The signup
-        handler issues a single-use token and emails it to the
-        submitted address; this endpoint consumes the token from
-        the click-through link.
+        handler issues a single-use token and emails a link to
+        `GET /v1/signup/verify`; that page's button submits the
+        token here, which consumes it and flags the key minted at
+        signup as email-verified (what the default-on
+        `signup_require_email_verification` gate checks).
 
-        Single-use semantics via Redis GETDEL — the second
-        click on the link returns 404, the same shape as a
-        forged or expired token. Token TTL defaults to 24h to
-        match the dashboard magic-link convention.
-
-        Subsequent waves layer:
-          1. The email-send step on POST /v1/signup that
-             populates the verifier with the issued token.
-          2. An optional validator gate (operator opt-in via
-             config) that rejects unverified keys with 403.
-
-        Today this endpoint just consumes the token; the
-        success path returns the key_id so the customer's
-        dashboard / CLI can correlate the verified key.
-      parameters:
-        - name: token
-          in: query
-          required: true
-          schema: { type: string }
-          description: The plaintext token from the verification email.
+        The token is read from the form body only, never the query
+        string. Single-use semantics via Redis GETDEL — a second
+        submit returns 404, the same shape as a forged or expired
+        token. Token TTL defaults to 24h to match the dashboard
+        magic-link convention.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, description: "The plaintext token from the verification email." }
       responses:
         "200":
           description: Token consumed; email ownership confirmed.
@@ -8875,7 +8897,7 @@ paths:
                 data:
                   verified: true
                   key_id: 7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c
-                  detail: email verified; API key activated
+                  detail: email ownership confirmed; the API key minted at signup is now flagged as verified
                 as_of: '2026-07-03T09:00:00Z'
                 flags:
                   stale: false
@@ -8896,12 +8918,17 @@ paths:
                           detail:   { type: string }
                         required: [verified]
         "400":
-          description: Missing `?token=` query parameter.
+          description: Missing `token` form field, or an unreadable / oversized body.
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
         "404":
           description: Unknown / consumed / expired token.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "500":
+          description: Verification store error.
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -17189,7 +17216,7 @@ components:
             properties:
               name:  { type: string, description: "Dependency name (e.g. `postgres`, `redis`)." }
               ok:    { type: boolean, description: "True when the dependency answered its ping within the deadline." }
-              error: { type: string, description: "Failure reason; present only when `ok` is false." }
+              error: { type: string, description: "Failure reason; present only when `ok` is false. A fixed pointer to the server log, never the dependency's driver error; only a condition of this binary itself (e.g. a schema/binary mismatch) is described here." }
             required: [name, ok]
         status_root:
           type: string

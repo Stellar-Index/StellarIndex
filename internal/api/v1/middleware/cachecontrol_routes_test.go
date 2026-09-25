@@ -76,7 +76,7 @@ var defaultPolicyAllowlist = map[string]string{
 	"/v1/ledger/stream":                "SSE stream; private, no-store is correct",
 	"/v1/admin/accounts/{id}":          "operator-authenticated",
 	"/v1/admin/status-notices":         "operator-authenticated",
-	"/v1/signup/verify":                "single-use email token consumption",
+	"/v1/signup/verify":                "handler sets its own Cache-Control (no-store confirmation page)",
 }
 
 // TestPolicyForPath_EveryRegisteredGETRouteIsAdjudicated walks the GET

@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	htmltemplate "html/template"
 	"log/slog"
@@ -134,7 +135,7 @@ func (c schemaVersionChecker) Ping(ctx context.Context) error {
 		return fmt.Errorf("read schema_migrations version: %w", err)
 	}
 	if dirty && nonAtomicMigrationVersions[version] {
-		return fmt.Errorf("schema_migrations is dirty at version %d: this migration is not atomic (explicit mid-file COMMIT) and its schema state cannot be inferred — the binary must not serve against a half-migrated schema", version)
+		return readyzPublicError{fmt.Sprintf("schema_migrations is dirty at version %d: this migration is not atomic (explicit mid-file COMMIT) and its schema state cannot be inferred — the binary must not serve against a half-migrated schema", version)}
 	}
 	// Every OTHER migration runs in one implicit transaction, so a dirty
 	// flag means Postgres rolled the failed attempt back and the applied
@@ -146,7 +147,7 @@ func (c schemaVersionChecker) Ping(ctx context.Context) error {
 		effective = version - 1
 	}
 	if effective < c.expected {
-		return fmt.Errorf("schema/binary mismatch: binary expects migrations head >= %d but only %d is applied (dirty=%v) — a deploy skipped migrations or the binary was swapped ahead of them", c.expected, effective, dirty)
+		return readyzPublicError{fmt.Sprintf("schema/binary mismatch: binary expects migrations head >= %d but only %d is applied (dirty=%v) — a deploy skipped migrations or the binary was swapped ahead of them", c.expected, effective, dirty)}
 	}
 	return nil
 }
@@ -175,7 +176,7 @@ func (c schemaDirtyChecker) Ping(ctx context.Context) error {
 		return fmt.Errorf("read schema_migrations version: %w", err)
 	}
 	if dirty {
-		return fmt.Errorf("schema_migrations is dirty at version %d — run `migrate force` once confirmed; the applied schema is otherwise intact and serving continues", version)
+		return readyzPublicError{fmt.Sprintf("schema_migrations is dirty at version %d — run `migrate force` once confirmed; the applied schema is otherwise intact and serving continues", version)}
 	}
 	return nil
 }
@@ -670,7 +671,8 @@ type Server struct {
 	started      time.Time
 	// requestTimeout bounds every non-streaming request's context via
 	// the RequestTimeout middleware (see Handler). Defaulted in New to
-	// [defaultRequestTimeout] when Options.RequestTimeout is unset. The
+	// [defaultRequestTimeout] when Options.RequestTimeout is unset; zero
+	// (middleware omitted) only under Options.DisableRequestTimeout. The
 	// durable chokepoint behind C3-1/C3-2/P1 (audit-2026-07-16) — every
 	// handler inherits a deadline even when it forgets its own.
 	requestTimeout time.Duration
@@ -888,7 +890,7 @@ type Options struct {
 	// proof flow added in F-1218 (codex audit-2026-05-12). The
 	// signup handler issues a single-use token via
 	// `Reserve(token, keyID, ttl)`; the
-	// `GET /v1/signup/verify?token=…` handler consumes it via
+	// `POST /v1/signup/verify` handler consumes it via
 	// `Consume(token)` and (in subsequent waves) flips the key
 	// to a verified state. Nil disables the verify endpoint —
 	// it returns 503 with a clear "verification not configured"
@@ -1675,6 +1677,11 @@ type Options struct {
 	// Streaming (SSE) endpoints are exempt — they own their lifecycle
 	// through client-disconnect ctx cancellation.
 	RequestTimeout time.Duration
+	// DisableRequestTimeout omits the RequestTimeout middleware entirely,
+	// overriding RequestTimeout. Set from an explicit
+	// api.request_timeout = 0, which is documented to disable it; a
+	// separate flag because a zero RequestTimeout means "unset".
+	DisableRequestTimeout bool
 }
 
 // New constructs a Server and mounts all v1 routes.
@@ -1806,7 +1813,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		publicRoutes:     middleware.NewPublicRoutes(),
 		started:          time.Now().UTC(),
 		pegDeclaredAt:    timeOr(opts.PegDeclaredAt, time.Now().UTC()),
-		requestTimeout:   durationOr(opts.RequestTimeout, defaultRequestTimeout),
+		requestTimeout:   requestTimeoutFor(opts),
 	}
 	applyProtocolOptions(s, opts)
 	s.explorerHandler = explorerHandlerFor(s, opts, logger)
@@ -1894,6 +1901,16 @@ func statusServicesOr(names []string) []string {
 		return append([]string(nil), defaultStatusServices...)
 	}
 	return out
+}
+
+// requestTimeoutFor resolves the blanket request deadline: 0 (middleware
+// omitted) only when the operator explicitly disabled it, so a zero-value
+// Options keeps the default bound on.
+func requestTimeoutFor(opts Options) time.Duration {
+	if opts.DisableRequestTimeout {
+		return 0
+	}
+	return durationOr(opts.RequestTimeout, defaultRequestTimeout)
 }
 
 // durationOr returns d when it is positive, else fallback. Used to back
@@ -2563,11 +2580,11 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// creates a free-tier platform account + first API key in one
 	// unauthenticated POST. Shares /v1/signup's per-IP throttle.
 	s.handlePublic("POST /v1/register", s.handleRegister)
-	// F-1218 (codex audit-2026-05-12): email-ownership-proof
-	// flow. The signup handler issues a token (subsequent
-	// wave) and emails it; this endpoint consumes the token
-	// from the click-through link.
-	s.handlePublic("GET /v1/signup/verify", s.handleSignupVerify)
+	// F-1218: email-ownership proof. The emailed GET link only
+	// renders a confirmation page (link scanners fetch it); the
+	// page's POST consumes the token.
+	s.handlePublic("GET /v1/signup/verify", s.handleSignupVerifyPage)
+	s.handlePublic("POST /v1/signup/verify", s.handleSignupVerify)
 
 	// Customer-dashboard magic-link auth — POST /v1/auth/login +
 	// GET /v1/auth/callback + POST /v1/auth/logout. Mounted only
@@ -2752,11 +2769,7 @@ func (s *Server) computeReadyz() (int, []byte) {
 			// the right degradation for a readiness check, and the next
 			// round re-probes from scratch.
 			defer worker.Recover(s.logger, "api-readyz-check")
-			err := c.Ping(ctx)
-			r := checkResult{Name: c.Name(), OK: err == nil}
-			if err != nil {
-				r.Error = err.Error()
-			}
+			r := s.runReadyCheck(ctx, c)
 			results[i] = r // distinct indices — no mutex needed
 
 			// Publish the outcome as an alertable gauge. The check
@@ -2819,6 +2832,38 @@ func (s *Server) computeReadyz() (int, []byte) {
 		return render(http.StatusOK, Flags{Stale: true})
 	}
 	return render(http.StatusOK, Flags{})
+}
+
+// readyCheckFailedDetail is the FIXED checks[].error text /v1/readyz
+// serves for a failed ping. Never the driver error: readyz is
+// unauthenticated and exempt from the anonymous rate limiter, and a
+// dependency's error names its endpoint (pgx adds user and database) —
+// the same reason livezLakeUnreadyDetail exists. The real error goes to
+// the server log.
+const readyCheckFailedDetail = "ping failed — see the API server log for the underlying error"
+
+// readyzPublicError is a Ping failure whose text was written for the
+// public readyz body: it names a condition of this binary (never an
+// endpoint, credential or driver output). Only this type is echoed;
+// every other error is served as [readyCheckFailedDetail].
+type readyzPublicError struct{ msg string }
+
+func (e readyzPublicError) Error() string { return e.msg }
+
+// runReadyCheck pings one dependency, logging the raw error server-side
+// and returning only a publishable detail.
+func (s *Server) runReadyCheck(ctx context.Context, c ReadyChecker) checkResult {
+	err := c.Ping(ctx)
+	r := checkResult{Name: c.Name(), OK: err == nil}
+	if err != nil {
+		s.logger.Warn("readyz: dependency ping failed", "check", c.Name(), "critical", c.Critical(), "err", err)
+		r.Error = readyCheckFailedDetail
+		var pub readyzPublicError
+		if errors.As(err, &pub) {
+			r.Error = pub.msg
+		}
+	}
+	return r
 }
 
 // livezLakeTTL bounds how long one lake-ping round is reused. Same
