@@ -1387,7 +1387,7 @@ func (o *Orchestrator) decideBucket(
 	// computed below from `tradeUSD`, so the pre-filter scalar isn't
 	// the gate input anymore. Kept on the return value for backwards
 	// compatibility with future callers + lint readability.
-	trades, _, tradeUSD, err := o.fetchForTarget(ctx, pair, from, bucketEnd)
+	trades, _, tradeUSD, proxied, err := o.fetchForTarget(ctx, pair, from, bucketEnd)
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s %v: %w", pair.String(), window, err)
 	}
@@ -1545,7 +1545,7 @@ func (o *Orchestrator) decideBucket(
 		// which is how a dust pair stays out of the cross-rate graph
 		// (INV-11).
 		edge: newEdgeQuote(pair, vwap, conf, confOK, trades),
-		leg:  o.newLegRef(pair, vwap, trades),
+		leg:  o.newLegRef(pair, vwap, trades, proxied),
 	}
 	if err := o.publishDirect(ctx, pair, window, pub, bucketEnd, now); err != nil {
 		return nil, err
@@ -2082,6 +2082,10 @@ func distinctSourceCount(trades []canonical.Trade) int {
 // aborting the whole window — a single connector misbehaving at
 // the Timescale layer shouldn't black out an otherwise-healthy
 // aggregation target.
+//
+// `proxied` holds the IDs of the trades rewritten from a backer pair,
+// so the published leg can report how much of it was priced in a
+// stablecoin at par (see [legRef]'s proxyShare). nil when the proxy is off.
 // fetchTradesDetectTruncation wraps the store fetch with the per-query
 // cap and bumps AggregatorWindowTruncatedTotal (+ a WARN) when the
 // returned row count hits the cap — i.e. the window held more trades
@@ -2113,24 +2117,25 @@ func (o *Orchestrator) fetchForTarget(
 	ctx context.Context,
 	target canonical.Pair,
 	from, to time.Time,
-) (trades []canonical.Trade, usdVolume float64, tradeUSD map[string]float64, err error) {
+) (trades []canonical.Trade, usdVolume float64, tradeUSD map[string]float64, proxied map[string]struct{}, err error) {
 	if !o.cfg.EnableStablecoinFiatProxy {
 		t, err := o.fetchTradesDetectTruncation(ctx, target, target, from, to)
 		if err != nil {
-			return nil, 0, nil, err
+			return nil, 0, nil, nil, err
 		}
 		total, perTrade := usdVolumeForPairPerTrade(target, t, o.cfg.USDPeggedClassicAssets, o.cfg.USDPeggedSorobanAssets)
-		return t, total, perTrade, nil
+		return t, total, perTrade, nil, nil
 	}
 
 	sources, err := aggregate.ExpandTargetPairWithClassicPegs(target, o.cfg.USDPeggedClassicAssets)
 	if err != nil {
-		return nil, 0, nil, fmt.Errorf("expand target %s: %w", target.String(), err)
+		return nil, 0, nil, nil, fmt.Errorf("expand target %s: %w", target.String(), err)
 	}
 
 	var merged []canonical.Trade
 	var sumUSD float64
 	tradeUSD = map[string]float64{}
+	proxied = map[string]struct{}{}
 	for _, src := range sources {
 		batch, ferr := o.fetchTradesDetectTruncation(ctx, target, src, from, to)
 		if ferr != nil {
@@ -2155,10 +2160,11 @@ func (o *Orchestrator) fetchForTarget(
 		}
 		for i := range batch {
 			batch[i].Pair = target
+			proxied[batch[i].ID()] = struct{}{}
 			merged = append(merged, batch[i])
 		}
 	}
-	return merged, sumUSD, tradeUSD, nil
+	return merged, sumUSD, tradeUSD, proxied, nil
 }
 
 // usdVolumeForPair was the F-1213 entry point that returned only

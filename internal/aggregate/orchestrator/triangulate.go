@@ -266,6 +266,8 @@ const rerouteMinConfidence = 0.5
 // covers both "no route clears min_route_confidence" AND (R3) "a
 // leg-substitution reroute did not clear rerouteMinConfidence": in both
 // the composite is flagged but NOT published over the direct price.
+// "proxy_pivot" does the same when a priced leg's stablecoin-proxy prints
+// disagree with its own-quote prints ([Orchestrator.refuseProxyPivot]).
 //
 // R3 — when a configured leg is DRY (st.legDry) but the router still
 // reaches the target, the composite came from a SUBSTITUTE path. The
@@ -369,6 +371,11 @@ func (o *Orchestrator) routeTarget(
 		})
 		return "low_confidence"
 	}
+	if o.refuseProxyPivot(ctx, chain, window, compositeMeta{
+		PathCount: pathCount, CombinedConfidence: combinedConf, Diverged: diverged, Rerouted: rerouted,
+	}) {
+		return outcomeProxyPivot
+	}
 	return o.publishComposite(ctx, chain, window, composite, pathCount, corroboration, combinedConf, diverged, rerouted)
 }
 
@@ -409,13 +416,13 @@ func (o *Orchestrator) publishComposite(
 	key := cachekeys.VWAP(chain.Target.Base, chain.Target.Quote, window)
 	ttl := cachekeys.VWAPTTL(window)
 	metaKey := cachekeys.VWAPCompositeMeta(chain.Target.Base, chain.Target.Quote, window)
-	metaBody, err := json.Marshal(o.withCorroborationBasis(chain.Target, window, compositeMeta{
+	metaBody, err := json.Marshal(o.withPivotComposition(chain, window, o.withCorroborationBasis(chain.Target, window, compositeMeta{
 		PathCount:          pathCount,
 		CombinedConfidence: combinedConf,
 		LowConfidence:      false,
 		Diverged:           diverged,
 		Rerouted:           rerouted,
-	}))
+	})))
 	if err != nil {
 		o.logger.Warn("triangulation: composite meta encode failed — refusing to publish",
 			"chain", chain.Target.String(), "err", err)
@@ -586,6 +593,59 @@ type compositeMeta struct {
 	// agreement was. Never a source count for the target itself.
 	CorroborationBasis  string         `json:"corroboration_basis,omitempty"`
 	CompositeLegSources map[string]int `json:"composite_leg_sources,omitempty"`
+
+	// PivotProxyShare maps each priced chain leg that took prints through
+	// the stablecoin-fiat proxy to the share of its survivor base volume
+	// priced in a stablecoin at par, not in the leg's own quote asset.
+	// PivotSurfaceRefusal names the leg and why the composite was NOT
+	// published (outcome proxy_pivot): its stablecoin and own-quote
+	// prints disagree, so the pivot is not the USD the FX leg multiplies.
+	PivotProxyShare     map[string]float64 `json:"pivot_proxy_share,omitempty"`
+	PivotSurfaceRefusal string             `json:"pivot_surface_refusal,omitempty"`
+}
+
+// outcomeProxyPivot is the triangulation outcome for a composite refused
+// because a priced leg's stablecoin-proxy prints disagree with its
+// own-quote prints beyond the leg-dispersion bound: the direct serves.
+const outcomeProxyPivot = "proxy_pivot"
+
+// pivotComposition reports, for this tick's publish of each priced chain
+// leg, the stablecoin-proxy share of its volume and the first leg whose
+// two quote surfaces disagree ("" when none do). A leg not published
+// this tick carries no composition and is not judged here.
+func (o *Orchestrator) pivotComposition(chain TriangulationChain, window time.Duration) (shares map[string]float64, refusal string) {
+	maxBps := o.cfg.CompositeReference.withDefaults().LegDispersionBps
+	for _, leg := range chain.Legs {
+		lr, ok := o.tickLegRefs[window][leg.String()]
+		if !ok || isFXLeg(leg) || lr.proxyShare <= 0 {
+			continue
+		}
+		if shares == nil {
+			shares = make(map[string]float64, len(chain.Legs))
+		}
+		shares[leg.String()] = lr.proxyShare
+		if why := lr.quoteSurfaceRefusal(maxBps); why != "" && refusal == "" {
+			refusal = leg.String() + " " + why
+		}
+	}
+	return shares, refusal
+}
+
+// refuseProxyPivot withholds a composite whose pivot leg is two
+// different USDs — real-USD prints and stablecoin prints taken at par
+// that disagree — rather than let it overwrite the direct print. Writes
+// the flags for Step 3 and reports whether it refused.
+func (o *Orchestrator) refuseProxyPivot(ctx context.Context, chain TriangulationChain, window time.Duration, meta compositeMeta) bool {
+	shares, refusal := o.pivotComposition(chain, window)
+	if refusal == "" {
+		return false
+	}
+	o.logger.Warn("triangulation: pivot leg's stablecoin-proxy prints disagree with its own-quote prints — direct price serves",
+		"chain", chain.Target.String(), "window", window.String(), "refusal", refusal)
+	meta.PivotProxyShare = shares
+	meta.PivotSurfaceRefusal = refusal
+	o.writeCompositeMeta(ctx, chain.Target, window, meta)
+	return true
 }
 
 // withCorroborationBasis stamps this tick's composite-reference reading
@@ -599,6 +659,13 @@ func (o *Orchestrator) withCorroborationBasis(target canonical.Pair, window time
 	if len(ref.legSources) > 0 {
 		meta.CompositeLegSources = ref.legSources
 	}
+	return meta
+}
+
+// withPivotComposition stamps the chain legs' stablecoin-proxy share onto
+// a composite_meta before it is written.
+func (o *Orchestrator) withPivotComposition(chain TriangulationChain, window time.Duration, meta compositeMeta) compositeMeta {
+	meta.PivotProxyShare, _ = o.pivotComposition(chain, window)
 	return meta
 }
 

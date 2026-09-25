@@ -679,17 +679,21 @@ func TestTick_StablecoinExpansion_FetchesAllBackerPairsAndCollapses(t *testing.T
 	usd, _ := canonical.NewFiatAsset("USD")
 	targetPair, _ := canonical.NewPair(xlm, usd)
 
+	// The two backer legs differ in price, weight AND amount scale, so a
+	// dropped leg (0.20 or 0.30), an equal-weighted merge (0.25) or a
+	// merge without per-source scale normalisation (29/130 ≈ 0.2231) each
+	// miss the exact volume-weighted 0.275.
 	store := &mockStore{
 		perPair: map[string][]canonical.Trade{
-			// 1 XLM @ 0.20 USDT.
+			// 1 XLM @ 0.20 USDT on an 8dp venue.
 			"crypto:XLM/crypto:USDT": {
 				backerTrade(t, "USDT", "binance",
 					big.NewInt(100_000_000), big.NewInt(20_000_000), now.Add(-2*time.Minute)),
 			},
-			// 1 XLM @ 0.20 USDC (same equal-weight price).
+			// 3 XLM @ 0.30 USDC on SDEX (7dp).
 			"crypto:XLM/crypto:USDC": {
-				backerTrade(t, "USDC", "coinbase",
-					big.NewInt(100_000_000), big.NewInt(20_000_000), now.Add(-1*time.Minute)),
+				backerTrade(t, "USDC", "sdex",
+					big.NewInt(30_000_000), big.NewInt(9_000_000), now.Add(-1*time.Minute)),
 			},
 			// direct XLM/fiat:USD, no FX trades populated here.
 		},
@@ -726,8 +730,9 @@ func TestTick_StablecoinExpansion_FetchesAllBackerPairsAndCollapses(t *testing.T
 	if err != nil {
 		t.Fatalf("miniredis Get %q: %v", key, err)
 	}
-	if val[:4] != "0.20" {
-		t.Errorf("collapsed VWAP = %q want prefix 0.20", val)
+	// (1×0.20 + 3×0.30) / 4 XLM.
+	if val != "0.275000000000" {
+		t.Errorf("collapsed VWAP = %q, want 0.275000000000 (both backer legs, volume-weighted)", val)
 	}
 
 	// No backer-pair-keyed Redis entry should exist — the expansion
