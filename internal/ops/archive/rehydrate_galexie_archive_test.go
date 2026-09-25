@@ -241,6 +241,46 @@ func TestRehydrateFiles_AlreadyInHotIsSkipped(t *testing.T) {
 	}
 }
 
+// TestRehydrateExitError_AllMissingFailsClosed: CA2-A20-correct-7 —
+// a run where every requested path is missing in cold (the symptom
+// of a hot/cold schema mismatch, where every hot-shaped key 404s
+// against cold) must exit non-zero, not report a clean run.
+func TestRehydrateExitError_AllMissingFailsClosed(t *testing.T) {
+	err := rehydrateExitError(5, 5, 0)
+	if err == nil {
+		t.Fatal("expected a non-nil error when every requested path is missing in cold, got nil (exit 0)")
+	}
+}
+
+// TestRehydrateExitError_PartialMissingIsNotAFailure: `missing` on
+// its own, short of the full set, is a legitimate diagnostic signal
+// (a genuine, expected archive gap) and must NOT fail the run.
+func TestRehydrateExitError_PartialMissingIsNotAFailure(t *testing.T) {
+	err := rehydrateExitError(5, 2, 0)
+	if err != nil {
+		t.Fatalf("partial missing must not fail the run, got: %v", err)
+	}
+}
+
+// TestRehydrateExitError_ErrorsAlwaysFailRegardlessOfMissing:
+// existing errs>0 behaviour is preserved.
+func TestRehydrateExitError_ErrorsAlwaysFailRegardlessOfMissing(t *testing.T) {
+	err := rehydrateExitError(5, 0, 1)
+	if err == nil {
+		t.Fatal("expected a non-nil error when errs > 0, got nil")
+	}
+}
+
+// TestRehydrateExitError_EmptyRangeIsNotAFailure: an empty requested
+// range (from==to with no files, or a zero-length paths slice) must
+// not trip the all-missing guard via a 0==0 comparison.
+func TestRehydrateExitError_EmptyRangeIsNotAFailure(t *testing.T) {
+	err := rehydrateExitError(0, 0, 0)
+	if err != nil {
+		t.Fatalf("empty range must not fail, got: %v", err)
+	}
+}
+
 func TestParseRehydrateFlags(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

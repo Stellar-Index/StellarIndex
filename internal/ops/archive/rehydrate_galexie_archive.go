@@ -105,20 +105,16 @@ func rehydrateGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,fu
 	}
 	defer func() { _ = cold.Close() }()
 
-	// Schema discovery via hot — both tiers must publish compatible
-	// schemas (Galexie's manifest is bucket-local but the LedgersPerFile
-	// + FilesPerPartition + extension match across mirrors of the same
-	// network). Using hot is the safer side: hot is where we write.
-	schema, err := datastore.LoadSchema(rootCtx, hot, datastore.DataStoreConfig{
-		Type: "S3",
-		Params: map[string]string{
-			"destination_bucket_path": cfg.Storage.S3BucketArchive,
-			"region":                  cfg.Storage.S3Region,
-			"endpoint_url":            cfg.Storage.S3Endpoint,
-		},
-	})
+	// CA2-A20-correct-7: both tiers' schemas must agree before any
+	// path is built. rehydratePaths derives every object key from
+	// ONE schema (hot's); if cold's actual layout uses a different
+	// LedgersPerFile/FilesPerPartition/extension, every key handed to
+	// cold.Exists is simply wrong-shaped and 404s — indistinguishable
+	// from a genuine archive gap. Mirrors the hard-fail-on-mismatch
+	// guard in internal/ledgerstream/ledgerstream.go (INT-01).
+	schema, err := loadAndVerifyRehydrateSchemas(rootCtx, hot, cold, cfg.Storage)
 	if err != nil {
-		return fmt.Errorf("load schema (hot): %w", err)
+		return err
 	}
 
 	paths := rehydratePaths(schema, opts.from, opts.to)
@@ -145,10 +141,68 @@ func rehydrateGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,fu
 		"elapsed", time.Since(start).String(),
 		"dry_run", opts.dryRun,
 	)
+	return rehydrateExitError(len(paths), missing, errs)
+}
+
+// rehydrateExitError decides whether a completed rehydrate run should
+// exit non-zero.
+//
+// CA2-A20-correct-7: `missing` alone must NOT fail the run — it's a
+// legitimate diagnostic signal (a genuine archive gap, or a normal
+// spot-check outcome) that the previous behaviour correctly left
+// exit-0. But every single requested file missing, with zero
+// copied/skipped/errored, means nothing in the range was found on
+// cold at all — the exact fully-mismatched-schema symptom (every
+// hot-shaped key 404s against a differently-partitioned cold
+// mirror), not a sparse archive. Previously this returned nil (exit
+// 0) unconditionally whenever errs was 0, silently reporting success
+// on a run that copied nothing.
+func rehydrateExitError(totalPaths, missing, errs int) error {
 	if errs > 0 {
 		return fmt.Errorf("rehydrate finished with %d errors", errs)
 	}
+	if totalPaths > 0 && missing == totalPaths {
+		return fmt.Errorf("rehydrate found ALL %d files missing in cold — likely a cold-tier misconfiguration or mirror mismatch, not a genuine gap", missing)
+	}
 	return nil
+}
+
+// loadAndVerifyRehydrateSchemas loads hot's schema (used to build
+// every object key rehydratePaths generates) and cold's, and
+// hard-fails on any shape mismatch rather than silently letting
+// hot-shaped keys 404 against a differently-partitioned cold tier.
+func loadAndVerifyRehydrateSchemas(ctx context.Context, hot, cold datastore.DataStore, storage config.StorageConfig) (datastore.DataStoreSchema, error) {
+	hotSchema, err := datastore.LoadSchema(ctx, hot, datastore.DataStoreConfig{
+		Type: "S3",
+		Params: map[string]string{
+			"destination_bucket_path": storage.S3BucketArchive,
+			"region":                  storage.S3Region,
+			"endpoint_url":            storage.S3Endpoint,
+		},
+	})
+	if err != nil {
+		return datastore.DataStoreSchema{}, fmt.Errorf("load schema (hot): %w", err)
+	}
+	coldSchema, err := datastore.LoadSchema(ctx, cold, datastore.DataStoreConfig{
+		Type: "S3",
+		Params: map[string]string{
+			"destination_bucket_path": storage.S3ColdBucketArchive,
+			"region":                  storage.S3ColdRegion,
+			"endpoint_url":            storage.S3ColdEndpoint,
+		},
+	})
+	if err != nil {
+		return datastore.DataStoreSchema{}, fmt.Errorf("load schema (cold): %w", err)
+	}
+	if hotSchema.LedgersPerFile != coldSchema.LedgersPerFile ||
+		hotSchema.FilesPerPartition != coldSchema.FilesPerPartition ||
+		hotSchema.FileExtension != coldSchema.FileExtension {
+		return datastore.DataStoreSchema{}, fmt.Errorf(
+			"cold datastore schema (ledgers_per_file=%d files_per_partition=%d file_extension=%q) differs from hot's (ledgers_per_file=%d files_per_partition=%d file_extension=%q) — rehydrate would issue hot-shaped object keys to a differently-partitioned cold store and always miss",
+			coldSchema.LedgersPerFile, coldSchema.FilesPerPartition, coldSchema.FileExtension,
+			hotSchema.LedgersPerFile, hotSchema.FilesPerPartition, hotSchema.FileExtension)
+	}
+	return hotSchema, nil
 }
 
 // rehydrateStore is the seam rehydrateFiles depends on — the slice of
