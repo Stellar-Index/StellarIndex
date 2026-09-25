@@ -44,9 +44,10 @@ import (
 //	native/ZINV (native base) vwap 0.5             → ZINV = 2 XLM = 0.80 USD
 //	ZDIR/native + native/ZDIR (both directions, inverted row fresher)
 //
-// ZDIR is the byte-identity guard: an asset that ALREADY priced through a
-// base-side row must keep that exact value after the inverted arm lands
-// (the inverted row is fresher and disagrees — it must not win).
+// ZDIR's two directions disagree and the inverted row is fresher. The
+// headline price (listing, detail) takes the newest traded minute in
+// either direction, so the inverted row wins there; the price-history
+// series still prefer a bucket's base-side row.
 func TestXLMSacAsBase_PriceableThroughEveryPath(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -162,7 +163,7 @@ func TestXLMSacAsBase_PriceableThroughEveryPath(t *testing.T) {
 	}
 
 	// ZDIR: base-side row at -40m (2.0 XLM), inverted row at -10m that
-	// says 1.5 XLM. Base-side must keep winning → 0.80 USD, not 0.60.
+	// says 1.5 XLM. The headline price is the newer minute → 0.60 USD.
 	add("sdex", now.Add(-40*time.Minute), mustPair(zdir, xlm), 1_000_000_000, 2_000_000_000)
 	add("aquarius", now.Add(-10*time.Minute), mustPair(xlm, zdir), 1_500_000_000, 1_000_000_000)
 	// ZINV: ONLY the native-as-base direction. 100 XLM → 50 ZINV
@@ -287,7 +288,7 @@ func TestXLMSacAsBase_PriceableThroughEveryPath(t *testing.T) {
 		for _, tc := range []struct{ id, want string }{
 			{cbijID, "0.1000000000"},
 			{zinv.String(), "0.8000000000"},
-			{zdir.String(), "0.8000000000"},
+			{zdir.String(), "0.6000000000"},
 		} {
 			row, ok := byID[tc.id]
 			if !ok {
@@ -402,7 +403,7 @@ func TestXLMSacAsBase_PriceableThroughEveryPath(t *testing.T) {
 		for _, tc := range []struct{ id, want string }{
 			{cbijID, "0.1000000000"},
 			{zinv.String(), "0.8000000000"},
-			{zdir.String(), "0.8000000000"},
+			{zdir.String(), "0.6000000000"},
 		} {
 			row, err := store.GetAssetBySlug(ctx, tc.id)
 			if errors.Is(err, sql.ErrNoRows) {
