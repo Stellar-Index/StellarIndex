@@ -94,9 +94,22 @@ func dexRawWindowOK(source string, windowDays int) bool {
 
 // ─── query builders ──────────────────────────────────────────────────────
 //
-// Every windowed query binds source=$1 and the window=$2::interval; the
-// since-totals query binds source=$1 only (it is deliberately unwindowed
-// over the materialized-only CAGG — 0.23s for sdex's 3.13M rows on r1).
+// Every windowed query binds source=$1 and the window=$2::interval and
+// bounds its time column through dexWindowSQL; the since-totals query binds
+// source=$1 only (it is deliberately unwindowed over the materialized-only
+// CAGG — 0.23s for sdex's 3.13M rows on r1).
+
+// dexWindowSQL is the window predicate on col. 24h is a rolling 24 hours;
+// longer windows are the N complete UTC days before today, because the
+// daily CAGG labels a day by its 00:00 start and never materializes today —
+// a rolling cut there sums N-1 days under an "(Nd)" label. Raw-trade
+// figures take the same bounds so one block describes one window.
+func dexWindowSQL(windowDays int, col string) string {
+	if windowDays == 1 {
+		return col + " > now() - $2::interval"
+	}
+	return col + " >= " + completeDayCutoffSQL + " - $2::interval AND " + col + " < " + completeDayCutoffSQL
+}
 
 // ─── the source_volume_1h read contract ──────────────────────────────────
 //
@@ -156,13 +169,12 @@ func dexActivitySeriesQuery(windowDays int) string {
 	if windowDays == 1 {
 		return dexXLMUSDVwapCTE + `
 			SELECT to_char(bucket, 'YYYY-MM-DD"T"HH24:00'), (` + dexXLMLegUSD + `)::text, COALESCE(sum(trade_count),0)::text
-			FROM source_volume_1h WHERE source = $1 AND bucket > now() - $2::interval
+			FROM source_volume_1h WHERE source = $1 AND ` + dexWindowSQL(windowDays, "bucket") + `
 			GROUP BY 1 ORDER BY 1 ASC`
 	}
 	return `
 		SELECT to_char(bucket, 'YYYY-MM-DD'), COALESCE(sum(vol),0)::text, COALESCE(sum(trades),0)::text
-		FROM dex_volume_by_pair_1d WHERE source = $1 AND bucket > now() - $2::interval` +
-		completeDaysOnly(windowDays, "bucket") + `
+		FROM dex_volume_by_pair_1d WHERE source = $1 AND ` + dexWindowSQL(windowDays, "bucket") + `
 		GROUP BY 1 ORDER BY 1 ASC`
 }
 
@@ -180,15 +192,15 @@ func dexWindowKPIQuery(windowDays int) string {
 		return dexXLMUSDVwapCTE + `
 			SELECT round(` + dexXLMLegUSD + `,2)::text, COALESCE(sum(trade_count),0)::text,
 			       ` + dexXLMLegUnvalued + `
-			FROM source_volume_1h WHERE source = $1 AND bucket > now() - $2::interval`
+			FROM source_volume_1h WHERE source = $1 AND ` + dexWindowSQL(windowDays, "bucket")
 	}
 	return `
 		SELECT round(COALESCE(sum(vol),0),2)::text, COALESCE(sum(trades),0)::text,
 		       (SELECT count(*) FROM (
 		          SELECT 1 FROM dex_volume_by_pair_1d
-		           WHERE source = $1 AND bucket > now() - $2::interval
+		           WHERE source = $1 AND ` + dexWindowSQL(windowDays, "bucket") + `
 		           GROUP BY ` + marketKeySQL + `) q)::text
-		FROM dex_volume_by_pair_1d WHERE source = $1 AND bucket > now() - $2::interval`
+		FROM dex_volume_by_pair_1d WHERE source = $1 AND ` + dexWindowSQL(windowDays, "bucket")
 }
 
 // dexRawKPIQuery returns (unique_takers, priced_trades, active_pairs,
@@ -197,12 +209,12 @@ func dexWindowKPIQuery(windowDays int) string {
 // (ADR-0003; NULL-usd trades are excluded from both sides), rounded to
 // cents. aquarius 90d (the heaviest AMM: 1.0M rows) 1.0s; sdex gated to
 // ≤7d by dexRawWindowOK.
-func dexRawKPIQuery() string {
+func dexRawKPIQuery(windowDays int) string {
 	return `
 		SELECT count(DISTINCT taker)::text, count(usd_volume)::text,
 		       count(DISTINCT (` + marketKeySQL + `))::text,
 		       COALESCE(round(sum(usd_volume) / NULLIF(count(usd_volume),0), 2), 0)::text
-		FROM trades WHERE source = $1 AND ts > now() - $2::interval`
+		FROM trades WHERE source = $1 AND ` + dexWindowSQL(windowDays, "ts")
 }
 
 // dexTradersSeriesQuery returns the per-bucket unique-taker series from
@@ -213,8 +225,7 @@ func dexTradersSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
 		SELECT to_char(date_trunc('` + trunc + `', ts), '` + format + `'), count(DISTINCT taker)::text
-		FROM trades WHERE source = $1 AND ts > now() - $2::interval AND taker IS NOT NULL` +
-		completeDaysOnly(windowDays, "ts") + `
+		FROM trades WHERE source = $1 AND ` + dexWindowSQL(windowDays, "ts") + ` AND taker IS NOT NULL
 		GROUP BY 1 ORDER BY 1 ASC`
 }
 
@@ -230,12 +241,12 @@ func dexPairBreakdownQuery(windowDays int) string {
 	if windowDays == 1 {
 		p = `SELECT base_asset, quote_asset, COALESCE(sum(usd_volume),0) AS vol, count(*) AS n
 		    FROM trades
-		   WHERE source = $1 AND ts > now() - $2::interval
+		   WHERE source = $1 AND ` + dexWindowSQL(windowDays, "ts") + `
 		   GROUP BY 1, 2`
 	} else {
 		p = `SELECT base_asset, quote_asset, COALESCE(sum(vol),0) AS vol, sum(trades) AS n
 		    FROM dex_volume_by_pair_1d
-		   WHERE source = $1 AND bucket > now() - $2::interval
+		   WHERE source = $1 AND ` + dexWindowSQL(windowDays, "bucket") + `
 		   GROUP BY 1, 2`
 	}
 	return `
@@ -260,7 +271,7 @@ func dexTopPairsSeriesQuery(windowDays int) string {
 			WITH p AS (
 			  SELECT base_asset, quote_asset, date_trunc('hour', ts) AS bucket, COALESCE(sum(usd_volume),0) AS vol
 			    FROM trades
-			   WHERE source = $1 AND ts > now() - $2::interval
+			   WHERE source = $1 AND ` + dexWindowSQL(windowDays, "ts") + `
 			   GROUP BY 1, 2, 3),
 			 top AS (
 			  SELECT base_asset, quote_asset, sum(vol) AS total
@@ -274,12 +285,11 @@ func dexTopPairsSeriesQuery(windowDays int) string {
 		WITH top AS (
 		  SELECT base_asset, quote_asset, sum(vol) AS total
 		    FROM dex_volume_by_pair_1d
-		   WHERE source = $1 AND bucket > now() - $2::interval
+		   WHERE source = $1 AND ` + dexWindowSQL(windowDays, "bucket") + `
 		   GROUP BY 1, 2 ORDER BY total DESC NULLS LAST LIMIT 5)
 		SELECT t.base_asset, t.quote_asset, to_char(t.bucket, 'YYYY-MM-DD'), COALESCE(t.vol,0)::text
 		FROM dex_volume_by_pair_1d t JOIN top USING (base_asset, quote_asset)
-		WHERE t.source = $1 AND t.bucket > now() - $2::interval` +
-		completeDaysOnly(windowDays, "t.bucket") + `
+		WHERE t.source = $1 AND ` + dexWindowSQL(windowDays, "t.bucket") + `
 		ORDER BY top.total DESC NULLS LAST, t.base_asset, t.quote_asset, t.bucket ASC`
 }
 
@@ -292,7 +302,7 @@ func dexTopPairsTableQuery(windowDays int) string {
 			SELECT base_asset, quote_asset,
 			       count(*)::text, round(COALESCE(sum(usd_volume),0),2)::text, COALESCE(sum(base_amount),0)::text
 			  FROM trades
-			 WHERE source = $1 AND ts > now() - $2::interval
+			 WHERE source = $1 AND ` + dexWindowSQL(windowDays, "ts") + `
 			 GROUP BY base_asset, quote_asset
 			 ORDER BY sum(usd_volume) DESC NULLS LAST, count(*) DESC LIMIT 25`
 	}
@@ -300,7 +310,7 @@ func dexTopPairsTableQuery(windowDays int) string {
 		SELECT base_asset, quote_asset,
 		       COALESCE(sum(trades),0)::text, round(COALESCE(sum(vol),0),2)::text, COALESCE(sum(base_vol),0)::text
 		  FROM dex_volume_by_pair_1d
-		 WHERE source = $1 AND bucket > now() - $2::interval
+		 WHERE source = $1 AND ` + dexWindowSQL(windowDays, "bucket") + `
 		 GROUP BY base_asset, quote_asset
 		 ORDER BY sum(vol) DESC NULLS LAST, sum(trades) DESC LIMIT 25`
 }
@@ -309,11 +319,11 @@ func dexTopPairsTableQuery(windowDays int) string {
 // from raw trades (per-trade rows exist nowhere else). Amounts stay
 // per-asset base-unit NUMERIC strings; ordering is on the raw usd_volume.
 // 0.26s on aquarius 90d / sdex 24h; sdex gated to ≤7d by dexRawWindowOK.
-func dexLargestTradesQuery() string {
+func dexLargestTradesQuery(windowDays int) string {
 	return `
 		SELECT base_asset, quote_asset, base_amount::text, quote_amount::text,
 		       round(usd_volume,2)::text, tx_hash, to_char(ts, 'YYYY-MM-DD')
-		FROM trades WHERE source = $1 AND ts > now() - $2::interval AND usd_volume IS NOT NULL
+		FROM trades WHERE source = $1 AND ` + dexWindowSQL(windowDays, "ts") + ` AND usd_volume IS NOT NULL
 		ORDER BY usd_volume DESC LIMIT 10`
 }
 
@@ -422,6 +432,13 @@ func dexUSDValuationNote(windowDays int, xlmUnvalued string) string {
 	return "USD figures are sums of the ingest-time trades.usd_volume valuation only — never ad-hoc pricing. Trades whose quote never resolved to a USD price are excluded from USD sums and averages but still count toward trade totals."
 }
 
+// dexCompleteDaysNote discloses the >1d window (see dexWindowSQL) and the
+// rollup's refresh lag: migration 0064's policy (end_offset 1h, hourly)
+// materializes a finished day only after 01:00 UTC.
+func dexCompleteDaysNote(windowDays int) string {
+	return fmt.Sprintf("Every (%dd) figure covers the %d complete UTC days before today; today's partial day is excluded. The daily rollup behind USD volume, trades, active pairs, the pair breakdown and the top-pairs chart and table adds a finished day within about two hours of 00:00 UTC, so until then those figures may not yet include yesterday.", windowDays, windowDays)
+}
+
 // bespokeDEX builds the DEX/AMM bespoke block. See the file doc for the
 // three data tiers and the honesty rules each sub-part encodes.
 func (s *Store) bespokeDEX(ctx context.Context, source string, windowDays int) (*BespokeBlock, error) {
@@ -432,6 +449,10 @@ func (s *Store) bespokeDEX(ctx context.Context, source string, windowDays int) (
 			dexUSDValuationNote(windowDays, ""),
 			"Pairs are labelled by verified token tickers (native XLM plus the verified-currency catalogue's SAC/token addresses); an unverified token shows a truncated contract id, never a guessed symbol. Base/quote amounts are token base units at per-asset decimals, not USD.",
 		},
+	}
+
+	if windowDays > 1 {
+		blk.Notes = append(blk.Notes, dexCompleteDaysNote(windowDays))
 	}
 
 	xlmUnvalued, err := s.dexWindowBlocks(ctx, blk, source, since, windowDays)
@@ -526,7 +547,7 @@ func dexVolumeKPIHint(windowDays int, xlmUnvalued string) string {
 	if windowDays == 1 {
 		return "summed usd_volume of priced trades, plus unpriced XLM-denominated legs at the current XLM/USD vwap"
 	}
-	return "summed usd_volume of priced trades over the window"
+	return fmt.Sprintf("summed usd_volume of priced trades over the %d complete UTC days before today", windowDays)
 }
 
 // dexWindowTotals is one window KPI row. pairs is empty at 24h;
@@ -560,7 +581,7 @@ func (s *Store) dexWindowKPIs(ctx context.Context, source, since string, windowD
 // dexOmissionNotes can disclose the omission honestly.
 func (s *Store) dexRawKPIs(ctx context.Context, blk *BespokeBlock, source, since string, windowDays int, pairs *string) (takersZero bool, err error) {
 	var takers, priced, rawPairs, avg string
-	err = s.db.QueryRowContext(ctx, dexRawKPIQuery(), source, since).
+	err = s.db.QueryRowContext(ctx, dexRawKPIQuery(windowDays), source, since).
 		Scan(&takers, &priced, &rawPairs, &avg)
 	if err != nil {
 		return false, fmt.Errorf("timescale: bespokeDEX raw KPIs: %w", err)
@@ -706,7 +727,7 @@ func (s *Store) dexPairTables(ctx context.Context, blk *BespokeBlock, source, si
 		return err
 	}
 	if raw {
-		return s.dexLargestTradesTable(ctx, blk, source, since)
+		return s.dexLargestTradesTable(ctx, blk, source, since, windowDays)
 	}
 	return nil
 }
@@ -743,8 +764,8 @@ func (s *Store) dexTopPairsTable(ctx context.Context, blk *BespokeBlock, source,
 // dexLargestTradesTable appends the window's top-10 trades by USD volume.
 // Amounts are per-asset base-unit NUMERIC strings (ADR-0003); the tx hash
 // column links to the transaction page client-side.
-func (s *Store) dexLargestTradesTable(ctx context.Context, blk *BespokeBlock, source, since string) error {
-	rows, err := s.db.QueryContext(ctx, dexLargestTradesQuery(), source, since)
+func (s *Store) dexLargestTradesTable(ctx context.Context, blk *BespokeBlock, source, since string, windowDays int) error {
+	rows, err := s.db.QueryContext(ctx, dexLargestTradesQuery(windowDays), source, since)
 	if err != nil {
 		return fmt.Errorf("timescale: bespokeDEX largest trades: %w", err)
 	}
