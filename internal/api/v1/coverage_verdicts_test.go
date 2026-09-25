@@ -511,3 +511,39 @@ func TestHandleCoverageVerdicts_NetworkScoping(t *testing.T) {
 		}
 	})
 }
+
+// TestHandleCoverageVerdicts_StaleGateIgnoresNotApplicableSource pins
+// CA2-A02-correct-4: a pubnet-only row surviving in
+// completeness_snapshots on a testnet deployment (same fixture shape as
+// TestHandleCoverageVerdicts_NetworkScoping, but with a decades-old
+// computed_at — no testnet audit will ever recompute it) must not
+// permanently flag flags.stale=true when every verdict this deployment
+// actually publishes is fresh.
+func TestHandleCoverageVerdicts_StaleGateIgnoresNotApplicableSource(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	snaps := []timescale.CompletenessSnapshot{
+		{
+			Source: "sdex", Genesis: 2, Tip: 4_467_014, Watermark: 4_467_014,
+			CoveragePct: 100, Complete: true, LakeComplete: true,
+			SubstrateOK: true, RecognitionOK: true, ProjectionOK: true, ComputedAt: now,
+		},
+		{
+			// Pubnet-only, not applicable on testnet, and never revisited
+			// by any testnet audit — permanently old on this deployment.
+			Source: "soroswap", Genesis: 50_746_266, Tip: 4_467_014, Watermark: 50_746_265,
+			CoveragePct: 0, Complete: false, LakeComplete: false,
+			SubstrateOK: true, RecognitionOK: true, ProjectionOK: false,
+			ComputedAt: now.Add(-30 * time.Hour),
+		},
+	}
+	srv := v1.New(v1.Options{
+		Network:            "testnet",
+		CompletenessReader: &stubCompletenessReader{snaps: snaps},
+	})
+	ts := httpTestServer(t, srv)
+
+	if coverageStaleFlag(t, ts.URL) {
+		t.Error("flags.stale = true, want false: the only published verdict (sdex) is fresh; " +
+			"the stale soroswap row is not applicable on testnet and must not qualify the gate")
+	}
+}
