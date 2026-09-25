@@ -311,7 +311,7 @@ func (s *Server) priceChangeHorizon(
 	value = s.normalizeRawRatioString(value, pair.Base, pair.Quote)
 	pct, err := pctChange(currentPrice, value)
 	if err != nil {
-		return PriceChangeHorizon{Available: false}, nil
+		return PriceChangeHorizon{Available: false}, nil //nolint:nilerr // documented above: an unparseable ratio degrades to unavailable, like populateChange24h/batchChange24h treat the same pctChange failure modes
 	}
 	at := observedAt.UTC().Format(time.RFC3339)
 	res := resolutionLabel(resSec)
