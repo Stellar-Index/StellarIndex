@@ -34,7 +34,7 @@ tests:
   - interval: 1m
     name: a dead data-freshness timer trips probe_frozen
     input_series:
-      - series: 'node_textfile_mtime_seconds{file="data_freshness.prom",instance="r1:9100",job="node_exporter"}'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/data_freshness.prom",instance="r1:9100",job="node_exporter"}'
         values: '0+60x60 3600+0x120'
       - series: 'stellarindex_data_freshness_stale{domain="pricing",source="coingecko",instance="r1:9100",job="node_exporter"}'
         values: '0+0x180'
@@ -43,7 +43,7 @@ tests:
         alertname: stellarindex_data_freshness_probe_frozen
         exp_alerts:
           - exp_labels:
-              file: data_freshness.prom
+              file: /var/lib/node_exporter/textfile_collector/data_freshness.prom
               instance: r1:9100
               job: node_exporter
               severity: ticket
@@ -74,7 +74,7 @@ tests:
   - interval: 1m
     name: a live data-freshness timer never trips probe_frozen
     input_series:
-      - series: 'node_textfile_mtime_seconds{file="data_freshness.prom",instance="r1:9100",job="node_exporter"}'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/data_freshness.prom",instance="r1:9100",job="node_exporter"}'
         values: '0+60x180'
       - series: 'stellarindex_data_freshness_stale{domain="pricing",source="coingecko",instance="r1:9100",job="node_exporter"}'
         values: '0+0x180'

@@ -35,7 +35,7 @@ tests:
   - interval: 1m
     name: a dead config-assertions timer trips stale
     input_series:
-      - series: 'node_textfile_mtime_seconds{file="config_assertions.prom",instance="r1:9100",job="node_exporter"}'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/config_assertions.prom",instance="r1:9100",job="node_exporter"}'
         values: '0+60x60 3600+0x300'
       - series: 'stellarindex_config_assertion_ok{assertion="redis_maxmemory",instance="r1:9100",job="node_exporter"}'
         values: '1+0x360'
@@ -44,7 +44,7 @@ tests:
         alertname: stellarindex_config_assertions_stale
         exp_alerts:
           - exp_labels:
-              file: config_assertions.prom
+              file: /var/lib/node_exporter/textfile_collector/config_assertions.prom
               instance: r1:9100
               job: node_exporter
               severity: ticket
@@ -65,7 +65,7 @@ tests:
   - interval: 1m
     name: a live config-assertions timer never trips stale
     input_series:
-      - series: 'node_textfile_mtime_seconds{file="config_assertions.prom",instance="r1:9100",job="node_exporter"}'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/config_assertions.prom",instance="r1:9100",job="node_exporter"}'
         values: '0+60x360'
       - series: 'stellarindex_config_assertion_ok{assertion="redis_maxmemory",instance="r1:9100",job="node_exporter"}'
         values: '1+0x360'
