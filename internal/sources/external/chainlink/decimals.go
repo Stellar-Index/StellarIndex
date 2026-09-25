@@ -70,7 +70,6 @@ var (
 type feedDecimalsState struct {
 	onChain   uint8     // last successfully read decimals(); valid when hasChain
 	hasChain  bool      // at least one decimals() read has succeeded
-	mismatch  bool      // last successful read disagreed with the configured value
 	nextCheck time.Time // do not re-read decimals() before this instant
 	lastErr   error     // most recent decimals() failure, for the refusal message
 }
@@ -135,8 +134,7 @@ func (p *Poller) resolveDecimals(ctx context.Context, pair canonical.Pair, spec 
 	st.onChain = onChain
 	st.hasChain = true
 	st.lastErr = nil
-	st.mismatch = spec.Decimals != 0 && spec.Decimals != onChain
-	if st.mismatch {
+	if spec.Decimals != 0 && spec.Decimals != onChain {
 		st.nextCheck = now.Add(decimalsRetryInterval)
 		logger.Error("chainlink feed decimals mismatch — refusing readings until config and chain agree",
 			"source", SourceName,
@@ -158,10 +156,11 @@ func (p *Poller) resolveDecimals(ctx context.Context, pair canonical.Pair, spec 
 }
 
 // decimalsVerdict turns the per-feed state into a scale or a refusal.
-// Caller holds the cache lock.
+// Caller holds the cache lock. The mismatch is judged against THIS
+// call's spec: st is shared by every pair mapped to the feed address.
 func decimalsVerdict(pair canonical.Pair, spec FeedSpec, st *feedDecimalsState) (uint8, error) {
 	switch {
-	case st.mismatch:
+	case st.hasChain && spec.Decimals != 0 && spec.Decimals != st.onChain:
 		obs.ChainlinkFeedDecimalsMismatchTotal.WithLabelValues("ingest", pair.String()).Inc()
 		return 0, fmt.Errorf("%w: %s configured decimals=%d, on-chain decimals()=%d",
 			ErrDecimalsMismatch, pair.String(), spec.Decimals, st.onChain)
