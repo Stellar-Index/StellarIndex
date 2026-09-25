@@ -10,7 +10,7 @@
 
 import { useChangeSummary } from '@/api/hooks';
 import { cn } from '@/lib/cn';
-import { formatSubunitPrice } from '@/lib/format';
+import { formatPriceSmall } from '@/lib/format';
 import {
   isFrameStale,
   useLiveClock,
@@ -128,15 +128,8 @@ function formatQuotePrice(
   quoteIsUsd: boolean,
   quoteSuffix: string,
 ): string {
-  const num =
-    n >= 1
-      ? n.toFixed(n >= 100 ? 2 : 4)
-      : n >= 0.001
-        ? n.toFixed(6)
-        : n > 0
-          ? formatSubunitPrice(n)
-          : '—';
-  if (num === '—') return num;
+  if (!(n > 0)) return '—';
+  const num = formatPriceSmall(n);
   return quoteIsUsd ? `$${num}` : `${num} ${quoteSuffix}`;
 }
 
