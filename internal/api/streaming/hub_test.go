@@ -517,7 +517,10 @@ func TestHub_SubscribeKeepsEventsPublishedDuringSubscribe(t *testing.T) {
 // through ~8 reconnect rounds rendering stale prices as live.
 //
 // The replay must now deliver the NEWEST events that fit and keep the
-// subscription open for live delivery.
+// subscription open for live delivery. It is also budgeted at HALF the
+// channel capacity (GH-720): a full-capacity replay left no headroom,
+// so the very next live Publish found the channel full and evicted the
+// subscriber it had just resumed.
 func TestHub_ReplayBeyondQueueDepthKeepsConnection(t *testing.T) {
 	h := streaming.NewHub(256)
 	const published = 32 * 3
@@ -530,6 +533,7 @@ func TestHub_ReplayBeyondQueueDepthKeepsConnection(t *testing.T) {
 	ch, cancel := h.Subscribe([]string{"t"}, "0")
 	defer cancel()
 
+	const wantReplay = 16 // subscriberQueueDepth/2, single topic
 	var got []streaming.Event
 drain:
 	for {
@@ -539,7 +543,7 @@ drain:
 				t.Fatal("subscription was CLOSED during replay — a client resuming beyond the queue depth must be truncated, not disconnected")
 			}
 			got = append(got, ev)
-			if len(got) == 32 {
+			if len(got) == wantReplay {
 				break drain
 			}
 		case <-time.After(2 * time.Second):
@@ -547,8 +551,8 @@ drain:
 		}
 	}
 
-	if len(got) != 32 {
-		t.Fatalf("replayed %d events, want %d", len(got), 32)
+	if len(got) != wantReplay {
+		t.Fatalf("replayed %d events, want %d", len(got), wantReplay)
 	}
 	// The retained window must be the NEWEST slice, not the oldest.
 	if !strings.Contains(string(got[len(got)-1].Data), strconv.Itoa(published-1)) {
@@ -568,5 +572,100 @@ drain:
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no live event after replay — the subscriber was not registered for fanout")
+	}
+}
+
+// TestHub_ResumeReplayLeavesHeadroom is the regression test for GH-720:
+// a resume clamped at the FULL channel capacity left no room for the
+// next live Publish, which found the channel full and evicted the
+// subscriber it had just resumed. The channel must come back with
+// spare capacity, single-topic or multi-topic, and every subscribed
+// topic must contribute at least one replayed event — not just the
+// first.
+func TestHub_ResumeReplayLeavesHeadroom(t *testing.T) {
+	t.Run("single topic", func(t *testing.T) {
+		h := streaming.NewHub(256)
+		for i := 0; i < 64; i++ {
+			h.Publish("t", "price_update", []byte("seed"))
+		}
+		ch, cancel := h.Subscribe([]string{"t"}, "0")
+		defer cancel()
+
+		// Drain nothing — check queue occupancy against capacity right
+		// after Subscribe, as a live Publish would race against it.
+		if len(ch) >= cap(ch) {
+			t.Fatalf("replay filled the channel (%d/%d) — a live publish right after resume evicts the subscriber", len(ch), cap(ch))
+		}
+	})
+
+	t.Run("multi topic replays every topic", func(t *testing.T) {
+		h := streaming.NewHub(256)
+		// Topic "a" alone has more buffered events than the whole
+		// channel can hold, so an unbudgeted per-topic clamp lets it
+		// fill the channel by itself before topic "b" is ever
+		// registered.
+		for i := 0; i < 40; i++ {
+			h.Publish("a", "price_update", []byte("seed-a"))
+		}
+		h.Publish("b", "price_update", []byte("seed-b"))
+		ch, cancel := h.Subscribe([]string{"a", "b"}, "0")
+		defer cancel()
+
+		if len(ch) >= cap(ch) {
+			t.Fatalf("replay filled the channel (%d/%d) across topics", len(ch), cap(ch))
+		}
+
+		topics := map[string]bool{}
+	drain:
+		for {
+			select {
+			case ev := <-ch:
+				if strings.Contains(string(ev.Data), "seed-a") {
+					topics["a"] = true
+				}
+				if strings.Contains(string(ev.Data), "seed-b") {
+					topics["b"] = true
+				}
+			default:
+				break drain
+			}
+		}
+		if !topics["a"] || !topics["b"] {
+			t.Fatalf("expected replay from both subscribed topics, got %v — the first topic must not consume the whole replay budget", topics)
+		}
+	})
+}
+
+// TestHub_ReconnectIDsAreMonotonic is the regression test for GH-720's
+// first bullet: a resuming subscriber must never see an event ID
+// smaller than or equal to the resume cursor's own ID, and never out
+// of order across the replayed set.
+func TestHub_ReconnectIDsAreMonotonic(t *testing.T) {
+	h := streaming.NewHub(256)
+	var resumeFrom string
+	for i := 0; i < 8; i++ {
+		resumeFrom = h.Publish("t", "price_update", []byte("seed"))
+	}
+
+	ch, cancel := h.Subscribe([]string{"t"}, resumeFrom)
+	defer cancel()
+
+	liveID := h.Publish("t", "price_update", []byte("live"))
+
+	var lastID string
+drain:
+	for {
+		select {
+		case ev := <-ch:
+			if lastID != "" && ev.ID <= lastID {
+				t.Fatalf("non-monotonic id sequence: %q then %q", lastID, ev.ID)
+			}
+			lastID = ev.ID
+		case <-time.After(time.Second):
+			break drain
+		}
+	}
+	if lastID != liveID {
+		t.Fatalf("last delivered id = %q, want live event id %q", lastID, liveID)
 	}
 }
