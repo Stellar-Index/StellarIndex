@@ -66,10 +66,15 @@ import (
 // dropped feed whose median coincidentally equals the surviving price
 // (cross-feed median collisions are real — see the BENJI twins below),
 // and (3) order-preserving position — a rare compound, and only on the
-// payload-FALLBACK path (the primary state-write path is exact). The
-// hardening (intersect the alignment candidates with the partially-plumbed
-// state-write keys, which prove which feeds were NOT accepted) is tracked;
-// see memory project_redstone_audit_2026_08_03. The attacker-steering
+// payload-FALLBACK path (the primary state-write path is exact). When
+// the op's state-write keys name ANY of its feeds, the fallback's result
+// must be a subset of the changed feeds (decode.go corroborateFallback):
+// a dropped feed's entry is rewritten unchanged, so it cannot carry an
+// accepted price and the compound refuses. What remains is the fallback
+// with no feed-keyed writes plumbed (non-opted readers, stellar-rpc
+// fixtures, pre-plumb stored events) and the case where the dropped
+// feed's own entry was restored in the same op (no visible pre-image, so
+// it reads as changed). The attacker-steering
 // inverse additionally requires the ADAPTER to have accepted the payload
 // on-chain, where the signer filter did run. Fully closing it would mean
 // vendoring redstone-core's secp256k1 recovery + trusted-updater roster in

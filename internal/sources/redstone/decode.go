@@ -560,7 +560,8 @@ func sdkDecodeAddress(sv scval.ScVal) (string, error) {
 //     subset's arity disagrees with updated_feeds (e.g. a restored
 //     entry with no visible pre-image, or a storage-shape change —
 //     fall back rather than trust it). Anything non-unique refuses the
-//     whole event.
+//     whole event, as does an alignment naming a feed whose entry the
+//     plumbed writes show unchanged (corroborateFallback).
 //
 // A LONGER updated_feeds cannot come from freshness filtering and is
 // refused as genuinely malformed.
@@ -612,11 +613,35 @@ func resolveFeedAttribution(prices []priceDataDecoded, feedIDs []string, e *even
 			ErrFeedIDCountMismatch, len(feedIDs), len(prices), err)
 	}
 	attributed, err := attributeSubset(prices, feedIDs, payload)
+	if err == nil {
+		err = corroborateFallback(attributed, e)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: %d feed_ids, %d updated_feeds; %w",
 			ErrFeedIDCountMismatch, len(feedIDs), len(prices), err)
 	}
 	return attributed, nil
+}
+
+// corroborateFallback refuses a payload-median subset alignment that
+// names a feed whose stored PriceData the op did NOT change: a dropped
+// feed is rewritten byte-identical, so it cannot be one of the accepted
+// prices. This closes the F1 compound (payload.go) whenever the writes
+// name feeds at all. It can only turn an attribution into a refusal. An
+// empty feed-keyed written set (no keys plumbed, or a storage-shape
+// change) proves nothing and leaves the alignment standing.
+func corroborateFallback(attributed []string, e *events.Event) error {
+	written := writtenFeedSet(e.StateWriteKeys, e.ContractID)
+	if len(written) == 0 {
+		return nil
+	}
+	for _, f := range attributed {
+		if !written[f] {
+			return fmt.Errorf("%w: payload alignment names %q, whose stored PriceData did not change",
+				ErrStateWriteFeedMismatch, f)
+		}
+	}
+	return nil
 }
 
 // subsetFromStateWrites derives the accepted-feed subset from the
@@ -629,9 +654,9 @@ func resolveFeedAttribution(prices []priceDataDecoded, feedIDs []string, e *even
 // same order updated_feeds is built in. Non-string keys (any other
 // adapter storage) and unparseable keys are skipped, not fatal: the
 // caller compares the subset's arity against updated_feeds and falls
-// back to payload alignment on any disagreement, so a partial read can
-// only cause a fallback, never a misattribution. Nil when no keys were
-// plumbed.
+// back to payload alignment on any disagreement, so a partial read
+// degrades to that fallback (whose residual is payload.go's F1 CAVEAT),
+// never to a trusted wrong subset. Nil when no keys were plumbed.
 func subsetFromStateWrites(feedIDs, stateWriteKeys []string, contractID string) []string {
 	if len(stateWriteKeys) == 0 {
 		return nil
@@ -657,8 +682,8 @@ func subsetFromStateWrites(feedIDs, stateWriteKeys []string, contractID string) 
 // ScString keys owned by contractID. Non-string keys (any other
 // adapter storage) and unparseable keys are skipped, not fatal — the
 // callers compare arity/set membership and refuse or fall back on any
-// disagreement, so a partial read can only cause a refusal/fallback,
-// never a misattribution.
+// disagreement, so a partial read causes a refusal or the payload
+// fallback, never a trusted wrong set.
 func writtenFeedSet(stateWriteKeys []string, contractID string) map[string]bool {
 	written := make(map[string]bool, len(stateWriteKeys))
 	for _, kb64 := range stateWriteKeys {

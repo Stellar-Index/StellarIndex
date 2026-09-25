@@ -165,7 +165,9 @@ var (
 
 	// ErrStateWriteFeedMismatch — the op's value-changed contract-data
 	// keys (events.Event.StateWriteKeys) name a feed set different
-	// from the op-args feed_ids on an EQUAL-ARITY batch. An equal
+	// from the op-args feed_ids on an EQUAL-ARITY batch, or a subset
+	// batch's payload-median fallback names a feed whose entry they
+	// show unchanged (a dropped feed; payload.go F1 CAVEAT). An equal
 	// arity means the adapter accepted every requested feed, and an
 	// accepted feed's stored PriceData always changes — so the changed
 	// feed-keyed writes must equal the feed_ids set exactly. A

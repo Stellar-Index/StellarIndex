@@ -90,8 +90,8 @@ func TestDecode_SubsetFilteredBatch_StillAmbiguousWithoutStateWriteKeys(t *testi
 
 // A written-key set whose feed intersection disagrees with updated_feeds'
 // arity must NOT be trusted — the decoder falls back to payload-median
-// alignment, which refuses this event as ambiguous. Fail-safe: keys can
-// cause a fallback, never a misattribution.
+// alignment, which refuses this event as ambiguous. Keys can only force
+// the fallback; they never stand in for it.
 func TestDecode_SubsetFilteredBatch_ArityMismatchFallsBackToPayload(t *testing.T) {
 	ev := stateWriteFixtureEvent()
 	// Both BENJI twins' keys "written": intersection arity 2 != 1 price.
