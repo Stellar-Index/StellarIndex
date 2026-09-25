@@ -671,12 +671,20 @@ func runOneWasmHistoryWorker( //nolint:funlen,gocognit // worker hot path; refac
 		func(lcm sdkxdr.LedgerCloseMeta) error {
 			seq := lcm.LedgerSequence()
 			result.upperEnd = seq
-			scanLCMForWasmChanges(lcm, watch, result.state, seq, tlog)
+			if err := scanLCMForWasmChanges(lcm, watch, result.state, seq, tlog); err != nil {
+				return err
+			}
 			if trackStorage {
-				scanLCMForStorageRotations(lcm, watch, result.storageChanges, seq)
+				if err := scanLCMForStorageRotations(lcm, watch, result.storageChanges, seq); err != nil {
+					return err
+				}
 			}
 			if trackCode {
-				result.codeUploads = scanLCMForCodeUploads(lcm, result.codeUploads, seq)
+				uploads, err := scanLCMForCodeUploads(lcm, result.codeUploads, seq)
+				if err != nil {
+					return err
+				}
+				result.codeUploads = uploads
 			}
 			workerScanned++
 			if progressEvery > 0 && workerScanned%progressEvery == 0 {
@@ -806,22 +814,24 @@ func scanLCMForWasmChanges(
 	state map[sdkxdr.Hash]*wasmContractState,
 	seq uint32,
 	tlog *transitionLog,
-) {
-	if lcm.V != 1 || lcm.V1 == nil {
-		return // pre-V1 LCM (very old ledgers); no Soroban; nothing to scan
+) error {
+	if lcm.V < 0 || lcm.V > 2 {
+		return fmt.Errorf("ledger %d: unsupported LedgerCloseMeta.V=%d", seq, lcm.V)
 	}
-	v1 := lcm.V1
-	for i := range v1.TxProcessing {
-		txMeta := &v1.TxProcessing[i].TxApplyProcessing
-		switch {
-		case txMeta.V3 != nil:
+	for i := 0; i < lcm.CountTransactions(); i++ {
+		txMeta := lcm.TxApplyProcessing(i)
+		switch txMeta.V {
+		case 0, 1, 2:
+			// Predate Soroban ContractData changes. Skip.
+			continue
+		case 3:
 			for j := range txMeta.V3.Operations {
 				changes := txMeta.V3.Operations[j].Changes
 				for k := range changes {
 					scanLedgerEntryChange(&changes[k], watch, state, seq, tlog)
 				}
 			}
-		case txMeta.V4 != nil:
+		case 4:
 			for j := range txMeta.V4.Operations {
 				changes := txMeta.V4.Operations[j].Changes
 				for k := range changes {
@@ -829,10 +839,12 @@ func scanLCMForWasmChanges(
 				}
 			}
 		default:
-			// V1/V2 didn't have ContractData. Skip.
-			continue
+			// Unknown/future TransactionMeta arm: fail loudly rather
+			// than silently miss WASM changes it might carry.
+			return fmt.Errorf("ledger %d tx %d: unsupported TransactionMeta.V=%d", seq, i, txMeta.V)
 		}
 	}
+	return nil
 }
 
 // scanLCMForStorageRotations walks every operation's
@@ -850,30 +862,34 @@ func scanLCMForStorageRotations(
 	watch map[sdkxdr.Hash]string,
 	out map[sdkxdr.Hash][]storageChange,
 	seq uint32,
-) {
-	if lcm.V != 1 || lcm.V1 == nil {
-		return
+) error {
+	if lcm.V < 0 || lcm.V > 2 {
+		return fmt.Errorf("ledger %d: unsupported LedgerCloseMeta.V=%d", seq, lcm.V)
 	}
-	v1 := lcm.V1
-	for i := range v1.TxProcessing {
-		txMeta := &v1.TxProcessing[i].TxApplyProcessing
-		switch {
-		case txMeta.V3 != nil:
+	for i := 0; i < lcm.CountTransactions(); i++ {
+		txMeta := lcm.TxApplyProcessing(i)
+		switch txMeta.V {
+		case 0, 1, 2:
+			continue
+		case 3:
 			for j := range txMeta.V3.Operations {
 				changes := txMeta.V3.Operations[j].Changes
 				for k := range changes {
 					recordStorageChange(&changes[k], watch, out, seq)
 				}
 			}
-		case txMeta.V4 != nil:
+		case 4:
 			for j := range txMeta.V4.Operations {
 				changes := txMeta.V4.Operations[j].Changes
 				for k := range changes {
 					recordStorageChange(&changes[k], watch, out, seq)
 				}
 			}
+		default:
+			return fmt.Errorf("ledger %d tx %d: unsupported TransactionMeta.V=%d", seq, i, txMeta.V)
 		}
 	}
+	return nil
 }
 
 // recordStorageChange appends one entry per non-Instance
@@ -993,31 +1009,34 @@ func scanLCMForCodeUploads(
 	lcm sdkxdr.LedgerCloseMeta,
 	uploads []codeUpload,
 	seq uint32,
-) []codeUpload {
-	if lcm.V != 1 || lcm.V1 == nil {
-		return uploads
+) ([]codeUpload, error) {
+	if lcm.V < 0 || lcm.V > 2 {
+		return uploads, fmt.Errorf("ledger %d: unsupported LedgerCloseMeta.V=%d", seq, lcm.V)
 	}
-	v1 := lcm.V1
-	for i := range v1.TxProcessing {
-		txMeta := &v1.TxProcessing[i].TxApplyProcessing
-		switch {
-		case txMeta.V3 != nil:
+	for i := 0; i < lcm.CountTransactions(); i++ {
+		txMeta := lcm.TxApplyProcessing(i)
+		switch txMeta.V {
+		case 0, 1, 2:
+			continue
+		case 3:
 			for j := range txMeta.V3.Operations {
 				changes := txMeta.V3.Operations[j].Changes
 				for k := range changes {
 					uploads = maybeAppendCodeUpload(&changes[k], uploads, seq)
 				}
 			}
-		case txMeta.V4 != nil:
+		case 4:
 			for j := range txMeta.V4.Operations {
 				changes := txMeta.V4.Operations[j].Changes
 				for k := range changes {
 					uploads = maybeAppendCodeUpload(&changes[k], uploads, seq)
 				}
 			}
+		default:
+			return uploads, fmt.Errorf("ledger %d tx %d: unsupported TransactionMeta.V=%d", seq, i, txMeta.V)
 		}
 	}
-	return uploads
+	return uploads, nil
 }
 
 // maybeAppendCodeUpload checks one LedgerEntryChange for a
