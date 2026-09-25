@@ -107,3 +107,41 @@ func TestMaybeWriteWasmCode_IgnoresRemoved(t *testing.T) {
 		t.Fatalf("expected no-op on Removed; got %d entries", len(found))
 	}
 }
+
+// TestMaybeWriteWasmCode_FailedWriteDoesNotMarkFound is the GH-1189
+// regression: found is the walk's completion receipt (drives -early-exit,
+// the "wrote N/N" summary, and the missing-hash exit code), so a write
+// that fails must leave the hash absent from it rather than recording a
+// path that was never actually written — otherwise a full-disk or
+// permission failure reports "wrote N/N", exit 0, with no file on disk.
+func TestMaybeWriteWasmCode_FailedWriteDoesNotMarkFound(t *testing.T) {
+	tmp := t.TempDir()
+	// output-dir itself does not exist, so os.WriteFile's open fails —
+	// a stand-in for "full volume" / "root-owned directory" without
+	// needing real disk-quota or permission setup.
+	outDir := filepath.Join(tmp, "does-not-exist")
+
+	var hash sdkxdr.Hash
+	hash[0] = 0x42
+	hashHex := "42"
+	wantHashes := map[sdkxdr.Hash]struct{}{hash: {}}
+	wantHexes := map[sdkxdr.Hash]string{hash: hashHex}
+	entry := &sdkxdr.LedgerEntry{
+		Data: sdkxdr.LedgerEntryData{
+			Type:         sdkxdr.LedgerEntryTypeContractCode,
+			ContractCode: &sdkxdr.ContractCodeEntry{Hash: hash, Code: []byte{0x00, 0x61, 0x73, 0x6d}},
+		},
+	}
+	change := sdkxdr.LedgerEntryChange{Type: sdkxdr.LedgerEntryChangeTypeLedgerEntryCreated, Created: entry}
+
+	var mu sync.Mutex
+	found := map[sdkxdr.Hash]string{}
+	maybeWriteWasmCode(&change, wantHashes, outDir, wantHexes, &mu, found)
+
+	if _, ok := found[hash]; ok {
+		t.Fatalf("found[hash] set after a failed write — a write failure must not be reported as wrote")
+	}
+	if _, err := os.Stat(filepath.Join(outDir, hashHex+".wasm")); err == nil {
+		t.Fatalf("expected no file on disk after a failed write")
+	}
+}

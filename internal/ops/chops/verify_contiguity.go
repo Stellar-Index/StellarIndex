@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // verifyContiguity is the stellarindex-ops `verify-contiguity` subcommand —
@@ -68,7 +70,7 @@ func verifyContiguity(args []string) error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
-	toSeq, err := resolveToSeq(ctx, addr, *to)
+	toSeq, err := resolveToSeq(ctx, "verify-contiguity", *cfgPath, addr, *to)
 	if err != nil {
 		return err
 	}
@@ -80,14 +82,16 @@ func verifyContiguity(args []string) error {
 		fromSeq, toSeq, addr, ecFloorSeq, *checkFlag)
 
 	var ledgerGaps, ecDeficiency, ecPending uint64
+	runLedgers := *checkFlag == "ledgers" || *checkFlag == "all"
+	runEntryChanges := *checkFlag == "entrychanges" || *checkFlag == "all"
 
-	if *checkFlag == "ledgers" || *checkFlag == "all" {
+	if runLedgers {
 		ledgerGaps, err = runLedgerContiguityCheck(ctx, addr, fromSeq, toSeq)
 		if err != nil {
 			return err
 		}
 	}
-	if *checkFlag == "entrychanges" || *checkFlag == "all" {
+	if runEntryChanges {
 		ecDeficiency, ecPending, err = runEntryChangesCheck(ctx, addr, fromSeq, toSeq, ecFloorSeq)
 		if err != nil {
 			return err
@@ -95,8 +99,13 @@ func verifyContiguity(args []string) error {
 	}
 
 	total := ledgerGaps + ecDeficiency
-	fmt.Printf("\nverify-contiguity: summary check1_missing_ledgers=%d check2_deficiency=%d check2_backfill_pending=%d\n",
-		ledgerGaps, ecDeficiency, ecPending)
+	// A check narrowed out via -check must not report as "0" — that reads
+	// identically to "ran, found zero" (GH-1195). checkFieldValue prints
+	// SKIPPED for the check(s) not requested, and checks_run= makes a
+	// pasted report self-describing about its own coverage.
+	fmt.Printf("\nverify-contiguity: summary check1_missing_ledgers=%s check2_deficiency=%s check2_backfill_pending=%s checks_run=%s\n",
+		checkFieldValue(runLedgers, ledgerGaps), checkFieldValue(runEntryChanges, ecDeficiency), checkFieldValue(runEntryChanges, ecPending),
+		contiguityChecksRunLabel(runLedgers, runEntryChanges))
 
 	if total == 0 {
 		fmt.Println("verify-contiguity: PASSED")
@@ -147,16 +156,98 @@ func toLedgerSeq(flagName string, v uint64) (uint32, error) {
 	return uint32(v), nil
 }
 
-// resolveToSeq implements "-to 0 means auto (CH max ledger)".
-func resolveToSeq(ctx context.Context, addr string, to uint64) (uint32, error) {
+// independentTipShortfallTolerance is the safety margin between the
+// independent tip and the ClickHouse lake's own max ledger before a
+// verifier fails closed (GH-1180). Mirrors run-compute-completeness.sh's
+// 100-ledger margin for the same reason: the served/lake tier legitimately
+// trails the live cursor by seconds under normal load, so a shortfall
+// below this is expected lag, not truncation.
+const independentTipShortfallTolerance = 100
+
+// independentLedgerTip resolves a lake-verifier's -to=0 upper bound from a
+// source OTHER than the ClickHouse table under audit: the live
+// ledgerstream ingestion cursor in Postgres. A verifier that instead took
+// its bound from stellar.ledgers' own max(ledger_seq) (GH-1180) can never
+// observe a restore that died short or a stalled live ingest, because the
+// missing ledgers are also missing from the range it checks.
+func independentLedgerTip(ctx context.Context, cfgPath string) (uint32, error) {
+	cfg, err := config.LoadWithEnv(cfgPath)
+	if err != nil {
+		return 0, fmt.Errorf("load -config for independent tip: %w", err)
+	}
+	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
+	if err != nil {
+		return 0, fmt.Errorf("open postgres for independent tip: %w", err)
+	}
+	defer func() { _ = store.Close() }()
+	cur, err := store.GetCursor(ctx, "ledgerstream", "")
+	if err != nil {
+		return 0, fmt.Errorf("read ledgerstream cursor: %w", err)
+	}
+	return cur.LastLedger, nil
+}
+
+// resolveVerifyTo decides a verifier's resolved -to given the ClickHouse
+// lake's own max ledger and an independent tip, failing closed rather
+// than silently certifying a truncated lake as PASSED (GH-1180). Pure —
+// no I/O — so it is unit-testable without ClickHouse or Postgres.
+func resolveVerifyTo(toolName string, chMax, independentTip uint32) (uint32, error) {
+	if independentTip > chMax && independentTip-chMax > independentTipShortfallTolerance {
+		return 0, fmt.Errorf("%s: ClickHouse lake max ledger %d is %d ledger(s) short of the independent tip %d (ledgerstream cursor) — refusing to certify a truncated lake as PASSED; pass -to explicitly to override",
+			toolName, chMax, independentTip-chMax, independentTip)
+	}
+	return chMax, nil
+}
+
+// resolveToSeq implements "-to 0 means auto", bounding the resolved range
+// to what ClickHouse actually holds while failing closed if that is a
+// real shortfall against an independently-sourced tip (see
+// resolveVerifyTo). The independent tip is best-effort: if -config or
+// Postgres is unavailable, the verifier falls back to the CH-only bound
+// with a stderr warning rather than refusing to run — that is strictly
+// no worse than pre-GH-1180 behaviour, just no longer the ONLY path.
+func resolveToSeq(ctx context.Context, toolName, cfgPath, addr string, to uint64) (uint32, error) {
 	if to != 0 {
 		return toLedgerSeq("-to", to)
 	}
-	hi, err := clickhouse.MaxLedger(ctx, addr)
+	chMax, err := clickhouse.MaxLedger(ctx, addr)
 	if err != nil {
-		return 0, fmt.Errorf("verify-contiguity: resolve -to (CH max ledger): %w", err)
+		return 0, fmt.Errorf("%s: resolve -to (CH max ledger): %w", toolName, err)
 	}
-	return hi, nil
+	tip, tipErr := independentLedgerTip(ctx, cfgPath)
+	if tipErr != nil {
+		fmt.Fprintf(os.Stderr, "%s: independent tip unavailable (%v) — falling back to ClickHouse's own max ledger %d; a truncated lake cannot be detected this way, pass -to explicitly to be certain\n",
+			toolName, tipErr, chMax)
+		return chMax, nil
+	}
+	return resolveVerifyTo(toolName, chMax, tip)
+}
+
+// checkFieldValue renders one verify-contiguity summary field: "SKIPPED"
+// when the check that produces it was not requested via -check, else the
+// count. Pure — unit-testable without a live lake.
+func checkFieldValue(ran bool, v uint64) string {
+	if !ran {
+		return "SKIPPED"
+	}
+	return fmt.Sprintf("%d", v)
+}
+
+// contiguityChecksRunLabel renders the -check tokens that actually ran,
+// for the summary line's checks_run= field. Pure — unit-testable without
+// a live lake.
+func contiguityChecksRunLabel(ledgers, entryChanges bool) string {
+	var ran []string
+	if ledgers {
+		ran = append(ran, "ledgers")
+	}
+	if entryChanges {
+		ran = append(ran, "entrychanges")
+	}
+	if len(ran) == 0 {
+		return "none"
+	}
+	return strings.Join(ran, ",")
 }
 
 // contiguityBucketStride is the windowed-scan bucket width both checks use

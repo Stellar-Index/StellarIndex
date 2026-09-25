@@ -7,6 +7,34 @@ import (
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 )
 
+// TestValidateFollowFlags is the GH-1190 regression: -follow (the explicit
+// opt-in for an unbounded live tail) must reject an explicit -to and a
+// bounded parallel split, and must not fire at all for a plain -to=0 run
+// (that case is resolved to a real tip elsewhere, not rejected here).
+func TestValidateFollowFlags(t *testing.T) {
+	cases := []struct {
+		name     string
+		to       uint
+		follow   bool
+		parallel uint
+		wantErr  bool
+	}{
+		{"to=0, no follow: fine (resolved to a tip elsewhere)", 0, false, 1, false},
+		{"explicit -to without follow: fine", 1000, false, 1, false},
+		{"follow with to=0: fine — this is the point of -follow", 0, true, 1, false},
+		{"follow with an explicit -to: rejected", 1000, true, 1, true},
+		{"follow with -parallel>1: rejected", 0, true, 2, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateFollowFlags("wasm-history", tc.to, tc.follow, tc.parallel)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validateFollowFlags(to=%d,follow=%v,parallel=%d) = %v, wantErr=%v", tc.to, tc.follow, tc.parallel, err, tc.wantErr)
+			}
+		})
+	}
+}
+
 // TestRecordWasmTransition_FirstSeen confirms an initial deploy
 // opens an entry whose ToLedger is unset (open range).
 func TestRecordWasmTransition_FirstSeen(t *testing.T) {
@@ -608,5 +636,29 @@ func TestReadTransitionJSONL_TruncatedTail(t *testing.T) {
 	}
 	if len(transitions["C1"]) != 2 {
 		t.Errorf("C1 transitions = %d, want 2", len(transitions["C1"]))
+	}
+}
+
+// TestReadTransitionJSONL_MidFileCorruptionErrors is the GH-1199
+// regression: a malformed line that is NOT the file's last line means a
+// second run's lines landed after a first run's crash residue (the
+// O_APPEND-across-runs defect), not a crash-truncated tail — the old
+// break-on-first-error behaviour silently dropped every transition after
+// it and returned success. It must now be a hard error, and the good
+// lines AFTER the corrupt one must not be silently lost from the count.
+func TestReadTransitionJSONL_MidFileCorruptionErrors(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/wasm-history-w0.jsonl"
+	contents := `{"contract":"C1","wasm_hash":"a","at_ledger":100}
+not valid json at all
+{"contract":"C1","wasm_hash":"b","at_ledger":9000}
+`
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	transitions := make(map[string][]transitionRecord)
+	_, _, _, err := readTransitionJSONL(path, transitions)
+	if err == nil {
+		t.Fatalf("readTransitionJSONL = <nil> error, want an error — a mid-file malformed line is not crash residue")
 	}
 }
