@@ -128,8 +128,15 @@ inhibit_rules:
   # the inhibition never fire — the source page and target ticket could
   # never have the same alertname. Matching on `component` alone lets the
   # page suppress the ticket/informational variants for that component.
+  #
+  # `alertname != stellarindex_deadmansswitch` on the target is load-bearing
+  # (GH-900): `component` is coarse (13 subsystems share it across every
+  # severity), so without this exclusion any page in component=meta —
+  # e.g. stellarindex_alertmanager_down — silences the heartbeat whose
+  # entire purpose is to catch Prometheus/Alertmanager being down. A
+  # dead-man's switch must never be a target of its own watchdog's outage.
   - source_matchers: [severity = "page"]
-    target_matchers: [severity =~ "ticket|informational"]
+    target_matchers: [severity =~ "ticket|informational", alertname != "stellarindex_deadmansswitch"]
     equal: [component]
 
 # ─── Receivers ───────────────────────────────────────────────────
