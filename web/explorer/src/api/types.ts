@@ -5601,8 +5601,19 @@ export interface components {
              *     the two sides.
              */
             asset: string;
-            /** @description Decimal string (ADR-0003) at the asset's native smallest-unit scale. */
+            /** @description Decimal string (ADR-0003) at the asset's native smallest-unit scale; divide by 10^`decimals` for whole units. */
             amount: string;
+            /**
+             * @description `amount`'s smallest-unit scale, per row: 7 for native, classic
+             *     credit and `pool:<hex>` rows (protocol-fixed stroops); for a
+             *     Soroban token row, the contract's declared decimals() read from
+             *     the lake (7 when the contract stores no derivable metadata, as
+             *     on /contracts/{id}/transfers). OMITTED when the scale could not
+             *     be resolved (the contract read failed or timed out): a consumer
+             *     must not substitute a default, because a wrong exponent mis-scales
+             *     the amount by a power of ten.
+             */
+            decimals?: number;
             /**
              * @description The other side's address, when known. Empty for a claimable-
              *     balance escrow or a liquidity-pool leg (neither is a real

@@ -201,9 +201,6 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 	if priceAllowed && row.Change7dPct != nil {
 		detail.Change7dPct = row.Change7dPct
 	}
-	if reason := scamReason(row.IssuerGStrkey); reason != "" {
-		detail.IssuerScamReason = reason
-	}
 	// Identity + activity metadata. Mirrors AssetSummary scalars so
 	// the explorer's asset-detail page can drop its parallel
 	// /v1/coins/{slug} fetch (R-018 finish — consumer migration).

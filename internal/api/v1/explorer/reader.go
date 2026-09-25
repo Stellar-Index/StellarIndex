@@ -412,6 +412,10 @@ type Handler struct {
 	// every contract unlabelled; a miss leaves that one unlabelled.
 	ContractProtocol func(ctx context.Context, contractID string) (string, bool)
 
+	// TokenDecimals resolves a Soroban token contract's decimals();
+	// ok=false means unknown. Nil leaves every token's scale unknown.
+	TokenDecimals func(ctx context.Context, contractID string) (decimals int, ok bool)
+
 	LookupUSDPrice  func(ctx context.Context, asset canonical.Asset) (string, bool)
 	IsKnownSAC      func(contractID string) bool
 	LakeWatermark   func(ctx context.Context) (ledger uint32, stale bool, ok bool)
