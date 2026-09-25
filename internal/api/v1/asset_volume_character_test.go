@@ -30,7 +30,7 @@ func (s *stubVolumeCharacterReader) AssetVolumeCharacterRollup(_ context.Context
 func scamAUDVolumeCharacter() timescale.AssetVolumeCharacter {
 	return timescale.AssetVolumeCharacter{
 		WindowDays:             14,
-		VolumeUSD:              2_870_000,
+		VolumeUSD:              "2870000",
 		DistinctMakers:         2,
 		DistinctTakers:         1,
 		TopAccountPairVolShare: 0.99,
@@ -79,6 +79,52 @@ func TestAssetGet_VolumeCharacter_Surfaced(t *testing.T) {
 	}
 	if sig.VolumeUSD != "2870000.00" {
 		t.Errorf("volume_usd = %q, want 2870000.00", sig.VolumeUSD)
+	}
+}
+
+// TestAssetGet_VolumeCharacter_VolumeUSDExact: volume_usd is rendered to
+// 2dp from the rollup's NUMERIC text in big.Rat (ADR-0003). A float hop
+// loses the cents above 2^53 cents and rounds the exact half-cent 1234.125
+// to even ("1234.12"); an unparseable value omits the signals.
+func TestAssetGet_VolumeCharacter_VolumeUSDExact(t *testing.T) {
+	cases := []struct {
+		name, stored, want string
+	}{
+		{"above_2^53_cents", "90071992547409.93", "90071992547409.93"},
+		{"half_cent_rounds_away_from_zero", "1234.125", "1234.13"},
+		{"extra_scale_truncated_to_cents", "5000.00449999", "5000.00"},
+		{"unparseable_omits_signals", "NaN", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			vc := scamAUDVolumeCharacter()
+			vc.VolumeUSD = c.stored
+			srv, aud := audDetailServer(t, v1.Options{VolumeCharacter: &stubVolumeCharacterReader{vc: vc}})
+			ts := httpTestServer(t, srv)
+			resp := mustGet(t, ts.URL+"/v1/assets/"+aud.String())
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d", resp.StatusCode)
+			}
+			var env struct {
+				Data v1.AssetDetail `json:"data"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			sig := env.Data.VolumeCharacterSignals
+			if c.want == "" {
+				if sig != nil || env.Data.VolumeCharacter != "" {
+					t.Errorf("unparseable volume_usd served signals %+v / %q, want omitted", sig, env.Data.VolumeCharacter)
+				}
+				return
+			}
+			if sig == nil {
+				t.Fatalf("volume_character_signals missing")
+			}
+			if sig.VolumeUSD != c.want {
+				t.Errorf("volume_usd = %q, want %q", sig.VolumeUSD, c.want)
+			}
+		})
 	}
 }
 

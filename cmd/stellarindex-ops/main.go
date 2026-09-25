@@ -1548,8 +1548,10 @@ Subcommands:
                           Bootstrap the soroswap_pairs registry table
                           via stellar-rpc simulateTransaction. Walks the
                           factory's all_pairs() / token_0() / token_1()
-                          view functions and upserts each (pair, token0,
-                          token1) tuple. Run once on first deployment;
+                          view functions and inserts each (pair, token0,
+                          token1) tuple not yet registered; never rewrites
+                          a registered pair (a disagreeing one fails the
+                          run). Run once on first deployment;
                           live new_pair events keep the table fresh
                           afterwards (see migrations/0016_create_soroswap_pairs.up.sql).
   seed-protocol-contracts -config PATH -source NAME|all [-to LEDGER] [-timeout DUR]

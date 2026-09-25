@@ -19,8 +19,9 @@ import (
 // the fields that are genuine account addresses (payment/path-payment
 // destination, allow-trust / set-trust-line-flags trustor, clawback `from`,
 // account-merge / create-account destination, create-claimable-balance
-// claimant destinations, begin-sponsoring-future-reserves sponsorship
-// target, and muxed destinations resolved to their underlying G-account).
+// claimant destinations, begin-sponsoring-future-reserves and
+// revoke-sponsorship sponsorship targets, and muxed destinations resolved to
+// their underlying G-account).
 // Opaque free-text fields (a manage_data name/value, a memo, a contract string
 // arg) are NEVER interpreted as participants even when they happen to spell a
 // valid G-strkey — a per-type allowlist is the only safe way to keep an
@@ -69,27 +70,44 @@ func ParticipantAccounts(bodyB64 string) ([]string, error) {
 		out = append(out, g)
 	}
 
+	for _, candidate := range participantCandidateAddrs(body) {
+		add(candidate)
+	}
+
+	sort.Strings(out)
+	return out, nil
+}
+
+// participantCandidateAddrs returns the raw (possibly muxed) address
+// strings an operation body names in an account-typed field, keyed on op
+// type. Split out of ParticipantAccounts to keep the per-type dispatch and
+// the seen/candidate bookkeeping each independently under the gocyclo
+// threshold; behaviour is unchanged. See ParticipantAccounts' godoc for the
+// allowlist rationale and the InvokeHostFunction exclusion.
+func participantCandidateAddrs(body xdr.OperationBody) []string {
+	var out []string
+
 	switch body.Type {
 	case xdr.OperationTypeCreateAccount:
 		op := body.MustCreateAccountOp()
-		add(op.Destination.Address())
+		out = append(out, op.Destination.Address())
 	case xdr.OperationTypePayment:
-		add(muxedAddr(body.MustPaymentOp().Destination))
+		out = append(out, muxedAddr(body.MustPaymentOp().Destination))
 	case xdr.OperationTypePathPaymentStrictReceive:
-		add(muxedAddr(body.MustPathPaymentStrictReceiveOp().Destination))
+		out = append(out, muxedAddr(body.MustPathPaymentStrictReceiveOp().Destination))
 	case xdr.OperationTypePathPaymentStrictSend:
-		add(muxedAddr(body.MustPathPaymentStrictSendOp().Destination))
+		out = append(out, muxedAddr(body.MustPathPaymentStrictSendOp().Destination))
 	case xdr.OperationTypeAllowTrust:
 		op := body.MustAllowTrustOp()
-		add(op.Trustor.Address())
+		out = append(out, op.Trustor.Address())
 	case xdr.OperationTypeSetTrustLineFlags:
 		op := body.MustSetTrustLineFlagsOp()
-		add(op.Trustor.Address())
+		out = append(out, op.Trustor.Address())
 	case xdr.OperationTypeAccountMerge:
-		add(muxedAddr(body.MustDestination()))
+		out = append(out, muxedAddr(body.MustDestination()))
 	case xdr.OperationTypeClawback:
 		op := body.MustClawbackOp()
-		add(muxedAddr(op.From))
+		out = append(out, muxedAddr(op.From))
 	case xdr.OperationTypeCreateClaimableBalance:
 		op := body.MustCreateClaimableBalanceOp()
 		for _, c := range op.Claimants {
@@ -97,7 +115,7 @@ func ParticipantAccounts(bodyB64 string) ([]string, error) {
 			if !ok {
 				continue
 			}
-			add(v0.Destination.Address())
+			out = append(out, v0.Destination.Address())
 		}
 	case xdr.OperationTypeClaimClaimableBalance:
 		// The claim's only address-shaped field is the ClaimableBalanceId
@@ -105,7 +123,14 @@ func ParticipantAccounts(bodyB64 string) ([]string, error) {
 		// account, already indexed via operations.source_account.
 	case xdr.OperationTypeBeginSponsoringFutureReserves:
 		op := body.MustBeginSponsoringFutureReservesOp()
-		add(op.SponsoredId.Address())
+		out = append(out, op.SponsoredId.Address())
+	case xdr.OperationTypeRevokeSponsorship:
+		op := body.MustRevokeSponsorshipOp()
+		if lk, ok := op.GetLedgerKey(); ok {
+			out = append(out, revokeSponsorshipLedgerKeyAccount(lk))
+		} else if signer, ok := op.GetSigner(); ok {
+			out = append(out, signer.AccountId.Address())
+		}
 	case xdr.OperationTypeInvokeHostFunction:
 		// Deliberately contributes no participants. A Soroban InvokeContract's
 		// call args AND its op.Auth SorobanAuthorizationEntry entries are both
@@ -117,6 +142,25 @@ func ParticipantAccounts(bodyB64 string) ([]string, error) {
 		// The op source is still indexed via operations.source_account.
 	}
 
-	sort.Strings(out)
-	return out, nil
+	return out
+}
+
+// revokeSponsorshipLedgerKeyAccount returns the G-account that owns the
+// sponsored ledger entry named by a RevokeSponsorship op's ledger-key arm —
+// the account whose reserve requirement the revocation returns to it — or ""
+// when the entry has no single owning account (e.g. a claimable balance or
+// liquidity pool), which `add` safely drops.
+func revokeSponsorshipLedgerKeyAccount(lk xdr.LedgerKey) string {
+	switch lk.Type {
+	case xdr.LedgerEntryTypeAccount:
+		return lk.MustAccount().AccountId.Address()
+	case xdr.LedgerEntryTypeTrustline:
+		return lk.MustTrustLine().AccountId.Address()
+	case xdr.LedgerEntryTypeOffer:
+		return lk.MustOffer().SellerId.Address()
+	case xdr.LedgerEntryTypeData:
+		return lk.MustData().AccountId.Address()
+	default:
+		return ""
+	}
 }

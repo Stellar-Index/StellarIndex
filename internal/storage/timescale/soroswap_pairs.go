@@ -45,6 +45,33 @@ func (s *Store) UpsertSoroswapPair(ctx context.Context, pairStrkey, token0Strkey
 	return nil
 }
 
+// InsertSoroswapPairIfAbsent writes a (pair, token0, token1) mapping only
+// when pair_strkey has no row yet, reporting whether it inserted. It never
+// overwrites: rows learned from on-chain new_pair events (UpsertSoroswapPair)
+// outrank the off-chain stellar-rpc bootstrap in seed-soroswap-pairs.
+func (s *Store) InsertSoroswapPairIfAbsent(ctx context.Context, pairStrkey, token0Strkey, token1Strkey string) (bool, error) {
+	if pairStrkey == "" {
+		return false, errors.New("timescale: InsertSoroswapPairIfAbsent: empty pair_strkey")
+	}
+	if token0Strkey == "" || token1Strkey == "" {
+		return false, fmt.Errorf("timescale: InsertSoroswapPairIfAbsent %s: token0 or token1 empty", pairStrkey)
+	}
+	const q = `
+		INSERT INTO soroswap_pairs (pair_strkey, token0_strkey, token1_strkey, observed_at)
+		VALUES ($1, $2, $3, now())
+		ON CONFLICT (pair_strkey) DO NOTHING
+	`
+	res, err := s.db.ExecContext(ctx, q, pairStrkey, token0Strkey, token1Strkey)
+	if err != nil {
+		return false, fmt.Errorf("timescale: InsertSoroswapPairIfAbsent %s: %w", pairStrkey, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("timescale: InsertSoroswapPairIfAbsent %s rows affected: %w", pairStrkey, err)
+	}
+	return n == 1, nil
+}
+
 // LoadSoroswapPairRegistry returns every row in soroswap_pairs as a
 // flat slice. Used by the indexer + every parallel backfill chunk at
 // startup to seed the soroswap.Decoder's in-memory pair registry.

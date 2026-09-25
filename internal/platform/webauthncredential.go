@@ -67,7 +67,8 @@ type WebAuthnCredentialStore interface {
 
 	// UpdateWebAuthnCredentialSignCount stores the post-assertion
 	// signature counter + last-used timestamp after a successful
-	// login. ErrNotFound when the row is gone.
+	// login; the stored count is a high-water mark and never decreases.
+	// ErrNotFound when the row is gone.
 	UpdateWebAuthnCredentialSignCount(ctx context.Context, id uuid.UUID, signCount int64, lastUsedAt time.Time) error
 
 	// DeleteWebAuthnCredential removes a passkey. Scoped to its

@@ -384,3 +384,48 @@ func TestDecodeDecimals(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveDecimals_sharedAddressVerdictIsPerPair — two canonical
+// pairs mapped to one feed address (the invert pattern) with different
+// configured decimals must each get the verdict for THEIR OWN spec,
+// whichever resolves first. The on-chain value is cached per address;
+// a mismatch verdict must not be.
+func TestResolveDecimals_sharedAddressVerdictIsPerPair(t *testing.T) {
+	t.Parallel()
+	const feedAddr = "0x00000000000000000000000000000000000000c7"
+	agreeing := testPair("LINK", "USD")
+	wrong := testPair("EUR", "USD")
+	agreeSpec := FeedSpec{Address: feedAddr, Decimals: 8}
+	wrongSpec := FeedSpec{Address: feedAddr, Decimals: 18}
+
+	type step struct {
+		pair canonical.Pair
+		spec FeedSpec
+	}
+	orders := map[string][]step{
+		"mismatching_first": {{wrong, wrongSpec}, {agreeing, agreeSpec}},
+		"agreeing_first":    {{agreeing, agreeSpec}, {wrong, wrongSpec}},
+	}
+	for name, steps := range orders {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFakeRPC(t, buildLatestRoundDataReturn(t, 1, big.NewInt(1), 0, 1767225600, 1), 8, http.StatusOK)
+			p, _, _ := newDecimalsTestPoller(f, agreeing, feedAddr, 8)
+			for _, s := range steps {
+				got, err := p.resolveDecimals(context.Background(), s.pair, s.spec)
+				if s.spec.Decimals == 8 {
+					if err != nil || got != 8 {
+						t.Errorf("%s (configured 8, chain 8): got (%d, %v), want (8, nil)", s.pair, got, err)
+					}
+					continue
+				}
+				if !errors.Is(err, ErrDecimalsMismatch) {
+					t.Errorf("%s (configured 18, chain 8): got (%d, %v), want ErrDecimalsMismatch", s.pair, got, err)
+				}
+			}
+			if n := f.decimalsCalls.Load(); n != 1 {
+				t.Errorf("decimals() read %d times, want 1 (second pair must hit the per-address cache)", n)
+			}
+		})
+	}
+}

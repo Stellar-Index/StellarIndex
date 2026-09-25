@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strconv"
 	"testing"
 	"time"
 
@@ -178,8 +177,8 @@ func TestAssetVolumeCharacterRollup_OracleMatchesPerAsset(t *testing.T) {
 
 			// The oracle: the rollup EQUALS the per-asset read. Shares are
 			// compared to FULL precision (both are round4 over the SAME
-			// double sums), character/counts exactly, volume at the 2dp wire
-			// precision.
+			// double sums), character/counts exactly, volume as the exact
+			// NUMERIC text.
 			if roll.Character != per.Character {
 				t.Errorf("character: rollup=%q per-asset=%q", roll.Character, per.Character)
 			}
@@ -207,8 +206,8 @@ func TestAssetVolumeCharacterRollup_OracleMatchesPerAsset(t *testing.T) {
 			if roll.WindowDays != per.WindowDays {
 				t.Errorf("window_days: rollup=%d per-asset=%d", roll.WindowDays, per.WindowDays)
 			}
-			if rw, pw := fmt2(roll.VolumeUSD), fmt2(per.VolumeUSD); rw != pw {
-				t.Errorf("volume_usd (2dp): rollup=%s per-asset=%s", rw, pw)
+			if roll.VolumeUSD != per.VolumeUSD {
+				t.Errorf("volume_usd (exact NUMERIC): rollup=%s per-asset=%s", roll.VolumeUSD, per.VolumeUSD)
 			}
 		})
 	}
@@ -422,5 +421,3 @@ func seedCharacter(t *testing.T, ctx context.Context, db *sql.DB, assetID, chara
 		t.Fatalf("seed asset_volume_character %s: %v", assetID, err)
 	}
 }
-
-func fmt2(v float64) string { return strconv.FormatFloat(v, 'f', 2, 64) }

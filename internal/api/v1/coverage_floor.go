@@ -125,6 +125,16 @@ const (
 	// stop being described as uncovered, not by drift.
 	coverageFloorTTL = 30 * time.Minute
 
+	// coverageFloorFailedTTL is how long a probe the database answered
+	// with an error is memoised as failed. Short, and distinct from
+	// coverageFloorTTL: a transient store error (a dropped connection,
+	// a reset) is not a fact about the pair the way a real answer is,
+	// so it must not poison the advisory coverage_from/outside_coverage
+	// annotation for the same thirty minutes a genuine floor earns. It
+	// still bounds re-issuing the same failing read on every empty
+	// window, just over a window a recovered store clears quickly.
+	coverageFloorFailedTTL = 45 * time.Second
+
 	// coverageFloorProbeTimeout caps EVERY probe behind one response,
 	// together. A fiat-quoted pair's floor is measured over its whole
 	// constituent set (see [coverageSet]), and each constituent that
@@ -445,7 +455,7 @@ func (s *Server) coverageFloor(ctx context.Context, pair canonical.Pair, span co
 			"err", err, "base", pair.Base.String(), "quote", pair.Quote.String(), "span", span.String())
 		s.coverageFloorCache.store(key, coverageFloorEntry{
 			outcome: coverageFloorFailed,
-			expires: now.Add(coverageFloorTTL),
+			expires: now.Add(coverageFloorFailedTTL),
 		}, now)
 		return time.Time{}, coverageFloorFailed
 	}

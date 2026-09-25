@@ -458,7 +458,8 @@ func (c *listingClient) fetchListingPrices(
 		if err != nil {
 			return nil, 0, err
 		}
-		batch, batchRejected, err := parseMarkets(io.LimitReader(resp.Body, listingMaxResponseBytes))
+		batch, batchRejected, err := parseMarkets(
+			io.LimitReader(resp.Body, listingMaxResponseBytes), time.Now())
 		_ = resp.Body.Close()
 		if err != nil {
 			return nil, 0, err
@@ -479,12 +480,15 @@ func (c *listingClient) fetchListingPrices(
 // mistake for a price of nothing, and no timestamp is invented to stand
 // in for one the upstream did not publish. A fabricated `priced_at`
 // would defeat the storage layer's 24-hour price bound completely, since
-// that bound is measured on precisely that column.
+// that bound is measured on precisely that column. A `last_updated`
+// more than [timescale.ListingPriceMaxFutureSkew] ahead of now is
+// rejected for the same reason: that bound has no meaning for it.
 //
 // The rejected count is returned rather than logged here so the caller
 // can put it in the run summary: a price record discarded silently is
 // indistinguishable from a coin the platform never priced.
-func parseMarkets(r io.Reader) (map[string]listingPrice, int, error) {
+func parseMarkets(r io.Reader, now time.Time) (map[string]listingPrice, int, error) {
+	ceiling := now.Add(timescale.ListingPriceMaxFutureSkew)
 	out := map[string]listingPrice{}
 	rejected := 0
 
@@ -514,7 +518,7 @@ func parseMarkets(r io.Reader) (map[string]listingPrice, int, error) {
 			continue // the platform published no price — a normal state
 		}
 		at, err := time.Parse(time.RFC3339, strings.TrimSpace(m.LastUpdated))
-		if err != nil || at.IsZero() {
+		if err != nil || at.IsZero() || at.After(ceiling) {
 			rejected++
 			continue
 		}

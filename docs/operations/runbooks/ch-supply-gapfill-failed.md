@@ -41,6 +41,7 @@ ssh root@r1 'journalctl -u ch-supply.service -n 60 --no-pager'   # logs now live
 Classify the failure:
 - **`seed [X,Y] FAILED`** (stderr) — a `stellarindex-ops ch-supply` chunk errored. Usually ClickHouse pressure (Phase-0 / heavy re-derive) or a transient CH error.
 - **`ch-supply: tip unresolved`** — the Postgres `ingestion_cursors` tip query returned empty/0. Check Postgres + the `ledgerstream` cursor.
+- **`ch-supply: supply_flows watermark unresolved (got '…')`** — the ClickHouse `max(ledger_seq)` probe failed (curl error on stderr above it) or answered something other than digits. Check ClickHouse on `:8123` and that `stellar.supply_flows` exists; nothing was seeded.
 - **Any `Permission denied` / disk write** — a regression of the original bug; the script must not write to disk (see `run-ch-supply.sh`).
 
 ## Mitigation (≤ 15 min)

@@ -590,6 +590,32 @@ func (s *Store) sep41ObserverWatermark(ctx context.Context, asOfLedger uint32) (
 	return watermark, nil
 }
 
+// validateSEP41SupplyEventRows is the row contract the multi-row
+// sep41_supply_events writers enforce before touching the database, matching
+// InsertSEP41SupplyEvent's guards: one bad row would otherwise fail a CHECK
+// and abort every row in the statement. op names the caller in the error.
+func validateSEP41SupplyEventRows(op string, rows []SEP41SupplyEvent) error {
+	for i := range rows {
+		e := &rows[i]
+		if e.ContractID == "" {
+			return fmt.Errorf("timescale: %s: row %d empty ContractID", op, i)
+		}
+		if e.TxHash == "" {
+			return fmt.Errorf("timescale: %s: row %d empty TxHash", op, i)
+		}
+		if e.Amount == nil {
+			return fmt.Errorf("timescale: %s: row %d nil Amount", op, i)
+		}
+		if e.Amount.Sign() < 0 {
+			return fmt.Errorf("timescale: %s: row %d negative Amount %s", op, i, e.Amount)
+		}
+		if !e.Kind.IsValid() {
+			return fmt.Errorf("timescale: %s: row %d invalid Kind %q", op, i, e.Kind)
+		}
+	}
+	return nil
+}
+
 func parseSEP41Numeric(raw, label string) (*big.Int, error) {
 	v, ok := new(big.Int).SetString(raw, 10)
 	if !ok {
@@ -608,20 +634,8 @@ func (s *Store) InsertSEP41SupplyEventBatch(ctx context.Context, rows []SEP41Sup
 	if len(rows) == 0 {
 		return nil
 	}
-	for i := range rows {
-		e := &rows[i]
-		if e.ContractID == "" {
-			return fmt.Errorf("timescale: InsertSEP41SupplyEventBatch: row %d empty ContractID", i)
-		}
-		if e.TxHash == "" {
-			return fmt.Errorf("timescale: InsertSEP41SupplyEventBatch: row %d empty TxHash", i)
-		}
-		if e.Amount == nil {
-			return fmt.Errorf("timescale: InsertSEP41SupplyEventBatch: row %d nil Amount", i)
-		}
-		if !e.Kind.IsValid() {
-			return fmt.Errorf("timescale: InsertSEP41SupplyEventBatch: row %d invalid Kind %q", i, e.Kind)
-		}
+	if err := validateSEP41SupplyEventRows("InsertSEP41SupplyEventBatch", rows); err != nil {
+		return err
 	}
 
 	// INV-3 (migration 0110): the batch upsert below is now ON CONFLICT DO

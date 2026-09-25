@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // closedURL returns an http URL on a loopback port nothing listens on.
@@ -62,6 +64,46 @@ func TestDetectGaps_RPCFlagOverridesDeadConfigEndpoint(t *testing.T) {
 	// Past the tip read, the unreachable DSN is the next failure.
 	if err == nil || !strings.HasPrefix(err.Error(), "storage:") {
 		t.Fatalf("with -rpc: want to reach storage, got %v", err)
+	}
+}
+
+// TestMinLedgerBySource_ExcludesOneShotJobNamespaces pins CA2-A19-correct-9:
+// a finished one-shot job's shard rows (backfill, projected-rebuild,
+// census-backfill, …) must not surface in the per-source verdict at
+// all — their last_ledger is a historical range end, millions of
+// ledgers behind tip on a perfectly healthy system, and including
+// them turned a healthy detect-gaps run into a false LAGGING report.
+func TestMinLedgerBySource_ExcludesOneShotJobNamespaces(t *testing.T) {
+	cursors := []timescale.Cursor{
+		{Source: "ledgerstream", Sub: "", LastLedger: 900_000},
+		{Source: "projector", Sub: "soroswap", LastLedger: 899_500},
+		{Source: "projector", Sub: "band", LastLedger: 899_800},
+		// One-shot job shards — abandoned or long-finished, per the
+		// finding's r1 census (4,523 projected-rebuild rows, 91
+		// SDEX backfill rows from a 2026-05 attempt).
+		{Source: "backfill", Sub: "sdex-shard-1", LastLedger: 12_000},
+		{Source: "projected-rebuild", Sub: "shard-9", LastLedger: 4_000},
+		{Source: "census-backfill", Sub: "shard-2", LastLedger: 1},
+	}
+
+	got := minLedgerBySource(cursors)
+
+	want := map[string]uint32{
+		"ledgerstream": 900_000,
+		"projector":    899_500, // min across soroswap/band sub-cursors
+	}
+	if len(got) != len(want) {
+		t.Fatalf("minLedgerBySource returned %v, want exactly %v", got, want)
+	}
+	for source, wantLedger := range want {
+		if got[source] != wantLedger {
+			t.Errorf("source %q: got %d, want %d", source, got[source], wantLedger)
+		}
+	}
+	for _, oneShot := range []string{"backfill", "projected-rebuild", "census-backfill"} {
+		if _, present := got[oneShot]; present {
+			t.Errorf("one-shot namespace %q must not appear in the live verdict, got %v", oneShot, got)
+		}
 	}
 }
 

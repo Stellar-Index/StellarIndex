@@ -1,7 +1,14 @@
 # syntax=docker/dockerfile:1
-FROM node:22-bookworm-slim AS node
 
-FROM golang:1.26.8-trixie
+# Base images pinned by immutable digest (supply-chain, DEP-low), matching the
+# six stellarindex-*.Dockerfiles pinned in 5ed7ac728. The tag stays in the
+# reference for readability only — the digest is what buildkit pulls. Both
+# are multi-platform index digests resolved 2026-09-25 via the registry's
+# manifest-list endpoint; refresh by hand with the same lookup and update
+# this file when the tag moves.
+FROM node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS node
+
+FROM golang:1.26.8-trixie@sha256:bdca99a00bc16590cb1a0bb4e698f5fc5d6a64e4d5eef13d9f18a0ee08e5fa65
 
 ARG TARGETARCH
 ARG GOFUMPT_VERSION=v0.8.0

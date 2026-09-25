@@ -77,12 +77,12 @@ func (s *Store) CopyMergeSEP41SupplyEvents(ctx context.Context, rows []SEP41Supp
 	if len(rows) == 0 {
 		return nil
 	}
+	if err := validateSEP41SupplyEventRows("CopyMergeSEP41SupplyEvents", rows); err != nil {
+		return err
+	}
 	values := make([][]any, len(rows))
 	for i := range rows {
 		e := &rows[i]
-		if e.Amount == nil {
-			return fmt.Errorf("timescale: CopyMergeSEP41SupplyEvents: row %d: nil Amount", i)
-		}
 		values[i] = []any{
 			e.ContractID, int64(e.Ledger), e.TxHash,
 			int16(e.OpIndex), int16(e.EventIndex), e.ObservedAt.UTC(),

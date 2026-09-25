@@ -71,6 +71,55 @@ func TestCompareFile_DetectsAnnotationDrift(t *testing.T) {
 	}
 }
 
+// TestCheckExprWaiversAreTested is the GH-1174 regression: a baseline
+// `:expr` waiver naming a rule with no promtool test anywhere under
+// the rule-tests dir must fail, and adding that test must clear it.
+func TestCheckExprWaiversAreTested(t *testing.T) {
+	baseline := map[string]bool{
+		"meta.yml:stellarindex_alertmanager_down:expr": true,
+	}
+
+	var failures []string
+	fail := func(format string, args ...any) {
+		failures = append(failures, format)
+	}
+
+	checkExprWaiversAreTested(baseline, map[string]bool{}, "deploy/monitoring/rule-tests", fail)
+	if len(failures) == 0 {
+		t.Fatal("checkExprWaiversAreTested did not flag a waived rule with zero promtool coverage")
+	}
+
+	failures = nil
+	tested := map[string]bool{"stellarindex_alertmanager_down": true}
+	checkExprWaiversAreTested(baseline, tested, "deploy/monitoring/rule-tests", fail)
+	if len(failures) != 0 {
+		t.Fatalf("checkExprWaiversAreTested flagged a waived rule that IS covered by a promtool test: %v", failures)
+	}
+}
+
+// TestRuleTestedAlerts confirms the alertname scanner picks up an
+// alert_rule_test block's alertname field from a real test file shape.
+func TestRuleTestedAlerts(t *testing.T) {
+	dir := t.TempDir()
+	const yaml = `rule_files:
+  - ../rules/meta.yml
+tests:
+  - alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_alertmanager_down
+`
+	if err := os.WriteFile(filepath.Join(dir, "meta_test.yml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tested, err := ruleTestedAlerts(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tested["stellarindex_alertmanager_down"] {
+		t.Fatalf("ruleTestedAlerts(%q) = %v, want stellarindex_alertmanager_down present", dir, tested)
+	}
+}
+
 func TestAnnotationsEqual(t *testing.T) {
 	cases := []struct {
 		name string

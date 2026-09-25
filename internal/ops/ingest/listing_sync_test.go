@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // listingCoinsFixture is a trimmed copy of a real
@@ -94,6 +95,10 @@ const listingMarketsFixture = `[
   {"id": "broken-listing", "symbol": "brk", "current_price": 7.5,
    "market_cap": 1, "last_updated": "2026-09-15T14:05:00.000Z"}
 ]`
+
+// listingFixtureNow is the sync's clock for the fixtures above: 25
+// minutes after the upstream stamped its prices.
+var listingFixtureNow = time.Date(2026, 9, 15, 14, 30, 0, 0, time.UTC)
 
 // TestParseCoinsList_KeepsStellarRowsAndCountsTheRest walks the fixture
 // and pins every bucket of the census. The counts are the only evidence
@@ -239,7 +244,7 @@ func TestParseCoinsList_MalformedDocumentIsFatal(t *testing.T) {
 func TestParseMarkets_RejectsAPriceWithNoPublicationTime(t *testing.T) {
 	t.Parallel()
 
-	prices, rejected, err := parseMarkets(strings.NewReader(listingMarketsFixture))
+	prices, rejected, err := parseMarkets(strings.NewReader(listingMarketsFixture), listingFixtureNow)
 	if err != nil {
 		t.Fatalf("parseMarkets: %v", err)
 	}
@@ -273,6 +278,46 @@ func TestParseMarkets_RejectsAPriceWithNoPublicationTime(t *testing.T) {
 	}
 }
 
+// TestParseMarkets_RejectsAPublicationTimeInTheFuture — the storage
+// layer's 24-hour price bound is a floor on `priced_at`, so a timestamp
+// in the future would keep a frozen price "fresh" for as long as it is
+// ahead of now. Only clock skew is tolerated; anything past it is
+// rejected and COUNTED, never clamped to now (which would invent a time).
+func TestParseMarkets_RejectsAPublicationTimeInTheFuture(t *testing.T) {
+	t.Parallel()
+
+	skew := timescale.ListingPriceMaxFutureSkew
+	stamp := func(d time.Duration) string {
+		return listingFixtureNow.Add(d).Format(time.RFC3339)
+	}
+	body := `[
+  {"id": "far-future", "current_price": 1.5, "last_updated": "2099-01-01T00:00:00Z"},
+  {"id": "past-skew", "current_price": 2.5, "last_updated": "` + stamp(skew+time.Second) + `"},
+  {"id": "at-skew", "current_price": 3.5, "last_updated": "` + stamp(skew) + `"},
+  {"id": "an-hour-old", "current_price": 4.5, "last_updated": "` + stamp(-time.Hour) + `"}
+]`
+	prices, rejected, err := parseMarkets(strings.NewReader(body), listingFixtureNow)
+	if err != nil {
+		t.Fatalf("parseMarkets: %v", err)
+	}
+	for _, id := range []string{"far-future", "past-skew"} {
+		if p, ok := prices[id]; ok {
+			t.Errorf("%s: a last_updated past the skew allowance was kept (priced_at %v) — "+
+				"it would count as fresh until the clock caught up with it", id, p.At)
+		}
+	}
+	if rejected != 2 {
+		t.Errorf("rejected = %d, want 2 (far-future, past-skew)", rejected)
+	}
+	if got, want := prices["at-skew"].At, listingFixtureNow.Add(skew); !got.Equal(want) {
+		t.Errorf("at-skew priced_at = %v, want %v — clock skew inside the allowance "+
+			"must not drop a price", got, want)
+	}
+	if got, want := prices["an-hour-old"].USD, "4.5"; got != want {
+		t.Errorf("an-hour-old price = %q, want %q", got, want)
+	}
+}
+
 // TestParseMarkets_CarriesThePriceLiteralWithNoFloatRoundTrip is the
 // ADR-0003 guard at the wire boundary. The fixture's aquarius price has
 // far more significant digits than a float64 holds; decoding it through
@@ -284,7 +329,7 @@ func TestParseMarkets_CarriesThePriceLiteralWithNoFloatRoundTrip(t *testing.T) {
 
 	const exact = "0.00012345678901234567890123456789"
 
-	prices, _, err := parseMarkets(strings.NewReader(listingMarketsFixture))
+	prices, _, err := parseMarkets(strings.NewReader(listingMarketsFixture), listingFixtureNow)
 	if err != nil {
 		t.Fatalf("parseMarkets: %v", err)
 	}
@@ -313,7 +358,7 @@ func TestApplyListingPrices_LeavesUnpricedEntriesUnpriced(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseListingCatalogue: %v", err)
 	}
-	prices, _, err := parseMarkets(strings.NewReader(listingMarketsFixture))
+	prices, _, err := parseMarkets(strings.NewReader(listingMarketsFixture), listingFixtureNow)
 	if err != nil {
 		t.Fatalf("parseMarkets: %v", err)
 	}

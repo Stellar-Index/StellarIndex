@@ -2,7 +2,7 @@ package v1
 
 import (
 	"context"
-	"strconv"
+	"math/big"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -64,10 +64,15 @@ func (s *Server) applyVolumeCharacter(ctx context.Context, detail *AssetDetail, 
 		// lookup miss.
 		return
 	}
+	volumeUSD, ok := new(big.Rat).SetString(vc.VolumeUSD)
+	if !ok {
+		s.logger.Debug("volume character rollup volume_usd unparseable", "asset_id", asset.String(), "volume_usd", vc.VolumeUSD)
+		return
+	}
 	detail.VolumeCharacter = vc.Character
 	detail.VolumeCharacterSignals = &AssetVolumeCharacterSignals{
 		WindowDays:             vc.WindowDays,
-		VolumeUSD:              strconv.FormatFloat(vc.VolumeUSD, 'f', 2, 64),
+		VolumeUSD:              volumeUSD.FloatString(2),
 		DistinctMakers:         vc.DistinctMakers,
 		DistinctTakers:         vc.DistinctTakers,
 		TopAccountPairVolShare: vc.TopAccountPairVolShare,

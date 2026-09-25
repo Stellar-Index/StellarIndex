@@ -458,6 +458,7 @@ func rwaClassicStages(m rwaMembership, join rwaCatalogueJoin, served int) []RWAF
 			// response would look the same as a quiet network.
 			Stage: rwaStageIssuersWithSep1, Unit: rwaUnitIssuers, Count: c.IssuersWithPayload,
 			Dropped: rwaDrops(
+				RWAFunnelDrop{Reason: rwaDropAttestationStale, Count: c.IssuersPayloadStale, Actor: rwaActorIssuer},
 				RWAFunnelDrop{Reason: rwaDropPayloadUnreadable, Count: c.IssuersPayloadUnreadable, Actor: rwaActorIssuer},
 				RWAFunnelDrop{Reason: rwaDropDeclaresNothing, Count: c.IssuersDeclaringNothing, Actor: rwaActorIssuer},
 			),

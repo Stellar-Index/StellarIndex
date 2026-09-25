@@ -9017,6 +9017,11 @@ export interface components {
              *     dead name, a TLS failure and an undecodable document are one
              *     bucket — so the reason states what was observed rather than
              *     whose fault it was.
+             *     `sep1_attestation_stale` — the issuer holds a cached payload
+             *     that was not fetched within the last 30 days (or whose fetch
+             *     time is unknown): its domain has served nothing since, so
+             *     what that document said is no longer read as its
+             *     attestation. A successful re-fetch restores it.
              *     `sep1_payload_unreadable` — the cached payload would not
              *     decode.
              *     `sep1_declares_no_currencies` — it decoded and declares no
@@ -9124,7 +9129,7 @@ export interface components {
              *     `refused[]`.
              * @enum {string}
              */
-            reason: "sep1_attestation_never_fetched" | "domain_served_no_sep1_attestation" | "sep1_payload_unreadable" | "sep1_declares_no_currencies" | "entry_declares_no_asset_code" | "entry_declares_no_issuer" | "entry_declares_another_issuer" | "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "duplicate_declaration_of_the_same_asset" | "over_issuer_cap" | "admitted_but_never_observed_on_chain" | "directory_entry_names_an_account" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "duplicate_directory_entry_for_contract" | "over_contract_scan_cap" | "issuer_asset_page_truncated" | "withheld_issuer_flagged" | "reference_unavailable" | "reference_contract_not_bound" | "reference_not_instrument_scoped" | "reference_not_bound" | "reference_not_usd_denominated" | "no_reference_feed" | "reference_expired" | "reference_not_positive" | "supply_unavailable" | "decimals_unavailable" | "contract_already_evaluated_by_directory_arm" | "independent_listing_unavailable" | "contract_curated_binding_without_independent_listing" | "contract_listed_without_curated_binding" | "curated_tag_lookup_unavailable";
+            reason: "sep1_attestation_never_fetched" | "domain_served_no_sep1_attestation" | "sep1_attestation_stale" | "sep1_payload_unreadable" | "sep1_declares_no_currencies" | "entry_declares_no_asset_code" | "entry_declares_no_issuer" | "entry_declares_another_issuer" | "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "duplicate_declaration_of_the_same_asset" | "over_issuer_cap" | "admitted_but_never_observed_on_chain" | "directory_entry_names_an_account" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "duplicate_directory_entry_for_contract" | "over_contract_scan_cap" | "issuer_asset_page_truncated" | "withheld_issuer_flagged" | "reference_unavailable" | "reference_contract_not_bound" | "reference_not_instrument_scoped" | "reference_not_bound" | "reference_not_usd_denominated" | "no_reference_feed" | "reference_expired" | "reference_not_positive" | "supply_unavailable" | "decimals_unavailable" | "contract_already_evaluated_by_directory_arm" | "independent_listing_unavailable" | "contract_curated_binding_without_independent_listing" | "contract_listed_without_curated_binding" | "curated_tag_lookup_unavailable";
             count: number;
             /**
              * @description Who can move this number. `operator` — a fetch nobody has

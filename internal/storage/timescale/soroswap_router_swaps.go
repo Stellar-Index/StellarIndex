@@ -14,10 +14,12 @@ import (
 // in the `trades` hypertable which hold the per-pair leg-level
 // records emitted by the per-pair contracts the router walks.
 //
-// Identity per Stellar's per-op uniqueness: (ledger, tx_hash,
-// op_index). Multiple router invocations in the same tx are
-// theoretically possible (a contract calling the router twice
-// inside one InvokeContract) but op_index disambiguates.
+// Identity: (ledger, tx_hash, op_index, call_sig). Multiple router
+// invocations in the same tx are theoretically possible (a contract
+// calling the router twice inside one InvokeContract) but op_index
+// disambiguates them; call_sig (migration 0056) additionally
+// distinguishes multiple distinct router swaps observed within one
+// op (aggregator / batch calls).
 //
 // AmountIn / AmountOut are decimal-string numerics (i128 →
 // *big.Int → string per ADR-0003). Path is the hop sequence of
@@ -69,7 +71,8 @@ type SoroswapRouterSwap struct {
 }
 
 // InsertSoroswapRouterSwap appends one soroswap_router_swaps row,
-// idempotent on (ledger_close_time, ledger, tx_hash, op_index).
+// idempotent on (ledger_close_time, ledger, tx_hash, op_index,
+// call_sig).
 // Defensive: rejects empty PK columns + empty function name + empty
 // path before touching the DB.
 func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSwap) error {

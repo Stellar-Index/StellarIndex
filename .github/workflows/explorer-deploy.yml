@@ -6,8 +6,9 @@
 # auto-deploys on every push to main without consuming GitHub
 # Actions minutes. This workflow exists for two cases:
 #
-#   1. **Hotfix** — push a fixed version of an arbitrary commit
-#      (workflow_dispatch supports `ref:` selection).
+#   1. **Hotfix** — publish a fix. environment=production must be
+#      dispatched from main (scripts/ci/resolve-pages-branch.sh refuses
+#      any other ref); any other ref publishes as a preview.
 #   2. **CF git integration paused** — fall back to publishing
 #      from CI when the Pages project's git connection is
 #      disabled (e.g. mid-rotation of the CF GitHub app token).
@@ -111,8 +112,8 @@ jobs:
         #   relaxation also requires a still-future
         #   DEPLOY_APPROVAL_RELAXED_UNTIL (K079): open-ended relaxation
         #   never re-alarms. It waives reviewers only: the main-only
-        #   branch policy (which also stops a non-main ref being
-        #   published as `--branch main`) always holds.
+        #   branch policy always holds, and resolve-pages-branch.sh
+        #   independently refuses a non-main production ref.
         if: github.event.inputs.environment == 'production'
         env:
           GH_TOKEN: ${{ secrets.DEPLOY_PROTECTION_TOKEN || secrets.GITHUB_TOKEN }}
@@ -198,25 +199,14 @@ jobs:
       # test/controlwiring/explorer_build_guards_test.go for the wiring guard.
 
       - name: Resolve deploy branch
-        # F-004: workflow_dispatch means github.ref_name is whatever ref the
-        # run was launched from — any pushable branch (incl. wt/* agent
-        # branches). Passed straight into the wrangler `command:` it is a
-        # script-injection vector in a job holding CLOUDFLARE_API_TOKEN. Take
-        # the raw value via `env:` (never interpolate a `${{ }}` into the
-        # shell), allowlist-validate it, and only then export it for the
-        # deploy step to consume as a static, metacharacter-free token.
+        # The Pages branch label is the production switch, so it must agree
+        # with the ref this job checked out: production only from main,
+        # preview never as `main`, allowlisted because it reaches wrangler's
+        # command line (F-004). Refs pass through the runner's GITHUB_REF /
+        # GITHUB_REF_NAME, never a `${{ }}` interpolated into the shell.
         env:
-          RAW_BRANCH: ${{ github.event.inputs.environment == 'production' && 'main' || github.ref_name }}
-        run: |
-          set -euo pipefail
-          # Whole-string match ([[ =~ ]], not line-oriented grep) so an
-          # embedded newline can't slip a second line past the allowlist
-          # and into $GITHUB_ENV. Mirrors deploy.yml's binary-name check.
-          if [[ ! "$RAW_BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]]; then
-            echo "::error::Refusing to deploy: branch '$RAW_BRANCH' has characters outside [A-Za-z0-9._/-]"
-            exit 1
-          fi
-          printf 'BRANCH=%s\n' "$RAW_BRANCH" >> "$GITHUB_ENV"
+          DEPLOY_ENVIRONMENT: ${{ github.event.inputs.environment }}
+        run: bash scripts/ci/resolve-pages-branch.sh
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0  # v4.0.0

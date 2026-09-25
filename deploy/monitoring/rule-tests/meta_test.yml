@@ -1,0 +1,332 @@
+---
+# promtool unit tests for meta.yml's six `severity: page` alerts —
+# the alerting pipeline watching itself (alertmanager_down,
+# alertmanager_not_notifying, and the four exporter-down cascades).
+#
+#   promtool test rules deploy/monitoring/rule-tests/meta_test.yml
+#
+# GH-1174: these six alerts guard the paths that would otherwise let
+# the whole alerting pipeline go silently dark (the 2026-07-29 ->
+# 2026-08-29 31-day zero-notification outage). Four of the five
+# expressions rule-equivalence.baseline waives as intentional
+# multi-vs-r1 divergences live here, and until now none of them had a
+# promtool test on EITHER tree — "intentional divergence" and
+# "untested on both sides" were indistinguishable from the outside.
+
+rule_files:
+  - ../rules/meta.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── stellarindex_alertmanager_down ───────────────────────────────
+  - interval: 1m
+    name: alertmanager scrape target down fires alertmanager_down
+    input_series:
+      - series: 'up{job="alertmanager_pair",instance="am1:9093"}'
+        values: '0+0x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_alertmanager_down
+        exp_alerts:
+          - exp_labels:
+              job: alertmanager_pair
+              instance: am1:9093
+              severity: page
+              team: stellarindex
+              component: meta
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/alertmanager-down.md
+              summary: "AlertManager is down or unscraped"
+              description: |
+                Alertmanager is not answering its scrape. Every alert in the
+                system is undeliverable while this is true, including this
+                one — treat the Prometheus UI, not Discord, as the source of
+                truth until it clears.
+
+  - interval: 1m
+    name: alertmanager scrape target healthy stays silent
+    input_series:
+      - series: 'up{job="alertmanager_pair",instance="am1:9093"}'
+        values: '1+0x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_alertmanager_down
+        exp_alerts: []
+
+  # ── stellarindex_alertmanager_not_notifying ──────────────────────
+  # The deadman's switch should tick the webhook counter every minute;
+  # a flat counter for 15m means the fan-out died even though the
+  # process is up and being scraped.
+  - interval: 1m
+    name: flat webhook notification counter for 15m fires not_notifying
+    input_series:
+      - series: 'alertmanager_notifications_total{job="alertmanager_pair",integration="webhook"}'
+        values: '5+0x25'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_alertmanager_not_notifying
+        exp_alerts:
+          - exp_labels:
+              job: alertmanager_pair
+              integration: webhook
+              severity: page
+              team: stellarindex
+              component: meta
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/alertmanager-not-notifying.md
+              summary: "AlertManager has sent no notifications in 15m — the fan-out is dead"
+              description: |
+                The deadman's switch alone should produce ~30 webhook
+                notifications an hour. Zero means notifications are not
+                leaving the process. Most likely a receiver's *_configs block
+                was dropped because its URL env var is empty — check
+                /etc/default/alertmanager-secrets, then re-run
+                configs/alertmanager/apply.sh, which now refuses to install
+                a config whose receivers deliver to nobody.
+
+  - interval: 1m
+    name: steadily incrementing webhook counter stays silent
+    input_series:
+      - series: 'alertmanager_notifications_total{job="alertmanager_pair",integration="webhook"}'
+        values: '0+1x25'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_alertmanager_not_notifying
+        exp_alerts: []
+
+  # ── stellarindex_redis_exporter_down ─────────────────────────────
+  - interval: 1m
+    name: redis_exporter down for 2m fires exporter_down
+    input_series:
+      - series: 'up{job="redis_exporter",instance="cache1:9121"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_redis_exporter_down
+        exp_alerts:
+          - exp_labels:
+              job: redis_exporter
+              instance: cache1:9121
+              severity: page
+              team: stellarindex
+              component: monitoring
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
+              summary: "redis_exporter scrape target is down — cascade-blind for any alert that depends on it"
+              description: |
+                The redis_exporter Prometheus scrape target has been down
+                for 2+ minutes. While it is down, every alert that depends
+                on its metrics is silently blind — most importantly
+                `stellarindex_redis_writes_blocked`
+                (`redis_rdb_last_bgsave_status == 0`), the alert family in
+                `deploy/monitoring/rules/cache.yml`, and any
+                cache-miss / latency rule keyed on `redis_*`. This is the
+                exact failure mode F-0085 isolated from the 2026-05-10
+                SEV-2 incident: the metric-producing exporter died first,
+                so the dependent alert evaluated `absent_gauge == 0`
+                (no_data) and never fired. Follow the runbook to restart
+                and verify the exporter; once scraping resumes the
+                dependent alert families will re-evaluate on real data.
+
+  # ── stellarindex_postgres_exporter_down ──────────────────────────
+  # No input series at all: the target vanished from service discovery
+  # rather than being scraped-and-failing. Only the absent_over_time
+  # arm can see this — the `up{...} == 0` arm needs a series to exist.
+  - interval: 1m
+    name: postgres_exporter missing from service discovery fires exporter_down
+    input_series: []
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_postgres_exporter_down
+        exp_alerts:
+          - exp_labels:
+              job: postgres_exporter
+              severity: page
+              team: stellarindex
+              component: monitoring
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
+              summary: "postgres_exporter scrape target is down — cascade-blind for any alert that depends on it"
+              description: |
+                The postgres_exporter Prometheus scrape target has been
+                down for 2+ minutes. While it is down, every alert that
+                depends on `pg_*` metrics in
+                `deploy/monitoring/rules/storage.yml` is silently
+                blind — including `stellarindex_timescale_primary_down`,
+                `stellarindex_timescale_replica_lag`,
+                `stellarindex_timescale_lock_table_pressure`, and
+                `stellarindex_timescale_connections_saturated`. This is
+                the F-0085 blindness pattern surfaced by the 2026-05-10
+                SEV-2 incident: the metric-producing exporter died first,
+                so the dependent alert evaluated `absent_gauge == 0`
+                (no_data) and never fired. Follow the runbook to restart
+                and verify the exporter.
+
+  - interval: 1m
+    name: postgres_exporter scraped and down for 2m fires exporter_down
+    input_series:
+      - series: 'up{job="postgres_exporter",instance="pg1:9187"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_postgres_exporter_down
+        exp_alerts:
+          - exp_labels:
+              job: postgres_exporter
+              instance: pg1:9187
+              severity: page
+              team: stellarindex
+              component: monitoring
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
+              summary: "postgres_exporter scrape target is down — cascade-blind for any alert that depends on it"
+              description: |
+                The postgres_exporter Prometheus scrape target has been
+                down for 2+ minutes. While it is down, every alert that
+                depends on `pg_*` metrics in
+                `deploy/monitoring/rules/storage.yml` is silently
+                blind — including `stellarindex_timescale_primary_down`,
+                `stellarindex_timescale_replica_lag`,
+                `stellarindex_timescale_lock_table_pressure`, and
+                `stellarindex_timescale_connections_saturated`. This is
+                the F-0085 blindness pattern surfaced by the 2026-05-10
+                SEV-2 incident: the metric-producing exporter died first,
+                so the dependent alert evaluated `absent_gauge == 0`
+                (no_data) and never fired. Follow the runbook to restart
+                and verify the exporter.
+
+  # ── stellarindex_pgbackrest_exporter_down ────────────────────────
+  - interval: 1m
+    name: pgbackrest_exporter down for 2m fires exporter_down
+    input_series:
+      - series: 'up{job="pgbackrest_exporter",instance="pg1:9854"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_pgbackrest_exporter_down
+        exp_alerts:
+          - exp_labels:
+              job: pgbackrest_exporter
+              instance: pg1:9854
+              severity: page
+              team: stellarindex
+              component: monitoring
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
+              summary: "pgbackrest_exporter scrape target is down — cascade-blind for any alert that depends on it"
+              description: |
+                The pgbackrest_exporter Prometheus scrape target has been
+                down for 2+ minutes. While it is down,
+                `stellarindex_timescale_backup_failed` and
+                `stellarindex_timescale_backup_none_24h`
+                (`deploy/monitoring/rules/storage.yml`) are silently
+                blind — both depend on
+                `pgbackrest_backup_since_last_completion_seconds`, which
+                only this exporter publishes. A 24h RPO breach during
+                exporter downtime would not surface until the exporter came
+                back. (An exporter that is UP but has no stanza to report
+                is the sibling gap, owned by
+                `stellarindex_pgbackrest_backup_metrics_absent`.)
+                This is the F-0085 blindness pattern from the 2026-05-10
+                SEV-2 incident. Follow the runbook to restart and verify
+                the exporter.
+
+  # ── stellarindex_minio_exporter_down ─────────────────────────────
+  - interval: 1m
+    name: minio scrape target down for 2m fires exporter_down
+    input_series:
+      - series: 'up{job="minio",instance="minio1:9000"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_minio_exporter_down
+        exp_alerts:
+          - exp_labels:
+              job: minio
+              instance: minio1:9000
+              severity: page
+              team: stellarindex
+              component: monitoring
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
+              summary: "MinIO scrape target is down — cascade-blind for any alert that depends on it"
+              description: |
+                The MinIO Prometheus scrape target has been down for 2+
+                minutes. While it is down, every alert that depends on
+                MinIO cluster metrics (galexie-archive health,
+                archive-completeness, archive-publish, and any
+                object-storage usage / capacity rule) is silently blind.
+                Because Galexie writes ledger metadata to MinIO and the
+                indexer reads it back (ADR-0002), prolonged MinIO
+                invisibility risks a repeat of the F-0085 blindness
+                pattern from the 2026-05-10 SEV-2 — the metric-producing
+                target dies first, so dependent alerts evaluate
+                `absent_gauge == 0` (no_data) and never fire. Common
+                causes here are a missing bearer-token file
+                (`/etc/prometheus/minio.token` returning 401) and MinIO
+                itself being stopped. Follow the runbook.
+
+  # ── stellarindex_prometheus_scrape_failing (:expr baseline waiver) ──
+  # r1's job list is hyphenated/single-host-shaped; this tree's is the
+  # multi-host ansible template. The waiver covers the job SET, not
+  # whether the rule fires at all — prove that here on this tree.
+  - interval: 1m
+    name: a scraped job down for 2m fires scrape_failing
+    input_series:
+      - series: 'up{job="stellarindex_api",instance="api1:8080"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_prometheus_scrape_failing
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_api
+              instance: api1:8080
+              severity: ticket
+              team: stellarindex
+              component: meta
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/scrape-failing.md
+              summary: "Prometheus scrape of stellarindex_api@api1:8080 failing"
+              description: |
+                A scrape target has been down for 2+ min. We lose visibility
+                into that subsystem's health until it returns. Doesn't mean the
+                subsystem is down — often the exporter is the problem.
+
+  # ── stellarindex_alertmanager_notifications_failing (:expr waiver) ──
+  - interval: 1m
+    name: notification failures in the last 15m fire notifications_failing
+    input_series:
+      - series: 'alertmanager_notifications_failed_total{job="alertmanager_pair",integration="discord",reason="404"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_alertmanager_notifications_failing
+        exp_alerts:
+          - exp_labels:
+              job: alertmanager_pair
+              integration: discord
+              reason: "404"
+              severity: ticket
+              team: stellarindex
+              component: meta
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/alertmanager-notifications-failing.md
+              summary: "AlertManager notifications to discord are failing"
+              description: |
+                Alertmanager is attempting delivery and being refused
+                (404). A revoked Discord webhook or a deleted
+                Healthchecks check presents exactly this way. Unlike
+                not_notifying, the pipeline is alive — the far end is
+                rejecting it.
+
+  - interval: 1m
+    name: no notification failures stays silent
+    input_series:
+      - series: 'alertmanager_notifications_failed_total{job="alertmanager_pair",integration="discord",reason="404"}'
+        values: '0+0x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_alertmanager_notifications_failing
+        exp_alerts: []

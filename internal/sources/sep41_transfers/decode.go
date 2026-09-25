@@ -144,13 +144,9 @@ func decodeApprove(ev *events.Event) (string, string, *big.Int, uint32, error) {
 // uses `data_format = "single-value"` with the new admin Address
 // in the body.
 func decodeSetAdmin(ev *events.Event) (string, string, error) {
-	var from string
-	if len(ev.Topic) >= 2 {
-		var err error
-		from, err = decodeAddrTopic(ev, 1)
-		if err != nil {
-			return "", "", fmt.Errorf("sep41_transfers: set_admin.admin (topic[1]): %w", err)
-		}
+	from, err := decodeOptionalAdminTopic(ev)
+	if err != nil {
+		return "", "", fmt.Errorf("sep41_transfers: set_admin.admin (topic[1]): %w", err)
 	}
 	sv, err := scval.Parse(ev.Value)
 	if err != nil {
@@ -189,6 +185,23 @@ func decodeSetAuthorized(ev *events.Event) (string, bool, error) {
 	return id, authorize, nil
 }
 
+// decodeOptionalAdminTopic reads set_admin's optional topic[1]: absent or
+// Void decodes to "". It is the only address slot where Void is legal;
+// every other slot goes through decodeAddrTopic, which rejects it.
+func decodeOptionalAdminTopic(ev *events.Event) (string, error) {
+	if len(ev.Topic) < 2 {
+		return "", nil
+	}
+	sv, err := scval.Parse(ev.Topic[1])
+	if err != nil {
+		return "", fmt.Errorf("parse topic[1]: %w", err)
+	}
+	if sv.Type == xdr.ScValTypeScvVoid {
+		return "", nil
+	}
+	return scval.AsAddressStrkey(sv)
+}
+
 func decodeAddrTopic(ev *events.Event, idx int) (string, error) {
 	if len(ev.Topic) <= idx {
 		return "", fmt.Errorf("%w: want topic[%d], have len=%d", ErrShortTopic, idx, len(ev.Topic))
@@ -196,9 +209,6 @@ func decodeAddrTopic(ev *events.Event, idx int) (string, error) {
 	sv, err := scval.Parse(ev.Topic[idx])
 	if err != nil {
 		return "", fmt.Errorf("parse topic[%d]: %w", idx, err)
-	}
-	if sv.Type == xdr.ScValTypeScvVoid {
-		return "", nil
 	}
 	return scval.AsAddressStrkey(sv)
 }

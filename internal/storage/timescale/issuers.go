@@ -583,6 +583,10 @@ func (s *Store) SyncIssuerHomeDomain(ctx context.Context, gStrkey, homeDomain st
 // issuers row — sep1_payload (jsonb) + sep1_resolved_at = now() — and
 // clears the retry ladder (migration 0159).
 //
+// It is the only writer of sep1_payload_fetched_at (migration 0178):
+// sep1_resolved_at is stamped by every attempt, so only this column
+// says how old the held payload is once a domain starts failing.
+//
 // Clearing on success is what makes a RECOVERING domain cheap: an
 // issuer that finally publishes a stellar.toml after months of 404s
 // returns to the plain -older-than cadence on its very first success,
@@ -593,6 +597,7 @@ func (s *Store) SetIssuerSep1Payload(ctx context.Context, gStrkey string, payloa
         UPDATE issuers
            SET sep1_payload              = $2::jsonb,
                sep1_resolved_at          = NOW(),
+               sep1_payload_fetched_at   = NOW(),
                sep1_consecutive_failures = 0,
                sep1_next_attempt_after   = NULL
          WHERE g_strkey = $1

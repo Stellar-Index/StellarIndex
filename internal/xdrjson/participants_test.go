@@ -85,6 +85,51 @@ func TestParticipantAccounts_BeginSponsoringFutureReservesTarget(t *testing.T) {
 	}
 }
 
+// TestParticipantAccounts_RevokeSponsorshipLedgerEntryAccount is the GH-1065
+// regression: revoking sponsorship of an ACCOUNT ledger entry must index the
+// sponsored account (whose reserve requirement the revocation returns),
+// exactly like begin_sponsoring_future_reserves indexes it going in.
+func TestParticipantAccounts_RevokeSponsorshipLedgerEntryAccount(t *testing.T) {
+	lk := xdr.LedgerKey{
+		Type:    xdr.LedgerEntryTypeAccount,
+		Account: &xdr.LedgerKeyAccount{AccountId: xdr.MustAddress(gAddr2)},
+	}
+	op, err := xdr.NewRevokeSponsorshipOp(xdr.RevokeSponsorshipTypeRevokeSponsorshipLedgerEntry, lk)
+	if err != nil {
+		t.Fatalf("NewRevokeSponsorshipOp: %v", err)
+	}
+	b64 := mustBody(t, xdr.OperationTypeRevokeSponsorship, op)
+	got, err := xdrjson.ParticipantAccounts(b64)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(got) != 1 || got[0] != gAddr2 {
+		t.Errorf("participants = %v, want [%s]", got, gAddr2)
+	}
+}
+
+// TestParticipantAccounts_RevokeSponsorshipSignerAccount covers the signer
+// arm: revoking sponsorship of a signer must index the account the signer
+// is attached to.
+func TestParticipantAccounts_RevokeSponsorshipSignerAccount(t *testing.T) {
+	signer := xdr.RevokeSponsorshipOpSigner{
+		AccountId: xdr.MustAddress(gAddr),
+		SignerKey: xdr.MustSigner(gAddr2),
+	}
+	op, err := xdr.NewRevokeSponsorshipOp(xdr.RevokeSponsorshipTypeRevokeSponsorshipSigner, signer)
+	if err != nil {
+		t.Fatalf("NewRevokeSponsorshipOp: %v", err)
+	}
+	b64 := mustBody(t, xdr.OperationTypeRevokeSponsorship, op)
+	got, err := xdrjson.ParticipantAccounts(b64)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(got) != 1 || got[0] != gAddr {
+		t.Errorf("participants = %v, want [%s]", got, gAddr)
+	}
+}
+
 func TestParticipantAccounts_NoneForSelfContained(t *testing.T) {
 	// manage_data has no counterparty account field → no participants.
 	body, _ := xdr.NewOperationBody(xdr.OperationTypeManageData, xdr.ManageDataOp{DataName: "k"})

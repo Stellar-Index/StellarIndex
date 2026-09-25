@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"math/big"
 	"net/http"
 	"sort"
 	"strconv"
@@ -782,8 +783,9 @@ func assetMarketsLeg(ctx context.Context, reader MarketsReader, asset string, li
 }
 
 // fanOutAssetMarkets calls AssetMarkets in parallel for each
-// expanded asset_id, merges + dedupes the results, sorts by
-// 24h trade_count desc, caps at `limit`.
+// expanded asset_id, merges + dedupes the results, sorts per the
+// caller's `order` (matching the single-asset query's own ordering),
+// caps at `limit`.
 //
 // Dedup key: (base, quote) tuple — same pair observed via two
 // different asset_id queries (e.g. native/USDC-GA5Z... matches
@@ -821,17 +823,23 @@ func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, a
 	seen := make(map[pairKey]struct{})
 	merged := make([]Market, 0, limit)
 	for _, r := range results {
-		if r.err != nil && firstErr == nil {
-			firstErr = r.err
-		}
-		if r.err == nil {
-			// Oldest observed-at across the contributing legs; any
-			// stale leg makes the composite stale.
-			if !r.observedAt.IsZero() && (observedAt.IsZero() || r.observedAt.Before(observedAt)) {
-				observedAt = r.observedAt
+		if r.err != nil {
+			if firstErr == nil {
+				firstErr = r.err
 			}
-			stale = stale || r.stale
+			// A dropped leg means the composite is missing whatever
+			// that asset_id would have contributed — that's exactly
+			// what `stale` exists to signal, so a failed leg taints
+			// the composite the same as a stale one.
+			stale = true
+			continue
 		}
+		// Oldest observed-at across the contributing legs; any
+		// stale leg makes the composite stale.
+		if !r.observedAt.IsZero() && (observedAt.IsZero() || r.observedAt.Before(observedAt)) {
+			observedAt = r.observedAt
+		}
+		stale = stale || r.stale
 		for _, m := range r.rows {
 			k := pairKey{base: m.Base, quote: m.Quote}
 			if _, dup := seen[k]; dup {
@@ -844,14 +852,60 @@ func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, a
 	if firstErr != nil && len(merged) == 0 {
 		return nil, time.Time{}, false, firstErr
 	}
-	// Sort by trade_count_24h desc (proxy for "interesting market").
-	sort.SliceStable(merged, func(i, j int) bool {
-		return merged[i].TradeCount24h > merged[j].TradeCount24h
-	})
+	sortMergedMarkets(merged, order)
 	if len(merged) > limit {
 		merged = merged[:limit]
 	}
 	return merged, observedAt, stale, nil
+}
+
+// sortMergedMarkets orders a fan-out's merged rows the same way the
+// single-asset SQL path orders them (buildSourceMarketsQuery /
+// distinctPairsCommon), so `order_by` behaves identically whether the
+// caller passed a canonical asset_id or a slug that expanded into
+// several. MarketsOrderPair sorts ascending by (base, quote);
+// MarketsOrderVolume24hDesc sorts descending by volume_24h_usd,
+// NULLs treated as zero, tie-broken ascending by (base, quote) —
+// matching the SQL's `COALESCE(vol_24h_num, 0) DESC, base||quote ASC`.
+func sortMergedMarkets(merged []Market, order timescale.MarketsOrder) {
+	switch order {
+	case timescale.MarketsOrderPair:
+		sort.SliceStable(merged, func(i, j int) bool {
+			if merged[i].Base != merged[j].Base {
+				return merged[i].Base < merged[j].Base
+			}
+			return merged[i].Quote < merged[j].Quote
+		})
+	default: // MarketsOrderVolume24hDesc
+		sort.SliceStable(merged, func(i, j int) bool {
+			cmp := compareVolumeUSD(merged[i].Volume24hUSD, merged[j].Volume24hUSD)
+			if cmp != 0 {
+				return cmp > 0
+			}
+			if merged[i].Base != merged[j].Base {
+				return merged[i].Base < merged[j].Base
+			}
+			return merged[i].Quote < merged[j].Quote
+		})
+	}
+}
+
+// compareVolumeUSD compares two volume_24h_usd wire strings as
+// decimals (never float64 — ADR-0003) and returns -1/0/1. A nil
+// pointer (no recent volume) compares as zero, matching the SQL
+// path's `COALESCE(vol_24h_num, 0)`.
+func compareVolumeUSD(a, b *string) int {
+	toRat := func(s *string) *big.Rat {
+		if s == nil {
+			return new(big.Rat)
+		}
+		r, ok := new(big.Rat).SetString(*s)
+		if !ok {
+			return new(big.Rat)
+		}
+		return r
+	}
+	return toRat(a).Cmp(toRat(b))
 }
 
 // adjustListingPrice is the ONE path a listing row's last_price takes to

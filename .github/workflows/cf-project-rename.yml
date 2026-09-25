@@ -129,6 +129,13 @@ jobs:
           AFTER=$(find out -type f | wc -l)
           echo "pruned segment files: $BEFORE -> $AFTER"
 
+      - name: Resolve deploy branch
+        # A production (`main`) Pages deploy, so it must be built from main.
+        if: inputs.stage == 'create-and-deploy'
+        env:
+          DEPLOY_ENVIRONMENT: production
+        run: bash scripts/ci/resolve-pages-branch.sh
+
       - name: Deploy to the new project
         if: inputs.stage == 'create-and-deploy'
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
@@ -136,7 +143,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: web/explorer
-          command: pages deploy out --project-name=stellarindex-explorer --branch=main
+          command: pages deploy out --project-name=stellarindex-explorer --branch=${{ env.BRANCH }}
 
       - name: Verify the new project serves
         if: inputs.stage == 'create-and-deploy'

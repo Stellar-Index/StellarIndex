@@ -50,12 +50,22 @@ MEMGUARD="${CHSUPPLY_MEMGUARD:-6442450944}"   # wait while CH mem > 6 GiB
 # unit is de-privileged (User=stellarindex) and writes NOTHING to disk: a
 # /var/log file would fail on ownership under the 2026-07-03 hardening AND isn't
 # scraped by promtail (which ships the journal, not files). (2026-07-17)
-CH() { curl -sS --max-time 3600 http://localhost:8123/ --data-binary "$1" 2>/dev/null; }
+# -f: an HTTP 4xx/5xx is a failure with an empty stdout, not an exception
+# body that reads as a value.
+CH() { curl -sSf --max-time 3600 http://localhost:8123/ --data-binary "$1"; }
+# Digits only — the same guard data-freshness.sh puts on its supply_flows read.
+is_uint() { case "$1" in '' | *[!0-9]*) return 1 ;; esac; }
 
 TIP=$("$PSQL" "$DSN" -tA -c "SELECT last_ledger FROM ingestion_cursors WHERE source='ledgerstream'" 2>/dev/null | tr -d '[:space:]')
-[ -n "$TIP" ] && [ "$TIP" != "0" ] || { echo "$(date -u) ch-supply: tip unresolved" >&2; exit 1; }
+if ! is_uint "$TIP" || [ "$TIP" = "0" ]; then
+  echo "$(date -u) ch-supply: tip unresolved" >&2
+  exit 1
+fi
+# A failed probe must fail the unit: a default here would either skip the
+# seed loop and report success, or re-seed all of history.
 FROM=$(CH "SELECT max(ledger_seq)+1 FROM stellar.supply_flows" | tr -d '[:space:]')
-[ -n "$FROM" ] && [ "$FROM" != "0" ] || FROM=2
+is_uint "$FROM" || { echo "$(date -u) ch-supply: supply_flows watermark unresolved (got '${FROM:0:200}')" >&2; exit 1; }
+[ "$FROM" -ge 2 ] || FROM=2
 
 echo "$(date -u) ch-supply refresh: seed [$FROM,$TIP] (chunk=$CHUNK)"
 
@@ -70,8 +80,9 @@ rc=0
 while [ "$FROM" -lt "$TIP" ]; do
   TO=$(( FROM + CHUNK )); [ "$TO" -gt "$TIP" ] && TO=$TIP
   for _ in $(seq 1 30); do
+    # An unreadable memory figure is not "0 bytes": keep waiting.
     M=$(CH "SELECT sum(memory_usage) FROM system.processes" | tr -d '[:space:]')
-    [ "${M:-0}" -lt "$MEMGUARD" ] && break
+    is_uint "$M" && [ "$M" -lt "$MEMGUARD" ] && break
     sleep 20
   done
   "$OPS" ch-supply -config "$CONFIG" -ch-addr "$CHADDR" -from "$FROM" -to "$TO" -seed-flows </dev/null \

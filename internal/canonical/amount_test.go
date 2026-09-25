@@ -295,26 +295,19 @@ func TestAmount_SQLRoundTrip(t *testing.T) {
 	}
 }
 
-func TestAmount_ScanNullProducesZero(t *testing.T) {
-	// Every trade/oracle column storing an Amount is NOT NULL per
-	// migrations/0001 + 0003, so nil-src Scan shouldn't fire in
-	// production. Keep the defensive path test-pinned so a refactor
-	// that removes it — or changes nil → error — surfaces in CI.
-	var a Amount
-	if err := a.Scan(nil); err != nil {
-		t.Fatalf("Scan(nil): %v", err)
+func TestAmount_ScanNullIsAnError(t *testing.T) {
+	// A NULL must not become the money value 0: Amount cannot say
+	// "absent", so a nullable column goes through sql.NullString.
+	a := NewAmount(big.NewInt(42))
+	err := a.Scan(nil)
+	if err == nil {
+		t.Fatalf("Scan(nil) returned nil and left %q — a SQL NULL must not read as an Amount", a.String())
 	}
-	if !a.IsZero() {
-		t.Errorf("Scan(nil) must produce zero Amount, got %q", a.String())
+	if !errors.Is(err, ErrInvalidAmount) {
+		t.Fatalf("Scan(nil) error = %v, want it to wrap ErrInvalidAmount", err)
 	}
-	// And the subsequent Value() returns "0" (never nil), so a
-	// round-tripped NULL lands in a NOT-NULL column safely.
-	v, err := a.Value()
-	if err != nil {
-		t.Fatalf("Value after Scan(nil): %v", err)
-	}
-	if v != "0" {
-		t.Errorf("Value after Scan(nil) = %v, want \"0\"", v)
+	if got := a.String(); got != "42" {
+		t.Fatalf("Scan(nil) mutated the receiver to %q; a failed scan must leave it alone", got)
 	}
 }
 

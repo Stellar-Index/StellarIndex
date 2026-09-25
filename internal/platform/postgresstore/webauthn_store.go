@@ -121,9 +121,11 @@ func (r *WebAuthnCredentialStore) GetWebAuthnCredentialByCredentialID(
 func (r *WebAuthnCredentialStore) UpdateWebAuthnCredentialSignCount(
 	ctx context.Context, id uuid.UUID, signCount int64, lastUsedAt time.Time,
 ) error {
+	// High-water mark: overlapping ceremonies verify against the same stored
+	// count and can commit out of order; a late lower write must not lower it.
 	res, err := r.s.db.ExecContext(ctx, `
 		UPDATE webauthn_credentials
-		SET sign_count = $2, last_used_at = $3
+		SET sign_count = GREATEST(sign_count, $2), last_used_at = $3
 		WHERE id = $1`, id, signCount, lastUsedAt)
 	if err != nil {
 		return fmt.Errorf("update webauthn sign count: %w", err)

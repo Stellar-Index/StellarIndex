@@ -47,3 +47,34 @@ func TestDecodeUpdate_FanoutEdges(t *testing.T) {
 		t.Fatalf("EventIndex %d: got %v, want ErrEventIndexOverflow", eventFanoutStride, err)
 	}
 }
+
+// OperationIndex is the third packing input: at 1<<16 the packed value is
+// exactly 2^32 and wraps onto operation 0's OpIndex block, which the
+// oracle_updates upsert would then overwrite.
+func TestDecodeUpdate_OperationIndexBound(t *testing.T) {
+	prev, prevTS := decodeUpdateBody, decodeUpdateTimestamp
+	defer func() { decodeUpdateBody, decodeUpdateTimestamp = prev, prevTS }()
+	decodeUpdateTimestamp = func(_ string) (uint64, error) { return 0, nil }
+	decodeUpdateBody = func(_ string) ([]PriceEntry, error) {
+		return []PriceEntry{{Asset: canonical.NativeAsset(), Price: canonical.NewAmount(big.NewInt(1))}}, nil
+	}
+	e := &events.Event{
+		Topic:          []string{TopicSymbolReflector, TopicSymbolUpdate, "ts"},
+		ContractID:     dexContractID,
+		OperationIndex: 1<<16 - 1,
+		EventIndex:     eventFanoutStride - 1,
+	}
+	updates, err := decodeUpdate(e, VariantDEX, DefaultDecimals, "", time.Now())
+	if err != nil {
+		t.Fatalf("the last in-range OperationIndex must decode: %v", err)
+	}
+	if want := uint32((1<<16-1)*eventFanoutStride+eventFanoutStride-1) * opIndexFanoutStride; updates[0].OpIndex != want {
+		t.Fatalf("OpIndex = %d, want %d", updates[0].OpIndex, want)
+	}
+	for _, op := range []int{1 << 16, -1} {
+		e.OperationIndex, e.EventIndex = op, 0
+		if got, err := decodeUpdate(e, VariantDEX, DefaultDecimals, "", time.Now()); !errors.Is(err, ErrOperationIndexOverflow) {
+			t.Errorf("OperationIndex %d: got (%v, %v), want ErrOperationIndexOverflow", op, got, err)
+		}
+	}
+}

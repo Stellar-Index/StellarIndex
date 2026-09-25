@@ -3,6 +3,7 @@ package canonical_test
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -151,6 +152,105 @@ func TestAsset_JSON_stringRoundTrip(t *testing.T) {
 		}
 		if got, want := string(b), `"`+a.String()+`"`; got != want {
 			t.Fatalf("json = %s, want %s", got, want)
+		}
+	}
+}
+
+// muxedAccount is the SEP-23 M-strkey test vector (GA7QYNF7…SGZ, id 0).
+const muxedAccount = "MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVAAAAAAAAAAAAAJLK"
+
+func TestAsset_ParseStringRoundTrip(t *testing.T) {
+	mk := func(a c.Asset, err error) c.Asset {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("fixture: %v", err)
+		}
+		return a
+	}
+	cases := []struct {
+		name string
+		a    c.Asset
+	}{
+		{"native", c.NativeAsset()},
+		{"classic 4-char", mustClassic("USDC", usdcIssuer)},
+		{"classic 1-char", mustClassic("X", usdcIssuer)},
+		{"classic 5-char alphanum12", mustClassic("BENJI", usdcIssuer)},
+		{"classic 12-char alphanum12", mustClassic("ABCDEFGHIJ12", usdcIssuer)},
+		{"classic mixed-case", mustClassic("yXLM", usdcIssuer)},
+		{"classic lowercase", mustClassic("aqua", usdcIssuer)},
+		// Code "XLM" with an issuer is a classic asset, never native.
+		{"classic XLM-code impersonator", mustClassic("XLM", usdcIssuer)},
+		{"soroban", mustSoroban(xlmSAC)},
+		{"fiat", mustFiat("USD")},
+		{"crypto", mk(c.NewCryptoAsset("BTC"))},
+		{"crypto mixed-case", mk(c.NewCryptoAsset("sUSDe"))},
+		{"crypto punctuated", mk(c.NewCryptoAsset("SolvBTC.BBN_FUNDAMENTAL_USD"))},
+		{"rwa", mk(c.NewRWAAsset("BENJI"))},
+		{"rwa mixed-case", mk(c.NewRWAAsset("XAUm"))},
+		{"raw", mk(c.NewOracleRawAsset("BTC"))},
+		{"raw with slash", mk(c.NewOracleRawAsset("SolvBTC.BBN_FUNDAMENTAL/USD"))},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := tc.a.String()
+			got, err := c.ParseAsset(s)
+			if err != nil {
+				t.Fatalf("ParseAsset(%q) = %v", s, err)
+			}
+			if !got.Equal(tc.a) {
+				t.Fatalf("ParseAsset(%q) = %+v, want %+v", s, got, tc.a)
+			}
+			if got.String() != s {
+				t.Fatalf("String() after round-trip = %q, want %q", got.String(), s)
+			}
+		})
+	}
+}
+
+func TestNewClassicAsset_rejectsNonAccountIssuer(t *testing.T) {
+	for name, issuer := range map[string]string{
+		"contract C-address": xlmSAC,
+		"muxed M-address":    muxedAccount,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if a, err := c.NewClassicAsset("USDC", issuer); !errors.Is(err, c.ErrInvalidStrkey) {
+				t.Fatalf("NewClassicAsset(USDC, %s) = (%+v, %v), want ErrInvalidStrkey", issuer, a, err)
+			}
+			if a, err := c.ParseAsset("USDC-" + issuer); !errors.Is(err, c.ErrInvalidStrkey) {
+				t.Fatalf("ParseAsset(USDC-%s) = (%+v, %v), want ErrInvalidStrkey", issuer, a, err)
+			}
+		})
+	}
+}
+
+// Both database/sql scanners in the package must refuse SQL NULL the
+// same way: an error wrapping the type's sentinel that names the
+// sql.NullString escape hatch, and an untouched receiver.
+func TestScanNull_AmountAgreesWithAsset(t *testing.T) {
+	asset := mustClassic("USDC", usdcIssuer)
+	assetErr := asset.Scan(nil)
+	if !errors.Is(assetErr, c.ErrInvalidAsset) {
+		t.Fatalf("Asset.Scan(nil) = %v, want ErrInvalidAsset", assetErr)
+	}
+	if !asset.Equal(mustClassic("USDC", usdcIssuer)) {
+		t.Fatalf("Asset.Scan(nil) mutated the receiver to %+v", asset)
+	}
+
+	amount, err := c.FromString("7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	amountErr := amount.Scan(nil)
+	if !errors.Is(amountErr, c.ErrInvalidAmount) {
+		t.Fatalf("Amount.Scan(nil) = %v, want ErrInvalidAmount (Asset.Scan(nil) errors; the two must agree)", amountErr)
+	}
+	if amount.String() != "7" {
+		t.Fatalf("Amount.Scan(nil) mutated the receiver to %q", amount.String())
+	}
+
+	for name, err := range map[string]error{"Asset": assetErr, "Amount": amountErr} {
+		if !strings.Contains(err.Error(), "sql.NullString") {
+			t.Errorf("%s.Scan(nil) error %q does not name the sql.NullString escape hatch", name, err)
 		}
 	}
 }

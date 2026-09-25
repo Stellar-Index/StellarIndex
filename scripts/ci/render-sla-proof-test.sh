@@ -220,6 +220,22 @@ render "$TMP/no-thresholds.json" "$TMP/out"
 expect 'an export declaring no thresholds → rc 2' 2 'declares no thresholds'
 refused_writes_nothing 'the threshold-less export'
 
+# ── Missing option values → REFUSED (rc 2), never FAIL (rc 1) ──────────
+# `--summary` / `--out-dir` with no following value must not fall through
+# to a bare `shift 2`, which under `set -euo pipefail` exits 1 (the
+# script's own FAIL/report-written code) while writing nothing.
+base_env
+OUT="$(bash "$RENDER" --summary 2>&1)"
+RC=$?
+expect '--summary with no value → rc 2, not 1' 2 'requires a value'
+refused_writes_nothing 'the argument-less --summary invocation'
+
+base_env
+OUT="$(bash "$RENDER" --summary "$TMP/pass.json" --out-dir 2>&1)"
+RC=$?
+expect '--out-dir with no value → rc 2, not 1' 2 'requires a value'
+refused_writes_nothing 'the argument-less --out-dir invocation'
+
 # ── Provenance is mandatory, field by field ─────────────────────────────
 # "The artifact must name its own provenance." Each field is proven
 # load-bearing individually, so dropping one from the workflow cannot

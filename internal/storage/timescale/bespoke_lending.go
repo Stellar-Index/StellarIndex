@@ -165,8 +165,12 @@ func lendingAuctionSeriesQuery(windowDays int) string {
 
 // lendingPerPoolSeriesQuery builds the top-5-pools-by-window-events
 // activity series: (pool, bucket, events) rows ordered by each pool's
-// window event count descending, then bucket — the same fold shape as the
-// CCTP per-chain series.
+// window event count descending, then pool, then bucket — the same fold
+// shape as the CCTP per-chain series. The pool tiebreak (both in the
+// top-5 CTE and the outer ORDER BY) is load-bearing: two pools tied on
+// window event count otherwise sort by bucket first and interleave, and
+// collectLendingPoolSeries's consecutive-key fold starts a new series on
+// every interleave, fragmenting one pool's line into several.
 func lendingPerPoolSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
@@ -174,7 +178,7 @@ func lendingPerPoolSeriesQuery(windowDays int) string {
 		  SELECT pool, count(*) AS events
 		    FROM blend_positions
 		   WHERE ledger_close_time > now() - $1::interval
-		   GROUP BY 1 ORDER BY 2 DESC LIMIT 5)
+		   GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 5)
 		SELECT p.pool,
 		       to_char(date_trunc('` + trunc + `', p.ledger_close_time), '` + format + `'),
 		       count(*)::text
@@ -182,7 +186,7 @@ func lendingPerPoolSeriesQuery(windowDays int) string {
 		 WHERE p.ledger_close_time > now() - $1::interval` +
 		completeDaysOnly(windowDays, "p.ledger_close_time") + `
 		 GROUP BY p.pool, 2, top.events
-		 ORDER BY top.events DESC, 2 ASC`
+		 ORDER BY top.events DESC, p.pool, 2 ASC`
 }
 
 // lendingAllTimeKPIQuery is the unwindowed lifetime scale of the Blend
