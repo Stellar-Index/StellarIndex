@@ -1,6 +1,6 @@
 ---
 title: Backfill procedure — replaying a historical ledger range
-last_verified: 2026-09-04
+last_verified: 2026-09-25
 status: operator runbook
 ---
 

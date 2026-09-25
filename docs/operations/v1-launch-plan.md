@@ -247,7 +247,7 @@ honest ceiling of "independent", and it is written here so it is not re-derived.
 > (W8-17/W8-20 closed). Test nets: movements archive derived to the tip on
 > both (testnet 27.9M rows → tip 4,733,690 after one backfilled ledger;
 > futurenet 158k → 613,991); created cohorts serve (testnet 1,955 roots /
-> 3.81M members). Issues #512 #513 #514 #515 #516 #518 #519 #520 #521 closed
+> 3.81M members). Issues #512 #513 #514 #515 #516 #517 #518 #519 #520 #521 closed
 > with evidence. SDEX history: the chunk [61249957,61289956] retried on the
 > sub-batched writer and hit a second wall — every sub-batch into a
 > compressed `trades` chunk fails `SQLSTATE 53400 tuple decompression limit

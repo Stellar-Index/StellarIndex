@@ -136,9 +136,11 @@ in real-time.
      -dry-run
    ```
 
-   Expect: `trim plan ready candidates=<N> skipped_too_fresh=<M>
-   skipped_not_in_cold=0 verify_errors=0 dry_run=true`. Sanity-
-   check: `skipped_not_in_cold` should be 0 or very small —
+   Expect (the logger is `slog.NewJSONHandler`, so this is JSON on
+   stderr, not logfmt): `{"msg":"trim plan ready","candidates":<N>,
+   "skipped_too_fresh":<M>,"skipped_not_in_cold":0,"verify_errors":0,
+   "dry_run":true,...}`. Sanity-check: `skipped_not_in_cold` should be
+   0 or very small —
    non-zero means files exist locally that aren't in
    aws-public-blockchain, which is unusual and worth investigating
    before committing.

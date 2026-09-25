@@ -463,7 +463,9 @@ build-docker: ## Build all per-binary Docker images locally (Dockerfiles in dock
 smoke-docker: ## Smoke-test all per-binary Docker images (requires `make build-docker` first)
 	@for b in $(BINARIES); do \
 	  echo "Smoke stellarindex/$$b:local --help"; \
-	  docker run --rm stellarindex/$$b:local --help 2>&1 | head -5 || exit 1; \
+	  out=$$(docker run --rm stellarindex/$$b:local --help 2>&1); rc=$$?; \
+	  echo "$$out" | head -5; \
+	  if [ $$rc -ne 0 ]; then exit $$rc; fi; \
 	done
 
 .PHONY: smoke

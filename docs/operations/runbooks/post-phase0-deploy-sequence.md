@@ -54,7 +54,7 @@ With 0109/0110's `derive_generation` guard, `projector-replay` now **overwrites 
 - **Verify:** a spot re-project of a known-wrong range returns `rowsUpdated>0` (not the old `rowsInserted=0` no-op) and the served value corrects.
 
 ### 5. C2-11 soroban topic re-ingest + `ch-supply` catch-up
-- `stellarindex-ops projector-replay -ch -from <soroban-genesis> -to <lake-tip>` — recovers >4-topic events from the topic-complete lake into the widened `soroban_events`.
+- `stellarindex-ops ch-rebuild -config /etc/stellarindex.toml -from <soroban-genesis> -to <lake-tip> -write` — recovers >4-topic events from the topic-complete lake into the widened `soroban_events` (per the replay decision rule, docs/architecture/ingest-pipeline.md#the-replay-decision-rule: `soroban_events` is the raw landing zone, not a projector-registered source, so this is the lake re-derive path, not `projector-replay`).
 - `ch-supply` gap-fill catches up automatically (the journald fix + the new `stellarindex_ch_supply_gapfill_failed` alert mean a failure is now loud, not silent).
 
 ### 6. Apply the ansible config (the 33-task drift)  — `--check` first

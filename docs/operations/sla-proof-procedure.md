@@ -1,6 +1,6 @@
 ---
 title: SLA proof procedure (Task #77)
-last_verified: 2026-09-15
+last_verified: 2026-09-25
 status: ratified
 related:
   - scripts/ops/sla-proof-from-probe.sh
@@ -115,8 +115,12 @@ Before kicking off the run:
 
 - [ ] Staging stack is the **same configuration shape as
       production** — same Patroni / HAProxy / Redis-Sentinel
-      ansible roles applied (`make ansible-staging-apply` if
-      drift suspected).
+      ansible roles applied. There is no `make ansible-staging-apply`
+      target: those roles (`configs/ansible/roles/{patroni,haproxy,
+      redis-sentinel}`) are not yet wired into a playbook (see
+      [ha-plan.md](../architecture/ha-plan.md)). If drift is
+      suspected, diff the roles against the staging host by hand
+      until that playbook exists.
 - [ ] Indexer is actively ingesting (`/v1/readyz` shows
       `indexer.lag_seconds < 60`).
 - [ ] Aggregator is publishing into the live serving cache —

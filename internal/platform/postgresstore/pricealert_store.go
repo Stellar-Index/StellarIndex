@@ -13,7 +13,8 @@ import (
 )
 
 // PriceAlertStore implements [platform.PriceAlertStore] against the
-// `price_alerts` table from migration 0080 (BACKLOG #60).
+// `price_alerts` table from migration 0080 (introduced in 7145a7e51,
+// "customer webhook price alerts — CRUD + evaluator").
 //
 // Shape mirrors [WebhookStore]: an atomic per-account cap on create
 // (advisory lock + CTE-gated INSERT), owner-scoped reads for the
