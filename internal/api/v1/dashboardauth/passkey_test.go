@@ -84,7 +84,7 @@ func (f *fakeWebAuthnStore) UpdateWebAuthnCredentialSignCount(_ context.Context,
 	if !ok {
 		return platform.ErrNotFound
 	}
-	c.SignCount = signCount
+	c.SignCount = max(c.SignCount, signCount)
 	c.LastUsedAt = lastUsedAt
 	f.rows[id] = c
 	return nil
