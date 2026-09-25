@@ -240,3 +240,15 @@ func (t *touchTracker) sweepLocked(now time.Time) {
 		}
 	}
 }
+
+// SessionAccountSubject scopes an Idempotency-Key on a dashboard create
+// route to the caller's account, so two customers who pick the same
+// literal key never share a cache entry. Empty when no session is
+// attached, which middleware.Idempotency treats as "don't dedupe".
+func SessionAccountSubject(r *http.Request) string {
+	sc, ok := SessionFromContext(r.Context())
+	if !ok {
+		return ""
+	}
+	return sc.Account.ID.String()
+}

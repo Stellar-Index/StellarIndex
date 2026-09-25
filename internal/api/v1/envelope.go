@@ -29,10 +29,15 @@ type Envelope struct {
 	// (/v1/ohlc, /v1/history, /v1/chart, /v1/price/at) and only when the
 	// probe reached an answer; absent means UNKNOWN, never "from the
 	// beginning of time".
-	CoverageFrom *WireTime   `json:"coverage_from,omitempty"`
-	Sources      []string    `json:"sources,omitempty"`
-	Flags        Flags       `json:"flags"`
-	Pagination   *Pagination `json:"pagination,omitempty"`
+	CoverageFrom *WireTime `json:"coverage_from,omitempty"`
+	// Withheld names the requested ids a batch surface omitted from
+	// `data` because a serving gate declined to publish their price —
+	// distinct from an id omitted for having no data. Only
+	// /v1/price/batch sets it; absent when nothing was withheld.
+	Withheld   []string    `json:"withheld,omitempty"`
+	Sources    []string    `json:"sources,omitempty"`
+	Flags      Flags       `json:"flags"`
+	Pagination *Pagination `json:"pagination,omitempty"`
 }
 
 // Flags are the advisory quality markers per HA plan §9.

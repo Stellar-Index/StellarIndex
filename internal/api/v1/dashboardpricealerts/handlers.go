@@ -78,24 +78,11 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 // change nothing.
 func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
-	idem := middleware.Idempotency(h.cfg.idempotency, sessionAccountSubject)
+	idem := middleware.Idempotency(h.cfg.idempotency, dashboardauth.SessionAccountSubject)
 	mux.HandleFunc("GET /v1/dashboard/price-alerts", h.HandleList)
 	mux.Handle("POST /v1/dashboard/price-alerts", sameSite(idem(http.HandlerFunc(h.HandleCreate))))
 	mux.Handle("PATCH /v1/dashboard/price-alerts/{id}", sameSite(http.HandlerFunc(h.HandleUpdate)))
 	mux.Handle("DELETE /v1/dashboard/price-alerts/{id}", sameSite(http.HandlerFunc(h.HandleDelete)))
-}
-
-// sessionAccountSubject scopes an Idempotency-Key to the caller's
-// account, so two different customers who happen to pick the same
-// literal key string never share a cache entry. Empty when no
-// session is attached — [middleware.Idempotency] treats that as
-// "don't dedupe this request".
-func sessionAccountSubject(r *http.Request) string {
-	sc, ok := dashboardauth.SessionFromContext(r.Context())
-	if !ok {
-		return ""
-	}
-	return sc.Account.ID.String()
 }
 
 // priceAlertDTO is the wire shape the dashboard reads.

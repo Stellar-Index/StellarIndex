@@ -174,10 +174,11 @@ type PriceBatchQuery struct {
 //   - len(AssetIDs) ≤ 100 → GET /v1/price/batch?asset_ids=...
 //   - len(AssetIDs) > 100 → POST /v1/price/batch with JSON body
 //
-// Missing observations (asset has no indexed data) are silently
-// omitted from the response array — the envelope's `Data` slice
-// can be shorter than `AssetIDs`. Callers that need to detect
-// "asset X had no observation" diff the input + output.
+// An id is omitted from `Data` for one of two reasons, and the
+// envelope says which: ids whose price the server WITHHOLDS (thin
+// market, flagged issuer) are listed in [Envelope.Withheld]; an id in
+// neither Data nor Withheld has no price data. Never treat every
+// omission as "no data".
 //
 // `flags.stale` on the envelope is the OR over per-row staleness:
 // any stale row sets the envelope flag.
@@ -718,9 +719,21 @@ func (c *Client) Usage(ctx context.Context) (*Envelope[[]UsageRow], error) {
 // key to the listed route families ("read", "account", "dashboard",
 // "admin" — unknown values 400). Scopes only narrow; they never
 // grant anything the caller's tier wouldn't already reach.
+//
+// IdempotencyKey is sent as the `Idempotency-Key` header, not in the
+// body. Generate one value per logical mint and reuse it when retrying
+// a call whose outcome you never saw (a timeout): the server replays
+// the original key instead of minting a second live credential, and
+// answers 409 (retryable) while the original is still running.
+//
+// Reason is sent as the `X-Reason` header. The server requires it from
+// an OPERATOR-tier caller (400 without it; captured into the key.mint
+// audit row, as [Client.AdminCreateKey]) and ignores it otherwise.
 type CreateKeyRequest struct {
-	Label  string   `json:"label"`
-	Scopes []string `json:"scopes,omitempty"`
+	Label          string   `json:"label"`
+	Scopes         []string `json:"scopes,omitempty"`
+	IdempotencyKey string   `json:"-"`
+	Reason         string   `json:"-"`
 }
 
 // CreateKey issues a new API key. The new key inherits the
@@ -732,10 +745,23 @@ func (c *Client) CreateKey(ctx context.Context, req CreateKeyRequest) (*Envelope
 		return nil, &APIError{Status: 400, Title: "label required"}
 	}
 	var env Envelope[KeyCreated]
-	if err := c.doJSON(ctx, http.MethodPost, "/v1/account/keys", nil, req, &env); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/account/keys", nil, req, &env, req.headers()); err != nil {
 		return nil, err
 	}
 	return &env, nil
+}
+
+// headers returns the request headers CreateKey sends; unset fields
+// send nothing.
+func (req CreateKeyRequest) headers() map[string]string {
+	h := map[string]string{}
+	if req.IdempotencyKey != "" {
+		h["Idempotency-Key"] = req.IdempotencyKey
+	}
+	if req.Reason != "" {
+		h["X-Reason"] = req.Reason
+	}
+	return h
 }
 
 // AdminCreateKeyRequest is the body for [Client.AdminCreateKey].

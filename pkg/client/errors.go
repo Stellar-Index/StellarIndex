@@ -99,8 +99,23 @@ func (e *APIError) Error() string {
 	return b.String()
 }
 
-// IsNotFound reports whether the error is a 404.
+// Problem `type` URLs a caller branches on. A 404 on a price surface is
+// one of two different answers, and only Type tells them apart.
+const (
+	// ProblemTypePriceNotFound: the server holds no price data for the pair.
+	ProblemTypePriceNotFound = "https://api.stellarindex.io/errors/price-not-found"
+	// ProblemTypePriceWithheld: the server observes the pair but a serving
+	// gate declined to publish a price. Never render this as "no data".
+	ProblemTypePriceWithheld = "https://api.stellarindex.io/errors/price-withheld"
+)
+
+// IsNotFound reports whether the error is a 404 — of ANY kind, including
+// a withheld price. Check [APIError.IsWithheld] first.
 func (e *APIError) IsNotFound() bool { return e.Status == 404 }
+
+// IsWithheld reports whether the server declined to publish a price it
+// holds (problem type [ProblemTypePriceWithheld]).
+func (e *APIError) IsWithheld() bool { return e.Type == ProblemTypePriceWithheld }
 
 // IsUnauthorized reports whether the error is a 401.
 func (e *APIError) IsUnauthorized() bool { return e.Status == 401 }

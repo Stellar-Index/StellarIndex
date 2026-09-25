@@ -102,7 +102,10 @@
 //   - SSE streams (`/v1/price/{,tip/}stream`, `/v1/observations/stream`,
 //     `/v1/ledger/stream`) — architecturally outside the
 //     request/response shape; consumers use `net/http` with an
-//     eventsource-style reader directly.
+//     eventsource-style reader directly. On reconnect, send the last
+//     received event `id:` as the Last-Event-ID request header (the
+//     stream routes accept it) so the stream resumes rather than
+//     silently skipping the events missed while disconnected.
 //   - The network-explorer read surface (ADR-0038:
 //     `/v1/ledgers*`, `/v1/tx/{hash}`, `/v1/operations`,
 //     `/v1/contracts*`, `/v1/accounts*`, `/v1/search`, …) — serves

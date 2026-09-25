@@ -1083,3 +1083,77 @@ func TestProblemJSONMatchesSpec(t *testing.T) {
 		t.Errorf("SDK problemJSON tags the spec Problem schema does not document: %v", extra)
 	}
 }
+
+// ─── Request-side reconciliation ────────────────────────────────────
+
+// sdkRequestHeaders maps "SDKMethod Header-Name" to the request-struct
+// field that carries that header. Every `in: header` parameter of a
+// covered operation needs an entry: a header the SDK cannot send is a
+// server requirement no SDK caller can meet (X-Reason on an operator
+// CreateKey 400'd every time).
+var sdkRequestHeaders = map[string]struct {
+	req   any
+	field string
+}{
+	"CreateKey Idempotency-Key": {CreateKeyRequest{}, "IdempotencyKey"},
+	"CreateKey X-Reason":        {CreateKeyRequest{}, "Reason"},
+	"AdminCreateKey X-Reason":   {AdminCreateKeyRequest{}, "Reason"},
+}
+
+// specHeaderParams returns the header parameter names of one operation,
+// following components/parameters $refs.
+func specHeaderParams(doc map[string]any, method, path string) []string {
+	paths, _ := doc["paths"].(map[string]any)
+	item, _ := paths[path].(map[string]any)
+	op, _ := item[strings.ToLower(method)].(map[string]any)
+	params, _ := op["parameters"].([]any)
+	var out []string
+	for _, raw := range params {
+		p, _ := raw.(map[string]any)
+		if ref, ok := p["$ref"].(string); ok {
+			p = resolveRef(doc, ref)
+		}
+		if p["in"] == "header" {
+			name, _ := p["name"].(string)
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// TestSDKSendsEverySpecRequestHeader — every header parameter the spec
+// declares on an SDK-covered operation has a request field that carries
+// it (a string, kept out of the JSON body), and no table entry is stale.
+func TestSDKSendsEverySpecRequestHeader(t *testing.T) {
+	doc := loadSpec(t)
+	used := map[string]bool{}
+	for _, c := range coveredOperations {
+		for _, header := range specHeaderParams(doc, c.method, c.path) {
+			key := c.sdkMethod + " " + header
+			used[key] = true
+			entry, ok := sdkRequestHeaders[key]
+			if !ok {
+				t.Errorf("spec declares header %q on %s %s but Client.%s has no way to send it — "+
+					"add a request field and an sdkRequestHeaders entry", header, c.method, c.path, c.sdkMethod)
+				continue
+			}
+			f, ok := reflect.TypeOf(entry.req).FieldByName(entry.field)
+			if !ok {
+				t.Errorf("%s: %T has no field %s", key, entry.req, entry.field)
+				continue
+			}
+			if f.Type.Kind() != reflect.String || f.Tag.Get("json") != "-" {
+				t.Errorf("%s: %T.%s must be a string tagged json:\"-\" (header, not body); got %s %q",
+					key, entry.req, entry.field, f.Type, f.Tag.Get("json"))
+			}
+		}
+	}
+	for key := range sdkRequestHeaders {
+		if !used[key] {
+			t.Errorf("sdkRequestHeaders entry %q matches no header parameter in the spec — stale", key)
+		}
+	}
+	if len(used) == 0 {
+		t.Fatal("no covered operation declares a header parameter — this guard has gone vacuous")
+	}
+}

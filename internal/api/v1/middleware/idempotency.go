@@ -44,8 +44,12 @@ type idempotencyRecord struct {
 type IdempotencyStore struct {
 	mu      sync.Mutex
 	entries map[string]idempotencyRecord
-	ttl     time.Duration
-	now     func() time.Time
+	// inFlight holds keys whose first request is still running. A
+	// timed-out client's retry typically lands while the original is
+	// still committing; without this both run and mint twice.
+	inFlight map[string]struct{}
+	ttl      time.Duration
+	now      func() time.Time
 }
 
 // NewIdempotencyStore builds a store with the given TTL (falls back
@@ -54,21 +58,47 @@ func NewIdempotencyStore(ttl time.Duration) *IdempotencyStore {
 	if ttl <= 0 {
 		ttl = DefaultIdempotencyTTL
 	}
-	return &IdempotencyStore{entries: make(map[string]idempotencyRecord), ttl: ttl, now: time.Now}
+	return &IdempotencyStore{
+		entries:  make(map[string]idempotencyRecord),
+		inFlight: make(map[string]struct{}),
+		ttl:      ttl,
+		now:      time.Now,
+	}
 }
 
-func (s *IdempotencyStore) get(key string) (idempotencyRecord, bool) {
+// idempotencyClaim is begin's verdict for one request.
+type idempotencyClaim int
+
+const (
+	claimProceed  idempotencyClaim = iota // first request for this key: run the handler
+	claimReplay                           // a captured response exists: replay it
+	claimInFlight                         // the first request is still running: 409
+)
+
+// begin atomically resolves key to a replay, an in-flight conflict, or
+// a fresh claim. A proceed verdict marks key in flight; the caller must
+// call finish exactly once.
+func (s *IdempotencyStore) begin(key string) (idempotencyRecord, idempotencyClaim) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rec, ok := s.entries[key]
-	if !ok {
-		return idempotencyRecord{}, false
-	}
-	if s.now().After(rec.expiresAt) {
+	if rec, ok := s.entries[key]; ok {
+		if !s.now().After(rec.expiresAt) {
+			return rec, claimReplay
+		}
 		delete(s.entries, key)
-		return idempotencyRecord{}, false
 	}
-	return rec, true
+	if _, running := s.inFlight[key]; running {
+		return idempotencyRecord{}, claimInFlight
+	}
+	s.inFlight[key] = struct{}{}
+	return idempotencyRecord{}, claimProceed
+}
+
+// finish releases key's in-flight claim.
+func (s *IdempotencyStore) finish(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.inFlight, key)
 }
 
 // put stores a captured response unless a still-live entry already
@@ -77,7 +107,7 @@ func (s *IdempotencyStore) get(key string) (idempotencyRecord, bool) {
 // the last handler to finish clobbering it.
 //
 // Every call also sweeps expired entries from the whole map. A key
-// that's replayed keeps itself fresh via get()'s own eviction, but a
+// that's replayed keeps itself fresh via begin()'s own eviction, but a
 // key used exactly once (create-then-never-replay) has no other
 // removal path — without this sweep it would live for the life of
 // the process. Sweeping here bounds the map to roughly TTL worth of
@@ -140,6 +170,9 @@ func (rec *idempotencyRecorder) Write(b []byte) (int, error) {
 // missing/blank header leaves the request to run normally — the
 // header is opt-in, matching its semantics elsewhere (Stripe et al.).
 //
+// A repeat that arrives while the first request is still running gets
+// a retryable 409 rather than a second run of the handler.
+//
 // Only a 2xx response is cached: a validation failure or a transient
 // 5xx must not be replayed, or a client who fixed the request (or
 // retried past a blip) would keep getting the frozen error for the
@@ -163,11 +196,19 @@ func Idempotency(store *IdempotencyStore, subjectKeyFn func(*http.Request) strin
 			}
 			cacheKey := subject + ":" + rawKey
 
-			if rec, ok := store.get(cacheKey); ok {
-				replayIdempotentResponse(w, rec)
+			prior, claim := store.begin(cacheKey)
+			switch claim {
+			case claimReplay:
+				replayIdempotentResponse(w, prior)
+				return
+			case claimInFlight:
+				writeIdempotencyKeyInFlight(w, r)
 				return
 			}
-
+			// Deferred so the claim is released after put below (a retry
+			// never sees "not in flight, nothing captured" for a request
+			// that succeeded) and also when the handler panics.
+			defer store.finish(cacheKey)
 			rec := &idempotencyRecorder{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(rec, r)
 			if rec.status >= 200 && rec.status < 300 {
@@ -198,5 +239,20 @@ func writeIdempotencyKeyTooLong(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(w).Encode(p)
+}
+
+func writeIdempotencyKeyInFlight(w http.ResponseWriter, r *http.Request) {
+	p := rlProblem{
+		Type:     "https://api.stellarindex.io/errors/idempotency-key-in-flight",
+		Title:    "Request with this Idempotency-Key still in progress",
+		Status:   http.StatusConflict,
+		Detail:   "the original request carrying this Idempotency-Key has not finished; retry shortly to receive its response",
+		Instance: r.URL.RequestURI(),
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Retry-After", "1")
+	w.WriteHeader(http.StatusConflict)
 	_ = json.NewEncoder(w).Encode(p)
 }
