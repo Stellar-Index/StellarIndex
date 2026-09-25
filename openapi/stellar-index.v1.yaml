@@ -7393,6 +7393,15 @@ paths:
                   data: { $ref: "#/components/schemas/RWAHistoryView" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "500": { $ref: "#/components/responses/InternalError" }
+        "503":
+          description: |
+            No series is published: no assembly has succeeded in this
+            process (membership or a read leg did not answer), or the
+            deployment has not wired a leg. Served `no-store`; a failed
+            assembly also carries `Retry-After`.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
 
   /rwa/premium:
     get:
@@ -7540,6 +7549,15 @@ paths:
                   data: { $ref: "#/components/schemas/RWAPremiumHistoryView" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "500": { $ref: "#/components/responses/InternalError" }
+        "503":
+          description: |
+            No series is published: no assembly has succeeded in this
+            process (membership or a read leg did not answer), or the
+            deployment has not wired a leg. Served `no-store`; a failed
+            assembly also carries `Retry-After`.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
 
   /pairs:
     get:
