@@ -39,7 +39,7 @@ func TestSorobanVolume24hUSD_XLMAnchored(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	// Recognise classic USDC as a USD peg so the token/USDC leg lands a
-	// non-null usd_volume (the volume_usd>0 branch of the CASE).
+	// non-null usd_volume, which the anchored reader takes as-is.
 	spec, err := timescale.NewUSDVolumeQuoteSpec(
 		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"}, nil)
 	if err != nil {
@@ -129,5 +129,76 @@ func TestSorobanVolume24hUSD_EmptyReturnsZero(t *testing.T) {
 	}
 	if got != "0" {
 		t.Errorf("empty asset volume = %q, want \"0\"", got)
+	}
+}
+
+// TestSorobanVolume24hUSD_PartlyValuedBucket pins per-trade valuation: a
+// prices_1m bucket where one trade carries an insert-time usd_volume and a
+// same-minute trade on the same pair does not (its FX lookup failed at
+// insert) must value the second trade through the XLM leg, not report the
+// first trade's figure for the whole bucket.
+//
+// Fixture (one closed 1-minute bucket ~2h back, anchor 1 XLM = 0.5 USD):
+//   - token/XLM 10 XLM quoted, usd_volume = 5 (valued at insert)
+//   - token/XLM 20 XLM quoted, usd_volume NULL → 20 * 0.5 = 10
+//
+// SorobanVolume24hUSDForAsset(token) = 5 + 10 = 15
+func TestSorobanVolume24hUSD_PartlyValuedBucket(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	xlm := c.NativeAsset()
+	usdc, err := c.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := c.NewSorobanAsset("CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	xlmUSDC, _ := c.NewPair(xlm, usdc)
+	tokenXLM, _ := c.NewPair(token, xlm)
+
+	ts := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Minute)
+	valued := mkIntegrationTrade("aquarius", 2, ts, tokenXLM, 400, 100_000_000)
+	for _, tr := range []c.Trade{
+		mkIntegrationTrade("soroswap", 1, ts, xlmUSDC, 1_000_000_000, 500_000_000), // anchor vwap 0.5
+		valued,
+		mkIntegrationTrade("soroswap", 3, ts.Add(20*time.Second), tokenXLM, 800, 200_000_000),
+	} {
+		if err := store.InsertTrade(ctx, tr); err != nil {
+			t.Fatalf("InsertTrade %d: %v", tr.Ledger, err)
+		}
+	}
+	// No FX resolver is wired, so every row lands NULL; value the one row
+	// the way a successful insert-time tier would have.
+	res, err := store.DB().ExecContext(ctx,
+		`UPDATE trades SET usd_volume = 5 WHERE source = $1 AND ledger = $2`, valued.Source, valued.Ledger)
+	if err != nil {
+		t.Fatalf("value one trade: %v", err)
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		t.Fatalf("valued %d rows, want 1", n)
+	}
+	if _, err := store.DB().ExecContext(ctx,
+		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh prices_1m: %v", err)
+	}
+
+	got, err := store.SorobanVolume24hUSDForAsset(ctx, token.String())
+	if err != nil {
+		t.Fatalf("SorobanVolume24hUSDForAsset: %v", err)
+	}
+	if f := mustFloat(t, got); f < 14.99 || f > 15.01 {
+		t.Errorf("SorobanVolume24hUSDForAsset = %s (%.4f), want 15 (5 valued + 20 XLM * 0.5)", got, f)
 	}
 }

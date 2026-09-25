@@ -26,16 +26,20 @@ func TestSorobanVolume24hUSDQueryShape(t *testing.T) {
 		t.Error("query missing the closed-bucket `bucket <= now() - 1 minute` upper bound on the outer scan")
 	}
 
-	// USD-pegged legs come from the insert-time volume_usd (kept), XLM legs
-	// are anchored via the xlm_usd CTE (added). Both must be present.
-	if !strings.Contains(q, "WHEN volume_usd > 0") {
-		t.Error("query missing the USD-pegged-leg branch (volume_usd > 0)")
+	// Valued per trade: the insert-time usd_volume, else the XLM leg. An
+	// either/or on a prices_1m row's volume_usd drops the unvalued trades
+	// of a partly-valued bucket.
+	if !strings.Contains(q, "COALESCE(usd_volume, CASE") {
+		t.Error("query must value each trade as COALESCE(usd_volume, <XLM leg>)")
+	}
+	if strings.Contains(q, "volume_usd >") {
+		t.Error("query must not pick a valuation from a prices_1m row's volume_usd")
 	}
 	if !strings.Contains(q, "(SELECT vwap FROM xlm_usd)") {
 		t.Error("query missing the xlm_usd anchor multiplication")
 	}
 	// The XLM leg is valued off BOTH stored directions: native (or its SAC)
-	// as base (volume) and as quote (vwap*volume).
+	// as base (base_amount) and as quote (quote_amount).
 	if !strings.Contains(q, "WHEN base_asset IN ('native', '"+nativeXLMSAC+"')") {
 		t.Error("query missing the XLM-base-leg branch (native + SAC)")
 	}
@@ -43,8 +47,8 @@ func TestSorobanVolume24hUSDQueryShape(t *testing.T) {
 		t.Error("query missing the XLM-quote-leg branch (native + SAC)")
 	}
 	// Asset participates as either side; result floored to a definite "0".
-	if !strings.Contains(q, "WHERE (base_asset = $1 OR quote_asset = $1)") {
-		t.Error("query must match the asset as base OR quote")
+	if !strings.Contains(q, "FROM trades WHERE (base_asset = $1 OR quote_asset = $1) AND ts >= now() - INTERVAL '24 hours'") {
+		t.Error("query must read the asset's trades as base OR quote, bounded by an index-usable 24h ts bound")
 	}
 	if !strings.Contains(q, "COALESCE(sum(") {
 		t.Error("query must COALESCE the sum so an empty asset returns 0, not NULL")
