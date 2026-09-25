@@ -13,9 +13,11 @@ import (
 // InsertBlendPositionEvent appends one money-market position-change
 // event (supply / withdraw / supply_collateral / withdraw_collateral
 // / borrow / repay / flash_loan) to the blend_positions hypertable.
-// Idempotent on the PK (pool, ledger, tx_hash, op_index, event_kind,
-// ledger_close_time) — re-running over the same range is a no-op
-// rather than producing duplicates.
+// Idempotent on the (pool, ledger, tx_hash, op_index, event_kind,
+// event_index, ledger_close_time) PK via a generation-guarded
+// corrective upsert (INV-3, migration 0110): a re-derive lands only
+// when its derive_generation is >= the stored one, so a stale replay
+// can't revert a later correction.
 //
 // i128 amounts are written as decimal strings to the NUMERIC
 // column (ADR-0003 — full precision preserved through Go's
