@@ -614,6 +614,34 @@ func (s *Server) lookupCachedVWAP(ctx context.Context, base, quote canonical.Ass
 	return v, true, nil
 }
 
+// lookupCachedVWAPAliased is [Server.lookupCachedVWAP] walked over every
+// (base, quote) spelling in the given priority order, returning the first
+// hit and the literal pair it was read under. The aggregator publishes a
+// value under ONE spelling (the GBP composite only as crypto:XLM/fiat:GBP),
+// so a literal-only read makes the answer depend on how the client spelled
+// the asset. Callers key every per-pair marker on the returned pair.
+func (s *Server) lookupCachedVWAPAliased(ctx context.Context, bases, quotes []canonical.Asset, window time.Duration) (v CachedVWAP, base, quote canonical.Asset, found bool) {
+	for _, a := range bases {
+		for _, q := range quotes {
+			if a.Equal(q) {
+				continue
+			}
+			got, ok, err := s.lookupCachedVWAP(ctx, a, q, window)
+			if err != nil {
+				if ctx.Err() == nil {
+					s.logger.Warn("vwap cache lookup failed",
+						"err", err, "asset", a.String(), "quote", q.String())
+				}
+				continue
+			}
+			if ok {
+				return got, a, q, true
+			}
+		}
+	}
+	return CachedVWAP{}, canonical.Asset{}, canonical.Asset{}, false
+}
+
 // CompositeMetaLooker is an OPTIONAL capability the wired
 // [TriangulatedPriceLooker] MAY additionally implement to expose the
 // aggregator's router-quality flags for a triangulated composite —
@@ -794,7 +822,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		var ok bool
 		viaFallback = true
 		var withheld bool
-		snapshot, sources, triangulated, ok, withheld = s.priceFallback(r.Context(), asset, quote)
+		snapshot, sources, served, triangulated, ok, withheld = s.priceFallback(r.Context(), asset, quote)
 		// F-1254 (audit-2026-05-12): when the closed-bucket VWAP read
 		// returned ErrPriceNotFound and we degraded to one of the
 		// priceFallback chain (last-trade / stablecoin proxy /
@@ -884,6 +912,13 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 		s.attachConfidence(r, &snapshot, asset, quote)
 	}
 
+	// Every per-pair marker below is asked for the spelling the price was
+	// served from (frozenPairBase's resolution), not the one the client
+	// used: the aggregator keys each on the literal pair it priced.
+	governing := served
+	if governing.IsZero() {
+		governing = asset
+	}
 	flags := Flags{Stale: stale, Triangulated: triangulated}
 	// Surface the router's composite-quality signals (diverged /
 	// rerouted) that the aggregator persists to
@@ -891,7 +926,7 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	// triangulated composite. Best-effort. Skipped on a substituted
 	// snapshot — see [Server.attachCompositeFlags] (RNC27).
 	if !snapshot.Substituted {
-		s.attachCompositeFlags(r, &flags, asset, quote, triangulationLookupWindow, triangulated)
+		s.attachCompositeFlags(r, &flags, governing, quote, triangulationLookupWindow, triangulated)
 	}
 	flags.Frozen = frozen
 	flags.FrozenChecked = frozenChecked
@@ -916,13 +951,8 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	default:
 		flags.SingleSource = marketSingleSource(snapshot, sources)
 	}
-	// Start the verdict walk at the spelling the price was served from
-	// (frozenPairBase's resolution); the walk still falls through to
+	// The divergence walk starts at governing and still falls through to
 	// other aliases on a miss — see lookupDivergenceFlag.
-	governing := served
-	if governing.IsZero() {
-		governing = asset
-	}
 	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), governing, quote)
 	writeJSON(w, snapshot, flags, sources...)
 }
@@ -983,21 +1013,21 @@ const triangulationLookupWindow = 5 * time.Minute
 //
 // Staleness is the caller's call: each surface's flags.stale contract
 // differs (ADR-0018).
-func (s *Server) tryRedisVWAPFallback(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, bool) {
-	// Returns: snapshot, sources, triangulated, ok.
+//
+// The read walks the BASE's [assetAliases] against the literal quote —
+// the same shape as [Server.readPriceWithAliases], whose served-alias
+// contract (a base spelling, markers keyed on (served, quote)) the
+// default path's freeze / composite-meta / divergence reads follow.
+// served is the base alias the value was read under.
+func (s *Server) tryRedisVWAPFallback(ctx context.Context, asset, quote canonical.Asset) (snap PriceSnapshot, sources []string, served canonical.Asset, triangulated, ok bool) {
 	if s.triangulated == nil {
-		return PriceSnapshot{}, nil, false, false
+		return PriceSnapshot{}, nil, canonical.Asset{}, false, false
 	}
-	v, found, err := s.lookupCachedVWAP(ctx, asset, quote, triangulationLookupWindow)
-	if err != nil {
-		s.logger.Warn("vwap cache lookup failed",
-			"err", err, "asset", asset.String(), "quote", quote.String())
-		return PriceSnapshot{}, nil, false, false
-	}
+	v, served, _, found := s.lookupCachedVWAPAliased(ctx, assetAliases(asset), []canonical.Asset{quote}, triangulationLookupWindow)
 	if !found {
-		return PriceSnapshot{}, nil, false, false
+		return PriceSnapshot{}, nil, canonical.Asset{}, false, false
 	}
-	snap := PriceSnapshot{
+	snap = PriceSnapshot{
 		AssetID:       asset.String(),
 		Quote:         quote.String(),
 		Price:         v.Value,
@@ -1005,7 +1035,7 @@ func (s *Server) tryRedisVWAPFallback(ctx context.Context, asset, quote canonica
 		ObservedAt:    WireTime(v.ObservedAt),
 		WindowSeconds: int(triangulationLookupWindow.Seconds()),
 	}
-	return snap, []string{}, v.Triangulated, true
+	return snap, []string{}, served, v.Triangulated, true
 }
 
 // assetAliases is the api/v1 spelling of [canonical.AssetAliases] —
@@ -1367,7 +1397,9 @@ func normalizeRawRatioStringWithLookup(value string, base, quote canonical.Asset
 //
 // Returns ok=false when every layer misses; the caller turns that
 // into a 404. Extracted from handlePrice to keep that handler
-// under the gocognit cap.
+// under the gocognit cap. served is the base alias layer 1 read the
+// cached VWAP under — the pair a freeze-aware caller must ask its
+// markers about — and zero when any other layer answered.
 //
 // The chain is entered on ErrPriceNotFound, and the reader's
 // not-found exits are UNGATED by construction: cmd/stellarindex-api's
@@ -1377,7 +1409,7 @@ func normalizeRawRatioStringWithLookup(value string, base, quote canonical.Asset
 // zero-trades exit return before it. That is why the withholding
 // decision is asked HERE, at the chain's entry — see the scam gate
 // below (RLT-350).
-func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, bool, bool) {
+func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, canonical.Asset, bool, bool, bool) {
 	// Scam-issuer gate, before layer 1. The cached VWAP that layer
 	// serves is the aggregator's own aggregated claim about this pair,
 	// and the aggregator writes it with no directory consultation
@@ -1408,31 +1440,31 @@ func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset
 	// request-driven /v1/price + batch + oracle family the reader seam
 	// counts under, not a new serving path.
 	if scamWithheld(ctx, s.scam, asset, quote, "price_read") {
-		return PriceSnapshot{}, nil, false, false, true
+		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, true
 	}
-	if snap, srcs, triangulated, ok := s.tryRedisVWAPFallback(ctx, asset, quote); ok {
-		return snap, srcs, triangulated, true, false
+	if snap, srcs, served, triangulated, ok := s.tryRedisVWAPFallback(ctx, asset, quote); ok {
+		return snap, srcs, served, triangulated, true, false
 	}
 	snap, srcs, ok, withheld := s.tryStablecoinFiatProxy(ctx, asset, quote)
 	if ok {
-		return snap, srcs, true, true, false
+		return snap, srcs, canonical.Asset{}, true, true, false
 	}
 	if snap, srcs, ok := s.tryFiatCrossRate(asset, quote); ok {
-		return snap, srcs, true, true, false
+		return snap, srcs, canonical.Asset{}, true, true, false
 	}
 	// 4. USD-anchored cross for a NON-fiat asset quoted in a fiat we
 	//    have no market for (ADR-0051). Runs last so any directly
 	//    observed market — including the CEX-quoted EUR and GBP pairs —
 	//    always wins over a derived value.
 	if snap, srcs, ok, crossWithheld := s.tryUSDAnchoredFiatCross(ctx, asset, quote); ok {
-		return snap, srcs, true, true, false
+		return snap, srcs, canonical.Asset{}, true, true, false
 	} else if crossWithheld {
 		withheld = true
 	}
 	// Nothing served. `withheld` distinguishes "we have no price" from
 	// "we have one and decline to publish it" — the caller emits
 	// errors/price-withheld rather than errors/price-not-found (MSP-06).
-	return PriceSnapshot{}, nil, false, false, withheld
+	return PriceSnapshot{}, nil, canonical.Asset{}, false, false, withheld
 }
 
 // tryUSDAnchoredFiatCross prices a NON-fiat asset in any fiat we carry
@@ -1613,7 +1645,7 @@ func (s *Server) resolveUSDLeg(
 	case !errors.Is(err, ErrPriceNotFound):
 		return PriceSnapshot{}, nil, canonical.Asset{}, false, false
 	}
-	if snap, srcs, _, ok := s.tryRedisVWAPFallback(ctx, asset, usd); ok {
+	if snap, srcs, _, _, ok := s.tryRedisVWAPFallback(ctx, asset, usd); ok {
 		return snap, srcs, canonical.Asset{}, true, false
 	}
 	snap, srcs, ok, withheld := s.tryStablecoinFiatProxy(ctx, asset, usd)
@@ -3122,7 +3154,7 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 		// carries a price or is omitted — so a withheld verdict is
 		// dropped here deliberately rather than reported (MSP-06 covers
 		// the single-asset and oracle surfaces, which DO have one).
-		if fs, fsrc, ftri, ok, _ := s.priceFallback(ctx, asset, quote); ok {
+		if fs, fsrc, fserved, ftri, ok, _ := s.priceFallback(ctx, asset, quote); ok {
 			// F-1254: priceFallback responses are by definition below
 			// the closed-bucket VWAP contract (last-trade / proxy /
 			// triangulation). Mark stale so callers can tell the
@@ -3132,12 +3164,13 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 			// the batch envelope must OR it in for parity rather than
 			// silently dropping it.
 			fs.Change24hPct = s.batchChange24h(ctx, asset, quote, fs.Price)
-			// No closed-bucket read served this row, so there is no
-			// served alias: the freeze check is on the literal pair.
+			// fserved is the alias the cached VWAP was read under (zero
+			// when a later layer answered), the same governing pair
+			// /v1/price's freeze check takes for this fallback.
 			return s.holdFrozenBatchRow(r, batchRowResult{
 				snap: fs, sources: fsrc, stale: true, triangulated: ftri,
 				asset: asset, ok: true,
-			}, canonical.Asset{}, quote)
+			}, fserved, quote)
 		}
 		return batchRowResult{skip: true} // omit, do not 404 the batch
 	}
@@ -3423,26 +3456,17 @@ func (s *Server) handlePriceWindowed(w http.ResponseWriter, r *http.Request, ass
 	if s.writeIfScamWithheld(w, r, asset, quote, "price_read") {
 		return
 	}
-	for _, a := range assetAliases(asset) {
-		for _, q := range assetAliases(quote) {
-			if a.Equal(q) {
-				continue
-			}
-			v, found, err := s.lookupCachedVWAP(r.Context(), a, q, window)
-			if err != nil || !found {
-				continue
-			}
-			snap := PriceSnapshot{
-				AssetID:       asset.String(),
-				Quote:         quote.String(),
-				Price:         v.Value,
-				PriceType:     "vwap",
-				ObservedAt:    WireTime(v.ObservedAt),
-				WindowSeconds: int(window / time.Second),
-			}
-			writeJSON(w, snap, s.windowedPriceFlags(r, a, q, window, v.Triangulated))
-			return
+	if v, a, q, found := s.lookupCachedVWAPAliased(r.Context(), assetAliases(asset), assetAliases(quote), window); found {
+		snap := PriceSnapshot{
+			AssetID:       asset.String(),
+			Quote:         quote.String(),
+			Price:         v.Value,
+			PriceType:     "vwap",
+			ObservedAt:    WireTime(v.ObservedAt),
+			WindowSeconds: int(window / time.Second),
 		}
+		writeJSON(w, snap, s.windowedPriceFlags(r, a, q, window, v.Triangulated))
+		return
 	}
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/price-not-found",
