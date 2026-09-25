@@ -5,7 +5,6 @@ import (
 	"math/big"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -145,7 +144,7 @@ type AccountCohortContractV struct {
 }
 
 // AccountCohortPositionV is the cohort's aggregate in one DeFi venue.
-// Amount is the fold's own unit summed across holders — a magnitude.
+// Amount is the exact sum across holders, in the fold's own unit.
 type AccountCohortPositionV struct {
 	Protocol     string `json:"protocol"`
 	PositionKind string `json:"position_kind"`
@@ -502,7 +501,7 @@ func (h *Handler) cohortPositionsView(ctx context.Context, positions []clickhous
 	for _, p := range positions {
 		v := AccountCohortPositionV{
 			Protocol: p.Protocol, PositionKind: p.PositionKind, Venue: p.Venue, Asset: p.Asset,
-			Holders: p.Holders, Amount: strconv.FormatFloat(p.Amount, 'f', -1, 64),
+			Holders: p.Holders, Amount: p.Amount.String(),
 		}
 		if p.Asset != "" {
 			if resolve == nil {

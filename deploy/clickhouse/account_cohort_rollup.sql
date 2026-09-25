@@ -8,7 +8,8 @@
 --
 -- ── RUNBOOK (r1) ─────────────────────────────────────────────────────────
 --
---   1. Apply the DDL (idempotent; every statement is IF NOT EXISTS):
+--   1. Apply the DDL (idempotent: IF NOT EXISTS, and the closing retype is
+--      a no-op once applied):
 --        clickhouse-client --port 9300 --multiquery < deploy/clickhouse/account_cohort_rollup.sql
 --   2. Run one cycle by hand and read its step log — the movements walk
 --      is the long step (the whole account_movements archive, one 1M-
@@ -218,8 +219,8 @@ CREATE TABLE IF NOT EXISTS stellar.asset_month_usd_prices_staging
 AS stellar.asset_month_usd_prices;
 
 -- Open DeFi positions held by the cohort, per protocol / venue / asset.
--- `amount` is a Float64 sum of the folds' decimal amounts — a magnitude
--- for ranking and display, not a settlement figure.
+-- `amount` is the exact Int256 sum of the folds' integer amounts, each in
+-- the fold's own unit (ADR-0003: never a float).
 CREATE TABLE IF NOT EXISTS stellar.account_cohort_positions
 (
     rel           LowCardinality(String),
@@ -229,7 +230,7 @@ CREATE TABLE IF NOT EXISTS stellar.account_cohort_positions
     venue         String,
     asset         String,
     holders       UInt64,
-    amount        Float64
+    amount        Int256
 )
 ENGINE = MergeTree
 ORDER BY (rel, root, protocol, venue, asset, position_kind);
@@ -237,3 +238,11 @@ ORDER BY (rel, root, protocol, venue, asset, position_kind);
 CREATE TABLE IF NOT EXISTS stellar.account_cohort_positions_staging
 AS stellar.account_cohort_positions;
 
+-- A deployment created before the retype keeps `amount Float64` under IF
+-- NOT EXISTS, and its staging twin copies it, so retype both halves of
+-- the EXCHANGE pair (a no-op once applied). Apply before rolling a binary
+-- whose reader scans Int256; the next cycle rewrites every row exactly.
+ALTER TABLE stellar.account_cohort_positions
+    MODIFY COLUMN amount Int256;
+ALTER TABLE stellar.account_cohort_positions_staging
+    MODIFY COLUMN amount Int256;
