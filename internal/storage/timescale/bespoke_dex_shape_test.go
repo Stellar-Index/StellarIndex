@@ -17,11 +17,66 @@ func assertDEXNumericSafe(t *testing.T, name, q string) {
 }
 
 // assertWindowBounded guards against unbounded trades/CAGG walks: every
-// windowed DEX query binds the $2::interval window on its time column.
+// windowed DEX query binds the $2::interval window on its time column,
+// rolling at 24h or day-aligned beyond (TestDexWindowsShareCompleteDayBounds
+// pins which).
 func assertWindowBounded(t *testing.T, name, q string) {
 	t.Helper()
-	if !strings.Contains(q, "> now() - $2::interval") {
+	if !strings.Contains(q, dexRollingLowerSQL) && !strings.Contains(q, dexDayLowerSQL) {
 		t.Errorf("%s must be window-bounded (never an unbounded scan)", name)
+	}
+}
+
+const (
+	dexRollingLowerSQL = "> now() - $2::interval"
+	dexDayLowerSQL     = ">= date_trunc('day', now()) - $2::interval"
+	dexDayUpperSQL     = "< date_trunc('day', now())"
+)
+
+// TestDexWindowsShareCompleteDayBounds pins one window per DEX block. The
+// daily CAGG labels a day by its 00:00 start and never materializes today,
+// so a rolling `bucket > now() - '7 days'` cut summed 6 days under a "(7d)"
+// label while the raw-trade KPIs beside it covered 168 hours. Beyond 24h
+// every builder — CAGG and raw alike — must bound on the N complete UTC
+// days before today, and each window bind must carry both bounds.
+func TestDexWindowsShareCompleteDayBounds(t *testing.T) {
+	builders := map[string]func(int) string{
+		"dexActivitySeriesQuery": dexActivitySeriesQuery,
+		"dexWindowKPIQuery":      dexWindowKPIQuery,
+		"dexRawKPIQuery":         dexRawKPIQuery,
+		"dexTradersSeriesQuery":  dexTradersSeriesQuery,
+		"dexPairBreakdownQuery":  dexPairBreakdownQuery,
+		"dexTopPairsSeriesQuery": dexTopPairsSeriesQuery,
+		"dexTopPairsTableQuery":  dexTopPairsTableQuery,
+		"dexLargestTradesQuery":  dexLargestTradesQuery,
+	}
+	for name, fn := range builders {
+		for _, days := range []int{7, 30, 90} {
+			q := fn(days)
+			binds := strings.Count(q, "$2::interval")
+			if strings.Contains(q, dexRollingLowerSQL) {
+				t.Errorf("%s(%d) uses a rolling cut; the (%dd) figures must cover %d complete UTC days", name, days, days, days)
+			}
+			if lo, hi := strings.Count(q, dexDayLowerSQL), strings.Count(q, dexDayUpperSQL); binds == 0 || lo != binds || hi != binds {
+				t.Errorf("%s(%d): %d window binds, %d day-aligned lower bounds, %d today-exclusive upper bounds; want all equal and non-zero", name, days, binds, lo, hi)
+			}
+		}
+		q := fn(1)
+		if !strings.Contains(q, dexRollingLowerSQL) || strings.Contains(q, "date_trunc('day', now())") {
+			t.Errorf("%s(1) must keep the rolling 24h window", name)
+		}
+	}
+}
+
+// TestDexVolumeHintNamesCompleteDays — the >1d volume KPI says which days
+// it sums, and the block note discloses the rollup's post-midnight lag.
+func TestDexVolumeHintNamesCompleteDays(t *testing.T) {
+	if h := dexVolumeKPIHint(7, ""); !strings.Contains(h, "7 complete UTC days before today") {
+		t.Errorf("7d volume hint = %q, want it to name the 7 complete UTC days", h)
+	}
+	n := dexCompleteDaysNote(30)
+	if !strings.Contains(n, "30 complete UTC days before today") || !strings.Contains(n, "may not yet include yesterday") {
+		t.Errorf("30d window note = %q, want the window and the refresh lag disclosed", n)
 	}
 }
 
@@ -109,7 +164,7 @@ func TestDexWindowKPIQueryShape(t *testing.T) {
 // excluded from both sides (count(usd_volume) skips NULLs; sum ignores
 // them), and NULLIF guards the zero-priced window.
 func TestDexRawKPIQueryShape(t *testing.T) {
-	q := dexRawKPIQuery()
+	q := dexRawKPIQuery(90)
 	if !strings.Contains(q, "sum(usd_volume) / NULLIF(count(usd_volume),0)") {
 		t.Error("avg trade size must divide the usd_volume sum by the priced-trade count with a NULLIF guard")
 	}
@@ -197,7 +252,7 @@ func TestDexTopPairsSeriesQueryShape(t *testing.T) {
 // TestDexLargestTradesQueryShape — top-10 by usd_volume, priced rows only,
 // window-bounded, per-trade NUMERIC amounts as text.
 func TestDexLargestTradesQueryShape(t *testing.T) {
-	q := dexLargestTradesQuery()
+	q := dexLargestTradesQuery(90)
 	if !strings.Contains(q, "ORDER BY usd_volume DESC LIMIT 10") {
 		t.Error("largest trades must be the top 10 by usd_volume")
 	}
