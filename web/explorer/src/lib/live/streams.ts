@@ -23,6 +23,13 @@ const STREAM_LINGER_MS = 5_000;
 
 type Listener = (data: string) => void;
 
+// Connection status surfaced to subscribers so a page can render a
+// "reconnecting"/stale badge instead of a value that has silently gone
+// dark (GH-1038). 'reconnecting' covers both the initial connect and
+// the post-hard-failure wait for STREAM_REOPEN_MS.
+export type StreamStatus = 'live' | 'reconnecting';
+type StatusListener = (status: StreamStatus) => void;
+
 interface SharedStream {
   es: EventSource | null;
   refs: number;
@@ -33,18 +40,46 @@ interface SharedStream {
   attached: Set<string>;
   reopenTimer: ReturnType<typeof setTimeout> | null;
   lingerTimer: ReturnType<typeof setTimeout> | null;
+  // Highest `id:` seen on this connection (lexicographically —
+  // server IDs are fixed-width hex, sortable = chronological). Sent
+  // back as `?last_event_id=` on reopen so a hard failure resumes
+  // instead of dropping everything published during the outage.
+  lastEventId: string | null;
+  status: StreamStatus;
+  statusListeners: Set<StatusListener>;
 }
 
 const streams = new Map<string, SharedStream>();
 
+// The server accepts the resume cursor as either the `Last-Event-ID`
+// header (which EventSource sends automatically on its own transient
+// reconnects) or `?last_event_id=` (LastEventIDFrom,
+// internal/api/streaming/handler.go) — the fallback we need here
+// since we're opening a brand-new EventSource, not resuming one.
+function withLastEventId(url: string, lastEventId: string | null): string {
+  if (!lastEventId) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}last_event_id=${encodeURIComponent(lastEventId)}`;
+}
+
+function setStatus(s: SharedStream, status: StreamStatus): void {
+  if (s.status === status) return;
+  s.status = status;
+  for (const fn of s.statusListeners) fn(status);
+}
+
 function connect(url: string, s: SharedStream): void {
-  const es = new EventSource(url);
+  const es = new EventSource(withLastEventId(url, s.lastEventId));
   s.es = es;
   s.attached = new Set();
   for (const eventType of s.listeners.keys()) attach(s, eventType);
+  es.onopen = () => {
+    if (s.es === es) setStatus(s, 'live');
+  };
   es.onerror = () => {
     if (s.es === es && es.readyState === EventSource.CLOSED) {
       s.es = null;
+      setStatus(s, 'reconnecting');
       if (s.refs > 0 && !s.reopenTimer) {
         s.reopenTimer = setTimeout(() => {
           s.reopenTimer = null;
@@ -59,10 +94,17 @@ function attach(s: SharedStream, eventType: string): void {
   if (!s.es || s.attached.has(eventType)) return;
   s.attached.add(eventType);
   s.es.addEventListener(eventType, (ev) => {
+    const msgEv = ev as MessageEvent;
+    const id = msgEv.lastEventId;
+    // Out-of-order guard (#720): a transient reconnect the browser
+    // handled itself can still redeliver/reorder frames. Drop
+    // anything that isn't strictly newer than what we've already
+    // forwarded rather than let a stale frame overwrite a fresh one.
+    if (id && s.lastEventId !== null && id <= s.lastEventId) return;
+    if (id) s.lastEventId = id;
     const set = s.listeners.get(eventType);
     if (!set) return;
-    const data = (ev as MessageEvent).data as string;
-    for (const fn of set) fn(data);
+    for (const fn of set) fn(msgEv.data as string);
   });
 }
 
@@ -83,6 +125,7 @@ export function subscribeStream(
   url: string,
   eventType: string,
   onData: Listener,
+  onStatus?: StatusListener,
 ): () => void {
   // No-op outside a browser with SSE support (jsdom test environments,
   // any server-side render path): callers simply never receive frames
@@ -97,6 +140,9 @@ export function subscribeStream(
       attached: new Set(),
       reopenTimer: null,
       lingerTimer: null,
+      lastEventId: null,
+      status: 'reconnecting',
+      statusListeners: new Set(),
     };
     streams.set(url, s);
   }
@@ -111,6 +157,10 @@ export function subscribeStream(
     s.listeners.set(eventType, set);
   }
   set.add(onData);
+  if (onStatus) {
+    s.statusListeners.add(onStatus);
+    onStatus(s.status);
+  }
   if (!s.es) {
     if (s.reopenTimer) {
       clearTimeout(s.reopenTimer);
@@ -128,6 +178,7 @@ export function subscribeStream(
     const cur = streams.get(url);
     if (cur !== s) return;
     set.delete(onData);
+    if (onStatus) s.statusListeners.delete(onStatus);
     s.refs--;
     if (s.refs > 0) return;
     s.lingerTimer = setTimeout(() => teardown(url, s), STREAM_LINGER_MS);
