@@ -317,7 +317,7 @@ func (s *Store) execUnderLockTimeout(ctx context.Context, wait time.Duration, sc
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL lock_timeout = '%dms'", wait.Milliseconds())); err != nil {
 		return err
 	}
-	lockStmt := "LOCK TABLE " + (pgx.Identifier{schema, name}).Sanitize() + " IN ACCESS EXCLUSIVE MODE" //nolint:gosec // G202: identifier is quoted by pgx.Identifier.Sanitize
+	lockStmt := "LOCK TABLE " + (pgx.Identifier{schema, name}).Sanitize() + " IN ACCESS EXCLUSIVE MODE"
 	if _, err := tx.ExecContext(ctx, lockStmt); err != nil {
 		return err
 	}
