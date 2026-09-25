@@ -668,10 +668,10 @@ func (m MetadataConfig) HomeDomainFor(issuer string) (string, bool) {
 // the fleet stabilises; deferred to keep config surface narrow
 // until operators actually ask for it.
 type ExternalConfig struct {
-	Binance          ExternalVenueConfig         `toml:"binance"          doc:"Binance spot WebSocket aggTrade streamer (XLMUSDT / BTCUSDT / ETHUSDT / XLMBTC)."`
-	Kraken           ExternalVenueConfig         `toml:"kraken"           doc:"Kraken v2 WebSocket trade streamer (XLM in 6 fiats: USD/EUR/GBP/AUD/CAD/CHF + BTC/USD, ETH/USD)."`
-	Bitstamp         ExternalVenueConfig         `toml:"bitstamp"         doc:"Bitstamp v2 WebSocket live_trades streamer (XLM/USD, XLM/EUR, XLM/GBP, XLM/BTC, BTC/USD, BTC/EUR, ETH/USD)."`
-	Coinbase         ExternalVenueConfig         `toml:"coinbase"         doc:"Coinbase Exchange WebSocket matches streamer (XLM-USD, BTC-USD, ETH-USD)."`
+	Binance          ExternalStreamerConfig      `toml:"binance"          doc:"Binance spot WebSocket aggTrade streamer. Pair list: internal/sources/external/binance/pairs.yaml."`
+	Kraken           ExternalStreamerConfig      `toml:"kraken"           doc:"Kraken v2 WebSocket trade streamer. Pair list: internal/sources/external/kraken/pairs.go."`
+	Bitstamp         ExternalStreamerConfig      `toml:"bitstamp"         doc:"Bitstamp v2 WebSocket live_trades streamer. Pair list: internal/sources/external/bitstamp/pairs.go."`
+	Coinbase         ExternalStreamerConfig      `toml:"coinbase"         doc:"Coinbase Exchange WebSocket matches streamer. Pair list: internal/sources/external/coinbase/pairs.go."`
 	ExchangeRatesApi ExchangeRatesApiVenueConfig `toml:"exchangeratesapi" doc:"ExchangeRatesApi.io REST poller for fiat cross-rates (Professional tier required for USD base + 1-min cadence + redistribution)."`
 	CoinGecko        CoinGeckoVenueConfig        `toml:"coingecko"        doc:"CoinGecko /simple/price poller. Class=aggregator (divergence-only). Its keys are also used by the backfill-index and listing-sync ops commands."`
 	CoinMarketCap    CoinMarketCapVenueConfig    `toml:"coinmarketcap"    doc:"CoinMarketCap /v2 quotes poller. Class=aggregator. Paid API key; Standard tier ($79/mo+) for commercial redistribution."`
@@ -682,18 +682,29 @@ type ExternalConfig struct {
 	Dune             DuneConfig                  `toml:"dune"             doc:"Dune API read by the curated-rwa-sync ops command."`
 }
 
-// ExternalVenueConfig is the common per-venue toggle shape for
-// credential-less public venues (Binance, Kraken, Bitstamp, Coinbase).
-// Paid-tier venues with API keys use their own struct (e.g.
+// ExternalStreamerConfig is the toggle shape for credential-less
+// WebSocket streamers (Binance, Kraken, Bitstamp, Coinbase). They
+// have no poll cadence to override — the connector holds an open
+// socket — so unlike [ExternalVenueConfig] this carries no
+// PollInterval field. It used to embed one; the field was accepted
+// at load and validated but read by nothing (GH-999), silently
+// discarding any operator's `poll_interval` under `[external.binance]`
+// et al.
+type ExternalStreamerConfig struct {
+	Enabled bool `toml:"enabled" doc:"Whether this connector runs. Off by default — no network egress until operator opts in." default:"false"`
+}
+
+// ExternalVenueConfig is the toggle shape for credential-less public
+// venues that DO poll on a cadence (currently ECB). Paid-tier venues
+// with API keys use their own struct (e.g.
 // [ExchangeRatesApiVenueConfig]) that embeds the same Enabled field.
 type ExternalVenueConfig struct {
 	Enabled bool `toml:"enabled" doc:"Whether this connector runs. Off by default — no network egress until operator opts in." default:"false"`
 	// PollInterval overrides the connector's built-in default poll
 	// cadence. Empty/zero falls back to whatever the connector
-	// itself defines (e.g. coingecko's 60s, binance's 5s). Useful
-	// when a free-tier connector hits 429s — bump to 120s+ to
-	// halve the request rate.
-	PollInterval time.Duration `toml:"poll_interval" doc:"Override the connector's built-in default poll cadence (e.g. \"120s\"). Empty/zero uses the connector default." default:""`
+	// itself defines (e.g. ECB's 6h). Useful for tightening or
+	// loosening a free-tier connector's cadence.
+	PollInterval time.Duration `toml:"poll_interval" doc:"Override the connector's built-in default poll cadence (e.g. \"12h\"). Empty/zero uses the connector default." default:""`
 }
 
 // ExchangeRatesApiVenueConfig extends the common toggle with the
@@ -2132,10 +2143,10 @@ func Default() Config {
 // network egress / credentials. Split out of Default() to keep it under funlen.
 func defaultExternalConfig() ExternalConfig {
 	return ExternalConfig{
-		Binance:          ExternalVenueConfig{Enabled: false},
-		Kraken:           ExternalVenueConfig{Enabled: false},
-		Bitstamp:         ExternalVenueConfig{Enabled: false},
-		Coinbase:         ExternalVenueConfig{Enabled: false},
+		Binance:          ExternalStreamerConfig{Enabled: false},
+		Kraken:           ExternalStreamerConfig{Enabled: false},
+		Bitstamp:         ExternalStreamerConfig{Enabled: false},
+		Coinbase:         ExternalStreamerConfig{Enabled: false},
 		ExchangeRatesApi: ExchangeRatesApiVenueConfig{Enabled: false, Base: "USD"},
 		CoinGecko:        CoinGeckoVenueConfig{Enabled: false},
 		CoinMarketCap:    CoinMarketCapVenueConfig{Enabled: false},

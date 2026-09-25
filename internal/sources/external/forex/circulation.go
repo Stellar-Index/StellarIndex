@@ -10,9 +10,10 @@ import (
 )
 
 // circulationCSV is the curated monetary-base table joined onto
-// /v1/currencies. Lives in repo at data/currencies/circulation.csv.
-// Refresh cadence: quarterly, one CSV row per central-bank
-// publication. The file's header comments document the methodology.
+// /v1/currencies. Lives in repo at
+// internal/sources/external/forex/circulation_data.csv. Refresh
+// cadence: quarterly, one CSV row per central-bank publication. The
+// file's header comments document the methodology.
 //
 //go:embed circulation_data.csv
 var circulationCSV string

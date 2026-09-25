@@ -65,10 +65,11 @@ drift.
 Each connector reports its own `Class()` for runtime checks,
 but the source of truth is
 [`registry.go`](registry.go) — the same map the aggregator's
-class filter consults. A venue's `Class` and `Paid` are facts
-about the venue (not per-deployment); operators override
-`IncludeInVWAP` and `DefaultWeight` via config when they need
-to (rare).
+class filter consults. A venue's `Class`, `Paid`, `IncludeInVWAP`
+and `DefaultWeight` are facts about the venue (not per-deployment);
+they are not exposed as config. An operator who needs a
+per-deployment override files that as a registry.go change, not a
+config key.
 
 ### Why FX feeds are `ClassExchange`, not `ClassAggregator`
 

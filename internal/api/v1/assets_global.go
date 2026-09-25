@@ -48,7 +48,7 @@ type GlobalAssetView struct {
 	// expected to differ — venue mix, not window, is the dominant term
 	// here. PriceAsOf carries the tier's own observation time and is
 	// the field to read for freshness; for the fiat class it is an
-	// fx_quotes point from the DAILY ECB reference series, so a fiat
+	// fx_quotes point from Massive's DAILY grouped-aggregate series, so a fiat
 	// price_usd can legitimately be days old over a weekend. It is null
 	// only under price_authority onchain_listing, whose listing row
 	// carries no observation time. The package doc's
@@ -321,9 +321,9 @@ func assetForCurrency(vc *currency.VerifiedCurrency) (canonical.Asset, bool) {
 // correct values for the same asset. Sharing the resolver is the fix AND
 // the guard against the two drifting apart again.
 //
-// Order is load-bearing: fx_quotes first (Frankfurter-backed daily ECB
-// reference rates — the authoritative store both the backfill and the
-// forex worker land in), PriceReader only as a last resort for deployments
+// Order is load-bearing: fx_quotes first (Massive-backed daily
+// grouped-aggregate rates — the authoritative store the forex worker
+// lands in), PriceReader only as a last resort for deployments
 // without fx_quotes wiring.
 //
 // InverseUSD, not RateUSD: rate_usd is UNITS-OF-TICKER PER 1 USD (JPY
@@ -340,7 +340,7 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 			for i := len(points) - 1; i >= 0; i-- {
 				if _, usable := points[i].inverseUSDRat(); usable {
 					// FXQuotePoint carries no source label; fx_quotes is
-					// Frankfurter/ECB-backed by construction.
+					// Massive-backed by construction.
 					return points[i].InverseUSDText, points[i].Bucket, []string{"fx_quotes"}, true
 				}
 			}
@@ -369,12 +369,11 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 // entry. USD is special-cased to identity (price = 1.00); every
 // other fiat goes through the FX-rate fallback chain:
 //
-//  1. fxHistory (fx_quotes table — Frankfurter-backed daily ECB
-//     reference rates back to 1999). Reads the latest point in a
+//  1. fxHistory (fx_quotes table — Massive-backed daily
+//     grouped-aggregate rates). Reads the latest point in a
 //     trailing 7-day window and uses its InverseUSD as the
 //     fiat→USD price. This is the authoritative path because
-//     fx_quotes is where the Frankfurter backfill + the
-//     continuous forex worker both land.
+//     fx_quotes is where the continuous forex worker lands.
 //  2. PriceReader.LatestPrice as a last resort. Pre-fix the
 //     ordering was reversed: PriceReader was tried first and
 //     storePriceReader fast-paths a `quote.Type==fiat` request to

@@ -26,9 +26,10 @@ The shipped rule (both trees):
 (
   rate(stellarindex_external_poller_polls_total{outcome="error"}[15m])
   /
-  (
-    rate(stellarindex_external_poller_polls_total{outcome="success"}[15m])
-    + rate(stellarindex_external_poller_polls_total{outcome="error"}[15m])
+  ignoring(outcome) (
+    sum without (outcome) (
+      rate(stellarindex_external_poller_polls_total{outcome=~"success|error"}[15m])
+    )
   )
 ) > 0.5
 ```
@@ -40,6 +41,14 @@ sustained `for: 15m`. Two things worth knowing about the shape:
   that reached its cooldown, or an oracle with no new round), and it is
   deliberately excluded: a poller sitting in a post-429 cooldown does not
   dilute the ratio.
+- `sum without (outcome)` collapses the `success`/`error` children into one
+  series before dividing, and `ignoring(outcome)` lets the numerator match
+  it while keeping job/instance. PromQL's default one-to-one matching
+  compares the FULL label signature, so a bare `success + error` sum (no
+  `without`/`ignoring`) matches nothing — `outcome` differs on every
+  candidate pair — and the alert could never fire at any error rate
+  (wave-D ALERT-03). If you paste an expression to reproduce this by hand,
+  paste the one above, not the unaggregated form.
 - Both windows are 15 min and `for:` is 15 min, so a genuine trip needs ~30 min
   of degradation. A 5-minute vendor blip cannot fire this.
 
