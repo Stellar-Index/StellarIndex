@@ -68,8 +68,6 @@ tests:
         alertname: stellarindex_alertmanager_not_notifying
         exp_alerts:
           - exp_labels:
-              job: alertmanager_pair
-              integration: webhook
               severity: page
               team: stellarindex
               component: meta
@@ -90,6 +88,26 @@ tests:
     input_series:
       - series: 'alertmanager_notifications_total{job="alertmanager_pair",integration="webhook"}'
         values: '0+1x25'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_alertmanager_not_notifying
+        exp_alerts: []
+
+  # GH-1173: alertmanager_notifications_total is per-integration, and an
+  # HA pair (job=alertmanager_pair) exposes one series PER REPLICA. Only
+  # one replica may end up actually dispatching a given alert group, so
+  # the other replica's own webhook series can sit flat at 0 forever even
+  # though the fan-out as a whole is healthy. Unaggregated, that replica's
+  # series alone satisfies the first arm and pages permanently the moment
+  # a second webhook receiver (alert-delivery-failure) is wired. sum()
+  # must collapse both replicas before comparing to 0.
+  - interval: 1m
+    name: one HA replica never dispatching does not fire while its peer does
+    input_series:
+      - series: 'alertmanager_notifications_total{job="alertmanager_pair",integration="webhook",instance="am1:9093"}'
+        values: '0+1x25'
+      - series: 'alertmanager_notifications_total{job="alertmanager_pair",integration="webhook",instance="am2:9093"}'
+        values: '5+0x25'
     alert_rule_test:
       - eval_time: 25m
         alertname: stellarindex_alertmanager_not_notifying
