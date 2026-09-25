@@ -324,6 +324,42 @@ func TestEndpointFailures_PerEndpointFreshnessOverride(t *testing.T) {
 	}
 }
 
+// TestEndpointFailures_CriticalEndpointFailsOnAnyError proves the
+// doc-comment contract on endpoint.Critical ("a single failure here
+// fails the whole run"): 2 errors out of 2400 /readyz samples clears
+// the blanket 99.9% availability target (99.917%) but must still fail
+// because /readyz is Critical. Without the Critical hard-fail branch
+// this run reads "pass".
+func TestEndpointFailures_CriticalEndpointFailsOnAnyError(t *testing.T) {
+	sla := slaTargets{P95MS: 1000, P99MS: 1000, FreshnessSec: 30, AvailabilityPct: 99.9}
+
+	readyz := stats{
+		Endpoint:        "readyz",
+		Critical:        true,
+		Samples:         2400,
+		Successes:       2398,
+		Errors:          2,
+		AvailabilityPct: 100.0 * 2398.0 / 2400.0, // 99.9167% >= 99.9% target
+	}
+	if readyz.AvailabilityPct < sla.AvailabilityPct {
+		t.Fatalf("test setup broken: availability %.4f must clear the blanket target %.2f", readyz.AvailabilityPct, sla.AvailabilityPct)
+	}
+	got := endpointFailures(readyz, sla)
+	if len(got) == 0 {
+		t.Fatalf("critical endpoint readyz with 2 errors must fail the run even though availability clears the blanket target, got no failures")
+	}
+
+	// A non-critical endpoint with the identical error/availability
+	// profile must NOT be hard-failed by this branch — only the
+	// blanket availability/latency/freshness checks apply to it.
+	assets := readyz
+	assets.Endpoint = "assets"
+	assets.Critical = false
+	if got := endpointFailures(assets, sla); len(got) != 0 {
+		t.Errorf("non-critical endpoint at 99.92%% availability should pass, got %v", got)
+	}
+}
+
 // JSON round-trip sanity for the report shape — anything that
 // silently breaks the JSON output would surface here.
 func TestReport_JSONRoundTrip(t *testing.T) {
