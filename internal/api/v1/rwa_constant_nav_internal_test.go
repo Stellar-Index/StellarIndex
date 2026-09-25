@@ -151,3 +151,60 @@ func TestRWAApplyReference_UnusableListingPriceFallsToConstantNAV(t *testing.T) 
 		})
 	}
 }
+
+// The ISIN an issuer declares and the ISIN a constant-NAV binding was
+// verified against name one security or the row is refused: the bound
+// pair re-declaring another class, and another pair declaring a bound
+// class, are both withheld whatever else would have priced them. A
+// declaration that matches — in any case — or that is not an ISIN at
+// all leaves the row exactly as it was.
+func TestRWAApplyReference_DeclaredISINMustMatchConstantNAVBinding(t *testing.T) {
+	const franklinIB = "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP"
+	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	supply := "566742721191613"
+	snap := rwaReferences{available: true, byFeed: map[string]rwaReference{}, nonUSD: map[string]string{}}
+	listed := timescale.ListingEntry{PriceUSD: "0.99", PricedAt: now.Add(-time.Hour), Source: "listing", ListingID: "x"}
+	row := func(code, issuer, anchor string) *RWAAsset {
+		return &RWAAsset{AssetID: code + "-" + issuer, Code: code, Issuer: issuer, AnchorAsset: anchor, CirculatingSupply: &supply, Decimals: intPtr(7)}
+	}
+	refused := []struct {
+		name    string
+		a       *RWAAsset
+		listing bool
+	}{
+		{"bound pair declares the AB class", row("gBENJI", franklinIB, "LU3258450587"), false},
+		{"bound pair declares another class beside a usable listing", row("gBENJI", franklinIB, "LU3258450587"), true},
+		{"another pair declares the IB class beside a usable listing", row("gBENJI", unboundIssuer, "LU2900381208"), true},
+	}
+	for _, c := range refused {
+		t.Run(c.name, func(t *testing.T) {
+			listings := map[string]timescale.ListingEntry{}
+			if c.listing {
+				listings[c.a.AssetID] = listed
+			}
+			rwaApplyReference(c.a, snap, nil, listings, now)
+			if c.a.Reference != nil {
+				t.Fatalf("reference = %+v, want none: the row declares %s", c.a.Reference, c.a.AnchorAsset)
+			}
+			if c.a.ReferenceValuation.Status != RWAPremiumReferenceISINMismatch || c.a.Premium.Status != RWAPremiumReferenceISINMismatch {
+				t.Errorf("statuses = %q / %q, want %q on both", c.a.ReferenceValuation.Status, c.a.Premium.Status, RWAPremiumReferenceISINMismatch)
+			}
+			if c.a.ReferenceValuation.ValueUSD != nil {
+				t.Errorf("a refused row carries a figure: %q", *c.a.ReferenceValuation.ValueUSD)
+			}
+		})
+	}
+
+	for _, anchor := range []string{"LU2900381208", "lu2900381208", "", "Franklin OnChain U.S. Government Liquidity Fund"} {
+		a := row("gBENJI", franklinIB, anchor)
+		rwaApplyReference(a, snap, nil, map[string]timescale.ListingEntry{}, now)
+		if a.Reference == nil || a.Reference.Provenance != RWAReferenceProspectusCNAV || a.ReferenceValuation.ValueUSD == nil || *a.ReferenceValuation.ValueUSD != "56674272.12" {
+			t.Errorf("anchor %q: reference = %+v, valuation = %+v, want the prospectus CNAV valuing 56674272.12", anchor, a.Reference, a.ReferenceValuation)
+		}
+	}
+	other := row("gBENJI", unboundIssuer, "US0378331005")
+	rwaApplyReference(other, snap, nil, map[string]timescale.ListingEntry{other.AssetID: listed}, now)
+	if other.Reference == nil || other.Reference.Provenance != RWAReferenceListingPrice {
+		t.Errorf("an unbound pair declaring an unbound ISIN: reference = %+v, want the listing arm untouched", other.Reference)
+	}
+}

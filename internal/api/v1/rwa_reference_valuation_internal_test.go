@@ -433,6 +433,8 @@ func TestRWAReferenceDropActors_CoverEveryStatusARowCanCarry(t *testing.T) {
 		RWAPremiumReferenceExpired:     {},
 		RWAPremiumReferenceNotPositive: {},
 		RWAReferenceValuationNoSupply:  {},
+		// A declared ISIN contradicting the constant-NAV table.
+		RWAPremiumReferenceISINMismatch: {},
 		// A contract row whose own declared scale could not be read.
 		// The exponent IS the figure on this surface, so an unread one
 		// refuses the valuation rather than defaulting to 7.

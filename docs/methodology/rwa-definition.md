@@ -1154,6 +1154,12 @@ reader cannot act on a status that collapses them:
 - `reference_expired` — the bound feed's most recent observation is older
   than the seven-day window. Reachable only when a snapshot is carried
   across a sustained read failure.
+- `reference_isin_mismatch` — the well-formed ISIN the issuer declares in
+  `anchor_asset` contradicts a prospectus constant-NAV binding: the pair
+  is bound to a different share class, or the ISIN is a class bound on
+  another pair. No reference of any provenance is served until the
+  binding is re-verified, because the row would otherwise name one
+  security and be valued as another.
 
 ### What the comparison rests on
 

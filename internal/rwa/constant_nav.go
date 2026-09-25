@@ -1,6 +1,7 @@
 package rwa
 
 import (
+	"fmt"
 	"strings"
 	"time"
 )
@@ -123,23 +124,55 @@ var constantNAVBindings = []ConstantNAVBinding{
 	},
 }
 
-// constantNAVIndex keys the table on the exact pair and stamps each
-// binding's ReviewBy from its VerifiedOn. A verification date that does
-// not parse is a defect in this file, and the process refuses to start
-// on it rather than serve a binding whose bound cannot be computed.
-var constantNAVIndex = func() map[instrumentKey]ConstantNAVBinding {
-	m := make(map[instrumentKey]ConstantNAVBinding, len(constantNAVBindings))
-	for i, b := range constantNAVBindings {
+// constantNAVIndex keys the table on the exact pair and on the ISIN, and
+// stamps each binding's ReviewBy from its VerifiedOn. A defect in the
+// table is a defect in this file, and the process refuses to start on it
+// rather than serve a binding it cannot vouch for.
+var constantNAVIndex = func() constantNAVTable {
+	t, err := indexConstantNAV(constantNAVBindings)
+	if err != nil {
+		panic("rwa: " + err.Error())
+	}
+	return t
+}()
+
+type constantNAVTable struct {
+	byPair map[instrumentKey]ConstantNAVBinding
+	byISIN map[string]ConstantNAVBinding
+}
+
+// indexConstantNAV stamps ReviewBy into bindings in place and indexes
+// them. An ISIN names one share class and a share class is bound on one
+// pair, so a repeated ISIN or pair is two securities wearing one
+// identity and is refused, as is an ISIN that is not the upper-case,
+// check-digit-valid form every lookup compares against.
+func indexConstantNAV(bindings []ConstantNAVBinding) (constantNAVTable, error) {
+	t := constantNAVTable{
+		byPair: make(map[instrumentKey]ConstantNAVBinding, len(bindings)),
+		byISIN: make(map[string]ConstantNAVBinding, len(bindings)),
+	}
+	for i, b := range bindings {
 		verified, err := time.Parse(constantNAVDateLayout, b.VerifiedOn)
 		if err != nil {
-			panic("rwa: constant NAV binding " + b.Code + ": VerifiedOn " + b.VerifiedOn + " is not a " + constantNAVDateLayout + " date")
+			return constantNAVTable{}, fmt.Errorf("constant NAV binding %s: VerifiedOn %q is not a %s date", b.Code, b.VerifiedOn, constantNAVDateLayout)
+		}
+		if norm, ok := upperASCII12(b.ISIN); !ok || norm != b.ISIN || !IsISIN(b.ISIN) {
+			return constantNAVTable{}, fmt.Errorf("constant NAV binding %s: ISIN %q is not a well-formed upper-case ISIN", b.Code, b.ISIN)
+		}
+		key := instrumentKey{code: b.Code, issuer: b.Issuer}
+		if prev, dup := t.byPair[key]; dup {
+			return constantNAVTable{}, fmt.Errorf("constant NAV binding %s: pair %s-%s bound twice (ISINs %s and %s)", b.Code, b.Code, b.Issuer, prev.ISIN, b.ISIN)
+		}
+		if prev, dup := t.byISIN[b.ISIN]; dup {
+			return constantNAVTable{}, fmt.Errorf("constant NAV binding %s: ISIN %s already bound to %s-%s", b.Code, b.ISIN, prev.Code, prev.Issuer)
 		}
 		b.ReviewBy = verified.Add(ConstantNAVReviewInterval).Format(constantNAVDateLayout)
-		constantNAVBindings[i] = b
-		m[instrumentKey{code: b.Code, issuer: b.Issuer}] = b
+		bindings[i] = b
+		t.byPair[key] = b
+		t.byISIN[b.ISIN] = b
 	}
-	return m
-}()
+	return t, nil
+}
 
 // ReviewDeadline is the instant the binding falls due for
 // re-verification: the start of the ReviewBy date, UTC.
@@ -167,8 +200,27 @@ func (b ConstantNAVBinding) ReviewDue(now time.Time) bool {
 // ConstantNAV returns the prospectus constant-NAV binding for this exact
 // (code, issuer), and whether one exists.
 func ConstantNAV(code, issuer string) (ConstantNAVBinding, bool) {
-	b, ok := constantNAVIndex[instrumentKey{code: strings.TrimSpace(code), issuer: strings.TrimSpace(issuer)}]
+	b, ok := constantNAVIndex.byPair[instrumentKey{code: strings.TrimSpace(code), issuer: strings.TrimSpace(issuer)}]
 	return b, ok
+}
+
+// ConstantNAVISINConflict reports whether the ISIN an issuer's SEP-1
+// declares for (code, issuer) contradicts the constant-NAV table: the
+// pair is bound to a different ISIN, or the ISIN is bound to a
+// different pair. Either way the row would name one security and be
+// valued as another. A declaration that is not a well-formed ISIN names
+// no security and so contradicts nothing.
+func ConstantNAVISINConflict(code, issuer, declaredAnchorAsset string) bool {
+	isin, ok := upperASCII12(declaredAnchorAsset)
+	if !ok || !IsISIN(isin) {
+		return false
+	}
+	key := instrumentKey{code: strings.TrimSpace(code), issuer: strings.TrimSpace(issuer)}
+	if b, bound := constantNAVIndex.byPair[key]; bound && b.ISIN != isin {
+		return true
+	}
+	b, bound := constantNAVIndex.byISIN[isin]
+	return bound && (instrumentKey{code: b.Code, issuer: b.Issuer}) != key
 }
 
 // ConstantNAVBindings returns the table in declaration order, for

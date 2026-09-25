@@ -348,6 +348,15 @@ const (
 	// issuer nobody has bound yet, which is why the refusal is reported
 	// rather than absorbed.
 	RWAPremiumNotBound = "reference_not_bound"
+	// RWAPremiumReferenceISINMismatch — the ISIN the issuer's SEP-1
+	// declares for this pair contradicts the constant-NAV table: the
+	// pair is bound to a different share class, or the declared ISIN
+	// belongs to a class bound on another pair. Valuing the row would
+	// attach one security's NAV to a row naming another, and an issuer
+	// changing its declaration is the strongest signal that the class
+	// was reorganised — so nothing is served until the binding is
+	// re-verified.
+	RWAPremiumReferenceISINMismatch = "reference_isin_mismatch"
 	// RWAPremiumNoReference — the pair IS bound, but the oracle stream
 	// carries no row for its feed. Means exactly that and nothing else.
 	RWAPremiumNoReference = "no_reference_feed"
@@ -644,6 +653,10 @@ func rwaApplyReference(
 	// the wire it would be indistinguishable from a genuine one.
 	if !snap.available {
 		rwaRefuseReference(a, RWAPremiumReferenceUnavailable)
+		return
+	}
+	if rwa.ConstantNAVISINConflict(a.Code, a.Issuer, a.AnchorAsset) {
+		rwaRefuseReference(a, RWAPremiumReferenceISINMismatch)
 		return
 	}
 
