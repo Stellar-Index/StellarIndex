@@ -11,3 +11,25 @@ meta.yml:stellarindex_prometheus_scrape_failing:expr  # the job list mirrors eac
 meta.yml:stellarindex_alertmanager_down:expr  # same cause as scrape_failing above: r1's self-scrape job is `alertmanager`, the multi-host template's is `alertmanager_pair`
 meta.yml:stellarindex_alertmanager_not_notifying:expr  # same cause: the job selector tracks each deployment's scrape config
 meta.yml:stellarindex_alertmanager_notifications_failing:expr  # same cause: the job selector tracks each deployment's scrape config
+
+# GH-686: annotation-prose divergences reviewed and confirmed non-
+# operational (rule path/file-name substitutions per tree, or
+# tree-specific incident evidence in a shared rationale) — not a
+# second correction sitting on one tree only, unlike the F-0154/SELECT
+# drifts this same issue fixed in storage.yml/api.yml/ingestion.yml.
+cache.yml:stellarindex_redis_replication_broken:annotations  # covered by the :expr entry above; description also differs on replica count for the same reason
+anomaly.yml:stellarindex_anomaly_freeze_sustained:annotations  # rich multi-paragraph runbook prose, wording only
+external-pollers.yml:stellarindex_external_poller_stale_ecb:annotations  # wording only
+ingestion.yml:stellarindex_ingest_gap_detector_silent:annotations  # each tree documents its own false-fire incident evidence for the same three clauses
+ingestion.yml:stellarindex_ingestion_source_stopped:annotations  # wording only
+ingestion.yml:stellarindex_ingestion_source_stopped_daily_publisher:annotations  # wording only
+ingestion.yml:stellarindex_ingestion_source_stopped_low_volume_dex:annotations  # wording only
+ingestion.yml:stellarindex_ops_job_run_failed:annotations  # r1 names the journalctl command explicitly; multi leaves it to the operator's own tooling
+meta.yml:stellarindex_pgbackrest_exporter_down:annotations  # each tree's description cites its own storage.yml path
+meta.yml:stellarindex_postgres_exporter_down:annotations  # each tree's description cites its own storage.yml path
+meta.yml:stellarindex_redis_exporter_down:annotations  # each tree's description cites its own cache.yml path
+projector.yml:stellarindex_projector_decode_error_rate_high:annotations  # wording only
+projector.yml:stellarindex_projector_wedged:annotations  # wording only
+sla-probe.yml:stellarindex_sla_probe_freshness_breach:annotations  # wording only
+sla-probe.yml:stellarindex_sla_probe_p95_breach:annotations  # "customer"/"user" naming style only, r1 uses the generic term
+sla-probe.yml:stellarindex_sla_probe_stale:annotations  # wording only

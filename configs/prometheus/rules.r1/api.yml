@@ -231,6 +231,11 @@ groups:
             The customer-webhook delivery worker has been failing
             (5xx + network errors) at > 0.1 attempts/s for 15+ min.
             One customer's endpoint is likely sustained-down.
+            Query `webhook_deliveries` to find the failing webhook:
+            `SELECT webhook_id, COUNT(*) FROM webhook_deliveries
+             WHERE last_response_status >= 500
+               AND created_at > now() - interval '15 min'
+             GROUP BY webhook_id ORDER BY 2 DESC LIMIT 10`.
 
       # Usage-rollup worker health (#32/#37b). The API binary folds
       # the Redis per-endpoint usage counters into the usage_daily
@@ -287,7 +292,9 @@ groups:
           summary: "Customer webhook deliveries permanently failed (budget exhausted)"
           description: |
             A delivery hit the 15-attempt retry budget (~8h) and
-            was marked terminally failed.
+            was marked terminally failed. Customer hasn't received
+            the event. Operator should reach out before the
+            customer notices via their own monitoring.
 
       # #368 M6: `mark_error` is the delivery worker completing a POST
       # and then failing to RECORD it. markTerminal's godoc already

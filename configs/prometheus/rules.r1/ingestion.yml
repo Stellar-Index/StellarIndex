@@ -925,9 +925,10 @@ groups:
 
             Resolve via:
               stellarindex-ops find-data-gaps --config /etc/stellarindex.toml --source {{ $labels.source }} --output text
-            for per-source diagnosis, then either
+            for per-source diagnosis, then for Soroban-derived sources:
               stellarindex-ops projector-replay --source <name> --from F  (per-source projection cursor rewind; ADR-0032)
-              stellarindex-ops backfill -write --source <name> --from F --to T   (if only one source is short)
+            For non-projected sources (sdex / soroban-events):
+              stellarindex-ops backfill -write --source <name> --from F --to T
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detected.md
 
