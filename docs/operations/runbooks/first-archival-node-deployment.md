@@ -211,7 +211,7 @@ Before provisioning, confirm:
 - [ ] `VERSIONS.md` SHAs checked — stellar-core / galexie / rpc /
       archivist versions we pin are still current.
 - [ ] Secrets prepared: Postgres pass, MinIO root creds, admin
-      SSH key. Generate via `openssl rand -base64 32`.
+      SSH key. Generate via `openssl rand -hex 32`.
 
 ---
 

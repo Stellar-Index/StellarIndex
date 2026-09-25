@@ -42,6 +42,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/version"
 )
 
+// cmdUp's stdout is a contract: the Ansible migrate tasks key changed_when
+// on it (ansible_changed_when_test.go).
+const (
+	upAppliedFormat = "migrated to version %d (dirty=%v)\n"
+	upNoChangeMsg   = "already at latest version — nothing to do"
+)
+
 // newFlagSet declares the tool's whole flag surface; runbook invocations
 // are tested against it.
 func newFlagSet() (fs *flag.FlagSet, dsn *dsnFlag, dir *string, yes, iKnow *bool) {
@@ -184,7 +191,7 @@ func cmdUp(dir, dsn string) error {
 
 	if err := m.Up(); err != nil {
 		if errors.Is(err, migrate.ErrNoChange) {
-			fmt.Println("already at latest version — nothing to do")
+			fmt.Println(upNoChangeMsg)
 			return nil
 		}
 		return err
@@ -193,7 +200,7 @@ func cmdUp(dir, dsn string) error {
 	if vErr != nil {
 		return fmt.Errorf("post-up version: %w", vErr)
 	}
-	fmt.Printf("migrated to version %d (dirty=%v)\n", v, dirty)
+	fmt.Printf(upAppliedFormat, v, dirty)
 	return nil
 }
 

@@ -209,7 +209,7 @@
       - /usr/local/share/stellarindex/migrations
       - up
   environment:
-    STELLARINDEX_POSTGRES_DSN: "postgres://{{ postgres_user_stellarindex }}:{{ postgres_pass_stellarindex }}@127.0.0.1:5432/{{ postgres_db_stellarindex }}?sslmode=disable"
+    STELLARINDEX_POSTGRES_DSN: "{{ postgres_dsn_stellarindex }}"
     # GH-1166: same DDL-lock-convoy mitigation as deploy-binary.yml's
     # "Apply outstanding migrations" task. stellarindex-migrate's
     # golang-migrate postgres driver is lib/pq, which reads PGOPTIONS as
@@ -217,9 +217,18 @@
     # call sites of `stellarindex-migrate up`.
     PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=5min"
   register: migrate_result
-  changed_when: "'no change' not in (migrate_result.stdout | default(''))"
+  # cmdUp prints `migrated to version N` on an apply and "already at latest
+  # version — nothing to do" otherwise; pinned by
+  # cmd/stellarindex-migrate/ansible_changed_when_test.go.
+  changed_when: "'migrated to version' in migrate_result.stdout"
   failed_when: migrate_result.rc != 0
+  # The environment carries the DSN password; the version is reported below.
   no_log: true
+
+- name: Report the schema version the migrate step left
+  when: stellarindex_apply_migrations | default(false) | bool
+  ansible.builtin.debug:
+    msg: "{{ migrate_result.stdout_lines | select('match', '(migrated to version|already at latest version)') | list }}"
 
 # ──── Indexer service ─────────────────────────────────────────────────
 
