@@ -36,6 +36,7 @@ package pricingguard
 import (
 	"context"
 	"log/slog"
+	"math"
 	"math/big"
 	"strconv"
 	"sync"
@@ -130,17 +131,27 @@ func (p SubstancePolicy) withDefaults() SubstancePolicy {
 // config→policy conversion can't drift between them (this package
 // stays config-free; the binaries pass the section's fields). Zero
 // values keep the package defaults; a NaN/Inf volume (SetFloat64
-// returns nil) also falls back to the default floor — never zero.
+// returns nil) and a span/window too large for time.Duration also fall
+// back to the default floor — never zero, never a wrapped negative.
 func SubstancePolicyFromValues(minVolumeUSD float64, minBuckets, minSpanMinutes, windowHours int) SubstancePolicy {
 	pol := SubstancePolicy{
 		MinBuckets: int64(minBuckets),
-		MinSpan:    time.Duration(minSpanMinutes) * time.Minute,
-		Window:     time.Duration(windowHours) * time.Hour,
+		MinSpan:    durationOrZero(minSpanMinutes, time.Minute),
+		Window:     durationOrZero(windowHours, time.Hour),
 	}
 	if minVolumeUSD > 0 {
 		pol.MinVolumeUSD = new(big.Rat).SetFloat64(minVolumeUSD)
 	}
 	return pol
+}
+
+// durationOrZero is n*unit, or 0 (the "use the default" value) when the
+// product overflows time.Duration — a wrapped window would fail the gate open.
+func durationOrZero(n int, unit time.Duration) time.Duration {
+	if int64(n) > math.MaxInt64/int64(unit) || int64(n) < math.MinInt64/int64(unit) {
+		return 0
+	}
+	return time.Duration(n) * unit
 }
 
 // substanceCacheTTL bounds how stale a cached verdict may be. 60s keeps

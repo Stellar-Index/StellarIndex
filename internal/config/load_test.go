@@ -367,6 +367,9 @@ func TestAnsibleFiatPegStanza_ValidAndComplete(t *testing.T) {
 	if !reflect.DeepEqual(pegs, want) {
 		t.Errorf("deployed fiat_pegged_classic_assets = %v, want %v", pegs, want)
 	}
+	// r1 sets no substance keys, so it serves on the library floors; a
+	// stanza or Default() change that moves them must fail here.
+	assertDefaultSubstancePolicy(t, "r1 [pricing_guard]", c.PricingGuard)
 }
 
 func TestLoad_missingFileErrorsNice(t *testing.T) {

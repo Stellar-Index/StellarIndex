@@ -1,6 +1,7 @@
 package config
 
 import (
+	"cmp"
 	"fmt"
 	"sort"
 	"time"
@@ -346,6 +347,9 @@ func (pg PricingGuardConfig) validate() error {
 	if pg.SubstanceWindowHours < 0 {
 		return fmt.Errorf("%w: pricing_guard: substance_window_hours must be >= 0", ErrInvalidConfig)
 	}
+	if err := pg.validateSubstanceSatisfiable(); err != nil {
+		return err
+	}
 	if pg.FXCrossMaxAgeHours < 0 {
 		return fmt.Errorf("%w: pricing_guard: fx_cross_max_age_hours must be >= 0", ErrInvalidConfig)
 	}
@@ -372,10 +376,43 @@ func (pg PricingGuardConfig) validate() error {
 	return nil
 }
 
+// maxSubstanceWindowHours caps substance_window_hours at 400 days: far
+// above any sane trailing window, far below the ~2,562,047 h at which
+// time.Duration(h)*time.Hour wraps negative and the gate fails open.
+const maxSubstanceWindowHours = 400 * 24
+
+// validateSubstanceSatisfiable rejects floor combinations no market can
+// clear (every pair withheld) or a window that overflows time.Duration
+// (every pair served unguarded). The trailing window holds at most
+// window*60 closed 1m buckets and spans under window*60 minutes. A 0 knob
+// is checked at the default it resolves to.
+func (pg PricingGuardConfig) validateSubstanceSatisfiable() error {
+	def := defaultPricingGuardConfig()
+	windowHours := cmp.Or(pg.SubstanceWindowHours, def.SubstanceWindowHours)
+	spanMinutes := cmp.Or(pg.SubstanceMinSpanMinutes, def.SubstanceMinSpanMinutes)
+	buckets := cmp.Or(pg.SubstanceMinBuckets, def.SubstanceMinBuckets)
+	if windowHours > maxSubstanceWindowHours {
+		return fmt.Errorf("%w: pricing_guard: substance_window_hours = %d exceeds the maximum %d (400 days)",
+			ErrInvalidConfig, windowHours, maxSubstanceWindowHours)
+	}
+	windowMinutes := windowHours * 60
+	if spanMinutes >= windowMinutes {
+		return fmt.Errorf("%w: pricing_guard: substance_min_span_minutes (effective %d) must be less than "+
+			"substance_window_hours*60 (effective %d) — no market can span its whole window, so every pair would be withheld",
+			ErrInvalidConfig, spanMinutes, windowMinutes)
+	}
+	if buckets > windowMinutes {
+		return fmt.Errorf("%w: pricing_guard: substance_min_buckets (effective %d) must not exceed "+
+			"substance_window_hours*60 (effective %d) 1-minute buckets — every pair would be withheld",
+			ErrInvalidConfig, buckets, windowMinutes)
+	}
+	return nil
+}
+
 // defaultPricingGuardConfig mirrors the pricingguard.DefaultSubstance*
-// constants — see internal/pricingguard/substance.go for the rationale
-// behind each number. Kept in lockstep with the `default:` doc tags
-// (F-1327 drift test).
+// constants (config cannot import pricingguard — it depends on this
+// package); TestDefaultPricingGuard_MatchesPricingguardConstants pins the
+// lockstep, TestDefault_MatchesStructTags pins the `default:` doc tags.
 func defaultPricingGuardConfig() PricingGuardConfig {
 	return PricingGuardConfig{
 		SubstanceMinVolumeUSD:   1000,
