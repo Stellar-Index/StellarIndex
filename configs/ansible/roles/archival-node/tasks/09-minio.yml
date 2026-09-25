@@ -528,7 +528,7 @@
       AWS_REGION={{ region_id }}
       STELLARINDEX_S3_ACCESS_KEY={{ stellarindex_reader_access_key }}
       STELLARINDEX_S3_SECRET_KEY={{ stellarindex_reader_secret_key }}
-      STELLARINDEX_POSTGRES_DSN=postgres://{{ postgres_user_stellarindex }}:{{ postgres_pass_stellarindex }}@127.0.0.1:5432/{{ postgres_db_stellarindex }}?sslmode=disable
+      STELLARINDEX_POSTGRES_DSN={{ postgres_dsn_stellarindex }}
       # Vendor keys for interactive stellarindex-ops runs (divergence
       # spot-checks, fixture capture) — same values the indexer env
       # carries; codified 2026-07-03.

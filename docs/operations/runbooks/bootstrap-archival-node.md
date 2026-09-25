@@ -115,7 +115,10 @@ use that table, not a copy here. In summary the vault must carry:
 - `healthcheck_ping_url` (+ the per-unit Healthchecks.io ping URLs
   used by `tasks/13-healthcheck.yml` / `17-stellarindex-healthchecks.yml`).
 
-Generate strong passwords with `openssl rand -base64 32`.
+Generate strong passwords with `openssl rand -hex 32`. Hex is safe in
+every consumer: the preflight rejects shell metacharacters in env-file
+secrets, and base64's `/` and `+` need escaping wherever a secret is
+pasted into a URL by hand.
 
 ---
 
