@@ -2,13 +2,19 @@ name: ci
 
 on:
   pull_request:
-    # Skip docs-only PRs — a CHANGELOG bump or markdown edit
-    # doesn't need to spin up 11 runners. Code-touching PRs
-    # still hit the full matrix via the doc-code consistency job.
+    # T471/RLT-376 (audit-2026-09-18): a top-level `paths-ignore` skips
+    # the ENTIRE workflow, including the `doc-checks` job defined in
+    # this same file — so it previously skipped the one job whose whole
+    # purpose is validating docs, and also skipped every trigger for an
+    # internal/incidents/data/*.md-only change (that package's
+    # `//go:embed data/*.md` corpus). Only truly inert paths (the
+    # CHANGELOG, written at release cut; LICENSE; PR/issue templates)
+    # are skipped here. `**.md`/`docs/**` are NOT: doc-checks still
+    # needs to see them, and preflight's step-level `if:` gating (see
+    # the REQUIRED-CHECK NOTE below) is what keeps a docs-only PR from
+    # paying for the expensive build/test matrix, not this filter.
     paths-ignore:
       - 'CHANGELOG.md'
-      - '*.md'
-      - 'docs/**'
       - 'LICENSE'
       - '.github/ISSUE_TEMPLATE/**'
       - '.github/PULL_REQUEST_TEMPLATE.md'
@@ -35,10 +41,10 @@ on:
   # run on main is the tripwire. Do not remove it.
   push:
     branches: [main]
+    # See T471/RLT-376 note on the pull_request trigger above — same
+    # reasoning applies to push-to-main.
     paths-ignore:
       - 'CHANGELOG.md'
-      - '*.md'
-      - 'docs/**'
       - 'LICENSE'
       - '.github/ISSUE_TEMPLATE/**'
       - '.github/PULL_REQUEST_TEMPLATE.md'
@@ -177,6 +183,12 @@ jobs:
       # Measured standalone 2026-09-07: 0.11s.
       - name: lint-actions-pinning
         run: bash scripts/ci/lint-actions-pinning.sh
+      # T547: catches a pnpm/action-setup `version:` input drifting from
+      # the package.json `packageManager` pin it's meant to install for.
+      - name: lint-pnpm-version-pin self-test
+        run: bash scripts/ci/lint-pnpm-version-pin-test.sh
+      - name: lint-pnpm-version-pin
+        run: bash scripts/ci/lint-pnpm-version-pin.sh
       # Measured standalone 2026-09-07: 2.37s.
       - name: lint-migration-immutability
         run: ./scripts/ci/lint-migration-immutability.sh
@@ -421,10 +433,10 @@ jobs:
     # report as a passing required check — the PR author controls
     # whether their own gate runs. This job-level escape was already
     # dropped from `build` (N2-07, audit-2026-06-11) but missed here.
-    # If a docs/WIP PR genuinely needs to skip Go lint, filter it at
-    # the trigger (`paths-ignore` above already exempts docs-only
-    # diffs) — not with a per-job label a required check can't defend
-    # against.
+    # A docs-only PR skips Go lint's actual work via preflight's `go`
+    # path class (see the STEP-level `if:` on each work step below),
+    # not via a per-job `if:` or the trigger's `paths-ignore` — a
+    # per-job label a required check can't defend against.
     #
     # §B gates this job on preflight's `go` class, but deliberately with
     # a STEP-level `if:` on each work step below rather than a job-level
@@ -1938,9 +1950,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+      # T547: `version:` floated independently of web/explorer/package.json's
+      # `packageManager` pin — package_json_file lets action-setup read the
+      # pin itself instead of a second, driftable copy.
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86  # v6
         with:
-          version: "10"
+          package_json_file: web/explorer/package.json
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: "22"
@@ -2050,9 +2065,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+      # T547: package_json_file reads web/status/package.json's
+      # `packageManager` pin instead of a second, driftable copy.
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86  # v6
         with:
-          version: "10"
+          package_json_file: web/status/package.json
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: "22"

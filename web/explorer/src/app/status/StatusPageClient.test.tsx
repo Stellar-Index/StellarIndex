@@ -747,3 +747,30 @@ describe('probeEndpoint body-shape check', () => {
     expect(result.kind).toBe('fast');
   });
 });
+
+// RLT-466 (audit-2026-09-18): the header claimed "the full public-endpoint
+// matrix", but PUBLIC_ENDPOINTS lists a curated subset of the API's actual
+// routes (health/pricing/catalogue/oracle/auth surfaces only). "Full" is a
+// completeness claim the page can't back up.
+describe('StatusPageClient header copy', () => {
+  beforeAll(() => {
+    (globalThis as { EventSource?: unknown }).EventSource = FakeEventSource;
+  });
+  afterAll(() => {
+    delete (globalThis as { EventSource?: unknown }).EventSource;
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('describes the public-endpoint matrix as curated, not full', async () => {
+    mockFeeds({
+      status: async () =>
+        json({ data: statusPayload({}), as_of: new Date().toISOString() }),
+    });
+    renderPageWithClient();
+
+    await screen.findByText(/curated public-endpoint matrix/i);
+    expect(screen.queryByText(/full public-endpoint matrix/i)).toBeNull();
+  });
+});

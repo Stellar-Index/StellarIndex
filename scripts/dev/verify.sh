@@ -244,6 +244,8 @@ echo "=== Agents file ===" && ./scripts/ci/lint-agents-file.sh
 echo "=== Agents file self-test ===" && ./scripts/ci/lint-agents-file-test.sh
 echo "=== Actions pinning ===" && ./scripts/ci/lint-actions-pinning.sh
 echo "=== Actions pinning self-test ===" && ./scripts/ci/lint-actions-pinning-test.sh
+echo "=== pnpm version pin ===" && ./scripts/ci/lint-pnpm-version-pin.sh
+echo "=== pnpm version pin self-test ===" && ./scripts/ci/lint-pnpm-version-pin-test.sh
 # ci.yml's path-filter change-class computation, mirrored so a local run
 # judges the same classification CI gates on.
 # check-change-class.sh is a HELPER that CI invokes with a class and a file

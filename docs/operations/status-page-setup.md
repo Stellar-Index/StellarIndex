@@ -1,6 +1,6 @@
 ---
 title: Public status page at `status.stellarindex.io`
-last_verified: 2026-05-12
+last_verified: 2026-09-24
 status: operator runbook
 ---
 
@@ -12,9 +12,14 @@ status: operator runbook
 > (`web/status/public/_redirects` 301s every path to `/status`). No DNS change.
 
 The Stellar Index public status page lives at
-`https://status.stellarindex.io`. The source lives in this repo at
-[`web/status/`](../../web/status/) — a static Next.js export
-deployed to Cloudflare Pages on every push to `main`.
+`https://stellarindex.io/status`. Its source is a route inside the main
+explorer app, [`web/explorer/src/app/status/`](../../web/explorer/src/app/status/)
+(`StatusPageClient.tsx` + `incident/[slug]`), deployed by
+`.github/workflows/explorer-deploy.yml` on every push to `main` alongside
+the rest of `stellarindex.io`. `web/status/` (see its
+[README](../../web/status/README.md)) is what remains of the earlier
+standalone implementation: a redirect-only stub kept only so the
+`status.stellarindex.io` subdomain and TLS cert keep resolving.
 
 F-1211 (codex audit-2026-05-12): this doc previously described an
 **Upptime-on-GitHub-Pages** pipeline (and SEV playbook entries
@@ -33,29 +38,34 @@ internal/incidents/data/      ← canonical incident corpus
 internal/incidents/incidents.go ← go:embed loader the API binary
                                   bakes the corpus into for /v1/incidents
 
-web/status/                    ← Next.js static-export status page
-  src/
-    app/                       ← /, /incident/[slug]
-    lib/incidents.ts           ← build-time loader that reads the
-                                 same `internal/incidents/data/*.md`
-                                 corpus from the repo root
+web/explorer/src/app/status/   ← the live status page (explorer route)
+  StatusPageClient.tsx           ← polls the live API at runtime (see below)
+  incident/[slug]/               ← per-incident postmortem pages
+  src/lib/incidents.ts           ← build-time loader that reads the
+                                  same `internal/incidents/data/*.md`
+                                  corpus for incident HISTORY
 
-  next.config.mjs              ← output: 'export'
-  public/                      ← static assets, favicon, OG image
+web/status/                    ← redirect-only remnant; NOT the live page
+  public/_redirects              ← 301s status.stellarindex.io/* to
+                                  stellarindex.io/status/*
 
-deploy:                        ← Cloudflare Pages auto-deploy on push
+deploy:                        ← Cloudflare Pages, explorer-deploy.yml
   trigger:                       push to main
-  build:                         `pnpm install && pnpm build`
-  output:                        web/status/out
-  domain:                        status.stellarindex.io (apex CNAME)
+  domain:                        stellarindex.io/status (same origin as
+                                  the rest of the explorer)
 ```
 
-The page is **independent of the API by construction** — Cloudflare
-Pages is a different provider stack from our Hetzner/AWS/Vultr
-origins, so an origin-side outage cannot take the status page down.
-The page does not call into the API at runtime; it renders from the
-embedded incident corpus committed in the repo plus a build-time
-uptime calculation.
+The page is **NOT independent of the API.** `StatusPageClient.tsx` fetches
+`API_BASE_URL` at runtime — `/v1/status` (polled), `/v1/status/notices`,
+`/v1/incidents`, `/v1/diagnostics/ingestion`, and each row's own probe —
+directly from the visitor's browser. What survives an API-side outage is
+narrower than "independent": the static shell (layout, incident history
+baked in at build time from the `internal/incidents/data/*.md` corpus)
+still renders, but every live panel — overall status, latency, ingest
+freshness, the endpoint matrix — degrades to its stale/unreachable state
+rather than disappearing, because Cloudflare Pages is a different
+provider stack from the Hetzner/AWS/Vultr origins the page is reporting
+on.
 
 ## Posting an incident
 
@@ -65,7 +75,7 @@ uptime calculation.
    `started_at`, `affected_components`).
 2. Append the customer-facing body (Identification → Impact →
    Timeline → What we did) per the template.
-3. Commit + push to `main`. Cloudflare Pages deploys the new
+3. Commit + push to `main`. The explorer redeploys the new
    page within ~2 minutes; after the API binary is also
    redeployed, dashboard webhook subscribers receive the
    `incident.sev1` / `incident.resolved` callbacks via
@@ -96,11 +106,15 @@ the Prometheus dashboards authoritative (no editorial gate).
 
 ## CI / deploy
 
-CI runs `pnpm typecheck`, `pnpm lint`, `pnpm build`, and a trivy
-vuln scan of the committed `pnpm-lock.yaml` (`ignore-unfixed`,
-`CRITICAL,HIGH`) on every push touching `web/status/`. The `pnpm audit`
-gate this replaced had enforced nothing since 2026-07-15 — the npm
-advisory endpoint it called loud-skipped on
-`ERR_PNPM_AUDIT_BAD_RESPONSE`. The Cloudflare Pages project is
-configured to deploy from `main` on push; preview deploys fire
-automatically for every PR.
+CI (`ci.yml`'s `web/explorer` job) runs `pnpm typecheck`, `pnpm lint`,
+`pnpm test`, and a trivy scan of the committed `pnpm-lock.yaml` on every
+PR/push touching `web/explorer/` — the status route is covered as part
+of that job, not as its own. Deploy is `explorer-deploy.yml` (build +
+Cloudflare Pages publish, on push to `main`).
+
+The `web/status/` redirect stub is covered by its own, separate CI job
+(`ci.yml`'s `web/status` job: `pnpm typecheck`, `pnpm lint`, trivy) and
+its own manual-trigger deploy workflow
+(`.github/workflows/status-page.yml`) — kept only to redeploy the
+redirect project (`status.stellarindex.io`) when the CF git integration
+needs a hotfix path.
