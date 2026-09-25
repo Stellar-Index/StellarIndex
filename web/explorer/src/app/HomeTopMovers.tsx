@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { formatPriceSmall } from '@/lib/format';
+import { demoteFlaggedLast } from '@/lib/directory-tags';
+import { ScamBadge } from '@/components/ScamBadge';
 
 import { useCoins, useVerifiedSlugs, coinSlug, type Coin } from '@/api/hooks';
 import { useLedgerFollow } from '@/lib/live/hooks';
@@ -120,6 +122,7 @@ function MoverColumn({
                     ${formatPriceSmall(Number(c.price_usd))}
                   </span>
                 )}
+                <ScamBadge tags={c.issuer_directory_tags} />
               </Link>
               <span
                 className={`font-mono text-xs tabular-nums ${
@@ -137,6 +140,9 @@ function MoverColumn({
   );
 }
 
+// pickMovers re-sorts the page by 24h change, which would undo the server's
+// flagged-last rank tier; demoteFlaggedLast restores it within each column
+// before the top five are cut (#356).
 function pickMovers(coins: Coin[]): { gainers: Coin[]; losers: Coin[] } {
   const withChange = coins.filter((c) => {
     if (!c.change_24h_pct) return false;
@@ -146,11 +152,15 @@ function pickMovers(coins: Coin[]): { gainers: Coin[]; losers: Coin[] } {
   const sorted = [...withChange].sort(
     (a, b) => Number(b.change_24h_pct) - Number(a.change_24h_pct),
   );
+  const tagsOf = (c: Coin) => c.issuer_directory_tags;
   return {
-    gainers: sorted.filter((c) => Number(c.change_24h_pct) > 0).slice(0, 5),
-    losers: sorted
-      .filter((c) => Number(c.change_24h_pct) < 0)
-      .slice(-5)
-      .reverse(),
+    gainers: demoteFlaggedLast(
+      sorted.filter((c) => Number(c.change_24h_pct) > 0),
+      tagsOf,
+    ).slice(0, 5),
+    losers: demoteFlaggedLast(
+      sorted.filter((c) => Number(c.change_24h_pct) < 0).reverse(),
+      tagsOf,
+    ).slice(0, 5),
   };
 }

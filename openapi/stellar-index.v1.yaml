@@ -6754,10 +6754,18 @@ paths:
            `home_domain` it set ON CHAIN, containing a `[[CURRENCIES]]`
            entry whose `code` matches and whose declared `issuer` equals
            the account that served the file.
-        3. The issuer G-address is named in the curated third-party
-           account directory with a recognition tag
-           (`definition.recognition_tags`) and carries no scam-class tag
-           (`definition.scam_flag_tags`). A self-declaration alone is
+        3. The issuer G-address carries no scam-class tag
+           (`definition.scam_flag_tags`) in the curated third-party
+           account directory, and is independently recognised by one of
+           two routes, named on each row in `recognition`: the directory
+           names this account with a recognition tag
+           (`definition.recognition_tags`) —
+           `curated_account_directory` — or the directory names another
+           unflagged account with a recognition tag that the SAME
+           issuer-bound SEP-1 binds on the same home domain —
+           `curated_account_directory_via_domain_sibling`. The sibling
+           route assumes one entity per domain; the directory never
+           looked at the account itself. A self-declaration alone is
            not evidence: on the production directory the large majority
            of accounts declaring a real-world `anchor_asset_type` are
            tagged `malicious`, publishing from lookalike domains that
@@ -15521,7 +15529,7 @@ components:
           description: "Assets whose valuation is withheld or unavailable; each contributes nothing."
         lower_bound:
           type: boolean
-          description: True whenever any member is unvalued, i.e. whenever the total is less than the value of the set.
+          description: True whenever any member is unvalued or a rebuild cap bound the set (`truncated`), i.e. whenever the total may be less than the value of the set.
         earliest_first_seen_ledger:
           type: integer
           format: int64
@@ -15550,7 +15558,7 @@ components:
           description: One-line statement of what the total measured and how it was valued.
         truncated:
           type: boolean
-          description: True when a rebuild cap bound the set, so it is known to be incomplete. Absent when false.
+          description: True when a rebuild cap bound the set (the issuer cap, the contract scan cap, or a member issuer whose classic assets fill one listing page), so members may be missing; `basis` names which cap. Implies `lower_bound` on both totals. Absent when false.
 
     RWAReferenceSummary:
       type: object
@@ -15602,7 +15610,7 @@ components:
             `valuation` arm breaks this number down by reason.
         lower_bound:
           type: boolean
-          description: True whenever any member carries no reference valuation, i.e. whenever this total is less than the reference-priced value of the set.
+          description: True whenever any member carries no reference valuation or a rebuild cap bound the set, i.e. whenever this total may be less than the reference-priced value of the set.
         sources:
           type: array
           description: |
@@ -15672,7 +15680,7 @@ components:
       description: |
         One member of the set, with the evidence that admitted it and
         its valuation or the reason there is none.
-      required: [asset_id, code, issuer, basis, valuation, reference_valuation, premium, decimals, observation_count]
+      required: [asset_id, code, issuer, basis, recognition, valuation, reference_valuation, premium, decimals, observation_count]
       properties:
         asset_id:
           type: string

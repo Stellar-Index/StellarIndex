@@ -63,6 +63,7 @@ var handlerSpecFieldPairs = []struct {
 	{"BespokeBreakdown", reflect.TypeOf(BespokeBreakdown{})},
 	{"BespokeBreakdownRow", reflect.TypeOf(BespokeBreakdownRow{})},
 	{"BespokeTable", reflect.TypeOf(BespokeTable{})},
+	{"RWAAsset", reflect.TypeOf(RWAAsset{})},
 }
 
 // TestHandlerRequiredFieldsAreAlwaysServed is the other direction: a
