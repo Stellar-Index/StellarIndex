@@ -7792,7 +7792,13 @@ export interface components {
         RWASummary: {
             /** @description Assets in the set. */
             assets: number;
-            /** @description Distinct issuer G-addresses in the set. */
+            /**
+             * @description Distinct issuers in the set: distinct classic issuer
+             *     G-addresses, plus one per admitted contract (a
+             *     contract-issued row has no G-address, but is not the SAME
+             *     issuer as any other contract). Same definition
+             *     RWAHistoryView/RWAPremiumHistoryView's `issuers` uses.
+             */
             issuers: number;
             /**
              * @description Exact sum of the published per-asset market caps (decimal

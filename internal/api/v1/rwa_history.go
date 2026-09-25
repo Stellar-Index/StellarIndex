@@ -730,7 +730,7 @@ func rwaHistoryIssuerCount(m rwaMembership) int {
 	for _, mem := range m.members {
 		seen[mem.issuer] = struct{}{}
 	}
-	return len(seen) + len(m.contracts)
+	return rwaIssuerCount(len(seen), len(m.contracts))
 }
 
 // rwaHistoryCandidate is one member that cleared every gate a value
