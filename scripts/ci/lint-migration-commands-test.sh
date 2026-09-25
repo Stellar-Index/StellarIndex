@@ -256,6 +256,42 @@ printf '%s\n' \
   > "$stale/scripts/ci/lint-migration-commands.baseline"
 check "a stale baseline entry fails until it is deleted" 1 "$stale"
 
+# ── docs/ fenced ```sql DELETE/UPDATE (GH-795) ────────────────────────
+docs_unbound="$(mk docs_unbound)"
+mkdir -p "$docs_unbound/docs"
+cat > "$docs_unbound/docs/bad-runbook.md" <<'MD'
+# Bad runbook
+
+```sql
+DELETE FROM trades WHERE source IN ('aquarius');
+```
+MD
+catches "a docs/ DELETE with no time-bound predicate is caught" \
+  "$docs_unbound" "DELETE FROM trades WHERE source IN ('aquarius')"
+
+docs_bound="$(mk docs_bound)"
+mkdir -p "$docs_bound/docs"
+cat > "$docs_bound/docs/good-runbook.md" <<'MD'
+# Good runbook
+
+```sql
+DELETE FROM trades WHERE source IN ('aquarius') AND ts >= '<from>'::timestamptz;
+```
+MD
+check "a docs/ DELETE with a ts predicate passes" 0 "$docs_bound"
+
+docs_do_not_run="$(mk docs_do_not_run)"
+mkdir -p "$docs_do_not_run/docs"
+cat > "$docs_do_not_run/docs/warning-runbook.md" <<'MD'
+# Warning runbook
+
+```sql
+-- DO NOT RUN: this deletes every row.
+DELETE FROM trades;
+```
+MD
+check "a DO NOT RUN docs/ block is exempt" 0 "$docs_do_not_run"
+
 # ── non-vacuity ──────────────────────────────────────────────────────
 empty="$TMP/empty"
 mkdir -p "$empty/migrations"
