@@ -250,8 +250,9 @@ in_baseline() {
 # turned a sub-second gate into a multi-minute one.
 TESTLIST="$(mktemp)"
 trap 'rm -f "$TESTLIST"' EXIT
-find . \( -name .git -o -name vendor -o -name node_modules \
-          -o -name .discovery-repos \) -prune -o \
+# Hidden dirs hold no module tests but can hold whole checkouts (.claude
+# agent worktrees: 25 GB, ~15 s per grep).
+find . \( -name '.?*' -o -name vendor -o -name node_modules \) -prune -o \
      -type f -name '*_test.go' -print 2>/dev/null \
   | sed 's#^\./##' | sort > "$TESTLIST"
 
