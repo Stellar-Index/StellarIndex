@@ -335,9 +335,9 @@ func run(cfgPath string, dryRun bool) error {
 	// price-alert, anomaly.freeze and divergence.firing webhooks. A
 	// directory-scam-flagged issuer or a thin market must not reach a
 	// signed delivery the API itself would refuse to publish.
-	withholding := priceWithholding{
-		substance: buildAggregatorSubstanceGate(cfg.PricingGuard, store, logger),
-		scam: pricingguard.NewScamGate(store, pricingguard.ScamGateOptions{
+	withholding := pricingguard.Gate{
+		Substance: buildAggregatorSubstanceGate(cfg.PricingGuard, store, logger),
+		Scam: pricingguard.NewScamGate(store, pricingguard.ScamGateOptions{
 			Logger: logger.With("component", "price-withholding"),
 		}),
 	}
@@ -1062,10 +1062,9 @@ func run(cfgPath string, dryRun bool) error {
 			priceAlertVWAPReader{
 				store:  store,
 				logger: logger.With("component", "price-alert-guard"),
-				// The binary's shared withholding gates: an alert must not
+				// The binary's shared withholding gate: an alert must not
 				// fire off a pair the API itself would refuse to price.
-				substance: withholding.substance,
-				scam:      withholding.scam,
+				gate: withholding,
 			},
 			pricealerts.Options{
 				Interval: time.Duration(cfg.PriceAlerts.IntervalSeconds) * time.Second,
@@ -2704,10 +2703,9 @@ type priceAlertVWAPStore interface {
 // a failure. The Vwap1mRow.Bucket is the START of the 1-minute window;
 // the close time reported to the payload is +1 minute.
 type priceAlertVWAPReader struct {
-	store     priceAlertVWAPStore
-	logger    *slog.Logger
-	substance *pricingguard.SubstanceGate // nil → no thin-market gate
-	scam      *pricingguard.ScamGate      // nil → no scam-issuer gate
+	store  priceAlertVWAPStore
+	logger *slog.Logger
+	gate   pricingguard.Gate // zero → withholds nothing
 }
 
 func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canonical.Asset) (string, time.Time, bool, error) {
@@ -2732,7 +2730,7 @@ func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canoni
 	// than restated: this path had the substance half only, so a webhook
 	// could name a price /v1/price itself refuses to publish — the gap
 	// a per-binary copy of a decision always eventually opens (K001).
-	if pricingguard.PriceWithheld(ctx, r.substance, r.scam, base, quote, "price_alert") {
+	if r.gate.PriceWithheld(ctx, base, quote, "price_alert") {
 		return "", time.Time{}, false, nil
 	}
 	// Same serving-sanity guard as the two API raw-bucket paths (/v1/price,

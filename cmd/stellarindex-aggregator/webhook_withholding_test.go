@@ -45,9 +45,9 @@ func webhookGatePairs(t *testing.T) (flagged, native canonical.Asset) {
 	return flagged, canonical.NativeAsset()
 }
 
-func flaggedWithholding() priceWithholding {
+func flaggedWithholding() pricingguard.Gate {
 	dir := &alertScamDirectory{flagged: map[string]bool{alertScamIssuer: true}}
-	return priceWithholding{scam: pricingguard.NewScamGate(dir, pricingguard.ScamGateOptions{})}
+	return pricingguard.Gate{Scam: pricingguard.NewScamGate(dir, pricingguard.ScamGateOptions{})}
 }
 
 func TestAnomalyFreezeHook_WithholdsFlaggedIssuer(t *testing.T) {
@@ -164,7 +164,7 @@ func TestWebhookPublishSitesAreGated(t *testing.T) {
 				if publishes {
 					sites++
 					if !gated {
-						t.Errorf("%s: %s publishes a customer webhook without consulting priceWithholding.withheld",
+						t.Errorf("%s: %s publishes a customer webhook without consulting pricingguard.Gate",
 							name, fset.Position(lit.Pos()))
 					}
 				}
@@ -178,7 +178,7 @@ func TestWebhookPublishSitesAreGated(t *testing.T) {
 }
 
 // webhookPublishAndGate reports whether body calls X.Publish with a
-// platform.WebhookEvent* argument, and whether it calls X.withheld.
+// platform.WebhookEvent* argument, and whether it asks a pricingguard.Gate.
 func webhookPublishAndGate(body *ast.BlockStmt) (publishes, gated bool) {
 	ast.Inspect(body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -190,7 +190,7 @@ func webhookPublishAndGate(body *ast.BlockStmt) (publishes, gated bool) {
 			return true
 		}
 		switch sel.Sel.Name {
-		case "withheld":
+		case "PriceWithheld", "PriceWithholding", "PriceWithholdingAt":
 			gated = true
 		case "Publish":
 			for _, arg := range call.Args {

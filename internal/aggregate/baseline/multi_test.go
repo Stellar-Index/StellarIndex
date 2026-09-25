@@ -203,6 +203,54 @@ func TestMultiBaseline_SuddenSpikeFiresFromShortWindow(t *testing.T) {
 	}
 }
 
+// TestMaxZScore_ThinWindowDoesNotOutvoteWellSampledOne — a pair with a
+// month of ~2% per-bucket moves that traded in only three buckets in the
+// last 24h has a Day1 baseline built from TWO returns. That MAD is noise
+// (null P(z>=5) is 14% at n=2), so it must not turn an ordinary 1% move
+// into a 5-sigma anomaly while the 1999-return 30d window scores it < 1.
+func TestMaxZScore_ThinWindowDoesNotOutvoteWellSampledOne(t *testing.T) {
+	d1 := []float64{1.0, 1.001, 1.0022}
+	d7 := vwapSeries(1.0, stableJitter(400, 0.02))
+	d30 := vwapSeries(1.0, stableJitter(1999, 0.02))
+	mb := baseline.NewMultiBaseline(d1, d7, d30)
+	if mb.Day1 == nil || mb.Day1.N != 2 || mb.Day30.N != 1999 {
+		t.Fatalf("setup: Day1=%+v Day30=%+v", mb.Day1, mb.Day30)
+	}
+
+	z, window, valid := mb.MaxZScore(bucketReturn(0.01))
+	if !valid {
+		t.Fatal("valid=false with two well-sampled windows")
+	}
+	if window == baseline.Window1d {
+		t.Errorf("window = 1d: the 2-return window voted (z=%.2f)", z)
+	}
+	if z >= 1 {
+		t.Errorf("z = %.2f for a 1%% move on a ~2%% MAD pair, want < 1 (the well-sampled windows' reading)", z)
+	}
+}
+
+// TestMaxZScore_AllWindowsThinFallsBackToLargestSample — when no window
+// clears MinZScoreSamples the pair is still scored, from the window with
+// the most samples, so a young pair keeps its confidence and freeze
+// eligibility rather than dropping to valid=false.
+func TestMaxZScore_AllWindowsThinFallsBackToLargestSample(t *testing.T) {
+	thin := baseline.MinZScoreSamples - 1
+	mb := baseline.MultiBaseline{
+		Day1:  &baseline.Baseline{Median: 0, MAD: 0.001, N: 5},
+		Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: thin},
+	}
+	z, window, valid := mb.MaxZScore(bucketReturn(0.05))
+	if !valid {
+		t.Fatal("valid=false: an all-thin multi-baseline must still score")
+	}
+	if window != baseline.Window30d {
+		t.Errorf("window = %v, want %v (the largest-N window)", window, baseline.Window30d)
+	}
+	if want := 5.0; math.Abs(z-want) > 1e-9 {
+		t.Errorf("z = %v, want %v from the 30d window", z, want)
+	}
+}
+
 // TestSplitByLookback_BasicSlicing — three windows pulled from one
 // timestamped series.
 func TestSplitByLookback_BasicSlicing(t *testing.T) {

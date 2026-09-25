@@ -8,6 +8,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 )
 
@@ -526,6 +527,38 @@ func (s *Store) DirectoryEntryByAddress(ctx context.Context, address string) (Di
 		return DirectoryEntry{}, false, fmt.Errorf("directory: lookup %s: %w", address, err)
 	}
 	return e, true, nil
+}
+
+// DirectoryScamFlaggedClassicAssets lists every registered classic asset
+// whose issuer account carries a scam-class tag ([DirectoryScamFlagTags]).
+// It is what lets the scam pricing gate recognise a flagged issuer's
+// asset under its SAC contract id, which carries no issuer of its own.
+// Rows are returned as stored; the caller validates them.
+func (s *Store) DirectoryScamFlaggedClassicAssets(ctx context.Context) ([]canonical.Asset, error) {
+	q := `
+		SELECT ca.code, ca.issuer_g_strkey
+		  FROM classic_assets ca
+		 WHERE ca.issuer_g_strkey IN (
+		       SELECT address FROM account_directory
+		        WHERE ` + directoryIsAccountSQL + `
+		          AND ` + directoryScamTaggedSQL + `)`
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("directory: scam-flagged classic assets: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []canonical.Asset
+	for rows.Next() {
+		a := canonical.Asset{Type: canonical.AssetClassic}
+		if err := rows.Scan(&a.Code, &a.Issuer); err != nil {
+			return nil, fmt.Errorf("directory: scan scam-flagged classic asset: %w", err)
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("directory: scam-flagged classic asset rows: %w", err)
+	}
+	return out, nil
 }
 
 // DirectoryEntriesByAddresses resolves a batch of addresses in one

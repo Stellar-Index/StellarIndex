@@ -112,7 +112,9 @@ const blendReserveStateQuery = `SELECT key_xdr, entry_xdr
 // blend_admin queue_set_reserve events) — the on-chain ResConfig
 // storage entry is usually uncaptured (set at reserve init, never
 // rewritten), so APY is computed from the event-derived config when
-// present, and omitted otherwise (BaseMetrics).
+// present, and omitted otherwise (BaseMetrics). `version` is the pool's
+// contract generation (from its deploying factory), which fixes the
+// ResData rate scale; an unknown one is an error.
 //
 // ABSENCE means "reserves unavailable", never zero — the same contract
 // the sibling readers publish. A reserve is absent when it has no
@@ -120,10 +122,15 @@ const blendReserveStateQuery = `SELECT key_xdr, entry_xdr
 // entry has been TTL-ARCHIVED (a lapsed pool's last-known reserves are
 // not current liquidity; see [dropArchivedBlendReserves]). An archived
 // pool INSTANCE takes every reserve under it with it.
-func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, assets []string, configs map[string]blend.ReserveConfig) ([]BlendReserveState, error) {
+func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, version blend.PoolVersion, assets []string, configs map[string]blend.ReserveConfig) ([]BlendReserveState, error) {
 	poolID, err := contractIDFromStrkey(pool)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: blend pool id %q: %w", pool, err)
+	}
+	// V1 and V2 ResData share field names but not rate scales; decoding
+	// under a guessed generation is off by 10^3.
+	if version != blend.PoolV1 && version != blend.PoolV2 {
+		return nil, fmt.Errorf("clickhouse: blend pool %s: unknown pool version %d", pool, version)
 	}
 
 	keys, refByKey := blendReserveKeys(poolID, assets)
@@ -137,7 +144,7 @@ func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, ass
 	}
 	defer func() { _ = rows.Close() }()
 
-	dataByAsset, bstop, matched, err := scanBlendReserveParts(rows, refByKey)
+	dataByAsset, bstop, matched, err := scanBlendReserveParts(rows, refByKey, version)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +242,7 @@ func scanBlendReserveParts(rows interface {
 	Next() bool
 	Scan(...any) error
 	Err() error
-}, refByKey map[string]keyRef,
+}, refByKey map[string]keyRef, version blend.PoolVersion,
 ) (dataByAsset map[string]*blend.ReserveData, bstop uint32, matched []string, err error) {
 	dataByAsset = make(map[string]*blend.ReserveData)
 	for rows.Next() {
@@ -256,7 +263,7 @@ func scanBlendReserveParts(rows interface {
 			bstop = backstopRateFromInstance(val)
 			matched = append(matched, keyXDR)
 		case "ResData":
-			if rd, err := blend.DecodeReserveData(val); err == nil {
+			if rd, err := blend.DecodeReserveData(val, version); err == nil {
 				rdCopy := rd
 				dataByAsset[ref.asset] = &rdCopy
 				matched = append(matched, keyXDR)

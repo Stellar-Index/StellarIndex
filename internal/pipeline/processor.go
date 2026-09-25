@@ -98,4 +98,14 @@ func emitDispatcherMetricDeltas(before, after dispatcher.Stats) {
 		}
 		obs.SourceDecodeErrorsTotal.WithLabelValues(source).Add(float64(delta))
 	}
+	// Non-directional swaps are a recognized non-trade class, not lost
+	// data (ADR-0033 expected-zero) — their own counter, not folded into
+	// DecodeErrors (T070: the getter had no production reader at all).
+	for source, n := range after.NonDirectionalSwaps {
+		delta := n - before.NonDirectionalSwaps[source]
+		if delta <= 0 {
+			continue
+		}
+		obs.SourceNonDirectionalSwapsTotal.WithLabelValues(source).Add(float64(delta))
+	}
 }

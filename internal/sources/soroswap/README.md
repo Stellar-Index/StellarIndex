@@ -87,8 +87,12 @@ ADR-0003.
 
 Post-P23 (CAP-67), Soroban contracts that also emit classic asset
 events may use the unified 4-topic shape. Soroswap's own events
-remain 2-topic `(<event_name>, <pair_contract>)` — unrelated to
-CAP-67. The 4-topic shape never appears on Soroswap pair contracts.
+remain 2-topic — `topic[0]` a namespace discriminator
+(`String("SoroswapPair" | "SoroswapFactory")`), `topic[1]` the event
+name (`Symbol("swap" | "sync" | "new_pair" | …)`), per `classify()` —
+unrelated to CAP-67. The pair/factory contract identity is the
+EMITTING contract (`event.ContractID`), not a topic slot. The 4-topic
+shape never appears on Soroswap pair contracts.
 
 ### Q5 — a successful `swap` event is NOT always a trade
 

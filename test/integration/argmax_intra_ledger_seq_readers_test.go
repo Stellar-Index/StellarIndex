@@ -13,6 +13,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -171,7 +172,7 @@ func TestBlendPoolReserves_SameLedgerLastChangeWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewExplorerReader: %v", err)
 	}
-	states, err := reader.BlendPoolReserves(ctx, poolStr, []string{assetValStr, assetGoneStr}, nil)
+	states, err := reader.BlendPoolReserves(ctx, poolStr, blend.PoolV2, []string{assetValStr, assetGoneStr}, nil)
 	if err != nil {
 		t.Fatalf("BlendPoolReserves: %v", err)
 	}

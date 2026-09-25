@@ -18,6 +18,7 @@ import (
 type LendingReader interface {
 	ListBlendPools(ctx context.Context) ([]timescale.BlendPoolSummary, error)
 	BlendPoolAssets(ctx context.Context, pool string) ([]string, error)
+	BlendPoolVersion(ctx context.Context, pool string) (blend.PoolVersion, error)
 	BlendReserveConfigs(ctx context.Context, pool string) (map[string]blend.ReserveConfig, error)
 }
 
@@ -26,13 +27,12 @@ type LendingReader interface {
 // Today the listing is Blend-only — every row is one Blend pool
 // contract observed in the event stream (auctions and/or position
 // events). net_supplied_30d / net_borrowed_30d are a 30-day NET-FLOW
-// proxy (token base-units, summed across the pool's assets), NOT
-// all-time TVL or current reserve balances. utilization_30d_pct is
-// the window borrow/supply ratio when net supply is positive (a
-// coarse proxy), else null. Real current-state TVL + supply/borrow
-// APYs (reserve b_rate/d_rate) need the Soroban pool-storage reader;
-// these fields stand in until it ships and the wire shape is designed
-// to grow rather than version-bump.
+// proxy in token base-units, NOT all-time TVL or current reserve
+// balances, and null when the window's flows span more than one
+// reserve asset (base units of different tokens do not add).
+// utilization_30d_pct is their ratio, null whenever either is null or
+// net supply is not positive. Current-state per-reserve TVL,
+// utilization and APR are served by /v1/lending/pools/{pool}/reserves.
 type LendingPool struct {
 	Protocol          string   `json:"protocol"`
 	Pool              string   `json:"pool"`
@@ -40,9 +40,9 @@ type LendingPool struct {
 	AuctionsTotal     int64    `json:"auctions_total"`
 	UniqueUsers30d    int64    `json:"unique_users_30d"`
 	LastSeen          WireTime `json:"last_seen"`
-	NetSupplied30d    string   `json:"net_supplied_30d"`              // token base-units, window net-flow proxy
-	NetBorrowed30d    string   `json:"net_borrowed_30d"`              // token base-units, window net-flow proxy
-	Utilization30dPct *float64 `json:"utilization_30d_pct,omitempty"` // borrow/supply window ratio; null when net supply ≤ 0
+	NetSupplied30d    *string  `json:"net_supplied_30d"`              // token base-units, window net-flow proxy; null when multi-asset
+	NetBorrowed30d    *string  `json:"net_borrowed_30d"`              // token base-units, window net-flow proxy; null when multi-asset
+	Utilization30dPct *float64 `json:"utilization_30d_pct,omitempty"` // single-asset borrow/supply window ratio
 }
 
 // handleLendingPools serves GET /v1/lending/pools.
@@ -176,17 +176,8 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 	ctx, cancel := context.WithTimeout(r.Context(), maxHandlerBudget)
 	defer cancel()
 
-	assets, err := s.lending.BlendPoolAssets(ctx, pool)
-	if err != nil {
-		if clientAborted(r, err) {
-			return
-		}
-		if handlerTimedOut(ctx, err) {
-			s.writeLendingReservesTimeout(w, r, "BlendPoolAssets", pool)
-			return
-		}
-		s.logger.Error("BlendPoolAssets failed", "err", err, "pool", pool)
-		writeProblem(w, r, "https://api.stellarindex.io/errors/internal", "Internal error", http.StatusInternalServerError, "")
+	version, assets, proceed := s.blendReserveInputs(ctx, w, r, pool)
+	if !proceed {
 		return
 	}
 	// Rate-model configs (for APY) come from blend_admin events — the
@@ -200,7 +191,7 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 		s.logger.Warn("BlendReserveConfigs failed", "err", err, "pool", pool)
 		configs = nil
 	}
-	states, err := s.explorer.BlendPoolReserves(ctx, pool, assets, configs)
+	states, err := s.explorer.BlendPoolReserves(ctx, pool, version, assets, configs)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -263,6 +254,45 @@ func reservesTVLUSD(suppliedUSD []*big.Rat) (total *string, lowerBound bool) {
 	}
 	s := tvl.FloatString(2)
 	return &s, priced < len(suppliedUSD)
+}
+
+// blendReserveInputs resolves the served-tier inputs of the reserves
+// read: the pool's contract generation and its reserve assets. A pool
+// with no known V1/V2 lineage gets an empty reserve list — its rate
+// scale is unknowable, and a guess is off by 10^3. proceed=false means
+// a response has been written or the client has gone.
+func (s *Server) blendReserveInputs(ctx context.Context, w http.ResponseWriter, r *http.Request, pool string) (version blend.PoolVersion, assets []string, proceed bool) {
+	version, err := s.lending.BlendPoolVersion(ctx, pool)
+	if err != nil {
+		s.writeLendingLookupError(ctx, w, r, "BlendPoolVersion", pool, err)
+		return version, nil, false
+	}
+	if version == blend.PoolVersionUnknown {
+		s.logger.Warn("blend pool lineage unknown; reserves withheld", "pool", pool)
+		writeJSON(w, LendingPoolReservesView{Pool: pool, Reserves: []ReserveView{}}, Flags{})
+		return version, nil, false
+	}
+	assets, err = s.lending.BlendPoolAssets(ctx, pool)
+	if err != nil {
+		s.writeLendingLookupError(ctx, w, r, "BlendPoolAssets", pool, err)
+		return version, nil, false
+	}
+	return version, assets, true
+}
+
+// writeLendingLookupError maps a failed served-tier lookup to the
+// reserves handler's response: nothing for an aborted client, the
+// retryable 503 on the handler deadline, else a 500.
+func (s *Server) writeLendingLookupError(ctx context.Context, w http.ResponseWriter, r *http.Request, stage, pool string, err error) {
+	if clientAborted(r, err) {
+		return
+	}
+	if handlerTimedOut(ctx, err) {
+		s.writeLendingReservesTimeout(w, r, stage, pool)
+		return
+	}
+	s.logger.Error(stage+" failed", "err", err, "pool", pool)
+	writeProblem(w, r, "https://api.stellarindex.io/errors/internal", "Internal error", http.StatusInternalServerError, "")
 }
 
 // writeLendingReservesTimeout is the 503 the reserves handler owes a
@@ -382,17 +412,18 @@ func round2(f float64) float64 { return float64(int64(f*100+0.5)) / 100 }
 func round4(f float64) float64 { return float64(int64(f*10000+0.5)) / 10000 }
 
 // utilizationPct returns the window borrow/supply ratio as a
-// percentage (2dp), or nil when net supply is ≤ 0 (a utilisation
-// figure has no meaning then). Both inputs are decimal big-int
-// strings in token base-units; the ratio is dimensionless so the
-// per-asset decimal scale cancels for a single-asset pool and is a
-// coarse proxy for a multi-asset one (documented on the wire shape).
-func utilizationPct(netSuppliedStr, netBorrowedStr string) *float64 {
-	supplied, ok := new(big.Rat).SetString(netSuppliedStr)
+// percentage (2dp), or nil when either flow is absent (a multi-asset
+// window has no single unit) or net supply is ≤ 0. Both inputs are
+// decimal big-int strings in the same asset's base units.
+func utilizationPct(netSupplied, netBorrowed *string) *float64 {
+	if netSupplied == nil || netBorrowed == nil {
+		return nil
+	}
+	supplied, ok := new(big.Rat).SetString(*netSupplied)
 	if !ok || supplied.Sign() <= 0 {
 		return nil
 	}
-	borrowed, ok := new(big.Rat).SetString(netBorrowedStr)
+	borrowed, ok := new(big.Rat).SetString(*netBorrowed)
 	if !ok || borrowed.Sign() < 0 {
 		return nil
 	}

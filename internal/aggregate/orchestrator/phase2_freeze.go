@@ -350,7 +350,15 @@ func (o *Orchestrator) stepFreezeLifecycle(
 	decision anomaly.Decision,
 	prevVWAP *big.Rat,
 ) bool {
-	prev, overridden := o.loadFreezeState(ctx, pair, window, stateKey)
+	prev, overridden, err := o.loadFreezeState(ctx, pair, window, stateKey)
+	if err != nil {
+		// Unknown is not "never frozen": this may be the first bucket
+		// after a restart, unscored and unable to re-fire a live freeze,
+		// so withhold it and leave marker and state untouched.
+		o.logger.Warn("freeze lifecycle: marker read failed on cold key; withholding bucket",
+			"pair", pair.String(), "window", window.String(), "err", err)
+		return true
+	}
 	if overridden {
 		o.releaseFreeze(ctx, pair, window, stateKey, prev, freeze.TransitionOverridden)
 		return false
@@ -393,27 +401,26 @@ func (o *Orchestrator) stepFreezeLifecycle(
 //
 // Healthy pairs cost nothing steady-state: an inactive-but-present
 // entry short-circuits both reads.
+//
+// A cold-key read error returns err and caches nothing, so the next
+// tick retries the rehydrate; the caller must withhold the bucket.
 func (o *Orchestrator) loadFreezeState(
 	ctx context.Context,
 	pair canonical.Pair,
 	window time.Duration,
 	stateKey string,
-) (freeze.State, bool) {
+) (freeze.State, bool, error) {
 	st, cached := o.freezeStates[stateKey]
 	if o.cfg.FreezeWriter == nil {
-		return st, false
+		return st, false, nil
 	}
 
 	if !cached {
 		marked, ok, err := o.loadMarkerState(ctx, pair, window)
-		switch {
-		case err != nil:
-			// Transient Redis failure on a cold key. Start clean rather
-			// than fail the tick; the pair re-freezes on its own signal
-			// if the anomaly is still live.
-			o.logger.Debug("freeze lifecycle: marker read failed on cold key",
-				"pair", pair.String(), "err", err)
-		case ok && marked.Active():
+		if err != nil {
+			return freeze.State{}, false, err
+		}
+		if ok && marked.Active() {
 			st = marked
 			o.logger.Info("freeze lifecycle rehydrated from marker",
 				"pair", pair.String(),
@@ -424,15 +431,15 @@ func (o *Orchestrator) loadFreezeState(
 				"escalated", marked.Escalated)
 		}
 		o.freezeStates[stateKey] = st
-		return st, false
+		return st, false, nil
 	}
 
 	if st.Active() {
 		if _, ok, err := o.cfg.FreezeWriter.LoadState(ctx, pair.Base, pair.Quote); err == nil && !ok {
-			return st, true
+			return st, true, nil
 		}
 	}
-	return st, false
+	return st, false, nil
 }
 
 // loadMarkerState reads the lifecycle the marker records for (pair,

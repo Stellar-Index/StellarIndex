@@ -19,21 +19,52 @@ import (
 // (scval.MapField) — resilient to field reordering across contract
 // upgrades, the same discipline the event decoders use.
 //
-// Scales (from the contract): d_rate / b_rate are 12-decimal
+// Scales (from the V2 contract): d_rate / b_rate are 12-decimal
 // conversion rates; ir_mod / c_factor / l_factor / util / r_* /
 // reactivity / bstop_rate are 7-decimal; b_supply / d_supply /
 // backstop_credit / supply_cap are in the underlying token's decimals.
+// A V1 pool stores d_rate / b_rate / ir_mod with 9 decimals under the
+// same field names, so the scale is keyed on PoolVersion, never on
+// the wire shape.
+
+// PoolVersion is a Blend pool contract's generation, resolved from the
+// factory that deployed it. It fixes the scale of ReserveData's rates.
+type PoolVersion uint8
+
+const (
+	// PoolVersionUnknown is a pool whose deploying factory is not a
+	// known Blend factory; its reserve state is not decoded.
+	PoolVersionUnknown PoolVersion = iota
+	// PoolV1 — deployed by MainnetPoolFactoryV1; rates in 9 decimals.
+	PoolV1
+	// PoolV2 — deployed by MainnetPoolFactory; b/d_rate in 12 decimals,
+	// ir_mod in 7.
+	PoolV2
+)
+
+// PoolVersionForFactory maps the factory that deployed a pool to the
+// pool's contract generation.
+func PoolVersionForFactory(factoryID string) PoolVersion {
+	switch factoryID {
+	case MainnetPoolFactoryV1:
+		return PoolV1
+	case MainnetPoolFactory:
+		return PoolV2
+	}
+	return PoolVersionUnknown
+}
 
 // ReserveData is a Blend reserve's per-asset on-chain state
 // (PoolDataKey::ResData(asset) → persistent storage).
 type ReserveData struct {
-	DRate          *big.Int // dToken→underlying rate, 12 decimals
-	BRate          *big.Int // bToken→underlying rate, 12 decimals
-	IRMod          *big.Int // interest-rate curve modifier, 7 decimals
-	BSupply        *big.Int // total bToken supply (underlying decimals)
-	DSupply        *big.Int // total dToken supply (underlying decimals)
-	BackstopCredit *big.Int // underlying owed to the backstop
-	LastTime       uint64   // last block the data updated
+	DRate          *big.Int    // dToken→underlying rate, 12 decimals (V1: 9)
+	BRate          *big.Int    // bToken→underlying rate, 12 decimals (V1: 9)
+	IRMod          *big.Int    // interest-rate curve modifier, 7 decimals (V1: 9)
+	BSupply        *big.Int    // total bToken supply (underlying decimals)
+	DSupply        *big.Int    // total dToken supply (underlying decimals)
+	BackstopCredit *big.Int    // underlying owed to the backstop
+	LastTime       uint64      // last block the data updated
+	Version        PoolVersion // contract generation the rates are scaled for
 }
 
 // ReserveConfig is a Blend reserve's per-asset configuration
@@ -121,13 +152,18 @@ func ParseReserveConfigMetadata(b []byte) (ReserveConfig, error) {
 }
 
 // DecodeReserveData decodes a ReserveData ScVal (the value of a
-// ResData(asset) contract_data entry).
-func DecodeReserveData(v scval.ScVal) (ReserveData, error) {
+// ResData(asset) contract_data entry) for a pool of the given
+// generation. V1 and V2 entries are indistinguishable on the wire, so
+// an unknown generation is refused rather than guessed.
+func DecodeReserveData(v scval.ScVal, version PoolVersion) (ReserveData, error) {
+	if version != PoolV1 && version != PoolV2 {
+		return ReserveData{}, fmt.Errorf("blend: reserve data for unknown pool version %d", version)
+	}
 	m, err := scval.AsMap(v)
 	if err != nil {
 		return ReserveData{}, fmt.Errorf("blend: reserve data not a map: %w", err)
 	}
-	var rd ReserveData
+	rd := ReserveData{Version: version}
 	if rd.DRate, err = i128Field(m, "d_rate"); err != nil {
 		return ReserveData{}, err
 	}

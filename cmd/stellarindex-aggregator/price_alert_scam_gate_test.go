@@ -66,7 +66,7 @@ func TestPriceAlertReader_WithholdsScamFlaggedIssuer(t *testing.T) {
 				// pass for lack of data.
 				store:  fakeAlertVWAPStore{latest: alertRow(0, "1.01"), trailing: steadyAlertRows(12)},
 				logger: discardLogger(),
-				scam:   pricingguard.NewScamGate(dir, pricingguard.ScamGateOptions{}),
+				gate:   pricingguard.Gate{Scam: pricingguard.NewScamGate(dir, pricingguard.ScamGateOptions{})},
 			}
 			price, _, ok, err := reader.LatestVWAP(context.Background(), tc.base, tc.quote)
 			if err != nil {
@@ -92,7 +92,7 @@ func TestPriceAlertReader_UnflaggedPairStillServes(t *testing.T) {
 	reader := priceAlertVWAPReader{
 		store:  fakeAlertVWAPStore{latest: alertRow(0, "1.01"), trailing: steadyAlertRows(12)},
 		logger: discardLogger(),
-		scam:   pricingguard.NewScamGate(dir, pricingguard.ScamGateOptions{}),
+		gate:   pricingguard.Gate{Scam: pricingguard.NewScamGate(dir, pricingguard.ScamGateOptions{})},
 	}
 	price, _, ok, err := reader.LatestVWAP(context.Background(), base, quote)
 	if err != nil || !ok {
@@ -132,7 +132,7 @@ func TestPriceAlertSeamIsGated(t *testing.T) {
 			return true
 		}
 		t.Errorf("%s reads a closed VWAP bucket without calling "+
-			"pricingguard.PriceWithheld — whatever consumes it (a signed customer "+
+			"a pricingguard.Gate — whatever consumes it (a signed customer "+
 			"webhook, here) would publish a price the gates refuse. Route it through "+
 			"the chokepoint the API binary shares.", fn.Name.Name)
 		return true
@@ -170,8 +170,7 @@ func readsClosedVWAPBucket(fn *ast.FuncDecl) bool {
 	return found
 }
 
-// callsWithholdingChokepoint reports whether fn consults
-// pricingguard.PriceWithheld.
+// callsWithholdingChokepoint reports whether fn asks a pricingguard.Gate.
 func callsWithholdingChokepoint(fn *ast.FuncDecl) bool {
 	found := false
 	ast.Inspect(fn, func(n ast.Node) bool {
@@ -180,10 +179,11 @@ func callsWithholdingChokepoint(fn *ast.FuncDecl) bool {
 			return true
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || sel.Sel.Name != "PriceWithheld" {
+		if !ok {
 			return true
 		}
-		if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "pricingguard" {
+		switch sel.Sel.Name {
+		case "PriceWithheld", "PriceWithholding", "PriceWithholdingAt":
 			found = true
 			return false
 		}

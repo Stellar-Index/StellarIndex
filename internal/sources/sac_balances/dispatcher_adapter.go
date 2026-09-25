@@ -30,6 +30,19 @@ import (
 type Observer struct {
 	// wrappers maps SAC contract C-strkey → asset_key (CODE:ISSUER).
 	wrappers map[string]string
+
+	// unknownValShapeDrops counts Balance-keyed changes for a watched
+	// contract whose value decoded as neither a bare i128 nor a
+	// map-with-amount (Q120). Matches() only checks KEY shape — a
+	// configured pure-SEP-41 wrapper (contract_id → contract_id, no
+	// classic asset) whose storage layout differs from the native SAC's
+	// still gets claimed on every change and fails every Decode. A
+	// SUSTAINED non-zero rate here means the wrapper's storage layout is
+	// fundamentally undecodable (a config problem: the watched contract
+	// isn't a shape sac_balances understands), as opposed to an
+	// occasional decode blip — indistinguishable from generic decode
+	// errors without this counter. Read via [Observer.UnknownValShapeDrops].
+	unknownValShapeDrops int
 }
 
 var (
@@ -127,6 +140,9 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 	}
 	balance, err := scval.SEP41BalanceAmount(cd.Val)
 	if err != nil {
+		if errors.Is(err, scval.ErrUnknownBalanceValShape) {
+			o.unknownValShapeDrops++
+		}
 		return nil, err
 	}
 	return []consumer.Event{Observation{
@@ -139,6 +155,11 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 		IntraLedgerSeq: ctx.IntraLedgerSeq,
 	}}, nil
 }
+
+// UnknownValShapeDrops is the count of Balance-keyed changes for a watched
+// contract whose value shape [scval.SEP41BalanceAmount] could not decode
+// (Q120). See the field doc on [Observer.unknownValShapeDrops].
+func (o *Observer) UnknownValShapeDrops() int { return o.unknownValShapeDrops }
 
 // contractDataFromChange returns the ContractDataEntry +
 // is-removal flag for any change variant. Removed-variant rows

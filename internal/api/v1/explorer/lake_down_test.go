@@ -55,7 +55,7 @@ func (downReader) NetworkThroughput(context.Context, int) ([]clickhouse.Throughp
 	return nil, errLakeDown
 }
 
-func (downReader) BlendPoolReserves(context.Context, string, []string, map[string]blend.ReserveConfig) ([]clickhouse.BlendReserveState, error) {
+func (downReader) BlendPoolReserves(context.Context, string, blend.PoolVersion, []string, map[string]blend.ReserveConfig) ([]clickhouse.BlendReserveState, error) {
 	return nil, errLakeDown
 }
 

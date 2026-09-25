@@ -306,6 +306,70 @@ type Projector struct {
 	// writes a cursor so the seek runs once, not once per cycle.
 	seedMu sync.Mutex
 	seeds  map[string]uint32
+
+	// decoderStatsMu guards decoderStats: the last-observed values of a
+	// source's decoder-owned loss counters (Decoder.EvictedOrphans /
+	// UnknownContractDrops), read via the same duck-typed interfaces
+	// dispatcher.Stats() uses. The projector builds its OWN decoder
+	// instance per source (registry.go buildSource) — a separate
+	// instance from the live indexer's dispatcher, with independent
+	// buffer state — so without this the projector's half of the loss
+	// signal (the half that actually governs what gets WRITTEN, per
+	// ADR-0032) has no observability at all (Q037).
+	decoderStatsMu sync.Mutex
+	decoderStats   map[string]decoderLossCounters
+}
+
+// decoderLossCounters is the last snapshot of a decoder's cumulative
+// loss counters, used to compute the per-cycle delta emitted as
+// ProjectorEventsDecoded outcomes.
+type decoderLossCounters struct {
+	evictedOrphans       int
+	unknownContractDrops int
+	nonDirectionalSwaps  int
+}
+
+// emitDecoderLossDeltas reads src.Decoder's duck-typed loss counters (the
+// same interfaces dispatcher.Stats() reads) and emits the delta since the
+// last call for this source as ProjectorEventsDecoded outcomes. A decoder
+// that implements none of them is a no-op.
+func (p *Projector) emitDecoderLossDeltas(src Source) {
+	orphanReporter, hasOrphans := src.Decoder.(interface{ EvictedOrphans() int })
+	dropReporter, hasDrops := src.Decoder.(interface{ UnknownContractDrops() int })
+	nonDirReporter, hasNonDir := src.Decoder.(interface{ SkippedNonDirectional() int })
+	if !hasOrphans && !hasDrops && !hasNonDir {
+		return
+	}
+	var cur decoderLossCounters
+	if hasOrphans {
+		cur.evictedOrphans = orphanReporter.EvictedOrphans()
+	}
+	if hasDrops {
+		cur.unknownContractDrops = dropReporter.UnknownContractDrops()
+	}
+	if hasNonDir {
+		cur.nonDirectionalSwaps = nonDirReporter.SkippedNonDirectional()
+	}
+
+	p.decoderStatsMu.Lock()
+	if p.decoderStats == nil {
+		p.decoderStats = make(map[string]decoderLossCounters)
+	}
+	prev := p.decoderStats[src.Name]
+	p.decoderStats[src.Name] = cur
+	p.decoderStatsMu.Unlock()
+
+	if d := cur.evictedOrphans - prev.evictedOrphans; d > 0 {
+		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "orphan_evicted").Add(float64(d))
+	}
+	if d := cur.unknownContractDrops - prev.unknownContractDrops; d > 0 {
+		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "unknown_contract_drop").Add(float64(d))
+	}
+	// Non-directional swaps are an expected non-trade class (ADR-0033), not
+	// lost data — its own outcome label, kept out of orphan/unknown-drop.
+	if d := cur.nonDirectionalSwaps - prev.nonDirectionalSwaps; d > 0 {
+		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "non_directional_skip").Add(float64(d))
+	}
 }
 
 // SetClickHouseSource switches the projector to read forward events from the
@@ -1410,6 +1474,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	if sinkQuarantined > 0 {
 		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_quarantined").Add(float64(sinkQuarantined))
 	}
+	p.emitDecoderLossDeltas(src)
 	// A partially-failed cycle made forward progress (commitTo >= fromLedger)
 	// but still has a pending retry above commitTo — surface it as a distinct
 	// run outcome so a genuinely-stuck source alerts rather than silently

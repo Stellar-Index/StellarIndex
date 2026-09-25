@@ -14150,7 +14150,7 @@
               "request": {
                 "name": "Lending pools (Blend) with auction + net-flow stats.",
                 "description": {
-                  "content": "One row per distinct Blend pool contract observed in EITHER\nthe auction stream OR the position-event stream, with 24h /\nall-time auction counts, 30d unique users, last-seen, plus a\n30-day net-flow proxy for supply/borrow.\n\n`net_supplied_30d` / `net_borrowed_30d` are window NET-FLOW\ndeltas (token base-units, summed across the pool's assets),\nNOT all-time TVL or current reserve balances —\n`utilization_30d_pct` is the window borrow/supply ratio\n(omitted when net supply ≤ 0). Real current-state TVL +\nsupply/borrow APYs (reserve b_rate/d_rate) need the Soroban\npool-storage reader; these fields stand in until it ships.\n",
+                  "content": "One row per distinct Blend pool contract observed in EITHER\nthe auction stream OR the position-event stream, with 24h /\nall-time auction counts, 30d unique users, last-seen, plus a\n30-day net-flow proxy for supply/borrow.\n\n`net_supplied_30d` / `net_borrowed_30d` are window NET-FLOW\ndeltas in token base-units, NOT all-time TVL or current\nreserve balances. Both are null when the window's flows span\nmore than one reserve asset: base units of different tokens\ndo not add. `utilization_30d_pct` is their ratio, omitted\nwhenever either is null or net supply ≤ 0. Current-state\nper-reserve supplied / borrowed / utilization / APR are served\nby `/v1/lending/pools/{pool}/reserves`.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -14206,7 +14206,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"data\": [\n    {\n      \"protocol\": \"<string>\",\n      \"pool\": \"<string>\",\n      \"auctions_24h\": \"<long>\",\n      \"auctions_total\": \"<long>\",\n      \"unique_users_30d\": \"<long>\",\n      \"last_seen\": \"<dateTime>\",\n      \"net_supplied_30d\": \"<string>\",\n      \"net_borrowed_30d\": \"<string>\",\n      \"utilization_30d_pct\": \"<number,null>\"\n    },\n    {\n      \"protocol\": \"<string>\",\n      \"pool\": \"<string>\",\n      \"auctions_24h\": \"<long>\",\n      \"auctions_total\": \"<long>\",\n      \"unique_users_30d\": \"<long>\",\n      \"last_seen\": \"<dateTime>\",\n      \"net_supplied_30d\": \"<string>\",\n      \"net_borrowed_30d\": \"<string>\",\n      \"utilization_30d_pct\": \"<number,null>\"\n    }\n  ]\n}",
+                  "body": "{\n  \"data\": [\n    {\n      \"protocol\": \"<string>\",\n      \"pool\": \"<string>\",\n      \"auctions_24h\": \"<long>\",\n      \"auctions_total\": \"<long>\",\n      \"unique_users_30d\": \"<long>\",\n      \"last_seen\": \"<dateTime>\",\n      \"net_supplied_30d\": \"<string,null>\",\n      \"net_borrowed_30d\": \"<string,null>\",\n      \"utilization_30d_pct\": \"<number,null>\"\n    },\n    {\n      \"protocol\": \"<string>\",\n      \"pool\": \"<string>\",\n      \"auctions_24h\": \"<long>\",\n      \"auctions_total\": \"<long>\",\n      \"unique_users_30d\": \"<long>\",\n      \"last_seen\": \"<dateTime>\",\n      \"net_supplied_30d\": \"<string,null>\",\n      \"net_borrowed_30d\": \"<string,null>\",\n      \"utilization_30d_pct\": \"<number,null>\"\n    }\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },

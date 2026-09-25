@@ -87,7 +87,7 @@ groups:
       # for. stellarindex_redis_sentinel_primary alone cannot see a dead
       # scraper. 10m tolerates ~20 missed 30s runs before paging.
       - alert: stellarindex_redis_sentinel_textfile_stale
-        expr: time() - node_textfile_mtime_seconds{file="redis_sentinel.prom"} > 600
+        expr: time() - node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/redis_sentinel.prom"} > 600
         for: 5m
         labels:
           severity: ticket

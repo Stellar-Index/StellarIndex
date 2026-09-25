@@ -690,7 +690,13 @@ type Stats struct {
 	// happens inside Decode with a nil error and the dispatcher's own
 	// DecodeErrors counter never sees it.
 	UnknownContractDrops map[string]int
-	UnmatchedHits        int
+	// NonDirectionalSwaps is the per-source count of a fully decoded
+	// swap+sync pair recognized as non-directional (a single-side reserve
+	// move, not a trade) — an expected, non-error class (ADR-0033), not
+	// lost data like OrphanEvents/UnknownContractDrops. Collected the same
+	// duck-typed way (T070: the getter had no production reader at all).
+	NonDirectionalSwaps map[string]int
+	UnmatchedHits       int
 	// TxReadErrors counts malformed transactions skipped during
 	// ProcessLedger. Operators reading the snapshot can spot a
 	// sustained climb that would otherwise be invisible (the bad
@@ -746,6 +752,7 @@ func (d *Dispatcher) Stats() Stats {
 
 	orphanCopied := map[string]int{}
 	unknownContractCopied := map[string]int{}
+	nonDirectionalCopied := map[string]int{}
 	for _, dec := range d.decoders {
 		if reporter, ok := dec.(interface{ EvictedOrphans() int }); ok {
 			if n := reporter.EvictedOrphans(); n > 0 {
@@ -757,12 +764,18 @@ func (d *Dispatcher) Stats() Stats {
 				unknownContractCopied[dec.Name()] = n
 			}
 		}
+		if reporter, ok := dec.(interface{ SkippedNonDirectional() int }); ok {
+			if n := reporter.SkippedNonDirectional(); n > 0 {
+				nonDirectionalCopied[dec.Name()] = n
+			}
+		}
 	}
 	return Stats{
 		EventsSeen:           seenCopied,
 		DecodeErrors:         decodeCopied,
 		OrphanEvents:         orphanCopied,
 		UnknownContractDrops: unknownContractCopied,
+		NonDirectionalSwaps:  nonDirectionalCopied,
 		UnmatchedHits:        unmatched,
 		TxReadErrors:         txReadErrs,
 		TxEventReadErrors:    txEventReadErrs,

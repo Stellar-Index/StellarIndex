@@ -176,26 +176,12 @@ export async function deletePasskey(id: string): Promise<void> {
 
 // ─── Keys ──────────────────────────────────────────────────────────
 
-// APIKey mirrors the `/v1/dashboard/keys` keyDTO wire shape
-// (internal/api/v1/dashboardkeys/handlers.go). Optional fields are
-// omitted by the server when zero-valued.
-export interface APIKey {
-  id: string;
-  name: string;
-  description?: string;
-  key_prefix: string;
-  tier: string;
-  rate_limit_per_min: number;
-  monthly_quota?: number;
-  usage_alert_threshold_pct?: number;
-  ip_allowlist?: string[];
-  referer_allowlist?: string[];
-  expires_at?: string;
-  revoked_at?: string;
-  revoked_reason?: string;
-  last_used_at?: string;
-  created_at: string;
-}
+// APIKey is bound to the generated OpenAPI contract (src/api/types.ts,
+// `make web-generate-api`) so a spec change — e.g. the `scopes` field
+// added to `/v1/dashboard/keys` (internal/api/v1/dashboardkeys/handlers.go)
+// — breaks compilation here rather than silently rendering a key confined
+// to `read` as indistinguishable from full access.
+export type APIKey = components['schemas']['DashboardKey'];
 
 interface KeyListResponse {
   keys: APIKey[];

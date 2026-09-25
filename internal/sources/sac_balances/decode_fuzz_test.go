@@ -184,17 +184,26 @@ func TestObserver_DecodeRejectsForeignBalanceShapes(t *testing.T) {
 	u128 := xdr.ScVal{Type: xdr.ScValTypeScvU128, U128: &xdr.UInt128Parts{Lo: 5}}
 	u64v := xdr.Uint64(5)
 	u64 := xdr.ScVal{Type: xdr.ScValTypeScvU64, U64: &u64v}
-	for name, val := range map[string]xdr.ScVal{
+	shapes := map[string]xdr.ScVal{
 		"bare u128":        u128,
 		"bare u64":         u64,
 		"map amount u128":  balanceMap(u128, true),
 		"map amount u64":   balanceMap(u64, false),
 		"void (no amount)": {Type: xdr.ScValTypeScvVoid},
-	} {
+	}
+	for name, val := range shapes {
 		change := makeContractDataChange(t, cSAC, makeBalanceKey(t, gHolder), val)
 		outs, err := o.Decode(dispatcher.LedgerEntryChangeContext{Ledger: 1, Change: change})
 		if !errors.Is(err, ErrUnknownValShape) {
 			t.Errorf("%s: Decode = (%v, %v), want ErrUnknownValShape", name, outs, err)
 		}
+	}
+	// Q120: every one of the above is a Matches-accepted, undecodable-value
+	// shape — the exact class UnknownValShapeDrops exists to surface, since
+	// before this counter a persistently-misconfigured pure-SEP-41 wrapper
+	// (matches every change, decodes none) was indistinguishable from
+	// occasional decode noise on any existing signal.
+	if got := o.UnknownValShapeDrops(); got != len(shapes) {
+		t.Errorf("UnknownValShapeDrops() = %d, want %d (one per rejected shape)", got, len(shapes))
 	}
 }

@@ -207,6 +207,33 @@ func TestStats_UnknownContractDropsSurfacedViaDuckTypedInterface(t *testing.T) {
 	}
 }
 
+// fakeNonDirectionalReporter is a Decoder that also implements the
+// SkippedNonDirectional() int duck-typed interface, mirroring
+// soroswap.Decoder / sushiswap_v3.Decoder.
+type fakeNonDirectionalReporter struct {
+	fakeDecoder
+	skips int
+}
+
+func (f *fakeNonDirectionalReporter) SkippedNonDirectional() int { return f.skips }
+
+// TestStats_NonDirectionalSwapsSurfacedViaDuckTypedInterface pins T070: the
+// soroswap/sushiswap_v3 SkippedNonDirectional() getter had zero production
+// callers repo-wide — Stats() never collected it. Before the fix this field
+// did not exist at all.
+func TestStats_NonDirectionalSwapsSurfacedViaDuckTypedInterface(t *testing.T) {
+	dec := &fakeNonDirectionalReporter{
+		fakeDecoder: fakeDecoder{name: "soroswap", topic0: "T"},
+		skips:       3,
+	}
+	disp := New(dec)
+
+	stats := disp.Stats()
+	if got := stats.NonDirectionalSwaps["soroswap"]; got != 3 {
+		t.Errorf("Stats().NonDirectionalSwaps[%q] = %d, want 3", "soroswap", got)
+	}
+}
+
 // ─── OpDecoder dispatch ──────────────────────────────────────────
 
 type fakeOpDecoder struct {

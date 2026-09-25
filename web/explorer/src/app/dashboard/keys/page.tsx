@@ -438,6 +438,11 @@ function KeysTable({
                       {k.description}
                     </div>
                   )}
+                  <div className="text-ink-muted mt-0.5 text-xs">
+                    {k.scopes && k.scopes.length > 0
+                      ? `Scopes: ${k.scopes.join(', ')}`
+                      : 'Full access'}
+                  </div>
                 </Td>
                 <Td>
                   <span className="inline-flex items-center gap-1.5">

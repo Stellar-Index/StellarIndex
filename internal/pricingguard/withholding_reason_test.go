@@ -21,22 +21,22 @@ func TestPriceWithholdingFlaggedIssuerBeatsThinMarket(t *testing.T) {
 	scam := NewScamGate(&pairLegDirectory{flagged: map[string]bool{pairLegFlaggedIssuer: true}}, ScamGateOptions{})
 	clean := NewScamGate(&pairLegDirectory{flagged: map[string]bool{}}, ScamGateOptions{})
 
-	if got := PriceWithholding(ctx, thin, scam, native, flagged, "test"); got != WithheldFlaggedIssuer {
+	if got := (Gate{Substance: thin, Scam: scam}).PriceWithholding(ctx, native, flagged, "test"); got != WithheldFlaggedIssuer {
 		t.Errorf("thin AND flagged: PriceWithholding = %q, want %q", got, WithheldFlaggedIssuer)
 	}
-	if got := PriceWithholdingAt(ctx, thin, scam, native, flagged, gateNow, "test"); got != WithheldFlaggedIssuer {
+	if got := (Gate{Substance: thin, Scam: scam}).PriceWithholdingAt(ctx, native, flagged, gateNow, "test"); got != WithheldFlaggedIssuer {
 		t.Errorf("thin AND flagged: PriceWithholdingAt = %q, want %q", got, WithheldFlaggedIssuer)
 	}
-	if got := PriceWithholding(ctx, thin, clean, native, flagged, "test"); got != WithheldThinMarket {
+	if got := (Gate{Substance: thin, Scam: clean}).PriceWithholding(ctx, native, flagged, "test"); got != WithheldThinMarket {
 		t.Errorf("thin only: PriceWithholding = %q, want %q", got, WithheldThinMarket)
 	}
-	if got := PriceWithholding(ctx, nil, scam, native, flagged, "test"); got != WithheldFlaggedIssuer {
+	if got := (Gate{Scam: scam}).PriceWithholding(ctx, native, flagged, "test"); got != WithheldFlaggedIssuer {
 		t.Errorf("flagged only: PriceWithholding = %q, want %q", got, WithheldFlaggedIssuer)
 	}
-	if got := PriceWithholding(ctx, nil, clean, native, flagged, "test"); got != NotWithheld {
+	if got := (Gate{Scam: clean}).PriceWithholding(ctx, native, flagged, "test"); got != NotWithheld {
 		t.Errorf("neither: PriceWithholding = %q, want NotWithheld", got)
 	}
-	if !PriceWithheld(ctx, thin, clean, native, flagged, "test") || PriceWithheld(ctx, nil, clean, native, flagged, "test") {
+	if !(Gate{Substance: thin, Scam: clean}).PriceWithheld(ctx, native, flagged, "test") || (Gate{Scam: clean}).PriceWithheld(ctx, native, flagged, "test") {
 		t.Error("PriceWithheld must agree with PriceWithholding != NotWithheld")
 	}
 }

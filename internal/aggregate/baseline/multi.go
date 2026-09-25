@@ -89,6 +89,24 @@ func (m MultiBaseline) HasAnyValid() bool {
 	return m.Day1 != nil || m.Day7 != nil || m.Day30 != nil
 }
 
+// MinZScoreSamples is the sample floor a window needs before its
+// [Baseline.ZScore] may vote in [MultiBaseline.MaxZScore]. A MAD taken
+// from a handful of returns is itself noise, and a low draw scores an
+// ordinary move as an anomaly.
+//
+// Measured null false-positive rate (200k trials: baseline from n
+// Gaussian returns, one fresh draw from the same distribution, MAD well
+// above [MinMAD], P(z >= 5)):
+//
+//	n=2    14%       n=20   0.13%
+//	n=3    19%       n=30   0.041%
+//	n=5    6.8%      n=60   0.004%
+//	n=10   0.97%     n=100  <0.005% (20k trials, none)
+//
+// 60 matches [MinDriftSamples] (one hour of 1m buckets) and is the first
+// round window within an order of magnitude of zero.
+const MinZScoreSamples = 60
+
 // MaxZScore returns the largest z-score for bucket return `r` across every
 // window that has a valid baseline, plus the window's lookback
 // duration so callers can attribute "which window detected this".
@@ -104,6 +122,10 @@ func (m MultiBaseline) HasAnyValid() bool {
 // the frog-boiling defence must also consult
 // [MultiBaseline.MaxDriftZScore] and take the max; see
 // [Baseline.DriftZScore].
+//
+// Only windows with at least [MinZScoreSamples] returns vote, so a
+// near-empty short window cannot outvote a well-sampled long one; when
+// none qualifies the largest window alone scores.
 //
 // The third return value is `valid` — false when [HasAnyValid]
 // would return false. Callers branch to the bootstrap policy on
@@ -138,25 +160,42 @@ func (m MultiBaseline) MaxZScore(r BucketReturn) (z float64, window time.Duratio
 			return math.Inf(1), Window30d, true
 		}
 	}
-	if b := m.Day1; b != nil {
-		zb := b.ZScore(x)
+	for _, v := range m.zScoreVoters() {
+		zb := v.b.ZScore(x)
 		if !valid || zb > z {
-			z, window, valid = zb, Window1d, true
-		}
-	}
-	if b := m.Day7; b != nil {
-		zb := b.ZScore(x)
-		if !valid || zb > z {
-			z, window, valid = zb, Window7d, true
-		}
-	}
-	if b := m.Day30; b != nil {
-		zb := b.ZScore(x)
-		if !valid || zb > z {
-			z, window, valid = zb, Window30d, true
+			z, window, valid = zb, v.window, true
 		}
 	}
 	return z, window, valid
+}
+
+// windowBaseline is one window's baseline tagged with its lookback.
+type windowBaseline struct {
+	b      *Baseline
+	window time.Duration
+}
+
+// zScoreVoters returns the windows whose sample count clears
+// [MinZScoreSamples], or, when none does, the one with the most samples
+// (the longer window on a tie) so a young pair is still scored.
+func (m MultiBaseline) zScoreVoters() []windowBaseline {
+	var voters []windowBaseline
+	var largest windowBaseline
+	for _, c := range []windowBaseline{{m.Day1, Window1d}, {m.Day7, Window7d}, {m.Day30, Window30d}} {
+		if c.b == nil {
+			continue
+		}
+		if c.b.N >= MinZScoreSamples {
+			voters = append(voters, c)
+		}
+		if largest.b == nil || c.b.N >= largest.b.N {
+			largest = c
+		}
+	}
+	if len(voters) == 0 && largest.b != nil {
+		return []windowBaseline{largest}
+	}
+	return voters
 }
 
 // MaxDriftZScore returns the largest [Baseline.DriftZScore] across

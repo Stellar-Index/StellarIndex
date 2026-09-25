@@ -18,6 +18,7 @@ type stubExplorerReader struct {
 	opTypeStats    []clickhouse.OpTypeCount
 	throughput     []clickhouse.ThroughputBucket
 	reserves       []clickhouse.BlendReserveState
+	reserveCalls   []blend.PoolVersion // the pool version each BlendPoolReserves call was made with
 	opResults      map[uint32]clickhouse.OpResult
 	events         []clickhouse.EventSummary
 	contractEvents []clickhouse.ContractActivityRow
@@ -136,7 +137,8 @@ func (s *stubExplorerReader) NetworkThroughput(_ context.Context, _ int) ([]clic
 	return s.throughput, s.err
 }
 
-func (s *stubExplorerReader) BlendPoolReserves(_ context.Context, _ string, _ []string, _ map[string]blend.ReserveConfig) ([]clickhouse.BlendReserveState, error) {
+func (s *stubExplorerReader) BlendPoolReserves(_ context.Context, _ string, version blend.PoolVersion, _ []string, _ map[string]blend.ReserveConfig) ([]clickhouse.BlendReserveState, error) {
+	s.reserveCalls = append(s.reserveCalls, version)
 	return s.reserves, s.err
 }
 

@@ -17,24 +17,29 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/sourcenet"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/accounts"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/claimable_balances"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/liquidity_pools"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/redstone"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/reflector"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/rozo"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/sac_balances"
 	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
 	sep41transfers "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_transfers"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/trustlines"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -811,6 +816,25 @@ func unionContractIDs(base, extra []string) []string {
 // (sep41 sources are promoted only when configured), so the valid set is
 // exactly what buildReconciliationCatalogue returned. only == "" (all sources)
 // is always valid.
+// entryDecoderSourceNames lists RegisterSupplyEntryDecoders' five sources
+// (internal/pipeline/dispatcher.go). They're real, config-driven ingest
+// sources — they bump stellarindex_source_decode_errors_total like every
+// other source, and the generic stellarindex_ingestion_decode_error alert
+// (deploy/monitoring/rules/ingestion.yml) fires on them with no source
+// exception — but they read LedgerEntry changes, not soroban_events, so
+// they can never be a reconSource: completeness.Decoder's re-derive is
+// soroban_events-specific (reconcile.go), a different data model entirely.
+// Named here so validateSourceFilter can tell an operator "known but not on
+// this axis" instead of the misleading "unknown source" a typo would also
+// produce (Q116).
+var entryDecoderSourceNames = map[string]bool{
+	accounts.SourceName:           true,
+	trustlines.SourceName:         true,
+	claimable_balances.SourceName: true,
+	liquidity_pools.SourceName:    true,
+	sac_balances.SourceName:       true,
+}
+
 func validateSourceFilter(only string, cat []reconSource) error {
 	if only == "" {
 		return nil
@@ -821,6 +845,9 @@ func validateSourceFilter(only string, cat []reconSource) error {
 			return nil
 		}
 		names = append(names, src.name)
+	}
+	if entryDecoderSourceNames[only] {
+		return fmt.Errorf("-source %q is a LedgerEntry-based supply observer, not reconcilable on the soroban_events axis this tool covers (see internal/pipeline.RegisterSupplyEntryDecoders); known reconciliation sources: %s", only, strings.Join(names, ", "))
 	}
 	return fmt.Errorf("-source %q matches no reconciliation source for this config; known sources: %s", only, strings.Join(names, ", "))
 }

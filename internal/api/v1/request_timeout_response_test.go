@@ -27,6 +27,11 @@ func (blockingLendingReader) BlendPoolAssets(ctx context.Context, _ string) ([]s
 	return nil, ctx.Err()
 }
 
+func (blockingLendingReader) BlendPoolVersion(ctx context.Context, _ string) (blend.PoolVersion, error) {
+	<-ctx.Done()
+	return blend.PoolVersionUnknown, ctx.Err()
+}
+
 func (blockingLendingReader) BlendReserveConfigs(ctx context.Context, _ string) (map[string]blend.ReserveConfig, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()

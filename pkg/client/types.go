@@ -1260,11 +1260,12 @@ type LendingPool struct {
 	LastSeen       time.Time `json:"last_seen"`
 	// NetSupplied30d / NetBorrowed30d are 30-day NET-FLOW proxies in
 	// token base-units (decimal strings) — not all-time TVL or
-	// current reserve balances.
-	NetSupplied30d string `json:"net_supplied_30d"`
-	NetBorrowed30d string `json:"net_borrowed_30d"`
-	// Utilization30dPct is the borrow/supply window ratio; nil when
-	// net supply ≤ 0.
+	// current reserve balances. nil when the window's flows span more
+	// than one reserve asset, whose base units do not add.
+	NetSupplied30d *string `json:"net_supplied_30d"`
+	NetBorrowed30d *string `json:"net_borrowed_30d"`
+	// Utilization30dPct is the single-asset borrow/supply window
+	// ratio; nil when either flow is nil or net supply ≤ 0.
 	Utilization30dPct *float64 `json:"utilization_30d_pct,omitempty"`
 }
 

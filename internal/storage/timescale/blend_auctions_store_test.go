@@ -262,6 +262,38 @@ func TestBlendPoolAssets_OrderAndArgs(t *testing.T) {
 	}
 }
 
+// ─── BlendPoolVersion ───────────────────────────────────
+
+// TestBlendPoolVersion_KeysOnDeployingFactory — the reserve rate scale
+// depends on the pool's generation, resolved from the blend-scoped
+// protocol_contracts row; an unregistered pool is unknown, not V2.
+func TestBlendPoolVersion_KeysOnDeployingFactory(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		rows [][]driver.Value
+		want blend.PoolVersion
+	}{
+		{"v1 factory", [][]driver.Value{{blend.MainnetPoolFactoryV1}}, blend.PoolV1},
+		{"v2 factory", [][]driver.Value{{blend.MainnetPoolFactory}}, blend.PoolV2},
+		{"unregistered", nil, blend.PoolVersionUnknown},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			store, conn := newScriptedStore(t, scriptedResult{cols: []string{"factory_id"}, rows: c.rows})
+			got, err := store.BlendPoolVersion(context.Background(), blendPool)
+			if err != nil {
+				t.Fatalf("BlendPoolVersion: %v", err)
+			}
+			if got != c.want {
+				t.Errorf("BlendPoolVersion = %d, want %d", got, c.want)
+			}
+			stmt := conn.only(t)
+			if !reflect.DeepEqual(stmt.args, []driver.Value{blend.SourceName, blendPool}) {
+				t.Errorf("BlendPoolVersion args = %v, want [%s %s]", stmt.args, blend.SourceName, blendPool)
+			}
+		})
+	}
+}
+
 // ─── BlendReserveConfigs ──────────────────────────────────────────────
 
 // TestBlendReserveConfigs_ParsesAndSkipsUnparseable — one bad metadata
@@ -335,6 +367,8 @@ func TestListBlendPools_ValuesAndWindows(t *testing.T) {
 		rows: [][]driver.Value{
 			{blendPool, int64(3), int64(41), int64(12), last, blendMaxI128, "-250000000"},
 			{"CPOOL2", int64(0), int64(0), int64(1), last, "0", "0"},
+			// Flows across several reserve assets: the SQL withholds both sums.
+			{"CPOOL3", int64(0), int64(0), int64(2), last, nil, nil},
 		},
 	})
 
@@ -345,12 +379,13 @@ func TestListBlendPools_ValuesAndWindows(t *testing.T) {
 	want := []BlendPoolSummary{
 		{
 			Pool: blendPool, Auctions24h: 3, AuctionsTotal: 41, UniqueUsers30d: 12, LastSeen: last,
-			NetSupplied30d: blendMaxI128, NetBorrowed30d: "-250000000",
+			NetSupplied30d: strptr(blendMaxI128), NetBorrowed30d: strptr("-250000000"),
 		},
 		{
 			Pool: "CPOOL2", Auctions24h: 0, AuctionsTotal: 0, UniqueUsers30d: 1, LastSeen: last,
-			NetSupplied30d: "0", NetBorrowed30d: "0",
+			NetSupplied30d: strptr("0"), NetBorrowed30d: strptr("0"),
 		},
+		{Pool: "CPOOL3", UniqueUsers30d: 2, LastSeen: last},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("pools = %+v\nwant %+v", got, want)
@@ -366,6 +401,10 @@ func TestListBlendPools_ValuesAndWindows(t *testing.T) {
 		"INTERVAL '24 hours'",
 		"INTERVAL '30 days'",
 		"ORDER BY COALESCE(auc.atot, 0) DESC, p.pool ASC",
+		// Base units of different reserve assets never add: the net-flow
+		// sums are only emitted for a single-asset window.
+		"COUNT(DISTINCT asset)",
+		"CASE WHEN COALESCE(pos.flow_assets30, 0) <= 1",
 	} {
 		if !strings.Contains(stmt.sql, sub) {
 			t.Errorf("ListBlendPools SQL missing %q:\n%s", sub, stmt.sql)

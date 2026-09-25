@@ -31,7 +31,7 @@ tests:
   - interval: 1m
     name: a dead patroni-textfile-scraper timer trips stale
     input_series:
-      - series: 'node_textfile_mtime_seconds{file="patroni.prom",instance="r1:9100",job="node_exporter"}'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/patroni.prom",instance="r1:9100",job="node_exporter"}'
         values: '0+60x60 3600+0x60'
       - series: 'stellarindex_patroni_running{instance="r1:9100",job="node_exporter"}'
         values: '1+0x120'
@@ -40,7 +40,7 @@ tests:
         alertname: stellarindex_patroni_textfile_stale
         exp_alerts:
           - exp_labels:
-              file: patroni.prom
+              file: /var/lib/node_exporter/textfile_collector/patroni.prom
               instance: r1:9100
               job: node_exporter
               severity: ticket
@@ -59,7 +59,7 @@ tests:
   - interval: 1m
     name: a live patroni-textfile-scraper timer never trips stale
     input_series:
-      - series: 'node_textfile_mtime_seconds{file="patroni.prom",instance="r1:9100",job="node_exporter"}'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/patroni.prom",instance="r1:9100",job="node_exporter"}'
         values: '0+60x120'
       - series: 'stellarindex_patroni_running{instance="r1:9100",job="node_exporter"}'
         values: '1+0x120'
@@ -72,7 +72,7 @@ tests:
   - interval: 1m
     name: a dead redis-sentinel-textfile-scraper timer trips stale
     input_series:
-      - series: 'node_textfile_mtime_seconds{file="redis_sentinel.prom",instance="r1:9100",job="node_exporter"}'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/redis_sentinel.prom",instance="r1:9100",job="node_exporter"}'
         values: '0+60x60 3600+0x60'
       - series: 'stellarindex_redis_sentinel_primary{instance="r1:9100",job="node_exporter"}'
         values: '1+0x120'
@@ -81,7 +81,7 @@ tests:
         alertname: stellarindex_redis_sentinel_textfile_stale
         exp_alerts:
           - exp_labels:
-              file: redis_sentinel.prom
+              file: /var/lib/node_exporter/textfile_collector/redis_sentinel.prom
               instance: r1:9100
               job: node_exporter
               severity: ticket
@@ -99,7 +99,7 @@ tests:
   - interval: 1m
     name: a live redis-sentinel-textfile-scraper timer never trips stale
     input_series:
-      - series: 'node_textfile_mtime_seconds{file="redis_sentinel.prom",instance="r1:9100",job="node_exporter"}'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/redis_sentinel.prom",instance="r1:9100",job="node_exporter"}'
         values: '0+60x120'
       - series: 'stellarindex_redis_sentinel_primary{instance="r1:9100",job="node_exporter"}'
         values: '1+0x120'
@@ -112,7 +112,7 @@ tests:
   - interval: 1m
     name: a dead keepalived-textfile-scraper timer trips stale
     input_series:
-      - series: 'node_textfile_mtime_seconds{file="keepalived.prom",instance="r1:9100",job="node_exporter"}'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/keepalived.prom",instance="r1:9100",job="node_exporter"}'
         values: '0+60x60 3600+0x60'
       - series: 'stellarindex_haproxy_vip_owner{instance="r1:9100",job="node_exporter"}'
         values: '1+0x120'
@@ -121,7 +121,7 @@ tests:
         alertname: stellarindex_keepalived_textfile_stale
         exp_alerts:
           - exp_labels:
-              file: keepalived.prom
+              file: /var/lib/node_exporter/textfile_collector/keepalived.prom
               instance: r1:9100
               job: node_exporter
               severity: ticket
@@ -139,7 +139,7 @@ tests:
   - interval: 1m
     name: a live keepalived-textfile-scraper timer never trips stale
     input_series:
-      - series: 'node_textfile_mtime_seconds{file="keepalived.prom",instance="r1:9100",job="node_exporter"}'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/keepalived.prom",instance="r1:9100",job="node_exporter"}'
         values: '0+60x120'
       - series: 'stellarindex_haproxy_vip_owner{instance="r1:9100",job="node_exporter"}'
         values: '1+0x120'

@@ -208,7 +208,7 @@ groups:
       # pattern as stellarindex_config_assertions_stale (storage.yml).
       - alert: stellarindex_data_freshness_probe_frozen
         expr: |
-          time() - node_textfile_mtime_seconds{file="data_freshness.prom"} > 2700
+          time() - node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/data_freshness.prom"} > 2700
         for: 15m
         labels:
           severity: ticket

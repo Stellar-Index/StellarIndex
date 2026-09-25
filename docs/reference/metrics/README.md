@@ -535,6 +535,17 @@ Includes recovered decoder PANICS — see
 `stellarindex_decoder_panics_total` below, which is the strict subset
 of this counter that crashed rather than refused.
 
+### `stellarindex_source_non_directional_swaps_total`
+
+Counter, label `source`.
+
+Completed swap+sync pairs recognised as non-directional (reserves moved
+on one token side only, so not a trade). Emitted from dispatcher stats
+deltas on the live path and from the projector's own decoder instance.
+Kept separate from `decode_errors`: ADR-0033 treats this class as
+expected-zero, not lost data, so a non-zero rate is a signal to inspect
+the pair, not a decode failure.
+
 ### `stellarindex_source_amount_degraded_total`
 
 Counter, labels `source`, `field`.

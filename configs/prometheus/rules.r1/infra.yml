@@ -387,7 +387,7 @@ groups:
       # exists for. stellarindex_haproxy_vip_owner alone cannot see a
       # dead scraper. 10m tolerates ~20 missed 30s runs before paging.
       - alert: stellarindex_keepalived_textfile_stale
-        expr: time() - node_textfile_mtime_seconds{file="keepalived.prom"} > 600
+        expr: time() - node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/keepalived.prom"} > 600
         for: 5m
         labels:
           severity: ticket
