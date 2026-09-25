@@ -18,6 +18,7 @@ class FakeEventSource {
   static CLOSED = 2;
   url: string;
   readyState = FakeEventSource.OPEN;
+  onopen: (() => void) | null = null;
   onerror: (() => void) | null = null;
   listeners = new Map<string, Set<(ev: MessageEvent) => void>>();
   closed = false;
@@ -41,9 +42,13 @@ class FakeEventSource {
     this.readyState = FakeEventSource.CLOSED;
   }
 
-  emit(type: string, data: string) {
+  open() {
+    this.onopen?.();
+  }
+
+  emit(type: string, data: string, lastEventId = '') {
     for (const fn of this.listeners.get(type) ?? []) {
-      fn({ data } as MessageEvent);
+      fn({ data, lastEventId } as MessageEvent);
     }
   }
 
@@ -181,5 +186,56 @@ describe('subscribeStream', () => {
     vi.advanceTimersByTime(10_000);
     expect(FakeEventSource.instances[0].closed).toBe(false);
     un2();
+  });
+
+  it('reopens with ?last_event_id= set to the last id seen (GH-1038)', () => {
+    const un = subscribeStream(
+      'http://x/v1/ledger/stream',
+      'ledger_update',
+      () => {},
+    );
+    FakeEventSource.instances[0].emit('ledger_update', '{"n":1}', '0001');
+    FakeEventSource.instances[0].hardFail();
+
+    vi.advanceTimersByTime(STREAM_REOPEN_MS + 1);
+    expect(FakeEventSource.instances).toHaveLength(2);
+    expect(FakeEventSource.instances[1].url).toBe(
+      'http://x/v1/ledger/stream?last_event_id=0001',
+    );
+    un();
+  });
+
+  it('drops a frame whose id is not greater than the last one rendered (#720)', () => {
+    const got: string[] = [];
+    const un = subscribeStream(
+      'http://x/v1/ledger/stream',
+      'ledger_update',
+      (d) => got.push(d),
+    );
+    const es = FakeEventSource.instances[0];
+    es.emit('ledger_update', '{"n":2}', '0002');
+    es.emit('ledger_update', '{"n":1}', '0001'); // redelivered/out-of-order
+    es.emit('ledger_update', '{"n":3}', '0003');
+
+    expect(got).toEqual(['{"n":2}', '{"n":3}']);
+    un();
+  });
+
+  it('surfaces live/reconnecting status to subscribers (GH-1038)', () => {
+    const statuses: string[] = [];
+    const un = subscribeStream(
+      'http://x/v1/ledger/stream',
+      'ledger_update',
+      () => {},
+      (status) => statuses.push(status),
+    );
+    expect(statuses).toEqual(['reconnecting']);
+
+    FakeEventSource.instances[0].open();
+    expect(statuses).toEqual(['reconnecting', 'live']);
+
+    FakeEventSource.instances[0].hardFail();
+    expect(statuses).toEqual(['reconnecting', 'live', 'reconnecting']);
+    un();
   });
 });
