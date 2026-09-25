@@ -21,6 +21,15 @@ type MetricsSnapshot struct {
 	// checks are implemented.
 	FilesMissing map[string]int
 
+	// ChecksExpected / ChecksFound are the per-archive checkpoint
+	// counts a run scanned. GH-1095: FilesMissing alone has no
+	// denominator, so `archive_files_missing == 0` reads identically
+	// whether a run scanned 2M checkpoints or zero (a vacuous range,
+	// see [Report.Vacuous]) — these two gauges let an alert require
+	// Expected > 0 before trusting a zero-missing reading.
+	ChecksExpected map[string]int
+	ChecksFound    map[string]int
+
 	// RunDurationSeconds is wall-clock for the whole verify run.
 	RunDurationSeconds float64
 
@@ -47,6 +56,8 @@ type MetricsSnapshot struct {
 func NewMetricsSnapshot() *MetricsSnapshot {
 	return &MetricsSnapshot{
 		FilesMissing:   map[string]int{},
+		ChecksExpected: map[string]int{},
+		ChecksFound:    map[string]int{},
 		RepairAttempts: map[string]int{},
 		RepairFailures: map[string]int{},
 	}
@@ -81,6 +92,16 @@ func WriteTextfile(w io.Writer, snapshot *MetricsSnapshot) error {
 		return nil
 	}
 	if err := writeFilesMissing(w, snapshot); err != nil {
+		return err
+	}
+	if err := writeGauge(w, "archive_checkpoints_expected",
+		"Count of checkpoint positions this run expected to find in the named archive (GH-1095 denominator).",
+		"archive", snapshot.ChecksExpected); err != nil {
+		return err
+	}
+	if err := writeGauge(w, "archive_checkpoints_found",
+		"Count of checkpoint positions this run actually found in the named archive.",
+		"archive", snapshot.ChecksFound); err != nil {
 		return err
 	}
 	if err := writeLastSuccess(w, snapshot); err != nil {
@@ -165,6 +186,26 @@ func writeRunDuration(w io.Writer, snapshot *MetricsSnapshot) error {
 			"archive_completeness_run_duration_seconds %.3f\n",
 		snapshot.RunDurationSeconds)
 	return err
+}
+
+// writeGauge emits a labelled gauge block, HELP/TYPE unconditionally
+// (like [writeFilesMissing]) so an empty map — no archive section
+// populated this run — still yields a well-formed, queryable series
+// rather than the metric vanishing from the scrape.
+func writeGauge(w io.Writer, name, help, labelKey string, samples map[string]int) error {
+	if _, err := fmt.Fprintf(w,
+		"# HELP %s %s\n# TYPE %s gauge\n",
+		name, help, name); err != nil {
+		return err
+	}
+	for _, label := range sortedKeys(samples) {
+		if _, err := fmt.Fprintf(w,
+			"%s{%s=%q} %d\n",
+			name, labelKey, label, samples[label]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // writeCounter emits a labelled counter block. Skip entirely on an
@@ -377,9 +418,13 @@ func (s *MetricsSnapshot) PopulateFromReport(r *Report) {
 	}
 	if r.CrossAnchor != nil {
 		s.FilesMissing["cross-anchor"] = r.CrossAnchor.MissingCount
+		s.ChecksExpected["cross-anchor"] = r.CrossAnchor.Expected
+		s.ChecksFound["cross-anchor"] = r.CrossAnchor.Found
 	}
 	if r.Primary != nil {
 		s.FilesMissing["galexie-archive"] = r.Primary.MissingCount
+		s.ChecksExpected["galexie-archive"] = r.Primary.Expected
+		s.ChecksFound["galexie-archive"] = r.Primary.Found
 	}
 }
 

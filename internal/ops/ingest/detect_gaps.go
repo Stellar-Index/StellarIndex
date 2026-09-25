@@ -15,15 +15,21 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// detectGaps compares every per-source cursor against the
-// stellar-rpc network tip and reports any source lagging by more
-// than `threshold` ledgers. Exits non-zero when at least one source
-// is lagging so the command works as a prometheus-style health
-// probe from a cron / k8s Job.
+// detectGaps compares every LIVE per-source cursor (see
+// [timescale.LiveCursorSources]) against the stellar-rpc network tip
+// and reports any source lagging by more than `threshold` ledgers.
+// One-shot job namespaces (backfill, projected-rebuild, …) are
+// excluded — their last_ledger is a historical range end, not a
+// live position, so including them can only produce false LAGGING
+// verdicts (CA2-A19-correct-9). Exits non-zero when at least one live
+// source is lagging, or when no live cursor exists at all, so the
+// command works as a prometheus-style health probe from a cron / k8s
+// Job.
 //
-// For sources that track multiple sub-cursors (Soroswap per-pair
-// cursors), the MINIMUM last-ledger across the source's rows is
-// used — we care about the slowest position, not the fastest.
+// For sources that track multiple sub-cursors (the projector tracks
+// one per registered decoder), the MINIMUM last-ledger across the
+// source's rows is used — we care about the slowest position, not
+// the fastest.
 func detectGaps(args []string) error {
 	fs := flag.NewFlagSet("detect-gaps", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -71,8 +77,14 @@ func detectGaps(args []string) error {
 
 	minBySource := minLedgerBySource(cursors)
 	if len(minBySource) == 0 {
-		fmt.Printf("(no cursors stored — nothing to check against tip %d)\n", tip.Sequence)
-		return nil
+		// CA2-A19-correct-9 / GH-1095: an empty (or all-one-shot)
+		// cursor table is exactly the "every live source is stalled"
+		// state this probe exists to catch — it must not read as ok.
+		// Runbooks (ingestion-lag, insert-errors, ledger-ingest-stalled)
+		// send an operator here expecting a non-zero exit to mean
+		// something; a silent 0 buried that signal.
+		return fmt.Errorf("no live cursor (%v) found against tip %d — ingest may never have started or every live cursor was lost",
+			timescale.LiveCursorSources(), tip.Sequence)
 	}
 
 	lagging := writeGapReport(os.Stdout, minBySource, tip.Sequence, uint32(*threshold))
@@ -83,12 +95,27 @@ func detectGaps(args []string) error {
 	return nil
 }
 
-// minLedgerBySource reduces cursors to the minimum LastLedger per source.
-// For sources that track multiple sub-cursors (Soroswap per-pair cursors),
-// this is the slowest position, not the fastest.
+// minLedgerBySource reduces cursors to the minimum LastLedger per source,
+// restricted to [timescale.LiveCursorSources] (ledgerstream, projector).
+//
+// CA2-A19-correct-9: ingestion_cursors also holds one-shot job shards
+// (backfill, projected-rebuild, census-backfill, tag-signer,
+// backfill-router, …) whose last_ledger is a historical range end by
+// design — a FINISHED shard's row never advances again. Without this
+// filter those namespaces reported LAGGING by millions of ledgers on a
+// perfectly healthy system, because the probe couldn't tell "stuck"
+// from "done". reap-cursors and /v1/diagnostics/cursors already draw
+// this same line (see [timescale.IsLiveCursorSource]'s doc comment);
+// this was the one consumer of ListCursors that hadn't been wired to it.
+//
+// For sources that track multiple sub-cursors (the projector tracks one
+// per registered decoder), this is the slowest position, not the fastest.
 func minLedgerBySource(cursors []timescale.Cursor) map[string]uint32 {
 	minBySource := map[string]uint32{}
 	for _, c := range cursors {
+		if !timescale.IsLiveCursorSource(c.Source) {
+			continue
+		}
 		if cur, ok := minBySource[c.Source]; !ok || c.LastLedger < cur {
 			minBySource[c.Source] = c.LastLedger
 		}

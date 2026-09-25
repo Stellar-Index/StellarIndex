@@ -50,6 +50,40 @@ func TestWriteTextfile_BasicShape(t *testing.T) {
 	}
 }
 
+// TestWriteTextfile_ChecksExpectedFoundDenominator — GH-1095: a zero
+// archive_files_missing reading is indistinguishable from "nothing
+// was scanned" (a vacuous range) unless a denominator ships with it.
+// PopulateFromReport must carry Expected/Found onto the textfile so
+// an alert can require checkpoints_expected > 0 before trusting a
+// clean archive_files_missing reading.
+func TestWriteTextfile_ChecksExpectedFoundDenominator(t *testing.T) {
+	snap := archivecompleteness.NewMetricsSnapshot()
+	report := archivecompleteness.NewReport(100, 200)
+	report.SetCrossAnchor("/mnt/archive", archivecompleteness.CrossAnchorResult{
+		Expected: 1024,
+		Found:    1024,
+	})
+	snap.PopulateFromReport(report)
+
+	var buf bytes.Buffer
+	if err := archivecompleteness.WriteTextfile(&buf, snap); err != nil {
+		t.Fatalf("WriteTextfile: %v", err)
+	}
+	out := buf.String()
+
+	expectedSubstrings := []string{
+		"# TYPE archive_checkpoints_expected gauge",
+		`archive_checkpoints_expected{archive="cross-anchor"} 1024`,
+		"# TYPE archive_checkpoints_found gauge",
+		`archive_checkpoints_found{archive="cross-anchor"} 1024`,
+	}
+	for _, want := range expectedSubstrings {
+		if !strings.Contains(out, want) {
+			t.Errorf("textfile output missing %q\n--- got ---\n%s", want, out)
+		}
+	}
+}
+
 // TestWriteTextfile_EmptySnapshotProducesOnlyHelp — a snapshot with
 // no missing files and no repair activity should still emit
 // well-formed output (just the help/type for files_missing, with
