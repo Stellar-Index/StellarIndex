@@ -36,8 +36,7 @@ func embedInputs(t *testing.T, root string) []string {
 			return err
 		}
 		if d.IsDir() {
-			switch d.Name() {
-			case ".git", ".claude", "web", "node_modules", "vendor":
+			if p != root && (d.Name() == "web" || outsideModule(p, d.Name())) {
 				return filepath.SkipDir
 			}
 			return nil
