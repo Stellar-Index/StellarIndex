@@ -468,12 +468,21 @@ type scoredRoute struct {
 //     best independent path sets the trust floor). Conservative: it
 //     never claims more than the single strongest surviving route, even
 //     though agreement across routes is itself corroborating.
-//   - pathCount: the number of surviving routes that back the SERVED
-//     composite (survivors after outlier omission). This is the serving
-//     multiplicity carried on the composite meta — NOT the number the
-//     freeze trusts. It stays 1 for a single-route target (the whole
-//     production config today), byte-identical to the pre-corroboration
-//     behaviour.
+//   - servedRouteCount: the number of routes that actually produced the
+//     served composite — the size of the highest-confidence tier, AFTER
+//     its own outlier omission (see [highestConfidencePrice]). This is the
+//     count that answers "how many routes back this value". 1 for a
+//     single-route target (the whole production config today).
+//   - pathCount: the number of surviving routes in the full gated set
+//     (survivors after outlier omission over ALL gated routes, not just the
+//     top tier). This is the serving multiplicity historically carried on
+//     the composite meta — NOT the number that produced the served value
+//     (GH-1022: the two sets can be disjoint, e.g. a thin divergent
+//     majority survives median-relative omission while the served price
+//     came from a single top-confidence outlier route) — and NOT the
+//     number the freeze trusts. It stays 1 for a single-route target (the
+//     whole production config today), byte-identical to the
+//     pre-corroboration behaviour.
 //   - corroborationCount: the number of INDEPENDENT, TIGHTLY-AGREEING,
 //     NON-DIVERGED routes that back the composite — the anti-manipulation
 //     count Step 2 feeds into the anomaly-freeze source_count leg. This is
@@ -506,16 +515,16 @@ type scoredRoute struct {
 // "confident").
 func CombineRoutes(
 	edges []RouteLeg, base, quote canonical.Asset, maxHops int, minConfidence float64,
-) (composite *big.Rat, combinedConfidence float64, pathCount, corroborationCount int, diverged, lowConfidence bool, err error) {
+) (composite *big.Rat, combinedConfidence float64, servedRouteCount, pathCount, corroborationCount int, diverged, lowConfidence bool, err error) {
 	all := FindRoutes(edges, base, quote, maxHops, false)
 	routes := keepShortest(all)
 	if len(routes) == 0 {
-		return nil, 0, 0, 0, false, false, ErrNoRoute
+		return nil, 0, 0, 0, 0, false, false, ErrNoRoute
 	}
 
 	scored, serr := scoreRoutes(routes)
 	if serr != nil {
-		return nil, 0, 0, 0, false, false, serr
+		return nil, 0, 0, 0, 0, false, false, serr
 	}
 
 	gated, lowConf := gateByConfidence(scored, minConfidence)
@@ -527,8 +536,10 @@ func CombineRoutes(
 	// otherwise make the highest-confidence route the price-median outlier
 	// and evict it, letting the majority set the served price. Only the
 	// most-trusted route(s) set the value (see [highestConfidencePrice]); its
-	// confidence is the confidence we report.
-	composite = highestConfidencePrice(gated)
+	// confidence is the confidence we report. servedRouteCount is that tier's
+	// size (GH-1022): the route count that actually produced composite, kept
+	// separate from pathCount below because the two sets can be disjoint.
+	composite, servedRouteCount = highestConfidencePrice(gated)
 	combinedConfidence = maxConfidence(gated)
 
 	// DIVERGENCE + CORROBORATION are computed over the full gated route set
@@ -536,7 +547,8 @@ func CombineRoutes(
 	// corroborates and can trip diverged; it just cannot move the served
 	// price above. pathCount is the surviving serving multiplicity carried on
 	// the composite meta (NOT what the freeze trusts — that is
-	// corroborationCount).
+	// corroborationCount, and NOT what produced the served value — that is
+	// servedRouteCount above).
 	keep := omitOutlierIndices(pricesOf(gated), routerOutlierPermitPct)
 	survivors := make([]scoredRoute, 0, len(keep))
 	for _, i := range keep {
@@ -551,12 +563,12 @@ func CombineRoutes(
 		// it displaced; disagreeing with that set is divergence.
 		longer, lerr := nextTierDisagrees(composite, all, len(routes[0]), minConfidence)
 		if lerr != nil {
-			return nil, 0, 0, 0, false, false, lerr
+			return nil, 0, 0, 0, 0, false, false, lerr
 		}
 		diverged = longer
 	}
 	corroborationCount = corroboratingRouteCount(survivors, diverged)
-	return composite, combinedConfidence, pathCount, corroborationCount, diverged, lowConf, nil
+	return composite, combinedConfidence, servedRouteCount, pathCount, corroborationCount, diverged, lowConf, nil
 }
 
 // nextTierDisagrees reports whether the served composite differs by more
@@ -681,7 +693,12 @@ func maxConfidence(scored []scoredRoute) float64 {
 // confidence never described. best is always some route's confidence (L5
 // sanitizes any non-finite confidence), so the top tier is never empty when
 // routes is non-empty.
-func highestConfidencePrice(routes []scoredRoute) *big.Rat {
+// It also returns the size of the top tier AFTER its own outlier omission —
+// the route count that actually produced the returned price, reported by
+// CombineRoutes as servedRouteCount (GH-1022: distinct from pathCount, the
+// post-omission survivor count of the full gated set, which can be a
+// disjoint route population).
+func highestConfidencePrice(routes []scoredRoute) (*big.Rat, int) {
 	best := maxConfidence(routes)
 	top := make([]*big.Rat, 0, len(routes))
 	for _, s := range routes {
@@ -693,7 +710,7 @@ func highestConfidencePrice(routes []scoredRoute) *big.Rat {
 	// blending, then serve a value a route ACTUALLY produced (member median,
 	// never an averaged midpoint of two disagreeing routes).
 	top = OmitOutliers(top, routerOutlierPermitPct)
-	return medianMemberRat(top)
+	return medianMemberRat(top), len(top)
 }
 
 // spreadExceeds reports whether the max−min spread of vals exceeds pct
