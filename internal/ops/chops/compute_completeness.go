@@ -1303,23 +1303,29 @@ func detectFloorLoss(src reconSource, servedMins []servedFloor, floors map[strin
 // half of recordFloors.
 //
 // It records scopes[i].From — the ledger the reconcile genuinely started at —
-// NOT the target's raw MIN(ledger). On a narrowed `-from` run those differ,
-// and claiming to have verified from MIN when the run began higher would be a
-// lie the next run then trusts. The store applies LEAST(), so a narrowed run's
-// higher value is a harmless no-op and only a genuinely deeper run lowers the
-// floor.
+// NOT the target's raw MIN(ledger), and ONLY when that scope actually reached
+// the target's true bottom edge (scopes[i].From <= servedMins[i].min). A
+// narrowed `-from`/incremental run (projectionFloor resuming from a prior
+// watermark) clips the scope ABOVE the served tier's real minimum, so this
+// run has no evidence about the range below the clip: recording
+// scopes[i].From there would assert a floor higher than what is genuinely
+// served, disarming detectFloorLoss against loss in that unverified gap
+// (GH-671). This is not the harmless LEAST() no-op it looks like — LEAST()
+// only protects a target that ALREADY has a lower floor; a target with none
+// yet gets this inflated value banked outright on its first clean incremental
+// pass.
 //
-// A target holding NO served rows is SKIPPED, and that skip is the whole
-// reason this is a separate function. targetScope floors an empty target at
-// `genesis` (fail closed, so expected>0 vs served=0 reconciles as loss), and
-// recording THAT as a verified floor asserts something the run never saw: a
-// clean reconcile of an empty target proves only "0 expected, 0 served", not
-// "this table's rows have been verified present from genesis". The next run
-// where the table legitimately acquires its first row at ledger L then reads
-// MIN=L > genesis and detectFloorLoss reports L−genesis ledgers "GONE" — a
-// permanent false projection failure, because UpsertCompletenessTargetFloor's
-// LEAST() can never raise the floor back and detectFloorLoss's own verdict
-// blocks re-recording. Every late-starting target reaches production through
+// A target holding NO served rows is SKIPPED too, and for the same underlying
+// reason: targetScope floors an empty target at `genesis` (fail closed, so
+// expected>0 vs served=0 reconciles as loss), and recording THAT as a
+// verified floor asserts something the run never saw: a clean reconcile of an
+// empty target proves only "0 expected, 0 served", not "this table's rows
+// have been verified present from genesis". The next run where the table
+// legitimately acquires its first row at ledger L then reads MIN=L > genesis
+// and detectFloorLoss reports L−genesis ledgers "GONE" — a permanent false
+// projection failure, because UpsertCompletenessTargetFloor's LEAST() can
+// never raise the floor back and detectFloorLoss's own verdict blocks
+// re-recording. Every late-starting target reaches production through
 // exactly this path: a source whose first event has not happened yet (a rare
 // skim, a newly watched SEP-41 contract promoted into the catalogue). No rows
 // means no evidence about where the rows begin — so record nothing and let
@@ -1330,7 +1336,14 @@ func floorsToRecord(src reconSource, scopes []projectionScope, servedMins []serv
 		if i >= len(scopes) || i >= len(servedMins) {
 			break
 		}
-		if !servedMins[i].present {
+		sm := servedMins[i]
+		if !sm.present {
+			continue
+		}
+		if scopes[i].From > sm.min {
+			// Clipped by an incremental floor above the true served
+			// minimum — this run verified nothing below the clip, so
+			// it cannot bank a floor there.
 			continue
 		}
 		out = append(out, timescale.CompletenessTargetFloor{

@@ -968,6 +968,57 @@ func TestFloorsToRecord_EmptyTargetEarnsNoFloor(t *testing.T) {
 	}
 }
 
+// TestFloorsToRecord_IncrementalScopeCannotBankAFloorAboveTheServedMin is the
+// GH-671 sub-item 2 regression. An incremental run (projectionFloor resuming
+// from a prior watermark, or a whole-pass `-pass` reconcile) clips a target's
+// scope ABOVE its true served minimum, so the run has no evidence about the
+// range below the clip. Banking scopes[i].From there anyway hands
+// detectFloorLoss a floor higher than what the served tier genuinely holds,
+// disarming it against real loss in that unverified gap — and because
+// UpsertCompletenessTargetFloor's LEAST() only protects a target that
+// ALREADY has a lower recorded floor, a target with none yet (its very first
+// floor row) gets the inflated value banked outright.
+func TestFloorsToRecord_IncrementalScopeCannotBankAFloorAboveTheServedMin(t *testing.T) {
+	const (
+		genesis    = uint32(50_746_266)
+		trueMin    = uint32(55_000_000) // the target's real served bottom edge
+		clippedLow = uint32(62_000_000) // incremental run's projectionFloor start
+		tip        = uint32(63_000_000)
+	)
+	src := reconSource{
+		name:    "phoenix",
+		genesis: genesis,
+		targets: []reconTarget{
+			{table: "trades", whereFilter: "source = 'phoenix'"},
+		},
+	}
+
+	served := []servedFloor{{min: trueMin, present: true}}
+	// The incremental run's scope is clipped to start at clippedLow, well
+	// above the target's true served minimum — exactly what an incremental
+	// projectionFloor resume produces.
+	scopes := []projectionScope{
+		targetScope(trueMin, true, genesis, clippedLow, tip),
+	}
+	if scopes[0].From != clippedLow {
+		t.Fatalf("fixture invalid: expected the incremental floor to clip the scope to %d, got %d",
+			clippedLow, scopes[0].From)
+	}
+
+	recorded := floorsToRecord(src, scopes, served)
+	for _, f := range recorded {
+		if f.Table == "trades" {
+			t.Fatalf("floorsToRecord banked verified_from=%d for an incremental scope whose true "+
+				"served minimum is %d — this run never verified the %d-ledger gap between them, so "+
+				"a later loss inside that gap reads as sm.min(%d) <= VerifiedFrom(%d) and "+
+				"detectFloorLoss stays silent", f.VerifiedFrom, trueMin, clippedLow-trueMin, trueMin, f.VerifiedFrom)
+		}
+	}
+	if len(recorded) != 0 {
+		t.Fatalf("floorsToRecord = %+v, want no floor recorded for a clipped incremental scope", recorded)
+	}
+}
+
 // TestSubstrateClaim_IncrementalRunCannotUpgradeAFailingLakeVerdict is the
 // C4-057 regression, and the exact twin of
 // TestProjectionClaim_IncrementalRunCannotUpgradeAFailingVerdict one axis over.
