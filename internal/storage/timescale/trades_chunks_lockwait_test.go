@@ -37,18 +37,14 @@ func (e lockTimeoutErr) Error() string {
 func (e lockTimeoutErr) SQLState() string { return e.code }
 
 // lockRefused scripts one attempt that loses the lock race: the
-// transaction's `SET LOCAL lock_timeout` succeeds, the explicit `LOCK
-// TABLE` it bounds comes back 55P03 — acquisition, never the statement
-// that does the actual (potentially ~1.5h) work, which by construction
-// never runs on a refused attempt.
+// transaction's `SET LOCAL lock_timeout` succeeds, the statement it
+// bounds comes back 55P03.
 func lockRefused() []scriptedResult {
 	return []scriptedResult{{}, {err: lockTimeoutErr{code: pgLockNotAvailable}}}
 }
 
-// lockGranted scripts one attempt that gets the lock: the bound, the
-// explicit LOCK TABLE it protects, the bound being lifted, and the
-// statement that does the actual work.
-func lockGranted() []scriptedResult { return []scriptedResult{{}, {}, {}, {}} }
+// lockGranted scripts one attempt that gets the lock.
+func lockGranted() []scriptedResult { return []scriptedResult{{}, {}} }
 
 func countStatements(stmts []string, substr string) int {
 	n := 0
@@ -94,8 +90,8 @@ func TestDecompressTradesChunk_BoundsThePendingLockRequest(t *testing.T) {
 				t.Fatalf("err = %v", err)
 			}
 			got := conn.statements()
-			if len(got) != 4 {
-				t.Fatalf("issued %d statements, want 4 (the lock bound, the explicit lock, the bound lifted, the statement):\n%s", len(got), strings.Join(got, "\n"))
+			if len(got) != 2 {
+				t.Fatalf("issued %d statements, want 2 (the lock bound + the statement):\n%s", len(got), strings.Join(got, "\n"))
 			}
 			// The bound is the policy's own value, not a literal that can
 			// drift away from it.
@@ -106,17 +102,8 @@ func TestDecompressTradesChunk_BoundsThePendingLockRequest(t *testing.T) {
 			if got[0] != want {
 				t.Errorf("statement 0 = %q, want %q", got[0], want)
 			}
-			if !strings.Contains(got[1], "LOCK TABLE") || !strings.Contains(got[1], "ACCESS EXCLUSIVE MODE") {
-				t.Errorf("statement 1 = %q, want an explicit LOCK TABLE ... IN ACCESS EXCLUSIVE MODE — the lock must be taken BEFORE the work runs", got[1])
-			}
-			// GH-727: the bound must be LIFTED once the lock is held, so
-			// the statement that does the actual (up to ~1.5h) work can
-			// never be aborted by lock_timeout mid-flight.
-			if got[2] != "SET LOCAL lock_timeout = 0" {
-				t.Errorf("statement 2 = %q, want the bound lifted before the work statement", got[2])
-			}
-			if !strings.Contains(got[3], tc.stmt) {
-				t.Errorf("statement 3 = %q, want %s", got[3], tc.stmt)
+			if !strings.Contains(got[1], tc.stmt) {
+				t.Errorf("statement 1 = %q, want %s", got[1], tc.stmt)
 			}
 			// Transaction-scoped: the driver saw a COMMIT, so POSTGRES
 			// unwinds the GUC rather than the pool inheriting it.
@@ -141,23 +128,16 @@ func TestExecUnderBoundedLockWait_RetriesARefusedLock(t *testing.T) {
 	store, conn := newScriptedStore(t, script...)
 
 	fast := lockWaitPolicy{wait: 5 * time.Second, drain: time.Millisecond, budget: time.Minute}
-	err := store.execUnderBoundedLockWait(context.Background(), fast, "_timescaledb_internal", "_hyper_1_10_chunk", tradesChunkCompress)
+	err := store.execUnderBoundedLockWait(context.Background(), fast, tradesChunkCompress, "_timescaledb_internal", "_hyper_1_10_chunk")
 	if err != nil {
 		t.Fatalf("err = %v, want the fourth attempt to succeed", err)
 	}
-	// The refused attempts fail at the explicit LOCK TABLE (acquisition);
-	// GH-727 was that compress_chunk itself — the ~1.5h statement — used
-	// to be what raced the timeout, so it must run exactly once, on the
-	// attempt that actually got the lock.
-	if n := countStatements(conn.statements(), "compress_chunk("); n != 1 {
-		t.Errorf("issued %d compress statements, want 1 — a refused attempt must never reach the actual work", n)
-	}
-	if n := countStatements(conn.statements(), "LOCK TABLE"); n != 4 {
-		t.Errorf("issued %d lock-acquisition attempts, want 4 (three refused, one granted)", n)
+	if n := countStatements(conn.statements(), "compress_chunk("); n != 4 {
+		t.Errorf("issued %d compress attempts, want 4 (three refused, one granted)", n)
 	}
 	// EVERY attempt is bounded, not just the first: an unbounded retry
 	// would park exactly the pending request the first one withdrew.
-	if n := countStatements(conn.statements(), "SET LOCAL lock_timeout = '5000ms'"); n != 4 {
+	if n := countStatements(conn.statements(), "SET LOCAL lock_timeout"); n != 4 {
 		t.Errorf("%d of the 4 attempts bounded their lock wait, want all 4", n)
 	}
 }
@@ -175,7 +155,7 @@ func TestExecUnderBoundedLockWait_GivesUpNamingTheConvoy(t *testing.T) {
 	store, conn := newScriptedStore(t, script...)
 
 	stubborn := lockWaitPolicy{wait: 5 * time.Second, drain: 5 * time.Millisecond, budget: 40 * time.Millisecond}
-	err := store.execUnderBoundedLockWait(context.Background(), stubborn, "_timescaledb_internal", "_hyper_1_10_chunk", tradesChunkDecompress)
+	err := store.execUnderBoundedLockWait(context.Background(), stubborn, tradesChunkDecompress, "_timescaledb_internal", "_hyper_1_10_chunk")
 	if err == nil {
 		t.Fatal("err = nil, want the exhausted budget to surface")
 	}
@@ -187,11 +167,8 @@ func TestExecUnderBoundedLockWait_GivesUpNamingTheConvoy(t *testing.T) {
 			t.Errorf("err = %v, want containing %q", err, want)
 		}
 	}
-	if n := countStatements(conn.statements(), "LOCK TABLE"); n < 2 {
+	if n := countStatements(conn.statements(), "decompress_chunk("); n < 2 {
 		t.Errorf("made %d attempt(s) before giving up, want it to retry at least once", n)
-	}
-	if n := countStatements(conn.statements(), "decompress_chunk("); n != 0 {
-		t.Errorf("made %d decompress_chunk call(s), want 0 — every attempt was refused at acquisition, never reaching the actual work", n)
 	}
 }
 
@@ -202,14 +179,10 @@ func TestExecUnderBoundedLockWait_GivesUpNamingTheConvoy(t *testing.T) {
 func TestExecUnderBoundedLockWait_DoesNotRetryOtherErrors(t *testing.T) {
 	t.Parallel()
 	boom := errors.New("compress_chunk: could not extend file: No space left on device")
-	// The lock is acquired cleanly (SET LOCAL, LOCK TABLE, SET LOCAL 0) and
-	// the failure lands on the actual work statement — standing in for a
-	// long compress_chunk call that fails for a reason that has nothing to
-	// do with the lock at all.
-	store, conn := newScriptedStore(t, scriptedResult{}, scriptedResult{}, scriptedResult{}, scriptedResult{err: boom})
+	store, conn := newScriptedStore(t, scriptedResult{}, scriptedResult{err: boom})
 
 	fast := lockWaitPolicy{wait: 5 * time.Second, drain: time.Millisecond, budget: time.Minute}
-	err := store.execUnderBoundedLockWait(context.Background(), fast, "_timescaledb_internal", "_hyper_1_10_chunk", tradesChunkCompress)
+	err := store.execUnderBoundedLockWait(context.Background(), fast, tradesChunkCompress, "_timescaledb_internal", "_hyper_1_10_chunk")
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want the driver's error unchanged", err)
 	}
@@ -239,14 +212,14 @@ func TestExecUnderBoundedLockWait_StopsOnCancellation(t *testing.T) {
 	slow := lockWaitPolicy{wait: 5 * time.Second, drain: time.Hour, budget: 24 * time.Hour}
 	time.AfterFunc(50*time.Millisecond, cancel)
 	start := time.Now()
-	err := store.execUnderBoundedLockWait(ctx, slow, "_timescaledb_internal", "_hyper_1_10_chunk", tradesChunkDecompress)
+	err := store.execUnderBoundedLockWait(ctx, slow, tradesChunkDecompress, "_timescaledb_internal", "_hyper_1_10_chunk")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 	if elapsed := time.Since(start); elapsed > 30*time.Second {
 		t.Errorf("took %s to notice the cancellation; it waited out the drain", elapsed)
 	}
-	if n := countStatements(conn.statements(), "LOCK TABLE"); n != 1 {
+	if n := countStatements(conn.statements(), "decompress_chunk("); n != 1 {
 		t.Errorf("made %d attempts on a cancelled context, want 1", n)
 	}
 }

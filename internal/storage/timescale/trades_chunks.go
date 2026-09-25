@@ -9,8 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 // ─── `trades` chunk primitives for the chunk-wise usd_volume restamp ───
@@ -121,7 +119,7 @@ const (
 // Its exclusive lock is acquired under a bounded wait and retried — see
 // the convoy note below.
 func (s *Store) DecompressTradesChunk(ctx context.Context, c TradeChunk) error {
-	if err := s.execUnderBoundedLockWait(ctx, tradesChunkDecompressLock, c.Schema, c.Name, tradesChunkDecompress); err != nil {
+	if err := s.execUnderBoundedLockWait(ctx, tradesChunkDecompressLock, tradesChunkDecompress, c.Schema, c.Name); err != nil {
 		return fmt.Errorf("timescale: decompress chunk %s: %w", c, err)
 	}
 	return nil
@@ -132,7 +130,7 @@ func (s *Store) DecompressTradesChunk(ctx context.Context, c TradeChunk) error {
 // with a far larger retry budget, because giving up here LEAVES THE CHUNK
 // DECOMPRESSED — see the convoy note below.
 func (s *Store) CompressTradesChunk(ctx context.Context, c TradeChunk) error {
-	if err := s.execUnderBoundedLockWait(ctx, tradesChunkCompressLock, c.Schema, c.Name, tradesChunkCompress); err != nil {
+	if err := s.execUnderBoundedLockWait(ctx, tradesChunkCompressLock, tradesChunkCompress, c.Schema, c.Name); err != nil {
 		return fmt.Errorf("timescale: compress chunk %s: %w", c, err)
 	}
 	return nil
@@ -258,12 +256,11 @@ func isLockNotAvailable(err error) bool {
 	return false
 }
 
-// execUnderBoundedLockWait runs one statement against `schema.name` in its
-// own transaction, retrying for as long as the ONLY thing that failed was
-// the chunk's exclusive lock ACQUISITION and the policy has budget left.
-// Any other error is returned on the spot — a retry loop that swallowed,
-// say, an out-of-disk compress would be a worse bug than the one this
-// fixes.
+// execUnderBoundedLockWait runs one statement in its own transaction under
+// `SET LOCAL lock_timeout`, retrying for as long as the ONLY thing that
+// failed was the lock acquisition and the policy has budget left. Any
+// other error is returned on the spot — a retry loop that swallowed, say,
+// an out-of-disk compress would be a worse bug than the one this fixes.
 //
 // `SET LOCAL`, and POSTGRES scopes it — not the driver. A session-level
 // `SET` on a pooled connection outlives the call (pgx v5's stdlib adapter
@@ -271,10 +268,10 @@ func isLockNotAvailable(err error) bool {
 // every later statement that landed on that connection; COMMIT/ROLLBACK
 // unwinds LOCAL even on the error path. Same discipline as the
 // decompression cap in [Store.RestampExactTierUSDVolume].
-func (s *Store) execUnderBoundedLockWait(ctx context.Context, p lockWaitPolicy, schema, name, query string) error {
+func (s *Store) execUnderBoundedLockWait(ctx context.Context, p lockWaitPolicy, query string, args ...any) error {
 	deadline := time.Now().Add(p.budget)
 	for attempt := 1; ; attempt++ {
-		err := s.execUnderLockTimeout(ctx, p.wait, schema, name, query)
+		err := s.execUnderLockTimeout(ctx, p.wait, query, args...)
 		if err == nil {
 			return nil
 		}
@@ -296,19 +293,8 @@ func (s *Store) execUnderBoundedLockWait(ctx context.Context, p lockWaitPolicy, 
 	}
 }
 
-// execUnderLockTimeout is one attempt, and the bound applies to ACQUISITION
-// ONLY: BEGIN, bound the wait, take the chunk's AccessExclusiveLock
-// explicitly with a plain LOCK TABLE, then LIFT the bound before running
-// the actual decompress_chunk/compress_chunk — which, holding that same
-// lock already, gets it back instantly and is then free to run for however
-// long it needs without a competing request being able to abort it
-// mid-flight. Folding the whole statement under one `lock_timeout`, as this
-// used to, armed the bound for the AccessExclusiveLock decompress_chunk /
-// compress_chunk itself takes at the END of its (up to ~1.5 h) work, so a
-// late 55P03 could discard an attempt's full duration — far more than
-// either retry budget — while [execUnderBoundedLockWait] priced it as one
-// cheap, bounded try.
-func (s *Store) execUnderLockTimeout(ctx context.Context, wait time.Duration, schema, name, query string) error {
+// execUnderLockTimeout is one attempt: BEGIN, bound the wait, run, COMMIT.
+func (s *Store) execUnderLockTimeout(ctx context.Context, wait time.Duration, query string, args ...any) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -317,14 +303,7 @@ func (s *Store) execUnderLockTimeout(ctx context.Context, wait time.Duration, sc
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL lock_timeout = '%dms'", wait.Milliseconds())); err != nil {
 		return err
 	}
-	lockStmt := "LOCK TABLE " + (pgx.Identifier{schema, name}).Sanitize() + " IN ACCESS EXCLUSIVE MODE"
-	if _, err := tx.ExecContext(ctx, lockStmt); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, "SET LOCAL lock_timeout = 0"); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, query, schema, name); err != nil {
+	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 		return err
 	}
 	return tx.Commit()
