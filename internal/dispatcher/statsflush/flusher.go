@@ -70,6 +70,28 @@ type Flusher struct {
 	// Cumulative counters captured on the previous tick. Subtracting
 	// from current values yields the delta for this bucket.
 	last dispatcher.Stats
+
+	// obsLast baselines the dispatcher-level Prometheus counters
+	// (TxReadErrors, TxEventReadErrors, EntryMetaUnsupported)
+	// separately from last. Those obs.Add + WARN emissions happen
+	// unconditionally, before InsertDecoderStats, so they must not
+	// share a baseline with the per-source DB rows: INT-05
+	// deliberately holds `last` back on a write failure so the next
+	// successful insert recovers the dropped window, but that same
+	// hold-back would otherwise replay the identical counter delta
+	// and WARN on every subsequent tick until a new occurrence
+	// finally moves `current` past the stuck baseline (CA2-A25-
+	// harden-3). obsLast advances right after each emission,
+	// independent of whether the DB write that follows succeeds.
+	obsLast dispatcherObsCounters
+}
+
+// dispatcherObsCounters is the baseline for the dispatcher-level
+// counters promoted straight to Prometheus (see obsLast).
+type dispatcherObsCounters struct {
+	TxReadErrors         int
+	TxEventReadErrors    int
+	EntryMetaUnsupported int
 }
 
 // Options tunes a Flusher at construction time.
@@ -191,7 +213,7 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 	// counter (RLT-135). The counter sits outside the per-source row
 	// schema (LedgerTransactionReader.Read failures aren't attributable
 	// to a source) so the statsflush hypertable can't carry it.
-	if delta := current.TxReadErrors - f.last.TxReadErrors; delta > 0 {
+	if delta := current.TxReadErrors - f.obsLast.TxReadErrors; delta > 0 {
 		f.logger.Warn("dispatcher: tx-read errors during this flush window",
 			"delta", delta,
 			"total", current.TxReadErrors,
@@ -199,13 +221,14 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 		)
 		obs.DispatcherTxReadErrorsTotal.Add(float64(delta))
 	}
+	f.obsLast.TxReadErrors = current.TxReadErrors
 
 	// G15-06: a climbing tx-event-read-error count means
 	// GetTransactionEvents is failing (e.g. an unsupported future meta
 	// version), silently dropping every tx's Soroban events. Surfaced at
 	// WARN so the break is visible rather than masquerading as clean
 	// (empty) ledgers that the completeness reconcile would still pass.
-	if delta := current.TxEventReadErrors - f.last.TxEventReadErrors; delta > 0 {
+	if delta := current.TxEventReadErrors - f.obsLast.TxEventReadErrors; delta > 0 {
 		f.logger.Warn("dispatcher: tx-event read errors during this flush window — Soroban events being dropped",
 			"delta", delta,
 			"total", current.TxEventReadErrors,
@@ -213,6 +236,7 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 		)
 		obs.DispatcherTxEventReadErrorsTotal.Add(float64(delta))
 	}
+	f.obsLast.TxEventReadErrors = current.TxEventReadErrors
 
 	// An unhandled TransactionMeta version stops the apply-phase entry
 	// change walk for that tx — every classic balance / trustline / offer
@@ -220,7 +244,7 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 	// indistinguishable from a ledger in which nothing happened. Same
 	// WARN treatment as the sibling tx-event break above, and for the
 	// same reason (cold audit 2026-08-04).
-	if delta := current.EntryMetaUnsupported - f.last.EntryMetaUnsupported; delta > 0 {
+	if delta := current.EntryMetaUnsupported - f.obsLast.EntryMetaUnsupported; delta > 0 {
 		f.logger.Warn("dispatcher: unsupported TransactionMeta version during this flush window — apply-phase entry changes being skipped",
 			"delta", delta,
 			"total", current.EntryMetaUnsupported,
@@ -228,6 +252,7 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 		)
 		obs.DispatcherEntryMetaUnsupportedTotal.Add(float64(delta))
 	}
+	f.obsLast.EntryMetaUnsupported = current.EntryMetaUnsupported
 
 	if len(rows) > 0 {
 		if err := f.store.InsertDecoderStats(ctx, rows); err != nil {
@@ -246,14 +271,16 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 
 	// Snapshot for next-tick delta computation. Make a copy of the
 	// maps so concurrent dispatcher writes can't mutate our reference.
+	// TxReadErrors/TxEventReadErrors/EntryMetaUnsupported are NOT
+	// carried here — obsLast (advanced above, independent of write
+	// success) is their baseline; folding them into this DB-row
+	// snapshot would re-couple them to INT-05's hold-back-on-failure
+	// behaviour.
 	f.last = dispatcher.Stats{
-		EventsSeen:           copyIntMap(current.EventsSeen),
-		DecodeErrors:         copyIntMap(current.DecodeErrors),
-		OrphanEvents:         copyIntMap(current.OrphanEvents),
-		UnmatchedHits:        current.UnmatchedHits,
-		TxReadErrors:         current.TxReadErrors,
-		TxEventReadErrors:    current.TxEventReadErrors,
-		EntryMetaUnsupported: current.EntryMetaUnsupported,
+		EventsSeen:    copyIntMap(current.EventsSeen),
+		DecodeErrors:  copyIntMap(current.DecodeErrors),
+		OrphanEvents:  copyIntMap(current.OrphanEvents),
+		UnmatchedHits: current.UnmatchedHits,
 	}
 }
 
