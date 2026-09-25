@@ -669,9 +669,24 @@ func (s *Server) handleDiagnosticsBackups(w http.ResponseWriter, r *http.Request
 		// the same shape as RLT-439 (CachedOracleReader.fetch running
 		// a shared fill inline on the leader's own ctx).
 		ctx, cancel := context.WithTimeout(context.Background(), backupsQueryBudget)
-		s.backups.snap = buildBackupsSnapshot(ctx, s.logger, s.backupMetrics, now) //nolint:contextcheck // intentional detach — the rebuild is shared via s.backups.mu; the triggering caller's own disconnect must not fail it for every request behind the lock
+		fresh := buildBackupsSnapshot(ctx, s.logger, s.backupMetrics, now) //nolint:contextcheck // intentional detach — the rebuild is shared via s.backups.mu; the triggering caller's own disconnect must not fail it for every request behind the lock
 		cancel()
-		s.backups.builtAt = now
+		// builtAt is stamped from the clock AFTER the build, not the
+		// one taken before the (up-to-backupsQueryBudget) fan-out —
+		// otherwise the cache is treated as fresh for up to
+		// backupsQueryBudget longer than it actually is.
+		builtAt := time.Now().UTC()
+		if fresh.SourceStatus == "unknown" && !s.backups.builtAt.IsZero() {
+			// Every query failed (or the fan-out was starved) this
+			// round. Keep serving the previous good snapshot rather
+			// than replacing it with an all-"unknown" document; still
+			// advance builtAt so the handler doesn't hammer Prometheus
+			// every request until a query succeeds again.
+			s.backups.builtAt = builtAt
+		} else {
+			s.backups.snap = fresh
+			s.backups.builtAt = builtAt
+		}
 	}
 	snap := s.backups.snap
 

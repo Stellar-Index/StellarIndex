@@ -573,3 +573,73 @@ func TestHandleDiagnosticsBackups_Unconfigured(t *testing.T) {
 		t.Errorf("Cache-Control = %q, want no-store on problem responses", cc)
 	}
 }
+
+// switchableBackupMetrics answers every query with a good sample
+// until failAll is set, at which point every query errors.
+type switchableBackupMetrics struct {
+	failAll atomic.Bool
+}
+
+func (s *switchableBackupMetrics) queryVector(_ context.Context, expr string) ([]promSample, error) {
+	if s.failAll.Load() {
+		return nil, errors.New("prometheus down")
+	}
+	if expr == promSnapshotLast {
+		return []promSample{sample(nil, float64(time.Now().Add(-time.Hour).Unix()))}, nil
+	}
+	return nil, nil
+}
+
+// TestHandleDiagnosticsBackups_KeepsPreviousSnapshotOnAllFailedRebuild
+// is the GH-583 regression proof: an all-failed rebuild (every
+// Prometheus query erroring, e.g. an outage or a starved fan-out)
+// must not clobber a previously-good cached snapshot with an
+// all-"unknown" document. Before the fix, buildBackupsSnapshot's
+// output unconditionally replaced s.backups.snap regardless of its
+// own SourceStatus, so a transient all-query failure round painted
+// the public backups status "unknown" even though the previous
+// rebuild, seconds earlier, was healthy.
+func TestHandleDiagnosticsBackups_KeepsPreviousSnapshotOnAllFailedRebuild(t *testing.T) {
+	fake := &switchableBackupMetrics{}
+	srv := New(Options{BackupMetrics: fake})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// First request builds a healthy snapshot and caches it.
+	resp, err := http.Get(ts.URL + "/v1/diagnostics/backups")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env1 struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env1); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if env1.Data["source_status"] != "ok" {
+		t.Fatalf("setup: source_status = %v, want ok", env1.Data["source_status"])
+	}
+
+	// Force the cache to be considered stale without waiting out the
+	// real 60 s TTL, then make every query fail.
+	srv.backups.mu.Lock()
+	srv.backups.builtAt = time.Now().Add(-2 * backupsCacheTTL)
+	srv.backups.mu.Unlock()
+	fake.failAll.Store(true)
+
+	resp2, err := http.Get(ts.URL + "/v1/diagnostics/backups")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp2.Body.Close() }()
+	var env2 struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&env2); err != nil {
+		t.Fatal(err)
+	}
+	if env2.Data["source_status"] != "ok" {
+		t.Errorf("source_status = %v after an all-failed rebuild, want the previous good snapshot (ok) kept", env2.Data["source_status"])
+	}
+}
