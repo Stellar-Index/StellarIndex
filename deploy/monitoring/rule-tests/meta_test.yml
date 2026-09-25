@@ -113,6 +113,25 @@ tests:
         alertname: stellarindex_alertmanager_not_notifying
         exp_alerts: []
 
+  # GH-1173, receiver dimension: the webhook integration backs TWO
+  # receivers (deadmansswitch + alert-delivery-failure), each its own
+  # series. deadmansswitch ticks every 60s; alert-delivery-failure is
+  # legitimately idle because nothing has failed. Unaggregated, that
+  # idle receiver's own series alone would satisfy the first arm and
+  # page permanently the moment it is wired — the exact shape the
+  # finding reported (per-(integration,receiver) match).
+  - interval: 1m
+    name: one idle webhook receiver alongside an active one does not page
+    input_series:
+      - series: 'alertmanager_notifications_total{job="alertmanager_pair",integration="webhook",receiver="deadmansswitch"}'
+        values: '0+1x20'
+      - series: 'alertmanager_notifications_total{job="alertmanager_pair",integration="webhook",receiver="alert-delivery-failure"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_alertmanager_not_notifying
+        exp_alerts: []
+
   # ── stellarindex_redis_exporter_down ─────────────────────────────
   - interval: 1m
     name: redis_exporter down for 2m fires exporter_down

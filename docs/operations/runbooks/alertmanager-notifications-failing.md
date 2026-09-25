@@ -170,6 +170,12 @@ the check to arm that path:
 Until step 2 is done the receiver renders as a stub and this alert
 reaches chat only, exactly as before — no worse, but no better.
 
+Wiring it is safe: `stellarindex_alertmanager_not_notifying`
+(`alertmanager-not-notifying.md`) sums `alertmanager_notifications_total`
+across every webhook receiver before comparing to zero, so an idle
+`alert-delivery-failure` receiver alongside a ticking `deadmansswitch`
+does not page on its own (GH-1173).
+
 ## Related
 
 - [alertmanager-not-notifying](alertmanager-not-notifying.md)

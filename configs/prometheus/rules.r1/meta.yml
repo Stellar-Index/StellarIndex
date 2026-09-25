@@ -88,13 +88,16 @@ groups:
         # PRESENT and flat at 0 (first arm), while the discord series was
         # entirely ABSENT (the shape the second arm catches).
         #
-        # sum() is load-bearing (GH-1173): alertmanager_notifications_total
-        # is per-integration, and the webhook integration now backs TWO
-        # receivers (deadmansswitch + alert-delivery-failure), each its own
-        # series. Unaggregated, the deadman's ~30/hr keeps ITS series
-        # nonzero while alert-delivery-failure's own series sits at 0
-        # whenever no delivery is failing — a permanently-true first arm
-        # that pages forever the moment alert-delivery-failure is wired.
+        # sum() with no `by` is load-bearing (GH-1173):
+        # alertmanager_notifications_total is per-integration, and the
+        # webhook integration now backs TWO receivers (deadmansswitch +
+        # alert-delivery-failure), each its own series. Unaggregated, the
+        # deadman's ~30/hr keeps ITS series nonzero while
+        # alert-delivery-failure's own series sits at 0 whenever nothing
+        # is failing — a permanently-true first arm that pages forever
+        # the moment alert-delivery-failure is wired, muting
+        # deadmansswitch itself via the component:meta inhibit rule.
+        # Same shape as stellarindex_api_down.
         expr: |
           sum(increase(alertmanager_notifications_total{job="alertmanager",integration="webhook"}[15m])) == 0
           or absent_over_time(alertmanager_notifications_total{job="alertmanager",integration="webhook"}[15m]) == 1
