@@ -229,7 +229,7 @@ func (s *Store) UpshiftVaultShareSupplies(ctx context.Context) ([]UpshiftVaultSh
 		    SELECT DISTINCT ON (contract_id) contract_id, new_amount
 		      FROM upshift_vault_events
 		     WHERE event_kind = 'deployed_assets_changed'
-		     ORDER BY contract_id, ledger_close_time DESC, ledger DESC
+		     ORDER BY contract_id, ledger_close_time DESC, ledger DESC, op_index DESC, event_index DESC
 		)
 		SELECT f.contract_id,
 		       f.shares_outstanding::text,
