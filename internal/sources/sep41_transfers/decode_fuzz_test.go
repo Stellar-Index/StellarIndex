@@ -306,15 +306,41 @@ func TestDecoder_RejectsForeignBodyShapes(t *testing.T) {
 	}
 }
 
-// TestDecoder_VoidAddressTopicDecodesEmpty pins decodeAddrTopic's Void arm:
-// a Void address topic decodes to "" rather than failing the whole event.
-func TestDecoder_VoidAddressTopicDecodesEmpty(t *testing.T) {
+// TestDecoder_VoidAddressTopicRejectedOutsideSetAdmin: a Void in a required
+// address slot must fail the event, never decode to "" — an empty from_addr
+// on a transfer is read back as a "self" movement by the explorer.
+func TestDecoder_VoidAddressTopicRejectedOutsideSetAdmin(t *testing.T) {
 	d, _ := NewDecoder([]string{cWatched})
-	ev := transferEvent(t, cWatched, 3)
+	void := encScVal(t, xdr.ScVal{Type: xdr.ScValTypeScvVoid})
+	cases := []struct {
+		name string
+		ev   events.Event
+		idx  int
+	}{
+		{"transfer.from", transferEvent(t, cWatched, 3), 1},
+		{"transfer.to", transferEvent(t, cWatched, 3), 2},
+		{"approve.from", approveEvent(t, cWatched, 3, 9), 1},
+		{"approve.spender", approveEvent(t, cWatched, 3, 9), 2},
+		{"set_authorized.id", setAuthorizedEvent(t, cWatched, true), 1},
+	}
+	for _, tc := range cases {
+		tc.ev.Topic[tc.idx] = void
+		outs, err := d.Decode(tc.ev)
+		if !errors.Is(err, scval.ErrScValType) {
+			t.Errorf("%s Void: Decode = (%v, %v), want ErrScValType", tc.name, outs, err)
+		}
+	}
+}
+
+// TestDecoder_SetAdminVoidAdminTopicDecodesEmpty: set_admin's topic[1] is
+// optional, so it is the one address slot where Void decodes to "".
+func TestDecoder_SetAdminVoidAdminTopicDecodesEmpty(t *testing.T) {
+	d, _ := NewDecoder([]string{cWatched})
+	ev := setAdminEvent(t, cWatched, true)
 	ev.Topic[1] = encScVal(t, xdr.ScVal{Type: xdr.ScValTypeScvVoid})
 	out := decodeOne(t, d, ev)
-	if out.FromAddr != "" || out.ToAddr != gTo || out.Amount.Int64() != 3 {
-		t.Fatalf("got from=%q to=%q amount=%v, want \"\"/%q/3", out.FromAddr, out.ToAddr, out.Amount, gTo)
+	if out.FromAddr != "" || out.ToAddr != gTo {
+		t.Fatalf("got from=%q to=%q, want \"\"/%q", out.FromAddr, out.ToAddr, gTo)
 	}
 }
 

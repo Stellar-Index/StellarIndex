@@ -35,6 +35,10 @@ const opIndexFanoutStride = 1024
 // even at Stellar's 100-ops/tx cap: (100*64+63)*1024+1023 ≈ 6.6M.
 const eventFanoutStride = 64
 
+// opIndexFanoutMax bounds e.OperationIndex so the packed op_index stays
+// within uint32: 2^32 / (eventFanoutStride * opIndexFanoutStride) = 65536.
+const opIndexFanoutMax = (1 << 32) / (eventFanoutStride * opIndexFanoutStride)
+
 // reflectorTopicArity is the minimum topic count on a Reflector
 // UpdateEvent: ["REFLECTOR", "update", <timestamp: u64>]. Anything
 // shorter is by definition not our event.
@@ -94,14 +98,8 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 	if len(prices) == 0 {
 		return nil, ErrEmptyPrices
 	}
-	if len(prices) > opIndexFanoutStride {
-		// Refuse rather than silently emitting PK-colliding rows.
-		// See ErrPriceVectorOverflow for rationale.
-		return nil, fmt.Errorf("%w: got %d prices", ErrPriceVectorOverflow, len(prices))
-	}
-	if e.EventIndex < 0 || e.EventIndex >= eventFanoutStride {
-		// See ErrEventIndexOverflow for rationale.
-		return nil, fmt.Errorf("%w: got %d", ErrEventIndexOverflow, e.EventIndex)
+	if err := checkFanoutBounds(e, len(prices)); err != nil {
+		return nil, err
 	}
 
 	// Timestamp: the contract puts it in topic[2] as u64
@@ -184,6 +182,23 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 		return nil, ErrEmptyPrices
 	}
 	return out, nil
+}
+
+// checkFanoutBounds validates the three inputs to the synthetic OpIndex
+// packing (OperationIndex*eventFanoutStride+EventIndex)*opIndexFanoutStride+i
+// so it cannot wrap uint32 onto another event's block; redstone's twin
+// applies the same three bounds.
+func checkFanoutBounds(e *events.Event, priceCount int) error {
+	if priceCount > opIndexFanoutStride {
+		return fmt.Errorf("%w: got %d prices", ErrPriceVectorOverflow, priceCount)
+	}
+	if e.EventIndex < 0 || e.EventIndex >= eventFanoutStride {
+		return fmt.Errorf("%w: got %d", ErrEventIndexOverflow, e.EventIndex)
+	}
+	if e.OperationIndex < 0 || e.OperationIndex >= opIndexFanoutMax {
+		return fmt.Errorf("%w: got %d", ErrOperationIndexOverflow, e.OperationIndex)
+	}
+	return nil
 }
 
 // quoteForVariant returns the implicit quote asset of a Reflector

@@ -158,4 +158,10 @@ var (
 	// a decoder bug or a contract emitting far more events per op
 	// than anything observed.
 	ErrEventIndexOverflow = errors.New("reflector: EventIndex exceeds OpIndex fanout stride")
+
+	// ErrOperationIndexOverflow — e.OperationIndex is negative or at least
+	// opIndexFanoutMax, so the synthetic OpIndex packing would wrap uint32
+	// onto another operation's block. Unreachable on-chain (Soroban caps
+	// ops-per-tx far below the bound); a hit means a producer bug.
+	ErrOperationIndexOverflow = errors.New("reflector: OperationIndex exceeds OpIndex fanout bound")
 )
