@@ -135,6 +135,56 @@ func loadBaseline(path string) (map[string]bool, error) {
 	return out, nil
 }
 
+var alertnameRe = regexp.MustCompile(`(?m)^\s*alertname:\s*(\S+)`)
+
+// ruleTestedAlerts returns every alertname asserted by a promtool
+// unit test under testsDir (deploy/monitoring/rule-tests). GH-1174:
+// the equivalence baseline can waive a rule's expr as an intentional
+// per-deployment divergence, but a waived rule still needs SOME
+// promtool test proving its own tree's version actually fires —
+// otherwise "divergence is intentional" and "nobody tests either
+// copy" are indistinguishable from the outside.
+func ruleTestedAlerts(testsDir string) (map[string]bool, error) {
+	tested := map[string]bool{}
+	files, err := filepath.Glob(filepath.Join(testsDir, "*.yml"))
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range files {
+		raw, err := os.ReadFile(f) //nolint:gosec // CI tool — tests dir is derived from a CLI arg by design
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range alertnameRe.FindAllStringSubmatch(string(raw), -1) {
+			tested[m[1]] = true
+		}
+	}
+	return tested, nil
+}
+
+// checkExprWaiversAreTested fails any `:expr` baseline entry naming a
+// rule with no promtool test anywhere under testsDir.
+func checkExprWaiversAreTested(baseline map[string]bool, tested map[string]bool, testsDir string, fail func(string, ...any)) {
+	keys := make([]string, 0, len(baseline))
+	for k := range baseline {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if !strings.HasSuffix(key, ":expr") {
+			continue
+		}
+		parts := strings.SplitN(key, ":", 3)
+		if len(parts) < 2 {
+			continue
+		}
+		rule := parts[1]
+		if !tested[rule] {
+			fail("baseline entry %q waives %q's firing behavior as an intentional per-deployment divergence, but no promtool rule test under %s proves either tree's copy actually fires — add one", key, rule, testsDir)
+		}
+	}
+}
+
 func labelsEqual(a, b map[string]string) bool {
 	if len(a) != len(b) {
 		return false
@@ -204,6 +254,14 @@ func main() {
 	for _, r1Path := range r1Files {
 		compareFile(multiDir, r1Path, allowed, fail)
 	}
+
+	testsDir := filepath.Join(filepath.Dir(multiDir), "rule-tests")
+	tested, err := ruleTestedAlerts(testsDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	checkExprWaiversAreTested(baseline, tested, testsDir, fail)
 
 	// Stale baseline entries fail — shrink-only.
 	stale := make([]string, 0)

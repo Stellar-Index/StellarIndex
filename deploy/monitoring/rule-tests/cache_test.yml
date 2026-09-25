@@ -1,0 +1,48 @@
+---
+# promtool unit test for cache.yml's stellarindex_redis_replication_broken.
+#
+#   promtool test rules deploy/monitoring/rule-tests/cache_test.yml
+#
+# GH-1174: rule-equivalence.baseline waives this rule's expr as an
+# intentional multi-host-vs-r1 divergence (r1 is single-node, so its
+# copy compares against its own redis_expected_slaves recording rather
+# than a fixed threshold), but nothing proved either tree's copy
+# actually fires. This covers the multi-host tree's threshold form.
+
+rule_files:
+  - ../rules/cache.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: fewer than 2 connected replicas fires replication_broken
+    input_series:
+      - series: 'redis_connected_slaves{instance="cache1:6379"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 2m30s
+        alertname: stellarindex_redis_replication_broken
+        exp_alerts:
+          - exp_labels:
+              instance: cache1:6379
+              severity: ticket
+              team: stellarindex
+              component: cache
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-replication.md
+              summary: "Redis master cache1:6379 missing replicas"
+              description: |
+                Master reports 1 connected replicas, fewer than the
+                ADR-0024 expected 2. Sentinel can't promote on failover if
+                replicas are gone.
+
+  - interval: 30s
+    name: two connected replicas stays silent
+    input_series:
+      - series: 'redis_connected_slaves{instance="cache1:6379"}'
+        values: '2+0x10'
+    alert_rule_test:
+      - eval_time: 2m30s
+        alertname: stellarindex_redis_replication_broken
+        exp_alerts: []
