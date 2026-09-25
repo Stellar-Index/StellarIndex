@@ -74,8 +74,12 @@ SUMMARY=""
 OUT_DIR="docs/operations"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --summary)  SUMMARY="${2:-}"; shift 2 ;;
-    --out-dir)  OUT_DIR="${2:-}"; shift 2 ;;
+    --summary)
+      [ $# -ge 2 ] || { echo "render-sla-proof: REFUSED — --summary requires a value." >&2; usage; exit 2; }
+      SUMMARY="$2"; shift 2 ;;
+    --out-dir)
+      [ $# -ge 2 ] || { echo "render-sla-proof: REFUSED — --out-dir requires a value." >&2; usage; exit 2; }
+      OUT_DIR="$2"; shift 2 ;;
     -h|--help)  usage; exit 0 ;;
     *) echo "render-sla-proof: unknown argument '$1'" >&2; usage; exit 2 ;;
   esac
