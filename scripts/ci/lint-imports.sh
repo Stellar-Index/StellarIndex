@@ -98,7 +98,13 @@ RULES = [
         ],
         "allow": [
             "internal/stellarrpc/",             # the package itself
-            "internal/ops/",                    # stellarindex-ops subcommand packages (rpc-probe diag; D1 M1-5 split moved these out of cmd/stellarindex-ops/)
+            # stellarindex-ops subcommands, named one by one so a new
+            # ops file cannot quietly start sourcing data from stellar-rpc.
+            "internal/ops/diagnostics/rpc_probe.go",
+            "internal/ops/diagnostics/verify_decoders.go",
+            "internal/ops/chops/verify_reconciliation.go",
+            "internal/ops/ingest/detect_gaps.go",
+            "internal/ops/ingest/seed_soroswap_pairs.go",  # insert-only bootstrap; never rewrites a registered pair
             "scripts/dev/",                     # fixture-capture
             "/decode.go",                       # source decode.go — uses Event type only (PR 165b will move)
             "/factory_seed.go",                 # cold-start factory state via simulateTransaction (PR 14) — not a runtime decoder
