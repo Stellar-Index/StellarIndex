@@ -71,12 +71,11 @@ groups:
           component: cache
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-memory.md
-          summary: "Redis {{ $labels.instance }} rejecting writes (OOM, noeviction)"
+          summary: "Redis {{ $labels.instance }} rejecting writes (OOM)"
           description: |
-            Redis is at maxmemory under maxmemory-policy noeviction and is
-            rejecting writes outright (no eviction) rather than making
-            room. Application writes are failing now, not just degrading.
-            Scale up or free memory immediately.
+            Redis is at maxmemory and rejecting writes outright rather
+            than making room. Application writes are failing now, not
+            just degrading. Scale up or free memory immediately.
 
       # ── INERT (F-1329) — NOT APPLICABLE ON R1 ─────────────────────
       # r1 is a SINGLE-NODE redis (no Sentinel, no replicas — see
