@@ -853,6 +853,11 @@ jobs:
         # not the dispatching ref, or the config-apply gate verifies a
         # different commit's bytes than the ones actually applied.
         run: ./scripts/ci/deploy-checkout-ref-test.sh
+      - name: Pages deploy branch label (built ref vs --branch)
+        # GH-844: a Cloudflare Pages deploy labelled `main` is production, so
+        # every `pages deploy` job must resolve its label through
+        # resolve-pages-branch.sh, which refuses a non-main production ref.
+        run: ./scripts/ci/pages-deploy-branch-test.sh
       - name: verify.sh <-> CI import-checks parity (+ self-test)
         # GH-778/CID-25: this gate is the chokepoint that keeps
         # `make verify` honest against what CI actually runs, but until
