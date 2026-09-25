@@ -15782,7 +15782,7 @@ components:
             the valuation is withheld — a supply is not a price claim.
         supply_basis:
           type: string
-          enum: [xlm_sdf_reserve_exclusion, xlm_total_only, issuer_exclusion, admin_exclusion, sep41_total_only, override, sep1_declared_max, sep41_lake_flows, classic_lake_flows, classic_trustline_sum, contract_storage_balances]
+          enum: [xlm_sdf_reserve_exclusion, xlm_sdf_reserve_exclusion_static, xlm_total_only, issuer_exclusion, admin_exclusion, sep41_total_only, override, sep1_declared_max, sep41_lake_flows, classic_lake_flows, classic_trustline_sum, contract_storage_balances]
           description: |
             Which reading produced `circulating_supply`, in the same
             ADR-0011 vocabulary `Asset.supply_basis` uses. Absent when no
@@ -17687,7 +17687,7 @@ components:
         listing_valuation:  { $ref: "#/components/schemas/AssetListingValuation" }
         supply_basis:
           type: [string, "null"]
-          enum: [xlm_sdf_reserve_exclusion, xlm_total_only, issuer_exclusion, admin_exclusion, sep41_total_only, override, sep1_declared_max, sep41_lake_flows, classic_lake_flows, classic_trustline_sum, contract_storage_balances, no_metadata]
+          enum: [xlm_sdf_reserve_exclusion, xlm_sdf_reserve_exclusion_static, xlm_total_only, issuer_exclusion, admin_exclusion, sep41_total_only, override, sep1_declared_max, sep41_lake_flows, classic_lake_flows, classic_trustline_sum, contract_storage_balances, no_metadata]
           description: |
             Which ADR-0011 policy produced the supply numbers, and on
             LISTING rows additionally which ARM answered — three can,
@@ -17697,6 +17697,11 @@ components:
             `xlm_sdf_reserve_exclusion` and the rest) means a LIVE
             observation no older than six hours, the same reading
             `/v1/assets/{asset_id}` publishes for that asset.
+            `xlm_sdf_reserve_exclusion_static` is the exception: the
+            SDF reserve balances came from the operator's dated static
+            snapshot because the live account observer could not
+            answer, so the exclusion is only as current as that
+            snapshot.
             `classic_lake_flows` sums mint minus burn minus clawback
             over the asset's Stellar Asset Contract: it sees every
             holding domain, but over-counts an asset whose historical

@@ -1567,6 +1567,16 @@ type SupplyConfig struct {
 	// configuration error caught at writer-start.
 	ReserveBalancesStroops map[string]string `toml:"reserve_balances_stroops" doc:"Operator-managed snapshot of each SDF reserve account's XLM balance in stroops (decimal string). Updated manually on SDF reserve-move announcements. Used as the fallback source when the LCM AccountEntry observer (Task #54) hasn't yet populated account_observations for the watched reserve set; the live observer takes over once those rows land." default:"{}"`
 
+	// ReserveBalancesAsOf dates the ReserveBalancesStroops snapshot
+	// (YYYY-MM-DD, UTC). The static fallback refuses to answer when it
+	// is unset or older than ReserveBalancesMaxAge, so a forgotten map
+	// fails closed instead of being republished as the current reserve.
+	ReserveBalancesAsOf string `toml:"reserve_balances_as_of" doc:"Date (YYYY-MM-DD, UTC) the reserve_balances_stroops snapshot was taken. The static fallback refuses to answer when this is unset or older than reserve_balances_max_age; a snapshot it does serve is published with supply basis xlm_sdf_reserve_exclusion_static." default:""`
+
+	// ReserveBalancesMaxAge bounds how old the dated static snapshot may
+	// be and still be served.
+	ReserveBalancesMaxAge time.Duration `toml:"reserve_balances_max_age" doc:"Maximum age of the reserve_balances_stroops snapshot (measured from reserve_balances_as_of) at which the static fallback still answers. Past it, the XLM supply tick fails instead of republishing the old balances." default:"168h"`
+
 	// AggregatorRefreshEnabled, when true, runs the supply-
 	// snapshot writer as a goroutine inside the aggregator on a
 	// fixed cadence (see [AggregatorRefreshCadence]). When false
@@ -1795,7 +1805,51 @@ func (sc SupplyConfig) Validate() error {
 	if err := sc.validateFullyWrappedSACs(); err != nil {
 		return err
 	}
+	if _, err := sc.ReserveBalancesAsOfTime(); err != nil {
+		return err
+	}
+	if sc.ReserveBalancesMaxAge < 0 {
+		return fmt.Errorf("supply: reserve_balances_max_age %v must not be negative", sc.ReserveBalancesMaxAge)
+	}
 	return sc.validateStaleComponentLedgersByAsset()
+}
+
+// DefaultReserveBalancesMaxAge is the reserve_balances_max_age default:
+// one week, a conservative bound for balances SDF moves in
+// multi-billion-XLM tranches.
+const DefaultReserveBalancesMaxAge = 7 * 24 * time.Hour
+
+// EffectiveReserveBalancesMaxAge is ReserveBalancesMaxAge, or the
+// default when unset.
+func (sc SupplyConfig) EffectiveReserveBalancesMaxAge() time.Duration {
+	if sc.ReserveBalancesMaxAge <= 0 {
+		return DefaultReserveBalancesMaxAge
+	}
+	return sc.ReserveBalancesMaxAge
+}
+
+// NewStaticReserveReader builds the dated static reserve-balance reader
+// from reserve_balances_stroops / _as_of / _max_age — the one
+// construction path for every XLM supply writer.
+func (sc SupplyConfig) NewStaticReserveReader() (*supply.ConfigReserveBalanceReader, error) {
+	asOf, err := sc.ReserveBalancesAsOfTime()
+	if err != nil {
+		return nil, err
+	}
+	return supply.NewConfigReserveBalanceReader(sc.ReserveBalancesStroops, asOf, sc.EffectiveReserveBalancesMaxAge())
+}
+
+// ReserveBalancesAsOfTime parses ReserveBalancesAsOf; unset yields the
+// zero time, which the static reserve reader treats as undated.
+func (sc SupplyConfig) ReserveBalancesAsOfTime() (time.Time, error) {
+	if sc.ReserveBalancesAsOf == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.DateOnly, sc.ReserveBalancesAsOf)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("supply: reserve_balances_as_of %q is not a YYYY-MM-DD date: %w", sc.ReserveBalancesAsOf, err)
+	}
+	return t, nil
 }
 
 // validateStaleComponentLedgersByAsset is check 6 of
@@ -2126,6 +2180,7 @@ func Default() Config {
 			// panicking if an operator enables the worker without setting
 			// it (the validation gap behind G19-02).
 			AggregatorRefreshCadence: 5 * time.Minute,
+			ReserveBalancesMaxAge:    DefaultReserveBalancesMaxAge,
 		},
 		HashDB: defaultHashDBConfig(),
 		Obs: ObsConfig{

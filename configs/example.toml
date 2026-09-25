@@ -836,6 +836,15 @@ enabled = false
 # `OutcomeKindMissingFreshness` instead of published.
 # strict_freshness_required = false
 #
+# reserve_balances_as_of / reserve_balances_max_age — date the
+# [supply.reserve_balances_stroops] snapshot (YYYY-MM-DD, UTC). The
+# static fallback refuses to answer when the date is unset or older
+# than the max age; a snapshot it serves is published with basis
+# xlm_sdf_reserve_exclusion_static and outcome static_reserve, and
+# strict_freshness_required refuses it.
+# reserve_balances_as_of   = "2026-07-02"
+# reserve_balances_max_age = "168h"
+#
 # Tables go last: an uncommented key below a [table] header belongs to
 # that table, not to [supply].
 # [supply.reserve_balances_stroops]

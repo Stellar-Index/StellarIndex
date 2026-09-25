@@ -1467,7 +1467,11 @@ stellarindex_sdf_reserve_accounts:
 # Point-in-time balance snapshot (stroops, 2026-07-02) — the supply
 # writer's fallback until account_observations covers each account
 # (config.go SupplyConfig: every account above MUST appear here or the
-# writer refuses to start).
+# writer refuses to start). Dated by stellarindex_reserve_balances_as_of:
+# once older than reserve_balances_max_age (default 168h) the fallback
+# refuses and the XLM supply tick fails instead of republishing it.
+# Refresh both together from the live balances.
+stellarindex_reserve_balances_as_of: "2026-07-02"
 stellarindex_reserve_balances_stroops:
   "GD2D6JG6D3V52ZMPIYSVHYFKVNIMXGYVLYJQ3HYHG5YDPGJ3DCRGPLTP": "20000129"
   "GA2VRL65L3ZFEDDJ357RGI3MAOKPJZ2Z3IJTPSC24I4KDTNFSVEQURRA": "20000001"

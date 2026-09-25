@@ -4138,9 +4138,12 @@ var AggregatorBaselineRefreshTotal = prometheus.NewCounterVec(
 //
 //   - asset_key: supply.AssetKey form ("XLM", "CODE:ISSUER" for
 //     classic credits, the bare contract C-strkey for SEP-41).
-//   - outcome ∈ {ok, dormant, no_ledger, no_observation,
-//     compute_error, stale_component, missing_freshness,
-//     write_error}. `dormant` (F-1320) is a benign accept: a
+//   - outcome ∈ {ok, dormant, static_reserve, no_ledger,
+//     no_observation, compute_error, stale_component,
+//     missing_freshness, missing_baseline, write_error}.
+//     `static_reserve` is an XLM snapshot published from the dated
+//     static reserve map rather than the live observer; the
+//     error_dominant alert counts it. `dormant` (F-1320) is a benign accept: a
 //     dormant asset whose component anchor is unchanged but current.
 //     `stale_component` is a real rejection (the freshness producer
 //     lagged); the supply-refresh alert excludes `dormant` and is
@@ -4172,7 +4175,7 @@ var AggregatorSupplyLakeClampLedgers = prometheus.NewGauge(
 var AggregatorSupplyRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_supply_refresh_total",
-		Help: "Supply-snapshot refresh outcomes per (asset_key, outcome). Outcome ∈ {ok, dormant, no_ledger, no_observation, compute_error, stale_component, missing_freshness, write_error}.",
+		Help: "Supply-snapshot refresh outcomes per (asset_key, outcome). Outcome ∈ {ok, dormant, static_reserve, no_ledger, no_observation, compute_error, stale_component, missing_freshness, missing_baseline, write_error}.",
 	},
 	[]string{"asset_key", "outcome"},
 )

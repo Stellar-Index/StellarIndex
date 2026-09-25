@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"math/big"
 	"os"
 	"text/tabwriter"
 	"time"
@@ -219,16 +218,16 @@ func supplySnapshot(args []string) error {
 		return supplySnapshotMaybeEmitFailure(*textfileOut, *assetRaw, startedAt, err)
 	}
 
-	staticReader, err := supply.NewConfigReserveBalanceReader(cfg.Supply.ReserveBalancesStroops)
+	staticReader, err := cfg.Supply.NewStaticReserveReader()
 	if err != nil {
 		return supplySnapshotMaybeEmitFailure(*textfileOut, *assetRaw, startedAt, fmt.Errorf("reserve reader: %w", err))
 	}
 	// Live LCM reader tries first; ErrNoObservation falls back to
-	// static config per ADR-0021. The supplyChainReader wraps both.
-	reader := supplyChainReader{
-		live:   supply.NewLCMReserveBalanceReader(supplyStoreLookup{s: store}),
-		static: staticReader,
-	}
+	// the dated static config per ADR-0021.
+	reader := supply.NewChainedReserveBalanceReader(
+		supply.NewLCMReserveBalanceReader(supplyStoreLookup{s: store}),
+		staticReader,
+	)
 	computer, err := supply.NewXLMComputerForNetwork(cfg.Stellar.Passphrase(), cfg.Supply.SDFReserveAccounts, reader)
 	if err != nil {
 		return supplySnapshotMaybeEmitFailure(*textfileOut, *assetRaw, startedAt, fmt.Errorf("xlm computer: %w", err))
@@ -320,54 +319,6 @@ func (a supplyStoreLookup) LatestAccountObservationAtOrBefore(ctx context.Contex
 // the XLM freshness gate (CS-102).
 func (a supplyStoreLookup) MaxAccountObservationLedger(ctx context.Context, asOfLedger uint32) (uint32, error) {
 	return a.s.MaxAccountObservationLedger(ctx, asOfLedger)
-}
-
-// supplyChainReader composes the live LCM reader with the
-// operator-static config reader. Tries live first; on
-// ErrNoObservation (any account in the request set has no
-// observation, OR a transient storage error) falls through to
-// the static reader for the whole call. Per ADR-0021 we don't
-// mix live + static within one call — that would silently produce
-// a partially-fresh sum the operator can't audit.
-type supplyChainReader struct {
-	live   supply.ReserveBalanceReader
-	static supply.ReserveBalanceReader
-}
-
-func (c supplyChainReader) ReserveBalanceTotal(ctx context.Context, accounts []string, ledger uint32) (*big.Int, error) {
-	out, err := c.live.ReserveBalanceTotal(ctx, accounts, ledger)
-	if err == nil {
-		return out, nil
-	}
-	if errors.Is(err, supply.ErrNoObservation) {
-		// Drop to static. The static reader's own error path
-		// (missing-balance, parse error) bubbles up unchanged
-		// because that's an operator-config error, not a transient
-		// LCM gap.
-		return c.static.ReserveBalanceTotal(ctx, accounts, ledger)
-	}
-	return nil, err
-}
-
-// MinReserveAccountLedger forwards the freshness probe to the
-// live reader when it implements [supply.ReserveBalanceFreshnessReader].
-// The static fallback reader has no per-ledger freshness concept;
-// when the live reader can't satisfy the probe (or doesn't implement
-// the interface) we return 0 — the gate-permissive bypass — so the
-// supply-snapshot subcommand stays on the legacy posture for static
-// deployments. F-1236 (codex audit-2026-05-12).
-func (c supplyChainReader) MinReserveAccountLedger(ctx context.Context, accounts []string, ledger uint32) (uint32, error) {
-	if fr, ok := c.live.(supply.ReserveBalanceFreshnessReader); ok {
-		got, err := fr.MinReserveAccountLedger(ctx, accounts, ledger)
-		if err == nil {
-			return got, nil
-		}
-		if errors.Is(err, supply.ErrNoObservation) {
-			return 0, nil
-		}
-		return 0, err
-	}
-	return 0, nil
 }
 
 // supplySnapshotMaybeEmitFailure writes a fail-marker textfile (so

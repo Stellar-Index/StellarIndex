@@ -146,6 +146,7 @@ func TestBasis_TotalOnlyValuesAreDistinct(t *testing.T) {
 		wire  string
 	}{
 		{supply.BasisXLMSDFReserveExclusion, "xlm_sdf_reserve_exclusion"},
+		{supply.BasisXLMSDFReserveExclusionStatic, "xlm_sdf_reserve_exclusion_static"},
 		{supply.BasisXLMTotalOnly, "xlm_total_only"},
 		{supply.BasisIssuerExclusion, "issuer_exclusion"},
 		{supply.BasisAdminExclusion, "admin_exclusion"},

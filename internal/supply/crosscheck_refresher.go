@@ -94,6 +94,14 @@ const (
 	// whatsoever, and a stale SAC total can hide a real one).
 	// Operators chart and alert on this via the counter.
 	CrossCheckOutcomeMisaligned CrossCheckOutcomeKind = "misaligned"
+
+	// CrossCheckOutcomeUnchecked — a partial-wrap pair whose classic
+	// snapshot carries no SACWrappedStroops, so leg 2 (the only leg that
+	// feeds the divergence) was never evaluated. That is the steady state
+	// for any asset with no sac_balance_observations row, so it is not a
+	// transient. Like Missing / Misaligned the gauge series is CLEARED:
+	// a divergence of 0 here would read as "checked, agreed".
+	CrossCheckOutcomeUnchecked CrossCheckOutcomeKind = "unchecked"
 )
 
 // CrossCheckLedgerTolerance is the largest |classic.LedgerSequence −
@@ -244,7 +252,7 @@ func (r *CrossCheckRefresher) Tick(ctx context.Context) []CrossCheckOutcome {
 		case CrossCheckOutcomeWithin, CrossCheckOutcomeOver:
 			stroops, _ := outcome.Result.DivergenceStroops.Float64() // i128:ok Prometheus gauge value; the NUMERIC record keeps full precision
 			r.emitter.Divergence(p.ClassicKey, wrapClass, stroops)
-		case CrossCheckOutcomeMissing, CrossCheckOutcomeReadError, CrossCheckOutcomeMisaligned:
+		case CrossCheckOutcomeMissing, CrossCheckOutcomeReadError, CrossCheckOutcomeMisaligned, CrossCheckOutcomeUnchecked:
 			r.emitter.ClearDivergence(p.ClassicKey, wrapClass)
 		}
 		out = append(out, outcome)
@@ -295,20 +303,18 @@ func (r *CrossCheckRefresher) tickOne(ctx context.Context, p CrossCheckPair) Cro
 			"classic_key", p.ClassicKey, "sac_key", p.SACKey, "err", err)
 		return CrossCheckOutcome{Pair: p, Kind: CrossCheckOutcomeReadError, Err: err}
 	}
+	if result.WrapClass == WrapClassPartial && !result.SubsetBoundChecked {
+		// A partial-wrap check whose escrow leg was not evaluated checked
+		// nothing that feeds the divergence (leg 1 is diagnostic only).
+		r.logger.Debug("cross-check: escrow leg UNCHECKED (no sac_wrapped_stroops on the classic snapshot)",
+			"classic_key", p.ClassicKey,
+			"sac_key", p.SACKey,
+			"classic_total", result.ClassicTotal.String(),
+			"sac_total", result.SACTotal.String(),
+			"over_mint_stroops", bigOrUnset(result.OverMintStroops))
+		return CrossCheckOutcome{Pair: p, Kind: CrossCheckOutcomeUnchecked, Result: result}
+	}
 	if result.WithinTolerance {
-		// CS-087: a green partial-wrap check whose escrow leg was NOT
-		// evaluated (classic snapshot predates migration 0117, so it
-		// carries no SACWrapped component) checked nothing: leg 2 is the
-		// only leg that feeds the divergence. Say so at Debug rather than
-		// letting the silence read as assurance; it clears itself within
-		// one refresh cycle of the 0117 deploy.
-		if result.WrapClass == WrapClassPartial && !result.SubsetBoundChecked {
-			r.logger.Debug("cross-check: within tolerance, escrow leg UNCHECKED (no sac_wrapped_stroops on the classic snapshot)",
-				"classic_key", p.ClassicKey,
-				"sac_key", p.SACKey,
-				"classic_total", result.ClassicTotal.String(),
-				"sac_total", result.SACTotal.String())
-		}
 		return CrossCheckOutcome{Pair: p, Kind: CrossCheckOutcomeWithin, Result: result}
 	}
 	r.logger.Warn("cross-check: divergence over tolerance",

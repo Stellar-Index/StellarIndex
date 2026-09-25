@@ -446,6 +446,12 @@ watched_classic_assets = [
 watched_sep41_contracts = {{ stellarindex_watched_sep41_contracts | default([]) | to_json }}
 sdf_reserve_accounts = {{ stellarindex_sdf_reserve_accounts | default([]) | to_json }}
 {% if stellarindex_reserve_balances_stroops is defined and stellarindex_reserve_balances_stroops %}
+# Date of the static snapshot below; the fallback refuses to serve it
+# once it is older than reserve_balances_max_age (default 168h).
+reserve_balances_as_of = "{{ stellarindex_reserve_balances_as_of | default('') }}"
+{% if stellarindex_reserve_balances_max_age is defined %}
+reserve_balances_max_age = "{{ stellarindex_reserve_balances_max_age }}"
+{% endif %}
 
 # SDF reserve balances (stroops) — fallback until the AccountEntry
 # observer covers the set (config.go SupplyConfig: every account in
