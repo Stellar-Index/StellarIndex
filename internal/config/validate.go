@@ -208,18 +208,20 @@ func (s StellarConfig) validate() error {
 	// providing a list — duplicates don't buy redundancy, they just
 	// look redundant. Case-fold so "http://X" and "HTTP://X" compare
 	// equal (URL schemes are case-insensitive per RFC 3986).
-	seen := make(map[string]struct{}, len(s.RPCEndpoints))
+	// Errors name entries by index only: a hosted endpoint can carry an
+	// API key in its path or query, and this error is printed at boot.
+	seen := make(map[string]int, len(s.RPCEndpoints))
 	for i, ep := range s.RPCEndpoints {
 		if _, err := url.Parse(ep); err != nil || !strings.Contains(ep, "://") {
-			return fmt.Errorf("%w: stellar.rpc_endpoints[%d] %q must be a full URL",
-				ErrInvalidConfig, i, ep)
+			return fmt.Errorf("%w: stellar.rpc_endpoints[%d] must be a full URL",
+				ErrInvalidConfig, i)
 		}
 		key := strings.ToLower(strings.TrimRight(ep, "/"))
-		if _, dup := seen[key]; dup {
-			return fmt.Errorf("%w: stellar.rpc_endpoints has duplicate %q",
-				ErrInvalidConfig, ep)
+		if first, dup := seen[key]; dup {
+			return fmt.Errorf("%w: stellar.rpc_endpoints[%d] is a duplicate of stellar.rpc_endpoints[%d]",
+				ErrInvalidConfig, i, first)
 		}
-		seen[key] = struct{}{}
+		seen[key] = i
 	}
 	// CoreHTTPEndpoint is optional — empty means "don't probe core".
 	// When set it must parse as an absolute URL.
@@ -680,11 +682,8 @@ func (a AggregateConfig) validate() error {
 	if err := a.CompositeReference.validate(a); err != nil {
 		return err
 	}
-	for _, raw := range a.Windows {
-		if _, err := time.ParseDuration(raw); err != nil {
-			return fmt.Errorf("%w: aggregate.windows entry %q: %w",
-				ErrInvalidConfig, raw, err)
-		}
+	if _, err := parseAggregateWindows(a.Windows); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidConfig, err)
 	}
 	return nil
 }
@@ -713,6 +712,10 @@ func (a AnomalyConfig) validate() error {
 		if _, ok := known[class]; !ok {
 			return fmt.Errorf("%w: anomaly.classifications[%q] has unknown class %q (see anomaly.AllClasses)",
 				ErrInvalidConfig, assetID, class)
+		}
+		if _, err := canonical.ParseAsset(assetID); err != nil {
+			return fmt.Errorf("%w: anomaly.classifications key %q is not a canonical asset id: %w",
+				ErrInvalidConfig, assetID, err)
 		}
 	}
 	return a.Phase2.validate()
@@ -879,12 +882,27 @@ func (a AggregateConfig) AggregatorWindows() ([]time.Duration, error) {
 	if len(a.Windows) == 0 {
 		return nil, nil
 	}
-	out := make([]time.Duration, 0, len(a.Windows))
-	for _, raw := range a.Windows {
+	return parseAggregateWindows(a.Windows)
+}
+
+// parseAggregateWindows parses aggregate.windows, rejecting a non-positive
+// or repeated window: a negative one inverts the trade query range on
+// every tick and a zero one is a silently empty bucket.
+func parseAggregateWindows(raws []string) ([]time.Duration, error) {
+	out := make([]time.Duration, 0, len(raws))
+	seen := make(map[time.Duration]string, len(raws))
+	for _, raw := range raws {
 		d, err := time.ParseDuration(raw)
 		if err != nil {
 			return nil, fmt.Errorf("aggregate.windows entry %q: %w", raw, err)
 		}
+		if d <= 0 {
+			return nil, fmt.Errorf("aggregate.windows entry %q must be a positive duration", raw)
+		}
+		if prev, dup := seen[d]; dup {
+			return nil, fmt.Errorf("aggregate.windows entries %q and %q are the same window", prev, raw)
+		}
+		seen[d] = raw
 		out = append(out, d)
 	}
 	return out, nil

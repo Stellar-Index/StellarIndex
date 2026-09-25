@@ -302,7 +302,7 @@ func TestRefreshPair_RestartKeepsPublishedWarning(t *testing.T) {
 	t0 := time.Now()
 	ctx := context.Background()
 	_ = svc.RefreshPair(ctx, pair, 1.00, t0)
-	_ = svc.RefreshPair(ctx, pair, 1.00, t0.Add(40*time.Minute))
+	_ = svc.RefreshPair(ctx, pair, 1.00, t0.Add(divergence.DefaultWarningPersistence+time.Minute))
 	if !readDivergence(t, rdb, pair).WarningFired || firstHooks != 1 {
 		t.Fatalf("precondition: want a published warning and one hook, got fired=%v hooks=%d",
 			readDivergence(t, rdb, pair).WarningFired, firstHooks)
@@ -400,5 +400,83 @@ func TestRefreshPair_RestartDoesNotResurrectClearedWarning(t *testing.T) {
 	if got.WarningFired || !got.FiringSince.IsZero() {
 		t.Errorf("after recovery: WarningFired=%v FiringSince=%v, want false and zero",
 			got.WarningFired, got.FiringSince)
+	}
+}
+
+// TestRefreshPair_GapDoesNotMatureStreak (GH-1043): a pair that fired once,
+// then went unevaluated for hours (no VWAP, parse error, below quorum), must
+// not publish on the single firing observation after the gap. Elapsed time
+// across an unobserved interval is not evidence the divergence persisted.
+func TestRefreshPair_GapDoesNotMatureStreak(t *testing.T) {
+	var fired int
+	svc, rdb, _ := newTestService(t, depeggedRefs(), divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 2,
+		OnWarningFired: func(context.Context, canonical.Pair, divergence.CachedResult) {
+			fired++
+		},
+	})
+	ctx := context.Background()
+	pair := xlmUSD(t)
+	t0 := time.Now()
+	afterGap := t0.Add(3 * time.Hour)
+
+	_ = svc.RefreshPair(ctx, pair, 1.00, t0)
+	_ = svc.RefreshPair(ctx, pair, 1.00, afterGap)
+	got := readDivergence(t, rdb, pair)
+	if got.WarningFired || fired != 0 {
+		t.Fatalf("first firing refresh after a 3h unevaluated gap: WarningFired=%v hooks=%d, "+
+			"want the warning held — one post-gap sample must not satisfy the persistence debounce",
+			got.WarningFired, fired)
+	}
+	if !got.FiringSince.Equal(afterGap) {
+		t.Errorf("FiringSince = %v, want the streak restarted at %v", got.FiringSince, afterGap)
+	}
+
+	_ = svc.RefreshPair(ctx, pair, 1.00, afterGap.Add(divergence.DefaultWarningPersistence+time.Minute))
+	if !readDivergence(t, rdb, pair).WarningFired || fired != 1 {
+		t.Errorf("divergence observed across two refreshes after the gap did not publish (hooks=%d)", fired)
+	}
+}
+
+// TestRefreshPair_SlowCadenceStillWarns: an operator cadence longer than the
+// debounce (divergence_min_interval_seconds = 1h) is not a gap; consecutive
+// refreshes one interval apart must still mature the streak.
+func TestRefreshPair_SlowCadenceStillWarns(t *testing.T) {
+	svc, rdb, _ := newTestService(t, depeggedRefs(), divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 2,
+		RefreshInterval:      time.Hour,
+	})
+	ctx := context.Background()
+	pair := xlmUSD(t)
+	t0 := time.Now()
+	_ = svc.RefreshPair(ctx, pair, 1.00, t0)
+	_ = svc.RefreshPair(ctx, pair, 1.00, t0.Add(time.Hour))
+	if !readDivergence(t, rdb, pair).WarningFired {
+		t.Error("two consecutive firing refreshes at a 1h cadence did not publish: the gap reset blinded the warning")
+	}
+}
+
+// TestRefreshPair_PublishedWarningSurvivesGap: once published, an
+// evaluation gap must not flap the warning off and re-send the webhook.
+func TestRefreshPair_PublishedWarningSurvivesGap(t *testing.T) {
+	var fired int
+	svc, rdb, _ := newTestService(t, depeggedRefs(), divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 2,
+		OnWarningFired: func(context.Context, canonical.Pair, divergence.CachedResult) {
+			fired++
+		},
+	})
+	ctx := context.Background()
+	pair := xlmUSD(t)
+	t0 := time.Now()
+	_ = svc.RefreshPair(ctx, pair, 1.00, t0)
+	_ = svc.RefreshPair(ctx, pair, 1.00, t0.Add(divergence.DefaultWarningPersistence+time.Minute))
+	_ = svc.RefreshPair(ctx, pair, 1.00, t0.Add(3*time.Hour))
+	if !readDivergence(t, rdb, pair).WarningFired || fired != 1 {
+		t.Errorf("published warning after a gap: WarningFired=%v hooks=%d, want true and 1",
+			readDivergence(t, rdb, pair).WarningFired, fired)
 	}
 }

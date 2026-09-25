@@ -61,3 +61,21 @@ func TestAggregatorWindows_directBadEntryErrors(t *testing.T) {
 		t.Errorf("error %q should cite the offending entry", err.Error())
 	}
 }
+
+// A negative window inverts the trade query range every tick, a zero one
+// is a silently empty bucket, and a repeat ("5m" vs "300s") double-refreshes
+// one window; all three must fail at config load, not at the first tick.
+func TestAggregatorWindows_rejectsNonPositiveAndDuplicate(t *testing.T) {
+	for name, windows := range map[string][]string{
+		"negative":  {"5m", "-5m"},
+		"zero":      {"0s", "1h"},
+		"duplicate": {"5m", "1h", "300s"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := cfg.AggregateConfig{Windows: windows}
+			if _, err := a.AggregatorWindows(); err == nil {
+				t.Errorf("AggregatorWindows(%q) = nil error, want rejection", windows)
+			}
+		})
+	}
+}

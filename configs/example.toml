@@ -375,7 +375,9 @@ pairs = [
   # "crypto:BTC/fiat:USD",
 ]
 # Operator-override window set. Empty = built-in default ([5m, 1h, 24h]).
-# Format: Go time.Duration strings ("5m", "1h", "24h").
+# Format: Go time.Duration strings ("5m", "1h", "24h"). Each must be
+# positive and distinct (zero, negative and repeated windows fail config
+# load); order does not matter — the shortest drives the divergence check.
 windows = [
   # "5m",
   # "1h",

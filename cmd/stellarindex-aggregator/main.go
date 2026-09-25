@@ -482,8 +482,9 @@ func run(cfgPath string, dryRun bool) error {
 			ObservationSink: timescale.NewDivergenceSink(store,
 				timescale.WithDivergenceLedgerProvider(divergenceLedgerAdapter{cursors: store}),
 			),
-			Logger:         logger.With("component", "divergence"),
-			OnWarningFired: divWarningHook,
+			RefreshInterval: divergenceRefreshCadence(cfg.Aggregate),
+			Logger:          logger.With("component", "divergence"),
+			OnWarningFired:  divWarningHook,
 		})
 		if err != nil {
 			return fmt.Errorf("divergence service: %w", err)
@@ -2088,6 +2089,17 @@ func mkLogger(cfg config.ObsConfig) *slog.Logger {
 	return obs.NewLogger(cfg, "stellarindex-aggregator")
 }
 
+// divergenceRefreshCadence is the longest normal spacing between two
+// divergence refreshes of one pair: the pass runs on the first tick at
+// least divergence_min_interval_seconds after the previous one.
+func divergenceRefreshCadence(a config.AggregateConfig) time.Duration {
+	tick := time.Duration(a.IntervalSeconds) * time.Second
+	if tick <= 0 {
+		tick = orchestrator.DefaultInterval
+	}
+	return time.Duration(a.DivergenceMinIntervalSeconds)*time.Second + tick
+}
+
 // buildAnomalyChecker constructs an anomaly.Checker from
 // AnomalyConfig. Returns (nil, nil) when anomaly.enabled is false
 // — the orchestrator treats nil as "feature off" and publishes
@@ -2115,6 +2127,10 @@ func buildAnomalyChecker(cfg config.AnomalyConfig) (*anomaly.Checker, error) {
 	overrides := make(map[string]anomaly.AssetClass, len(cfg.Classifications))
 	for assetID, className := range cfg.Classifications {
 		overrides[assetID] = anomaly.AssetClass(className)
+	}
+	// Needs the alias registry installed above to see sac_wrappers twins.
+	if err := anomaly.ValidateOverrides(overrides); err != nil {
+		return nil, err
 	}
 	classifier := anomaly.NewClassifier(overrides)
 

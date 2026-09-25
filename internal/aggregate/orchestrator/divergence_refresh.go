@@ -70,11 +70,8 @@ func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) 
 		return
 	}
 	o.lastDivergenceRefreshAt = now
-	// Use the shortest configured window — gives the freshest VWAP
-	// as the divergence input. Windows are operator-supplied in
-	// increasing order (the default DefaultWindows = [5m, 1h, 24h]
-	// satisfies this; operators who reorder get whatever comes
-	// first — Windows is a slice not a map, no enforced sort).
+	// The shortest window gives the freshest VWAP as the divergence
+	// input; New sorts Windows ascending, so it is Windows[0].
 	shortest := o.cfg.Windows[0]
 
 	for _, pair := range o.cfg.Pairs {

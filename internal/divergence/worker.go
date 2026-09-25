@@ -199,6 +199,14 @@ type ServiceOptions struct {
 	// threshold/agreement logic from the debounce.
 	WarningPersistence time.Duration
 
+	// RefreshInterval is the expected spacing between two consecutive
+	// refreshes of the same pair (the caller's cadence). A firing streak
+	// whose previous firing observation is more than twice
+	// max(RefreshInterval, WarningPersistence) old has an unobserved gap
+	// in it, so it restarts instead of maturing on one post-gap sample.
+	// Zero means the cadence is at most WarningPersistence.
+	RefreshInterval time.Duration
+
 	// PerReferenceTimeout is forwarded to [Compare] via
 	// [CompareOptions]. Default 5s.
 	PerReferenceTimeout time.Duration
@@ -251,6 +259,7 @@ type Service struct {
 	minSources  int
 	timeout     time.Duration
 	persistence time.Duration
+	maxGap      time.Duration
 	sink        ObservationSink
 	// logger is optional — nil-safe. When set, sink failures are
 	// logged at WARN per (pair, reference) instead of being
@@ -267,9 +276,9 @@ type Service struct {
 	// refresh; the hook fires only on `false → true` transitions, and a
 	// below-quorum refresh carries this value forward untouched.
 	//
-	// firingSince (W3-guards-2) maps pair.String() → the comparison
-	// time of the first refresh in the current uninterrupted
-	// raw-firing streak, and powers the WarningPersistence debounce in
+	// firingSince (W3-guards-2) maps pair.String() → the current
+	// uninterrupted raw-firing streak (its first and latest firing
+	// comparison times), and powers the WarningPersistence debounce in
 	// [Service.warningPersists]. It is cleared the moment a refresh
 	// finds the raw condition clear.
 	//
@@ -279,8 +288,16 @@ type Service struct {
 	onWarning    WarningHook
 	warningMu    sync.Mutex
 	warningState map[string]bool
-	firingSince  map[string]time.Time
+	firingSince  map[string]firingStreak
 	restored     map[string]bool
+}
+
+// firingStreak is one pair's raw-firing run: since is its first firing
+// observation, last its most recent one. last is what distinguishes a
+// run observed throughout from one with an unevaluated gap in it.
+type firingStreak struct {
+	since time.Time
+	last  time.Time
 }
 
 // independentReferences drops references that cannot corroborate our
@@ -325,6 +342,7 @@ func NewService(opts ServiceOptions) (*Service, error) {
 		persistence = DefaultWarningPersistence
 	}
 	return &Service{
+		maxGap:       2 * max(persistence, opts.RefreshInterval),
 		refs:         independentReferences(opts.References),
 		cache:        opts.Cache,
 		threshold:    threshold,
@@ -335,7 +353,7 @@ func NewService(opts ServiceOptions) (*Service, error) {
 		logger:       opts.Logger,
 		onWarning:    opts.OnWarningFired,
 		warningState: map[string]bool{},
-		firingSince:  map[string]time.Time{},
+		firingSince:  map[string]firingStreak{},
 		restored:     map[string]bool{},
 	}, nil
 }
@@ -510,7 +528,7 @@ func (s *Service) lastWarning(pairKey string) bool {
 func (s *Service) lastFiringSince(pairKey string) time.Time {
 	s.warningMu.Lock()
 	defer s.warningMu.Unlock()
-	return s.firingSince[pairKey]
+	return s.firingSince[pairKey].since
 }
 
 // recordWarning latches an evaluated refresh's verdict and runs the
@@ -538,7 +556,12 @@ func (s *Service) recordWarning(ctx context.Context, pair canonical.Pair, cached
 // robust to the aggregator's refresh cadence. A refresh that finds the
 // raw condition CLEAR resets the streak, so each fresh onset starts its
 // own persistence clock (and a real divergence that briefly dips below
-// threshold restarts, which is the conservative choice). Returns
+// threshold restarts, which is the conservative choice). A not-yet-
+// published streak whose last firing observation is older than s.maxGap
+// also restarts: the pair went unevaluated (no VWAP, parse error, below
+// quorum, process down) and elapsed time across that gap is not evidence
+// the condition held. A published warning keeps its streak across a gap
+// so an outage does not flap it off and re-fire the webhook. Returns
 // rawFiring unchanged when the gate is disabled (s.persistence <= 0).
 // The second result is the streak start to persist, zero when clear.
 func (s *Service) warningPersists(pairKey string, rawFiring bool, at time.Time) (bool, time.Time) {
@@ -551,14 +574,19 @@ func (s *Service) warningPersists(pairKey string, rawFiring bool, at time.Time) 
 		delete(s.firingSince, pairKey)
 		return false, time.Time{}
 	}
-	since, ok := s.firingSince[pairKey]
-	if !ok || at.Before(since) {
-		// First firing of a new streak (or a non-monotonic comparison
-		// clock): start the persistence clock here and hold the warning.
-		s.firingSince[pairKey] = at
+	streak, ok := s.firingSince[pairKey]
+	gapped := ok && at.Sub(streak.last) > s.maxGap && !s.warningState[pairKey]
+	if !ok || at.Before(streak.since) || gapped {
+		// First firing of a new streak, a non-monotonic comparison clock,
+		// or an unobserved gap: start the persistence clock here and hold.
+		s.firingSince[pairKey] = firingStreak{since: at, last: at}
 		return false, at
 	}
-	return at.Sub(since) >= s.persistence, since
+	if at.After(streak.last) {
+		streak.last = at
+		s.firingSince[pairKey] = streak
+	}
+	return at.Sub(streak.since) >= s.persistence, streak.since
 }
 
 // restoreWarningState seeds a pair's debounce streak and webhook edge
@@ -605,7 +633,9 @@ func (s *Service) restoreWarningState(ctx context.Context, pairKey, cacheKey str
 	}
 	s.restored[pairKey] = true
 	if _, live := s.firingSince[pairKey]; !live && !since.IsZero() {
-		s.firingSince[pairKey] = since
+		// The cache holds no last-firing time; since is the conservative
+		// stand-in (it can only make the gap test stricter).
+		s.firingSince[pairKey] = firingStreak{since: since, last: since}
 	}
 	if _, live := s.warningState[pairKey]; !live && prior.WarningFired {
 		s.warningState[pairKey] = true
