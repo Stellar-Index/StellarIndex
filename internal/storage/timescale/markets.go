@@ -312,9 +312,16 @@ func (s *Store) AllPools(ctx context.Context, filter PoolsFilter, cursor string,
 //
 // Callers append their own filter predicates, the GROUP BY, and their
 // ordering tail. $1 is the recency-window lower bound; every caller
-// binds it first.
+// binds it first. The {{ALIAS_VALUES}} token is the alias-fold VALUES
+// rows (see buildAliasMapValues); alias_map is unused by `pools` itself
+// (grouped on raw stored spelling, matching poolsFilterSQL's predicates)
+// but is in scope for a caller's `canon` step to fold before orienting —
+// GH-1098.
 const perSourcePoolsCTE = `
-        WITH xlm_usd AS (
+        WITH alias_map(form, canon) AS (
+          VALUES {{ALIAS_VALUES}}
+        ),
+        xlm_usd AS (
           SELECT vwap
             FROM prices_1m
            WHERE base_asset = 'native'
@@ -413,7 +420,7 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	// pre-#25 query returned NULL; the handler scan collapses
 	// NULL and "0" identically, so functionally equivalent).
 	cte := perSourcePoolsCTE
-	canonBase, canonQuote, flipped := canonOrientSQL()
+	canonBase, canonQuote, _ := canonOrientSQL()
 	cte += poolsFilterSQL(canonBase, canonQuote) + `
          GROUP BY p.source, p.base_asset, p.quote_asset
         )
@@ -424,6 +431,13 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	// price re-expressed canonically (inverted for the flipped one). The
 	// XLM-fallback is already resolved into vol_24h_usd in `pools`, so
 	// summing it across directions is correct. See canonical.Orient.
+	//
+	// The fold through alias_map happens HERE, before orienting — not in
+	// `pools` above — so a market traded on one venue under `crypto:XLM`
+	// and on another under `native` collapses to one canon row instead of
+	// two split-volume directory entries (GH-1098).
+	canonBase, canonQuote, flipped := canonOrientSQLOn(
+		"COALESCE(bm.canon, pools.base_asset)", "COALESCE(qm.canon, pools.quote_asset)")
 	cte += `,
         canon AS (
           SELECT source,
@@ -434,6 +448,8 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
                  SUM(vol_24h_usd::numeric)::text AS vol_24h_usd,
                  ` + canonLastPriceSQL(flipped) + ` AS last_price
             FROM pools
+            LEFT JOIN alias_map bm ON bm.form = pools.base_asset
+            LEFT JOIN alias_map qm ON qm.form = pools.quote_asset
            GROUP BY source, ` + canonBase + `, ` + canonQuote + `
         )
     `
@@ -455,7 +471,8 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 		  LIMIT $3
 		`
 		args := append([]any{since, cursor, limit + 1}, poolsFilterArgs(filter)...)
-		return cte + tail, args
+		aliasValues, aliasArgs := buildAliasMapValues(len(args) + 1)
+		return strings.Replace(cte+tail, "{{ALIAS_VALUES}}", aliasValues, 1), append(args, aliasArgs...)
 	}
 	// FROM canon, NOT FROM pools. This tail used to read the
 	// pre-collapse CTE while the volume-desc tail above read `canon`,
@@ -482,7 +499,8 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	// statement requires 7` on every order_by=pair request — caught
 	// 2026-05-14 live on r1.
 	args := append([]any{since, cursor, limit + 1}, poolsFilterArgs(filter)...)
-	return cte + tail, args
+	aliasValues, aliasArgs := buildAliasMapValues(len(args) + 1)
+	return strings.Replace(cte+tail, "{{ALIAS_VALUES}}", aliasValues, 1), append(args, aliasArgs...)
 }
 
 // assetAliasBind expands an asset filter to the text[] of its alias forms
@@ -567,7 +585,11 @@ func (s *Store) sourceMarketsCommon(ctx context.Context, source, cursor string, 
 // PREVIOUS day (6h end_offset, materialized_only) and it is pair-wide
 // rather than per-venue anyway.
 func buildSourceMarketsQuery(since time.Time, source, cursor string, limit int, order MarketsOrder) (string, []any) {
-	canonBase, canonQuote, flipped := canonOrientSQL()
+	// Folded through alias_map before orienting, same as buildPoolsQuery's
+	// `canon` step — a pair traded under two alias spellings on the same
+	// venue collapses to one row instead of two (GH-1098).
+	canonBase, canonQuote, flipped := canonOrientSQLOn(
+		"COALESCE(bm.canon, pools.base_asset)", "COALESCE(qm.canon, pools.quote_asset)")
 	ctes := perSourcePoolsCTE + `
            AND p.source = $4
          GROUP BY p.source, p.base_asset, p.quote_asset
@@ -580,6 +602,8 @@ func buildSourceMarketsQuery(since time.Time, source, cursor string, limit int, 
                  SUM(vol_24h_usd::numeric)       AS vol_24h_num,
                  ` + canonLastPriceSQL(flipped) + ` AS last_price
             FROM pools
+            LEFT JOIN alias_map bm ON bm.form = pools.base_asset
+            LEFT JOIN alias_map qm ON qm.form = pools.quote_asset
            GROUP BY ` + canonBase + `, ` + canonQuote + `
         )
         SELECT base_asset, quote_asset, last_trade_at,
@@ -603,14 +627,18 @@ func buildSourceMarketsQuery(since time.Time, source, cursor string, limit int, 
                   (base_asset || '|' || quote_asset) ASC
          LIMIT $3
         `
-		return ctes + tail, []any{since, cursor, limit + 1, source}
+		aliasValues, aliasArgs := buildAliasMapValues(5)
+		args := append([]any{since, cursor, limit + 1, source}, aliasArgs...)
+		return strings.Replace(ctes+tail, "{{ALIAS_VALUES}}", aliasValues, 1), args
 	default: // MarketsOrderPair
 		const tail = `
          WHERE ($2 = '' OR (base_asset || '|' || quote_asset) > $2)
          ORDER BY (base_asset || '|' || quote_asset) ASC
          LIMIT $3
         `
-		return ctes + tail, []any{since, cursor, limit + 1, source}
+		aliasValues, aliasArgs := buildAliasMapValues(5)
+		args := append([]any{since, cursor, limit + 1, source}, aliasArgs...)
+		return strings.Replace(ctes+tail, "{{ALIAS_VALUES}}", aliasValues, 1), args
 	}
 }
 
@@ -813,9 +841,15 @@ func encodeMarketsCursor(last Market, order MarketsOrder) string {
 // set) — so it lives in one literal, the way perSourcePoolsCTE does, and
 // buildDistinctPairsQuery appends the `raw` and `canon` CTEs that depend
 // on the canonical-orientation expressions. Why each CTE reads the view
-// it reads is argued at length in buildDistinctPairsQuery.
+// it reads is argued at length in buildDistinctPairsQuery. The
+// {{ALIAS_VALUES}} token is the alias-fold VALUES rows (see
+// buildAliasMapValues) that the `canon` step folds through before
+// orienting — GH-1098.
 const distinctPairsActivityCTEs = `
-        WITH d AS (
+        WITH alias_map(form, canon) AS (
+          VALUES {{ALIAS_VALUES}}
+        ),
+        d AS (
             SELECT p.base_asset, p.quote_asset,
                    MAX(p.bucket) AS bucket_close_at,
                    (array_agg(p.last_price ORDER BY p.bucket DESC)
@@ -955,8 +989,12 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	// volume + trade count sum across both directions, and last_price is
 	// the most-recent trade's price re-expressed in the canonical
 	// orientation (inverted for the flipped direction). See
-	// canonOrientSQL / canonical.Orient.
-	canonBase, canonQuote, flipped := canonOrientSQL()
+	// canonOrientSQL / canonical.Orient. Folded through alias_map before
+	// orienting: a pair traded on one venue under `crypto:XLM` and on
+	// another under `native` is otherwise two directory rows with split
+	// 24h volume (GH-1098).
+	canonBase, canonQuote, flipped := canonOrientSQLOn(
+		"COALESCE(bm.canon, raw.base_asset)", "COALESCE(qm.canon, raw.quote_asset)")
 	ctes := distinctPairsActivityCTEs + `        raw AS (
             SELECT COALESCE(d.base_asset, h.base_asset)   AS base_asset,
                    COALESCE(d.quote_asset, h.quote_asset) AS quote_asset,
@@ -980,6 +1018,8 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
                    SUM(vol_24h_num)     AS vol_24h_num,
                    ` + canonLastPriceSQL(flipped) + ` AS last_price
               FROM raw
+              LEFT JOIN alias_map bm ON bm.form = raw.base_asset
+              LEFT JOIN alias_map qm ON qm.form = raw.quote_asset
              GROUP BY ` + canonBase + `, ` + canonQuote + `
         )
         SELECT base_asset, quote_asset, last_trade_at, bucket_close_at,
@@ -1011,14 +1051,18 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
                   (base_asset || '|' || quote_asset) ASC
          LIMIT $3
         `
-		return ctes + tail, []any{since, cursor, limit + 1, source, assets}
+		aliasValues, aliasArgs := buildAliasMapValues(6)
+		args := append([]any{since, cursor, limit + 1, source, assets}, aliasArgs...)
+		return strings.Replace(ctes+tail, "{{ALIAS_VALUES}}", aliasValues, 1), args
 	default: // MarketsOrderPair
 		const tail = `
          WHERE ($2 = '' OR (base_asset || '|' || quote_asset) > $2)
          ORDER BY (base_asset || '|' || quote_asset) ASC
          LIMIT $3
         `
-		return ctes + tail, []any{since, cursor, limit + 1, source, assets}
+		aliasValues, aliasArgs := buildAliasMapValues(6)
+		args := append([]any{since, cursor, limit + 1, source, assets}, aliasArgs...)
+		return strings.Replace(ctes+tail, "{{ALIAS_VALUES}}", aliasValues, 1), args
 	}
 }
 
