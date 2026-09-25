@@ -152,6 +152,11 @@ func NewCrossAnchorFiller(opts FillerOptions) (*CrossAnchorFiller, error) {
 		sources:     sources,
 		httpClient:  httpClient,
 		workers:     workers,
+		// os.Chown treats -1 as "leave this half unchanged"; start
+		// both here so a half-blank OwnerUser/OwnerGroup override
+		// can't fall back to Go's int zero-value (uid/gid 0 = root).
+		ownerUID: -1,
+		ownerGID: -1,
 	}
 
 	if opts.OwnerUser != "" {
