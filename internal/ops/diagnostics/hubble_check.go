@@ -403,6 +403,16 @@ func diffLedgerCounts(ours, theirs map[uint32]int) []ledgerDiff {
 // BigQuery NUMERIC sums (none expected at integer-stroop scale, but
 // the knob exists for future-proofing).
 
+// hubbleStroopsPerUnit is stellar-etl's scaling factor
+// (utils.ConvertStroopValueToReal) between the raw i64 stroop amount and
+// the whole-unit FLOAT64 Hubble stores in selling_amount/buying_amount.
+// hubbleStroopsPerUnitLiteral is the same value inlined into the BigQuery
+// SQL text (see fetchHubbleStats) since query parameters aren't usable
+// inside an aggregate expression there.
+const hubbleStroopsPerUnit = 10_000_000
+
+const hubbleStroopsPerUnitLiteral = "10000000"
+
 // ledgerStats is the per-ledger numeric record compared by the
 // -with-amounts path. Counts are int (matches the count-only path);
 // sum_sell + sum_buy are big.Int because Postgres + BigQuery NUMERIC
@@ -620,16 +630,30 @@ func hubbleDupCheck(ctx context.Context, bq hubbleBQ, from, to uint32) (total, d
 	return row.Total, row.Distinct, nil
 }
 
+// hubbleStatsSQL builds the -with-amounts BigQuery text. Pulled out of
+// fetchHubbleStats so the stroop-scaling can be asserted without a live
+// BigQuery client.
+//
+// selling_amount/buying_amount are Hubble's whole-unit FLOAT64 columns
+// (stellar-etl's utils.ConvertStroopValueToReal divides the raw stroop
+// int64 by hubbleStroopsPerUnit before loading BigQuery). Scale the SUM
+// back up to stroops in SQL so the STRING this parses into big.Int is both
+// integral (no decimal point to trip SetString) and directly comparable to
+// our stroop-scale base_amount/quote_amount sums.
+func hubbleStatsSQL() string {
+	return "SELECT history_operation_id >> 32 AS ledger, COUNT(*) AS n, " +
+		"COALESCE(CAST(ROUND(SUM(selling_amount) * " + hubbleStroopsPerUnitLiteral + ") AS STRING), '0') AS sum_sell, " +
+		"COALESCE(CAST(ROUND(SUM(buying_amount) * " + hubbleStroopsPerUnitLiteral + ") AS STRING), '0') AS sum_buy " +
+		"FROM `crypto-stellar.crypto_stellar.history_trades` " +
+		"WHERE history_operation_id BETWEEN @from AND @to " +
+		"GROUP BY ledger"
+}
+
 // fetchHubbleStats is the -with-amounts counterpart of
 // fetchHubbleCounts. Per-ledger (count, sum(selling_amount),
 // sum(buying_amount)).
 func fetchHubbleStats(ctx context.Context, bq hubbleBQ, from, to uint32) (map[uint32]ledgerStats, error) {
-	q := bq.query("SELECT history_operation_id >> 32 AS ledger, COUNT(*) AS n, " +
-		"COALESCE(CAST(SUM(selling_amount) AS STRING), '0') AS sum_sell, " +
-		"COALESCE(CAST(SUM(buying_amount)  AS STRING), '0') AS sum_buy " +
-		"FROM `crypto-stellar.crypto_stellar.history_trades` " +
-		"WHERE history_operation_id BETWEEN @from AND @to " +
-		"GROUP BY ledger")
+	q := bq.query(hubbleStatsSQL())
 	q.Parameters = []bigquery.QueryParameter{
 		// Hubble history_trades has no ledger_sequence column — the ledger is
 		// the high 32 bits of history_operation_id (TOID). Filter + group by

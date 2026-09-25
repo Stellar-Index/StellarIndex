@@ -2,6 +2,8 @@ package diagnostics
 
 import (
 	"math/big"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -245,5 +247,51 @@ func TestDiffLedgerStats_OneSidedAbsenceFlagsBothCountAndSums(t *testing.T) {
 		if got[0].Reasons[i] != want {
 			t.Errorf("reason %d: got %q, want %q", i, got[0].Reasons[i], want)
 		}
+	}
+}
+
+// TestHubbleStatsSQL_ScalesSumsToStroops pins CA2-A28-correct-7: Hubble's
+// selling_amount/buying_amount are whole-unit FLOAT64 (stellar-etl divides
+// by 1e7 on load), while our side sums stroop-scale base_amount/quote_amount.
+// Comparing them raw is off by exactly hubbleStroopsPerUnit, and a
+// non-integral SUM aborts fetchHubbleStats' big.Int.SetString outright. The
+// query must ROUND(SUM(...) * hubbleStroopsPerUnit) before casting to
+// STRING so both sides land on the same integer stroop scale.
+func TestHubbleStatsSQL_ScalesSumsToStroops(t *testing.T) {
+	sql := hubbleStatsSQL()
+
+	wantSell := "ROUND(SUM(selling_amount) * " + hubbleStroopsPerUnitLiteral + ")"
+	if !strings.Contains(sql, wantSell) {
+		t.Errorf("sum_sell not scaled to stroops: query missing %q\ngot: %s", wantSell, sql)
+	}
+	wantBuy := "ROUND(SUM(buying_amount) * " + hubbleStroopsPerUnitLiteral + ")"
+	if !strings.Contains(sql, wantBuy) {
+		t.Errorf("sum_buy not scaled to stroops: query missing %q\ngot: %s", wantBuy, sql)
+	}
+
+	// The literal embedded in the SQL text must actually equal the Go-side
+	// scaling constant, or the two could drift independently.
+	gotLiteral, err := strconv.Atoi(hubbleStroopsPerUnitLiteral)
+	if err != nil {
+		t.Fatalf("hubbleStroopsPerUnitLiteral %q is not an integer: %v", hubbleStroopsPerUnitLiteral, err)
+	}
+	if gotLiteral != hubbleStroopsPerUnit {
+		t.Errorf("hubbleStroopsPerUnitLiteral = %d, want %d (hubbleStroopsPerUnit)", gotLiteral, hubbleStroopsPerUnit)
+	}
+
+	// Demonstrates why scaling has to happen SQL-side rather than after
+	// big.Int.SetString: an un-scaled whole-unit sum like "12.3456789"
+	// (Hubble's real shape for a non-integral trade total) is not a valid
+	// base-10 integer string and SetString rejects it outright — exactly
+	// the "parse Hubble SUM(selling_amount)" failure the finding names.
+	// The scaled, rounded stroop value the fixed query produces IS valid.
+	if _, ok := new(big.Int).SetString("12.3456789", 10); ok {
+		t.Fatalf("test assumption broken: unscaled decimal string unexpectedly parsed as big.Int")
+	}
+	// Multiplying the same whole-unit value by hubbleStroopsPerUnit and
+	// rounding — exactly what the fixed query does in SQL — yields the
+	// integral stroop string fetchHubbleStats can actually parse.
+	if _, ok := new(big.Int).SetString("123456789", 10); !ok {
+		t.Fatalf("scaled stroop value should parse as big.Int")
 	}
 }
