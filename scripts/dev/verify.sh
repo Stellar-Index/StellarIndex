@@ -179,6 +179,8 @@ echo "=== verify↔CI parity self-test ===" && ./scripts/ci/check-verify-parity-
 echo "=== verify.sh ↔ CI import-checks parity ===" && ./scripts/ci/check-verify-parity.sh
 echo "=== CI meta-gate coverage ===" && ./scripts/ci/ci-meta-gate-coverage-test.sh
 echo "=== deploy checkout ref ===" && ./scripts/ci/deploy-checkout-ref-test.sh
+echo "=== deploy migration gate coverage ===" && ./scripts/ci/deploy-migration-gate-coverage-test.sh
+echo "=== deploy served-path smoke ===" && ./scripts/ci/deploy-served-path-smoke-test.sh
 echo "=== Pages deploy branch label ===" && ./scripts/ci/pages-deploy-branch-test.sh
 # The verifier image installs the Postman converter from a Dockerfile ARG whose
 # default must equal the pin in scripts/dev/docs-postman.sh; the script refuses
