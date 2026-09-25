@@ -240,7 +240,7 @@ func (s *Server) fetchObservationsOrWriteError(
 // downgrade to false silently — this is a UX hint, not a
 // load-bearing signal.
 func (s *Server) observationsHaveTriangulatedPrice(ctx context.Context, pair canonical.Pair) bool {
-	if _, _, _, ok := s.tryRedisVWAPFallback(ctx, pair.Base, pair.Quote); ok {
+	if _, _, _, _, ok := s.tryRedisVWAPFallback(ctx, pair.Base, pair.Quote); ok {
 		return true
 	}
 	if _, _, ok, _ := s.tryStablecoinFiatProxy(ctx, pair.Base, pair.Quote); ok {

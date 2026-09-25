@@ -2,9 +2,11 @@ package v1_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math/big"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1840,5 +1842,87 @@ drain:
 
 	if got := atomic.LoadInt32(&reader.calls); got != 1 {
 		t.Errorf("LatestPrice calls = %d, want 1 (n=%d identical concurrent requests should coalesce onto one upstream read)", got, n)
+	}
+}
+
+// pairKeyedCompositeLooker keys both the VWAP cache and the composite
+// meta on the LITERAL (base, quote) pair, as Redis does, so a read under
+// the wrong spelling misses rather than passing by accident.
+type pairKeyedCompositeLooker struct {
+	vwaps map[string]v1.CachedVWAP
+	metas map[string][]byte
+}
+
+func (l *pairKeyedCompositeLooker) LookupTriangulatedVWAP(
+	_ context.Context, base, quote canonical.Asset, _ time.Duration,
+) (v1.CachedVWAP, bool, error) {
+	v, ok := l.vwaps[base.String()+"/"+quote.String()]
+	return v, ok, nil
+}
+
+func (l *pairKeyedCompositeLooker) LookupCompositeMeta(
+	_ context.Context, base, quote canonical.Asset, _ time.Duration,
+) ([]byte, bool, error) {
+	m, ok := l.metas[base.String()+"/"+quote.String()]
+	return m, ok, nil
+}
+
+// TestPrice_FallbackCompositeIsSpellingIndependent pins #1025: the
+// aggregator publishes the GBP composite under crypto:XLM/fiat:GBP only,
+// so on a closed-bucket miss ?asset=native must reach that same composite
+// — value, triangulated flag and the composite's own router meta — rather
+// than falling to a request-time FX cross. Everything but the echoed
+// asset_id must match the crypto:XLM response.
+func TestPrice_FallbackCompositeIsSpellingIndependent(t *testing.T) {
+	observed := time.Date(2026, 9, 18, 8, 55, 0, 0, time.UTC)
+	looker := &pairKeyedCompositeLooker{
+		vwaps: map[string]v1.CachedVWAP{
+			"crypto:XLM/fiat:GBP": {Value: "0.140889883632", Triangulated: true, ObservedAt: observed},
+		},
+		metas: map[string][]byte{
+			"crypto:XLM/fiat:GBP": []byte(`{"path_count":1,"combined_confidence":0.9,"low_confidence":false,"diverged":true,"rerouted":false}`),
+		},
+	}
+	srv := v1.New(v1.Options{Prices: &stubPriceReader{err: v1.ErrPriceNotFound}, Triangulated: looker})
+	ts := startHTTPTest(t, srv.Handler())
+
+	type envelope struct {
+		Data    map[string]any `json:"data"`
+		Flags   map[string]any `json:"flags"`
+		Sources []string       `json:"sources"`
+	}
+	get := func(asset string) envelope {
+		t.Helper()
+		status, body := getBody(t, ts.URL+"/v1/price?asset="+asset+"&quote=fiat:GBP")
+		if status != http.StatusOK {
+			t.Fatalf("asset=%s: status = %d, want 200: %s", asset, status, body)
+		}
+		var env envelope
+		if err := json.Unmarshal([]byte(body), &env); err != nil {
+			t.Fatalf("asset=%s: decode: %v: %s", asset, err, body)
+		}
+		if got := env.Data["asset_id"]; got != asset {
+			t.Fatalf("asset=%s: asset_id = %v, want the requested spelling echoed", asset, got)
+		}
+		delete(env.Data, "asset_id")
+		return env
+	}
+
+	composite := get("crypto:XLM")
+	native := get("native")
+	if composite.Data["price"] != "0.140889883632" {
+		t.Fatalf("crypto:XLM price = %v, want the cached composite", composite.Data["price"])
+	}
+	if composite.Flags["triangulated"] != true || composite.Flags["diverged"] != true {
+		t.Fatalf("crypto:XLM flags = %v, want triangulated and diverged from the composite meta", composite.Flags)
+	}
+	if !reflect.DeepEqual(native.Data, composite.Data) {
+		t.Errorf("native data = %v\nwant (crypto:XLM) %v", native.Data, composite.Data)
+	}
+	if !reflect.DeepEqual(native.Flags, composite.Flags) {
+		t.Errorf("native flags = %v\nwant (crypto:XLM) %v", native.Flags, composite.Flags)
+	}
+	if !reflect.DeepEqual(native.Sources, composite.Sources) {
+		t.Errorf("native sources = %v, want (crypto:XLM) %v", native.Sources, composite.Sources)
 	}
 }

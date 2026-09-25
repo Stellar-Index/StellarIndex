@@ -249,7 +249,7 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// present) is dropped since the tip envelope has no triangulated
 	// flag — operators reading the marker for forensics use /v1/price
 	// instead.
-	if cacheSnap, cacheSources, _, ok := s.tryRedisVWAPFallback(ctx, asset, quote); ok {
+	if cacheSnap, cacheSources, _, _, ok := s.tryRedisVWAPFallback(ctx, asset, quote); ok {
 		return cacheSnap, cacheSources, nil
 	}
 	// Read-time stablecoin-fiat proxy: rewrites X/fiat:USD to X/<peg>

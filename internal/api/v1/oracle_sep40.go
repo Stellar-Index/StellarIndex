@@ -111,7 +111,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		var ok bool
 		viaFallback = true
 		var withheld bool
-		snapshot, sources, triangulated, ok, withheld = s.priceFallback(ctx, asset, defaultPriceQuote)
+		snapshot, sources, _, triangulated, ok, withheld = s.priceFallback(ctx, asset, defaultPriceQuote)
 		// MSP-06: a withheld verdict reached from the proxy leg must be
 		// reported as withheld, not as "no price data" — the two are
 		// different answers, and only the withheld problem names the raw
@@ -422,7 +422,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		var ok bool
 		viaFallback = true
 		var withheld bool
-		snapshot, sources, triangulated, ok, withheld = s.priceFallback(ctx, base, quote)
+		snapshot, sources, _, triangulated, ok, withheld = s.priceFallback(ctx, base, quote)
 		// MSP-06, as above.
 		if !ok && withheld {
 			writePriceWithheldProblem(w, r, base, quote, PriceWithheldUnattributed)
