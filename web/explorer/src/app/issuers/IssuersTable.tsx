@@ -9,6 +9,7 @@ import { useIssuers } from '@/api/hooks';
 import { formatCompact } from '@/lib/format';
 import { useTableSort, SortableTh, type SortColumn } from '@/lib/useTableSort';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
+import { classifyScamReasonLabel } from '@/lib/directory-tags';
 
 /**
  * Live issuer directory backed by `/v1/issuers`. Ranked by total
@@ -200,14 +201,7 @@ export function IssuersTable() {
                         title={row.scam_reason}
                         className="bg-down-subtle text-down rounded-sm px-1.5 py-0.5 text-[9px] font-medium tracking-wider uppercase"
                       >
-                        {/* S-010: the flag categories differ materially —
-                            a deprecated legacy issuer of a real org is not
-                            a scam. Derive the label from the reason. */}
-                        {/^deprecated/i.test(row.scam_reason)
-                          ? 'DEPRECATED'
-                          : /scam|counterfeit|fraud/i.test(row.scam_reason)
-                            ? 'SCAM'
-                            : 'UNSAFE'}
+                        {classifyScamReasonLabel(row.scam_reason)}
                       </span>
                     )}
                   </div>

@@ -99,6 +99,26 @@ export function stellarExpertDirectoryUrl(
  * `tagsOf` reads the row's issuer_directory_tags, so this stays generic
  * over row shapes.
  */
+/**
+ * ScamReasonLabel — the three-way badge text for a curated `scam_reason`
+ * free-text string (Go: known_scams.go's `Reason` field). This is a
+ * distinct vocabulary from DIRECTORY_SCAM_FLAG_TAGS (a hand-curated
+ * legacy list, not the account_directory tags), but still lives here so
+ * a badge classifier is never re-derived per caller (#879).
+ */
+export type ScamReasonLabel = 'DEPRECATED' | 'SCAM' | 'UNSAFE';
+
+/**
+ * classifyScamReasonLabel — S-010: a deprecated legacy issuer of a real
+ * org is not a scam, so the badge text is derived from the reason text
+ * rather than always reading "SCAM".
+ */
+export function classifyScamReasonLabel(reason: string): ScamReasonLabel {
+  if (/^deprecated/i.test(reason)) return 'DEPRECATED';
+  if (/scam|counterfeit|fraud/i.test(reason)) return 'SCAM';
+  return 'UNSAFE';
+}
+
 export function demoteFlaggedLast<T>(
   rows: readonly T[],
   tagsOf: (row: T) => readonly string[] | null | undefined,
