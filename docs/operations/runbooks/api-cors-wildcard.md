@@ -53,3 +53,10 @@ curl -fs http://localhost:9464/metrics | grep stellarindex_api_cors_decisions_to
 3. Verify the fix by confirming `allowed_wildcard` stops incrementing
    and (if origins were pinned) `allowed_origin` picks up the same
    traffic.
+
+## Related
+
+- Implementation: `internal/api/v1/middleware/cors.go` (the decision and
+  its outcome counter) and `warnOpenCORS` in `cmd/stellarindex-api/main.go`
+  (the boot-time warning this alert makes continuous).
+- Alert rule: `configs/prometheus/rules.r1/api-security.yml`.

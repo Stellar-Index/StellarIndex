@@ -53,3 +53,10 @@ curl -fs http://localhost:9479/metrics | grep -E \
    wrong value (compare against the certified raw ledger lake, not the
    other region — both could in principle be behind a since-fixed
    defect) and re-run its ingest/projection for the affected range.
+
+## Related
+
+- Implementation: `internal/ops/archive/cross_region_monitor.go`.
+- Alert rules: `configs/prometheus/rules.r1/cross-region.yml`.
+- Design: [ADR-0050](../../adr/0050-multi-region-ha-architecture.md).
+- Re-running a region's projection for a range: [projector-replay.md](projector-replay.md).
