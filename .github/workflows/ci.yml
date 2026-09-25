@@ -2219,6 +2219,18 @@ jobs:
         # temp files with a stub handler — no hosts, no secrets.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-galexie-restart-test.sh
+      - name: nftables per-source SSH rate-limit test
+        # Every role that renders /etc/nftables.conf must limit new SSH per
+        # source address: a single shared bucket lets one scanner starve the
+        # operator and the deploy runner. Renders each writer's real Jinja.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-ssh-rate-limit-test.sh
+      - name: prometheus role archival-host guard test
+        # The prometheus role replaces the whole nftables ruleset; it must
+        # never select an archival node, even under --tags firewall.
+        # --list-hosts/--list-tasks only, nothing connects anywhere.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-prometheus-host-guard-test.sh
       - name: exporter listen-address ARGS wiring test (T575)
         # redis_exporter / postgres_exporter Debian units exec
         # `<binary> $ARGS` via EnvironmentFile; WEB_LISTEN_ADDRESS /

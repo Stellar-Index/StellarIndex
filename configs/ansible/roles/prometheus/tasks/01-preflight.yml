@@ -31,6 +31,19 @@
       Prometheus/Alertmanager is managed out-of-band today via
       configs/prometheus/rules.r1 + configs/alertmanager/apply.sh.
 
+# 06-firewall.yml renders the WHOLE /etc/nftables.conf (`flush ruleset`).
+# On an archival node that replaces the archival-node ruleset: Caddy
+# 80/443, the stellar-core peer port and the SSH allow-list all go.
+- name: assert host is not an archival node (this role owns the host firewall)
+  assert:
+    that:
+      - inventory_hostname not in groups['archival_nodes'] | default([])
+    fail_msg: >-
+      {{ inventory_hostname }} is in archival_nodes. The prometheus role
+      replaces the host's entire nftables ruleset and would drop the
+      archival-node public ports (Caddy 80/443, stellar-core peer) and
+      its SSH allow-list. Run it on dedicated prometheus_pair hosts only.
+
 - name: assert prometheus_pair has exactly 2 hosts
   assert:
     that:
