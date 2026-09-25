@@ -109,6 +109,14 @@ type CachedResult struct {
 	// "unchecked", not "unanimous disagreement".
 	AgreementCount int `json:"agreement_count"`
 
+	// Pinned marks an entry whose OurPrice was a frozen pair's pinned
+	// last-known-good, not a fresh VWAP ([Service.RefreshPinnedPair]).
+	// The references and Median are fresh; DivergencePct and
+	// AgreementCount measure the pinned value and are no verdict or
+	// confidence input, and WarningFired/FiringSince are carried forward
+	// from the last evaluated refresh.
+	Pinned bool `json:"our_price_pinned,omitempty"`
+
 	// ComputedAt is when the worker wrote this result. RFC 3339 UTC.
 	ComputedAt time.Time `json:"computed_at"`
 }
@@ -379,6 +387,26 @@ func NewService(opts ServiceOptions) (*Service, error) {
 var ErrNoReferenceResponded = errors.New("divergence: no reference responded for pair")
 
 func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice float64, observedAt time.Time) error {
+	return s.refresh(ctx, pair, ourPrice, observedAt, false)
+}
+
+// RefreshPinnedPair is [Service.RefreshPair] for a pair whose served
+// price is frozen: pinnedPrice is the last-known-good the freeze keeps
+// serving, not a fresh observation. The references are still polled, so
+// the entry's Median stays current for the freeze's release corroboration,
+// but the comparison against the pinned value reaches no verdict — a
+// freeze on a genuine repricing would otherwise be reported as our price
+// diverging from the market it refused to follow. So the entry is marked
+// [CachedResult.Pinned], the warning verdict and its persistence streak are
+// carried forward as on a below-quorum refresh, and no warning hook fires.
+// Per-reference observations are still persisted: each row carries the
+// pinned price it was measured against, and is the operator's evidence of
+// whether the market moved away from the frozen value.
+func (s *Service) RefreshPinnedPair(ctx context.Context, pair canonical.Pair, pinnedPrice float64, observedAt time.Time) error {
+	return s.refresh(ctx, pair, pinnedPrice, observedAt, true)
+}
+
+func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice float64, observedAt time.Time, pinned bool) error {
 	if len(s.refs) == 0 {
 		return nil
 	}
@@ -408,6 +436,7 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 	// per CS-087 — with no responses, AgreementCount == 0 means
 	// "unchecked", not "unanimous disagreement".
 	checked := res.SuccessCount >= s.minSources
+	evaluated := checked && !pinned
 
 	// W3-guards-2: our value is a shortest-window VWAP; the references
 	// are instantaneous spot quotes. On a fast price move the VWAP lags
@@ -424,11 +453,11 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 	key := cachekeys.Divergence(pair)
 	s.restoreWarningState(ctx, pair.String(), key.String(), gateAt)
 
-	// A below-quorum refresh is unevaluable: it must not assert "no
-	// divergence", restart the persistence streak or reset the webhook
+	// A below-quorum or pinned refresh is unevaluable: it must not assert
+	// "no divergence", restart the persistence streak or reset the webhook
 	// latch, so it carries the last evaluated verdict forward.
 	warningFired, firingSince := s.lastWarning(pair.String()), s.lastFiringSince(pair.String())
-	if checked {
+	if evaluated {
 		rawFiring := res.DivergencePct > s.threshold || agreeing == 0
 		warningFired, firingSince = s.warningPersists(pair.String(), rawFiring, gateAt)
 	}
@@ -445,6 +474,7 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 		SuccessCount:   res.SuccessCount,
 		FailureCount:   res.FailureCount,
 		AgreementCount: agreeing,
+		Pinned:         pinned,
 		ComputedAt:     time.Now().UTC(),
 	}
 
@@ -499,7 +529,7 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 		s.flushObservations(ctx, pair, ourPrice, res, stampedAt)
 	}
 
-	if checked {
+	if evaluated {
 		s.recordWarning(ctx, pair, cached)
 	}
 	// CS-088: references were configured but none responded — the cache now
