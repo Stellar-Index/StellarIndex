@@ -50,9 +50,10 @@ jobs:
         run: |
           set -uo pipefail
           # Capture the exit code directly. Piping this into tee or sed
-          # would report the pipe's last status, not the gate's.
-          bash scripts/ci/site-crawl-check.sh > /tmp/site-crawl.txt 2>&1
-          rc=$?
+          # would report the pipe's last status, not the gate's. `|| rc=$?`
+          # because the step shell is `bash -e`: a bare failure aborts here.
+          rc=0
+          bash scripts/ci/site-crawl-check.sh > /tmp/site-crawl.txt 2>&1 || rc=$?
           cat /tmp/site-crawl.txt
           {
             echo "verdict_rc=${rc}"
