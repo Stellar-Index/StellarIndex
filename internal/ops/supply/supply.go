@@ -244,11 +244,9 @@ func supplySnapshot(args []string) error {
 		fmt.Println("─── DRY RUN ─── snapshot NOT written to asset_supply_history.")
 		return nil
 	}
-	if err := store.InsertSupply(ctx, snap); err != nil {
-		return supplySnapshotMaybeEmitFailure(*textfileOut, *assetRaw, startedAt, fmt.Errorf("InsertSupply: %w", err))
+	if err := persistSnapshot(ctx, store, snap, time.Now()); err != nil {
+		return supplySnapshotMaybeEmitFailure(*textfileOut, *assetRaw, startedAt, err)
 	}
-	fmt.Printf("Wrote snapshot for asset_key=%s ledger=%d basis=%s\n",
-		snap.AssetKey, snap.LedgerSequence, snap.Basis)
 
 	if *textfileOut != "" {
 		if err := supply.WriteSnapshotTextfile(*textfileOut, snap, time.Since(startedAt).Seconds(), true); err != nil {
@@ -256,6 +254,48 @@ func supplySnapshot(args []string) error {
 		}
 	}
 	return nil
+}
+
+// persistSnapshot writes snap and, when its day bucket is older than
+// supply_1d's refresh policy reaches, refreshes that bucket explicitly
+// so a corrective re-derive reaches the market-cap chart. A failed
+// refresh fails the run: the row is written but not yet served.
+func persistSnapshot(ctx context.Context, store *timescale.Store, snap supply.Supply, now time.Time) error {
+	if err := store.InsertSupply(ctx, snap); err != nil {
+		return fmt.Errorf("InsertSupply: %w", err)
+	}
+	fmt.Printf("Wrote snapshot for asset_key=%s ledger=%d basis=%s\n",
+		snap.AssetKey, snap.LedgerSequence, snap.Basis)
+
+	from, to, ok := supplyCAGGRefreshWindow(snap.ObservedAt, now)
+	if !ok {
+		return nil
+	}
+	if err := store.RefreshContinuousAggregate(ctx, timescale.SupplyCAGG.Name, from, to); err != nil {
+		return fmt.Errorf("refresh %s [%s, %s): %w", timescale.SupplyCAGG.Name,
+			from.Format(time.DateOnly), to.Format(time.DateOnly), err)
+	}
+	fmt.Printf("Refreshed %s over [%s, %s)\n", timescale.SupplyCAGG.Name,
+		from.Format(time.DateOnly), to.Format(time.DateOnly))
+	return nil
+}
+
+// supplyCAGGPolicyCover is how far back supply_1d's own refresh policy
+// (migration 0066, start_offset 7 days) is trusted to pick a snapshot
+// up: a day short of the offset, so a bucket straddling the policy
+// window's start is refreshed here rather than left to rounding.
+const supplyCAGGPolicyCover = 6 * 24 * time.Hour
+
+// supplyCAGGRefreshWindow returns the supply_1d range to refresh for a
+// snapshot observed at observedAt, or ok=false when the policy covers
+// it. The range is the snapshot's UTC day padded by a day each side,
+// which meets [timescale.SupplyCAGG]'s MinWindow.
+func supplyCAGGRefreshWindow(observedAt, now time.Time) (from, to time.Time, ok bool) {
+	day := observedAt.UTC().Truncate(24 * time.Hour)
+	if !day.Before(now.Add(-supplyCAGGPolicyCover)) {
+		return time.Time{}, time.Time{}, false
+	}
+	return day.Add(-24 * time.Hour), day.Add(48 * time.Hour), true
 }
 
 // supplyStoreLookup adapts *timescale.Store to
@@ -722,12 +762,29 @@ func runSupplyCrossCheck(
 	}
 	printSupplySnapshot("CROSS-CHECK", otherRaw, otherKey, otherSnap)
 
+	return crossCheckAndReport(os.Stdout, primarySnap, otherSnap, wrapClass, primaryKey)
+}
+
+// crossCheckAndReport runs the comparison and prints its verdict. A pair
+// whose snapshots are too many ledgers apart is reported as MISALIGNED
+// and returned as an error: the aggregator's refresher refuses the same
+// pair, so the CLI must not print a verdict the daemon would not give.
+func crossCheckAndReport(w io.Writer, primarySnap, otherSnap supply.Supply, wrapClass supply.WrapClass, primaryKey string) error {
 	result, err := supply.CrossCheckForClass(primarySnap, otherSnap, wrapClass)
+	if errors.Is(err, supply.ErrCrossCheckMisaligned) {
+		_, _ = fmt.Fprintln(w, "─── CROSS-CHECK RESULT ───")
+		_, _ = fmt.Fprintf(w, "  primary_ledger:       %d\n", primarySnap.LedgerSequence)
+		_, _ = fmt.Fprintf(w, "  counterpart_ledger:   %d\n", otherSnap.LedgerSequence)
+		_, _ = fmt.Fprintf(w, "  status:               MISALIGNED ? — snapshots more than %d ledgers apart; no verdict\n",
+			supply.CrossCheckLedgerTolerance)
+		_, _ = fmt.Fprintln(w, "  next action:          find which side's supply refresher is stalled (supply audit <asset> -history-hours 24)")
+		_, _ = fmt.Fprintln(w)
+		return err
+	}
 	if err != nil {
 		return fmt.Errorf("CrossCheckForClass(%s): %w", wrapClass, err)
 	}
-
-	return reportCrossCheck(os.Stdout, result, primaryKey)
+	return reportCrossCheck(w, result, primaryKey)
 }
 
 // errCrossCheckUnchecked is returned when a partial-wrap result carries
@@ -740,6 +797,7 @@ var errCrossCheckUnchecked = errors.New("cross-check inconclusive — escrow leg
 func reportCrossCheck(w io.Writer, result supply.CrossCheckResult, primaryKey string) error {
 	_, _ = fmt.Fprintln(w, "─── CROSS-CHECK RESULT ───")
 	_, _ = fmt.Fprintf(w, "  wrap_class:           %s\n", result.WrapClass)
+	_, _ = fmt.Fprintf(w, "  ledgers:              primary=%d counterpart=%d\n", result.ClassicLedger, result.SACLedger)
 	_, _ = fmt.Fprintf(w, "  primary_total:        %s\n", result.ClassicTotal.String())
 	_, _ = fmt.Fprintf(w, "  counterpart_total:    %s\n", result.SACTotal.String())
 	_, _ = fmt.Fprintf(w, "  divergence_stroops:   %s\n", result.DivergenceStroops.String())
