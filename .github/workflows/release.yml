@@ -70,7 +70,7 @@ jobs:
   resolve-tag:
     name: Resolve release tag
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 40   # the CI gate below waits up to 30 min for an in-flight ci.yml run
     outputs:
       tag: ${{ steps.out.outputs.tag }}
       is_prerelease: ${{ steps.out.outputs.is_prerelease }}
@@ -143,13 +143,39 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          conclusion="$(gh api "repos/${REPO}/actions/runs?head_sha=${COMMIT_SHA}&per_page=50" \
-            --jq '[.workflow_runs[] | select(.path == ".github/workflows/ci.yml")] | sort_by(.run_number) | last | .conclusion // "missing"')"
-          if [ "$conclusion" != "success" ]; then
-            echo "::error::ci.yml's most recent run for commit ${COMMIT_SHA} concluded '${conclusion}' (expected success). Refusing to release untested code."
+          # A release cut commit touches only CHANGELOG.md, which ci.yml's
+          # paths-ignore skips, and a push runs CI on its tip only. Gate on
+          # the nearest first-parent ancestor with a ci.yml run, provided
+          # everything between it and the tag is ci.yml-ignored.
+          ignored='^(CHANGELOG\.md|LICENSE|\.github/ISSUE_TEMPLATE/.*|\.github/PULL_REQUEST_TEMPLATE\.md)$'
+          runs_q='[.workflow_runs[] | select(.path == ".github/workflows/ci.yml")] | length'
+          sha="$COMMIT_SHA"
+          for _ in $(seq 1 50); do
+            [ "$(gh api "repos/${REPO}/actions/runs?head_sha=${sha}&per_page=50" --jq "$runs_q")" -gt 0 ] && break
+            sha="$(gh api "repos/${REPO}/commits/${sha}" --jq '.parents[0].sha')"
+          done
+          if [ "$sha" != "$COMMIT_SHA" ]; then
+            untested="$(gh api "repos/${REPO}/compare/${sha}...${COMMIT_SHA}" --jq '.files[].filename' | grep -Ev "$ignored" || true)"
+            if [ -n "$untested" ]; then
+              echo "::error::${COMMIT_SHA} has no ci.yml run and differs from its nearest CI-run ancestor ${sha} in CI-relevant files:"
+              echo "$untested"
+              exit 1
+            fi
+            echo "${COMMIT_SHA} differs from ${sha} only in ci.yml-ignored paths; gating on ${sha}."
+          fi
+          # The tag often lands while that run is still going: wait for it.
+          for _ in $(seq 1 60); do
+            run="$(gh api "repos/${REPO}/actions/runs?head_sha=${sha}&per_page=50" \
+              --jq '[.workflow_runs[] | select(.path == ".github/workflows/ci.yml")] | sort_by(.run_number) | last | "\(.status // "missing") \(.conclusion // "none")"')"
+            [ "${run%% *}" = "completed" ] || [ "${run%% *}" = "missing" ] && break
+            echo "ci.yml run for ${sha} is ${run%% *}; waiting."
+            sleep 30
+          done
+          if [ "$run" != "completed success" ]; then
+            echo "::error::ci.yml's most recent run for ${sha} (gating tag commit ${COMMIT_SHA}) is '${run}' (expected completed success). Refusing to release untested code."
             exit 1
           fi
-          echo "ci.yml concluded success for ${COMMIT_SHA}."
+          echo "ci.yml concluded success for ${sha} (gating ${COMMIT_SHA})."
 
   # Build every binary we ship (linux/amd64 only — see the goarch
   # comment below). fail-fast: false keeps each binary's build
