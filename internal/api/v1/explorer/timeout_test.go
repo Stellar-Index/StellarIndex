@@ -136,7 +136,7 @@ func (r *capReader) NetworkThroughput(ctx context.Context, _ int) ([]clickhouse.
 	return nil, nil
 }
 
-func (r *capReader) BlendPoolReserves(ctx context.Context, _ string, _ []string, _ map[string]blend.ReserveConfig) ([]clickhouse.BlendReserveState, error) {
+func (r *capReader) BlendPoolReserves(ctx context.Context, _ string, _ blend.PoolVersion, _ []string, _ map[string]blend.ReserveConfig) ([]clickhouse.BlendReserveState, error) {
 	r.probe.record(ctx)
 	return nil, nil
 }

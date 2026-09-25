@@ -11,10 +11,13 @@ import "math/big"
 // interest_test.go).
 //
 // Scales: SCALAR_7 (1e7) for rates/factors/utilization; SCALAR_12
-// (1e12) for b_rate/d_rate conversion rates.
+// (1e12) for V2 b_rate/d_rate conversion rates, SCALAR_9 (1e9) for a
+// V1 pool's (blend-contracts v1 reserve.rs total_supply /
+// total_liabilities).
 
 var (
 	scalar7  = big.NewInt(10_000_000)        // 1e7
+	scalar9  = big.NewInt(1_000_000_000)     // 1e9
 	scalar12 = big.NewInt(1_000_000_000_000) // 1e12
 	util95   = big.NewInt(9_500_000)         // 0.95 in 7 decimals
 	util05   = big.NewInt(500_000)           // 0.05 in 7 decimals
@@ -47,18 +50,27 @@ func ceilDiv(n, d *big.Int) *big.Int {
 	return q
 }
 
+// rateScalar is the fixed-point scale of b_rate / d_rate for the
+// reserve's pool generation. DecodeReserveData refuses an unknown one.
+func (rd ReserveData) rateScalar() *big.Int {
+	if rd.Version == PoolV1 {
+		return scalar9
+	}
+	return scalar12
+}
+
 // SuppliedUnderlying returns the reserve's total supplied amount in the
 // underlying token's smallest unit (reserve.rs::total_supply =
-// b_supply.fixed_mul_floor(b_rate, SCALAR_12)).
+// b_supply.fixed_mul_floor(b_rate, SCALAR_12), SCALAR_9 on V1).
 func (rd ReserveData) SuppliedUnderlying() *big.Int {
-	return fixedMulFloor(rd.BSupply, rd.BRate, scalar12)
+	return fixedMulFloor(rd.BSupply, rd.BRate, rd.rateScalar())
 }
 
 // BorrowedUnderlying returns the reserve's total borrowed amount in the
 // underlying token's smallest unit (reserve.rs::total_liabilities =
-// d_supply.fixed_mul_ceil(d_rate, SCALAR_12)).
+// d_supply.fixed_mul_ceil(d_rate, SCALAR_12), SCALAR_9 on V1).
 func (rd ReserveData) BorrowedUnderlying() *big.Int {
-	return fixedMulCeil(rd.DSupply, rd.DRate, scalar12)
+	return fixedMulCeil(rd.DSupply, rd.DRate, rd.rateScalar())
 }
 
 // Utilization returns the reserve utilization in 7 decimals, exactly
@@ -172,8 +184,13 @@ func BaseMetrics(rd ReserveData) ReserveMetrics {
 
 // Metrics derives the full per-reserve current-state metrics (incl.
 // APY) from the decoded reserve state + config + the pool's backstop
-// take rate.
+// take rate. BorrowRate is the V2 rate model (7-decimal ir_mod); a V1
+// reserve's 9-decimal ir_mod has no verified port, so its APR is
+// withheld rather than served ~100x high.
 func Metrics(rd ReserveData, rc ReserveConfig, bstopRate uint32) ReserveMetrics {
+	if rd.Version == PoolV1 {
+		return BaseMetrics(rd)
+	}
 	util := rd.Utilization()
 	borrowRate := rc.BorrowRate(util, rd.IRMod)
 	supplyRate := SupplyRate(borrowRate, util, bstopRate)

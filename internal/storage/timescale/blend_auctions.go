@@ -2,7 +2,9 @@ package timescale
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -266,21 +268,21 @@ type BlendAssetAmount struct {
 // 30-day net-flow proxy for supply/borrow.
 //
 // NetSupplied30d / NetBorrowed30d are window NET-FLOW deltas from
-// blend_positions (token base-units, summed across the pool's
-// assets), NOT all-time TVL or current balances — the served tier is
-// retention-scoped, and event flow ≠ on-chain reserve state. Real
-// current-state TVL + supply/borrow APYs need the Soroban pool-
-// storage reader (reserve b_rate/d_rate + totals from
-// ledger_entry_changes); that's the follow-up these fields stand in
-// for.
+// blend_positions in token base-units, NOT all-time TVL or current
+// balances — the served tier is retention-scoped, and event flow ≠
+// on-chain reserve state. They are nil when the window's flows span
+// more than one reserve asset: base units of different tokens do not
+// add (the bespoke lending block dropped its cross-asset totals for
+// the same reason). Current-state per-reserve figures come from
+// BlendPoolReserves.
 type BlendPoolSummary struct {
 	Pool           string
 	Auctions24h    int64
 	AuctionsTotal  int64
 	UniqueUsers30d int64
 	LastSeen       time.Time
-	NetSupplied30d string // token base-units, 30d net flow (proxy, not TVL)
-	NetBorrowed30d string // token base-units, 30d net flow (proxy)
+	NetSupplied30d *string // token base-units, 30d net flow; nil when multi-asset
+	NetBorrowed30d *string // token base-units, 30d net flow; nil when multi-asset
 }
 
 // BlendPoolAssets returns the distinct reserve assets (underlying
@@ -309,6 +311,26 @@ func (s *Store) BlendPoolAssets(ctx context.Context, pool string) ([]string, err
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// BlendPoolVersion resolves a pool's contract generation from the
+// factory that deployed it, as recorded in the protocol_contracts
+// registry (the Blend decoder's trust root, never retention-scoped).
+// V1 and V2 pools store reserve rates at different scales under the
+// same field names, so this lineage is the only safe key. A pool the
+// registry does not hold, or holds under an unrecognised factory, is
+// PoolVersionUnknown.
+func (s *Store) BlendPoolVersion(ctx context.Context, pool string) (blend.PoolVersion, error) {
+	const q = `SELECT factory_id FROM protocol_contracts WHERE source = $1 AND contract_id = $2`
+	var factory string
+	err := s.db.QueryRowContext(ctx, q, blend.SourceName, pool).Scan(&factory)
+	if errors.Is(err, sql.ErrNoRows) {
+		return blend.PoolVersionUnknown, nil
+	}
+	if err != nil {
+		return blend.PoolVersionUnknown, fmt.Errorf("timescale: BlendPoolVersion: %w", err)
+	}
+	return blend.PoolVersionForFactory(factory), nil
 }
 
 // BlendReserveConfigs returns the latest APPLIED ReserveConfig per
@@ -365,7 +387,8 @@ func (s *Store) BlendReserveConfigs(ctx context.Context, pool string) (map[strin
 
 // ListBlendPools returns one row per distinct pool contract observed
 // in EITHER blend_auctions OR blend_positions, with auction counts,
-// last-seen, and a 30-day net-flow proxy for supply/borrow. Sorted
+// last-seen, and a 30-day net-flow proxy for supply/borrow (NULL when
+// the window's flows cross reserve assets — see BlendPoolSummary). Sorted
 // by AuctionsTotal desc so high-activity pools surface first; ties
 // broken by pool address for deterministic output.
 //
@@ -392,6 +415,8 @@ func (s *Store) ListBlendPools(ctx context.Context) ([]BlendPoolSummary, error) 
             SELECT pool,
                    COALESCE(sum(` + blendSupplyNetExpr + `) FILTER (WHERE ledger_close_time > NOW() - INTERVAL '30 days'),0) AS net_supplied,
                    COALESCE(sum(` + blendBorrowNetExpr + `) FILTER (WHERE ledger_close_time > NOW() - INTERVAL '30 days'),0) AS net_borrowed,
+                   COUNT(DISTINCT asset)
+                     FILTER (WHERE ledger_close_time > NOW() - INTERVAL '30 days') AS flow_assets30,
                    COUNT(DISTINCT user_address)
                      FILTER (WHERE ledger_close_time > NOW() - INTERVAL '30 days') AS pos_users30,
                    MAX(ledger_close_time) AS last_position
@@ -403,8 +428,10 @@ func (s *Store) ListBlendPools(ctx context.Context) ([]BlendPoolSummary, error) 
                GREATEST(COALESCE(auc.users30, 0), COALESCE(pos.pos_users30, 0)),
                GREATEST(COALESCE(auc.last_auction, 'epoch'::timestamptz),
                         COALESCE(pos.last_position, 'epoch'::timestamptz)),
-               COALESCE(pos.net_supplied, 0)::text,
-               COALESCE(pos.net_borrowed, 0)::text
+               CASE WHEN COALESCE(pos.flow_assets30, 0) <= 1
+                    THEN COALESCE(pos.net_supplied, 0)::text END,
+               CASE WHEN COALESCE(pos.flow_assets30, 0) <= 1
+                    THEN COALESCE(pos.net_borrowed, 0)::text END
           FROM pools p
           LEFT JOIN auc ON auc.pool = p.pool
           LEFT JOIN pos ON pos.pool = p.pool
@@ -418,10 +445,13 @@ func (s *Store) ListBlendPools(ctx context.Context) ([]BlendPoolSummary, error) 
 	var out []BlendPoolSummary
 	for rows.Next() {
 		var p BlendPoolSummary
+		var supplied, borrowed sql.NullString
 		if err := rows.Scan(&p.Pool, &p.Auctions24h, &p.AuctionsTotal, &p.UniqueUsers30d,
-			&p.LastSeen, &p.NetSupplied30d, &p.NetBorrowed30d); err != nil {
+			&p.LastSeen, &supplied, &borrowed); err != nil {
 			return nil, fmt.Errorf("timescale: ListBlendPools scan: %w", err)
 		}
+		p.NetSupplied30d = nullStringPtr(supplied)
+		p.NetBorrowed30d = nullStringPtr(borrowed)
 		out = append(out, p)
 	}
 	if err := rows.Err(); err != nil {

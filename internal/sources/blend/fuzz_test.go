@@ -359,7 +359,7 @@ func FuzzDecodeReserveData(f *testing.F) {
 		if reverse {
 			slices.Reverse(entries)
 		}
-		rd, err := DecodeReserveData(mapScVal(entries))
+		rd, err := DecodeReserveData(mapScVal(entries), PoolV2)
 		if err != nil {
 			t.Fatalf("DecodeReserveData: %v", err)
 		}
@@ -374,7 +374,7 @@ func FuzzDecodeReserveData(f *testing.F) {
 		}
 
 		missing := slices.Delete(slices.Clone(entries), int(drop)%len(entries), int(drop)%len(entries)+1)
-		if _, err := DecodeReserveData(mapScVal(missing)); err == nil {
+		if _, err := DecodeReserveData(mapScVal(missing), PoolV2); err == nil {
 			t.Fatalf("DecodeReserveData accepted a map missing a field (dropped index %d)", int(drop)%len(entries))
 		}
 	})

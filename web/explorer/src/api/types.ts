@@ -1489,12 +1489,13 @@ export interface paths {
          *     30-day net-flow proxy for supply/borrow.
          *
          *     `net_supplied_30d` / `net_borrowed_30d` are window NET-FLOW
-         *     deltas (token base-units, summed across the pool's assets),
-         *     NOT all-time TVL or current reserve balances —
-         *     `utilization_30d_pct` is the window borrow/supply ratio
-         *     (omitted when net supply ≤ 0). Real current-state TVL +
-         *     supply/borrow APYs (reserve b_rate/d_rate) need the Soroban
-         *     pool-storage reader; these fields stand in until it ships.
+         *     deltas in token base-units, NOT all-time TVL or current
+         *     reserve balances. Both are null when the window's flows span
+         *     more than one reserve asset: base units of different tokens
+         *     do not add. `utilization_30d_pct` is their ratio, omitted
+         *     whenever either is null or net supply ≤ 0. Current-state
+         *     per-reserve supplied / borrowed / utilization / APR are served
+         *     by `/v1/lending/pools/{pool}/reserves`.
          */
         get: operations["listLendingPools"];
         put?: never;
@@ -14417,9 +14418,8 @@ export interface operations {
                      *           "auctions_total": 7430,
                      *           "unique_users_30d": 10946,
                      *           "last_seen": "2026-07-03T22:37:27Z",
-                     *           "net_supplied_30d": "575363575586841",
-                     *           "net_borrowed_30d": "67357854119677",
-                     *           "utilization_30d_pct": 11.71
+                     *           "net_supplied_30d": null,
+                     *           "net_borrowed_30d": null
                      *         }
                      *       ],
                      *       "as_of": "2026-07-03T22:37:47.445630311Z",
@@ -14444,11 +14444,11 @@ export interface operations {
                             unique_users_30d?: number;
                             /** Format: date-time */
                             last_seen?: string;
-                            /** @description Token base-units, 30d net-flow proxy (not TVL). */
-                            net_supplied_30d?: string;
-                            /** @description Token base-units, 30d net-flow proxy. */
-                            net_borrowed_30d?: string;
-                            /** @description Window borrow/supply ratio %; null when net supply ≤ 0. */
+                            /** @description Token base-units, 30d net-flow proxy (not TVL); null when the window's flows span more than one reserve asset. */
+                            net_supplied_30d?: string | null;
+                            /** @description Token base-units, 30d net-flow proxy; null when the window's flows span more than one reserve asset. */
+                            net_borrowed_30d?: string | null;
+                            /** @description Single-asset window borrow/supply ratio %; null when either net flow is null or net supply ≤ 0. */
                             utilization_30d_pct?: number | null;
                         }[];
                     };

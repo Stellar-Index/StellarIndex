@@ -12,6 +12,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/google/uuid"
 
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -309,7 +310,7 @@ func TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead(t *testing.T) {
 
 	// (1) Differential.
 	legacy := legacyWinners(ctx)
-	states, err := reader.BlendPoolReserves(ctx, poolStr, assets, nil)
+	states, err := reader.BlendPoolReserves(ctx, poolStr, blend.PoolV2, assets, nil)
 	if err != nil {
 		t.Fatalf("BlendPoolReserves: %v", err)
 	}
@@ -395,7 +396,7 @@ func TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead(t *testing.T) {
 	legacyID := uuid.NewString()
 	_ = legacyWinners(clickhouse.Context(ctx, clickhouse.WithQueryID(legacyID)))
 	readerID := uuid.NewString()
-	if _, err := reader.BlendPoolReserves(clickhouse.Context(ctx, clickhouse.WithQueryID(readerID)), poolStr, assets, nil); err != nil {
+	if _, err := reader.BlendPoolReserves(clickhouse.Context(ctx, clickhouse.WithQueryID(readerID)), poolStr, blend.PoolV2, assets, nil); err != nil {
 		t.Fatalf("BlendPoolReserves (measured): %v", err)
 	}
 	mustExec(`SYSTEM FLUSH LOGS`)

@@ -213,7 +213,7 @@ func TestBlendPoolReserves_RejectsANonContractPool(t *testing.T) {
 		return nil, nil
 	}}
 	r := &ExplorerReader{conn: conn}
-	if _, err := r.BlendPoolReserves(t.Context(), "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", nil, nil); err == nil {
+	if _, err := r.BlendPoolReserves(t.Context(), "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", blend.PoolV2, nil, nil); err == nil {
 		t.Fatal("BlendPoolReserves accepted a non-contract pool id")
 	}
 }
@@ -226,7 +226,7 @@ func TestBlendPoolReserves_RejectsANonContractPool(t *testing.T) {
 func TestBlendPoolReserves_QueryShape(t *testing.T) {
 	conn := &stubConn{respond: func(string) (driver.Rows, error) { return &stubRows{}, nil }}
 	r := &ExplorerReader{conn: conn}
-	if _, err := r.BlendPoolReserves(t.Context(), blendTestPool, []string{blendTestAssetSAC}, nil); err != nil {
+	if _, err := r.BlendPoolReserves(t.Context(), blendTestPool, blend.PoolV2, []string{blendTestAssetSAC}, nil); err != nil {
 		t.Fatalf("BlendPoolReserves: %v", err)
 	}
 	if len(conn.queries) != 1 {
@@ -297,7 +297,7 @@ func TestScanBlendReserveParts_IgnoresUnrequestedKeys(t *testing.T) {
 	rows := &stubRows{data: [][]any{
 		{"some-other-key", "AAAA"},
 	}}
-	byAsset, bstop, matched, err := scanBlendReserveParts(rows, refByKey)
+	byAsset, bstop, matched, err := scanBlendReserveParts(rows, refByKey, blend.PoolV2)
 	if err != nil {
 		t.Fatalf("scanBlendReserveParts: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestScanBlendReserveParts_MatchedTracksOnlyReportedEntries(t *testing.T) {
 		{blendTestResDataKey, resDataEntryFixture(t)},
 		{"resdata-undecodable", "!!!not-base64!!!"},
 	}}
-	byAsset, _, matched, err := scanBlendReserveParts(rows, refByKey)
+	byAsset, _, matched, err := scanBlendReserveParts(rows, refByKey, blend.PoolV2)
 	if err != nil {
 		t.Fatalf("scanBlendReserveParts: %v", err)
 	}
@@ -352,7 +352,7 @@ func TestScanBlendReserveParts_MatchedTracksOnlyReportedEntries(t *testing.T) {
 func TestScanBlendReserveParts_UndecodableEntryIsSkippedNotFatal(t *testing.T) {
 	refByKey := map[string]keyRef{blendTestResDataKey: {asset: blendTestAssetSAC, kind: "ResData"}}
 	rows := &stubRows{data: [][]any{{blendTestResDataKey, "!!!not-base64!!!"}}}
-	byAsset, _, _, err := scanBlendReserveParts(rows, refByKey)
+	byAsset, _, _, err := scanBlendReserveParts(rows, refByKey, blend.PoolV2)
 	if err != nil {
 		t.Fatalf("one undecodable entry aborted the pool read: %v", err)
 	}
@@ -368,7 +368,7 @@ func TestScanBlendReserveParts_UndecodableEntryIsSkippedNotFatal(t *testing.T) {
 func TestScanBlendReserveParts_TruncatedStreamIsAnError(t *testing.T) {
 	truncated := errors.New("stream truncated")
 	rows := &stubRows{streamErr: truncated}
-	if _, _, _, err := scanBlendReserveParts(rows, nil); !errors.Is(err, truncated) {
+	if _, _, _, err := scanBlendReserveParts(rows, nil, blend.PoolV2); !errors.Is(err, truncated) {
 		t.Fatalf("err = %v, want it to wrap %v", err, truncated)
 	}
 }

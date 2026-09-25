@@ -24,7 +24,15 @@ type stubLendingReader struct {
 	pools   []timescale.BlendPoolSummary
 	assets  []string
 	configs map[string]blend.ReserveConfig
+	version *blend.PoolVersion // nil → PoolV2, the generation the reserve fixtures are scaled for
 	err     error
+}
+
+func (r *stubLendingReader) BlendPoolVersion(_ context.Context, _ string) (blend.PoolVersion, error) {
+	if r.version == nil {
+		return blend.PoolV2, r.err
+	}
+	return *r.version, r.err
 }
 
 func (r *stubLendingReader) ListBlendPools(_ context.Context) ([]timescale.BlendPoolSummary, error) {
@@ -74,8 +82,8 @@ func TestLendingPools_HappyPath(t *testing.T) {
 				AuctionsTotal:  5687,
 				UniqueUsers30d: 4,
 				LastSeen:       lastSeen,
-				NetSupplied30d: "1000",
-				NetBorrowed30d: "400",
+				NetSupplied30d: ptr("1000"),
+				NetBorrowed30d: ptr("400"),
 			},
 			{
 				Pool:           "CCCCIQSDILITHMM7PBSLVDT5MISSY7R26MNZXCX4H7J5JQ5FPIYOGYFS",
@@ -119,15 +127,46 @@ func TestLendingPools_HappyPath(t *testing.T) {
 	if !first.LastSeen.Time().Equal(lastSeen) {
 		t.Errorf("LastSeen = %v, want %v", first.LastSeen, lastSeen)
 	}
-	if first.NetSupplied30d != "1000" || first.NetBorrowed30d != "400" {
-		t.Errorf("net-flow = (supplied=%q, borrowed=%q), want (1000, 400)", first.NetSupplied30d, first.NetBorrowed30d)
+	if first.NetSupplied30d == nil || *first.NetSupplied30d != "1000" ||
+		first.NetBorrowed30d == nil || *first.NetBorrowed30d != "400" {
+		t.Errorf("net-flow = (supplied=%v, borrowed=%v), want (1000, 400)", first.NetSupplied30d, first.NetBorrowed30d)
 	}
 	if first.Utilization30dPct == nil || *first.Utilization30dPct != 40 {
 		t.Errorf("Utilization30dPct = %v, want 40 (400/1000)", first.Utilization30dPct)
 	}
-	// Second pool has no net-flow fields set → utilisation omitted.
+	// Second pool's flows span several assets (nil from the store) →
+	// both flows serialise as null and utilisation is omitted.
 	if env.Data[1].Utilization30dPct != nil {
-		t.Errorf("Utilization30dPct (pool 2) = %v, want nil (no net supply)", *env.Data[1].Utilization30dPct)
+		t.Errorf("Utilization30dPct (pool 2) = %v, want nil (multi-asset window)", *env.Data[1].Utilization30dPct)
+	}
+	if !strings.Contains(body, `"net_supplied_30d":null`) || !strings.Contains(body, `"net_borrowed_30d":null`) {
+		t.Errorf("multi-asset pool must serialise its net flows as null, got: %s", body)
+	}
+}
+
+// TestLendingPools_CrossAssetFlowsHaveNoUtilization pins that a pool
+// whose window flows cross reserve assets never gets a utilisation
+// figure: 1e13 XLM stroops supplied and 1e12 USDC units borrowed are
+// not "10% utilised" — the store withholds the sums and the handler
+// must not synthesise a ratio from anything else.
+func TestLendingPools_CrossAssetFlowsHaveNoUtilization(t *testing.T) {
+	reader := &stubLendingReader{pools: []timescale.BlendPoolSummary{{
+		Pool:     "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+		LastSeen: time.Date(2026, 5, 9, 10, 15, 52, 0, time.UTC),
+	}}}
+	srv := v1.New(v1.Options{Lending: reader})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/lending/pools")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if strings.Contains(body, "utilization_30d_pct") {
+		t.Errorf("cross-asset pool served a utilisation figure: %s", body)
+	}
+	if !strings.Contains(body, `"net_supplied_30d":null`) {
+		t.Errorf("cross-asset pool must serve null net flows, got: %s", body)
 	}
 }
 
@@ -245,6 +284,61 @@ func TestLendingPoolReserves_StorageErrorStays500(t *testing.T) {
 	resp := mustGet(t, base+"/v1/lending/pools/"+pool+"/reserves")
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500 for a non-deadline storage error", resp.StatusCode)
+	}
+}
+
+// A V1 pool's ResData rates carry 9 decimals, not V2's 12: the handler
+// must hand the reader the pool's own generation so supplied / borrowed
+// / TVL are not served 1000x low.
+func TestLendingPoolReserves_PassesPoolVersionToReader(t *testing.T) {
+	pool := mkCStrkey(t, 7)
+	asset := mkCStrkey(t, 20)
+	v1Pool := blend.PoolV1
+	explorer := &stubExplorerReader{}
+	srv := v1.New(v1.Options{
+		Explorer: explorer,
+		Lending:  &stubLendingReader{assets: []string{asset}, version: &v1Pool},
+	})
+	base := httpTestServer(t, srv).URL
+
+	resp := mustGet(t, base+"/v1/lending/pools/"+pool+"/reserves")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if len(explorer.reserveCalls) != 1 || explorer.reserveCalls[0] != blend.PoolV1 {
+		t.Errorf("BlendPoolReserves called with versions %v, want [PoolV1]", explorer.reserveCalls)
+	}
+}
+
+// A pool with no known V1/V2 lineage has no knowable rate scale: its
+// reserves are withheld (empty, no TVL) and the lake is never read.
+func TestLendingPoolReserves_UnknownLineageWithheld(t *testing.T) {
+	pool := mkCStrkey(t, 7)
+	asset := mkCStrkey(t, 20)
+	unknown := blend.PoolVersionUnknown
+	explorer := &stubExplorerReader{reserves: []clickhouse.BlendReserveState{{
+		Pool: pool, Asset: asset, Decimals: 7,
+		Metrics: blend.ReserveMetrics{SuppliedUnderlying: big.NewInt(1), BorrowedUnderlying: big.NewInt(0)},
+	}}}
+	srv := v1.New(v1.Options{
+		Explorer: explorer,
+		Lending:  &stubLendingReader{assets: []string{asset}, version: &unknown},
+	})
+	base := httpTestServer(t, srv).URL
+
+	resp := mustGet(t, base+"/v1/lending/pools/"+pool+"/reserves")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.LendingPoolReservesView `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data.Reserves) != 0 || env.Data.TVLUSD != nil {
+		t.Errorf("unknown-lineage pool served reserves=%d tvl=%v, want none", len(env.Data.Reserves), env.Data.TVLUSD)
+	}
+	if len(explorer.reserveCalls) != 0 {
+		t.Errorf("unknown-lineage pool read the lake with versions %v", explorer.reserveCalls)
 	}
 }
 

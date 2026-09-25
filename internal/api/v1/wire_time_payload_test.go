@@ -127,7 +127,7 @@ func wireTimePayloadServer(t *testing.T) *testServer {
 			Pool:     "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
 			LastSeen: wireTimeFixture,
 			// Flow proxies are decimal strings; content is irrelevant here.
-			NetSupplied30d: "0", NetBorrowed30d: "0",
+			NetSupplied30d: ptr("0"), NetBorrowed30d: ptr("0"),
 		}}},
 		CompletenessReader: &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{{
 			Source: "blend", Genesis: 51_499_546, Tip: 63_000_000, Watermark: 62_999_000,
