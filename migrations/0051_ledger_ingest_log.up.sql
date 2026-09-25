@@ -1,10 +1,13 @@
 -- 0051 up — `ledger_ingest_log` substrate-continuity record (ADR-0033 Phase 2).
 --
--- One row per ledger we have fully processed, written POST-persist
--- (after the ledger's events land in their per-source tables), so the
--- record is an authoritative "this ledger is done" marker — unlike the
--- ledgerstream cursor, which advances BEFORE persistence and so can
--- claim a ledger a mid-write panic actually lost.
+-- One row per ledger the indexer walked, written once the ledger's
+-- events were ENQUEUED to the async sink (after pipeline.ProcessLedger
+-- returns, before the sink persists them), or by census-backfill from the
+-- LCM alone. It is NOT a persistence marker: like the ledgerstream cursor
+-- it can name a ledger whose rows were later lost. Persistence is proven
+-- by reconciliation against the stored rows (ADR-0033 Claims 2b/3). The
+-- stored table comment and persisted_at's comment say so as of 0180; the
+-- persisted_at column note inside the body below predates that fix.
 --
 -- This table is the foundation of the three-claim completeness model:
 --

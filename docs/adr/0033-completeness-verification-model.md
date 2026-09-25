@@ -46,6 +46,25 @@ superseded_by: null
 > yet feed the substrate-continuity verdict. That role remains
 > aspirational, per the 2026-06-12 note above.
 
+> **Reality note (2026-09-25, GH #923).** Claim 1 below says
+> `ledger_ingest_log` is written **after** event persistence; the Positive
+> consequences call it "post-persist" and the close of the
+> cursor-advances-before-write hole. As shipped it is neither. The live
+> indexer writes the row once `pipeline.ProcessLedger` returns, i.e. once
+> the ledger's events are enqueued to the async sink, before the sink
+> persists them, and best-effort
+> (`cmd/stellarindex-indexer/main.go::recordLedgerIngest`);
+> `census-backfill` writes it from the LCM with no persistence at all; and
+> projected domains (ADR-0032) are written later by the projector from the
+> ClickHouse lake, so no indexer-side acknowledgement could make the row
+> mean "the rows are in Postgres". The row proves substrate continuity
+> (contiguity + hash chain) and carries the LCM census. It shares the
+> cursor's hole: a ledger's rows can be lost after its row is written.
+> What catches that loss is reconciliation against the stored rows
+> (Claims 2b/3: `verify-reconciliation`, `compute-completeness`), never
+> this row's presence. Migration 0180 corrects the stored catalog comment
+> to match.
+
 ## Context
 
 We want **100% confidence that we have 100% coverage** of every
@@ -149,6 +168,9 @@ A single failing ledger pins `W` and surfaces exactly what is
 missing. No threshold, no cursor trust, no asserted 100%.
 
 ### Claim 1 — Substrate continuity (`ledger_ingest_log`)
+
+> As shipped, written post-enqueue, not post-persist — see the
+> 2026-09-25 reality note at the top.
 
 A single authoritative per-ledger record, written **after** event
 persistence completes (not before, as the cursor is today):
