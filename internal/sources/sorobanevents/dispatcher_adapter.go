@@ -158,6 +158,9 @@ type AsyncSink struct {
 	skipped uint64
 	written uint64
 	lost    uint64
+	// minUnlanded is the lowest ledger of any row dropped or abandoned at
+	// shutdown (0 = none); see [AsyncSink.LowestUnlandedLedger].
+	minUnlanded uint32
 	// accepted counts rows that entered ch. Every one ends written or
 	// lost, in channel order, which is what [AsyncSink.Sync] relies on.
 	accepted uint64
@@ -249,7 +252,7 @@ func (s *AsyncSink) PushEvent(ev events.Event) {
 	// must never enter ch — the drain's final poll may already be past.
 	select {
 	case <-s.stopping:
-		s.countDropped()
+		s.countDropped(row.Ledger)
 		return
 	default:
 	}
@@ -259,7 +262,7 @@ func (s *AsyncSink) PushEvent(ev events.Event) {
 		s.accepted++
 		s.mu.Unlock()
 	case <-s.stopping:
-		s.countDropped()
+		s.countDropped(row.Ledger)
 	}
 }
 
@@ -302,10 +305,27 @@ func (s *AsyncSink) Sync(ctx context.Context) error {
 	return nil
 }
 
-func (s *AsyncSink) countDropped() {
+func (s *AsyncSink) countDropped(ledger uint32) {
 	s.mu.Lock()
 	s.dropped++
+	s.noteUnlandedLocked(ledger)
 	s.mu.Unlock()
+}
+
+func (s *AsyncSink) noteUnlandedLocked(ledger uint32) {
+	if s.minUnlanded == 0 || ledger < s.minUnlanded {
+		s.minUnlanded = ledger
+	}
+}
+
+// LowestUnlandedLedger returns the lowest ledger of any row this sink
+// dropped or abandoned at shutdown, so a caller checkpointing a resume
+// cursor can stop short of it. Rows isolated as a permanent data fault
+// are excluded: a re-walk cannot land them either (ADR-0041 skip-class).
+func (s *AsyncSink) LowestUnlandedLedger() (uint32, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.minUnlanded, s.minUnlanded != 0
 }
 
 // Stop signals shutdown to producers (closing the stopping channel
@@ -563,6 +583,10 @@ func (s *AsyncSink) flushBatch(rows []Row) []Row {
 				return rows // Stop raced this flush: the drain retries it.
 			}
 			s.abandonBatch(rows, err, "shutdown before the write landed")
+			lo, _ := rowLedgerRange(rows)
+			s.mu.Lock()
+			s.noteUnlandedLocked(lo)
+			s.mu.Unlock()
 			return nil
 		case <-time.After(backoff):
 		}

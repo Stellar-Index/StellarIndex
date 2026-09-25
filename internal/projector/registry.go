@@ -342,6 +342,15 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 	}
 }
 
+// IsProjectedSource reports whether the projector owns name's writes
+// (AGENTS.md invariant [7]). It probes buildSource itself, so a source
+// added there is covered with no second list; a build error means the
+// name has a projector entry with incomplete config, which still counts.
+func IsProjectedSource(name string, oracle config.OracleConfig, watchedSEP41 []string) bool {
+	_, ok, err := buildSource(strings.ToLower(strings.TrimSpace(name)), oracle, watchedSEP41, nil)
+	return ok || err != nil
+}
+
 func missingConfigErr(source string) error {
 	return &missingConfigError{Source: source}
 }

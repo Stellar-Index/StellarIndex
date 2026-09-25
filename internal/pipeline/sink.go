@@ -209,7 +209,8 @@ func countReceived(source string) {
 // storage layer that a parallel drain breaks.
 //
 // `mode` semantics unchanged from the single-goroutine version.
-func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.Store, in <-chan consumer.Event, mode SinkMode) {
+func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.Store, in <-chan consumer.Event, mode SinkMode) ShutdownLoss {
+	lt := &lossTracker{}
 	// Bounded async retry buffer for external (CEX/FX) trades that hit
 	// an infrastructure fault (ADR-0041 / 2026-07-06 Postgres outage).
 	// On-chain trades block-and-retry instead (cursor gating); external
@@ -252,7 +253,7 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 			// by storeEventPersister — as the non-trade event persister.
 			// Both seams exist so the shutdown-race tests can intercept a
 			// write with a fake.
-			persistWorker(ctx, logger, storeEventPersister(logger, store), store, in, mode, workerID, extBuf)
+			persistWorker(ctx, logger, storeEventPersister(logger, store), store, in, mode, workerID, extBuf, lt)
 		}(i)
 	}
 	wg.Wait()
@@ -262,6 +263,7 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 		bufCancel()
 	}
 	bufWG.Wait()
+	return lt.snapshot()
 }
 
 // PersistWorkers is the count of concurrent drain goroutines run by
@@ -279,7 +281,7 @@ const PersistWorkers = 8
 // only reason they are parameters rather than a `*timescale.Store`.
 //
 //nolint:gocognit,contextcheck // batched-drain loop has natural fan-out: ctx.Done, ticker, channel — splitting hurts readability of the flush invariants. The shutdown flush intentionally uses a fresh context (parent is canceled); see flushShutdown.
-func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, tw tradeWriter, in <-chan consumer.Event, mode SinkMode, workerID int, extBuf *externalRetryBuffer) {
+func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, tw tradeWriter, in <-chan consumer.Event, mode SinkMode, workerID int, extBuf *externalRetryBuffer, lt *lossTracker) {
 	tradeBuf := make([]canonical.Trade, 0, tradeBatchSize)
 	// carried holds NON-trade events whose steady-state write was
 	// cancelled mid-flight by the parent ctx — the non-trade twin of the
@@ -293,6 +295,7 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 	// [persistCarried] then RETURN, so there is no reset — nothing reads
 	// it again.
 	var carried []consumer.Event
+	var drain drainDeadline
 	ep = dispatcherEventPersister(ep, mode)
 	flushTicker := time.NewTicker(tradeBatchFlushInterval)
 	defer flushTicker.Stop()
@@ -335,7 +338,7 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 			tradeBuf = append(abandoned, tradeBuf...)
 			return
 		}
-		reportAbandonedTrades(logger, "steady-state flush under shutdown ctx", abandoned, fctx.Err())
+		reportAbandonedTrades(logger, lt, "steady-state flush under shutdown ctx", abandoned, fctx.Err())
 	}
 
 	// flushShutdown flushes this worker's in-memory tradeBuf on the
@@ -355,7 +358,7 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 		}
 		fctx, cancel := context.WithDeadline(context.Background(), deadline)
 		defer cancel()
-		reportAbandonedTrades(logger, "worker shutdown flush", flushWith(fctx, nil), fctx.Err())
+		reportAbandonedTrades(logger, lt, "worker shutdown flush", flushWith(fctx, nil), fctx.Err())
 	}
 
 	for {
@@ -374,25 +377,26 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 			// (F-1318) — never the cancelled parent, which would fail every
 			// insert instantly and silently drop the event.
 			//
-			// CON-10: every phase below shares ONE absolute deadline computed
-			// here, so the worker's whole post-cancellation drain is bounded by
+			// CON-10: every phase below shares ONE absolute deadline, latched
+			// by whichever post-cancellation phase ran first (possibly a racy
+			// select arm via shutdownSafeCtx), so the worker's whole drain is bounded by
 			// [drainTimeout] rather than by drainTimeout × phases. That is what
 			// guarantees worker 0 reaches drainBufferedEvents' deadline arm —
 			// and logs the undrained ledger range — before main hard-exits at
 			// [ShutdownDeadline].
-			deadline := time.Now().Add(drainTimeout)
+			deadline := drain.get()
 			// Carried events first: they were dequeued BEFORE anything
 			// still sitting in `in`, and nothing else can redeliver them.
-			persistCarried(carried, logger, ep, deadline)
+			persistCarried(carried, logger, ep, deadline, lt)
 			shutdownCtx, shutdownCancel := context.WithDeadline(context.Background(), deadline)
-			tradeBuf = drainInFlightNow(shutdownCtx, in, logger, ep, mode, tradeBuf)
+			tradeBuf = drainInFlightNow(shutdownCtx, in, logger, ep, mode, tradeBuf, lt)
 			shutdownCancel()
 			flushShutdown(deadline)
 			// Only the first worker handles the blocking shutdown drain
 			// (catches events that arrive after our non-blocking sweep + the
 			// channel close) to avoid duplicate drain work; the others exit.
 			if workerID == 0 {
-				drainBufferedEvents(in, logger, ep, tw, mode, deadline)
+				drainBufferedEvents(in, logger, ep, tw, mode, deadline, lt)
 			}
 			return
 		case <-flushTicker.C:
@@ -402,13 +406,13 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 			// fresh bounded context when that happens, so the flush gets its
 			// fair share of the drain budget instead of failing every insert
 			// instantly against the already-dead parent.
-			fctx, fcancel := shutdownSafeCtx(ctx)
+			fctx, fcancel := shutdownSafeCtx(ctx, &drain)
 			flush(fctx)
 			fcancel()
 		case ev, ok := <-in:
 			if !ok {
-				deadline := time.Now().Add(drainTimeout)
-				persistCarried(carried, logger, ep, deadline)
+				deadline := drain.get()
+				persistCarried(carried, logger, ep, deadline, lt)
 				flushShutdown(deadline)
 				return
 			}
@@ -422,7 +426,7 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 				tradeBuf = append(tradeBuf, t)
 				if len(tradeBuf) >= tradeBatchSize {
 					// CON-09: see the flushTicker arm above.
-					fctx, fcancel := shutdownSafeCtx(ctx)
+					fctx, fcancel := shutdownSafeCtx(ctx, &drain)
 					flush(fctx)
 					fcancel()
 				}
@@ -432,7 +436,7 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 			// updates, supply observations, blend / cctp / rozo rows):
 			// same ADR-0041 failure policy as trades — see
 			// persistEventResilient. CON-09: see the flushTicker arm above.
-			fctx, fcancel := shutdownSafeCtx(ctx)
+			fctx, fcancel := shutdownSafeCtx(ctx, &drain)
 			if err := persistEventResilient(fctx, logger, ep, ev); err != nil {
 				// Same carry rule as `flush` above, for the same reason:
 				// only the parent-ctx case is carried. When shutdownSafeCtx
@@ -442,7 +446,7 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 				if fctx == ctx {
 					carried = append(carried, ev)
 				} else {
-					reportAbandonedEvent(logger, ev, err)
+					reportAbandonedEvent(logger, lt, ev, err)
 				}
 			}
 			fcancel()
@@ -466,7 +470,7 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 // complexity rather than suppress the linter); behaviour is unchanged,
 // including that a closed channel and a momentarily-empty one both just
 // return.
-func drainInFlightNow(ctx context.Context, in <-chan consumer.Event, logger *slog.Logger, ep eventPersister, mode SinkMode, tradeBuf []canonical.Trade) []canonical.Trade {
+func drainInFlightNow(ctx context.Context, in <-chan consumer.Event, logger *slog.Logger, ep eventPersister, mode SinkMode, tradeBuf []canonical.Trade, lt *lossTracker) []canonical.Trade {
 	for {
 		select {
 		case ev, ok := <-in:
@@ -481,7 +485,7 @@ func drainInFlightNow(ctx context.Context, in <-chan consumer.Event, logger *slo
 				continue
 			}
 			if err := persistEventResilient(ctx, logger, ep, ev); err != nil {
-				reportAbandonedEvent(logger, ev, err)
+				reportAbandonedEvent(logger, lt, ev, err)
 			}
 		default:
 			return tradeBuf
@@ -503,7 +507,7 @@ func drainInFlightNow(ctx context.Context, in <-chan consumer.Event, logger *slo
 // locals, which is what keeps that function under the complexity gate.
 //
 //nolint:contextcheck // intentional fresh context; see godoc above.
-func persistCarried(carried []consumer.Event, logger *slog.Logger, ep eventPersister, deadline time.Time) {
+func persistCarried(carried []consumer.Event, logger *slog.Logger, ep eventPersister, deadline time.Time, lt *lossTracker) {
 	if len(carried) == 0 {
 		return
 	}
@@ -511,14 +515,14 @@ func persistCarried(carried []consumer.Event, logger *slog.Logger, ep eventPersi
 	defer cancel()
 	for _, ev := range carried {
 		if err := persistEventResilient(cctx, logger, ep, ev); err != nil {
-			reportAbandonedEvent(logger, ev, err)
+			reportAbandonedEvent(logger, lt, ev, err)
 		}
 	}
 }
 
 // shutdownSafeCtx returns ctx unchanged when it is still live. When ctx
-// has ALREADY been cancelled it returns a FRESH context bounded by
-// [drainTimeout] instead (CON-09, audit-2026-07-23): the racy select in
+// has ALREADY been cancelled it returns a FRESH context bounded by the
+// worker's latched drain deadline instead (CON-09, audit-2026-07-23): the racy select in
 // [persistWorker]'s main loop can pick the flushTicker or `<-in` arm on
 // the exact same iteration ctx.Done() fires, and passing the dead
 // parent straight through to a flush/persist call would fail every
@@ -526,11 +530,25 @@ func persistCarried(carried []consumer.Event, logger *slog.Logger, ep eventPersi
 // bounded shot at landing the worker's `<-ctx.Done()` arm would have
 // given it. The caller must always call the returned CancelFunc (a
 // no-op when ctx was live).
-func shutdownSafeCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+func shutdownSafeCtx(ctx context.Context, drain *drainDeadline) (context.Context, context.CancelFunc) {
 	if ctx.Err() == nil {
 		return ctx, func() {}
 	}
-	return context.WithDeadline(context.Background(), time.Now().Add(drainTimeout))
+	return context.WithDeadline(context.Background(), drain.get())
+}
+
+// drainDeadline latches ONE absolute post-cancellation deadline per
+// worker (CON-10). Whichever shutdown phase asks first fixes it — a racy
+// select arm via [shutdownSafeCtx] or the `<-ctx.Done()` arm — and every
+// later phase reuses it, so arms taken after cancellation spend the same
+// [drainTimeout] budget instead of each starting a fresh one.
+type drainDeadline struct{ at time.Time }
+
+func (d *drainDeadline) get() time.Time {
+	if d.at.IsZero() {
+		d.at = time.Now().Add(drainTimeout)
+	}
+	return d.at
 }
 
 // tradeBatchSize caps the trades-per-batch in BatchInsertTrades.
@@ -669,7 +687,7 @@ func IsSoleWriterProjected(ev consumer.Event) bool {
 // why it never fired in production).
 //
 //nolint:contextcheck,gocognit // intentional fresh context + batched-drain fan-out; see godoc above.
-func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, ep eventPersister, tw tradeWriter, mode SinkMode, deadline time.Time) {
+func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, ep eventPersister, tw tradeWriter, mode SinkMode, deadline time.Time, lt *lossTracker) {
 	drainCtx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	tradeBuf := make([]canonical.Trade, 0, tradeBatchSize)
@@ -683,7 +701,7 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, ep event
 		// down, so every trade block-retries within the bounded drainCtx
 		// (2026-07-06 outage fix). An infra fault here abandons after the
 		// drainTimeout and logs the recoverable ledger range at ERROR.
-		reportAbandonedTrades(logger, "shutdown drain", flushTradeBatch(drainCtx, logger, tw, nil, batch, -1), drainCtx.Err())
+		reportAbandonedTrades(logger, lt, "shutdown drain", flushTradeBatch(drainCtx, logger, tw, nil, batch, -1), drainCtx.Err())
 	}
 	for {
 		select {
@@ -705,7 +723,7 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, ep event
 			// Bounded by the shared drain deadline; an abandon here is a
 			// genuine loss (there is no later pass to carry it to).
 			if err := persistEventResilient(drainCtx, logger, ep, ev); err != nil {
-				reportAbandonedEvent(logger, ev, err)
+				reportAbandonedEvent(logger, lt, ev, err)
 			}
 		case <-drainCtx.Done():
 			flushTrades()
@@ -713,7 +731,7 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, ep event
 			// possibly still buffered. drainFinalPass makes one last
 			// best-effort NON-BLOCKING pass over whatever's immediately
 			// available and reports exactly what's left undrained.
-			drainFinalPass(in, logger, ep, tw, mode)
+			drainFinalPass(in, logger, ep, tw, mode, lt)
 			return
 		}
 	}
@@ -764,7 +782,7 @@ func (s *ledgerSpan) observe(l uint32) {
 	}
 }
 
-func drainFinalPass(in <-chan consumer.Event, logger *slog.Logger, ep eventPersister, tw tradeWriter, mode SinkMode) {
+func drainFinalPass(in <-chan consumer.Event, logger *slog.Logger, ep eventPersister, tw tradeWriter, mode SinkMode, lt *lossTracker) {
 	finalCtx, finalCancel := context.WithTimeout(context.Background(), drainFinalPassBudget)
 	defer finalCancel()
 	finalTrades := make([]canonical.Trade, 0, tradeBatchSize)
@@ -796,7 +814,7 @@ drainRemainder:
 				continue
 			}
 			if err := persistEventResilient(finalCtx, logger, ep, ev); err != nil {
-				reportAbandonedEvent(logger, ev, err)
+				reportAbandonedEvent(logger, lt, ev, err)
 			}
 		default:
 			break drainRemainder
@@ -804,7 +822,7 @@ drainRemainder:
 	}
 	if len(finalTrades) > 0 {
 		// nil extBuf: same shutdown block-and-retry posture as flushTrades.
-		reportAbandonedTrades(logger, "final pass", flushTradeBatch(finalCtx, logger, tw, nil, finalTrades, -1), finalCtx.Err())
+		reportAbandonedTrades(logger, lt, "final pass", flushTradeBatch(finalCtx, logger, tw, nil, finalTrades, -1), finalCtx.Err())
 	}
 	if total > 0 {
 		logger.Error("PersistEvents drain deadline exceeded — made a final best-effort persist pass; any residual is recoverable from the CH lake, re-derive this ledger range if the served tier is short",
@@ -1306,7 +1324,8 @@ func persistEventResilient(ctx context.Context, logger *slog.Logger, ep eventPer
 // carries no ledger (kind + source is the whole identity the interface
 // exposes), so the re-derive hint is the source's own gap detector /
 // the completeness verdict rather than a ledger range.
-func reportAbandonedEvent(logger *slog.Logger, ev consumer.Event, err error) {
+func reportAbandonedEvent(logger *slog.Logger, lt *lossTracker, ev consumer.Event, err error) {
+	lt.event()
 	obs.SourceInsertErrorsTotal.WithLabelValues(eventSource(ev), "dropped").Inc()
 	// The per-source `dropped` counter above feeds a RATE alert (≥ 0.1/s
 	// for 5 min) that a handful of rows lost at shutdown never trips;
@@ -1314,6 +1333,59 @@ func reportAbandonedEvent(logger *slog.Logger, ev consumer.Event, err error) {
 	obs.SinkUndrainedRowsTotal.WithLabelValues(obs.SinkPersistEvents, "event").Inc()
 	logger.Error("served-tier event abandoned on shutdown — re-derive this source's tail (per-source gap detector / completeness verdict will show it)",
 		"kind", ev.EventKind(), "source", eventSource(ev), "err", err)
+}
+
+// ShutdownLoss is what one [PersistEvents] run abandoned: rows no drain
+// pass landed. A caller that checkpoints a resume cursor (backfill) must
+// not move it past them.
+type ShutdownLoss struct {
+	// Rows is the number of abandoned rows.
+	Rows int
+	// MinLedger is the lowest ledger among abandoned trades; 0 when none.
+	MinLedger uint32
+	// LedgerUnknown is set when an abandoned row was a non-trade event,
+	// which carries no ledger, so no safe cursor cap can be derived.
+	LedgerUnknown bool
+}
+
+// lossTracker accumulates one PersistEvents run's [ShutdownLoss] across
+// its workers. Nil-safe so the drain helpers' direct unit tests can pass nil.
+type lossTracker struct {
+	mu   sync.Mutex
+	loss ShutdownLoss
+}
+
+func (l *lossTracker) trades(abandoned []canonical.Trade) {
+	if l == nil || len(abandoned) == 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.loss.Rows += len(abandoned)
+	for _, t := range abandoned {
+		switch {
+		case t.Ledger == 0: // off-chain trade: no ledger to cap on
+			l.loss.LedgerUnknown = true
+		case l.loss.MinLedger == 0 || t.Ledger < l.loss.MinLedger:
+			l.loss.MinLedger = t.Ledger
+		}
+	}
+}
+
+func (l *lossTracker) event() {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.loss.Rows++
+	l.loss.LedgerUnknown = true
+}
+
+func (l *lossTracker) snapshot() ShutdownLoss {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.loss
 }
 
 // eventPersister writes ONE non-trade served-tier event. It is always

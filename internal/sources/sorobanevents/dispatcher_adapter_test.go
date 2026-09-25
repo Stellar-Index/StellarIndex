@@ -809,3 +809,56 @@ func TestAsyncSink_FlushBatch_PermanentFaultIsolatesPoisonRow(t *testing.T) {
 		t.Errorf("log output = %q; want exactly one row abandoned with reason=\"permanent data fault\"", out)
 	}
 }
+
+// TestAsyncSink_LowestUnlandedLedger_CoversShutdownDropsAndAbandons pins
+// the signal backfill caps its resume cursor on: a graceful Stop while a
+// producer is blocked on back-pressure drops that ledger's remaining rows,
+// and a batch the drain grace cannot land is abandoned. The lowest such
+// ledger must be reported, or the cursor is checkpointed past rows that
+// never reached soroban_events.
+func TestAsyncSink_LowestUnlandedLedger_CoversShutdownDropsAndAbandons(t *testing.T) {
+	t.Parallel()
+
+	w := newBlockableWriter() // never releases: Postgres is the bottleneck
+	sink := NewAsyncSink(w, AsyncSinkOptions{
+		BufferSize:    1,
+		BatchSize:     1,
+		FlushInterval: 10 * time.Second,
+		WriteTimeout:  100 * time.Millisecond,
+	})
+	sink.Start()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := uint32(0); i < 4; i++ {
+			sink.PushEvent(captureableEvent(t, 4_000_000+i))
+		}
+	}()
+	time.Sleep(100 * time.Millisecond) // producer is now blocked in PushEvent
+	sink.Stop()
+	<-done
+
+	if sink.DroppedCount() == 0 {
+		t.Fatal("precondition: no row was dropped at Stop")
+	}
+	got, ok := sink.LowestUnlandedLedger()
+	if !ok || got != 4_000_000 {
+		t.Fatalf("LowestUnlandedLedger() = (%d, %t), want (4000000, true): nothing was written, so the lowest pushed ledger is the first one not durable", got, ok)
+	}
+}
+
+func TestAsyncSink_LowestUnlandedLedger_NoneOnCleanStop(t *testing.T) {
+	t.Parallel()
+
+	w := newBlockableWriter()
+	close(w.release)
+	sink := NewAsyncSink(w, AsyncSinkOptions{BatchSize: 2, WriteTimeout: time.Second})
+	sink.Start()
+	for i := uint32(0); i < 3; i++ {
+		sink.PushEvent(captureableEvent(t, 5_000_000+i))
+	}
+	sink.Stop()
+	if got, ok := sink.LowestUnlandedLedger(); ok {
+		t.Fatalf("LowestUnlandedLedger() = %d after every row landed; want none", got)
+	}
+}

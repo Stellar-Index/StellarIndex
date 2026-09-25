@@ -119,7 +119,7 @@ func TestPersistWorker_ShutdownRacingInFlightTradeFlush_RowsLandNotLost(t *testi
 		// straight after its own shutdown flush. A nil-store event
 		// persister is fine — only trade-shaped events flow, and they go
 		// through tw.
-		persistWorker(ctx, discardLogger(), storeEventPersister(discardLogger(), nil), store, in, SinkModeAll, 1, nil)
+		persistWorker(ctx, discardLogger(), storeEventPersister(discardLogger(), nil), store, in, SinkModeAll, 1, nil, nil)
 	}()
 
 	// The ticker (tradeBatchFlushInterval) flushes the 3 buffered trades;
@@ -275,7 +275,7 @@ func TestPersistWorker_ShutdownRacingInFlightEventWrite_EventLandsNotLost(t *tes
 		defer close(done)
 		// workerID 1: not the blocking-drain worker, so the worker exits
 		// straight after its own shutdown pass.
-		persistWorker(ctx, discardLogger(), ep.persist, nil, in, SinkModeAll, 1, nil)
+		persistWorker(ctx, discardLogger(), ep.persist, nil, in, SinkModeAll, 1, nil, nil)
 	}()
 
 	// Wait until the steady-state write is in flight, then cancel while it
@@ -311,5 +311,41 @@ func TestPersistWorker_ShutdownRacingInFlightEventWrite_EventLandsNotLost(t *tes
 	// "dropped"} is what an operator re-derives a source's tail on.
 	if got, before := counter(t, obs.SourceInsertErrorsTotal, band.SourceName, "dropped"), droppedBefore; got != before {
 		t.Errorf("SourceInsertErrorsTotal{source=band,kind=dropped} moved %v -> %v; the carried event landed, so nothing was dropped", before, got)
+	}
+}
+
+// TestPersistWorker_PostCancelPhasesShareOneDeadline pins CON-10 against
+// the racy select: once ctx is cancelled, a `<-in` or ticker arm that wins
+// the race (via shutdownSafeCtx) and the `<-ctx.Done()` arm must all write
+// under the SAME absolute deadline. When each started its own drainTimeout,
+// one extra blocking arm pushed the Done arm's deadline past main's
+// ShutdownDeadline hard exit, so carried rows died unreported. The select
+// picks `<-in` first with p=1/2 per run, so 50 runs make a pre-fix pass
+// vanishingly unlikely.
+func TestPersistWorker_PostCancelPhasesShareOneDeadline(t *testing.T) {
+	for run := 0; run < 50; run++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		in := make(chan consumer.Event, 8)
+		for i := 0; i < cap(in); i++ {
+			in <- band.UpdateEvent{Update: canonical.OracleUpdate{Source: band.SourceName}}
+		}
+		var mu sync.Mutex
+		deadlines := map[time.Time]int{}
+		ep := func(c context.Context, _ consumer.Event, _ bool) error {
+			d, ok := c.Deadline()
+			if !ok {
+				t.Error("post-cancel write ran under a context with no deadline")
+			}
+			mu.Lock()
+			deadlines[d]++
+			mu.Unlock()
+			time.Sleep(time.Millisecond)
+			return nil
+		}
+		persistWorker(ctx, discardLogger(), ep, nil, in, SinkModeAll, 1, nil, nil)
+		if len(deadlines) != 1 {
+			t.Fatalf("run %d: post-cancel writes used %d distinct deadlines %v; want exactly 1 shared drain deadline", run, len(deadlines), deadlines)
+		}
 	}
 }

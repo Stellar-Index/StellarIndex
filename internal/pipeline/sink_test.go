@@ -417,7 +417,7 @@ func TestDrainFinalPass_SkipInSinkExcludedFromReport(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 
-	drainFinalPass(in, logger, storeEventPersister(logger, nil), nil, SinkModeSkipProjected)
+	drainFinalPass(in, logger, storeEventPersister(logger, nil), nil, SinkModeSkipProjected, nil)
 
 	out := buf.String()
 	if !strings.Contains(out, "undrained_events=1") {
@@ -466,10 +466,16 @@ func TestDrainBufferedEvents_UndrainedRowsAreCounted(t *testing.T) {
 	store := &fakeTradeStore{failErr: context.DeadlineExceeded} // stays unhealthy
 	ep := func(context.Context, consumer.Event, bool) error { return context.DeadlineExceeded }
 
-	drainBufferedEvents(in, discardLogger(), ep, store, SinkModeSkipProjected, time.Now().Add(time.Minute))
+	lt := &lossTracker{}
+	drainBufferedEvents(in, discardLogger(), ep, store, SinkModeSkipProjected, time.Now().Add(time.Minute), lt)
 
 	if n := store.landedCount(); n != 0 {
 		t.Fatalf("landed %d trades through a store that refuses every write; want 0", n)
+	}
+	// The loss PersistEvents hands back is what backfill caps its resume
+	// cursor on; the ledger-less events make any cap unsafe, so say so.
+	if got, want := lt.snapshot(), (ShutdownLoss{Rows: trades + events, MinLedger: 700, LedgerUnknown: true}); got != want {
+		t.Errorf("ShutdownLoss = %+v; want %+v", got, want)
 	}
 	if got := counter(t, obs.SinkUndrainedRowsTotal, obs.SinkPersistEvents, "trade") - tradesBefore; got != trades {
 		t.Errorf("sink_undrained_rows{persist_events,trade} delta = %v; want %d (one per abandoned trade row)", got, trades)
@@ -498,10 +504,14 @@ func TestDrainBufferedEvents_CleanDrainCountsNoUndrainedRows(t *testing.T) {
 	store.healthy.Store(true)
 	ep := func(context.Context, consumer.Event, bool) error { return nil }
 
-	drainBufferedEvents(in, discardLogger(), ep, store, SinkModeSkipProjected, time.Now().Add(time.Minute))
+	lt := &lossTracker{}
+	drainBufferedEvents(in, discardLogger(), ep, store, SinkModeSkipProjected, time.Now().Add(time.Minute), lt)
 
 	if n := store.landedCount(); n != 2 {
 		t.Fatalf("landed %d trades; want 2 — the fixture's clean path did not run, so the zero-delta below would be vacuous", n)
+	}
+	if got := lt.snapshot(); got != (ShutdownLoss{}) {
+		t.Errorf("ShutdownLoss = %+v on a clean drain; want zero", got)
 	}
 	if got := counter(t, obs.SinkUndrainedRowsTotal, obs.SinkPersistEvents, "trade") - tradesBefore; got != 0 {
 		t.Errorf("sink_undrained_rows{persist_events,trade} delta = %v on a clean drain; want 0", got)
@@ -517,7 +527,7 @@ func TestDrainBufferedEvents_CleanDrainCountsNoUndrainedRows(t *testing.T) {
 // through persistWorker is unaffected.
 func TestShutdownSafeCtx_LiveCtxPassedThroughUnchanged(t *testing.T) {
 	ctx := context.Background()
-	got, cancel := shutdownSafeCtx(ctx)
+	got, cancel := shutdownSafeCtx(ctx, &drainDeadline{})
 	defer cancel()
 	if got != ctx {
 		t.Errorf("shutdownSafeCtx(live ctx) returned a different context; want the same ctx passed through unchanged")
@@ -544,7 +554,7 @@ func TestShutdownSafeCtx_CancelledParentGetsFreshBoundedCtx(t *testing.T) {
 	parent, parentCancel := context.WithCancel(context.Background())
 	parentCancel() // simulate the racy-select window: ctx already done
 
-	got, cancel := shutdownSafeCtx(parent)
+	got, cancel := shutdownSafeCtx(parent, &drainDeadline{})
 	defer cancel()
 
 	if got == parent {
@@ -672,7 +682,7 @@ func TestPersistWorker_Phase3ParallelWriteCountsOnlyInProjector(t *testing.T) {
 			in <- aquarius.KillEvent{}
 			in <- band.UpdateEvent{}
 			close(in)
-			persistWorker(context.Background(), discardLogger(), ep, tw, in, tc.mode, 1, nil)
+			persistWorker(context.Background(), discardLogger(), ep, tw, in, tc.mode, 1, nil, nil)
 
 			if got := tw.landedCount(); got != 2 {
 				t.Fatalf("trades landed = %d, want 2 (the parallel write must still land)", got)
