@@ -26,6 +26,23 @@
 -- `(asset_key, ledger_sequence, time)` does include time, so
 -- the constraint creates cleanly.
 --
+-- T439 (audit-reverif-2026-09-18): the inner BEGIN/COMMIT below ends
+-- the single implicit transaction golang-migrate's Run() would
+-- otherwise wrap this whole file in, so step 2 (the constraint swap)
+-- commits independently of steps 1 and 3. If step 3 then fails for
+-- any reason, this version is left DIRTY with the constraint already
+-- applied. This up.sql is shipped and its SQL is immutable (see
+-- migrations/README.md "Amending a shipped migration"), so recovery
+-- is operational, not a migration change:
+--   1. `SELECT conname FROM pg_constraint WHERE conrelid =
+--      'asset_supply_history'::regclass AND conname =
+--      'asset_supply_history_asset_ledger_idx'` — if it already
+--      exists, DROP it manually before `migrate force 29 && migrate up`,
+--      or the replayed ADD CONSTRAINT fails again with "already exists".
+--   2. Re-check `timescaledb.compress` on `asset_supply_history` is
+--      back to the settings step 3 sets — a manual retry after a
+--      dropped constraint still needs step 3 re-applied.
+--
 -- F-1261 (codex audit-2026-05-12): migration 0005 enabled
 -- Timescale compression on this table, and Timescale rejects
 -- index/constraint mutations on compressed hypertables with
