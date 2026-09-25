@@ -23,12 +23,10 @@ type AccountsListView struct {
 	// is available). Each row's Value is expressed in this unit.
 	RankedBy string             `json:"ranked_by"`
 	Accounts []AccountWealthRow `json:"accounts"`
-	// AsOfLedger is the lake watermark this current-state ranking is
-	// fresh to (ADR-0041 Decision 4): the highest ledger the ClickHouse
-	// lake had captured at serve time. The ranking is a one-pass read
-	// over the current-state (ledger_entry_changes) projection, so a
-	// wedged sink makes it stale — pairs with `flags.stale`. Omitted
-	// when no watermark reader is wired.
+	// AsOfLedger is the ranking snapshot's vintage (ADR-0041 Decision 4):
+	// the lake watermark read immediately before the snapshot's scan, so
+	// it pairs with the envelope's as_of and never names a ledger later
+	// than the data ranked. Omitted when the watermark was unreadable.
 	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 	// LowerBound is always true: each Value counts only the holding domains
 	// CoverageNote names, so it can under-state an account, never over-state it.
@@ -44,7 +42,8 @@ const accountsWealthCoverageNote = "Ranked on classic holdings only: the account
 type AccountWealthRow struct {
 	AccountID string `json:"account_id"`
 	// Value is the account's ranked wealth in the response's RankedBy unit —
-	// USD dollars ("usd") or whole XLM ("native_xlm"). This is the canonical
+	// USD dollars ("usd", 2dp) or whole XLM ("native_xlm", exact to the
+	// stroop from the integer balance, no float in the path). This is the canonical
 	// field; read RankedBy to format it.
 	Value string `json:"value"`
 	// USDValue is a backward-compatible alias, populated only on the "usd"
@@ -88,7 +87,7 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	// handler's deadline. Before this, the scan ran inline and timed out on
 	// EVERY request — 8.1s of waiting followed by a 500, 100% of the time
 	// (site-audit S3/S30).
-	ranked, basis, rankedAt, warm := h.Reader.AccountsByWealthCached(ctx, assets, prices, limit)
+	snap, warm := h.Reader.AccountsByWealthCached(ctx, assets, prices, limit)
 	if !warm {
 		// Honest degraded state instead of a 500. The previous copy blamed
 		// "the current-state projection is still backfilling, or pricing is
@@ -104,8 +103,8 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	}
 	// Degraded when the snapshot has outlived its refresh contract (the
 	// background refresher is failing/behind) — the data is real, the flag +
-	// the envelope's as_of (stamped from rankedAt) say how old.
-	snapshotStale := time.Since(rankedAt) > clickhouse.AccountsWealthCacheTTL
+	// the envelope's as_of (stamped from the snapshot) say how old.
+	snapshotStale := time.Since(snap.AsOf) > clickhouse.AccountsWealthCacheTTL
 	// Locked-burn detection (Pass-B ACC-1): the SDF burn address ranked
 	// as the richest account — $11.3B of provably unspendable XLM
 	// presented as wealth. Badge, don't hide: the balance is real, the
@@ -114,29 +113,29 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	// on each row (a.Locked), NOT re-queried here — AccountsUnspendable is a
 	// FINAL scan that was the residual 6-8s of /v1/accounts latency once the
 	// ranking itself was cached (site-audit S3).
-	wmLedger, stale, _ := h.LakeWatermark(ctx)
+	// as_of_ledger is the snapshot's own vintage; the serve-time watermark
+	// read contributes only the lake-wedged `stale` signal.
+	_, stale, _ := h.LakeWatermark(ctx)
 	out := AccountsListView{
-		RankedBy: basis, Accounts: make([]AccountWealthRow, len(ranked)), AsOfLedger: wmLedger,
+		RankedBy: snap.Basis, Accounts: make([]AccountWealthRow, len(snap.Rows)), AsOfLedger: snap.AsOfLedger,
 		LowerBound: true, CoverageNote: accountsWealthCoverageNote,
 	}
 	// priced_assets is a USD-basis notion; on the native-XLM basis nothing is
 	// USD-priced, so report 0 rather than the "native" fallback key count.
-	if basis != clickhouse.WealthBasisNative {
+	if snap.Basis != clickhouse.WealthBasisNative {
 		out.PricedAssets = len(assets)
 	}
-	for i, a := range ranked {
+	for i, a := range snap.Rows {
 		row := AccountWealthRow{AccountID: a.AccountID, Locked: a.Locked}
-		if basis == clickhouse.WealthBasisNative {
-			// a.USD carries the native XLM quantity (balance × 1.0); full
-			// precision so the client formats it.
-			row.Value = strconv.FormatFloat(a.USD, 'f', -1, 64)
+		if snap.Basis == clickhouse.WealthBasisNative {
+			row.Value = stroops7(a.NativeStroops.BigInt())
 		} else {
 			row.Value = strconv.FormatFloat(a.USD, 'f', 2, 64)
 			row.USDValue = row.Value // back-compat alias, USD basis only
 		}
 		out.Accounts[i] = row
 	}
-	h.writeJSONAt(w, out, stale || snapshotStale, rankedAt)
+	h.writeJSONAt(w, out, stale || snapshotStale, snap.AsOf)
 }
 
 // usdPriceMap builds parallel (asset, price) arrays for wealth ranking: native
@@ -449,9 +448,9 @@ type AssetHoldersView struct {
 	Asset       string         `json:"asset"`
 	HolderCount int64          `json:"holder_count"`
 	Holders     []AssetHolderV `json:"holders"`
-	// AsOfLedger is the lake watermark this read is fresh to (ADR-0041
-	// Decision 4). Omitted when no watermark reader is wired. Pairs with
-	// `flags.stale`.
+	// AsOfLedger is the board snapshot's vintage (ADR-0041 Decision 4): the
+	// lake watermark read immediately before its scan, paired with the
+	// envelope's as_of. Omitted when no watermark was available.
 	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 }
 
@@ -565,12 +564,12 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wmLedger, stale, _ := h.LakeWatermark(ctx)
-	out := AssetHoldersView{Asset: asset, HolderCount: total, Holders: make([]AssetHolderV, len(holders)), AsOfLedger: wmLedger}
+	_, stale, _ := h.LakeWatermark(ctx)
+	out := AssetHoldersView{Asset: asset, HolderCount: total, Holders: make([]AssetHolderV, len(holders)), AsOfLedger: asOf.ledger}
 	for i, hh := range holders {
 		out.Holders[i] = AssetHolderV{AccountID: hh.AccountID, Balance: strconv.FormatInt(hh.Balance, 10)}
 	}
-	h.writeJSONAt(w, out, stale || degraded, asOf)
+	h.writeJSONAt(w, out, stale || degraded, asOf.at)
 }
 
 // PrewarmAccountsWealth primes the wealth-ranking cache so no user ever

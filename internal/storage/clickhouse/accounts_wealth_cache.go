@@ -20,7 +20,7 @@ import (
 // leaderboard of the largest balances on the network, which reorders on
 // the timescale of large transfers, not seconds. Serving a ranking up to
 // 15 minutes old is materially indistinguishable from live, and the
-// response carries the lake watermark so callers can see its vintage.
+// response carries the snapshot's own ledger (AsOfLedger) as its vintage.
 const AccountsWealthCacheTTL = 15 * time.Minute
 
 // AccountsWealthRefreshTimeout bounds a single background refresh. Well
@@ -59,12 +59,17 @@ func wealthBasis(assets []string) string {
 	return WealthBasisUSD
 }
 
-// accountsWealthEntry is the single cached ranking (top
-// [accountsWealthMaxLimit]); callers slice it to their requested limit.
-type accountsWealthEntry struct {
-	rows     []AccountWealth
-	basis    string
-	cachedAt time.Time
+// AccountWealthSnapshot is one computed wealth ranking and its vintage. The
+// cache holds a single one (top [accountsWealthMaxLimit]); callers get it
+// sliced to their requested limit.
+type AccountWealthSnapshot struct {
+	Rows  []AccountWealth
+	Basis string
+	// AsOf is when the ranking was computed. AsOfLedger is the lake watermark
+	// read immediately BEFORE its scan, so it never names a ledger later than
+	// the data the ranking read; 0 when the watermark was unreadable.
+	AsOf       time.Time
+	AsOfLedger uint32
 }
 
 // accountsWealthCache is a TTL + single-flight cache in front of
@@ -83,7 +88,7 @@ type accountsWealthEntry struct {
 // so honestly rather than being hung for 8 s first.
 type accountsWealthCache struct {
 	mu     sync.Mutex
-	entry  accountsWealthEntry
+	entry  AccountWealthSnapshot
 	filled bool
 	flight chan struct{}
 }
@@ -101,25 +106,25 @@ func newAccountsWealthCache() *accountsWealthCache {
 // when nothing was ever stored. A nil cache (a zero-value ExplorerReader,
 // as built in some tests) behaves as a permanent miss rather than
 // panicking.
-func (c *accountsWealthCache) get() ([]AccountWealth, string, time.Time, bool) {
+func (c *accountsWealthCache) get() (AccountWealthSnapshot, bool) {
 	if c == nil {
-		return nil, "", time.Time{}, false
+		return AccountWealthSnapshot{}, false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.filled {
-		return nil, "", time.Time{}, false
+		return AccountWealthSnapshot{}, false
 	}
-	return c.entry.rows, c.entry.basis, c.entry.cachedAt, true
+	return c.entry, true
 }
 
-func (c *accountsWealthCache) put(rows []AccountWealth, basis string, now time.Time) {
+func (c *accountsWealthCache) put(snap AccountWealthSnapshot) {
 	if c == nil {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.entry = accountsWealthEntry{rows: rows, basis: basis, cachedAt: now}
+	c.entry = snap
 	c.filled = true
 }
 
@@ -156,7 +161,9 @@ func (c *accountsWealthCache) endFlight(ch chan struct{}) {
 //
 // It NEVER runs the slow scan on the caller's deadline. Three states:
 //
-//   - fresh entry (within AccountsWealthCacheTTL): served as-is.
+//   - fresh entry (within AccountsWealthCacheTTL): served as-is. The
+//     snapshot carries its own AsOf and AsOfLedger; a handler stamps
+//     those, never a serve-time watermark read (a torn read).
 //   - STALE entry (TTL lapsed — e.g. the background refresh has been
 //     failing): served anyway, with its real asOf, and a detached
 //     single-flight refresh is kicked. The handler compares asOf against
@@ -173,13 +180,14 @@ func (c *accountsWealthCache) endFlight(ch chan struct{}) {
 // cold state at all.
 func (r *ExplorerReader) AccountsByWealthCached(
 	ctx context.Context, assets []string, prices []float64, limit int,
-) ([]AccountWealth, string, time.Time, bool) {
+) (AccountWealthSnapshot, bool) {
 	if limit <= 0 || limit > accountsWealthMaxLimit {
 		limit = 100
 	}
-	rows, basis, asOf, ok := r.wealthCache.get()
-	if ok && time.Since(asOf) <= AccountsWealthCacheTTL {
-		return clampWealth(rows, limit), basis, asOf, true
+	snap, ok := r.wealthCache.get()
+	snap.Rows = clampWealth(snap.Rows, limit)
+	if ok && time.Since(snap.AsOf) <= AccountsWealthCacheTTL {
+		return snap, true
 	}
 	// Stale or cold: start a background refresh either way.
 	//
@@ -191,9 +199,9 @@ func (r *ExplorerReader) AccountsByWealthCached(
 	r.refreshAccountsWealth(assets, prices) //nolint:contextcheck // intentional detach; see above
 	if ok {
 		// Stale-but-real: serve it with its honest timestamp.
-		return clampWealth(rows, limit), basis, asOf, true
+		return snap, true
 	}
-	return nil, "", time.Time{}, false
+	return AccountWealthSnapshot{}, false
 }
 
 // clampWealth returns the first `limit` rows of a cached ranking.
@@ -211,12 +219,33 @@ func clampWealth(rows []AccountWealth, limit int) []AccountWealth {
 func (r *ExplorerReader) PrewarmAccountsByWealth(
 	ctx context.Context, assets []string, prices []float64,
 ) error {
-	rows, err := r.AccountsByWealth(ctx, assets, prices, accountsWealthMaxLimit)
+	snap, err := r.computeAccountsWealth(ctx, assets, prices)
 	if err != nil {
 		return err
 	}
-	r.wealthCache.put(r.withLocked(ctx, rows), wealthBasis(assets), time.Now())
+	r.wealthCache.put(snap)
 	return nil
+}
+
+// computeAccountsWealth runs one full ranking and stamps its vintage. The
+// watermark is read BEFORE the scan so AsOfLedger never names a ledger later
+// than the data the ranking saw; an unreadable watermark leaves it 0
+// (as_of_ledger omitted) rather than failing a ranking that did compute.
+func (r *ExplorerReader) computeAccountsWealth(
+	ctx context.Context, assets []string, prices []float64,
+) (AccountWealthSnapshot, error) {
+	var ledger uint32
+	if wm, _, err := r.LakeWatermark(ctx); err == nil {
+		ledger = wm
+	}
+	rows, err := r.AccountsByWealth(ctx, assets, prices, accountsWealthMaxLimit)
+	if err != nil {
+		return AccountWealthSnapshot{}, err
+	}
+	return AccountWealthSnapshot{
+		Rows: r.withLocked(ctx, rows), Basis: wealthBasis(assets),
+		AsOf: time.Now(), AsOfLedger: ledger,
+	}, nil
 }
 
 // withLocked resolves the locked-burn flag for the ranked accounts and
@@ -261,10 +290,7 @@ func (r *ExplorerReader) refreshAccountsWealth(assets []string, prices []float64
 		start := time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), AccountsWealthRefreshTimeout)
 		defer cancel()
-		rows, err := r.AccountsByWealth(ctx, assets, prices, accountsWealthMaxLimit)
-		if err == nil {
-			rows = r.withLocked(ctx, rows)
-		}
+		snap, err := r.computeAccountsWealth(ctx, assets, prices)
 		obs.ObserveExplorerSWRRefresh("accounts_wealth", start, err)
 		if err != nil {
 			// Log rather than swallow: a persistently-failing refresh keeps
@@ -276,6 +302,6 @@ func (r *ExplorerReader) refreshAccountsWealth(assets []string, prices []float64
 			}
 			return // next caller retries; nothing cached, nothing corrupted
 		}
-		r.wealthCache.put(rows, wealthBasis(assets), time.Now())
+		r.wealthCache.put(snap)
 	}()
 }

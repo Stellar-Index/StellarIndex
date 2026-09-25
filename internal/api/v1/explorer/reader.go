@@ -270,18 +270,18 @@ type ExplorerReader interface {
 	AccountsByWealth(ctx context.Context, assets []string, prices []float64, limit int) ([]clickhouse.AccountWealth, error)
 	// AccountsByWealthCached serves the ranking from a background-refreshed
 	// cache and NEVER runs the underlying FINAL scan on the caller's
-	// deadline. asOf is the ranking's fetch time — an entry past its TTL is
-	// STILL served (with its honest asOf; the handler flags it degraded)
+	// deadline. The snapshot's AsOf/AsOfLedger are the ranking's vintage — an
+	// entry past its TTL is STILL served (with them; the handler flags it degraded)
 	// rather than treated as a miss, so a window of failed refreshes
 	// degrades to old-but-real data, not to 503s (route-sweep 2026-07-29).
 	// ok=false means "never computed yet" — render a warming state, do
 	// not fall back to AccountsByWealth on the request path (site-audit S3:
 	// that scan needs 11-20s against an 8s handler deadline, so it 500'd
-	// 100% of the time). The basis return ("usd" | "native_xlm") records
-	// which unit the cached ranking is in, so the handler labels the served
-	// numbers correctly — native XLM where no USD price map was available
-	// (the lean test nets).
-	AccountsByWealthCached(ctx context.Context, assets []string, prices []float64, limit int) ([]clickhouse.AccountWealth, string, time.Time, bool)
+	// 100% of the time). Basis ("usd" | "native_xlm") records which unit
+	// the cached ranking is in, so the handler labels the served numbers
+	// correctly — native XLM where no USD price map was available (the lean
+	// test nets).
+	AccountsByWealthCached(ctx context.Context, assets []string, prices []float64, limit int) (clickhouse.AccountWealthSnapshot, bool)
 	SoroswapPairReserves(ctx context.Context, pairs []string) (map[string]clickhouse.SoroswapPairState, error)
 	NativeLiquidityPoolReserves(ctx context.Context, poolIDs []string) (map[string]clickhouse.NativeLiquidityPoolState, error)
 	NativeLiquidityPoolsRanked(ctx context.Context, limit int) ([]clickhouse.NativeLiquidityPoolState, error)

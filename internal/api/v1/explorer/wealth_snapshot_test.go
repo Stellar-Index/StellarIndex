@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -22,18 +23,41 @@ import (
 // other read falls through to capReader's harmless zero values.
 type wealthSnapshotReader struct {
 	*capReader
-	rows  []clickhouse.AccountWealth
-	basis string
-	asOf  time.Time
-	ok    bool
+	rows   []clickhouse.AccountWealth
+	basis  string
+	asOf   time.Time
+	ledger uint32
+	ok     bool
 }
 
-func (r *wealthSnapshotReader) AccountsByWealthCached(context.Context, []string, []float64, int) ([]clickhouse.AccountWealth, string, time.Time, bool) {
+func (r *wealthSnapshotReader) AccountsByWealthCached(context.Context, []string, []float64, int) (clickhouse.AccountWealthSnapshot, bool) {
 	basis := r.basis
 	if basis == "" {
 		basis = clickhouse.WealthBasisUSD
 	}
-	return r.rows, basis, r.asOf, r.ok
+	return clickhouse.AccountWealthSnapshot{Rows: r.rows, Basis: basis, AsOf: r.asOf, AsOfLedger: r.ledger}, r.ok
+}
+
+// TestAccountsList_AsOfLedgerIsSnapshotVintage pins #621: as_of_ledger must
+// be the ledger the served ranking was computed at, not a serve-time
+// watermark read that can be up to a whole cache TTL newer than the rows.
+func TestAccountsList_AsOfLedgerIsSnapshotVintage(t *testing.T) {
+	const snapshotLedger, serveTimeLedger = 63_400_000, 63_400_178
+	h, rec := wealthTestHandler(&wealthSnapshotReader{
+		capReader: &capReader{probe: &deadlineProbe{}},
+		rows:      []clickhouse.AccountWealth{{AccountID: validTestAccount, USD: 12.5}},
+		asOf:      time.Now().Add(-14 * time.Minute), ledger: snapshotLedger, ok: true,
+	})
+	h.LakeWatermark = func(context.Context) (uint32, bool, bool) { return serveTimeLedger, false, true }
+	serveAccountsList(t, h)
+	view, okAssert := rec.view.(AccountsListView)
+	if !okAssert {
+		t.Fatalf("payload was %T, want AccountsListView", rec.view)
+	}
+	if view.AsOfLedger != snapshotLedger {
+		t.Errorf("as_of_ledger = %d, want the snapshot's %d (not the serve-time watermark %d)",
+			view.AsOfLedger, snapshotLedger, serveTimeLedger)
+	}
 }
 
 // wealthTestHandler wires the minimal seams AccountsList needs, recording
@@ -113,9 +137,12 @@ func TestAccountsList_FreshSnapshot_NotDegraded(t *testing.T) {
 func TestAccountsList_NativeBasis(t *testing.T) {
 	h, rec := wealthTestHandler(&wealthSnapshotReader{
 		capReader: &capReader{probe: &deadlineProbe{}},
-		rows:      []clickhouse.AccountWealth{{AccountID: validTestAccount, USD: 4200.5}},
-		basis:     clickhouse.WealthBasisNative,
-		asOf:      time.Now().Add(-time.Minute), ok: true,
+		rows: []clickhouse.AccountWealth{{
+			AccountID: validTestAccount, USD: 4200.5,
+			NativeStroops: canonical.NewAmount(big.NewInt(42_005_000_000)),
+		}},
+		basis: clickhouse.WealthBasisNative,
+		asOf:  time.Now().Add(-time.Minute), ok: true,
 	})
 	serveAccountsList(t, h)
 	if rec.status != http.StatusOK {
@@ -140,6 +167,31 @@ func TestAccountsList_NativeBasis(t *testing.T) {
 	}
 	if row.USDValue != "" {
 		t.Errorf("usd_value = %q on native basis, want empty", row.USDValue)
+	}
+}
+
+// TestAccountsList_NativeBasisIsExactPastFloat53 pins CA2-A03-correct-5: a
+// native_xlm value above 2^53 stroops (~900.7M XLM — the test-net root and
+// friendbot accounts that top the board) is served to the stroop, not
+// through the float ranking key, which cannot carry the 7th decimal there.
+func TestAccountsList_NativeBasisIsExactPastFloat53(t *testing.T) {
+	const stroops = 100_000_000_001_234_567 // 10,000,000,000.1234567 XLM
+	h, rec := wealthTestHandler(&wealthSnapshotReader{
+		capReader: &capReader{probe: &deadlineProbe{}},
+		rows: []clickhouse.AccountWealth{{
+			AccountID: validTestAccount, USD: float64(stroops) / 1e7,
+			NativeStroops: canonical.NewAmount(big.NewInt(stroops)),
+		}},
+		basis: clickhouse.WealthBasisNative,
+		asOf:  time.Now().Add(-time.Minute), ok: true,
+	})
+	serveAccountsList(t, h)
+	view, okAssert := rec.view.(AccountsListView)
+	if !okAssert || len(view.Accounts) != 1 {
+		t.Fatalf("payload was %T with %d rows, want one AccountsListView row", rec.view, len(view.Accounts))
+	}
+	if got, want := view.Accounts[0].Value, "10000000000.1234567"; got != want {
+		t.Errorf("native_xlm value = %q, want the exact balance %q", got, want)
 	}
 }
 

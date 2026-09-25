@@ -189,19 +189,20 @@ func TestExplorer_AssetHolders(t *testing.T) {
 
 // TestExplorer_AccountsList_Watermark pins ADR-0041 Decision 4 on the
 // /v1/accounts wealth ranking (a current-state read over the
-// ledger_entry_changes projection): `as_of_ledger` carries the cached
-// lake watermark and `flags.stale` fires when its close time trails now
-// beyond the threshold — the same disclosure the /v1/accounts/{g}
-// detail read already carries. An empty stubPriceReader prices nothing,
-// so the ranking is served straight from the stub wealth rows.
+// ledger_entry_changes projection): `as_of_ledger` carries the ranking
+// snapshot's own ledger — NOT the later serve-time watermark (#621) —
+// and `flags.stale` fires when the serve-time watermark's close time
+// trails now beyond the threshold. An empty stubPriceReader prices
+// nothing, so the ranking is served straight from the stub wealth rows.
 func TestExplorer_AccountsList_Watermark(t *testing.T) {
 	reader := &stubExplorerReader{
-		wealth: []clickhouse.AccountWealth{{AccountID: testG, USD: 123.45}},
+		wealth:       []clickhouse.AccountWealth{{AccountID: testG, USD: 123.45}},
+		wealthLedger: 63_888_888,
 	}
 	srv := v1.New(v1.Options{
 		Explorer:      reader,
 		Prices:        &stubPriceReader{},
-		LakeWatermark: &wmStub{ledger: 63_888_888, closedAt: time.Now().Add(-10 * time.Minute)},
+		LakeWatermark: &wmStub{ledger: 63_888_999, closedAt: time.Now().Add(-10 * time.Minute)},
 	})
 	base := httpTestServer(t, srv).URL
 
