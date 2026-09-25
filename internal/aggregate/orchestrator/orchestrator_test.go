@@ -1113,6 +1113,79 @@ func TestTick_AnomalyFreeze_RefreshesLKGTTL(t *testing.T) {
 	}
 }
 
+// TestKeepFrozenVWAPAlive_ExtendsCompositeQualifiers pins GH-1292: a
+// frozen composite's provenance marker and quality-flags meta must outlive
+// the ordinary VWAP TTL together with its value, or five minutes into a
+// hold the API serves the LKG as a direct VWAP with flags.triangulated
+// and flags.diverged gone.
+func TestKeepFrozenVWAPAlive_ExtendsCompositeQualifiers(t *testing.T) {
+	pair := xlmUsdtPair(t)
+	cache, mr := newTestRedis(t)
+	window := time.Hour
+	o := New(nil, cache, Config{Pairs: []canonical.Pair{pair}, Windows: []time.Duration{window}})
+	ctx := context.Background()
+	ttl := cachekeys.VWAPTTL(window)
+	valKey := cachekeys.VWAP(pair.Base, pair.Quote, window).String()
+	atKey := cachekeys.VWAPObservedAt(pair.Base, pair.Quote, window).String()
+	provKey := cachekeys.VWAPProvenance(pair.Base, pair.Quote, window).String()
+	metaKey := cachekeys.VWAPCompositeMeta(pair.Base, pair.Quote, window).String()
+	const meta = `{"path_count":2,"diverged":true}`
+	cache.Set(ctx, valKey, "1.000000000000", ttl)
+	cache.Set(ctx, atKey, cachekeys.FormatVWAPObservedAt(time.Now().Truncate(time.Minute)), ttl)
+	cache.Set(ctx, provKey, cachekeys.VWAPProvenanceTriangulated, ttl)
+	cache.Set(ctx, metaKey, meta, ttl)
+
+	hold := 35 * time.Minute
+	o.keepFrozenVWAPAlive(ctx, pair, window, hold)
+
+	for _, k := range []string{valKey, atKey, provKey, metaKey} {
+		if got := mr.TTL(k); got != hold {
+			t.Errorf("TTL(%s) = %v after keepalive; want the hold %v", k, got, hold)
+		}
+	}
+	// Past the ordinary VWAP TTL but inside the hold: the value must still
+	// read as the triangulated composite it was, flags and all.
+	past := ttl + time.Minute
+	mr.FastForward(past)
+	if got, err := mr.Get(provKey); err != nil || got != cachekeys.VWAPProvenanceTriangulated {
+		t.Errorf("provenance after %v = %q (err %v); want %q", past, got, err, cachekeys.VWAPProvenanceTriangulated)
+	}
+	if got, err := mr.Get(metaKey); err != nil || got != meta {
+		t.Errorf("composite meta after %v = %q (err %v); want %q", past, got, err, meta)
+	}
+	if got, err := mr.Get(valKey); err != nil || got != "1.000000000000" {
+		t.Errorf("LKG value after %v = %q (err %v); want untouched", past, got, err)
+	}
+}
+
+// TestKeepFrozenVWAPAlive_DirectPairGainsNoProvenance: a direct pair has no
+// provenance marker and the keepalive must not invent one, or its LKG would
+// be relabelled triangulated.
+func TestKeepFrozenVWAPAlive_DirectPairGainsNoProvenance(t *testing.T) {
+	pair := xlmUsdtPair(t)
+	cache, mr := newTestRedis(t)
+	window := 5 * time.Minute
+	o := New(nil, cache, Config{Pairs: []canonical.Pair{pair}, Windows: []time.Duration{window}})
+	ctx := context.Background()
+	valKey := cachekeys.VWAP(pair.Base, pair.Quote, window).String()
+	cache.Set(ctx, valKey, "1.000000000000", window)
+
+	hold := 35 * time.Minute
+	o.keepFrozenVWAPAlive(ctx, pair, window, hold)
+
+	for _, k := range []string{
+		cachekeys.VWAPProvenance(pair.Base, pair.Quote, window).String(),
+		cachekeys.VWAPCompositeMeta(pair.Base, pair.Quote, window).String(),
+	} {
+		if mr.Exists(k) {
+			t.Errorf("%s exists after keepalive on a direct pair; want absent", k)
+		}
+	}
+	if got := mr.TTL(valKey); got != hold {
+		t.Errorf("TTL(value) = %v; want %v", got, hold)
+	}
+}
+
 // TestTick_AnomalyNilChecker_PublishesEverything — when the
 // orchestrator has no Anomaly checker wired, every bucket publishes.
 // Identical to the pre-anomaly behaviour.

@@ -1850,10 +1850,14 @@ func frozenTickKey(pair canonical.Pair, window time.Duration) string {
 }
 
 // keepFrozenVWAPAlive extends the TTL of the last-known-good VWAP
-// key for (pair, window), and of its observed-at stamp, so both
-// survive for at least as long as the freeze marker (F-1345, G13-03).
-// The value is not rewritten, so the stamp keeps saying when it was
-// observed; the API serves it as observed_at (RLT-357).
+// key for (pair, window) and of every qualifier written beside it — the
+// observed-at stamp, the triangulated-provenance marker and the
+// composite quality-flags meta — so all of them survive for at least as
+// long as the freeze marker (F-1345, G13-03). The value is not
+// rewritten, so the stamp keeps saying when it was observed; the API
+// serves it as observed_at (RLT-357). A qualifier left on its original
+// TTL would expire mid-hold and relabel a frozen composite as a direct
+// VWAP with flags.triangulated and its quality flags gone.
 //
 // Why: a freeze skips the VWAP cache write, so the LKG value keeps
 // the TTL it was written with — equal to the window. A freeze that
@@ -1882,9 +1886,13 @@ func (o *Orchestrator) keepFrozenVWAPAlive(ctx context.Context, pair canonical.P
 	}
 	key := cachekeys.VWAP(pair.Base, pair.Quote, window)
 	atKey := cachekeys.VWAPObservedAt(pair.Base, pair.Quote, window)
+	provKey := cachekeys.VWAPProvenance(pair.Base, pair.Quote, window)
+	metaKey := cachekeys.VWAPCompositeMeta(pair.Base, pair.Quote, window)
 	if _, err := o.cache.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		p.Expire(ctx, key.String(), ttl)
 		p.Expire(ctx, atKey.String(), ttl)
+		p.Expire(ctx, provKey.String(), ttl)
+		p.Expire(ctx, metaKey.String(), ttl)
 		return nil
 	}); err != nil {
 		o.logger.Debug("freeze: LKG VWAP TTL refresh failed",
