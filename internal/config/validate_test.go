@@ -57,6 +57,38 @@ func TestValidate_HashDBVerifyBoundsRejected(t *testing.T) {
 	}
 }
 
+// TestValidate_RPCEndpointErrorsOmitURL: a hosted stellar-rpc endpoint can
+// embed an API key in its path, and the validation error is printed at
+// boot, so neither the malformed nor the duplicate branch may echo the URL.
+func TestValidate_RPCEndpointErrorsOmitURL(t *testing.T) {
+	const pathMarker = "fixture-path-marker"
+	for name, tc := range map[string]struct {
+		endpoints []string
+		wantIdx   string
+	}{
+		"malformed": {[]string{"rpc.example.test/v1/" + pathMarker}, "rpc_endpoints[0]"},
+		"duplicate": {
+			[]string{"https://rpc.example.test/v1/" + pathMarker, "https://rpc.example.test/v1/" + pathMarker + "/"},
+			"rpc_endpoints[1] is a duplicate of stellar.rpc_endpoints[0]",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := config.Default()
+			c.Stellar.RPCEndpoints = tc.endpoints
+			err := c.Validate()
+			if !errors.Is(err, config.ErrInvalidConfig) {
+				t.Fatalf("Validate() = %v, want ErrInvalidConfig", err)
+			}
+			if strings.Contains(err.Error(), pathMarker) {
+				t.Errorf("error %q echoes the endpoint URL, which may carry an API key", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantIdx) {
+				t.Errorf("error %q should identify the entry as %q", err, tc.wantIdx)
+			}
+		})
+	}
+}
+
 func TestValidate_DefaultPasses(t *testing.T) {
 	// Default() MUST pass Validate — that's the "fresh install
 	// works" contract every binary depends on.
@@ -271,6 +303,14 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 				c.Anomaly.Classifications = map[string]string{"USDC-GA5Z": "stable"}
 			},
 			"anomaly.classifications",
+		},
+		// A key no asset can ever String() to never matches, so the asset
+		// silently stays on the looser default thresholds.
+		"anomaly classifications unparseable key": {
+			func(c *config.Config) {
+				c.Anomaly.Classifications = map[string]string{"USDC-GA5Z": "stablecoin"}
+			},
+			"not a canonical asset id",
 		},
 
 		// ADR-0019 §"Freeze duration" (N-F6): the auto-unfreeze band

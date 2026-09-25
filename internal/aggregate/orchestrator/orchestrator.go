@@ -52,6 +52,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"slices"
 	"sync"
 	"time"
 
@@ -687,6 +688,20 @@ var DefaultWindows = []time.Duration{
 	24 * time.Hour,
 }
 
+// normalizeWindows returns the positive windows ascending and de-duplicated,
+// in a fresh slice. refreshDivergenceAll reads Windows[0] as the shortest;
+// config validation rejects the rest, this covers a directly built Config.
+func normalizeWindows(ws []time.Duration) []time.Duration {
+	out := make([]time.Duration, 0, len(ws))
+	for _, w := range ws {
+		if w > 0 {
+			out = append(out, w)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
 // closedBucket is the aggregator's closed-bucket granularity: every
 // window ends at the last closed boundary of this size (ADR-0015 — serve
 // the last closed bucket, never an in-progress one). One minute is the
@@ -1002,6 +1017,7 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 	if cfg.TickTimeout <= 0 {
 		cfg.TickTimeout = DefaultTickTimeoutIntervals * cfg.Interval
 	}
+	cfg.Windows = normalizeWindows(cfg.Windows)
 	if len(cfg.Windows) == 0 {
 		cfg.Windows = DefaultWindows
 	}

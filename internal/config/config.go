@@ -1256,7 +1256,9 @@ type AnomalyConfig struct {
 
 	// Classifications maps a canonical asset_id (as produced by
 	// canonical.Asset.String()) to its asset class. Anything not in
-	// the map falls through to ClassDefault.
+	// the map falls through to ClassDefault. A class set on one alias
+	// spelling (native, crypto:XLM, a SAC twin) covers all of them; two
+	// spellings of one asset with different classes fail aggregator boot.
 	//
 	// TOML representation:
 	//   [anomaly.classifications]

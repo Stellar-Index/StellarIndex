@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"bytes"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -147,6 +148,33 @@ windows = ["1 fortnight"]
 	}
 	if !strings.Contains(err.Error(), "aggregate.windows") {
 		t.Errorf("error should name the field: %v", err)
+	}
+}
+
+// TestLoadReader_AggregateWindowsRejectsNonPositiveAndDuplicate pins the
+// load-time half of the window guard: validate() runs on every binary's
+// config, so a bad window never reaches the orchestrator.
+func TestLoadReader_AggregateWindowsRejectsNonPositiveAndDuplicate(t *testing.T) {
+	for name, windows := range map[string]string{
+		"negative":  `["5m", "-5m"]`,
+		"zero":      `["0s", "1h"]`,
+		"duplicate": `["5m", "1h", "300s"]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := `
+[region]
+id = "r1"
+
+[storage]
+postgres_dsn = "postgres://u:p@h/db"
+
+[aggregate]
+windows = ` + windows + "\n"
+			_, err := cfg.LoadReader(strings.NewReader(body), "test.toml")
+			if !errors.Is(err, cfg.ErrInvalidConfig) || !strings.Contains(err.Error(), "aggregate.windows") {
+				t.Errorf("windows = %s: err = %v, want an ErrInvalidConfig naming aggregate.windows", windows, err)
+			}
+		})
 	}
 }
 

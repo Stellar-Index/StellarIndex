@@ -167,6 +167,42 @@ func TestRefreshDivergenceAll_HappyPath(t *testing.T) {
 	}
 }
 
+// TestRefreshDivergenceAll_ReversedWindowsUseShortest: an operator who
+// lists windows longest-first must still get the 5m VWAP as the divergence
+// input, not the lagged 24h one that happens to be listed first.
+func TestRefreshDivergenceAll_ReversedWindowsUseShortest(t *testing.T) {
+	t.Parallel()
+	rdb, _ := newTestRedis(t)
+	pair := pairXLMUSD(t)
+	ctx := context.Background()
+	for w, price := range map[time.Duration]string{
+		5 * time.Minute: "0.42",
+		time.Hour:       "0.40",
+		24 * time.Hour:  "0.30",
+	} {
+		if err := rdb.Set(ctx, cachekeys.VWAP(pair.Base, pair.Quote, w).String(), price, time.Minute).Err(); err != nil {
+			t.Fatalf("seed redis: %v", err)
+		}
+	}
+
+	capR := &captureRefresher{}
+	o := New(nil, rdb, Config{
+		Pairs:               []canonical.Pair{pair},
+		Windows:             []time.Duration{24 * time.Hour, time.Hour, 5 * time.Minute},
+		DivergenceRefresher: capR,
+		Logger:              silentLogger(),
+	})
+	o.refreshDivergenceAll(ctx, time.Now().UTC())
+
+	if len(capR.calls) != 1 {
+		t.Fatalf("RefreshPair calls: got %d, want 1", len(capR.calls))
+	}
+	if got := capR.calls[0].OurPrice; got != 0.42 {
+		t.Errorf("ourPrice = %v, want 0.42 (the 5m VWAP); windows listed longest-first "+
+			"must not make the 24h VWAP the divergence input", got)
+	}
+}
+
 // TestRefreshDivergenceAll_ParseErrorSkipsCall — a malformed VWAP
 // in the cache (writer regression) doesn't propagate to the
 // refresher. The pair is skipped silently (parse_error counter

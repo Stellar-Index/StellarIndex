@@ -1,6 +1,9 @@
 package anomaly
 
 import (
+	"fmt"
+	"slices"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -69,8 +72,9 @@ func AllClasses() []AssetClass {
 // Classifier is safe for concurrent use after construction. The
 // underlying map is not mutated post-[NewClassifier].
 type Classifier struct {
-	// overrides keys on canonical.Asset.String() for stable lookup;
-	// the value is the operator-assigned class.
+	// overrides keys on the canonical alias form's String(), so every
+	// spelling of one asset (native, crypto:XLM, the XLM SAC) shares a
+	// class; the value is the operator-assigned class.
 	overrides map[string]AssetClass
 }
 
@@ -81,18 +85,67 @@ type Classifier struct {
 //
 // Empty / nil overrides yields a Classifier that returns
 // [ClassDefault] for every asset.
+//
+// Keys fold through [canonical.CanonicalAsset] against the alias registry
+// installed at construction. Two keys naming one asset with different
+// classes resolve to the lexicographically first key; production rejects
+// that input first via [ValidateOverrides].
 func NewClassifier(overrides map[string]AssetClass) *Classifier {
-	cp := make(map[string]AssetClass, len(overrides))
-	for k, v := range overrides {
-		cp[k] = v
+	folded, _ := foldOverrides(overrides)
+	return &Classifier{overrides: folded}
+}
+
+// ValidateOverrides rejects an override map in which two keys name the
+// same asset under the alias registry (e.g. "native" and "crypto:XLM") but
+// assign it different classes, which would otherwise leave one spelling on
+// the wrong thresholds. Call it after the registry is installed.
+func ValidateOverrides(overrides map[string]AssetClass) error {
+	if _, conflict := foldOverrides(overrides); conflict != "" {
+		return fmt.Errorf("anomaly: classifications %s name the same asset with different classes", conflict)
 	}
-	return &Classifier{overrides: cp}
+	return nil
+}
+
+// foldOverrides re-keys overrides onto canonical alias forms, visiting
+// keys in sorted order so the result is deterministic. conflict describes
+// the first pair of keys that fold together with different classes.
+func foldOverrides(overrides map[string]AssetClass) (folded map[string]AssetClass, conflict string) {
+	keys := make([]string, 0, len(overrides))
+	for k := range overrides {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	folded = make(map[string]AssetClass, len(overrides))
+	firstKey := make(map[string]string, len(overrides))
+	for _, k := range keys {
+		fk := foldKey(k)
+		if prev, seen := firstKey[fk]; seen {
+			if folded[fk] != overrides[k] && conflict == "" {
+				conflict = fmt.Sprintf("%q and %q", prev, k)
+			}
+			continue
+		}
+		firstKey[fk] = k
+		folded[fk] = overrides[k]
+	}
+	return folded, conflict
+}
+
+// foldKey is an override key's canonical alias form; a key that does not
+// parse as an asset is kept verbatim (config validation rejects those).
+func foldKey(k string) string {
+	a, err := canonical.ParseAsset(k)
+	if err != nil {
+		return k
+	}
+	return canonical.CanonicalAsset(a).String()
 }
 
 // ClassOf returns the asset's class. Falls back to [ClassDefault]
-// when the asset isn't in the operator's classification map.
+// when the asset isn't in the operator's classification map. Any alias
+// of a classified asset gets the same class.
 func (c *Classifier) ClassOf(asset canonical.Asset) AssetClass {
-	if cls, ok := c.overrides[asset.String()]; ok {
+	if cls, ok := c.overrides[canonical.CanonicalAsset(asset).String()]; ok {
 		return cls
 	}
 	return ClassDefault
