@@ -106,6 +106,41 @@ func TestWriteFindDataGapsText_WithGaps(t *testing.T) {
 	}
 }
 
+// TestWriteFindDataGapsText_IdentitySourceGetsReplayCommand covers a
+// gap target whose Source is ALREADY the projector source name (cctp
+// has no CanonicalSource override in per_source_gaps.go — its
+// SourceNetKey() falls back to "cctp", which is exactly what
+// buildSource registers). Before the CA2-A19-correct-10 fix,
+// projectorSourceForGapTarget's hand-written switch had no case for
+// "cctp" and fell through to the "no direct projector source"
+// stub, hiding a real, runnable `projector-replay --source cctp`
+// command from the operator.
+func TestWriteFindDataGapsText_IdentitySourceGetsReplayCommand(t *testing.T) {
+	r := findDataGapsReport{
+		ScannedAt:       time.Now().UTC(),
+		Source:          "cctp",
+		ProjectorSource: "cctp",
+		Table:           "cctp_events",
+		MinGapSize:      200000,
+		FromLedger:      62_146_641,
+		ToLedger:        63_000_000,
+		Gaps: []timescale.LedgerGap{
+			{Start: 62_500_000, End: 62_700_000, Size: 200000},
+		},
+		TotalMissingLedgers: 200000,
+	}
+	out := captureStdout(t, func() {
+		writeFindDataGapsText(r)
+	})
+	if strings.Contains(out, "has no direct projector source") {
+		t.Errorf("cctp is a registered projector source; got a false negative:\n%s", out)
+	}
+	want := "stellarindex-ops projector-replay --config /etc/stellarindex.toml --source cctp --from 62500000"
+	if !strings.Contains(out, want) {
+		t.Errorf("missing the working projector-replay command %q; got:\n%s", want, out)
+	}
+}
+
 // TestWriteFindDataGapsJSON_Shape pins the JSON contract so a future
 // rename of LedgerGap or its JSON tags surfaces here. Operator
 // scripts piping into `jq '.gaps[] | "\(.start) \(.end)"'`
