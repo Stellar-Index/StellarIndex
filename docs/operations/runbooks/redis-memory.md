@@ -15,7 +15,7 @@ severity: P2
 | Severity | P2 (`severity: ticket`) |
 | Detected by | `configs/prometheus/rules.r1/cache.yml` (group `stellarindex.cache`, both alerts `severity: ticket`, `for: 5m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/cache.yml`. |
 | Typical MTTR | 30 min (scale-up) – hours (cleanup / policy change) |
-| Impact | Depends on `maxmemory-policy` (see Quick diagnosis step 0): under `allkeys-lru`, eviction — hot keys may get knocked out; cache hit-rate drops; API falls back to Timescale more often → elevated p95/p99 latency; rate-limit counters can get evicted early → some clients get fresh quotas. Under `noeviction`, WRITE ERRORS instead of evictions — cache writes and rate-limit INCRs start failing. |
+| Impact | Depends on `maxmemory-policy` (see Quick diagnosis step 0): under `volatile-lru` (multi-host default), eviction of TTL-bearing keys only — the TTL-less `apikey:` credential records are never evicted (GH #1317); hot keys may get knocked out; cache hit-rate drops; API falls back to Timescale more often → elevated p95/p99 latency; rate-limit counters can get evicted early → some clients get fresh quotas. Under `noeviction`, WRITE ERRORS instead of evictions — cache writes and rate-limit INCRs start failing. |
 
 ## Symptoms
 
@@ -31,7 +31,7 @@ severity: P2
 # Step 0 — what does hitting the cap actually DO here?
 # r1's ansible only codifies maxmemory (see below), NOT
 # maxmemory-policy — only the (unapplied) multi-host
-# redis-sentinel role sets allkeys-lru. If this reports
+# redis-sentinel role sets volatile-lru. If this reports
 # `noeviction` (the Redis default), the failure mode at the cap
 # is WRITE ERRORS, not evictions.
 ssh root@136.243.90.96 'redis-cli config get maxmemory-policy'

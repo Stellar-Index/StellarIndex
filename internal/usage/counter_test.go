@@ -2,7 +2,9 @@ package usage_test
 
 import (
 	"context"
+	"errors"
 	"net/url"
+	"sync"
 	"testing"
 	"time"
 
@@ -176,7 +178,7 @@ func TestRead_EmptySubjectReturnsNil(t *testing.T) {
 }
 
 // TestRead_DaysClampedToRetention — asking for more days than the
-// retention window returns at most retentionDays rows. Clamp is
+// retention window returns at most RetentionDays rows. Clamp is
 // load-bearing because the caller's `days` parameter is wire-
 // derived (from the API `?days=` query) and we don't want a
 // caller demanding 365 days to issue 365 MGETs.
@@ -270,5 +272,176 @@ func TestRead_RetentionTTLApplied(t *testing.T) {
 	}
 	if ttl > 36*24*time.Hour {
 		t.Errorf("TTL = %v, want ≤ 36 days", ttl)
+	}
+}
+
+// fakeUsageDaily is an in-memory usage_daily: GREATEST-merged rollup
+// rows in, billable (ok + 4xx) units per day out, as the SQL does.
+type fakeUsageDaily struct {
+	mu    sync.Mutex
+	rows  map[string]usage.RollupRow
+	err   error
+	reads int
+}
+
+func (f *fakeUsageDaily) UpsertUsageDaily(_ context.Context, rows []usage.RollupRow) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.rows == nil {
+		f.rows = make(map[string]usage.RollupRow)
+	}
+	for _, r := range rows {
+		k := r.Day + "|" + r.Subject + "|" + r.Endpoint
+		cur := f.rows[k]
+		r.OK = max(r.OK, cur.OK)
+		r.ClientErrors = max(r.ClientErrors, cur.ClientErrors)
+		r.ServerErrors = max(r.ServerErrors, cur.ServerErrors)
+		r.Throttled = max(r.Throttled, cur.Throttled)
+		f.rows[k] = r
+	}
+	return nil
+}
+
+func (f *fakeUsageDaily) BillableByDay(_ context.Context, subject, from, to string) (map[string]int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reads++
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := make(map[string]int64)
+	for _, r := range f.rows {
+		if r.Subject == subject && r.Day >= from && r.Day <= to {
+			out[r.Day] += r.OK + r.ClientErrors
+		}
+	}
+	return out, nil
+}
+
+func dayKey(subject, day string) string {
+	return "usage:" + url.QueryEscape(subject) + ":" + day
+}
+
+// TestMonthToDate_EvictedDayKeysReconcileFromUsageDaily pins GH-1274:
+// the day keys live on an evicting Redis and a missing key read as a
+// quiet day, so evicting the month's cold early days silently cut the
+// billed month from 950 to 250. The rollup has already persisted those
+// days, so the meter must still read 950.
+func TestMonthToDate_EvictedDayKeysReconcileFromUsageDaily(t *testing.T) {
+	mr, rdb := newRedis(t)
+	clock := time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC)
+	durable := &fakeUsageDaily{}
+	c := usage.New(rdb, usage.WithClock(func() time.Time { return clock }), usage.WithDurableDays(durable))
+	ctx := context.Background()
+	const subj = "id:acct:acme"
+
+	// Billable traffic as middleware.UsageTracker records it: the quota
+	// total and the detail hash, weighted identically.
+	for day, n := range map[int]int64{1: 400, 2: 300, 20: 250} {
+		clock = time.Date(2026, 5, day, 9, 0, 0, 0, time.UTC)
+		if err := c.IncrementBy(ctx, subj, n); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.IncrementDetailBy(ctx, subj, "/v1/price", usage.ClassOK, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := usage.NewRollup(c, durable, time.Minute, nil)
+	if _, err := r.SweepDays(ctx, []string{"2026-05-01", "2026-05-02", "2026-05-20"}); err != nil {
+		t.Fatalf("SweepDays: %v", err)
+	}
+
+	mr.Del(dayKey(subj, "2026-05-01"))
+	mr.Del(dayKey(subj, "2026-05-02"))
+
+	clock = time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
+	got, err := c.MonthToDate(ctx, subj)
+	if err != nil {
+		t.Fatalf("MonthToDate: %v", err)
+	}
+	if got != 950 {
+		t.Errorf("MonthToDate after evicting May 1-2 = %d, want 950 (Redis alone reads 250)", got)
+	}
+}
+
+// TestMonthToDate_TakesMaxPerDayNeverSum: both sources are lower bounds
+// of the true count, so a lagging rollup must not add to Redis and a
+// recreated day key must not hide the rollup's larger value.
+func TestMonthToDate_TakesMaxPerDayNeverSum(t *testing.T) {
+	mr, rdb := newRedis(t)
+	clock := time.Date(2026, 5, 2, 9, 0, 0, 0, time.UTC)
+	durable := &fakeUsageDaily{}
+	c := usage.New(rdb, usage.WithClock(func() time.Time { return clock }), usage.WithDurableDays(durable))
+	ctx := context.Background()
+	const subj = "id:acct:acme"
+
+	_ = durable.UpsertUsageDaily(ctx, []usage.RollupRow{
+		{Day: "2026-05-01", Subject: subj, Endpoint: "/v1/price", OK: 7},
+		{Day: "2026-05-02", Subject: subj, Endpoint: "/v1/price", OK: 45, ClientErrors: 5, Throttled: 99},
+	})
+	_ = mr.Set(dayKey(subj, "2026-05-01"), "10") // rollup lags Redis
+	_ = mr.Set(dayKey(subj, "2026-05-02"), "2")  // today's key evicted and recreated
+
+	got, err := c.MonthToDate(ctx, subj)
+	if err != nil {
+		t.Fatalf("MonthToDate: %v", err)
+	}
+	if got != 60 {
+		t.Errorf("MonthToDate = %d, want 60 (max(10,7) + max(2,45+5); throttled is never billable)", got)
+	}
+}
+
+// TestMonthToDate_DurableReadFailure: with no earlier read of the month
+// a durable failure is an error (the gate's dwell must see it); after
+// one, the earlier snapshot is still a lower bound and is served.
+func TestMonthToDate_DurableReadFailure(t *testing.T) {
+	_, rdb := newRedis(t)
+	clock := time.Date(2026, 5, 3, 9, 0, 0, 0, time.UTC)
+	durable := &fakeUsageDaily{err: errors.New("postgres down")}
+	c := usage.New(rdb, usage.WithClock(func() time.Time { return clock }), usage.WithDurableDays(durable))
+	ctx := context.Background()
+	const subj = "id:acct:acme"
+
+	if _, err := c.MonthToDate(ctx, subj); err == nil {
+		t.Fatal("MonthToDate with an unreadable usage_daily and no snapshot returned nil error")
+	}
+
+	durable.err = nil
+	_ = durable.UpsertUsageDaily(ctx, []usage.RollupRow{{Day: "2026-05-01", Subject: subj, Endpoint: "/v1/price", OK: 30}})
+	if got, err := c.MonthToDate(ctx, subj); err != nil || got != 30 {
+		t.Fatalf("MonthToDate = %d, %v; want 30, nil", got, err)
+	}
+
+	durable.err = errors.New("postgres down")
+	clock = clock.Add(time.Hour)
+	if got, err := c.MonthToDate(ctx, subj); err != nil || got != 30 {
+		t.Errorf("MonthToDate on a failed refresh = %d, %v; want the snapshot's 30, nil", got, err)
+	}
+}
+
+// TestMonthToDate_DurableReadsAreCached: MonthToDate runs on every
+// metered request, so usage_daily is read once per subject per rollup
+// interval, not once per request.
+func TestMonthToDate_DurableReadsAreCached(t *testing.T) {
+	_, rdb := newRedis(t)
+	clock := time.Date(2026, 5, 3, 9, 0, 0, 0, time.UTC)
+	durable := &fakeUsageDaily{}
+	c := usage.New(rdb, usage.WithClock(func() time.Time { return clock }), usage.WithDurableDays(durable))
+	ctx := context.Background()
+
+	for range 50 {
+		if _, err := c.MonthToDate(ctx, "id:acct:acme"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if durable.reads != 1 {
+		t.Errorf("usage_daily reads for 50 calls inside one interval = %d, want 1", durable.reads)
+	}
+	clock = clock.Add(usage.DefaultRollupInterval)
+	if _, err := c.MonthToDate(ctx, "id:acct:acme"); err != nil {
+		t.Fatal(err)
+	}
+	if durable.reads != 2 {
+		t.Errorf("usage_daily reads after one interval = %d, want 2", durable.reads)
 	}
 }

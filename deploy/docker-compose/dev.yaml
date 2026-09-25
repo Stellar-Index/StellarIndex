@@ -70,7 +70,8 @@ services:
       - "--maxmemory"
       - "${REDIS_MAXMEM:-512mb}"
       - "--maxmemory-policy"
-      - "allkeys-lru"
+      # never evict the TTL-less credential records (GH #1317)
+      - "volatile-lru"
       # Password optional; only set if provided.
       # Override the CMD entirely in your .env if you need auth.
     ports:

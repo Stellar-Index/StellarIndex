@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -24,6 +25,10 @@ import (
 // [auth.RedisAPIKeyStore] which provides both methods.
 type AccountStore interface {
 	Create(ctx context.Context, req auth.CreateAPIKeyRequest) (auth.APIKeyRecord, string, error)
+	// CreateCapped is Create with the identifier's active-key ceiling
+	// enforced atomically with the write; refusals are
+	// *auth.KeyQuotaExceededError or wrap auth.ErrKeyQuotaUnavailable.
+	CreateCapped(ctx context.Context, req auth.CreateAPIKeyRequest, maxActive int) (auth.APIKeyRecord, string, error)
 	ListKeysForIdentifier(ctx context.Context, identifier string) ([]auth.APIKeyRecord, error)
 	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
 }
@@ -542,24 +547,11 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !s.accountKeyQuotaOK(w, r, subject.Identifier) {
-		return
-	}
-
 	// Every delegated dimension (tier, rate limit, monthly quota, expiry,
 	// email verification) is inherited from the caller, never defaulted:
 	// a child from a metered or time-boxed key is metered and time-boxed.
-	rec, plaintext, err := s.accounts.Create(r.Context(),
-		auth.ChildKeyRequest(subject, req.Label, scopes))
-	if err != nil {
-		if clientAborted(r, err) {
-			return
-		}
-		s.logger.Error("account key create failed", "err", err, "identifier", subject.Identifier)
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/account-create-failed",
-			"Could not issue key", http.StatusInternalServerError,
-			"see X-Request-ID in server logs")
+	rec, plaintext, ok := s.mintAccountKey(w, r, auth.ChildKeyRequest(subject, req.Label, scopes))
+	if !ok {
 		return
 	}
 
@@ -751,57 +743,62 @@ func (s *Server) appendKeyAudit(r *http.Request, entry platform.AuditEntry, surf
 // [Options.AccountKeyQuota].
 const defaultAccountKeyQuota = 25
 
-// accountKeyQuotaOK enforces the per-identifier active-key cap before a
-// self-service mint. Returns false when it has already written the
-// response.
+// mintAccountKey issues a self-service key under the per-identifier
+// active-key cap. Returns false when it has already written the response.
 //
 // C3-015 (audit-2026-07-23): POST /v1/account/keys minted on every call
-// with no count check, and [auth.RedisAPIKeyStore.Create] writes the
-// record unconditionally — so one authenticated caller could mint keys in
-// a loop, each one a live credential and a permanent Redis record, until
-// the store filled. The parallel dashboard path has enforced a quota
-// (checkQuota + the store's atomic maxKeys gate) since F-1257; this is
-// the same gate for the surface that never got one.
+// with no count check, so one authenticated caller could mint keys in a
+// loop, each a live credential and a permanent Redis record. The cap is
+// enforced by the store in the same critical section as the write
+// ([auth.RedisAPIKeyStore.CreateCapped]), mirroring the dashboard path's
+// atomic maxKeys gate: a handler-side count followed by a separate
+// Create let a concurrent burst all read the same count below the cap.
 //
-// A read failure fails CLOSED (503, no mint): the check exists precisely
-// because an unbounded mint is the abuse, so "couldn't count, mint
-// anyway" would hand the abuser the bypass. That mirrors the dashboard
-// path, whose checkQuota also refuses on a list error.
-func (s *Server) accountKeyQuotaOK(w http.ResponseWriter, r *http.Request, identifier string) bool {
+// An unverifiable count fails CLOSED (503, no mint): the cap exists
+// precisely because an unbounded mint is the abuse.
+func (s *Server) mintAccountKey(w http.ResponseWriter, r *http.Request, req auth.CreateAPIKeyRequest) (auth.APIKeyRecord, string, bool) {
 	quota := s.accountKeyQuota
-	switch {
-	case quota < 0:
-		return true // explicitly disabled by the operator
-	case quota == 0:
+	if quota == 0 {
 		quota = defaultAccountKeyQuota
 	}
-	existing, err := s.accounts.ListKeysForIdentifier(r.Context(), identifier)
-	if err != nil {
-		if clientAborted(r, err) {
-			return false
-		}
-		s.logger.Error("account key quota check failed", "err", err, "identifier", identifier)
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/account-store-unavailable",
-			"Could not verify key quota", http.StatusServiceUnavailable,
-			"the key store could not be read to count existing keys; retry shortly")
-		return false
+	var (
+		rec       auth.APIKeyRecord
+		plaintext string
+		err       error
+	)
+	if quota < 0 { // explicitly disabled by the operator
+		rec, plaintext, err = s.accounts.Create(r.Context(), req)
+	} else {
+		rec, plaintext, err = s.accounts.CreateCapped(r.Context(), req, quota)
 	}
-	active := 0
-	for _, k := range existing {
-		if k.RevokedAt.IsZero() {
-			active++
-		}
+	if err == nil {
+		return rec, plaintext, true
 	}
-	if active >= quota {
+	if clientAborted(r, err) {
+		return auth.APIKeyRecord{}, "", false
+	}
+	var over *auth.KeyQuotaExceededError
+	switch {
+	case errors.As(err, &over):
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/key-quota-exceeded",
 			"API key quota reached", http.StatusConflict,
 			fmt.Sprintf("this account already holds %d active API keys (max %d) — revoke one via DELETE /v1/account/keys/{keyID} first",
-				active, quota))
-		return false
+				over.Active, over.Max))
+	case errors.Is(err, auth.ErrKeyQuotaUnavailable):
+		s.logger.Error("account key quota check failed", "err", err, "identifier", req.Identifier)
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/account-store-unavailable",
+			"Could not verify key quota", http.StatusServiceUnavailable,
+			"the key store could not be read to count existing keys; retry shortly")
+	default:
+		s.logger.Error("account key create failed", "err", err, "identifier", req.Identifier)
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/account-create-failed",
+			"Could not issue key", http.StatusInternalServerError,
+			"see X-Request-ID in server logs")
 	}
-	return true
+	return auth.APIKeyRecord{}, "", false
 }
 
 // handleAccountKeysList serves GET /v1/account/keys.

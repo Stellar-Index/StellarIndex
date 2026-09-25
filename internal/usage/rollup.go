@@ -168,7 +168,7 @@ func (r *Rollup) window(now time.Time) ([]string, time.Time) {
 	now = now.UTC()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	yesterday := today.AddDate(0, 0, -1)
-	from := today.AddDate(0, 0, -(retentionDays - 1))
+	from := today.AddDate(0, 0, -(RetentionDays - 1))
 	if r.pendingFrom.After(from) {
 		from = r.pendingFrom
 	}

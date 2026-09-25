@@ -83,7 +83,7 @@ type cachedAccountStatus struct {
 const DefaultAccountStatusCacheTTL = 30 * time.Second
 
 // MirroredKeyIdleTTL bounds a register-mirrored credential's lifetime in
-// the allkeys-lru validator pool as a SLIDING idle window rather than a
+// the validator pool as a SLIDING idle window rather than a
 // hard expiry (W1-flow-register-2). The record is written with this TTL
 // ([RedisAPIKeyStore.CreateWithSecret]) and every successful validated
 // [Lookup] slides it forward, so an actively-used key never expires while
@@ -93,7 +93,9 @@ const DefaultAccountStatusCacheTTL = 30 * time.Second
 // 401" defect for keys that are actually in use.
 //
 // 90 days: comfortably longer than any plausible active-use gap, so only
-// a genuinely abandoned credential is ever dropped.
+// a genuinely abandoned credential is ever dropped. The TTL also puts the
+// record in the instance's volatile-lru eviction pool, so memory pressure
+// can drop an idle one early; TTL-less records are never evicted.
 const MirroredKeyIdleTTL = 90 * 24 * time.Hour
 
 // AccountStatusReader is the narrow slice of
@@ -361,7 +363,7 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 	// Refresh-on-use (W1-flow-register-2): a fully-validated key that
 	// carries a TTL (the register mirror) has its idle window slid
 	// forward, so an actively-used credential never hard-expires while a
-	// genuinely idle one still TTLs out of the allkeys-lru pool. Placed
+	// genuinely idle one still TTLs out of the validator pool. Placed
 	// after every rejection gate (revoked / expired / account inactive)
 	// so a suspended account's key is NOT kept alive. Best-effort and
 	// EXPIRE ... XX, so it never touches persistent (TTL-less) operator /

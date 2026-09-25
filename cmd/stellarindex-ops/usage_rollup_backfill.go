@@ -21,14 +21,6 @@ import (
 // package speaks (Redis key suffix, DetailRow.Date, RollupRow.Day).
 const usageRollupDateLayout = "2006-01-02"
 
-// usageRollupMaxRangeDays bounds -from/-to. The Redis detail hashes
-// that feed the rollup carry a 35-day TTL (internal/usage's
-// `retentionDays`, unexported), so a wider range can only scan days
-// whose source data has already expired — while still paying a full
-// keyspace SCAN per day. Refusing the range is better than a silent
-// hour-long no-op walk.
-const usageRollupMaxRangeDays = 35
-
 // usageRollupBackfill re-folds the Redis per-endpoint usage counters
 // into the `usage_daily` Timescale hypertable for an operator-chosen
 // UTC date range.
@@ -70,7 +62,7 @@ func usageRollupBackfill(args []string) error {
 	if *cfgPath == "" {
 		return errors.New("-config is required")
 	}
-	days, err := usageRollupDays(*fromStr, *toStr)
+	days, err := usageRollupDays(*fromStr, *toStr, time.Now())
 	if err != nil {
 		return err
 	}
@@ -107,7 +99,13 @@ func usageRollupBackfill(args []string) error {
 // usageRollupDays expands the -from/-to flags into the inclusive list
 // of UTC days to fold, rejecting the shapes that would otherwise walk
 // the whole Redis keyspace for nothing.
-func usageRollupDays(fromStr, toStr string) ([]time.Time, error) {
+//
+// The range must sit inside the Redis counters' retention window
+// ending today (UTC). An older day has expired from Redis, so its fold
+// reads nothing and prints "0 row(s)" — indistinguishable from a day
+// with no traffic — and a future day has nothing to read yet. Both are
+// refused rather than run.
+func usageRollupDays(fromStr, toStr string, now time.Time) ([]time.Time, error) {
 	if fromStr == "" {
 		return nil, errors.New("-from is required (YYYY-MM-DD, UTC)")
 	}
@@ -125,14 +123,19 @@ func usageRollupDays(fromStr, toStr string) ([]time.Time, error) {
 	if to.Before(from) {
 		return nil, fmt.Errorf("-to %s is before -from %s", toStr, fromStr)
 	}
-	span := int(to.Sub(from)/(24*time.Hour)) + 1
-	if span > usageRollupMaxRangeDays {
-		return nil, fmt.Errorf(
-			"-from %s -to %s spans %d days; the Redis counters that feed this rollup only live %d days, "+
-				"so anything older has already expired — narrow the range (or split it) instead",
-			fromStr, toStr, span, usageRollupMaxRangeDays)
+	today := now.UTC().Truncate(24 * time.Hour)
+	if to.After(today) {
+		return nil, fmt.Errorf("-to %s is after today (%s UTC); there are no counters to fold yet",
+			toStr, today.Format(usageRollupDateLayout))
 	}
-	days := make([]time.Time, 0, span)
+	oldest := today.AddDate(0, 0, -(usage.RetentionDays - 1))
+	if from.Before(oldest) {
+		return nil, fmt.Errorf(
+			"-from %s is before %s: the Redis counters that feed this rollup only live %d days, "+
+				"so those days have already expired and would fold as 0 rows — start at %s or later",
+			fromStr, oldest.Format(usageRollupDateLayout), usage.RetentionDays, oldest.Format(usageRollupDateLayout))
+	}
+	days := make([]time.Time, 0, int(to.Sub(from)/(24*time.Hour))+1)
 	for d := from; !d.After(to); d = d.AddDate(0, 0, 1) {
 		days = append(days, d)
 	}

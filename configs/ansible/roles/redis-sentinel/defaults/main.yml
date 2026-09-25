@@ -41,13 +41,17 @@ redis_password: ""
 # password-only path is REJECTED because the default user is off.
 redis_acl_lockdown: false
 
-# Memory + eviction. allkeys-lru evicts least-recently-used keys
-# before OOM kills the process. NOT cache-only: this instance also
-# holds the `apikey:` credential records, which allkeys-lru evicts
-# regardless of TTL — an evicted record is an unrecoverable key
-# (GH #1317, open).
+# Memory + eviction. NOT cache-only: this instance is also the store
+# of record for the TTL-less `apikey:` credentials (plaintext is
+# unrecoverable), their `apikey-index:` hash and the `signup:email:`
+# map. volatile-lru evicts only keys that carry a TTL — every cache
+# family does — so those records are never evicted; an allkeys-*
+# policy deletes live credentials under memory pressure (GH #1317).
+# Memory full of TTL-less keys fails writes with OOM, which pages via
+# stellarindex_redis_write_rejected_oom. 03-redis-configure.yml also
+# applies this to already-running instances.
 redis_maxmemory: "4gb"
-redis_maxmemory_policy: allkeys-lru
+redis_maxmemory_policy: volatile-lru
 
 # Persistence (ha-plan §3.4: AOF every-second + RDB nightly).
 redis_appendonly: "yes"

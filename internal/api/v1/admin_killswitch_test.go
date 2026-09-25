@@ -292,6 +292,10 @@ func (s *recordingRevokeStore) Create(_ context.Context, _ auth.CreateAPIKeyRequ
 	panic("unused")
 }
 
+func (s *recordingRevokeStore) CreateCapped(_ context.Context, _ auth.CreateAPIKeyRequest, _ int) (auth.APIKeyRecord, string, error) {
+	panic("unused")
+}
+
 func (s *recordingRevokeStore) ListKeysForIdentifier(_ context.Context, _ string) ([]auth.APIKeyRecord, error) {
 	panic("unused")
 }

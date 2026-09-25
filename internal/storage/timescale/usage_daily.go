@@ -177,3 +177,41 @@ func (s *Store) ReadUsageDaily(ctx context.Context, subject string, days int) ([
 	}
 	return out, nil
 }
+
+// BillableByDay implements usage.DailyBillableReader: the subject's
+// billable units (ok + 4xx, the quota-counted classes) per UTC day in
+// [from, to] (YYYY-MM-DD, inclusive). It is the durable side the
+// month-to-date meter reconciles evicted Redis day keys against.
+func (s *Store) BillableByDay(ctx context.Context, subject, from, to string) (map[string]int64, error) {
+	const q = `
+        SELECT day, SUM(ok_count + client_error_count)::bigint
+          FROM usage_daily
+         WHERE subject = $1
+           AND day >= $2::date
+           AND day <= $3::date
+         GROUP BY day
+    `
+	rows, err := s.db.QueryContext(ctx, q, subject, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: BillableByDay: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make(map[string]int64)
+	for rows.Next() {
+		var (
+			day time.Time
+			n   int64
+		)
+		if err := rows.Scan(&day, &n); err != nil {
+			return nil, fmt.Errorf("timescale: BillableByDay: scan: %w", err)
+		}
+		out[day.UTC().Format("2006-01-02")] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: BillableByDay: rows: %w", err)
+	}
+	return out, nil
+}
+
+var _ usage.DailyBillableReader = (*Store)(nil)

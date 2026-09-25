@@ -53,3 +53,35 @@
     - redis_acl_lockdown | bool
     - not redis_first_run_only or redis_sentinel_state.rc != 0
   notify: "redis config changed"
+
+# redis.conf is rendered on first run only (above), so a changed
+# redis_maxmemory_policy never reaches a running cluster through the
+# template. Apply it live on every node and persist it with CONFIG
+# REWRITE: an allkeys-* policy left running evicts the TTL-less
+# credential records (GH #1317). Under ACL lockdown only the sentinel
+# user holds CONFIG SET/REWRITE.
+- name: enforce maxmemory-policy on the running instance
+  shell: |
+    set -eu
+    cli() {
+      redis-cli -h {{ ansible_host }} -p {{ redis_port }} \
+        {{ ('--user ' ~ redis_sentinel_auth_user) if (redis_acl_lockdown | bool) else '' }} \
+        "$@"
+    }
+    current=$(cli CONFIG GET maxmemory-policy | sed -n 2p)
+    if [ "$current" = "{{ redis_maxmemory_policy }}" ]; then
+      echo unchanged
+      exit 0
+    fi
+    [ "$(cli CONFIG SET maxmemory-policy {{ redis_maxmemory_policy }})" = OK ]
+    [ "$(cli CONFIG REWRITE)" = OK ]
+    echo changed
+  args:
+    executable: /bin/bash
+  environment:
+    # redis-cli reads the password from here, keeping it off argv.
+    REDISCLI_AUTH: "{{ redis_password }}"
+  register: redis_policy_enforce
+  changed_when: redis_policy_enforce.stdout == 'changed'
+  when: redis_sentinel_state.rc == 0
+  no_log: true

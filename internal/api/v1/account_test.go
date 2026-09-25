@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -39,6 +40,25 @@ func (f *fakeAccountStore) Create(_ context.Context, req auth.CreateAPIKeyReques
 		return auth.APIKeyRecord{}, "", f.err
 	}
 	return f.rec, f.plain, nil
+}
+
+// CreateCapped mirrors the real store's contract: count un-revoked keys,
+// refuse at the ceiling, else Create.
+func (f *fakeAccountStore) CreateCapped(ctx context.Context, req auth.CreateAPIKeyRequest, maxActive int) (auth.APIKeyRecord, string, error) {
+	existing, err := f.ListKeysForIdentifier(ctx, req.Identifier)
+	if err != nil {
+		return auth.APIKeyRecord{}, "", fmt.Errorf("%w: %w", auth.ErrKeyQuotaUnavailable, err)
+	}
+	active := 0
+	for _, k := range existing {
+		if k.RevokedAt.IsZero() {
+			active++
+		}
+	}
+	if active >= maxActive {
+		return auth.APIKeyRecord{}, "", &auth.KeyQuotaExceededError{Active: active, Max: maxActive}
+	}
+	return f.Create(ctx, req)
 }
 
 func (f *fakeAccountStore) ListKeysForIdentifier(_ context.Context, identifier string) ([]auth.APIKeyRecord, error) {
