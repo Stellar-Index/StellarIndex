@@ -15984,6 +15984,7 @@ components:
             - no_reference_feed
             - reference_expired
             - reference_not_positive
+            - reference_isin_mismatch
             - supply_unavailable
             - decimals_unavailable
           description: |
@@ -16185,6 +16186,7 @@ components:
             - withheld_issuer_flagged
             - reference_not_bound
             - reference_contract_not_bound
+            - reference_isin_mismatch
             - no_reference_feed
             - reference_unavailable
             - reference_expired
@@ -16233,6 +16235,14 @@ components:
             and class rather than a feed, so it cannot answer this
             however many entries it holds — a fund's identity is not a
             price for it.
+            `reference_isin_mismatch` — the ISIN the issuer's SEP-1
+            declares in `anchor_asset` contradicts a constant-NAV
+            binding: this pair is bound to a different share class, or
+            the declared ISIN is a class bound on another pair. The row
+            would name one security and be valued as another, so no
+            reference of any provenance is served until the binding is
+            re-verified. Only a well-formed ISIN is compared; a free-text
+            `anchor_asset` names no security and contradicts nothing.
             `no_reference_feed` — the pair IS bound, but the oracle stream
             carries no row for its feed.
             `reference_unavailable` — the oracle read did not answer, so
@@ -16928,10 +16938,12 @@ components:
             `reference_valuation.status` and is documented there and
             under `RWAPremium.status`. `reference_contract_not_bound`,
             `no_reference_feed`, `reference_unavailable`,
-            `reference_expired` and `supply_unavailable` are attributed
-            to the `operator` — a source that could be enabled, an
-            outage here, a supply pipeline that does not reach the
-            asset, or a curated contract binding a reviewer can add.
+            `reference_expired`, `reference_isin_mismatch` and
+            `supply_unavailable` are attributed to the `operator` — a
+            source that could be enabled, an outage here, a supply
+            pipeline that does not reach the asset, a curated contract
+            binding a reviewer can add, or a constant-NAV binding that
+            must be re-read against the issuer's page.
             `withheld_issuer_flagged`, `reference_not_bound`,
             `reference_not_instrument_scoped`,
             `reference_not_usd_denominated` and
@@ -17016,6 +17028,7 @@ components:
             - no_reference_feed
             - reference_expired
             - reference_not_positive
+            - reference_isin_mismatch
             - supply_unavailable
             - decimals_unavailable
             - contract_already_evaluated_by_directory_arm

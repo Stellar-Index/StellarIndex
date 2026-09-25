@@ -294,6 +294,7 @@ var rwaReferenceRefusalOrder = []string{
 	RWAPremiumIssuerFlagged,
 	RWAPremiumReferenceUnavailable,
 	RWAPremiumContractNotBound,
+	RWAPremiumReferenceISINMismatch,
 	RWAPremiumNotInstrumentScoped,
 	RWAPremiumNotBound,
 	RWAPremiumReferenceNotUSD,
@@ -333,6 +334,10 @@ var rwaReferenceDropActors = map[string]string{
 	RWAPremiumReferenceUnavailable: rwaActorOperator,
 	RWAPremiumReferenceExpired:     rwaActorOperator,
 	RWAReferenceValuationNoSupply:  rwaActorOperator,
+	// The operator's: the constant-NAV binding must be re-read against
+	// the issuer's page and re-bound or removed; the issuer's
+	// declaration is the evidence, not the fault.
+	RWAPremiumReferenceISINMismatch: rwaActorOperator,
 	// The operator's: the scale is on chain and readable, so a row
 	// carrying this reason means a reader here is unwired, failing, or
 	// has not captured the contract instance. Never the issuer's — the

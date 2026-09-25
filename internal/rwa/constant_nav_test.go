@@ -121,3 +121,56 @@ func TestConstantNAV_ReviewDueFlipsAtTheDeadline(t *testing.T) {
 		t.Error("an unreadable ReviewBy must fail closed as due")
 	}
 }
+
+// The table's own ISINs are keys: well-formed, upper-case and each on
+// exactly one pair, or the process refuses to start.
+func TestIndexConstantNAV_RefusesAnAmbiguousTable(t *testing.T) {
+	ib := ConstantNAVBinding{Code: "gBENJI", Issuer: franklinLuxIBIssuer, ISIN: "LU2900381208", NAVUSD: "1.00", VerifiedOn: "2026-09-16"}
+	ab := ConstantNAVBinding{Code: "grBENJI", Issuer: franklinLuxABIssuer, ISIN: "LU3258450587", NAVUSD: "1.00", VerifiedOn: "2026-09-16"}
+	with := func(b ConstantNAVBinding, f func(*ConstantNAVBinding)) ConstantNAVBinding { f(&b); return b }
+	cases := map[string][]ConstantNAVBinding{
+		"one ISIN on two issuers": {ib, with(ab, func(b *ConstantNAVBinding) { b.ISIN = ib.ISIN })},
+		"one pair bound twice":    {ib, with(ab, func(b *ConstantNAVBinding) { b.Code, b.Issuer = ib.Code, ib.Issuer })},
+		"lower-case ISIN":         {with(ib, func(b *ConstantNAVBinding) { b.ISIN = "lu2900381208" })},
+		"bad check digit":         {with(ib, func(b *ConstantNAVBinding) { b.ISIN = "LU2900381209" })},
+		"unparseable date":        {with(ib, func(b *ConstantNAVBinding) { b.VerifiedOn = "16/09/2026" })},
+	}
+	for name, bindings := range cases {
+		if _, err := indexConstantNAV(bindings); err == nil {
+			t.Errorf("%s: indexed without error", name)
+		}
+	}
+	good := []ConstantNAVBinding{ib, ab}
+	tbl, err := indexConstantNAV(good)
+	if err != nil {
+		t.Fatalf("a well-formed table: %v", err)
+	}
+	if tbl.byISIN["LU3258450587"].Code != "grBENJI" || good[0].ReviewBy != "2026-12-15" {
+		t.Errorf("index = %+v, bindings = %+v", tbl, good)
+	}
+}
+
+// A declared ISIN contradicts the table when the pair is bound to
+// another class or the ISIN is bound to another pair; a matching or
+// non-ISIN declaration contradicts nothing.
+func TestConstantNAVISINConflict(t *testing.T) {
+	cases := []struct {
+		code, issuer, declared string
+		want                   bool
+	}{
+		{"gBENJI", franklinLuxIBIssuer, "LU2900381208", false},
+		{"gBENJI", franklinLuxIBIssuer, " lu2900381208 ", false},
+		{"gBENJI", franklinLuxIBIssuer, "LU3258450587", true},
+		{"gBENJI", franklinLuxIBIssuer, "US0378331005", true},
+		{"gBENJI", franklinLuxIBIssuer, "LU2900381209", false},
+		{"gBENJI", franklinLuxIBIssuer, "Franklin OnChain Fund", false},
+		{"gBENJI", "GAIMPOSTOR", "LU2900381208", true},
+		{"FAKE", franklinLuxIBIssuer, "LU2900381208", true},
+		{"FAKE", "GAIMPOSTOR", "US0378331005", false},
+	}
+	for _, c := range cases {
+		if got := ConstantNAVISINConflict(c.code, c.issuer, c.declared); got != c.want {
+			t.Errorf("ConstantNAVISINConflict(%q, %q, %q) = %v, want %v", c.code, c.issuer, c.declared, got, c.want)
+		}
+	}
+}

@@ -86,6 +86,8 @@ const PREMIUM_REASON: Record<string, string> = {
     'Withheld — the issuer carries a scam-class directory flag. No valuation is published for it, including an independent one: handing an impersonator the real instrument’s value would be a larger claim than the one the flag suppressed.',
   reference_not_bound:
     'This exact (code, issuer) is not one of the pairs bound to an oracle feed. A code alone is not an identity — anyone can issue a token under an instrument’s ticker — so no valuation of that instrument is attached to it.',
+  reference_isin_mismatch:
+    'The ISIN the issuer declares for this token contradicts the share class its constant NAV was verified against — either this token is bound to a different class, or the class it names is bound to another token. No valuation is published until the binding is re-verified: the row would otherwise name one security and be valued as another.',
   no_reference_feed:
     'This token is bound to an oracle feed, but no oracle is currently publishing that instrument.',
   reference_unavailable:
@@ -205,6 +207,7 @@ const FUNNEL_DROP_PROSE: Record<string, string> = {
   reference_contract_not_bound: 'No oracle feed bound to this contract',
   reference_not_instrument_scoped: 'The feed prices an ounce, not a token',
   reference_not_bound: 'No oracle feed bound to this (code, issuer)',
+  reference_isin_mismatch: 'Declared ISIN contradicts the constant-NAV binding',
   reference_not_usd_denominated: 'The feed is quoted in a reserve asset',
   no_reference_feed: 'Bound, but no oracle is publishing it',
   reference_expired: 'The feed has been silent for over a week',
