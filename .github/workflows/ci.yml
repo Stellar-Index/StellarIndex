@@ -2277,6 +2277,12 @@ jobs:
         # temp files with a stub handler — no hosts, no secrets.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-galexie-restart-test.sh
+      - name: Postgres DSN credential-encoding test (structural + local ansible run)
+        # A raw '/', '#' or '@' in the vaulted password broke the rendered
+        # DSN's URL parse, so migrate and every service refused to start.
+        # Renders the shipped env template with hostile credentials.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-postgres-dsn-test.sh
       - name: nftables per-source SSH rate-limit test
         # Every role that renders /etc/nftables.conf must limit new SSH per
         # source address: a single shared bucket lets one scanner starve the
