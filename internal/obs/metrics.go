@@ -53,6 +53,7 @@ func registerAppMetrics() {
 		SourceDecodeErrorsTotal,
 		SourceUnknownSymbolsTotal,
 		SourceOrphanEventsTotal,
+		SourceNonDirectionalSwapsTotal,
 		AMMSelfPairSwapTotal,
 		AMMNonPositiveSwapTotal,
 		ExternalPollerPollsTotal,
@@ -1740,6 +1741,21 @@ var SourceOrphanEventsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_orphan_events_total",
 		Help: "Events that arrived without their required correlation partner, per source.",
+	},
+	[]string{"source"},
+)
+
+// SourceNonDirectionalSwapsTotal — per-source counter of completed swap+sync
+// pairs that decoded cleanly but moved value within one token side only (a
+// direct pair.swap() invocation, not a trade). Recognized non-trade class
+// (ADR-0033 counts it expected-zero, not undecodable), so distinct from
+// SourceDecodeErrorsTotal: purely informational, tracking Decoder.
+// SkippedNonDirectional (soroswap, sushiswap_v3), which had no production
+// reader at all before this counter (T070).
+var SourceNonDirectionalSwapsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_source_non_directional_swaps_total",
+		Help: "Completed swap+sync pairs recognized as non-directional (single-side reserve move, not a trade), per source.",
 	},
 	[]string{"source"},
 )

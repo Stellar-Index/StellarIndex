@@ -429,6 +429,37 @@ func TestValidateSourceFilter(t *testing.T) {
 	}
 }
 
+// TestValidateSourceFilter_EntryDecoderSourceGetsDistinctMessage pins Q116:
+// "accounts" (and its four RegisterSupplyEntryDecoders siblings) are real,
+// config-driven ingest sources — they bump stellarindex_source_decode_errors_total
+// like any other source and the generic decode-error alert fires on them —
+// but they read LedgerEntry changes, not soroban_events, so they can never
+// be a reconSource. Before the fix, -source accounts got the SAME "matches
+// no reconciliation source" message a typo would, which reads as "accounts
+// isn't a real source" rather than "accounts is real but not reconcilable
+// here". The rejection must name the reason, not just the known-sources list.
+func TestValidateSourceFilter_EntryDecoderSourceGetsDistinctMessage(t *testing.T) {
+	cat := []reconSource{{name: "soroswap"}, {name: "aquarius"}}
+
+	err := validateSourceFilter("accounts", cat)
+	if err == nil {
+		t.Fatal("validateSourceFilter(\"accounts\") = nil, want an error (accounts is not on the soroban_events reconcile axis)")
+	}
+	if !strings.Contains(err.Error(), "LedgerEntry") {
+		t.Errorf("rejection for a known entry-decoder source should explain why (LedgerEntry-based, not reconcilable here); got %q", err.Error())
+	}
+
+	// A genuine typo must still get the plain unknown-source message, not
+	// the entry-decoder explanation.
+	err = validateSourceFilter("accountz", cat)
+	if err == nil {
+		t.Fatal("validateSourceFilter(\"accountz\") = nil, want an error")
+	}
+	if strings.Contains(err.Error(), "LedgerEntry") {
+		t.Errorf("a genuine typo should not get the entry-decoder explanation; got %q", err.Error())
+	}
+}
+
 // TestFilterCatalogueByNetwork pins #483: on a test net the pubnet-anchored
 // protocol sources leave the catalogue entirely (their decoders match
 // nothing there and their pubnet genesis floors sit above the network's
