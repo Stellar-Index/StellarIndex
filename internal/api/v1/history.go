@@ -265,6 +265,23 @@ func (s *Server) normalizeTradeRowPrices(rows []TradeRow, trades []canonical.Tra
 
 // ─── Handler ──────────────────────────────────────────────────────
 
+// historyTradeRows renders trades stamped with each row's amount scale:
+// the per-asset decimals on-chain, the connector's single scale off-chain.
+func historyTradeRows(trades []canonical.Trade, baseDec, quoteDec int) []TradeRow {
+	rows := make([]TradeRow, len(trades))
+	for i, t := range trades {
+		rows[i] = tradeRowFrom(t, 10)
+		rows[i].BaseDecimals = baseDec
+		rows[i].QuoteDecimals = quoteDec
+		if dec, ok := externalSourceAmountDecimals(t.Source); ok {
+			// Off-chain sources normalise BOTH sides to one scale.
+			rows[i].BaseDecimals = dec
+			rows[i].QuoteDecimals = dec
+		}
+	}
+	return rows
+}
+
 // handleHistory serves GET /v1/history?base=<id>&quote=<id>&from=<rfc3339>&to=<rfc3339>&limit=<int>.
 //
 // Defaults:
@@ -400,17 +417,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 		writeDecimalsUnavailable(w, r, "https://api.stellarindex.io/errors/history-unavailable")
 		return
 	}
-	rows := make([]TradeRow, len(trades))
-	for i, t := range trades {
-		rows[i] = tradeRowFrom(t, 10)
-		rows[i].BaseDecimals = baseDec
-		rows[i].QuoteDecimals = quoteDec
-		if dec, ok := externalSourceAmountDecimals(t.Source); ok {
-			// Off-chain sources normalise BOTH sides to one scale.
-			rows[i].BaseDecimals = dec
-			rows[i].QuoteDecimals = dec
-		}
-	}
+	rows := historyTradeRows(trades, baseDec, quoteDec)
 	// dex-nonstandard-decimals forward normalization of the Price field
 	// (M2). tradeRowFrom's Price is the raw quote_amount/base_amount ratio;
 	// normalizeTradeRowPrices corrects it against the `nonstandard_decimals_assets`
