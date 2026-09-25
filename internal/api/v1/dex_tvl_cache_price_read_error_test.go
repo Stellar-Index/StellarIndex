@@ -95,6 +95,7 @@ func priceReadErrorSources(t *testing.T) (DEXTVLSources, *erroringTVLPricer, str
 	}
 	pricer := &erroringTVLPricer{rates: map[string]string{"native": "0.5"}}
 	src.Pricer = pricer
+	src.Verified = tvlTestCatalogue(tvlTestNoMarketToken)
 	return src, pricer, asset.String()
 }
 

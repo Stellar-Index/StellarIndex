@@ -257,7 +257,7 @@ func TestDEXTVLTotal_RefusesUnbalancedPoolAccounting(t *testing.T) {
 		"aquarius": {TVLUSD: "99.00", PoolsTotal: 3, PoolsPriced: 1, UnpricedPools: 1, AsOf: stamp, AsOfLedger: 9},
 		// Not a decimal at all.
 		"phoenix": {TVLUSD: "n/a", PoolsTotal: 1, PoolsPriced: 1, AsOf: stamp, AsOfLedger: 11},
-	}, at, nil)
+	}, at, nil, nil)
 
 	if total.TVLUSD != "10.00" {
 		t.Errorf("total tvl_usd = %q, want 10.00 (only soroswap admitted)", total.TVLUSD)
@@ -309,7 +309,7 @@ func TestDEXTVLTotal_ColdStartHasNoTotal(t *testing.T) {
 	if got := NewDEXTVLCache(DEXTVLSources{}).Total(); got != nil {
 		t.Errorf("cold Total() = %+v, want nil", got)
 	}
-	if got := reconcileDEXTVLTotal(map[string]ProtocolTVLView{}, time.Now(), nil); got != nil {
+	if got := reconcileDEXTVLTotal(map[string]ProtocolTVLView{}, time.Now(), nil, nil); got != nil {
 		t.Errorf("empty-snapshot total = %+v, want nil", got)
 	}
 }
@@ -335,13 +335,13 @@ func TestDEXTVLTotal_AllRefusedPublishesNoTotal(t *testing.T) {
 		"soroswap": {TVLUSD: "10.00", AsOf: stamp, PoolsTotal: 2, PoolsPriced: 2},
 		"phoenix":  {TVLUSD: "5.00", AsOf: stamp, PoolsTotal: 1, PoolsPriced: 1},
 	}
-	if got := reconcileDEXTVLTotal(snapshot, at, nil); got == nil || got.TVLUSD != "15.00" {
+	if got := reconcileDEXTVLTotal(snapshot, at, nil, nil); got == nil || got.TVLUSD != "15.00" {
 		t.Fatalf("baseline total = %+v, want 15.00 — the fixture itself must be admissible", got)
 	}
 
 	// ...now carry BOTH forward, so every part is refused.
 	divergentBefore := testutil.ToFloat64(obs.DEXTVLReconcileTotal.WithLabelValues("divergent"))
-	total := reconcileDEXTVLTotal(snapshot, at, []string{"soroswap", "phoenix"})
+	total := reconcileDEXTVLTotal(snapshot, at, []string{"soroswap", "phoenix"}, nil)
 	if total != nil {
 		t.Fatalf("total = %+v, want nil — an all-refused cycle must publish NO total, "+
 			"never a $%s that reads as a real figure of zero", total, total.TVLUSD)

@@ -4408,7 +4408,7 @@ var TLSCertNotAfterUnix = prometheus.NewGaugeVec(
 )
 
 // TLSCertProbeTotal — per-(host, outcome) probe outcome counter.
-// outcome ∈ {ok, dial_error, no_cert, timeout}. A growing `ok`
+// outcome ∈ {ok, dial_error, no_cert, timeout, cert_invalid, cert_expired}. A growing `ok`
 // rate while [TLSCertNotAfterUnix] stays flat is the success
 // signal; an `error` outcome alongside a stale gauge means the
 // probe is failing and the operator should investigate before
@@ -4895,7 +4895,7 @@ var HashdbDriftTotal = prometheus.NewCounter(
 //     degraded refresh, not a blank page.
 //
 // Operators alert on a sustained `error` rate with no interleaved
-// `ok`: that means /v1/dexes TVL (and the per-protocol pages) are
+// `ok`: that means /v1/protocols TVL (and the per-protocol pages) are
 // serving an ever-older carried-forward snapshot while looking
 // healthy. An isolated `error` during a lake merge or served-tier
 // restart is expected and self-heals on the next tick.

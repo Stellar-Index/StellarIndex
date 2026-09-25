@@ -54,6 +54,14 @@ func RunTLSCertProbe(ctx context.Context, hosts []string, logger *slog.Logger) e
 		logger = slog.Default()
 	}
 
+	// Every (host, outcome) series exists at 0 before the first probe, so
+	// the alert's increase() sees a fresh process's first failure.
+	for _, host := range hosts {
+		for _, outcome := range tlsCertProbeOutcomes() {
+			obs.TLSCertProbeTotal.WithLabelValues(host, outcome).Add(0)
+		}
+	}
+
 	// Kick off an immediate first round so the gauge is populated
 	// before the first interval tick.
 	probeAllHosts(ctx, hosts, logger)
@@ -102,13 +110,7 @@ func probeOneHost(ctx context.Context, host string, logger *slog.Logger) string 
 	}
 	conn, err := dialer.DialContext(dialCtx, "tcp", addr)
 	if err != nil {
-		outcome := "dial_error"
-		if errors.Is(err, context.DeadlineExceeded) {
-			outcome = "timeout"
-		}
-		obs.TLSCertProbeTotal.WithLabelValues(host, outcome).Inc()
-		logger.Warn("tls cert probe failed", "host", host, "err", err, "outcome", outcome)
-		return outcome
+		return recordTLSDialFailure(host, err, logger)
 	}
 	defer func() { _ = conn.Close() }()
 
@@ -133,6 +135,38 @@ func probeOneHost(ctx context.Context, host string, logger *slog.Logger) string 
 		"not_after", leaf.NotAfter.Format(time.RFC3339),
 		"days_remaining", fmt.Sprintf("%.1f", time.Until(leaf.NotAfter).Hours()/24))
 	return "ok"
+}
+
+// tlsCertProbeOutcomes is every outcome label probeOneHost can emit.
+func tlsCertProbeOutcomes() []string {
+	return []string{"ok", "dial_error", "timeout", "no_cert", "cert_invalid", "cert_expired"}
+}
+
+// recordTLSDialFailure classifies a failed handshake. A leaf that failed
+// verification still reached us, and the error carries it: its NotAfter
+// is recorded and the outcome says expired vs otherwise invalid, so a
+// bad cert is never reported as a bare "unreachable" with no gauge.
+func recordTLSDialFailure(host string, err error, logger *slog.Logger) string {
+	var cve *tls.CertificateVerificationError
+	if errors.As(err, &cve) && len(cve.UnverifiedCertificates) > 0 {
+		leaf := cve.UnverifiedCertificates[0]
+		obs.TLSCertNotAfterUnix.WithLabelValues(host).Set(float64(leaf.NotAfter.Unix()))
+		outcome := "cert_invalid"
+		if time.Now().After(leaf.NotAfter) {
+			outcome = "cert_expired"
+		}
+		obs.TLSCertProbeTotal.WithLabelValues(host, outcome).Inc()
+		logger.Warn("tls cert probe: certificate failed verification",
+			"host", host, "err", err, "outcome", outcome, "not_after", leaf.NotAfter.Format(time.RFC3339))
+		return outcome
+	}
+	outcome := "dial_error"
+	if errors.Is(err, context.DeadlineExceeded) {
+		outcome = "timeout"
+	}
+	obs.TLSCertProbeTotal.WithLabelValues(host, outcome).Inc()
+	logger.Warn("tls cert probe failed", "host", host, "err", err, "outcome", outcome)
+	return outcome
 }
 
 // tlsConfigOverride is a test-only hook: tests that exercise the

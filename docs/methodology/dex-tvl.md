@@ -27,7 +27,7 @@ reserves come from the source that actually holds absolute state:
 | Protocol | Reserve source |
 |---|---|
 | soroswap | Current pair reserves from each pair's instance storage in the certified lake, scoped to the `soroswap_pairs` registry |
-| aquarius | Each pool's latest post-state reserve snapshot from `aquarius_reserves` (trailing 90 days) |
+| aquarius | Each pool's latest post-state reserve snapshot from `aquarius_reserves` (trailing 90 days). Token identities are recovered by position from the pool's deposit/withdraw events (`update_reserves` carries none), and the table records no transaction application order, so a pool touched by two transactions at the same operation and event index in its latest ledger reads either one's post-state |
 | phoenix | Current `ReserveA`/`ReserveB` persistent entries in the lake, with token identities from the pool's CONFIG entry, scoped to the ADR-0035 curated pool set |
 | comet | Current per-token pool balance records in the lake, scoped to the curated allowlist |
 
@@ -77,11 +77,11 @@ be checked against the reserves rather than taken on trust. Per leg:
 | `reserve` | The captured reserve in base units (i128 decimal string). Absent when nothing was captured |
 | `asset` | The **canonical** identity the served price path values the leg under — the same id `/v1/assets/{id}` answers for. A configured classic↔SAC wrapper collapses to its classic twin here, exactly as the trust gates were asked about it |
 | `basis` + `usd` | Present when the leg was valued. `declared_usd_peg`: $1 per whole unit at the token's declared decimals, applied only after the trust gates. `served_usd_price`: reserve × the same served USD rate `/v1/assets/{asset}` publishes. `empty_reserve`: the reserve is zero, so the leg is worth exactly $0 and no price was consulted |
-| `excluded` | Present when the leg was **not** valued, naming the rule below that excluded it: `withheld` (rule 1), `no_served_price` (rule 2), `unresolved_token` (rule 5), `malformed_token`, `invalid_reserve` |
+| `excluded` | Present when the leg was **not** valued, naming the rule below that excluded it: `withheld` (rule 1), `unverified_asset` (rule 2), `no_served_price` (rule 3), `unresolved_token` (rule 6), `malformed_token`, `invalid_reserve` |
 
 Exactly one of `basis`/`usd` or `excluded` is present on a leg: a leg
 that contributed nothing says why on the wire and is never a silent
-zero. A pool whose captured storage did not decode (rule 3) is
+zero. A pool whose captured storage did not decode (rule 4) is
 published with `excluded: undecodable_storage`, no legs and
 `tvl_usd: "0.00"`.
 
@@ -115,20 +115,30 @@ makes the served number smaller, never larger.
 1. **A leg the trust gates withhold contributes exactly 0** and its pool
    is counted in `unpriced_pools`. A number an attacker can author is
    not a lower bound.
-2. **A leg with no served USD price contributes exactly 0**, same
+2. **A leg whose asset is not identified contributes exactly 0**, same
+   accounting (`unverified_asset`). Only native XLM, an
+   operator-declared USD peg, or an entry of the hand-vetted verified
+   currency catalogue (`internal/currency`) — reached by its classic id
+   or through its SAC, derived on the configured network — is valued.
+   Pools are permissionless: whoever deploys a token authors both its
+   reserve and, with a few dollars of self-trading, its VWAP, which
+   clears the price tiers' one-cent floor and the substance floor
+   alike. The screen has no off switch; a deployment that wires no
+   catalogue values native XLM and declared pegs only.
+3. **A leg with no served USD price contributes exactly 0**, same
    accounting. We do not substitute a stale, modelled or single-trade
    price to make a pool look complete.
-3. **A pool whose captured storage shape is unrecognised contributes 0**
+4. **A pool whose captured storage shape is unrecognised contributes 0**
    and is counted in both `pools_total` and `unpriced_pools`. It is
    never partially decoded or guessed — a contract upgrade that changes
    a storage layout shows up as a counted gap, not a silent shrink.
-4. **A pool absent from the reserve read is excluded entirely** — not
+5. **A pool absent from the reserve read is excluded entirely** — not
    counted, not zeroed. Archived or uncaptured pools are honestly
    "unavailable"; absence is not a reserve of zero.
-5. **Aquarius legs whose token address never resolved** are unpriceable
+6. **Aquarius legs whose token address never resolved** are unpriceable
    (`update_reserves` carries positions, not addresses) and count their
    pool unpriced.
-6. **Phoenix stake contracts are excluded** from the pool set: they hold
+7. **Phoenix stake contracts are excluded** from the pool set: they hold
    LP shares, and counting them would double-count the underlying.
 
 Consequence: whenever `unpriced_pools > 0` the figure is a **lower
@@ -195,6 +205,14 @@ A refused protocol is **dropped from the total and named in `excluded`
 with the reason**. The headline narrows and says why; it never absorbs a
 figure we cannot stand behind. Operators see the same verdict as
 `stellarindex_dex_tvl_reconcile_total{outcome="divergent"}`.
+
+A protocol whose TVL is derived on this deployment but that has **no
+figure at all** this cycle is named in `excluded` the same way, and
+sets `lower_bound`: either its first reserve read failed with no
+earlier figure to carry (the refresh also counts as failed), or its
+reader returned no pools — which is unavailable, never a TVL of zero,
+so no `"0.00"` is published for it. Its `/v1/protocols/{name}/tvl` 404
+gives the same reason rather than calling the derivation unwired.
 
 ## Reconciling against our own data
 

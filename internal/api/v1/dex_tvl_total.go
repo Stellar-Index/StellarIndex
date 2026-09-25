@@ -34,8 +34,8 @@ type DEXTVLTotalView struct {
 	// re-add these rows and get TVLUSD.
 	Protocols []string `json:"protocols"`
 	// LowerBound is true when at least one included protocol has
-	// unpriced pools, or a protocol was dropped by the reconciliation
-	// below — i.e. the named protocols' true pooled value is at least
+	// unpriced pools, a protocol was dropped by the reconciliation
+	// below, or a derived protocol published no figure this cycle — i.e. the named protocols' true pooled value is at least
 	// TVLUSD. It says nothing about `Excluded`, which is a SCOPE
 	// statement, not a valuation gap: overloading one boolean with both
 	// meanings would make neither legible.
@@ -144,6 +144,17 @@ const (
 		"(pools_total != pools_priced + unpriced_pools), so the figure's coverage is unknown"
 )
 
+// Unavailability reasons: a protocol whose TVL IS derived here but that
+// published no figure this cycle. Named in `excluded` like a refusal, and
+// quoted by its /v1/protocols/{name}/tvl 404, so a derived protocol is
+// never mistaken for an unwired one.
+const (
+	dexTVLUnavailableReadFailed = "its reserve read failed this cycle and no earlier figure exists " +
+		"to carry forward, so no figure is published — the protocol is derived here, its TVL is not zero"
+	dexTVLUnavailableNoPools = "its reserve read returned no pools this cycle; absence is " +
+		"unavailable, never zero TVL, so no figure is published"
+)
+
 // Total returns the reconciled headline total for the most recent
 // refresh, or nil before the first refresh completes (cold start —
 // handlers omit the field, never 503).
@@ -178,10 +189,12 @@ func (c *DEXTVLCache) Total() *DEXTVLTotalView {
 //     the coverage claim came from different accountings and the
 //     lower-bound story is no longer provable.
 //
-// at is the refresh instant the snapshot was computed at and carried
-// names the protocols serving a previous cycle's figure. Returns nil
+// at is the refresh instant the snapshot was computed at, carried
+// names the protocols serving a previous cycle's figure, and unavailable
+// names the derived protocols with no figure in snapshot at all — each
+// is listed in `excluded` and makes the total a lower bound. Returns nil
 // for an empty snapshot (nothing to total).
-func reconcileDEXTVLTotal(snapshot map[string]ProtocolTVLView, at time.Time, carried []string) *DEXTVLTotalView {
+func reconcileDEXTVLTotal(snapshot map[string]ProtocolTVLView, at time.Time, carried []string, unavailable []DEXTVLExclusion) *DEXTVLTotalView {
 	if len(snapshot) == 0 {
 		return nil
 	}
@@ -229,8 +242,11 @@ func reconcileDEXTVLTotal(snapshot map[string]ProtocolTVLView, at time.Time, car
 		return nil
 	}
 	out.TVLUSD = sum.FloatString(2)
-	out.LowerBound = out.UnpricedPools > 0 || len(refused) > 0
-	out.Excluded = append(refused, dexTVLScopeExclusions...)
+	out.LowerBound = out.UnpricedPools > 0 || len(refused) > 0 || len(unavailable) > 0
+	out.Excluded = make([]DEXTVLExclusion, 0, len(unavailable)+len(refused)+len(dexTVLScopeExclusions))
+	out.Excluded = append(out.Excluded, unavailable...)
+	out.Excluded = append(out.Excluded, refused...)
+	out.Excluded = append(out.Excluded, dexTVLScopeExclusions...)
 	out.Basis = dexTVLTotalBasis(out.Protocols)
 
 	outcome := "ok"

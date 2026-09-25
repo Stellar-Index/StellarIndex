@@ -48,6 +48,51 @@ tests:
                 (rate limit, DNS issue, ACME quota, Caddy stuck). If the
                 gauge is ABSENT (the absent_over_time branch fires alone),
                 the TLS prober itself is down — check it before assuming
-                the cert is fine.
+                the cert is fine. If the probe-outcome arm fires, the host
+                had failed probes and no successful one in 13 h (unreachable,
+                or a cert failing verification: wrong name, broken chain,
+                expired) and the value is a failure count, not a timestamp —
+                read stellarindex_tls_cert_probe_total{host} by outcome.
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
+
+  # CA2-A08-correct-6: status.* fails verification after a restart, so it
+  # has no gauge; api.* still reports, so absent_over_time is quiet. The
+  # probe-outcome arm must fire for status.* alone.
+  - interval: 1m
+    input_series:
+      - series: 'stellarindex_tls_cert_not_after_unix{job="stellarindex_api",instance="r1:8080",host="api.stellarindex.io"}'
+        values: '2000000000+0x120'
+      - series: 'stellarindex_tls_cert_probe_total{job="stellarindex_api",instance="r1:8080",host="api.stellarindex.io",outcome="ok"}'
+        values: '0 1+0x120'
+      - series: 'stellarindex_tls_cert_probe_total{job="stellarindex_api",instance="r1:8080",host="status.stellarindex.io",outcome="ok"}'
+        values: '0+0x120'
+      - series: 'stellarindex_tls_cert_probe_total{job="stellarindex_api",instance="r1:8080",host="status.stellarindex.io",outcome="cert_invalid"}'
+        values: '0 1+0x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_tls_cert_expiring_soon
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              host: status.stellarindex.io
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
+              summary: "TLS cert for status.stellarindex.io expires in <14 days"
+              description: |
+                The leaf certificate for status.stellarindex.io expires at
+                1970-01-01 00:00:01 +0000 UTC. Caddy's Let's Encrypt
+                auto-renewal normally triggers 30 days before expiry;
+                this alert firing means the renewal hasn't happened
+                (rate limit, DNS issue, ACME quota, Caddy stuck). If the
+                gauge is ABSENT (the absent_over_time branch fires alone),
+                the TLS prober itself is down — check it before assuming
+                the cert is fine. If the probe-outcome arm fires, the host
+                had failed probes and no successful one in 13 h (unreachable,
+                or a cert failing verification: wrong name, broken chain,
+                expired) and the value is a failure count, not a timestamp —
+                read stellarindex_tls_cert_probe_total{host} by outcome.
 
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md

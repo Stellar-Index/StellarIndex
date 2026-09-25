@@ -1175,8 +1175,12 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// own VWAP. A withheld leg now counts its pool unpriced, so the
 		// number stays an honest lower bound rather than becoming a
 		// fabricated one.
-		Gate:   buildDEXTVLValueGate(substanceGate, scamGate, usdPegs),
-		Logger: logger.With("component", "dex-tvl"),
+		Gate: buildDEXTVLValueGate(substanceGate, scamGate, usdPegs),
+		// Identity screen (#985): pools are permissionless, so only the
+		// hand-vetted catalogue's assets (plus native and declared pegs)
+		// are valued; a self-listed token's legs count unpriced.
+		Verified: verifiedCurrencies,
+		Logger:   logger.With("component", "dex-tvl"),
 	}
 	if fx, err := timescale.NewVWAPUSDFXResolver(store, timescale.VWAPUSDFXResolverOptions{
 		USDPegs: cfg.Trades.USDPeggedClassicAssets,

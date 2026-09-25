@@ -95,6 +95,39 @@ func TestProbeOneHost_OK(t *testing.T) {
 	}
 }
 
+// TestProbeOneHost_CertFailingVerificationIsStillRead is the
+// CA2-A08-correct-6 regression. The production dial verifies the chain,
+// so an expired or mis-issued leaf failed the handshake and was counted
+// as a bare dial_error with its NotAfter never read: after a restart the
+// host had no gauge at all, and the one condition the probe exists to
+// catch was reported as "unreachable". The handshake error carries the
+// unverified chain; the probe must record the leaf and say which failure.
+func TestProbeOneHost_CertFailingVerificationIsStillRead(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		notAfter time.Time
+		outcome  string
+	}{
+		{"expired", time.Now().Add(-10 * time.Minute).Truncate(time.Second), "cert_expired"},
+		{"untrusted chain", time.Now().Add(90 * 24 * time.Hour).Truncate(time.Second), "cert_invalid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			host, stop := startTLSServer(t, tc.notAfter)
+			defer stop()
+			before := testutil.ToFloat64(obs.TLSCertProbeTotal.WithLabelValues(host, tc.outcome))
+			if got := probeOneHost(context.Background(), host, slog.New(slog.NewTextHandler(io.Discard, nil))); got != tc.outcome {
+				t.Fatalf("outcome = %q, want %q", got, tc.outcome)
+			}
+			if after := testutil.ToFloat64(obs.TLSCertProbeTotal.WithLabelValues(host, tc.outcome)); after != before+1 {
+				t.Errorf("%s counter %v → %v, want +1", tc.outcome, before, after)
+			}
+			if gauge := testutil.ToFloat64(obs.TLSCertNotAfterUnix.WithLabelValues(host)); gauge != float64(tc.notAfter.Unix()) {
+				t.Errorf("not_after gauge = %v, want the leaf's %d", gauge, tc.notAfter.Unix())
+			}
+		})
+	}
+}
+
 func TestProbeOneHost_DialError(t *testing.T) {
 	// Port 1 on localhost — almost always closed. Expect dial_error.
 	host := "127.0.0.1:1"

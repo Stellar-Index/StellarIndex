@@ -14,7 +14,7 @@ severity: P3
 | Alerts | `stellarindex_dex_tvl_refresh_failing` (ticket) |
 | Detected by | Prometheus rules in `deploy/monitoring/rules/api.yml` + `configs/prometheus/rules.r1/api.yml` |
 | Typical MTTR | 5–20 min (almost always ClickHouse or served-tier reachability, shared with louder alerts) |
-| Impact | `/v1/dexes`, `/v1/protocols` and the per-protocol pages keep serving TVL — but it is a carried-forward snapshot growing stale behind a healthy-looking page. No 5xx, no error flag beyond the snapshot's own `as_of`. |
+| Impact | `/v1/protocols`, `/v1/protocols/{name}/tvl` and the per-protocol pages keep serving TVL — but it is a carried-forward snapshot growing stale behind a healthy-looking page. No 5xx, no error flag beyond the snapshot's own `as_of`. A protocol whose read has failed on every cycle since the API started has no figure to carry: it is absent, named in `tvl_total.excluded` (which sets `lower_bound`), and its `/tvl` drill-down 404 says the read failed. |
 
 ## Symptoms
 

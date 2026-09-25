@@ -96,6 +96,7 @@ func tvlBranchSources() (DEXTVLSources, *stubTVLGate) {
 		Pricer:          stubTVLPricer{rates: map[string]string{"native": "0.5"}},
 		PegInfo:         stubTVLPegInfo{pegged: map[string]int{tvlTestUSDCSAC: 7}},
 		Gate:            gate,
+		Verified:        tvlTestCatalogue(tvlTestNoMarketToken),
 	}, gate
 }
 
