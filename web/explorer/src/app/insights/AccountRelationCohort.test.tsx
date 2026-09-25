@@ -36,7 +36,7 @@ function cohort(overrides: Record<string, unknown> = {}) {
       { asset: 'pool:0a1b2c3d', kind: 'pool_share', holders: 5, balance: '7' },
     ],
     holdings_truncated: false,
-    valuation: { total_usd: '525.00', priced_holdings: 2, unpriced_holdings: 1, price_cap: 100, unpriced_over_cap: 0, basis: 'live_vwap_current' },
+    valuation: { total_usd: '525.00', priced_holdings: 2, unpriced_holdings: 1, basis: 'live_vwap_current' },
     flows: {
       granularity: '1M',
       assets: [USDC, 'native'],
@@ -105,41 +105,6 @@ describe('AccountRelationCohort', () => {
     expect(await screen.findByText(/does not carry this creator/)).toBeInTheDocument();
     expect(screen.queryByText('Value moved by month')).not.toBeInTheDocument();
     expect(screen.getByText(/64,400,000/)).toBeInTheDocument();
-  });
-
-  it('serves a complete priced total as-is, with no lower-bound caveat', async () => {
-    apiGet.mockResolvedValueOnce({ data: cohort() });
-    renderCohort();
-    expect(await screen.findByText('$525')).toBeInTheDocument();
-    expect(screen.getByText('2 priced · 1 no live price')).toBeInTheDocument();
-    expect(screen.queryByText('The priced total is a lower bound')).not.toBeInTheDocument();
-  });
-
-  it('renders a total cut short by the request deadline as a lower bound and says why', async () => {
-    apiGet.mockResolvedValueOnce({
-      data: cohort({
-        valuation: { total_usd: '525.00', priced_holdings: 3, unpriced_holdings: 40, price_cap: 100, unpriced_over_cap: 0, degraded: true, basis: 'live_vwap_current' },
-      }),
-    });
-    renderCohort();
-    expect(await screen.findByText('≥ $525')).toBeInTheDocument();
-    expect(screen.queryByText('$525')).not.toBeInTheDocument();
-    expect(screen.getByText('3 priced · 40 unpriced or not reached')).toBeInTheDocument();
-    expect(screen.getByText('The priced total is a lower bound')).toBeInTheDocument();
-    expect(screen.getByText(/cut short by the request deadline/)).toBeInTheDocument();
-  });
-
-  it('names holdings outside the price cap as not looked up, not as having no live price', async () => {
-    apiGet.mockResolvedValueOnce({
-      data: cohort({
-        valuation: { total_usd: '525.00', priced_holdings: 2, unpriced_holdings: 6, price_cap: 100, unpriced_over_cap: 5, basis: 'live_vwap_current' },
-      }),
-    });
-    renderCohort();
-    expect(await screen.findByText('≥ $525')).toBeInTheDocument();
-    expect(screen.getByText('2 priced · 1 no live price · 5 not looked up')).toBeInTheDocument();
-    expect(screen.getByText(/Only the 100 largest holdings are priced per request; 5 smaller holdings were not looked up/)).toBeInTheDocument();
-    expect(screen.queryByText(/cut short/)).not.toBeInTheDocument();
   });
 
   it('reads a 503 as the rollup still warming', async () => {

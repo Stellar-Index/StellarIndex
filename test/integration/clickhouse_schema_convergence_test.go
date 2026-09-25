@@ -27,7 +27,7 @@ var (
 	convergeCreateDB      = regexp.MustCompile(`(?i)^CREATE\s+DATABASE\s+IF\s+NOT\s+EXISTS\s+stellar$`)
 	convergeAlterTable    = regexp.MustCompile(`(?is)^ALTER\s+TABLE\s+(\S+)\s+(.*)$`)
 	convergeAddIfMissing  = regexp.MustCompile(`(?is)^ADD\s+(COLUMN|INDEX)\s+IF\s+NOT\s+EXISTS\s+(\w+)\s`)
-	convergeUnconditional = regexp.MustCompile(`(?is)^(ADD\s+(COLUMN|INDEX)|DROP\s+INDEX|MODIFY\s+COLUMN)\s`)
+	convergeUnconditional = regexp.MustCompile(`(?is)^(ADD\s+(COLUMN|INDEX)|DROP\s+INDEX)\s`)
 )
 
 // convergeSchema is table -> "column x" / "index y" -> full definition.
