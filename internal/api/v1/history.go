@@ -394,8 +394,12 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	// served base_decimals 7 against a parser that stamps 8. The `price`
 	// field is scale-invariant, so nothing in the response contradicted
 	// it (cold audit 2026-08-04).
-	baseDec := s.resolveAssetDecimals(hCtx, base)
-	quoteDec := s.resolveAssetDecimals(hCtx, quote)
+	baseDec, baseOK := s.resolveAssetDecimals(hCtx, base)
+	quoteDec, quoteOK := s.resolveAssetDecimals(hCtx, quote)
+	if !baseOK || !quoteOK {
+		writeDecimalsUnavailable(w, r, "https://api.stellarindex.io/errors/history-unavailable")
+		return
+	}
 	rows := make([]TradeRow, len(trades))
 	for i, t := range trades {
 		rows[i] = tradeRowFrom(t, 10)

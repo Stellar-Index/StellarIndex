@@ -494,14 +494,18 @@ func TestChartTWAP_HoledSeriesReachesTheProxyWalk(t *testing.T) {
 
 // TestChartMarketCap_HoledPriceLegReachesTheProxyWalk: market_cap
 // multiplies the same daily price series by circulating supply, so a
-// holed price leg is a holed market-cap series. Supply is a single
-// snapshot, forward-filled, so every priced day gets a cap.
+// holed price leg is a holed market-cap series. Supply is observed every
+// day at a constant 1000 XLM, so every priced day gets a cap (the
+// forward-fill is bounded, so a single old snapshot would not reach today).
 func TestChartMarketCap_HoledPriceLegReachesTheProxyWalk(t *testing.T) {
 	store := holedFlagshipStore()
 	usdc := installUSDCSACRegistry(t)
-	sup := &stubSupplyLooker{daily: []timescale.SupplyDayPoint{
-		{Bucket: holedDay(41), Circulating: big.NewInt(1_000_0000000)}, // 1000 XLM
-	}}
+	sup := &stubSupplyLooker{}
+	for n := 41; n >= 0; n-- {
+		sup.daily = append(sup.daily, timescale.SupplyDayPoint{
+			Bucket: holedDay(n), Circulating: big.NewInt(1_000_0000000), // 1000 XLM
+		})
+	}
 	ts := httpTestServer(t, v1.New(v1.Options{
 		History:            store,
 		Supply:             sup,

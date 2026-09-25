@@ -459,6 +459,7 @@ func (s *Server) ohlcSeriesWithAliases(
 			bars, err := s.history.OHLCSeries(ctx, ap, string(interval), from, to, limit)
 			if err != nil || len(bars) > 0 {
 				annotateOHLCSeriesBarScale(bars)
+				normalizeOHLCSeriesVolumes(bars)
 				return bars, false, err
 			}
 		}

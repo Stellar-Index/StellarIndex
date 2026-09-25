@@ -128,6 +128,7 @@ func TestPctChange(t *testing.T) {
 		{"down 5%", "0.95", "1.00", "-5.00"},
 		{"big up", "150.00", "100.00", "+50.00"},
 		{"sub-cent up", "1.0000001", "1.00", "0.00"},
+		{"sub-cent down", "1.00000", "1.00004", "0.00"},
 		// Two-decimal rounding is half-away-from-zero (FloatString
 		// behaviour) — pinned because consumer charts depend on it.
 		{"rounds half up", "1.005", "1.00", "+0.50"},

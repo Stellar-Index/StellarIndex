@@ -670,9 +670,7 @@ func (s *Server) handleChartFiat(
 		return
 	}
 
-	// Default window: trailing 1y when timeframe=all (open-ended would
-	// hammer Postgres for 25y on every request; the chart consumer
-	// only renders one screen anyway).
+	// Default window: trailing 25y (ECB inception) when timeframe=all.
 	to := time.Now().UTC().Truncate(24 * time.Hour)
 	queryFrom := from
 	if queryFrom.IsZero() {
@@ -1935,10 +1933,8 @@ func (s *Server) handleChartMarketCap(
 		return
 	}
 
-	// Default window: trailing 1y when timeframe=all (open-ended
-	// would hammer Postgres + the catalogue M2 doesn't change over
-	// time anyway, so 25y of "same number × per-day FX" is just
-	// noise).
+	// Default window: trailing 25y (ECB inception), the same as the direct
+	// fiat path, when timeframe=all.
 	to := time.Now().UTC().Truncate(24 * time.Hour)
 	queryFrom := from
 	if queryFrom.IsZero() {
@@ -2159,7 +2155,7 @@ func (s *Server) handleChartMarketCapCrypto(
 		return
 	}
 
-	wire := marketCapPoints(pricePts, supPts, baseDec)
+	wire, supplyStale := marketCapPoints(pricePts, supPts, baseDec)
 	refused, lowLiquidity := s.marketCapSeriesRefused(ctx, pair.Base, wire)
 	if refused {
 		wire = []HistoryPointWire{}
@@ -2182,7 +2178,7 @@ func (s *Server) handleChartMarketCapCrypto(
 			series.RequestedFrom = wireTimePtr(&requested)
 		}
 	}
-	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded})
+	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded || supplyStale})
 }
 
 // marketCapSeriesRefused applies the detail page's valuation guards
@@ -2213,22 +2209,38 @@ func (s *Server) marketCapSeriesRefused(ctx context.Context, base canonical.Asse
 	return false, false
 }
 
+// marketCapSupplyMaxCarry bounds how far a supply_1d bucket may be
+// forward-filled onto later price days. supply_1d's newest bucket is a
+// completed prior day (measured 17h47m behind on r1), so today's price day
+// legitimately reads yesterday's supply, and two days also covers the
+// window after midnight before the CAGG refresh. Past that the observer
+// (which writes every few minutes) has missed whole days, and the product
+// would be today's price times a supply nobody is measuring.
+const marketCapSupplyMaxCarry = 48 * time.Hour
+
 // marketCapPoints forward-fills daily supply onto the daily USD-price
 // series and multiplies: each price day gets the most-recent
-// circulating supply at-or-before that day. Both inputs are ascending
-// by bucket; a single forward cursor over supPts keeps it O(n+m). A
-// price day with no supply at-or-before it (asset priced before its
-// first supply snapshot) is skipped rather than emitted as zero.
-func marketCapPoints(pricePts []HistoryPoint, supPts []timescale.SupplyDayPoint, baseDecimals int) []HistoryPointWire {
-	wire := make([]HistoryPointWire, 0, len(pricePts))
+// circulating supply at-or-before that day, carried at most
+// marketCapSupplyMaxCarry. Both inputs are ascending by bucket; a single
+// forward cursor over supPts keeps it O(n+m). A price day with no usable
+// supply (priced before the first snapshot, or past the carry bound) is
+// skipped rather than emitted as zero; supplyStale reports that the
+// carry bound cut at least one day.
+func marketCapPoints(pricePts []HistoryPoint, supPts []timescale.SupplyDayPoint, baseDecimals int) (wire []HistoryPointWire, supplyStale bool) {
+	wire = make([]HistoryPointWire, 0, len(pricePts))
 	si := 0
 	var cur *big.Int
+	var curAt time.Time
 	for _, pp := range pricePts {
 		for si < len(supPts) && !supPts[si].Bucket.After(pp.Bucket) {
-			cur = supPts[si].Circulating
+			cur, curAt = supPts[si].Circulating, supPts[si].Bucket
 			si++
 		}
 		if cur == nil || pp.VWAP == "" {
+			continue
+		}
+		if pp.Bucket.Sub(curAt) > marketCapSupplyMaxCarry {
+			supplyStale = true
 			continue
 		}
 		mc, err := usdMarketValue(cur, pp.VWAP, baseDecimals)
@@ -2237,7 +2249,7 @@ func marketCapPoints(pricePts []HistoryPoint, supPts []timescale.SupplyDayPoint,
 		}
 		wire = append(wire, HistoryPointWire{T: WireTime(pp.Bucket), P: mc})
 	}
-	return wire
+	return wire, supplyStale
 }
 
 // fiatSupplyWholeUnits converts the catalogue's (supply, decimals)

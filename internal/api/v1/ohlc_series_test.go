@@ -502,9 +502,10 @@ func TestOHLCSeries_WireShapeFields(t *testing.T) {
 	body, _ := readAll(resp)
 	// Series-mode wire field names — CG/CMC parity (`t,o,h,l,c,v_base,v_quote,n`).
 	// fiat:USD goes through the combine, which normalises prices to fixed
-	// decimals (ohlcPriceDigits) like the single-bar /v1/ohlc; v_base is an
-	// integer-string. Single-constituent bucket → values pass through exactly.
-	for _, want := range []string{`"t":"`, `"o":"1.0000000000"`, `"h":"2.0000000000"`, `"l":"0.5000000000"`, `"c":"1.5000000000"`, `"v_base":"100"`, `"v_quote":"150.0000000000"`, `"n":3`} {
+	// decimals (ohlcPriceDigits) like the single-bar /v1/ohlc; v_base and
+	// v_quote are integer smallest-unit text on every path.
+	// Single-constituent bucket → values pass through exactly.
+	for _, want := range []string{`"t":"`, `"o":"1.0000000000"`, `"h":"2.0000000000"`, `"l":"0.5000000000"`, `"c":"1.5000000000"`, `"v_base":"100"`, `"v_quote":"150"`, `"n":3`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q: %s", want, body)
 		}

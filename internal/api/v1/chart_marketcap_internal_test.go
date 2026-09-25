@@ -1,11 +1,13 @@
 package v1
 
 import (
+	"context"
 	"math/big"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -28,7 +30,7 @@ func TestMarketCapPoints_ForwardFill(t *testing.T) {
 		{Bucket: day(2026, 6, 2), Circulating: big.NewInt(2_000_0000000)},  // 2000.0
 	}
 
-	got := marketCapPoints(price, supply, 7)
+	got, _ := marketCapPoints(price, supply, 7)
 	want := []struct {
 		t time.Time
 		p string
@@ -57,7 +59,7 @@ func TestMarketCapPoints_SkipBeforeFirstSupply(t *testing.T) {
 	supply := []timescale.SupplyDayPoint{
 		{Bucket: day(2026, 6, 3), Circulating: big.NewInt(1_000_0000000)}, // 1000.0
 	}
-	got := marketCapPoints(price, supply, 7)
+	got, _ := marketCapPoints(price, supply, 7)
 	if len(got) != 1 {
 		t.Fatalf("got %d points, want 1: %+v", len(got), got)
 	}
@@ -69,7 +71,7 @@ func TestMarketCapPoints_SkipBeforeFirstSupply(t *testing.T) {
 // No supply at all → empty series (not a panic, not zeros).
 func TestMarketCapPoints_NoSupply(t *testing.T) {
 	price := []HistoryPoint{{Bucket: day(2026, 6, 1), VWAP: "0.10"}}
-	if got := marketCapPoints(price, nil, 7); len(got) != 0 {
+	if got, _ := marketCapPoints(price, nil, 7); len(got) != 0 {
 		t.Errorf("want empty series with no supply, got %+v", got)
 	}
 }
@@ -87,12 +89,12 @@ func TestMarketCapPoints_NonstandardDecimalsSupplyLeg(t *testing.T) {
 		{Bucket: day(2026, 7, 1), Circulating: new(big.Int).Exp(big.NewInt(10), big.NewInt(12), nil)},
 	}
 	// Correct: 1000 tokens × $5.00 = $5,000.00.
-	got := marketCapPoints(price, supply, 9)
+	got, _ := marketCapPoints(price, supply, 9)
 	if len(got) != 1 || got[0].P != "5000.00" {
 		t.Fatalf("9dp supply leg: got %+v, want single point 5000.00", got)
 	}
 	// Regression guard: the old hardcoded-7 divisor would 100× it.
-	old := marketCapPoints(price, supply, 7)
+	old, _ := marketCapPoints(price, supply, 7)
 	if len(old) != 1 || old[0].P != "500000.00" {
 		t.Fatalf("sanity: 7dp divisor should over-report as 500000.00, got %+v", old)
 	}
@@ -127,7 +129,7 @@ func TestFiatSupplyWholeUnits_ExactBeyondFloat64(t *testing.T) {
 	}
 
 	// End-to-end: market cap at rate 1.0 must preserve the exact digit.
-	mc := computeFiatMarketCap(supplyStr, "1")
+	mc := computeFiatMarketCap(supplyStr, 0, "1")
 	if mc == nil || *mc != "9007199254740993.00" {
 		t.Errorf("computeFiatMarketCap = %v, want 9007199254740993.00 (exact)", mc)
 	}
@@ -143,7 +145,7 @@ func TestComputeFiatMarketCap_ExactRat(t *testing.T) {
 		{"1000000000000000000", "0.000000000000000001", "1.00"},      // 1e18 × 1e-18 stays exact
 	}
 	for _, c := range cases {
-		got := computeFiatMarketCap(c.supply, c.price)
+		got := computeFiatMarketCap(c.supply, 0, c.price)
 		if got == nil || *got != c.want {
 			t.Errorf("computeFiatMarketCap(%q,%q) = %v, want %q", c.supply, c.price, got, c.want)
 		}
@@ -167,4 +169,40 @@ func TestFormatCrossRate(t *testing.T) {
 			t.Errorf("formatCrossRate(%s) = %q, want %q", c.r.RatString(), got, c.want)
 		}
 	}
+}
+
+// TestFiatMarketCap_HonoursSupplyDecimals — the listing
+// (fiatMarketCapUSD) and global (populateFiatView) market caps must
+// scale the catalogue supply by 10^supply_decimals exactly as the
+// market-cap chart's fiatSupplyWholeUnits does. A cents-denominated M2
+// (supply_decimals=2) otherwise overstated the cap 100x on those two
+// surfaces while the chart stayed correct.
+func TestFiatMarketCap_HonoursSupplyDecimals(t *testing.T) {
+	vc := &currency.VerifiedCurrency{
+		Ticker:            "USD",
+		CirculatingSupply: "2170000000000000", // $21.7T stated in cents
+		SupplyDecimals:    2,
+	}
+	const want = "21700000000000.00"
+
+	chartM2, ok := fiatSupplyWholeUnits(vc.CirculatingSupply, vc.SupplyDecimals)
+	if !ok || chartM2.FloatString(2) != want {
+		t.Fatalf("chart premise: fiatSupplyWholeUnits = %v, want %s", chartM2, want)
+	}
+
+	s := &Server{}
+	if got := s.fiatMarketCapUSD(context.Background(), vc); got == nil || *got != want {
+		t.Errorf("fiatMarketCapUSD = %v, want %s (must match the chart)", strPtrValue(got), want)
+	}
+	view := s.populateFiatView(context.Background(), GlobalAssetView{}, vc)
+	if view.MarketCapUSD == nil || *view.MarketCapUSD != want {
+		t.Errorf("populateFiatView market_cap_usd = %v, want %s", strPtrValue(view.MarketCapUSD), want)
+	}
+}
+
+func strPtrValue(p *string) string {
+	if p == nil {
+		return "<nil>"
+	}
+	return *p
 }

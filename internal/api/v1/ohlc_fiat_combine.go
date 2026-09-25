@@ -768,8 +768,8 @@ func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
 		H:      ratToDecimal(high, ohlcPriceDigits),
 		L:      ratToDecimal(low, ohlcPriceDigits),
 		C:      ratToDecimal(closeP, ohlcPriceDigits),
-		VBase:  ratToDecimal(baseVol, 0),
-		VQuote: ratToDecimal(quoteVol, ohlcPriceDigits),
+		VBase:  seriesVolumeText(baseVol),
+		VQuote: seriesVolumeText(quoteVol),
 		// The bucket's own lift target IS the scale VBase/VQuote ended
 		// up at — every scale present was multiplied up to it above, so
 		// stating anything else would mismatch the served integers.
@@ -824,4 +824,30 @@ func ratFromDecimal(s string) *big.Rat {
 		return nil
 	}
 	return r
+}
+
+// seriesVolumeText is the one wire rendering of a series bar's v_base /
+// v_quote: integer smallest-unit text. The true value is a sum of integer
+// amounts; the CAGG's vwap*volume leg carries sub-unit NUMERIC noise on
+// either side of it, so round to nearest (half up; volumes are >= 0).
+func seriesVolumeText(r *big.Rat) string {
+	if r == nil {
+		return "0"
+	}
+	twice := new(big.Int).Mul(r.Num(), big.NewInt(2))
+	twice.Add(twice, r.Denom())
+	return twice.Quo(twice, new(big.Int).Mul(r.Denom(), big.NewInt(2))).String()
+}
+
+// normalizeOHLCSeriesVolumes re-renders pass-through CAGG rows through
+// [seriesVolumeText] so the native path emits what finalize emits.
+func normalizeOHLCSeriesVolumes(bars []OHLCSeriesBar) {
+	for i := range bars {
+		if v := ratFromDecimal(bars[i].VBase); v != nil {
+			bars[i].VBase = seriesVolumeText(v)
+		}
+		if v := ratFromDecimal(bars[i].VQuote); v != nil {
+			bars[i].VQuote = seriesVolumeText(v)
+		}
+	}
 }

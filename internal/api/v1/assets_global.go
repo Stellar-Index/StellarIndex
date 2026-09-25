@@ -230,7 +230,7 @@ func (s *Server) populateFiatView(ctx context.Context, view GlobalAssetView, vc 
 		view.PriceAuthority = aggregate.AuthorityIdentity
 		view.PriceSources = []string{"identity"}
 		view.PriceAsOf = wireTimePtr(&asOf)
-		view.MarketCapUSD = computeFiatMarketCap(vc.CirculatingSupply, identity)
+		view.MarketCapUSD = computeFiatMarketCap(vc.CirculatingSupply, vc.SupplyDecimals, identity)
 		return view
 	}
 	// Shared with the listing path — see [Server.fiatUSDPriceFor]. Calling
@@ -244,7 +244,7 @@ func (s *Server) populateFiatView(ctx context.Context, view GlobalAssetView, vc 
 	view.PriceAuthority = aggregate.AuthorityReferenceRate
 	view.PriceSources = sources
 	view.PriceAsOf = wireTimePtr(&obs)
-	view.MarketCapUSD = computeFiatMarketCap(vc.CirculatingSupply, price)
+	view.MarketCapUSD = computeFiatMarketCap(vc.CirculatingSupply, vc.SupplyDecimals, price)
 	return view
 }
 
@@ -390,20 +390,21 @@ func (s *Server) fiatMarketCapUSD(ctx context.Context, vc *currency.VerifiedCurr
 		return nil
 	}
 	if strings.EqualFold(vc.Ticker, "USD") {
-		return computeFiatMarketCap(vc.CirculatingSupply, "1.00000000000000")
+		return computeFiatMarketCap(vc.CirculatingSupply, vc.SupplyDecimals, "1.00000000000000")
 	}
 	price, _, _, ok := s.fiatUSDPriceFor(ctx, vc.Ticker)
 	if !ok {
 		return nil
 	}
-	return computeFiatMarketCap(vc.CirculatingSupply, price)
+	return computeFiatMarketCap(vc.CirculatingSupply, vc.SupplyDecimals, price)
 }
 
-// computeFiatMarketCap returns market_cap_usd = supplyStr × priceStr
-// formatted to 2 fractional digits, or nil when either operand can't
-// be parsed as a decimal. supplyStr is the natural-unit amount
-// (raw yen/yuan/etc.; supply_decimals = 0 for fiat).
-func computeFiatMarketCap(supplyStr, priceStr string) *string {
+// computeFiatMarketCap returns market_cap_usd = supplyStr / 10^decimals
+// × priceStr formatted to 2 fractional digits, or nil when either operand
+// can't be parsed. Scaling goes through fiatSupplyWholeUnits so this
+// listing/global figure and the market-cap chart agree for any
+// supply_decimals the catalogue declares.
+func computeFiatMarketCap(supplyStr string, decimals int, priceStr string) *string {
 	if supplyStr == "" || priceStr == "" {
 		return nil
 	}
@@ -412,7 +413,7 @@ func computeFiatMarketCap(supplyStr, priceStr string) *string {
 	// big.Float(128) path was near-exact for realistic fiat sizes but
 	// still not rational-exact; big.Rat removes any ambiguity for a
 	// supply string that would overflow a float64's 53-bit mantissa.
-	supply, ok := new(big.Rat).SetString(supplyStr)
+	supply, ok := fiatSupplyWholeUnits(supplyStr, decimals)
 	if !ok {
 		return nil
 	}
