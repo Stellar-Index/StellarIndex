@@ -57,7 +57,10 @@ CH() { curl -sSf --max-time 3600 http://localhost:8123/ --data-binary "$1"; }
 is_uint() { case "$1" in '' | *[!0-9]*) return 1 ;; esac; }
 
 TIP=$("$PSQL" "$DSN" -tA -c "SELECT last_ledger FROM ingestion_cursors WHERE source='ledgerstream'" 2>/dev/null | tr -d '[:space:]')
-is_uint "$TIP" && [ "$TIP" != "0" ] || { echo "$(date -u) ch-supply: tip unresolved" >&2; exit 1; }
+if ! is_uint "$TIP" || [ "$TIP" = "0" ]; then
+  echo "$(date -u) ch-supply: tip unresolved" >&2
+  exit 1
+fi
 # A failed probe must fail the unit: a default here would either skip the
 # seed loop and report success, or re-seed all of history.
 FROM=$(CH "SELECT max(ledger_seq)+1 FROM stellar.supply_flows" | tr -d '[:space:]')
