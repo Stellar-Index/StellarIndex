@@ -246,12 +246,16 @@ export async function revokeKey(id: string): Promise<void> {
 // (date, endpoint family) from the server-side usage_daily rollups.
 // `endpoint` is the route PATTERN (e.g. "/v1/assets/{asset_id}");
 // it is absent on the server's legacy fallback shape (one row per
-// day, pre-rollup deployments). `requests` counts allowed traffic;
+// day, pre-rollup deployments). `requests` counts every non-429
+// response (5xx included); `billable` is the subset the monthly
+// quota actually counts (2xx/3xx and 4xx-except-429) — reconcile
+// against `monthly_request_quota` with `billable`, never `requests`.
 // `errors` = 4xx (excl. 429) + 5xx; `throttled` = 429 rejections.
 export interface UsageRow {
   date: string; // YYYY-MM-DD
   endpoint?: string;
   requests: number;
+  billable: number;
   errors: number;
   throttled: number;
 }
