@@ -578,6 +578,7 @@ lane_d() { # everything else
     echo "=== Ansible Caddy signing-key pipefail self-test ===" && ./scripts/ci/ansible-caddy-key-pipefail-test.sh
     echo "=== Promtail server listen-address self-test ===" && ./scripts/ci/promtail-listen-address-test.sh
     echo "=== Ansible README parity self-test ===" && ./scripts/ci/ansible-readme-parity-test.sh
+    echo "=== Ansible pubnet example checksum parity self-test ===" && ./scripts/ci/ansible-pubnet-checksum-parity-test.sh
     echo "=== Ansible keepalived healthcheck self-test ===" && ./scripts/ci/ansible-keepalived-healthcheck-test.sh
     echo "=== HAProxy http-request timeout self-test ===" && ./scripts/ci/haproxy-http-request-timeout-test.sh
     # CI's import-checks job runs these gate scripts too; verify.sh must mirror

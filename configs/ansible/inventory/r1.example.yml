@@ -41,6 +41,12 @@
 
 all:
   vars:
+    # Supply-chain checksums (F-1291/F-1293 — role asserts fail-fast
+    # without these; same pinned versions across every pubnet region).
+    minio_release_sha256:               "c27873d791b56d33518de11f12c5bfae4be88ebac00e12c6dd0027b08123fd80"
+    mc_release_sha256:                  "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891"
+    pgbackrest_exporter_release_sha256: "e73a862a900ef08d697a64b6644abb078453370e8e02db75a24d8b496ea33e6d"
+
     # ───── Region identity ─────────────────────────────────────────
     region_id:           "r1"
     region_name:         "Hetzner-r1"         # = `name` in stellarindex.toml [region]; matches live r1
