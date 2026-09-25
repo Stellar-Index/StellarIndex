@@ -853,6 +853,16 @@ jobs:
         # not the dispatching ref, or the config-apply gate verifies a
         # different commit's bytes than the ones actually applied.
         run: ./scripts/ci/deploy-checkout-ref-test.sh
+      - name: deploy migration gate runs all four migration lints
+        # GH-1165: deploy.yml is the last gate before DDL runs on
+        # production and `main` is unprotected, so it must run numbering,
+        # compat, immutability and commands — not compat alone.
+        run: ./scripts/ci/deploy-migration-gate-coverage-test.sh
+      - name: deploy served-path smoke asserts readiness on every region
+        # GH-910: runs the real step against stub curl/ssh — /v1/readyz
+        # (not the constant-body /v1/healthz) must gate, and testnet and
+        # futurenet must get a real /v1/assets read, not only the probe.
+        run: ./scripts/ci/deploy-served-path-smoke-test.sh
       - name: Pages deploy branch label (built ref vs --branch)
         # GH-844: a Cloudflare Pages deploy labelled `main` is production, so
         # every `pages deploy` job must resolve its label through

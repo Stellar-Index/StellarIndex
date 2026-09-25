@@ -98,7 +98,7 @@ on:
         type: string
         default: 'stellarindex-indexer,stellarindex-aggregator,stellarindex-api,stellarindex-sla-probe,stellarindex-ops,stellarindex-migrate'
       health_grace_seconds:
-        description: 'Seconds to wait between restart and /v1/healthz probe'
+        description: 'Seconds to wait between restart and /v1/readyz probe'
         required: false
         type: string
         default: '15'
@@ -1430,6 +1430,15 @@ jobs:
         # query path) and, on r1, re-runs the version-skew probe that
         # found the second incident and requires skew == 0.
         #
+        # GH-910: readiness is asserted on /v1/readyz, not /v1/healthz —
+        # healthz's body is a constant "ok", so it could never fail
+        # while the process was up. readyz runs the Postgres, schema-
+        # head and closed-bucket checkers (503 on a critical failure)
+        # and reports "degraded" when a non-critical one (redis, a
+        # dirty schema_migrations row) is down; both fail this step.
+        # The /v1/assets page read runs on EVERY region, so the test
+        # nets get a real query-path read, not just a probe.
+        #
         # The binaries are already live when this runs, so a miss here
         # cannot roll anything back — a RED JOB is the loud signal that
         # the operator must act (fix-forward or re-run the deploy with
@@ -1474,21 +1483,22 @@ jobs:
             echo "OK 200 GET $url"
           }
 
-          smoke /v1/healthz
+          smoke /v1/readyz
           status="$(jq -r '.data.status // empty' smoke-body.json)"
           if [ "$status" != "ok" ]; then
-            echo "::error::served-path smoke: ${API_BASE}/v1/healthz is 200 but .data.status='${status}' (want 'ok')"
+            echo "::error::served-path smoke: ${API_BASE}/v1/readyz is 200 but .data.status='${status}' (want 'ok'). Failing checks: $(jq -c '[.data.checks[]? | select(.ok != true)]' smoke-body.json)"
             cat smoke-body.json; echo
             exit 1
           fi
-          echo "OK healthz status=ok"
+          echo "OK readyz status=ok"
+
+          # The default page size the explorer UI requests, on every
+          # network.
+          smoke '/v1/assets?limit=100'
 
           if [ "$REGION" = "r1" ]; then
-            # The two list sizes the explorer actually requests: 500 is
-            # the sitemap/build fetch that 500'd on 2026-08-28; 100 is
-            # the default page size the UI uses.
+            # The sitemap/build fetch that 500'd on 2026-08-28.
             smoke '/v1/assets?limit=500'
-            smoke '/v1/assets?limit=100'
 
             # Version-skew assertion over the SSH path the playbook
             # step already materialised (~/.ssh/id_deploy + the pinned
