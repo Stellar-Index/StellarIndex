@@ -82,7 +82,7 @@ jobs:
         # relaxation, so assert-deploy-gate.sh always demands reviewers.
         run: bash scripts/ci/assert-deploy-gate.sh "$ENV_NAME"
 
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         if: inputs.stage == 'create-and-deploy'
         with:
           package_json_file: web/explorer/package.json
@@ -138,7 +138,7 @@ jobs:
 
       - name: Deploy to the new project
         if: inputs.stage == 'create-and-deploy'
-        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        uses: cloudflare/wrangler-action@4e88846969242f7752bcfdaf5511bfbb3985ca47 # v4.1.1
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
