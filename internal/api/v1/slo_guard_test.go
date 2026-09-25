@@ -4,7 +4,13 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 )
 
 // TestSLORoutesNeverTouchTheLake pins the multi-region plan's §3a invariant
@@ -78,6 +84,55 @@ func TestSLORoutesNeverTouchTheLake(t *testing.T) {
 	for name, found := range sloHandlers {
 		if !found {
 			t.Errorf("SLO'd handler %s not found in package — renamed? Update this guard alongside slo.yml, or the invariant silently un-pins", name)
+		}
+	}
+}
+
+// TestSLORoutesMatchTheCacheBand pins #820: the SLO burn-rate rules' route
+// set (sloHandlers above, mirrored in slo.yml's `route=~` regex) must be a
+// subset of middleware.SLOPriceRoutes, the single source of truth
+// cachecontrol.go's short-cache-band switch and its own probe-TTL test
+// share. A route that pages on the p95 latency SLO but isn't in
+// SLOPriceRoutes would silently sit outside the cache band the SLO's
+// freshness assumption depends on — exactly the drift #820 found between
+// this file, slo.yml and the probe-TTL test's hand-typed list.
+func TestSLORoutesMatchTheCacheBand(t *testing.T) {
+	inBand := make(map[string]bool, len(middleware.SLOPriceRoutes))
+	for _, p := range middleware.SLOPriceRoutes {
+		inBand[p] = true
+	}
+
+	// The route each sloHandlers entry above answers, kept in lockstep
+	// with that map's comments.
+	sloRoutes := []string{
+		"/v1/price",
+		"/v1/price/batch",
+		"/v1/oracle/latest",
+		"/v1/oracle/lastprice",
+		"/v1/oracle/prices",
+		"/v1/oracle/x_last_price",
+	}
+	for _, route := range sloRoutes {
+		if !inBand[route] {
+			t.Errorf("SLO'd route %s is not in middleware.SLOPriceRoutes — TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe will not bound it", route)
+		}
+	}
+
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(root, "configs/prometheus/rules.r1/slo.yml"))
+	if err != nil {
+		t.Fatalf("read slo.yml: %v", err)
+	}
+	m := regexp.MustCompile(`route=~"([^"]+)"`).FindSubmatch(b)
+	if m == nil {
+		t.Fatal("slo.yml: no route=~\"...\" regex found to check against SLOPriceRoutes")
+	}
+	for _, route := range strings.Split(string(m[1]), "|") {
+		if !inBand[route] {
+			t.Errorf("slo.yml route %s is not in middleware.SLOPriceRoutes", route)
 		}
 	}
 }
