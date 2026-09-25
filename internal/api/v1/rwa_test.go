@@ -21,9 +21,11 @@ package v1_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -264,6 +266,33 @@ func TestRWAAssets_AdmitsADeclaredAndRecognisedAsset(t *testing.T) {
 	}
 	if v.Definition.DocumentationURL == "" || len(v.Definition.Requirements) != 4 {
 		t.Errorf("definition not served with the rows: %+v", v.Definition)
+	}
+}
+
+// TestRWAAssets_FullIssuerPageMakesTheTotalALowerBound pins
+// CA2-A06-correct-3 on the classic arm: an issuer whose listing page fills
+// may hold a member in the unread tail, so a total over the served rows is
+// partial even when every one of them is valued.
+func TestRWAAssets_FullIssuerPageMakesTheTotalALowerBound(t *testing.T) {
+	page := []timescale.AssetRow{rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312)}
+	for i := len(page); i < 500; i++ {
+		page = append(page, rwaRow(fmt.Sprintf("FILL%03d", i), rwaGoodIssuer, nil, 1))
+	}
+	v := getRWA(t, rwaServer(t,
+		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")},
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{rwaGoodIssuer: page},
+	))
+	if len(v.Assets) != 1 || v.Summary.AssetsUnvalued != 0 || v.Summary.MarketCapUSD == nil {
+		t.Fatalf("assets = %v unvalued = %d cap = %v, want one valued row",
+			rwaAssetIDs(v), v.Summary.AssetsUnvalued, v.Summary.MarketCapUSD)
+	}
+	if !v.Summary.LowerBound || !v.Summary.Truncated {
+		t.Errorf("lower_bound/truncated = %v/%v, want true/true with a full issuer page",
+			v.Summary.LowerBound, v.Summary.Truncated)
+	}
+	if !strings.Contains(v.Summary.Basis, "1 member issuer(s) have more classic assets than one listing page reads") {
+		t.Errorf("basis does not name the page cap: %q", v.Summary.Basis)
 	}
 }
 

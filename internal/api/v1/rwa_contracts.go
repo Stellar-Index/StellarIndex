@@ -437,14 +437,18 @@ func (s *Server) rwaUnreachedEntities(ctx context.Context, tags []string) []rwaU
 //
 // # The two fills the pipeline cannot do
 //
-//  1. SUPPLY AND MARKET CAP. fillMarketCapsFromSupply reads two maps,
-//     both keyed by classic identity — the supply_1d rollup and a
-//     trustline-balance sum. A SEP-41 contract has no trustlines, so
-//     both miss and every contract row would be `supply_unavailable`
-//     forever. The supply for these tokens lives in the certified lake
-//     (stellar.supply_flows), which is where /v1/assets/{id} and
-//     /v1/assets/{id}/supply already read it from. This reuses that
-//     reader rather than adding a second supply path.
+//  1. SUPPLY AND MARKET CAP. fillMarketCapsFromSupply reads three maps:
+//     the precise supply observations, the SAC lake flows and a
+//     trustline-balance sum. Only the precise map can reach a contract
+//     row (its asset_key is the contract id for a pure SEP-41 token), and
+//     only for the few tokens the supply observer watches; every other
+//     contract row would be `supply_unavailable` forever. The supply for
+//     these tokens lives in the certified lake (stellar.supply_flows),
+//     which is where /v1/assets/{id} and /v1/assets/{id}/supply already
+//     read it from. fillContractMarketCaps reuses that reader, and it is
+//     the last word on a contract row's cap: it drops whatever cap the
+//     generic fill wrote once it holds its own supply reading, and every
+//     cap on a row whose scale was not read.
 //  2. THE SCAM SUPPRESSION. fillIssuerDirectoryTags keys on the issuer
 //     G-address and skips every row without one, so a contract asset has
 //     never been subject to the directory scam gate on any surface. On
@@ -491,7 +495,10 @@ func (s *Server) rwaContractListingRows(
 
 	// The /v1/assets post-query pipeline, in its order — see
 	// rwaListingRows for why the whole sequence runs rather than a
-	// chosen subset.
+	// chosen subset. Its market-cap fill makes its own lake decimals read
+	// (applyConfirmedListingDecimals) and can still divide by the default
+	// 7 when that read misses; fillContractMarketCaps below discards any
+	// such cap.
 	s.stampListingCollisions(details)
 	s.applySubstanceGateToListing(ctx, details)
 	s.fillMarketCapsFromSupply(ctx, details, map[string]int{})
@@ -600,6 +607,7 @@ func (s *Server) fillContractMarketCaps(
 	ctx context.Context, rows []AssetDetail, src map[string]timescale.AssetRow,
 	scaled map[string]struct{},
 ) (cut bool) {
+	refuseUnscaledContractCaps(rows, scaled)
 	if s.tokenSupply == nil {
 		return false
 	}
@@ -612,6 +620,9 @@ func (s *Server) fillContractMarketCaps(
 		if !ok {
 			continue
 		}
+		// This reading owns the cap from here: a figure the generic fill
+		// derived from a different supply must not survive a refusal below.
+		row.MarketCapUSD = nil
 		b := basis.String()
 		row.SupplyBasis = &b
 		// The supply is a raw chain fact and is served either way. The
@@ -650,6 +661,21 @@ func (s *Server) fillContractMarketCaps(
 		row.MarketCapUSD = &mc
 	}
 	return false
+}
+
+// refuseUnscaledContractCaps drops the cap from every row whose scale was
+// not read, whichever supply produced it: the generic listing fill divides
+// by the catalogue's default 7 when it has no reading.
+func refuseUnscaledContractCaps(rows []AssetDetail, scaled map[string]struct{}) {
+	for i := range rows {
+		if _, ok := scaled[rows[i].AssetID]; ok {
+			continue
+		}
+		rows[i].MarketCapUSD = nil
+		if rows[i].CirculatingSupply != nil {
+			rows[i].DecimalsUnresolved = true
+		}
+	}
 }
 
 // contractSupplyReading resolves one contract token's circulating supply and
