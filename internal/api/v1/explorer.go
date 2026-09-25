@@ -127,6 +127,7 @@ func explorerHandlerFor(s *Server, opts Options, logger *slog.Logger) *explorerp
 		PoolTokens:         opts.ProtocolPoolTokens,
 		Directory:          opts.Directory,
 		ContractProtocol:   s.contractProtocol,
+		TokenDecimals:      s.resolveTokenDecimals,
 		LookupUSDPrice:     s.lookupUSDPrice,
 		IsKnownSAC:         s.isKnownSAC,
 		LakeWatermark:      s.lakeWatermark,

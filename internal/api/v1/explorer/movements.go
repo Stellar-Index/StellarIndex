@@ -26,6 +26,8 @@ type SEP41MovementsReader interface {
 // AccountMovementEntry is one row in the wire response for GET
 // /v1/accounts/{g_strkey}/movements (ADR-0048 D5). Amount is a string
 // (ADR-0003 — i128 exceeds IEEE 754 double precision above 2^53).
+// Decimals is Amount's per-row scale, omitted when unresolved so a client
+// never divides by a guessed exponent.
 type AccountMovementEntry struct {
 	Ledger          uint32         `json:"ledger"`
 	LedgerCloseTime string         `json:"ledger_close_time"`
@@ -36,6 +38,7 @@ type AccountMovementEntry struct {
 	Direction       string         `json:"direction"`
 	Asset           string         `json:"asset"`
 	Amount          string         `json:"amount"`
+	Decimals        *int           `json:"decimals,omitempty"`
 	Counterparty    string         `json:"counterparty,omitempty"`
 	Provenance      string         `json:"provenance"`
 	Attributes      map[string]any `json:"attributes,omitempty"`
@@ -335,11 +338,8 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 	merged := mergeAccountMovementRows(chRows, pgRows, limit)
 	out := AccountMovementsView{
 		Account:      g,
-		Movements:    make([]AccountMovementEntry, len(merged)),
+		Movements:    h.accountMovementEntries(ctx, merged),
 		CoverageNote: coverageNote,
-	}
-	for i, m := range merged {
-		out.Movements[i] = accountMovementEntryView(m)
 	}
 	if len(merged) == limit {
 		// Pin the boundary this sequence committed to (the live watermark
@@ -650,6 +650,64 @@ func movementRowIsNewer(x, y clickhouse.AccountMovementRow) bool {
 		return x.OpIndex > y.OpIndex
 	}
 	return x.LegIndex > y.LegIndex
+}
+
+// classicAmountDecimals is the protocol-fixed stroop scale of native,
+// classic credit and liquidity-pool-share amounts.
+const classicAmountDecimals = 7
+
+// movementDecimalsBudget bounds a whole page's token-decimals reads, so a
+// page of many distinct Soroban tokens cannot stretch the request.
+const movementDecimalsBudget = 2 * time.Second
+
+// accountMovementEntries renders the merged page, resolving each distinct
+// asset's decimals once (the feed spans every token contract since
+// ADR-0048, so the scale is per asset, never a feed-wide 7).
+func (h *Handler) accountMovementEntries(ctx context.Context, merged []clickhouse.AccountMovementRow) []AccountMovementEntry {
+	dctx, cancel := context.WithTimeout(ctx, movementDecimalsBudget)
+	defer cancel()
+	scales := make(map[string]*int)
+	out := make([]AccountMovementEntry, len(merged))
+	for i, m := range merged {
+		d, seen := scales[m.Asset]
+		if !seen {
+			d = h.movementAssetDecimals(dctx, m.Asset)
+			scales[m.Asset] = d
+		}
+		out[i] = accountMovementEntryView(m)
+		out[i].Decimals = d
+	}
+	return out
+}
+
+// movementAssetDecimals returns a movement asset's smallest-unit scale, or
+// nil when it is unknown: an unrecognised asset spelling, no decimals seam,
+// or a failed contract read.
+func (h *Handler) movementAssetDecimals(ctx context.Context, asset string) *int {
+	if strings.HasPrefix(asset, "pool:") {
+		d := classicAmountDecimals
+		return &d
+	}
+	parsed, err := canonical.ParseAsset(asset)
+	if err != nil {
+		return nil
+	}
+	switch parsed.Type {
+	case canonical.AssetNative, canonical.AssetClassic:
+		d := classicAmountDecimals
+		return &d
+	case canonical.AssetSoroban:
+		if h.TokenDecimals == nil {
+			return nil
+		}
+		if d, ok := h.TokenDecimals(ctx, parsed.ContractID); ok {
+			return &d
+		}
+		return nil
+	default:
+		// fiat / crypto / rwa never reach an on-chain movement feed.
+		return nil
+	}
 }
 
 // accountMovementEntryView renders one merged row as its wire shape.

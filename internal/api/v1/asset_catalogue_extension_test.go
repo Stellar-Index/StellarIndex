@@ -319,3 +319,45 @@ func TestAssetGet_NativeObservationCountIsAbsent(t *testing.T) {
 		t.Errorf("observation_count served for native XLM, which has no trade count: %s", body)
 	}
 }
+
+// The curated scam warning is a static lookup on the issuer, so it must
+// survive every way the catalogue-row read can come back empty, and the
+// cached replay must carry it too.
+func TestAssetGet_IssuerScamReason_SurvivesCatalogueRowMiss(t *testing.T) {
+	const scamIssuer = "GDOEVDDBU6OBWKL7VHDAOKD77UP4DKHQYKOKJJT5PR3WRDBTX35HUEUX"
+	const want = "Scam (stellar.expert)"
+	asset, err := canonical.NewClassicAsset("SCAM", scamIssuer)
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+	cases := []struct {
+		name   string
+		assets v1.AssetsReader
+	}{
+		{"row read deadline", &stubAssetsReaderExt{rowErr: context.DeadlineExceeded}},
+		{"no catalogue row", &stubAssetsReaderExt{rowErr: sql.ErrNoRows}},
+		{"no assets reader", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := &stubAssetReader{byID: map[string]v1.AssetDetail{
+				asset.String(): {AssetID: asset.String(), Type: "classic", Code: "SCAM", Issuer: sptr(scamIssuer)},
+			}}
+			srv := v1.New(v1.Options{Assets: reader, AssetsReader: tc.assets})
+			ts := httpTestServer(t, srv)
+			for _, pass := range []string{"fresh", "cached"} {
+				resp := mustGet(t, ts.URL+"/v1/assets/"+asset.String())
+				var env struct {
+					Data v1.AssetDetail `json:"data"`
+				}
+				if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+					t.Fatalf("%s: decode: %v", pass, err)
+				}
+				_ = resp.Body.Close()
+				if env.Data.IssuerScamReason != want {
+					t.Errorf("%s: issuer_scam_reason = %q, want %q", pass, env.Data.IssuerScamReason, want)
+				}
+			}
+		})
+	}
+}

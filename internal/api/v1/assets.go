@@ -3442,6 +3442,10 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// before caching, so it's the only correct place to set it.
 	detail.Kind = "stellar_asset"
 
+	// A static lookup on the asset's own issuer: the curated scam warning
+	// must not depend on any overlay's DB read succeeding.
+	stampIssuerScamReason(&detail, parsed)
+
 	// Real-decimals overlay for Soroban tokens (from the lake's captured
 	// instance METADATA). MUST run before applyF2Fields — the market-cap /
 	// FDV math divides by 10^detail.Decimals. Classic + native are always
@@ -3480,7 +3484,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	s.applyF2Fields(r.Context(), &detail, parsed)
 
 	// Asset-catalogue overlay (R-018 final) — lifts price / top_markets
-	// / history / changes / ATH / scam_reason from the assetsReader catalogue
+	// / history / changes / ATH from the assetsReader catalogue
 	// so /v1/assets/{id} is a superset of /v1/coins/{slug}. Skipped
 	// for fiat:* (no asset-catalogue row); a no-op when no AssetsReader is
 	// wired or the asset has no asset-catalogue row.

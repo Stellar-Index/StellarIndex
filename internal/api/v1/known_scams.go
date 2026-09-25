@@ -1,5 +1,7 @@
 package v1
 
+import "github.com/Stellar-Index/StellarIndex/internal/canonical"
+
 // knownScams flags G-strkeys that stellar.expert's directory marks
 // as malicious, scam, or unsafe. Until we wire a runtime fetch
 // against api.stellar.expert/explorer/public/directory/<g> (which
@@ -120,4 +122,12 @@ func scamReason(gStrkey string) string {
 		return entry.Reason
 	}
 	return ""
+}
+
+// stampIssuerScamReason sets the curated scam warning from the asset's own
+// issuer, so a failed or slow catalogue read cannot drop it from the detail.
+func stampIssuerScamReason(detail *AssetDetail, asset canonical.Asset) {
+	if reason := scamReason(asset.Issuer); reason != "" {
+		detail.IssuerScamReason = reason
+	}
 }

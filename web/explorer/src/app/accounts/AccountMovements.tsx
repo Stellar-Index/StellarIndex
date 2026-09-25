@@ -25,6 +25,7 @@ import {
 import { apiGet, asExample } from '@/api/client';
 import { useLedgerFollow } from '@/lib/live/hooks';
 import type { components } from '@/api/types';
+import { formatBaseUnits } from '@/lib/format';
 import {
   type Envelope,
   formatTimestamp,
@@ -393,7 +394,7 @@ function MovementRow({ m }: { m: AccountMovement }) {
         <AssetLink canonical={m.asset} />
       </Td>
       <Td align="right" className="font-mono">
-        {formatMovementAmount(m.amount)}
+        {formatMovementAmount(m.amount, m.decimals)}
       </Td>
       <Td>
         <CounterpartyCell counterparty={m.counterparty} />
@@ -466,15 +467,16 @@ function capitalize(w: string): string {
   return w.length === 0 ? w : w.charAt(0).toUpperCase() + w.slice(1);
 }
 
-// formatMovementAmount — amount is a decimal string at the asset's native
-// smallest-unit scale (ADR-0003); the wire does NOT carry a per-row
-// decimals field. Every row on this feed is either a classic Stellar asset
-// (fixed 7-decimal stroop scale — a protocol-wide invariant, same as XLM)
-// or, on the rare genuine-Soroban-native-token post-P23 row, falls back to
-// that same 7-decimal scale. This is the identical "no per-row decimals on
-// the wire, default 7" convention ContractView's TransfersPanel uses for
-// the same reason; stroopsToXlm does the actual division as an exact BigInt
-// divide (never a float above 2^53) so large amounts stay faithful.
-function formatMovementAmount(amount: string): string {
-  return stroopsToXlm(amount);
+// formatMovementAmount — amount is a base-unit string (ADR-0003) scaled by
+// the row's own `decimals`: the feed spans every SEP-41 contract, so one
+// feed-wide scale mis-states non-7-decimal tokens by powers of ten. An
+// absent `decimals` means the API could not resolve the scale; the raw
+// base units are shown, labelled, rather than divided by a guessed 7.
+export function formatMovementAmount(
+  amount: string,
+  decimals: number | null | undefined,
+): string {
+  if (decimals == null) return `${formatBaseUnits(amount, 0)} base units`;
+  if (decimals === 7) return stroopsToXlm(amount);
+  return formatBaseUnits(amount, decimals, Math.min(decimals, 7));
 }
