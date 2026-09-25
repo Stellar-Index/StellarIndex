@@ -756,3 +756,24 @@ func TestValidateWebhookName_CountsCodePoints(t *testing.T) {
 		t.Error("201 code points accepted")
 	}
 }
+
+// TestValidateEvents_AcceptsTheCanonicalSet pins subscription validation
+// to platform.WebhookEventTypes(): every member is subscribable and the
+// rejection names every member, so a new type cannot be refused with a
+// message that predates it (GH-1348).
+func TestValidateEvents_AcceptsTheCanonicalSet(t *testing.T) {
+	for _, e := range platform.WebhookEventTypes() {
+		if err := validateEvents([]string{string(e)}); err != nil {
+			t.Errorf("validateEvents(%q) = %v, want nil", e, err)
+		}
+	}
+	err := validateEvents([]string{"not.a.type"})
+	if err == nil {
+		t.Fatal("validateEvents accepted an unknown type")
+	}
+	for _, e := range platform.WebhookEventTypes() {
+		if !strings.Contains(err.Error(), string(e)) {
+			t.Errorf("rejection %q does not name supported type %q", err.Error(), e)
+		}
+	}
+}

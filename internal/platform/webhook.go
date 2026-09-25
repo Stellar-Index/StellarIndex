@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,7 +30,8 @@ const (
 	WebhookEventIncidentResolved WebhookEventType = "incident.resolved"
 
 	// WebhookEventAnomalyFreeze fires when the aggregator engages a
-	// freeze on a (asset, quote) the customer cares about.
+	// freeze on an (asset, quote). It goes to EVERY subscribed webhook:
+	// there is no per-account pair filter.
 	WebhookEventAnomalyFreeze WebhookEventType = "anomaly.freeze"
 
 	// WebhookEventDivergenceFiring fires when a price-divergence
@@ -47,6 +49,30 @@ const (
 	// observed_price, bucket, at).
 	WebhookEventPriceAlert WebhookEventType = "price.alert"
 )
+
+// WebhookEventTypes returns every [WebhookEventType] in declaration order.
+// It is the one membership list: subscription validation, metric seeding
+// and their guards all read it, and TestWebhookEventTypesListsEveryConstant
+// fails when a constant above is missing from it.
+func WebhookEventTypes() []WebhookEventType {
+	return []WebhookEventType{
+		WebhookEventIncidentSEV1,
+		WebhookEventIncidentResolved,
+		WebhookEventAnomalyFreeze,
+		WebhookEventDivergenceFiring,
+		WebhookEventPriceAlert,
+	}
+}
+
+// IsWebhookEventType reports whether s names a member of [WebhookEventTypes].
+func IsWebhookEventType(s string) bool {
+	for _, e := range WebhookEventTypes() {
+		if string(e) == s {
+			return true
+		}
+	}
+	return false
+}
 
 // CustomerWebhook is an outbound HTTPS endpoint a customer
 // registers to receive event notifications. Stripe-shape:
@@ -120,6 +146,11 @@ func (d WebhookDelivery) IsTerminal() bool {
 	return !d.DeliveredAt.IsZero() || d.NextAttemptAt.IsZero()
 }
 
+// ErrDeliveryAlreadyEnqueued reports an EnqueueDelivery whose ID is already
+// queued for that webhook: the event reached the subscriber on an earlier
+// attempt, so nothing was inserted and nothing was lost.
+var ErrDeliveryAlreadyEnqueued = errors.New("platform: webhook delivery already enqueued")
+
 // WebhookStore persists [CustomerWebhook] and [WebhookDelivery].
 type WebhookStore interface {
 	// CreateWebhook registers a new outbound endpoint, enforcing
@@ -190,11 +221,18 @@ type WebhookStore interface {
 	// ListPendingDeliveries. attempt_count starts at 0;
 	// NextAttemptAt zero is normalised to "now" so the first
 	// poll picks it up immediately.
+	//
+	// d.ID is the row's primary key and so its idempotency key: a
+	// second enqueue with an ID already queued for the same webhook
+	// inserts nothing and returns an error wrapping
+	// [ErrDeliveryAlreadyEnqueued]. A zero ID gets a fresh random one.
 	EnqueueDelivery(ctx context.Context, d WebhookDelivery) error
 
-	// ListPendingDeliveries returns up to `limit` deliveries
-	// whose next_attempt_at is in the past, ordered FIFO. The
-	// delivery worker calls this on each poll tick.
+	// ListPendingDeliveries claims up to `limit` deliveries whose
+	// next_attempt_at is in the past: FIFO within each webhook, with
+	// every due webhook's oldest row ahead of any webhook's second so
+	// one endpoint's backlog cannot fill the batch. The delivery
+	// worker calls this on each poll tick.
 	ListPendingDeliveries(ctx context.Context, limit int) ([]WebhookDelivery, error)
 
 	// MarkDelivered records a successful POST: stamps

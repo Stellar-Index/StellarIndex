@@ -45,6 +45,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -112,6 +113,9 @@ const (
 	// defaultMaxAttempts is Options.MaxAttempts' default; see its doc.
 	defaultMaxAttempts = 15
 
+	// defaultConcurrency is Options.Concurrency's default.
+	defaultConcurrency = 8
+
 	// defaultHTTPTimeout bounds a single delivery POST. It also bounds
 	// each attempt's webhook lookup + HTTP work (see tick). The write that
 	// records the outcome is bounded separately by markWriteTimeout, so
@@ -123,10 +127,11 @@ const (
 	// on each row (`next_attempt_at = now() + 5m`; see the package doc /
 	// internal/platform/postgresstore/webhook_store.go). A row not
 	// finished within the lease is re-claimed by a second worker and
-	// DOUBLE-delivered. The worker processes a batch SERIALLY, so the
-	// worst-case time to reach the last row is
-	// BatchLimit × (Timeout + markWriteTimeout); that product MUST stay
-	// comfortably under this lease.
+	// DOUBLE-delivered. One endpoint's rows are delivered serially and a
+	// batch may be all one endpoint's, so the worst-case time to reach the
+	// last row is still BatchLimit × (Timeout + markWriteTimeout), however
+	// many endpoints run in parallel; that product MUST stay comfortably
+	// under this lease.
 	storeLeaseDuration = 5 * time.Minute
 
 	// markWriteTimeout bounds the store write that records an attempt's
@@ -171,18 +176,22 @@ type Options struct {
 	PollInterval time.Duration
 
 	// BatchLimit caps how many deliveries each poll drains.
-	// Default 25 (defaultBatchLimit). The worker processes a batch
-	// SERIALLY and the store leases each claimed row for
-	// storeLeaseDuration (5m); a row not reached before its lease
+	// Default 25 (defaultBatchLimit). The store leases each claimed row
+	// for storeLeaseDuration (5m); a row not reached before its lease
 	// expires is re-claimed by a second worker and DOUBLE-delivered.
 	// INVARIANT: BatchLimit × (HTTPClient.Timeout + markWriteTimeout)
 	// MUST stay under the 5-minute store lease (default
-	// 25 × (10s + 1s) = 275s < 300s). The
-	// compile-time guard beside the defaults enforces it for the
-	// default values; if you raise this, keep the product under the
-	// lease. Higher values bias toward throughput at the cost of
-	// postgres lock duration per cycle and shrink that safety margin.
+	// 25 × (10s + 1s) = 275s < 300s). Concurrency does not relax it:
+	// one endpoint's rows are serial and a batch can be all one
+	// endpoint's. New panics on a resolved Options that breaks it.
 	BatchLimit int
+
+	// Concurrency caps how many ENDPOINTS a batch delivers to in
+	// parallel. Each endpoint's rows run serially, in claim order, so one
+	// endpoint never has two POSTs in flight from this worker, and a
+	// stalled endpoint holds one slot instead of the whole queue.
+	// Default 8 (defaultConcurrency).
+	Concurrency int
 
 	// MaxAttempts before a delivery is marked permanently failed.
 	// Default 15: with backoffCeiling's 30s→doubling→1h-capped schedule
@@ -247,6 +256,9 @@ func newWorker(store DeliveryStore, opts Options, clientFor func(*http.Client) *
 	}
 	if opts.MaxAttempts <= 0 {
 		opts.MaxAttempts = defaultMaxAttempts
+	}
+	if opts.Concurrency <= 0 {
+		opts.Concurrency = defaultConcurrency
 	}
 	opts.HTTPClient = clientFor(opts.HTTPClient)
 	if opts.Logger == nil {
@@ -341,9 +353,11 @@ func (w *Worker) Stop() {
 	<-w.doneCh
 }
 
-// tick drains one batch from the pending queue. Errors during the
-// batch are logged + counted; the loop continues to the next
-// delivery so one bad row doesn't stall the queue.
+// tick drains one batch from the pending queue: one lane per endpoint,
+// up to Options.Concurrency lanes at once, each lane serial in claim
+// order. Errors are logged + counted per delivery so one bad row doesn't
+// stall the queue, and one slow endpoint delays only its own lane. tick
+// returns when every lane has finished.
 func (w *Worker) tick(ctx context.Context) {
 	pending, err := w.store.ListPendingDeliveries(ctx, w.opts.BatchLimit)
 	if err != nil {
@@ -352,19 +366,49 @@ func (w *Worker) tick(ctx context.Context) {
 		obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("list_error").Inc()
 		return
 	}
-	for _, d := range pending {
-		// Bound each attempt to the per-request timeout so the worst-case
-		// serial batch time stays BatchLimit × (Timeout + markWriteTimeout)
-		// — the basis for the BatchLimit-vs-lease invariant (see
-		// Options.BatchLimit). A single stuck delivery can't blow the batch
-		// past the 5-minute store lease and let a second worker re-claim
-		// the tail. This deadline covers the webhook lookup and the POST
-		// only; the outcome write has its own (see Worker.mark), because
-		// this one is already spent exactly when the POST timed out.
+	slots := make(chan struct{}, w.opts.Concurrency)
+	var wg sync.WaitGroup
+	for _, lane := range lanesByWebhook(pending) {
+		slots <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer func() { <-slots; wg.Done() }()
+			w.deliverLane(ctx, lane)
+		}()
+	}
+	wg.Wait()
+}
+
+// deliverLane delivers one endpoint's rows in order. Each attempt is
+// bounded by the per-request timeout, so no lane — and therefore no batch
+// — outlives BatchLimit × (Timeout + markWriteTimeout), the basis for the
+// BatchLimit-vs-lease invariant (see Options.BatchLimit). This deadline
+// covers the webhook lookup and the POST only; the outcome write has its
+// own (see Worker.mark), because this one is already spent exactly when
+// the POST timed out.
+func (w *Worker) deliverLane(ctx context.Context, lane []platform.WebhookDelivery) {
+	for _, d := range lane {
 		attemptCtx, cancel := context.WithTimeout(ctx, w.attemptTimeout())
 		w.deliverOneRecovered(attemptCtx, d)
 		cancel()
 	}
+}
+
+// lanesByWebhook groups a claimed batch by endpoint, keeping claim order
+// both across lanes (by each endpoint's first row) and within each lane.
+func lanesByWebhook(pending []platform.WebhookDelivery) [][]platform.WebhookDelivery {
+	index := map[uuid.UUID]int{}
+	var lanes [][]platform.WebhookDelivery
+	for _, d := range pending {
+		i, ok := index[d.WebhookID]
+		if !ok {
+			i = len(lanes)
+			index[d.WebhookID] = i
+			lanes = append(lanes, nil)
+		}
+		lanes[i] = append(lanes[i], d)
+	}
+	return lanes
 }
 
 // deliverOneRecovered isolates a single delivery's panic to that delivery
