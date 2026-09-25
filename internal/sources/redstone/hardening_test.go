@@ -178,9 +178,8 @@ func TestDecode_EqualArity_StateWriteMismatch_FallsBackToPayload(t *testing.T) {
 	// real payload whose feed medians match those prices exactly: the
 	// state-write claim disagrees (only BTC's key is reported changed),
 	// but the payload independently and uniquely corroborates BOTH
-	// feeds, so the fallback must attribute rather than refuse — the
-	// contract internal/dispatcher/state_write_keys.go documents
-	// ("the worst case is a fallback, never a misattribution").
+	// feeds, so the fallback must attribute rather than refuse (the
+	// degradation internal/dispatcher/state_write_keys.go documents).
 	ev := hardeningEvent(t, []string{"BTC", "ETH"})
 	payload := buildTestPayload(t, 1_745_000_000_000, map[string][]int64{
 		"BTC": {1_000_000},

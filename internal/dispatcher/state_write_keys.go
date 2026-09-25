@@ -36,12 +36,14 @@ import (
 // `removed` is a deletion, not a value write. P23 `restored` changes are
 // ignored on BOTH sides (the lake twin's query selects only
 // state/created/updated rows): a restored-then-rewritten-unchanged entry therefore has
-// no visible pre-image and would count as changed on both paths equally —
-// consumers treat StateWriteKeys as best-effort input with their own
-// arity check + fallback (Redstone falls back to payload-median
-// alignment), so the worst case is a fallback, never a misattribution.
-// Any per-key parse/marshal failure excludes that key (fail toward the
-// consumer's fallback, mirroring the lake extractor's skip-and-tolerate).
+// no visible pre-image and would count as changed on both paths equally.
+// Any per-key parse/marshal failure excludes that key (mirroring the lake
+// extractor's skip-and-tolerate). Consumers treat StateWriteKeys as
+// best-effort input with their own arity check + fallback, so either
+// degradation sends Redstone to payload-median alignment. That fallback
+// is NOT misattribution-free: see the F1 CAVEAT in
+// internal/sources/redstone/payload.go for the residual it carries and
+// the part of it these keys close.
 
 // contractDataWrite is one value-changing contract-data write.
 type contractDataWrite struct {
