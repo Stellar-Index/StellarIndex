@@ -1512,7 +1512,7 @@ func (o *Orchestrator) decideBucket(
 		// rather than leaving it standing (see clearCompositeReference).
 		o.clearCompositeReference(pair, window)
 	}
-	conf, confOK := o.computeConfidence(ctx, pair, window, vwap, mb.returns(prevForConfidence), trades)
+	conf, confOK := o.computeConfidence(ctx, pair, window, vwap, mb.returns(prevForConfidence), trades, now)
 	// The freeze's source_count leg (ADR-0019 3-signal AND) reads the
 	// INDEPENDENCE signal, not just the direct trade sources: a pair
 	// reproduced by ≥2 mutually-agreeing, confidence-gated router routes

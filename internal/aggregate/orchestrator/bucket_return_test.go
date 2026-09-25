@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -114,6 +115,27 @@ func TestMarginalBuckets_FallsBackToPublishedWhenWindowHoldsOneMinute(t *testing
 	}
 	if got := mb.returns(nil); len(got) != 0 {
 		t.Errorf("returns scored a lone minute with no comparator: %v", got)
+	}
+}
+
+// A minute whose predecessor printed k minutes earlier is scored in the
+// baseline's one-minute unit — the raw move over sqrt(k) — whether the
+// predecessor is in the window or is the previous decision's minute.
+func TestMarginalBuckets_ScalesAReturnAcrossEmptyMinutes(t *testing.T) {
+	o := New(&mockStore{}, nil, Config{})
+	pair := xlmUSDPair(t)
+	at := time.Date(2026, 7, 25, 12, 0, 30, 0, time.UTC)
+	first := makeXLMUSDTrade(t, "soroswap", 1_000_000, 1_000_000, at)
+	second := makeXLMUSDTrade(t, "soroswap", 1_000_000, 1_210_000, at.Add(10*time.Minute))
+	rets := o.scoreMinutes([]canonical.Trade{first, second}, pair, "k", nil).returns(nil)
+	if want := 0.21 / math.Sqrt(10); len(rets) != 1 || math.Abs(rets[0].Fraction()-want) > 1e-12 {
+		t.Errorf("in-window predecessor 10m back: returns = %v, want one %v", rets, want)
+	}
+
+	third := makeXLMUSDTrade(t, "soroswap", 1_000_000, 1_331_000, at.Add(25*time.Minute))
+	rets = o.scoreMinutes([]canonical.Trade{third}, pair, "k", nil).returns(nil)
+	if want := 0.1 / math.Sqrt(15); len(rets) != 1 || math.Abs(rets[0].Fraction()-want) > 1e-12 {
+		t.Errorf("previous decision's minute 15m back: returns = %v, want one %v", rets, want)
 	}
 }
 

@@ -18,12 +18,14 @@ import (
 // new print by closedBucket/window, while the class thresholds and the
 // z-score baseline are calibrated per closed bucket (ADR-0019). Empty minutes
 // have no baseline row, so the predecessor is the previous NON-EMPTY minute —
-// the construction the baseline trains on. Scoring every minute since the
+// the construction the baseline trains on — and Phase 2 scales that return by
+// the minutes between them as the baseline does (baseline.NewBucketReturn);
+// Phase 1's class thresholds stay on the raw move. Scoring every minute since the
 // previous decision rather than only the newest keeps a move that lands in
 // one batch (ingest backlog, skipped tick) measured against the level before
 // the batch.
 type marginalBuckets struct {
-	pred    *big.Rat     // VWAP before minutes[0]; nil when none is known
+	pred    *minuteVWAP  // the minute before minutes[0]; nil when none is known
 	minutes []minuteVWAP // oldest first; empty only when no minute can be priced
 	rolling *big.Rat     // the window's VWAP: the observation when minutes is empty
 }
@@ -33,8 +35,12 @@ type minuteVWAP struct {
 	vwap *big.Rat
 }
 
-// priceStep is one scored move: curr against its comparator prev.
-type priceStep struct{ prev, curr *big.Rat }
+// priceStep is one scored move: curr against its comparator prev, elapsed
+// apart (0 when prev's minute is unknown, i.e. the published fallback).
+type priceStep struct {
+	prev, curr *big.Rat
+	elapsed    time.Duration
+}
 
 // scoreMinutes prices the minutes this decision scores from the window's own
 // (already filtered) trades through the served VWAP path, and records the
@@ -62,7 +68,7 @@ func (o *Orchestrator) scoreMinutes(trades []canonical.Trade, pair canonical.Pai
 		}
 		at := time.Unix(0, k).UTC()
 		if len(newestFirst) > 0 && (!haveLast || at.Before(last.at)) {
-			mb.pred = v
+			mb.pred = &minuteVWAP{at: at, vwap: v}
 			break
 		}
 		newestFirst = append(newestFirst, minuteVWAP{at: at, vwap: v})
@@ -76,7 +82,7 @@ func (o *Orchestrator) scoreMinutes(trades []canonical.Trade, pair canonical.Pai
 	if mb.pred == nil && haveLast && last.at.Before(mb.minutes[0].at) {
 		// The previous decision's minute has left the window (or lost its
 		// trades to the filters); it is still the previous non-empty minute.
-		mb.pred = last.vwap
+		mb.pred = &last
 	}
 	if o.scoredMinutes == nil {
 		o.scoredMinutes = make(map[string]minuteVWAP)
@@ -96,18 +102,23 @@ func (o *Orchestrator) bucketVWAP(trades []canonical.Trade, pair canonical.Pair)
 // steps returns every scored move. The first minute is measured against
 // fallback — the last published VWAP — only when no earlier minute is known;
 // when no minute could be priced the rolling move against fallback stands in.
+// A fallback comparison has no known minute, so its elapsed is 0.
 func (mb marginalBuckets) steps(fallback *big.Rat) []priceStep {
 	if len(mb.minutes) == 0 {
 		return []priceStep{{prev: fallback, curr: mb.rolling}}
 	}
-	prev := mb.pred
-	if prev == nil {
-		prev = fallback
+	prev := minuteVWAP{vwap: fallback}
+	if mb.pred != nil {
+		prev = *mb.pred
 	}
 	out := make([]priceStep, 0, len(mb.minutes))
 	for _, m := range mb.minutes {
-		out = append(out, priceStep{prev: prev, curr: m.vwap})
-		prev = m.vwap
+		s := priceStep{prev: prev.vwap, curr: m.vwap}
+		if !prev.at.IsZero() {
+			s.elapsed = m.at.Sub(prev.at)
+		}
+		out = append(out, s)
+		prev = m
 	}
 	return out
 }
@@ -140,7 +151,8 @@ func (mb marginalBuckets) worstStep(fallback *big.Rat) priceStep {
 }
 
 // returns is Phase 2's observation set: every comparable step as a bucket
-// return. Empty when nothing is comparable.
+// return, scaled by its elapsed minutes exactly as the baseline's training
+// returns are. Empty when nothing is comparable.
 func (mb marginalBuckets) returns(fallback *big.Rat) []baseline.BucketReturn {
 	var out []baseline.BucketReturn
 	for _, s := range mb.steps(fallback) {
@@ -149,7 +161,7 @@ func (mb marginalBuckets) returns(fallback *big.Rat) []baseline.BucketReturn {
 		}
 		p, _ := s.prev.Float64() // i128:ok price ratio for the z-score observation, not an amount
 		c, _ := s.curr.Float64() // i128:ok price ratio for the z-score observation, not an amount
-		if r, ok := baseline.NewBucketReturn(p, c); ok {
+		if r, ok := baseline.NewBucketReturn(p, c, s.elapsed); ok {
 			out = append(out, r)
 		}
 	}

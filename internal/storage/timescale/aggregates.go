@@ -1848,11 +1848,10 @@ func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from,
 }
 
 // VWAPsForPair1m returns chronologically-ordered (oldest-first) VWAP
-// values from prices_1m where bucket falls in [from, to). Used by
-// the baseline refresher to pull the 30-day training window for a
-// pair. Returns the bare float series (not the full Vwap1mRow) —
-// the caller's downstream consumer (`baseline.ReturnsFromVWAPs`)
-// only needs the prices, not the metadata.
+// values from prices_1m where bucket falls in [from, to), without
+// timestamps. The baseline refresher reads [Store.TimedVWAPsForPair1m]
+// instead: empty minutes have no row, so `baseline.ReturnsFromVWAPs`
+// needs each bucket's end to scale a return across a gap.
 //
 // Empty slice + nil error when the pair has no closed buckets in
 // the window.

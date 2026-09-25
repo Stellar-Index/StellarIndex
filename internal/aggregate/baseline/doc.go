@@ -5,9 +5,9 @@
 //   - [Baseline] — combined robust-stats result with an attached
 //     [Baseline.ZScore] method for "how anomalous is this new
 //     return"
-//   - [ReturnsFromVWAPs] — convert a sequence of bucket VWAPs into
-//     bucket-to-bucket percent changes (the input the baseline
-//     summarises)
+//   - [ReturnsFromVWAPs] — convert a timed sequence of bucket VWAPs
+//     into bucket-to-bucket returns scaled to one minute (the input
+//     the baseline summarises)
 //
 // The math is intentionally split off from the storage layer (the
 // `volatility_baseline_1m` CAGG that feeds it) and from the

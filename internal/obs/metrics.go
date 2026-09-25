@@ -122,6 +122,7 @@ func registerAppMetrics() {
 		AggregatorSupplyRefreshTotal,
 		SEP41SupplyRollupAdvancesTotal,
 		AggregatorConfidenceComputeTotal,
+		AggregatorBaselineAgeSeconds,
 
 		ChLiveSinkLedgersTotal,
 
@@ -4256,7 +4257,8 @@ var SEP41SupplyRollupAdvanceDurationSeconds = prometheus.NewHistogramVec(
 //   - ok                       — score computed + cached cleanly
 //   - skipped                  — first-tick / no prev-VWAP comparator
 //   - baseline_missing         — MultiBaseline absent or in full bootstrap
-//   - marshal_error            — score JSON encode failed (unreachable in practice)
+//   - baseline_stale           — baseline row older than the one-day ceiling; read as bootstrap
+//   - marshal_error           — score JSON encode failed (unreachable in practice)
 //   - write_error              — Redis write of confidence: key failed
 //   - divergence_read_error    — Redis Get on div:<asset> errored (best-effort; sentinel passed)
 //   - divergence_decode_error  — div:<asset> JSON decode failed
@@ -4272,6 +4274,18 @@ var AggregatorConfidenceComputeTotal = prometheus.NewCounterVec(
 		Help: "Confidence-score compute outcomes per (pair, window) × tick. See package docs for the full label vocabulary.",
 	},
 	[]string{"outcome"},
+)
+
+// AggregatorBaselineAgeSeconds — per-pair age of the volatility baseline
+// row the confidence step read (now − computed_at). Refresh outcomes are
+// counted only in aggregate, so this is where one pair whose refresh keeps
+// failing shows up.
+var AggregatorBaselineAgeSeconds = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_baseline_age_seconds",
+		Help: "Age in seconds of the volatility baseline row the confidence step last read, per pair.",
+	},
+	[]string{"pair"},
 )
 
 // VerifyArchiveLedgersVerified — counter of ledgers successfully
