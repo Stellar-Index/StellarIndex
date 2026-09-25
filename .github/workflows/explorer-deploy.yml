@@ -151,9 +151,12 @@ jobs:
           echo "Resolved: network=$NETWORK api=$api project=$project"
 
       - name: Set up pnpm
+        # T547: package_json_file reads web/explorer/package.json's
+        # `packageManager` pin instead of a version input that floats
+        # independently of it.
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86  # v6
         with:
-          version: 10
+          package_json_file: web/explorer/package.json
           run_install: false
 
       - name: Set up Node

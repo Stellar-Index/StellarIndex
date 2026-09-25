@@ -53,6 +53,10 @@ permissions:
   # permissions block). Granting write here handed it to every job in the
   # workflow, including the matrix that compiles untrusted-adjacent input.
   contents: read
+  # RLT-375 (audit-2026-09-18): resolve-tag queries the Actions API for
+  # the tagged commit's CI conclusion before anything is built or
+  # published — read-only, same least-privilege posture as `contents`.
+  actions: read
   # F-1296 (codex audit-2026-05-13): `id-token: write` was removed
   # here when nothing consumed the OIDC JWT. It is now granted —
   # but only at JOB level on the `release` job (see its
@@ -87,22 +91,65 @@ jobs:
           else
             tag="$REF_NAME"
           fi
+          # Q228/RNC25 (audit-2026-09-18): `grep -Eq '^...$'` anchors
+          # per LINE, not per string — a multi-line $tag whose first
+          # line is a valid SemVer still matches, and the extra lines
+          # would ride along into GITHUB_OUTPUT verbatim. Reject any
+          # embedded newline outright (a real git ref/tag can never
+          # contain one; only workflow_dispatch's free-text input can),
+          # then validate with bash's `[[ =~ ]]`, which anchors ^/$ to
+          # the whole string rather than processing line-by-line.
+          case "$tag" in
+            *$'\n'*)
+              echo "::error::Tag input contains a newline; refusing."
+              exit 1
+              ;;
+          esac
           # Sanity-check tag shape; abort early on garbage so we don't
           # publish a v-prefix-typo release.
-          if ! echo "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?(\+[A-Za-z0-9.-]+)?$'; then
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?(\+[A-Za-z0-9.-]+)?$ ]]; then
             echo "::error::Tag '$tag' does not match SemVer vX.Y.Z[-prerelease][+build]"
             exit 1
           fi
           # Pre-release detection: '-' between version core and any
           # identifier (per semver.org §9). Build metadata ('+...')
           # alone does NOT make it a pre-release.
-          if echo "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+-'; then
+          if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+- ]]; then
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
           else
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          # Heredoc-safe multi-line form (GitHub Actions' documented way
+          # to write a value to GITHUB_OUTPUT that might contain
+          # newlines) — belt-and-braces now that the newline case above
+          # is already rejected.
+          {
+            echo "tag<<GH_OUTPUT_EOF"
+            echo "$tag"
+            echo "GH_OUTPUT_EOF"
+          } >> "$GITHUB_OUTPUT"
           echo "Resolved tag: $tag"
+      - name: Require a green CI run on this commit
+        # RLT-375 (audit-2026-09-18): a tag push has no precondition
+        # tying it to a passing CI run on that commit — ci.yml doesn't
+        # even trigger on tag pushes, so nothing stopped tagging (and
+        # releasing) a commit CI never ran on. Skipped for
+        # workflow_dispatch: that path re-builds an EXISTING tag, an
+        # explicit maintainer action, not a fresh cut.
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          conclusion="$(gh api "repos/${REPO}/actions/runs?head_sha=${COMMIT_SHA}&per_page=50" \
+            --jq '[.workflow_runs[] | select(.path == ".github/workflows/ci.yml")] | sort_by(.run_number) | last | .conclusion // "missing"')"
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::ci.yml's most recent run for commit ${COMMIT_SHA} concluded '${conclusion}' (expected success). Refusing to release untested code."
+            exit 1
+          fi
+          echo "ci.yml concluded success for ${COMMIT_SHA}."
 
   # Build every binary we ship (linux/amd64 only — see the goarch
   # comment below). fail-fast: false keeps each binary's build

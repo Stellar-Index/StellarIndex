@@ -2,17 +2,25 @@ package incidents
 
 import (
 	"io/fs"
+	"os"
 	"strings"
 	"testing"
 )
 
 // TestLoad_RealCorpus exercises the actual embedded markdown
-// files. At time of writing the corpus is one real incident
-// (2026-05-06 Postgres lock-table) plus _template.md (skipped).
+// files. At time of writing the corpus is four real incidents plus
+// _template.md (skipped).
 //
 // A new entry shipping with a future PR should still make this
 // pass — Load is content-shape agnostic; this asserts the loader
 // round-trips the embedded fixtures.
+//
+// T177 (audit-2026-09-18): Load() silently drops a post that fails
+// to parse (deliberate, per the package doc — one bad post shouldn't
+// break the feed) and only logs a warning. A `len(got) != 0` check
+// can't tell "every post parsed" from "all but one silently didn't":
+// cross-check against the real file count on disk so a corpus file
+// that stops parsing fails this test instead of vanishing quietly.
 func TestLoad_RealCorpus(t *testing.T) {
 	got, err := Load(nil)
 	if err != nil {
@@ -21,6 +29,22 @@ func TestLoad_RealCorpus(t *testing.T) {
 	if len(got) == 0 {
 		t.Fatalf("Load: returned 0 incidents; expected at least one real entry under data/")
 	}
+
+	entries, err := os.ReadDir("data")
+	if err != nil {
+		t.Fatalf("ReadDir(data): %v", err)
+	}
+	wantCount := 0
+	for _, e := range entries {
+		if e.IsDir() || strings.HasPrefix(e.Name(), "_") || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		wantCount++
+	}
+	if len(got) != wantCount {
+		t.Fatalf("Load: parsed %d incident(s), but data/ has %d non-template .md file(s) — a post is being silently dropped (see the Warn log for which)", len(got), wantCount)
+	}
+
 	for i, inc := range got {
 		if inc.Slug == "" {
 			t.Errorf("[%d] empty slug", i)
