@@ -116,18 +116,13 @@ func integrationGated(t *testing.T, path string) bool {
 // repo-relative directory, one integration-gated _test.go file found in it.
 func integrationGatedTestDirs(t *testing.T, root string) map[string]string {
 	t.Helper()
-	// Not Go source of this module: VCS metadata, nested agent checkouts
-	// (full copies of the repo under .claude/), JS dependency trees, and
-	// testdata (ignored by the go tool).
-	skip := map[string]bool{".git": true, ".claude": true, "node_modules": true, "testdata": true, "vendor": true}
-
 	dirs := map[string]string{}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
-			if path != root && skip[d.Name()] {
+			if path != root && outsideModule(path, d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -200,4 +195,19 @@ func TestPkgPatternCovers(t *testing.T) {
 			t.Errorf("pkgPatternCovers(%q, %q) = %v, want %v", c.pattern, c.dir, got, c.want)
 		}
 	}
+}
+
+// outsideModule reports whether dir holds no Go source of this module by
+// the go tool's own rules: dot/underscore dirs, testdata, and any nested
+// module. That covers gitignored checkouts (.claude worktrees, cloned
+// repos) that a fixed name list misses. node_modules and vendor are
+// dependency trees.
+func outsideModule(dir, name string) bool {
+	switch {
+	case strings.HasPrefix(name, "."), strings.HasPrefix(name, "_"),
+		name == "testdata", name == "node_modules", name == "vendor":
+		return true
+	}
+	_, err := os.Stat(filepath.Join(dir, "go.mod"))
+	return err == nil
 }
