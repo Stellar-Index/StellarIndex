@@ -134,11 +134,11 @@ func (t *RedisLoginThrottle) Allow(ctx context.Context, ip, email string) (bool,
 	// Per-IP cap (the spray-many-addresses dimension). An IP-less direct
 	// call (production shouldn't see one — Caddy/Cloudflare populate it)
 	// skips the IP dimension, same as the signup throttle. The address is
-	// masked to its throttle-key identity first — see [throttleIPKey];
+	// masked to its throttle-key identity first — see [ratelimit.ThrottleIPKey];
 	// without that an attacker with any IPv6 /64 rotates the /128 and
 	// never shares a bucket with themselves.
 	if ip != "" {
-		ok, err := t.incrUnderCap(ctx, t.keyPrefix+"ip:"+throttleIPKey(ip), t.maxPerIP)
+		ok, err := t.incrUnderCap(ctx, t.keyPrefix+"ip:"+ratelimit.ThrottleIPKey(ip), t.maxPerIP)
 		allowed = allowed && ok
 		if err != nil && firstErr == nil {
 			firstErr = err

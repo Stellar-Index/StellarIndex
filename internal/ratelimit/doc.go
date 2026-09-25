@@ -2,10 +2,13 @@
 //
 // # Why fixed-window, not token bucket or sliding window?
 //
-// Our API SLA is "1000 req/min per client".
-// That's a minute-granular ceiling, not a smooth-rate budget. A
-// fixed 1-minute window keyed on `rl:<key>:<min>` matches the
-// contract exactly + costs one Redis round-trip per request.
+// The limits are per-minute ceilings per client, set per tier by
+// `api.anon_rate_limit_per_min` and `api.key_rate_limit_per_min` (the
+// spec asks for at least 1000 req/min per client; the deployed values
+// live in config, not here). A minute-granular ceiling is not a
+// smooth-rate budget, so a fixed 1-minute window keyed on
+// `rl:<key>:<min>` matches it exactly and costs one Redis round-trip
+// per request.
 //
 // Sliding windows need two counters and weighted maths; token
 // buckets need INCRBYFLOAT + drift correction + more state per
@@ -29,11 +32,16 @@
 //
 // The production middleware charges one token before dispatch and
 // lets a handler re-price the request once it has parsed the parameter
-// that sets the cost (middleware.ChargeRateLimit). Today that is
-// GET/POST /v1/price/batch, at one token per de-duplicated asset id,
-// and GET /v1/assets, by the query plan the request selects. Cost is
-// clamped into [1, limit]; see [Bucket.Charge] for why neither end is
-// an error.
+// that sets the cost (middleware.ChargeRateLimit). The rule for which
+// routes must do so: any handler whose store work a client parameter
+// selects — a query plan, a collection size, a bucket granularity —
+// prices the request by that work before reading. Its call sites carry
+// the weights: GET/POST /v1/price/batch (one token per de-duplicated
+// asset id), GET /v1/assets (by query plan) and
+// GET /v1/history/since-inception (by granularity). Nothing enforces
+// the rule across routes yet, so a new route of that shape has to be
+// enrolled by hand. Cost is clamped into [1, limit]; see
+// [Bucket.Charge] for why neither end is an error.
 //
 // # Redis key shape
 //

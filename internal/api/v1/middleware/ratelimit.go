@@ -83,11 +83,13 @@ const MaxRateLimitKeyLen = 256
 //
 // plus an RFC 9457 problem+json body.
 //
-// Fail-open: a Redis outage does NOT reject requests. The middleware
-// logs the error at debug (so noise doesn't drown real signals) and
-// lets the request through. This mirrors the guidance in
-// [ratelimit.Bucket.Take]'s doc: the rate limiter is a policy knob,
-// not a hard dependency.
+// Redis failures follow the bucket's dwell-time policy (the
+// internal/ratelimit package doc, "Failure mode"): a transient error
+// inside the bucket's dwell-time (default [ratelimit.DefaultDwellTime])
+// fails OPEN — logged at debug, the request goes through — and
+// [ratelimit.ErrThrottleUnavailable], once the outage outlasts the
+// dwell-time, fails CLOSED with 503 +
+// Retry-After. Do not collapse the two branches into one fail-open.
 //
 // KeyFn decides the key: per-IP (default if nil), per-API-key, etc.
 // If KeyFn returns "" the request is not rate-limited. Skip allows

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
@@ -691,7 +692,35 @@ const (
 	// either: it pages raw trades through `limit`/`cursor` and takes no
 	// `granularity`.
 	historyMaxPoints = 50_000
+
+	// sinceInceptionPricingSpan is the history depth the since-inception
+	// rate-limit price assumes: roughly the network's age, fixed so a
+	// request's price does not creep up by the day.
+	sinceInceptionPricingSpan = 10 * 365 * 24 * time.Hour
 )
+
+// sinceInceptionCost is the rate-limit price, in tokens, of one
+// /v1/history/since-inception request. The client's `granularity`
+// selects how many buckets the unbounded read returns, and the read is
+// LIMITed to historyMaxPoints, so its work tracks the point count:
+// min(historyMaxPoints, span / bucket width). The default grain costs
+// the base token and every other grain its point count's multiple of
+// the default's, rounded DOWN — conservative, as the /v1/assets weights
+// are: 1m / 15m / 1h cost 13 against a measured production ratio of
+// ~15 (50,000 points at 1m vs 3,341 at 1d on the flagship pair,
+// 2026-09-09). An unknown grain costs the base token; it is a 400
+// before any read.
+func sinceInceptionCost(gran string) int {
+	width := timescale.HistoryGranularity(gran).BucketDuration()
+	if width <= 0 {
+		return 1
+	}
+	points := func(w time.Duration) int {
+		return min(historyMaxPoints, int(sinceInceptionPricingSpan/w))
+	}
+	base := points(timescale.HistoryGranularity(defaultHistoryGranularity).BucketDuration())
+	return max(1, points(width)/base)
+}
 
 // handleHistorySinceInception serves GET /v1/history/since-inception?
 // asset=<id>&quote=<id>&granularity=<g>. Returns CLOSED buckets
@@ -773,6 +802,9 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 	// surfaces scam.go promises stay visible — /v1/history's trade rows
 	// and /v1/observations — are untouched.
 	if s.seriesWithheldForScam(w, r, pair, "history_series") {
+		return
+	}
+	if !middleware.ChargeRateLimit(w, r, sinceInceptionCost(gran)) {
 		return
 	}
 

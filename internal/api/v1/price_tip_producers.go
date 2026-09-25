@@ -5,7 +5,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"net/netip"
 	"slices"
 	"strconv"
 	"sync"
@@ -17,6 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
@@ -662,7 +662,7 @@ func (s *Server) SetMaxTipProducersPerCaller(n int) {
 // for IPv6.
 //
 // The prefix, not the address (SEC-15, mirroring
-// middleware.remoteIPPrefixFor and streaming.maskStreamClientIP):
+// every per-IP cap — one definition, [ratelimit.ThrottleIPKey]):
 // residential and mobile ISPs delegate a whole /64 to one subscriber, so
 // a quota keyed on the full /128 is bypassed by rotating the low bits —
 // one fresh bucket per address, the quota never engages.
@@ -675,14 +675,7 @@ func tipProducerCaller(r *http.Request) string {
 	if ip == "" {
 		return unknownTipCaller
 	}
-	addr, err := netip.ParseAddr(ip)
-	if err != nil {
-		return ip
-	}
-	if addr.Is4() || addr.Is4In6() {
-		return addr.String()
-	}
-	return netip.PrefixFrom(addr, 64).Masked().Addr().String()
+	return ratelimit.ThrottleIPKey(ip)
 }
 
 // acquireTipProducer ensures a shared producer runs for the pair and

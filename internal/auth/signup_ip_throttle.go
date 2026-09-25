@@ -172,7 +172,7 @@ func (t *RedisSignupIPThrottle) CheckIP(ctx context.Context, ip string) error {
 	// billing meter).
 	//
 	// The address is masked to its throttle-key identity first — see
-	// [throttleIPKey]. Keying on the caller's exact IPv6 /128 made this
+	// [ratelimit.ThrottleIPKey]. Keying on the caller's exact IPv6 /128 made this
 	// cap free to bypass: one delegated /64 is 2^64 distinct addresses,
 	// each landing on its own empty bucket, so the bulk-account-mint
 	// vector F-1232 exists to close was open to anyone with IPv6
@@ -194,7 +194,7 @@ func (t *RedisSignupIPThrottle) CheckIP(ctx context.Context, ip string) error {
 	// exactly the bulk-mint vector F-1232 exists to close.
 	incrCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), signupThrottleIncrTimeout)
 	defer cancel()
-	count, err := t.counter.Incr(incrCtx, t.keyPrefix+throttleIPKey(ip))
+	count, err := t.counter.Incr(incrCtx, t.keyPrefix+ratelimit.ThrottleIPKey(ip))
 	if err != nil {
 		if t.observeRedisFailure() {
 			return ErrThrottleUnavailable

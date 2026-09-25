@@ -18,8 +18,10 @@ import (
 // Fields (minimum):
 //   - method, path, status, bytes, latency_ms
 //   - request_id (from RequestID middleware)
-//   - remote_ip (X-Forwarded-For first hop if present, else
-//     r.RemoteAddr stripped of the port)
+//   - remote_ip ([RemoteIP]: the rightmost X-Forwarded-For hop outside
+//     the trusted-proxy CIDRs when the peer is a trusted proxy, else
+//     r.RemoteAddr stripped of the port — never the first hop, which
+//     the caller writes)
 //   - user_agent
 //
 // 429 special case: a single misconfigured client (or a load

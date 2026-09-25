@@ -91,19 +91,10 @@
 //
 // # Middleware stack
 //
-// Applied in order (outermost first). See [Server.Handler] for the
-// authoritative ordering + rationale on each placement:
-//
-//	RequestID        → assigns X-Request-ID if absent / safe.
-//	HTTPMetrics      → records http_requests_total + duration hist.
-//	Logger           → structured access log per request (slog);
-//	                   populates remote_ip into ctx for downstream.
-//	Recoverer        → handler panics → 500 problem+json.
-//	SecurityHeaders  → X-Content-Type-Options: nosniff on every resp.
-//	CORS (optional)  → allow-list from [config.APIConfig.AllowedOrigins];
-//	                   outside RateLimit so OPTIONS preflight is free.
-//	RateLimit (opt.) → per-IP token bucket (internal/ratelimit); innermost
-//	                   so it sees Logger-populated remote_ip.
+// The order, outermost first, is listed once, in package middleware's
+// doc, and built by [Server.middlewareStack], which carries the
+// rationale for each placement. TestMiddlewareStackMatchesPackageDoc
+// fails when the two disagree.
 //
 // # What this package doesn't do
 //

@@ -222,39 +222,30 @@ func TestRemoteIPFor(t *testing.T) {
 	})
 }
 
-// TestMaskIPForThrottleKey pins the SEC-15 fix: IPv4 throttle keys stay
-// exact, but IPv6 throttle keys are aggregated to their /64 network
-// prefix so an attacker who controls an entire delegated /64 (common
-// for residential/mobile ISPs) can't mint one throttle bucket per
-// address by rotating within it.
-func TestMaskIPForThrottleKey(t *testing.T) {
+// TestRemoteIPThrottleKey pins the throttle identity the middleware
+// derives: IPv4 exact, IPv4-in-IPv6 unmapped to the same budget as its
+// IPv4 spelling, IPv6 aggregated to its /64 (SEC-15). The mask itself is
+// table-tested in internal/ratelimit; this proves the middleware uses it.
+func TestRemoteIPThrottleKey(t *testing.T) {
+	resetTrustedProxyConfig(t)
 	cases := []struct {
-		name string
-		ip   string
-		want string
+		name       string
+		remoteAddr string
+		want       string
 	}{
-		{"ipv4 unchanged", "203.0.113.7", "203.0.113.7"},
-		{"ipv6 masked to /64 — address 1", "2001:db8:1234:5678::1", "2001:db8:1234:5678::"},
-		{"ipv6 masked to /64 — address 2 in same /64", "2001:db8:1234:5678:ffff:ffff:ffff:ffff", "2001:db8:1234:5678::"},
-		{"ipv6 different /64 masks differently", "2001:db8:1234:9999::1", "2001:db8:1234:9999::"},
-		{"invalid input passed through", "not-an-ip", "not-an-ip"},
-		{"empty passed through", "", ""},
+		{"ipv4 unchanged", "203.0.113.7:4321", "203.0.113.7"},
+		{"ipv4-in-ipv6 shares the ipv4 budget", "[::ffff:203.0.113.7]:4321", "203.0.113.7"},
+		{"ipv6 masked to /64", "[2001:db8:1234:5678::1]:4321", "2001:db8:1234:5678::"},
+		{"ipv6 same /64 same key", "[2001:db8:1234:5678:ffff:ffff:ffff:ffff]:4321", "2001:db8:1234:5678::"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := maskIPForThrottleKey(tc.ip); got != tc.want {
-				t.Errorf("maskIPForThrottleKey(%q) = %q, want %q", tc.ip, got, tc.want)
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.RemoteAddr = tc.remoteAddr
+			if got := RemoteIPThrottleKey(req); got != tc.want {
+				t.Errorf("RemoteIPThrottleKey(RemoteAddr=%q) = %q, want %q", tc.remoteAddr, got, tc.want)
 			}
 		})
-	}
-
-	// The two same-/64 IPv6 addresses above must produce an IDENTICAL
-	// key — that's the actual anti-bypass property, not just "some
-	// transformation happened".
-	a := maskIPForThrottleKey("2001:db8:1234:5678::1")
-	b := maskIPForThrottleKey("2001:db8:1234:5678:ffff:ffff:ffff:ffff")
-	if a != b {
-		t.Fatalf("two addresses in the same /64 produced different throttle keys: %q vs %q", a, b)
 	}
 }
 
