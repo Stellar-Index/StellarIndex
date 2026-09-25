@@ -269,7 +269,7 @@ real (`internal/ops/chops/ch_backfill.go:36`,
 ### 2.2 Invocation
 
 ```
-run-heavy-job.sh sdex-hist-<window> \
+run-heavy-job.sh sdex-hist \
   stellarindex-ops ch-rebuild -config /etc/stellarindex.toml \
     -sources sdex -sdex -sdex-gaps -from <lo> -to <hi> -write
 ```

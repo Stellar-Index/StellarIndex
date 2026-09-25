@@ -292,6 +292,22 @@ PATH="$TMP/userbin:$PATH" run_cases "non-root"
 mkdir -p "$TMP/rootbin"; printf '#!/usr/bin/env bash\necho 0\n' > "$TMP/rootbin/id"; chmod +x "$TMP/rootbin/id"
 PATH="$TMP/rootbin:$PATH" run_cases "root (id stubbed)"
 
+# ── 11. NAME must be a job label, not the payload's own binary ───────
+# A dropped label ("run-heavy-job.sh stellarindex-ops supply …" instead
+# of "run-heavy-job.sh <label> stellarindex-ops supply …") shifts every
+# word left, so the wrapper would otherwise try to exec the binary's
+# own subcommand ("supply") as the command (F155).
+echo "  [NAME validation]"
+for bin in stellarindex-ops stellarindex-api stellarindex-migrate stellarindex-aggregator stellarindex-indexer stellarindex-sla-probe; do
+  env -u INVOCATION_ID "$WRAP" "$bin" supply seed-sac-balances >"$TMP/out" 2>"$TMP/err"
+  rc=$?
+  if [ "$rc" -eq 2 ] && [ ! -s "$TMP/out" ] && err_has "is a binary name, not a job label"; then
+    ok "NAME='$bin' refused as a job label before the payload runs"
+  else
+    bad "NAME='$bin' was not refused (rc=$rc, out='$(tr '\n' ' ' < "$TMP/out")', err='$(tr '\n' ' ' < "$TMP/err")')"
+  fi
+done
+
 # ── 10. nothing tells an operator to pick a per-attempt job name ─────
 echo "  [operator-facing text]"
 # git grep: tracked files only, so git-ignored local scratch never trips it.
