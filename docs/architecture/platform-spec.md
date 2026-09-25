@@ -19,8 +19,8 @@ status: design proposal — §7.2 admin endpoints split into SHIPPED vs proposed
 > (`internal/api/v1/dashboardauth/handlers.go:252`).
 > **Not built:** MFA/TOTP anywhere (§1.5), the `GET /v1/auth/whoami` route
 > (§2.1), the `permissions` JSON model (§2.2 — superseded by key scopes), the
-> `api_usage_events` event-ingestion pipeline (§3 — the table + CAGGs exist in
-> migration 0027 but are permanently empty), the staff perimeter (§7), the
+> `api_usage_events` event-ingestion pipeline (§3 — migration 0027 creates the
+> table, which stays empty; the CAGGs it names were never created), the staff perimeter (§7), the
 > MRR/ARR revenue surfaces (already covered by §4's SUPERSEDED banner), and
 > the GDPR data-subject-rights endpoints (§8.3 — no `data-export` or account
 > deletion route exists anywhere in `internal/api/v1`; also blocked on the
@@ -319,8 +319,9 @@ secret managers.
 > **Not implemented (verified 2026-09-02).** `internal/platform/usage.go:1-22`
 > says it plainly: `UsageStore`/`UsageEvent`/`UsageRollup` have **zero
 > implementations and zero callers**, nothing drains a Redis stream into
-> `AppendEvent`, and the `api_usage_events` hypertable + `api_usage_{5m,1h,1d}`
-> CAGGs from migration 0027 exist in the schema but are **never written to**.
+> `AppendEvent`, and the `api_usage_events` hypertable from migration 0027
+> exists in the schema but is **never written to**. The `api_usage_{5m,1h,1d}`
+> CAGGs 0027 names in a comment were **never created** by any migration.
 > Anything built on this section will silently see no rows.
 > **The live pipeline is a different package:** `internal/usage` — per-subject
 > and per-`endpoint×outcome` Redis INCR counters, rolled up every 5 minutes
@@ -802,10 +803,11 @@ audit-2026-07-23); the audit row carries `keys_clamped` /
 > section depends on.
 >
 > What exists today is operator closure: `PATCH /v1/admin/accounts/{id}`
-> with `status: closed` revokes every live Postgres-backed API key and makes
-> the status terminal (any later non-`closed` status is a 409). Dashboard
-> sessions are refused by the account-status gate and customer-webhook
-> deliveries fail terminally for a closed account. It erases no PII, does not
+> with `status: closed` revokes every live Postgres-backed API key and every
+> member's dashboard session, and makes the status terminal (any later
+> non-`closed` status is a 409). The account-status gate also refuses any
+> session a failed sweep left behind, and customer-webhook deliveries fail
+> terminally for a closed account. It erases no PII, does not
 > revoke passkeys or disable price alerts, and is not a substitute for the
 > erasure below.
 

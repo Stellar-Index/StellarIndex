@@ -268,9 +268,12 @@ func (r *UserStore) GetSession(ctx context.Context, id uuid.UUID) (platform.Sess
 // GetSessionByTokenHash is the authentication-path lookup: the caller
 // (resolveSession) hashes the incoming cookie token and looks the
 // active session up by hash. The sessions table stores only the hash,
-// so read-access to the table is not directly replayable.
+// so read-access to the table is not directly replayable. An expired
+// row is filtered here, not left to every caller: expired rows persist
+// until the session reaper's grace window passes.
 func (r *UserStore) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (platform.Session, error) {
-	const q = `SELECT ` + sessionColumns + ` FROM sessions WHERE token_hash = $1 AND revoked_at IS NULL`
+	const q = `SELECT ` + sessionColumns + ` FROM sessions
+		WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()`
 	row := r.s.db.QueryRowContext(ctx, q, tokenHash)
 	out, err := scanSession(row)
 	if err != nil {
@@ -371,8 +374,8 @@ func ipString(ip net.IP) (string, error) {
 // session reaper (internal/retentionreaper).
 //
 // Both states are terminal: every lookup filters `revoked_at IS NULL`,
-// the dashboard middleware refuses a row whose expires_at has passed,
-// and nothing moves expires_at forward.
+// the authentication lookup also filters `expires_at > now()`, and
+// nothing moves expires_at forward.
 func (r *UserStore) SweepEndedSessions(ctx context.Context, olderThan time.Time) (int64, error) {
 	const q = `
 		DELETE FROM sessions

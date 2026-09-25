@@ -102,8 +102,8 @@ type APIKeyBudgetStores struct {
 // the plaintext is shown once and Postgres keeps only the hash, so the
 // record cannot be rebuilt. Under the redis backend nothing needs
 // evicting: the tier clamp rewrites the canonical record in place
-// through [SelfServiceKeyManager], and suspension is enforced by the
-// Redis validator's own account-status gate.
+// through [SelfServiceKeyManager], and suspension and the account
+// overrides are read by the Redis validator's own account cache.
 func NewAPIKeyBudgetStores(platformKeys platform.APIKeyStore, rdb redis.Cmdable, authBackend string) APIKeyBudgetStores {
 	var st APIKeyBudgetStores
 	if platformKeys != nil {

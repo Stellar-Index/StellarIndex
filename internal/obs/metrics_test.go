@@ -552,6 +552,7 @@ func TestZeroSeed_F0033(t *testing.T) {
 		// "the look-up never got wired to the audit sink at all", which
 		// is the pre-fix state.
 		`stellarindex_admin_audit_write_failures_total{surface="staff_customer_lookup"} 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="admin_account_read"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="passkey_register"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="passkey_delete"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="passkey_clone_warning"} 0`,

@@ -4,9 +4,9 @@
 // and ZERO callers anywhere in the codebase — no async worker drains
 // a Redis stream into AppendEvent(Batch), nothing constructs a
 // UsageStore, and nothing reads UsageRollup. The api_usage_events
-// hypertable + api_usage_{5m,1h,1d} CAGGs these types model
-// (migrations/0027_platform_v1_schema.up.sql) exist in the schema
-// but are never written to.
+// hypertable these types model (migrations/0027_platform_v1_schema.up.sql)
+// exists and is never written to; the api_usage_{5m,1h,1d} CAGGs that
+// migration names in a comment were never created.
 //
 // Per-request billing/usage accounting is live via a DIFFERENT,
 // unrelated package: internal/usage (Redis INCR counters, see
@@ -50,9 +50,9 @@ type UsageEvent struct {
 	RequestID  string
 }
 
-// UsageRollup is a continuous-aggregate row from api_usage_5m,
-// api_usage_1h, or api_usage_1d. Same shape across all three
-// aggregates; only the bucket interval differs.
+// UsageRollup models a row of the planned (never created) api_usage_5m,
+// api_usage_1h and api_usage_1d aggregates. Same shape across all three;
+// only the bucket interval differs.
 type UsageRollup struct {
 	Bucket          time.Time
 	AccountID       uuid.UUID

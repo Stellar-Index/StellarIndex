@@ -105,7 +105,7 @@ type UserStore interface {
 	GetSession(ctx context.Context, id uuid.UUID) (Session, error)
 
 	// GetSessionByTokenHash looks up an active session by sha256 of the
-	// cookie token; ErrNotFound if absent or revoked. This is the
+	// cookie token; ErrNotFound if absent, revoked or expired. This is the
 	// authentication path: resolveSession hashes the incoming cookie and
 	// looks up by hash, so a leak of the sessions table (which stores
 	// only the hash) is not directly replayable.

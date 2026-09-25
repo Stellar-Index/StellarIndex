@@ -41,6 +41,13 @@ type PlatformAccountStore interface {
 	UpdateAtomic(ctx context.Context, id uuid.UUID, mutate func(*platform.Account) error) (before, after platform.Account, err error)
 }
 
+// AccountSessionRevoker is the narrow [platform.UserStore] slice account
+// closure needs to log every member out. postgresstore.UserStore satisfies it.
+type AccountSessionRevoker interface {
+	ListUsersForAccount(ctx context.Context, accountID uuid.UUID) ([]platform.User, error)
+	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error
+}
+
 // AdminAccountView is the wire shape the operator account endpoints
 // return — the account-level knobs an operator inspects / edits, no
 // customer PII beyond the billing email. Mirrors the dashboardauth
@@ -165,11 +172,12 @@ func (s *Server) requireReason(w http.ResponseWriter, r *http.Request) (string, 
 
 // handleAdminAccountGet serves GET /v1/admin/accounts/{id} — read the
 // account-level tier + overrides so an operator can inspect current
-// state before patching. Operator-tier only; read-only (no audit row —
-// the audit log records mutations, not reads, matching the staff
-// lookup's structured-log-only posture).
+// state before patching. Operator-tier only. The view carries the billing
+// email, so every successful read lands an "admin.account.read" audit row,
+// as the dashboard staff lookup does for the same PII.
 func (s *Server) handleAdminAccountGet(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireOperator(w, r, "/v1/admin/accounts/{id}"); !ok {
+	subject, ok := s.requireOperator(w, r, "/v1/admin/accounts/{id}")
+	if !ok {
 		return
 	}
 	if s.platformAccounts == nil {
@@ -193,6 +201,7 @@ func (s *Server) handleAdminAccountGet(w http.ResponseWriter, r *http.Request) {
 			"see X-Request-ID in server logs")
 		return
 	}
+	s.recordAdminAccountReadAudit(r, subject, acct)
 	writeJSON(w, adminAccountView(acct), Flags{})
 }
 
@@ -248,6 +257,7 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 	evicted, evictFailed := s.evictKeyCacheOnEnforcementChange(
 		r.Context(), subject, priorStatus, priorRateOverride, priorQuotaOverride, acct)
 	revoked, revokeFailed := s.revokeKeysOnClosure(r.Context(), subject, acct)
+	sessUsers, sessFailed := s.revokeSessionsOnClosure(r.Context(), acct)
 
 	before := adminAccountView(beforeAcct)
 	after := adminAccountView(acct)
@@ -261,9 +271,13 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 		"keys_evicted", evicted,
 		"key_evict_failures", evictFailed,
 		"keys_revoked", revoked,
-		"key_revoke_failures", revokeFailed)
-	s.recordAdminAccountAudit(r, subject, id.String(), reason, before, after,
-		adminAccountKeyOutcome{clamped: clamped, clampFailed: clampFailed, revoked: revoked, revokeFailed: revokeFailed})
+		"key_revoke_failures", revokeFailed,
+		"session_users_revoked", sessUsers,
+		"session_revoke_failures", sessFailed)
+	s.recordAdminAccountAudit(r, subject, id.String(), reason, before, after, adminAccountKeyOutcome{
+		clamped: clamped, clampFailed: clampFailed, revoked: revoked, revokeFailed: revokeFailed,
+		sessionUsers: sessUsers, sessionFailed: sessFailed,
+	})
 
 	writeJSON(w, after, Flags{})
 }
@@ -280,6 +294,7 @@ const accountClosedRevokeReason = "account closed"
 // recorded durably in its audit row.
 type adminAccountKeyOutcome struct {
 	clamped, clampFailed, revoked, revokeFailed int
+	sessionUsers, sessionFailed                 int
 }
 
 // writeAccountUpdateError maps an UpdateAtomic failure to its problem response.
@@ -336,6 +351,34 @@ func (s *Server) revokeKeysOnClosure(
 		s.invalidatePlatformKeyCache(ctx, cause, st, acct, k)
 	}
 	return revoked, failed
+}
+
+// revokeSessionsOnClosure revokes every dashboard session of each member of a
+// closed account, so closure is recorded on the session rows rather than
+// resting on the middleware's account-status gate alone. Like
+// revokeKeysOnClosure it runs on every PATCH that leaves the account closed,
+// so a re-PATCH retries a member a previous sweep failed on.
+func (s *Server) revokeSessionsOnClosure(ctx context.Context, acct platform.Account) (users, failed int) {
+	if acct.Status != platform.AccountClosed || s.platformUsers == nil {
+		return 0, 0
+	}
+	members, err := s.platformUsers.ListUsersForAccount(ctx, acct.ID)
+	if err != nil {
+		s.logger.Error("account closure: ListUsersForAccount failed; sessions stay unrevoked "+
+			"(the account-status gate still denies them); re-PATCH status=closed to retry",
+			"account_id", acct.ID, "err", err)
+		return 0, 1
+	}
+	for i := range members {
+		if err := s.platformUsers.RevokeAllUserSessions(ctx, members[i].ID); err != nil {
+			s.logger.Error("account closure: session revoke failed; re-PATCH status=closed to retry",
+				"account_id", acct.ID, "user_id", members[i].ID, "err", err)
+			failed++
+			continue
+		}
+		users++
+	}
+	return users, failed
 }
 
 // clampKeysAfterTierChange lowers every credential the account can still
@@ -410,8 +453,9 @@ func (s *Server) clampKeysAfterTierChange(
 // /v1/register mirror), so an "eviction" there is the permanent loss of the
 // customer's key on what may be a quota RAISE. [NewAPIKeyBudgetStores] leaves
 // CacheInvalidator nil in that mode and this function returns (0, 0); the
-// redis validator enforces suspension through its own account-status gate and
-// does not resolve account overrides at all, so nothing is left stale.
+// redis validator reads status and overrides through its own account cache,
+// which refreshes within auth.DefaultAccountStatusCacheTTL, so nothing needs
+// evicting.
 //
 // Reuses the tier-clamp eviction seam exactly (ListActiveForAccount +
 // InvalidateCachedKey). Best-effort and idempotent — a failure on one key never
@@ -654,6 +698,49 @@ func writeAccountNotFound(w http.ResponseWriter, r *http.Request) {
 		"no account with that id")
 }
 
+// auditSurfaceAdminAccountRead is the operator account read's label on
+// [obs.AdminAuditWriteFailuresTotal]; internal/obs seeds the same value.
+const auditSurfaceAdminAccountRead = "admin_account_read"
+
+// recordAdminAccountReadAudit persists the "admin.account.read" audit row:
+// which operator credential read which account's billing email. Best-effort
+// like every sibling: the read has already happened, so a sink failure is
+// counted and logged rather than failing the request.
+func (s *Server) recordAdminAccountReadAudit(r *http.Request, actor auth.Subject, acct platform.Account) {
+	if s.audit == nil {
+		return
+	}
+	meta, err := json.Marshal(map[string]any{
+		"actor_key_id":     actor.KeyID,
+		"actor_identifier": actor.Identifier,
+		"account_slug":     acct.Slug,
+	})
+	if err != nil {
+		obs.AdminAuditWriteFailuresTotal.WithLabelValues(auditSurfaceAdminAccountRead).Inc()
+		s.logger.Warn("admin account read: audit metadata marshal failed (skipping audit row)",
+			"err", err, "account_id", acct.ID)
+		return
+	}
+	entry := platform.AuditEntry{
+		AccountID:  acct.ID,
+		ActorKind:  platform.ActorStaff,
+		Action:     "admin.account.read",
+		TargetKind: "account",
+		TargetID:   acct.ID.String(),
+		Metadata:   meta,
+		UserAgent:  r.UserAgent(),
+		Timestamp:  time.Now().UTC(),
+	}
+	if ip := middleware.RemoteIP(r); ip != "" {
+		entry.IP = net.ParseIP(ip)
+	}
+	if err := s.audit.Append(r.Context(), entry); err != nil {
+		obs.AdminAuditWriteFailuresTotal.WithLabelValues(auditSurfaceAdminAccountRead).Inc()
+		s.logger.Warn("admin account read: audit append failed (best-effort)",
+			"err", err, "account_id", acct.ID, "actor_key_id", actor.KeyID)
+	}
+}
+
 // recordAdminAccountAudit persists the "account.override.set" audit
 // row. Best-effort — a sink failure logs at WARN and never blocks the
 // mutation (audit-log unavailability must not break staff workflows;
@@ -681,6 +768,9 @@ func (s *Server) recordAdminAccountAudit(
 		// by re-PATCHing status=closed.
 		"keys_revoked":        keys.revoked,
 		"key_revoke_failures": keys.revokeFailed,
+		// Members whose dashboard sessions the closure revoked.
+		"session_users_revoked":   keys.sessionUsers,
+		"session_revoke_failures": keys.sessionFailed,
 		"before": map[string]any{
 			"tier":                           before.Tier,
 			"status":                         before.Status,

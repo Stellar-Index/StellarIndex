@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
@@ -187,5 +188,49 @@ func TestRedisAPIKey_NoAccountReaderIsPreFixBehaviour(t *testing.T) {
 	}
 	if sub.KeyID != "kid_nogate" {
 		t.Errorf("Subject.KeyID = %q, want kid_nogate", sub.KeyID)
+	}
+}
+
+// TestRedisAPIKey_AccountOverridesResolved pins GH-965: on the default
+// redis backend an operator's account overrides are enforced on the next
+// Lookup, with the Postgres validator's cascade (the rate-limit override is
+// a floor, the monthly-quota override a ceiling), and a change lands once the
+// account cache refreshes.
+func TestRedisAPIKey_AccountOverridesResolved(t *testing.T) {
+	acct := acctWithStatus("acme", platform.AccountActive)
+	acct.RateLimitPerMinOverride = 50_000
+	acct.MonthlyRequestQuotaOverride = 2_000
+	accounts := &stubAccountStatusReader{bySlug: map[string]platform.Account{"acme": acct}}
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	v := NewRedisAPIKeyValidator(rdb, WithAccountStatus(accounts), WithClock(func() time.Time { return now }))
+	seedKey(t, mr, "sip_override_key", APIKeyRecord{
+		KeyID: "kid_override", Identifier: AccountIdentifier("acme"), Tier: TierAPIKey,
+		RateLimitPerMin: 1_000, MonthlyQuota: 100_000,
+	})
+
+	sub, err := v.Lookup(context.Background(), "sip_override_key")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if sub.RateLimitPerMin != 50_000 || sub.MonthlyQuota != 2_000 {
+		t.Fatalf("Subject budgets = %d/min, %d/month; want the overrides 50000/min, 2000/month",
+			sub.RateLimitPerMin, sub.MonthlyQuota)
+	}
+
+	// Operator clears both overrides: the per-key budget is enforced again
+	// once the account cache refreshes.
+	acct.RateLimitPerMinOverride, acct.MonthlyRequestQuotaOverride = 0, 0
+	accounts.bySlug["acme"] = acct
+	now = now.Add(DefaultAccountStatusCacheTTL + time.Second)
+	sub, err = v.Lookup(context.Background(), "sip_override_key")
+	if err != nil {
+		t.Fatalf("Lookup after refresh: %v", err)
+	}
+	if sub.RateLimitPerMin != 1_000 || sub.MonthlyQuota != 100_000 {
+		t.Errorf("Subject budgets after clearing = %d/min, %d/month; want the per-key 1000/min, 100000/month",
+			sub.RateLimitPerMin, sub.MonthlyQuota)
 	}
 }

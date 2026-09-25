@@ -1646,7 +1646,7 @@ distinguishable from "dead".
 
 Counter, label `surface` (`account_override` / `key_mint` /
 `key_revoke` / `status_notice` / `staff_customer_lookup` /
-`passkey_register` / `passkey_delete` / `passkey_clone_warning` /
+`admin_account_read` / `passkey_register` / `passkey_delete` / `passkey_clone_warning` /
 `passkey_login_replay`). `key_mint` and `key_revoke` also cover the
 dashboard's `/v1/dashboard/keys` routes; the four `passkey_*` surfaces
 are the passkey add/remove routes and the two refused-sign-in rows
@@ -1661,9 +1661,10 @@ worse). The consequence is that a tier override, a minted or revoked
 credential, or a public status notice can be live with no record of
 the actor, the reason, or the previous values.
 
-`staff_customer_lookup` is the one **read** in the set (C3-056):
-`GET /v1/account/admin/lookup` returns another customer's billing
-email, tier, status and every user's email + last-login. Nothing is
+`staff_customer_lookup` and `admin_account_read` are the **reads** in
+the set: `GET /v1/account/admin/lookup` returns another customer's
+billing email, tier, status and every user's email + last-login
+(C3-056), and `GET /v1/admin/accounts/{id}` returns the billing email. Nothing is
 mutated, which is precisely why the audit row is the only evidence
 the access happened — a lost row here is an unrecorded PII access,
 not an unrecorded change.
