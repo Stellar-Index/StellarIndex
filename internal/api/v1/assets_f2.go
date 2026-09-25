@@ -188,7 +188,10 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// already uses. Only fires when no observer snapshot exists (classic assets
 	// keep their Algorithm-2 snapshot), so it adds a CH read only for Soroban
 	// tokens.
-	if !haveSnap && s.tokenSupply != nil && asset.Type == canonical.AssetSoroban && asset.ContractID != "" {
+	// A stale observer snapshot yields to the live lake reading too, as the
+	// listing's precise arm yields to its lake arms past the same bound.
+	now := time.Now()
+	if (!haveSnap || supplyObservationStale(snap, now)) && s.tokenSupply != nil && asset.Type == canonical.AssetSoroban && asset.ContractID != "" {
 		// ts.Incomplete means the lake-flows net total is negative
 		// (Σ(burn+clawback) > Σmint) — the token's supply_flows are
 		// incompletely seeded (e.g. pre-Soroban SAC-wrapper mints not yet
@@ -245,6 +248,7 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// detail.PriceUSD (set by populatePriceUSD) + the snapshot; the
 	// wg.Wait barrier makes both safely visible.
 	if haveSnap {
+		detail.SupplyStale = supplyObservationStale(snap, now)
 		populateSupplyFields(detail, snap)
 		s.populateMarketCap(ctx, detail, asset, snap, key, priceSourceCount)
 	}
@@ -328,6 +332,22 @@ func populateSupplyFields(detail *AssetDetail, snap supply.Supply) {
 		v := string(snap.Basis)
 		detail.SupplyBasis = &v
 	}
+	if !snap.ObservedAt.IsZero() {
+		at := snap.ObservedAt.UTC()
+		detail.SupplyAsOf = wireTimePtr(&at)
+	}
+	if snap.LedgerSequence != 0 {
+		l := snap.LedgerSequence
+		detail.SupplyAsOfLedger = &l
+	}
+}
+
+// supplyObservationStale reports whether an observer snapshot is older
+// than preciseSupplyMaxAge — the bound the listing's precise arm applies
+// to the same asset_supply_history rows. A reading with no vintage (the
+// lake-flows fallback) is live, not stale.
+func supplyObservationStale(snap supply.Supply, now time.Time) bool {
+	return !snap.ObservedAt.IsZero() && now.Sub(snap.ObservedAt) > preciseSupplyMaxAge
 }
 
 // populatePriceUSD inlines detail.PriceUSD via the lookupUSDPrice
@@ -389,7 +409,16 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 		// market_cap / fdv have no value to compute against.
 		return
 	}
-	if detail.MarketCapDecimalsMismatch {
+	if detail.SupplyStale {
+		// Today's price times a supply nobody has observed for longer
+		// than preciseSupplyMaxAge is not a market cap. supply_as_of
+		// says how old it is; flags.stale marks the body.
+		return
+	}
+	if detail.MarketCapDecimalsMismatch || detail.DecimalsUnresolved {
+		// DecimalsUnresolved: the lake read failed and no projection row
+		// vouches for the scale, so detail.Decimals is a guess.
+		//
 		// Decimals lockstep refusal (applyTokenDecimals): the USD price
 		// above was normalised through the nonstandard_decimals_assets
 		// projection while detail.Decimals is the lake's reading, and the
@@ -610,12 +639,14 @@ func pctChange(nowStr, thenStr string) (string, error) {
 	pct := new(big.Rat).Quo(delta, then)
 	pct.Mul(pct, big.NewRat(100, 1))
 	out := pct.FloatString(2)
-	// Lead positives with "+" so the wire format distinguishes
-	// up-moves from down-moves visually. Suppress the prefix when
-	// the rounded output is "0.00" — a sub-cent positive delta
-	// reads as flat at two decimals, and showing "+0.00" misleads
-	// consumers that render the leading sign.
-	if pct.Sign() > 0 && out != "0.00" {
+	// A sub-cent delta in either direction reads as flat at two
+	// decimals: FloatString takes the '-' from the Rat's sign, not the
+	// rounded digits, so "-0.00" must collapse to "0.00" just as the
+	// positive branch never emits "+0.00".
+	switch {
+	case out == "-0.00":
+		out = "0.00"
+	case pct.Sign() > 0 && out != "0.00":
 		out = "+" + out
 	}
 	return out, nil

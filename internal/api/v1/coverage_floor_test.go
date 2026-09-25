@@ -1227,8 +1227,8 @@ func TestOHLCSeries_FiatQuoteBookOutranksSACQuotedPool(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
 	day1 := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 	day2 := day1.AddDate(0, 0, 1)
-	book := mkSeriesBar(day1, "0.0041", "0.0042", "0.0040", "0.0041", "100", "0.41", 1)
-	poolDay2 := mkSeriesBar(day2, "0.0035", "0.0036", "0.0034", "0.0035", "10", "0.035", 3)
+	book := mkSeriesBar(day1, "0.0041", "0.0042", "0.0040", "0.0041", "100000", "410", 1)
+	poolDay2 := mkSeriesBar(day2, "0.0035", "0.0036", "0.0034", "0.0035", "10000", "35", 3)
 	reader := &stubHistoryReader{ohlcByPair: map[string][]v1.OHLCSeriesBar{
 		pegAliasAquaClassic + "/" + usdcClassicID: {book},
 		pegAliasAquaSAC + "/" + pegAliasUSDCSAC: {
@@ -1329,7 +1329,7 @@ func TestOHLCSeries_XLMBookOutranksSACQuotedPool(t *testing.T) {
 func TestOHLCSeries_SACQuotedOnlyDepthIsServed(t *testing.T) {
 	usdc := installUSDCSACRegistry(t)
 	poolFloor := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
-	pool := mkSeriesBar(poolFloor, "0.0041", "0.0042", "0.0040", "0.0041", "1000", "4.1", 3)
+	pool := mkSeriesBar(poolFloor, "0.0041", "0.0042", "0.0040", "0.0041", "1000000", "4100", 3)
 	reader := &stubHistoryReader{ohlcByPair: map[string][]v1.OHLCSeriesBar{
 		aquaClassicID + "/" + pegAliasUSDCSAC: {pool},
 	}}
@@ -1372,7 +1372,7 @@ func TestOHLCSeries_SACQuotedDepthOutsideTheWindowStillCarriesItsFloor(t *testin
 	poolFloor := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 	reader := &stubHistoryReader{ohlcByPair: map[string][]v1.OHLCSeriesBar{
 		aquaClassicID + "/" + pegAliasUSDCSAC: {
-			mkSeriesBar(poolFloor, "0.0041", "0.0042", "0.0040", "0.0041", "1000", "4.1", 3),
+			mkSeriesBar(poolFloor, "0.0041", "0.0042", "0.0040", "0.0041", "1000000", "4100", 3),
 		},
 	}}
 	probe := &coverageFloorProbe{byPair: map[string]time.Time{

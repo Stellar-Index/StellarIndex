@@ -74,34 +74,53 @@ const tokenMetadataReadTimeout = 2 * time.Second
 // relationship, since neither package can see the other's constant.
 const sep41TransfersReadTimeout = 8 * time.Second
 
-// resolveTokenDecimals best-effort reads a token contract's on-chain
-// decimals() via the tokenDecimals reader, falling back to 7 on a nil
-// reader, a read error, or an uncaptured/non-standard token. Bounded
-// by its own short deadline so a slow metadata read can't stall the
-// transfer-list response.
-func (s *Server) resolveTokenDecimals(ctx context.Context, contractID string) int {
+// resolveTokenDecimals reads a token contract's on-chain decimals() via
+// the tokenDecimals reader, bounded by tokenMetadataReadTimeout. A nil
+// reader or an uncaptured/non-standard token is the documented default 7;
+// a FAILED read (error or deadline) returns ok=false, because the result
+// is published as the conversion factor for every amount beside it and a
+// guessed 7 on an 18-decimal token overstates each one 10^11-fold.
+func (s *Server) resolveTokenDecimals(ctx context.Context, contractID string) (decimals int, ok bool) {
 	if s.tokenDecimals == nil {
-		return defaultTokenDecimals
+		return defaultTokenDecimals, true
 	}
 	dctx, cancel := context.WithTimeout(ctx, tokenMetadataReadTimeout)
 	defer cancel()
 	d, found, err := s.tokenDecimals.TokenDecimals(dctx, contractID)
-	if err != nil || !found {
-		return defaultTokenDecimals
+	if err != nil {
+		s.logger.Warn("token decimals read failed; refusing to publish a default scale",
+			"contract_id", contractID, "err", err)
+		return 0, false
 	}
-	return int(d)
+	if !found {
+		return defaultTokenDecimals, true
+	}
+	return int(d), true
 }
 
 // resolveAssetDecimals returns the smallest-unit scale for a canonical
 // asset: the token contract's declared decimals() for Soroban tokens
-// (via resolveTokenDecimals), else the classic/native/fiat default of 7.
-// Callers resolve once per side per request — never per row — since a
-// /v1/history page shares one base+quote pair.
-func (s *Server) resolveAssetDecimals(ctx context.Context, a canonical.Asset) int {
+// (via resolveTokenDecimals, whose ok it passes through), else the
+// classic/native/fiat default of 7. Callers resolve once per side per
+// request — never per row — since a /v1/history page shares one
+// base+quote pair.
+func (s *Server) resolveAssetDecimals(ctx context.Context, a canonical.Asset) (decimals int, ok bool) {
 	if a.Type == canonical.AssetSoroban && a.ContractID != "" {
 		return s.resolveTokenDecimals(ctx, a.ContractID)
 	}
-	return defaultTokenDecimals
+	return defaultTokenDecimals, true
+}
+
+// writeDecimalsUnavailable is the refusal for a response whose
+// `decimals` field is its amounts' conversion factor when the token's
+// scale could not be read: a retryable 503 rather than a guessed 7.
+func writeDecimalsUnavailable(w http.ResponseWriter, r *http.Request, problemType string) {
+	if r.Context().Err() != nil {
+		return // client aborted: nothing to write to
+	}
+	writeProblem(w, r, problemType,
+		"Token decimals temporarily unavailable", http.StatusServiceUnavailable,
+		"the token contract's decimals() could not be read, and every amount in this response is scaled by it; retry shortly.")
 }
 
 // handleSEP41Transfers serves GET
@@ -191,13 +210,18 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, e)
 	}
 
+	decimals, ok := s.resolveTokenDecimals(r.Context(), contractID)
+	if !ok {
+		writeDecimalsUnavailable(w, r, "https://api.stellarindex.io/errors/sep41-transfers-transient")
+		return
+	}
 	resp := SEP41TransfersResponse{
 		ContractID: contractID,
 		Count:      len(entries),
 		Limit:      limit,
 		From:       fromAddr,
 		To:         toAddr,
-		Decimals:   s.resolveTokenDecimals(r.Context(), contractID),
+		Decimals:   decimals,
 		Transfers:  entries,
 	}
 	writeJSON(w, resp, Flags{})

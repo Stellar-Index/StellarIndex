@@ -379,6 +379,11 @@ type AssetDetail struct {
 	// "override"); null when no snapshot exists.
 	SupplyBasis *string `json:"supply_basis,omitempty"`
 
+	// SupplyAsOf / SupplyAsOfLedger date the supply observation; nil when
+	// the reading carries no vintage.
+	SupplyAsOf       *time.Time `json:"supply_as_of,omitempty"`
+	SupplyAsOfLedger *uint32    `json:"supply_as_of_ledger,omitempty"`
+
 	// VolumeUSD24h is the trailing-24h USD-denominated trade volume
 	// across every pair this asset participates in. "0" is a valid
 	// value (asset tracked, no trades in the window); null means
@@ -659,9 +664,10 @@ type OHLCSeriesResponse struct {
 	Intervals []OHLCSeriesBar `json:"intervals"`
 }
 
-// OHLCSeriesBar is one bar of an [OHLCSeriesResponse]. Prices and
-// volumes are decimal strings; VBaseDecimals / VQuoteDecimals are the
-// volume scales (nil when a contributing source is unrecognised).
+// OHLCSeriesBar is one bar of an [OHLCSeriesResponse]. Prices are
+// decimal strings, volumes integer smallest-unit strings;
+// VBaseDecimals / VQuoteDecimals are the volume scales (nil when a
+// contributing source is unrecognised).
 type OHLCSeriesBar struct {
 	T              time.Time `json:"t"`
 	O              string    `json:"o"`

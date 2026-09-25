@@ -2422,7 +2422,7 @@ paths:
                     l: '0.2034919999'
                     c: '0.2055899576'
                     v_base: '1751598864823776'
-                    v_quote: '359971028467214.0000042405'
+                    v_quote: '359971028467214'
                     v_base_decimals: 8
                     v_quote_decimals: 8
                     n: 11667
@@ -2432,7 +2432,7 @@ paths:
                     l: '0.2033449999'
                     c: '0.2055593613'
                     v_base: '844461854722825'
-                    v_quote: '173117716771324.0000032245'
+                    v_quote: '173117716771324'
                     v_base_decimals: 8
                     v_quote_decimals: 8
                     n: 8497
@@ -17722,8 +17722,8 @@ components:
         price_usd:          { type: [string, "null"], description: "Current per-asset USD price as a fixed-precision decimal string — same value `/v1/price?asset=…&quote=fiat:USD` returns. Inlined so wallet UIs don't need a second round-trip. Null when no USD price can be derived. When `price_basis` is present the value is NOT a market observation — see that field." }
         price_basis:        { type: string, enum: [declared_peg, transitive], description: "Present ONLY when price_usd is not a DIRECT market observation. `declared_peg`: the price was filled from an operator-declared 1:1 fiat peg × the current fiat→USD FX rate (pricing_guard.fiat_pegged_classic_assets) because no market-derived price survived the thin-market substance gate — peg-priced rows deliberately carry no change pills, sparkline claim, or market_cap derived from the peg, because the fill asserts a conversion basis, not a market. `transitive`: the price was derived through ONE intermediate hop (asset→hop, hop→USD) where the asset has no direct USD or XLM market of its own; BOTH legs are independently substance-gated before the value is served, so a thin intermediate cannot reprice everything quoted against it. Note this value is served ONLY here — `/v1/price` answers for direct markets and returns no price for a transitive asset. Absent = direct market-derived (the pre-existing contract, unchanged)." }
         change_24h_pct:     { type: [string, "null"], description: "Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. \"+1.27\", \"-0.05\", \"0.00\"). Null when the asset has no current USD price or no comparison bucket ~24h ago." }
-        market_cap_usd:     { type: [string, "null"], description: "circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch)." }
-        fdv_usd:            { type: [string, "null"], description: "max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null, USD price unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch)." }
+        market_cap_usd:     { type: [string, "null"], description: "circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch). Also null, with flags.stale true, when the supply observation is older than six hours (see supply_as_of) or when a Soroban token's decimals() read failed and no confirmed value vouches for the scale." }
+        fdv_usd:            { type: [string, "null"], description: "max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null, USD price unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch). Also null, with flags.stale true, when the supply observation is older than six hours (see supply_as_of) or when a Soroban token's decimals() read failed and no confirmed value vouches for the scale." }
         market_cap_low_liquidity: { type: boolean, description: "True when market_cap_usd and fdv_usd were deliberately suppressed (served null) because the observed market cannot support the figure. Two independent guards set it. FLOOR: the backing price came from a single venue AND trailing-24h USD volume is below the server's aggregate.min_market_cap_volume_usd — trading is negligible in absolute terms. CEILING: the computed cap exceeds aggregate.max_market_cap_volume_ratio times the asset's own trailing-24h volume — the claim is large against whatever trading there is, which an absolute floor cannot detect (measured 2026-09-15, two assets published $5.89B of this surface's headline total on $6,759 of combined daily volume while clearing the floor). Disambiguates 'suppressed on purpose' from 'no supply/price data'; price_usd and circulating_supply both still serve — the guard is on the valuation, not on the facts behind it. Omitted when a cap is present." }
         market_cap_decimals_mismatch: { type: boolean, description: "True when market_cap_usd and fdv_usd were deliberately REFUSED (served null) because the two decimals resolvers this response depends on disagreed for a Soroban token at request time: the lake's on-chain decimals() — which `decimals` reports and the supply divisor uses — versus the nonstandard_decimals_assets projection every price-shaped path normalises the USD price through. Either the projection carries a different value, or the lake reads non-7 and the projection has no row yet, so supply and price sit on different scales and their product is wrong by a power of ten. Not a liquidity verdict (market_cap_low_liquidity stays unset). price_usd, circulating_supply and decimals all still serve — each is a fact on its own scale; only the cross-scale product is withheld. Self-clearing: the aggregator's lockstep reconcile repairs the projection toward the lake on its next tick (runbook dex-nonstandard-decimals.md). Omitted when the resolvers agree." }
         listing_reference:  { $ref: "#/components/schemas/AssetListingReference" }
@@ -17781,6 +17781,21 @@ components:
             for SEP-41 tokens outside the operator watch-list
             (total == circulating; no admin exclusion). Null when no
             supply snapshot is available.
+        supply_as_of:
+          type: string
+          format: date-time
+          description: |
+            When the supply observation behind total_supply /
+            circulating_supply / max_supply was taken. Omitted when the
+            reading carries no vintage (the live `sep41_lake_flows`
+            sum). An observation older than six hours still serves with
+            this timestamp, but market_cap_usd and fdv_usd are withheld
+            and flags.stale is true: today's price times a supply nobody
+            is still observing is not a market cap.
+        supply_as_of_ledger:
+          type: integer
+          format: int64
+          description: Ledger sequence of the supply observation dated by supply_as_of. Omitted under the same condition.
         volume_24h_usd:
           type: [string, "null"]
           description: |
@@ -18756,8 +18771,8 @@ components:
         h: { type: string, description: "High price (decimal string)." }
         l: { type: string, description: "Low price (decimal string)." }
         c: { type: string, description: "Close price (decimal string)." }
-        v_base:  { type: string, description: "Σ base_amount smallest units over the bucket (decimal string). Per BUCKET: where a bucket merges venues that stamp at different scales (an on-chain leg at 7 decimals beside an exchange leg at 8), its sum is taken at the finest scale present IN THAT BUCKET, so two buckets of one response may be summed at different scales and only `v_quote`/`v_base` — the price — is comparable across them. Divide by 10^`v_base_decimals` to get asset units; dividing by a hardcoded 1e7 overstates any CEX-fed bucket tenfold." }
-        v_quote: { type: string, description: "Σ quote_amount smallest units over the bucket (decimal string); same per-bucket scale rule as `v_base`, and the same for both legs of a bucket, so their ratio is a price. Divide by 10^`v_quote_decimals` to get asset units." }
+        v_base:  { type: string, description: "Σ base_amount smallest units over the bucket, as integer text (no fractional part) on every path, fiat-quoted or not; sub-unit noise from the stored vwap × volume product is rounded to the nearest unit. Per BUCKET: where a bucket merges venues that stamp at different scales (an on-chain leg at 7 decimals beside an exchange leg at 8), its sum is taken at the finest scale present IN THAT BUCKET, so two buckets of one response may be summed at different scales and only `v_quote`/`v_base` — the price — is comparable across them. Divide by 10^`v_base_decimals` to get asset units; dividing by a hardcoded 1e7 overstates any CEX-fed bucket tenfold." }
+        v_quote: { type: string, description: "Σ quote_amount smallest units over the bucket, as integer text on every path (same rounding as `v_base`); same per-bucket scale rule as `v_base`, and the same for both legs of a bucket, so their ratio is a price. Divide by 10^`v_quote_decimals` to get asset units." }
         v_base_decimals:
           type: [integer, "null"]
           description: |

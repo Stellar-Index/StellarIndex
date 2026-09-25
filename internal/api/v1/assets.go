@@ -264,12 +264,11 @@ type AssetDetail struct {
 	// on-chain metadata. INTERNAL — never serialised — because it
 	// exists to stop a figure being published, not to be published.
 	//
-	// Set only on the RWA surface's contract rows, which are the only
-	// place an unread scale is load-bearing: everywhere else a
-	// contract row carries no valuation anyway. See
-	// [Server.fillContractDecimals] for the four ways a reading goes
-	// missing, one of which is a reachable process state rather than a
-	// hypothetical.
+	// Set on the RWA surface's contract rows for any missing reading (see
+	// [Server.fillContractDecimals] for the four ways one goes missing),
+	// and on Soroban asset rows — detail and listing — when the lake read
+	// FAILED with no confirmed projection row ([Server.applyTokenDecimals]).
+	// Every consumer refuses the scale-dependent cap/FDV on it.
 	DecimalsUnresolved bool `json:"-"`
 
 	// SupplyBasis identifies which ADR-0011 policy produced the
@@ -278,6 +277,17 @@ type AssetDetail struct {
 	// indicates an operator curated the locked-set or SEP-1
 	// declared a max_supply).
 	SupplyBasis *string `json:"supply_basis,omitempty"`
+
+	// SupplyAsOf / SupplyAsOfLedger are when, and at which ledger, the
+	// supply observation behind the supply fields was taken. Omitted when
+	// the reading carries no vintage (the live lake-flows fallback).
+	SupplyAsOf       *WireTime `json:"supply_as_of,omitempty"`
+	SupplyAsOfLedger *uint32   `json:"supply_as_of_ledger,omitempty"`
+
+	// SupplyStale is true when the only supply observation is older than
+	// preciseSupplyMaxAge: the supply still serves with its as-of, but no
+	// cap is derived from it and the response is flagged stale. INTERNAL.
+	SupplyStale bool `json:"-"`
 
 	// VolumeUSD24h is the trailing-24h USD-denominated trade
 	// volume across every pair this asset participates in (as base
@@ -1428,7 +1438,7 @@ func (s *Server) fillRowMarketCap(
 	// stamps a smallest-unit figure the row's `decimals` has to be able
 	// to scale, whether or not a cap goes out beside it.
 	s.applyConfirmedListingDecimals(ctx, row)
-	if row.MarketCapDecimalsMismatch {
+	if row.MarketCapDecimalsMismatch || row.DecimalsUnresolved {
 		// Lockstep refusal — mirrors populateMarketCap's on the detail
 		// path (assets_f2.go): the price behind row.PriceUSD was
 		// normalised through the nonstandard_decimals_assets projection
@@ -1521,8 +1531,11 @@ func (s *Server) applyConfirmedListingDecimals(ctx context.Context, row *AssetDe
 	if row.Type != string(canonical.AssetSoroban) {
 		return
 	}
-	lake, lakeKnown := s.lakeTokenDecimals(ctx, row.AssetID)
+	lake, lakeKnown, lakeErr := s.lakeTokenDecimals(ctx, row.AssetID)
 	if !lakeKnown {
+		if !hasConfirmed && lakeErr != nil {
+			row.DecimalsUnresolved = true
+		}
 		return
 	}
 	row.Decimals = lake
@@ -3538,7 +3551,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// issuer doesn't. No-op when no catalogue is wired or the asset
 	// isn't a classic Stellar asset.
 	flags := s.verifiedCurrencyFlags(&detail, parsed)
-	if homeDomainDegraded {
+	if homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale {
 		flags.Stale = true
 	}
 
@@ -3554,7 +3567,11 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, detail, flags)
 		return
 	}
-	s.assetDetailCache.put(cacheKey, body)
+	// A failed decimals read is a transient outage: replaying its
+	// cap-less body for the whole TTL would outlive the outage.
+	if !detail.DecimalsUnresolved {
+		s.assetDetailCache.put(cacheKey, body)
+	}
 	writeCachedAssetDetail(w, &assetDetailEntry{body: body, cachedAt: time.Now()})
 }
 
@@ -3625,7 +3642,10 @@ func (s *Server) resolveAssetDetail(w http.ResponseWriter, r *http.Request, pars
 //     so using it keeps supply and price on ONE scale. Pre-lockstep this kept
 //     the default 7 while the price was normalised on the row's value, and
 //     the cap came out 10^(decimals−7)× too large. No row → the documented
-//     default of 7 stays.
+//     default of 7 stays when the lake answered "no declaration" (or no
+//     reader is wired), but a FAILED read (error or deadline) with no row
+//     sets DecimalsUnresolved: the scale is unknown, so populateMarketCap
+//     refuses the cap and handleAssetGet serves flags.stale uncached.
 //
 // The sub-budget is the point (#371 F9): pre-fix this ran on the raw
 // request context, so a slow lake held GET /v1/assets/{id} for the whole
@@ -3638,10 +3658,12 @@ func (s *Server) applyTokenDecimals(ctx context.Context, detail *AssetDetail, a 
 		return
 	}
 	confirmed, hasConfirmed := s.nonstandardDecimals.Lookup(a.ContractID)
-	lake, lakeKnown := s.lakeTokenDecimals(ctx, a.ContractID)
+	lake, lakeKnown, lakeErr := s.lakeTokenDecimals(ctx, a.ContractID)
 	if !lakeKnown {
 		if hasConfirmed {
 			detail.Decimals = confirmed
+		} else if lakeErr != nil {
+			detail.DecimalsUnresolved = true
 		}
 		return
 	}
@@ -3665,24 +3687,26 @@ func (s *Server) applyTokenDecimals(ctx context.Context, detail *AssetDetail, a 
 
 // lakeTokenDecimals is the bounded, best-effort lake read behind
 // applyTokenDecimals. known=false covers every way the reading can be
-// missing — no reader wired, an uncaptured instance, a contract with no
-// usable metadata, a read error, or a read past tokenMetadataReadTimeout —
-// because the caller's fallback is the same for all of them.
-func (s *Server) lakeTokenDecimals(ctx context.Context, contractID string) (decimals int, known bool) {
+// missing; err is non-nil only when the read itself FAILED (an error or a
+// read past tokenMetadataReadTimeout), as opposed to no reader wired, an
+// uncaptured instance or a contract with no usable metadata, where the
+// documented default applies. Callers must not publish a scale-dependent
+// figure on a failed read.
+func (s *Server) lakeTokenDecimals(ctx context.Context, contractID string) (decimals int, known bool, err error) {
 	if s.tokenDecimals == nil {
-		return 0, false
+		return 0, false, nil
 	}
 	dctx, cancel := context.WithTimeout(ctx, tokenMetadataReadTimeout)
 	defer cancel()
 	d, found, err := s.tokenDecimals.TokenDecimals(dctx, contractID)
 	if err != nil {
-		s.logger.Debug("token decimals overlay failed; falling back", "contract_id", contractID, "err", err)
-		return 0, false
+		s.logger.Warn("token decimals read failed; scale unresolved", "contract_id", contractID, "err", err)
+		return 0, false, err
 	}
 	if !found {
-		return 0, false
+		return 0, false, nil
 	}
-	return int(d), true
+	return int(d), true, nil
 }
 
 // tryServeGlobalAsset returns true when `raw` matched a verified-

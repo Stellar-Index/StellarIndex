@@ -9690,9 +9690,9 @@ export interface components {
             price_basis?: "declared_peg" | "transitive";
             /** @description Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. "+1.27", "-0.05", "0.00"). Null when the asset has no current USD price or no comparison bucket ~24h ago. */
             change_24h_pct?: string | null;
-            /** @description circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch). */
+            /** @description circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch). Also null, with flags.stale true, when the supply observation is older than six hours (see supply_as_of) or when a Soroban token's decimals() read failed and no confirmed value vouches for the scale. */
             market_cap_usd?: string | null;
-            /** @description max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null, USD price unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch). */
+            /** @description max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null, USD price unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch). Also null, with flags.stale true, when the supply observation is older than six hours (see supply_as_of) or when a Soroban token's decimals() read failed and no confirmed value vouches for the scale. */
             fdv_usd?: string | null;
             /** @description True when market_cap_usd and fdv_usd were deliberately suppressed (served null) because the observed market cannot support the figure. Two independent guards set it. FLOOR: the backing price came from a single venue AND trailing-24h USD volume is below the server's aggregate.min_market_cap_volume_usd — trading is negligible in absolute terms. CEILING: the computed cap exceeds aggregate.max_market_cap_volume_ratio times the asset's own trailing-24h volume — the claim is large against whatever trading there is, which an absolute floor cannot detect (measured 2026-09-15, two assets published $5.89B of this surface's headline total on $6,759 of combined daily volume while clearing the floor). Disambiguates 'suppressed on purpose' from 'no supply/price data'; price_usd and circulating_supply both still serve — the guard is on the valuation, not on the facts behind it. Omitted when a cap is present. */
             market_cap_low_liquidity?: boolean;
@@ -9753,6 +9753,22 @@ export interface components {
              * @enum {string|null}
              */
             supply_basis?: "xlm_sdf_reserve_exclusion" | "xlm_sdf_reserve_exclusion_static" | "xlm_total_only" | "issuer_exclusion" | "admin_exclusion" | "sep41_total_only" | "override" | "sep1_declared_max" | "sep41_lake_flows" | "classic_lake_flows" | "classic_trustline_sum" | "contract_storage_balances" | "no_metadata" | null;
+            /**
+             * Format: date-time
+             * @description When the supply observation behind total_supply /
+             *     circulating_supply / max_supply was taken. Omitted when the
+             *     reading carries no vintage (the live `sep41_lake_flows`
+             *     sum). An observation older than six hours still serves with
+             *     this timestamp, but market_cap_usd and fdv_usd are withheld
+             *     and flags.stale is true: today's price times a supply nobody
+             *     is still observing is not a market cap.
+             */
+            supply_as_of?: string;
+            /**
+             * Format: int64
+             * @description Ledger sequence of the supply observation dated by supply_as_of. Omitted under the same condition.
+             */
+            supply_as_of_ledger?: number;
             /**
              * @description Trailing-24h USD-denominated trade volume across every
              *     pair this asset participates in (as base OR quote).
@@ -10611,9 +10627,9 @@ export interface components {
             l: string;
             /** @description Close price (decimal string). */
             c: string;
-            /** @description Σ base_amount smallest units over the bucket (decimal string). Per BUCKET: where a bucket merges venues that stamp at different scales (an on-chain leg at 7 decimals beside an exchange leg at 8), its sum is taken at the finest scale present IN THAT BUCKET, so two buckets of one response may be summed at different scales and only `v_quote`/`v_base` — the price — is comparable across them. Divide by 10^`v_base_decimals` to get asset units; dividing by a hardcoded 1e7 overstates any CEX-fed bucket tenfold. */
+            /** @description Σ base_amount smallest units over the bucket, as integer text (no fractional part) on every path, fiat-quoted or not; sub-unit noise from the stored vwap × volume product is rounded to the nearest unit. Per BUCKET: where a bucket merges venues that stamp at different scales (an on-chain leg at 7 decimals beside an exchange leg at 8), its sum is taken at the finest scale present IN THAT BUCKET, so two buckets of one response may be summed at different scales and only `v_quote`/`v_base` — the price — is comparable across them. Divide by 10^`v_base_decimals` to get asset units; dividing by a hardcoded 1e7 overstates any CEX-fed bucket tenfold. */
             v_base: string;
-            /** @description Σ quote_amount smallest units over the bucket (decimal string); same per-bucket scale rule as `v_base`, and the same for both legs of a bucket, so their ratio is a price. Divide by 10^`v_quote_decimals` to get asset units. */
+            /** @description Σ quote_amount smallest units over the bucket, as integer text on every path (same rounding as `v_base`); same per-bucket scale rule as `v_base`, and the same for both legs of a bucket, so their ratio is a price. Divide by 10^`v_quote_decimals` to get asset units. */
             v_quote: string;
             /**
              * @description Decimal exponent of `v_base`: asset units = v_base /
@@ -13791,7 +13807,7 @@ export interface operations {
                      *             "l": "0.2034919999",
                      *             "c": "0.2055899576",
                      *             "v_base": "1751598864823776",
-                     *             "v_quote": "359971028467214.0000042405",
+                     *             "v_quote": "359971028467214",
                      *             "v_base_decimals": 8,
                      *             "v_quote_decimals": 8,
                      *             "n": 11667
@@ -13803,7 +13819,7 @@ export interface operations {
                      *             "l": "0.2033449999",
                      *             "c": "0.2055593613",
                      *             "v_base": "844461854722825",
-                     *             "v_quote": "173117716771324.0000032245",
+                     *             "v_quote": "173117716771324",
                      *             "v_base_decimals": 8,
                      *             "v_quote_decimals": 8,
                      *             "n": 8497

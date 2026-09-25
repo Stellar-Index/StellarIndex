@@ -75,7 +75,7 @@ func sacReachSeries(t *testing.T, ts *testServer, base, from, to string) fiatSer
 // serve today.
 func TestFiatSeries_SACQuotedPoolIsTheOnlyVenueIsServed(t *testing.T) {
 	usdc := installUSDCSACRegistry(t)
-	pool := mkSeriesBar(sacReachDay(0), "0.0041", "0.0042", "0.0040", "0.0041", "1000", "4.1", 3)
+	pool := mkSeriesBar(sacReachDay(0), "0.0041", "0.0042", "0.0040", "0.0041", "1000000", "4100", 3)
 	reader := &stubHistoryReader{ohlcByPair: map[string][]v1.OHLCSeriesBar{
 		aquaClassicID + "/" + pegAliasUSDCSAC: {pool},
 	}}
@@ -205,10 +205,10 @@ func TestFiatSeries_ThinSACPoolNeverSetsABarBesideBookData(t *testing.T) {
 // 24 assets that have both a book and a pool.
 func TestFiatSeries_PoolFillsOnlyTheBucketsTheBookCannotAnswer(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
-	book := mkSeriesBar(sacReachDay(0), "0.0041", "0.0042", "0.0040", "0.0041", "100", "0.41", 1)
+	book := mkSeriesBar(sacReachDay(0), "0.0041", "0.0042", "0.0040", "0.0041", "100000", "410", 1)
 	poolDay1 := mkSeriesBar(sacReachDay(0), "0.0030", "0.5000", "0.0100", "0.0035", "20", "0.07", 50)
-	poolDay2 := mkSeriesBar(sacReachDay(1), "0.0035", "0.0036", "0.0034", "0.0035", "10", "0.035", 3)
-	poolDay3 := mkSeriesBar(sacReachDay(2), "0.0038", "0.0039", "0.0037", "0.0038", "12", "0.045", 4)
+	poolDay2 := mkSeriesBar(sacReachDay(1), "0.0035", "0.0036", "0.0034", "0.0035", "10000", "35", 3)
+	poolDay3 := mkSeriesBar(sacReachDay(2), "0.0038", "0.0039", "0.0037", "0.0038", "12000", "45", 4)
 	reader := &stubHistoryReader{ohlcByPair: map[string][]v1.OHLCSeriesBar{
 		pegAliasAquaClassic + "/" + usdcClassicID: {book},
 		pegAliasAquaSAC + "/" + pegAliasUSDCSAC:   {poolDay1, poolDay2, poolDay3},
