@@ -201,7 +201,8 @@ func TestRWAContractListingRows_ReportsAValuationCutShort(t *testing.T) {
 		t.Fatalf("market_cap_usd = %s on a row whose scale was never read", *mc)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/v1/rwa/assets", nil)
-	if _, degraded, live := s.rwaVerifiedContractRows(ctx, req, members); !live || !degraded {
+	rec := httptest.NewRecorder()
+	if _, degraded, live := s.rwaVerifiedContractRows(ctx, rec, req, members); !live || !degraded {
 		t.Fatalf("verified arm: degraded=%v live=%v, want a live, degraded (flags.stale) response", degraded, live)
 	}
 }

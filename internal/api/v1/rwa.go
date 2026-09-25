@@ -1644,17 +1644,15 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	classicAssets, unobserved := s.rwaAssetRows(m, rows)
 	join.notObserved = unobserved
 
-	// The contract arm, valued through its own read of the same
-	// pipeline. A failure here degrades to zero contract rows rather
-	// than failing the response: the classic arm is a complete answer to
-	// its own question, and emptying it because a second population
-	// could not be read would publish less than we know. Both contract
-	// arms, this one and the curated one below, share one valuation
-	// budget inside the handler ceiling; a cut or failed valuation is
-	// served as what it is, under flags.stale.
+	// The contract arm fails the response exactly as the classic arm
+	// does: degrading to zero rows would drop admitted members from the
+	// totals without a lower_bound and book them as never observed. Both
+	// contract arms, this one and the curated one below, share one
+	// valuation budget inside the handler ceiling; a cut (but not
+	// failed) valuation is served as what it is, under flags.stale.
 	vctx, cancel := context.WithTimeout(r.Context(), rwaContractValuationBudget)
 	defer cancel()
-	contractRows, degraded, live := s.rwaVerifiedContractRows(vctx, r, m.contracts)
+	contractRows, degraded, live := s.rwaVerifiedContractRows(vctx, w, r, m.contracts)
 	if !live {
 		return
 	}
@@ -1713,12 +1711,15 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, Envelope{Data: view, Flags: Flags{Stale: degraded || curatedDegraded}})
 }
 
-// rwaVerifiedContractRows values the verified contract arm. A failed read
-// degrades to no contract rows rather than failing the response, and is
-// reported as degraded, as is a valuation ctx cut short. live is false
-// only when the client has gone and nothing should be written.
+// rwaVerifiedContractRows values the verified contract arm. A valuation
+// ctx cut short still returns its rows, reported as degraded (served
+// under flags.stale). A failed read fails the response exactly as the
+// classic arm's read failure does, the same way as a swallowed error
+// would publish admitted-but-unread members as never observed. live is
+// false whenever nothing further should be written: either the client
+// has gone, or this already wrote the failure response.
 func (s *Server) rwaVerifiedContractRows(
-	ctx context.Context, r *http.Request, members []rwaContractMember,
+	ctx context.Context, w http.ResponseWriter, r *http.Request, members []rwaContractMember,
 ) (rows map[string]AssetDetail, degraded, live bool) {
 	rows, _, cut, err := s.rwaContractListingRows(ctx, members)
 	if err == nil {
@@ -1728,7 +1729,10 @@ func (s *Server) rwaVerifiedContractRows(
 		return nil, false, false
 	}
 	s.logger.Error("rwa contract listing read failed", "err", err)
-	return map[string]AssetDetail{}, true, true
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/internal",
+		"Internal error", http.StatusInternalServerError, "")
+	return nil, false, false
 }
 
 // rwaBasisUnavailable is the summary basis when the attestation or
