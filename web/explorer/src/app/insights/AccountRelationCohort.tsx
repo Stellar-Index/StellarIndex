@@ -19,7 +19,7 @@ import {
   TR,
 } from '@/components/ui';
 import { apiGet, asExample, type Envelope } from '@/api/client';
-import { formatCompact, truncateMiddle } from '@/lib/format';
+import { formatCompactUnits, truncateMiddle } from '@/lib/format';
 import type { components } from '@/api/types';
 
 import { formatTimestamp } from '../explorer-shared';
@@ -60,20 +60,14 @@ type UsdBasis = 'today' | 'then';
 
 type UsdSide = 'inflow_usd' | 'outflow_usd' | 'inflow_usd_then' | 'outflow_usd_then';
 
-/** Sums a month's per-asset USD figures over the assets that carry one.
- * Assets without a price contribute nothing and are not zero. */
+/** The month point's served USD sum for one side: exact on the server and
+ * rounded once, over the one basket both bases share. Absent is no point,
+ * never zero. */
 function monthUSD(p: CohortPoint, side: UsdSide): number | null {
-  let sum = 0;
-  let any = false;
-  for (const a of p.by_asset) {
-    const v = a[side];
-    if (v === undefined) continue;
-    const n = Number(v);
-    if (!Number.isFinite(n)) continue;
-    sum += n;
-    any = true;
-  }
-  return any ? sum : null;
+  const v = p[side];
+  if (v === undefined) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 function monthTime(p: CohortPoint): number {
@@ -81,7 +75,8 @@ function monthTime(p: CohortPoint): number {
 }
 
 /** The moved-in / moved-out lines for one basis: a month contributes a
- * point only where at least one of its assets is priced on that basis. */
+ * point only where its basket — assets priced on both bases — is non-empty,
+ * so the two bases always draw the same months over the same assets. */
 function usdLines(points: CohortPoint[], basis: UsdBasis): { in: LinePoint[]; out: LinePoint[] } {
   const inSide: UsdSide = basis === 'then' ? 'inflow_usd_then' : 'inflow_usd';
   const outSide: UsdSide = basis === 'then' ? 'outflow_usd_then' : 'outflow_usd';
@@ -176,14 +171,9 @@ export function AccountRelationCohort({
   }));
   const today = usdLines(data.flows.points, 'today');
   const then = usdLines(data.flows.points, 'then');
-  const hasToday = today.in.length > 0 || today.out.length > 0;
-  const hasThen = then.in.length > 0 || then.out.length > 0;
-  // The chosen basis where the response carries it; the other where it
-  // does not; nothing where neither is priced.
-  const basis: UsdBasis | null =
-    basisChoice === 'then'
-      ? hasThen ? 'then' : hasToday ? 'today' : null
-      : hasToday ? 'today' : hasThen ? 'then' : null;
+  // Both bases value one basket per month, so they are present together.
+  const hasUsd = today.in.length > 0 || today.out.length > 0;
+  const basis: UsdBasis | null = hasUsd ? basisChoice : null;
   const usdLine = basis === 'then' ? then : today;
   const labelled = data.contracts.filter((c) => c.protocol);
   const unlabelled = data.contracts.length - labelled.length;
@@ -232,7 +222,7 @@ export function AccountRelationCohort({
                     )}
                   </Td>
                   <Td align="right">{numFmt.format(h.holders)}</Td>
-                  <Td align="right">{formatCompact(Number(h.balance))}</Td>
+                  <Td align="right">{formatCompactUnits(h.balance)}</Td>
                   <Td align="right">{h.value_usd !== undefined ? usd(h.value_usd) : <span className="text-ink-faint">unpriced</span>}</Td>
                 </TR>
               ))}
@@ -273,17 +263,15 @@ export function AccountRelationCohort({
             />
             {basis !== null ? (
               <>
-                {hasToday && hasThen && (
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="text-ink-muted">Value in</span>
-                    <SortPill active={basis === 'today'} onClick={() => setBasisChoice('today')}>
-                      USD today
-                    </SortPill>
-                    <SortPill active={basis === 'then'} onClick={() => setBasisChoice('then')}>
-                      USD then
-                    </SortPill>
-                  </div>
-                )}
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-ink-muted">Value in</span>
+                  <SortPill active={basis === 'today'} onClick={() => setBasisChoice('today')}>
+                    USD today
+                  </SortPill>
+                  <SortPill active={basis === 'then'} onClick={() => setBasisChoice('then')}>
+                    USD then
+                  </SortPill>
+                </div>
                 <LineChart
                   data={usdLine.in}
                   series={[
@@ -304,9 +292,9 @@ export function AccountRelationCohort({
               </>
             ) : (
               <Callout tone="info" title="No priced asset moved">
-                The cohort&rsquo;s movements are in assets nothing prices — live or
-                on the index&rsquo;s own markets that month — so there is no USD line
-                to draw; the activity line above is exact.
+                None of the cohort&rsquo;s moved assets is priced both live and on
+                the index&rsquo;s own markets in the same month, so there is no USD
+                line to draw; the activity line above is exact.
               </Callout>
             )}
             <p className="text-ink-faint text-[11px]">
@@ -314,8 +302,11 @@ export function AccountRelationCohort({
               archive. &ldquo;USD today&rdquo; values each month&rsquo;s quantity at
               today&rsquo;s price — one unit across months, not what the month was
               worth then; &ldquo;USD then&rdquo; values it at that month&rsquo;s
-              volume-weighted USD price on this index&rsquo;s own markets, and a
-              month no such market priced draws no point. Broken out for{' '}
+              volume-weighted USD price on this index&rsquo;s own markets. Both
+              lines sum the same assets each month — those priced on both bases —
+              so switching changes the price, never the basket; an asset priced
+              on one basis alone is left out of both, and a month with no such
+              asset draws no point. Broken out for{' '}
               {data.flows.assets.length} asset{data.flows.assets.length === 1 ? '' : 's'}
               ; the activity line counts every asset. A month with no movement
               emits no point.
@@ -402,7 +393,7 @@ export function AccountRelationCohort({
                     </Td>
                     <Td>{p.asset_label ?? (p.asset ? truncateMiddle(p.asset, 12) : <span className="text-ink-faint">venue shares</span>)}</Td>
                     <Td align="right">{numFmt.format(p.holders)}</Td>
-                    <Td align="right">{formatCompact(Number(p.amount))}</Td>
+                    <Td align="right">{formatCompactUnits(p.amount)}</Td>
                   </TR>
                 ))}
               </TBody>

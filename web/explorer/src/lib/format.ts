@@ -25,6 +25,50 @@ export function formatCompact(value: number | string): string {
   return COMPACT_FORMATTER.format(n);
 }
 
+/**
+ * formatCompactUnits — formatCompact for an exact decimal or smallest-unit
+ * integer string (ADR-0003's wire shape), shifted left by `decimals` and
+ * rounded from the EXACT value. `Number()`-then-divide rounds twice before
+ * Intl rounds a third time, and can cross a display boundary: 10^7-scaled
+ * "5123049999999999660566" is 512.3T, not the 512.31T it yields. "—" for an
+ * absent or non-decimal value.
+ */
+export function formatCompactUnits(
+  raw: string | null | undefined,
+  decimals = 0,
+): string {
+  if (raw == null) return '—';
+  const m = /^(-?)(\d+)(?:\.(\d+))?$/.exec(raw.trim());
+  if (!m) return '—';
+  const [, sign, whole, frac = ''] = m;
+  const units = BigInt(`${sign}${whole}${frac}`);
+  const scale = 10n ** BigInt(frac.length + decimals);
+  const intPart = units / scale;
+  // From 1,000 up, compact notation rounds at the tens place or coarser,
+  // where the truncated fraction cannot move the result; Intl formats a
+  // BigInt exactly.
+  if (intPart >= 1000n || intPart <= -1000n) return COMPACT_FORMATTER.format(intPart);
+  // Below that it shows at most two places: round exactly to hundredths
+  // (half away from zero, Intl's default) before the value becomes a float.
+  const hundredths = units * 100n;
+  let q = hundredths / scale;
+  const r = hundredths % scale;
+  if (2n * (r < 0n ? -r : r) >= scale) q += units < 0n ? -1n : 1n;
+  return COMPACT_FORMATTER.format(Number(q) / 100);
+}
+
+/**
+ * decimalOrNull — a best-effort decimal wire string (a USD figure) as a JS
+ * number for chart geometry, or null when it is absent or not a number:
+ * never the 0 that `Number(x) || 0` fabricates, which draws "no price held"
+ * as a real zero.
+ */
+export function decimalOrNull(raw: string | null | undefined): number | null {
+  if (raw == null || raw.trim() === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
 // formatSubunitPrice — a tiny positive (or bad-data negative) value as
 // a PLAIN DECIMAL with `sig` significant digits and no exponent:
 // 3.353e-4 renders "0.0003353", never "$3.353e-4" (operator call,

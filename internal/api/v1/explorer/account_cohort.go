@@ -94,15 +94,19 @@ type AccountCohortFlowsV struct {
 	Points          []AccountCohortFlowPointV `json:"points"`
 }
 
-// AccountCohortFlowPointV is one month. InflowUSDThen / OutflowUSDThen
-// sum the by_asset rows' then-priced figures exactly and round once —
-// the month's value moved at that month's prices — and are absent when
-// no asset of the month has a then-price (never zero).
+// AccountCohortFlowPointV is one month. The point's USD figures value
+// ONE basket — the PricedAssets by_asset rows priced both today and then
+// — on each basis, summed exactly and rounded once, so switching basis
+// changes only the price, never the asset set. They are absent when the
+// basket is empty (never zero).
 type AccountCohortFlowPointV struct {
 	Period         string                    `json:"period"`
 	PeriodStart    string                    `json:"period_start"`
 	Movements      uint64                    `json:"movements"`
 	ActiveAccounts uint64                    `json:"active_accounts"`
+	PricedAssets   uint64                    `json:"priced_assets"`
+	InflowUSD      *string                   `json:"inflow_usd,omitempty"`
+	OutflowUSD     *string                   `json:"outflow_usd,omitempty"`
 	InflowUSDThen  *string                   `json:"inflow_usd_then,omitempty"`
 	OutflowUSDThen *string                   `json:"outflow_usd_then,omitempty"`
 	ByAsset        []AccountCohortAssetFlowV `json:"by_asset"`
@@ -171,7 +175,9 @@ const accountCohortNote = "Every figure is the cohort's own ledger footprint as 
 	"with no movement emits no point, and the USD figures value each month's quantity at " +
 	"today's price, not that month's; the *_usd_then figures value it at price_usd_then — then = " +
 	"that month's volume-weighted USD price on this index's own markets — and are absent where " +
-	"no USD-quoted market priced the asset that month. active_accounts is a uniqCombined estimate, movements is " +
+	"no USD-quoted market priced the asset that month. A point's own USD figures sum only its " +
+	"priced_assets basket — the by_asset rows priced on BOTH bases — so today and then value the " +
+	"same assets; a row priced on one basis alone is in neither point sum. active_accounts is a uniqCombined estimate, movements is " +
 	"exact. contracts are the C… counterparties of cohort movements: the value-moving subset " +
 	"of interaction — a call that moved no balance is not counted. positions are the served " +
 	"tier's per-protocol folds joined to the cohort; amount is the fold's own unit summed " +
@@ -375,13 +381,11 @@ func cohortFlowsView(flows []clickhouse.AccountCohortFlow, price cohortPriceFn) 
 	shown := map[string]struct{}{}
 	movements := map[string]uint64{}
 	var cur *AccountCohortFlowPointV
-	var then *cohortThenSum
+	var sum *cohortMonthSum
 	flush := func() {
-		if cur == nil || then == nil || !then.any {
-			return
+		if cur != nil {
+			sum.apply(cur)
 		}
-		in, o := formatUSD(then.in), formatUSD(then.out)
-		cur.InflowUSDThen, cur.OutflowUSDThen = &in, &o
 	}
 	for _, f := range flows {
 		period := f.Month.UTC().Format("2006-01")
@@ -391,7 +395,7 @@ func cohortFlowsView(flows []clickhouse.AccountCohortFlow, price cohortPriceFn) 
 				Period: period, PeriodStart: f.Month.UTC().Format(time.RFC3339), ByAsset: []AccountCohortAssetFlowV{},
 			})
 			cur = &out.Points[len(out.Points)-1]
-			then = &cohortThenSum{in: new(big.Rat), out: new(big.Rat)}
+			sum = newCohortMonthSum()
 		}
 		if f.Asset == clickhouse.CohortAllAssets {
 			cur.Movements, cur.ActiveAccounts = f.Movements, f.ActiveAccounts
@@ -402,12 +406,8 @@ func cohortFlowsView(flows []clickhouse.AccountCohortFlow, price cohortPriceFn) 
 			out.Assets = append(out.Assets, f.Asset)
 		}
 		movements[f.Asset] += f.Movements
-		af, thenIn, thenOut := cohortAssetFlowView(f, price)
-		if thenIn != nil {
-			then.in.Add(then.in, thenIn)
-			then.out.Add(then.out, thenOut)
-			then.any = true
-		}
+		af, usd := cohortAssetFlowView(f, price)
+		sum.add(usd)
 		cur.ByAsset = append(cur.ByAsset, af)
 	}
 	flush()
@@ -422,19 +422,51 @@ func cohortFlowsView(flows []clickhouse.AccountCohortFlow, price cohortPriceFn) 
 	return out
 }
 
-// cohortThenSum accumulates one month's then-priced flows exactly; the
-// point renders the sum rounded once, never a sum of rounded strings.
-type cohortThenSum struct {
-	in, out *big.Rat
-	any     bool
+// cohortAssetUSD is one asset-month's exact USD legs; a nil pair means
+// that basis does not price the asset.
+type cohortAssetUSD struct {
+	todayIn, todayOut, thenIn, thenOut *big.Rat
+}
+
+// cohortMonthSum accumulates one month's USD flows exactly over its
+// basket — the assets priced on both bases — and renders them rounded
+// once, never as a sum of rounded strings.
+type cohortMonthSum struct {
+	todayIn, todayOut, thenIn, thenOut *big.Rat
+	n                                  uint64
+}
+
+func newCohortMonthSum() *cohortMonthSum {
+	return &cohortMonthSum{todayIn: new(big.Rat), todayOut: new(big.Rat), thenIn: new(big.Rat), thenOut: new(big.Rat)}
+}
+
+func (s *cohortMonthSum) add(u cohortAssetUSD) {
+	if u.todayIn == nil || u.thenIn == nil {
+		return
+	}
+	s.todayIn.Add(s.todayIn, u.todayIn)
+	s.todayOut.Add(s.todayOut, u.todayOut)
+	s.thenIn.Add(s.thenIn, u.thenIn)
+	s.thenOut.Add(s.thenOut, u.thenOut)
+	s.n++
+}
+
+func (s *cohortMonthSum) apply(p *AccountCohortFlowPointV) {
+	p.PricedAssets = s.n
+	if s.n == 0 {
+		return
+	}
+	ti, to, hi, ho := formatUSD(s.todayIn), formatUSD(s.todayOut), formatUSD(s.thenIn), formatUSD(s.thenOut)
+	p.InflowUSD, p.OutflowUSD, p.InflowUSDThen, p.OutflowUSDThen = &ti, &to, &hi, &ho
 }
 
 // cohortAssetFlowView renders one asset's month: whole units for classic
 // keys, the contract's own unit otherwise, USD at today's price where
 // the asset is priced, and USD at the month's own price where the reader
-// joined one. The exact then-priced amounts are returned beside the view
-// (nil when unpriced) so the month point can sum them before rounding.
-func cohortAssetFlowView(f clickhouse.AccountCohortFlow, price cohortPriceFn) (AccountCohortAssetFlowV, *big.Rat, *big.Rat) {
+// joined one. The exact USD legs are returned beside the view so the
+// month point can sum its basket before rounding.
+func cohortAssetFlowView(f clickhouse.AccountCohortFlow, price cohortPriceFn) (AccountCohortAssetFlowV, cohortAssetUSD) {
+	var usd cohortAssetUSD
 	scaled := cohortAssetKind(f.Asset) != "contract"
 	af := AccountCohortAssetFlowV{Asset: f.Asset, Scaled: scaled}
 	if scaled {
@@ -443,17 +475,18 @@ func cohortAssetFlowView(f clickhouse.AccountCohortFlow, price cohortPriceFn) (A
 		af.Inflow, af.Outflow = f.Inflow.String(), f.Outflow.String()
 	}
 	if p, ok := price(f.Asset); ok && scaled {
-		in, o := formatUSD(usdOfStroops(f.Inflow, p.Rat)), formatUSD(usdOfStroops(f.Outflow, p.Rat))
+		usd.todayIn, usd.todayOut = usdOfStroops(f.Inflow, p.Rat), usdOfStroops(f.Outflow, p.Rat)
+		in, o := formatUSD(usd.todayIn), formatUSD(usd.todayOut)
 		af.InflowUSD, af.OutflowUSD = &in, &o
 	}
 	pThen, ok := cohortPriceThen(f.PriceUSDThen)
 	if !ok || !scaled {
-		return af, nil, nil
+		return af, usd
 	}
-	thenIn, thenOut := usdOfStroops(f.Inflow, pThen), usdOfStroops(f.Outflow, pThen)
-	in, o, ps := formatUSD(thenIn), formatUSD(thenOut), *f.PriceUSDThen
+	usd.thenIn, usd.thenOut = usdOfStroops(f.Inflow, pThen), usdOfStroops(f.Outflow, pThen)
+	in, o, ps := formatUSD(usd.thenIn), formatUSD(usd.thenOut), *f.PriceUSDThen
 	af.InflowUSDThen, af.OutflowUSDThen, af.PriceUSDThen = &in, &o, &ps
-	return af, thenIn, thenOut
+	return af, usd
 }
 
 // cohortPriceThen parses the reader's month price into an exact rate.

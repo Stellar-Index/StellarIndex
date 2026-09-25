@@ -1,0 +1,9 @@
+# ClickHouse Float32/Float64 money columns that predate the ClickHouse
+# money pass of scripts/ci/lint-migrations.sh, keyed file:table.column.
+# Shrink-only: an entry whose column is no longer a float fails the lint
+# as stale, and lint-baseline-growth.sh fails any addition without a
+# Baseline-Growth trailer naming this file.
+account_cohort_rollup.sql:stellar.asset_month_usd_prices.volume_usd
+account_cohort_rollup.sql:stellar.account_cohort_positions.amount
+tier1_schema.sql:stellar.asset_month_usd_prices.volume_usd
+tier1_schema.sql:stellar.account_cohort_positions.amount

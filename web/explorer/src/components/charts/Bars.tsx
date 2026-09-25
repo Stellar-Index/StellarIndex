@@ -12,6 +12,11 @@ import { cn } from '@/lib/cn';
 
 export type HBarItem = {
   label: string;
+  /**
+   * Stable React key; defaults to `label`. Pass the full canonical id
+   * wherever two entries can share a label — two assets with one code.
+   */
+  id?: string;
   /** Bar geometry (relative magnitude). */
   value: number;
   /** Pre-formatted value label; falls back to value.toLocaleString('en-US'). */
@@ -73,7 +78,7 @@ export function HBarList({
     <ul aria-label={ariaLabel} className={cn('space-y-1.5', className)}>
       {finite.map((it) => (
         <li
-          key={it.label}
+          key={it.id ?? it.label}
           className="grid grid-cols-[minmax(7rem,14rem)_1fr] items-center gap-3 text-xs"
           title={it.title}
         >
@@ -119,8 +124,18 @@ export function HBarList({
 
 export type PairedBarRow = {
   label: string;
-  a: number;
-  b: number;
+  /**
+   * Stable React key; defaults to `label`. Pass the full canonical id
+   * wherever two entries can share a label — two assets with one code.
+   */
+  id?: string;
+  /**
+   * A half's value, or null when it has none (an unpriced USD figure): that
+   * half draws no bar and shows its display, "—" by default — never a
+   * zero-length bar that reads as a real zero.
+   */
+  a: number | null;
+  b: number | null;
   /** Pre-formatted labels for a / b (exact strings where needed). */
   aDisplay?: string;
   bDisplay?: string;
@@ -152,11 +167,15 @@ export function PairedBars({
   ariaLabel: string;
   className?: string;
 }) {
+  const valid = (v: number | null) => v === null || Number.isFinite(v);
   const finite = rows.filter(
-    (r) => Number.isFinite(r.a) && Number.isFinite(r.b),
+    (r) => valid(r.a) && valid(r.b) && (r.a !== null || r.b !== null),
   );
   if (finite.length === 0) return null;
-  const max = Math.max(...finite.flatMap((r) => [r.a, r.b]), 0);
+  const max = Math.max(
+    ...finite.flatMap((r) => [r.a ?? 0, r.b ?? 0]),
+    0,
+  );
   if (max <= 0) return null;
 
   return (
@@ -182,7 +201,7 @@ export function PairedBars({
       <ul aria-label={ariaLabel} className="space-y-2.5">
         {finite.map((r) => (
           <li
-            key={r.label}
+            key={r.id ?? r.label}
             className="grid grid-cols-[minmax(7rem,14rem)_1fr] items-center gap-3 text-xs"
             title={r.title}
           >
@@ -197,16 +216,18 @@ export function PairedBars({
                 ] as const
               ).map((half) => (
                 <span key={half.s} className="flex items-center gap-2">
-                  <span
-                    aria-hidden
-                    className="h-1.5 min-w-[2px] shrink-0 rounded-xs"
-                    style={{
-                      width: `${Math.max((half.v / max) * 100, 0.75) * 0.7}%`,
-                      backgroundColor: half.c,
-                    }}
-                  />
+                  {half.v !== null && (
+                    <span
+                      aria-hidden
+                      className="h-1.5 min-w-[2px] shrink-0 rounded-xs"
+                      style={{
+                        width: `${Math.max((half.v / max) * 100, 0.75) * 0.7}%`,
+                        backgroundColor: half.c,
+                      }}
+                    />
+                  )}
                   <span className="text-ink-muted font-mono text-[11px] whitespace-nowrap tabular-nums">
-                    {half.d ?? formatValue(half.v)}
+                    {half.d ?? (half.v === null ? '—' : formatValue(half.v))}
                   </span>
                 </span>
               ))}
@@ -220,6 +241,11 @@ export function PairedBars({
 
 export type DivergingBucket = {
   label: string;
+  /**
+   * Stable React key; defaults to `label`. Pass the full canonical id
+   * wherever two entries can share a label — two assets with one code.
+   */
+  id?: string;
   /** Positive-direction magnitude (e.g. received). Rendered up. */
   pos: number;
   /** Negative-direction magnitude (e.g. sent). Rendered down. Pass the MAGNITUDE (>= 0). */
@@ -301,7 +327,7 @@ export function DivergingColumns({
           const posH = (b.pos / max) * (half - 2);
           const negH = (b.neg / max) * (half - 2);
           return (
-            <g key={b.label}>
+            <g key={b.id ?? b.label}>
               {b.pos > 0 && (
                 <rect
                   x={x}

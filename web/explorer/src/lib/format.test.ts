@@ -270,3 +270,42 @@ describe('multiplyDecimalStrings', () => {
     expect(format.multiplyDecimalStrings('', '1')).toBeNull();
   });
 });
+
+describe('formatCompactUnits', () => {
+  it('rounds the exact value, not a float that crossed the display boundary', () => {
+    // 512,304,999,999,999.966… whole units: 512.3T. Number()-then-divide
+    // yields 512305000000000 and so "512.31T".
+    expect(format.formatCompactUnits('5123049999999999660566', 7)).toBe('512.3T');
+    expect(format.formatCompactUnits('8030049999999999577453', 7)).toBe('803T');
+  });
+
+  it('keeps an 18-decimal supply above 2^53 base units at its true magnitude', () => {
+    expect(format.formatCompactUnits('1000000000000000000000000000', 18)).toBe('1B');
+  });
+
+  it('formats decimal strings and small values to two exact places', () => {
+    expect(format.formatCompactUnits('1250.0000000')).toBe('1.25K');
+    expect(format.formatCompactUnits('1234.5')).toBe('1.23K');
+    expect(format.formatCompactUnits('12.345')).toBe('12.35');
+    expect(format.formatCompactUnits('-12.345')).toBe('-12.35');
+    expect(format.formatCompactUnits('7')).toBe('7');
+    expect(format.formatCompactUnits('123456', 7)).toBe('0.01');
+  });
+
+  it('renders an absent or non-decimal value as a dash, never a zero', () => {
+    expect(format.formatCompactUnits(undefined)).toBe('—');
+    expect(format.formatCompactUnits('')).toBe('—');
+    expect(format.formatCompactUnits('1e27')).toBe('—');
+  });
+});
+
+describe('decimalOrNull', () => {
+  it('parses a decimal and reports absence as null, never 0', () => {
+    expect(format.decimalOrNull('12.5')).toBe(12.5);
+    expect(format.decimalOrNull('0')).toBe(0);
+    expect(format.decimalOrNull(undefined)).toBeNull();
+    expect(format.decimalOrNull(null)).toBeNull();
+    expect(format.decimalOrNull('')).toBeNull();
+    expect(format.decimalOrNull('n/a')).toBeNull();
+  });
+});

@@ -8,7 +8,11 @@ import { AssetLink } from '@/components/AssetLink';
 import { DonutChart } from '@/components/charts/DonutChart';
 import { HBarList, PairedBars } from '@/components/charts/Bars';
 import { apiGet, asExample } from '@/api/client';
-import { formatCompact, sumDecimalStrings } from '@/lib/format';
+import {
+  decimalOrNull,
+  formatCompact,
+  sumDecimalStrings,
+} from '@/lib/format';
 import { scaledUnits } from '../../explorer-shared';
 import { shortAssetText } from '@/lib/asset-label';
 
@@ -99,6 +103,7 @@ export function PoolReserves({ pool }: { pool: string }) {
       {priced.length > 0 && totalUsd > 0 && (
         <DonutChart
           data={priced.map((rv) => ({
+            id: rv.asset,
             label: shortAssetText(rv.asset),
             value: Number(rv.supplied_usd),
           }))}
@@ -118,7 +123,7 @@ export function PoolReserves({ pool }: { pool: string }) {
               ariaLabel={`Supplied vs borrowed per priced reserve: ${priced
                 .map(
                   (rv) =>
-                    `${shortAssetText(rv.asset)} $${formatCompact(Number(rv.supplied_usd))} supplied, $${formatCompact(Number(rv.borrowed_usd ?? 0))} borrowed`,
+                    `${shortAssetText(rv.asset)} $${formatCompact(Number(rv.supplied_usd))} supplied, ${rv.borrowed_usd != null ? `$${formatCompact(Number(rv.borrowed_usd))}` : 'unpriced'} borrowed`,
                 )
                 .join('; ')}`}
               aLabel="Supplied"
@@ -126,9 +131,10 @@ export function PoolReserves({ pool }: { pool: string }) {
               aColor="var(--color-up)"
               bColor="var(--color-brand-500)"
               rows={priced.map((rv) => ({
+                id: rv.asset,
                 label: shortAssetText(rv.asset),
                 a: Number(rv.supplied_usd),
-                b: Number(rv.borrowed_usd ?? 0),
+                b: decimalOrNull(rv.borrowed_usd),
                 aDisplay: `$${formatCompact(Number(rv.supplied_usd))}`,
                 bDisplay:
                   rv.borrowed_usd != null
@@ -152,6 +158,7 @@ export function PoolReserves({ pool }: { pool: string }) {
                 .join(', ')}`}
               max={100}
               items={reserves.map((rv) => ({
+                id: rv.asset,
                 label: shortAssetText(rv.asset),
                 value: Math.max(0, Math.min(100, rv.utilization_pct)),
                 display: `${rv.utilization_pct.toFixed(1)}%`,
@@ -192,9 +199,10 @@ export function PoolReserves({ pool }: { pool: string }) {
                     (rv) => rv.supply_apr != null || rv.borrow_apr != null,
                   )
                   .map((rv) => ({
+                    id: rv.asset,
                     label: shortAssetText(rv.asset),
-                    a: rv.supply_apr ?? 0,
-                    b: rv.borrow_apr ?? 0,
+                    a: rv.supply_apr ?? null,
+                    b: rv.borrow_apr ?? null,
                     aDisplay: pct(rv.supply_apr),
                     bDisplay: pct(rv.borrow_apr),
                     title: rv.asset,

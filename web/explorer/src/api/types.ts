@@ -6317,7 +6317,16 @@ export interface components {
              * @description Distinct members that moved something that month (uniqCombined estimate).
              */
             active_accounts: number;
-            /** @description The month's inflow at that month's prices: the `by_asset` rows' `inflow_usd_then` summed exactly and rounded once. Absent when no asset of the month has a `price_usd_then`; never zero. */
+            /**
+             * Format: int64
+             * @description How many `by_asset` rows form the month's basket: the rows priced on BOTH bases (an `inflow_usd` and an `inflow_usd_then`). The point's four USD figures sum exactly this basket, so today and then value the same assets; a row priced on one basis alone is in neither point sum. 0 when the basket is empty.
+             */
+            priced_assets: number;
+            /** @description The basket's inflow at today's prices: its `by_asset` rows' exact `inflow` × live USD price, summed and rounded once. Absent when `priced_assets` is 0; never zero. */
+            inflow_usd?: string;
+            /** @description As `inflow_usd`, for the outflow. */
+            outflow_usd?: string;
+            /** @description The basket's inflow at that month's prices: its `by_asset` rows' exact `inflow` × `price_usd_then`, summed and rounded once. Absent when `priced_assets` is 0; never zero. */
             inflow_usd_then?: string;
             /** @description As `inflow_usd_then`, for the outflow. */
             outflow_usd_then?: string;

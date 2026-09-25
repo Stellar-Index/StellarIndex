@@ -1,5 +1,7 @@
 'use client';
 
+import { decimalOrNull } from '@/lib/format';
+
 interface Bucket {
   hour: string;
   volume_usd: string;
@@ -22,8 +24,13 @@ export function SourceSparkline({
   if (!buckets || buckets.length === 0) {
     return <span className="text-ink-faint font-mono text-[10px]">—</span>;
   }
-  const values = buckets.map((b) => Number(b.volume_usd) || 0);
-  const max = Math.max(...values);
+  // An absent or unparsable hour draws no bar — a gap, not a zero hour.
+  const values = buckets.map((b) => decimalOrNull(b.volume_usd));
+  const known = values.filter((v): v is number => v !== null);
+  if (known.length === 0) {
+    return <span className="text-ink-faint font-mono text-[10px]">—</span>;
+  }
+  const max = Math.max(...known);
   if (max === 0) {
     return <span className="text-ink-faint font-mono text-[10px]">no vol</span>;
   }
@@ -36,6 +43,7 @@ export function SourceSparkline({
       className="inline-block"
     >
       {values.map((v, i) => {
+        if (v === null) return null;
         const h = (v / max) * height;
         const x = i * barWidth;
         const y = height - h;

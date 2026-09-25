@@ -6,6 +6,11 @@ import { cn } from '@/lib/cn';
 
 export type DonutSlice = {
   label: string;
+  /**
+   * Stable React key; defaults to `label`. Pass the full canonical id
+   * wherever two entries can share a label — two assets with one code.
+   */
+  id?: string;
   value: number;
   /** Optional internal link for the legend row. */
   href?: string;
@@ -120,7 +125,7 @@ export function DonutChart({
           />
           {segs.map((s) => (
             <circle
-              key={s.label}
+              key={s.id ?? s.label}
               cx={cx}
               cy={cy}
               r={r}
@@ -180,7 +185,7 @@ export function DonutChart({
             </span>
           );
           return (
-            <li key={s.label}>
+            <li key={s.id ?? s.label}>
               {s.href ? (
                 <Link
                   href={s.href}

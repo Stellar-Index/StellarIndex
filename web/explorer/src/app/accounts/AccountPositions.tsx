@@ -267,6 +267,7 @@ export function AccountPositions({ id }: { id: string }) {
       // for unlinkable ids; the slice then renders unlinked.
       const slug = assetSlug(h.asset);
       return {
+        id: h.asset,
         label: shortAssetText(h.asset),
         value: h.valueUSD as number,
         ...(slug ? { href: assetHref(slug) } : {}),

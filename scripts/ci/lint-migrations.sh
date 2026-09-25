@@ -288,16 +288,22 @@ fi
 # Escape hatch: the same inline `-- lint-money:ok <reason>` as pass 1.
 #
 # ch_float_baseline lists the Float64 money columns that predate this
-# pass, keyed file:table.column. Each is a documented display magnitude
-# (its DDL header says so) mirrored between the operator file and
-# tier1_schema.sql, and the fix belongs with that DDL: retype, or carry
-# the inline escape with its reason. An entry that no longer matches is
-# stale and FAILS, so this list only shrinks.
+# pass, keyed file:table.column, one per line of CH_FLOAT_BASELINE. Each
+# is a documented display magnitude (its DDL header says so) mirrored
+# between the operator file and tier1_schema.sql, and the fix belongs with
+# that DDL: retype, or carry the inline escape with its reason. An entry
+# that no longer matches is stale and FAILS, so this list only shrinks.
+# It lives in a *.baseline file rather than here because CI runs the base
+# ref's copy of this script (CID-03): an inline list could never shrink,
+# as the base copy would call the entry a retype retires stale. Growth of
+# the file is lint-baseline-growth.sh's to catch; a missing file is an
+# empty baseline, the strictest reading.
 CH_DIR="${CH_DIR:-deploy/clickhouse}"
-ch_float_baseline='account_cohort_rollup.sql:stellar.asset_month_usd_prices.volume_usd
-account_cohort_rollup.sql:stellar.account_cohort_positions.amount
-tier1_schema.sql:stellar.asset_month_usd_prices.volume_usd
-tier1_schema.sql:stellar.account_cohort_positions.amount'
+CH_FLOAT_BASELINE="${CH_FLOAT_BASELINE:-scripts/ci/lint-migrations-ch-float.baseline}"
+ch_float_baseline=''
+if [ -f "$CH_FLOAT_BASELINE" ]; then
+  ch_float_baseline="$(grep -vE '^[[:space:]]*(#|$)' "$CH_FLOAT_BASELINE" || true)"
+fi
 
 # ch_money_floats prints one `line<TAB>table.column<TAB>raw` per money
 # column typed Float32/Float64 (Nullable or not) in $1. Table context
