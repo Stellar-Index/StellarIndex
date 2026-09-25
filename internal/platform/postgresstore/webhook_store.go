@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
@@ -31,6 +32,20 @@ func NewWebhookStore(s *Store) *WebhookStore {
 // Compile-time interface conformance.
 var _ platform.WebhookStore = (*WebhookStore)(nil)
 
+// customerWebhooksURLKey is migration 0180's UNIQUE (account_id, url) index.
+const customerWebhooksURLKey = "customer_webhooks_account_url_key"
+
+// webhookURLConflict maps a violation of [customerWebhooksURLKey] to
+// [platform.ErrConflict] and returns any other error unchanged.
+func webhookURLConflict(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgErrUniqueViolation &&
+		pgErr.ConstraintName == customerWebhooksURLKey {
+		return platform.ErrConflict
+	}
+	return err
+}
+
 // CreateWebhook inserts the registry row, enforcing the per-account
 // `maxPerAccount` cap atomically. F-1248 (codex audit-2026-05-12):
 // the handler's pre-check (`SELECT … then INSERT`) was raceable —
@@ -49,9 +64,10 @@ var _ platform.WebhookStore = (*WebhookStore)(nil)
 // by account_id, so two different accounts creating concurrently
 // don't serialise against each other.
 //
-// `maxPerAccount` is the value passed by the handler
-// (MaxWebhooksPerAccount = 10 at time of writing). Tests can pass
-// a smaller value to drive the race deterministically.
+// `maxPerAccount` is the handler's tier ceiling; a value <= 0 admits
+// nothing (TierAnon), never a default. Tests can pass a smaller value
+// to drive the race deterministically. A second registration of the
+// same URL on one account returns [platform.ErrConflict].
 func (c *WebhookStore) CreateWebhook(ctx context.Context, w platform.CustomerWebhook, maxPerAccount int) (platform.CustomerWebhook, error) {
 	if w.AccountID == uuid.Nil {
 		return platform.CustomerWebhook{}, errors.New("postgresstore: CreateWebhook: AccountID is empty")
@@ -63,7 +79,7 @@ func (c *WebhookStore) CreateWebhook(ctx context.Context, w platform.CustomerWeb
 		return platform.CustomerWebhook{}, errors.New("postgresstore: CreateWebhook: Events is empty")
 	}
 	if maxPerAccount <= 0 {
-		maxPerAccount = 10
+		return platform.CustomerWebhook{}, platform.ErrWebhookQuotaExceeded
 	}
 	tx, err := c.s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -103,7 +119,7 @@ func (c *WebhookStore) CreateWebhook(ctx context.Context, w platform.CustomerWeb
 		if errors.Is(err, sql.ErrNoRows) {
 			return platform.CustomerWebhook{}, platform.ErrWebhookQuotaExceeded
 		}
-		return platform.CustomerWebhook{}, fmt.Errorf("postgresstore: CreateWebhook: %w", err)
+		return platform.CustomerWebhook{}, fmt.Errorf("postgresstore: CreateWebhook: %w", webhookURLConflict(err))
 	}
 	if err := tx.Commit(); err != nil {
 		return platform.CustomerWebhook{}, fmt.Errorf("postgresstore: CreateWebhook: commit: %w", err)
@@ -223,7 +239,7 @@ func (c *WebhookStore) UpdateWebhook(ctx context.Context, w platform.CustomerWeb
 	events := w.Events
 	res, err := c.s.db.ExecContext(ctx, q, w.ID, w.Name, w.URL, events, w.Enabled)
 	if err != nil {
-		return fmt.Errorf("postgresstore: UpdateWebhook %s: %w", w.ID, err)
+		return fmt.Errorf("postgresstore: UpdateWebhook %s: %w", w.ID, webhookURLConflict(err))
 	}
 	n, err := res.RowsAffected()
 	if err != nil {

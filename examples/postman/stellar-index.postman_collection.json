@@ -32372,7 +32372,7 @@
               "request": {
                 "name": "Customer dashboard — register a new webhook.",
                 "description": {
-                  "content": "Session-gated. Returns the signing secret ONCE — store it\nserver-side immediately and use it to HMAC-verify the\nX-StellarIndex-Signature header on inbound POSTs. URL must\nbe https://. Owner / admin / member roles can register;\nviewer + billing 403. Webhook quota is tier-aware (free 10,\npartner 100 — deployment-overridable); exceeding it\nreturns 409.\n",
+                  "content": "Session-gated. Returns the signing secret ONCE — store it\nserver-side immediately and use it to HMAC-verify the\nX-StellarIndex-Signature header on inbound POSTs. URL must\nbe https:// on the default port (443) and at most 2048\nbytes. Owner / admin / member roles can register;\nviewer + billing 403. Webhook quota is tier-aware (free 10,\npartner 100 — deployment-overridable); exceeding it\nreturns 409, as does a url this account already registered.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -32696,7 +32696,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Account at the 10-webhook quota.\nA request whose `Idempotency-Key` matches one still being\nprocessed also gets 409 (`idempotency-key-in-flight`,\nretryable per `Retry-After`).",
+                  "name": "Account at its tier's webhook quota, or it already has a\nwebhook for this url.\nA request whose `Idempotency-Key` matches one still being\nprocessed also gets 409 (`idempotency-key-in-flight`,\nretryable per `Retry-After`).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -33046,7 +33046,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Cross-site write blocked: state-changing dashboard + auth\nrequests must carry an `Origin` (or `Referer`) matching\nthis API or an operator-allow-listed site\n(`cross-site-request-blocked`).",
+                      "name": "Role can't manage webhooks, OR the write was blocked as\ncross-site: state-changing dashboard + auth requests must\ncarry an `Origin` (or `Referer`) matching this API or an\noperator-allow-listed site (`cross-site-request-blocked`).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -33114,7 +33114,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Webhook not found.",
+                      "name": "No webhook with this id on this account (absent, already deleted, or another account's).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -33180,6 +33180,74 @@
                       "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Another of this account's webhooks already uses this url.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "webhooks",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          },
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          },
+                          {
+                            "description": {
+                              "content": "Added as a part of security scheme: apikey",
+                              "type": "text/plain"
+                            },
+                            "key": "stellarindex_session",
+                            "value": "<API Key>"
+                          }
+                        ],
+                        "method": "PATCH",
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"anomaly.freeze\",\n    \"incident.sev1\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                          "options": {
+                            "raw": {
+                              "headerFamily": "json",
+                              "language": "json"
+                            }
+                          }
+                        }
+                      },
+                      "status": "Conflict",
+                      "code": 409,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
                     }
                   ],
                   "event": [],
@@ -33192,7 +33260,7 @@
                   "request": {
                     "name": "Customer dashboard — delete a webhook.",
                     "description": {
-                      "content": "Session-gated. Hard-deletes the registry row and cascades\nto webhook_deliveries. Idempotent — 204 on absent.\n",
+                      "content": "Session-gated. Hard-deletes the registry row and cascades\nto webhook_deliveries. An absent or cross-account id returns\n404 (the same shape, so presence never leaks); a client\nretrying a delete whose response it lost should treat 404 as\nalready deleted.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -33289,6 +33357,61 @@
                       "header": [],
                       "cookie": [],
                       "_postman_previewlanguage": "text"
+                    },
+                    {
+                      "name": "Client-supplied parameters didn't validate.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "webhooks",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          },
+                          {
+                            "description": {
+                              "content": "Added as a part of security scheme: apikey",
+                              "type": "text/plain"
+                            },
+                            "key": "stellarindex_session",
+                            "value": "<API Key>"
+                          }
+                        ],
+                        "method": "DELETE",
+                        "body": {}
+                      },
+                      "status": "Bad Request",
+                      "code": 400,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
                     },
                     {
                       "name": "No valid session cookie.",
@@ -33522,6 +33645,62 @@
                             }
                           ],
                           "body": "{\n  \"deliveries\": [\n    {\n      \"id\": \"<uuid>\",\n      \"event_type\": \"incident.sev1\",\n      \"attempt_count\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"next_attempt_at\": \"<string,null-date-time>\",\n      \"delivered_at\": \"<string,null-date-time>\",\n      \"last_error\": \"<string,null>\",\n      \"last_response_status\": \"<integer,null>\"\n    },\n    {\n      \"id\": \"<uuid>\",\n      \"event_type\": \"incident.resolved\",\n      \"attempt_count\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"next_attempt_at\": \"<string,null-date-time>\",\n      \"delivered_at\": \"<string,null-date-time>\",\n      \"last_error\": \"<string,null>\",\n      \"last_response_status\": \"<integer,null>\"\n    }\n  ]\n}",
+                          "cookie": [],
+                          "_postman_previewlanguage": "json"
+                        },
+                        {
+                          "name": "Client-supplied parameters didn't validate.",
+                          "originalRequest": {
+                            "url": {
+                              "path": [
+                                "dashboard",
+                                "webhooks",
+                                ":id",
+                                "deliveries"
+                              ],
+                              "host": [
+                                "{{baseUrl}}"
+                              ],
+                              "query": [],
+                              "variable": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) ",
+                                    "type": "text/plain"
+                                  },
+                                  "type": "any",
+                                  "value": "<uuid>",
+                                  "key": "id"
+                                }
+                              ]
+                            },
+                            "header": [
+                              {
+                                "key": "Accept",
+                                "value": "application/problem+json"
+                              },
+                              {
+                                "description": {
+                                  "content": "Added as a part of security scheme: apikey",
+                                  "type": "text/plain"
+                                },
+                                "key": "stellarindex_session",
+                                "value": "<API Key>"
+                              }
+                            ],
+                            "method": "GET",
+                            "body": {}
+                          },
+                          "status": "Bad Request",
+                          "code": 400,
+                          "header": [
+                            {
+                              "key": "Content-Type",
+                              "value": "application/problem+json"
+                            }
+                          ],
+                          "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
                           "cookie": [],
                           "_postman_previewlanguage": "json"
                         },

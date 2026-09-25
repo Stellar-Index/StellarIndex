@@ -50,11 +50,24 @@ func (s *fakeStore) CreateWebhook(_ context.Context, w platform.CustomerWebhook,
 			return platform.CustomerWebhook{}, platform.ErrWebhookQuotaExceeded
 		}
 	}
+	if s.urlTaken(w) {
+		return platform.CustomerWebhook{}, platform.ErrConflict
+	}
 	w.ID = uuid.New()
 	w.CreatedAt = time.Now().UTC()
 	w.UpdatedAt = w.CreatedAt
 	s.webhooks[w.ID] = w
 	return w, nil
+}
+
+// urlTaken mirrors migration 0180's UNIQUE (account_id, url). Caller holds s.mu.
+func (s *fakeStore) urlTaken(w platform.CustomerWebhook) bool {
+	for id, existing := range s.webhooks {
+		if id != w.ID && existing.AccountID == w.AccountID && existing.URL == w.URL {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *fakeStore) GetWebhook(_ context.Context, id uuid.UUID) (platform.CustomerWebhook, error) {
@@ -101,6 +114,9 @@ func (s *fakeStore) UpdateWebhook(_ context.Context, w platform.CustomerWebhook)
 	defer s.mu.Unlock()
 	if _, ok := s.webhooks[w.ID]; !ok {
 		return platform.ErrNotFound
+	}
+	if s.urlTaken(w) {
+		return platform.ErrConflict
 	}
 	w.UpdatedAt = time.Now().UTC()
 	s.webhooks[w.ID] = w
@@ -775,5 +791,80 @@ func TestValidateEvents_AcceptsTheCanonicalSet(t *testing.T) {
 		if !strings.Contains(err.Error(), string(e)) {
 			t.Errorf("rejection %q does not name supported type %q", err.Error(), e)
 		}
+	}
+}
+
+// TestValidateWebhookURL_PortAndLength pins GH-828: a webhook URL is
+// confined to the default https port and a 2048-byte ceiling, so a
+// registration cannot aim signed POSTs at an arbitrary TCP service or
+// store a multi-KiB URL that every failed attempt copies into last_error.
+func TestValidateWebhookURL_PortAndLength(t *testing.T) {
+	base := "https://hooks.example/"
+	for _, tc := range []struct {
+		name, url string
+		ok        bool
+	}{
+		{"default port", base + "hook", true},
+		{"explicit 443", "https://hooks.example:443/hook", true},
+		{"smtp port", "https://hooks.example:25/hook", false},
+		{"alt https port", "https://hooks.example:8443/hook", false},
+		{"at the cap", base + strings.Repeat("a", 2048-len(base)), true},
+		{"one past the cap", base + strings.Repeat("a", 2048-len(base)+1), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateWebhookURL(context.Background(), tc.url)
+			if tc.ok && err != nil {
+				t.Fatalf("validateWebhookURL(%d bytes) = %v, want nil", len(tc.url), err)
+			}
+			if !tc.ok && err == nil {
+				t.Fatalf("validateWebhookURL(%.40q, %d bytes) accepted, want rejection", tc.url, len(tc.url))
+			}
+		})
+	}
+}
+
+// TestHandleCreate_DuplicateURLConflicts pins GH-828's UNIQUE
+// (account_id, url): a second registration of the same destination is a
+// 409, not a second row fanning every event out to it again.
+func TestHandleCreate_DuplicateURLConflicts(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	body := createRequest{
+		Name:   "ops",
+		URL:    "https://hooks.example/dup",
+		Events: []string{string(platform.WebhookEventIncidentSEV1)},
+	}
+	for i, want := range []int{http.StatusCreated, http.StatusConflict} {
+		w := httptest.NewRecorder()
+		h.HandleCreate(w, sessionReq(t, http.MethodPost, "/v1/dashboard/webhooks", body, sc))
+		if w.Code != want {
+			t.Fatalf("create #%d status = %d, want %d; body=%s", i+1, w.Code, want, w.Body.String())
+		}
+	}
+	if len(store.webhooks) != 1 {
+		t.Errorf("store holds %d webhooks, want 1", len(store.webhooks))
+	}
+}
+
+// TestHandleUpdate_DuplicateURLConflicts is the PATCH half of the same
+// uniqueness: moving a webhook onto a sibling's url is a 409.
+func TestHandleUpdate_DuplicateURLConflicts(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	a, b := uuid.New(), uuid.New()
+	for id, u := range map[uuid.UUID]string{a: "https://a.example/hook", b: "https://b.example/hook"} {
+		store.webhooks[id] = platform.CustomerWebhook{
+			ID: id, AccountID: sc.Account.ID, Name: "n", URL: u,
+			Events: []string{"incident.sev1"}, Enabled: true,
+		}
+	}
+	req := sessionReq(t, http.MethodPatch, "/v1/dashboard/webhooks/"+b.String(),
+		updateRequest{URL: strPtr("https://a.example/hook")}, sc)
+	req.SetPathValue("id", b.String())
+	w := httptest.NewRecorder()
+	h.HandleUpdate(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body=%s", w.Code, w.Body.String())
+	}
+	if got := store.webhooks[b].URL; got != "https://b.example/hook" {
+		t.Errorf("rejected update rewrote url to %q", got)
 	}
 }

@@ -157,25 +157,16 @@ func (h *Handlers) HandleList(w http.ResponseWriter, r *http.Request) {
 }
 
 // DefaultCooldownSeconds is applied when a create request OMITS
-// cooldown_seconds. NTF-PA-02: the evaluator is level-triggered, so a
-// cooldown of 0 re-fires a `price.alert` delivery every sweep tick
-// (DefaultInterval=30s) for as long as the threshold holds — thousands of
-// duplicate deliveries/day for what a customer almost always intends as a
-// single crossing notification. Defaulting the OMITTED case to a non-zero
-// minimum keeps the common case sane while still letting a caller opt into
-// the documented every-tick behaviour by sending an explicit 0. 300s (5m)
-// is the cooldown used throughout the API examples/spec as the
-// representative value.
-const DefaultCooldownSeconds = 300
+// cooldown_seconds: the floor, [platform.MinAlertCooldownSeconds].
+const DefaultCooldownSeconds = platform.MinAlertCooldownSeconds
 
 type createRequest struct {
 	BaseAsset  string `json:"base_asset"`
 	QuoteAsset string `json:"quote_asset"`
 	Condition  string `json:"condition"`
 	Threshold  string `json:"threshold"`
-	// CooldownSeconds is a pointer so an OMITTED field (nil) is
-	// distinguishable from an explicit 0: nil → DefaultCooldownSeconds,
-	// explicit 0 → the documented re-fire-every-tick behaviour.
+	// CooldownSeconds is a pointer so an OMITTED field (nil) takes
+	// DefaultCooldownSeconds while an explicit value is validated.
 	CooldownSeconds *int  `json:"cooldown_seconds,omitempty"`
 	Enabled         *bool `json:"enabled,omitempty"` // pointer so absent → true default
 }
@@ -299,10 +290,8 @@ func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, toDTO(updated))
 }
 
-// HandleDelete removes the alert. Idempotent — deleting an absent ID
-// returns 204 (via parseAndAuthorise's not-found → 404 for cross-account
-// probes; a genuinely-absent-but-owned row can't happen since we looked
-// it up).
+// HandleDelete removes the alert. An absent or cross-account id is 404
+// via parseAndAuthorise (the same shape, so presence never leaks).
 func (h *Handlers) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	sc, ok := dashboardauth.SessionFromContext(r.Context())
 	if !ok {
@@ -393,11 +382,14 @@ func parseCreateRequest(r *http.Request) (createRequest, int, string) {
 	if problem := validateThreshold(req.Threshold); problem != "" {
 		return createRequest{}, http.StatusBadRequest, problem
 	}
-	if req.CooldownSeconds != nil && *req.CooldownSeconds < 0 {
-		return createRequest{}, http.StatusBadRequest, "cooldown_seconds must be >= 0"
+	if req.CooldownSeconds != nil && !platform.ValidAlertCooldown(*req.CooldownSeconds) {
+		return createRequest{}, http.StatusBadRequest, cooldownProblem
 	}
 	return req, 0, ""
 }
+
+var cooldownProblem = fmt.Sprintf("cooldown_seconds must be between %d and %d",
+	platform.MinAlertCooldownSeconds, platform.MaxAlertCooldownSeconds)
 
 // applyUpdate validates + applies a PATCH body to current. Returns
 // (status, problem) on the first validation failure, or (0, "") on
@@ -432,8 +424,8 @@ func applyUpdate(current *platform.PriceAlert, req updateRequest) (int, string) 
 		current.Threshold = v
 	}
 	if req.CooldownSeconds != nil {
-		if *req.CooldownSeconds < 0 {
-			return http.StatusBadRequest, "cooldown_seconds must be >= 0"
+		if !platform.ValidAlertCooldown(*req.CooldownSeconds) {
+			return http.StatusBadRequest, cooldownProblem
 		}
 		current.CooldownSeconds = *req.CooldownSeconds
 	}

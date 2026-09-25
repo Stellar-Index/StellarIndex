@@ -9162,10 +9162,11 @@ paths:
         Session-gated. Returns the signing secret ONCE — store it
         server-side immediately and use it to HMAC-verify the
         X-StellarIndex-Signature header on inbound POSTs. URL must
-        be https://. Owner / admin / member roles can register;
+        be https:// on the default port (443) and at most 2048
+        bytes. Owner / admin / member roles can register;
         viewer + billing 403. Webhook quota is tier-aware (free 10,
         partner 100 — deployment-overridable); exceeding it
-        returns 409.
+        returns 409, as does a url this account already registered.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -9208,7 +9209,8 @@ paths:
               schema: { $ref: "#/components/schemas/Problem" }
         "409":
           description: |
-            Account at the 10-webhook quota.
+            Account at its tier's webhook quota, or it already has a
+            webhook for this url.
             A request whose `Idempotency-Key` matches one still being
             processed also gets 409 (`idempotency-key-in-flight`,
             retryable per `Retry-After`).
@@ -9260,15 +9262,20 @@ paths:
               schema: { $ref: "#/components/schemas/Problem" }
         "403":
           description: |
-            Cross-site write blocked: state-changing dashboard + auth
-            requests must carry an `Origin` (or `Referer`) matching
-            this API or an operator-allow-listed site
-            (`cross-site-request-blocked`).
+            Role can't manage webhooks, OR the write was blocked as
+            cross-site: state-changing dashboard + auth requests must
+            carry an `Origin` (or `Referer`) matching this API or an
+            operator-allow-listed site (`cross-site-request-blocked`).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
         "404":
-          description: Webhook not found.
+          description: No webhook with this id on this account (absent, already deleted, or another account's).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "409":
+          description: Another of this account's webhooks already uses this url.
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -9280,7 +9287,10 @@ paths:
         - SessionCookie: []
       description: |
         Session-gated. Hard-deletes the registry row and cascades
-        to webhook_deliveries. Idempotent — 204 on absent.
+        to webhook_deliveries. An absent or cross-account id returns
+        404 (the same shape, so presence never leaks); a client
+        retrying a delete whose response it lost should treat 404 as
+        already deleted.
       parameters:
         - name: id
           in: path
@@ -9289,6 +9299,7 @@ paths:
       responses:
         "204":
           description: Deleted.
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401":
           description: No valid session cookie.
           content:
@@ -9341,6 +9352,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/WebhookDeliveryDTO" }
                 required: [deliveries]
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401":
           description: No valid session cookie.
           content:
@@ -14064,7 +14076,7 @@ components:
       type: object
       properties:
         name:    { type: string, minLength: 1, maxLength: 200 }
-        url:     { type: string, description: "Must start with https://." }
+        url:     { type: string, maxLength: 2048, description: "Must start with https://, use the default port (443), and be unique within the account." }
         events:
           type: array
           minItems: 1
@@ -14116,7 +14128,7 @@ components:
         their current value.
       properties:
         name:    { type: string, minLength: 1, maxLength: 200 }
-        url:     { type: string }
+        url:     { type: string, maxLength: 2048, description: "Same rules as on create." }
         events:
           type: array
           items:
@@ -14156,7 +14168,7 @@ components:
         quote_asset:      { type: string, description: "Canonical quote asset id." }
         condition:        { type: string, enum: [above, below], description: "`above` fires at observed >= threshold; `below` at observed <= threshold." }
         threshold:        { type: string, description: "Price boundary as a decimal string (never a float — ADR-0003)." }
-        cooldown_seconds: { type: integer, minimum: 0, description: "Minimum seconds between two fires of this alert. 0 = re-fire every tick the condition holds." }
+        cooldown_seconds: { type: integer, minimum: 300, description: "Minimum seconds between two fires of this alert (at least 300)." }
         enabled:          { type: boolean }
         last_fired_at:    { type: string, format: date-time, description: "When the alert last enqueued a delivery. Absent/zero = never fired." }
         created_at:       { type: string, format: date-time }
@@ -14170,7 +14182,7 @@ components:
         quote_asset:      { type: string, description: "Canonical quote asset id." }
         condition:        { type: string, enum: [above, below] }
         threshold:        { type: string, description: "Positive decimal string (e.g. \"0.15\", \"1200\"). Fractions / scientific notation are rejected." }
-        cooldown_seconds: { type: integer, minimum: 0, description: "Optional; defaults to 300 (5m) when omitted. Send an explicit 0 to opt into re-firing every tick the condition holds." }
+        cooldown_seconds: { type: integer, minimum: 300, maximum: 2147483647, description: "Optional; defaults to 300 (5m), also the minimum. A lower value is a 400: the evaluator is level-triggered, so a shorter cooldown would re-notify every webhook on each tick the condition holds." }
         enabled:          { type: boolean, description: "Defaults true when absent." }
       required: [base_asset, quote_asset, condition, threshold]
 
@@ -14184,7 +14196,7 @@ components:
         quote_asset:      { type: string }
         condition:        { type: string, enum: [above, below] }
         threshold:        { type: string }
-        cooldown_seconds: { type: integer, minimum: 0 }
+        cooldown_seconds: { type: integer, minimum: 300, maximum: 2147483647 }
         enabled:          { type: boolean }
 
     # ──────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,6 +35,25 @@ func ValidAlertCondition(s string) bool {
 	}
 }
 
+// MinAlertCooldownSeconds floors the re-fire interval. The evaluator is
+// level-triggered, so a shorter cooldown re-enqueues every subscribed
+// webhook each tick the condition holds: at the free tier's 25 alerts x 10
+// webhooks a 0 cooldown enqueues 250 deliveries per 30 s tick, above the
+// delivery worker's ~5/s drain. At 300 s one such account is ~0.8/s.
+// Migration 0181 raised stored values below it.
+const MinAlertCooldownSeconds = 300
+
+// MaxAlertCooldownSeconds is the largest cooldown the int4
+// `price_alerts.cooldown_seconds` column can hold.
+const MaxAlertCooldownSeconds = math.MaxInt32
+
+// ValidAlertCooldown reports whether n is an accepted cooldown. Used by
+// the CRUD handler so an out-of-range value is a 400, not a firehose
+// alert or a driver encode error surfacing as a 500.
+func ValidAlertCooldown(n int) bool {
+	return n >= MinAlertCooldownSeconds && n <= MaxAlertCooldownSeconds
+}
+
 // PriceAlert is one customer-registered price-threshold rule: "notify
 // this account when <BaseAsset>/<QuoteAsset> goes <Condition>
 // <Threshold>". Backs the `price_alerts` table (migration 0080).
@@ -64,7 +84,7 @@ type PriceAlert struct {
 	Threshold string
 
 	// CooldownSeconds is the minimum wall-clock gap between two fires of
-	// the same alert. 0 = re-fire every tick the condition holds.
+	// the same alert, at least [MinAlertCooldownSeconds].
 	CooldownSeconds int
 
 	Enabled bool

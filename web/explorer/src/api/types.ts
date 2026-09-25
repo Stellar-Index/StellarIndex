@@ -3779,10 +3779,11 @@ export interface paths {
          * @description Session-gated. Returns the signing secret ONCE — store it
          *     server-side immediately and use it to HMAC-verify the
          *     X-StellarIndex-Signature header on inbound POSTs. URL must
-         *     be https://. Owner / admin / member roles can register;
+         *     be https:// on the default port (443) and at most 2048
+         *     bytes. Owner / admin / member roles can register;
          *     viewer + billing 403. Webhook quota is tier-aware (free 10,
          *     partner 100 — deployment-overridable); exceeding it
-         *     returns 409.
+         *     returns 409, as does a url this account already registered.
          */
         post: operations["createDashboardWebhook"];
         delete?: never;
@@ -3804,7 +3805,10 @@ export interface paths {
         /**
          * Customer dashboard — delete a webhook.
          * @description Session-gated. Hard-deletes the registry row and cascades
-         *     to webhook_deliveries. Idempotent — 204 on absent.
+         *     to webhook_deliveries. An absent or cross-account id returns
+         *     404 (the same shape, so presence never leaks); a client
+         *     retrying a delete whose response it lost should treat 404 as
+         *     already deleted.
          */
         delete: operations["deleteDashboardWebhook"];
         options?: never;
@@ -6510,7 +6514,7 @@ export interface components {
         };
         CreateWebhookRequest: {
             name: string;
-            /** @description Must start with https://. */
+            /** @description Must start with https://, use the default port (443), and be unique within the account. */
             url: string;
             events: ("incident.sev1" | "incident.resolved" | "anomaly.freeze" | "divergence.firing" | "price.alert")[];
             /** @description Defaults true when absent. */
@@ -6552,6 +6556,7 @@ export interface components {
          */
         UpdateWebhookRequest: {
             name?: string;
+            /** @description Same rules as on create. */
             url?: string;
             events?: ("incident.sev1" | "incident.resolved" | "anomaly.freeze" | "divergence.firing" | "price.alert")[];
             enabled?: boolean;
@@ -6602,7 +6607,7 @@ export interface components {
             condition: "above" | "below";
             /** @description Price boundary as a decimal string (never a float — ADR-0003). */
             threshold: string;
-            /** @description Minimum seconds between two fires of this alert. 0 = re-fire every tick the condition holds. */
+            /** @description Minimum seconds between two fires of this alert (at least 300). */
             cooldown_seconds: number;
             enabled: boolean;
             /**
@@ -6624,7 +6629,7 @@ export interface components {
             condition: "above" | "below";
             /** @description Positive decimal string (e.g. "0.15", "1200"). Fractions / scientific notation are rejected. */
             threshold: string;
-            /** @description Optional; defaults to 300 (5m) when omitted. Send an explicit 0 to opt into re-firing every tick the condition holds. */
+            /** @description Optional; defaults to 300 (5m), also the minimum. A lower value is a 400: the evaluator is level-triggered, so a shorter cooldown would re-notify every webhook on each tick the condition holds. */
             cooldown_seconds?: number;
             /** @description Defaults true when absent. */
             enabled?: boolean;
@@ -20395,7 +20400,8 @@ export interface operations {
                 };
             };
             /**
-             * @description Account at the 10-webhook quota.
+             * @description Account at its tier's webhook quota, or it already has a
+             *     webhook for this url.
              *     A request whose `Idempotency-Key` matches one still being
              *     processed also gets 409 (`idempotency-key-in-flight`,
              *     retryable per `Retry-After`).
@@ -20428,6 +20434,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            400: components["responses"]["BadRequest"];
             /** @description No valid session cookie. */
             401: {
                 headers: {
@@ -20501,10 +20508,10 @@ export interface operations {
                 };
             };
             /**
-             * @description Cross-site write blocked: state-changing dashboard + auth
-             *     requests must carry an `Origin` (or `Referer`) matching
-             *     this API or an operator-allow-listed site
-             *     (`cross-site-request-blocked`).
+             * @description Role can't manage webhooks, OR the write was blocked as
+             *     cross-site: state-changing dashboard + auth requests must
+             *     carry an `Origin` (or `Referer`) matching this API or an
+             *     operator-allow-listed site (`cross-site-request-blocked`).
              */
             403: {
                 headers: {
@@ -20514,8 +20521,17 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Webhook not found. */
+            /** @description No webhook with this id on this account (absent, already deleted, or another account's). */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Another of this account's webhooks already uses this url. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20563,6 +20579,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
             /** @description No valid session cookie. */
             401: {
                 headers: {

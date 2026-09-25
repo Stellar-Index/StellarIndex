@@ -159,6 +159,8 @@ type WebhookStore interface {
 	// check + insert happen in a single SQL statement so
 	// concurrent callers can't both pass a pre-check and each
 	// append a row past the cap. F-1248 (codex audit-2026-05-12).
+	// A cap <= 0 admits nothing (TierAnon's ladder value). Returns
+	// [ErrConflict] when the account already registered w.URL.
 	CreateWebhook(ctx context.Context, w CustomerWebhook, maxPerAccount int) (CustomerWebhook, error)
 
 	// GetWebhook by ID.
@@ -176,6 +178,8 @@ type WebhookStore interface {
 
 	// UpdateWebhook writes mutable fields (name, url, events,
 	// enabled). Secret rotation is a separate explicit method.
+	// Returns [ErrConflict] when the new url duplicates another of
+	// the account's webhooks.
 	UpdateWebhook(ctx context.Context, w CustomerWebhook) error
 
 	// RotateWebhookSecret replaces the signing secret. Returns
