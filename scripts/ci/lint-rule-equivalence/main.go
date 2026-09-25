@@ -14,9 +14,14 @@
 //
 // This linter parses both trees and compares, per paired file, the
 // set of alert/record rules and each rule's expr (job labels
-// normalized: `stellarindex-x` ≡ `stellarindex_x`), `for`, and
-// `labels`. Comments and annotation prose are deliberately NOT
-// compared — wording may differ; firing behavior may not.
+// normalized: `stellarindex-x` ≡ `stellarindex_x`), `for`, `labels`,
+// and `annotations` (same job-label + whitespace normalization).
+// YAML comments are still not compared — they carry no operator-facing
+// content — but `summary`/`description`/`runbook_url` are, because an
+// operator reading one tree's alert acts on that tree's prose: a
+// correction or diagnostic query that lands on one side only (GH-686)
+// is exactly the class of divergence firing-behavior equivalence
+// cannot catch.
 //
 // Intentional divergences live in
 // scripts/ci/rule-equivalence.baseline, one per line:
@@ -51,11 +56,12 @@ import (
 )
 
 type rule struct {
-	Alert  string            `yaml:"alert"`
-	Record string            `yaml:"record"`
-	Expr   string            `yaml:"expr"`
-	For    string            `yaml:"for"`
-	Labels map[string]string `yaml:"labels"`
+	Alert       string            `yaml:"alert"`
+	Record      string            `yaml:"record"`
+	Expr        string            `yaml:"expr"`
+	For         string            `yaml:"for"`
+	Labels      map[string]string `yaml:"labels"`
+	Annotations map[string]string `yaml:"annotations"`
 }
 
 func (r rule) name() string {
@@ -135,6 +141,22 @@ func labelsEqual(a, b map[string]string) bool {
 	}
 	for k, v := range a {
 		if b[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+// annotationsEqual compares two rules' annotations after the same
+// job-label + whitespace normalization applied to expr, so the two
+// trees' job-label convention doesn't itself count as prose drift.
+func annotationsEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		bv, ok := b[k]
+		if !ok || normalize(v) != normalize(bv) {
 			return false
 		}
 	}
@@ -263,6 +285,9 @@ func compareFile(multiDir, r1Path string, allowed func(string) bool, fail func(s
 		}
 		if !labelsEqual(r1r.Labels, mr.Labels) && !allowed(key+":labels") {
 			fail("%s: %q labels differ (multi=%v r1=%v)", base, n, mr.Labels, r1r.Labels)
+		}
+		if !annotationsEqual(r1r.Annotations, mr.Annotations) && !allowed(key+":annotations") {
+			fail("%s: %q annotations differ\n  multi: %v\n  r1:    %v", base, n, mr.Annotations, r1r.Annotations)
 		}
 	}
 }
