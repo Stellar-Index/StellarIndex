@@ -235,7 +235,7 @@ func (sc *Scanner) ScanFile(path string) ([]Site, error) {
 			if !ok {
 				return true
 			}
-			s, callee := r.site(g, file, fn, self)
+			s, callee := r.site(g, r.fset, file, fn, self)
 			sites = append(sites, s)
 			r.recurseIntoCallee(callee, visited, &sites)
 			return true
@@ -272,7 +272,7 @@ func (r *resolver) recurseIntoCallee(callee *resolvedCallee, visited map[string]
 		if !ok {
 			return true
 		}
-		s, nested := r.site(g, callee.file, callee.decl, callee.self)
+		s, nested := r.site(g, callee.fset, callee.file, callee.decl, callee.self)
 		*sites = append(*sites, s)
 		r.recurseIntoCallee(nested, visited, sites)
 		return true
@@ -311,11 +311,11 @@ type resolver struct {
 	modPath string
 }
 
-func (r *resolver) site(g *ast.GoStmt, file *ast.File, enclosing *ast.FuncDecl, self *pkgIndex) (Site, *resolvedCallee) {
+func (r *resolver) site(g *ast.GoStmt, fset *token.FileSet, file *ast.File, enclosing *ast.FuncDecl, self *pkgIndex) (Site, *resolvedCallee) {
 	s := Site{
-		Line:   r.fset.Position(g.Pos()).Line,
+		Line:   fset.Position(g.Pos()).Line,
 		Target: exprString(g.Call.Fun),
-		fset:   r.fset,
+		fset:   fset,
 	}
 	if enclosing != nil && enclosing.Name != nil {
 		s.Enclosing = enclosing.Name.Name
@@ -327,7 +327,7 @@ func (r *resolver) site(g *ast.GoStmt, file *ast.File, enclosing *ast.FuncDecl, 
 		s.Kind = KindFuncLit
 		s.Target = "func literal"
 		s.body = fun.Body
-		s.Origin = shortPos(r.fset, g.Pos())
+		s.Origin = shortPos(fset, g.Pos())
 	case *ast.Ident:
 		decl, ok := self.funcs[fun.Name]
 		if !ok {

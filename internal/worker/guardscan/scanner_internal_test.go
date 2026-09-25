@@ -1,6 +1,7 @@
 package guardscan
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -85,5 +86,69 @@ func startC(logger *slog.Logger) { go worker.Recover(logger, "x") }
 	// testdata/shared once, internal/worker once — not once per file.
 	if sc.parsedDirs != 2 {
 		t.Errorf("indexed %d package directories scanning 3 files, want 2 (each package once)", sc.parsedDirs)
+	}
+}
+
+// TestScan_RecursedFuncLitUsesCalleeFileSet is a regression for site()
+// resolving Line and a FuncLit's Origin against the SCANNED file's
+// *token.FileSet even when the site was found by recursing into a callee
+// parsed into a different FileSet (indexDir/indexImport each build their
+// own). Before the fix, both values were computed with r.fset — the
+// outer resolver's FileSet — so a nested `go func(){}()` found while
+// recursing into workers.go (parsed by indexDir, not by ScanFile) reported
+// Line 0 and a garbage Origin instead of workers.go's real line.
+func TestScan_RecursedFuncLitUsesCalleeFileSet(t *testing.T) {
+	dir := filepath.Join("testdata", "recursed_funclit")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(dir)
+		_ = os.Remove("testdata")
+	})
+	if err := os.WriteFile(filepath.Join(dir, "workers.go"), []byte(`package main
+
+func startWorkers() {
+	go func() {
+		_ = 1
+	}()
+}
+`), 0o600); err != nil {
+		t.Fatalf("write workers.go: %v", err)
+	}
+	path := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(path, []byte(`package main
+
+func run() {
+	go startWorkers()
+}
+`), 0o600); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+
+	sites, err := ScanFile(path, Config{})
+	if err != nil {
+		t.Fatalf("ScanFile: %v", err)
+	}
+	if len(sites) != 2 {
+		t.Fatalf("found %d go statements, want 2 (go startWorkers() plus its inner literal); sites: %+v", len(sites), sites)
+	}
+	var lit Site
+	found := false
+	for _, s := range sites {
+		if s.Kind == KindFuncLit {
+			lit, found = s, true
+		}
+	}
+	if !found {
+		t.Fatalf("the recursed func literal site was not found; sites: %+v", sites)
+	}
+	const wantLine = 4 // workers.go's `go func() {` line
+	if lit.Line != wantLine {
+		t.Errorf("recursed func literal Line = %d, want %d (workers.go's real line, not 0 from the wrong FileSet)", lit.Line, wantLine)
+	}
+	wantOrigin := fmt.Sprintf("workers.go:%d", wantLine)
+	if lit.Origin != wantOrigin {
+		t.Errorf("recursed func literal Origin = %q, want %q", lit.Origin, wantOrigin)
 	}
 }
