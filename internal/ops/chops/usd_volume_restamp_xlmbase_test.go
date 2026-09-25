@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestCheckRestampLiveOverlap is the one-writer contract for a `trades`
@@ -114,6 +115,32 @@ func TestParseMinRelDelta(t *testing.T) {
 	}
 	if _, err := parseMinRelDelta("one percent"); err == nil {
 		t.Error("a non-numeric -min-rel-delta must be refused")
+	}
+}
+
+// TestResumeMinRelDeltaRoundTrips: the RESUME line's -min-rel-delta must
+// parse back to the exact threshold the run used, or the resumed half
+// filters a different write set from the half it continues.
+func TestResumeMinRelDeltaRoundTrips(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{"0.001", "0.0000004", "0.0012345", "1/3", "2", "0.1234567890123"} {
+		want, err := parseMinRelDelta(in)
+		if err != nil || want == nil {
+			t.Fatalf("parseMinRelDelta(%q) = %v, %v", in, want, err)
+		}
+		flags := xlmBaseResumeFlags(xlmBaseRestampOptions{Slice: time.Hour, MinRelDelta: want})
+		_, val, ok := strings.Cut(flags, "-min-rel-delta ")
+		if !ok {
+			t.Fatalf("%q: RESUME flags %q carry no -min-rel-delta", in, flags)
+		}
+		val, _, _ = strings.Cut(val, " ")
+		got, err := parseMinRelDelta(val)
+		if err != nil {
+			t.Fatalf("%q: RESUME value %q does not parse: %v", in, val, err)
+		}
+		if got == nil || got.Cmp(want) != 0 {
+			t.Errorf("%q: RESUME renders -min-rel-delta %q, which parses to %v; want exactly %s", in, val, got, want.RatString())
+		}
 	}
 }
 
