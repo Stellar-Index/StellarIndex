@@ -2321,6 +2321,14 @@ jobs:
         # Text only, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-readme-parity-test.sh
+      - name: ansible pubnet example checksum parity test (Q255)
+        # r1/r2/r3.example.yml silently omitted minio_release_sha256 /
+        # mc_release_sha256 / pgbackrest_exporter_release_sha256, unlike
+        # testnet.example.yml and futurenet.example.yml which set them —
+        # an operator only discovers the missing vars when the role
+        # fails fast mid-apply. Text only, no hosts.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-pubnet-checksum-parity-test.sh
       - name: ansible keepalived chk_haproxy reachability-probe test (SL16)
         # chk_haproxy was a bare `pgrep haproxy` — process-existence only.
         # A wedged-but-resident haproxy (or an api_pool with every server
