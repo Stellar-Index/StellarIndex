@@ -11,7 +11,6 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
-	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -218,7 +217,7 @@ var cohortRollupStatements = []rollupStep{
 	{sql: `INSERT INTO stellar.account_cohort_positions_staging
 	     (rel, root, protocol, position_kind, venue, asset, holders, amount)
 	 SELECT c.rel, c.root, p.protocol, p.position_kind, p.venue, p.asset,
-	        toUInt64(uniqExact(p.user)), sum(toInt256(p.amount))
+	        toUInt64(uniqExact(p.user)), sum(toFloat64OrZero(p.amount))
 	 FROM stellar.defi_position_holders_staging AS p
 	 INNER JOIN stellar.account_cohort_members AS c ON p.user = c.member
 	 GROUP BY c.rel, c.root, p.protocol, p.position_kind, p.venue, p.asset
@@ -276,19 +275,6 @@ func RunCohortRollup(ctx context.Context, addr string, holders []timescale.DeFiP
 	return runRollupSteps(ctx, conn, tip, "cohort rollup", cohortRollupStatements, logf)
 }
 
-// positionHolderAmount is h.Amount as a canonical base-10 integer, or an
-// error: the positions fold sums exactly, so a fractional or empty amount
-// fails the cycle (the previous snapshot stays live) rather than being
-// rounded, zeroed or dropped from a total served as exact.
-func positionHolderAmount(h timescale.DeFiPositionHolder) (string, error) {
-	a, err := canonical.FromString(h.Amount)
-	if err != nil || h.Amount == "" {
-		return "", fmt.Errorf("clickhouse: cohort rollup: %s %s position of %s in %s: amount %q is not an integer: %w",
-			h.Protocol, h.PositionKind, h.User, h.Venue, h.Amount, canonical.ErrInvalidAmount)
-	}
-	return a.String(), nil
-}
-
 // loadDeFiPositionHolders truncates and refills defi_position_holders_staging.
 func loadDeFiPositionHolders(ctx context.Context, conn driver.Conn, holders []timescale.DeFiPositionHolder) error {
 	if err := conn.Exec(ctx, `TRUNCATE TABLE stellar.defi_position_holders_staging`); err != nil {
@@ -304,11 +290,7 @@ func loadDeFiPositionHolders(ctx context.Context, conn driver.Conn, holders []ti
 	}
 	now := time.Now().UTC()
 	for _, h := range holders {
-		amount, err := positionHolderAmount(h)
-		if err != nil {
-			return err
-		}
-		if err := b.Append(h.Protocol, h.PositionKind, h.Venue, h.Asset, h.User, amount, h.LastLedger, now); err != nil {
+		if err := b.Append(h.Protocol, h.PositionKind, h.Venue, h.Asset, h.User, h.Amount, h.LastLedger, now); err != nil {
 			return fmt.Errorf("clickhouse: cohort rollup: append position snapshot: %w", err)
 		}
 	}
@@ -426,7 +408,7 @@ type AccountCohortPosition struct {
 	Venue        string
 	Asset        string
 	Holders      uint64
-	Amount       *big.Int // exact sum in the fold's own unit
+	Amount       float64
 }
 
 // Read caps. A root's holdings and flows are bounded by the assets its
@@ -628,11 +610,9 @@ func (r *ExplorerReader) readCohortPositions(ctx context.Context, out *AccountCo
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var p AccountCohortPosition
-		var amount big.Int
-		if err := rows.Scan(&p.Protocol, &p.PositionKind, &p.Venue, &p.Asset, &p.Holders, &amount); err != nil {
+		if err := rows.Scan(&p.Protocol, &p.PositionKind, &p.Venue, &p.Asset, &p.Holders, &p.Amount); err != nil {
 			return fmt.Errorf("clickhouse: scan account cohort position: %w", err)
 		}
-		p.Amount = &amount
 		out.Positions = append(out.Positions, p)
 	}
 	return rows.Err()

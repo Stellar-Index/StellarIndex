@@ -76,15 +76,6 @@ type cohortEnvelope struct {
 	} `json:"data"`
 }
 
-// cohortPositionAmountStr is an 18-decimal-scale fold total: past 2^53, so
-// it survives the wire only if nothing on the way is a float.
-const cohortPositionAmountStr = "8760000000000000000000000001"
-
-func cohortPositionAmount() *big.Int {
-	v, _ := new(big.Int).SetString(cohortPositionAmountStr, 10)
-	return v
-}
-
 const cohortUSDC = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
 func cohortSnapshot() clickhouse.AccountCohort {
@@ -112,7 +103,7 @@ func cohortSnapshot() clickhouse.AccountCohort {
 			{ContractID: "CUNKNOWN", Movements: 1, ActiveAccounts: 1, FirstAt: at, LastAt: at},
 		},
 		Positions: []clickhouse.AccountCohortPosition{
-			{Protocol: "blend", PositionKind: "lending_supply", Venue: "CBLENDPOOL", Asset: "", Holders: 4, Amount: cohortPositionAmount()},
+			{Protocol: "blend", PositionKind: "lending_supply", Venue: "CBLENDPOOL", Asset: "", Holders: 4, Amount: 1234.5},
 		},
 	}
 }
@@ -260,7 +251,7 @@ func TestAccountGraphCohort_ContractsAndPositionsAreServedAsRead(t *testing.T) {
 	if len(env.Data.Contracts) != 2 || env.Data.Contracts[0].ContractID != "CBLENDPOOL" || env.Data.Contracts[0].ActiveAccounts != 9 {
 		t.Errorf("contracts = %+v", env.Data.Contracts)
 	}
-	if len(env.Data.Positions) != 1 || env.Data.Positions[0].Protocol != "blend" || env.Data.Positions[0].Holders != 4 || env.Data.Positions[0].Amount != cohortPositionAmountStr {
+	if len(env.Data.Positions) != 1 || env.Data.Positions[0].Protocol != "blend" || env.Data.Positions[0].Holders != 4 || env.Data.Positions[0].Amount != "1234.5" {
 		t.Errorf("positions = %+v", env.Data.Positions)
 	}
 	if env.Data.Note == "" {

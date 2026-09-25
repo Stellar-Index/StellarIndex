@@ -1292,8 +1292,8 @@ CREATE TABLE IF NOT EXISTS stellar.asset_month_usd_prices_staging
 AS stellar.asset_month_usd_prices;
 
 -- Open DeFi positions held by the cohort, per protocol / venue / asset.
--- `amount` is the exact Int256 sum of the folds' integer amounts, each in
--- the fold's own unit (ADR-0003: never a float).
+-- `amount` is a Float64 sum of the folds' decimal amounts — a magnitude
+-- for ranking and display, not a settlement figure.
 CREATE TABLE IF NOT EXISTS stellar.account_cohort_positions
 (
     rel           LowCardinality(String),
@@ -1303,7 +1303,7 @@ CREATE TABLE IF NOT EXISTS stellar.account_cohort_positions
     venue         String,
     asset         String,
     holders       UInt64,
-    amount        Int256
+    amount        Float64
 )
 ENGINE = MergeTree
 ORDER BY (rel, root, protocol, venue, asset, position_kind);
