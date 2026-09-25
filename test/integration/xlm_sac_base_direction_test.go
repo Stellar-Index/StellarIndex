@@ -207,16 +207,18 @@ func TestXLMSacAsBase_PriceableThroughEveryPath(t *testing.T) {
 		return ok1 && ok2 && a.Cmp(b) == 0
 	}
 
-	t.Run("TransitiveUSDPrice", func(t *testing.T) {
+	t.Run("TransitiveUSDPriceCandidates", func(t *testing.T) {
 		// CBIJ: hop is the XLM SAC itself (its only XLM market is
-		// SAC-as-base), which must resolve to xlm_usd.
-		tp, ok, err := store.TransitiveUSDPrice(ctx, cbijID)
+		// SAC-as-base), which must resolve to xlm_usd. CAUP7 has no USD
+		// route of its own, so it is not a candidate.
+		tps, err := store.TransitiveUSDPriceCandidates(ctx, cbijID)
 		if err != nil {
-			t.Fatalf("TransitiveUSDPrice(CBIJ): %v", err)
+			t.Fatalf("TransitiveUSDPriceCandidates(CBIJ): %v", err)
 		}
-		if !ok {
-			t.Errorf("TransitiveUSDPrice(CBIJ): no route, want 0.10 via hop %s", c.XLMSacContractID)
+		if len(tps) != 1 {
+			t.Errorf("TransitiveUSDPriceCandidates(CBIJ) = %+v, want one route: 0.10 via hop %s", tps, c.XLMSacContractID)
 		} else {
+			tp := tps[0]
 			if tp.Hop != c.XLMSacContractID {
 				t.Errorf("CBIJ hop = %s, want the XLM SAC %s", tp.Hop, c.XLMSacContractID)
 			}
@@ -225,13 +227,14 @@ func TestXLMSacAsBase_PriceableThroughEveryPath(t *testing.T) {
 			}
 		}
 		// CAUP7: hop CBIJ, whose own XLM market is SAC-as-base.
-		tp, ok, err = store.TransitiveUSDPrice(ctx, caup7ID)
+		tps, err = store.TransitiveUSDPriceCandidates(ctx, caup7ID)
 		if err != nil {
-			t.Fatalf("TransitiveUSDPrice(CAUP7): %v", err)
+			t.Fatalf("TransitiveUSDPriceCandidates(CAUP7): %v", err)
 		}
-		if !ok {
-			t.Errorf("TransitiveUSDPrice(CAUP7): no route, want 0.20 via hop CBIJ")
+		if len(tps) != 1 {
+			t.Errorf("TransitiveUSDPriceCandidates(CAUP7) = %+v, want one route: 0.20 via hop CBIJ", tps)
 		} else {
+			tp := tps[0]
 			if tp.Hop != cbijID {
 				t.Errorf("CAUP7 hop = %s, want CBIJ", tp.Hop)
 			}

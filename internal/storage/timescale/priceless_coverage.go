@@ -63,7 +63,7 @@ type AssetCoverageSignals struct {
 // through one of these quotes is "priced" for the coverage check.
 //
 // Composed from the resolver's own lists (transitive_price.go) rather
-// than restated, so the tripwire and Store.TransitiveUSDPrice cannot
+// than restated, so the tripwire and Store.TransitiveUSDPriceCandidates cannot
 // disagree about what a proxy is; TestProxyQuoteLists_Lockstep pins the
 // catalogue's literal IN-lists to the same set.
 const coverageQuoteProxies = usdProxyQuotes + `,
@@ -231,7 +231,7 @@ const pricelessPricedCTEs = `priced_direct AS (
   UNION
   SELECT unnest(ARRAY[` + coverageQuoteProxies + `])
 ),
--- ONE transitive hop, kept in lockstep with Store.TransitiveUSDPrice.
+-- ONE transitive hop, kept in lockstep with Store.TransitiveUSDPriceCandidates.
 --
 -- This CTE decides what counts as "priced" for the tripwire, and it is
 -- QUOTE-based, not served-price-based: it asks "can this asset reach a
@@ -255,7 +255,7 @@ const pricelessPricedCTEs = `priced_direct AS (
 -- gone quiet while remaining genuinely unpriced.
 --
 -- Grouped per (asset, hop) rather than per asset, because the resolver
--- gates ONE chosen hop — aggregating across every priced counterparty
+-- gates each candidate hop on its own — aggregating across every priced counterparty
 -- would clear the floors on combined depth no single market has.
 one_hop AS (
   SELECT CASE WHEN p.base_asset = d.asset_id THEN p.quote_asset ELSE p.base_asset END AS asset_id,
