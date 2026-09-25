@@ -2092,10 +2092,13 @@ type OHLCBar struct {
 // never reaching `to` — a stale slice for exactly the wide-window
 // request a caller sizes `limit` down to bound.
 //
-// `quote_amount` is derived as `vwap * volume` at SELECT time:
-// VWAP is defined as Σ(price·base) / Σ(base), so vwap·Σ(base) =
-// Σ(price·base) = Σ(quote). This is exact in NUMERIC arithmetic
-// — no precision loss vs storing volume_quote in the CAGG.
+// The CAGG stores no Σ(quote), so it (and a flipped row's base leg) is
+// rebuilt as `round(vwap * volume)`. vwap is one NUMERIC division,
+// rounded to ~16 significant digits, so the bare product misses the
+// integer Σ(quote) by a fractional residue; rounding recovers it exactly
+// while Σ(quote) is below 10^16 smallest units per stored row, and to
+// within about one part in 10^16 above that. Exact at any size needs a
+// stored volume_quote — see migrations/README.md rule 8.
 func (s *Store) OHLCSeries(
 	ctx context.Context,
 	p canonical.Pair,
@@ -2148,8 +2151,8 @@ func (s *Store) OHLCSeries(
 		        CASE WHEN base_asset = $1 THEN last_price  ELSE 1.0 / NULLIF(last_price, 0)  END AS c,
 		        CASE WHEN base_asset = $1 THEN high_price  ELSE 1.0 / NULLIF(low_price, 0)   END AS hi,
 		        CASE WHEN base_asset = $1 THEN low_price   ELSE 1.0 / NULLIF(high_price, 0)  END AS lo,
-		        CASE WHEN base_asset = $1 THEN volume        ELSE vwap * volume END AS base_vol,
-		        CASE WHEN base_asset = $1 THEN vwap * volume ELSE volume        END AS quote_vol,
+		        CASE WHEN base_asset = $1 THEN volume               ELSE round(vwap * volume) END AS base_vol,
+		        CASE WHEN base_asset = $1 THEN round(vwap * volume) ELSE volume               END AS quote_vol,
 		        trade_count AS tc,
 		        sources     AS srcs
 		      FROM (
@@ -2255,8 +2258,8 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		               CASE WHEN base_asset = $1 THEN last_price  ELSE 1.0 / NULLIF(last_price, 0)  END AS c,
 		               CASE WHEN base_asset = $1 THEN high_price  ELSE 1.0 / NULLIF(low_price, 0)   END AS hi,
 		               CASE WHEN base_asset = $1 THEN low_price   ELSE 1.0 / NULLIF(high_price, 0)  END AS lo,
-		               CASE WHEN base_asset = $1 THEN volume        ELSE vwap * volume END AS base_vol,
-		               CASE WHEN base_asset = $1 THEN vwap * volume ELSE volume        END AS quote_vol,
+		               CASE WHEN base_asset = $1 THEN volume               ELSE round(vwap * volume) END AS base_vol,
+		               CASE WHEN base_asset = $1 THEN round(vwap * volume) ELSE volume               END AS quote_vol,
 		               trade_count AS tc,
 		               sources     AS srcs
 		          FROM (
@@ -2312,7 +2315,7 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 //   - high  = max(high_price)
 //   - low   = min(low_price)
 //   - base_volume  = Σ volume
-//   - quote_volume = Σ (vwap * volume)  (Σ quote per the VWAP identity)
+//   - quote_volume = Σ round(vwap * volume)  (Σ quote; see [Store.OHLCSeries])
 //   - trade_count  = Σ trade_count
 //
 // `outInterval` MUST be an integer multiple of the source CAGG's

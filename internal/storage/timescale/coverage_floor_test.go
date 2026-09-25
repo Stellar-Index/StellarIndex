@@ -5,7 +5,10 @@ package timescale
 
 import (
 	"context"
+	"database/sql/driver"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -204,6 +207,62 @@ func TestEarliestBucketSQL_RendersWithoutFormatResidue(t *testing.T) {
 		}
 		if !strings.Contains(rendered, "FROM prices_1d p") {
 			t.Errorf("%s: table not bound:\n%s", name, rendered)
+		}
+	}
+}
+
+var earliestBucketClosedGuard = regexp.MustCompile(`p\.bucket <= \$4::timestamptz - INTERVAL '(\d+) (\w+)'`)
+
+// TestEarliestBucket_IssuedStatementCarriesTheClosedBucketGuard reads
+// the ADR-0015 closed-bucket guard out of the statement the store
+// actually issues: `to` binds as $4 unshifted, and every arm subtracts
+// exactly one bucket of the requested granularity from it. A guard
+// narrower than one bucket admits the in-progress bucket as a floor.
+func TestEarliestBucket_IssuedStatementCarriesTheClosedBucketGuard(t *testing.T) {
+	pair := testXLMUSDCPair(t)
+	to := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	from := to.Add(-90 * 24 * time.Hour)
+	units := map[string]time.Duration{
+		"minute": time.Minute, "minutes": time.Minute, "hour": time.Hour, "hours": time.Hour,
+		"day": 24 * time.Hour, "week": 7 * 24 * time.Hour,
+	}
+	reads := []struct {
+		name string
+		arms int
+		call func(*Store, HistoryGranularity) error
+	}{
+		{"EarliestBucket", 2, func(s *Store, g HistoryGranularity) error {
+			_, _, err := s.EarliestBucket(context.Background(), pair, g, from, to)
+			return err
+		}},
+		{"EarliestBucketAsStored", 1, func(s *Store, g HistoryGranularity) error {
+			_, _, err := s.EarliestBucketAsStored(context.Background(), pair, g, from, to)
+			return err
+		}},
+	}
+	for _, rd := range reads {
+		for _, g := range []HistoryGranularity{Granularity1m, Granularity15m, Granularity1h, Granularity4h, Granularity1d, Granularity1w} {
+			store, conn := newScriptedStore(t, scriptedResult{cols: []string{"min"}, rows: [][]driver.Value{{nil}}})
+			if err := rd.call(store, g); err != nil {
+				t.Fatalf("%s[%s]: %v", rd.name, g, err)
+			}
+			stmt := conn.stmts[0]
+			if got := stmt.arg(t, 3); got != any(from) {
+				t.Errorf("%s[%s]: $3 = %v, want from %v", rd.name, g, got, from)
+			}
+			if got := stmt.arg(t, 4); got != any(to) {
+				t.Errorf("%s[%s]: $4 = %v, want to %v unshifted", rd.name, g, got, to)
+			}
+			ms := earliestBucketClosedGuard.FindAllStringSubmatch(stmt.sql, -1)
+			if len(ms) != rd.arms {
+				t.Fatalf("%s[%s]: %d arms carry the closed-bucket guard, want %d:\n%s", rd.name, g, len(ms), rd.arms, stmt.sql)
+			}
+			for _, m := range ms {
+				n, _ := strconv.Atoi(m[1])
+				if got := time.Duration(n) * units[m[2]]; got != g.BucketDuration() {
+					t.Errorf("%s[%s]: guard subtracts %s %s, want one %s bucket", rd.name, g, m[1], m[2], g.BucketDuration())
+				}
+			}
 		}
 	}
 }

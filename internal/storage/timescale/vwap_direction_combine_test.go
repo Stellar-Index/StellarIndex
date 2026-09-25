@@ -368,8 +368,10 @@ func TestLatestClosedVWAP1mForPair_VolumeWeightedUnion(t *testing.T) {
 // point-in-time engine behind /v1/price/at and /v1/price/changes.
 func TestClosedVWAPAtOrBefore_VolumeWeightedUnion(t *testing.T) {
 	pair := testXLMUSDCPair(t)
-	ts := time.Now().UTC().Add(-30 * time.Minute)
+	// Whole seconds: the bounds render at the literal layout's precision.
+	ts := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Second)
 	bucket := ts.Truncate(time.Minute).Add(-time.Minute)
+	const maxStaleness = time.Hour
 
 	script := []scriptedResult{{
 		cols: []string{"bucket", "base_asset", "vwap", "volume"},
@@ -378,10 +380,29 @@ func TestClosedVWAPAtOrBefore_VolumeWeightedUnion(t *testing.T) {
 			{bucket, pair.Quote.String(), "5", "10"},
 		},
 	}}
-	store, _ := newScriptedStore(t, script...)
+	store, conn := newScriptedStore(t, script...)
 	defer func() { _ = store.db.Close() }()
 
-	got, err := store.ClosedVWAPAtOrBefore(context.Background(), pair, ts, time.Hour)
+	got, err := store.ClosedVWAPAtOrBefore(context.Background(), pair, ts, maxStaleness)
+	if err != nil {
+		t.Fatalf("ClosedVWAPAtOrBefore: %v", err)
+	}
+	// ADR-0015: only CLOSED buckets serve. The guard is the upper literal
+	// the caller computes (bucket + res <= ts, i.e. bucket <= ts - res), so
+	// it is read back out of the issued statement rather than trusted.
+	stmts := conn.statements()
+	if len(stmts) != 1 {
+		t.Fatalf("issued %d statements, want 1 (the 1m rung answers)", len(stmts))
+	}
+	upper, lower := closedVWAPAtOrBeforeBounds(t, stmts[0])
+	if want := ts.Add(-time.Minute); !upper.Equal(want) {
+		t.Errorf("upper bound = %s, want ts-1m = %s; anything later admits the in-progress bucket",
+			upper.UTC(), want)
+	}
+	if want := ts.Add(-(maxStaleness + 2*time.Minute)); !lower.Equal(want) {
+		t.Errorf("lower bound = %s, want ts-(maxStaleness+2m) = %s; a tighter one prunes an "+
+			"acceptable bucket and silently degrades the served resolution", lower.UTC(), want)
+	}
 	if err != nil {
 		t.Fatalf("ClosedVWAPAtOrBefore: %v", err)
 	}
