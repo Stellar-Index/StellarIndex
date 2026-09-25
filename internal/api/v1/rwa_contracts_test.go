@@ -50,7 +50,10 @@ type stubRWAContractReader struct {
 	// excluded, counted but never returned.
 	scamContracts     int
 	untaggedContracts int
-	err               error
+	// beyondScanLimit counts recognised contracts the census saw but the
+	// storage LIMIT did not return.
+	beyondScanLimit int
+	err             error
 }
 
 func (s *stubRWAContractReader) DirectoryRecognisedContracts(
@@ -61,10 +64,10 @@ func (s *stubRWAContractReader) DirectoryRecognisedContracts(
 	}
 	c := timescale.DirectoryRWACensus{
 		Accounts:                    s.accounts,
-		Contracts:                   len(s.contracts) + s.scamContracts + s.untaggedContracts,
+		Contracts:                   len(s.contracts) + s.scamContracts + s.untaggedContracts + s.beyondScanLimit,
 		ContractsScamFlagged:        s.scamContracts,
 		ContractsWithoutIssuingTag:  s.untaggedContracts,
-		ContractsRecognised:         len(s.contracts),
+		ContractsRecognised:         len(s.contracts) + s.beyondScanLimit,
 		AccountsIssuingTagged:       len(s.unreached),
 		AccountsIssuingWithoutAsset: len(s.unreached),
 	}
@@ -175,12 +178,30 @@ func rwaContractServer(
 	dir map[string]timescale.DirectoryEntry,
 ) *v1.Server {
 	t.Helper()
+	return rwaContractServerWithPrecise(t, contracts, rows, symbols, supplies, decimals, dir, nil)
+}
+
+// rwaContractServerWithPrecise is rwaContractServer with the listing's
+// precise-supply seam answering for the given asset ids. For a pure SEP-41
+// token that seam is keyed by the contract id, so it reaches contract rows.
+func rwaContractServerWithPrecise(
+	t *testing.T,
+	contracts *stubRWAContractReader,
+	rows map[string]timescale.AssetRow,
+	symbols map[string]string,
+	supplies map[string]string,
+	decimals map[string]uint32,
+	dir map[string]timescale.DirectoryEntry,
+	precise map[string]string,
+) *v1.Server {
+	t.Helper()
 	return v1.New(v1.Options{
 		Sep1Cache: &stubSep1BoundReader{},
 		Directory: &stubDirectoryReader{entries: dir},
 		AssetsReader: &rwaListStub{
 			stubAssetsReaderExt: &stubAssetsReaderExt{},
 			byIssuer:            map[string][]timescale.AssetRow{},
+			supply:              precise,
 		},
 		RWAContracts:      contracts,
 		ContractCatalogue: &stubContractCatalogue{rows: rows},
@@ -276,6 +297,87 @@ func TestRWAContracts_DecimalsDriveTheValuation(t *testing.T) {
 		if got := deref(view.Assets[0].Valuation.MarketCapUSD); got != tc.want {
 			t.Errorf("decimals %d: market_cap_usd = %q, want %q", tc.decimals, got, tc.want)
 		}
+	}
+}
+
+// TestRWAContracts_UnreadScaleValuesNothingFromAnySupply pins GH-1010.
+//
+// The contract pipeline runs the generic listing fill first, and that fill
+// reads the precise-supply map, which is keyed by contract id for a pure
+// SEP-41 token. With the scale unreadable it divides by the catalogue's
+// default 7, and the contract arm's decimals_unavailable refusal then left
+// that cap standing: 1,000,000 tokens at a true 6 decimals x 1.074 served
+// as a published 107,400.00, a tenth of the real figure.
+func TestRWAContracts_UnreadScaleValuesNothingFromAnySupply(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		lake map[string]string
+	}{
+		{"lake supply read", map[string]string{rwaContractGood: "1000000000000"}},
+		{"no lake supply", map[string]string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			view := getRWA(t, rwaContractServerWithPrecise(t,
+				&stubRWAContractReader{contracts: []timescale.DirectoryEntry{
+					recognisedContract(rwaContractGood, "Example Treasury Fund"),
+				}},
+				map[string]timescale.AssetRow{rwaContractGood: rwaContractRow(rwaContractGood, sptr("1.0740000000"))},
+				map[string]string{rwaContractGood: "USTRY"},
+				tc.lake,
+				map[string]uint32{},
+				nil,
+				map[string]string{rwaContractGood: "1000000000000"},
+			))
+			if len(view.Assets) != 1 {
+				t.Fatalf("assets = %d, want 1", len(view.Assets))
+			}
+			a := view.Assets[0]
+			if a.Valuation.MarketCapUSD != nil {
+				t.Errorf("market_cap_usd = %q with the scale unread, want absent", *a.Valuation.MarketCapUSD)
+			}
+			if a.Valuation.Status != v1.RWAValuationDecimalsUnknown {
+				t.Errorf("status = %q, want %q", a.Valuation.Status, v1.RWAValuationDecimalsUnknown)
+			}
+			if view.Summary.MarketCapUSD != nil {
+				t.Errorf("summary market_cap_usd = %q, want absent", *view.Summary.MarketCapUSD)
+			}
+		})
+	}
+}
+
+// TestRWAContracts_ScanCapMakesTheTotalALowerBound pins CA2-A06-correct-3.
+// Every served row is valued, but recognised contracts the scan never
+// evaluated may be members, so the total is partial and must say so.
+func TestRWAContracts_ScanCapMakesTheTotalALowerBound(t *testing.T) {
+	view := getRWA(t, rwaContractServer(t,
+		&stubRWAContractReader{
+			contracts:       []timescale.DirectoryEntry{recognisedContract(rwaContractGood, "Example Treasury Fund")},
+			beyondScanLimit: 3,
+		},
+		map[string]timescale.AssetRow{rwaContractGood: rwaContractRow(rwaContractGood, sptr("1.0740000000"))},
+		map[string]string{rwaContractGood: "USTRY"},
+		map[string]string{rwaContractGood: "1000000000000"},
+		map[string]uint32{rwaContractGood: 6},
+		nil,
+	))
+	if len(view.Assets) != 1 || view.Summary.AssetsUnvalued != 0 {
+		t.Fatalf("assets = %d unvalued = %d, want one valued row", len(view.Assets), view.Summary.AssetsUnvalued)
+	}
+	if got := deref(view.Summary.MarketCapUSD); got != "1074000.00" {
+		t.Errorf("summary market_cap_usd = %q, want 1074000.00", got)
+	}
+	if !view.Summary.LowerBound || !view.Summary.Truncated {
+		t.Errorf("lower_bound/truncated = %v/%v, want true/true with 3 recognised contracts unevaluated",
+			view.Summary.LowerBound, view.Summary.Truncated)
+	}
+	if !view.Summary.ReferenceValuation.LowerBound {
+		t.Error("reference_valuation.lower_bound is false over a truncated set")
+	}
+	if strings.Contains(view.Summary.Basis, "Every asset in the set publishes a valuation") {
+		t.Errorf("basis claims a complete set: %q", view.Summary.Basis)
+	}
+	if !strings.Contains(view.Summary.Basis, "contract scan cap left 3 recognised contract(s) unevaluated") {
+		t.Errorf("basis does not name the contract scan cap: %q", view.Summary.Basis)
 	}
 }
 

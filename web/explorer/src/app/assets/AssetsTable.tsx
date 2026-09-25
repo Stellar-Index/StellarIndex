@@ -18,8 +18,9 @@ import {
   scaleBaseUnits,
   truncateMiddle,
 } from '@/lib/format';
-import { demoteFlaggedLast, scamFlagTags } from '@/lib/directory-tags';
+import { demoteFlaggedLast } from '@/lib/directory-tags';
 import { FreshnessMarker } from '@/components/primitives';
+import { ScamBadge } from '@/components/ScamBadge';
 import {
   Badge,
   Button,
@@ -621,7 +622,7 @@ function AssetRow({
             className="text-ink-muted text-[11px]"
           />
         )}
-        <ScamBadge tags={coin.issuer_directory_tags} />
+        <ScamBadge tags={coin.issuer_directory_tags} className="mt-1" />
       </Td>
       <Td>
         <ClassBadge cls={coin.class} />
@@ -704,28 +705,6 @@ function AssetRow({
         </Td>
       )}
     </TR>
-  );
-}
-
-// ScamBadge — compact directory-flag pill in the asset row. Renders only
-// when the issuer's curated directory tags include a scam-warning flag
-// (malicious/unsafe/fraud/scam/hack/phishing). Third-party attribution,
-// never a verification signal — but the same flag DOES withhold the row's
-// price/market cap (the scam gate) and sinks the row to the bottom of the
-// ranking (demoteFlaggedLast, #356). Badged, demoted, never hidden.
-function ScamBadge({ tags }: { tags?: string[] | null }) {
-  const flagged = scamFlagTags(tags);
-  if (flagged.length === 0) return null;
-  return (
-    <Badge
-      tone="bad"
-      className="mt-1"
-      title={`Flagged by the stellar-expert community directory as: ${flagged.join(
-        ', ',
-      )} (third-party attribution — display-only, not a StellarIndex verification signal)`}
-    >
-      ⚠ Flagged
-    </Badge>
   );
 }
 

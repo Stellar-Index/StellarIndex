@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -639,8 +640,9 @@ type RWASummary struct {
 	// contributed to the total.
 	AssetsValued   int `json:"assets_valued"`
 	AssetsUnvalued int `json:"assets_unvalued"`
-	// LowerBound is true whenever any member asset is unvalued, i.e.
-	// whenever the total is less than the value of the set.
+	// LowerBound is true whenever any member asset is unvalued or a
+	// rebuild cap bound the set (Truncated), i.e. whenever the total may
+	// be less than the value of the set.
 	LowerBound bool `json:"lower_bound"`
 	// EarliestFirstSeenLedger is the lowest ledger at which any member
 	// asset was first observed. The index holds every ledger from
@@ -668,9 +670,31 @@ type RWASummary struct {
 	// Basis is a one-line statement of what was measured and how it was
 	// valued, in the same posture the DEX TVL headline takes.
 	Basis string `json:"basis"`
-	// Truncated reports that a cap bound the rebuild, so the set is
-	// known to be incomplete.
+	// Truncated reports that a cap bound the rebuild — the issuer cap,
+	// the contract scan cap or a full per-issuer listing page — so
+	// members may be missing from the set; Basis names which.
 	Truncated bool `json:"truncated,omitempty"`
+}
+
+// rwaTruncation counts what each rebuild cap left unread. Every one of
+// them makes the summary total a lower bound, not only the issuer cap.
+type rwaTruncation struct {
+	overIssuerCap   int
+	overContractCap int
+	issuerPagesFull int
+}
+
+func (t rwaTruncation) any() bool {
+	return t.overIssuerCap > 0 || t.overContractCap > 0 || t.issuerPagesFull > 0
+}
+
+// rwaTruncationOf gathers the caps from the membership and the catalogue join.
+func rwaTruncationOf(m rwaMembership, join rwaCatalogueJoin) rwaTruncation {
+	return rwaTruncation{
+		overIssuerCap:   m.overIssuerCap,
+		overContractCap: m.contractCensus.overCap,
+		issuerPagesFull: join.pagesTruncated,
+	}
 }
 
 // RWAReferenceSummary aggregates the reference-priced basis.
@@ -697,8 +721,8 @@ type RWAReferenceSummary struct {
 	AssetsValued   int `json:"assets_valued"`
 	AssetsUnvalued int `json:"assets_unvalued"`
 	// LowerBound is true whenever any member carries no reference
-	// valuation, i.e. whenever this total is less than the
-	// reference-priced value of the set.
+	// valuation or a rebuild cap bound the set, i.e. whenever this total
+	// may be less than the reference-priced value of the set.
 	LowerBound bool `json:"lower_bound"`
 	// Sources names the distinct PUBLISHERS whose published values are
 	// in the total, sorted. Not "oracles": the total can mix three
@@ -850,7 +874,7 @@ type RWAAsset struct {
 	// naming the same address — because neither is sufficient alone.
 	// A consumer that wants only directory-attested rows can filter on
 	// this field rather than having to reconstruct the rule.
-	Recognition string `json:"recognition,omitempty"`
+	Recognition string `json:"recognition"`
 	// AnchorClass is the closed-vocabulary class, present only under
 	// the declaration basis.
 	AnchorClass string `json:"anchor_class,omitempty"`
@@ -1008,8 +1032,6 @@ type rwaMembership struct {
 	// own member, so the asset was served twice and its market cap
 	// entered every total twice.
 	duplicateDeclarations int
-	// truncated records that rwaMaxIssuers bound the set.
-	truncated bool
 	// available is false when no attestation reader is wired, which is
 	// a configuration statement rather than an empty population.
 	available bool
@@ -1270,7 +1292,6 @@ func (s *Server) admitClassicCandidates(
 		}
 		if _, known := issuers[c.Issuer]; !known {
 			if len(issuers) >= rwaMaxIssuers {
-				out.truncated = true
 				out.overIssuerCap++
 				continue
 			}
@@ -1700,7 +1721,7 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	for i := range view.Assets {
 		rwaApplyReference(&view.Assets[i], refs, listingRefs, classicListingRefs, now)
 	}
-	view.Summary = rwaSummarise(view.Assets, m.truncated)
+	view.Summary = rwaSummarise(view.Assets, rwaTruncationOf(m, join))
 	view.ByClass = rwaByClass(view.Assets)
 	view.ByIssuer = rwaByIssuer(view.Assets)
 	view.Funnel = rwaFunnelOf(m, join, len(classicAssets), dirCounts.served, listingCounts.served, view.Assets)
@@ -2363,7 +2384,7 @@ func rwaAssetIssuerCount(assets []RWAAsset) int {
 	return rwaIssuerCount(len(issuers), len(contracts))
 }
 
-func rwaSummarise(assets []RWAAsset, truncated bool) RWASummary {
+func rwaSummarise(assets []RWAAsset, trunc rwaTruncation) RWASummary {
 	total, valued := rwaSumMarketCaps(assets)
 	var earliest uint32
 	for _, a := range assets {
@@ -2372,26 +2393,28 @@ func rwaSummarise(assets []RWAAsset, truncated bool) RWASummary {
 		}
 	}
 	referenced, compared := rwaReferenceCounts(assets)
+	ref := rwaSummariseReference(assets)
+	ref.LowerBound = ref.LowerBound || trunc.any()
 	return RWASummary{
 		Assets:                  len(assets),
 		Issuers:                 rwaAssetIssuerCount(assets),
 		MarketCapUSD:            total,
 		AssetsValued:            valued,
 		AssetsUnvalued:          len(assets) - valued,
-		LowerBound:              len(assets)-valued > 0,
+		LowerBound:              len(assets)-valued > 0 || trunc.any(),
 		EarliestFirstSeenLedger: earliest,
 		AssetsWithReference:     referenced,
 		AssetsCompared:          compared,
-		ReferenceValuation:      rwaSummariseReference(assets),
+		ReferenceValuation:      ref,
 		BothBases:               rwaBothBases(assets),
-		Basis:                   rwaBasis(len(assets), valued, compared, truncated),
-		Truncated:               truncated,
+		Basis:                   rwaBasis(len(assets), valued, compared, trunc),
+		Truncated:               trunc.any(),
 	}
 }
 
 // rwaBasis states what the total measured, in prose, so a reader of the
 // figure gets its scope without having to reconstruct it from counts.
-func rwaBasis(total, valued, compared int, truncated bool) string {
+func rwaBasis(total, valued, compared int, trunc rwaTruncation) string {
 	var b strings.Builder
 	b.WriteString("Sum of the published market caps of the assets meeting the four-requirement definition. ")
 	b.WriteString("Market cap is circulating supply times the served USD price, both as /v1/assets serves them, ")
@@ -2399,6 +2422,8 @@ func rwaBasis(total, valued, compared int, truncated bool) string {
 	switch {
 	case total == 0:
 		b.WriteString("No asset currently meets the definition.")
+	case valued == total && trunc.any():
+		b.WriteString("Every served asset publishes a valuation.")
 	case valued == total:
 		b.WriteString("Every asset in the set publishes a valuation.")
 	default:
@@ -2418,10 +2443,29 @@ func rwaBasis(total, valued, compared int, truncated bool) string {
 	// total and assuming it now includes the reference-priced figure.
 	// It does not, and no row moved into or out of it.
 	b.WriteString(" Reference-priced valuations are a separate basis and are NOT in this total: summary.reference_valuation carries them under their own name.")
-	if truncated {
-		b.WriteString(" The issuer cap bound this rebuild, so the set is known to be incomplete.")
-	}
+	rwaWriteTruncation(&b, trunc)
 	return b.String()
+}
+
+// rwaWriteTruncation names each cap that bound the rebuild and what it
+// left unread, so a reader of a partial total knows what it excludes.
+func rwaWriteTruncation(b *strings.Builder, t rwaTruncation) {
+	if !t.any() {
+		return
+	}
+	var caps []string
+	if t.overIssuerCap > 0 {
+		caps = append(caps, "the issuer cap turned away "+strconv.Itoa(t.overIssuerCap)+" qualifying asset(s)")
+	}
+	if t.overContractCap > 0 {
+		caps = append(caps, "the contract scan cap left "+strconv.Itoa(t.overContractCap)+" recognised contract(s) unevaluated")
+	}
+	if t.issuerPagesFull > 0 {
+		caps = append(caps, strconv.Itoa(t.issuerPagesFull)+" member issuer(s) have more classic assets than one listing page reads")
+	}
+	b.WriteString(" A rebuild cap bound this set (")
+	b.WriteString(strings.Join(caps, "; "))
+	b.WriteString("), so members may be missing and the total is a LOWER BOUND on the value of the set.")
 }
 
 // rwaUnclassified groups the assets admitted on the oracle basis, which

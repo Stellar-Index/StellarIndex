@@ -2077,7 +2077,7 @@ type RWAAsset struct {
 	// Recognition names the route by which the row's issuer (or
 	// contract) counts as independently recognised; the routes are not
 	// the same strength of evidence.
-	Recognition string `json:"recognition,omitempty"`
+	Recognition string `json:"recognition"`
 	AnchorClass string `json:"anchor_class,omitempty"`
 	AnchorAsset string `json:"anchor_asset,omitempty"`
 	// Valuation is the observed-market-price money, or the reason there

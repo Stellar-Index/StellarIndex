@@ -273,6 +273,45 @@ describe('trust-surface guards', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('every ranked /v1/assets panel badges and demotes a flagged issuer (#773)', () => {
+    // The flagged badge and demoteFlaggedLast lived in AssetsTable only;
+    // the two home panels rendered the same rows unbadged, and HomeTopMovers'
+    // client-side sort floated a flagged row back to the top. The subject
+    // set is DERIVED — every file calling useCoins( — so a new consumer
+    // fails here until it is classified.
+    const ranked = new Set([
+      'app/assets/AssetsTable.tsx',
+      'app/HomeTopAssets.tsx',
+      'app/HomeTopMovers.tsx',
+    ]);
+    const exempt: Record<string, string> = {
+      // Offers only legs with a usd price; a flagged issuer's is withheld.
+      'app/assets/[slug]/AssetSwap.tsx': 'priced legs only',
+      // A lookup list, not a ranking, and it renders no price.
+      'components/nav/SearchModal.tsx': 'lookup, not a ranking',
+    };
+    const files = new Map(sourceFiles());
+    const unclassified = [...files]
+      .filter(([path, body]) => {
+        if (path === 'api/hooks.ts') return false;
+        return /\buseCoins\(/.test(stripComments(body));
+      })
+      .map(([path]) => path)
+      .filter((path) => !ranked.has(path) && !(path in exempt))
+      .sort();
+    expect(unclassified).toEqual([]);
+
+    const offenders = [...ranked].filter((path) => {
+      const body = files.get(path);
+      if (body === undefined) return true;
+      const code = stripComments(body);
+      return (
+        !code.includes('<ScamBadge') || !code.includes('demoteFlaggedLast(')
+      );
+    });
+    expect(offenders).toEqual([]);
+  });
+
   it('no /assets/ href is built from a code-truncated canonical id', () => {
     // A classic asset_id is CODE-GISSUER…, and the bare code is
     // AMBIGUOUS: every USDC-alike shares /assets/USDC. A link built by
