@@ -298,6 +298,37 @@ func TestListingDirectory_BothBoundsAreEnforcedInSQL(t *testing.T) {
 	}
 }
 
+// TestListingPriceFresh_HasAFutureCeiling — the price bound is a floor
+// on `priced_at`, so a timestamp ahead of now() would pass it for as long
+// as it stays ahead. Every read that decides "priced" must also carry the
+// ceiling, and its SQL spelling must match the Go allowance the ingest
+// sync rejects against.
+func TestListingPriceFresh_HasAFutureCeiling(t *testing.T) {
+	t.Parallel()
+
+	wantCeiling := "priced_at <= now() + INTERVAL '" + listingPriceMaxFutureSkew + "'"
+	for name, q := range map[string]string{
+		"contracts read":  listingDirectoryContractsSQL,
+		"by-address read": listingDirectoryByAddressSQL,
+		"census":          listingDirectoryCensusSQL,
+	} {
+		if !strings.Contains(q, wantCeiling) {
+			t.Errorf("%s: no future ceiling on priced_at — a 2099 timestamp would keep a "+
+				"frozen price fresh for decades", name)
+		}
+	}
+	d, err := time.ParseDuration(strings.Replace(listingPriceMaxFutureSkew, " minutes", "m", 1))
+	if err != nil {
+		t.Fatalf("listingPriceMaxFutureSkew %q is not `<n> minutes`: %v", listingPriceMaxFutureSkew, err)
+	}
+	if d != ListingPriceMaxFutureSkew {
+		t.Errorf("SQL skew %s != Go skew %s — the sync and the reader disagree", d, ListingPriceMaxFutureSkew)
+	}
+	if d <= 0 || d >= time.Hour {
+		t.Errorf("skew allowance %s must absorb clock skew only, not an hourly sync's worth", d)
+	}
+}
+
 // TestListingBounds_AreParseableIntervalsAndCorrectlyOrdered — the two
 // constants are spliced into SQL as literal intervals, so a typo is a
 // runtime syntax error on a timer-driven read path rather than a compile

@@ -201,6 +201,16 @@ const listingRecognitionMaxAge = "48 hours"
 // illiquid listing, which is most of them.
 const listingPriceMaxAge = "24 hours"
 
+// ListingPriceMaxFutureSkew is how far AHEAD of our clock a `priced_at`
+// may sit and still count. Without a ceiling, an upstream timestamp in
+// the future turns the 24-hour floor into no bound at all: a frozen price
+// stamped 2099 would stay "fresh" for decades. The allowance only absorbs
+// clock skew between two NTP-synced hosts; the ingest sync rejects past
+// it too, and [listingPriceMaxFutureSkew] is its SQL spelling.
+const ListingPriceMaxFutureSkew = 5 * time.Minute
+
+const listingPriceMaxFutureSkew = "5 minutes"
+
 // listingIsContractSQL and listingIsClassicSQL split the cached set by
 // address form, and they are the exact twins of migration 0160's CHECK —
 // which is what lets the census arithmetic treat the two as exhaustive.
@@ -231,10 +241,12 @@ const listingRecognisedSQL = `synced_at > now() - INTERVAL '` + listingRecogniti
 // platform's clock. The `IS NOT NULL` arm is not redundant with the
 // interval comparison — it is the explicit rejection of a missing
 // publication time, stated so that reading this predicate answers the
-// question rather than leaving it to SQL's NULL semantics.
+// question rather than leaving it to SQL's NULL semantics. The ceiling
+// arm is what makes the floor a bound: see [ListingPriceMaxFutureSkew].
 const listingPriceFreshSQL = `price_usd IS NOT NULL
 		   AND priced_at IS NOT NULL
-		   AND priced_at > now() - INTERVAL '` + listingPriceMaxAge + `'`
+		   AND priced_at > now() - INTERVAL '` + listingPriceMaxAge + `'
+		   AND priced_at <= now() + INTERVAL '` + listingPriceMaxFutureSkew + `'`
 
 // listingUpsertChunk bounds the multi-row upsert: 500 rows × 5 params =
 // 2500 placeholders, far under Postgres's 65535 bind-param cap. The
