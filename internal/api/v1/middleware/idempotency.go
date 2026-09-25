@@ -204,6 +204,7 @@ func Idempotency(store *IdempotencyStore, subjectKeyFn func(*http.Request) strin
 			case claimInFlight:
 				writeIdempotencyKeyInFlight(w, r)
 				return
+			case claimProceed:
 			}
 			// Deferred so the claim is released after put below (a retry
 			// never sees "not in flight, nothing captured" for a request

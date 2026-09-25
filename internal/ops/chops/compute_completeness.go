@@ -1336,11 +1336,11 @@ func floorsToRecord(src reconSource, scopes []projectionScope, servedMins []serv
 		if i >= len(scopes) || i >= len(servedMins) {
 			break
 		}
-		sm := servedMins[i]
+		sm, from := servedMins[i], scopes[i].From //nolint:gosec // G602 false positive: the check above bounds i
 		if !sm.present {
 			continue
 		}
-		if scopes[i].From > sm.min {
+		if from > sm.min {
 			// Clipped by an incremental floor above the true served
 			// minimum — this run verified nothing below the clip, so
 			// it cannot bank a floor there.
@@ -1350,7 +1350,7 @@ func floorsToRecord(src reconSource, scopes []projectionScope, servedMins []serv
 			Source:       src.name,
 			Table:        tgt.table,
 			Filter:       tgt.whereFilter,
-			VerifiedFrom: scopes[i].From,
+			VerifiedFrom: from,
 		})
 	}
 	return out
