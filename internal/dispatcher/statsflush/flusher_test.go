@@ -253,8 +253,8 @@ func TestFlushAt_EntryMetaUnsupported_SnapshotAdvances_NoLatch(t *testing.T) {
 
 	// Tick 1: fresh delta of 4 against the zero-value baseline. WARN fires.
 	f.flushAt(context.Background(), base)
-	if got := f.last.EntryMetaUnsupported; got != 4 {
-		t.Fatalf("after flush 1, f.last.EntryMetaUnsupported = %d, want 4 (snapshot must advance)", got)
+	if got := f.obsLast.EntryMetaUnsupported; got != 4 {
+		t.Fatalf("after flush 1, f.obsLast.EntryMetaUnsupported = %d, want 4 (snapshot must advance)", got)
 	}
 
 	// Tick 2: no new occurrences — current stays at 4. Must NOT re-warn.
@@ -263,5 +263,54 @@ func TestFlushAt_EntryMetaUnsupported_SnapshotAdvances_NoLatch(t *testing.T) {
 	got := strings.Count(buf.String(), "unsupported TransactionMeta version during this flush window")
 	if got != 1 {
 		t.Errorf("WARN logged %d times across 2 flat-delta ticks, want 1 (must not latch on the cumulative total forever)", got)
+	}
+}
+
+// TestFlushAt_ObsCounters_SurviveWriteFailure_NoLatch is the
+// regression test for CA2-A25-harden-3: flushAt used to derive the
+// dispatcher-level obs-counter deltas (TxReadErrors,
+// TxEventReadErrors, EntryMetaUnsupported) from the SAME baseline
+// (f.last) that INT-05 deliberately holds back on an
+// InsertDecoderStats failure. A failed-insert tick followed by a
+// stable-count tick (no new occurrences) then recomputed the
+// identical positive delta a second time, re-emitting the same
+// obs.Add and WARN.
+//
+// Drives a failing tick with a fresh TxReadErrors delta, then a
+// second tick where the store recovers but the counter hasn't moved,
+// and asserts both the Prometheus counter and the WARN fire only
+// once — from the first tick.
+func TestFlushAt_ObsCounters_SurviveWriteFailure_NoLatch(t *testing.T) {
+	before := testutil.ToFloat64(obs.DispatcherTxReadErrorsTotal)
+
+	src := &stubStatsSource{stats: dispatcher.Stats{
+		EventsSeen:   map[string]int{"band": 10},
+		TxReadErrors: 3,
+	}}
+	w := &fakeStatsWriter{fail: true}
+	var buf bytes.Buffer
+	f := New(src, w, slog.New(slog.NewTextHandler(&buf, nil)), Options{Interval: 5 * time.Minute})
+
+	base := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+
+	// Tick 1: fresh TxReadErrors delta of 3. InsertDecoderStats fails,
+	// so f.last (the DB-row baseline) is retained — but the obs-counter
+	// baseline must still advance.
+	f.flushAt(context.Background(), base)
+	if got := f.obsLast.TxReadErrors; got != 3 {
+		t.Fatalf("after flush 1, f.obsLast.TxReadErrors = %d, want 3 (must advance even on write failure)", got)
+	}
+
+	// Tick 2: store recovers, but TxReadErrors hasn't moved (still 3).
+	// Must NOT recompute a stale positive delta against the held-back
+	// f.last.
+	w.fail = false
+	f.flushAt(context.Background(), base.Add(5*time.Minute))
+
+	if got := testutil.ToFloat64(obs.DispatcherTxReadErrorsTotal) - before; got != 3 {
+		t.Errorf("DispatcherTxReadErrorsTotal delta across both ticks = %v, want 3 (must not re-add on the second, flat-count tick)", got)
+	}
+	if got := strings.Count(buf.String(), "tx-read errors during this flush window"); got != 1 {
+		t.Errorf("WARN logged %d times across write-failure + flat-count ticks, want 1", got)
 	}
 }
