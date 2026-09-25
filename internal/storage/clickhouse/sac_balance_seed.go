@@ -200,7 +200,8 @@ func streamCurrentStateSeeds(
 // An archived key is emitted as a tombstone at its archival ledger rather than
 // dropped: a served row written while it was live (an earlier seed pass, or the
 // live observer before a pre-eviction archival) would otherwise stay the
-// holder's latest observation forever. Fails OPEN — see [resolveSACArchivals].
+// holder's latest observation forever. A key with no TTL row fails the pass —
+// see [resolveSACArchivals].
 func emitLiveSeeds(
 	ctx context.Context,
 	conn driver.Conn,
@@ -248,9 +249,10 @@ type sacArchival struct {
 // last-write ledger would overwrite the genuine observation there and zero the
 // holder across [lastWrite, archival) in every historical read.
 //
-// Fails open like [ClassifyTTLLiveness]. A live_until below the entry's own
-// last write cannot be true (a write needs a live entry), so it is stale TTL
-// data rather than proof of archival and the key is left live.
+// Fails CLOSED on a key with no TTL row: see [sacArchivalLedgers]. A
+// live_until below the entry's own last write cannot be true (a write needs a
+// live entry), so it is stale TTL data rather than proof of archival and the
+// key is left live.
 func resolveSACArchivals(ctx context.Context, conn driver.Conn, lastWrite map[string]uint32, asOfLedger uint32) (map[string]sacArchival, error) {
 	out := make(map[string]sacArchival)
 	if len(lastWrite) == 0 {
@@ -264,14 +266,13 @@ func resolveSACArchivals(ctx context.Context, conn driver.Conn, lastWrite map[st
 	if err != nil {
 		return nil, err
 	}
-	archivedAt := make(map[string]uint32)
-	ledgers := make([]uint32, 0)
-	for k, lu := range liveUntil {
-		if TTLVerdictAt(lu, asOfLedger) != TTLArchived || lu < lastWrite[k] {
-			continue
-		}
-		archivedAt[k] = lu + 1 // lu < asOfLedger, so no overflow
-		ledgers = append(ledgers, lu+1)
+	archivedAt, err := sacArchivalLedgers(lastWrite, liveUntil, asOfLedger)
+	if err != nil {
+		return nil, err
+	}
+	ledgers := make([]uint32, 0, len(archivedAt))
+	for _, at := range archivedAt {
+		ledgers = append(ledgers, at)
 	}
 	closeTimes, err := ledgerCloseTimes(ctx, conn, ledgers)
 	if err != nil {
@@ -288,6 +289,41 @@ func resolveSACArchivals(ctx context.Context, conn driver.Conn, lastWrite map[st
 		out[k] = sacArchival{ledger: at, closeTime: ct}
 	}
 	return out, nil
+}
+
+// errSACSeedTTLUnresolved is returned when a watched Balance key has no
+// stellar.ttl_live_until row.
+var errSACSeedTTLUnresolved = errors.New("clickhouse: sac seed: watched Balance entries have no stellar.ttl_live_until row")
+
+// sacArchivalLedgers maps each key of lastWrite whose TTL lapsed before
+// asOfLedger to its archival ledger (live_until+1).
+//
+// Every Soroban contract_data entry has a TTL entry, so a watched key with no
+// TTL row means the projection does not cover it — typically a deployment that
+// skipped deploy/clickhouse/ttl_live_until.sql's Step-2 backfill. Keeping such
+// a key as live re-seeds exactly the archived balances this filter exists to
+// retract, under a provenance row that looks complete, so the seed refuses
+// instead of guessing either way.
+func sacArchivalLedgers(lastWrite, liveUntil map[string]uint32, asOfLedger uint32) (map[string]uint32, error) {
+	archivedAt := make(map[string]uint32)
+	var unresolved []string
+	for k, written := range lastWrite {
+		lu, ok := liveUntil[k]
+		if !ok {
+			unresolved = append(unresolved, k)
+			continue
+		}
+		if TTLVerdictAt(lu, asOfLedger) != TTLArchived || lu < written {
+			continue
+		}
+		archivedAt[k] = lu + 1 // lu < asOfLedger, so no overflow
+	}
+	if len(unresolved) > 0 {
+		sort.Strings(unresolved)
+		return nil, fmt.Errorf("%w: %d of %d key(s), first %s — complete the Step-2 backfill in deploy/clickhouse/ttl_live_until.sql and re-run",
+			errSACSeedTTLUnresolved, len(unresolved), len(lastWrite), unresolved[0])
+	}
+	return archivedAt, nil
 }
 
 // ledgerCloseTimes reads the close time of each ledger in seqs from
@@ -823,9 +859,9 @@ func (r *sacSeedReducer) offer(keyXDR, entryXDR, changeType string, closeTime ti
 // (or the live observer, before a pre-eviction archival) already served; the
 // tombstone sits at the archival ledger so history before it is untouched.
 // Only a positively-resolved, lapsed TTL retracts a key — see
-// [resolveSACArchivals]; an unresolved key is kept, because the seed exists to
-// recover dormant-but-live balances (AQUA's) and over-retracting would
-// silently understate supply.
+// [resolveSACArchivals]. An unresolved key fails the pass rather than being
+// kept (over-count) or retracted (a dormant-but-live balance like AQUA's would
+// silently understate supply).
 func (r *sacSeedReducer) retractArchived(ctx context.Context, conn driver.Conn, asOfLedger uint32) (int, error) {
 	lastWrite := make(map[string]uint32, len(r.best))
 	for k, w := range r.best {

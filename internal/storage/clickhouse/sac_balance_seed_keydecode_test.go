@@ -71,7 +71,7 @@ func TestStreamCurrentStateSeeds_UnwatchedCorruptKeyDoesNotAbort(t *testing.T) {
 		{corruptBalanceKeyXDR(t, otherSAC), "", "updated", seedLedger, ct},
 		{seedKeyFor(t), seedEntryFor(t, 100_000_000, seedLedger), "updated", seedLedger, ct},
 	}}
-	conn := archivalConn(t, nil, nil)
+	conn := archivalConn(t, map[string]uint32{seedKeyFor(t): seedLedger + 1_000}, nil)
 
 	var got []SACBalanceSeed
 	err := streamCurrentStateSeeds(context.Background(), conn, driver.Rows(rows), seedWatched(), seedLedger+1, func(s SACBalanceSeed) error {

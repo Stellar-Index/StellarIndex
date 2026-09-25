@@ -317,7 +317,7 @@ Subcommands:
                           Report sources lagging more than N ledgers (default 100)
                           behind the stellar-rpc network tip. Exit code 1 if any
                           source is lagging.
-  ch-cap67-movements -ch-addr ADDR [-from N] [-to N] [-window N] [-max-decode-errors N] [-dry-run]
+  ch-cap67-movements -ch-addr ADDR [-from N] [-to N] [-window N] [-max-decode-errors N] [-write]
                           Derive post-P23 account movements (ALL assets,
                           native XLM included) from the lake's CAP-67
                           transfer events into stellar.account_movements
@@ -327,7 +327,7 @@ Subcommands:
                           A one-shot run exits non-zero when more transfer
                           events failed to decode than -max-decode-errors
                           (default 0); -follow logs them per window.
-  ch-holders-rollup -ch-addr ADDR
+  ch-holders-rollup -ch-addr ADDR [-write]
                           Recompute every asset's top-500 holders board +
                           holder count into staging and atomically exchange
                           live (asset_holders_rollup). Run from the 30-min
@@ -381,7 +381,7 @@ Subcommands:
                           run-heavy-job.sh on r1 immediately after applying
                           deploy/clickhouse/contract_active_ledgers.sql —
                           the reader trusts a non-empty index as complete.
-  directory-sync -config PATH [-url URL] [-dry-run] [-timeout DUR]
+  directory-sync -config PATH [-url URL] [-write] [-timeout DUR]
                           Mirror the MIT-licensed stellar-expert/public-directory
                           account labels (~18.5k G/C addresses: names, domains,
                           tags like #exchange/#sdf/#malicious) into
@@ -400,7 +400,7 @@ Subcommands:
                           directory-sync never updates or prunes it. -delete
                           hands the address back to the next sync. Dry run
                           unless -write.
-  curated-rwa-sync -config PATH [-base-url URL] [-dry-run] [-timeout DUR] [-textfile PATH]
+  curated-rwa-sync -config PATH [-base-url URL] [-write] [-timeout DUR] [-textfile PATH]
                           Cache a third party's curated list of tokenized
                           real-world assets on Stellar, and that party's own
                           USD price per token, into rwa_curated_directory for
@@ -416,7 +416,7 @@ Subcommands:
                           are skipped and counted; a price with no day is
                           dropped, never given one. Refuses an empty result.
                           Key from DUNE_API_KEY (required).
-  listing-sync -config PATH [-base-url URL] [-dry-run] [-timeout DUR]
+  listing-sync -config PATH [-base-url URL] [-write] [-timeout DUR]
                           Cache the Stellar slice of an independent price-
                           aggregation platform's own per-coin platform->address
                           map (CoinGecko /coins/list?include_platform=true
@@ -597,7 +597,7 @@ Subcommands:
                           C…). Cross-check pairing is operator-
                           supplied because SAC contract-id
                           derivation isn't wired in canonical yet.
-  supply snapshot -config PATH [-asset <id>] [-ledger N] [-dry-run]
+  supply snapshot -config PATH [-asset <id>] [-ledger N] [-write]
                           Compute a fresh supply snapshot and write
                           it to asset_supply_history. The CLI is
                           intentionally native-XLM only — classic
@@ -615,7 +615,7 @@ Subcommands:
                           stellar.ledgers row at or before it; pass
                           -ledger to override. -dry-run prints
                           without writing.
-  supply seed-observations -config PATH [-ch-addr ADDR] [-dry-run]
+  supply seed-observations -config PATH [-ch-addr ADDR] [-write]
                           Seed account_observations from the ClickHouse
                           lake for every [supply].sdf_reserve_accounts
                           entry (ADR-0021). Closes the dormant-account
@@ -624,7 +624,7 @@ Subcommands:
                           keep the reserve reader on the static fallback
                           forever. Idempotent; the live observer
                           supersedes seeded rows on the next real change.
-  supply seed-sac-balances -config PATH [-ch-addr ADDR] [-full-history] [-dry-run]
+  supply seed-sac-balances -config PATH [-ch-addr ADDR] [-full-history] [-write]
                           Seed sac_balance_observations from the lake for
                           every current Balance(Address) entry of each
                           [supply].sac_wrappers contract (ADR-0022 /
@@ -635,7 +635,7 @@ Subcommands:
                           ~ledger-62M-floored current-state projection —
                           heavier, walked in ledger windows, run under
                           run-heavy-job.sh only.
-  supply seed-claimable-balances -config PATH [-ch-addr ADDR] [-assets LIST] [-timeout DUR] [-dry-run]
+  supply seed-claimable-balances -config PATH [-ch-addr ADDR] [-assets LIST] [-timeout DUR] [-write]
                           Seed claimable_observations from the ClickHouse
                           lake for every currently-LIVE claimable balance
                           paying a classic credit asset (ADR-0022 /
@@ -659,7 +659,7 @@ Subcommands:
                           Whole-chain scan over a ~150B-row table: hours,
                           silent until the end (all inserts land after the
                           reduction), r1 = run-heavy-job.sh only.
-  supply seed-sep41-genesis -config PATH [-ch-addr ADDR] [-genesis-ledger N] [-dry-run]
+  supply seed-sep41-genesis -config PATH [-ch-addr ADDR] [-genesis-ledger N] [-write]
                           Seed each [supply].watched_sep41_contracts
                           contract's pre-Soroban (ledger < 50457424)
                           per-kind opening balance into sep41_supply_rollup
@@ -754,7 +754,7 @@ Subcommands:
                               -from 50457424 -to 62296694 -parallel 8 \
                               -hashes 4a64c8c8...,b400f7a8... \
                               -output-dir /var/wasm-audit
-  backfill-external -config PATH -source SRC -pair SYM -from TS -to TS -granularity D
+  backfill-external -config PATH -source SRC -pair SYM -from TS -to TS -granularity D [-write]
                           Pull historical candles from an external venue
                           (binance / kraken / bitstamp / coinbase) and
                           insert synthesised canonical.Trade rows into
@@ -768,7 +768,7 @@ Subcommands:
                               -from 2024-01-01T00:00:00Z \
                               -to   2024-12-31T00:00:00Z \
                               -granularity 1h
-  backfill-chainlink -config PATH [-from-block N] [-to-block N] [-chunk-blocks N] [-sleep-ms N] [-dry-run]
+  backfill-chainlink -config PATH [-from-block N] [-to-block N] [-chunk-blocks N] [-sleep-ms N] [-write]
                           Walk every configured Chainlink feed's
                           AnswerUpdated event log across the requested
                           block range and insert one OracleUpdate row
@@ -845,7 +845,7 @@ Subcommands:
                           hubble-check). Cost: 20-40 GB scan per
                           1M-ledger range — use -dry-run-bytes for
                           a preview.
-  backfill -config PATH -from N -to N [-source S,S,...] [-bucket NAME] [-dry-run] [-resume]
+  backfill -config PATH -from N -to N [-source S,S,...] [-bucket NAME] (-write | -dry-run) [-resume]
                           Replay a bounded ledger range through the
                           full ingest pipeline (galexie → dispatcher
                           → decoders → trades hypertable). Same code
@@ -865,7 +865,7 @@ Subcommands:
                               -config /etc/stellarindex.toml \
                               -from 21000000 -to 25000000 \
                               -source soroswap,aquarius
-  backfill-router -config PATH -from N -to N [-resume] [-bucket NAME]
+  backfill-router -config PATH -from N -to N [-resume] [-bucket NAME] [-write]
                           Reconstruct soroswap_router_swaps for a ledger
                           range by replaying the soroswap-router
                           ContractCallDecoder over raw Galexie ledger
@@ -874,7 +874,7 @@ Subcommands:
                           (ON CONFLICT DO NOTHING); checkpoints into
                           ingestion_cursors for resume. Superseded on the
                           lake path by ch-rebuild -contract-calls.
-  resume-stalled -config PATH [-min-lag DUR] [-max-resumes N] [-source-filter S] [-parallel N] [-dry-run]
+  resume-stalled -config PATH [-min-lag DUR] [-max-resumes N] [-source-filter S] [-parallel N] [-write]
                           Resume every stalled backfill cursor that still
                           has a remaining range, marching each toward the
                           'to' ledger encoded in its sub_source. One-shot
@@ -886,7 +886,7 @@ Subcommands:
                           ledger-coverage gaps >= -min-gap-size (default
                           1000 ledgers). Feed the output to a targeted
                           backfill run. Read-only.
-  tag-routed-via -config PATH [-from N] [-to N] [-window N] [-resume]
+  tag-routed-via -config PATH [-from N] [-to N] [-window N] [-resume] [-write]
                           Back-tag trades.routed_via='soroswap-router' for
                           every trade sharing (ledger, tx_hash) with a
                           persisted soroswap_router_swaps row (migration
@@ -902,7 +902,7 @@ Subcommands:
                           (default true) resumes only a run of the same
                           range. The live indexer keeps the trailing 30
                           min tagged going forward.
-  tag-signer -config PATH -from N -to N [-window N] [-ch-addr H:P] [-resume]
+  tag-signer -config PATH -from N -to N [-window N] [-ch-addr H:P] [-resume] [-write]
                           Back-tag trades.signer (the AMM/Soroban swap tx
                           source account) over a ledger range, reading the
                           signer from the lake's stellar.transactions
@@ -913,7 +913,7 @@ Subcommands:
                           checkpointed per -from/-to pair, and -resume
                           (default true) resumes only a run of the same
                           range.
-  census-backfill -config PATH -from N -to N [-bucket NAME] [-resume]
+  census-backfill -config PATH -from N -to N [-bucket NAME] [-resume] [-write]
                           Populate ledger_ingest_log (ADR-0033 substrate
                           record) for a historical range. Pure structural
                           walk — counts contract events + classic trade
@@ -930,12 +930,12 @@ Subcommands:
                           /contracts/{id}/code-history) from
                           ledger_entry_changes. Windowed + resumable; run
                           under run-heavy-job.sh.
-  ch-census-rollup        -ch-addr ADDR [-backfill] [-from-day YYYY-MM-DD]
+  ch-census-rollup        -ch-addr ADDR [-backfill] [-from-day YYYY-MM-DD] [-write]
                           Maintain stellar.contracts_census_daily (the
                           day-keyed census behind fast /v1/contracts).
                           Timer mode recomputes today + missing days;
                           -backfill walks from the lake's first event.
-  ch-backfill -config PATH -from N -to N [-bucket NAME] [-ch-addr H:P] [-flush-every N] [-parallel N]
+  ch-backfill -config PATH -from N -to N [-bucket NAME] [-ch-addr H:P] [-flush-every N] [-parallel N] (-write | -dry-run)
                           ADR-0034 Phase 2: structurally decode [from,to]
                           from galexie into the ClickHouse stellar.* Tier-1
                           tables (ledgers/txs/ops/op_results/contract_events).
@@ -1019,7 +1019,7 @@ Subcommands:
                           an explicit -from (resume point) / -to bound.
                           Prints a resume point per window; serialize it and
                           run under the root-<2G watchdog on r1.
-  ch-participant-backfill [-ch-addr H:P] [-from N] [-to N] [-window N] [-max-decode-errors N] [-dry-run]
+  ch-participant-backfill [-ch-addr H:P] [-from N] [-to N] [-window N] [-max-decode-errors N] [-write]
                           Fill stellar.operation_participants (the non-source
                           side of ADR-0038 Phase B account history) for
                           HISTORICAL ledgers by re-deriving participants from
@@ -1091,7 +1091,7 @@ Subcommands:
                               -ch-addr 127.0.0.1:9300 \
                               -from 2 -to 58762516 \
                               -write -verify
-  projector-replay -config PATH -source NAME -from N [-dry-run]
+  projector-replay -config PATH -source NAME -from N [-write]
                           Rewind the projector's per-source cursor so the
                           indexer's projector goroutine re-projects a
                           historical range from soroban_events (ADR-0032
@@ -1500,19 +1500,19 @@ Subcommands:
                           the -limit (default 2000000) truncated is refused.
                           -scope selects the entry types; -dry-run sizes the
                           write set without writing.
-  issuer-enrich -config PATH [-ch ADDR] [-batch N] [-dry-run]
+  issuer-enrich -config PATH [-ch ADDR] [-batch N] [-write]
                           Populate issuers.home_domain from on-chain account
                           state in the ClickHouse lake (unblocks sep1-refresh
                           → org_name). Batched; -dry-run reports counts
                           without writing.
-  sep1-refresh -config PATH [-limit N] [-older-than DUR] [-timeout DUR] [-issuer G...] [-dry-run]
+  sep1-refresh -config PATH [-limit N] [-older-than DUR] [-timeout DUR] [-issuer G...] [-write]
                           Resolve the SEP-1 stellar.toml for every issuer
                           with a home_domain and write the parsed payload to
                           issuers.sep1_payload (surfacing org_name on
                           /v1/issuers). Per-issuer failures are counted, not
                           fatal; built-in per-request timeout + SSRF guard.
                           Run hourly from cron.
-  issuer-flags -config PATH [-ch-addr ADDR] [-limit N] [-batch N] [-timeout DUR] [-dry-run]
+  issuer-flags -config PATH [-ch-addr ADDR] [-limit N] [-batch N] [-timeout DUR] [-write]
                           Decode issuer AccountEntry auth flags from the lake
                           and persist them to issuers.auth_* — a DURABLE
                           fallback for the API's read-time enrichment, which
@@ -1524,7 +1524,7 @@ Subcommands:
                           ordered by PK, so bounded runs resume rather than
                           re-walk. Issuers outside the captured window are
                           reported as absent, not an error. Run daily.
-  asset-registry-backfill -config PATH [-ch-addr ADDR] [-page N] [-batch N]
+  asset-registry-backfill -config PATH [-ch-addr ADDR] [-page N] [-batch N] [-write]
                           [-limit N] [-resume-from ASSET_ID] [-timeout DUR]
                           [-min-free-bytes N] [-heartbeat PATH] [-write]
                           Register every classic asset the lake holds a
@@ -1544,7 +1544,7 @@ Subcommands:
                           is an optimisation, not a correctness requirement.
                           Long — run under run-heavy-job.sh, and use -limit to
                           land it in tranches while the listing spine grows.
-  seed-soroswap-pairs -config PATH [-rpc URL] [-timeout DUR]
+  seed-soroswap-pairs -config PATH [-rpc URL] [-timeout DUR] [-write]
                           Bootstrap the soroswap_pairs registry table
                           via stellar-rpc simulateTransaction. Walks the
                           factory's all_pairs() / token_0() / token_1()
@@ -1554,7 +1554,7 @@ Subcommands:
                           run). Run once on first deployment;
                           live new_pair events keep the table fresh
                           afterwards (see migrations/0016_create_soroswap_pairs.up.sql).
-  seed-protocol-contracts -config PATH -source NAME|all [-to LEDGER] [-timeout DUR]
+  seed-protocol-contracts -config PATH -source NAME|all [-to LEDGER] [-timeout DUR] [-write]
                           Bootstrap the protocol_contracts registry for a
                           factory-anchored gated decoder (ADR-0035): walks
                           the source's factory creation events (e.g. Blend
@@ -1603,7 +1603,7 @@ Subcommands:
                               to run otherwise.
                           Rollback: stellarindex-ops
                           rehydrate-galexie-archive -from N -to N.
-  rehydrate-galexie-archive -config PATH -from N -to N [-dry-run]
+  rehydrate-galexie-archive -config PATH -from N -to N [-write]
                           Per ADR-0027 §Step 2: copy LCM files for the
                           ledger range [-from, -to] from the configured
                           cold tier (storage.s3_cold_*; production is the
@@ -1700,7 +1700,7 @@ Subcommands:
                             stellarindex-ops usage-rollup-backfill \
                               -config /etc/stellarindex.toml \
                               -from 2026-07-19 -to 2026-07-21 -write
-  freeze-unfreeze -config PATH [-list] [-asset A -quote Q -reason "..." [-actor NAME]] [-dry-run]
+  freeze-unfreeze -config PATH [-list] [-asset A -quote Q -reason "..." [-actor NAME]] [-write]
                           Manually lift an ADR-0019 price freeze. An
                           ESCALATED freeze (the 4x30m extension
                           ladder ran out) never auto-unfreezes by

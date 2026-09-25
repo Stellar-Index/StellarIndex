@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,6 +90,55 @@ func TestSACSeed_ArchivedHolderRetractedAtArchivalLedger(t *testing.T) {
 		}
 		if !s.CloseTime.Equal(archivalClose) {
 			t.Errorf("%s: tombstone CloseTime = %v, want %v from stellar.ledgers", name, s.CloseTime, archivalClose)
+		}
+	}
+}
+
+// TestSACSeed_UncoveredTTLRefuses: a watched Balance entry with no
+// stellar.ttl_live_until row (an unbackfilled projection) must fail both
+// readers — never be emitted as a live holder under a clean-looking pass.
+func TestSACSeed_UncoveredTTLRefuses(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	const (
+		written = uint32(31_400_000)
+		asset   = "NOTTL:GAX5TXB5RYJNLBUR477PEXM4X75APK2PGMTN6KEFQSESGWFXEAKFSXJO"
+	)
+	sac, sacContract := fhSyntheticContractAddr(t, 0xF1)
+	holder, holderAddr := fhSyntheticAccountAddr(t, 0xF2)
+	balanceKey := fhBalanceKey(t, holderAddr)
+	keyXDR := fhKeyXDR(t, sacContract, balanceKey)
+
+	rows := []chstore.LedgerEntryChangeRow{{
+		LedgerSeq: written, CloseTime: time.Date(2024, 12, 1, 0, 0, 0, 0, time.UTC),
+		TxHash: "nottl-seed-it", OpIndex: 0, ChangeIndex: 0,
+		ChangeType: "created", EntryType: "contract_data", KeyXDR: keyXDR,
+		EntryXDR: fhEntryXDR(t, sacContract, balanceKey, fhI128Val(big.NewInt(9_000_000)), written),
+	}}
+	if _, err := chstore.InsertEntryChanges(ctx, addr, rows, 0); err != nil {
+		t.Fatalf("InsertEntryChanges: %v", err)
+	}
+
+	watched := map[string]string{sac: asset}
+	readers := map[string]func(context.Context, string, map[string]string, func(chstore.SACBalanceSeed) error) error{
+		"current-state": chstore.StreamSACBalanceSeeds,
+		"full-history":  chstore.StreamSACBalanceSeedsFullHistory,
+	}
+	for name, stream := range readers {
+		var emitted int
+		err := stream(ctx, addr, watched, func(s chstore.SACBalanceSeed) error {
+			if s.Holder == holder {
+				emitted++
+			}
+			return nil
+		})
+		if err == nil || !strings.Contains(err.Error(), "no stellar.ttl_live_until row") {
+			t.Errorf("%s: err = %v, want the TTL-coverage refusal", name, err)
+		}
+		if emitted != 0 {
+			t.Errorf("%s: emitted %d seeds for the uncovered holder, want 0", name, emitted)
 		}
 	}
 }

@@ -85,6 +85,12 @@ type WriteGate struct {
 	dryRun *bool
 }
 
+// WriteFlagUsage is the -write flag's help text. Every write-gated
+// subcommand's `stellarindex-ops --help` synopsis must name -write: dry run is
+// the default, so a synopsis offering only -dry-run documents a command that
+// never writes.
+const WriteFlagUsage = "apply changes to the datastore. Without it this command is a fail-closed DRY RUN: it reports what would change and writes nothing."
+
 // RegisterWriteGate registers the shared -write / -dry-run flag pair on
 // fs and returns the gate.
 //
@@ -96,8 +102,7 @@ type WriteGate struct {
 //     intent; -write wins if both are passed.
 func RegisterWriteGate(fs *flag.FlagSet) *WriteGate {
 	return &WriteGate{
-		write: fs.Bool("write", false,
-			"apply changes to the datastore. Without it this command is a fail-closed DRY RUN: it reports what would change and writes nothing."),
+		write: fs.Bool("write", false, WriteFlagUsage),
 		dryRun: fs.Bool("dry-run", false,
 			"preview only, writing nothing — the DEFAULT. Retained as an explicit no-op alias for existing callers; pass -write to actually apply."),
 	}

@@ -654,3 +654,39 @@ func TestIsMemoryLimitExceeded(t *testing.T) {
 		t.Error("a non-ClickHouse error must not trigger a window bisection")
 	}
 }
+
+// TestSACArchivalLedgers_MissingTTLRowFailsClosed pins the TTL-coverage gate:
+// a watched Balance key with no stellar.ttl_live_until row (an unbackfilled
+// projection) must fail the seed, not be kept as live — keeping it re-seeds the
+// archived balance the filter exists to retract.
+func TestSACArchivalLedgers_MissingTTLRowFailsClosed(t *testing.T) {
+	lastWrite := map[string]uint32{"live": 100, "archived": 100, "uncovered": 100}
+	liveUntil := map[string]uint32{"live": 500, "archived": 200}
+
+	got, err := sacArchivalLedgers(lastWrite, liveUntil, 300)
+	if !errors.Is(err, errSACSeedTTLUnresolved) {
+		t.Fatalf("err = %v, want errSACSeedTTLUnresolved", err)
+	}
+	if got != nil {
+		t.Errorf("archivals = %v, want nil on a refused pass", got)
+	}
+	if !strings.Contains(err.Error(), "1 of 3 key(s), first uncovered") {
+		t.Errorf("err = %q, want the unresolved count and first key named", err)
+	}
+}
+
+// TestSACArchivalLedgers_Verdicts: with every key covered, only a positively
+// lapsed live_until at or above the entry's own last write retracts, at
+// live_until+1.
+func TestSACArchivalLedgers_Verdicts(t *testing.T) {
+	lastWrite := map[string]uint32{"live": 100, "archived": 100, "stale": 250, "edge": 100}
+	liveUntil := map[string]uint32{"live": 500, "archived": 200, "stale": 200, "edge": 300}
+
+	got, err := sacArchivalLedgers(lastWrite, liveUntil, 300)
+	if err != nil {
+		t.Fatalf("sacArchivalLedgers: %v", err)
+	}
+	if len(got) != 1 || got["archived"] != 201 {
+		t.Errorf("archivals = %v, want map[archived:201]", got)
+	}
+}
