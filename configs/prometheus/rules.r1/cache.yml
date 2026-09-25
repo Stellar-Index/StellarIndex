@@ -53,6 +53,31 @@ groups:
             Eviction rate exceeds 100/s sustained 5+ min. LRU pressure. API
             hit rates drop and Timescale fallback load rises.
 
+      # T611: r1's archival-node role pins maxmemory-policy to
+      # noeviction (15-log-discipline.yml) to protect the
+      # unrecoverable `apikey:` credential records from allkeys-lru
+      # eviction (GH #1317). Under noeviction, a full-memory Redis
+      # doesn't evict — it REJECTS writes with an OOM error, which
+      # stellarindex_redis_evictions_high (an eviction-rate alert)
+      # cannot see at all. redis_errors_total{err="OOM"} is the
+      # prometheus-redis-exporter counter fed by Redis's Errorstats
+      # section (INFO ERRORSTATS `errorstat_OOM`).
+      - alert: stellarindex_redis_write_rejected_oom
+        expr: rate(redis_errors_total{err="OOM"}[5m]) > 0
+        for: 2m
+        labels:
+          severity: page
+          team: stellarindex
+          component: cache
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-memory.md
+          summary: "Redis {{ $labels.instance }} rejecting writes (OOM, noeviction)"
+          description: |
+            Redis is at maxmemory under maxmemory-policy noeviction and is
+            rejecting writes outright (no eviction) rather than making
+            room. Application writes are failing now, not just degrading.
+            Scale up or free memory immediately.
+
       # ── INERT (F-1329) — NOT APPLICABLE ON R1 ─────────────────────
       # r1 is a SINGLE-NODE redis (no Sentinel, no replicas — see
       # docs/operations/r1-deployment-state.md). There is no replication
@@ -76,8 +101,8 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-replication.md
           summary: "Redis master {{ $labels.instance }} missing replicas"
           description: |
-            Master reports fewer connected replicas than expected (< {{ $labels.expected }}).
-            Sentinel can't promote on failover if replicas are gone.
+            Master reports {{ $value }} connected replicas, fewer than
+            expected. Sentinel can't promote on failover if replicas are gone.
 
       # T586: redis-sentinel-textfile-scraper.timer runs every 30s
       # (OnUnitActiveSec=30s, redis-sentinel role 07-monitoring.yml) and

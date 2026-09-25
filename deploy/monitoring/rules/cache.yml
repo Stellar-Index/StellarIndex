@@ -53,6 +53,31 @@ groups:
             Eviction rate exceeds 100/s sustained 5+ min. LRU pressure. API
             hit rates drop and Timescale fallback load rises.
 
+      # T611: under `maxmemory-policy noeviction`, a full-memory Redis
+      # doesn't evict — it REJECTS writes with an OOM error, invisible
+      # to stellarindex_redis_evictions_high (an eviction-rate alert).
+      # redis_errors_total{err="OOM"} is the prometheus-redis-exporter
+      # counter fed by Redis's Errorstats section (INFO ERRORSTATS
+      # `errorstat_OOM`). The multi-host topology defaults to
+      # allkeys-lru (redis-sentinel/defaults/main.yml), so this should
+      # be near-permanently quiet there; it still catches an operator
+      # override to noeviction or a genuine can't-evict-fast-enough
+      # OOM burst.
+      - alert: stellarindex_redis_write_rejected_oom
+        expr: rate(redis_errors_total{err="OOM"}[5m]) > 0
+        for: 2m
+        labels:
+          severity: page
+          team: stellarindex
+          component: cache
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-memory.md
+          summary: "Redis {{ $labels.instance }} rejecting writes (OOM)"
+          description: |
+            Redis is at maxmemory and rejecting writes outright rather
+            than making room. Application writes are failing now, not
+            just degrading. Scale up or free memory immediately.
+
       # F-1329: `redis_expected_slaves` is defined NOWHERE (no exporter,
       # no recording rule, no external label) — the comparison silently
       # produced no series and this alert was dead. redis_exporter emits

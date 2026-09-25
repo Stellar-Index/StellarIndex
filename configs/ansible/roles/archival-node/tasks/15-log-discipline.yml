@@ -304,6 +304,24 @@
     - Restart redis
   tags: [log-discipline, redis]
 
+# T611: maxmemory alone leaves maxmemory-policy at the packaged
+# default (noeviction) implicitly — a rebuild that changes Debian's
+# shipped default silently changes eviction behavior. Pin it
+# explicitly. noeviction (not allkeys-lru) is deliberate: this
+# instance also holds the `apikey:` credential records (see
+# redis-sentinel/defaults/main.yml), and allkeys-lru would evict an
+# unrecoverable key under memory pressure (GH #1317, open) instead of
+# rejecting the write with OOM — a rejected write is loud and
+# recoverable, a silently evicted credential is not.
+- name: Pin Redis eviction policy (Debian-packaged redis on the archival node)
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: '^#?\s*maxmemory-policy\s+\S+'
+    line: "maxmemory-policy {{ redis_maxmemory_policy | default('noeviction') }}"
+  notify:
+    - Restart redis
+  tags: [log-discipline, redis]
+
 # ─── nft-drop log routing (hand-applied 2026-06-30, codified 2026-07-03
 # in the drift audit) ────────────────────────────────────────────────
 # Firewall drop logs go to their own small rotated file instead of
