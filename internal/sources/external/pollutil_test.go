@@ -75,6 +75,18 @@ func TestFiatCodesFromPairs(t *testing.T) {
 	}
 }
 
+// DefaultFXPairs("EUR") must include a USD/EUR pair — ecb is wired
+// with base EUR in production (cmd/stellarindex-indexer) and its
+// USD cube row must not be silently dropped by FiatCodesFromPairs'
+// derived interest set (CA2-A26).
+func TestDefaultFXPairs_EURBaseIncludesUSD(t *testing.T) {
+	pairs := DefaultFXPairs("EUR")
+	wanted := FiatCodesFromPairs(pairs, "EUR")
+	if _, ok := wanted["USD"]; !ok {
+		t.Fatalf("DefaultFXPairs(EUR) must yield a USD cross pair, got codes %v", wanted)
+	}
+}
+
 // GetBody must set the caller's headers, cap the body read at
 // LimitBytes, and return the status verbatim (status interpretation
 // stays with the venue).
