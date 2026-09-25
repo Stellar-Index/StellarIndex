@@ -210,17 +210,18 @@ func TestDecodeRelay_ContractRelayerValidates(t *testing.T) {
 	}
 }
 
-// TestDecodeRelay_FarFutureResolveTimeClampsToClose confirms that a
+// TestDecodeForceRelay_FarFutureResolveTimeClampsToClose confirms that a
 // sentinel / garbage far-future resolve_time (the same overflow
 // class as the soroswap-router deadline_ts) falls back to the ledger
 // close time instead of stamping a year-99-billion timestamp that
-// would overflow the timestamptz INSERT.
-func TestDecodeRelay_FarFutureResolveTimeClampsToClose(t *testing.T) {
+// would overflow the timestamptz INSERT. force_relay (unconditional
+// admin path, no resolve_time acceptance window) still clamps; relay()
+// drops instead — see TestDecodeRelay_FutureResolveTimeBeyondContractWindowIsDropped.
+func TestDecodeForceRelay_FarFutureResolveTimeClampsToClose(t *testing.T) {
 	const farFuture = uint64(3_000_000_000_000_000_000) // ~year 95 billion
 	closedAt := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 
 	args := []string{
-		encodeAddressArg(t, relayerG),
 		encodeSymbolRatesArg(t, []struct {
 			Symbol string
 			Rate   uint64
@@ -230,7 +231,7 @@ func TestDecodeRelay_FarFutureResolveTimeClampsToClose(t *testing.T) {
 		encodeU64Arg(t, farFuture),
 		encodeU64Arg(t, 1),
 	}
-	updates, err := decodeRelayArgs(FnRelay, args, adapterC,
+	updates, err := decodeRelayArgs(FnForceRelay, args, adapterC,
 		52_000_000, "abcd", 0, "", "", closedAt)
 	if err != nil {
 		t.Fatalf("decodeRelayArgs: %v", err)
@@ -244,13 +245,13 @@ func TestDecodeRelay_FarFutureResolveTimeClampsToClose(t *testing.T) {
 	}
 }
 
-// TestDecodeRelay_OverflowResolveTimeClampsToClose covers the u64 values
-// ABOVE math.MaxInt64 (~9.2e18) that the FarFuture test (3e18) does not:
-// these wrap NEGATIVE in the int64() cast and, pre-fix, stamped a
-// far-PAST time (e.g. year -267,666,662,216 for 1e19, or 1969 for
-// MaxUint64) that slipped past the old `ts.After(close+24h)` guard in
-// both directions and overflowed the timestamptz INSERT.
-func TestDecodeRelay_OverflowResolveTimeClampsToClose(t *testing.T) {
+// TestDecodeForceRelay_OverflowResolveTimeClampsToClose covers the u64
+// values ABOVE math.MaxInt64 (~9.2e18) that the FarFuture test (3e18)
+// does not: these wrap NEGATIVE in the int64() cast and, pre-fix,
+// stamped a far-PAST time (e.g. year -267,666,662,216 for 1e19, or
+// 1969 for MaxUint64) that slipped past the old `ts.After(close+24h)`
+// guard in both directions and overflowed the timestamptz INSERT.
+func TestDecodeForceRelay_OverflowResolveTimeClampsToClose(t *testing.T) {
 	closedAt := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	for name, resolve := range map[string]uint64{
 		"justOverMaxInt64": uint64(math.MaxInt64) + 1,
@@ -259,7 +260,6 @@ func TestDecodeRelay_OverflowResolveTimeClampsToClose(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			args := []string{
-				encodeAddressArg(t, relayerG),
 				encodeSymbolRatesArg(t, []struct {
 					Symbol string
 					Rate   uint64
@@ -269,7 +269,7 @@ func TestDecodeRelay_OverflowResolveTimeClampsToClose(t *testing.T) {
 				encodeU64Arg(t, resolve),
 				encodeU64Arg(t, 1),
 			}
-			updates, err := decodeRelayArgs(FnRelay, args, adapterC,
+			updates, err := decodeRelayArgs(FnForceRelay, args, adapterC,
 				52_000_000, "abcd", 0, "", "", closedAt)
 			if err != nil {
 				t.Fatalf("decodeRelayArgs: %v", err)
@@ -482,18 +482,19 @@ func TestDecoder_MatchesOnlyRelayFunctions(t *testing.T) {
 	}
 }
 
-// A resolve_time beyond Band's own +1h acceptance window must clamp to
-// the ledger close. relay() silently NO-OPs outside that window (the tx
-// still succeeds), so recording the declared future time made our
-// `ORDER BY ts DESC` latest-read serve a price the chain refused, for as
-// long as the future stamp stayed ahead — up to a day under the shared
-// helper's generic +24h ceiling (cold audit 2026-08-03).
-func TestDecodeRelay_FutureResolveTimeBeyondContractWindowClampsToClose(t *testing.T) {
+// A resolve_time beyond Band's own +1h acceptance window must be
+// dropped, not clamped to the ledger close: relay() silently NO-OPs
+// outside that window (the tx still succeeds), so writing the update
+// anyway — even stamped at closedAt — let a rate the chain never
+// applied win our `ORDER BY ts DESC` latest-read (cold audit
+// 2026-08-03; CA2-A32-correct-2 found the clamp itself still left that
+// window open for up to one relay interval).
+func TestDecodeRelay_FutureResolveTimeBeyondContractWindowIsDropped(t *testing.T) {
 	closedAt := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 
 	for name, tc := range map[string]struct {
-		offset    time.Duration
-		wantClose bool
+		offset   time.Duration
+		wantDrop bool
 	}{
 		"within window (30m)":      {30 * time.Minute, false},
 		"just inside window (59m)": {59 * time.Minute, false},
@@ -519,6 +520,13 @@ func TestDecodeRelay_FutureResolveTimeBeyondContractWindowClampsToClose(t *testi
 			}
 			updates, err := decodeRelayArgs(FnRelay, args, adapterC,
 				52_000_000, "abcd", 0, "", "", closedAt)
+			if tc.wantDrop {
+				if !errors.Is(err, ErrEmptyRates) {
+					t.Fatalf("decodeRelayArgs error = %v, want ErrEmptyRates — a relay the "+
+						"contract would reject must not be written at all", err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("decodeRelayArgs: %v", err)
 			}
@@ -526,13 +534,6 @@ func TestDecodeRelay_FutureResolveTimeBeyondContractWindowClampsToClose(t *testi
 				t.Fatalf("expected 1 update, got %d", len(updates))
 			}
 			got := updates[0].Timestamp.UTC()
-			if tc.wantClose {
-				if !got.Equal(closedAt) {
-					t.Errorf("ts = %s, want the ledger close %s — a relay the contract "+
-						"would reject must not be stamped in the future", got, closedAt)
-				}
-				return
-			}
 			if !got.Equal(time.Unix(int64(resolve), 0).UTC()) {
 				t.Errorf("ts = %s, want the declared resolve_time (inside the contract's window)", got)
 			}

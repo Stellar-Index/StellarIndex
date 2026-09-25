@@ -46,11 +46,13 @@ func TestDecodeRelayArgs_UnknownFunction_NotBandCall(t *testing.T) {
 	}
 }
 
-func TestDecodeRelay_PreEpochResolveTimeFallsBackToClosedAt(t *testing.T) {
-	// resolveSeconds < 1e9 (pre-2001) is treated as relayer-corruption
-	// and replaced with ledger close time. Real-world Band payloads
-	// are always post-2020; this defensive path keeps a bogus
-	// resolve_time from stamping garbage timestamps on the row.
+func TestDecodeRelay_PreEpochResolveTimeIsDropped(t *testing.T) {
+	// resolve_time=0 is well below Band's own resolve_time < close+OFFSET
+	// acceptance window's floor of sanity (pre-2001) — the contract's
+	// relay() would silently no-op the call on-chain even though the tx
+	// succeeds. Clamping it to closedAt and still writing it (the old
+	// behaviour) let a rate the chain never applied win the latest-read
+	// ORDER BY ts DESC. relay() must drop the update instead.
 	closedAt := time.Unix(1_745_000_500, 0).UTC()
 	args := []string{
 		encodeAddressArg(t, relayerG),
@@ -58,10 +60,31 @@ func TestDecodeRelay_PreEpochResolveTimeFallsBackToClosedAt(t *testing.T) {
 			Symbol string
 			Rate   uint64
 		}{{"BTC", 50_000_000_000_000}}),
-		encodeU64Arg(t, 0), // pre-epoch — triggers fallback
+		encodeU64Arg(t, 0), // pre-epoch — the contract would no-op
 		encodeU64Arg(t, 1),
 	}
-	updates, err := decodeRelayArgs(FnRelay, args, adapterC,
+	_, err := decodeRelayArgs(FnRelay, args, adapterC,
+		52_000_000, "abcd", 0, "", "", closedAt)
+	if !errors.Is(err, ErrEmptyRates) {
+		t.Fatalf("decodeRelayArgs error = %v, want ErrEmptyRates (relay() would no-op)", err)
+	}
+}
+
+func TestDecodeForceRelay_PreEpochResolveTimeFallsBackToClosedAt(t *testing.T) {
+	// force_relay is the unconditional admin path — it has no
+	// resolve_time acceptance window to mirror, so a garbage
+	// resolve_time still clamps to ledger close rather than being
+	// dropped.
+	closedAt := time.Unix(1_745_000_500, 0).UTC()
+	args := []string{
+		encodeSymbolRatesArg(t, []struct {
+			Symbol string
+			Rate   uint64
+		}{{"BTC", 50_000_000_000_000}}),
+		encodeU64Arg(t, 0), // pre-epoch — triggers fallback, not a drop
+		encodeU64Arg(t, 1),
+	}
+	updates, err := decodeRelayArgs(FnForceRelay, args, adapterC,
 		52_000_000, "abcd", 0, "", "", closedAt)
 	if err != nil {
 		t.Fatalf("decodeRelayArgs: %v", err)
@@ -70,8 +93,30 @@ func TestDecodeRelay_PreEpochResolveTimeFallsBackToClosedAt(t *testing.T) {
 		t.Fatalf("got %d updates, want 1", len(updates))
 	}
 	if !updates[0].Timestamp.Equal(closedAt) {
-		t.Errorf("Timestamp = %v, want closedAt %v (pre-epoch resolve_time should fall back)",
+		t.Errorf("Timestamp = %v, want closedAt %v (force_relay pre-epoch resolve_time should fall back)",
 			updates[0].Timestamp, closedAt)
+	}
+}
+
+func TestDecodeRelay_FutureResolveTimeBeyondOffsetIsDropped(t *testing.T) {
+	// resolve_time >= close+OFFSET (1h) is outside relay()'s own
+	// acceptance window even though it's well inside
+	// canonical.SafeUnixSeconds's looser 24h ceiling — must still drop.
+	closedAt := time.Unix(1_745_000_500, 0).UTC()
+	future := uint64(closedAt.Add(2 * time.Hour).Unix())
+	args := []string{
+		encodeAddressArg(t, relayerG),
+		encodeSymbolRatesArg(t, []struct {
+			Symbol string
+			Rate   uint64
+		}{{"BTC", 50_000_000_000_000}}),
+		encodeU64Arg(t, future),
+		encodeU64Arg(t, 1),
+	}
+	_, err := decodeRelayArgs(FnRelay, args, adapterC,
+		52_000_000, "abcd", 0, "", "", closedAt)
+	if !errors.Is(err, ErrEmptyRates) {
+		t.Fatalf("decodeRelayArgs error = %v, want ErrEmptyRates (future resolve_time beyond Band's OFFSET)", err)
 	}
 }
 
