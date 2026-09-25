@@ -58,7 +58,3 @@ func ssrfGuardedDialContext(ctx context.Context, network, addr string) (net.Conn
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	return nettools.DialFirstReachable(ctx, dialer, network, ips, port)
 }
-
-// IsReservedTLD reports a documentation/reserved TLD. Thin delegate to the
-// canonical implementation; kept exported for the worker's existing tests.
-func IsReservedTLD(host string) bool { return nettools.IsReservedTLD(host) }
