@@ -89,7 +89,7 @@ func TestVerifyDecoders_ResolvesBucketAndGatesCoverage(t *testing.T) {
 	if strings.Contains(body, "NewBoundedLedgerStreamConfig(cfg, cfg.Storage.S3BucketLive") {
 		t.Error("verifyDecoders still streams from the hardcoded TRIMMED live bucket (RLT-282)")
 	}
-	if !strings.Contains(body, "return verifyWalkCoverage(uint32(*from), uint32(*to), totalLedgers, streamBucket)") {
+	if !strings.Contains(body, "if err := verifyWalkCoverage(uint32(*from), uint32(*to), totalLedgers, streamBucket); err != nil {") {
 		t.Error("verifyDecoders never gates on coverage — a short walk exits 0 with every " +
 			"decoder reported silent")
 	}
