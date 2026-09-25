@@ -72,8 +72,51 @@ func TestListAssetsBaseSelect_NoPerRequestPriceScan(t *testing.T) {
 				"not faster", cte)
 		}
 	}
-	if got := strings.Count(sqlWithoutComments(assetPriceCTEs), "DISTINCT ON"); got != 8 {
-		t.Errorf("price derivation has %d DISTINCT ON CTEs, want 8 (4 direct_usd* + 4 asset_vs_xlm*)", got)
+	if got := strings.Count(sqlWithoutComments(assetPriceCTEs), "WHERE bucket = newest"); got != 8 {
+		t.Errorf("price derivation has %d newest-bucket arms, want 8 (4 direct_usd* + 4 asset_vs_xlm*)", got)
+	}
+}
+
+// TestPriceArms_UnionBothDirectionsAndPickByRecency pins the two rules
+// the headline price depends on, in the rollup AND the detail query.
+//
+// Every per-asset arm reads BOTH stored directions of its markets and
+// prefers neither: a (USDC, asset) or (XLM, asset) row is the same market
+// as (asset, USDC) / (asset, XLM), written by a source that records swap
+// direction. And the arm is chosen by observation recency, not by a fixed
+// direct-then-XLM order, which let a days-old USD print outrank a live
+// XLM market. The executing proof is
+// test/integration/asset_price_arm_recency_test.go.
+func TestPriceArms_UnionBothDirectionsAndPickByRecency(t *testing.T) {
+	t.Parallel()
+	usdList := strings.Join(strings.Fields(usdProxyQuotes), " ")
+	for name, q := range map[string]string{
+		"rollup": refreshAssetPriceSnapshotUpsert,
+		"detail": getAssetBySlugSQL,
+	} {
+		sql := strings.Join(strings.Fields(sqlWithoutComments(q)), " ")
+		for _, want := range []string{
+			"quote_asset IN (" + usdList + ")",
+			"base_asset IN (" + usdList + ")",
+		} {
+			if got := strings.Count(sql, want); got != 4 {
+				t.Errorf("%s: %d direct_usd* arms read %q, want 4 (now, 1h, 24h, 7d)", name, got, want)
+			}
+		}
+		if strings.Contains(sql, "inverted") {
+			t.Errorf("%s: an arm still ranks one stored direction over the other", name)
+		}
+		if strings.Contains(sql, "COALESCE( CASE WHEN ca.asset_id = 'native'") {
+			t.Errorf("%s: the price is still a fixed-order COALESCE across arms", name)
+		}
+		for _, want := range []string{
+			strings.Join(strings.Fields(priceArmJoins), " "),
+			"direct.bucket >= LEAST(vs_xlm.bucket, (SELECT bucket FROM xlm_usd))",
+		} {
+			if !strings.Contains(sql, want) {
+				t.Errorf("%s: missing the shared arm pick %.80q", name, want)
+			}
+		}
 	}
 }
 

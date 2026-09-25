@@ -73,8 +73,8 @@ type AssetRow struct {
 	Change24hPct *string
 	Change7dPct  *string
 	// SourceCount is the number of DISTINCT venues that backed PriceUSD —
-	// array_length(prices_1m.sources) of the latest bucket the listing price
-	// came from. It is the liquidity signal the API's market-cap valuation
+	// across every prices_1m row, both directions, of the minute the listing
+	// price came from. It is the liquidity signal the API's market-cap valuation
 	// guard reads (single-venue AND sub-floor volume → suppress the cap).
 	// Nil when the price wasn't derived from a per-asset bucket on this query
 	// (a triangulated native-XLM price, or the single-row slug/native queries
@@ -693,13 +693,9 @@ const listAssetsBaseSelect = `
 		    -- preserves full precision (36+ digits) which is just
 		    -- noise for a display value. 10 dp covers sub-millicent
 		    -- precision (1e-10) which is finer than any asset's
-		    -- meaningful tick size. Rendering is UNCHANGED by #331 F1:
-		    -- asset_price_snapshot stores the same unrounded NUMERIC the
-		    -- inline COALESCE chain produced (snapshotPriceUSDExpr), so
-		    -- the wire string is the string it always was — the rollup
-		    -- moved the compute, not the value. One exception, on
-		    -- purpose: for a CONFIRMED non-7-decimals token the rollup
-		    -- stores the decimals-CORRECTED price
+		    -- meaningful tick size. asset_price_snapshot stores the
+		    -- unrounded NUMERIC (snapshotPriceUSDExpr); for a CONFIRMED
+		    -- non-7-decimals token that is the decimals-CORRECTED price
 		    -- (snapshotNormalizedPriceUSDExpr), so this ROUND runs after
 		    -- the correction and no reader may normalise it again.
 		    ROUND(` + listingPriceUSDExpr + `, 10)::text  AS price_usd,
@@ -1659,7 +1655,7 @@ func (s *Store) GetAssetTopMarkets(ctx context.Context, assetID string, limit in
 // threshold; the helpers above already document the chosen-CTE
 // pattern that keeps the volume sum and price triangulation on
 // the same canonical row.
-const getAssetBySlugSQL = `
+var getAssetBySlugSQL = `
 		WITH chosen AS (
 		  -- Three input shapes accepted (in tiebreak preference):
 		  --   1. friendly slug (USDC, AQUA, EURC)        — slug column
@@ -1722,190 +1718,8 @@ const getAssetBySlugSQL = `
 		         AND volume_usd IS NOT NULL
 		    ) t
 		),
-		direct_usd AS (
-		  -- Quote set = fiat:USD OR USDC — classic G-issuer AND
-		  -- its SAC contract (CCW67T…) — per the stablecoin-proxy
-		  -- policy (see the listing query's direct_usd CTE + the
-		  -- xlm_usd CTEs below): a USDC-quoted vwap is taken AS
-		  -- the USD price (~0.1% peg error accepted). ORDER BY
-		  -- bucket DESC keeps the freshest row across all quotes.
-		  SELECT vwap FROM prices_1m
-		   WHERE base_asset  = (SELECT asset_id FROM chosen)
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
-		       'fiat:USD'
-		     )
-		     AND bucket >= now() - INTERVAL '7 days'
-		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC LIMIT 1
-		),
-		direct_usd_1h AS (
-		  SELECT vwap FROM prices_1m
-		   WHERE base_asset  = (SELECT asset_id FROM chosen)
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
-		       'fiat:USD'
-		     )
-		     AND bucket BETWEEN now() - INTERVAL '90 minutes'
-		                   AND now() - INTERVAL '55 minutes'
-		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC LIMIT 1
-		),
-		direct_usd_24h AS (
-		  SELECT vwap FROM prices_1m
-		   WHERE base_asset  = (SELECT asset_id FROM chosen)
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
-		       'fiat:USD'
-		     )
-		     AND bucket BETWEEN now() - INTERVAL '26 hours'
-		                   AND now() - INTERVAL '23 hours 30 minutes'
-		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC LIMIT 1
-		),
-		direct_usd_7d AS (
-		  SELECT vwap FROM prices_1m
-		   WHERE base_asset  = (SELECT asset_id FROM chosen)
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
-		       'fiat:USD'
-		     )
-		     AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
-		                   AND now() - INTERVAL '6 days 22 hours'
-		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC LIMIT 1
-		),
-		asset_vs_xlm AS (
-		  -- XLM leg in BOTH identity forms — 'native' AND its SAC
-		  -- (CAS3J7… = canonical.XLMSacContractID) — and in BOTH
-		  -- stored directions, base-side preferred; see the listing
-		  -- query's asset_vs_xlm CTE for the rationale.
-		  SELECT vwap FROM (
-		    SELECT vwap, bucket, 0 AS inverted FROM prices_1m
-		     WHERE base_asset  = (SELECT asset_id FROM chosen)
-		       AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		       AND bucket >= now() - INTERVAL '7 days'
-		       AND vwap IS NOT NULL
-		    UNION ALL
-		    SELECT 1::numeric / vwap, bucket, 1 FROM prices_1m
-		     WHERE quote_asset = (SELECT asset_id FROM chosen)
-		       AND base_asset  IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		       AND bucket >= now() - INTERVAL '7 days'
-		       AND vwap > 0
-		  ) u
-		   ORDER BY inverted, bucket DESC LIMIT 1
-		),
-		asset_vs_xlm_1h AS (
-		  SELECT vwap FROM (
-		    SELECT vwap, bucket, 0 AS inverted FROM prices_1m
-		     WHERE base_asset  = (SELECT asset_id FROM chosen)
-		       AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		       AND bucket BETWEEN now() - INTERVAL '90 minutes'
-		                   AND now() - INTERVAL '55 minutes'
-		       AND vwap IS NOT NULL
-		    UNION ALL
-		    SELECT 1::numeric / vwap, bucket, 1 FROM prices_1m
-		     WHERE quote_asset = (SELECT asset_id FROM chosen)
-		       AND base_asset  IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		       AND bucket BETWEEN now() - INTERVAL '90 minutes'
-		                   AND now() - INTERVAL '55 minutes'
-		       AND vwap > 0
-		  ) u
-		   ORDER BY inverted, bucket DESC LIMIT 1
-		),
-		asset_vs_xlm_24h AS (
-		  SELECT vwap FROM (
-		    SELECT vwap, bucket, 0 AS inverted FROM prices_1m
-		     WHERE base_asset  = (SELECT asset_id FROM chosen)
-		       AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		       AND bucket BETWEEN now() - INTERVAL '26 hours'
-		                   AND now() - INTERVAL '23 hours 30 minutes'
-		       AND vwap IS NOT NULL
-		    UNION ALL
-		    SELECT 1::numeric / vwap, bucket, 1 FROM prices_1m
-		     WHERE quote_asset = (SELECT asset_id FROM chosen)
-		       AND base_asset  IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		       AND bucket BETWEEN now() - INTERVAL '26 hours'
-		                   AND now() - INTERVAL '23 hours 30 minutes'
-		       AND vwap > 0
-		  ) u
-		   ORDER BY inverted, bucket DESC LIMIT 1
-		),
-		asset_vs_xlm_7d AS (
-		  SELECT vwap FROM (
-		    SELECT vwap, bucket, 0 AS inverted FROM prices_1m
-		     WHERE base_asset  = (SELECT asset_id FROM chosen)
-		       AND quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		       AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
-		                   AND now() - INTERVAL '6 days 22 hours'
-		       AND vwap IS NOT NULL
-		    UNION ALL
-		    SELECT 1::numeric / vwap, bucket, 1 FROM prices_1m
-		     WHERE quote_asset = (SELECT asset_id FROM chosen)
-		       AND base_asset  IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		       AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
-		                   AND now() - INTERVAL '6 days 22 hours'
-		       AND vwap > 0
-		  ) u
-		   ORDER BY inverted, bucket DESC LIMIT 1
-		),
-		xlm_usd AS (
-		  -- Same stablecoin-proxy policy as the listing query:
-		  -- prices_1m doesn't carry (native, fiat:USD) rows; use
-		  -- on-chain XLM/USDC as the USD-equivalent.
-		  SELECT vwap FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND vwap IS NOT NULL
-		     AND bucket >= now() - INTERVAL '24 hours'
-		   ORDER BY bucket DESC LIMIT 1
-		),
-		xlm_usd_1h AS (
-		  -- 1h-ago XLM/USD for change_1h_pct via stablecoin proxy.
-		  SELECT vwap FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND bucket BETWEEN now() - INTERVAL '90 minutes'
-		                   AND now() - INTERVAL '55 minutes'
-		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC LIMIT 1
-		),
-		xlm_usd_24h AS (
-		  -- 24h-ago XLM/USD for change_24h_pct via stablecoin proxy.
-		  SELECT vwap FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND bucket BETWEEN now() - INTERVAL '26 hours'
-		                   AND now() - INTERVAL '23 hours 30 minutes'
-		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC LIMIT 1
-		),
-		xlm_usd_7d AS (
-		  -- 7d-ago XLM/USD for change_7d_pct via stablecoin proxy.
-		  SELECT vwap FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
-		                   AND now() - INTERVAL '6 days 22 hours'
-		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC LIMIT 1
-		)
+		` + assetPriceArmCTEs("(SELECT asset_id FROM chosen)") + `,
+		` + xlmUSDCTEs + `
 		SELECT
 		    -- asset_id is the LAST resort here, and it is load-bearing.
 		    --
@@ -1929,96 +1743,15 @@ const getAssetBySlugSQL = `
 		    COALESCE(ca.slug, ca.code, ca.asset_id) AS slug,
 		    ca.asset_id, ca.code, ca.issuer_g_strkey,
 		    ca.first_seen_ledger, ca.last_seen_ledger, ca.observation_count,
-		    -- XLM (asset_id='native') has no rows in direct_usd or
-		    -- asset_vs_xlm — its base_asset is 'native' but neither
-		    -- (native, fiat:USD) nor (native, native) exists in
-		    -- prices_1m. Use the xlm_usd CTE directly.
-		    ROUND(COALESCE(
-		      CASE WHEN ca.asset_id = 'native'
-		           THEN (SELECT vwap FROM xlm_usd)
-		           ELSE NULL
-		      END,
-		      (SELECT vwap FROM direct_usd),
-		      (SELECT vwap FROM asset_vs_xlm) * (SELECT vwap FROM xlm_usd)
-		    ), ` + catalogueRoundPlacesForRow + `)::text AS price_usd,
+		    -- One arm per asset, chosen and read exactly as the listing
+		    -- rollup does (priceArmJoins below).
+		    ROUND((` + snapshotPriceUSDExpr + `), ` + catalogueRoundPlacesForRow + `)::text AS price_usd,
 		    vol.vol_usd                           AS volume_24h_usd,
 		    NULL::numeric                         AS market_cap_usd,
 		    NULL::numeric                         AS circulating_supply,
-		    CASE
-		      WHEN ca.asset_id = 'native'
-		           AND (SELECT vwap FROM xlm_usd) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_1h) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_1h) > 0
-		      THEN to_char(((SELECT vwap FROM xlm_usd)
-		                  / (SELECT vwap FROM xlm_usd_1h) - 1) * 100,
-		                  'FM999999990.00')
-		      WHEN (SELECT vwap FROM direct_usd) IS NOT NULL
-		           AND (SELECT vwap FROM direct_usd_1h) IS NOT NULL
-		           AND (SELECT vwap FROM direct_usd_1h) > 0
-		      THEN to_char(((SELECT vwap FROM direct_usd)
-		                  / (SELECT vwap FROM direct_usd_1h) - 1) * 100,
-		                  'FM999999990.00')
-		      WHEN (SELECT vwap FROM asset_vs_xlm) IS NOT NULL
-		           AND (SELECT vwap FROM asset_vs_xlm_1h) IS NOT NULL
-		           AND (SELECT vwap FROM asset_vs_xlm_1h) > 0
-		           AND (SELECT vwap FROM xlm_usd) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_1h) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_1h) > 0
-		      THEN to_char((((SELECT vwap FROM asset_vs_xlm)    * (SELECT vwap FROM xlm_usd))
-		                  / ((SELECT vwap FROM asset_vs_xlm_1h) * (SELECT vwap FROM xlm_usd_1h))
-		                  - 1) * 100, 'FM999999990.00')
-		      ELSE NULL
-		    END                                   AS change_1h_pct,
-		    CASE
-		      WHEN ca.asset_id = 'native'
-		           AND (SELECT vwap FROM xlm_usd) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_24h) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_24h) > 0
-		      THEN to_char(((SELECT vwap FROM xlm_usd)
-		                  / (SELECT vwap FROM xlm_usd_24h) - 1) * 100,
-		                  'FM999999990.00')
-		      WHEN (SELECT vwap FROM direct_usd) IS NOT NULL
-		           AND (SELECT vwap FROM direct_usd_24h) IS NOT NULL
-		           AND (SELECT vwap FROM direct_usd_24h) > 0
-		      THEN to_char(((SELECT vwap FROM direct_usd)
-		                  / (SELECT vwap FROM direct_usd_24h) - 1) * 100,
-		                  'FM999999990.00')
-		      WHEN (SELECT vwap FROM asset_vs_xlm) IS NOT NULL
-		           AND (SELECT vwap FROM asset_vs_xlm_24h) IS NOT NULL
-		           AND (SELECT vwap FROM asset_vs_xlm_24h) > 0
-		           AND (SELECT vwap FROM xlm_usd) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_24h) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_24h) > 0
-		      THEN to_char((((SELECT vwap FROM asset_vs_xlm)     * (SELECT vwap FROM xlm_usd))
-		                  / ((SELECT vwap FROM asset_vs_xlm_24h) * (SELECT vwap FROM xlm_usd_24h))
-		                  - 1) * 100, 'FM999999990.00')
-		      ELSE NULL
-		    END                                   AS change_24h_pct,
-		    CASE
-		      WHEN ca.asset_id = 'native'
-		           AND (SELECT vwap FROM xlm_usd) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_7d) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_7d) > 0
-		      THEN to_char(((SELECT vwap FROM xlm_usd)
-		                  / (SELECT vwap FROM xlm_usd_7d) - 1) * 100,
-		                  'FM999999990.00')
-		      WHEN (SELECT vwap FROM direct_usd) IS NOT NULL
-		           AND (SELECT vwap FROM direct_usd_7d) IS NOT NULL
-		           AND (SELECT vwap FROM direct_usd_7d) > 0
-		      THEN to_char(((SELECT vwap FROM direct_usd)
-		                  / (SELECT vwap FROM direct_usd_7d) - 1) * 100,
-		                  'FM999999990.00')
-		      WHEN (SELECT vwap FROM asset_vs_xlm) IS NOT NULL
-		           AND (SELECT vwap FROM asset_vs_xlm_7d) IS NOT NULL
-		           AND (SELECT vwap FROM asset_vs_xlm_7d) > 0
-		           AND (SELECT vwap FROM xlm_usd) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_7d) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_7d) > 0
-		      THEN to_char((((SELECT vwap FROM asset_vs_xlm)    * (SELECT vwap FROM xlm_usd))
-		                  / ((SELECT vwap FROM asset_vs_xlm_7d) * (SELECT vwap FROM xlm_usd_7d))
-		                  - 1) * 100, 'FM999999990.00')
-		      ELSE NULL
-		    END                                   AS change_7d_pct,
+		    to_char(` + priceChangePctExpr("1h") + `, 'FM999999990.00') AS change_1h_pct,
+		    to_char(` + priceChangePctExpr("24h") + `, 'FM999999990.00') AS change_24h_pct,
+		    to_char(` + priceChangePctExpr("7d") + `, 'FM999999990.00') AS change_7d_pct,
 		    -- Single-row slug lookup serves catalogue-verified currencies,
 		    -- which are never dust — leave source_count unmeasured so the
 		    -- valuation guard never suppresses here (shared scanAssetRow shape).
@@ -2031,7 +1764,7 @@ const getAssetBySlugSQL = `
 		    NULL::numeric                         AS sort_vol_usd,
 		    NULL::int                             AS rank_tier
 		  FROM chosen ca
-		  LEFT JOIN per_asset_24h_vol vol ON true
+		  LEFT JOIN per_asset_24h_vol vol ON true` + priceArmJoins + `
 `
 
 // GetAssetBySlug looks up by friendly slug (USDC, AQUA, EURC),
