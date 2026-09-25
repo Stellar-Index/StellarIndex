@@ -195,7 +195,7 @@ fi
 # `VERIFY INCOMPLETE … exit 1` there even when every section passed, and a
 # release could only ever be cut from Linux. prepush resolves its own
 # profile, so a machine without Docker still gets the native gate.
-prepush_log="$(mktemp -t cut-release-prepush)"
+prepush_log="$(mktemp -t cut-release-prepush.XXXXXX)"
 echo "→ Running make prepush (the push clearance; this takes ~20 minutes)..."
 if ! make prepush >"$prepush_log" 2>&1 ||
   ! grep -q 'ALL REQUIRED CHECKS PASSED' "$prepush_log"; then
