@@ -64,11 +64,25 @@ func quoteRank(assetID string) int {
 	if StablecoinCodes[assetCode(assetID)] {
 		return 3
 	}
-	if assetID == "native" || assetID == nativeSAC {
+	if xlmQuoteRankForms[assetID] {
 		return 2
 	}
 	return 1
 }
+
+// xlmQuoteRankForms is every canonical asset_id spelling of XLM
+// (native, crypto:XLM, the SAC wrapper) — derived from xlmAliasFamily
+// so quoteRank ranks all three forms identically. GH-1100: quoteRank
+// used to recognise only "native" and the SAC address, so a
+// crypto:XLM-spelled market could orient inversely to the same market
+// spelled native.
+var xlmQuoteRankForms = func() map[string]bool {
+	m := make(map[string]bool, len(xlmAliasFamily))
+	for _, a := range xlmAliasFamily {
+		m[a.String()] = true
+	}
+	return m
+}()
 
 // Orient returns the canonical (base, quote) orientation of the market
 // formed by asset_ids a and b, plus whether the INPUT order (a=base,

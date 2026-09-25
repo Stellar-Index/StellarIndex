@@ -35,7 +35,7 @@ func quoteRankSQL(col string) string {
 	return fmt.Sprintf(`(CASE
         WHEN %[1]s LIKE 'fiat:%%' THEN 4
         WHEN split_part(replace(%[1]s, 'crypto:', ''), '-', 1) IN (%[2]s) THEN 3
-        WHEN %[1]s IN ('native', '%[3]s') THEN 2
+        WHEN %[1]s IN ('native', 'crypto:XLM', '%[3]s') THEN 2
         ELSE 1 END)`, col, stablecoinInListSQL(), nativeXLMSAC)
 }
 
