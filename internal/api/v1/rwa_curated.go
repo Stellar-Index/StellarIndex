@@ -339,12 +339,14 @@ func (s *Server) rwaCuratedRows(ctx context.Context, members []rwaCuratedMember,
 	}
 	cm := make([]rwaContractMember, 0, len(members))
 	for _, m := range members {
+		// No dirName: the curator's company is served on curator.company
+		// only. As dirName it would become issuer_directory_name (the R3
+		// label on an issuer G-address) and name (a SEP-1 name).
 		cm = append(cm, rwaContractMember{
 			contractID:  m.contractID,
 			symbol:      m.entry.AssetCode,
 			basis:       rwa.BasisThirdPartyCurated,
 			recognition: rwa.RecognitionThirdPartyCurator,
-			dirName:     m.entry.Company,
 		})
 	}
 	details, notObserved, err := s.rwaContractListingRows(ctx, cm)

@@ -207,6 +207,46 @@ func TestRWACurated_ServesTheCuratorsRowsApart(t *testing.T) {
 	}
 }
 
+// The curator's free-text company label is the curator's word about a
+// contract row, not an independent label on an issuer G-address (the R3
+// evidence `issuer_directory_name` names) nor a SEP-1 `name`. It is
+// served on `curator.company` and nowhere else.
+func TestRWACurated_CompanyIsNotServedAsDirectoryOrSEP1Name(t *testing.T) {
+	curated := &stubCuratedReader{rows: map[string]timescale.CuratedRWAEntry{
+		curatedOnlyVuMe:          curatedEntry(curatedOnlyVuMe, "Realiz", "Corporate Credit", "1.1174"),
+		curatedAlsoVerifiedEUTBL: curatedEntry(curatedAlsoVerifiedEUTBL, "Spiko", "Non-US Government Debt", "1.22"),
+	}}
+	got := getRWA(t, rwaCuratedServer(t, curated))
+	if len(got.CuratedAssets) != 2 {
+		t.Fatalf("served %d curated rows, want 2", len(got.CuratedAssets))
+	}
+	company := map[string]string{curatedOnlyVuMe: "Realiz", curatedAlsoVerifiedEUTBL: "Spiko"}
+	for _, a := range got.CuratedAssets {
+		want := company[a.ContractID]
+		if a.IssuerDirectoryName != "" {
+			t.Errorf("%s: issuer_directory_name = %q, want empty: a curated row has no directory-labelled issuer", a.ContractID, a.IssuerDirectoryName)
+		}
+		if a.Name == want {
+			t.Errorf("%s: name = %q is the curator's company label, not a SEP-1 or bound-instrument name", a.ContractID, a.Name)
+		}
+		if a.Curator == nil || a.Curator.Company != want {
+			t.Errorf("%s: curator.company = %+v, want %q", a.ContractID, a.Curator, want)
+		}
+	}
+	if vume, ok := curatedByContract(got, curatedOnlyVuMe); !ok || vume.Name != "" {
+		t.Errorf("unbound curated-only row name = %q, want empty (no SEP-1 entry, no in-repo binding)", vume.Name)
+	}
+}
+
+func curatedByContract(v v1.RWAAssetsView, contractID string) (v1.RWAAsset, bool) {
+	for _, a := range v.CuratedAssets {
+		if a.ContractID == contractID {
+			return a, true
+		}
+	}
+	return v1.RWAAsset{}, false
+}
+
 // A classic `CODE-GISSUER` row has no contract path to be served through,
 // so the arm leaves it out; the census must say how many it left out
 // rather than let them vanish from the response.

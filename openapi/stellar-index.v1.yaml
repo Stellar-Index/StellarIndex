@@ -15185,7 +15185,12 @@ components:
             `by_class` or `by_issuer`. Each carries `basis:
             third_party_curated`, a `curator` block with the curator's own
             labels, and a reference valuation at the curator's uploaded
-            price. Absent when no curated reader is wired.
+            price. The curator's company label is served on
+            `curator.company` only: it is never `issuer_directory_name`
+            (no directory label on an issuer G-address stands behind it)
+            nor `name` (a curated row has no SEP-1 entry), so `name` is
+            the in-repo bound instrument where one exists and absent
+            otherwise. Absent when no curated reader is wired.
           items: { $ref: "#/components/schemas/RWAAsset" }
         curated:
           $ref: "#/components/schemas/RWACuratedSummary"
@@ -15585,7 +15590,9 @@ components:
           description: |
             The distinct `reference.provenance` values CONTRIBUTING to
             the total, sorted. Served so the mixture is visible at
-            summary level without walking every row.
+            summary level without walking every row. Never
+            `curator_uploaded_price`: curated rows are served apart in
+            `curated_assets` and never enter this total.
 
             `basis` is derived from exactly this list: an all-oracle
             total does not describe listing prices, and a total that
