@@ -104,10 +104,18 @@ type Config struct {
 
 	// Registry — optional. When non-nil, the backend registers
 	// Prometheus metrics (buffer_fetch_latency_seconds, etc.) under
-	// RegistryNamespace. Use our main obs registry in production.
-	// When ColdDataStore is also set, the [TieredDataStore]'s
-	// tier_read_total + cold_read_duration_seconds metrics
-	// register under the same registry.
+	// RegistryNamespace. MUST stay nil in production: the SDK's
+	// backend metric registration is not idempotent, and Stream is
+	// called more than once per process across the archive, live and
+	// catch-up paths — a second call registers the same collector
+	// names again, and MustRegister panics on the resulting
+	// AlreadyRegisteredError. Only safe for a caller that invokes
+	// Stream exactly once per process.
+	//
+	// [TieredDataStore]'s tier_read_total and cold_read_duration_seconds
+	// are package-level obs metrics (obs.LedgerstreamTierReadTotal,
+	// obs.LedgerstreamColdReadDurationSeconds) registered once at
+	// process boot; they do not depend on this field.
 	Registry          *prometheus.Registry
 	RegistryNamespace string
 
