@@ -154,10 +154,13 @@ func captureOpsStderr(t *testing.T, fn func()) string {
 	return string(<-done)
 }
 
-// TestUsageRollupDays covers the flag-expansion guards: a range wider
-// than the Redis retention window can only scan expired days while
-// paying a full keyspace SCAN each, so it's refused rather than run.
+// TestUsageRollupDays covers the flag-expansion guards. Redis holds the
+// counters for usage.RetentionDays ending today, so a day before that
+// window has expired and a day after today has not happened: folding
+// either prints "0 row(s)" and exits 0, which reads as "no traffic".
+// Both are refused however narrow the range (CA2-A26-harden-3).
 func TestUsageRollupDays(t *testing.T) {
+	now := time.Date(2026, 7, 21, 15, 30, 0, 0, time.UTC)
 	cases := []struct {
 		name     string
 		from, to string
@@ -165,17 +168,19 @@ func TestUsageRollupDays(t *testing.T) {
 		wantErr  bool
 	}{
 		{name: "single day defaults -to to -from", from: "2026-07-19", wantDays: 1},
-		{name: "inclusive range", from: "2026-07-19", to: "2026-07-21", wantDays: 3},
+		{name: "inclusive range ending today", from: "2026-07-19", to: "2026-07-21", wantDays: 3},
 		{name: "missing -from", wantErr: true},
 		{name: "unparseable -from", from: "19-07-2026", wantErr: true},
 		{name: "unparseable -to", from: "2026-07-19", to: "tomorrow", wantErr: true},
 		{name: "reversed range", from: "2026-07-21", to: "2026-07-19", wantErr: true},
-		{name: "exactly the retention window", from: "2026-06-16", to: "2026-07-20", wantDays: 35},
-		{name: "one day past the retention window", from: "2026-06-15", to: "2026-07-20", wantErr: true},
+		{name: "exactly the retention window", from: "2026-06-17", to: "2026-07-21", wantDays: 35},
+		{name: "one day past the retention window", from: "2026-06-16", to: "2026-07-21", wantErr: true},
+		{name: "narrow range entirely expired", from: "2026-05-01", to: "2026-05-03", wantErr: true},
+		{name: "-to in the future", from: "2026-07-21", to: "2026-07-22", wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			days, err := usageRollupDays(tc.from, tc.to)
+			days, err := usageRollupDays(tc.from, tc.to, now)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("usageRollupDays(%q, %q) = %d days, want error", tc.from, tc.to, len(days))

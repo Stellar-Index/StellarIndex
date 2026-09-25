@@ -643,7 +643,9 @@ func APIKey(keyHash string) APIKeyRecordKey {
 // APIKeyTTL is the TTL for apikey: records. Zero — keys live until
 // explicitly deleted; expiry/revocation are encoded in the JSON
 // payload so the lookup can return the right error sentinel
-// (ErrTokenExpired vs ErrUnauthorized).
+// (ErrTokenExpired vs ErrUnauthorized). Zero is also what keeps them
+// out of the instance's volatile-lru eviction pool: the plaintext is
+// unrecoverable, so an evicted record is a lost credential (GH-1317).
 const APIKeyTTL = time.Duration(0)
 
 // APIKeyCacheKey is the typed Redis key for the `apikey-cache:<sha256-hex>`
@@ -677,9 +679,9 @@ func APIKeyCache(keyHash string) APIKeyCacheKey {
 // sanctioned keyspace walk that builds it for records that predate it.
 // Reader: the same store's by-owner / by-KeyID lookups.
 //
-// Why ONE hash and not a SET per owner plus a pointer per KeyID: the
-// production instance runs `maxmemory-policy allkeys-lru`, so every
-// Redis key is independently evictable. A per-owner set evicted while
+// Why ONE hash and not a SET per owner plus a pointer per KeyID: under
+// an allkeys-* policy (the production default until GH-1317; still any
+// operator's override) every Redis key is independently evictable. A per-owner set evicted while
 // its records survive would make live credentials invisible to list,
 // revoke and the tier clamp — a revocation that silently no-ops. With
 // the entries and the `ready` marker in one key they share one fate:
@@ -713,6 +715,13 @@ func APIKeyIndex() APIKeyIndexKey { return APIKeyIndexKey("apikey-index:v1") }
 // process run the index build at a time. Same family as the index so
 // one ACL pattern admits both.
 func APIKeyIndexBuildLock() APIKeyIndexKey { return APIKeyIndexKey("apikey-index:build-lock") }
+
+// APIKeyMintLock is the per-owner lock that serialises a capped mint's
+// count and write across API instances (CreateCapped). TTL-bounded; in
+// the index family so the shipped `~apikey-index:*` ACL admits it.
+func APIKeyMintLock(identifier string) APIKeyIndexKey {
+	return APIKeyIndexKey("apikey-index:mint-lock:" + identifier)
+}
 
 // ─── Per-source freshness gauge ───────────────────────────────────
 //

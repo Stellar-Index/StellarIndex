@@ -44,10 +44,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// retentionDays bounds how far back Read can look. 35 covers the
-// 30d billing window with a 5-day buffer for late writes / clock
-// skew between regions.
-const retentionDays = 35
+// RetentionDays is the TTL, in days, of every Redis usage key, and so
+// how far back Read, the rollup and its manual backfill can see. 35
+// covers the 30d billing window with a 5-day buffer for late writes /
+// clock skew between regions.
+const RetentionDays = 35
 
 // Outcome classes for the per-endpoint detail counters. Bounded by
 // construction — the middleware maps every response status onto
@@ -86,6 +87,7 @@ type Counter struct {
 	rdb       redis.Cmdable
 	keyPrefix string
 	nowFn     func() time.Time
+	durable   *durableDays
 }
 
 // Option configures a Counter at construction.
@@ -147,7 +149,7 @@ func (c *Counter) IncrementBy(ctx context.Context, subject string, n int64) erro
 	key := c.keyPrefix + url.QueryEscape(subject) + ":" + day
 	pipe := c.rdb.TxPipeline()
 	pipe.IncrBy(ctx, key, n)
-	pipe.Expire(ctx, key, retentionDays*24*time.Hour)
+	pipe.Expire(ctx, key, RetentionDays*24*time.Hour)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("usage: incr %s: %w", key, err)
 	}
@@ -186,7 +188,7 @@ func (c *Counter) IncrementDetailBy(ctx context.Context, subject, endpoint, clas
 	key := c.detailKey(subject, day)
 	pipe := c.rdb.TxPipeline()
 	pipe.HIncrBy(ctx, key, endpoint+"|"+class, n)
-	pipe.Expire(ctx, key, retentionDays*24*time.Hour)
+	pipe.Expire(ctx, key, RetentionDays*24*time.Hour)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("usage: hincrby %s: %w", key, err)
 	}
@@ -357,53 +359,69 @@ type Day struct {
 // package doc), so the sum spans every credential the account
 // holds. F-1226 (codex audit-2026-05-12).
 //
-// Empty subject or a Redis-side failure returns (0, err); the
-// caller treats both as "fail open" — usage caps must never be
-// the reason a request 500s. Returns (0, nil) for the first day
-// of the month before any counter has been written.
+// Each day counts max(Redis, usage_daily) when [WithDurableDays] is
+// set. The day keys carry a TTL on an evicting Redis, and a missing
+// key reads as zero, so Redis alone under-bills a month whose cold
+// early days were evicted (GH-1274). Both sources are lower bounds of
+// the true billable count, so their max never over-bills.
+//
+// A read failure on either side returns (0, err); the caller fails
+// open inside its dwell window and closed after it. Returns (0, nil)
+// for the first day of the month before any counter has been written.
 func (c *Counter) MonthToDate(ctx context.Context, subject string) (int64, error) {
 	if c == nil || subject == "" {
 		return 0, nil
 	}
 	now := c.nowFn().UTC()
 	year, month, today := now.Date()
+	dates := make([]string, 0, today)
 	keys := make([]string, 0, today)
 	for d := 1; d <= today; d++ {
 		date := time.Date(year, month, d, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
+		dates = append(dates, date)
 		keys = append(keys, c.keyPrefix+url.QueryEscape(subject)+":"+date)
 	}
 	raw, err := c.rdb.MGet(ctx, keys...).Result()
 	if err != nil {
 		return 0, fmt.Errorf("usage: month-to-date mget: %w", err)
 	}
-	var total int64
-	for _, v := range raw {
-		if v == nil {
-			continue
-		}
-		s, ok := v.(string)
-		if !ok {
-			continue
-		}
-		n, err := strconv.ParseInt(s, 10, 64)
+	var durable map[string]int64
+	if c.durable != nil {
+		durable, err = c.durable.get(ctx, subject, dates[0], dates[len(dates)-1], now)
 		if err != nil {
-			continue
+			return 0, fmt.Errorf("usage: month-to-date durable read: %w", err)
 		}
-		total += n
+	}
+	var total int64
+	for i, v := range raw {
+		total += max(parseCount(v), durable[dates[i]])
 	}
 	return total, nil
+}
+
+// parseCount decodes one MGET slot; a missing or malformed value is 0.
+func parseCount(v any) int64 {
+	s, ok := v.(string)
+	if !ok {
+		return 0
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // Read returns up to `days` daily counts for the subject, oldest
 // first. Days with no requests are omitted (the caller fills
 // gaps with zero buckets if the wire contract requires it). days
-// is clamped to retentionDays — beyond that the data has expired.
+// is clamped to RetentionDays — beyond that the data has expired.
 func (c *Counter) Read(ctx context.Context, subject string, days int) ([]Day, error) {
 	if subject == "" || days <= 0 {
 		return nil, nil
 	}
-	if days > retentionDays {
-		days = retentionDays
+	if days > RetentionDays {
+		days = RetentionDays
 	}
 	now := c.nowFn().UTC()
 	keys := make([]string, days)

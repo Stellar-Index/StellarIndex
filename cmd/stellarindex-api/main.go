@@ -491,9 +491,11 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// panicked on the first authenticated request. The middleware
 	// is now passed nil when Redis is absent and treats nil counters
 	// as disabled.
+	// The month-to-date meter reconciles each day against usage_daily,
+	// so an evicted Redis day key cannot read as a quiet day (GH-1274).
 	var usageCounter *usage.Counter
 	if rdb != nil {
-		usageCounter = usage.New(rdb)
+		usageCounter = usage.New(rdb, usage.WithDurableDays(store))
 	}
 
 	// authMW is built later (after the dashboard bundle) so the

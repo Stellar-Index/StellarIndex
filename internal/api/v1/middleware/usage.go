@@ -201,7 +201,7 @@ func ChargeUsage(r *http.Request, units int) {
 //     defaultAccountKeyQuota, but bounded is not capped).
 //   - ROTATE: revoke-and-mint produced a fresh KeyID, hence a
 //     month-to-date of zero, so the cap reset on demand mid-month —
-//     and `accountKeyQuotaOK` counts only un-revoked keys, so the
+//     and the self-service key cap counts only un-revoked keys, so the
 //     rotation was free.
 //
 // Counting per account closes both: the allowance is conserved across

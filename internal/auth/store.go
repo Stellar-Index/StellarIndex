@@ -285,6 +285,108 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 	return rec, plaintext, nil
 }
 
+// KeyQuotaExceededError is [RedisAPIKeyStore.CreateCapped]'s refusal:
+// the identifier already holds Active un-revoked keys against a ceiling
+// of Max.
+type KeyQuotaExceededError struct{ Active, Max int }
+
+func (e *KeyQuotaExceededError) Error() string {
+	return fmt.Sprintf("auth: identifier holds %d active API keys (max %d)", e.Active, e.Max)
+}
+
+// ErrKeyQuotaUnavailable wraps every CreateCapped failure that left the
+// ceiling unverified (lock or count), as distinct from a failed write.
+var ErrKeyQuotaUnavailable = errors.New("auth: key quota could not be verified")
+
+// ErrKeyMintBusy means another capped mint for the same identifier held
+// the mint lock for the whole wait. Retryable.
+var ErrKeyMintBusy = errors.New("auth: another key mint for this identifier is in progress")
+
+const (
+	// keyMintLockTTL bounds how long a crashed minter blocks its
+	// identifier; a mint is a few round trips.
+	keyMintLockTTL = 10 * time.Second
+	// keyMintLockWait is how long a mint queues behind another before
+	// giving up with ErrKeyMintBusy.
+	keyMintLockWait = 3 * time.Second
+	keyMintLockPoll = 25 * time.Millisecond
+)
+
+// releaseMintLockScript deletes the lock only while it still holds this
+// minter's token, so a mint that outlived the TTL cannot free a lock a
+// later minter now owns.
+var releaseMintLockScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+	return redis.call('DEL', KEYS[1])
+end
+return 0
+`)
+
+// CreateCapped is [RedisAPIKeyStore.Create] with the identifier's
+// active-key ceiling enforced in the same critical section as the write.
+// A per-identifier lock serialises count-then-create across every API
+// instance, so a concurrent burst cannot all read a count below
+// maxActive and all mint. Active means un-revoked. A lock or count
+// failure refuses the mint: the cap exists to stop unbounded minting.
+func (s *RedisAPIKeyStore) CreateCapped(ctx context.Context, req CreateAPIKeyRequest, maxActive int) (APIKeyRecord, string, error) {
+	if req.Identifier == "" {
+		return APIKeyRecord{}, "", errors.New("auth: CreateCapped: Identifier is required")
+	}
+	release, err := s.lockMint(ctx, req.Identifier)
+	if err != nil {
+		return APIKeyRecord{}, "", fmt.Errorf("auth: CreateCapped: %w: %w", ErrKeyQuotaUnavailable, err)
+	}
+	defer release()
+
+	existing, err := s.ListKeysForIdentifier(ctx, req.Identifier)
+	if err != nil {
+		return APIKeyRecord{}, "", fmt.Errorf("auth: CreateCapped: %w: count keys: %w", ErrKeyQuotaUnavailable, err)
+	}
+	active := 0
+	for _, rec := range existing {
+		if rec.RevokedAt.IsZero() {
+			active++
+		}
+	}
+	if active >= maxActive {
+		return APIKeyRecord{}, "", &KeyQuotaExceededError{Active: active, Max: maxActive}
+	}
+	return s.Create(ctx, req)
+}
+
+// lockMint takes the identifier's mint lock, polling up to
+// keyMintLockWait, and returns its release.
+func (s *RedisAPIKeyStore) lockMint(ctx context.Context, identifier string) (func(), error) {
+	key := cachekeys.APIKeyMintLock(identifier).String()
+	token, err := generateID(s.randRead, "", 16)
+	if err != nil {
+		return nil, fmt.Errorf("mint lock token: %w", err)
+	}
+	wait := time.NewTimer(keyMintLockWait)
+	defer wait.Stop()
+	for {
+		won, err := s.rdb.SetNX(ctx, key, token, keyMintLockTTL).Result()
+		if err != nil {
+			return nil, fmt.Errorf("mint lock: %w", err)
+		}
+		if won {
+			return func() {
+				// Detached: a caller that hung up must still free the lock.
+				rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+				defer cancel()
+				_ = releaseMintLockScript.Run(rctx, s.rdb, []string{key}, token).Err()
+			}, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-wait.C:
+			return nil, ErrKeyMintBusy
+		case <-time.After(keyMintLockPoll):
+		}
+	}
+}
+
 // inheritedMonthlyQuota is the ceiling a key minted without one takes
 // from the credentials its identifier already holds: the most generous
 // LIVE one, so a mint can neither lift the identifier's plan nor tighten

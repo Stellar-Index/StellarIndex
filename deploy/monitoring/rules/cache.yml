@@ -36,8 +36,9 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-memory.md
           summary: "Redis {{ $labels.instance }} memory {{ $value | humanize }}% used"
           description: |
-            At > 90 % memory for 5+ minutes. allkeys-lru will start evicting
-            rate-limit counters + asset-metadata caches. Plan a scale-up.
+            At > 90 % memory for 5+ minutes. volatile-lru will start evicting
+            TTL-bearing keys (rate-limit counters, caches, usage day
+            counters); noeviction rejects writes. Plan a scale-up.
 
       - alert: stellarindex_redis_evictions_high
         expr: rate(redis_evicted_keys_total[5m]) > 100
@@ -59,10 +60,10 @@ groups:
       # redis_errors_total{err="OOM"} is the prometheus-redis-exporter
       # counter fed by Redis's Errorstats section (INFO ERRORSTATS
       # `errorstat_OOM`). The multi-host topology defaults to
-      # allkeys-lru (redis-sentinel/defaults/main.yml), so this should
-      # be near-permanently quiet there; it still catches an operator
-      # override to noeviction or a genuine can't-evict-fast-enough
-      # OOM burst.
+      # volatile-lru (redis-sentinel/defaults/main.yml), which never
+      # evicts the TTL-less credential records (GH #1317); it rejects
+      # writes OOM once only those remain, or on a can't-evict-fast-
+      # enough burst, and this catches both plus a noeviction override.
       - alert: stellarindex_redis_write_rejected_oom
         expr: rate(redis_errors_total{err="OOM"}[5m]) > 0
         for: 2m

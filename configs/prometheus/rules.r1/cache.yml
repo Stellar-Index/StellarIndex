@@ -36,8 +36,9 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-memory.md
           summary: "Redis {{ $labels.instance }} memory {{ $value | humanize }}% used"
           description: |
-            At > 90 % memory for 5+ minutes. allkeys-lru will start evicting
-            rate-limit counters + asset-metadata caches. Plan a scale-up.
+            At > 90 % memory for 5+ minutes. volatile-lru will start evicting
+            TTL-bearing keys (rate-limit counters, caches, usage day
+            counters); noeviction rejects writes. Plan a scale-up.
 
       - alert: stellarindex_redis_evictions_high
         expr: rate(redis_evicted_keys_total[5m]) > 100

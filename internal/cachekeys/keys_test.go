@@ -541,35 +541,83 @@ func TestTypedKeysAreDistinctFamilies(t *testing.T) {
 	_ = usdc // keep the import path exercised even if unused above
 }
 
-// TestAPIKeyRecords_NotOnAnEvictingInstance is the GH-1317 reproduction.
-// `apikey:` records are the credential of record for signup, admin and
-// mint-key issued keys (the plaintext is unrecoverable by contract), and
-// APIKeyTTL=0 only makes them durable on an instance that cannot evict
-// them. The codified instance runs an allkeys-* policy, which evicts
-// regardless of TTL, so memory pressure silently deletes live credentials.
-// Skipped until the records move to a noeviction instance or Postgres
-// becomes canonical; remove the Skip with that fix.
+// TestAPIKeyRecords_NotOnAnEvictingInstance pins GH-1317. `apikey:`
+// records are the credential of record for signup, admin and mint-key
+// issued keys (the plaintext is unrecoverable by contract). They are
+// durable only if the instance can never evict them: noeviction, or a
+// volatile-* policy while the records carry no TTL. An allkeys-* policy
+// evicts regardless of TTL, so memory pressure silently deletes live
+// credentials. Both codified Redis deployments are checked.
 func TestAPIKeyRecords_NotOnAnEvictingInstance(t *testing.T) {
-	if os.Getenv("STELLARINDEX_REPRO_GH1317") == "" {
-		t.Skip("GH-1317 open: credential records share the allkeys-lru cache instance; set STELLARINDEX_REPRO_GH1317=1 to reproduce")
+	policies := map[string]string{
+		"redis-sentinel defaults": sentinelDefaultsPolicy(t),
+		"docker-compose dev":      composeDevPolicy(t),
 	}
+	for where, policy := range policies {
+		switch {
+		case policy == "noeviction":
+		case strings.HasPrefix(policy, "volatile-") && cachekeys.APIKeyTTL == 0:
+		default:
+			t.Errorf("%s: maxmemory-policy %q can evict apikey: records written with APIKeyTTL=%s; an evicted record is an unrecoverable credential (silent permanent 401)", where, policy, cachekeys.APIKeyTTL)
+		}
+	}
+}
 
+// TestRedisRole_EnforcesPolicyOnRunningInstances pins the other half of
+// GH-1317: redis.conf is rendered on first run only, so without a live
+// CONFIG SET a corrected default never reaches a running cluster.
+func TestRedisRole_EnforcesPolicyOnRunningInstances(t *testing.T) {
+	raw, err := os.ReadFile("../../configs/ansible/roles/redis-sentinel/tasks/03-redis-configure.yml")
+	if err != nil {
+		t.Fatalf("read redis-configure tasks: %v", err)
+	}
+	for _, want := range []string{
+		"CONFIG SET maxmemory-policy {{ redis_maxmemory_policy }}",
+		"CONFIG REWRITE",
+	} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("03-redis-configure.yml lacks %q: a policy change would only reach freshly built clusters", want)
+		}
+	}
+}
+
+func sentinelDefaultsPolicy(t *testing.T) string {
+	t.Helper()
 	raw, err := os.ReadFile("../../configs/ansible/roles/redis-sentinel/defaults/main.yml")
 	if err != nil {
 		t.Fatalf("read redis-sentinel defaults: %v", err)
 	}
-	policy := ""
 	for _, line := range strings.Split(string(raw), "\n") {
 		if v, ok := strings.CutPrefix(line, "redis_maxmemory_policy:"); ok {
-			policy = strings.TrimSpace(v)
+			return strings.TrimSpace(v)
 		}
 	}
-	if policy == "" {
-		t.Fatal("redis_maxmemory_policy not found in redis-sentinel defaults")
+	t.Fatal("redis_maxmemory_policy not found in redis-sentinel defaults")
+	return ""
+}
+
+func composeDevPolicy(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile("../../deploy/docker-compose/dev.yaml")
+	if err != nil {
+		t.Fatalf("read dev compose: %v", err)
 	}
-	if cachekeys.APIKeyTTL == 0 && strings.HasPrefix(policy, "allkeys-") {
-		t.Errorf("maxmemory-policy %q evicts apikey: records written with APIKeyTTL=0; an evicted record is an unrecoverable credential (silent permanent 401)", policy)
+	var doc struct {
+		Services map[string]struct {
+			Command []string `yaml:"command"`
+		} `yaml:"services"`
 	}
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse dev compose: %v", err)
+	}
+	cmd := doc.Services["redis"].Command
+	for i, arg := range cmd {
+		if arg == "--maxmemory-policy" && i+1 < len(cmd) {
+			return cmd[i+1]
+		}
+	}
+	t.Fatal("--maxmemory-policy not found in the dev compose redis command")
+	return ""
 }
 
 // The VWAPMaxAge doc comment tells an operator what notices a dead

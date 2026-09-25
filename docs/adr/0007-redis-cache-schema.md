@@ -16,6 +16,24 @@ superseded_by: null
 > mechanism differs. The decision below is preserved as the original
 > record.
 
+> **Amendment (2026-09-25, GH #1317).** The instance is not cache-only.
+> It is the store of record for three TTL-less families: `apikey:`
+> credential records (the plaintext is unrecoverable, so an evicted
+> record is a lost key), the `apikey-index:` lookup hash and the
+> `signup:email:` map. The max-memory policy below is therefore
+> **`volatile-lru`**, not `allkeys-lru`: only TTL-bearing keys are
+> eviction candidates, and every cache family carries a TTL. The
+> redis-sentinel role applies the policy to running instances as well
+> as rendering it; r1 runs `noeviction`. A new family written without a
+> TTL is a store-of-record decision, not a cache entry.
+>
+> **Amendment (2026-09-25, GH #1274).** The `usage:<subject>:<day>`
+> month-to-date meter is **not a cache** either, but it carries a
+> 35-day TTL and so stays evictable. The monthly quota therefore reads
+> each day as the larger of that key and the day's `usage_daily`
+> rollup (ok + 4xx), so an evicted day key no longer reads as a quiet
+> day.
+
 ## Context
 
 The API p95 ≤ 200 ms latency SLA is only

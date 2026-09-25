@@ -14,11 +14,11 @@ import (
 // either constant fails here until the operator-facing text follows.
 func TestRollupRecoveryDocsMatchConstants(t *testing.T) {
 	want := []string{
-		fmt.Sprintf("%d days", retentionDays),
+		fmt.Sprintf("%d days", RetentionDays),
 		fmt.Sprintf("%d days per sweep", catchUpDaysPerSweep),
 	}
 	runbookWant := []string{
-		fmt.Sprintf("%d-day", retentionDays),
+		fmt.Sprintf("%d-day", RetentionDays),
 		fmt.Sprintf("%d days per sweep", catchUpDaysPerSweep),
 		fmt.Sprintf("%d per 5-minute sweep", catchUpDaysPerSweep),
 	}
