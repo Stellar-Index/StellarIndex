@@ -16843,6 +16843,11 @@ components:
             dead name, a TLS failure and an undecodable document are one
             bucket — so the reason states what was observed rather than
             whose fault it was.
+            `sep1_attestation_stale` — the issuer holds a cached payload
+            that was not fetched within the last 30 days (or whose fetch
+            time is unknown): its domain has served nothing since, so
+            what that document said is no longer read as its
+            attestation. A successful re-fetch restores it.
             `sep1_payload_unreadable` — the cached payload would not
             decode.
             `sep1_declares_no_currencies` — it decoded and declares no
@@ -16951,6 +16956,7 @@ components:
           enum:
             - sep1_attestation_never_fetched
             - domain_served_no_sep1_attestation
+            - sep1_attestation_stale
             - sep1_payload_unreadable
             - sep1_declares_no_currencies
             - entry_declares_no_asset_code

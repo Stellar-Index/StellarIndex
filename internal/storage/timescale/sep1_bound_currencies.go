@@ -6,7 +6,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
+
+// Sep1AttestationMaxAge bounds how old a cached SEP-1 payload may be and
+// still count as an issuer's attestation. A healthy domain is re-fetched
+// daily; a failing one keeps its last payload, so without a bound a dead
+// domain would attest for as long as the row exists. Thirty days is the
+// retry ladder's cap ([Sep1BackoffCap]): past it, even the monthly retry
+// a dead domain settles at has not renewed the claim.
+const Sep1AttestationMaxAge = 30 * 24 * time.Hour
 
 // Issuer-bound SEP-1 [[CURRENCIES]] entries — the raw material for any
 // surface that must act on what an issuer DECLARED about one of its own
@@ -73,7 +82,7 @@ type Sep1BoundCurrency struct {
 //
 // The arithmetic closes, and [Sep1BoundCensus.Check] proves it:
 //
-//	IssuersWithPayload = IssuersPayloadUnreadable +
+//	IssuersWithPayload = IssuersPayloadStale + IssuersPayloadUnreadable +
 //	                     IssuersDeclaringNothing + IssuersDeclaring
 //	Entries            = EntriesMissingCode + EntriesMissingIssuer +
 //	                     EntriesNamingAnotherIssuer + EntriesBound
@@ -113,6 +122,11 @@ type Sep1BoundCensus struct {
 	// failure and an undecodable document are one bucket — so the count
 	// says only that the fetch ran and produced no payload.
 	IssuersFetchedWithoutPayload int
+	// IssuersPayloadStale counts payloads not fetched within
+	// [Sep1AttestationMaxAge], or of unknown fetch time. They are not
+	// read: a domain that has served nothing for that long no longer
+	// attests to what its last document said.
+	IssuersPayloadStale int
 	// IssuersPayloadUnreadable counts payloads that would not decode.
 	// Previously a bare `return nil, 0`.
 	IssuersPayloadUnreadable int
@@ -148,6 +162,8 @@ type Sep1BoundCensus struct {
 // add accumulates one payload's census into the running total. The
 // issuer-population fields are set by the scan, not per payload.
 func (c *Sep1BoundCensus) add(o Sep1BoundCensus) {
+	c.IssuersWithPayload += o.IssuersWithPayload
+	c.IssuersPayloadStale += o.IssuersPayloadStale
 	c.IssuersPayloadUnreadable += o.IssuersPayloadUnreadable
 	c.IssuersDeclaringNothing += o.IssuersDeclaringNothing
 	c.IssuersDeclaring += o.IssuersDeclaring
@@ -170,7 +186,7 @@ func (c *Sep1BoundCensus) add(o Sep1BoundCensus) {
 // to zero for presentation would otherwise let an inconsistent census
 // read as sound.
 func (c Sep1BoundCensus) Check() string {
-	if got := c.IssuersPayloadUnreadable + c.IssuersDeclaringNothing + c.IssuersDeclaring; got != c.IssuersWithPayload {
+	if got := c.IssuersPayloadStale + c.IssuersPayloadUnreadable + c.IssuersDeclaringNothing + c.IssuersDeclaring; got != c.IssuersWithPayload {
 		return fmt.Sprintf("issuer stages sum to %d, not IssuersWithPayload %d", got, c.IssuersWithPayload)
 	}
 	if got := c.EntriesMissingCode + c.EntriesMissingIssuer + c.EntriesNamingAnotherIssuer + c.EntriesBound; got != c.Entries {
@@ -205,7 +221,8 @@ type Sep1CurrencyFilter func(Sep1BoundCurrency) bool
 
 // BoundSep1Currencies walks every issuer carrying a cached SEP-1
 // payload and returns the entries that pass the provenance rule and the
-// filter, plus the census of everything it walked.
+// filter, plus the census of everything it walked. A payload not
+// fetched within [Sep1AttestationMaxAge] is counted and not read.
 //
 // The census is returned rather than discarded so a caller can report
 // the size of the population it narrowed from, per stage. Without it a
@@ -246,10 +263,15 @@ func (s *Store) BoundSep1Currencies(ctx context.Context, keep Sep1CurrencyFilter
 		return nil, census, fmt.Errorf("timescale: BoundSep1Currencies population: %w", err)
 	}
 
-	const q = `SELECT g_strkey, COALESCE(home_domain, ''), sep1_payload
+	// Freshness is judged on sep1_payload_fetched_at, never
+	// sep1_resolved_at: every attempt stamps the latter, so a dead
+	// domain's row looks fresh there while its payload ages. A NULL
+	// fetch time is an age nobody recorded, and reads as stale.
+	const q = `SELECT g_strkey, COALESCE(home_domain, ''), sep1_payload,
+	                  COALESCE(sep1_payload_fetched_at >= NOW() - $1::interval, false)
 	             FROM issuers
 	            WHERE sep1_payload IS NOT NULL`
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.db.QueryContext(ctx, q, intervalArg(Sep1AttestationMaxAge))
 	if err != nil {
 		return nil, census, fmt.Errorf("timescale: BoundSep1Currencies: %w", err)
 	}
@@ -261,20 +283,12 @@ func (s *Store) BoundSep1Currencies(ctx context.Context, keep Sep1CurrencyFilter
 			gStrkey    string
 			homeDomain string
 			payload    sql.NullString
+			fresh      bool
 		)
-		if err := rows.Scan(&gStrkey, &homeDomain, &payload); err != nil {
+		if err := rows.Scan(&gStrkey, &homeDomain, &payload, &fresh); err != nil {
 			return nil, census, fmt.Errorf("timescale: BoundSep1Currencies scan: %w", err)
 		}
-		if !payload.Valid || payload.String == "" {
-			// `WHERE sep1_payload IS NOT NULL` already excluded these;
-			// an empty string reaching here is a payload that decoded to
-			// nothing, which is an unreadable payload, not an absent row.
-			census.IssuersWithPayload++
-			census.IssuersPayloadUnreadable++
-			continue
-		}
-		census.IssuersWithPayload++
-		kept, c := boundSep1CurrenciesFromPayload(gStrkey, homeDomain, payload.String, keep)
+		kept, c := boundSep1CurrenciesFromRow(gStrkey, homeDomain, payload, fresh, keep)
 		out = append(out, kept...)
 		census.add(c)
 	}
@@ -282,6 +296,31 @@ func (s *Store) BoundSep1Currencies(ctx context.Context, keep Sep1CurrencyFilter
 		return nil, census, fmt.Errorf("timescale: BoundSep1Currencies rows: %w", err)
 	}
 	return out, census, nil
+}
+
+// boundSep1CurrenciesFromRow judges one payload-bearing issuer row. A
+// stale payload is counted and never decoded, so what a dark domain
+// last said binds nothing. Split out so the age bound is testable
+// without a database.
+func boundSep1CurrenciesFromRow(
+	gStrkey, homeDomain string, payload sql.NullString, fresh bool,
+	keep Sep1CurrencyFilter,
+) ([]Sep1BoundCurrency, Sep1BoundCensus) {
+	census := Sep1BoundCensus{IssuersWithPayload: 1}
+	switch {
+	case !fresh:
+		census.IssuersPayloadStale++
+		return nil, census
+	case !payload.Valid || payload.String == "":
+		// `WHERE sep1_payload IS NOT NULL` already excluded NULL; an
+		// empty string reaching here is a payload that decoded to
+		// nothing, which is an unreadable payload, not an absent row.
+		census.IssuersPayloadUnreadable++
+		return nil, census
+	}
+	kept, c := boundSep1CurrenciesFromPayload(gStrkey, homeDomain, payload.String, keep)
+	census.add(c)
+	return kept, census
 }
 
 // boundSep1CurrenciesFromPayload extracts the entries one issuer is

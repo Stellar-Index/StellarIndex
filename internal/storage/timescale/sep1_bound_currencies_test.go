@@ -1,6 +1,9 @@
 package timescale
 
-import "testing"
+import (
+	"database/sql"
+	"testing"
+)
 
 // The provenance rule, without a database. A stellar.toml describes only
 // the issuer that served it: an entry naming someone else is dropped,
@@ -217,6 +220,37 @@ func TestSep1BoundCensus_FetchSplitCannotExceedThePopulation(t *testing.T) {
 	if why := bad.Check(); why == "" {
 		t.Error("Check() passed a census claiming more fetched issuers than issuers with a domain — " +
 			"the never-attempted remainder would go negative and be published as zero")
+	}
+}
+
+// A payload older than the attestation bound binds nothing. The refresh
+// keeps a dark domain's last payload and stamps sep1_resolved_at on every
+// failed attempt, so without this a domain that stopped serving its
+// stellar.toml months ago still admitted and recognised its accounts.
+func TestBoundSep1CurrenciesFromRow_StalePayloadBindsNothing(t *testing.T) {
+	const serving = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
+	payload := sql.NullString{Valid: true, String: `{"OrgName":"Etherfuse","Currencies":[
+		{"Code":"USTRY","Issuer":"` + serving + `","AnchorAssetType":"bond"}]}`}
+
+	fresh, freshCensus := boundSep1CurrenciesFromRow(serving, "etherfuse.com", payload, true, nil)
+	if len(fresh) != 1 || fresh[0].Code != "USTRY" {
+		t.Fatalf("fresh payload bound %+v, want USTRY", fresh)
+	}
+	if freshCensus.IssuersWithPayload != 1 || freshCensus.IssuersDeclaring != 1 || freshCensus.IssuersPayloadStale != 0 {
+		t.Errorf("fresh census = %+v, want one payload walked and declaring", freshCensus)
+	}
+
+	stale, census := boundSep1CurrenciesFromRow(serving, "etherfuse.com", payload, false, nil)
+	if len(stale) != 0 {
+		t.Errorf("stale payload bound %+v, want nothing — a dark domain no longer attests", stale)
+	}
+	want := Sep1BoundCensus{IssuersWithPayload: 1, IssuersPayloadStale: 1}
+	if census != want {
+		t.Errorf("stale census = %+v, want %+v — counted in its own bucket, never decoded", census, want)
+	}
+	census.IssuersWithHomeDomain = 1
+	if why := census.Check(); why != "" {
+		t.Errorf("stale census does not balance: %s", why)
 	}
 }
 

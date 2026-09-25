@@ -244,6 +244,43 @@ func TestRWAAssets_FunnelAccountsForTheWholePopulation(t *testing.T) {
 	}
 }
 
+// A payload past the attestation age bound is walked but not read. The
+// funnel must name it, or the issuer stage stops closing and the stale
+// population vanishes the way unreadable payloads once did.
+func TestRWAAssets_FunnelCountsStaleAttestations(t *testing.T) {
+	upstream := timescale.Sep1BoundCensus{
+		IssuersWithHomeDomain:      44376,
+		IssuersWithPayload:         14635,
+		IssuersPayloadStale:        500,
+		IssuersPayloadUnreadable:   41,
+		IssuersDeclaringNothing:    2109,
+		IssuersDeclaring:           11985,
+		Entries:                    1182000,
+		EntriesMissingCode:         3140,
+		EntriesMissingIssuer:       9612,
+		EntriesNamingAnotherIssuer: 1145346,
+		EntriesBound:               23902,
+		EntriesFiltered:            23902,
+	}
+	bound := []timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")}
+	dir := map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")}
+	rows := map[string][]timescale.AssetRow{
+		rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312)},
+	}
+
+	v := getRWA(t, rwaServerWithUpstream(t, upstream, bound, dir, rows))
+	checkFunnelArithmetic(t, v)
+	st := rwaFunnelStages(t, v)
+	if got := rwaDropCount(st, "issuers_with_sep1_attestation", "sep1_attestation_stale"); got != 500 {
+		t.Errorf("sep1_attestation_stale = %d, want 500", got)
+	}
+	for _, d := range st["issuers_with_sep1_attestation"].Dropped {
+		if d.Reason == "sep1_attestation_stale" && d.Actor != "issuer" {
+			t.Errorf("stale drop actor = %q, want issuer — its domain has served nothing since", d.Actor)
+		}
+	}
+}
+
 // TestRWAAssets_FunnelSeparatesNeverFetchedFromDeclaresNothing pins the
 // distinction the surface most needs and least had. An issuer whose
 // stellar.toml nobody has fetched, one whose payload will not decode,

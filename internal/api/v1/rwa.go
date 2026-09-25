@@ -412,6 +412,7 @@ const (
 
 	rwaDropNoAttestation        = "sep1_attestation_never_fetched"
 	rwaDropDomainServedNothing  = "domain_served_no_sep1_attestation"
+	rwaDropAttestationStale     = "sep1_attestation_stale"
 	rwaDropPayloadUnreadable    = "sep1_payload_unreadable"
 	rwaDropDeclaresNothing      = "sep1_declares_no_currencies"
 	rwaDropMissingCode          = "entry_declares_no_asset_code"
