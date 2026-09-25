@@ -575,6 +575,7 @@ lane_c() { # web typecheck/lint/test/build. Graceful-skip when pnpm isn't
 
 lane_d() { # everything else
     echo "=== Ansible galexie-restart self-test ===" && ./scripts/ci/ansible-galexie-restart-test.sh
+    echo "=== Ansible Postgres DSN encoding self-test ===" && ./scripts/ci/ansible-postgres-dsn-test.sh
     echo "=== Ansible nftables per-source SSH rate-limit self-test ===" && ./scripts/ci/ansible-ssh-rate-limit-test.sh
     echo "=== Ansible prometheus archival-host guard self-test ===" && ./scripts/ci/ansible-prometheus-host-guard-test.sh
     echo "=== Ansible exporter listen-address self-test ===" && ./scripts/ci/ansible-exporter-listen-address-test.sh
