@@ -4,6 +4,7 @@
 package chops
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -31,6 +32,60 @@ func TestLakeExitCode(t *testing.T) {
 				t.Fatalf("lakeExitCode(%d,%d,%d) = %d, want %d", tc.gaps, tc.deficiency, tc.broken, got, tc.want)
 			}
 		})
+	}
+}
+
+// ─── resolveVerifyTo: fail-closed against an independent tip (GH-1180) ────
+
+func TestResolveVerifyTo(t *testing.T) {
+	cases := []struct {
+		name               string
+		chMax, independent uint32
+		wantTo             uint32
+		wantErr            bool
+	}{
+		{"chMax at or ahead of independent tip passes through", 63_100_000, 63_099_000, 63_100_000, false},
+		{"within tolerance is expected lag, not truncation", 63_100_000, 63_100_050, 63_100_000, false},
+		{"three partitions short of the independent tip fails closed", 60_000_000, 63_000_000, 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveVerifyTo("verify-lake", tc.chMax, tc.independent)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("resolveVerifyTo(%d,%d) = %d, <nil>, want an error (truncated lake must fail closed)", tc.chMax, tc.independent, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveVerifyTo(%d,%d) unexpected error: %v", tc.chMax, tc.independent, err)
+			}
+			if got != tc.wantTo {
+				t.Fatalf("resolveVerifyTo(%d,%d) = %d, want %d", tc.chMax, tc.independent, got, tc.wantTo)
+			}
+		})
+	}
+}
+
+// ─── lakeCheckLine / lakeChecksRunLabel: SKIPPED vs. zero (GH-1195) ───────
+
+func TestLakeCheckLineDistinguishesSkippedFromZero(t *testing.T) {
+	skipped := lakeCheckLine("hash_chain", false, "0 broken link(s)")
+	if !strings.Contains(skipped, "SKIPPED") {
+		t.Fatalf("lakeCheckLine(ran=false) = %q, want it to say SKIPPED, not the zero-valued detail", skipped)
+	}
+	ran := lakeCheckLine("hash_chain", true, "0 broken link(s)")
+	if strings.Contains(ran, "SKIPPED") || !strings.Contains(ran, "0 broken link(s)") {
+		t.Fatalf("lakeCheckLine(ran=true) = %q, want the detail, not SKIPPED", ran)
+	}
+}
+
+func TestLakeChecksRunLabel(t *testing.T) {
+	if got := lakeChecksRunLabel(true, false, true); got != "contiguity,hashchain" {
+		t.Fatalf("lakeChecksRunLabel(contiguity,hashchain) = %q", got)
+	}
+	if got := lakeChecksRunLabel(false, false, false); got != "none" {
+		t.Fatalf("lakeChecksRunLabel(none) = %q, want %q", got, "none")
 	}
 }
 

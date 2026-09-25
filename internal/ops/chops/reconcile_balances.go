@@ -47,11 +47,12 @@ import (
 // required. Exit code is the number of MISMATCHes (capped at 255); a run whose
 // ERROR rate exceeds -max-error-rate ALSO fails non-zero (C2-15 fail-open guard
 // — an all-errored run verified nothing and must not look clean), as does a
-// -sample run that MATCHED zero accounts (F4 — a vacuous run that confirmed
-// nothing), a single -account run whose only result is NO_DATA (MNY-04 — the
-// operator asserted THIS account should be covered), or any account that is
-// MERGED_OR_ABSENT on Horizon while we still hold a positive balance for it
-// (MNY-04 — stale data, not report-only), mirroring scripts/dev/r1-smoke.sh's
+// run — -account or -sample alike — that verified (MATCH/MISMATCH) zero of
+// the accounts it was asked to check, or covered fewer accounts than
+// requested (e.g. cancelled mid-sample) (GH-1186 — a vacuous or incomplete
+// run must not look clean), or any account that is MERGED_OR_ABSENT on
+// Horizon while we still hold a positive balance for it (MNY-04 — stale
+// data, not report-only), mirroring scripts/dev/r1-smoke.sh's
 // "exit code = number of failed checks" convention so cron/Healthchecks.io
 // can consume it directly — see opsutil.ExitCodeError's doc comment for how a
 // Go subcommand reports a non-1 exit code without breaking realMain's
@@ -114,12 +115,7 @@ func reconcileBalances(args []string) error { //nolint:funlen // linear: flag pa
 
 	mismatches, errored, staleMergedHeld := printReconcileReport(os.Stdout, results)
 
-	// MNY-04: a single -account run asserts "verify THIS account" — if
-	// our lake has zero rows for it, that's a coverage gap the
-	// operator explicitly asked about, not a clean pass.
-	singleAccountNoData := haveAccount && len(results) == 1 && results[0].Outcome == outcomeNoData
-
-	reason, exitErr := reconcileExitError(mismatches, errored, len(results), haveSample, sampleConfirmedNothing(results), *maxErrorRate, singleAccountNoData, staleMergedHeld)
+	reason, exitErr := reconcileExitError(mismatches, errored, len(results), len(accounts), countVerified(results), *maxErrorRate, staleMergedHeld)
 	if reason != "" {
 		fmt.Fprintf(os.Stderr, "reconcile-balances: FAIL — %s\n", reason)
 	}
@@ -246,8 +242,9 @@ const (
 	// verdict on our data, exactly like F5's SKIPPED for verify-served-values.
 	// Reported separately and DELIBERATELY EXCLUDED from the C2-15 error rate:
 	// a Horizon rate-limit episode must not fail an otherwise-healthy -sample
-	// gate. (A run where truth was dark for EVERY account still fails, via F4 —
-	// zero MATCHes confirmed nothing.)
+	// gate. (A run where truth was dark for every requested account still
+	// fails, via the GH-1186 verified==0 guard in reconcileExitError — zero
+	// MATCH/MISMATCH means nothing was actually compared, in either mode.)
 	outcomeTruthUnavailable reconcileOutcome = "TRUTH_UNAVAILABLE"
 )
 
@@ -502,22 +499,34 @@ func clampExitCode(n int) int {
 
 // reconcileExitError maps a completed run's tally to its exit error (nil =
 // clean) plus a human-readable reason for stderr, consolidating the mismatch
-// exit code with the C2-15, F4, MNY-04-no-data, and MNY-04-stale-merged
-// fail-open guards so all four are decided — and tested — in one pure place.
+// exit code with the C2-15, GH-1186 vacuous/incomplete, and MNY-04-stale-merged
+// fail-open guards so all are decided — and tested — in one pure place.
 // `errored` counts OUR-side (ClickHouse) failures ONLY; Horizon/truth outages
 // are outcomeTruthUnavailable and excluded, so a Horizon rate-limit episode
 // can't fail an otherwise-healthy -sample gate (consistent with F5). Pure —
 // unit-testable.
 //
-// singleAccountNoData: a single -account run whose sole result is NO_DATA —
-// the operator asserted this specific account should be covered, so an
-// empty lake for it is a coverage gap, not a clean pass (MNY-04).
+// `requested` is how many accounts the run set out to check (either mode);
+// `n` is how many it actually produced a result for (can trail `requested`
+// if the run was cancelled mid-sample); `verified` is how many of those
+// results were MATCH or MISMATCH — the only outcomes meaning a comparison
+// actually happened (NO_DATA, MERGED_OR_ABSENT, ERROR and
+// TRUTH_UNAVAILABLE all mean nothing was compared for that account).
+//
+// GH-1186: a run that verified zero accounts, or ran short of what it was
+// asked to cover, confirmed nothing about the population it claimed to
+// check — in EITHER -account or -sample mode. The prior guard keyed on run
+// mode (a -sample-only "matched nothing" check) and treated
+// TRUTH_UNAVAILABLE as an exempt outcome rather than "nothing verified", so
+// a single -account run during a Horizon outage passed clean; and a
+// -sample run cancelled after a handful of matches passed on the partial
+// tally rather than failing on incomplete coverage.
 //
 // staleMergedHeld: count of MERGED_OR_ABSENT accounts (any mode) where we
 // still hold a positive recorded balance — Horizon says the account is gone
 // but our lake claims it has funds, a correctness signal worth failing on
 // rather than report-only (MNY-04).
-func reconcileExitError(mismatches, errored, n int, haveSample, confirmedNothing bool, maxErrorRate float64, singleAccountNoData bool, staleMergedHeld int) (reason string, err error) {
+func reconcileExitError(mismatches, errored, n, requested, verified int, maxErrorRate float64, staleMergedHeld int) (reason string, err error) {
 	// C2-15: too many OUR-side errors ⟹ verified nothing reliable; fail even at
 	// zero mismatches.
 	if n > 0 && float64(errored)/float64(n) > maxErrorRate {
@@ -528,12 +537,6 @@ func reconcileExitError(mismatches, errored, n int, haveSample, confirmedNothing
 		return fmt.Sprintf("%d/%d accounts (%.0f%%) errored on OUR side, over -max-error-rate %.0f%% — result unreliable, not a clean pass",
 				errored, n, float64(errored)/float64(n)*100, maxErrorRate*100),
 			&opsutil.ExitCodeError{Code: code}
-	}
-	// MNY-04: -account asserted coverage for a SPECIFIC account; we have
-	// nothing for it.
-	if singleAccountNoData {
-		return "the requested -account has NO_DATA in our lake — the operator asserted this account should be covered, not a clean pass",
-			&opsutil.ExitCodeError{Code: 255}
 	}
 	// MNY-04: a merged/absent account where we still hold a positive
 	// balance is a real data-staleness signal, not a report-only footnote.
@@ -546,10 +549,17 @@ func reconcileExitError(mismatches, errored, n int, haveSample, confirmedNothing
 				staleMergedHeld),
 			&opsutil.ExitCodeError{Code: code}
 	}
-	// F4: a -sample run that MATCHED nothing confirmed nothing (single -account
-	// runs are exempt — the operator chose that account).
-	if haveSample && mismatches == 0 && confirmedNothing {
-		return "-sample matched no accounts — the reconcile confirmed nothing, not a clean pass",
+	// GH-1186: nothing was actually verified — NO_DATA / MERGED_OR_ABSENT /
+	// ERROR / TRUTH_UNAVAILABLE for every requested account, in either mode.
+	if requested > 0 && verified == 0 {
+		return fmt.Sprintf("0/%d requested account(s) were verified (MATCH or MISMATCH) — the run confirmed nothing, not a clean pass", requested),
+			&opsutil.ExitCodeError{Code: 255}
+	}
+	// GH-1186: the run covered less than it was asked to (e.g. cancelled
+	// mid-sample) — a partial tally must not stand in for the requested
+	// population.
+	if n < requested {
+		return fmt.Sprintf("checked %d/%d requested account(s) before the run ended — incomplete coverage, not a clean pass", n, requested),
 			&opsutil.ExitCodeError{Code: 255}
 	}
 	if mismatches == 0 {
@@ -558,24 +568,23 @@ func reconcileExitError(mismatches, errored, n int, haveSample, confirmedNothing
 	return "", &opsutil.ExitCodeError{Code: clampExitCode(mismatches)}
 }
 
-// sampleConfirmedNothing reports whether a -sample reconcile run verified zero
-// accounts — every result was no-data / merged / errored, none MATCHED. That is
-// a vacuous pass the go-live gate must reject (F4 fail-open guard): the sample
-// is drawn from recently-active accounts, so a real serving tier makes most of
-// them MATCH; zero matches means the reconcile proved nothing. Pure — no I/O —
-// so it's unit-testable without a live lake or Horizon. An empty result set
-// returns false (reconcileResolveAccounts already errors on an empty sample, so
-// "nothing checked" can't reach here; guard against it anyway).
-func sampleConfirmedNothing(results []reconcileResult) bool {
-	if len(results) == 0 {
-		return false
-	}
+// countVerified returns how many results were MATCH or MISMATCH — the only
+// outcomes meaning an actual comparison happened; NO_DATA,
+// MERGED_OR_ABSENT, ERROR and TRUTH_UNAVAILABLE all mean nothing was
+// compared for that account. Pure — no I/O — unit-testable. Replaces
+// sampleConfirmedNothing (GH-1186): the old helper asked only "did
+// anything MATCH", was consulted only in -sample mode, and treated a
+// TRUTH_UNAVAILABLE-only run as distinct from "confirmed nothing" — so a
+// single -account run dark on Horizon slipped past reconcileExitError as
+// a clean pass.
+func countVerified(results []reconcileResult) int {
+	n := 0
 	for _, r := range results {
-		if r.Outcome == outcomeMatch {
-			return false
+		if r.Outcome == outcomeMatch || r.Outcome == outcomeMismatch {
+			n++
 		}
 	}
-	return true
+	return n
 }
 
 // printReconcileReport writes the full per-account + summary report to w and

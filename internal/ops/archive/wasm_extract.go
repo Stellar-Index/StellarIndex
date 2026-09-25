@@ -59,7 +59,8 @@ func extractWasmFromGalexie(args []string) error { //nolint:funlen,gocognit,gocy
 	outputDir := fs.String("output-dir", "",
 		"Directory to write <hash>.wasm files into (required, must exist)")
 	from := fs.Uint("from", 2, "First ledger sequence (inclusive)")
-	to := fs.Uint("to", 0, "Last ledger sequence (inclusive). Required when -parallel > 1.")
+	to := fs.Uint("to", 0, "Last ledger sequence (inclusive). 0 = resolve the archive tip once at startup (requires bucket ListObjectsV2). Required explicitly when -parallel > 1. For an unbounded LIVE TAIL instead, pass -follow.")
+	follow := fs.Bool("follow", false, "Tail the live chain indefinitely from -from instead of resolving -to to a fixed tip (GH-1190: -to 0 used to mean live-tail implicitly, so an absent hash's MISSING/exit-non-zero path was unreachable — the walk never ended). Incompatible with -parallel > 1 and with any -to.")
 	bucket := fs.String("bucket", "",
 		"Galexie bucket name. Default: cfg.Storage.S3BucketArchive.")
 	parallel := fs.Uint("parallel", 1,
@@ -84,6 +85,9 @@ func extractWasmFromGalexie(args []string) error { //nolint:funlen,gocognit,gocy
 	}
 	if *parallel == 0 {
 		*parallel = 1
+	}
+	if err := validateFollowFlags("extract-wasm", *to, *follow, *parallel); err != nil {
+		return err
 	}
 	if *parallel > 1 && *to == 0 {
 		return fmt.Errorf("-parallel > 1 requires -to (workers split a bounded range)")
@@ -131,8 +135,6 @@ func extractWasmFromGalexie(args []string) error { //nolint:funlen,gocognit,gocy
 	if bucketName == "" {
 		bucketName = cfg.Storage.S3BucketArchive
 	}
-	fmt.Fprintf(os.Stderr, "extract-wasm: looking for %d hash(es), bucket=%s, range=[%d, %d], parallel=%d\n",
-		len(wantHashes), bucketName, *from, *to, *parallel)
 
 	lsCfg := ledgerstream.Config{
 		DataStore: datastore.DataStoreConfig{
@@ -150,13 +152,31 @@ func extractWasmFromGalexie(args []string) error { //nolint:funlen,gocognit,gocy
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// GH-1190: -to 0 used to fall straight through to ledgerstream.Stream
+	// (unbounded live tail), so an absent hash's "MISSING ... exit
+	// non-zero" path was unreachable — the walk never ended. -follow is
+	// the explicit opt-in for that; otherwise resolve -to to a real tip
+	// once, up front (same helper wasm-history uses).
+	resolvedTo := uint32(*to)
+	if *to == 0 && !*follow {
+		tip, tipErr := resolveArchiveTip(ctx, lsCfg)
+		if tipErr != nil {
+			return fmt.Errorf("extract-wasm: resolve -to=0 to archive tip (pass -follow for an unbounded live tail instead): %w", tipErr)
+		}
+		resolvedTo = tip
+		fmt.Fprintf(os.Stderr, "extract-wasm: resolved -to=0 → tip %d\n", resolvedTo)
+	}
+
+	fmt.Fprintf(os.Stderr, "extract-wasm: looking for %d hash(es), bucket=%s, range=[%d, %d], parallel=%d\n",
+		len(wantHashes), bucketName, *from, resolvedTo, *parallel)
+
 	// Shared "found" map — once a worker writes a hash, others can
 	// skip it. Atomic per-hash via mutex around the whole map.
 	var foundMu sync.Mutex
 	found := make(map[sdkxdr.Hash]string) // hash → output path
 	startedAt := time.Now()
 
-	bounds := opsutil.SplitRange(uint32(*from), uint32(*to), int(*parallel))
+	bounds := opsutil.SplitRange(uint32(*from), resolvedTo, int(*parallel))
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(bounds))
 	totalScanned := atomicUint64{}
@@ -210,10 +230,16 @@ func extractWasmFromGalexie(args []string) error { //nolint:funlen,gocognit,gocy
 	}
 	wg.Wait()
 	close(errCh)
+	// First non-cancel worker error wins; printed AND returned (GH-1189) —
+	// dropping it after printing let a stream failure (wrong bucket, MinIO
+	// down) exit 0 with "N hash(es) not found — try a wider range" instead
+	// of reporting the walk itself never completed.
+	var workerErr error
 	for err := range errCh {
-		// First non-cancel error wins; partial output may still be useful.
+		if workerErr == nil {
+			workerErr = err
+		}
 		fmt.Fprintf(os.Stderr, "extract-wasm: ERROR %v\n", err)
-		break
 	}
 
 	fmt.Fprintf(os.Stderr, "\nextract-wasm: scanned %d ledgers in %s; wrote %d/%d hash(es)\n",
@@ -229,8 +255,13 @@ func extractWasmFromGalexie(args []string) error { //nolint:funlen,gocognit,gocy
 			missing++
 		}
 	}
-	if missing > 0 {
-		return fmt.Errorf("%d hash(es) not found in [%d,%d] — try a wider range", missing, *from, *to)
+	switch {
+	case workerErr != nil && missing > 0:
+		return fmt.Errorf("worker error: %w (also %d hash(es) not found in [%d,%d])", workerErr, missing, *from, resolvedTo)
+	case workerErr != nil:
+		return workerErr
+	case missing > 0:
+		return fmt.Errorf("%d hash(es) not found in [%d,%d] — try a wider range", missing, *from, resolvedTo)
 	}
 	return nil
 }
@@ -340,16 +371,33 @@ func maybeWriteWasmCode(
 		foundMu.Unlock()
 		return
 	}
-	hexHash := wantHexes[cc.Hash]
-	outPath := filepath.Join(outputDir, hexHash+".wasm")
-	found[cc.Hash] = outPath
+	// Claim the hash before writing (still under the lock) so a concurrent
+	// worker matching the same hash later (e.g. a Restored entry at a
+	// later ledger) doesn't race the write, but don't record it as FOUND
+	// yet: found is the walk's completion receipt (drives -early-exit, the
+	// wrote N/N summary, and the missing-hash exit code), and GH-1189 was
+	// exactly this receipt being issued before the write it attests to had
+	// happened. An empty value marks "claimed, write in flight".
+	found[cc.Hash] = ""
 	foundMu.Unlock()
 
-	if err := os.WriteFile(outPath, cc.Code, 0o600); err != nil {
-		// Don't fail the entire walk on one write error; record + skip.
-		// We hold the path in `found` already so we won't retry.
-		fmt.Fprintf(os.Stderr, "extract-wasm: ERROR writing %s: %v\n", outPath, err)
+	hexHash := wantHexes[cc.Hash]
+	outPath := filepath.Join(outputDir, hexHash+".wasm")
+	tmpPath := outPath + ".tmp"
+	writeErr := os.WriteFile(tmpPath, cc.Code, 0o600)
+	if writeErr == nil {
+		writeErr = os.Rename(tmpPath, outPath)
+	}
+
+	foundMu.Lock()
+	if writeErr != nil {
+		delete(found, cc.Hash) // unclaim so a later occurrence can retry
+		foundMu.Unlock()
+		_ = os.Remove(tmpPath)
+		fmt.Fprintf(os.Stderr, "extract-wasm: ERROR writing %s: %v\n", outPath, writeErr)
 		return
 	}
+	found[cc.Hash] = outPath
+	foundMu.Unlock()
 	fmt.Fprintf(os.Stderr, "extract-wasm: wrote %s (%d bytes)\n", outPath, len(cc.Code))
 }

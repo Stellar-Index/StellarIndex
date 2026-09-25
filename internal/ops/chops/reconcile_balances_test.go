@@ -249,36 +249,39 @@ func TestHorizonRetryAfter(t *testing.T) {
 	}
 }
 
-// ─── sampleConfirmedNothing: F4 vacuous-sample fail-open guard ─────────────
+// ─── countVerified: GH-1186 "did an actual comparison happen" tally ───────
 
-func TestSampleConfirmedNothing(t *testing.T) {
+func TestCountVerified(t *testing.T) {
 	cases := []struct {
 		name    string
 		results []reconcileResult
-		want    bool
+		want    int
 	}{
-		{"empty is not a confirm-nothing (guarded elsewhere)", nil, false},
-		{"one match confirms something", []reconcileResult{{Outcome: outcomeMatch}}, false},
-		{"a match among no-data confirms something", []reconcileResult{
+		{"empty verifies nothing", nil, 0},
+		{"one match verifies one", []reconcileResult{{Outcome: outcomeMatch}}, 1},
+		{"a match among no-data counts only the match", []reconcileResult{
 			{Outcome: outcomeNoData}, {Outcome: outcomeMatch}, {Outcome: outcomeMergedOrAbsent},
-		}, false},
-		{"all no-data confirmed nothing", []reconcileResult{
+		}, 1},
+		{"all no-data verifies nothing", []reconcileResult{
 			{Outcome: outcomeNoData}, {Outcome: outcomeNoData},
-		}, true},
-		{"all merged/absent confirmed nothing", []reconcileResult{
+		}, 0},
+		{"all merged/absent verifies nothing", []reconcileResult{
 			{Outcome: outcomeMergedOrAbsent}, {Outcome: outcomeMergedOrAbsent},
-		}, true},
-		{"all errored confirmed nothing (C2-15 also catches this)", []reconcileResult{
+		}, 0},
+		{"all errored verifies nothing (C2-15 also catches this)", []reconcileResult{
 			{Outcome: outcomeError}, {Outcome: outcomeError},
-		}, true},
-		{"a mismatch is not a match — still confirmed nothing MATCHED", []reconcileResult{
+		}, 0},
+		{"all truth-unavailable verifies nothing (GH-1186 — the prior hole)", []reconcileResult{
+			{Outcome: outcomeTruthUnavailable},
+		}, 0},
+		{"a mismatch counts as verified too", []reconcileResult{
 			{Outcome: outcomeMismatch}, {Outcome: outcomeNoData},
-		}, true},
+		}, 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := sampleConfirmedNothing(tc.results); got != tc.want {
-				t.Fatalf("sampleConfirmedNothing = %v, want %v", got, tc.want)
+			if got := countVerified(tc.results); got != tc.want {
+				t.Fatalf("countVerified = %d, want %d", got, tc.want)
 			}
 		})
 	}
@@ -378,38 +381,39 @@ func TestPrintReconcileReport_StaleMergedHeld(t *testing.T) {
 // -sample gate).
 func TestReconcileExitError(t *testing.T) {
 	cases := []struct {
-		name                     string
-		mismatches, errored, n   int
-		haveSample, confirmedNil bool // confirmedNil = sampleConfirmedNothing
-		maxErrorRate             float64
-		singleAccountNoData      bool
-		staleMergedHeld          int
-		wantExit                 bool
-		wantCode                 int // only checked when wantExit
+		name                              string
+		mismatches, errored, n, requested int
+		verified                          int
+		maxErrorRate                      float64
+		staleMergedHeld                   int
+		wantExit                          bool
+		wantCode                          int // only checked when wantExit
 	}{
-		{"clean sample pass", 0, 0, 100, true, false, 0.25, false, 0, false, 0},
-		{"mismatches exit with count", 3, 0, 100, true, false, 0.25, false, 0, true, 3},
-		{"mismatch count capped at 255", 900, 0, 1000, true, false, 0.25, false, 0, true, 255},
+		{"clean sample pass", 0, 0, 100, 100, 100, 0.25, 0, false, 0},
+		{"mismatches exit with count", 3, 0, 100, 100, 100, 0.25, 0, true, 3},
+		{"mismatch count capped at 255", 900, 0, 1000, 1000, 1000, 0.25, 0, true, 255},
 		// C2-15: our-side error rate
-		{"our-error rate over threshold fails even at 0 mismatch", 0, 30, 100, true, false, 0.25, false, 0, true, 255},
-		{"our-error rate at threshold stays clean", 0, 25, 100, true, false, 0.25, false, 0, false, 0},
-		{"our-error over threshold WITH mismatches keeps mismatch code", 4, 30, 100, true, false, 0.25, false, 0, true, 4},
+		{"our-error rate over threshold fails even at 0 mismatch", 0, 30, 100, 100, 70, 0.25, 0, true, 255},
+		{"our-error rate at threshold stays clean", 0, 25, 100, 100, 75, 0.25, 0, false, 0},
+		{"our-error over threshold WITH mismatches keeps mismatch code", 4, 30, 100, 100, 70, 0.25, 0, true, 4},
 		// C2-15 Horizon-split: truth-unavailable is NOT in `errored`, so a run
 		// with 70 match + 30 truth-dark has errored=0 → passes the rate guard.
-		{"30% Horizon-dark does NOT trip C2-15 (errored=0)", 0, 0, 100, true, false, 0.25, false, 0, false, 0},
-		// F4: -sample matched nothing
-		{"sample matched nothing fails", 0, 0, 100, true, true, 0.25, false, 0, true, 255},
-		{"single -account matched nothing is exempt (F4)", 0, 0, 1, false, true, 0.25, false, 0, false, 0},
-		{"empty run is clean", 0, 0, 0, true, false, 0.25, false, 0, false, 0},
-		// MNY-04: single -account NO_DATA is NOT exempt (distinct from F4)
-		{"single -account NO_DATA fails", 0, 0, 1, false, true, 0.25, true, 0, true, 255},
+		{"30% Horizon-dark does NOT trip C2-15 (errored=0)", 0, 0, 100, 100, 70, 0.25, 0, false, 0},
+		// GH-1186: verified nothing, in either mode
+		{"sample verified nothing fails", 0, 0, 100, 100, 0, 0.25, 0, true, 255},
+		{"single -account verified nothing fails (GH-1186 — no longer exempt)", 0, 0, 1, 1, 0, 0.25, 0, true, 255},
+		{"single -account TRUTH_UNAVAILABLE-only fails (the prior hole)", 0, 0, 1, 1, 0, 0.25, 0, true, 255},
+		{"empty request (requested=0) is clean — nothing was ever asked for", 0, 0, 0, 0, 0, 0.25, 0, false, 0},
+		// GH-1186: incomplete coverage (cancelled mid-sample) fails even
+		// though what WAS checked all matched.
+		{"cancelled mid-sample with partial matches still fails on incomplete coverage", 0, 0, 4, 10, 4, 0.25, 0, true, 255},
 		// MNY-04: stale MERGED_OR_ABSENT-with-held-balance fails even with 0 mismatches
-		{"stale merged-held balance fails", 0, 0, 100, true, false, 0.25, false, 2, true, 2},
-		{"stale merged-held balance with a mismatch keeps the mismatch code", 5, 0, 100, true, false, 0.25, false, 2, true, 5},
+		{"stale merged-held balance fails", 0, 0, 100, 100, 100, 0.25, 2, true, 2},
+		{"stale merged-held balance with a mismatch keeps the mismatch code", 5, 0, 100, 100, 100, 0.25, 2, true, 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := reconcileExitError(tc.mismatches, tc.errored, tc.n, tc.haveSample, tc.confirmedNil, tc.maxErrorRate, tc.singleAccountNoData, tc.staleMergedHeld)
+			_, err := reconcileExitError(tc.mismatches, tc.errored, tc.n, tc.requested, tc.verified, tc.maxErrorRate, tc.staleMergedHeld)
 			if tc.wantExit != (err != nil) {
 				t.Fatalf("reconcileExitError = %v, wantExit=%v", err, tc.wantExit)
 			}

@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"bufio"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
+	"github.com/stellar/go-stellar-sdk/support/datastore"
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
@@ -23,11 +25,50 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
+// validateFollowFlags checks the -follow/-to/-parallel combination shared by
+// wasm-history and extract-wasm-from-galexie (GH-1190): -follow is the
+// explicit opt-in for an unbounded live tail, so it can't be combined with
+// an explicit -to, and a bounded parallel split has no meaning without a
+// fixed upper bound. Pure — unit-testable without a live archive.
+func validateFollowFlags(toolName string, to uint, follow bool, parallel uint) error {
+	if follow && to != 0 {
+		return fmt.Errorf("%s: -follow tails indefinitely and is incompatible with an explicit -to", toolName)
+	}
+	if follow && parallel > 1 {
+		return fmt.Errorf("%s: -follow (unbounded live tail) is incompatible with -parallel > 1 (workers split a bounded range)", toolName)
+	}
+	return nil
+}
+
+// resolveArchiveTip opens a one-shot DataStore against the same config a
+// walker will use and returns the archive's current latest ledger — the
+// same primitive verify-archive's -workers>1 tip resolution and
+// trim-galexie-archive's hot-tip lookup already use, applied here so
+// wasm-history's -to=0 default means "the tip, once" rather than
+// ledgerstream.Stream's "tail forever" (GH-1190). Unlike verify-archive's
+// resolution, this one has no serial-walk fallback to demote to: a
+// bounded-output walker with no upper bound would just hang, so a
+// resolution failure (e.g. no bucket ListObjectsV2) is returned to the
+// caller as a hard error instead.
+func resolveArchiveTip(ctx context.Context, lsCfg ledgerstream.Config) (uint32, error) {
+	ds, err := datastore.NewDataStore(ctx, lsCfg.DataStore)
+	if err != nil {
+		return 0, fmt.Errorf("open datastore: %w", err)
+	}
+	defer func() { _ = ds.Close() }()
+	tip, err := datastore.FindLatestLedgerSequence(ctx, ds)
+	if err != nil {
+		return 0, fmt.Errorf("find latest ledger: %w", err)
+	}
+	return tip, nil
+}
+
 func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // linear diagnostic, splitting reduces readability
 	fs := flag.NewFlagSet("wasm-history", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	from := fs.Uint("from", 2, "First ledger sequence (inclusive)")
-	to := fs.Uint("to", 0, "Last ledger sequence (inclusive). Required when -parallel > 1.")
+	to := fs.Uint("to", 0, "Last ledger sequence (inclusive). 0 = resolve the archive tip once at startup (requires bucket ListObjectsV2). Required explicitly when -parallel > 1. For an unbounded LIVE TAIL instead, pass -follow.")
+	follow := fs.Bool("follow", false, "Tail the live chain indefinitely from -from instead of resolving -to to a fixed tip (GH-1190: -to 0 used to mean live-tail implicitly, so the default invocation tailed pubnet forever and never wrote the output JSON, which is only emitted at completion). Incompatible with -parallel > 1 and with any -to.")
 	contractsCSV := fs.String("contracts", "",
 		"Comma-separated contract C-strkey IDs to watch (required, at least one)")
 	bucket := fs.String("bucket", "",
@@ -71,6 +112,9 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 	if *parallel == 0 {
 		*parallel = 1
 	}
+	if err := validateFollowFlags("wasm-history", *to, *follow, *parallel); err != nil {
+		return err
+	}
 	if *parallel > 1 && *to == 0 {
 		return fmt.Errorf("-parallel > 1 requires -to (workers split a bounded range)")
 	}
@@ -109,8 +153,6 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 	if bucketName == "" {
 		bucketName = cfg.Storage.S3BucketArchive
 	}
-	fmt.Fprintf(os.Stderr, "wasm-history: watching %d contract(s), bucket=%s, range=[%d, %d], parallel=%d\n",
-		len(watch), bucketName, *from, *to, *parallel)
 
 	// wasm-history walks tend to scan recent ranges (audit trailing N
 	// months). The trailing edge can be at the live tip; if -to
@@ -121,6 +163,25 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// GH-1190: -to 0 used to fall straight through to ledgerstream.Stream,
+	// which reads to==0 as "tail live, unbounded" — a walker whose entire
+	// output is one JSON document emitted at completion (see below) then
+	// never emits it. -follow is the explicit opt-in for that; otherwise
+	// resolve -to to a real tip once, up front, same as verify-archive's
+	// -workers>1 tip resolution.
+	resolvedTo := uint32(*to)
+	if *to == 0 && !*follow {
+		tip, tipErr := resolveArchiveTip(ctx, lsCfg)
+		if tipErr != nil {
+			return fmt.Errorf("wasm-history: resolve -to=0 to archive tip (pass -follow for an unbounded live tail instead): %w", tipErr)
+		}
+		resolvedTo = tip
+		fmt.Fprintf(os.Stderr, "wasm-history: resolved -to=0 → tip %d\n", resolvedTo)
+	}
+
+	fmt.Fprintf(os.Stderr, "wasm-history: watching %d contract(s), bucket=%s, range=[%d, %d], parallel=%d\n",
+		len(watch), bucketName, *from, resolvedTo, *parallel)
 
 	startedAt := time.Now()
 
@@ -140,7 +201,7 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 	trackStorage := *storageOut != ""
 	trackCode := *codeOut != ""
 	workerStates, totalScanned, err := runWasmHistoryWorkers(
-		ctx, lsCfg, watch, uint32(*from), uint32(*to), int(*parallel), trackStorage, trackCode,
+		ctx, lsCfg, watch, uint32(*from), resolvedTo, int(*parallel), trackStorage, trackCode,
 		uint64(*progressEvery), *checkpointDir)
 	if err != nil {
 		return err
@@ -200,7 +261,7 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 	// the range than you asked for" has to be impossible to miss — and
 	// stderr alone is easy to miss when stdout is redirected to a file,
 	// which is exactly how the runbook invokes this.
-	return wasmWalkCoverage(uint32(*from), uint32(*to), totalScanned, bucketName)
+	return wasmWalkCoverage(uint32(*from), resolvedTo, totalScanned, bucketName)
 }
 
 // wasmWalkCoverage turns a wasm-history walk that did not deliver its
@@ -464,16 +525,19 @@ func readAllTransitionJSONL(paths []string, to uint32, transitions map[string][]
 	return closeAt, nil
 }
 
-// readTransitionJSONL appends every transition record in path's
-// JSONL to the per-contract slice in `transitions`. Returns the
-// number of transition lines successfully decoded (corrupted or
-// partial trailing lines are logged + skipped — a crashed walk may
-// have left a half-written last line, and "recover what we have"
-// beats "fail outright"), plus this worker's observed extent: the
-// watermark line if present (hasExtent=true, authoritative), else
-// the highest AtLedger among its transitions as a conservative
-// fallback (the worker crashed before writing its watermark, but we
-// know it scanned at least that far).
+// readTransitionJSONL appends every transition record in path's JSONL to
+// the per-contract slice in `transitions`. Returns the number of
+// transition lines successfully decoded. Reads line-by-line (not a
+// streaming json.Decoder) so a single malformed line can be skipped and
+// parsing RESYNCS at the next line, rather than treating "cannot parse
+// here" as "this file ends here" (GH-1199): a malformed/truncated LAST
+// line is tolerated (a crashed walk may leave a half-written final
+// line — "recover what we have" beats "fail outright"), but a malformed
+// line anywhere else is a hard error, because this file is opened
+// O_APPEND across separate wasm-history runs sharing a -checkpoint-dir
+// (see newTransitionLog) and a truncated per-run start would otherwise
+// look identical to legitimate crash residue, silently dropping every
+// later run's transitions from the merge.
 func readTransitionJSONL(path string, transitions map[string][]transitionRecord) (count int, extent uint32, hasExtent bool, err error) {
 	// gosec G304: path comes from -checkpoint-dir glob expansion; the
 	// merge tool is itself a privileged ops command that operators run
@@ -484,14 +548,33 @@ func readTransitionJSONL(path string, transitions map[string][]transitionRecord)
 	}
 	defer func() { _ = f.Close() }()
 
-	dec := json.NewDecoder(f)
-	for dec.More() {
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4<<20) // transition lines are small; allow generous headroom
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	if serr := scanner.Err(); serr != nil {
+		return 0, 0, false, fmt.Errorf("scan %s: %w", filepath.Base(path), serr)
+	}
+
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
 		var r transitionRecord
-		if err := dec.Decode(&r); err != nil {
+		if jerr := json.Unmarshal([]byte(line), &r); jerr != nil {
+			lineNo := i + 1
 			fmt.Fprintf(os.Stderr,
-				"wasm-history-merge-jsonl: %s: skipping malformed/truncated line near offset %d (%v)\n",
-				filepath.Base(path), dec.InputOffset(), err)
-			break
+				"wasm-history-merge-jsonl: %s: malformed/truncated line %d (%v)\n",
+				filepath.Base(path), lineNo, jerr)
+			if i != len(lines)-1 {
+				return count, extent, hasExtent, fmt.Errorf(
+					"%s: line %d is malformed and is NOT the file's last line — mid-file corruption, not crash residue; refusing to silently drop the transitions after it",
+					filepath.Base(path), lineNo)
+			}
+			continue // malformed LAST line: tolerated as a crash-truncated tail
 		}
 		if r.Watermark {
 			extent = r.AtLedger
@@ -1199,10 +1282,14 @@ func recordWasmTransition(
 //
 // The writer is buffered (4 KiB default) and flushed every
 // transition (transitions are rare relative to ledgers, so the
-// flush overhead is negligible). The file is opened with O_APPEND
-// so concurrent appends from multiple workers to the SAME file
-// would be safe at the OS level — but each worker writes to its
-// own file by convention to avoid log-line interleaving.
+// flush overhead is negligible). The file is O_TRUNC'd on open
+// (GH-1199): -checkpoint-dir is a stable, operator-chosen directory
+// reused across INDEPENDENT wasm-history invocations, and each
+// invocation is a fresh walk, not a resume of a prior run's — leaving
+// the old O_APPEND meant a second run's lines landed after a first
+// run's partial/crashed tail, and wasm-history-merge-jsonl's
+// last-line-only tolerance then silently dropped everything the
+// second run wrote.
 type transitionLog struct {
 	f     *os.File
 	enc   *json.Encoder
@@ -1224,7 +1311,7 @@ func newTransitionLog(path string, watch map[sdkxdr.Hash]string) (*transitionLog
 	// gosec G304: path comes from operator-controlled -checkpoint-dir
 	// flag; the wasm-history subcommand is itself a privileged ops
 	// tool that needs to write to operator-chosen paths.
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // intentional ops-tool file write
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) //nolint:gosec // intentional ops-tool file write
 	if err != nil {
 		return nil, err
 	}

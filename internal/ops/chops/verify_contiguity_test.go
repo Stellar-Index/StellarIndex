@@ -7,6 +7,26 @@ import (
 	"testing"
 )
 
+// ─── checkFieldValue / contiguityChecksRunLabel: SKIPPED vs. zero (GH-1195) ─
+
+func TestCheckFieldValueDistinguishesSkippedFromZero(t *testing.T) {
+	if got := checkFieldValue(false, 0); got != "SKIPPED" {
+		t.Fatalf("checkFieldValue(ran=false, 0) = %q, want SKIPPED", got)
+	}
+	if got := checkFieldValue(true, 0); got != "0" {
+		t.Fatalf("checkFieldValue(ran=true, 0) = %q, want %q (ran-and-clean must not look SKIPPED)", got, "0")
+	}
+}
+
+func TestContiguityChecksRunLabel(t *testing.T) {
+	if got := contiguityChecksRunLabel(true, false); got != "ledgers" {
+		t.Fatalf("contiguityChecksRunLabel(ledgers only) = %q", got)
+	}
+	if got := contiguityChecksRunLabel(false, false); got != "none" {
+		t.Fatalf("contiguityChecksRunLabel(none) = %q, want %q", got, "none")
+	}
+}
+
 // ─── groupMissingIntoRanges: gap-range computation, no live CH ────────────
 
 func TestGroupMissingIntoRanges(t *testing.T) {

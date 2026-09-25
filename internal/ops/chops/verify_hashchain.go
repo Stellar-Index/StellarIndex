@@ -71,7 +71,7 @@ func verifyHashChain(args []string) error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
-	toSeq, err := resolveToSeq(ctx, addr, *to)
+	toSeq, err := resolveToSeq(ctx, "verify-hashchain", *cfgPath, addr, *to)
 	if err != nil {
 		return err
 	}

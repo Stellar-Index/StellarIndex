@@ -82,7 +82,7 @@ func verifyLake(args []string) error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
-	toSeq, err := resolveToSeq(ctx, addr, *to)
+	toSeq, err := resolveToSeq(ctx, "verify-lake", *cfgPath, addr, *to)
 	if err != nil {
 		return err
 	}
@@ -118,15 +118,15 @@ func verifyLake(args []string) error {
 	total := ledgerGaps + ecDeficiency + hashChainBroken
 
 	fmt.Printf("\n=== verify-lake: LAKE VERIFICATION [%d,%d] ===\n", fromSeq, toSeq)
-	fmt.Printf("  contiguity:     %d missing ledger(s)\n", ledgerGaps)
-	fmt.Printf("  entry_changes:  %d deficiency (%d backfill-pending, informational)\n", ecDeficiency, ecPending)
-	fmt.Printf("  hash_chain:     %d broken link(s)\n", hashChainBroken)
+	fmt.Print(lakeCheckLine("contiguity", runContiguity, fmt.Sprintf("%d missing ledger(s)", ledgerGaps)))
+	fmt.Print(lakeCheckLine("entry_changes", runEntryChanges, fmt.Sprintf("%d deficiency (%d backfill-pending, informational)", ecDeficiency, ecPending)))
+	fmt.Print(lakeCheckLine("hash_chain", runHashChain, fmt.Sprintf("%d broken link(s)", hashChainBroken)))
 
 	verdict := "PASSED"
 	if total > 0 {
 		verdict = "FAILED"
 	}
-	fmt.Printf("verify-lake: summary total_failures=%d  (%s)\n", total, verdict)
+	fmt.Printf("verify-lake: summary total_failures=%d checks_run=%s  (%s)\n", total, lakeChecksRunLabel(runContiguity, runEntryChanges, runHashChain), verdict)
 
 	if total == 0 {
 		return nil
@@ -148,6 +148,39 @@ func lakeExitCode(gaps, deficiency, broken uint64) int {
 		return 255
 	}
 	return int(total) //nolint:gosec // capped above; always in [0,255].
+}
+
+// lakeCheckLine formats one verify-lake summary line. A check narrowed out
+// via -checks prints "SKIPPED (not requested)" rather than a zero count —
+// "not run" and "ran, found zero" must not share one representation
+// (GH-1195), or a report from a narrowed run reads as full coverage. Pure
+// — unit-testable without a live lake.
+func lakeCheckLine(label string, ran bool, detail string) string {
+	if !ran {
+		return fmt.Sprintf("  %-15s SKIPPED (not requested)\n", label+":")
+	}
+	return fmt.Sprintf("  %-15s %s\n", label+":", detail)
+}
+
+// lakeChecksRunLabel renders the -checks tokens that actually ran, for the
+// summary line's checks_run= field — so a pasted report is self-describing
+// about its own coverage without the reader having to infer it from which
+// lines say SKIPPED. Pure — unit-testable without a live lake.
+func lakeChecksRunLabel(contiguity, entryChanges, hashChain bool) string {
+	var ran []string
+	if contiguity {
+		ran = append(ran, lakeCheckContiguity)
+	}
+	if entryChanges {
+		ran = append(ran, lakeCheckEntryChanges)
+	}
+	if hashChain {
+		ran = append(ran, lakeCheckHashChain)
+	}
+	if len(ran) == 0 {
+		return "none"
+	}
+	return strings.Join(ran, ",")
 }
 
 // -checks flag tokens.

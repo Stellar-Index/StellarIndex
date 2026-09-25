@@ -83,7 +83,7 @@ func TestWasmHistory_GatesCoverageAfterEmittingJSON(t *testing.T) {
 	}
 
 	encode := strings.Index(body, "enc.Encode(out)")
-	coverage := strings.Index(body, "return wasmWalkCoverage(uint32(*from), uint32(*to), totalScanned, bucketName)")
+	coverage := strings.Index(body, "return wasmWalkCoverage(uint32(*from), resolvedTo, totalScanned, bucketName)")
 	switch {
 	case encode < 0:
 		t.Fatal("JSON encode anchor not found — this test is asserting nothing")
