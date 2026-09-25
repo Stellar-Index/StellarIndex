@@ -10,11 +10,9 @@ import {
 import { formatPriceSmall } from '@/lib/format';
 
 /**
- * unwrapChangeSummary — the /v1/changes/{entity_type}/{id} endpoint
- * returns the standard envelope ({data, as_of, flags}); useChangeSummary
- * currently hands back the raw JSON. Accept either the envelope or a
- * bare row so the strip keeps working if the hook later unwraps.
- * Exported for tests.
+ * unwrapChangeSummary — useChangeSummary returns the bare row; the
+ * /v1/changes/{entity_type}/{id} envelope ({data, as_of, flags}) is
+ * accepted too, for a caller holding the raw response. Exported for tests.
  */
 export function unwrapChangeSummary(raw: unknown): ChangeSummary | null {
   if (raw == null || typeof raw !== 'object') return null;

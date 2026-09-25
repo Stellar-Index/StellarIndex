@@ -4,6 +4,7 @@ import Link from 'next/link';
 
 import { MarketChart } from '@/components/charts/MarketChart';
 import { useNativeUsdPrice } from '@/api/hooks';
+import { FreshnessMarker } from '@/components/primitives';
 import { cn } from '@/lib/cn';
 import {
   isFrameStale,
@@ -25,7 +26,8 @@ const TIP_LIVE_STALE_MS = 30_000;
  * would resolve to USDC at ~$1.00. The candles come from /v1/ohlc.
  */
 export function HomeHeroChart() {
-  const { price, change24hPct: change, stale } = useNativeUsdPrice();
+  const { price, flags, change24hPct: change } = useNativeUsdPrice();
+  const stale = flags.stale === true;
   // Make the "live USD price" label honest (RT-2): overlay the tip-price
   // stream on the build-time-baked initial and flash on each tick. A
   // frame older than TIP_LIVE_STALE_MS (stream wedged/quiet) must not
@@ -36,7 +38,11 @@ export function HomeHeroChart() {
     tip != null && !isFrameStale(clock, tip.receivedAt, TIP_LIVE_STALE_MS);
   const tipStr = tipFresh ? tip.data.data.price : undefined;
   const tipActive = tipStr != null && Number.isFinite(Number(tipStr));
-  const livePrice = tipActive ? Number(tipStr) : price;
+  const livePrice = tipActive
+    ? Number(tipStr)
+    : price != null
+      ? Number(price)
+      : null;
   const flash = usePriceFlash(tipActive ? tipStr : undefined);
 
   return (
@@ -68,6 +74,9 @@ export function HomeHeroChart() {
               ${livePrice >= 1 ? livePrice.toFixed(4) : livePrice.toFixed(6)}
             </span>
           )}
+          {/* stale is already in the caption; the rest (frozen above all)
+              describe the pair, whichever transport carried the price. */}
+          <FreshnessMarker flags={{ ...flags, stale: false }} />
           {change != null && (
             <span
               className={`font-mono text-sm tabular-nums ${

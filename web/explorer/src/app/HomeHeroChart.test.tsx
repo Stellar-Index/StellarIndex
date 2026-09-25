@@ -34,7 +34,11 @@ function renderHero(ui: ReactElement = <HomeHeroChart />) {
   );
 }
 
-function mockPriceFetch(price: string, stale: boolean) {
+function mockPriceFetch(
+  price: string,
+  stale: boolean,
+  extraFlags: Record<string, boolean> = {},
+) {
   vi.stubGlobal(
     'fetch',
     vi.fn().mockImplementation((input: string | URL) => {
@@ -43,7 +47,10 @@ function mockPriceFetch(price: string, stale: boolean) {
         return Promise.resolve({
           ok: true,
           status: 200,
-          json: async () => ({ data: { price }, flags: { stale } }),
+          json: async () => ({
+            data: { price },
+            flags: { stale, ...extraFlags },
+          }),
         });
       }
       // /v1/chart 24h-change series — irrelevant to these assertions.
@@ -101,5 +108,18 @@ describe('HomeHeroChart', () => {
     expect(await screen.findByText('$0.170000')).toBeInTheDocument();
     expect(screen.getByText(/USD price · stale/i)).toBeInTheDocument();
     expect(screen.queryByText(/live USD price/i)).not.toBeInTheDocument();
+  });
+
+  // #1028: /v1/price is the only route that sets `frozen`, and the hook
+  // dropped every flag but `stale`.
+  it('marks a frozen price even while the tip stream is live', async () => {
+    mockPriceFetch('0.17', false, { frozen: true, frozen_checked: true });
+    useTipStream.mockReturnValue({
+      data: { data: { price: '0.1745' }, as_of: '2026-08-08T00:00:00Z' },
+      receivedAt: Date.now(),
+    });
+    renderHero();
+
+    expect(await screen.findByText('Frozen')).toBeInTheDocument();
   });
 });

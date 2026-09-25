@@ -9,6 +9,7 @@
 // point the whole explorer at mainnet data.
 
 import { CURRENT_NETWORK } from '@/lib/networks';
+import type { components } from './types';
 
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? CURRENT_NETWORK.apiBaseUrl;
@@ -81,7 +82,8 @@ function buildUrl(
   );
   if (params) {
     for (const [k, v] of Object.entries(params)) {
-      if (v !== undefined && !consumed.has(k)) url.searchParams.set(k, String(v));
+      if (v !== undefined && !consumed.has(k))
+        url.searchParams.set(k, String(v));
     }
   }
   return url.toString();
@@ -123,9 +125,12 @@ export async function apiGet<T>(
 export type Envelope<T> = {
   data: T;
   as_of?: string;
-  flags?: Record<string, unknown>;
+  flags?: EnvelopeFlags;
   pagination?: { next?: string };
 };
+
+/** The generated `Flags` contract; every member is optional on the wire. */
+export type EnvelopeFlags = Partial<components['schemas']['Flags']>;
 
 /**
  * apiGetData — apiGet + the `.data` unwrap that ~28 call sites

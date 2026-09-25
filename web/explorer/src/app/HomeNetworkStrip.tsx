@@ -80,7 +80,11 @@ export function HomeNetworkStrip() {
   const tipNumber = tipPriceStr != null ? Number(tipPriceStr) : NaN;
   const tipActive = Number.isFinite(tipNumber) && tipNumber > 0;
   const flash = usePriceFlash(tipActive ? tipPriceStr : undefined);
-  const xlmPrice = tipActive ? tipNumber : native.price;
+  const xlmPrice = tipActive
+    ? tipNumber
+    : native.price != null
+      ? Number(native.price)
+      : null;
   const xlmChange = native.change24hPct;
 
   // #328: on a net with no aggregator both USD tiles are structurally "—"

@@ -140,17 +140,17 @@ function formatTimestamp(iso: string): string {
   return d.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
 }
 
-// Reads h24_delta_pct off either the standard {data, as_of, flags}
-// envelope or a bare row (useChangeSummary currently hands back the
-// raw JSON) — same either-shape tolerance as the asset-sidebar's
-// unwrapChangeSummary, scoped to the one field this badge needs.
+// Reads h24_delta_pct off a bare row (what useChangeSummary returns)
+// or the {data, as_of, flags} envelope — same either-shape tolerance as
+// the asset-sidebar's unwrapChangeSummary, scoped to the one field this badge needs.
 function unwrapH24DeltaPct(raw: unknown): number | null {
   if (raw == null || typeof raw !== 'object') return null;
   const maybe = raw as {
     data?: { h24_delta_pct?: number | null };
     h24_delta_pct?: number | null;
   };
-  const row = maybe.data != null && typeof maybe.data === 'object' ? maybe.data : maybe;
+  const row =
+    maybe.data != null && typeof maybe.data === 'object' ? maybe.data : maybe;
   return typeof row.h24_delta_pct === 'number' ? row.h24_delta_pct : null;
 }
 

@@ -10,10 +10,9 @@ const WINDOW_FIELD = {
 
 type Window = keyof typeof WINDOW_FIELD;
 
-// Reads one delta field off either the standard {data, as_of, flags}
-// envelope or a bare row (useChangeSummary currently hands back the
-// raw JSON) — same either-shape tolerance as the asset-sidebar's
-// unwrapChangeSummary, scoped to the single field a chip needs.
+// Reads one delta field off a bare row (what useChangeSummary returns)
+// or the {data, as_of, flags} envelope — same either-shape tolerance as
+// the asset-sidebar's unwrapChangeSummary, scoped to the single field a chip needs.
 function unwrapDeltaPct(raw: unknown, field: string): number | null {
   if (raw == null || typeof raw !== 'object') return null;
   const maybe = raw as Record<string, unknown>;

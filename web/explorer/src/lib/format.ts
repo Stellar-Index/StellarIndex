@@ -255,6 +255,36 @@ export function formatBaseUnits(
 }
 
 /**
+ * sumDecimalStrings — exact sum of fixed-point decimal strings (the wire
+ * shape of every money field, ADR-0003) as a decimal string. Absent
+ * entries are skipped; null when nothing was summed or any entry is not a
+ * decimal, so a garbage row cannot quietly shrink a published total.
+ */
+export function sumDecimalStrings(
+  values: readonly (string | null | undefined)[],
+): string | null {
+  const parsed: { units: bigint; frac: number }[] = [];
+  for (const v of values) {
+    if (v == null || v === '') continue;
+    const m = /^(-?)(\d+)(?:\.(\d+))?$/.exec(v.trim());
+    if (!m) return null;
+    const [, sign, whole, frac = ''] = m;
+    parsed.push({ units: BigInt(`${sign}${whole}${frac}`), frac: frac.length });
+  }
+  if (parsed.length === 0) return null;
+  const scale = Math.max(...parsed.map((p) => p.frac));
+  const total = parsed.reduce(
+    (acc, p) => acc + p.units * 10n ** BigInt(scale - p.frac),
+    0n,
+  );
+  const neg = total < 0n;
+  const digits = (neg ? -total : total).toString().padStart(scale + 1, '0');
+  const whole = digits.slice(0, digits.length - scale);
+  const frac = scale > 0 ? `.${digits.slice(digits.length - scale)}` : '';
+  return `${neg ? '-' : ''}${whole}${frac}`;
+}
+
+/**
  * formatDecimalAmount — a FIXED-POINT DECIMAL STRING (the wire shape of
  * every money field, ADR-0003) → a grouped display string, without the
  * value ever touching a JS number. `Number('40538494.54')` is harmless;
