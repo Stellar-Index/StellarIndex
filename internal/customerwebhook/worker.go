@@ -52,6 +52,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // DeliveryStore is the worker's subset of [platform.WebhookStore].
@@ -372,7 +373,14 @@ func (w *Worker) tick(ctx context.Context) {
 		slots <- struct{}{}
 		wg.Add(1)
 		go func() {
-			defer func() { <-slots; wg.Done() }()
+			// Release the slot and WaitGroup even on a panic, or tick blocks forever.
+			defer func() {
+				if r := recover(); r != nil {
+					worker.Report(w.opts.Logger, "customer-webhook-lane", r)
+				}
+				<-slots
+				wg.Done()
+			}()
 			w.deliverLane(ctx, lane)
 		}()
 	}
