@@ -511,9 +511,10 @@ reserve_balances_max_age = "{{ stellarindex_reserve_balances_max_age }}"
 # not contribute to VWAP. Pair format mirrors canonical.Pair.String().
 [divergence.chainlink]
 enabled = true
-# vault_chainlink_rpc_url carries the keyed Alchemy endpoint; the
-# llamarpc fallback is Cloudflare-challenged since 2026-06 (rc.138 fix).
-rpc_url = "{{ vault_chainlink_rpc_url | default('https://eth.llamarpc.com') }}"
+# rpc_url is set via CHAINLINK_RPC_URL env in /etc/default/stellarindex
+# (same var external.chainlink uses -- config.ApplyEnvOverrides feeds
+# both consumers from one operator-provided endpoint). The Alchemy URL
+# embeds the API key in the path -- must never land in this 0644 file.
 
 [divergence.chainlink.feeds]
 
