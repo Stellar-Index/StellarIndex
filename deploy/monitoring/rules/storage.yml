@@ -1264,3 +1264,33 @@ groups:
             For postgres/redis the dedicated exporter alerts fire alongside
             this one and carry more detail — treat those as primary and this
             as corroboration.
+
+      # GH-899: 60 of 66 node_exporter textfile-collector producers
+      # (scripts/ci/textfile-producers.manifest) had no staleness alert at
+      # all — a producer's timer/cron could die silently forever. Rather
+      # than hand-add 60 near-identical per-file rules, this one rule has
+      # no `file=` selector, so it matches every textfile_collector .prom
+      # node_exporter has ever scraped, present or future. A producer with
+      # its own tighter, file-scoped alert (see stellarindex_patroni_textfile_stale,
+      # stellarindex_config_assertions_stale, redis/keepalived/data-freshness/
+      # stellar-stack-version above and in the sibling rule files) fires
+      # sooner; this is the backstop for everything else. 24h is well above
+      # every known producer's expected refresh interval, so it never
+      # duplicates a tighter alert, only catches what nothing else does.
+      - alert: stellarindex_textfile_producer_stale
+        expr: time() - node_textfile_mtime_seconds > 86400
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+          summary: "textfile-collector file {{ $labels.file }} has not been refreshed in 24h+ on {{ $labels.instance }}"
+          description: |
+            node_exporter has not seen a fresh mtime on {{ $labels.file }}
+            for 24+ hours. Its producing timer/cron has likely died; check
+            scripts/ci/textfile-producers.manifest for which script owns
+            this file and `systemctl status` its unit. This is a catch-all:
+            most producers should have fired their own, tighter alert long
+            before this one does.
