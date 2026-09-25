@@ -73,7 +73,18 @@ func canonLastPriceSQL(flipped string) string {
 // base = token_in (what the taker sold). The same economic trade lands in
 // opposite orientations, so a read combining sources must orient here.
 func canonOrientSQL() (canonBase, canonQuote, flipped string) {
-	const bcol, qcol = "base_asset", "quote_asset"
+	return canonOrientSQLOn("base_asset", "quote_asset")
+}
+
+// canonOrientSQLOn is [canonOrientSQL] generalised to an arbitrary pair of
+// base/quote SQL expressions rather than the literal "base_asset" /
+// "quote_asset" columns — the seam a caller folding alias spellings first
+// (e.g. `COALESCE(alias_map.canon, base_asset)`) plugs into, so a market's
+// canonical orientation is computed AFTER its alias fold rather than
+// before, and a SAC/crypto:XLM-keyed row ranks identically to its
+// native-keyed twin. Each expression is substituted verbatim, so it must
+// already be a single term (parenthesised if composite).
+func canonOrientSQLOn(bcol, qcol string) (canonBase, canonQuote, flipped string) {
 	rb, rq := quoteRankSQL(bcol), quoteRankSQL(qcol)
 	// The stored base (bcol) is actually the canonical QUOTE when it
 	// outranks the stored quote, or on a tie sorts after it.
