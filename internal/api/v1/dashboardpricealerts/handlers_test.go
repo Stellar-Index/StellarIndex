@@ -237,31 +237,44 @@ func TestHandleCreate_OmittedCooldown_DefaultsNonZero(t *testing.T) {
 	}
 }
 
-// TestHandleCreate_ExplicitZeroCooldown_Preserved guards the other half of
-// the NTF-PA-02 fix: an EXPLICIT cooldown_seconds:0 remains the documented
-// re-fire-every-tick opt-in and is not overwritten by the default.
-func TestHandleCreate_ExplicitZeroCooldown_Preserved(t *testing.T) {
-	h, _, sc := newTestRig(t, nil)
-	body := map[string]any{
-		"base_asset":       "native",
-		"quote_asset":      "fiat:USD",
-		"condition":        "above",
-		"threshold":        "0.15",
-		"cooldown_seconds": 0,
+// TestCooldownBelowFloor_Rejected400 pins GH-810: an explicit cooldown
+// below platform.MinAlertCooldownSeconds (0 included, formerly the
+// "re-fire every tick" opt-in) is a 400 on create and PATCH — it made the
+// level-triggered evaluator enqueue every subscribed webhook each tick.
+// The floor itself is accepted.
+func TestCooldownBelowFloor_Rejected400(t *testing.T) {
+	floor := platform.MinAlertCooldownSeconds
+	if floor < 300 {
+		t.Fatalf("MinAlertCooldownSeconds = %d; lowering it re-opens the per-tick amplifier", floor)
 	}
-	req := sessionReq(t, http.MethodPost, "/v1/dashboard/price-alerts", body, sc)
-	w := httptest.NewRecorder()
-	h.HandleCreate(w, req)
+	for _, cd := range []int{0, 1, floor - 1} {
+		h, store, sc := newTestRig(t, nil)
+		body := validCreate()
+		body.CooldownSeconds = ptr(cd)
+		w := httptest.NewRecorder()
+		h.HandleCreate(w, sessionReq(t, http.MethodPost, "/v1/dashboard/price-alerts", body, sc))
+		if w.Code != http.StatusBadRequest || len(store.alerts) != 0 {
+			t.Fatalf("create cooldown=%d: status %d, %d stored; want 400 and none", cd, w.Code, len(store.alerts))
+		}
 
+		seed := platform.PriceAlert{AccountID: sc.Account.ID, BaseAsset: "native", QuoteAsset: "fiat:USD", Condition: platform.AlertAbove, Threshold: "0.2", CooldownSeconds: 3600, Enabled: true}
+		created, _ := store.CreatePriceAlert(context.Background(), seed, 0)
+		req := sessionReq(t, http.MethodPatch, "/v1/dashboard/price-alerts/"+created.ID.String(), updateRequest{CooldownSeconds: ptr(cd)}, sc)
+		req.SetPathValue("id", created.ID.String())
+		w = httptest.NewRecorder()
+		h.HandleUpdate(w, req)
+		if w.Code != http.StatusBadRequest || store.alerts[created.ID].CooldownSeconds != 3600 {
+			t.Fatalf("update cooldown=%d: status %d, stored %d; want 400 and 3600 kept", cd, w.Code, store.alerts[created.ID].CooldownSeconds)
+		}
+	}
+
+	h, _, sc := newTestRig(t, nil)
+	body := validCreate()
+	body.CooldownSeconds = ptr(floor)
+	w := httptest.NewRecorder()
+	h.HandleCreate(w, sessionReq(t, http.MethodPost, "/v1/dashboard/price-alerts", body, sc))
 	if w.Code != http.StatusCreated {
-		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
-	}
-	var dto priceAlertDTO
-	if err := json.Unmarshal(w.Body.Bytes(), &dto); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if dto.CooldownSeconds != 0 {
-		t.Errorf("explicit cooldown_seconds:0 must be preserved, got %d", dto.CooldownSeconds)
+		t.Fatalf("create at the floor: status %d, want 201; body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -372,6 +385,39 @@ func TestHandleUpdate_HappyPath(t *testing.T) {
 	got := store.alerts[created.ID]
 	if got.Threshold != "0.99" || got.Enabled {
 		t.Errorf("update not applied: %+v", got)
+	}
+}
+
+// TestCooldownAboveInt4_Rejected400 pins CA2-A03-harden-6: the column is
+// int4, so a cooldown past math.MaxInt32 must be a client 400 on create
+// and PATCH, never reach the store (where pgx refuses to encode it and
+// the handler answered 500).
+func TestCooldownAboveInt4_Rejected400(t *testing.T) {
+	tooBig := platform.MaxAlertCooldownSeconds + 1
+	h, store, sc := newTestRig(t, nil)
+
+	body := validCreate()
+	body.CooldownSeconds = ptr(tooBig)
+	w := httptest.NewRecorder()
+	h.HandleCreate(w, sessionReq(t, http.MethodPost, "/v1/dashboard/price-alerts", body, sc))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("create status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+	if len(store.alerts) != 0 {
+		t.Fatalf("out-of-range create reached the store (%d rows)", len(store.alerts))
+	}
+
+	seed := platform.PriceAlert{AccountID: sc.Account.ID, BaseAsset: "native", QuoteAsset: "fiat:USD", Condition: platform.AlertAbove, Threshold: "0.2", CooldownSeconds: 300, Enabled: true}
+	created, _ := store.CreatePriceAlert(context.Background(), seed, 0)
+	req := sessionReq(t, http.MethodPatch, "/v1/dashboard/price-alerts/"+created.ID.String(), updateRequest{CooldownSeconds: ptr(tooBig)}, sc)
+	req.SetPathValue("id", created.ID.String())
+	w = httptest.NewRecorder()
+	h.HandleUpdate(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("update status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+	if got := store.alerts[created.ID].CooldownSeconds; got != 300 {
+		t.Errorf("rejected update rewrote cooldown to %d", got)
 	}
 }
 

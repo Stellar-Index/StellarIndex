@@ -408,12 +408,12 @@ function CreateAlertForm({
           <Field
             label="Cooldown (seconds)"
             htmlFor="alert-cooldown"
-            hint="Minimum seconds between two fires. 0 re-fires every tick the condition holds."
+            hint="Minimum seconds between two fires; at least 300 (5 minutes)."
           >
             <Input
               id="alert-cooldown"
               type="number"
-              min={0}
+              min={300}
               value={cooldown}
               onChange={(e) =>
                 setCooldown(Math.max(0, Number(e.target.value) || 0))

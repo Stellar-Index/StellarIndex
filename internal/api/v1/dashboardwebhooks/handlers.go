@@ -284,12 +284,20 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 				r.URL.Path)
 			return
 		}
+		if errors.Is(err, platform.ErrConflict) {
+			writeProblem(w, http.StatusConflict, errDuplicateURL, r.URL.Path)
+			return
+		}
 		h.cfg.Logger.Error("create webhook in postgres", "err", err, "account_id", sc.Account.ID)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, createResponse{Webhook: toDTO(out), Secret: secret})
 }
+
+// errDuplicateURL is the 409 detail for a URL the account has already
+// registered (UNIQUE (account_id, url), migration 0180).
+const errDuplicateURL = "this account already has a webhook registered for that url"
 
 type updateRequest struct {
 	Name    *string  `json:"name,omitempty"`
@@ -343,11 +351,12 @@ func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		current.Name = name
 	}
 	if req.URL != nil {
-		if err := validateWebhookURL(r.Context(), *req.URL); err != nil {
+		u := strings.TrimSpace(*req.URL)
+		if err := validateWebhookURL(r.Context(), u); err != nil {
 			writeProblem(w, http.StatusBadRequest, err.Error(), r.URL.Path)
 			return
 		}
-		current.URL = *req.URL
+		current.URL = u
 	}
 	if len(req.Events) > 0 {
 		if err := validateEvents(req.Events); err != nil {
@@ -361,6 +370,10 @@ func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.cfg.Webhooks.UpdateWebhook(r.Context(), current); err != nil {
+		if errors.Is(err, platform.ErrConflict) {
+			writeProblem(w, http.StatusConflict, errDuplicateURL, r.URL.Path)
+			return
+		}
 		h.cfg.Logger.Error("update webhook", "err", err, "id", id)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
@@ -374,8 +387,9 @@ func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, toDTO(updated))
 }
 
-// HandleDelete removes the webhook + cascades to deliveries.
-// Idempotent — deleting an absent ID returns 204.
+// HandleDelete removes the webhook + cascades to deliveries. An absent
+// or cross-account id is 404 (the same shape, so presence never leaks);
+// a retried delete therefore reads 404 as "already gone".
 func (h *Handlers) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	sc, ok := dashboardauth.SessionFromContext(r.Context())
 	if !ok {
@@ -500,9 +514,16 @@ func validateWebhookName(name string) error {
 	return nil
 }
 
+// maxWebhookURLLen bounds a stored webhook URL; it is copied into every
+// failed attempt's last_error, so the 8 KiB body cap is far too loose.
+const maxWebhookURLLen = 2048
+
 func validateWebhookURL(ctx context.Context, raw string) error {
 	if raw == "" {
 		return errors.New("url is required")
+	}
+	if len(raw) > maxWebhookURLLen {
+		return fmt.Errorf("url must be at most %d bytes", maxWebhookURLLen)
 	}
 	if !strings.HasPrefix(raw, "https://") {
 		return errors.New("url must start with https:// (TLS required for HMAC integrity)")
@@ -522,6 +543,11 @@ func validateWebhookURL(ctx context.Context, raw string) error {
 	}
 	if u.Hostname() == "" {
 		return errors.New("url must have a hostname")
+	}
+	// Deliveries are signed POSTs from our egress; any other port would let
+	// a registration aim them at an arbitrary TCP service on a public host.
+	if p := u.Port(); p != "" && p != "443" {
+		return errors.New("url must use the default https port (443)")
 	}
 	if err := rejectInternalHost(ctx, u.Hostname()); err != nil {
 		return err
