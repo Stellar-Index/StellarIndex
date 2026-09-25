@@ -2794,7 +2794,7 @@ the reference set.
 ### `stellarindex_aggregator_triangulations_total`
 
 Counter, label `outcome` (`ok` / `missing_leg` / `parse_error` /
-`redis_error` / `frozen_leg`).
+`redis_error` / `frozen_leg` / `low_confidence` / `proxy_pivot`).
 
 Triangulation outcomes per tick × chain × window. The aggregator
 runs one row per (chain, window) per tick after the per-pair
@@ -2812,7 +2812,15 @@ that carries no frozen flag of its own. The freeze is inherited onto
 the target pair instead. Treat a sustained `frozen_leg` rate as
 "the chain's legs are under anomaly protection", not as an error.
 
-All five outcomes are pre-seeded at zero in `internal/obs`, so
+`low_confidence` and `proxy_pivot` also leave the direct price serving
+and write only the composite_meta flags. `proxy_pivot` means a priced
+leg took prints through the stablecoin-fiat proxy and those stablecoin
+prints disagree with the leg's own-quote prints beyond the
+composite-reference leg-dispersion bound (a de-peg): the composite would
+multiply a stablecoin price by a real-USD FX rate.
+`composite_meta.pivot_surface_refusal` names the leg.
+
+All seven outcomes are pre-seeded at zero in `internal/obs`, so
 `rate()` / `absent()` on any of them is a real zero rather than a gap
 before the first event.
 

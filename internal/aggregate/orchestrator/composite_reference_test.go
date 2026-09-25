@@ -823,3 +823,72 @@ func TestCompositeReference_VerdictGaugeRetiredWhenPairLeavesTheEvaluatedSet(t *
 		t.Errorf("%d leg-dispersion series survive an un-evaluated tick, want 0", n)
 	}
 }
+
+// A target that stays eligible while one of its legs stops resolving
+// must not keep that leg's last per-leg series: the gauges describe THIS
+// tick's reading, and a stale leg_sources=2 next to an "unavailable"
+// verdict tells an on-call reader the leg is healthy when it is dry.
+func TestCompositeReference_LegSeriesRetiredWhenLegDropsOnEligibleTarget(t *testing.T) {
+	// A target no other test in this package uses, so the series counted
+	// here can only have come from this test.
+	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	usdJPY := mkPair(t, "fiat", "USD", "fiat", "JPY")
+	xlmJPY := mkPair(t, "crypto", "XLM", "fiat", "JPY")
+	window := time.Minute
+	now := time.Now().UTC()
+
+	store := &mockStore{perPair: map[string][]canonical.Trade{}}
+	cache, _ := newTestRedis(t)
+	o := New(store, cache, Config{
+		Pairs:          []canonical.Pair{xlmJPY, xlmUSD},
+		Windows:        []time.Duration{window},
+		Interval:       time.Hour,
+		Triangulations: []TriangulationChain{{Target: xlmJPY, Legs: []canonical.Pair{xlmUSD, usdJPY}}},
+		FXStore:        &fakeFXStore{quote: big.NewRat(150, 1), observedAt: now.Add(-time.Hour), source: "massive"},
+		FreezeWriter:   &recordingFreezeMarker{},
+		Baselines: stubBaselineSource{
+			multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: maxDay30Returns}},
+			computedAt: now,
+		},
+		CompositeReference: CompositeReferenceConfig{Enabled: true, Targets: []canonical.Pair{xlmJPY}},
+	})
+	pairLabel, windowLabelValue := xlmJPY.String(), window.String()
+
+	// Tick 1: two-venue leg, single-venue target → every leg series set.
+	store.perPair[xlmUSD.String()] = []canonical.Trade{
+		makeTradeOn(t, xlmUSD, "kraken", 100_000_000, 10_000_000, now.Add(-30*time.Second)),
+		makeTradeOn(t, xlmUSD, "coinbase", 100_000_000, 10_000_000, now.Add(-30*time.Second)),
+	}
+	store.perPair[xlmJPY.String()] = []canonical.Trade{
+		makeTradeOn(t, xlmJPY, "soroswap", 100_000_000, 1_500_000_000, now.Add(-30*time.Second)),
+	}
+	if err := o.Tick(context.Background()); err != nil {
+		t.Fatalf("tick 1: %v", err)
+	}
+	if n := compositeSeriesFor(t, obs.AggregatorCompositeReferenceLegSources, pairLabel, windowLabelValue); n == 0 {
+		t.Fatal("tick 1: no leg-source series published — test setup is wrong")
+	}
+	if n := compositeSeriesFor(t, obs.AggregatorCompositeReferenceLegDispersionBps, pairLabel, windowLabelValue); n == 0 {
+		t.Fatal("tick 1: no leg-dispersion series published — test setup is wrong")
+	}
+
+	// Tick 2: the XLM/USD leg goes dry; the target is still single-venue.
+	store.perPair[xlmUSD.String()] = nil
+	store.perPair[xlmJPY.String()] = []canonical.Trade{
+		makeTradeOn(t, xlmJPY, "soroswap", 100_000_000, 1_500_000_000, now.Add(-5*time.Second)),
+	}
+	nextBucket(o)
+	if err := o.Tick(context.Background()); err != nil {
+		t.Fatalf("tick 2: %v", err)
+	}
+	if g := testutil.ToFloat64(obs.AggregatorCompositeCorroboration.WithLabelValues(
+		pairLabel, windowLabelValue, string(compositeVerdictUnavailable))); g != 1 {
+		t.Fatalf("tick 2: composite_corroboration{verdict=unavailable} = %v, want 1 (still evaluated, leg dry)", g)
+	}
+	if n := compositeSeriesFor(t, obs.AggregatorCompositeReferenceLegSources, pairLabel, windowLabelValue); n != 0 {
+		t.Errorf("%d leg-source series survive a tick whose leg did not resolve, want 0", n)
+	}
+	if n := compositeSeriesFor(t, obs.AggregatorCompositeReferenceLegDispersionBps, pairLabel, windowLabelValue); n != 0 {
+		t.Errorf("%d leg-dispersion series survive a tick whose leg did not resolve, want 0", n)
+	}
+}

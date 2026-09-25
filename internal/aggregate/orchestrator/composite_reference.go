@@ -12,6 +12,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
@@ -207,6 +208,72 @@ type legRef struct {
 	// computed (A4): the guard cannot vouch for the leg, so the leg is
 	// refused (`leg_dispersion=uncomputable`) rather than skipped.
 	dispersionUncomputable bool
+
+	// proxyShare is the fraction of the survivor base volume (at the
+	// common scale the VWAP weights by) that fetchForTarget rewrote onto
+	// this pair from a stablecoin-proxy source pair ([aggregate.ProxyPair])
+	// — prints quoted in a stablecoin, priced here at par with real USD.
+	proxyShare float64
+
+	// surfaceDivergence is |proxyVWAP − ownQuoteVWAP| / ownQuoteVWAP
+	// between the proxy-rewritten prints and the prints quoted in the
+	// pair's own quote asset: a stablecoin de-peg, which the par rewrite
+	// otherwise absorbs into the leg unseen. nil when either surface is
+	// empty; surfaceUncomputable when a surface VWAP failed.
+	surfaceDivergence   *big.Rat
+	surfaceUncomputable bool
+}
+
+// quoteSurfaceRefusal returns why this leg cannot stand for one quote
+// asset — its proxy-rewritten and own-quote prints disagree by more
+// than maxBps, or the comparison could not run — or "" when it can.
+func (lr legRef) quoteSurfaceRefusal(maxBps int) string {
+	if lr.surfaceUncomputable {
+		return "quote_surface=uncomputable"
+	}
+	if lr.surfaceDivergence != nil && lr.surfaceDivergence.Cmp(big.NewRat(int64(maxBps), 10_000)) > 0 {
+		return fmt.Sprintf("quote_surface=%.1fbps", ratBps(lr.surfaceDivergence))
+	}
+	return ""
+}
+
+// quoteSurfaces measures how much of a published bucket came through a
+// stablecoin-proxy rewrite (proxied holds those trades' IDs) and how far
+// the proxy prints sit from the pair's own-quote prints. Both surfaces
+// are priced with computeNormalizedVWAP, as the leg VWAP is.
+func (o *Orchestrator) quoteSurfaces(
+	pair canonical.Pair, trades []canonical.Trade, proxied map[string]struct{},
+) (share float64, divergence *big.Rat, uncomputable bool) {
+	if len(proxied) == 0 {
+		return 0, nil, false
+	}
+	scaled := aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor)
+	var proxy, own []canonical.Trade
+	proxyBase, totalBase := new(big.Int), new(big.Int)
+	for i := range trades {
+		totalBase.Add(totalBase, scaled[i].BaseAmount.BigInt())
+		if _, ok := proxied[trades[i].ID()]; ok {
+			proxy = append(proxy, trades[i])
+			proxyBase.Add(proxyBase, scaled[i].BaseAmount.BigInt())
+			continue
+		}
+		own = append(own, trades[i])
+	}
+	if len(proxy) == 0 || totalBase.Sign() <= 0 {
+		return 0, nil, false
+	}
+	share, _ = new(big.Rat).SetFrac(proxyBase, totalBase).Float64() // i128:ok a share for reporting, not a served amount
+	if len(own) == 0 {
+		return share, nil, false
+	}
+	proxyVWAP, perr := o.computeNormalizedVWAP(proxy, pair)
+	ownVWAP, oerr := o.computeNormalizedVWAP(own, pair)
+	if perr != nil || oerr != nil || proxyVWAP.Sign() <= 0 || ownVWAP.Sign() <= 0 {
+		return share, nil, true
+	}
+	divergence = new(big.Rat).Sub(proxyVWAP, ownVWAP)
+	divergence.Abs(divergence).Quo(divergence, ownVWAP)
+	return share, divergence, false
 }
 
 // legDispersion computes the leg-dispersion statistic for one
@@ -387,17 +454,23 @@ func (o *Orchestrator) chainForTarget(pair canonical.Pair) (TriangulationChain, 
 // Rebuilt at the top of every Tick; same single-Tick-at-a-time
 // invariant as tickEdgeQuotes (L4).
 func (o *Orchestrator) recordLegRef(pair canonical.Pair, window time.Duration, vwap *big.Rat, trades []canonical.Trade) {
-	o.setTickLegRef(pair, window, o.newLegRef(pair, vwap, trades))
+	o.setTickLegRef(pair, window, o.newLegRef(pair, vwap, trades, nil))
 }
 
-// newLegRef builds the reference-leg reading for a published bucket.
-func (o *Orchestrator) newLegRef(pair canonical.Pair, vwap *big.Rat, trades []canonical.Trade) legRef {
+// newLegRef builds the reference-leg reading for a published bucket;
+// proxied is the set of trade IDs fetchForTarget rewrote from a
+// stablecoin-proxy source pair.
+func (o *Orchestrator) newLegRef(pair canonical.Pair, vwap *big.Rat, trades []canonical.Trade, proxied map[string]struct{}) legRef {
 	dispersion, uncomputable := o.legDispersion(pair, trades, vwap)
+	share, surfaceDiv, surfaceUncomputable := o.quoteSurfaces(pair, trades, proxied)
 	return legRef{
 		price:                  new(big.Rat).Set(vwap), // defensive copy, as newEdgeQuote
 		sources:                distinctSourceCount(trades),
 		dispersion:             dispersion,
 		dispersionUncomputable: uncomputable,
+		proxyShare:             share,
+		surfaceDivergence:      surfaceDiv,
+		surfaceUncomputable:    surfaceUncomputable,
 	}
 }
 
@@ -534,6 +607,11 @@ func (o *Orchestrator) referenceLeg(
 		if lr.dispersion != nil && lr.dispersion.Cmp(big.NewRat(int64(cfg.LegDispersionBps), 10_000)) > 0 {
 			return nil, lr.sources, fmt.Sprintf("leg_dispersion=%.1fbps", ratBps(lr.dispersion))
 		}
+		// Agreeing venues are still not one USD when part of the leg was
+		// priced in a de-pegged stablecoin at par.
+		if why := lr.quoteSurfaceRefusal(cfg.LegDispersionBps); why != "" {
+			return nil, lr.sources, "leg_" + why
+		}
 		return lr.price, lr.sources, ""
 	}
 	if o.cfg.FXStore == nil {
@@ -588,6 +666,11 @@ func (o *Orchestrator) emitCompositeReference(pair canonical.Pair, window time.D
 		}
 		obs.AggregatorCompositeCorroboration.WithLabelValues(pair.String(), window.String(), string(v)).Set(val)
 	}
+	// Delete-then-set, as recordVenueVWAPs: a leg that did not resolve (or
+	// was never reached) this tick must not keep last tick's reading.
+	labels := prometheus.Labels{"pair": pair.String(), "window": window.String()}
+	obs.AggregatorCompositeReferenceLegSources.DeletePartialMatch(labels)
+	obs.AggregatorCompositeReferenceLegDispersionBps.DeletePartialMatch(labels)
 	for leg, n := range ref.legSources {
 		obs.AggregatorCompositeReferenceLegSources.WithLabelValues(pair.String(), window.String(), leg).Set(float64(n))
 	}

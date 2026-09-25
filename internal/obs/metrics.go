@@ -428,7 +428,7 @@ func seedBoundedLabelSeries() {
 	// publish a derived price because a leg was frozen" was the one
 	// outcome an operator could not distinguish from "this metric is
 	// dead" until it first fired.
-	for _, outcome := range []string{"ok", "missing_leg", "parse_error", "redis_error", "frozen_leg", "low_confidence"} {
+	for _, outcome := range []string{"ok", "missing_leg", "parse_error", "redis_error", "frozen_leg", "low_confidence", "proxy_pivot"} {
 		AggregatorTriangulationsTotal.WithLabelValues(outcome)
 	}
 	// The self-pair exploit detector is EXPECTED to sit at zero indefinitely
@@ -4030,7 +4030,7 @@ var AnomalyFreezeRecoverySweepDurationSeconds = prometheus.NewHistogramVec(
 var AggregatorTriangulationsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_triangulations_total",
-		Help: "Aggregator triangulation outcomes per tick × chain × window (graph-router priced). Outcome ∈ {ok, missing_leg, parse_error, redis_error, frozen_leg, low_confidence}. low_confidence = no route cleared min_route_confidence, so the composite was flagged but NOT published over the direct price.",
+		Help: "Aggregator triangulation outcomes per tick × chain × window (graph-router priced). Outcome ∈ {ok, missing_leg, parse_error, redis_error, frozen_leg, low_confidence, proxy_pivot}. low_confidence = no route cleared min_route_confidence, so the composite was flagged but NOT published over the direct price. proxy_pivot = a priced leg's stablecoin-proxy prints disagree with its own-quote prints, so the composite was flagged but NOT published over the direct price.",
 	},
 	[]string{"outcome"},
 )
