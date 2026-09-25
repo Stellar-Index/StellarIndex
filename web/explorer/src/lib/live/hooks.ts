@@ -138,6 +138,21 @@ export interface LiveTip {
 }
 
 /**
+ * tipCaveat — the caveat a price surface must append beside a live tip
+ * tick, derived from the SAME flags/window the server sent (GH-772: the
+ * widened LiveTip/LiveTipFlags carried divergence_warning/frozen/
+ * window_seconds but no price surface read them). Frozen wins over a
+ * divergence warning — a frozen tick isn't moving at all, which is the
+ * stronger caveat. Null when nothing is worth flagging.
+ */
+export function tipCaveat(data: LiveTip['data'], flags?: LiveTipFlags): string | null {
+  if (flags?.frozen) return 'frozen — source has not updated';
+  if (flags?.divergence_warning) return 'sources diverging';
+  if (data.window_seconds != null) return `${data.window_seconds}s window`;
+  return null;
+}
+
+/**
  * useTipStream — live tip price for a pair. Pass `asset: null` to
  * disable (e.g. while the pair is unknown). Quote defaults to USD.
  * Pairs the server withholds (404/withheld pre-flight) hard-close the
@@ -386,6 +401,13 @@ export function usePricePoll({
   stale: boolean;
   triangulated: boolean;
   withheld: boolean;
+  /** The server's own wording for WHY the price is withheld (RFC7807
+   * `title`/`detail` off the 404 body — internal/api/v1/price.go's
+   * `priceWithheldWording`), e.g. "issuer flagged" vs "market too thin
+   * to aggregate". Null until a withheld verdict lands; callers must not
+   * hardcode a liquidity-only caption over these (GH-772). */
+  withheldTitle: string | null;
+  withheldDetail: string | null;
   /** True after the first successful poll (including a withheld verdict). */
   polled: boolean;
 } {
@@ -395,6 +417,8 @@ export function usePricePoll({
     stale: false,
     triangulated: false,
     withheld: false,
+    withheldTitle: null as string | null,
+    withheldDetail: null as string | null,
     polled: false,
   });
   // Reset during render when the asset/quote pair changes (mirrors
@@ -411,6 +435,8 @@ export function usePricePoll({
       stale: false,
       triangulated: false,
       withheld: false,
+      withheldTitle: null,
+      withheldDetail: null,
       polled: false,
     });
   }
@@ -442,12 +468,16 @@ export function usePricePoll({
         if (r.status === 404) {
           const body = (await r.json().catch(() => null)) as {
             type?: string;
+            title?: string;
+            detail?: string;
           } | null;
           if (!cancelled && body?.type?.endsWith('/price-withheld')) {
             setState((s) => ({
               ...s,
               price: null,
               withheld: true,
+              withheldTitle: body.title ?? null,
+              withheldDetail: body.detail ?? null,
               polled: true,
             }));
           }
@@ -467,6 +497,8 @@ export function usePricePoll({
           stale: Boolean(body.flags?.stale),
           triangulated: Boolean(body.flags?.triangulated),
           withheld: false,
+          withheldTitle: null,
+          withheldDetail: null,
           polled: true,
         });
       } catch {

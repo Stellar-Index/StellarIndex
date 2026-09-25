@@ -13,6 +13,7 @@ import { cn } from '@/lib/cn';
 import { formatPriceSmall } from '@/lib/format';
 import {
   isFrameStale,
+  tipCaveat,
   useLiveClock,
   usePriceFlash,
   usePricePoll,
@@ -57,17 +58,18 @@ export function LivePairPrice({
     initialPrice,
     initialObservedAt,
   });
-  const { price, observedAt, polled } = poll;
+  const { price, observedAt, polled, stale, withheldTitle, withheldDetail } = poll;
 
   const tip = useTipStream(base, quote);
   const clock = useLiveClock();
-  const tipPriceStr =
-    tip != null && !isFrameStale(clock, tip.receivedAt, TIP_LIVE_STALE_MS)
-      ? tip.data.data?.price
-      : undefined;
+  const tipFresh =
+    tip != null && !isFrameStale(clock, tip.receivedAt, TIP_LIVE_STALE_MS);
+  const tipPriceStr = tipFresh ? tip.data.data?.price : undefined;
   const tipNumber = tipPriceStr != null ? Number(tipPriceStr) : NaN;
   const tipActive = Number.isFinite(tipNumber) && tipNumber > 0;
   const flash = usePriceFlash(tipActive ? tipPriceStr : undefined);
+  const caveat =
+    tipActive && tip ? tipCaveat(tip.data.data, tip.data.flags) : null;
 
   const shown = tipActive ? tipNumber : price;
 
@@ -102,20 +104,24 @@ export function LivePairPrice({
             <span className="bg-up absolute inline-flex h-full w-full animate-ping rounded-full opacity-60" />
             <span className="bg-up relative inline-flex h-2 w-2 rounded-full" />
           </span>
-          live · streaming
+          live · streaming{caveat && ` · ${caveat}`}
         </span>
       ) : poll.withheld ? (
         // Mirrors the asset-page sibling: a withheld verdict replaces the
         // timestamp caption — "as of <ts>" under a — price implies the
         // server is stale rather than deliberately refusing to quote.
+        // The wording is the server's own (GH-772) — never a hardcoded
+        // liquidity-only string, which is wrong for e.g. a scam-issuer
+        // withhold.
         <span className="text-ink-muted text-xs">
-          price withheld · market too thin to aggregate
+          {withheldDetail ?? withheldTitle ?? 'price withheld'}
         </span>
       ) : (
         observedAt && (
           <span className="text-ink-muted text-xs">
             as of {formatTimestamp(observedAt)}
             {!polled && ' (at build)'}
+            {stale && ' · stale'}
           </span>
         )
       )}

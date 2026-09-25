@@ -148,6 +148,9 @@ describe('LiveAssetPrice', () => {
         ok: false,
         json: async () => ({
           type: 'https://api.stellarindex.io/errors/price-withheld',
+          title: 'Price withheld — issuer flagged',
+          detail:
+            'a directory-flagged issuer is on one leg of native / fiat:USD, so no price is published for this market',
         }),
       }),
     );
@@ -158,9 +161,13 @@ describe('LiveAssetPrice', () => {
         initialProvenance="listing"
       />,
     );
+    // The caption comes from the server's own problem-body wording
+    // (GH-772) — never a hardcoded liquidity-only string, which would
+    // be false for a scam-issuer withhold like this one.
     expect(
-      await screen.findByText(/price withheld · market too thin to aggregate/i),
+      await screen.findByText(/directory-flagged issuer/i),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/market too thin to aggregate/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/\$0\.17/)).not.toBeInTheDocument();
   });
 
