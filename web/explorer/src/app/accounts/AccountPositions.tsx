@@ -18,6 +18,7 @@ import {
   TR,
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
+import { fetchPriceBatchChunked, isPriceableAssetId } from '@/lib/price-batch';
 import type { components } from '@/api/types';
 import { assetHref } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -34,7 +35,6 @@ interface AccountStateResp {
   trustlines?: { asset: string; balance: string }[];
 }
 
-type PriceBatchEnvelope = components['schemas']['PriceBatchEnvelope'];
 type PriceType = components['schemas']['Price']['price_type'];
 
 /**
@@ -89,6 +89,8 @@ interface PriceBatch {
   stale: boolean;
   /** Oldest `observed_at` among the rows priced here. */
   observedAt: string | null;
+  /** Holdings whose batch chunk the API rejected — unanswered, not unpriced. */
+  failedCount: number;
 }
 
 interface Holding {
@@ -143,11 +145,15 @@ export function AccountPositions({ id }: { id: string }) {
     }
   }
 
+  // A pool share or unknown_asset id would 400 its whole batch request;
+  // those holdings stay listed, unpriced.
+  const priceableIds = assetIds.filter(isPriceableAssetId);
+
   const pricesQ = useQuery<PriceBatch>({
-    queryKey: ['/v1/price/batch', 'positions', assetIds.join(',')],
+    queryKey: ['/v1/price/batch', 'positions', priceableIds.join(',')],
     // No aggregator on the lean test nets → /v1/price/batch is empty; skip the
     // portfolio valuation there (the USD tiles/columns null-degrade to "—").
-    enabled: assetIds.length > 0 && CURRENT_NETWORK.pricing,
+    enabled: priceableIds.length > 0 && CURRENT_NETWORK.pricing,
     retry: false,
     staleTime: 30_000,
     // RLT-387: a `staleTime` alone only re-fetches on the visitor's next
@@ -156,16 +162,13 @@ export function AccountPositions({ id }: { id: string }) {
     // `/v1/price/batch` read (ConvertLive.tsx's useConvertRate).
     refetchInterval: 60_000,
     queryFn: async () => {
-      const env = await apiGet<PriceBatchEnvelope>('/v1/price/batch', {
-        asset_ids: assetIds.join(','),
-        quote: 'fiat:USD',
-      });
+      const batch = await fetchPriceBatchChunked(priceableIds, 'fiat:USD');
       const byAsset: Record<string, PricedAt> = {};
       // Instants, not strings: RFC 3339 stamps carry variable fractional
       // precision and lexicographic order gets "…00Z" vs "…00.5Z" wrong.
       let observedAt: string | null = null;
       let oldestMs = Number.POSITIVE_INFINITY;
-      for (const row of env.data ?? []) {
+      for (const row of batch.rows) {
         if (!row.price) continue;
         const p = Number(row.price);
         if (!(Number.isFinite(p) && p > 0)) continue;
@@ -186,7 +189,12 @@ export function AccountPositions({ id }: { id: string }) {
           observedAt = at.observedAt;
         }
       }
-      return { byAsset, stale: Boolean(env.flags?.stale), observedAt };
+      return {
+        byAsset,
+        stale: batch.stale,
+        observedAt,
+        failedCount: batch.failedIds.length,
+      };
     },
   });
 
@@ -240,6 +248,12 @@ export function AccountPositions({ id }: { id: string }) {
   // An unpriced positive balance adds $0 to the sum, so the total is a floor
   // (AGENTS.md invariant 1): mark it "≥" and name what it leaves out.
   const unpricedCount = holdings.length - pricedCount;
+  // A rejected lookup is not "no price": say so rather than let it read as
+  // an illiquid holding.
+  const priceFailedCount =
+    pricesQ.isError && !pricesQ.data
+      ? priceableIds.length
+      : (pricesQ.data?.failedCount ?? 0);
   const lowerBound = unpricedCount > 0;
   const totalText = `${lowerBound ? '≥ ' : ''}${usdFmt.format(total)}`;
   const excludedText = `excludes ${unpricedCount} unpriced`;
@@ -309,6 +323,13 @@ export function AccountPositions({ id }: { id: string }) {
         <p className="text-ink-muted text-xs">
           Prices observed {formatRelative(pricesQ.data.observedAt)}
           {pricesQ.data.stale && ' · flagged stale by the pricing API'}
+        </p>
+      )}
+      {priceFailedCount > 0 && (
+        <p role="alert" className="text-down-strong text-xs">
+          Price lookup failed for {priceFailedCount.toLocaleString('en-US')} of{' '}
+          {holdings.length.toLocaleString('en-US')} holdings; the total excludes
+          them.
         </p>
       )}
 

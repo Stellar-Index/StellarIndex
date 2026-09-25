@@ -39,7 +39,8 @@ type WebhookEnqueuer interface {
 // PriceReader returns the latest CLOSED 1-minute VWAP for a pair.
 // Satisfied in production by an adapter over
 // timescale.Store.LatestClosedVWAP1mForPair (which combines both stored
-// orientations). ok=false with a nil error means "no closed bucket in
+// orientations), tried across every canonical.AssetAliases spelling of
+// both legs. ok=false with a nil error means "no closed bucket in
 // scope" — a benign no-op, not a failure.
 type PriceReader interface {
 	LatestVWAP(ctx context.Context, base, quote canonical.Asset) (price string, bucketClose time.Time, ok bool, err error)

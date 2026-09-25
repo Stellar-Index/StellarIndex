@@ -2693,41 +2693,51 @@ type priceAlertVWAPReader struct {
 }
 
 func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canonical.Asset) (string, time.Time, bool, error) {
-	pair, err := canonical.NewPair(base, quote)
-	if err != nil {
+	if _, err := canonical.NewPair(base, quote); err != nil {
 		return "", time.Time{}, false, err
 	}
-	row, err := r.store.LatestClosedVWAP1mForPair(ctx, pair)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", time.Time{}, false, nil
+	// Walk every spelling of both legs, literal pair first and SAC forms
+	// last (canonical.AssetAliases owns the order), as /v1/price does:
+	// `native`/fiat:USD has no rows of its own because its market is
+	// recorded under crypto:XLM, so a literal-only read never fires. The
+	// first spelling with a closed bucket answers; a read error ends the
+	// walk rather than falling through to a thinner spelling.
+	for _, b := range canonical.AssetAliases(base) {
+		for _, q := range canonical.AssetAliases(quote) {
+			pair, err := canonical.NewPair(b, q)
+			if err != nil {
+				continue // two spellings of one asset collapse to a self-pair
+			}
+			row, err := r.store.LatestClosedVWAP1mForPair(ctx, pair)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return "", time.Time{}, false, err
+			}
+			// Price-withholding chokepoint ([pricing_guard]), the same
+			// expression the API binary serves under: an alert must never
+			// fire off a thin market or a directory-scam-flagged issuer
+			// on EITHER leg. Withheld → ok=false, the benign no-op, and
+			// sticky: no other spelling is tried. The gate is
+			// alias-invariant (the scam gate canonicalises each leg, the
+			// substance gate reads every alias), so the requested pair's
+			// verdict is every spelling's.
+			if r.gate.PriceWithheld(ctx, base, quote, "price_alert") {
+				return "", time.Time{}, false, nil
+			}
+			// Same serving-sanity guard as the API raw-bucket paths: the
+			// bare closed bucket bypasses the orchestrator's σ-outlier /
+			// min-volume / freeze filters, so a fat-finger print would
+			// fire a SPURIOUS alert. GuardServedVWAP1m serves last-known-
+			// good off the trailing baseline of the pair actually read,
+			// is byte-identical on a healthy bucket, and fails open on
+			// thin history.
+			served := pricingguard.GuardServedVWAP1m(ctx, r.store, r.logger, pair, row)
+			return served.VWAP, served.Bucket.Add(time.Minute), true, nil
+		}
 	}
-	if err != nil {
-		return "", time.Time{}, false, err
-	}
-	// Price-withholding chokepoint ([pricing_guard]): a customer price
-	// alert must never fire off a pair whose entire market is
-	// attacker-authorable, nor off a directory-scam-flagged issuer's
-	// market on EITHER leg. Withheld → ok=false, the same benign no-op
-	// as "no closed bucket" (the evaluator skips the pair).
-	//
-	// The same expression the API binary serves under, imported rather
-	// than restated: this path had the substance half only, so a webhook
-	// could name a price /v1/price itself refuses to publish — the gap
-	// a per-binary copy of a decision always eventually opens (K001).
-	if r.gate.PriceWithheld(ctx, base, quote, "price_alert") {
-		return "", time.Time{}, false, nil
-	}
-	// Same serving-sanity guard as the two API raw-bucket paths (/v1/price,
-	// /v1/assets/{slug}): LatestClosedVWAP1mForPair is the bare
-	// Σ(quote)/Σ(base) closed bucket that BYPASSES the orchestrator's
-	// σ-outlier filter / min-USD-volume gate / freeze protection, so a
-	// fat-finger / manipulation print in the served minute would otherwise
-	// fire a SPURIOUS customer price alert. pricingguard.GuardServedVWAP1m
-	// serves last-known-good when the latest bucket is grossly off its
-	// trailing baseline (no spurious alert), is byte-identical on a healthy
-	// bucket, and fails open on thin history.
-	served := pricingguard.GuardServedVWAP1m(ctx, r.store, r.logger, pair, row)
-	return served.VWAP, served.Bucket.Add(time.Minute), true, nil
+	return "", time.Time{}, false, nil
 }
 
 // buildAggregatorSubstanceGate maps [pricing_guard] onto the shared

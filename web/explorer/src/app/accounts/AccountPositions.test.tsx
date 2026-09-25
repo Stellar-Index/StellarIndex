@@ -254,3 +254,130 @@ describe('AccountPositions price envelope', () => {
     expect(screen.getByText('71.9% of value')).toBeInTheDocument();
   });
 });
+
+// /v1/price/batch rejects the WHOLE request on one id it cannot parse and
+// on more than 100 ids (internal/api/v1/price.go). The lake serves a
+// classic AMM pool share as a `pool:<hex>` trustline, so one LP position
+// used to erase the valuation of every other holding, silently.
+const POOL_SHARE = `pool:${'ab'.repeat(32)}`;
+const FILLER_ISSUER =
+  'GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA';
+
+type Params = Record<string, string | number | undefined> | undefined;
+
+function batchIdsOf(params: Params): string[] {
+  return String(params?.asset_ids ?? '').split(',');
+}
+
+function stubStrictBatch(
+  trustlines: { asset: string; balance: string }[],
+  opts: { rejectAll?: boolean } = {},
+) {
+  vi.mocked(apiGet).mockImplementation(
+    async (path: string, params?: Params) => {
+      if (path.startsWith('/v1/accounts/')) {
+        return {
+          data: {
+            account_id: ACCOUNT,
+            exists: true,
+            balance: XLM_BALANCE,
+            trustlines,
+          },
+        };
+      }
+      if (path === '/v1/price/batch') {
+        const ids = batchIdsOf(params);
+        if (
+          opts.rejectAll ||
+          ids.length > 100 ||
+          ids.some((id) => id.startsWith('pool:') || id === 'unknown_asset')
+        ) {
+          throw new Error(
+            '400 Bad Request on /v1/price/batch — invalid-asset-id',
+          );
+        }
+        const rows = [];
+        if (ids.includes('native')) {
+          rows.push({
+            asset_id: 'crypto:XLM',
+            quote: 'fiat:USD',
+            price: '0.19498671210062048170',
+            price_type: 'vwap',
+            observed_at: hoursAgo(1),
+          });
+        }
+        if (ids.includes(USDC)) {
+          rows.push({
+            asset_id: USDC,
+            quote: 'fiat:USD',
+            price: '1.000000000000',
+            price_type: 'vwap',
+            observed_at: hoursAgo(1),
+          });
+        }
+        return {
+          data: rows,
+          as_of: new Date().toISOString(),
+          flags: { stale: false },
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    },
+  );
+}
+
+function batchCalls(): string[][] {
+  return vi
+    .mocked(apiGet)
+    .mock.calls.filter((c) => c[0] === '/v1/price/batch')
+    .map((c) => batchIdsOf(c[1] as Params));
+}
+
+describe('AccountPositions batch robustness', () => {
+  afterEach(() => {
+    vi.mocked(apiGet).mockReset();
+  });
+
+  it('values the priced holdings when the account holds a pool share', async () => {
+    stubStrictBatch([
+      { asset: USDC, balance: USDC_BALANCE },
+      { asset: POOL_SHARE, balance: '1230000000' },
+      { asset: 'unknown_asset', balance: '10' },
+    ]);
+    renderPanel();
+
+    expect(await screen.findAllByText('≥ $69.50')).toHaveLength(2);
+    expect(screen.getByText('2 priced')).toBeInTheDocument();
+    // The pool share stays listed, counted as unpriced rather than dropped.
+    expect(screen.getByText('excludes 2 unpriced')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(batchCalls().flat()).not.toContain(POOL_SHARE);
+  });
+
+  it('chunks more than 100 holdings instead of losing the whole valuation', async () => {
+    const filler = Array.from({ length: 119 }, (_, i) => ({
+      asset: `T${i}-${FILLER_ISSUER}`,
+      balance: '10000000',
+    }));
+    stubStrictBatch([{ asset: USDC, balance: USDC_BALANCE }, ...filler]);
+    renderPanel();
+
+    expect(await screen.findAllByText('≥ $69.50')).toHaveLength(2);
+    expect(screen.getByText('2 priced')).toBeInTheDocument();
+    const calls = batchCalls();
+    expect(calls.length).toBe(2);
+    for (const ids of calls) expect(ids.length).toBeLessThanOrEqual(100);
+    expect(calls.flat()).toHaveLength(121);
+  });
+
+  it('says so when the price lookup itself failed', async () => {
+    stubStrictBatch([{ asset: USDC, balance: USDC_BALANCE }], {
+      rejectAll: true,
+    });
+    renderPanel();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Price lookup failed for 2 of 2 holdings',
+    );
+  });
+});
