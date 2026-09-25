@@ -1,5 +1,8 @@
 ---
-# Brings up Prometheus + Alertmanager on archival-node hosts.
+# Brings up Prometheus + Alertmanager on the dedicated prometheus_pair
+# hosts. Never an archival node: the role renders the whole-host
+# /etc/nftables.conf, which would drop that host's public ports (the
+# role's preflight asserts this, and runs under any --tags selection).
 # Companion to playbooks/archival-node.yml — the archival-node
 # playbook installs node_exporter and bind-mounts the metric ports;
 # this playbook wires the scrape + alert routing layer on top.
@@ -19,7 +22,7 @@
 # 01-preflight.yml requires a `prometheus_pair` group with exactly two
 # hosts, plus a populated `stellarindex_api`/`_aggregator`/`_indexer`
 # scrape-target group. r1.yml defines only `archival_nodes` with a
-# single host, so the play fails at the first assert.
+# single host, so the play matches no hosts and changes nothing.
 #
 # R1's Prometheus + Alertmanager are managed out-of-band today:
 # configs/prometheus/rules.r1/ (the R1 rule overlay, kept in lockstep
@@ -76,7 +79,7 @@
 # back to a receiver that delivers to nobody.
 
 - name: Monitoring (Prometheus + Alertmanager)
-  hosts: archival_nodes
+  hosts: prometheus_pair
   become: true
   gather_facts: true
 

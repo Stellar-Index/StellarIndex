@@ -1,7 +1,9 @@
 ---
+# `always`: a tag-filtered run (e.g. --tags firewall) must still hit the
+# host guards before 06-firewall replaces the whole ruleset.
 - name: 01 — preflight
   import_tasks: 01-preflight.yml
-  tags: [prometheus, preflight]
+  tags: [prometheus, preflight, always]
 
 - name: 02 — install prometheus + alertmanager
   import_tasks: 02-install.yml

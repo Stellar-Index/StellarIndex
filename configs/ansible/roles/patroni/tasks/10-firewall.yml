@@ -47,6 +47,15 @@
           }
         }
 
+        # Per-source SSH rate-limit state; bounded and expiring so an
+        # internet-wide scan cannot grow it without limit.
+        set ssh_ratelimit_v4 {
+          type ipv4_addr
+          size 65535
+          flags dynamic,timeout
+          timeout 5m
+        }
+
         chain input {
           type filter hook input priority filter; policy drop;
 
@@ -58,7 +67,11 @@
           ip protocol icmp limit rate 10/second accept
           ip6 nexthdr ipv6-icmp limit rate 10/second accept
 
-          tcp dport 22 ip saddr @ssh_allowed_v4 ct state new limit rate 30/minute accept comment "ssh"
+          # SSH is limited per source address: one shared bucket let any single
+          # scanner starve every other new connection into `policy drop`. If the
+          # set is full the update does not match and the accept below still applies.
+          tcp dport 22 ip saddr @ssh_allowed_v4 ct state new update @ssh_ratelimit_v4 { ip saddr limit rate over 30/minute burst 10 packets } drop comment "ssh-ratelimit"
+          tcp dport 22 ip saddr @ssh_allowed_v4 ct state new accept comment "ssh"
 
           # Postgres + Patroni REST + etcd, internal-only.
           tcp dport { {{ patroni_postgres_port }}, 8008, {{ etcd_client_port }}, {{ etcd_peer_port }} } ip saddr @internal_v4 accept comment "patroni-internal"
