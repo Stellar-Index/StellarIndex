@@ -529,40 +529,6 @@ func (g *SubstanceGate) AllowedAt(ctx context.Context, base, quote canonical.Ass
 	return allowed
 }
 
-// PriceWithheldAt is [PriceWithheld] for a point-in-time read: the same
-// one expression over the same two gates, with the substance half asked
-// about the instant being served instead of about now. The scam half is
-// deliberately NOT moved in time — a directory flag is an owner-level
-// trust decision about the issuer, and it withholds that issuer's
-// history along with its present.
-//
-// It sits beside [SubstanceGate.AllowedAt] rather than being spelled by
-// a caller for the reason [PriceWithheld] exists at all: a hand-written
-// call site can consult one gate and forget the other (MSP-07).
-func PriceWithheldAt(
-	ctx context.Context,
-	substance *SubstanceGate,
-	scam *ScamGate,
-	base, quote canonical.Asset,
-	at time.Time,
-	surface string,
-) bool {
-	return PriceWithholdingAt(ctx, substance, scam, base, quote, at, surface) != NotWithheld
-}
-
-// PriceWithholdingAt is [PriceWithheldAt] reporting which gate fired,
-// in the same scam-first order as [PriceWithholding].
-func PriceWithholdingAt(
-	ctx context.Context,
-	substance *SubstanceGate,
-	scam *ScamGate,
-	base, quote canonical.Asset,
-	at time.Time,
-	surface string,
-) Withholding {
-	return WithholdingFor(scam.WithheldPair(ctx, base, quote, surface), substance.AllowedAt(ctx, base, quote, at, surface))
-}
-
 func (g *SubstanceGate) clock() time.Time {
 	if g.now != nil {
 		return g.now()

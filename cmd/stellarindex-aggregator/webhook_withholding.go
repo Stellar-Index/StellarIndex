@@ -26,25 +26,13 @@ type webhookPublisher interface {
 	Publish(ctx context.Context, eventType platform.WebhookEventType, payload []byte) (customerwebhook.PublishResult, error)
 }
 
-// priceWithholding is the pair of [pricing_guard] gates this binary
-// consults before any customer-facing publication of an aggregated price.
-// Both are nil-receiver safe (nil withholds nothing).
-type priceWithholding struct {
-	substance *pricingguard.SubstanceGate
-	scam      *pricingguard.ScamGate
-}
-
-func (g priceWithholding) withheld(ctx context.Context, base, quote canonical.Asset, surface string) bool {
-	return pricingguard.PriceWithheld(ctx, g.substance, g.scam, base, quote, surface)
-}
-
 // anomalyFreezeHook fans an `anomaly.freeze` out to subscribed customers.
 // frozen_value is the pair's aggregated price, so a market /v1/price
 // withholds is not delivered: the freeze itself stays durable in
 // freeze_events, only the customer copy carrying the price is skipped.
-func anomalyFreezeHook(logger *slog.Logger, pub webhookPublisher, gates priceWithholding) timescale.FreezeHook {
+func anomalyFreezeHook(logger *slog.Logger, pub webhookPublisher, gates pricingguard.Gate) timescale.FreezeHook {
 	return func(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) {
-		if gates.withheld(ctx, asset, quote, freezeWebhookGateSurface) {
+		if gates.PriceWithheld(ctx, asset, quote, freezeWebhookGateSurface) {
 			logger.Info("anomaly.freeze webhook withheld: pair's price is withheld by pricing_guard",
 				"asset", asset.String(), "quote", quote.String())
 			return
@@ -77,9 +65,9 @@ func anomalyFreezeHook(logger *slog.Logger, pub webhookPublisher, gates priceWit
 // customers. our_price is the pair's aggregated price, so a market
 // /v1/price withholds is not delivered, for the same reason as
 // [anomalyFreezeHook].
-func divergenceFiringHook(logger *slog.Logger, pub webhookPublisher, gates priceWithholding) divergence.WarningHook {
+func divergenceFiringHook(logger *slog.Logger, pub webhookPublisher, gates pricingguard.Gate) divergence.WarningHook {
 	return func(ctx context.Context, pair canonical.Pair, cached divergence.CachedResult) {
-		if gates.withheld(ctx, pair.Base, pair.Quote, divergenceWebhookGateSurface) {
+		if gates.PriceWithheld(ctx, pair.Base, pair.Quote, divergenceWebhookGateSurface) {
 			logger.Info("divergence.firing webhook withheld: pair's price is withheld by pricing_guard",
 				"pair", pair.String())
 			return

@@ -278,7 +278,7 @@ func TestSubstanceGate_AllowedAt_NilGateAndUngatedPairAllow(t *testing.T) {
 	}
 }
 
-// PriceWithheldAt is one expression over both gates; the substance half
+// Gate.PriceWithholdingAt is one expression over both gates; the substance half
 // is the point-in-time one.
 func TestPriceWithheldAt_UsesThePointInTimeSubstanceVerdict(t *testing.T) {
 	base, quote := scamPair(t)
@@ -287,13 +287,13 @@ func TestPriceWithheldAt_UsesThePointInTimeSubstanceVerdict(t *testing.T) {
 		at:   func(time.Time) timescale.MarketSubstance { return dustSubstance },
 	}
 	gate := newTimedGate(r)
-	if PriceWithheld(context.Background(), gate, nil, base, quote, "test") {
+	if (Gate{Substance: gate}).PriceWithheld(context.Background(), base, quote, "test") {
 		t.Fatal("fixture: the live read must not be withheld")
 	}
-	if !PriceWithheldAt(context.Background(), gate, nil, base, quote, time.Date(2021, 3, 1, 9, 0, 0, 0, time.UTC), "test") {
-		t.Fatal("PriceWithheldAt did not withhold a dust instant")
+	if (Gate{Substance: gate}).PriceWithholdingAt(context.Background(), base, quote, time.Date(2021, 3, 1, 9, 0, 0, 0, time.UTC), "test") == NotWithheld {
+		t.Fatal("PriceWithholdingAt did not withhold a dust instant")
 	}
-	if PriceWithheldAt(context.Background(), nil, nil, base, quote, gateNow, "test") {
+	if (Gate{}).PriceWithholdingAt(context.Background(), base, quote, gateNow, "test") != NotWithheld {
 		t.Error("nil gates must allow")
 	}
 }

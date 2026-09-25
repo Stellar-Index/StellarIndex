@@ -29,12 +29,13 @@
 // invariant is per-surface rather than "one seam":
 //
 //   - the price-reader seam — /v1/price, /v1/price/batch, and the
-//     asset headline, via [PriceWithheld] (cmd/stellarindex-api's
+//     asset headline, via [Gate] (cmd/stellarindex-api's
 //     priceWithheld chokepoint delegates to it);
 //   - the SEP-40 oracle price paths, /v1/price/at and the DEX-TVL
 //     valuation, same chokepoint;
-//   - the aggregator's price-alert evaluator, same chokepoint —
-//     customer webhooks fire off the same closed VWAP buckets;
+//   - the aggregator's price-alert evaluator and its anomaly.freeze and
+//     divergence.firing webhooks, via the same [Gate] — customer
+//     webhooks fire off the same closed VWAP buckets;
 //   - /v1/price/tip, in computeTip (the reader seam covers only the
 //     middle branch of that function);
 //   - /v1/price/stream, in closedStreamWithheld — at connect AND on
@@ -56,9 +57,9 @@
 //
 // A new price-claim surface must add its own call. There is no seam
 // that covers them all, and asserting one in a comment is how this gap
-// survived — cmd/stellarindex-api's TestPriceServingSeamsAreGated
-// enumerates the reader-backed ones so a new ungated seam fails CI,
-// but it cannot see a handler that computes its own price.
+// survived — gate_guard_test.go fails on any function in any cmd/*
+// binary that reads a closed VWAP bucket without asking a [Gate], but it
+// cannot see a handler that computes its own price.
 //
 // BOTH LEGS, always. The withholding decision is a property of the
 // MARKET, not of whichever leg the client happened to name first: a
@@ -148,6 +149,17 @@ type ScamDirectoryReader interface {
 	DirectoryEntryByAddress(ctx context.Context, address string) (timescale.DirectoryEntry, bool, error)
 }
 
+// scamFlaggedAssetLister is the optional seam behind the SAC index: every
+// registered classic asset whose issuer is scam-flagged. A reader without
+// it leaves the gate unable to recognise an unregistered SAC spelling.
+type scamFlaggedAssetLister interface {
+	DirectoryScamFlaggedClassicAssets(ctx context.Context) ([]canonical.Asset, error)
+}
+
+// Both binaries hand NewScamGate a *timescale.Store; if it stopped
+// providing the listing the SAC index would disarm without a build error.
+var _ scamFlaggedAssetLister = (*timescale.Store)(nil)
+
 const (
 	scamCacheTTL = 60 * time.Second
 	scamCacheMax = 8192
@@ -168,6 +180,11 @@ type ScamGate struct {
 
 	mu    sync.Mutex
 	cache map[string]scamVerdict // keyed by issuer G-address
+
+	flaggedAssets scamFlaggedAssetLister // nil → no SAC index
+	sacMu         sync.Mutex
+	sacIndex      map[string]struct{} // SAC contract ids of flagged issuances
+	sacExpires    time.Time
 }
 
 // ScamGateOptions tunes a ScamGate. Logger rides here (not as a
@@ -185,32 +202,36 @@ func NewScamGate(dir ScamDirectoryReader, opts ScamGateOptions) *ScamGate {
 	if dir == nil {
 		return nil
 	}
-	return &ScamGate{dir: dir, logger: opts.Logger, cache: make(map[string]scamVerdict)}
+	g := &ScamGate{dir: dir, logger: opts.Logger, cache: make(map[string]scamVerdict)}
+	g.flaggedAssets, _ = dir.(scamFlaggedAssetLister)
+	return g
 }
 
-// PriceWithheld is the ONE withholding decision, consumed by BOTH
-// binaries: withhold when the thin-market substance gate refuses the
-// pair, OR when either leg's issuer is directory-scam-flagged.
+// Gate is the ONE withholding decision every binary consults before it
+// publishes an aggregated price: withhold when the thin-market substance
+// gate refuses the pair, OR when either leg's issuer is
+// directory-scam-flagged.
 //
-// It lives here rather than in cmd/stellarindex-api because a decision
-// spelled once per binary drifts once per binary. The API binary had
-// the only copy, so the aggregator's price-alert evaluator — which
-// fires customer webhooks off the same closed VWAP buckets the API
-// serves — consulted the substance gate alone and the scam gate not at
-// all: an alert could name a price /v1/price refuses to publish
-// (F002/K001). cmd/stellarindex-api's priceWithheld and the
-// aggregator's price-alert reader both delegate here.
+// It lives here rather than in a binary because a decision spelled once
+// per binary drifts once per binary: the aggregator's price-alert
+// evaluator once consulted the substance half alone, so an alert could
+// name a price /v1/price refuses to publish. Its methods are the only
+// exported expression that folds the two halves; the AST guard in
+// gate_guard_test.go fails on any cmd/* file that consults a half
+// directly or reads a closed VWAP bucket without asking a Gate.
 //
-// Both gates are nil-receiver safe (nil == allow everything), so an
-// operator who disabled [pricing_guard] keeps today's behaviour.
-func PriceWithheld(
-	ctx context.Context,
-	substance *SubstanceGate,
-	scam *ScamGate,
-	base, quote canonical.Asset,
-	surface string,
-) bool {
-	return PriceWithholding(ctx, substance, scam, base, quote, surface) != NotWithheld
+// Both halves are nil-receiver safe (nil == allow everything), so an
+// operator who disabled [pricing_guard] keeps today's behaviour, and the
+// zero Gate withholds nothing.
+type Gate struct {
+	Substance *SubstanceGate // nil → no thin-market floor
+	Scam      *ScamGate      // nil → no scam-issuer gate
+}
+
+// PriceWithheld reports whether the pair's aggregated price must not be
+// published. `surface` is a low-cardinality metric label.
+func (g Gate) PriceWithheld(ctx context.Context, base, quote canonical.Asset, surface string) bool {
+	return g.PriceWithholding(ctx, base, quote, surface) != NotWithheld
 }
 
 // Withholding names which gate withheld a pair's price, so a surface
@@ -227,18 +248,21 @@ const (
 	WithheldFlaggedIssuer Withholding = "flagged_issuer"
 )
 
-// PriceWithholding is [PriceWithheld] reporting WHICH gate fired. The
-// scam gate is asked FIRST: when both would withhold, the flag is the
+// PriceWithholding is [Gate.PriceWithheld] reporting WHICH gate fired.
+// The scam gate is asked FIRST: when both would withhold, the flag is the
 // true reason, and reporting the pair as merely thin would hand the
 // client the recompute-it-yourself advice the flag exists to refuse.
-func PriceWithholding(
-	ctx context.Context,
-	substance *SubstanceGate,
-	scam *ScamGate,
-	base, quote canonical.Asset,
-	surface string,
-) Withholding {
-	return WithholdingFor(scam.WithheldPair(ctx, base, quote, surface), substance.Allowed(ctx, base, quote, surface))
+func (g Gate) PriceWithholding(ctx context.Context, base, quote canonical.Asset, surface string) Withholding {
+	return WithholdingFor(g.Scam.WithheldPair(ctx, base, quote, surface), g.Substance.Allowed(ctx, base, quote, surface))
+}
+
+// PriceWithholdingAt is [Gate.PriceWithholding] for a point-in-time read:
+// the substance half is asked about the instant being served instead of
+// about now. The scam half is deliberately NOT moved in time — a
+// directory flag is an owner-level trust decision about the issuer, and
+// it withholds that issuer's history along with its present.
+func (g Gate) PriceWithholdingAt(ctx context.Context, base, quote canonical.Asset, at time.Time, surface string) Withholding {
+	return WithholdingFor(g.Scam.WithheldPair(ctx, base, quote, surface), g.Substance.AllowedAt(ctx, base, quote, at, surface))
 }
 
 // WithholdingFor folds the two gates' verdicts into one; a flagged issuer
@@ -325,18 +349,21 @@ func (g *ScamGate) Withheld(ctx context.Context, base canonical.Asset, surface s
 // bit-for-bit unchanged; only the SAC spelling moves. XLM's SAC
 // canonicalises to `native`, which has no issuer and so returns false.
 //
-// KNOWN BYPASS: a SAC with no `[supply].sac_wrappers` entry resolves to
-// itself — a C-address cannot be inverted to its classic asset without
-// that table — so it returns false here with no directory lookup, and a
-// flagged issuer's price is served under that contract id. The gate
-// cannot tell it from a genuine bare SEP-41 token, which must keep
-// serving, so it does not fail closed. Closing it for a flagged issuer
-// means registering that asset's SAC in `sac_wrappers`.
+// A SAC with no `[supply].sac_wrappers` entry resolves to itself — a
+// C-address cannot be inverted to its classic asset without that table —
+// so a contract leg is matched against [ScamGate.flaggedSAC]'s index
+// instead: the derived SAC ids of every registered classic asset whose
+// issuer is flagged. Derivation, not metadata, is the trust anchor, so a
+// genuine SEP-41 token can never match. What stays unrecognised is a SAC
+// whose classic asset is absent from classic_assets.
 func (g *ScamGate) withheldLeg(ctx context.Context, asset canonical.Asset, surface string) bool {
 	if g == nil {
 		return false
 	}
 	asset = canonical.CanonicalAsset(asset)
+	if asset.Type == canonical.AssetSoroban {
+		return g.flaggedSAC(ctx, asset.ContractID, surface)
+	}
 	if asset.Type != canonical.AssetClassic || asset.Issuer == "" {
 		return false
 	}
@@ -380,6 +407,56 @@ func (g *ScamGate) withheldLeg(ctx context.Context, asset canonical.Asset, surfa
 		obs.PriceServeScamWithheldTotal.WithLabelValues(surface).Inc()
 	}
 	return withheld
+}
+
+// flaggedSAC reports whether contractID is the SAC of a flagged issuer's
+// classic asset. Fail-open on a listing error, counted like a directory
+// error; the failure is not cached.
+func (g *ScamGate) flaggedSAC(ctx context.Context, contractID, surface string) bool {
+	if g.flaggedAssets == nil || contractID == "" {
+		return false
+	}
+	index, err := g.flaggedSACIndex(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			obs.ScamGateLookupFailuresTotal.WithLabelValues(surface).Inc()
+			if g.logger != nil {
+				g.logger.Warn("scam pricing gate: flagged-asset listing failed — serving contract leg unguarded",
+					"contract", contractID, "surface", surface, "err", err)
+			}
+		}
+		return false
+	}
+	if _, ok := index[contractID]; !ok {
+		return false
+	}
+	obs.PriceServeScamWithheldTotal.WithLabelValues(surface).Inc()
+	return true
+}
+
+// flaggedSACIndex returns the cached SAC-id set, rebuilding it once per
+// scamCacheTTL so a cleared flag stops withholding on the same clock as
+// the issuer cache.
+func (g *ScamGate) flaggedSACIndex(ctx context.Context) (map[string]struct{}, error) {
+	now := g.clock()
+	g.sacMu.Lock()
+	defer g.sacMu.Unlock()
+	if g.sacIndex != nil && now.Before(g.sacExpires) {
+		return g.sacIndex, nil
+	}
+	assets, err := g.flaggedAssets.DirectoryScamFlaggedClassicAssets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	index := make(map[string]struct{}, len(assets))
+	for _, a := range assets {
+		// An invalid stored code or issuer has no derivable SAC to match.
+		if cid, derr := a.SacContractID(); derr == nil {
+			index[cid] = struct{}{}
+		}
+	}
+	g.sacIndex, g.sacExpires = index, now.Add(scamCacheTTL)
+	return index, nil
 }
 
 func (g *ScamGate) clock() time.Time {

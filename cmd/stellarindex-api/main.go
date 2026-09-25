@@ -3741,12 +3741,9 @@ const defaultVWAPFreshness = 15 * time.Minute
 // TestWithholdingGatesAreSpelledOnlyAtTheChokepoint fails if a future
 // call site spells either gate out again.
 //
-// The expression itself now lives in pricingguard.PriceWithholding: the
-// aggregator's price-alert evaluator serves customer webhooks off the
-// same closed VWAP buckets and had NO copy of the scam half at all, so
-// one binary-local chokepoint was one chokepoint short (F002/K001).
-// This function stays because the seam guard above derives its subject
-// set from calls to it by name.
+// The expression itself lives in pricingguard.Gate, shared with the
+// aggregator's customer-webhook surfaces. This function stays because
+// the seam guard above derives its subject set from calls to it by name.
 //
 // Both gates are nil-receiver safe (nil == allow-everything), so an
 // operator who disabled [pricing_guard] keeps today's behaviour.
@@ -3773,10 +3770,11 @@ func priceWithheld(
 	for _, opt := range opts {
 		opt(&q)
 	}
+	gate := pricingguard.Gate{Substance: substance, Scam: scam}
 	if q.pointInTime {
-		return pricingguard.PriceWithholdingAt(ctx, substance, scam, base, quote, q.at, surface)
+		return gate.PriceWithholdingAt(ctx, base, quote, q.at, surface)
 	}
-	return pricingguard.PriceWithholding(ctx, substance, scam, base, quote, surface)
+	return gate.PriceWithholding(ctx, base, quote, surface)
 }
 
 // withholdingQuery is what a seam may tell the chokepoint about the

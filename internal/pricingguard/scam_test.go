@@ -164,16 +164,16 @@ func TestPriceWithholding_NamesTheScamGateFirst(t *testing.T) {
 	scam := NewScamGate(&fakeDir{entry: timescale.DirectoryEntry{Tags: []string{"unsafe"}}, found: true}, ScamGateOptions{})
 	clean := NewScamGate(&fakeDir{found: false}, ScamGateOptions{})
 
-	if got := PriceWithholding(ctx, thin, scam, flagged, native, "test"); got != WithheldFlaggedIssuer {
+	if got := (Gate{Substance: thin, Scam: scam}).PriceWithholding(ctx, flagged, native, "test"); got != WithheldFlaggedIssuer {
 		t.Errorf("thin AND flagged: verdict = %q, want WithheldFlaggedIssuer", got)
 	}
-	if got := PriceWithholding(ctx, thin, clean, flagged, native, "test"); got != WithheldThinMarket {
+	if got := (Gate{Substance: thin, Scam: clean}).PriceWithholding(ctx, flagged, native, "test"); got != WithheldThinMarket {
 		t.Errorf("thin only: verdict = %q, want WithheldThinMarket", got)
 	}
-	if got := PriceWithholding(ctx, nil, nil, flagged, native, "test"); got != NotWithheld {
+	if got := (Gate{}).PriceWithholding(ctx, flagged, native, "test"); got != NotWithheld {
 		t.Errorf("nil gates: verdict = %q, want NotWithheld", got)
 	}
-	if !PriceWithheld(ctx, thin, scam, flagged, native, "test") {
+	if !(Gate{Substance: thin, Scam: scam}).PriceWithheld(ctx, flagged, native, "test") {
 		t.Error("PriceWithheld must agree with a withholding verdict")
 	}
 }
