@@ -977,6 +977,26 @@ jobs:
         # trips it, and a mere name-prefix lookalike does not. A ban you
         # evade by importing one directory deeper is worse than none.
         run: ./scripts/ci/lint-imports-test.sh
+      - name: lint-git-fixture-isolation
+        # #1257: previously reachable only through `make lint-changed`
+        # (opt-in pre-commit hook), so a fixture leaking a real .git
+        # marker into a test tree could merge through CI unseen.
+        run: ./scripts/ci/lint-git-fixture-isolation.sh
+      - name: lint-alerts-catalog
+        # #1257: same gap — the alerts-catalogue Severity column could
+        # drift from labels.severity through CI with only the hook to
+        # catch it, and the hook is opt-in.
+        run: python3 ./scripts/ci/lint-alerts-catalog.py
+      - name: lint-yaml-duplicate-keys
+        # #1257: same gap — a duplicate mapping key in a rule file
+        # (later key silently wins) could merge through CI unseen.
+        run: python3 ./scripts/ci/lint-yaml-duplicate-keys.py
+      - name: lint-go-toolchain-parity self-test
+        # #1257: the toolchain-parity gate's own self-test ran nowhere —
+        # not in this workflow, not in verify.sh — so a regression in the
+        # gate itself (the exact failure mode it exists to catch) was
+        # invisible.
+        run: ./scripts/ci/lint-go-toolchain-parity-test.sh
       - name: lint-go-typographic-quotes
         # `make fmt` runs gofumpt, whose doc-comment reformatter applies Go's
         # legacy TeX quoting rule: a doubled apostrophe in a DOC comment
@@ -1381,6 +1401,12 @@ jobs:
         run: ./scripts/ci/lint-systemd-hardening.sh
       - name: systemd unit hardening self-test
         run: ./scripts/ci/lint-systemd-hardening-test.sh
+      - name: memory-mappings self-test
+        # #1257: the mapping-headroom probe's own fixture tests ran
+        # nowhere — CI has no host and macOS has no /proc, so this is the
+        # only place the probe's process-selection and fail-closed
+        # behaviour can be exercised at all.
+        run: ./scripts/ci/memory-mappings-test.sh
 
       - name: lint-textfile-exposition
         # r1 2026-09-10: the TimescaleDB probe ran

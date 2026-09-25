@@ -53,6 +53,9 @@ func KeepAliveHTTPClient() *http.Client {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
+	// http-timeout-ok: this client only performs the WS upgrade dial; the
+	// long-lived connection afterwards is a net.Conn read loop with its own
+	// ping/stall detection (see ErrStreamStalled), not an http.Client call.
 	return &http.Client{Transport: transport}
 }
 

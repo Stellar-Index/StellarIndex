@@ -45,6 +45,51 @@ mk good svc.go 'package svc
 func f() { c := &http.Client{Timeout: 30 * time.Second}; resp, _ := c.Do(req); _ = resp }'
 check "an explicitly bounded client passes" 0 "$TMP/good"
 
+echo "lint-http-timeouts-test: #1256 — other spellings of the same unbounded client"
+
+mk getcall svc.go 'package svc
+func f() { resp, _ := http.Get("https://example.invalid"); _ = resp }'
+check "http.Get (uses DefaultClient internally) is caught" 1 "$TMP/getcall"
+
+mk postcall svc.go 'package svc
+func f() { resp, _ := http.Post(u, ct, body); _ = resp }'
+check "http.Post is caught" 1 "$TMP/postcall"
+
+mk inlinelit svc.go 'package svc
+func f() { c := &http.Client{}; resp, _ := c.Get(u); _ = resp }'
+check "an inline &http.Client{} with no Timeout is caught" 1 "$TMP/inlinelit"
+
+mk varlit svc.go 'package svc
+var C = http.Client{}
+func f() { resp, _ := C.Get(u); _ = resp }'
+check "a var-declared http.Client{} with no Timeout is caught" 1 "$TMP/varlit"
+
+mk multilinelit svc.go 'package svc
+func f() {
+	c := &http.Client{
+		Transport: t,
+	}
+	_ = c
+}'
+check "a multi-line http.Client{} literal with no Timeout is caught" 1 "$TMP/multilinelit"
+
+mk litwithtimeout svc.go 'package svc
+func f() {
+	c := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+	_ = c
+}'
+check "a multi-line http.Client{} literal WITH Timeout passes" 0 "$TMP/litwithtimeout"
+
+mk litannotated svc.go 'package svc
+func f() {
+	// http-timeout-ok: upgrade dial only, connection is a raw net.Conn afterwards
+	c := &http.Client{Transport: t}
+	_ = c
+}'
+check "an annotated timeout-less http.Client{} passes" 0 "$TMP/litannotated"
+
 echo "lint-http-timeouts-test: escape hatch"
 
 mk okinline svc.go 'package svc

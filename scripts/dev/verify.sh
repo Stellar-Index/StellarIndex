@@ -261,6 +261,7 @@ echo "=== Dependabot toolchain-bump guard self-test ===" && ./scripts/ci/check-d
 # toolchain bump makes the vulnerability gate fail to parse the module graph
 # instead of reporting on it.
 echo "=== Go toolchain parity (govulncheck) ===" && ./scripts/ci/lint-go-toolchain-parity.sh
+echo "=== Go toolchain parity self-test ===" && ./scripts/ci/lint-go-toolchain-parity-test.sh
 # VERSIONS.md's pinned go-stellar-sdk tag must track go.mod's require line
 # (Q274: the row drifted to v0.6.0 while go.mod moved to v0.7.3).
 echo "=== SDK version pin self-test ===" && ./scripts/ci/lint-sdk-version-pin-test.sh
@@ -292,6 +293,9 @@ echo "=== Source enablement self-test ===" && ./scripts/ci/lint-source-enablemen
 echo "=== Pre-push integration-routing self-test ===" && ./scripts/ci/prepush-integration-required-test.sh
 echo "=== Integration-shard partition self-test ===" && ./scripts/ci/integration-shard-test.sh
 echo "=== Shell SIGPIPE (pipe-into-head) ===" && ./scripts/ci/lint-shell-sigpipe.sh
+echo "=== Git fixture isolation ===" && ./scripts/ci/lint-git-fixture-isolation.sh
+echo "=== YAML duplicate keys ===" && python3 ./scripts/ci/lint-yaml-duplicate-keys.py
+echo "=== Memory-mappings probe self-test ===" && ./scripts/ci/memory-mappings-test.sh
 echo "=== HTTP timeouts ===" && ./scripts/ci/lint-http-timeouts.sh
 echo "=== HTTP timeouts self-test ===" && ./scripts/ci/lint-http-timeouts-test.sh
 echo "=== Healthcheck oneshot start/runtime bound ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout.sh
@@ -501,6 +505,7 @@ defer_check_lane() { # defer_check_lane <deferred-file> <label> <reason> —
 lane_a() { # doc lints
     echo "=== Docs ==="          && ./scripts/ci/lint-docs.sh
     echo "=== Alerts catalogue self-test ===" && ./scripts/ci/lint-alerts-catalog-test.sh
+    echo "=== Alerts catalogue ===" && python3 ./scripts/ci/lint-alerts-catalog.py
     echo "=== Doc links ===" && ./scripts/ci/lint-doc-links.sh
     echo "=== Doc links self-test ===" && ./scripts/ci/lint-doc-links-test.sh
 }
