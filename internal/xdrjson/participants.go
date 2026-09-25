@@ -19,8 +19,9 @@ import (
 // the fields that are genuine account addresses (payment/path-payment
 // destination, allow-trust / set-trust-line-flags trustor, clawback `from`,
 // account-merge / create-account destination, create-claimable-balance
-// claimant destinations, begin-sponsoring-future-reserves sponsorship
-// target, and muxed destinations resolved to their underlying G-account).
+// claimant destinations, begin-sponsoring-future-reserves and
+// revoke-sponsorship sponsorship targets, and muxed destinations resolved to
+// their underlying G-account).
 // Opaque free-text fields (a manage_data name/value, a memo, a contract string
 // arg) are NEVER interpreted as participants even when they happen to spell a
 // valid G-strkey — a per-type allowlist is the only safe way to keep an
@@ -106,6 +107,13 @@ func ParticipantAccounts(bodyB64 string) ([]string, error) {
 	case xdr.OperationTypeBeginSponsoringFutureReserves:
 		op := body.MustBeginSponsoringFutureReservesOp()
 		add(op.SponsoredId.Address())
+	case xdr.OperationTypeRevokeSponsorship:
+		op := body.MustRevokeSponsorshipOp()
+		if lk, ok := op.GetLedgerKey(); ok {
+			add(revokeSponsorshipLedgerKeyAccount(lk))
+		} else if signer, ok := op.GetSigner(); ok {
+			add(signer.AccountId.Address())
+		}
 	case xdr.OperationTypeInvokeHostFunction:
 		// Deliberately contributes no participants. A Soroban InvokeContract's
 		// call args AND its op.Auth SorobanAuthorizationEntry entries are both
@@ -119,4 +127,24 @@ func ParticipantAccounts(bodyB64 string) ([]string, error) {
 
 	sort.Strings(out)
 	return out, nil
+}
+
+// revokeSponsorshipLedgerKeyAccount returns the G-account that owns the
+// sponsored ledger entry named by a RevokeSponsorship op's ledger-key arm —
+// the account whose reserve requirement the revocation returns to it — or ""
+// when the entry has no single owning account (e.g. a claimable balance or
+// liquidity pool), which `add` safely drops.
+func revokeSponsorshipLedgerKeyAccount(lk xdr.LedgerKey) string {
+	switch lk.Type {
+	case xdr.LedgerEntryTypeAccount:
+		return lk.MustAccount().AccountId.Address()
+	case xdr.LedgerEntryTypeTrustline:
+		return lk.MustTrustLine().AccountId.Address()
+	case xdr.LedgerEntryTypeOffer:
+		return lk.MustOffer().SellerId.Address()
+	case xdr.LedgerEntryTypeData:
+		return lk.MustData().AccountId.Address()
+	default:
+		return ""
+	}
 }
