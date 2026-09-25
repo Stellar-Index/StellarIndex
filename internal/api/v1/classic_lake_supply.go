@@ -68,6 +68,10 @@ import (
 // the trustline figure in that case. The consequence is the safety property
 // this change rests on: no asset's served circulating supply can go DOWN as a
 // result of it. It closes a known understatement and cannot open a new one.
+//
+// The floor holds only for a trustline sum of comparable vintage: one taken
+// before a burn floors nothing after it, which is why cachedClassicSupply
+// stops serving the map once it is classicSupplyMaxAge old.
 
 const (
 	// classicLakeSupplyTTL bounds how long one asset's lake-flows reading is

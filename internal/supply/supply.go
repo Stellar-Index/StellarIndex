@@ -110,6 +110,12 @@ const (
 	// actually outstanding), while USDC, EURC, AQUA, yXLM and VELO all
 	// landed within 0.03%. That is why this basis ranks BELOW a direct
 	// supply observation and above only the trustline sum.
+	//
+	// NOT exclusion-netted: the flow sum carries no issuer or locked-set
+	// balances to subtract, so total == circulating here, as for
+	// [BasisSEP41LakeFlows]. The listing publishes it as
+	// circulating_supply; an observation for the same asset
+	// ([BasisIssuerExclusion], [BasisOverride]) subtracts those sets.
 	BasisClassicLakeFlows Basis = "classic_lake_flows"
 
 	// BasisClassicTrustlineSum — a CLASSIC asset's supply summed from
@@ -121,6 +127,10 @@ const (
 	// minted, which is what makes it a floor rather than an estimate, and
 	// the floor is what keeps an under-seeded flow sum from being
 	// published as a smaller truth.
+	//
+	// NOT exclusion-netted either: every holder's trustline balance is
+	// summed, locked-set accounts included, so total == circulating here
+	// and it floors the TOTAL, not an issuer/locked-excluded circulating.
 	BasisClassicTrustlineSum Basis = "classic_trustline_sum"
 
 	// BasisContractStorageBalances — a Soroban token's supply summed from the
