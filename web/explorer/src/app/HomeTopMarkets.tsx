@@ -15,7 +15,7 @@ import {
   THead,
   TR,
 } from '@/components/ui';
-import { formatCompact, formatSubunitPrice } from '@/lib/format';
+import { formatCompact, formatPairPrice } from '@/lib/format';
 import { shortAssetText } from '@/lib/asset-label';
 
 /**
@@ -109,7 +109,7 @@ export function HomeTopMarkets() {
                       </Link>
                     </Td>
                     <Td align="right" className="text-ink-body font-mono">
-                      {m.last_price ? formatLastPrice(m.last_price) : '—'}
+                      {m.last_price ? formatPairPrice(Number(m.last_price)) : '—'}
                     </Td>
                     <Td align="right" className="font-mono">
                       {m.volume_24h_usd
@@ -128,16 +128,4 @@ export function HomeTopMarkets() {
       )}
     </section>
   );
-}
-
-function formatLastPrice(raw: string): string {
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return '—';
-  return n >= 1000
-    ? n.toFixed(2)
-    : n >= 1
-      ? n.toFixed(4)
-      : n >= 0.0001
-        ? n.toFixed(6)
-        : formatSubunitPrice(n);
 }

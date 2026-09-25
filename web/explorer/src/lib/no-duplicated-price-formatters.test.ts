@@ -1,12 +1,73 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Resolve via node:path, not `new URL(rel, base)` — under the jsdom
 // environment the global URL is jsdom's and fileURLToPath rejects it
 // ("The URL must be of scheme file").
 const HERE = dirname(fileURLToPath(import.meta.url));
+const SRC = join(HERE, '..');
+
+function walk(dir: string, out: string[] = []): string[] {
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) walk(p, out);
+    else if (/\.(ts|tsx)$/.test(name) && !/\.test\.(ts|tsx)$/.test(name))
+      out.push(p);
+  }
+  return out;
+}
+
+const sources = walk(SRC).map((p) => ({
+  rel: relative(SRC, p),
+  text: readFileSync(p, 'utf8'),
+}));
+
+// GH-774: the guard used to pin the literal pre-2026-08-06 ladder text
+// (`n.toExponential(3)`), which no live fork has contained since
+// formatSubunitPrice replaced scientific notation — so it matched
+// nothing, and three later forks (HomeTopMarkets.formatLastPrice,
+// embed/LivePrice's inline ladder, LivePairPrice.formatQuotePrice) went
+// uncaught. This matches by STRUCTURE — the `>=1000/>=1/>=0.0001` and
+// `>=1/>=0.001` threshold chains that fall back to formatSubunitPrice,
+// the shape of lib/format.ts's formatPairPrice and formatPriceSmall —
+// so a differently-worded fork still trips it, per
+// fec-consolidation-guards.test.ts's enumerate-and-match-by-shape
+// pattern.
+const PAIR_LADDER_SHAPE =
+  />=\s*1000\b[\s\S]{0,300}?>=\s*1\b[\s\S]{0,300}?>=\s*0\.0001\b[\s\S]{0,200}?formatSubunitPrice\(/;
+const SMALL_LADDER_SHAPE =
+  />=\s*1\b[\s\S]{0,300}?>=\s*0\.001\b[\s\S]{0,200}?formatSubunitPrice\(/;
+
+function hasHandRolledLadder(text: string): boolean {
+  return PAIR_LADDER_SHAPE.test(text) || SMALL_LADDER_SHAPE.test(text);
+}
+
+describe('no hand-rolled price-ladder forks exist outside lib/format.ts', () => {
+  // Shape-matching against the whole tree surfaces older forks GH-774 did
+  // not name (build-time asset/embed pages, DepthChart's axis labels) —
+  // recorded here rather than silently swept in, so the guard's job from
+  // here is to block a NEW (6th) fork, not to have quietly re-narrowed
+  // itself back to a fixed list. Migrate one off this list and delete its
+  // entry; do not add to it.
+  const KNOWN_UNMIGRATED = new Set([
+    'app/assets/[slug]/page.tsx',
+    'app/embed/asset/[slug]/page.tsx',
+    'app/embed/currency/[ticker]/page.tsx',
+    'app/embed/pair/[pair]/page.tsx',
+    'app/markets/[pair]/page.tsx',
+    'components/charts/DepthChart.tsx',
+  ]);
+
+  it('formatPairPrice / formatPriceSmall are the only ladder implementations', () => {
+    const offenders = sources
+      .filter((f) => hasHandRolledLadder(f.text))
+      .map((f) => f.rel)
+      .filter((r) => r !== 'lib/format.ts' && !KNOWN_UNMIGRATED.has(r));
+    expect(offenders).toEqual([]);
+  });
+});
 
 // COR-14/AGT-05: DexesView.tsx, PoolsTable.tsx, and MarketsTable.tsx each
 // hand-copied the exact same quote-per-base price ladder instead of
@@ -21,8 +82,6 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // cell, defines no local one, and nobody re-copies the raw ladder.
 // See SourceStatsPanel.test.tsx for a sibling case (the local
 // `formatCompact` fork) where the duplication *had* already drifted.
-const DUPLICATED_LADDER =
-  'n >= 1000 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n >= 0.0001 ? n.toFixed(6) : n.toExponential(3)';
 
 // 2026-08-24 (FEC audit A3-F8): PoolsTable + PairsTable folded into the
 // shared VenueMarketsTable — the price-table set is now the two remaining
@@ -45,7 +104,7 @@ describe.each(files)('%s', (rel) => {
   });
 
   it('does not hand-copy the price-ladder ternary', () => {
-    expect(src).not.toContain(DUPLICATED_LADDER);
+    expect(hasHandRolledLadder(src)).toBe(false);
   });
 });
 
@@ -83,6 +142,6 @@ describe('the shared LastPriceCell', () => {
     // The drift the second fork introduced: a cell without the tick
     // flash. The shared cell must keep it.
     expect(src).toContain('usePriceFlash');
-    expect(src).not.toContain(DUPLICATED_LADDER);
+    expect(hasHandRolledLadder(src)).toBe(false);
   });
 });

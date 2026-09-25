@@ -46,7 +46,9 @@ describe('FEC guards (repo-walk)', () => {
   // for stat lines, reviewed 2026-08-24. RLT-388 (2026-09-21): the
   // /convert/[from]/[to] headline, interactive widget and meta
   // description were three independent formatRate forks that could
-  // (and did) disagree; folded onto formatPairPrice.
+  // (and did) disagree; folded onto formatPairPrice. GH-774: the home
+  // Top Markets table's own `formatLastPrice` ternary was the same
+  // formatPairPrice shape, hand-copied; folded onto the import.
   it('formatPairPrice importers are exactly the reviewed set', () => {
     const allowed = new Set([
       'lib/format.ts',
@@ -58,6 +60,7 @@ describe('FEC guards (repo-walk)', () => {
       'app/convert/[from]/[to]/page.tsx',
       'app/convert/[from]/[to]/ConvertLive.tsx',
       'app/convert/[from]/[to]/ConvertPair.tsx',
+      'app/HomeTopMarkets.tsx',
     ]);
     const importers = sources
       .filter((f) => f.text.includes('formatPairPrice'))
