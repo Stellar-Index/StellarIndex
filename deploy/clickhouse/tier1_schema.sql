@@ -87,8 +87,8 @@ CREATE TABLE IF NOT EXISTS stellar.transactions
     inner_result_code         Int32  DEFAULT 0,  -- inner TransactionResultCode (the inner failure reason)
     -- Bloom skip-index for hash lookups (GET /v1/tx/{hash}, ADR-0038): the
     -- sort key is (ledger_seq, tx_index), so WHERE tx_hash=? would otherwise
-    -- full-scan. New parts are indexed on insert; existing history needs a
-    -- one-time `ALTER TABLE stellar.transactions MATERIALIZE INDEX idx_tx_hash`.
+    -- full-scan. New parts are indexed on insert; an existing host takes it
+    -- (and idx_tx_source) from deploy/clickhouse/tier1_skip_indexes.sql.
     INDEX idx_tx_hash tx_hash TYPE bloom_filter(0.01) GRANULARITY 1,
     -- Per-account submitted-tx lookups (GET /v1/accounts/{g}/transactions).
     INDEX idx_tx_source source_account TYPE bloom_filter(0.01) GRANULARITY 1,
@@ -114,7 +114,8 @@ CREATE TABLE IF NOT EXISTS stellar.operations
     ingested_at    DateTime DEFAULT now(),
     -- Per-account sourced-operation lookups (GET /v1/accounts/{g}/operations);
     -- sort key is (ledger_seq, tx_index, op_index) so a source_account
-    -- predicate would otherwise full-scan. MATERIALIZE INDEX for history.
+    -- predicate would otherwise full-scan. Existing host:
+    -- deploy/clickhouse/tier1_skip_indexes.sql.
     INDEX idx_op_source source_account TYPE bloom_filter(0.01) GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(ingested_at)
@@ -185,8 +186,7 @@ CREATE TABLE IF NOT EXISTS stellar.contract_events
     -- Bloom skip-index for per-contract activity (GET /v1/contracts/{c},
     -- ADR-0038): the sort key is (ledger_seq, tx_hash, ...), so WHERE
     -- contract_id=? would otherwise full-scan. New parts indexed on insert;
-    -- existing history needs `ALTER TABLE stellar.contract_events
-    -- MATERIALIZE INDEX idx_contract_id`.
+    -- an existing host: deploy/clickhouse/tier1_skip_indexes.sql.
     INDEX idx_contract_id contract_id TYPE bloom_filter(0.01) GRANULARITY 1,
     -- Day-window pruning for the census rollup (stellarindex-ops
     -- ch-census-rollup, internal/storage/clickhouse/contracts_census.go):
@@ -196,11 +196,8 @@ CREATE TABLE IF NOT EXISTS stellar.contract_events
     -- columns — so without this index every granule of the table is read
     -- per run. close_time is monotone in ledger_seq (the sort key), so a
     -- per-granule minmax prunes a one-day window to ~one day of granules.
-    -- Existing history needs the one-time
-    --   `ALTER TABLE stellar.contract_events
-    --      ADD INDEX idx_ce_close_time close_time TYPE minmax GRANULARITY 1`
-    -- (new parts are indexed on insert from then on) followed by
-    --   `ALTER TABLE stellar.contract_events MATERIALIZE INDEX idx_ce_close_time`.
+    -- Existing host: deploy/clickhouse/tier1_skip_indexes.sql (ADD INDEX,
+    -- then per-partition MATERIALIZE INDEX).
     INDEX idx_ce_close_time close_time TYPE minmax GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(ingested_at)
@@ -1460,5 +1457,7 @@ CREATE TABLE IF NOT EXISTS stellar.contracts_census_daily
     last_seen   DateTime('UTC')
 )
 ENGINE = MergeTree
+-- Day, not intDiv(ledger, 1000000) like the lake tables: the day IS the unit
+-- ch-census-rollup recomputes and swaps with REPLACE PARTITION '<day>'.
 PARTITION BY day
 ORDER BY (day, contract_id);

@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS stellar.contracts_census_daily
     last_seen   DateTime('UTC')
 )
 ENGINE = MergeTree
+-- Day, not intDiv(ledger, 1000000) like the lake tables: the day IS the unit
+-- ch-census-rollup recomputes and swaps with REPLACE PARTITION '<day>'.
 PARTITION BY day
 ORDER BY (day, contract_id);
 
