@@ -28,6 +28,13 @@ const DefaultBufferSize = 256
 // subscriber gets evicted quickly rather than ballooning memory.
 const subscriberQueueDepth = 32
 
+// maxSplitReplayTopics is the largest subscription width at which
+// Hub.Subscribe still splits the replay budget evenly per topic. Real
+// callers subscribe to a handful of alias topics at most (see
+// canonical.AssetAliases); this is generous headroom above that, not
+// a tuned production limit.
+const maxSplitReplayTopics = 8
+
 // DefaultTopicIdleTTL is how long a topic that still holds buffered
 // events but has NO subscribers is kept before the reaper drops it
 // (REL-05). It is the window in which a client that disconnects can
@@ -344,7 +351,32 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 		}
 	}
 
-	for _, topic := range topics {
+	// Replay is budgeted at HALF the channel capacity, shared across
+	// the subscribed topics via a running total rather than a
+	// full-capacity clamp per topic. A per-topic clamp equal to
+	// subscriberQueueDepth lets a single topic (or the first of
+	// several alias topics) fill the entire channel on resume, so the
+	// very next live Publish finds it full and evicts the subscriber
+	// it just resumed — replay would have accomplished nothing.
+	// Reserving headroom means a resuming subscriber survives at
+	// least one live tick.
+	//
+	// Below maxSplitReplayTopics (comfortably above the largest real
+	// alias fan-out — see canonical.AssetAliases) the budget is also
+	// split evenly per topic, so a later alias topic in a multi-topic
+	// subscription is never starved by an earlier one that happens to
+	// have a deeper backlog. Above that threshold — a shape no real
+	// caller produces — splitting further would only shrink the one
+	// topic actually carrying traffic, so each topic is instead
+	// offered whatever of the shared budget is still unspent.
+	remaining := subscriberQueueDepth / 2
+	for i, topic := range topics {
+		share := remaining
+		if len(topics) <= maxSplitReplayTopics {
+			topicsLeft := len(topics) - i
+			share = (remaining + topicsLeft - 1) / topicsLeft // ceil(remaining/topicsLeft)
+		}
+
 		// Replay and live registration happen in ONE topic-locked
 		// critical section. Doing them in two (snapshot, then register)
 		// leaves a gap: Publish takes the same lock to push into the
@@ -374,14 +406,15 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 			// connected. The lost span is exactly the gap the ID jump is
 			// documented to signal (cold audit 2026-08-04).
 			replay := t.replayAfter(lastEventID)
-			if len(replay) > subscriberQueueDepth {
-				replay = replay[len(replay)-subscriberQueueDepth:]
+			if len(replay) > share {
+				replay = replay[len(replay)-share:]
 			}
 			for _, ev := range replay {
 				if !sub.sendReplay(ev) {
 					break
 				}
 			}
+			remaining -= len(replay)
 			t.subs[sub] = struct{}{}
 		})
 	}
