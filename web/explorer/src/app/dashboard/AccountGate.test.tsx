@@ -1,7 +1,11 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 const replace = vi.fn();
+
+beforeEach(() => {
+  replace.mockClear();
+});
 
 vi.mock('@/api/hooks', async () => {
   const actual =
