@@ -121,6 +121,34 @@ var firehoseExcludeSyms = []string{
 	"transfer", "mint", "burn", "clawback", "approve", "set_authorized",
 }
 
+// KnownProjectorSources is the set of source names buildSource
+// recognises — the same strings BuildRegistry's `names` argument and
+// `stellarindex-ops projector-replay -source <name>` accept. Exported
+// so a non-projector caller (find-data-gaps) can tell whether a gap
+// target is projected without re-deriving buildSource's switch —
+// see AGENTS.md invariant 7.
+var KnownProjectorSources = map[string]struct{}{
+	soroswap.SourceName:        {},
+	aquarius.SourceName:        {},
+	phoenix.SourceName:         {},
+	sushiswap_v3.SourceName:    {},
+	upshift.SourceName:         {},
+	comet.SourceName:           {},
+	blend.SourceName:           {},
+	blend_backstop.SourceName:  {},
+	blend_emitter.SourceName:   {},
+	cctp.SourceName:            {},
+	rozo.SourceName:            {},
+	sorocredit.SourceName:      {},
+	defindex.SourceName:        {},
+	sep41_transfers.SourceName: {},
+	sep41_supply.SourceName:    {},
+	reflector.SourceDEX:        {},
+	reflector.SourceCEX:        {},
+	reflector.SourceFX:         {},
+	redstone.SourceName:        {},
+}
+
 //nolint:gocognit,gocyclo,funlen // dispatch switch; one case per source. Same shape as pipeline.BuildDispatcher (which carries the same exemption).
 func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (Source, bool, error) {
 	switch name {
