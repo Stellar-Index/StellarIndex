@@ -236,7 +236,10 @@ stellarindex-ops verify-archive -config /etc/stellarindex.toml \
 `-archivist-timeout`, logging to journald as `stellarindex-tier-e`
 and writing
 `stellarindex_verify_archive_last_success_unix{tier="archivist"}`.
-No alert rule reads that series yet, so a failing run shows only in
+`stellarindex_verify_archive_tier_e_run_stale` (ticket, 35d + slack —
+see [alerts-catalog.md](alerts-catalog.md#verify-archive-timer-alerts)
+and [verify-archive-tier-e](runbooks/verify-archive-tier-e.md)) tickets
+off that series; a failing run also shows in
 `journalctl -t stellarindex-tier-e`. Still run it by hand immediately
 before kicking off a backfill, to catch disk corruption before
 building hours of replay on top of it. The hashing scan is

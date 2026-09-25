@@ -1,0 +1,82 @@
+# verify-archive Tier E (archivist scan) staleness (GH-726).
+#
+# Separate file from verify-archive_test.yml, not just an appended block:
+# Tier E's window is 35 DAYS (monthly cron) against Tier A/B's 36 HOURS
+# (nightly systemd timers), and promtool's unit-test replay evaluates
+# every rule at this file's top-level `evaluation_interval`, not at a
+# per-test `interval:` override — a sample list spaced further apart than
+# the GLOBAL evaluation_interval goes stale (default 5m lookback) between
+# ticks and a `time() - x > threshold` alert can never accumulate `for`
+# duration. Sharing verify-archive_test.yml's `evaluation_interval: 1m`
+# either times out loading a 35d range vector at 1-minute resolution
+# ("query processing would load too many samples into memory") or, at 1h
+# per-test `interval` under that 1m global, silently never fires (PROVEN:
+# an isolated rule/test pair using restore-drill.yml's exact numbers
+# reproduces the same silent non-fire under a 1m global evaluation_interval
+# and only fires once the file's global also moves to 1h — matching
+# restore-drill_test.yml's own header). `evaluation_interval: 1h` here
+# mirrors restore-drill_test.yml's monthly-cadence checks for exactly that
+# reason.
+#
+# No unit_failed pair is possible for Tier E: it is installed as an
+# ansible.builtin.cron entry (14-stellarindex-services.yml), not a systemd
+# unit, so there is no node_systemd_unit_state series to alert off of.
+# absent_over_time is the only signal that covers both "every run failed"
+# and "cron entry never installed".
+#
+# PROVEN-RED: delete the `or absent_over_time(...[35d])` arm from
+# stellarindex_verify_archive_tier_e_run_stale in verify-archive.yml and
+# re-run — the "never written" case below reports 0 firing alerts (FAIL)
+# because with the series absent nothing selects it.
+
+rule_files:
+- ../rules/verify-archive.yml
+evaluation_interval: 1h
+tests:
+- interval: 1h
+  name: archivist tier failing every month no longer looks fresh
+  input_series:
+  - series: stellarindex_verify_archive_last_success_unix{job="node",instance="r1:9100",tier="archivist"}
+    values: '60x866'
+  alert_rule_test:
+  - eval_time: 864h
+    alertname: stellarindex_verify_archive_tier_e_run_stale
+    exp_alerts:
+    - exp_labels:
+        job: node
+        instance: r1:9100
+        tier: archivist
+        severity: ticket
+        team: stellarindex
+        component: archive
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-tier-e.md
+        summary: "verify-archive Tier E (archivist scan) has recorded no success in >35d (monthly cron, the 15th)"
+        description: "The monthly stellar-archivist scan (`-tier archivist`,\nstellarindex-verify-archive-tier-e cron, the 15th 12:43 UTC) has\nnot recorded a clean exit in over 35 days — one missed monthly\ncycle plus slack — or has never recorded one. Either the cron\nentry isn't installed (check verify_archive_tier_b_enabled in\ninventory — Tier E is gated the same as Tier B) or every recent\nscan failed/timed out. While this is stale, Tier B's checkpoint\nanchor is unconfirmed against a freshly re-hashed local mirror:\nbit rot in /srv/history-archive would pass Tier B silently.\nDiagnosis:\n  - `crontab -l -u root | grep verify-archive-tier-e` — is the\n    entry present?\n  - `grep stellarindex-tier-e /var/log/syslog` (or journald,\n    depending on syslog routing) — what did the last run log?\n  - re-run by hand: `stellarindex-ops verify-archive -tier\n    archivist -archive-root /srv/history-archive\n    -archivist-timeout 48h`.\n\nRunbook: docs/operations/runbooks/verify-archive-tier-e.md\n"
+- interval: 1h
+  name: archivist tier verified within the window is quiet
+  input_series:
+  - series: stellarindex_verify_archive_last_success_unix{job="node",instance="r1:9100",tier="archivist"}
+    values: '0+3600x866'
+  alert_rule_test:
+  - eval_time: 864h
+    alertname: stellarindex_verify_archive_tier_e_run_stale
+    exp_alerts: []
+- interval: 1h
+  name: archivist tier never written tickets off the absent_over_time branch
+  input_series:
+  - series: 'up{job="node_exporter",instance="localhost:9100"}'
+    values: '1x900'
+  alert_rule_test:
+  - eval_time: 864h
+    alertname: stellarindex_verify_archive_tier_e_run_stale
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        team: stellarindex
+        component: archive
+        tier: archivist
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-tier-e.md
+        summary: "verify-archive Tier E (archivist scan) has recorded no success in >35d (monthly cron, the 15th)"
+        description: "The monthly stellar-archivist scan (`-tier archivist`,\nstellarindex-verify-archive-tier-e cron, the 15th 12:43 UTC) has\nnot recorded a clean exit in over 35 days — one missed monthly\ncycle plus slack — or has never recorded one. Either the cron\nentry isn't installed (check verify_archive_tier_b_enabled in\ninventory — Tier E is gated the same as Tier B) or every recent\nscan failed/timed out. While this is stale, Tier B's checkpoint\nanchor is unconfirmed against a freshly re-hashed local mirror:\nbit rot in /srv/history-archive would pass Tier B silently.\nDiagnosis:\n  - `crontab -l -u root | grep verify-archive-tier-e` — is the\n    entry present?\n  - `grep stellarindex-tier-e /var/log/syslog` (or journald,\n    depending on syslog routing) — what did the last run log?\n  - re-run by hand: `stellarindex-ops verify-archive -tier\n    archivist -archive-root /srv/history-archive\n    -archivist-timeout 48h`.\n\nRunbook: docs/operations/runbooks/verify-archive-tier-e.md\n"
