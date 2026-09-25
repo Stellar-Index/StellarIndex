@@ -27238,7 +27238,7 @@
                   "request": {
                     "name": "Operator — revoke another identifier's API key (kill switch).",
                     "description": {
-                      "content": "Revokes a leaked or abused credential belonging to any customer.\nThe self-service `DELETE /v1/account/keys/{keyID}` is scoped to\nthe caller's OWN identifier, so it requires the compromised\ncustomer's credential; this is the operator path.\n\n`identifier` is required rather than inferred: the revoke is\nscoped to a named owner so a mistyped key id cannot reach a\ndifferent customer's account. Read both values off\n`GET /v1/account/keys` or the mint's audit row.\n\nRestricted to operator-tier credentials — other tiers 403.\nRequires an `X-Reason` header captured into the audit log; every\nsuccessful revoke lands a `key.revoke` audit row (staff actor).\n\n204 covers both \"revoked\" and \"no such key for that identifier\":\nthe two are deliberately indistinguishable so the endpoint can't\nbe used to enumerate key ids across accounts. To disable a whole\naccount instead, PATCH its `status` on\n`/v1/admin/accounts/{id}`.\n",
+                      "content": "Revokes a leaked or abused credential belonging to any customer.\nThe self-service `DELETE /v1/account/keys/{keyID}` is scoped to\nthe caller's OWN identifier, so it requires the compromised\ncustomer's credential; this is the operator path.\n\n`identifier` is required rather than inferred: the revoke is\nscoped to a named owner so a mistyped key id cannot reach a\ndifferent customer's account. Read both values off\n`GET /v1/account/keys` or the mint's audit row.\n\nRestricted to operator-tier credentials — other tiers 403.\nRequires an `X-Reason` header captured into the audit log; every\nsuccessful revoke lands a `key.revoke` audit row (staff actor).\n\n204 means a key was revoked. 404 means no live key with that id\nis owned by `identifier` and nothing was revoked (no audit row is\nwritten): a typo'd identifier fails loudly instead of reading as\na contained leak. \"No such key\" and \"another owner's key\" share\nthe 404, so the endpoint still can't be used to enumerate key ids\nacross accounts. To disable a whole\naccount instead, PATCH its `status` on\n`/v1/admin/accounts/{id}`.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -27303,7 +27303,7 @@
                   },
                   "response": [
                     {
-                      "name": "Revoked (or no-op when no such key exists for that identifier).",
+                      "name": "Revoked.",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -27578,6 +27578,80 @@
                       },
                       "status": "Forbidden",
                       "code": 403,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Not found.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "admin",
+                            "keys",
+                            ":keyID"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) Owner reference the key belongs to (e.g. `acct:<slug>` or `signup-<hash>`).",
+                                "type": "text/plain"
+                              },
+                              "key": "identifier",
+                              "value": "<string>"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) Public-safe `kid_<hex>` identifier of the key to revoke.",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "keyID"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "disabled": false,
+                            "description": {
+                              "content": "(Required) Free-form reason captured into the audit log.",
+                              "type": "text/plain"
+                            },
+                            "key": "X-Reason",
+                            "value": "<string>"
+                          },
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          },
+                          {
+                            "description": {
+                              "content": "Added as a part of security scheme: bearer",
+                              "type": "text/plain"
+                            },
+                            "key": "Authorization",
+                            "value": "Bearer <token>"
+                          }
+                        ],
+                        "method": "DELETE",
+                        "body": {}
+                      },
+                      "status": "Not Found",
+                      "code": 404,
                       "header": [
                         {
                           "key": "Content-Type",
