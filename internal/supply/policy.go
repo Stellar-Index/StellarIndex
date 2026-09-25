@@ -65,8 +65,9 @@ type Policy struct {
 	SDFReserveAccounts []string
 
 	// PerAsset overrides the per-algorithm default locked-set for
-	// specific assets. Key shape: "XLM" for native, "CODE:G..." for
-	// classic, "C..." for SEP-41 Soroban tokens.
+	// specific assets. Key is [AssetKey] form: "CODE:G..." for
+	// classic, "C..." for SEP-41 Soroban tokens. Native XLM is not a
+	// valid key — Algorithm 1 never reads this map.
 	//
 	// A present-but-empty entry (LockedSet{} with both slices nil)
 	// means "no exclusions for this asset" — overrides the default
@@ -77,10 +78,10 @@ type Policy struct {
 	// MaxSupplyOverrides force a max_supply for a specific asset,
 	// beating both the SEP-1 declaration and the per-algorithm
 	// default (nil for classic, nil for SEP-41 without
-	// declaration). Value is a decimal string in the asset's base
-	// unit (stroops for XLM / classic, contract-defined units for
-	// SEP-41). Empty string means "fall through to next source"
-	// (equivalent to omitting the key).
+	// declaration). Keyed like PerAsset (no XLM). Value is a decimal
+	// string in the asset's base unit (stroops for classic,
+	// contract-defined units for SEP-41). Empty string means "fall
+	// through to next source" (equivalent to omitting the key).
 	MaxSupplyOverrides map[string]string
 }
 
@@ -167,6 +168,9 @@ func (p Policy) Validate() error {
 	errs = append(errs, validateStrkeys("SDFReserveAccounts", "G", canonical.IsAccountID, p.SDFReserveAccounts)...)
 
 	for assetKey, override := range p.MaxSupplyOverrides {
+		if err := validatePolicyKey("MaxSupplyOverrides", assetKey); err != nil {
+			errs = append(errs, err)
+		}
 		if override == "" {
 			continue // sentinel for "fall through"
 		}
@@ -176,6 +180,9 @@ func (p Policy) Validate() error {
 	}
 
 	for assetKey, locked := range p.PerAsset {
+		if err := validatePolicyKey("PerAsset", assetKey); err != nil {
+			errs = append(errs, err)
+		}
 		errs = append(errs, validateStrkeys(
 			fmt.Sprintf("PerAsset[%q].Accounts", assetKey), "G", canonical.IsAccountID, locked.Accounts)...)
 		errs = append(errs, validateStrkeys(

@@ -1247,13 +1247,25 @@ func buildSupplyRefreshers(cfg config.Config, store *timescale.Store, closeTimes
 // cfg.Stellar.Passphrase(), cfg.Supply.SDFReserveAccounts, …) — ClassicComputer/SEP41Computer never read
 // it (see internal/supply/classic.go, sep41.go), so setting it here
 // would be dead weight that misleads a future reader.
+//
+// Both maps are re-keyed onto supply.AssetKey form: the computers look
+// entries up by exact match, so the dash spelling watched_classic_assets
+// uses would otherwise load cleanly and never apply.
 func buildSupplyPolicy(cfg config.SupplyConfig) (supply.Policy, error) {
-	policy := supply.Policy{
-		MaxSupplyOverrides: cfg.MaxSupplyOverrides,
+	maxSupply, err := supply.CanonicalizePolicyKeys(cfg.MaxSupplyOverrides)
+	if err != nil {
+		return supply.Policy{}, fmt.Errorf("supply policy: max_supply_overrides: %w", err)
 	}
-	if len(cfg.PerAssetLockedSets) > 0 {
-		policy.PerAsset = make(map[string]supply.LockedSet, len(cfg.PerAssetLockedSets))
-		for assetKey, ls := range cfg.PerAssetLockedSets {
+	lockedSets, err := supply.CanonicalizePolicyKeys(cfg.PerAssetLockedSets)
+	if err != nil {
+		return supply.Policy{}, fmt.Errorf("supply policy: per_asset_locked_sets: %w", err)
+	}
+	policy := supply.Policy{
+		MaxSupplyOverrides: maxSupply,
+	}
+	if len(lockedSets) > 0 {
+		policy.PerAsset = make(map[string]supply.LockedSet, len(lockedSets))
+		for assetKey, ls := range lockedSets {
 			policy.PerAsset[assetKey] = supply.LockedSet{
 				Accounts:  ls.Accounts,
 				Contracts: ls.Contracts,
