@@ -430,6 +430,20 @@
       fi
       NAME="$1"; shift
 
+      # NAME is a job LABEL, not the payload's binary. Passing a
+      # binary name here (an operator meaning to write
+      # "run-heavy-job.sh <label> stellarindex-ops supply …" but
+      # dropping <label>) shifts every following word one slot left,
+      # so the wrapper execs the binary's own first subcommand
+      # (`supply`) instead of the binary — "exec: supply: not found"
+      # mid-incident (F155). Refuse it before the lock is even taken.
+      case "$NAME" in
+        stellarindex-ops|stellarindex-api|stellarindex-migrate|stellarindex-aggregator|stellarindex-indexer|stellarindex-sla-probe)
+          echo "run-heavy-job: refusing: '$NAME' is a binary name, not a job label — usage is 'run-heavy-job.sh <job-label> <command...>'; the label is missing so the intended binary would be dropped and its first argument exec'd instead" >&2
+          exit 2
+          ;;
+      esac
+
       # ── Singleton lock (C4-14 / INF-11) ──────────────────────────
       # Per-job flock so a new run cannot start while the prior run of
       # the SAME job is still going. Overlapping timer fires — or a
