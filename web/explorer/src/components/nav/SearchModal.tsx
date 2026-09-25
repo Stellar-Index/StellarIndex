@@ -8,7 +8,7 @@ import { createPortal } from 'react-dom';
 
 import { apiGet } from '@/api/client';
 import { useCoins, useVerifiedSlugs, coinSlug, type Coin } from '@/api/hooks';
-import { assetHrefFor } from '@/lib/fiat-slugs';
+import { assetHref, assetHrefFor } from '@/lib/fiat-slugs';
 import { availableRoutes } from '@/lib/network-routes';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { truncateMiddle } from '@/lib/format';
@@ -775,7 +775,7 @@ function coinResult(c: Coin, verified: boolean): Result {
         ? `${(c.asset_id ?? '').slice(0, 4)}…${(c.asset_id ?? '').slice(-4)}`
         : (c.asset_id ?? 'Asset')),
     hint: coinSlug(c),
-    href: `/assets/${coinSlug(c)}`,
+    href: assetHref(coinSlug(c)),
     verified,
   };
 }

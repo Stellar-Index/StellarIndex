@@ -21,6 +21,7 @@ import { PairChart } from './PairChart';
 import { PairPathView } from './PairPathView';
 import { SourceBreakdown } from './SourceBreakdown';
 import { shortAssetText } from '@/lib/asset-label';
+import { assetHref, assetHrefFor } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 type Params = Promise<{ pair: string }>;
@@ -734,8 +735,18 @@ function AssetBadge({ canonical }: { canonical: string }) {
     label = 'XLM';
     slug = 'native';
   } else if (canonical.startsWith('fiat:')) {
-    label = canonical.replace('fiat:', '');
-    slug = label;
+    // A fiat leg's declared canonical page is /external/assets/{slug}
+    // (AM-16), never /assets/{ticker} — route it through assetHrefFor
+    // rather than the generic slug/href path below (GH-894/K064).
+    const ticker = canonical.replace('fiat:', '');
+    return (
+      <Link
+        href={assetHrefFor(ticker)}
+        className="hover:text-brand-600 transition-colors"
+      >
+        {ticker}
+      </Link>
+    );
   } else if (canonical.startsWith('crypto:')) {
     label = canonical.replace('crypto:', '');
     slug = label;
@@ -760,7 +771,7 @@ function AssetBadge({ canonical }: { canonical: string }) {
   if (!slug) return <span>{label}</span>;
   return (
     <Link
-      href={`/assets/${encodeURIComponent(slug)}`}
+      href={assetHref(slug)}
       className="hover:text-brand-600 transition-colors"
     >
       {label}

@@ -10,6 +10,7 @@ import {
   coinSlug,
   type Coin,
 } from '@/api/hooks';
+import { assetHref } from '@/lib/fiat-slugs';
 import { useLedgerFollow } from '@/lib/live/hooks';
 import {
   EmptyState,
@@ -153,7 +154,7 @@ function Row({
       <Td className="text-ink-faint">{rank}</Td>
       <Td>
         <Link
-          href={`/assets/${coinSlug(coin)}`}
+          href={assetHref(coinSlug(coin))}
           className="group flex items-center gap-2"
         >
           <AssetIcon image={coin.image} code={coin.code} />

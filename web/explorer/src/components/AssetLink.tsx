@@ -4,6 +4,7 @@ import Link from 'next/link';
 
 import { useSACWrappers } from '@/api/hooks';
 import { cn } from '@/lib/cn';
+import { assetHref, assetHrefFor } from '@/lib/fiat-slugs';
 import { AssetLabel } from './AssetLabel';
 
 import {
@@ -79,6 +80,23 @@ export function assetSlug(canonical: string | undefined | null): string | null {
 }
 
 /**
+ * assetLinkHref decides the target for a resolved `slug` given the
+ * ORIGINAL canonical id it came from. A `fiat:` canonical's declared
+ * canonical page is /external/assets/{friendly-slug} (assetHrefFor), not
+ * /assets/{slug} — see fiat-slugs.ts's assetHrefFor docstring (AM-16).
+ * assetSlug() intentionally still returns the bare ticker for a `fiat:`
+ * id (existing callers rely on that), so the fiat/non-fiat branch has to
+ * live here, at the href call site, not inside assetSlug.
+ */
+function assetLinkHref(
+  canonical: string | undefined | null,
+  slug: string,
+): string {
+  if (canonical?.startsWith('fiat:')) return assetHrefFor(canonical.slice(5));
+  return assetHref(slug);
+}
+
+/**
  * AssetLink — AssetLabel wrapped in a link to the asset's detail page,
  * targeting the static-export-safe short slug. Falls back to a plain
  * (unlinked) AssetLabel when the id has no safe route (e.g. an
@@ -109,7 +127,7 @@ export function AssetLink({
   if (!slug) return <AssetLabel canonical={canonical} />;
   return (
     <Link
-      href={`/assets/${encodeURIComponent(slug)}`}
+      href={assetLinkHref(canonical, slug)}
       className={cn('hover:text-brand-600 transition-colors', className)}
     >
       <AssetLabel canonical={canonical} />
@@ -141,7 +159,7 @@ export function AssetText({
   if (!slug) return <span className={className}>{text}</span>;
   return (
     <Link
-      href={`/assets/${encodeURIComponent(slug)}`}
+      href={assetLinkHref(canonical, slug)}
       title={canonical ?? undefined}
       className={cn(
         'hover:text-brand-600 transition-colors hover:underline',

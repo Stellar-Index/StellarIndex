@@ -10,6 +10,7 @@ import { AssetLink } from '@/components/AssetLink';
 import { Panel } from '@/components/reveal';
 import { Mono } from '@/components/ui';
 import { isRawOracleAsset, rawOracleSymbol } from '@/lib/asset-label';
+import { assetHref } from '@/lib/fiat-slugs';
 import { formatOraclePrice, formatRelative } from '@/lib/format';
 import { sourceToneClass } from '@/lib/pillTone';
 
@@ -374,7 +375,7 @@ function UnattributedOracles({
               : ''}{' '}
             is at{' '}
             <Link
-              href={`/assets/${warning.verified_slug}`}
+              href={assetHref(warning.verified_slug)}
               className="text-brand-600 hover:underline"
             >
               /assets/{warning.verified_slug}

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { formatPriceSmall } from '@/lib/format';
 
 import { useCoins, useVerifiedSlugs, coinSlug, type Coin } from '@/api/hooks';
+import { assetHref } from '@/lib/fiat-slugs';
 import { useLedgerFollow } from '@/lib/live/hooks';
 
 /**
@@ -89,7 +90,7 @@ function MoverColumn({
               className="hover:bg-surface-muted flex items-center justify-between px-4 py-2.5"
             >
               <Link
-                href={`/assets/${coinSlug(c)}`}
+                href={assetHref(coinSlug(c))}
                 className="flex items-baseline gap-2 text-sm"
               >
                 <span className="text-ink font-medium">{c.code}</span>

@@ -8,6 +8,7 @@ import { Panel } from '@/components/reveal';
 import { Container, Breadcrumbs } from '@/components/ui';
 import { asExample } from '@/api/client';
 import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
+import { assetHref } from '@/lib/fiat-slugs';
 import { formatCompact, formatPriceSmall, formatRelative } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { ogImageFor } from '@/lib/seo';
@@ -530,7 +531,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                     <tr key={a.asset_id} className="hover:bg-surface-muted">
                       <Td>
                         <Link
-                          href={`/assets/${a.slug}`}
+                          href={assetHref(a.slug)}
                           className="hover:text-brand-600 font-medium"
                         >
                           {a.code}
