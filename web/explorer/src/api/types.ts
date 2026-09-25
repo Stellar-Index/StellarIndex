@@ -3469,8 +3469,9 @@ export interface paths {
          * Operator — read an account's tier + overrides.
          * @description Returns the account-level tier plus the per-account
          *     `rate_limit_per_min_override` / `monthly_request_quota_override`
-         *     (0 = inherit tier default). Operator-tier only; read-only (not
-         *     audit-logged — the audit log records mutations, not reads).
+         *     (0 = inherit tier default). Operator-tier only. The view carries
+         *     the account's billing email, so every successful read is
+         *     audit-logged (`admin.account.read`, naming the operator key).
          */
         get: operations["getAdminAccount"];
         put?: never;
@@ -3485,9 +3486,10 @@ export interface paths {
          *     `monthly_request_quota_override` (admin Phase 1.5). All fields are
          *     optional; at least one must be present. An override value of `0`
          *     clears it (inherit the tier default). The rate-limit override acts
-         *     as an account-wide floor applied by the Postgres API-key validator
-         *     on the next Lookup — it raises keys budgeted below it, never
-         *     lowers a key budgeted above.
+         *     as an account-wide floor and the quota override as a ceiling,
+         *     applied by the API-key validator on either auth backend (within
+         *     30 seconds on the Redis backend's account cache) — the floor raises
+         *     keys budgeted below it, never lowers a key budgeted above.
          *
          *     `status` is the account-level KILL SWITCH. Moving an account to
          *     `suspended` or `closed` stops its API keys authenticating and
@@ -3495,7 +3497,8 @@ export interface paths {
          *     alongside and `suspended_at` is stamped on the first transition
          *     away from `active`. Moving back to `active` clears both. `closed`
          *     is terminal: every live dashboard API key is revoked (reason
-         *     `account closed`), and any later `status` other than `closed` is
+         *     `account closed`), every member's dashboard session is revoked,
+         *     and any later `status` other than `closed` is
          *     refused with 409. Re-sending `status: closed` retries revocations
          *     that failed. To kill a single leaked credential instead, use
          *     `DELETE /v1/admin/keys/{keyID}`.

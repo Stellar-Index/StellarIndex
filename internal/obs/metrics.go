@@ -539,6 +539,9 @@ func seedBoundedLabelSeries() {
 		// mutation, but the accountability gap is identical — the row
 		// that records who read whose data is the only trace it happened.
 		"staff_customer_lookup",
+		// The operator account read (GET /v1/admin/accounts/{id}) returns
+		// the same billing email.
+		"admin_account_read",
 		// Self-service first-factor credential changes, and the passkey
 		// sign-in refusals that carry a credential-theft signal.
 		"passkey_register", "passkey_delete",
@@ -4441,13 +4444,14 @@ var TLSCertProbeTotal = prometheus.NewCounterVec(
 // Labels:
 //   - surface: which privileged action lost its audit row
 //     (account_override|key_mint|key_revoke|status_notice|
-//     staff_customer_lookup|passkey_register|passkey_delete|
-//     passkey_clone_warning|passkey_login_replay)
+//     staff_customer_lookup|admin_account_read|passkey_register|
+//     passkey_delete|passkey_clone_warning|passkey_login_replay)
 //
-// `staff_customer_lookup` is the one READ in the set: the staff
-// customer look-up returns another customer's billing email plus every
-// user's email and last-login, so the audit row is the only record that
-// a staff member saw it (C3-056).
+// `staff_customer_lookup` and `admin_account_read` are the READS in the
+// set: the staff customer look-up returns another customer's billing email
+// plus every user's email and last-login (C3-056), and the operator
+// account read returns the billing email, so the audit row is the only
+// record that someone saw it.
 //
 // Bounded, well-known label set — pre-seeded so the alert's increase()
 // reads a real zero rather than "no data" before the first failure.

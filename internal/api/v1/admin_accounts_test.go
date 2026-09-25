@@ -384,3 +384,115 @@ func TestAdminAccountOverrides_ClosedIsTerminal(t *testing.T) {
 		}
 	})
 }
+
+// fakeAccountSessionRevoker records which members had their sessions revoked.
+type fakeAccountSessionRevoker struct {
+	members   map[uuid.UUID][]platform.User
+	revokeErr map[uuid.UUID]error
+	revoked   []uuid.UUID
+}
+
+func (f *fakeAccountSessionRevoker) ListUsersForAccount(_ context.Context, accountID uuid.UUID) ([]platform.User, error) {
+	return f.members[accountID], nil
+}
+
+func (f *fakeAccountSessionRevoker) RevokeAllUserSessions(_ context.Context, userID uuid.UUID) error {
+	if err := f.revokeErr[userID]; err != nil {
+		return err
+	}
+	f.revoked = append(f.revoked, userID)
+	return nil
+}
+
+// TestAdminAccountOverrides_CloseRevokesSessions pins GH-809: closing an
+// account revokes every member's dashboard sessions and records the outcome
+// in the audit row; a suspension leaves sessions to the status gate.
+func TestAdminAccountOverrides_CloseRevokesSessions(t *testing.T) {
+	acct := seededAccount()
+	alice := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	bob := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	newServer := func(store v1.PlatformAccountStore, users *fakeAccountSessionRevoker, sink v1.AuditSink) *httptest.Server {
+		srv := v1.New(v1.Options{
+			Auth:             fakeAuthMiddleware(operatorSubject()),
+			PlatformAccounts: store,
+			PlatformUsers:    users,
+			Audit:            sink,
+		})
+		ts := httptest.NewServer(srv.Handler())
+		t.Cleanup(ts.Close)
+		return ts
+	}
+	members := map[uuid.UUID][]platform.User{acct.ID: {{ID: alice}, {ID: bob}}}
+
+	t.Run("closed", func(t *testing.T) {
+		users := &fakeAccountSessionRevoker{members: members, revokeErr: map[uuid.UUID]error{bob: io.ErrUnexpectedEOF}}
+		sink := &recordingAuditSink{}
+		ts := newServer(newFakePlatformAccountStore(acct), users, sink)
+		resp := patchJSON(t, ts.URL+"/v1/admin/accounts/"+acct.ID.String(), "customer asked to close", `{"status":"closed"}`)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		if len(users.revoked) != 1 || users.revoked[0] != alice {
+			t.Fatalf("revoked sessions for %v, want [alice]: a closed account's sessions must not outlive it", users.revoked)
+		}
+		meta := string(sink.entries[0].Metadata)
+		if !strings.Contains(meta, `"session_users_revoked":1`) || !strings.Contains(meta, `"session_revoke_failures":1`) {
+			t.Errorf("audit row must record the session sweep outcome; metadata=%s", meta)
+		}
+	})
+	t.Run("suspended", func(t *testing.T) {
+		users := &fakeAccountSessionRevoker{members: members}
+		ts := newServer(newFakePlatformAccountStore(acct), users, &recordingAuditSink{})
+		resp := patchJSON(t, ts.URL+"/v1/admin/accounts/"+acct.ID.String(), "abuse", `{"status":"suspended"}`)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		if len(users.revoked) != 0 {
+			t.Errorf("suspension revoked sessions %v; only terminal closure should", users.revoked)
+		}
+	})
+}
+
+// TestAdminAccountGet_AppendsReadAudit pins CA2-A39-harden-0: the operator
+// account read returns the billing email, so each successful GET lands one
+// durable "admin.account.read" row naming the operator credential and the
+// account it read, and a refused read lands none.
+func TestAdminAccountGet_AppendsReadAudit(t *testing.T) {
+	acct := seededAccount()
+	acct.BillingEmail = "billing@acme.example"
+	sink := &recordingAuditSink{}
+	ts := newAdminAccountServer(t, operatorSubject(), newFakePlatformAccountStore(acct), sink)
+
+	resp, err := http.Get(ts.URL + "/v1/admin/accounts/" + acct.ID.String())
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if len(sink.entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1: an operator read of billing PII must be recorded", len(sink.entries))
+	}
+	e := sink.entries[0]
+	if e.Action != "admin.account.read" || e.TargetKind != "account" || e.TargetID != acct.ID.String() ||
+		e.AccountID != acct.ID || e.ActorKind != platform.ActorStaff {
+		t.Errorf("audit entry = %+v, want admin.account.read on account %s by staff", e, acct.ID)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(e.Metadata, &meta); err != nil {
+		t.Fatalf("metadata: %v", err)
+	}
+	if meta["actor_key_id"] != operatorSubject().KeyID {
+		t.Errorf("metadata actor_key_id = %v, want %q", meta["actor_key_id"], operatorSubject().KeyID)
+	}
+
+	missing, err := http.Get(ts.URL + "/v1/admin/accounts/" + uuid.New().String())
+	if err != nil {
+		t.Fatalf("GET missing: %v", err)
+	}
+	t.Cleanup(func() { missing.Body.Close() })
+	if missing.StatusCode != http.StatusNotFound || len(sink.entries) != 1 {
+		t.Errorf("404 read: status=%d entries=%d, want 404 and no new row", missing.StatusCode, len(sink.entries))
+	}
+}

@@ -95,9 +95,12 @@ du -sh /var/lib/pgbackrest
 
 > **Retention is NOT a lever on this database.** Raw `trades` are
 > kept forever by design (ADR-0034; migration 0031 removed the old
-> 90-day retention), the `prices_*` continuous aggregates are
-> indefinite, and the only surviving `add_retention_policy` is on
-> `api_usage_events`. Do NOT "adjust the retention interval" and do
+> 90-day retention), and the served `prices_*` continuous aggregates are
+> indefinite apart from `prices_1m`. Four `add_retention_policy` calls
+> survive: `api_usage_events` and `usage_daily` (12 months), and
+> `prices_1m` and `price_source_contributions` (90 days, both shipped
+> with the job disabled — arming them is a deliberate operator act, not
+> a disk-full response). Do NOT "adjust the retention interval" and do
 > NOT `drop_chunks` on data tables — that destroys served history to
 > buy hours of runway. Space relief on r1 is **pool-level**: follow
 > `zfs-pool-full.md` (stale ZFS snapshots, pgBackRest repo pruning,
@@ -153,6 +156,10 @@ du -sh /var/lib/pgbackrest
 
 ## Changelog
 
+- 2026-09-25 — the retention note named `api_usage_events` as the only
+  surviving policy; migrations 0156/0166 (`prices_1m`), 0167
+  (`usage_daily`) and 0169 (`price_source_contributions`) added three
+  more. The note now lists all four.
 - 2026-08-28 — re-verified against HEAD. Removed the DANGEROUS
   retention advice ("adjust add_retention_policy" / `drop_chunks`) —
   raw `trades` are kept forever (ADR-0034, migration 0031); the only

@@ -111,10 +111,8 @@ func resolveSession(r *http.Request, cfg *Config, tracker *touchTracker) (Sessio
 	// (W1-auth-passkey-2). Any non-matching / stale cookie simply misses.
 	sess, err := cfg.Users.GetSessionByTokenHash(r.Context(), HashSessionToken(cookie.Value))
 	if err != nil {
-		// ErrNotFound covers expired (already filtered server-
-		// side via the WHERE revoked_at IS NULL pred + the
-		// caller's session-scan), revoked, and absent. The
-		// user re-logs-in.
+		// ErrNotFound covers absent, revoked and expired (the
+		// store filters expires_at > now()). The user re-logs-in.
 		if !errors.Is(err, platform.ErrNotFound) {
 			// Log only `err`, never the cookie token or its hash. The
 			// bearer credential is the cookie token; the table now stores
@@ -130,8 +128,9 @@ func resolveSession(r *http.Request, cfg *Config, tracker *touchTracker) (Sessio
 		return SessionContext{}, false
 	}
 	if !sess.ExpiresAt.After(cfg.Now()) {
-		// Belt-and-suspenders: row was returned (revoked_at
-		// NULL) but expires_at has passed.
+		// The store filters on the database clock; this re-checks
+		// on the API clock so skew between the two cannot extend a
+		// session.
 		return SessionContext{}, false
 	}
 

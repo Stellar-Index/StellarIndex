@@ -1280,6 +1280,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// and the public notices list to `[]`.
 	var (
 		platformAccountStore v1.PlatformAccountStore
+		platformUserStore    v1.AccountSessionRevoker
 		registerAccountStore v1.RegisterAccountCreator
 		statusNoticeStore    v1.StatusNoticeStore
 	)
@@ -1289,6 +1290,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// POST /v1/register.
 		acctStore := postgresstore.NewAccountStore(postgresstore.New(pgDB))
 		platformAccountStore = acctStore
+		platformUserStore = postgresstore.NewUserStore(postgresstore.New(pgDB))
 		registerAccountStore = acctStore
 		statusNoticeStore = postgresstore.NewStatusNoticeStore(postgresstore.New(pgDB))
 	}
@@ -1353,6 +1355,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Sep1Cache:           store,
 		Accounts:            accountStore,
 		PlatformAccounts:    platformAccountStore,
+		PlatformUsers:       platformUserStore,
 		RegisterAccounts:    registerAccountStore,
 		APIKeyBudgets:       apiKeyBudgets,
 		StatusNotices:       statusNoticeStore,

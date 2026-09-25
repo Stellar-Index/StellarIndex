@@ -237,6 +237,7 @@ type Server struct {
 	accounts            AccountStore
 	accountKeyQuota     int
 	platformAccounts    PlatformAccountStore
+	platformUsers       AccountSessionRevoker
 	registerAccounts    RegisterAccountCreator
 	apiKeyBudgets       APIKeyBudgetStores
 	statusNotices       StatusNoticeStore
@@ -833,6 +834,12 @@ type Options struct {
 	// overrides from at Lookup time, so a staff-set override takes
 	// effect on the next key lookup. Nil makes those endpoints 503.
 	PlatformAccounts PlatformAccountStore
+
+	// PlatformUsers, when non-nil, lets PATCH /v1/admin/accounts/{id}
+	// revoke every dashboard session of an account it closes. Production
+	// wires postgresstore.NewUserStore; nil leaves sessions to the
+	// dashboard middleware's account-status gate.
+	PlatformUsers AccountSessionRevoker
 
 	// RegisterAccounts, when non-nil, backs POST /v1/register — the
 	// open, curl-first onboarding path that creates a free-tier
@@ -1693,6 +1700,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		accounts:                opts.Accounts,
 		accountKeyQuota:         opts.AccountKeyQuota,
 		platformAccounts:        opts.PlatformAccounts,
+		platformUsers:           opts.PlatformUsers,
 		registerAccounts:        opts.RegisterAccounts,
 		apiKeyBudgets:           opts.APIKeyBudgets,
 		statusNotices:           opts.StatusNotices,
