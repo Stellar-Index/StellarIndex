@@ -188,7 +188,7 @@ const classicAmountDecimals = 7
 func monthlyUSDVWAPScale(raw string, sources []string, sourceDecimals SourceAmountDecimals) (*big.Rat, error) {
 	a, err := canonical.ParseAsset(raw)
 	if err != nil {
-		return big.NewRat(1, 1), nil
+		return big.NewRat(1, 1), nil //nolint:nilerr // an unparseable spelling is not a canonical asset; it folds raw, per the doc comment above
 	}
 	switch a.Type {
 	case canonical.AssetNative, canonical.AssetClassic:
@@ -198,6 +198,8 @@ func monthlyUSDVWAPScale(raw string, sources []string, sourceDecimals SourceAmou
 			return tenToMinus(classicAmountDecimals), nil
 		}
 		return big.NewRat(1, 1), nil
+	case canonical.AssetFiat, canonical.AssetCrypto, canonical.AssetRWA, canonical.AssetOracleRaw:
+		// Off-chain spellings: fall through to the sources' registered scale below.
 	}
 	if sourceDecimals == nil {
 		return nil, fmt.Errorf("off-chain row and no source scale lookup")
