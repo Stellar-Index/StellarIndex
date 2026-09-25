@@ -161,8 +161,11 @@ Per-binary sequence:
 6. **`systemctl restart <binary>.service`**.
 7. **Grace period** (default 15s) before health probe.
 8. **Health probe**:
-   - `stellarindex-api`: `curl http://127.0.0.1:3000/v1/healthz` expects 200 (5 retries × 3s)
-   - other binaries: `systemctl is-active` expects `active` (5 retries × 3s)
+   - `stellarindex-api`: `curl http://127.0.0.1:3000/v1/readyz` expects 200 (5 retries × 3s)
+   - `stellarindex-indexer` / `stellarindex-aggregator`: `curl http://127.0.0.1:<port>/readyz`
+     on the metrics listener (9464 / 9465, `daemon_ready_ports` in `deploy-binary.yml`)
+     expects 200 (20 retries × 3s). It 503s when the applied schema is behind the
+     binary. A daemon with no `daemon_ready_ports` entry fails its probe.
 9. **Rollback on probe failure**:
    - Stop the failing service.
    - Move bad binary to `<binary>.failed-<new-version>` (preserved for post-mortem).

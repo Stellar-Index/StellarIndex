@@ -98,7 +98,7 @@ WHERE entry_type = 'contract_data'
 --   /usr/local/sbin/run-heavy-job.sh instance-changes-v2-backfill \
 --     /usr/local/bin/stellarindex-ops ch-instance-backfill \
 --     -ch-addr 127.0.0.1:9300 -table contract_instance_changes_v2 \
---     -from 2 -window 2000000
+--     -from 2 -window 2000000 -write
 --
 -- Resume an interrupted run with the -from it printed.
 
@@ -135,7 +135,7 @@ WHERE entry_type = 'contract_data'
 -- DDL gap — idempotent, so overlap is harmless:
 --
 --   /usr/local/bin/stellarindex-ops ch-instance-backfill \
---     -ch-addr 127.0.0.1:9300 -from <T - 1000>
+--     -ch-addr 127.0.0.1:9300 -from <T - 1000> -write
 --
 -- Restart stellarindex-api: its key-shape probe latches the old-shape
 -- verdict for the process lifetime, and until restarted it keeps reading in

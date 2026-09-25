@@ -244,6 +244,8 @@ echo "=== Agents file ===" && ./scripts/ci/lint-agents-file.sh
 echo "=== Agents file self-test ===" && ./scripts/ci/lint-agents-file-test.sh
 echo "=== Actions pinning ===" && ./scripts/ci/lint-actions-pinning.sh
 echo "=== Actions pinning self-test ===" && ./scripts/ci/lint-actions-pinning-test.sh
+echo "=== pnpm version pin ===" && ./scripts/ci/lint-pnpm-version-pin.sh
+echo "=== pnpm version pin self-test ===" && ./scripts/ci/lint-pnpm-version-pin-test.sh
 # ci.yml's path-filter change-class computation, mirrored so a local run
 # judges the same classification CI gates on.
 # check-change-class.sh is a HELPER that CI invokes with a class and a file
@@ -564,6 +566,8 @@ lane_c() { # web typecheck/lint/test/build. Graceful-skip when pnpm isn't
 
 lane_d() { # everything else
     echo "=== Ansible galexie-restart self-test ===" && ./scripts/ci/ansible-galexie-restart-test.sh
+    echo "=== Ansible nftables per-source SSH rate-limit self-test ===" && ./scripts/ci/ansible-ssh-rate-limit-test.sh
+    echo "=== Ansible prometheus archival-host guard self-test ===" && ./scripts/ci/ansible-prometheus-host-guard-test.sh
     echo "=== Ansible exporter listen-address self-test ===" && ./scripts/ci/ansible-exporter-listen-address-test.sh
     echo "=== Ansible node-exporter-collectors install self-test ===" && ./scripts/ci/ansible-node-exporter-collectors-install-test.sh
     echo "=== Ansible Caddy signing-key pipefail self-test ===" && ./scripts/ci/ansible-caddy-key-pipefail-test.sh

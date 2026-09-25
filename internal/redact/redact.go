@@ -253,11 +253,11 @@ func goEscape(s string) string {
 // exists for. The query secret's own anchor (`password=`) cuts that
 // text in [cutHeld], which is the reading that is actually right.
 func passwordSpan(v string, held []heldSecret) string {
-	i := strings.Index(v, "://")
-	if i <= 0 {
+	_, r, _ := urlRest(v)
+	if r < 0 {
 		return ""
 	}
-	rest := v[i+3:]
+	rest := v[r:]
 	at := strings.LastIndex(rest, "@")
 	if at < 0 {
 		return ""
@@ -293,20 +293,53 @@ type heldSecret struct {
 //     element (`--postgres://…`, `-dsn=postgres://…`) and the echo does
 //     not repeat the dashes it arrived with. With no `@` at all the
 //     secret has no end marker and runs to the end of the string, on the
-//     same terms as [unterminatedColon].
+//     same terms as [unterminatedColon]. The same holds for a URL whose
+//     `//` was left out (`scheme:user:SECRET@`), see [urlRest].
 //   - URL query, `?password=SECRET` and `sslpassword`.
 //   - libpq keyword/value, `password=SECRET` or `password='SE CRET'`.
 func heldSecrets(v string) []heldSecret {
-	i := strings.Index(v, "://")
-	if i <= 0 {
+	s, r, opaque := urlRest(v)
+	if r < 0 {
 		return keywordSecrets(v)
 	}
-	rest := v[i+3:]
+	rest := v[r:]
 	var out []heldSecret
 	if c, end := userinfoPassword(rest); c >= 0 {
-		out = append(out, heldSecret{anchor: v[schemeStart(v, i):i+3] + rest[:c+1], secret: rest[c+1 : end]})
+		out = append(out, heldSecret{anchor: v[s:r] + rest[:c+1], secret: rest[c+1 : end]})
 	}
-	return append(out, querySecrets(rest)...)
+	out = append(out, querySecrets(rest)...)
+	if opaque {
+		// A keyword string can hold a `word:` that reads as a scheme; keep
+		// its keyword reading too.
+		out = append(out, keywordSecrets(v)...)
+	}
+	return out
+}
+
+// urlRest locates a URL-form connection string: the index its scheme
+// starts at and the index of the text after the scheme's separator, or
+// r = -1 if v is not one. The separator is `://`, or a bare `scheme:`
+// (plus one `/`) when the `//` was left out — libpq reads that as a
+// keyword string and quotes the whole of it, password included, in its
+// error. The bare form needs the scheme to open v, after any dashes or
+// a `-flag=`, so a path or text with a colon in it is not read as one.
+func urlRest(v string) (s, r int, opaque bool) {
+	if i := strings.Index(v, "://"); i > 0 {
+		return schemeStart(v, i), i + 3, false
+	}
+	i := strings.Index(v, ":")
+	if i <= 0 {
+		return 0, -1, false
+	}
+	s = schemeStart(v, i)
+	if s == i || (s > 0 && v[s-1] != '-' && v[s-1] != '=') {
+		return 0, -1, false
+	}
+	r = i + 1
+	if strings.HasPrefix(v[r:], "/") {
+		r++
+	}
+	return s, r, true
 }
 
 // schemeStart walks back from the `://` at i over the characters a

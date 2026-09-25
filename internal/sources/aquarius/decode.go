@@ -20,14 +20,14 @@ const aquariusTopicArity = 4
 // in events.go (uniqueness of keys holds because each TopicSymbol*
 // encodes a distinct Event* string).
 //
-// Every topic Aquarius emits (the original AMM surface verified
+// Every topic an Aquarius pool emits (the original AMM surface verified
 // 2026-05-27 against the then-public upstream Rust source; the
 // rewards-gauge + governance surfaces verified 2026-07-10 against
 // real r1 lake bytes — the upstream repo is no longer public) must
-// appear here — the EVERY-event policy
-// (memory: project_every_event_principle) treats classify() as the
-// authoritative completeness gate for BackfillSafe, and
-// TestClassify_completenessVsUpstream enumerates the closed set.
+// appear here, and TestClassify_completenessVsUpstream enumerates the
+// closed set. The router's own `swap` / `deposit` / `withdraw` do not
+// match: a documented known gap (README "Known gap"), pinned by
+// TestRouterCensusTopics_matchedOrKnownGap.
 var kindByTopicSymbol = map[string]string{
 	TopicSymbolTrade:                      EventTrade,
 	TopicSymbolDepositLiquidity:           EventDepositLiquidity,

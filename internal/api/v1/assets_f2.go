@@ -353,6 +353,30 @@ func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asse
 	return sourceCount
 }
 
+// marketCapRefused is the pre-figure half of the valuation guards shared by
+// the detail cap and the market-cap chart, so the two cannot disagree on
+// whether an asset has a market valuation at all.
+//
+// An unverified ticker collision refuses outright: a look-alike of a verified
+// currency must not publish price × supply as a headline valuation — see the
+// matching guard in fillRowMarketCap (listing path) for the full rationale
+// (2026-08-04: XRP-GBXRPL45… published a $109.5M cap under XRP's ticker).
+// Single-venue sub-floor trading refuses as low liquidity. The turnover
+// ceiling tests the computed figure, so each caller applies
+// [capExceedsObservedTurnover] to its own.
+func (s *Server) marketCapRefused(asset canonical.Asset, priceSourceCount int, volume24hUSD *string) (refused, lowLiquidity bool) {
+	if s.verifiedCurrencies != nil && asset.Type == canonical.AssetClassic {
+		if _, collision := s.verifiedCurrencies.StellarCollision(asset.Code, asset.Issuer); collision {
+			return true, false
+		}
+	}
+	if !asset.Equal(canonical.NativeAsset()) &&
+		dustLiquiditySuppressed(priceSourceCount, volume24hUSD, s.minMarketCapVolumeUSD) {
+		return true, true
+	}
+	return false, false
+}
+
 // populateMarketCap fills market_cap_usd + fdv_usd from the supply
 // snapshot and the already-populated detail.PriceUSD. Re-uses the
 // inlined price (set by populatePriceUSD or the asset-catalogue overlay path)
@@ -407,20 +431,8 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 	// serves, and must not be weakened to match the listing's XLM-route
 	// count). Full parity requires unifying the two price bases at the
 	// aggregator/SQL layer — out of scope for these two API files.
-	// Unverified ticker collision: a look-alike of a verified currency
-	// must not publish price × supply as a headline valuation — see the
-	// matching guard in fillRowMarketCap (listing path) for the full
-	// rationale (2026-08-04: XRP-GBXRPL45… published a $109.5M cap
-	// under XRP's ticker). Computed directly here because the envelope
-	// stamp (verifiedCurrencyFlags) runs after this populate.
-	if s.verifiedCurrencies != nil && asset.Type == canonical.AssetClassic {
-		if _, collision := s.verifiedCurrencies.StellarCollision(asset.Code, asset.Issuer); collision {
-			return
-		}
-	}
-	if !asset.Equal(canonical.NativeAsset()) &&
-		dustLiquiditySuppressed(priceSourceCount, detail.VolumeUSD24h, s.minMarketCapVolumeUSD) {
-		detail.MarketCapLowLiquidity = true
+	if refused, lowLiquidity := s.marketCapRefused(asset, priceSourceCount, detail.VolumeUSD24h); refused {
+		detail.MarketCapLowLiquidity = lowLiquidity
 		return
 	}
 	if snap.CirculatingSupply != nil {

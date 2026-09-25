@@ -5,7 +5,7 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellarindex_aggregator_outlier_storm` / `stellarindex_aggregator_outlier_trim_fraction`
+# Runbook — `stellarindex_aggregator_outlier_storm` / `stellarindex_aggregator_outlier_trim_fraction` / `stellarindex_aggregator_outlier_volume_trim_fraction`
 
 > **2026-08-28 redesign.** The alert used to gate on
 > `sum by (pair) (rate(stellarindex_aggregator_dropped_trades_total{reason="outlier"}[10m])) > 10`
@@ -46,16 +46,17 @@ severity: P3
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_aggregator_outlier_storm` (venue disagreement) / `stellarindex_aggregator_outlier_trim_fraction` (in-window trim share) / `stellarindex_aggregator_outlier_trim_rate_legacy` (overlap copy of the old counter gate, retire 2026-09-04) |
+| Alert | `stellarindex_aggregator_outlier_storm` (venue disagreement) / `stellarindex_aggregator_outlier_trim_fraction` (in-window trim share) / `stellarindex_aggregator_outlier_volume_trim_fraction` (in-window volume trim share, every window) / `stellarindex_aggregator_outlier_trim_rate_legacy` (overlap copy of the old counter gate, retire 2026-09-04) |
 | Severity | P3 (ticket) |
 | Detected by | `deploy/monitoring/rules/aggregator.yml` |
 | Typical MTTR | 30 min – several hours |
-| Impact | `outlier_storm`: one pair's venues have disagreed by > 1 % on their 5m VWAPs for 15 m+ — one venue is stale, thin, mis-decoding amounts, or a stablecoin leg is skewed. `trim_fraction`: the time-local filter is rejecting > 20 % of one pair's 24h window — a spam / wash / dust wave inside the window. In both cases the **published price is protected** (robust, time-locally filtered VWAP across venues); this is a data-quality / source-health signal, not a customer-facing price error. Harm is a source being wholesale-rejected (completeness) or a thin surviving sample. |
+| Impact | `outlier_storm`: one pair's venues have disagreed by > 1 % on their 5m VWAPs for 15 m+ — one venue is stale, thin, mis-decoding amounts, or a stablecoin leg is skewed. `trim_fraction`: the time-local filter is rejecting > 20 % of one pair's 24h window — a spam / wash / dust wave inside the window. In both cases the **published price is protected** (robust, time-locally filtered VWAP across venues); this is a data-quality / source-health signal, not a customer-facing price error. Harm is a source being wholesale-rejected (completeness) or a thin surviving sample. `volume_trim_fraction`: the filter has removed > 20 % of one pair's traded base volume in one window; at 100 % that window is **withheld** (no price published for it) because the prints the count majority would keep carry less volume than the ones it would drop — the wash-over-block shape. |
 
 ## Symptoms
 
 - `outlier_storm`: `max by (pair)(stellarindex_aggregator_venue_vwap{window="5m"}) / min by (pair)(...) − 1 > 0.01` with ≥ 2 venue series, for a **single** `pair`, sustained past 15 m.
 - `trim_fraction`: `1 − window_trades{stage="outlier"} / window_trades{stage="class"} > 0.2` on `window="24h"` with ≥ 20 class-filtered trades, sustained past 30 m.
+- `volume_trim_fraction`: `1 − window_base_volume{stage="outlier"} / window_base_volume{stage="class"} > 0.2` on any window with class volume > 0, sustained past 15 m. A value of exactly 1 with `window_trades{stage="class"} > 0` is a withheld (contested) window.
 - `trim_rate_legacy` (until 2026-09-04): `sum by (pair) rate(dropped_trades_total{reason="outlier"}[10m]) > 10` for 2 h — the per-tick re-count; treat exactly like `trim_fraction`.
 - The published VWAP for that pair is typically still correct — cross-check the
   pair's `div:<pair>` Redis flag / API `flags.divergence_warning` for actual
@@ -80,6 +81,13 @@ curl -fs http://localhost:9465/metrics \
 #    how thin is the survivor set?
 curl -fs http://localhost:9465/metrics \
   | grep '^stellarindex_aggregator_window_trades{' | grep 'window="24h"' | sort
+
+# 2b) volume_trim_fraction: how much of the MONEY is the filter removing?
+#    Read it beside window_trades for the same window: many prints but little
+#    volume removed is dust; few prints and most of the volume is a large
+#    print outside the band, or wash prints outvoting an honest block.
+curl -fs http://localhost:9465/metrics \
+  | grep '^stellarindex_aggregator_window_base_volume{' | sort
 
 # 3) Is the upstream-trade rate also elevated? (real volume → real outliers)
 psql -d stellarindex -c \
@@ -230,3 +238,7 @@ Capture for the postmortem:
   spam-bucket fixtures added; `trim_fraction` promtool case now uses
   the fixture's real filter output (1200 / 720); old counter gate kept
   as `outlier_trim_rate_legacy` for one week (retire 2026-09-04).
+- 2026-09-24 — `outlier_volume_trim_fraction` on every window, from the
+  new `window_base_volume{stage}` gauge: a withheld 5m or 1h window, or
+  a single-venue wash burst, is visible where the 24h count rule and the
+  ≥ 2-venue storm rule are not.

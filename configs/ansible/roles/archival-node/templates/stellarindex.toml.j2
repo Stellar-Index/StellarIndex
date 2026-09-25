@@ -366,11 +366,16 @@ listen_addr = "{{ stellarindex_api_listen_addr | default('127.0.0.1:3000') }}"
 # network-switcher can read each network's public /v1/ledger/tip cross-origin
 # (e.g. the mainnet explorer showing testnet's live ledger, and vice-versa).
 allowed_origins = ["https://stellarindex.io", "https://api.stellarindex.io", "https://status.stellarindex.io", "https://docs.stellarindex.io", "https://dashboard.stellarindex.io", "https://www.stellarindex.io", "https://testnet.stellarindex.io", "https://futurenet.stellarindex.io"]
+# Default false. The dashboard's magic-link session cookie rides
+# cross-origin requests to /v1/account/*; valid only beside the explicit
+# allowed_origins list above (the API panics at boot beside ["*"]).
 allow_credentials = true
 # AC7 onboarding fix (2026-06-13): verification-gated signup stays OFF
 # until a verified-sender domain is set up end-to-end.
 signup_require_email_verification = false
 
+# Default "none". Freemium: anonymous callers get the anon limit below, a
+# valid key gets its tier's limit, an invalid key is a 401.
 auth_mode = "apikey_optional"
 trusted_proxy_cidrs = ["127.0.0.1/32"]
 prometheus_url = "http://localhost:9090"
@@ -381,8 +386,23 @@ prometheus_url = "http://localhost:9090"
 # here means it can never be reported DOWN — only drop one that is
 # genuinely not installed.
 status_services = [{{ '"indexer", "aggregator"' if run_aggregator | default(true) | bool else '"indexer"' }}]
+# Defaults 60 (anon) / 1000 (key). Raised because the explorer's Cloudflare
+# Pages prerender fetches from one IP and 429'd at 60/min, rendering
+# /assets/[slug]/[network] pages as "Not found".
 anon_rate_limit_per_min = 6000
 key_rate_limit_per_min = 6000
+
+# In-site dashboard (magic-link login). base_url / cookie_domain default
+# empty; r1 renders the production explorer origin and parent domain.
+[api.dashboard]
+base_url           = "{{ stellarindex_dashboard_base_url | default('https://stellarindex.io') }}"
+email_from         = "{{ stellarindex_dashboard_email_from | default('Stellar Index <hello@stellarindex.io>') }}"
+resend_api_key_env = "STELLARINDEX_RESEND_API_KEY"
+# Keys the 6-digit email-code derivation (HMAC over the stored token
+# hash). Unset env → random per-process secret (codes die on restart).
+code_secret_env    = "STELLARINDEX_DASHBOARD_CODE_SECRET"
+cookie_secure      = true
+cookie_domain      = "{{ stellarindex_dashboard_cookie_domain | default('.stellarindex.io') }}"
 
 # ──────────────────────────────────────────────────────────────────
 # [supply] — operator-curated registries.
@@ -401,16 +421,6 @@ key_rate_limit_per_min = 6000
 # internal/currency/data/seed.yaml. Next aggregator restart
 # starts populating market_cap_usd / fdv_usd / circulating_supply
 # / total_supply / max_supply for these.
-[api.dashboard]
-base_url           = "{{ stellarindex_dashboard_base_url | default('https://stellarindex.io') }}"
-email_from         = "{{ stellarindex_dashboard_email_from | default('Stellar Index <hello@stellarindex.io>') }}"
-resend_api_key_env = "STELLARINDEX_RESEND_API_KEY"
-# Keys the 6-digit email-code derivation (HMAC over the stored token
-# hash). Unset env → random per-process secret (codes die on restart).
-code_secret_env    = "STELLARINDEX_DASHBOARD_CODE_SECRET"
-cookie_secure      = true
-cookie_domain      = "{{ stellarindex_dashboard_cookie_domain | default('.stellarindex.io') }}"
-
 [supply]
 # aggregator_refresh_enabled starts the supply-refresh goroutine
 # path (2026-05-14). It emits the success metric even when no rows
@@ -515,6 +525,13 @@ rpc_url = "{{ vault_chainlink_rpc_url | default('https://eth.llamarpc.com') }}"
   address = "0xBcE206caE7f0ec07b545EddE332A47C2F75bbeb3"
   decimals = 8
   max_age_hours = 76  # FX markets close weekends; 3h crypto default reads them dead Fri-Mon (PR #149 panel)
+
+# Supply cross-check (served circulating_supply vs the Stellar Network
+# Dashboard). Off unless the inventory sets
+# stellarindex_divergence_supply_enabled: true — it makes outbound HTTP
+# calls and pages on a >1% drift, so arming it is an operator decision.
+[divergence.supply]
+enabled = {{ 'true' if stellarindex_divergence_supply_enabled | default(false) | bool else 'false' }}
 
 # 2026-05-14 — Phase 2 freeze stop-gap.
 # crypto:BTC/fiat:EUR has source_count=1 structurally (only one

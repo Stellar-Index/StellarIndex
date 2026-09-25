@@ -314,6 +314,9 @@ var (
 		EventApplyUpgrade, EventCommitUpgrade, EventSetPrivilegedAddrs,
 		EventApplyTransferOwnership, EventCommitTransferOwnership,
 		EventEnableEmergencyMode, EventDisableEmergencyMode,
+		EventSetProtocolFee, EventClaimProtocolFee,
+		EventKillDeposit, EventUnkillDeposit, EventKillSwap, EventUnkillSwap,
+		EventKillClaim, EventUnkillClaim, EventKillGaugesClaim, EventUnkillGaugesClaim,
 	}
 )
 

@@ -41,6 +41,31 @@ func recordWindowStage(pair canonical.Pair, window time.Duration, stage string, 
 	obs.AggregatorWindowTrades.WithLabelValues(pair.String(), windowLabel(window), stage).Set(float64(n))
 }
 
+// recordWindowStageVolume is [recordWindowStage] plus the stage's base
+// volume (AggregatorWindowBaseVolume). Volume is in whole units rather
+// than at the stage's common smallest-unit scale: that scale is the
+// stage's own maximum, so a trim that removed every 8dp print would put
+// the survivors on a different scale from the class set.
+func recordWindowStageVolume(pair canonical.Pair, window time.Duration, stage string, trades []canonical.Trade) {
+	recordWindowStage(pair, window, stage, len(trades))
+	bySource := make(map[string]*big.Int, 4)
+	for i := range trades {
+		sum, ok := bySource[trades[i].Source]
+		if !ok {
+			sum = new(big.Int)
+			bySource[trades[i].Source] = sum
+		}
+		sum.Add(sum, trades[i].BaseAmount.BigInt())
+	}
+	total := new(big.Rat)
+	for source, sum := range bySource {
+		unit := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(amountScaleDecimalsFor(source))), nil)
+		total.Add(total, new(big.Rat).SetFrac(sum, unit))
+	}
+	vol, _ := total.Float64() // i128:ok gauge boundary; operator signal, never served
+	obs.AggregatorWindowBaseVolume.WithLabelValues(pair.String(), windowLabel(window), stage).Set(vol)
+}
+
 // recordVenueVWAPs publishes one AggregatorVenueVWAP series per source
 // present in `trades` (the PRE-outlier, post-class set) and deletes
 // the series of every source that was present on a previous refresh

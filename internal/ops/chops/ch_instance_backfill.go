@@ -1,7 +1,6 @@
 package chops
 
 import (
-	"flag"
 	"fmt"
 	"os"
 
@@ -20,7 +19,7 @@ import (
 // DDL's operator contract). Same r1 cautions as the sibling backfills:
 // serialize, run under run-heavy-job.sh, resume with the printed -from.
 func chInstanceBackfill(args []string) error {
-	fs := flag.NewFlagSet("ch-instance-backfill", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("ch-instance-backfill")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	from := fs.Uint("from", 2, "first ledger (inclusive; resume point from a previous run's output)")
 	to := fs.Uint("to", 0, "last ledger (inclusive; 0 = the contiguous lake tip from -from)")
@@ -35,6 +34,9 @@ func chInstanceBackfill(args []string) error {
 	if *from == 0 || *window == 0 {
 		return fmt.Errorf("-from and -window must be > 0")
 	}
+	if err := gate.RequireStatedMode(); err != nil {
+		return fmt.Errorf("ch-instance-backfill: %w", err)
+	}
 
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
@@ -47,6 +49,11 @@ func chInstanceBackfill(args []string) error {
 		return fmt.Errorf("-to (%d) is below -from (%d)", last, *from)
 	}
 
+	if !gate.Banner() {
+		fmt.Fprintf(os.Stderr, "ch-instance-backfill: would fill stellar.%s for ledgers %d..%d (window %d) on %s\n",
+			*table, *from, last, *window, *chAddr)
+		return nil
+	}
 	fmt.Fprintf(os.Stderr, "ch-instance-backfill: filling stellar.%s for ledgers %d..%d (window %d) on %s\n",
 		*table, *from, last, *window, *chAddr)
 	return clickhouse.BackfillContractInstanceChangesInto(ctx, *chAddr, *table, uint32(*from), last, uint32(*window),

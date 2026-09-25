@@ -152,8 +152,10 @@ var Registry = map[string]Metadata{
 	//
 	// `exchangeratesapi` (currently disabled) is NOT a forex-snap fallback:
 	// its poller emits OracleUpdates only (oracle_updates), never trades or
-	// fx_quotes, so FXQuoteAtOrBefore's `trades` arm finds nothing from it
-	// and nothing serves the snap while the massive feed is dry.
+	// fx_quotes, so FXQuoteAtOrBefore's `trades` arm finds nothing from it.
+	// The snap's only fallback is the forex worker's in-process ECB standby
+	// (forex.ECBProvider), which writes fx_quotes with source "ecb" — not
+	// the "ecb" sanity connector below.
 	// FX pollers stamp amounts at 1e6 (DefaultDecimals=6), NOT the CEX 1e8;
 	// AmountDecimals:6 records that for the USD-volume gate (CS-040).
 	// OracleResolution is a trading day: an FX rate legitimately holds

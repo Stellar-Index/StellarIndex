@@ -88,6 +88,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/orchestrator"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/protoeventsrollup"
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming/redispub"
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/customerwebhook"
@@ -683,7 +684,7 @@ func run(cfgPath string, dryRun bool) error {
 	// can scrape them and the aggregator-silent / outlier-storm /
 	// class-drop-spike alerts in deploy/monitoring/rules/aggregator.yml
 	// can actually fire.
-	metricsSrv := startMetricsServer(cfg.Obs, logger)
+	metricsSrv := startMetricsServer(cfg.Obs, store, logger)
 
 	// ─── Baseline refresh worker (ADR-0019 Phase 2) ─────────────
 	// Slow-cadence loop alongside the orchestrator: hourly pulls
@@ -2079,7 +2080,7 @@ func defaultPairs() []canonical.Pair {
 // metrics listener to "address already in use." Operators on
 // multi-host deploys override obs.metrics_listen per-host and never
 // hit the shift.
-func startMetricsServer(cfg config.ObsConfig, logger *slog.Logger) *http.Server {
+func startMetricsServer(cfg config.ObsConfig, schema v1.SchemaVersionReader, logger *slog.Logger) *http.Server {
 	if cfg.MetricsListen == "" {
 		logger.Warn("obs.metrics_listen is empty — /metrics endpoint disabled; aggregator-silent / outlier-storm / class-drop-spike alerts will not fire")
 		return nil
@@ -2090,15 +2091,9 @@ func startMetricsServer(cfg config.ObsConfig, logger *slog.Logger) *http.Server 
 		logger.Info("obs.metrics_listen left at indexer default; shifting aggregator to "+aggregatorMetricsShiftedAddr+" to avoid single-host port collision",
 			"original", aggregatorMetricsCollidingDefault, "shifted_to", aggregatorMetricsShiftedAddr)
 	}
-	mux := http.NewServeMux()
-	mux.Handle("GET /metrics", obs.Handler())
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok\n"))
-	})
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           newMetricsMux(schema),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
@@ -2108,6 +2103,21 @@ func startMetricsServer(cfg config.ObsConfig, logger *slog.Logger) *http.Server 
 		}
 	}()
 	return srv
+}
+
+// newMetricsMux serves /metrics, the constant liveness /healthz, and
+// /readyz: the schema-head check the deploy gate probes, so a binary
+// swapped ahead of its migrations fails the deploy instead of passing
+// `systemctl is-active` while every write errors (GH-1167).
+func newMetricsMux(schema v1.SchemaVersionReader) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", obs.Handler())
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
+	mux.Handle("GET /readyz", v1.ReadyzHandler(v1.NewSchemaVersionChecker(schema)))
+	return mux
 }
 
 // aggregatorMetricsCollidingDefault is the indexer's default

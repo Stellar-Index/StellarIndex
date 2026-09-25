@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/user"
 	"strings"
 	"time"
 
@@ -21,19 +20,6 @@ const opsKeyReasonMaxLen = 512
 // through (postgresstore.AuditStore in production).
 type keyAuditSink interface {
 	Append(ctx context.Context, e platform.AuditEntry) error
-}
-
-// resolveOpsActor names who ran a privileged key command: -actor, else the
-// OS login. An audit row with no actor is refused.
-func resolveOpsActor(flagActor string) (string, error) {
-	if a := strings.TrimSpace(flagActor); a != "" {
-		return a, nil
-	}
-	u, err := user.Current()
-	if err != nil || strings.TrimSpace(u.Username) == "" {
-		return "", errors.New("-actor is required (the OS user could not be resolved)")
-	}
-	return u.Username, nil
 }
 
 // validateOpsKeyReason requires the -reason recorded with every CLI key

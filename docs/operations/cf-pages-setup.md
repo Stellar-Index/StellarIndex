@@ -220,6 +220,11 @@ and `/account` shows the signed-out shell. To turn login on:
   [`runbooks/explorer-cf-pages-down.md`](runbooks/explorer-cf-pages-down.md)
   for diagnosis and rollback (full outage, edge-function failure, or
   a stale deploy stuck past the 20,000-file ceiling).
+- **A route is missing its security headers (CSP, HSTS, X-Frame-Options)**
+  — Pages applies `web/explorer/public/_headers` to static assets only,
+  never to a Pages Function response (`/og/*`, `/client-errors`, the
+  shell-fallback routes). See
+  [explorer-deployment.md § What `_headers` does not cover](explorer-deployment.md#what-_headers-does-not-cover).
 
 ## Dashboard retirement (`app.stellarindex.io`) — DONE 2026-06-17
 

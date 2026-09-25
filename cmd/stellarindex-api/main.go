@@ -339,6 +339,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// readyz "degraded" flag for operators to `force` without
 		// draining the fleet over a migration that rolled back cleanly.
 		v1.NewSchemaDirtyChecker(schemaChecker{db: store.DB()}),
+		// ADR-0015: unguarded CAGG readers depend on materialized_only;
+		// drain if an out-of-band ALTER makes a view serve its open bucket.
+		v1.NewClosedBucketChecker(store),
 	}
 	if rdb != nil {
 		checks = append(checks, redisChecker{rdb: rdb})

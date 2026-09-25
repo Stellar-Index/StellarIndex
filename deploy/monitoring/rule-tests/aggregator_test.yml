@@ -200,6 +200,65 @@ tests:
         alertname: stellarindex_aggregator_outlier_trim_fraction
         exp_alerts: []
 
+  # ══ stellarindex_aggregator_outlier_volume_trim_fraction ══════════
+  # ── Case 7: dust count majority over an honest block, 5m window ──
+  # The gauge values are the orchestrator's output on the worked example
+  # (TestRefreshPairWindow_RecordsWindowBaseVolumePerStage): 3 × 1,000,000
+  # XLM at 0.100 and 4 × 30,000 XLM at 0.114. The count majority would
+  # trim the honest block, so the window is withheld: class 3,120,000,
+  # outlier 0. Neither the 24h count rule nor outlier_storm (one venue)
+  # sees it. Fires once `for: 15m` has elapsed; silent at 10m.
+  - interval: 1m
+    name: a withheld 5m window fires after the 15m for-gate
+    input_series:
+      - series: 'stellarindex_aggregator_window_base_volume{pair="crypto:XLM/crypto:USDT",window="5m",stage="class",binary="stellarindex-aggregator"}'
+        values: '3120000x40'
+      - series: 'stellarindex_aggregator_window_base_volume{pair="crypto:XLM/crypto:USDT",window="5m",stage="outlier",binary="stellarindex-aggregator"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_aggregator_outlier_volume_trim_fraction
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: stellarindex_aggregator_outlier_volume_trim_fraction
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+              pair: crypto:XLM/crypto:USDT
+              window: 5m
+              binary: stellarindex-aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+              summary: "crypto:XLM/crypto:USDT outlier filter removing >20% of the 5m window's volume for 15m (P3)"
+              description: |
+                The outlier filter has removed more than 20% of the base volume
+                in crypto:XLM/crypto:USDT's 5m window for 15m+
+                (stellarindex_aggregator_window_base_volume, stage=outlier vs
+                stage=class). At 100% the window is withheld: a count majority
+                of prints disagrees with the volume majority, the shape of wash
+                prints set against an honest block, and no price is published
+                for that window. Compare window_trades for the same window —
+                many prints but little volume removed is dust; few prints and
+                much volume is a large print outside the band. Diagnose from
+                the trades table for the pair.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+
+  # ── Case 8: a fat-finger trim removes almost no volume and stays silent ──
+  # Same Go test's second case: class 5,010,000, outlier 5,000,000 (0.2%).
+  - interval: 1m
+    name: a fat-finger volume trim stays silent
+    input_series:
+      - series: 'stellarindex_aggregator_window_base_volume{pair="crypto:XLM/crypto:USDT",window="5m",stage="class",binary="stellarindex-aggregator"}'
+        values: '5010000x40'
+      - series: 'stellarindex_aggregator_window_base_volume{pair="crypto:XLM/crypto:USDT",window="5m",stage="outlier",binary="stellarindex-aggregator"}'
+        values: '5000000x40'
+    alert_rule_test:
+      - eval_time: 39m
+        alertname: stellarindex_aggregator_outlier_volume_trim_fraction
+        exp_alerts: []
+
   # ══ stellarindex_nonstandard_decimals_correction_failing ══════════
   # ── the startup-only refresh failure ─────────────────────────────
   # The refresh sweep's FIRST run happens on a background goroutine

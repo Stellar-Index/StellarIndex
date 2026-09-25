@@ -1165,6 +1165,10 @@ type ChartSeries struct {
 	Discontinuous bool           `json:"discontinuous"`
 	GapStartsAt   *time.Time     `json:"gap_starts_at,omitempty"`
 	GapEndsAt     *time.Time     `json:"gap_ends_at,omitempty"`
+	// MarketCapLowLiquidity (price_type=market_cap only) reports that
+	// Points was withheld because the asset's current market cannot
+	// support a valuation, as on Asset.MarketCapLowLiquidity.
+	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 }
 
 // ChangeSummary is the data shape returned by [Client.ChangeSummary]

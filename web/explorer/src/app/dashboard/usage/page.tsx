@@ -36,8 +36,8 @@ import {
   TR,
 } from '@/components/ui';
 import {
-  fmtDate,
   fmtDateTime,
+  fmtDateUTC,
   fmtInt,
   fmtRelative,
   tierCeiling,
@@ -155,8 +155,35 @@ interface DayAgg {
   throttled: number;
 }
 
-/** Collapse per-endpoint rows into per-day totals for the bars. */
-function aggregateByDate(rows: UsageRow[]): DayAgg[] {
+/**
+ * The UTC calendar-day axis for the bars: dense, oldest → newest,
+ * ending on the newest day actually served (never the client clock —
+ * a skewed clock, or a server window not ending today, would mint
+ * columns the reader never scanned) and capped at `windowDays` so the
+ * chart never grows past the requested window.
+ */
+export function usageWindowUTC(rows: UsageRow[], windowDays: number): string[] {
+  const days = rows
+    .map((r) => r.date)
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    .sort();
+  if (days.length === 0) return [];
+  const endMs = Date.parse(`${days[days.length - 1]}T00:00:00Z`);
+  const startMs = Math.max(
+    Date.parse(`${days[0]}T00:00:00Z`),
+    endMs - (windowDays - 1) * 86_400_000,
+  );
+  const out: string[] = [];
+  for (let ms = startMs; ms <= endMs; ms += 86_400_000) {
+    out.push(new Date(ms).toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+/** Collapse per-endpoint rows into per-day totals for the bars, zero-filling
+ * any day in the served window with no rows so a gap in traffic renders as
+ * a real gap, not a shortened run of neighbouring bars. */
+export function aggregateByDate(rows: UsageRow[]): DayAgg[] {
   const byDate = new Map<string, DayAgg>();
   for (const r of rows) {
     const agg = byDate.get(r.date) ?? {
@@ -170,7 +197,9 @@ function aggregateByDate(rows: UsageRow[]): DayAgg[] {
     agg.throttled += r.throttled || 0;
     byDate.set(r.date, agg);
   }
-  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+  return usageWindowUTC(rows, 30).map(
+    (date) => byDate.get(date) ?? { date, requests: 0, errors: 0, throttled: 0 },
+  );
 }
 
 interface EndpointAgg {
@@ -263,8 +292,8 @@ function DailyRequests({ usage }: { usage: UsageRow[] | null }) {
   return (
     <Card>
       <CardHeader
-        title="Requests (last 30 days)"
-        description="Per-account daily request counts recorded by the API."
+        title="Requests (last 30 days, UTC)"
+        description="Per-account daily request counts recorded by the API, bucketed by UTC calendar day."
         actions={
           days && days.length > 0 ? (
             <span className="tnum text-ink-muted font-mono text-sm">
@@ -293,28 +322,34 @@ function DailyRequests({ usage }: { usage: UsageRow[] | null }) {
 function UsageBars({ rows }: { rows: DayAgg[] }) {
   const max = Math.max(...rows.map((r) => r.requests), 1);
   return (
-    <div className="flex items-end gap-1">
-      {rows.map((r) => {
-        const h = Math.max(3, (r.requests / max) * 64);
-        const extras = [
-          r.errors > 0 ? `${fmtInt(r.errors)} errors` : null,
-          r.throttled > 0 ? `${fmtInt(r.throttled)} throttled` : null,
-        ]
-          .filter(Boolean)
-          .join(', ');
-        return (
-          <div
-            key={r.date}
-            title={`${fmtDate(r.date)}: ${fmtInt(r.requests)} requests${extras ? ` (${extras})` : ''}`}
-            className="flex flex-1 flex-col items-center justify-end"
-          >
+    <div>
+      <div className="flex items-end gap-1">
+        {rows.map((r) => {
+          const h = Math.max(3, (r.requests / max) * 64);
+          const extras = [
+            r.errors > 0 ? `${fmtInt(r.errors)} errors` : null,
+            r.throttled > 0 ? `${fmtInt(r.throttled)} throttled` : null,
+          ]
+            .filter(Boolean)
+            .join(', ');
+          return (
             <div
-              className="bg-brand-500/70 w-full rounded-xs"
-              style={{ height: `${h}px` }}
-            />
-          </div>
-        );
-      })}
+              key={r.date}
+              title={`${fmtDateUTC(r.date)} UTC: ${fmtInt(r.requests)} requests${extras ? ` (${extras})` : ''}`}
+              className="flex flex-1 flex-col items-center justify-end"
+            >
+              <div
+                className="bg-brand-500/70 w-full rounded-xs"
+                style={{ height: `${h}px` }}
+              />
+            </div>
+          );
+        })}
+      </div>
+      <div className="text-ink-muted tnum mt-1 flex justify-between font-mono text-xs">
+        <span>{fmtDateUTC(rows[0].date)}</span>
+        <span>{fmtDateUTC(rows[rows.length - 1].date)}</span>
+      </div>
     </div>
   );
 }

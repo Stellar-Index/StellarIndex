@@ -275,7 +275,7 @@ func TestGatedContractSet_realDecoders(t *testing.T) {
 }
 
 // TestCatalogue_GatedPrefilterOptIn pins the exact opt-in set: aquarius,
-// phoenix and sushiswap_v3 (identity gates that time out / risk timing out on
+// phoenix, soroswap and sushiswap_v3 (identity gates that time out / risk timing out on
 // the whole-lake re-derive) opt in; defindex must NOT (its decode correlates
 // events ACROSS contracts in the same tx, which a contract-id prefilter would
 // break), and neither may a census / oracle / ContractCall source.
@@ -296,7 +296,7 @@ func TestCatalogue_GatedPrefilterOptIn(t *testing.T) {
 			optedIn[src.name] = true
 		}
 	}
-	for _, name := range []string{"aquarius", "phoenix", "sushiswap_v3"} {
+	for _, name := range []string{"aquarius", "phoenix", "soroswap", "sushiswap_v3"} {
 		if !optedIn[name] {
 			t.Errorf("source %q must opt into the -ch gated prefilter (it streams the whole lake otherwise)", name)
 		}
@@ -305,7 +305,7 @@ func TestCatalogue_GatedPrefilterOptIn(t *testing.T) {
 		t.Errorf("defindex must NOT opt into the gated prefilter — its decode correlates events across contracts in the same tx, which a contract-id prefilter would break")
 	}
 	// Sanity: the opt-in stays narrow — exactly the identity-gated AMMs.
-	if len(optedIn) != 3 {
-		t.Errorf("gated-prefilter opt-in set = %v, want exactly {aquarius, phoenix, sushiswap_v3}", optedIn)
+	if len(optedIn) != 4 {
+		t.Errorf("gated-prefilter opt-in set = %v, want exactly {aquarius, phoenix, soroswap, sushiswap_v3}", optedIn)
 	}
 }

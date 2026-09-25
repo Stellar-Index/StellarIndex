@@ -17,6 +17,7 @@ type fakeDirectoryOverrideStore struct {
 	rows    map[string]timescale.DirectoryEntry
 	cleared []string
 	reasons []string
+	actors  []string
 	deleted []string
 }
 
@@ -25,9 +26,10 @@ func (f *fakeDirectoryOverrideStore) DirectoryEntryByAddress(_ context.Context, 
 	return e, ok, nil
 }
 
-func (f *fakeDirectoryOverrideStore) ClearDirectoryScamFlag(_ context.Context, a, reason string) (before, after timescale.DirectoryEntry, found bool, err error) {
+func (f *fakeDirectoryOverrideStore) ClearDirectoryScamFlag(_ context.Context, a, operator, reason string) (before, after timescale.DirectoryEntry, found bool, err error) {
 	f.cleared = append(f.cleared, a)
 	f.reasons = append(f.reasons, reason)
+	f.actors = append(f.actors, operator)
 	before = f.rows[a]
 	after = before
 	after.Tags = timescale.DirectoryTagsWithoutScamFlags(before.Tags)
@@ -44,7 +46,10 @@ func (f *fakeDirectoryOverrideStore) DeleteDirectoryOverride(_ context.Context, 
 
 var overrideIssuer = "G" + strings.Repeat("B", 55)
 
-const overrideReason = "issuer verified via its stellar.toml; upstream tag is a false positive"
+const (
+	overrideReason = "issuer verified via its stellar.toml; upstream tag is a false positive"
+	overrideActor  = "ops-oncall"
+)
 
 func newOverrideFake(source string, tags ...string) *fakeDirectoryOverrideStore {
 	return &fakeDirectoryOverrideStore{rows: map[string]timescale.DirectoryEntry{
@@ -55,7 +60,7 @@ func newOverrideFake(source string, tags ...string) *fakeDirectoryOverrideStore 
 func TestDirectoryOverride_ClearKeepsRecognitionTags(t *testing.T) {
 	f := newOverrideFake("stellar-expert", "issuer", "unsafe", "memo-required")
 	var out bytes.Buffer
-	req := directoryOverrideRequest{address: overrideIssuer, clearScamFlag: true, reason: overrideReason, write: true}
+	req := directoryOverrideRequest{address: overrideIssuer, clearScamFlag: true, reason: overrideReason, actor: overrideActor, write: true}
 	if err := runDirectoryOverride(context.Background(), f, &out, req); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
@@ -64,6 +69,9 @@ func TestDirectoryOverride_ClearKeepsRecognitionTags(t *testing.T) {
 	}
 	if !slices.Equal(f.reasons, []string{overrideReason}) {
 		t.Errorf("reason handed to the store = %q, want %q", f.reasons, overrideReason)
+	}
+	if !slices.Equal(f.actors, []string{overrideActor}) {
+		t.Errorf("operator handed to the store = %q, want %q — the override must record who lifted the flag", f.actors, overrideActor)
 	}
 	got := f.rows[overrideIssuer]
 	if want := []string{"issuer", "memo-required"}; !slices.Equal(got.Tags, want) {
@@ -78,7 +86,7 @@ func TestDirectoryOverride_DryRunWritesNothing(t *testing.T) {
 	f := newOverrideFake("stellar-expert", "issuer", "unsafe")
 	var out bytes.Buffer
 	if err := runDirectoryOverride(context.Background(), f, &out,
-		directoryOverrideRequest{address: overrideIssuer, clearScamFlag: true, reason: overrideReason}); err != nil {
+		directoryOverrideRequest{address: overrideIssuer, clearScamFlag: true, reason: overrideReason, actor: overrideActor}); err != nil {
 		t.Fatalf("dry-run clear: %v", err)
 	}
 	if len(f.cleared) != 0 || len(f.deleted) != 0 {
@@ -98,17 +106,27 @@ func TestDirectoryOverride_Refusals(t *testing.T) {
 	}{
 		{
 			"unflagged row", newOverrideFake("stellar-expert", "issuer"),
-			directoryOverrideRequest{address: overrideIssuer, clearScamFlag: true, reason: overrideReason, write: true},
+			directoryOverrideRequest{address: overrideIssuer, clearScamFlag: true, reason: overrideReason, actor: overrideActor, write: true},
 			timescale.ErrDirectoryNotScamFlagged,
 		},
 		{
 			"clear without a reason", newOverrideFake("stellar-expert", "unsafe"),
-			directoryOverrideRequest{address: overrideIssuer, clearScamFlag: true, write: true},
+			directoryOverrideRequest{address: overrideIssuer, clearScamFlag: true, actor: overrideActor, write: true},
 			nil,
 		},
 		{
 			"clear with a blank reason", newOverrideFake("stellar-expert", "unsafe"),
-			directoryOverrideRequest{address: overrideIssuer, clearScamFlag: true, reason: " \t", write: true},
+			directoryOverrideRequest{address: overrideIssuer, clearScamFlag: true, reason: " \t", actor: overrideActor, write: true},
+			nil,
+		},
+		{
+			"clear without an operator", newOverrideFake("stellar-expert", "unsafe"),
+			directoryOverrideRequest{address: overrideIssuer, clearScamFlag: true, reason: overrideReason, write: true},
+			nil,
+		},
+		{
+			"clear with a blank operator", newOverrideFake("stellar-expert", "unsafe"),
+			directoryOverrideRequest{address: overrideIssuer, clearScamFlag: true, reason: overrideReason, actor: " ", write: true},
 			nil,
 		},
 		{
@@ -123,17 +141,17 @@ func TestDirectoryOverride_Refusals(t *testing.T) {
 		},
 		{
 			"both actions", newOverrideFake("stellar-expert", "unsafe"),
-			directoryOverrideRequest{address: overrideIssuer, clearScamFlag: true, reason: overrideReason, remove: true, write: true},
+			directoryOverrideRequest{address: overrideIssuer, clearScamFlag: true, reason: overrideReason, actor: overrideActor, remove: true, write: true},
 			nil,
 		},
 		{
 			"malformed address", newOverrideFake("stellar-expert", "unsafe"),
-			directoryOverrideRequest{address: "GABC", clearScamFlag: true, reason: overrideReason, write: true},
+			directoryOverrideRequest{address: "GABC", clearScamFlag: true, reason: overrideReason, actor: overrideActor, write: true},
 			nil,
 		},
 		{
 			"no row", newOverrideFake("stellar-expert", "unsafe"),
-			directoryOverrideRequest{address: "G" + strings.Repeat("C", 55), clearScamFlag: true, reason: overrideReason, write: true},
+			directoryOverrideRequest{address: "G" + strings.Repeat("C", 55), clearScamFlag: true, reason: overrideReason, actor: overrideActor, write: true},
 			nil,
 		},
 	}

@@ -2514,6 +2514,23 @@ window with ≥ 20 class-filtered trades, for 30m) — the single-venue spam
 shape (2026-08-14 token farm) that venue disagreement cannot see.
 Bounded: configured pairs × windows × 3 stages.
 
+### `stellarindex_aggregator_window_base_volume`
+
+Gauge, labels `pair`, `window` (`5m` / `1h` / `24h`), `stage`
+(`class` / `outlier`).
+
+Base-asset volume, in whole units (each source's smallest-unit scale
+divided out), of the **current** (pair, window) refresh after the
+ClassExchange-only filter and after the outlier filter. The outlier
+centre is a per-print median, so the trade-count share above cannot tell
+trimmed dust from a trimmed honest block; `1 − outlier/class` here is the
+share of the traded money the filter removed, and 1 when it withheld a
+window whose trim would have discarded the volume majority. Feeds
+`stellarindex_aggregator_outlier_volume_trim_fraction` (`> 0.2` on every
+window, for 15m). Operator signal, never a served value: the float64
+conversion happens at the gauge boundary only. Bounded: configured
+pairs × windows × 2 stages.
+
 ### `stellarindex_aggregator_dropped_windows_total`
 
 Counter, label `reason` (`min_usd_volume`).

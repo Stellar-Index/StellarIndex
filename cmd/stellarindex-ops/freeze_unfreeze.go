@@ -151,7 +151,7 @@ func resolveUnfreezeMutationInputs(list bool, assetFlag, quoteFlag, reasonFlag, 
 	if err := validateOpsKeyReason(reason); err != nil {
 		return "", "", err
 	}
-	actor, err = resolveOpsActor(actorFlag)
+	actor, err = opsutil.ResolveActor(actorFlag)
 	if err != nil {
 		return "", "", err
 	}

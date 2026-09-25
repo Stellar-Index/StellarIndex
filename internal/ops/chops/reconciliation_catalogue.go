@@ -192,18 +192,29 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 	// DefaultGapDetectorTargets floor
 	// (TestCatalogueGenesisLocksStepWithGapDetectorTargets).
 	cat := []reconSource{
-		{name: "soroswap", genesis: 50_746_266, dec: soroswapDec, targets: []reconTarget{
-			{"trades", "source = 'soroswap'", []string{"soroswap.trade"}},
-			{"soroswap_skim_events", "", []string{"soroswap.skim"}},
-			// soroswap.liquidity → soroswap_liquidity (persistSoroswapLiquidity
-			// is a single INSERT: one decoder LiquidityEvent → one row).
-			// Lake-validated 2026-08-17: 54/54 full-history rows == distinct
-			// event identities, so the per-ledger count reconciles 1:1. Closes
-			// the "emitted (soroswap.liquidity), persisted, never reconciled"
-			// blind spot the density detector alone was covering — the exact
-			// omission the catalogue-completeness invariant now guards.
-			{"soroswap_liquidity", "", []string{"soroswap.liquidity"}},
-		}},
+		{
+			// Identity-gated (factories ∪ registered pairs), so the -ch
+			// re-derive opts into the gated prefilter like aquarius below.
+			// Without it a CS-095 re-floor at genesis streams every contract
+			// event from genesis to tip, unfiltered, as the pass's FIRST
+			// source. factories/creationSym also let the preseed register
+			// pairs announced before a sub-range's lo.
+			name: "soroswap", genesis: 50_746_266, dec: soroswapDec,
+			factories: soroswap.MainnetFactories, creationSym: soroswap.PrefixFactory,
+			newGatedDec: func() gatedDecoder { return soroswap.NewDecoder() },
+			targets: []reconTarget{
+				{"trades", "source = 'soroswap'", []string{"soroswap.trade"}},
+				{"soroswap_skim_events", "", []string{"soroswap.skim"}},
+				// soroswap.liquidity → soroswap_liquidity (persistSoroswapLiquidity
+				// is a single INSERT: one decoder LiquidityEvent → one row).
+				// Lake-validated 2026-08-17: 54/54 full-history rows == distinct
+				// event identities, so the per-ledger count reconciles 1:1. Closes
+				// the "emitted (soroswap.liquidity), persisted, never reconciled"
+				// blind spot the density detector alone was covering — the exact
+				// omission the catalogue-completeness invariant now guards.
+				{"soroswap_liquidity", "", []string{"soroswap.liquidity"}},
+			},
+		},
 		{
 			// ADR-0035/0040 contract-gated (router-anchored). The bare
 			// NewDecoder() already carries the curated in-code pool seed

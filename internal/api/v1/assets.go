@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
@@ -2712,7 +2713,9 @@ func (s *Server) writeCataloguePage(
 	// this writer and neither applies the row filters (stated on all four
 	// parameters in the spec), so no arm has been selected away and the
 	// cross-arm total is the only figure a row here can honestly carry.
-	s.fillCatalogueStatsForPage(r.Context(), page, assetListFilters{})
+	if s.fillCatalogueStatsForPage(r.Context(), page, assetListFilters{}) {
+		flags.Stale = true
+	}
 	s.attachSparkline7dIfRequested(r, page)
 	env := Envelope{Data: page, Flags: flags}
 	if end < len(rows) {
@@ -2774,6 +2777,10 @@ func (s *Server) catalogueRowPricing(ctx context.Context, vc *currency.VerifiedC
 // or it carries no price. The GlobalAssetView on-chain fallback
 // (fillGlobalPriceFromOnChain) uses it to price Stellar-only verified
 // tokens (AQUA, yXLM, SHX, …) the global CEX/aggregator tier misses.
+//
+// The price is held to the same substance gate as the classic listing row
+// and the CODE-ISSUER detail (fail closed), so a dust market cannot price a
+// catalogue row that /v1/price and the detail page withhold.
 func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) *string {
 	if s.assetsReader == nil || assetID == "" {
 		return nil
@@ -2781,6 +2788,12 @@ func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) *st
 	row, err := s.assetsReader.GetAssetByAssetID(ctx, assetID)
 	if err != nil || row.PriceUSD == nil {
 		return nil
+	}
+	if s.substance != nil {
+		asset, err := canonical.ParseAsset(assetID)
+		if err != nil || !s.listingPriceAllowed(ctx, asset) {
+			return nil
+		}
 	}
 	// The per-asset reader's price is a RAW prices_1m ratio (it is not
 	// the writer-normalised listing rollup, whatever this function's name
@@ -2996,9 +3009,9 @@ func (s *Server) serveCatalogueUnifiedPage(
 	// writeCataloguePage (the class-filtered path) because both share
 	// a byte-identical price-fill line and the edits anchored on the
 	// first occurrence. Keep both call sites.
-	s.fillCatalogueStatsForPage(r.Context(), page, filters)
+	unmeasured := s.fillCatalogueStatsForPage(r.Context(), page, filters)
 	s.attachSparkline7dIfRequested(r, page)
-	env := Envelope{Data: page, Flags: Flags{}}
+	env := Envelope{Data: page, Flags: Flags{Stale: unmeasured}}
 	if end < len(rows) {
 		env.Pagination = &Pagination{Next: "catalogue:" + strconv.Itoa(end)}
 		writeEnvelope(w, env)
@@ -3015,7 +3028,7 @@ func (s *Server) serveCatalogueUnifiedPage(
 			return
 		}
 		env.Data = append(page, classicRows...)
-		env.Flags.Stale = stale
+		env.Flags.Stale = unmeasured || stale
 		if nextInner != "" {
 			env.Pagination = &Pagination{Next: "classic:" + nextInner}
 		} else {
@@ -4690,12 +4703,16 @@ func maxFractionDigits(a, b string) int {
 // carries the classic + contract sum; under any row filter it carries
 // the classic arm the exact-issuer twin lookup returned, because that is
 // the arm the filter admitted.
-func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDetail, filters assetListFilters) {
+//
+// unmeasured reports that the substance gate withheld a twin it could not
+// measure, so the caller stamps flags.stale as the classic phase does.
+func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDetail, filters assetListFilters) (unmeasured bool) {
 	if s.assetsReader == nil {
-		return
+		return false
 	}
 	statsCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
+	var anyUnmeasured atomic.Bool
 	forEachBounded(s.logger, len(page), readFanoutConcurrency, func(i int) {
 		vc, ok := s.verifiedCurrencies.LookupBySlug(page[i].Slug)
 		if !ok {
@@ -4728,6 +4745,11 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		if filters.unfiltered() {
 			s.mergeContractArmVolume(statsCtx, &twin[0], entry.AssetID)
 		}
+		// The classic-phase ordering: the twin's price backs the cap and the
+		// pills merged below, so a dust price must be withheld before either.
+		if s.applySubstanceGateToListing(statsCtx, twin) {
+			anyUnmeasured.Store(true)
+		}
 		// Same supply-derived market-cap fill the classic phase gets — the
 		// raw listing row carries no mcap. The twin row comes from
 		// ListAssetsExt (listAssetsBaseSelect), which DOES populate
@@ -4755,6 +4777,7 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		s.applyListingValuations(statsCtx, twin)
 		mergeTwinStats(&page[i], twin[0])
 	})
+	return anyUnmeasured.Load()
 }
 
 // mergeContractArmVolume adds a catalogue entry's SAC wrapper's

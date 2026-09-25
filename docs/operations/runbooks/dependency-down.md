@@ -22,6 +22,7 @@ well covered.**
 | `redis` | `redis_exporter` | corroboration |
 | `schema` | none | the primary signal |
 | `nonstandard_decimals` | none | the primary signal |
+| `closed_buckets` | none | the primary signal |
 
 ## At a glance
 
@@ -126,6 +127,20 @@ for `nonstandard-decimals cache initial refresh failed` in the API log and
 A refresh failure after a successful load keeps the last-good snapshot
 and does not turn this check red.
 
+## If `dependency="closed_buckets"`
+
+A continuous aggregate outside the real-time allowlist
+(`source_volume_1h`, `pools_per_source_1h`) has
+`timescaledb.materialized_only = false`, so it serves its in-progress
+bucket. Most readers of the price / TWAP / oracle views (catalogue
+snapshot, `/v1/markets`, DEX pages, FX resolution, RWA history) have no
+closed-bucket predicate of their own, so they now serve a partial bucket
+while the guarded `/v1/price` serves the previous one. The readyz body
+names the views. Migration 0172 pins the property, so this means an
+out-of-band `ALTER`: restore each named view with
+`ALTER MATERIALIZED VIEW <view> SET (timescaledb.materialized_only = true);`
+(rewrites the view definition only; nothing re-materializes).
+
 ## False-positive shapes
 
 - **During a deploy.** The API restarts and the check briefly fails. The
@@ -164,3 +179,5 @@ healthy dependency — the metric is written for failing checks too, and
   Before this, ClickHouse had no health signal in either rule tree.
 - 2026-09-24 — added the critical `nonstandard_decimals` check: red until
   the API's nonstandard-decimals cache has loaded once.
+- 2026-09-24 — added the critical `closed_buckets` check: red while any
+  CAGG outside the real-time allowlist serves its open bucket.

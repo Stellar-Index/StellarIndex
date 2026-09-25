@@ -88,7 +88,7 @@ type ReadyChecker interface {
 // This constant MUST equal the head under migrations/; the parity test
 // TestExpectedSchemaVersionMatchesMigrationsHead fails CI if a migration
 // is added without bumping it.
-const ExpectedSchemaVersion uint = 176
+const ExpectedSchemaVersion uint = 177
 
 // nonAtomicMigrationVersions lists migration numbers whose up.sql commits
 // mid-file, breaking golang-migrate's one-transaction-per-file guarantee
@@ -176,6 +176,43 @@ func (c schemaDirtyChecker) Ping(ctx context.Context) error {
 	}
 	if dirty {
 		return fmt.Errorf("schema_migrations is dirty at version %d — run `migrate force` once confirmed; the applied schema is otherwise intact and serving continues", version)
+	}
+	return nil
+}
+
+// OpenBucketCAGGReader lists the continuous aggregates that serve their
+// in-progress bucket outside the real-time allowlist.
+// *timescale.Store satisfies it.
+type OpenBucketCAGGReader interface {
+	OpenBucketCAGGs(ctx context.Context) ([]string, error)
+}
+
+// closedBucketChecker is the critical ReadyChecker for ADR-0015 at
+// runtime. Most CAGG readers (catalogue snapshot, /v1/markets, DEX pages,
+// FX resolution, RWA history) have no closed-bucket predicate and rely on
+// materialized_only; migration 0172 pins it, but an out-of-band ALTER
+// would make them serve the open bucket beside a guarded /v1/price.
+type closedBucketChecker struct {
+	reader OpenBucketCAGGReader
+}
+
+// NewClosedBucketChecker builds the materialized_only readiness check.
+// Critical()==true: two money surfaces disagreeing on the same pair must
+// drain the backend, not serve behind a green probe.
+func NewClosedBucketChecker(reader OpenBucketCAGGReader) ReadyChecker {
+	return closedBucketChecker{reader: reader}
+}
+
+func (c closedBucketChecker) Name() string   { return "closed_buckets" }
+func (c closedBucketChecker) Critical() bool { return true }
+
+func (c closedBucketChecker) Ping(ctx context.Context) error {
+	views, err := c.reader.OpenBucketCAGGs(ctx)
+	if err != nil {
+		return fmt.Errorf("read continuous aggregate materialized_only: %w", err)
+	}
+	if len(views) > 0 {
+		return fmt.Errorf("continuous aggregates serving the open bucket (materialized_only = false): %s — restore with ALTER MATERIALIZED VIEW <view> SET (timescaledb.materialized_only = true)", strings.Join(views, ", "))
 	}
 	return nil
 }

@@ -268,7 +268,7 @@ run alongside other heavy CH jobs; run under the root-<2 G watchdog):
 
 ```sh
 clickhouse-client < /path/to/tier1_schema.sql   # CREATE ... IF NOT EXISTS — safe
-stellarindex-ops ch-txindex-backfill -ch-addr 127.0.0.1:9300 -window 5000000
+stellarindex-ops ch-txindex-backfill -ch-addr 127.0.0.1:9300 -full -window 5000000 -write
 # -from defaults to 2, -to 0 = current lake tip; on interrupt re-run
 # with the last printed "resume point -from N".
 ```

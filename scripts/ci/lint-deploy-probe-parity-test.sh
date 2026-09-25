@@ -35,5 +35,45 @@ case "$deploy_path" in
   *) check "deploy-binary.yml's api_health_path is /v1/readyz (got '${deploy_path}')" 1 ;;
 esac
 
+# Every other daemon is probed on its /readyz (schema-head check), never
+# `systemctl is-active`, which reads "active" for a process failing every
+# write. Each non-CLI, non-API binary the deploy defaults to must carry a
+# probe port, and the port must be the one the archival-node role scrapes.
+daemon_problems="$(python3 - <<'PY'
+import yaml
+play = yaml.safe_load(open("configs/ansible/playbooks/deploy-binary.yml"))[0]["vars"]
+ports = play.get("daemon_ready_ports") or {}
+cli = set(play.get("cli_binaries") or [])
+wf = yaml.safe_load(open(".github/workflows/deploy.yml"))
+trigger = wf.get("on", wf.get(True))
+default = trigger["workflow_dispatch"]["inputs"]["binaries"]["default"]
+daemons = [b.strip() for b in default.split(",") if b.strip() not in cli and b.strip() != "stellarindex-api"]
+role = yaml.safe_load(open("configs/ansible/roles/archival-node/defaults/main.yml"))
+want = {
+    "stellarindex-indexer": role.get("local_prometheus_indexer_port"),
+    "stellarindex-aggregator": role.get("local_prometheus_aggregator_port"),
+}
+problems = []
+if not daemons:
+    problems.append("no daemon found in deploy.yml's default binaries list")
+for d in daemons:
+    if d not in ports:
+        problems.append(f"{d} has no daemon_ready_ports entry")
+    elif d in want and ports[d] != want[d]:
+        problems.append(f"{d} probes port {ports[d]}, archival-node scrapes {want[d]}")
+tasks = open("configs/ansible/tasks/deploy-one-binary.yml").read()
+if 'cmd: "systemctl is-active' in tasks:
+    problems.append("deploy-one-binary.yml still probes with systemctl is-active")
+if "daemon_ready_ports[binary] }}/readyz" not in tasks:
+    problems.append("deploy-one-binary.yml has no daemon /readyz probe")
+print("\n".join(problems))
+PY
+)"
+if [ -z "$daemon_problems" ]; then
+  check "every deployed daemon is probed on its /readyz port" 0
+else
+  check "every deployed daemon is probed on its /readyz port: ${daemon_problems}" 1
+fi
+
 echo "lint-deploy-probe-parity-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ]

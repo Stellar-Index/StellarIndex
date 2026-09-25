@@ -5,7 +5,6 @@ package v1_test
 
 import (
 	"context"
-	"errors"
 	"math/big"
 	"net/http"
 	"strings"
@@ -29,8 +28,6 @@ import (
 // marketCapPoints divide by 10^7): every assertion below flips RED. See
 // M2_ANALYSIS.md.
 
-var errM2PriceAtMiss = errors.New("m2 test: no bucket")
-
 // m2PriceAtStub implements v1.PriceAtReader keyed on "<base>/<quote>". When
 // `historical` is set it returns `current` for a near-now ts and `historical`
 // for an older ts, so /v1/price/changes horizons see a non-trivial delta.
@@ -53,7 +50,7 @@ func (s m2PriceAtStub) PriceAt(_ context.Context, pair canonical.Pair, ts time.T
 	if v, ok := s.byPair[key]; ok {
 		return v, s.bucketAt, 60, nil
 	}
-	return "", time.Time{}, 0, errM2PriceAtMiss
+	return "", time.Time{}, 0, v1.ErrPriceAtUnavailable
 }
 
 // ─── /v1/price/at ─────────────────────────────────────────────────────────

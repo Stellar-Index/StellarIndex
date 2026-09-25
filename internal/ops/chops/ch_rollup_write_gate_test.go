@@ -18,11 +18,15 @@ import (
 // rollupWriteGatedSubcommands are the chops ClickHouse writers that carry
 // the shared opsutil.WriteGate. The two rollups (F079) declared no
 // -write/-dry-run pair and wrote unconditionally; ch-backfill (#868)
-// wrote unless -dry-run was passed.
+// wrote unless -dry-run was passed, and the three windowed index backfills
+// (#868) declared neither flag and always wrote.
 var rollupWriteGatedSubcommands = []string{
 	"ch-census-rollup",
 	"ch-holders-rollup",
 	"ch-backfill",
+	"ch-txindex-backfill",
+	"ch-contract-ledgers-backfill",
+	"ch-instance-backfill",
 }
 
 // TestRollupSubcommandsRegisterTheSharedWriteGate drives each subcommand

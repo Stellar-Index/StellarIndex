@@ -39,8 +39,8 @@ const (
 	// audit-trail window PCI DSS 10.7 sets for security logs.
 	SessionRetention = 90 * 24 * time.Hour
 	// WebhookDeliveryRetention is how long a finished delivery stays in
-	// the customer-visible delivery log. Retries span 72 h, so a row
-	// this old is long settled.
+	// the customer-visible delivery log. The last retry lands ~4–8 h
+	// after the first failure, so a row this old is long settled.
 	WebhookDeliveryRetention = 30 * 24 * time.Hour
 )
 

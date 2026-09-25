@@ -804,8 +804,9 @@ function PageHead({ error, asOf }: { error: string | null; asOf: string }) {
         </div>
         <h1 className="text-h1 text-ink font-semibold">Stellar Index status</h1>
         <p className="text-ink-muted mt-2 max-w-prose text-[15px] leading-relaxed">
-          Live service health, request latency, ingest freshness, and the full
-          public-endpoint matrix — probed independently from your browser.
+          Live service health, request latency, ingest freshness, and a
+          curated public-endpoint matrix — probed independently from your
+          browser.
         </p>
       </div>
       {/* The pulse is a liveness claim: it only pulses green while the

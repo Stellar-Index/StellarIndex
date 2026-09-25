@@ -127,6 +127,20 @@ func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduc
 }
 
 func newMigrator(dir, dsn string) (*migrate.Migrate, error) {
+	if err := checkDSN(dsn); err != nil {
+		return nil, err
+	}
+	src := "file://" + dir
+	m, err := migrate.New(src, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open migrator: %w", err)
+	}
+	return m, nil
+}
+
+// checkDSN refuses, without echoing any of it, a DSN the driver would
+// quote back in its own error.
+func checkDSN(dsn string) error {
 	// Parse the DSN here, with the parser the library is about to use, so
 	// that a DSN it would reject never reaches it. Its rejection cannot be
 	// made safe after the fact: net/url's reason quotes the piece it
@@ -136,18 +150,29 @@ func newMigrator(dir, dsn string) (*migrate.Migrate, error) {
 	// honest one. This is the only path on which the library formats the
 	// DSN — a string that parses here parses there — so composing the
 	// failure ourselves removes the fragment instead of chasing it.
-	if _, err := url.Parse(dsn); err != nil {
-		return nil, fmt.Errorf("the Postgres DSN from %s does not parse: %s. "+
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return fmt.Errorf("the Postgres DSN from %s does not parse: %s. "+
 			"None of the value is shown — it carries the password; percent-encode "+
 			"every reserved character in it (%% as %%25, @ as %%40)",
 			dsnSource, redact.ParseFailure(dsn, err))
 	}
-	src := "file://" + dir
-	m, err := migrate.New(src, dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open migrator: %w", err)
+	// A DSN that parses can still miss the driver's URL form, and then
+	// lib/pq reads it as keyword/value and quotes all of it, password
+	// included, in `missing "=" after …`. The `//` is checked on the text:
+	// net/url takes `postgres:u:pw@h` as opaque and `postgres:/u:pw@h` as a
+	// path. The host is not required, so the socket form
+	// `postgres:///db?host=/run/postgresql` still passes.
+	if u.Scheme != "postgres" && u.Scheme != "postgresql" {
+		return fmt.Errorf("the Postgres DSN from %s does not start with postgres:// or postgresql://. "+
+			"None of the value is shown — it may carry the password", dsnSource)
 	}
-	return m, nil
+	if !strings.HasPrefix(dsn[len(u.Scheme)+1:], "//") {
+		return fmt.Errorf("the Postgres DSN from %s is missing the // after its scheme "+
+			"(postgres://user:password@host/db). None of the value is shown — it carries the password",
+			dsnSource)
+	}
+	return nil
 }
 
 func cmdUp(dir, dsn string) error {
@@ -175,6 +200,11 @@ func cmdUp(dir, dsn string) error {
 func cmdDown(dir, dsn string, n int, yes, iKnow bool) error {
 	if !iKnow {
 		return errDownNeedsIKnow
+	}
+	// Before the prompt: it prints the DSN through a pattern that cannot
+	// see the password in one missing its `//`.
+	if err := checkDSN(dsn); err != nil {
+		return err
 	}
 	if err := confirmDown(n, dsn, yes, os.Stdin, stderr); err != nil {
 		return err

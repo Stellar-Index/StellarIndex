@@ -102,7 +102,7 @@ func registerAppMetrics() {
 		CustomerWebhookDeliveryAttemptsTotal,
 		CustomerWebhookFanoutFailuresTotal,
 		AggregatorDroppedTradesTotal,
-		AggregatorVenueVWAP, AggregatorWindowTrades,
+		AggregatorVenueVWAP, AggregatorWindowTrades, AggregatorWindowBaseVolume,
 		AggregatorDroppedWindowsTotal,
 		AggregatorMinUSDVolumeUnvaluableTotal,
 		PriceServeSubstanceWithheldTotal,
@@ -3406,6 +3406,25 @@ var AggregatorWindowTrades = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_aggregator_window_trades",
 		Help: "Trades in the current (pair, window) refresh after each filter stage (fetched|class|outlier). outlier/class is the surviving fraction of the VWAP input.",
+	},
+	[]string{"pair", "window", "stage"},
+)
+
+// AggregatorWindowBaseVolume — base-asset volume, in whole units (each
+// source's smallest-unit scale divided out), of one (pair, window)
+// refresh after the "class" and "outlier" stages. The outlier centre is
+// a per-print median, so a trade-count trim share cannot tell dust from
+// a trimmed honest block; `1 − outlier/class` here is the share of the
+// traded money the filter removed, and 1 when it withheld a window
+// whose trim would have discarded the volume majority. float64 only at
+// the gauge boundary — an operator signal, never a served value.
+//
+// Feeds `stellarindex_aggregator_outlier_volume_trim_fraction`. Bounded
+// cardinality: configured pairs × windows × 2 stages.
+var AggregatorWindowBaseVolume = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_window_base_volume",
+		Help: "Base-asset volume (whole units) of the current (pair, window) refresh after each filter stage (class|outlier). 1 - outlier/class is the share of traded volume the outlier filter removed.",
 	},
 	[]string{"pair", "window", "stage"},
 )

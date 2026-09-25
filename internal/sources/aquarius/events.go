@@ -215,12 +215,6 @@ var (
 	// (undecodable-but-matched). Exposed so callers/tests can assert the
 	// classification; the dispatcher adapter consumes it internally.
 	ErrZeroAmountTrade = errors.New("aquarius: zero-amount trade (recognized no-op)")
-	// ErrConcentratedWIP is reserved for concentrated-pool trade
-	// events, which use a different body schema. Current mainnet
-	// has no concentrated pools live (feature-branch WIP at
-	// Phase-1 audit); if we encounter one we'll surface this error
-	// and skip until the dedicated decoder lands.
-	ErrConcentratedWIP = errors.New("aquarius: concentrated-liquidity pools not decoded yet (Phase-1 WIP)")
 )
 
 // EventAddPool is the ROUTER's pool-registration event (topic[0]

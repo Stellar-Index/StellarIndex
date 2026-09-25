@@ -45,7 +45,7 @@
 --
 --   /usr/local/sbin/run-heavy-job.sh contract-ledgers-backfill \
 --     /usr/local/bin/stellarindex-ops ch-contract-ledgers-backfill \
---     -ch-addr 127.0.0.1:9300 -from 2 -window 5000000
+--     -ch-addr 127.0.0.1:9300 -from 2 -window 5000000 -write
 --
 -- Leaving the table applied-but-unbackfilled on a lake with history costs
 -- PERFORMANCE, not correctness: every quiet/cold contract keeps paying the

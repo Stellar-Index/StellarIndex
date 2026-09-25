@@ -112,7 +112,11 @@ func FuzzDecodeUpdate(f *testing.F) {
 		if !u.Asset.Equal(wantAsset) {
 			t.Fatalf("asset = %s, want %s", u.Asset, wantAsset)
 		}
-		if u.Quote.String() != "fiat:USD" || u.Decimals != DefaultDecimals || u.Source != variant.SourceName() {
+		wantQuote := "fiat:USD"
+		if variant == VariantDEX {
+			wantQuote = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+		}
+		if u.Quote.String() != wantQuote || u.Decimals != DefaultDecimals || u.Source != variant.SourceName() {
 			t.Fatalf("row metadata = (%s, %d, %s)", u.Quote, u.Decimals, u.Source)
 		}
 		wantOp := uint64(opIdx*eventFanoutStride+evIdx) * opIndexFanoutStride

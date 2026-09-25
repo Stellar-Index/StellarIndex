@@ -77,7 +77,7 @@
 --
 --   /usr/local/sbin/run-heavy-job.sh instance-changes-backfill \
 --     /usr/local/bin/stellarindex-ops ch-instance-backfill \
---     -ch-addr 127.0.0.1:9300 -from 2 -window 2000000
+--     -ch-addr 127.0.0.1:9300 -from 2 -window 2000000 -write
 --
 -- Leaving the table applied-but-unbackfilled on a lake with history costs
 -- PERFORMANCE, not correctness: cold contracts keep paying the legacy scan

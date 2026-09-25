@@ -415,3 +415,56 @@ func TestGuardServedVWAP1mAt_TrailingFetchErrorIncrementsMetric(t *testing.T) {
 		t.Fatalf("PricingGuardTrailingFetchFailedTotal{path=at} = %v, want %v (before %v + one fail-open fetch error)", after, before+1, before)
 	}
 }
+
+// dormantRows returns n newest-first trailing buckets at vwap, the newest
+// of them ageDays days before the candidate (minutesAgo=0).
+func dormantRows(n, ageDays int, vwap string) []timescale.Vwap1mRow {
+	rows := make([]timescale.Vwap1mRow, n)
+	for i := range rows {
+		rows[i] = mkRow(ageDays*24*60+i, vwap)
+	}
+	return rows
+}
+
+func TestGuardServedVWAP1mConfidence_DormantBaselineIsNotABaseline(t *testing.T) {
+	// A pair that last traded 40 buckets at 0.001 two hundred days ago
+	// relists at a real 0.01. That history is not a trailing baseline: the
+	// fresh price is served flagged low-confidence, never swapped for the
+	// 200-day-old row as a confident price.
+	store := fakeTrailing{rows: dormantRows(SampleFetch, 200, "0.001")}
+	relist := mkRow(0, "0.01")
+	served, lowConfidence, substituted := GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), relist)
+	if substituted || served.VWAP != "0.01" || !served.Bucket.Equal(relist.Bucket) {
+		t.Fatalf("served %s @ %v (substituted=%v), want the relisted 0.01 candidate", served.VWAP, served.Bucket, substituted)
+	}
+	if !lowConfidence {
+		t.Fatal("a candidate with no in-horizon baseline must be served low-confidence")
+	}
+	// The point-in-time path has no stale flag: no answer, never the old row.
+	if served, ok := SelectGuardedVWAP1mAt(relist, store.rows, relist.Bucket, 400*24*time.Hour); ok {
+		t.Fatalf("point-in-time guard served %s @ %v against a dormant baseline, want no answer", served.VWAP, served.Bucket)
+	}
+}
+
+func TestSelectGuardedVWAP1m_BaselineHorizonIsInclusiveAndPerBucket(t *testing.T) {
+	// Only buckets within BaselineMaxAge of the candidate form its
+	// baseline: two fresh 0.01 buckets (a thin baseline, 10x band) beside
+	// 38 dormant 0.001 ones judge a 0.012 candidate as sane.
+	horizonMinutes := int(BaselineMaxAge / time.Minute)
+	rows := append([]timescale.Vwap1mRow{mkRow(1, "0.01"), mkRow(horizonMinutes, "0.01")},
+		dormantRows(SampleFetch-2, 200, "0.001")...)
+	served, rejected, lowConfidence := selectGuardedVWAP1m(mkRow(0, "0.012"), rows)
+	if rejected || lowConfidence || served.VWAP != "0.012" {
+		t.Fatalf("served %s rejected=%v lowConfidence=%v, want 0.012 validated by the in-horizon buckets", served.VWAP, rejected, lowConfidence)
+	}
+	// A 100x print is still rejected, and its substitute is an in-horizon bucket.
+	served, rejected, _ = selectGuardedVWAP1m(mkRow(0, "1.0"), rows)
+	if !rejected || served.VWAP != "0.01" {
+		t.Fatalf("served %s rejected=%v, want the in-horizon 0.01 as last-known-good", served.VWAP, rejected)
+	}
+	// One minute past the horizon drops the bucket from the baseline.
+	stale := []timescale.Vwap1mRow{mkRow(horizonMinutes+1, "0.001")}
+	if _, rejected, lowConfidence := selectGuardedVWAP1m(mkRow(0, "0.01"), stale); rejected || !lowConfidence {
+		t.Fatalf("rejected=%v lowConfidence=%v, want an out-of-horizon bucket ignored", rejected, lowConfidence)
+	}
+}
