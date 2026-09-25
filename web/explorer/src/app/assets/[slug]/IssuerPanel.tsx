@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { useIssuer, type Issuer } from '@/api/hooks';
+import { assetHref } from '@/lib/fiat-slugs';
 import { formatCompact } from '@/lib/format';
 
 /**
@@ -200,7 +201,7 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
               <tr key={a.asset_id} className="hover:bg-surface-muted">
                 <Td>
                   <Link
-                    href={`/assets/${a.slug}`}
+                    href={assetHref(a.slug ?? a.asset_id ?? a.code ?? '')}
                     className="hover:text-brand-600 font-medium"
                   >
                     {a.code}

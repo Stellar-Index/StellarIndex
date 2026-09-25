@@ -17,6 +17,7 @@ import {
   formatRelativeLong,
 } from '@/lib/format';
 import { hasDirectoryScamFlag } from '@/lib/directory-tags';
+import { assetHref } from '@/lib/fiat-slugs';
 import { truncateMiddle } from '@/components/ui/Mono';
 import {
   Badge,
@@ -530,7 +531,7 @@ function CuratedPanel({
                     <TR key={a.asset_id}>
                       <Td>
                         <Link
-                          href={`/assets/${a.slug || a.asset_id}`}
+                          href={assetHref(a.slug || a.asset_id)}
                           className="hover:text-brand-600 font-medium"
                         >
                           {a.symbol ||
@@ -1404,7 +1405,7 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
     <TR>
       <Td>
         <Link
-          href={`/assets/${asset.slug || asset.asset_id}`}
+          href={assetHref(asset.slug || asset.asset_id)}
           className="hover:text-brand-600 font-medium"
         >
           {asset.code}

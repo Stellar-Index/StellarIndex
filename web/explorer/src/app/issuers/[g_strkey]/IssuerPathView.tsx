@@ -7,6 +7,7 @@ import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { Container, Breadcrumbs, EmptyState, Skeleton } from '@/components/ui';
 
+import { assetHref } from '@/lib/fiat-slugs';
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
 import { CopyHash, type Envelope } from '@/app/explorer-shared';
 
@@ -155,7 +156,7 @@ export function IssuerPathView() {
                     {(data.assets ?? []).map((a) => (
                       <li key={a.asset_id ?? a.code}>
                         <Link
-                          href={`/assets/${encodeURIComponent(a.asset_id ?? a.code ?? '')}`}
+                          href={assetHref(a.asset_id ?? a.code ?? '')}
                           className="text-brand-600 font-medium hover:underline"
                         >
                           {a.code ?? a.asset_id}

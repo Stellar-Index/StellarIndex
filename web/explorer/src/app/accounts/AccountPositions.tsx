@@ -19,6 +19,7 @@ import {
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import type { components } from '@/api/types';
+import { assetHref } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { formatCompact, formatPriceSmall, formatRelative } from '@/lib/format';
 import { scaledUnits } from '../explorer-shared';
@@ -254,7 +255,7 @@ export function AccountPositions({ id }: { id: string }) {
       return {
         label: shortAssetText(h.asset),
         value: h.valueUSD as number,
-        ...(slug ? { href: `/assets/${encodeURIComponent(slug)}` } : {}),
+        ...(slug ? { href: assetHref(slug) } : {}),
       };
     });
 

@@ -11,6 +11,7 @@ import { DirectoryLabel } from '@/components/DirectoryLabel';
 import { Sparkline } from '@/components/primitives';
 import { apiGet, asExample, API_BASE_URL } from '@/api/client';
 import { useSACWrappers } from '@/api/hooks';
+import { assetHref } from '@/lib/fiat-slugs';
 import {
   type Envelope,
   type ContractResp,
@@ -331,7 +332,7 @@ function SacIdentity({ id }: { id: string }) {
         </span>
         {sacAsset && (
           <Link
-            href={`/assets/${encodeURIComponent(sacAsset)}`}
+            href={assetHref(sacAsset)}
             className="text-brand-600 font-medium hover:underline"
           >
             {code} — asset detail →

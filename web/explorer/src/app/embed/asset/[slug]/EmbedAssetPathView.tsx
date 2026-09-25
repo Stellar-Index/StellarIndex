@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import type { Coin } from '@/api/hooks';
 import { apiGetData } from '@/api/client';
+import { assetHref } from '@/lib/fiat-slugs';
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
 
 import { EmbedShellFrame, EmbedShellMessage } from '../../EmbedShellFrame';
@@ -43,11 +44,7 @@ export function EmbedAssetPathView() {
   const liveId = coin.asset_id ?? '';
 
   return (
-    <EmbedShellFrame
-      label={code}
-      sublabel="Stellar"
-      href={`/assets/${encodeURIComponent(slug)}`}
-    >
+    <EmbedShellFrame label={code} sublabel="Stellar" href={assetHref(slug)}>
       {liveId ? (
         <LivePrice assetId={liveId} initial={initial} />
       ) : (

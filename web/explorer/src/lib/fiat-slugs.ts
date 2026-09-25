@@ -52,3 +52,19 @@ export function fiatSlugFor(ticker: string): string {
 export function assetHrefFor(ticker: string): string {
   return `/external/assets/${fiatSlugFor(ticker)}`;
 }
+
+// assetHref is the routing chokepoint for an already-resolved ON-CHAIN
+// asset page slug (classic asset id, `native`, a Soroban contract's
+// wrapped code, an RWA/embed slug, …). GH-894/K064: every call site used
+// to hand-build `/assets/${slug}` itself, and one of them (the market-pair
+// badge's `fiat:` branch) drifted straight past assetHrefFor above and
+// linked a fiat leg to the non-canonical /assets/ page. Route every such
+// href through here so there is exactly one place left to get it right —
+// and one place a guard test (fiat-slugs.test.ts) can check.
+//
+// NEVER call this with a `fiat:`-prefixed ticker or its bare form — use
+// assetHrefFor instead. This function does not know a fiat currency's
+// friendly slug and would emit the wrong URL.
+export function assetHref(slug: string): string {
+  return `/assets/${encodeURIComponent(slug)}`;
+}

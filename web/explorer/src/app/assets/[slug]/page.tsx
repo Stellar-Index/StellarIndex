@@ -17,6 +17,7 @@ import {
   multiplyDecimalStrings,
 } from '@/lib/format';
 import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
+import { assetHref } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { Badge, Breadcrumbs, Container } from '@/components/ui';
 import { AssetScamCallout } from './AssetScamCallout';
@@ -976,7 +977,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
               {detail.unverified_warning.note} The verified asset is available
               at{' '}
               <Link
-                href={`/assets/${detail.unverified_warning.verified_slug}`}
+                href={assetHref(detail.unverified_warning.verified_slug)}
                 className="hover:text-warn-700 font-medium underline"
               >
                 {detail.unverified_warning.verified_name}
