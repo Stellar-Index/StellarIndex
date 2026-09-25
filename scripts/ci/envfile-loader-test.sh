@@ -91,7 +91,7 @@ else
       ok "$f carries the canonical load_env_file()"
     fi
     # shellcheck disable=SC2016  # literal "$f" is the pattern being searched for
-    if ! grep -qE '^\s*load_env_file /etc/default/(stellarindex|stellarindex-ops)( export)?$|load_env_file "\$f" export' "$f"; then
+    if ! grep -qE '^\s*load_env_file (/etc/default/(stellarindex|stellarindex-ops)|"\$\{STELLARINDEX_ENV_FILE:-/etc/default/stellarindex\}")( export)?$|load_env_file "\$f" export' "$f"; then
       bad "$f defines load_env_file but never calls it on its env file"
     fi
   done
