@@ -46,9 +46,14 @@ function cohort(overrides: Record<string, unknown> = {}) {
           period_start: '2026-07-01T00:00:00Z',
           movements: 50,
           active_accounts: 21,
+          priced_assets: 2,
+          inflow_usd: '100.30',
+          outflow_usd: '25.00',
+          inflow_usd_then: '100.80',
+          outflow_usd_then: '24.95',
           by_asset: [
-            { asset: USDC, inflow: '100', outflow: '25', scaled: true, inflow_usd: '100.00', outflow_usd: '25.00' },
-            { asset: 'native', inflow: '3', outflow: '0', scaled: true, inflow_usd: '0.30', outflow_usd: '0.00' },
+            { asset: USDC, inflow: '100', outflow: '25', scaled: true, inflow_usd: '100.00', outflow_usd: '25.00', inflow_usd_then: '99.80', outflow_usd_then: '24.95', price_usd_then: '0.998' },
+            { asset: 'native', inflow: '3', outflow: '0', scaled: true, inflow_usd: '0.30', outflow_usd: '0.00', inflow_usd_then: '1.00', outflow_usd_then: '0.00', price_usd_then: '0.3333333333' },
           ],
         },
       ],
@@ -64,6 +69,13 @@ function cohort(overrides: Record<string, unknown> = {}) {
     note: 'n',
     ...overrides,
   };
+}
+
+/** Empties a month point's basket: no point USD figure on either basis. */
+function emptyBasket(p: Record<string, unknown>, byAsset: unknown[]) {
+  for (const k of ['inflow_usd', 'outflow_usd', 'inflow_usd_then', 'outflow_usd_then']) delete p[k];
+  p.priced_assets = 0;
+  p.by_asset = byAsset;
 }
 
 function renderCohort(relation: 'created' | 'sponsored' = 'created') {
@@ -115,9 +127,7 @@ describe('AccountRelationCohort', () => {
 
   it('draws no USD line when nothing moved is priced', async () => {
     const c = cohort();
-    (c.flows.points[0] as { by_asset: unknown }).by_asset = [
-      { asset: 'CTOKEN', inflow: '5000', outflow: '0', scaled: false },
-    ];
+    emptyBasket(c.flows.points[0]!, [{ asset: 'CTOKEN', inflow: '5000', outflow: '0', scaled: false }]);
     apiGet.mockResolvedValueOnce({ data: c });
     renderCohort();
     expect(await screen.findByText('No priced asset moved')).toBeInTheDocument();
@@ -125,23 +135,25 @@ describe('AccountRelationCohort', () => {
     expect(screen.queryByText('USD then')).not.toBeInTheDocument();
   });
 
-  it('offers no USD-then toggle when no month carries a then price', async () => {
-    apiGet.mockResolvedValueOnce({ data: cohort() });
+  it('draws no USD line when no asset is priced on both bases, however each is priced alone', async () => {
+    const c = cohort();
+    emptyBasket(c.flows.points[0]!, [
+      // today only, then only: each row keeps its figure, the month has no basket
+      { asset: USDC, inflow: '100', outflow: '25', scaled: true, inflow_usd: '100.00', outflow_usd: '25.00' },
+      { asset: 'native', inflow: '3', outflow: '0', scaled: true, inflow_usd_then: '1.00', outflow_usd_then: '0.00', price_usd_then: '0.3333333333' },
+    ]);
+    apiGet.mockResolvedValueOnce({ data: c });
     renderCohort();
-    await screen.findByText('$525');
+    expect(await screen.findByText('No priced asset moved')).toBeInTheDocument();
+    expect(screen.getAllByTestId('line-chart')).toHaveLength(1);
     expect(screen.queryByText('USD then')).not.toBeInTheDocument();
-    expect(screen.queryByText('USD today')).not.toBeInTheDocument();
-    expect(screen.getAllByTestId('line-chart')[1]).toHaveTextContent("at today's prices");
   });
 
-  it('switches the value-moved chart to each month’s own prices, summing only the then-priced assets', async () => {
+  it('draws both bases from the served month sums, one basket, never a re-sum of the rows', async () => {
     const c = cohort();
-    (c.flows.points[0] as { by_asset: unknown }).by_asset = [
-      // priced both ways
-      { asset: USDC, inflow: '100', outflow: '25', scaled: true, inflow_usd: '100.00', outflow_usd: '25.00', inflow_usd_then: '99.80', outflow_usd_then: '24.95', price_usd_then: '0.998' },
-      // priced today only: contributes to "today", not to "then" — and not as zero
-      { asset: 'native', inflow: '3', outflow: '0', scaled: true, inflow_usd: '0.30', outflow_usd: '0.00' },
-    ];
+    // A row priced today only is outside the basket the point sums: were
+    // the chart to re-sum by_asset it would read 150.30 today.
+    (c.flows.points[0]!.by_asset as unknown[]).push({ asset: 'AQUA-GISSUER', inflow: '50', outflow: '0', scaled: true, inflow_usd: '50.00', outflow_usd: '0.00' });
     apiGet.mockResolvedValueOnce({ data: c });
     renderCohort();
     await screen.findByText('$525');
@@ -164,29 +176,11 @@ describe('AccountRelationCohort', () => {
     expect(todayPill).toHaveAttribute('aria-pressed', 'false');
     expect(chart()).toHaveTextContent("at each month's own prices");
     expect(series()).toEqual([
-      ['Moved in', [99.8]],
+      ['Moved in', [100.8]],
       ['Moved out', [24.95]],
     ]);
 
     fireEvent.click(todayPill);
     expect(chart()).toHaveTextContent("at today's prices");
-  });
-
-  it('draws the then line alone, with no toggle, when nothing moved has a live price', async () => {
-    const c = cohort();
-    (c.flows.points[0] as { by_asset: unknown }).by_asset = [
-      { asset: USDC, inflow: '100', outflow: '25', scaled: true, inflow_usd_then: '99.80', outflow_usd_then: '24.95', price_usd_then: '0.998' },
-    ];
-    apiGet.mockResolvedValueOnce({ data: c });
-    renderCohort();
-    await screen.findByText('$525');
-    expect(screen.queryByText('USD then')).not.toBeInTheDocument();
-    expect(screen.queryByText('No priced asset moved')).not.toBeInTheDocument();
-    const chart = screen.getAllByTestId('line-chart')[1]!;
-    expect(chart).toHaveTextContent("at each month's own prices");
-    expect(JSON.parse(chart.getAttribute('data-series') ?? '[]')).toEqual([
-      ['Moved in', [99.8]],
-      ['Moved out', [24.95]],
-    ]);
   });
 });

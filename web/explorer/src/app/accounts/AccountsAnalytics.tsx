@@ -185,6 +185,7 @@ export function AccountsAnalytics() {
           </p>
           <HBarList
             items={heldAssets.map((a) => ({
+              id: a.asset,
               label: a.asset.split('-')[0],
               value: a.holders,
               display: formatCompact(a.holders),

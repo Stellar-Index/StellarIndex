@@ -8,6 +8,7 @@ import (
 	"time"
 
 	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -19,9 +20,11 @@ import (
 // the range that must not be read.
 //
 // The served row per (asset, month) is Σ quote / Σ base over EVERY
-// folded row — the union market's VWAP — so May's XLM price is
-// (10 + 60 + 25) / (100 + 300 + 100) = 0.19, not the mean of 0.1, 0.2
-// and 0.25 (0.1833…), and not either spelling's own figure.
+// folded row in WHOLE units — the union market's VWAP — so May's XLM
+// price is (10 + 60 + 25) / (100 + 300 + 100) = 0.19, not the mean of
+// 0.1, 0.2 and 0.25 (0.1833…), not either spelling's own figure, and not
+// the 0.2098 that weighting by raw stored volume gives: the crypto:XLM
+// trades are stored at the CEX feeds' 10^8, the native one in stroops.
 func TestStoreMonthlyUSDVWAPs_FoldsAliasSpellingsPerMonth(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -56,6 +59,11 @@ func TestStoreMonthlyUSDVWAPs_FoldsAliasSpellingsPerMonth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A CEX feed's crypto:XLM trade, amounts at that source's 10^8.
+	cex := func(tr c.Trade) c.Trade {
+		tr.Source = "coinbase"
+		return tr
+	}
 	pair := func(base, quote c.Asset) c.Pair {
 		p, err := c.NewPair(base, quote)
 		if err != nil {
@@ -69,9 +77,9 @@ func TestStoreMonthlyUSDVWAPs_FoldsAliasSpellingsPerMonth(t *testing.T) {
 	jun := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	for i, tr := range []c.Trade{
 		// May, XLM in both spellings, against two USD proxies.
-		mkAPITrade(1, may, pair(native, usdc), 1_000_000_000, 100_000_000),                        // 100 XLM for 10 USDC → 0.10
-		mkAPITrade(2, may.Add(time.Hour), pair(cryptoXLM, usdc), 3_000_000_000, 600_000_000),      // 300 XLM for 60 USDC → 0.20
-		mkAPITrade(3, may.Add(2*time.Hour), pair(cryptoXLM, fiatUSD), 1_000_000_000, 250_000_000), // 100 XLM for 25 USD → 0.25
+		mkAPITrade(1, may, pair(native, usdc), 1_000_000_000, 100_000_000),                                // 100 XLM for 10 USDC → 0.10
+		cex(mkAPITrade(2, may.Add(time.Hour), pair(cryptoXLM, usdc), 30_000_000_000, 6_000_000_000)),      // 300 XLM for 60 USDC → 0.20
+		cex(mkAPITrade(3, may.Add(2*time.Hour), pair(cryptoXLM, fiatUSD), 10_000_000_000, 2_500_000_000)), // 100 XLM for 25 USD → 0.25
 		// May, a second classic asset.
 		mkAPITrade(4, may.Add(3*time.Hour), pair(aqua, usdc), 2_000_000_000, 10_000_000), // 200 AQUA for 1 USDC → 0.005
 		// May, XLM quoted in AQUA: not a USD proxy, must not count.
@@ -92,7 +100,7 @@ func TestStoreMonthlyUSDVWAPs_FoldsAliasSpellingsPerMonth(t *testing.T) {
 
 	from := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
-	rows, err := store.MonthlyUSDVWAPs(ctx, from, to)
+	rows, err := store.MonthlyUSDVWAPs(ctx, from, to, func(src string) int { return external.Lookup(src).AmountScaleDecimals() })
 	if err != nil {
 		t.Fatalf("MonthlyUSDVWAPs: %v", err)
 	}

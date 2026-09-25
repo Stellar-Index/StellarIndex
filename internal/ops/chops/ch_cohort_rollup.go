@@ -10,6 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -18,6 +19,24 @@ import (
 // genesis month. Every USD-quoted month the served tier holds is
 // loaded, so a cohort's oldest flow can be valued at its own month.
 var cohortPricesFrom = time.Date(2015, time.September, 1, 0, 0, 0, 0, time.UTC)
+
+// closedMonthEdge is the exclusive upper bound the cycle reads
+// [Store.MonthlyUSDVWAPs] to: the first instant of now's calendar
+// month. prices_1mo's current-month bucket is still accumulating
+// trades, so admitting it would serve a partial-month VWAP that
+// changes on every rollup cycle — the flicker ADR-0015's closed-bucket
+// rule exists to prevent, applied here to the month grain instead of
+// the rate endpoints' 30 s one (GH-1058).
+func closedMonthEdge(now time.Time) time.Time {
+	now = now.UTC()
+	return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+}
+
+// sourceAmountDecimals is the source registry's amount scale, which the
+// monthly price fold needs to weigh off-chain spellings in whole units.
+func sourceAmountDecimals(source string) int {
+	return external.Lookup(source).AmountScaleDecimals()
+}
 
 // ch-cohort-rollup — what the accounts an address created or sponsored
 // went on to hold and do: current holdings, monthly flows, the contracts
@@ -80,7 +99,7 @@ func chCohortRollup(args []string) error {
 		return err
 	}
 	logf("defi position snapshot: %d rows from the served tier in %s", len(holders), time.Since(start).Round(time.Second))
-	prices, err := store.MonthlyUSDVWAPs(ctx, cohortPricesFrom, time.Now().UTC())
+	prices, err := store.MonthlyUSDVWAPs(ctx, cohortPricesFrom, closedMonthEdge(time.Now()), sourceAmountDecimals)
 	_ = store.Close()
 	if err != nil {
 		return err

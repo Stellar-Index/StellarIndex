@@ -165,6 +165,30 @@ SQL
 catches "a baseline entry whose column was retyped is caught as stale" "$d" \
   "stale ch_float_baseline entry account_cohort_rollup.sql:stellar.asset_month_usd_prices.volume_usd"
 
+# The baseline is read from a *.baseline file, not the script: CI runs
+# the base ref's copy of this script (CID-03), so an inline list could
+# never shrink — the base copy calls the entry a retype PR retires stale.
+d="$(mk shrunk-baseline account_cohort_rollup.sql <<'SQL'
+-- si-apply-scope: operator
+CREATE TABLE IF NOT EXISTS stellar.asset_month_usd_prices
+(
+    volume_usd Float64
+)
+ENGINE = MergeTree ORDER BY volume_usd;
+CREATE TABLE IF NOT EXISTS stellar.account_cohort_positions
+(
+    amount Int256
+)
+ENGINE = MergeTree ORDER BY amount;
+SQL
+)"
+printf '# fixture\naccount_cohort_rollup.sql:stellar.asset_month_usd_prices.volume_usd\n' > "$TMP/shrunk.baseline"
+CH_FLOAT_BASELINE="$TMP/shrunk.baseline" \
+  clean "a retype that shrinks the baseline file passes" "$d"
+CH_FLOAT_BASELINE="$TMP/no-such.baseline" \
+  catches "a missing baseline file exempts nothing" "$d" \
+  "money column stellar.asset_month_usd_prices.volume_usd is a float"
+
 mkdir -p "$TMP/empty"
 catches "an empty directory fails rather than passing vacuously" "$TMP/empty" \
   "cannot pass vacuously"

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import dynamic from 'next/dynamic';
 
-import { formatCompact } from '@/lib/format';
+import { decimalOrNull, formatCompact } from '@/lib/format';
 import { Segmented } from '@/components/ui';
 
 const LineChart = dynamic(
@@ -44,7 +44,8 @@ export function SourceActivityChart({
   const data = active.map((b) => ({
     time: Math.floor(new Date(b.hour).getTime() / 1000),
     value: b.trade_count ?? 0, // line: quantity of trades
-    volume: Number(b.volume_usd) || 0, // bars: USD volume
+    // bars: USD volume; an absent hour is a gap, never a zero-volume bar
+    volume: decimalOrNull(b.volume_usd) ?? undefined,
   }));
 
   return (

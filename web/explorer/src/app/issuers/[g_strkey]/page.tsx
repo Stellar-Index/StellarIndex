@@ -9,7 +9,12 @@ import { Container, Breadcrumbs } from '@/components/ui';
 import { asExample } from '@/api/client';
 import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
 import { assetHref } from '@/lib/fiat-slugs';
-import { formatCompact, formatPriceSmall, formatRelative } from '@/lib/format';
+import {
+  formatCompact,
+  formatCompactUnits,
+  formatPriceSmall,
+  formatRelative,
+} from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { ogImageFor } from '@/lib/seo';
 import { StellarExpertLink } from '@/components/StellarExpertLink';
@@ -575,9 +580,9 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                               /1e7 hardcode misstated supply for any
                               non-7-decimals SEP-41 asset. */}
                           {coin?.circulating_supply
-                            ? formatCompact(
-                                Number(coin.circulating_supply) /
-                                  10 ** (coin.decimals ?? 7),
+                            ? formatCompactUnits(
+                                coin.circulating_supply,
+                                coin.decimals ?? 7,
                               )
                             : '—'}
                         </span>

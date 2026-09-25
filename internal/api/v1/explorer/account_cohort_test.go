@@ -2,6 +2,7 @@ package explorer
 
 import (
 	"context"
+	"encoding/json"
 	"math/big"
 	"strconv"
 	"testing"
@@ -345,6 +346,9 @@ func TestAccountCohortView_ValuesFlowsAtTheMonthsOwnPrice(t *testing.T) {
 				return "0.10", true
 			case cohortTestUSDC:
 				return "1", true
+			case "AQUA-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+				"YBX-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN":
+				return "0.001", true
 			}
 			return "", false
 		},
@@ -436,6 +440,101 @@ func TestAccountCohortView_ValuesFlowsAtTheMonthsOwnPrice(t *testing.T) {
 	sepP := v.Flows.Points[2]
 	if sepP.InflowUSDThen != nil || sepP.OutflowUSDThen != nil {
 		t.Errorf("a month with no then-priced asset must omit the point sums, got in %s out %s", deref(sepP.InflowUSDThen), deref(sepP.OutflowUSDThen))
+	}
+}
+
+// A month point's today and then figures value ONE basket — the assets
+// priced on both bases — so switching the chart's basis changes the price,
+// never the asset set. An asset priced on one basis alone is in neither
+// point sum, while its own by_asset row keeps the figure it has. Asserted
+// on the wire shape the explorer chart reads.
+func TestAccountCohortView_FlowPointSumsShareOneBasket(t *testing.T) {
+	const (
+		todayOnly = "AQUA-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		thenOnly  = "YBX-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	)
+	price := func(a string) (cohortPrice, bool) {
+		switch a {
+		case cohortTestUSDC:
+			return cohortPrice{Text: "1", Rat: big.NewRat(1, 1)}, true
+		case todayOnly:
+			return cohortPrice{Text: "2", Rat: big.NewRat(2, 1)}, true
+		}
+		return cohortPrice{}, false
+	}
+	str := func(s string) *string { return &s }
+	jul := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	flows := []clickhouse.AccountCohortFlow{
+		{Month: jul, Asset: clickhouse.CohortAllAssets, Inflow: big.NewInt(0), Outflow: big.NewInt(0), Movements: 3, ActiveAccounts: 1},
+		// 10 in, 5 out: 10.00 / 5.00 today, 9.90 / 4.95 at 0.99 then
+		{Month: jul, Asset: cohortTestUSDC, Inflow: big.NewInt(100_000_000), Outflow: big.NewInt(50_000_000), Movements: 1, ActiveAccounts: 1, PriceUSDThen: str("0.99")},
+		// 100 in at 2 today = 200.00; no month price
+		{Month: jul, Asset: todayOnly, Inflow: big.NewInt(1_000_000_000), Outflow: big.NewInt(0), Movements: 1, ActiveAccounts: 1},
+		// 100 in at 3 then = 300.00; no live price
+		{Month: jul, Asset: thenOnly, Inflow: big.NewInt(1_000_000_000), Outflow: big.NewInt(0), Movements: 1, ActiveAccounts: 1, PriceUSDThen: str("3")},
+	}
+	p := cohortFlowsView(flows, price).Points[0]
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	for k, want := range map[string]any{
+		"priced_assets":    float64(1),
+		"inflow_usd":       "10.00",
+		"outflow_usd":      "5.00",
+		"inflow_usd_then":  "9.90",
+		"outflow_usd_then": "4.95",
+	} {
+		if got[k] != want {
+			t.Errorf("point %s = %v, want %v (the USDC-only basket)", k, got[k], want)
+		}
+	}
+	for _, af := range p.ByAsset {
+		switch af.Asset {
+		case todayOnly:
+			if deref(af.InflowUSD) != "200.00" || af.InflowUSDThen != nil {
+				t.Errorf("today-only row = %s / %s, want 200.00 / <nil>", deref(af.InflowUSD), deref(af.InflowUSDThen))
+			}
+		case thenOnly:
+			if af.InflowUSD != nil || deref(af.InflowUSDThen) != "300.00" {
+				t.Errorf("then-only row = %s / %s, want <nil> / 300.00", deref(af.InflowUSD), deref(af.InflowUSDThen))
+			}
+		}
+	}
+}
+
+// A month whose basket is empty emits no point USD figure on either basis,
+// and says so with priced_assets 0 rather than a zero dollar amount.
+func TestAccountCohortView_FlowPointEmptyBasketOmitsBothBases(t *testing.T) {
+	price := func(a string) (cohortPrice, bool) {
+		if a == cohortTestUSDC {
+			return cohortPrice{Text: "1", Rat: big.NewRat(1, 1)}, true
+		}
+		return cohortPrice{}, false
+	}
+	jul := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	flows := []clickhouse.AccountCohortFlow{
+		{Month: jul, Asset: cohortTestUSDC, Inflow: big.NewInt(100_000_000), Outflow: big.NewInt(0), Movements: 1, ActiveAccounts: 1},
+	}
+	raw, err := json.Marshal(cohortFlowsView(flows, price).Points[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["priced_assets"] != float64(0) {
+		t.Errorf("priced_assets = %v, want 0", got["priced_assets"])
+	}
+	for _, k := range []string{"inflow_usd", "outflow_usd", "inflow_usd_then", "outflow_usd_then"} {
+		if v, ok := got[k]; ok {
+			t.Errorf("point %s = %v, want absent for an empty basket", k, v)
+		}
 	}
 }
 
