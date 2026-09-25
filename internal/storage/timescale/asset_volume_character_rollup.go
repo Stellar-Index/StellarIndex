@@ -163,14 +163,15 @@ func buildAliasMapValues(startIdx int) (valuesSQL string, args []any) {
 }
 
 // volumeCharacterFromSums derives the §2 signals + character from the raw
-// double-precision sums. It is the SINGLE derivation shared by the
+// sums: the exact NUMERIC total text is the volume, the double sums only
+// form the unitless shares. It is the SINGLE derivation shared by the
 // per-asset [Store.AssetVolumeCharacter] and the all-asset rollup, so the
 // rollup can never drift from the value the detail used to compute live —
 // same inputs, same round4, same deriveVolumeCharacter.
-func volumeCharacterFromSums(total, topPair, selfCross, issuerSide, marketStyled float64, makers, takers int64) AssetVolumeCharacter {
+func volumeCharacterFromSums(totalNum string, total, topPair, selfCross, issuerSide, marketStyled float64, makers, takers int64) AssetVolumeCharacter {
 	out := AssetVolumeCharacter{
 		WindowDays:     int(volumeCharacterWindow.Hours()) / 24,
-		VolumeUSD:      total,
+		VolumeUSD:      totalNum,
 		DistinctMakers: makers,
 		DistinctTakers: takers,
 	}
@@ -312,7 +313,7 @@ func execAssetVolumeCharacterUpsert(ctx context.Context, tx *sql.Tx, batch []ass
 		args         = make([]any, 0, len(batch)*assetVolumeCharacterUpsertCols)
 	)
 	for i, r := range batch {
-		vc := volumeCharacterFromSums(r.total, r.topPair, r.selfCross, r.issuerSide, r.marketStyled, r.makers, r.takers)
+		vc := volumeCharacterFromSums(r.totalVolNumeric, r.total, r.topPair, r.selfCross, r.issuerSide, r.marketStyled, r.makers, r.takers)
 		base := i * assetVolumeCharacterUpsertCols
 		placeholders = append(placeholders, fmt.Sprintf(
 			"($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,now())",
@@ -320,7 +321,7 @@ func execAssetVolumeCharacterUpsert(ctx context.Context, tx *sql.Tx, batch []ass
 			base+7, base+8, base+9, base+10, base+11,
 		))
 		args = append(args,
-			r.assetID, vc.WindowDays, r.totalVolNumeric,
+			r.assetID, vc.WindowDays, vc.VolumeUSD,
 			vc.DistinctMakers, vc.DistinctTakers,
 			vc.TopAccountPairVolShare, vc.SelfCrossShare,
 			vc.IssuerSideShare, vc.MarketStyledShare,
@@ -352,10 +353,10 @@ func execAssetVolumeCharacterUpsert(ctx context.Context, tx *sql.Tx, batch []ass
 }
 
 // assetVolumeCharacterRollupSQL is the keyed-on-PK read the detail path
-// uses. volume_usd is read back as double precision so VolumeUSD renders
-// the identical 2dp wire value the per-asset path produced.
+// uses. volume_usd is read back as NUMERIC text so the money sum never
+// passes through a double (ADR-0003).
 const assetVolumeCharacterRollupSQL = `
-SELECT window_days, volume_usd::double precision, distinct_makers, distinct_takers,
+SELECT window_days, volume_usd::text, distinct_makers, distinct_takers,
        top_account_pair_vol_share, self_cross_share, issuer_side_share,
        market_styled_share, is_market_styled, character
   FROM asset_volume_character

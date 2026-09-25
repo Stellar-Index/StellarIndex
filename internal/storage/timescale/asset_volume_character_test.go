@@ -29,7 +29,7 @@ func TestDeriveVolumeCharacter_Census(t *testing.T) {
 			// Market-styled (native XLM) + single account pair → wash.
 			name: "scam_AUD_volume_painting_wash",
 			in: AssetVolumeCharacter{
-				VolumeUSD: 2_870_000, IsMarketStyled: true,
+				VolumeUSD: "2870000", IsMarketStyled: true,
 				TopAccountPairVolShare: 0.99, IssuerSideShare: 0.99,
 				DistinctMakers: 2, DistinctTakers: 1,
 			},
@@ -40,7 +40,7 @@ func TestDeriveVolumeCharacter_Census(t *testing.T) {
 			// pair against its sibling AUDR.
 			name: "AUDD_operational_corridor",
 			in: AssetVolumeCharacter{
-				VolumeUSD: 344_000, IsMarketStyled: false,
+				VolumeUSD: "344000", IsMarketStyled: false,
 				TopAccountPairVolShare: 0.98, IssuerSideShare: 1.0,
 			},
 			want: VolumeCharacterOperational,
@@ -48,7 +48,7 @@ func TestDeriveVolumeCharacter_Census(t *testing.T) {
 		{
 			name: "AUDR_operational_corridor",
 			in: AssetVolumeCharacter{
-				VolumeUSD: 344_000, IsMarketStyled: false,
+				VolumeUSD: "344000", IsMarketStyled: false,
 				TopAccountPairVolShare: 0.97, IssuerSideShare: 0.99,
 			},
 			want: VolumeCharacterOperational,
@@ -58,7 +58,7 @@ func TestDeriveVolumeCharacter_Census(t *testing.T) {
 			// account pair dominates, on a real price surface.
 			name: "normal_multi_account_market",
 			in: AssetVolumeCharacter{
-				VolumeUSD: 5_000_000, IsMarketStyled: true,
+				VolumeUSD: "5000000", IsMarketStyled: true,
 				TopAccountPairVolShare: 0.15, IssuerSideShare: 0.05,
 				DistinctMakers: 800, DistinctTakers: 750,
 			},
@@ -70,7 +70,7 @@ func TestDeriveVolumeCharacter_Census(t *testing.T) {
 			// volume but the issuer isn't the counterparty → fabricated.
 			name: "third_party_ping_pong_concentrated",
 			in: AssetVolumeCharacter{
-				VolumeUSD: 23_000, IsMarketStyled: false,
+				VolumeUSD: "23000", IsMarketStyled: false,
 				TopAccountPairVolShare: 0.97, IssuerSideShare: 0.0,
 			},
 			want: VolumeCharacterConcentrated,
@@ -80,7 +80,7 @@ func TestDeriveVolumeCharacter_Census(t *testing.T) {
 			// trades on a market surface.
 			name: "dust_bot_concentrated",
 			in: AssetVolumeCharacter{
-				VolumeUSD: 5_500, IsMarketStyled: true,
+				VolumeUSD: "5500", IsMarketStyled: true,
 				TopAccountPairVolShare: 1.0, IssuerSideShare: 0.0,
 			},
 			want: VolumeCharacterConcentrated,
@@ -92,7 +92,7 @@ func TestDeriveVolumeCharacter_Census(t *testing.T) {
 			// pair is the tell).
 			name: "issuer_side_but_market_styled_is_wash",
 			in: AssetVolumeCharacter{
-				VolumeUSD: 100_000, IsMarketStyled: true,
+				VolumeUSD: "100000", IsMarketStyled: true,
 				TopAccountPairVolShare: 0.95, IssuerSideShare: 0.95,
 			},
 			want: VolumeCharacterConcentrated,
@@ -102,7 +102,34 @@ func TestDeriveVolumeCharacter_Census(t *testing.T) {
 			// even if its handful of trades is one account pair.
 			name: "below_floor_defaults_market",
 			in: AssetVolumeCharacter{
-				VolumeUSD: 500, IsMarketStyled: true,
+				VolumeUSD: "500", IsMarketStyled: true,
+				TopAccountPairVolShare: 1.0, IssuerSideShare: 1.0,
+			},
+			want: VolumeCharacterMarket,
+		},
+		{
+			// The floor compares the exact decimal: a fraction of a cent
+			// under $1k is still below it.
+			name: "just_below_floor_exact_defaults_market",
+			in: AssetVolumeCharacter{
+				VolumeUSD: "999.999999", IsMarketStyled: true,
+				TopAccountPairVolShare: 1.0, IssuerSideShare: 1.0,
+			},
+			want: VolumeCharacterMarket,
+		},
+		{
+			name: "at_floor_exact_is_classified",
+			in: AssetVolumeCharacter{
+				VolumeUSD: "1000.00", IsMarketStyled: true,
+				TopAccountPairVolShare: 1.0, IssuerSideShare: 1.0,
+			},
+			want: VolumeCharacterConcentrated,
+		},
+		{
+			// Unreadable volume is no signal: never badge on it.
+			name: "unparseable_volume_defaults_market",
+			in: AssetVolumeCharacter{
+				VolumeUSD: "NaN", IsMarketStyled: true,
 				TopAccountPairVolShare: 1.0, IssuerSideShare: 1.0,
 			},
 			want: VolumeCharacterMarket,

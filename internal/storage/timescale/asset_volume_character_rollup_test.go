@@ -2,6 +2,8 @@ package timescale
 
 import (
 	"context"
+	"database/sql/driver"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -135,5 +137,36 @@ func TestRefreshAssetVolumeCharacter_zeroRowPassKeepsLastGood(t *testing.T) {
 	}
 	if !script.committed() {
 		t.Error("zero-row pass must commit its expiry prune")
+	}
+}
+
+// TestAssetVolumeCharacterRollup_VolumeUSDExact: volume_usd is a NUMERIC
+// money sum and must reach the caller as its own decimal text. A double
+// hop cannot hold 90071992547409.93 (above 2^53 cents) and serves the
+// wrong cents (ADR-0003).
+func TestAssetVolumeCharacterRollup_VolumeUSDExact(t *testing.T) {
+	t.Parallel()
+
+	const exact = "90071992547409.93"
+	store, script := newScriptedStore(t, scriptedResult{
+		cols: []string{
+			"window_days", "volume_usd", "distinct_makers", "distinct_takers",
+			"top_account_pair_vol_share", "self_cross_share", "issuer_side_share",
+			"market_styled_share", "is_market_styled", "character",
+		},
+		rows: [][]driver.Value{{
+			int64(14), exact, int64(3), int64(2),
+			0.5, 0.0, 0.0, 1.0, true, VolumeCharacterMarket,
+		}},
+	})
+	vc, found, err := store.AssetVolumeCharacterRollup(context.Background(), "native")
+	if err != nil || !found {
+		t.Fatalf("AssetVolumeCharacterRollup: found=%v err=%v", found, err)
+	}
+	if got := fmt.Sprint(vc.VolumeUSD); got != exact {
+		t.Errorf("VolumeUSD = %s, want the NUMERIC verbatim %s", got, exact)
+	}
+	if q := script.statements()[0]; strings.Contains(q, "double precision") {
+		t.Errorf("rollup read casts volume_usd through double precision:\n%s", q)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/big"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -39,7 +40,7 @@ const (
 	// Mirrors the explorer's market-cap confidence floor ($1k) and stays
 	// below the census dust-bot example ($5.5k) so real low-value wash is
 	// still caught.
-	volumeCharacterMinVolumeUSD = 1000.0
+	volumeCharacterMinVolumeUSD = 1000
 
 	// volumeCharacterConcentrationThreshold — >90% of window volume in a
 	// SINGLE (unordered) account pair on a market-styled pair is the
@@ -63,8 +64,9 @@ const (
 type AssetVolumeCharacter struct {
 	WindowDays int
 	// VolumeUSD is the priced (usd_volume non-null) window volume the
-	// shares below are computed against.
-	VolumeUSD              float64
+	// shares below are computed against: the exact NUMERIC sum's decimal
+	// text, never a float (ADR-0003).
+	VolumeUSD              string
 	DistinctMakers         int64
 	DistinctTakers         int64
 	TopAccountPairVolShare float64
@@ -111,7 +113,8 @@ WITH w AS (
     ` + volumeCharacterMakerSQL + `,
     taker,
     CASE WHEN base_asset = ANY($1) THEN quote_asset ELSE base_asset END AS counterpart,
-    usd_volume::double precision AS v
+    usd_volume::double precision AS v,
+    usd_volume AS v_num
   FROM trades
   WHERE ts >= now() - $2::interval
     AND (base_asset = ANY($1) OR quote_asset = ANY($1))
@@ -125,6 +128,7 @@ pairs AS (
 )
 SELECT
   COALESCE((SELECT SUM(v) FROM w), 0)                                              AS total_vol,
+  COALESCE((SELECT SUM(v_num) FROM w), 0)::text                                    AS total_vol_num,
   (SELECT COUNT(DISTINCT maker) FROM w WHERE maker IS NOT NULL)                    AS distinct_makers,
   (SELECT COUNT(DISTINCT taker) FROM w WHERE taker IS NOT NULL)                    AS distinct_takers,
   COALESCE((SELECT MAX(pv) FROM pairs), 0)                                         AS top_pair_vol,
@@ -148,11 +152,12 @@ func (s *Store) AssetVolumeCharacter(ctx context.Context, assetID string) (Asset
 
 	var (
 		total, topPair, selfCross, issuerSide, marketStyled float64
+		totalNum                                            string
 		makers, takers                                      int64
 	)
 	err := s.db.QueryRowContext(ctx, assetVolumeCharacterSQL,
 		assetAliasArray(assetID), window, issuer).
-		Scan(&total, &makers, &takers, &topPair, &selfCross, &issuerSide, &marketStyled)
+		Scan(&total, &totalNum, &makers, &takers, &topPair, &selfCross, &issuerSide, &marketStyled)
 	if err != nil {
 		return AssetVolumeCharacter{}, fmt.Errorf("timescale: AssetVolumeCharacter %s: %w", assetID, err)
 	}
@@ -161,7 +166,7 @@ func (s *Store) AssetVolumeCharacter(ctx context.Context, assetID string) (Asset
 	// (RefreshAssetVolumeCharacter) turns the SAME raw double-precision
 	// sums into shares + character through this exact path, so the rollup
 	// can never drift from the value this per-request read produces.
-	return volumeCharacterFromSums(total, topPair, selfCross, issuerSide, marketStyled, makers, takers), nil
+	return volumeCharacterFromSums(totalNum, total, topPair, selfCross, issuerSide, marketStyled, makers, takers), nil
 }
 
 // deriveVolumeCharacter maps the signals to a character. Pure — the design
@@ -190,7 +195,7 @@ func (s *Store) AssetVolumeCharacter(ctx context.Context, assetID string) (Asset
 //     fabricated, not operational).
 //   - otherwise → `market`.
 func deriveVolumeCharacter(s AssetVolumeCharacter) string {
-	if s.VolumeUSD < volumeCharacterMinVolumeUSD {
+	if belowVolumeCharacterFloor(s.VolumeUSD) {
 		return VolumeCharacterMarket
 	}
 	concentrated := s.TopAccountPairVolShare >= volumeCharacterConcentrationThreshold
@@ -205,6 +210,13 @@ func deriveVolumeCharacter(s AssetVolumeCharacter) string {
 		return VolumeCharacterConcentrated
 	}
 	return VolumeCharacterMarket
+}
+
+// belowVolumeCharacterFloor compares the exact decimal volume against the
+// floor in big.Rat. Unparseable text is below it: no readable signal, no badge.
+func belowVolumeCharacterFloor(volumeUSD string) bool {
+	v, ok := new(big.Rat).SetString(volumeUSD)
+	return !ok || v.Cmp(big.NewRat(volumeCharacterMinVolumeUSD, 1)) < 0
 }
 
 // round4 rounds a share to 4 decimal places for a stable wire value.
