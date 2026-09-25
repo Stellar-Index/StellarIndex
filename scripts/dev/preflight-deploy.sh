@@ -606,6 +606,31 @@ else
         note "could not materialise ${VERSION}'s migrations/ for the compat gate"
     fi
     rm -rf "$compat_dir"
+
+    # GH-1165: deploy.yml's migration gate now also runs numbering,
+    # immutability and commands (not just compat). Mirror that here so
+    # this preflight can't report clean while the real gate would fail.
+    # Those three scripts cd to their OWN script directory's repo root
+    # (see their `cd "$(dirname "$0")/../.."`), so they need to run from
+    # a full checkout of ${VERSION} — its own README register, checksum
+    # baseline and commands baseline — not the migrations-only extract
+    # the compat gate above uses.
+    tree_dir="$(mktemp -d)"
+    if git archive "$VERSION" | tar -x -C "$tree_dir" 2>/dev/null; then
+        for gate in lint-migrations lint-migration-immutability lint-migration-commands; do
+            gate_verdict="$(bash "${tree_dir}/scripts/ci/${gate}.sh" 2>&1)"
+            gate_verdict_rc=$?
+            if [ "$gate_verdict_rc" -eq 0 ]; then
+                echo "  ${gate} (${VERSION}): clean."
+            else
+                printf '%s\n' "$gate_verdict" | sed 's/^/  /'
+                block "${gate} fails over ${VERSION}'s migrations — deploy.yml runs the same gate before 'migrate up'"
+            fi
+        done
+    else
+        note "could not materialise ${VERSION}'s tree for the numbering/immutability/commands gates"
+    fi
+    rm -rf "$tree_dir"
     if [ "$MIGRATIONS_ACK" -eq 0 ]; then
         block "$(printf '%s\n' "$migrations" | grep -c .) migration(s) in this range have not been acknowledged — read them for old-binary compatibility, then re-run with --migrations-ack"
     else

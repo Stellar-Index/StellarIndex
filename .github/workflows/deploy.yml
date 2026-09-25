@@ -695,6 +695,25 @@ jobs:
           MIGRATIONS_DIR=dist/migrations \
             bash scripts/ci/lint-migration-compat.sh --staged
 
+      - name: Migration numbering, immutability and commands gates
+        # GH-1165: the rollback-safety gate above only ever ran rule-9
+        # compat. The other three migration lints — numbering (a new
+        # migration filed into a gap below the deployed head is
+        # invisible to `migrate up`), immutability (an already-shipped
+        # migration edited in place, as 0138 was), and commands (an
+        # untested SQL command claimed in a migration header) — ran only
+        # in ci.yml, which `main` never has to pass: it is not
+        # branch-protected. This is the same "last gate before DDL runs
+        # on production" as the step above, so it runs the same three
+        # lints ci.yml runs on every PR, against this checkout (pinned
+        # to the tag being deployed by the `ref:` on this job's
+        # checkout step).
+        run: |
+          set -euo pipefail
+          bash scripts/ci/lint-migrations.sh
+          bash scripts/ci/lint-migration-immutability.sh
+          bash scripts/ci/lint-migration-commands.sh
+
       - name: Set up SSH
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
