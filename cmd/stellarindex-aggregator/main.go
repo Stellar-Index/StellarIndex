@@ -2773,6 +2773,10 @@ func (mevObserver) Run(outcome string, dur time.Duration, _ int, inserted int) {
 	}
 }
 
+func (mevObserver) Truncated(input string) {
+	obs.MEVScanTruncatedTotal.WithLabelValues(input).Inc()
+}
+
 // canonicalSACName turns a Stellar Asset Contract's own name ("CODE:ISSUER",
 // or "native") into the canonical asset id the served tier keys prices by.
 func canonicalSACName(name string) (string, bool) {

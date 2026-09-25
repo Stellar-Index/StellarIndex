@@ -1,7 +1,9 @@
 package mev
 
 import (
+	"encoding/json"
 	"math/big"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -217,11 +219,12 @@ func oracleRef(asset string) OracleRef {
 	}
 }
 
-// Trades on the oracle's asset in txs on both sides of the update →
-// detected with before/after legs.
+// Trades on the oracle's asset in txs on both sides of the update, in
+// OPPOSITE directions on it (sdex: base = what the taker received, so
+// buys USDC before, sells it after) → detected with before/after legs.
 func TestDetectOracleSandwiches_Bracket(t *testing.T) {
 	trades := []canonical.Trade{
-		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: "native", quote: usdc}),
+		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: usdc, quote: "native"}),
 		mkTrade(t, tOpt{tx: txB, taker: "GATK", base: "native", quote: usdc}),
 	}
 	idx := map[string]uint32{txA: 1, txO: 3, txB: 5}
@@ -262,11 +265,60 @@ func TestDetectOracleSandwiches_OneSideOnly(t *testing.T) {
 func TestDetectOracleSandwiches_XLMSACNormalised(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: "native", quote: usdc}),
-		mkTrade(t, tOpt{tx: txB, taker: "GATK", base: "native", quote: usdc}),
+		mkTrade(t, tOpt{tx: txB, taker: "GATK", base: usdc, quote: "native"}),
 	}
 	idx := map[string]uint32{txA: 1, txO: 3, txB: 5}
 	if got := DetectOracleSandwiches(trades, nil, []OracleRef{oracleRef(xlmSAC)}, idx); len(got) != 1 {
 		t.Fatalf("got %d candidates, want 1", len(got))
+	}
+}
+
+// A market maker trading the oracle's asset the SAME way on both sides
+// of the update is not a sandwich and must not be published — including
+// when the two legs are on different pairs, and when the venues' base
+// conventions differ (sdex base = received, soroswap base = sold).
+func TestDetectOracleSandwiches_SameDirectionDropped(t *testing.T) {
+	idx := map[string]uint32{txA: 1, txO: 3, txB: 5}
+	cases := map[string][]canonical.Trade{
+		"same pair": {
+			mkTrade(t, tOpt{tx: txA, taker: "GATK", base: "native", quote: usdc}),
+			mkTrade(t, tOpt{tx: txB, taker: "GATK", base: "native", quote: usdc}),
+		},
+		"different pairs, both buy USDC": {
+			mkTrade(t, tOpt{tx: txA, taker: "GATK", base: usdc, quote: "native"}),
+			mkTrade(t, tOpt{tx: txB, taker: "GATK", base: usdc, quote: aqua}),
+		},
+		"cross-convention, both buy USDC": {
+			mkTrade(t, tOpt{tx: txA, taker: "GATK", base: usdc, quote: "native"}),
+			mkTrade(t, tOpt{source: "soroswap", tx: txB, taker: "GATK", base: "native", quote: usdc}),
+		},
+	}
+	for name, trades := range cases {
+		if got := DetectOracleSandwiches(trades, nil, []OracleRef{oracleRef(usdc)}, idx); len(got) != 0 {
+			t.Errorf("%s: got %d candidates, want 0: %+v", name, len(got), got)
+		}
+	}
+
+	// Cross-convention OPPOSITE (sdex buys USDC, soroswap sells it) is kept.
+	opposite := []canonical.Trade{
+		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: usdc, quote: "native"}),
+		mkTrade(t, tOpt{source: "soroswap", tx: txB, taker: "GATK", base: usdc, quote: "native"}),
+	}
+	if got := DetectOracleSandwiches(opposite, nil, []OracleRef{oracleRef(usdc)}, idx); len(got) != 1 {
+		t.Errorf("cross-convention opposite: got %d candidates, want 1", len(got))
+	}
+}
+
+// A leg on a venue with no known base convention has no provable
+// direction → dropped.
+func TestDetectOracleSandwiches_UnknownSourceDropped(t *testing.T) {
+	trades := []canonical.Trade{
+		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: usdc, quote: "native"}),
+		mkTrade(t, tOpt{source: "somedex", tx: txB, taker: "GATK", base: "native", quote: usdc}),
+	}
+	idx := map[string]uint32{txA: 1, txO: 3, txB: 5}
+	if got := DetectOracleSandwiches(trades, nil, []OracleRef{oracleRef(usdc)}, idx); len(got) != 0 {
+		t.Fatalf("got %d candidates, want 0", len(got))
 	}
 }
 
@@ -405,11 +457,13 @@ func TestDetectWashTrades_PoolMakerIgnored(t *testing.T) {
 
 // ── liquidation cascade ─────────────────────────────────────────────
 
+// fill is a liquidation fill of a position holding usdc (so a usdc
+// oracle update is on-asset evidence for it).
 func fill(pool, user, filler, tx string, ledger uint32) AuctionFill {
 	return AuctionFill{
 		Pool: pool, User: user, Filler: filler,
 		AuctionType: 0, Ledger: ledger, TxHash: tx, OpIndex: 0,
-		Timestamp: baseTS,
+		Timestamp: baseTS, Assets: []string{usdc},
 	}
 }
 
@@ -436,6 +490,76 @@ func TestDetectLiquidationCascades_Cluster(t *testing.T) {
 	}
 	if d.PriorFills[0].TxHash != txA || d.OracleUpdates[0].Ledger != 102 {
 		t.Errorf("detail = %+v", d)
+	}
+}
+
+// The liquidated borrowers are the subjects of the liquidations: they
+// must not appear in the published accounts of an event whose kind names
+// an MEV pattern, nor default into Taker when a fill has no filler. They
+// stay in the detail under the explicit `liquidated` role.
+func TestDetectLiquidationCascades_LiquidatedNotPublishedAsActors(t *testing.T) {
+	oracles := []OracleRef{{Source: "reflector-dex", Asset: usdc, Ledger: 102, TxHash: txO}}
+	got := DetectLiquidationCascades([]AuctionFill{
+		fill("CPOOLA", "GUSER1", "GFILL1", txA, 100),
+		fill("CPOOLB", "GUSER2", "GFILL2", txB, 105),
+	}, oracles)
+	if len(got) != 1 {
+		t.Fatalf("got %d candidates, want 1", len(got))
+	}
+	if want := []string{"GFILL2", "GFILL1"}; !reflect.DeepEqual(got[0].Accounts, want) {
+		t.Errorf("accounts = %v, want the fillers only %v", got[0].Accounts, want)
+	}
+	d := got[0].Detail.(cascadeDetail)
+	if d.Fill.Liquidated != "GUSER2" || d.PriorFills[0].Liquidated != "GUSER1" {
+		t.Errorf("detail must keep the owners under `liquidated`: %+v", d)
+	}
+	b, err := json.Marshal(d.Fill)
+	if err != nil || !strings.Contains(string(b), `"liquidated":"GUSER2"`) {
+		t.Errorf("fill json = %s (%v), want a liquidated role", b, err)
+	}
+
+	// No filler recorded: nothing to attribute — never the victim.
+	noFiller := DetectLiquidationCascades([]AuctionFill{
+		fill("CPOOLA", "GUSER1", "", txA, 100),
+		fill("CPOOLB", "GUSER2", "", txB, 105),
+	}, oracles)
+	if len(noFiller) != 1 {
+		t.Fatalf("no-filler: got %d candidates, want 1", len(noFiller))
+	}
+	if noFiller[0].Taker != "" || len(noFiller[0].Accounts) != 0 {
+		t.Errorf("no-filler: taker=%q accounts=%v, want empty (never the liquidated owner)",
+			noFiller[0].Taker, noFiller[0].Accounts)
+	}
+}
+
+// The oracle leg must price one of the filled position's own assets: an
+// update for an unrelated asset in the bracket is not evidence, and a
+// fill with no recorded assets correlates with nothing. Alias forms of
+// the position's asset (XLM SAC vs native / crypto:XLM) do match.
+func TestDetectLiquidationCascades_OracleMustPriceThePosition(t *testing.T) {
+	fills := []AuctionFill{
+		fill("CPOOLA", "GUSER1", "GFILL1", txA, 100),
+		fill("CPOOLB", "GUSER2", "GFILL2", txB, 105),
+	}
+	unrelated := []OracleRef{{Source: "reflector-dex", Asset: aqua, Ledger: 102, TxHash: txO}}
+	if got := DetectLiquidationCascades(fills, unrelated); len(got) != 0 {
+		t.Errorf("unrelated-asset oracle: got %d candidates, want 0", len(got))
+	}
+
+	bare := []AuctionFill{fills[0], fills[1]}
+	bare[1].Assets = nil
+	onAsset := []OracleRef{{Source: "reflector-dex", Asset: usdc, Ledger: 102, TxHash: txO}}
+	if got := DetectLiquidationCascades(bare, onAsset); len(got) != 0 {
+		t.Errorf("fill with no assets: got %d candidates, want 0", len(got))
+	}
+
+	xlmPos := []AuctionFill{fills[0], fills[1]}
+	xlmPos[1].Assets = []string{xlmSAC}
+	for _, oracleAsset := range []string{"native", "crypto:XLM", xlmSAC} {
+		o := []OracleRef{{Source: "reflector-cex", Asset: oracleAsset, Ledger: 102, TxHash: txO}}
+		if got := DetectLiquidationCascades(xlmPos, o); len(got) != 1 {
+			t.Errorf("XLM position vs %s oracle: got %d candidates, want 1", oracleAsset, len(got))
+		}
 	}
 }
 

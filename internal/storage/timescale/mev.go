@@ -3,6 +3,7 @@ package timescale
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -10,15 +11,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 )
 
-// TradesForArbScan returns recent ON-CHAIN trades (ledger > 0, with a
-// taker) that closed after `since`, ascending by (ledger, tx_hash,
-// op_index) — the order the MEV detector groups on — plus a parallel
-// slice of each trade's USD volume ("" when NULL). Capped at `limit`.
+// TradesForArbScan returns the NEWEST `limit` ON-CHAIN trades (ledger >
+// 0, with a taker) that closed after `since`, returned ascending by
+// (ledger, tx_hash, op_index) — the order the MEV detector groups on —
+// plus a parallel slice of each trade's USD volume ("" when NULL).
 //
-// The `since` lower bound prunes the trades hypertable to the recent
-// chunk(s); combined with the limit this is a bounded scan, NOT an
-// unbounded trade walk. The detector re-runs over overlapping windows
-// and dedups on write, so a tight window each tick is sufficient.
+// The cap keeps the newest rows, not the oldest: the worker re-scans a
+// trailing window every tick, so earlier ticks already covered the oldest
+// rows, while an oldest-first LIMIT drops the same burst tail on every
+// tick. len == limit means the window was truncated; the worker counts
+// that and trims the possibly-partial oldest ledger.
 func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int) ([]canonical.Trade, []string, error) {
 	if limit <= 0 {
 		limit = 50_000
@@ -62,7 +64,7 @@ func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int
          WHERE ts > $1
            AND ledger > 0
            AND taker IS NOT NULL AND taker <> ''
-         ORDER BY ledger ASC, tx_hash ASC, op_index ASC
+         ORDER BY ledger DESC, tx_hash DESC, op_index DESC
          LIMIT $2
     `
 	rows, err := s.db.QueryContext(ctx, q, since.UTC(), limit)
@@ -108,16 +110,18 @@ func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int
 	if err := rows.Err(); err != nil {
 		return nil, nil, fmt.Errorf("timescale: TradesForArbScan rows: %w", err)
 	}
+	slices.Reverse(trades)
+	slices.Reverse(usd)
 	return trades, usd, nil
 }
 
 // oracleUpdatesForMEVScanQuery is the OracleUpdatesForMEVScan SQL.
 // `asset NOT LIKE 'raw:%'` excludes the unmapped rows the oracle
 // capture-totality design records verbatim (canonical.AssetOracleRaw):
-// the liquidation_cascade correlator has no asset keying (any row in
-// the ledger bracket is evidence), so without this predicate a raw
-// row would manufacture a cascade candidate; the sandwich detector is
-// keyed by exact asset string and could never match one anyway.
+// they are record-layer only and must never become MEV evidence. The
+// detectors also key on asset (cascade on the position's assets, the
+// sandwich on the trade's), so this predicate is the SQL-side half of
+// that rule.
 const oracleUpdatesForMEVScanQuery = `
         SELECT source, COALESCE(contract_id, ''), ledger, tx_hash, op_index,
                asset, quote, ts
@@ -125,13 +129,14 @@ const oracleUpdatesForMEVScanQuery = `
          WHERE ts > $1
            AND ledger > 0
            AND asset NOT LIKE 'raw:%'
-         ORDER BY ledger ASC, tx_hash ASC, op_index ASC
+         ORDER BY ledger DESC, tx_hash DESC, op_index DESC
          LIMIT $2
     `
 
-// OracleUpdatesForMEVScan returns recent ON-CHAIN oracle updates
-// (ledger > 0, mapped assets only — see oracleUpdatesForMEVScanQuery)
-// published after `since`, ascending by ledger, capped at `limit`.
+// OracleUpdatesForMEVScan returns the newest `limit` ON-CHAIN oracle
+// updates (ledger > 0, mapped assets only — see
+// oracleUpdatesForMEVScanQuery) published after `since`, returned
+// ascending by ledger (newest kept, for the reason TradesForArbScan gives).
 // Satisfies mev.OracleScanner — the input for the oracle_sandwich +
 // liquidation_cascade detectors.
 func (s *Store) OracleUpdatesForMEVScan(ctx context.Context, since time.Time, limit int) ([]domain.MEVOracleRef, error) {
@@ -158,26 +163,36 @@ func (s *Store) OracleUpdatesForMEVScan(ctx context.Context, since time.Time, li
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("timescale: OracleUpdatesForMEVScan rows: %w", err)
 	}
+	slices.Reverse(out)
 	return out, nil
 }
 
 // BlendFillsForMEVScan returns recent Blend liquidation-relevant
 // auction fills (event_kind='fill', auction_type 0=UserLiquidation /
-// 1=BadDebt — Interest auctions aren't liquidations) after `since`,
-// ascending by ledger, capped at `limit`. Satisfies
-// mev.AuctionScanner.
+// 1=BadDebt — Interest auctions aren't liquidations) after `since`: the
+// newest `limit`, returned ascending by ledger (newest kept, for the
+// reason TradesForArbScan gives). Satisfies mev.AuctionScanner.
 func (s *Store) BlendFillsForMEVScan(ctx context.Context, since time.Time, limit int) ([]domain.MEVAuctionFill, error) {
 	if limit <= 0 {
 		limit = 50_000
 	}
+	// assets: the distinct reserve assets in the fill's bid + lot — the
+	// position's debt and collateral, which the cascade correlator keys
+	// its oracle evidence on.
 	const q = `
         SELECT pool, user_address, COALESCE(filler, ''), auction_type,
-               ledger, tx_hash, op_index, ts
+               ledger, tx_hash, op_index, ts,
+               ARRAY(
+                 SELECT DISTINCT e->>'asset'
+                   FROM jsonb_array_elements(COALESCE(bid, '[]'::jsonb) || COALESCE(lot, '[]'::jsonb)) AS e
+                  WHERE e->>'asset' IS NOT NULL
+                  ORDER BY 1
+               ) AS assets
           FROM blend_auctions
          WHERE ts > $1
            AND event_kind = 'fill'
            AND auction_type IN (0, 1)
-         ORDER BY ledger ASC, tx_hash ASC, op_index ASC
+         ORDER BY ledger DESC, tx_hash DESC, op_index DESC
          LIMIT $2
     `
 	rows, err := s.db.QueryContext(ctx, q, since.UTC(), limit)
@@ -192,6 +207,7 @@ func (s *Store) BlendFillsForMEVScan(ctx context.Context, since time.Time, limit
 		if err := rows.Scan(
 			&f.Pool, &f.User, &f.Filler, &f.AuctionType,
 			&f.Ledger, &f.TxHash, &f.OpIndex, &f.Timestamp,
+			pgarray.Strings(&f.Assets),
 		); err != nil {
 			return nil, fmt.Errorf("timescale: BlendFillsForMEVScan scan: %w", err)
 		}
@@ -200,12 +216,15 @@ func (s *Store) BlendFillsForMEVScan(ctx context.Context, since time.Time, limit
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("timescale: BlendFillsForMEVScan rows: %w", err)
 	}
+	slices.Reverse(out)
 	return out, nil
 }
 
 // InsertMEVEvent persists a detected MEV event, idempotent on
 // dedup_key (ON CONFLICT DO NOTHING). Returns inserted=false when the
-// event already existed. Satisfies mev.Sink.
+// event already existed. profit_usd is written NULL: no detector
+// estimates attacker profit, and trade notional is not profit.
+// Satisfies mev.Sink.
 func (s *Store) InsertMEVEvent(ctx context.Context, e domain.MEVStoredEvent) (bool, error) {
 	const q = `
         INSERT INTO mev_events (
@@ -214,16 +233,15 @@ func (s *Store) InsertMEVEvent(ctx context.Context, e domain.MEVStoredEvent) (bo
             detail, profit_usd, dedup_key
         ) VALUES (
             $1, $2, $3,
-            NULL, NULL, $4, $5,
-            $6, $7, $8
+            $4, $5, $6, $7,
+            $8, NULL, $9
         )
         ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING
     `
-	profitUSD := nullString(e.NotionalUSD)
 	res, err := s.db.ExecContext(ctx, q,
 		e.Timestamp.UTC(), int(e.DetectedAtLedger), e.Kind,
-		e.TxHashes, e.Accounts,
-		string(e.DetailJSON), profitUSD, e.DedupKey,
+		nullString(e.AssetID), nullString(e.QuoteID), e.TxHashes, e.Accounts,
+		string(e.DetailJSON), e.DedupKey,
 	)
 	if err != nil {
 		return false, fmt.Errorf("timescale: InsertMEVEvent: %w", err)

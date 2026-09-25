@@ -176,6 +176,46 @@ func TestRouter_MultiPathCorroboration(t *testing.T) {
 	}
 }
 
+// A single thin 2-leg route that appears next to three agreeing 3-leg
+// routes is served (shortest wins), but it must not read CLEANER than the
+// set it displaced: disagreeing with that longer tier is divergence, and a
+// diverged result corroborates nothing. When it agrees, nothing is flagged.
+func TestRouter_ShortestRouteDivergesFromDisplacedLongerTier(t *testing.T) {
+	jpy := canonical.Asset{Type: canonical.AssetFiat, Code: "JPY"}
+	chf := canonical.Asset{Type: canonical.AssetFiat, Code: "CHF"}
+	longer := []aggregate.Quote{
+		rq(obscure, xlm, 1, 1, 0.9), rq(xlm, usd, 1, 1, 0.9), rq(usd, gbp, 1, 1, 0.9),
+		rq(obscure, eur, 1, 1, 0.9), rq(eur, obsFiat, 1, 1, 0.9), rq(obsFiat, gbp, 1, 1, 0.9),
+		rq(obscure, jpy, 1, 1, 0.9), rq(jpy, chf, 1, 1, 0.9), rq(chf, gbp, 1, 1, 0.9),
+	}
+	edges := mustEdges(t, append(longer, rq(obscure, btc, 1, 1, 0.9), rq(btc, gbp, 2, 1, 0.9))...)
+	if n := len(aggregate.FindRoutes(edges, obscure, gbp, 3, false)); n != 4 {
+		t.Fatalf("fixture: %d routes, want 1 two-leg + 3 three-leg", n)
+	}
+
+	composite, _, pathCount, corroboration, diverged, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 3, 0)
+	if err != nil {
+		t.Fatalf("CombineRoutes: %v", err)
+	}
+	eqRat(t, composite, big.NewRat(2, 1), "composite (shortest route still serves)")
+	if pathCount != 1 {
+		t.Errorf("pathCount = %d, want 1", pathCount)
+	}
+	if !diverged || corroboration != 0 {
+		t.Errorf("diverged=%v corroboration=%d, want true/0: the thin route disagrees 2 vs 1 with the three routes it displaced",
+			diverged, corroboration)
+	}
+
+	agreeing := mustEdges(t, append(longer, rq(obscure, btc, 1, 1, 0.9), rq(btc, gbp, 1, 1, 0.9))...)
+	_, _, _, corroboration, diverged, _, err = aggregate.CombineRoutes(agreeing, obscure, gbp, 3, 0)
+	if err != nil {
+		t.Fatalf("CombineRoutes (agreeing): %v", err)
+	}
+	if diverged || corroboration != 1 {
+		t.Errorf("agreeing: diverged=%v corroboration=%d, want false/1", diverged, corroboration)
+	}
+}
+
 // outlier rejection: three same-length routes, one wildly off → outlier
 // omitted, composite = median of the 2 good, pathCount=2, diverged=true.
 func TestRouter_OutlierRejection(t *testing.T) {

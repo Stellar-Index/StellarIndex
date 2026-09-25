@@ -485,9 +485,11 @@ type scoredRoute struct {
 //     undirected edge {From,To} are one manipulable market, not two
 //     independent confirmations — so an all-through-one-bottleneck set
 //     counts as 1). 1 for a single route. See corroboratingRouteCount.
-//   - diverged: true if any route was rejected as an outlier OR the
+//   - diverged: true if any route was rejected as an outlier, the
 //     surviving routes still spread more than routerDivergenceSpreadPct
-//     of their median. A caller should treat a diverged composite as a
+//     of their median, OR the composite disagrees by that much with the
+//     next-longer route tier the shortest-only selection discarded (see
+//     nextTierDisagrees). A caller should treat a diverged composite as a
 //     soft signal, not a clean price.
 //   - lowConfidence: true when NO route cleared minConfidence. In that
 //     case a best-effort composite is still returned (computed from all
@@ -505,7 +507,8 @@ type scoredRoute struct {
 func CombineRoutes(
 	edges []RouteLeg, base, quote canonical.Asset, maxHops int, minConfidence float64,
 ) (composite *big.Rat, combinedConfidence float64, pathCount, corroborationCount int, diverged, lowConfidence bool, err error) {
-	routes := FindRoutes(edges, base, quote, maxHops, true)
+	all := FindRoutes(edges, base, quote, maxHops, false)
+	routes := keepShortest(all)
 	if len(routes) == 0 {
 		return nil, 0, 0, 0, false, false, ErrNoRoute
 	}
@@ -542,8 +545,55 @@ func CombineRoutes(
 	pathCount = len(survivors)
 	rejected := len(gated) - len(survivors)
 	diverged = rejected > 0 || spreadExceeds(pricesOf(survivors), routerDivergenceSpreadPct)
+	if !diverged {
+		// keepShortest drops every longer route before scoring, so a thin
+		// shortest route would otherwise read cleaner than the longer set
+		// it displaced; disagreeing with that set is divergence.
+		longer, lerr := nextTierDisagrees(composite, all, len(routes[0]), minConfidence)
+		if lerr != nil {
+			return nil, 0, 0, 0, false, false, lerr
+		}
+		diverged = longer
+	}
 	corroborationCount = corroboratingRouteCount(survivors, diverged)
 	return composite, combinedConfidence, pathCount, corroborationCount, diverged, lowConf, nil
+}
+
+// nextTierDisagrees reports whether the served composite differs by more
+// than routerDivergenceSpreadPct from the consensus of the next-longer
+// route tier (the shortest length above `shortest`): that tier's routes,
+// confidence-gated and outlier-omitted exactly as the served tier is,
+// reduced to their member median. No longer tier → false.
+func nextTierDisagrees(composite *big.Rat, all [][]RouteLeg, shortest int, minConfidence float64) (bool, error) {
+	next := 0
+	for _, r := range all {
+		if len(r) > shortest && (next == 0 || len(r) < next) {
+			next = len(r)
+		}
+	}
+	if next == 0 {
+		return false, nil
+	}
+	var tier [][]RouteLeg
+	for _, r := range all {
+		if len(r) == next {
+			tier = append(tier, r)
+		}
+	}
+	scored, err := scoreRoutes(tier)
+	if err != nil {
+		return false, err
+	}
+	gated, _ := gateByConfidence(scored, minConfidence)
+	prices := pricesOf(gated)
+	kept := make([]*big.Rat, 0, len(prices))
+	for _, i := range omitOutlierIndices(prices, routerOutlierPermitPct) {
+		kept = append(kept, prices[i])
+	}
+	if len(kept) == 0 {
+		return false, nil
+	}
+	return spreadExceeds([]*big.Rat{composite, medianMemberRat(kept)}, routerDivergenceSpreadPct), nil
 }
 
 // scoreRoutes computes each route's exact composite and weakest-link

@@ -13,9 +13,12 @@ const KindLiquidationCascade = "liquidation_cascade"
 
 const cascadeNote = "A Blend liquidation-auction fill followed at least one other " +
 	"fill against a DIFFERENT position within " + cascadeWindowStr + " ledgers, with an " +
-	"on-chain oracle update inside the bracket. Correlation signature: the cluster + " +
-	"oracle timing is the evidence; causality (the first liquidation moving the price " +
-	"that triggered the next) is not proven."
+	"on-chain oracle update for one of the filled position's own debt or collateral " +
+	"assets inside the bracket. Correlation signature: the cluster + oracle timing is " +
+	"the evidence; causality (the first liquidation moving the price that triggered " +
+	"the next) is not proven. accounts lists the fillers (liquidators) only; the " +
+	"positions' owners appear in the detail as `liquidated` and are the subjects of " +
+	"the liquidations, not actors in the pattern."
 
 // cascadeWindowLedgers is the clustering window: fills within this
 // many ledgers of each other (≈1 minute at ~5s closes) are one
@@ -26,14 +29,18 @@ const (
 )
 
 // cascadeFillRef is one fill's evidence entry in the detail payload.
+// Liquidated is the owner of the position being auctioned — the subject
+// of the liquidation, named under that role so it is never read as an
+// actor.
 type cascadeFillRef struct {
-	Pool        string `json:"pool"`
-	User        string `json:"user"`
-	Filler      string `json:"filler,omitempty"`
-	AuctionType int16  `json:"auction_type"` // 0=UserLiquidation, 1=BadDebt
-	Ledger      uint32 `json:"ledger"`
-	TxHash      string `json:"tx_hash"`
-	OpIndex     uint32 `json:"op_index"`
+	Pool        string   `json:"pool"`
+	Liquidated  string   `json:"liquidated"`
+	Filler      string   `json:"filler,omitempty"`
+	AuctionType int16    `json:"auction_type"` // 0=UserLiquidation, 1=BadDebt
+	Assets      []string `json:"assets"`       // the position's reserves in this fill's bid + lot
+	Ledger      uint32   `json:"ledger"`
+	TxHash      string   `json:"tx_hash"`
+	OpIndex     uint32   `json:"op_index"`
 }
 
 // cascadeOracleRef is one correlated oracle update in the detail
@@ -111,29 +118,59 @@ func buildCascadeCandidate(sorted []AuctionFill, i int, oracles []OracleRef) (Ca
 	}
 
 	lowLedger := priors[len(priors)-1].Ledger // earliest prior in the window
-	var correlated []cascadeOracleRef
-	for _, o := range oracles {
-		if o.Ledger == 0 {
-			continue
-		}
-		if !oracleRefIsMapped(o) {
-			continue // raw: row — record-layer only, never cascade evidence
-		}
-		if o.Ledger+cascadeWindowLedgers >= lowLedger && o.Ledger <= f.Ledger {
-			correlated = append(correlated, cascadeOracleRef{
-				Source:     o.Source,
-				ContractID: o.ContractID,
-				Asset:      o.Asset,
-				Ledger:     o.Ledger,
-				TxHash:     o.TxHash,
-			})
-		}
-	}
+	correlated := correlatedOracles(f, lowLedger, oracles)
 	if len(correlated) == 0 {
 		return Candidate{}, false
 	}
 
 	return assembleCascadeCandidate(f, priors, correlated), true
+}
+
+// correlatedOracles returns the oracle updates inside [lowLedger − window,
+// f.Ledger] that price one of f's own position assets. Without the asset
+// key, any mapped update from a many-feed oracle publishing on a short
+// cadence lands in almost every bracket and the leg carries no evidence.
+// A fill with no recorded assets correlates with nothing (fail closed).
+func correlatedOracles(f AuctionFill, lowLedger uint32, oracles []OracleRef) []cascadeOracleRef {
+	position := positionAssetSet(f.Assets)
+	var out []cascadeOracleRef
+	for _, o := range oracles {
+		if o.Ledger == 0 || o.Ledger+cascadeWindowLedgers < lowLedger || o.Ledger > f.Ledger {
+			continue
+		}
+		if !oracleRefIsMapped(o) {
+			continue // raw: row — record-layer only, never cascade evidence
+		}
+		if _, ok := position[normAsset(o.Asset)]; !ok {
+			continue
+		}
+		out = append(out, cascadeOracleRef{
+			Source:     o.Source,
+			ContractID: o.ContractID,
+			Asset:      o.Asset,
+			Ledger:     o.Ledger,
+			TxHash:     o.TxHash,
+		})
+	}
+	return out
+}
+
+// positionAssetSet is the position's assets closed over their alias
+// forms (normalised), so an oracle keyed on one identity of an asset
+// (a SAC id, crypto:XLM) matches a position recorded under another.
+func positionAssetSet(assets []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(assets))
+	for _, s := range assets {
+		set[normAsset(s)] = struct{}{}
+		a, err := canonical.ParseAsset(s)
+		if err != nil {
+			continue
+		}
+		for _, alias := range canonical.AssetAliasStrings(a) {
+			set[normAsset(alias)] = struct{}{}
+		}
+	}
+	return set
 }
 
 func assembleCascadeCandidate(f AuctionFill, priors []AuctionFill, correlated []cascadeOracleRef) Candidate {
@@ -159,8 +196,10 @@ func assembleCascadeCandidate(f AuctionFill, priors []AuctionFill, correlated []
 		acctSet[a] = struct{}{}
 		accts = append(accts, a)
 	}
+	// Only fillers are actors in the pattern. The liquidated owners stay
+	// in the detail under their own role, never in the published
+	// accounts list, and never as the Taker fallback.
 	addAcct(f.Filler)
-	addAcct(f.User)
 	for _, p := range priors {
 		priorRefs = append(priorRefs, fillRef(p))
 		if _, ok := txSet[p.TxHash]; !ok {
@@ -168,22 +207,18 @@ func assembleCascadeCandidate(f AuctionFill, priors []AuctionFill, correlated []
 			txs = append(txs, p.TxHash)
 		}
 		addAcct(p.Filler)
-		addAcct(p.User)
 	}
 
-	primary := f.Filler
-	if primary == "" {
-		primary = f.User
-	}
 	return Candidate{
 		Kind:             KindLiquidationCascade,
 		Ledger:           f.Ledger,
 		DetectedAtLedger: f.Ledger,
 		Timestamp:        f.Timestamp.UTC(),
 		TxHash:           f.TxHash,
-		Taker:            primary,
+		Taker:            f.Filler,
 		TxHashes:         txs,
 		Accounts:         accts,
+		Assets:           sortedKeys(positionAssets(f.Assets)),
 		Sources:          []string{"blend"},
 		Dedup: KindLiquidationCascade + ":" + f.TxHash + ":" + f.Pool + ":" + f.User +
 			":" + strconv.FormatUint(uint64(f.OpIndex), 10),
@@ -198,12 +233,10 @@ func assembleCascadeCandidate(f AuctionFill, priors []AuctionFill, correlated []
 }
 
 // oracleRefIsMapped reports whether the oracle row's asset is a MAPPED
-// canonical asset. The cascade correlator is the one oracle_updates
-// consumer with no asset keying (any row in the ledger bracket is
-// evidence), so it must exclude the `raw:` rows the oracle
-// capture-totality design records verbatim for unmapped symbols —
-// they are orientation-unknown reference data, never interpretation
-// input. OracleUpdatesForMEVScan already excludes them in SQL; this is
+// canonical asset. The `raw:` rows the oracle capture-totality design
+// records verbatim for unmapped symbols are orientation-unknown
+// reference data, never interpretation input, so they never become
+// cascade evidence. OracleUpdatesForMEVScan already excludes them in SQL; this is
 // the in-process guard for any other OracleScanner. A string that is
 // not a canonical asset at all is treated as unmapped (fail closed).
 func oracleRefIsMapped(o OracleRef) bool {
@@ -211,12 +244,22 @@ func oracleRefIsMapped(o OracleRef) bool {
 	return err == nil && a.IsMapped()
 }
 
+// positionAssets is the fill's asset list as a set.
+func positionAssets(assets []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(assets))
+	for _, a := range assets {
+		set[a] = struct{}{}
+	}
+	return set
+}
+
 func fillRef(f AuctionFill) cascadeFillRef {
 	return cascadeFillRef{
 		Pool:        f.Pool,
-		User:        f.User,
+		Liquidated:  f.User,
 		Filler:      f.Filler,
 		AuctionType: f.AuctionType,
+		Assets:      sortedKeys(positionAssets(f.Assets)),
 		Ledger:      f.Ledger,
 		TxHash:      f.TxHash,
 		OpIndex:     f.OpIndex,

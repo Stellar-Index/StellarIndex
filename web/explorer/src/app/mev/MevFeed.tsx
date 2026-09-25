@@ -13,7 +13,11 @@ interface MevLeg {
   quote: string;
   base_amount: string;
   quote_amount: string;
-  op_index: number;
+  // on-chain operation index + position within it; absent when the
+  // source's trades.op_index encoding is unknown
+  op_index?: number;
+  sub_index?: number;
+  trade_op_index: number; // the stored trades.op_index key
   // ordering-aware kinds (sandwich / oracle_sandwich) add:
   tx_hash?: string;
   tx_index?: number;
@@ -27,9 +31,10 @@ interface MevLeg {
 
 interface MevFillRef {
   pool: string;
-  user: string;
+  liquidated: string; // position owner — the liquidation's subject, not an actor
   filler?: string;
   auction_type: number;
+  assets: string[];
   ledger: number;
   tx_hash: string;
 }

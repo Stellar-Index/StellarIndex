@@ -31,10 +31,10 @@ const sandwichNote = "One account's trades in two different transactions bracket
 // carrying the lake-resolved tx_index that placed it. Amounts are
 // decimal strings (ADR-0003).
 type OrderedLeg struct {
-	Source      string `json:"source"`
-	TxHash      string `json:"tx_hash"`
-	TxIndex     uint32 `json:"tx_index"`
-	OpIndex     uint32 `json:"op_index"`
+	Source  string `json:"source"`
+	TxHash  string `json:"tx_hash"`
+	TxIndex uint32 `json:"tx_index"`
+	OpRef
 	Account     string `json:"account,omitempty"`
 	Base        string `json:"base"`
 	Quote       string `json:"quote"`
@@ -164,8 +164,11 @@ func buildSandwichCandidate(trades []canonical.Trade, usdVolume []string, txIdx 
 
 	t0 := trades[front]
 	pair := unorderedPairKey(t0)
+	assetID, quoteID := pairIDs(t0)
 	notional := sumUSD(usdVolume, involved)
 	c := Candidate{
+		AssetID:          assetID,
+		QuoteID:          quoteID,
 		Kind:             KindSandwich,
 		Ledger:           t0.Ledger,
 		DetectedAtLedger: t0.Ledger,
@@ -219,6 +222,33 @@ func oppositeDirection(front, back canonical.Trade) bool {
 	return fok && bok && fl != bl
 }
 
+// oppositeOnAsset is oppositeDirection keyed on one asset rather than a
+// shared pair: the two trades may be on different pairs that both touch
+// asset. False when either direction is indeterminate.
+func oppositeOnAsset(a, b canonical.Trade, asset string) bool {
+	ar, aok := takerReceivesAsset(a, asset)
+	br, bok := takerReceivesAsset(b, asset)
+	return aok && bok && ar != br
+}
+
+// takerReceivesAsset reports whether the taker RECEIVED asset (compared
+// normalised) in t. ok is false when the source's convention is unknown
+// or t does not touch asset.
+func takerReceivesAsset(t canonical.Trade, asset string) (received, ok bool) {
+	baseReceived, known := takerBaseIsReceived(t.Source)
+	if !known {
+		return false, false
+	}
+	switch normAsset(asset) {
+	case normAsset(t.Pair.Base.String()):
+		return baseReceived, true
+	case normAsset(t.Pair.Quote.String()):
+		return !baseReceived, true
+	default:
+		return false, false
+	}
+}
+
 // takerReceivesLowAsset reports whether the taker RECEIVED the
 // orientation-independent LOW asset of the trade's pair (the same "low"
 // unorderedPairKey sorts on), collapsing the per-source base convention
@@ -270,7 +300,7 @@ func orderedLegFrom(t canonical.Trade, txIdx map[string]uint32, role string) Ord
 		Source:      t.Source,
 		TxHash:      t.TxHash,
 		TxIndex:     txIdx[t.TxHash],
-		OpIndex:     t.OpIndex,
+		OpRef:       opRefOf(t),
 		Account:     t.Taker,
 		Base:        t.Pair.Base.String(),
 		Quote:       t.Pair.Quote.String(),
