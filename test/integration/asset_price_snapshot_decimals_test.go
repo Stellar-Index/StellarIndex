@@ -113,10 +113,10 @@ func seedDecimalsFixture(t *testing.T, ctx context.Context, store *timescale.Sto
 		add("soroswap", ts, pair(seven, usdc), 1_000_000_000, 650_000_000)
 	}
 	// nine an hour ago at HALF the price, inside the change_1h window
-	// (55–90 min). Both legs of the change are raw, so the scale cancels
+	// (55–65 min). Both legs of the change are raw, so the scale cancels
 	// and the percentage must read +100.00 whether or not the price
 	// itself is corrected.
-	add("soroswap", now.Add(-70*time.Minute), pair(nine, usdc), 1_000_000_000_000, 12_500_000_000)
+	add("soroswap", now.Add(-60*time.Minute), pair(nine, usdc), 1_000_000_000_000, 12_500_000_000)
 
 	// The Soroban-venue legs carry no insert-time usd_volume; the listing
 	// spine and GetAssetBySlug admit a discovered contract only once it
