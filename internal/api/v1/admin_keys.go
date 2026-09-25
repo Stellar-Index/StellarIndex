@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -116,11 +117,10 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 	// with the audit row as the only signal. ClampMintScopes' own doc
 	// calls itself "the single chokepoint every mint path funnels
 	// through"; this call is what makes that true for the admin path.
-	scopes, problem := middleware.ClampMintScopes(subject, req.Scopes)
-	if problem != "" {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/scope-exceeds-caller",
-			"Scope exceeds caller", http.StatusForbidden, problem)
+	// The same clamp bounds rate_limit_per_min, so a scope-narrowed
+	// operator cannot mint 100k/min keys (GH-1147).
+	scopes, ok := s.clampMintToCaller(w, r, subject, req.Scopes, req.RateLimitPerMin)
+	if !ok {
 		return
 	}
 	// Persist, audit-log and echo the CLAMPED set, never the request's:
@@ -128,6 +128,7 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 	req.Scopes = scopes
 
 	rec, plaintext, err := s.accounts.Create(r.Context(), auth.CreateAPIKeyRequest{
+		MintedBy:        &subject,
 		Identifier:      req.Identifier,
 		Label:           req.Label,
 		Tier:            auth.Tier(req.Tier),
@@ -175,6 +176,26 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// clampMintToCaller applies [auth.ClampToMinter] ahead of the store's own
+// re-check so a refused escalation is a 403 naming the reason, logged at
+// WARN with the actor, rather than a 500 or a silent refusal.
+func (s *Server) clampMintToCaller(
+	w http.ResponseWriter, r *http.Request, caller auth.Subject, scopes []string, rateLimitPerMin int,
+) ([]string, bool) {
+	clamped, err := auth.ClampToMinter(caller, scopes, rateLimitPerMin)
+	if err == nil {
+		return clamped, true
+	}
+	s.logger.Warn("key mint refused: request exceeds the minting credential",
+		"err", err, "actor_key_id", caller.KeyID, "actor_identifier", caller.Identifier,
+		"path", r.URL.Path, "request_id", middleware.RequestIDFrom(r))
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/scope-exceeds-caller",
+		"Scope exceeds caller", http.StatusForbidden,
+		strings.TrimPrefix(err.Error(), auth.ErrMintExceedsCaller.Error()+": "))
+	return nil, false
+}
+
 // revokeKeyEverywhere revokes a credential in every store that might
 // hold a live record for it (GH-978). Redis is the working
 // credential under the default auth_backend=redis; Postgres's
@@ -183,17 +204,30 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 // Redis stops authentication but leaves api_keys.revoked_at NULL —
 // the row keeps counting toward the active-key ceiling and lists as
 // live to every Postgres reader. Both legs are scoped to identifier
-// and collapse "no such key for this owner" into a silent no-op, so
+// and treat "no such key" and "another owner's key" identically, so
 // neither can be used to enumerate or revoke another account's keys.
+//
+// Returns [auth.ErrKeyNotFound] when NEITHER leg revoked anything, so
+// a caller never reports a typo'd identifier or key id as a revoke.
 func (s *Server) revokeKeyEverywhere(ctx context.Context, identifier, keyID, reason string) error {
 	err := s.accounts.RevokeKeyByID(ctx, identifier, keyID)
-	if pgErr := s.revokeOwnedPlatformKey(ctx, identifier, keyID, reason); pgErr != nil {
-		if err == nil {
-			err = pgErr
-		} else {
-			s.logger.Error("revoke: postgres management row also failed",
-				"err", pgErr, "identifier", identifier, "key_id", keyID)
-		}
+	revoked := err == nil
+	if errors.Is(err, auth.ErrKeyNotFound) {
+		err = nil
+	}
+	pgErr := s.revokeOwnedPlatformKey(ctx, identifier, keyID, reason)
+	switch {
+	case pgErr == nil:
+		revoked = true
+	case errors.Is(pgErr, platform.ErrNotFound):
+	case err == nil:
+		err = pgErr
+	default:
+		s.logger.Error("revoke: postgres management row also failed",
+			"err", pgErr, "identifier", identifier, "key_id", keyID)
+	}
+	if err == nil && !revoked {
+		return auth.ErrKeyNotFound
 	}
 	return err
 }
@@ -202,39 +236,31 @@ func (s *Server) revokeKeyEverywhere(ctx context.Context, identifier, keyID, rea
 // when that row's account is the one identifier names. The store's
 // Revoke is keyed by id alone, so the owner check has to happen here —
 // the same posture as RedisAPIKeyStore.RevokeKeyByID. A missing row, a
-// row owned by another account, or no account store to prove ownership
-// all return nil without revoking (fail closed, no enumeration oracle).
+// row owned by another account, an already-revoked row, or no store to
+// prove ownership all return [platform.ErrNotFound] without revoking
+// (fail closed, no enumeration oracle); nil means a row was revoked.
 func (s *Server) revokeOwnedPlatformKey(ctx context.Context, identifier, keyID, reason string) error {
 	keys := s.apiKeyBudgets.Platform
 	if keys == nil {
-		return nil
+		return platform.ErrNotFound
 	}
 	if s.platformAccounts == nil {
 		s.logger.Warn("revoke: postgres key store wired without an account store; management row left untouched",
 			"identifier", identifier, "key_id", keyID)
-		return nil
+		return platform.ErrNotFound
 	}
 	k, err := keys.Get(ctx, keyID)
-	if errors.Is(err, platform.ErrNotFound) {
-		return nil
-	}
 	if err != nil {
 		return err
 	}
 	owner, err := s.platformAccounts.Get(ctx, k.AccountID)
-	if errors.Is(err, platform.ErrNotFound) {
-		return nil
-	}
 	if err != nil {
 		return err
 	}
 	if auth.AccountIdentifier(owner.Slug) != identifier {
-		return nil
+		return platform.ErrNotFound
 	}
-	if err := keys.Revoke(ctx, keyID, uuid.Nil, reason); err != nil && !errors.Is(err, platform.ErrNotFound) {
-		return err
-	}
-	return nil
+	return keys.Revoke(ctx, keyID, uuid.Nil, reason)
 }
 
 // handleAdminKeysRevoke serves DELETE
@@ -254,10 +280,12 @@ func (s *Server) revokeOwnedPlatformKey(ctx context.Context, identifier, keyID, 
 // GET /v1/account/keys or the audit row for the mint.
 //
 // Operator-tier only; requires an `X-Reason` header (platform-spec §7.2,
-// same contract as PATCH /v1/admin/accounts). 204 on success AND on
-// "no such key for that identifier" — the store deliberately collapses
-// the two so an operator credential can't be used to enumerate key ids
-// across accounts (same posture as the self-service revoke).
+// same contract as PATCH /v1/admin/accounts). 204 only when a key was
+// actually revoked; 404, with no audit row, when no key matches
+// (identifier, keyID). This is the emergency containment path, so a
+// typo'd identifier must read as a failure, never as a contained leak.
+// "No such key" and "another owner's key" share the 404, so it is still
+// no cross-account enumeration oracle.
 func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 	subject, ok := s.requireOperator(w, r, "/v1/admin/keys/{keyID}")
 	if !ok {
@@ -294,6 +322,15 @@ func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.revokeKeyEverywhere(r.Context(), identifier, keyID, reason); err != nil {
 		if clientAborted(r, err) {
+			return
+		}
+		if errors.Is(err, auth.ErrKeyNotFound) {
+			s.logger.Warn("admin key revoke matched no key",
+				"actor_key_id", subject.KeyID, "target_identifier", identifier, "key_id", keyID)
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/key-not-found",
+				"Key not found", http.StatusNotFound,
+				"no live key "+keyID+" is owned by identifier "+identifier+"; nothing was revoked")
 			return
 		}
 		s.logger.Error("admin key revoke failed", "err", err,

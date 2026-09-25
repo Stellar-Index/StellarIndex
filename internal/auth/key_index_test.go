@@ -300,8 +300,8 @@ func TestKeyIndex_OwnershipIsCheckedAgainstTheRecord(t *testing.T) {
 	if got := listedKeyIDs(t, f.store, "account:attacker"); len(got) != 0 {
 		t.Fatalf("a forged owner entry disclosed another account's key: %v", got)
 	}
-	if err := f.store.RevokeKeyByID(ctx, "account:attacker", victim.KeyID); err != nil {
-		t.Fatalf("RevokeKeyByID: %v", err)
+	if err := f.store.RevokeKeyByID(ctx, "account:attacker", victim.KeyID); !errors.Is(err, ErrKeyNotFound) {
+		t.Fatalf("RevokeKeyByID on another owner's key = %v, want ErrKeyNotFound", err)
 	}
 	if !f.authenticates(victimPlain) {
 		t.Fatal("a caller revoked a key it does not own")
