@@ -61,7 +61,7 @@ const (
 	// out, that kind MUST be one of them).
 	reconciledByKind routeDisp = iota
 	// reconciledByCensus: reconciled, but not via soroban_events EventKind
-	// re-derive — the SDEX LCM census (src.census) or the event-less
+	// re-derive — the SDEX lake-ops re-derive (src.census) or the event-less
 	// ContractCall census (src.callDec). `table` MUST be a target of such a
 	// source (kinds may legitimately be nil there).
 	reconciledByCensus

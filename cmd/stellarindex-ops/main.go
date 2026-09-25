@@ -1313,7 +1313,7 @@ Subcommands:
                           shape no decoder handles (a topic a WASM upgrade
                           added that we'd silently drop) and exits non-zero
                           if any exist. Cron/CI-gateable.
-  verify-reconciliation -config PATH -from N -to N [-source S] [-max-list N]
+  verify-reconciliation -config PATH -from N -to N [-source S] [-max-list N] [-ch-addr ADDR]
                           ADR-0033 Claim 2b: re-derive how many trades
                           each soroban_events range WOULD produce (running
                           the real decoder) and diff per ledger against the
@@ -1323,7 +1323,7 @@ Subcommands:
                           trades (soroswap/aquarius/phoenix/comet), oracles
                           (reflector/redstone), cctp/rozo/defindex, blend's
                           four tables (re-derive bucketed by EventKind), and
-                          sdex (LCM census). Seeds soroswap pairs via RPC.
+                          sdex (lake ops re-derive). Seeds soroswap pairs via RPC.
   compute-completeness -config PATH [-to N] [-source S] [-ch -pass]
                           ADR-0033 Phase 6: compute the per-source
                           completeness WATERMARK (substrate continuity +

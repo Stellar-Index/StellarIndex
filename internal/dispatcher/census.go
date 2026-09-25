@@ -33,12 +33,11 @@ import (
 //     the trades table's CHECK (base_amount > 0) forbids them, so
 //     filterStorableTrades drops each one before the INSERT. The
 //     census counts an atom the served tier is structurally incapable
-//     of holding. Anything that monitors census-minus-COUNT reads a
-//     permanent non-zero for this benign class, and the legacy
-//     (non -ch) compute-completeness path flags every affected ledger
-//     as an SDEX projection gap. The authoritative -ch verdict is safe:
-//     it re-derives through the same decoder AND the same Validate()
-//     gate, so both sides drop the atom together.
+//     of holding, so census-minus-COUNT is a permanent non-zero for
+//     this benign class. No projection oracle reads it: every SDEX
+//     reconcile in internal/ops/chops re-derives through the same
+//     decoder AND the same Validate() + primary-key filter
+//     (sdexServedCensus), so both sides drop the atom together.
 //
 //     Note the lockstep test that guards this comment compares the
 //     counter to the DECODER, never to the writer — which is why the
@@ -186,8 +185,9 @@ func captureEligible(ce xdr.ContractEvent) bool {
 // same success gating) for atom SELECTION, and delegates the per-atom
 // "is this a real trade" test to [sdexclaim.IsRealTrade], which is the
 // same predicate sdex.decodeClaimAtom enforces (C2-010,
-// audit-2026-07-23) — so the census equals the SDEX trade-row count by
-// construction, not by three files agreeing to stay in step.
+// audit-2026-07-23) — so the census equals the decoder's trade output by
+// construction, not by three files agreeing to stay in step. It does not
+// equal the trade-row count; see [Census].
 // Returns the count rather than the slice to avoid allocation in the
 // hot per-ledger census walk.
 func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int { //nolint:gocognit // switch over 5 trade op types, with a dual result-arm fallback for passive offers; linear and clearer unsplit.
@@ -248,7 +248,8 @@ func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int { //nolint
 // (realTradeCount / claimAtomAmounts moved to internal/sdexclaim — shared with
 // the ClickHouse structural extractor. The count mirrors sdex.decodeClaimAtom's
 // both-zero drop EXACTLY: both-zero no-op crosses are excluded, one-side-zero
-// rounding-artifact fills are kept, so the census equals COUNT(trades).)
+// rounding-artifact fills are kept, so the census equals the decoder's output
+// and exceeds COUNT(trades) by the fills the writer cannot store.)
 
 // censusPrevLedgerHash extracts header.PreviousLedgerHash across the
 // LedgerCloseMeta versions (mirrors the cmd-side extractLedgerHeader).

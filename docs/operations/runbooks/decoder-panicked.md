@@ -89,9 +89,11 @@ on the indexer process surviving:
    `ledger_ingest_log` (migration 0051) carries the decoder-independent
    census for the same ledger.
 
-For classic op decoders (sdex) the `classic_trade_effect_count` census
-vs `trades` reconcile shows the delta; for entry-change observers the
-per-class gap detector does.
+For classic op decoders (sdex) `stellarindex-ops verify-reconciliation
+-source sdex` shows the delta (it re-derives from the lake through the
+writer's filter; the raw `classic_trade_effect_count` census also counts
+one-side-zero fills the trades table cannot hold); for entry-change
+observers the per-class gap detector does.
 
 ## Mitigation (≤ 15 min)
 

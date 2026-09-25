@@ -27,11 +27,13 @@ import (
 //     correctly because each logical record's events share one
 //     (ledger, tx, op).
 //   - SDEX — predates Soroban, so there is no soroban_events to
-//     re-derive from. Use the LCM-derived classic_trade_effect_count
-//     census in ledger_ingest_log (one ClaimAtom = one trade). This is
-//     gated on the substrate record covering the range; if it has gaps,
-//     run `census-backfill` first. The external Hubble anchor
-//     (`hubble-check`) is the defense-in-depth cross-check.
+//     re-derive from. Re-derive from the ClickHouse lake's operations
+//     through the SDEX decoder and the served write filter (Validate +
+//     primary-key de-dup), gated on the lake substrate covering the
+//     range. NOT the ledger_ingest_log classic_trade_effect_count census:
+//     it counts one-side-zero fills the trades table cannot hold, so it
+//     never reconciles. The external Hubble anchor (`hubble-check`) is
+//     the defense-in-depth cross-check.
 //
 // Exits non-zero if any mismatch is found. Cron/CI-gateable.
 func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funlen // linear per-source loop; splitting reduces clarity (same as backfillRouter).
@@ -41,6 +43,7 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 	to := fs.Uint("to", 0, "Last ledger sequence (inclusive, required)")
 	only := fs.String("source", "", "Limit to one source (soroswap|aquarius|phoenix|comet|sushiswap_v3|upshift|sdex); default: all")
 	maxList := fs.Int("max-list", 50, "Max gap ledgers to print per source")
+	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address (the sdex re-derive reads the lake's operations)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -106,11 +109,15 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 		var byKind map[string]map[uint32]int
 		var censusExpected map[uint32]int
 		if src.census {
-			c, cerr := sdexCensusExpected(ctx, store, lo, hi)
+			c, blind, cerr := sdexProjectionExpected(ctx, *chAddr, lo, hi)
 			if cerr != nil {
 				return fmt.Errorf("%s: %w", src.name, cerr)
 			}
 			censusExpected = c
+			if blind.Any() {
+				anyGaps = true
+				fmt.Fprintf(os.Stderr, "verify-reconciliation: %-28s %s\n", src.name, blind.Detail())
+			}
 		} else {
 			// Factory-anchored sources (ADR-0035): seed the gate registry
 			// from the factory's creation events [genesis, lo) before the
@@ -171,21 +178,6 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 		return fmt.Errorf("projection reconciliation found mismatches — see above (ADR-0033 Claim 2b)")
 	}
 	return nil
-}
-
-// sdexCensusExpected returns the SDEX per-ledger expected trade count
-// from the LCM census, guarded on ledger_ingest_log fully covering the
-// range (else the census is incomplete and reads as false gaps).
-func sdexCensusExpected(ctx context.Context, store *timescale.Store, lo, hi uint32) (map[uint32]int, error) {
-	gaps, err := store.FindLedgerIngestGaps(ctx, lo, hi)
-	if err != nil {
-		return nil, err
-	}
-	if len(gaps) > 0 {
-		return nil, fmt.Errorf("ledger_ingest_log has %d gap(s) in [%d,%d] — run `census-backfill` first (first gap %d-%d)",
-			len(gaps), lo, hi, gaps[0].Start, gaps[0].End)
-	}
-	return store.ClassicTradeEffectCountsByLedger(ctx, lo, hi)
 }
 
 func sumCounts(m map[uint32]int) int {

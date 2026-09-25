@@ -241,7 +241,8 @@ const (
 // distinct venues behind them.
 //
 // prices_1m keeps a market in whichever direction its source wrote it
-// (aquarius stores base = token_in; SDEX stores both), and `vwap` is
+// (Soroban AMMs store base = token_in; SDEX stores base = the offer's sold
+// asset, the inverse, and so both directions), and `vwap` is
 // always base priced in quote. So each row is re-expressed as two legs in
 // the arm's (asset, quote) orientation and the leg sums are re-divided,
 // the SQL form of [combineDirVWAP]:

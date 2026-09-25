@@ -49,15 +49,17 @@ func BoughtSide(a xdr.ClaimAtom) (asset xdr.Asset, amount xdr.Int64, known bool)
 	return boughtAsset, bought, known
 }
 
-// IsRealTrade reports whether one ClaimAtom will become a `trades` row —
-// i.e. whether internal/sources/sdex.decodeClaimAtom would return a
-// Trade rather than an error for it.
+// IsRealTrade reports whether internal/sources/sdex.decodeClaimAtom would
+// return a Trade rather than an error for one ClaimAtom.
 //
 // It is the SINGLE definition of that predicate, applied by the two
 // count oracles (dispatcher.claimAtomCount for the ADR-0033 census and
 // clickhouse.claimAtomCount for the lake's classic_trade_effect_count)
-// so both equal COUNT(trades) BY CONSTRUCTION rather than by two
-// comments asking future editors to keep three sites in step.
+// so both equal the DECODER's trade output by construction. They do NOT
+// equal COUNT(trades): the writer additionally drops one-side-zero fills
+// (canonical.Trade.Validate, CHECK base_amount > 0), which rule 2 keeps.
+// A served-tier projection oracle must re-derive through that filter
+// (chops.sdexServedCensus), not read these counters.
 //
 // The four drop rules, in the decoder's own order:
 //

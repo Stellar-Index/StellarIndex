@@ -144,7 +144,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	toFlag := fs.Uint("to", 0, "Tip ledger (inclusive); 0 = resolve from the live ledgerstream cursor")
 	only := fs.String("source", "", "Limit to one source (e.g. soroswap|blend|reflector-dex|sdex)")
 	useCH := fs.Bool("ch", false, "Read all three claims from the certified ClickHouse lake (substrate + recognition + projection re-derive) instead of Postgres soroban_events — fast, off the serving DB (ADR-0033 + ADR-0034)")
-	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address (with -ch)")
+	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address (with -ch; without it, SDEX's projection still re-derives from the lake)")
 	skipSubstrate := fs.Bool("skip-substrate", false, "Skip the hash-chain re-scan and CARRY the prior substrate verdict — fast per-source iteration once substrate is proven. This run scans nothing, so it can only CONFIRM a prior clean verdict that already reached this run's tip; a FAILING or short prior verdict publishes substrate_ok=false with the unverified band named in the detail (C4-057). It no longer asserts substrate_ok=true unconditionally.")
 	skipRecognition := fs.Bool("skip-recognition", false, "Trust the prior recognition audit (recognition_ok=true) instead of re-scanning all topic shapes — the global DistinctTopicShapes scan is the load-heaviest step; skip it for gentle projection-only iteration once recognition is verified")
 	fromLedger := fs.Uint("from", 0, "INCREMENTAL verify: only check [from, tip], trusting [genesis, from] as already verified (substrate + recognition + projection all scoped to [from, tip]); the watermark still extends to tip when the window is clean. 0 = full verify from each source's genesis. The completeness timer passes min(watermark) from the prior snapshots so each run re-checks only new ledgers — minutes, not hours. An incremental run can only CONFIRM or DOWNGRADE the served `complete` axis, never upgrade it: a range it did not reconcile is carried from the prior verdict, and a FAILING prior verdict is cleared only by a full run (INV-5 — see projectionClaim).")
@@ -660,7 +660,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 				// so its published floor is genesis — not a served-tier
 				// minimum.
 				projVerifiedFrom = genesis
-				pgaps, pblind, perr := reconcileSourceProjection(ctx, store, nil, src, genesis, srW.Ledger)
+				pgaps, pblind, perr := reconcileSourceProjection(ctx, store, *chAddr, nil, src, genesis, srW.Ledger)
 				if perr != nil {
 					return fmt.Errorf("%s: projection: %w", src.name, perr)
 				}
@@ -1772,13 +1772,14 @@ func lakeCoverageProblem(genesis uint32, scanClean, substrateOK bool, prior prio
 }
 
 // reconcileSourceProjection reconciles every table a source writes over
-// [genesis, hi] and returns the union of mismatched ledgers. SDEX uses
-// the LCM census; event sources re-derive (by kind) and project each
-// table's kinds.
-func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, src reconSource, genesis, hi uint32) ([]uint32, completeness.BlindSpots, error) {
+// [genesis, hi] and returns the union of mismatched ledgers. SDEX re-derives
+// its served projection from the lake's operations (the ledger_ingest_log
+// census counts one-side-zero fills the trades table cannot hold); event
+// sources re-derive (by kind) and project each table's kinds.
+func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chAddr string, chStreamer completeness.EventStreamer, src reconSource, genesis, hi uint32) ([]uint32, completeness.BlindSpots, error) {
 	var mismatched []uint32
 	if src.census {
-		expected, eerr := store.ClassicTradeEffectCountsByLedger(ctx, genesis, hi)
+		expected, blind, eerr := sdexProjectionExpected(ctx, chAddr, genesis, hi)
 		if eerr != nil {
 			return nil, completeness.BlindSpots{}, eerr
 		}
@@ -1791,7 +1792,7 @@ func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chSt
 				mismatched = append(mismatched, g.Ledger)
 			}
 		}
-		return mismatched, completeness.BlindSpots{}, nil
+		return mismatched, blind, nil
 	}
 
 	// Re-derive expected outputs: from the CH lake (certified, off the serving
@@ -2090,27 +2091,13 @@ func reconcileTarget(ctx context.Context, store *timescale.Store, src reconSourc
 // census == served by identical write logic, so the residual is exactly the
 // ops the served tier dropped (real coverage gaps) — not a methodology
 // artifact (one-side-zero fills or op_index fanout collisions, both of which
-// the served can't hold but the CH substrate retains). Read-only; windowed
-// 100k so the operations⋈results join stays under the CH memory cap.
-//
-// distinct-PK accumulation is natural fan-out; splitting hurts the read.
-//
-//nolint:gocognit // windowed stream → per-op decode → per-trade Validate +
+// the served can't hold but the CH substrate retains) — see sdexServedCensus.
+// Read-only; windowed so the operations⋈results join stays under the CH
+// memory cap.
 func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to uint32) (map[uint32]int, completeness.BlindSpots, error) {
 	out := make(map[uint32]int)
 	blind := completeness.NewBlindTracker()
 	dec := sdex.NewDecoder()
-	// sdexPK is the served trades primary key minus its per-ledger constants:
-	// source is always "sdex" and ts is the ledger close-time (constant within
-	// a ledger), so per-ledger de-dup reduces to (tx_hash, op_index). Counting
-	// DISTINCT keys mirrors the served ON CONFLICT (source,ledger,tx_hash,
-	// op_index,ts) DO NOTHING: the op_index fanout stride (1024) collides for
-	// rare >1024-claim ops, which the served de-dups — so the census must too,
-	// or it reads systematically high (the fixed-across-tips residual).
-	type sdexPK struct {
-		tx string
-		op uint32
-	}
 	// 25k (was 100k): halves twice the per-window join input after the
 	// 2026-07-05 OOM series — combined with the reader's grace_hash
 	// spill this bounds memory regardless of history growth.
@@ -2120,7 +2107,7 @@ func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to u
 		if hi > to {
 			hi = to
 		}
-		seen := make(map[uint32]map[sdexPK]struct{})
+		seen := sdexServedCensus{}
 		if err := clickhouse.StreamSDEXOps(ctx, chAddr, lo, hi, func(op clickhouse.SDEXOp) error {
 			// SDEX Decode soft-fails per claim (never a non-nil error);
 			// DecodeCounted additionally reports how many claim atoms in
@@ -2147,32 +2134,12 @@ func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to u
 			for i := 0; i < failed; i++ {
 				blind.Undecodable(op.Ledger)
 			}
-			// Mirror the served write exactly with two filters: (1)
-			// canonical.Trade.Validate() (BaseAmount>0 ∧ QuoteAmount>0) — the
-			// decoder emits one-side-zero fills for raw completeness but
-			// InsertTrade rejects them; (2) PK de-dup — fanout collisions on
-			// >1024-claim ops are coalesced by ON CONFLICT. Both leave the raw
-			// claim in the CH substrate; the served projection holds the
-			// distinct, valid subset, so this counts that subset.
-			for _, ev := range outs {
-				te, ok := ev.(sdex.TradeEvent)
-				if !ok || te.Trade.Validate() != nil {
-					continue
-				}
-				s := seen[te.Trade.Ledger]
-				if s == nil {
-					s = make(map[sdexPK]struct{})
-					seen[te.Trade.Ledger] = s
-				}
-				s[sdexPK{tx: te.Trade.TxHash, op: te.Trade.OpIndex}] = struct{}{}
-			}
+			seen.add(outs)
 			return nil
 		}); err != nil {
 			return nil, completeness.BlindSpots{}, err
 		}
-		for ledger, s := range seen {
-			out[ledger] += len(s)
-		}
+		seen.addTo(out)
 		if hi == to {
 			break
 		}
