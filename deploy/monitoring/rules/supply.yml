@@ -69,8 +69,8 @@ groups:
             for {{ $labels.classic_key }} disagrees by
             {{ $value }} stroops, exceeding the 1-stroop tolerance.
             wrap_class={{ $labels.wrap_class }}: "partial_wrap" means
-            the SAC reported MORE supply than the classic total could
-            back (impossible under correct accounting); "full_wrap"
+            more is escrowed inside the SAC than it ever net-minted
+            (impossible under correct accounting); "full_wrap"
             means the operator-attested fully-SAC-represented asset's
             totals no longer match exactly. Either way this is a
             genuine indexer mis-sum, not the expected partial-wrap

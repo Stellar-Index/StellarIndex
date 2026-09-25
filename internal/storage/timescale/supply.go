@@ -11,6 +11,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
+// ErrCirculatingExceedsTotal is returned by [Store.InsertSupply] for a
+// snapshot whose circulating supply exceeds its total. Every computer
+// derives circulating by subtracting exclusions from total, so such a
+// row can only come from a computer or ops-path bug; InsertSupply is
+// the sole writer of asset_supply_history, which carries only
+// per-column non-negativity CHECKs.
+var ErrCirculatingExceedsTotal = errors.New("timescale: InsertSupply: circulating_supply exceeds total_supply")
+
 // InsertSupply appends a [supply.Supply] snapshot to
 // asset_supply_history. Idempotent-corrective on
 // (asset_key, ledger_sequence, time) — re-deriving at the same
@@ -46,6 +54,10 @@ func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 	}
 	if snap.CirculatingSupply == nil {
 		return fmt.Errorf("timescale: InsertSupply %s: CirculatingSupply is nil", snap.AssetKey)
+	}
+	if snap.CirculatingSupply.Cmp(snap.TotalSupply) > 0 {
+		return fmt.Errorf("%w: %s @ ledger %d: circulating %s > total %s", ErrCirculatingExceedsTotal,
+			snap.AssetKey, snap.LedgerSequence, snap.CirculatingSupply, snap.TotalSupply)
 	}
 
 	var maxSupply sql.NullString

@@ -78,6 +78,39 @@ func TestReportCrossCheck(t *testing.T) {
 	}
 }
 
+// A pair the aggregator refuses as misaligned (MNY-04) must not get a
+// verdict from the CLI either: the runbook sends the operator here
+// exactly when the daemon reported `misaligned`.
+func TestCrossCheckAndReport_MisalignedPairHasNoVerdict(t *testing.T) {
+	t.Parallel()
+	classic := supply.Supply{
+		AssetKey: "classic", TotalSupply: big.NewInt(1_000),
+		SACWrappedStroops: big.NewInt(400), LedgerSequence: 50_000_000,
+	}
+	sac := supply.Supply{AssetKey: "sac", TotalSupply: big.NewInt(400), LedgerSequence: 50_050_000}
+
+	for _, class := range []supply.WrapClass{supply.WrapClassPartial, supply.WrapClassFull} {
+		var out bytes.Buffer
+		err := crossCheckAndReport(&out, classic, sac, class, "classic")
+		if !errors.Is(err, supply.ErrCrossCheckMisaligned) {
+			t.Errorf("%s: err = %v, want ErrCrossCheckMisaligned", class, err)
+		}
+		if status := statusLine(out.String()); !strings.Contains(status, "MISALIGNED") {
+			t.Errorf("%s: status line = %q, want MISALIGNED", class, status)
+		}
+	}
+
+	aligned := sac
+	aligned.LedgerSequence = classic.LedgerSequence + supply.CrossCheckLedgerTolerance
+	var out bytes.Buffer
+	if err := crossCheckAndReport(&out, classic, aligned, supply.WrapClassPartial, "classic"); err != nil {
+		t.Fatalf("aligned pair: err = %v, want pass", err)
+	}
+	if status := statusLine(out.String()); !strings.Contains(status, "WITHIN TOLERANCE") {
+		t.Errorf("aligned pair: status line = %q, want WITHIN TOLERANCE", status)
+	}
+}
+
 func statusLine(out string) string {
 	for _, line := range strings.Split(out, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "status:") {

@@ -2,6 +2,7 @@ package supply
 
 import (
 	"errors"
+	"fmt"
 	"math/big"
 )
 
@@ -150,16 +151,14 @@ func normalizeWrapClass(c WrapClass) WrapClass {
 // DivergenceStroops's meaning depends on WrapClass:
 //   - [WrapClassFull]: |classic.TotalSupply − sac.TotalSupply| — the
 //     original ADR-0011 equality compare.
-//   - [WrapClassPartial]: max(OverMintStroops, EscrowExcessStroops) —
-//     the worse of the two impossibility bounds below. Zero in the
-//     expected state for a partially-wrapped asset; positive only when
-//     one of the two conservation bounds is actually breached.
+//   - [WrapClassPartial]: EscrowExcessStroops (leg 2), or 0 when
+//     !SubsetBoundChecked. OverMintStroops (leg 1) is diagnostic-only
+//     and never feeds it, so an over-mint alone cannot move the
+//     `stellarindex_supply_cross_check_divergence_stroops` gauge or
+//     page.
 //
 // Both shapes report a non-negative *big.Int and WithinTolerance=true
-// when DivergenceStroops ≤ [CrossCheckTolerance]. Keeping the single
-// gauge as the max of the legs means the existing
-// `stellarindex_supply_cross_check_divergence_stroops` alert fires on
-// EITHER breach with no threshold change; the per-leg fields say which.
+// when DivergenceStroops ≤ [CrossCheckTolerance].
 type CrossCheckResult struct {
 	ClassicKey        string
 	SACKey            string
@@ -169,13 +168,19 @@ type CrossCheckResult struct {
 	WithinTolerance   bool
 	WrapClass         WrapClass
 
-	// OverMintStroops is leg 1: max(0, SACTotal − ClassicTotal). The
-	// SAC cannot have minted more than the classic asset's whole total
-	// supply, because that total already includes the escrowed amount
-	// as one of its four non-negative addends. Populated only under
-	// [WrapClassPartial] (the [WrapClassFull] equality compare reports
-	// a signed-magnitude in DivergenceStroops instead and leaves this
-	// nil).
+	// ClassicLedger / SACLedger are the LedgerSequence each snapshot
+	// was computed at, so a reader can see the two sides are
+	// contemporaneous; 0 means the snapshot recorded no ledger anchor.
+	ClassicLedger uint32
+	SACLedger     uint32
+
+	// OverMintStroops is leg 1: max(0, SACTotal − ClassicTotal), the
+	// cumulative-net-mint vs classic-outstanding gap. DIAGNOSTIC ONLY:
+	// it can be legitimately positive (a classic-side retirement or a
+	// one-time SAC mint distributed classically — see
+	// [CrossCheckSubsetBound]) and does not feed DivergenceStroops or
+	// WithinTolerance. Populated only under [WrapClassPartial]; nil
+	// under [WrapClassFull].
 	OverMintStroops *big.Int
 
 	// SACWrapped is Algorithm 2's SACWrapped component as recorded on
@@ -189,10 +194,10 @@ type CrossCheckResult struct {
 	// means the classic snapshot carried none (a pre-migration-0117
 	// row, or a non-classic algorithm) so the leg was NOT evaluated.
 	//
-	// false MUST NOT be read as "the escrow side agrees". A green
-	// WithinTolerance with SubsetBoundChecked=false means only "the SAC
-	// has not over-minted past the classic total" — the pre-2026-07-25
-	// one-sided claim — not that the two sides reconcile.
+	// false MUST NOT be read as "the escrow side agrees". Leg 2 is the
+	// only leg that feeds DivergenceStroops, so a green WithinTolerance
+	// with SubsetBoundChecked=false checked NOTHING — divergence is 0
+	// by construction.
 	SubsetBoundChecked bool
 
 	// EscrowExcessStroops is leg 2: max(0, SACWrapped − SACTotal). The
@@ -207,6 +212,28 @@ type CrossCheckResult struct {
 // argument has a nil TotalSupply (the per-algorithm Computers always
 // populate TotalSupply on success; a nil here is a caller bug).
 var ErrCrossCheckNilSupply = errors.New("supply: cross-check requires non-nil TotalSupply on both inputs")
+
+// ErrCrossCheckMisaligned is returned by [CrossCheckForClass] when the
+// two snapshots were computed more than [CrossCheckLedgerTolerance]
+// ledgers apart (MNY-04). Comparing arbitrarily-aged totals makes both
+// invariants unsound in both directions, so there is no verdict to give.
+var ErrCrossCheckMisaligned = errors.New("supply: cross-check snapshots describe different ledgers")
+
+// checkLedgerAlignment refuses a pair whose snapshots are further apart
+// than [CrossCheckLedgerTolerance]. A zero LedgerSequence on either side
+// means "no ledger anchor recorded" (bootstrap / static-fallback
+// snapshot) and takes the permissive path, mirroring the
+// MinComponentLedger==0 convention the freshness gate uses.
+func checkLedgerAlignment(classic, sac Supply) error {
+	if classic.LedgerSequence == 0 || sac.LedgerSequence == 0 {
+		return nil
+	}
+	if gap := ledgerGap(classic.LedgerSequence, sac.LedgerSequence); gap > CrossCheckLedgerTolerance {
+		return fmt.Errorf("%w: %d ledgers apart (classic=%d sac=%d), tolerance %d",
+			ErrCrossCheckMisaligned, gap, classic.LedgerSequence, sac.LedgerSequence, CrossCheckLedgerTolerance)
+	}
+	return nil
+}
 
 // CrossCheck compares a classic-asset Algorithm 2 reading with its
 // SAC-wrapped Algorithm 3 reading under the STRICT total-vs-total
@@ -278,20 +305,20 @@ func CrossCheck(classic, sac Supply) (CrossCheckResult, error) {
 		DivergenceStroops: abs,
 		WithinTolerance:   abs.Cmp(CrossCheckTolerance) <= 0,
 		WrapClass:         WrapClassFull,
+		ClassicLedger:     classic.LedgerSequence,
+		SACLedger:         sac.LedgerSequence,
 	}, nil
 }
 
 // CrossCheckSubsetBound compares a classic-asset Algorithm 2 reading
 // with its SAC-wrapped Algorithm 3 reading under the [WrapClassPartial]
-// invariants. It checks TWO conservation bounds, each of which is
-// impossible to breach under correct accounting regardless of how much
-// of the asset is wrapped:
+// invariants. It computes two legs:
 //
-//	leg 1 (over-mint, 2026-07-08 decision, BACKLOG #59)
-//	    sac.TotalSupply ≤ classic.TotalSupply
-//	  because Algorithm 2's total already includes the SAC-wrapped
-//	  balance as one of its four non-negative addends (see
-//	  [ClassicSupplyComponents]). OverMintStroops = the excess.
+//	leg 1 (over-mint, DIAGNOSTIC ONLY since 2026-08-05)
+//	    sac.TotalSupply vs classic.TotalSupply
+//	  OverMintStroops = max(0, sac − classic). Reported for triage but
+//	  never alerting: its premise holds only for a one-way wrap (see
+//	  the BLND / PHO counter-examples in the body).
 //
 //	leg 2 (escrow-exceeds-minted, 2026-07-25, audit E4/N-F3(b))
 //	    classic.SACWrappedStroops ≤ sac.TotalSupply
@@ -299,12 +326,10 @@ func CrossCheck(classic, sac Supply) (CrossCheckResult, error) {
 //	  so the ledger-entry sum of SAC balances cannot exceed the
 //	  event-derived net mint. EscrowExcessStroops = the excess.
 //
-// DivergenceStroops = max(OverMintStroops, EscrowExcessStroops), so the
-// single existing gauge + alert fires on either breach with no
-// threshold change, and the per-leg fields on [CrossCheckResult] say
-// which one. Zero in the expected steady state for a partially-wrapped
-// asset (leg 1's classic ≥ sac and leg 2's SACWrapped ≤ sac are both
-// comfortably satisfied), so nothing pages.
+// DivergenceStroops = EscrowExcessStroops (0 when !SubsetBoundChecked),
+// so the gauge + alert fire on a leg-2 breach only. Zero in the
+// expected steady state for a partially-wrapped asset, so nothing
+// pages.
 //
 // Leg 2 is CS-087-gated. When classic.SACWrappedStroops is nil the leg
 // is NOT evaluated and SubsetBoundChecked stays false; it is never
@@ -362,6 +387,8 @@ func CrossCheckSubsetBound(classic, sac Supply) (CrossCheckResult, error) {
 		OverMintStroops:   overMint,
 		DivergenceStroops: big.NewInt(0),
 		WrapClass:         WrapClassPartial,
+		ClassicLedger:     classic.LedgerSequence,
+		SACLedger:         sac.LedgerSequence,
 	}
 
 	if classic.SACWrappedStroops != nil {
@@ -392,11 +419,15 @@ func excessOver(have, bound *big.Int) *big.Int {
 // CrossCheckForClass dispatches to [CrossCheck] (equality) or
 // [CrossCheckSubsetBound] (subset bound) based on class, normalizing
 // the zero-value / any unrecognized class to [WrapClassPartial] — the
-// safe default — via [normalizeWrapClass]. This is the entry point
-// [CrossCheckRefresher] uses; CrossCheck / CrossCheckSubsetBound stay
-// exported for direct unit testing and for callers that already know
-// their class.
+// safe default — via [normalizeWrapClass]. It first refuses a
+// misaligned pair with [ErrCrossCheckMisaligned], so the aggregator's
+// [CrossCheckRefresher] and the `supply audit -cross-check` CLI share
+// one MNY-04 guard. CrossCheck / CrossCheckSubsetBound stay exported
+// for direct unit testing of the pure comparisons.
 func CrossCheckForClass(classic, sac Supply, class WrapClass) (CrossCheckResult, error) {
+	if err := checkLedgerAlignment(classic, sac); err != nil {
+		return CrossCheckResult{}, err
+	}
 	if normalizeWrapClass(class) == WrapClassFull {
 		return CrossCheck(classic, sac)
 	}

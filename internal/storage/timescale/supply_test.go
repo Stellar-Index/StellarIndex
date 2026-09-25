@@ -54,6 +54,49 @@ func TestInsertSupply_RequiresCirculatingSupply(t *testing.T) {
 	}
 }
 
+// TestInsertSupply_RejectsCirculatingAboveTotal — circulating is total
+// minus exclusions for every computer, so circulating > total is a bug
+// that must fail before the DB call rather than be served (GH #1015).
+// Equality is the no-exclusion case and must still reach the DB.
+func TestInsertSupply_RejectsCirculatingAboveTotal(t *testing.T) {
+	s := &Store{}
+	err := s.InsertSupply(context.Background(), supply.Supply{
+		AssetKey:          "XLM",
+		TotalSupply:       big.NewInt(1_000),
+		CirculatingSupply: big.NewInt(1_001),
+		LedgerSequence:    7,
+	})
+	if !errors.Is(err, ErrCirculatingExceedsTotal) {
+		t.Fatalf("err = %v, want ErrCirculatingExceedsTotal", err)
+	}
+
+	defer func() {
+		// A nil *sql.DB panics once validation passes: that proves the
+		// equal case was let through to the write.
+		if recover() == nil {
+			t.Error("circulating == total was rejected before reaching the DB")
+		}
+	}()
+	_ = s.InsertSupply(context.Background(), supply.Supply{
+		AssetKey:          "XLM",
+		TotalSupply:       big.NewInt(1_000),
+		CirculatingSupply: big.NewInt(1_000),
+		LedgerSequence:    7,
+	})
+}
+
+// TestSupplyCAGGIsRefreshable — `supply snapshot -ledger` refreshes
+// supply_1d after a re-derive older than its 7-day policy window, which
+// the allow-list must accept (GH #991).
+func TestSupplyCAGGIsRefreshable(t *testing.T) {
+	if SupplyCAGG.Name != "supply_1d" {
+		t.Fatalf("SupplyCAGG.Name = %q, want supply_1d (migration 0066)", SupplyCAGG.Name)
+	}
+	if !IsRefreshableCAGG(SupplyCAGG.Name) {
+		t.Errorf("IsRefreshableCAGG(%q) = false; a corrective re-derive could never reach it", SupplyCAGG.Name)
+	}
+}
+
 // TestAssembleSupply_HappyPath — text-cast NUMERIC columns parse
 // back to the same *big.Int the writer started with, including very
 // large values that exceed int64.

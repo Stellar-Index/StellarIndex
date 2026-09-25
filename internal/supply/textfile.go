@@ -56,11 +56,17 @@ func WriteSnapshotTextfile(path string, snap Supply, durationSec float64, pass b
 // series the 36 h ticket and the 72 h page both depend on.
 //
 // `assetRaw` is the operator-supplied -asset flag value (e.g.
-// "native" / "USDC-G…"); it goes on the `unit_failed` label so an
-// operator running multiple assets sees per-asset failure status.
+// "native" / "USDC-G…"). It is resolved to its [AssetKey] ("XLM") for
+// the `unit_failed` label, so the failure sample shares one asset_key
+// with the carried `last_success_timestamp` and the success path; a
+// value that does not parse is labelled verbatim rather than dropped.
 func WriteSnapshotFailureTextfile(path, assetRaw string, durationSec float64) error {
+	assetKey, err := ParseAssetKey(assetRaw)
+	if err != nil {
+		assetKey = assetRaw
+	}
 	return writeAtomicCarryingLastSuccess(path, func(w io.Writer) error {
-		return writeFailureMetrics(w, assetRaw, durationSec)
+		return writeFailureMetrics(w, assetKey, durationSec)
 	})
 }
 
@@ -148,11 +154,11 @@ func writeSnapshotMetrics(w io.Writer, snap Supply, durationSec float64, pass bo
 // don't have a Supply to report) and no `last_success_timestamp`
 // (there was no success to stamp; the previous file's samples are
 // carried forward by [writeAtomicCarryingLastSuccess] instead).
-func writeFailureMetrics(w io.Writer, assetRaw string, durationSec float64) error {
+func writeFailureMetrics(w io.Writer, assetKey string, durationSec float64) error {
 	if err := writeGaugeInt(w,
 		"stellarindex_supply_snapshot_unit_failed",
 		"1 when the most recent run failed, 0 on success.",
-		assetRaw, 1); err != nil {
+		assetKey, 1); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintf(w,

@@ -275,34 +275,21 @@ func (r *CrossCheckRefresher) tickOne(ctx context.Context, p CrossCheckPair) Cro
 			"sac_key", p.SACKey, "err", err)
 		return CrossCheckOutcome{Pair: p, Kind: CrossCheckOutcomeReadError, Err: err}
 	}
-	// MNY-04: both snapshots loaded — but each is the LATEST for its own
-	// asset_key, written by its own per-asset refresher, so they can
-	// describe wildly different ledgers. Comparing arbitrarily-aged
-	// totals makes the subset bound unsound in both directions, so
-	// refuse to evaluate rather than publish a verdict the data can't
-	// support. A zero LedgerSequence on either side means "no ledger
-	// anchor recorded" (bootstrap / static-fallback snapshot) and takes
-	// the legacy permissive path, mirroring the MinComponentLedger==0
-	// convention the freshness gate uses.
-	if classic.LedgerSequence > 0 && sac.LedgerSequence > 0 {
-		if gap := ledgerGap(classic.LedgerSequence, sac.LedgerSequence); gap > CrossCheckLedgerTolerance {
-			r.logger.Warn("cross-check: snapshots misaligned, comparison skipped",
-				"classic_key", p.ClassicKey,
-				"sac_key", p.SACKey,
-				"classic_ledger", classic.LedgerSequence,
-				"sac_ledger", sac.LedgerSequence,
-				"gap_ledgers", gap,
-				"tolerance_ledgers", CrossCheckLedgerTolerance)
-			return CrossCheckOutcome{
-				Pair: p,
-				Kind: CrossCheckOutcomeMisaligned,
-				Err: fmt.Errorf("supply: cross-check snapshots %d ledgers apart (classic=%d sac=%d), tolerance %d",
-					gap, classic.LedgerSequence, sac.LedgerSequence, CrossCheckLedgerTolerance),
-			}
-		}
-	}
-
+	// MNY-04: each snapshot is the LATEST for its own asset_key, written
+	// by its own per-asset refresher, so they can describe wildly
+	// different ledgers; CrossCheckForClass refuses such a pair rather
+	// than publish a verdict the data can't support.
 	result, err := CrossCheckForClass(classic, sac, p.WrapClass)
+	if errors.Is(err, ErrCrossCheckMisaligned) {
+		r.logger.Warn("cross-check: snapshots misaligned, comparison skipped",
+			"classic_key", p.ClassicKey,
+			"sac_key", p.SACKey,
+			"classic_ledger", classic.LedgerSequence,
+			"sac_ledger", sac.LedgerSequence,
+			"tolerance_ledgers", CrossCheckLedgerTolerance,
+			"err", err)
+		return CrossCheckOutcome{Pair: p, Kind: CrossCheckOutcomeMisaligned, Err: err}
+	}
 	if err != nil {
 		r.logger.Warn("cross-check: compare failed",
 			"classic_key", p.ClassicKey, "sac_key", p.SACKey, "err", err)
@@ -311,11 +298,10 @@ func (r *CrossCheckRefresher) tickOne(ctx context.Context, p CrossCheckPair) Cro
 	if result.WithinTolerance {
 		// CS-087: a green partial-wrap check whose escrow leg was NOT
 		// evaluated (classic snapshot predates migration 0117, so it
-		// carries no SACWrapped component) proves only "the SAC has not
-		// over-minted" — the pre-2026-07-25 one-sided claim. Say so at
-		// Debug rather than letting the silence read as two-sided
-		// assurance; it clears itself within one refresh cycle of the
-		// 0117 deploy.
+		// carries no SACWrapped component) checked nothing: leg 2 is the
+		// only leg that feeds the divergence. Say so at Debug rather than
+		// letting the silence read as assurance; it clears itself within
+		// one refresh cycle of the 0117 deploy.
 		if result.WrapClass == WrapClassPartial && !result.SubsetBoundChecked {
 			r.logger.Debug("cross-check: within tolerance, escrow leg UNCHECKED (no sac_wrapped_stroops on the classic snapshot)",
 				"classic_key", p.ClassicKey,
@@ -330,11 +316,9 @@ func (r *CrossCheckRefresher) tickOne(ctx context.Context, p CrossCheckPair) Cro
 		"sac_key", p.SACKey,
 		"wrap_class", string(result.WrapClass),
 		"divergence_stroops", result.DivergenceStroops.String(),
-		// Which conservation bound broke — the operator's first
-		// question, and the two legs need opposite responses (leg 1:
-		// the classic side is under-observed; leg 2: mints are missing
-		// or burns double-counted). See the supply-cross-check-
-		// divergence runbook.
+		// Leg 2 (escrow excess) is what breached: mints are missing or
+		// burns double-counted. Leg 1 (over-mint) is diagnostic context
+		// only. See the supply-cross-check-divergence runbook.
 		"over_mint_stroops", bigOrUnset(result.OverMintStroops),
 		"escrow_excess_stroops", bigOrUnset(result.EscrowExcessStroops),
 		"subset_bound_checked", result.SubsetBoundChecked,

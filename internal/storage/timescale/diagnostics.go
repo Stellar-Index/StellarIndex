@@ -187,21 +187,27 @@ var OracleCAGGs = []CAGGSpec{
 // history. TestTradesCAGGsMatchCatalog holds the list to the schema.
 var CAGGsOnPrices1m = []string{"twap_1h", "twap_1d"}
 
+// SupplyCAGG is the continuous aggregate over asset_supply_history
+// (migration 0066). Its policy reaches back only 7 days, so a snapshot
+// re-derived further back reaches it only through an explicit refresh.
+var SupplyCAGG = CAGGSpec{Name: "supply_1d", MinWindow: 3 * 24 * time.Hour}
+
 // allowedCAGGViews is the strict allow-list of view names accepted by
-// RefreshContinuousAggregate, derived from [TradesCAGGs] and
-// [OracleCAGGs]. Required
+// RefreshContinuousAggregate, derived from [TradesCAGGs],
+// [OracleCAGGs] and [SupplyCAGG]. Required
 // because we string-format the view name into the SQL — the
 // procedure's first arg is REGCLASS and pgx doesn't placeholder it.
 // Allow-list keeps SQL injection off the table even though callers
 // are internal.
 var allowedCAGGViews = func() map[string]bool {
-	m := make(map[string]bool, len(TradesCAGGs)+len(OracleCAGGs))
+	m := make(map[string]bool, len(TradesCAGGs)+len(OracleCAGGs)+1)
 	for _, c := range TradesCAGGs {
 		m[c.Name] = true
 	}
 	for _, c := range OracleCAGGs {
 		m[c.Name] = true
 	}
+	m[SupplyCAGG.Name] = true
 	return m
 }()
 

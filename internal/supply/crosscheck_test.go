@@ -553,3 +553,37 @@ func TestCrossCheckForClass_PartialRoutesEscrowLeg(t *testing.T) {
 		}
 	}
 }
+
+// TestCrossCheckForClass_RefusesMisalignedLedgers pins the MNY-04 guard
+// at the shared entry point, so no caller (refresher or CLI) can compare
+// two snapshots computed more than CrossCheckLedgerTolerance apart.
+func TestCrossCheckForClass_RefusesMisalignedLedgers(t *testing.T) {
+	t.Parallel()
+	classic := supply.Supply{
+		AssetKey: usdcClassicKey, TotalSupply: big.NewInt(1_000),
+		SACWrappedStroops: big.NewInt(400), LedgerSequence: 60_000_000,
+	}
+	sac := supply.Supply{AssetKey: usdcSACKey, TotalSupply: big.NewInt(1_000), LedgerSequence: 60_000_000}
+
+	for _, class := range []supply.WrapClass{supply.WrapClassPartial, supply.WrapClassFull} {
+		sac.LedgerSequence = classic.LedgerSequence - supply.CrossCheckLedgerTolerance - 1
+		if _, err := supply.CrossCheckForClass(classic, sac, class); !errors.Is(err, supply.ErrCrossCheckMisaligned) {
+			t.Errorf("%s: gap tolerance+1: err = %v, want ErrCrossCheckMisaligned", class, err)
+		}
+
+		sac.LedgerSequence = classic.LedgerSequence - supply.CrossCheckLedgerTolerance
+		res, err := supply.CrossCheckForClass(classic, sac, class)
+		if err != nil {
+			t.Fatalf("%s: gap == tolerance: err = %v, want a verdict", class, err)
+		}
+		if res.ClassicLedger != classic.LedgerSequence || res.SACLedger != sac.LedgerSequence {
+			t.Errorf("%s: result ledgers = (%d,%d), want (%d,%d)", class,
+				res.ClassicLedger, res.SACLedger, classic.LedgerSequence, sac.LedgerSequence)
+		}
+
+		sac.LedgerSequence = 0 // no anchor recorded: permissive, as the freshness gate is
+		if _, err := supply.CrossCheckForClass(classic, sac, class); err != nil {
+			t.Errorf("%s: unanchored snapshot: err = %v, want a verdict", class, err)
+		}
+	}
+}

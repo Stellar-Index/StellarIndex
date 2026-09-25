@@ -71,6 +71,14 @@ are essentially never 100% wrapped.
 
 ## If this is firing on BLND / EURC / KALE / PHO — read this second
 
+> **Since 2026-08-05 this case can no longer fire the alert.** It shows
+> as `sac_total > classic_total` — leg 1, which is diagnostic-only (see
+> §What is now two-sided). A `partial_wrap` alert on these assets now
+> means a leg-2 breach and follows that path. The dormant-balance
+> understatement below is still real and still served; it surfaces only
+> as a positive `over_mint_stroops` on the aggregator's log line and a
+> missing `full_history` row in `sac_balance_seed_provenance`.
+
 **This is the one standing cause of a `partial_wrap` alert, it is a
 REAL served-supply error, and the fix is an operator command, not a
 code change.** If you are here because the alert has been open for days
@@ -121,22 +129,22 @@ indistinguishable from a partially-wrapped asset's normal state when
 all you can compare is the two folded totals.
 
 Audit **E4/N-F3(b)** (2026-07-25) closed that direction.
-`CrossCheckSubsetBound` now evaluates **two** conservation bounds and
-reports `max` of their excesses in the single
-`stellarindex_supply_cross_check_divergence_stroops` gauge, so the
-existing 1-stroop alert threshold fires on either with no rule change:
+`CrossCheckSubsetBound` computes **two** legs, but since 2026-08-05
+(ADR-0011 amendment) only leg 2 feeds the
+`stellarindex_supply_cross_check_divergence_stroops` gauge:
+`divergence = escrow_excess_stroops`, or 0 when the leg is unchecked.
+Leg 1 is still computed for triage and **cannot page**:
 
-| Leg | Bound | Breach means | Result field |
-| --- | ----- | ------------ | ------------ |
-| 1 — over-mint (2026-07-08) | `sac_total ≤ classic_total` | the SAC reports more supply than the classic asset has in total; the classic side is under-observed | `OverMintStroops` |
-| 2 — escrow-exceeds-minted (2026-07-25) | `SACWrapped ≤ sac_total` | more is escrowed inside the SAC than it ever net-minted; **mints the indexer never captured, or burns it double-counted** | `EscrowExcessStroops` |
+| Leg | Bound | Breach means | Result field | Pages? |
+| --- | ----- | ------------ | ------------ | ------ |
+| 1 — over-mint (diagnostic) | `sac_total` vs `classic_total` | the SAC's cumulative net mint exceeds classic outstanding — legitimate after a classic-side retirement (BLND) or a one-time SAC mint distributed classically (PHO); otherwise a hint that the classic side is under-observed | `OverMintStroops` | no |
+| 2 — escrow-exceeds-minted (2026-07-25) | `SACWrapped ≤ sac_total` | more is escrowed inside the SAC than it ever net-minted; **mints the indexer never captured, or burns it double-counted** | `EscrowExcessStroops` | yes |
 
-The `over_mint_stroops` / `escrow_excess_stroops` fields appear on the
-aggregator's `cross-check: divergence over tolerance` WARN line — read
-them first, because the two legs need **opposite** responses (leg 1:
-recover missing classic-side balances, §Mitigation; leg 2: the SEP-41
+So a firing `partial_wrap` alert is always a leg-2 breach: the SEP-41
 event capture for that SAC is incomplete — see
-[`sep41-mint-recovery.md`](../sep41-mint-recovery.md)).
+[`sep41-mint-recovery.md`](../sep41-mint-recovery.md). The
+`over_mint_stroops` field on the aggregator's
+`cross-check: divergence over tolerance` WARN line is context only.
 
 **Leg 2 is CS-087-gated and can report UNCHECKED.** A classic snapshot
 written before migration 0117 carries no `sac_wrapped_stroops`, so the
@@ -145,8 +153,9 @@ deliberately NOT defaulted to zero: `0 ≤ sac_total` holds vacuously, so
 a zero default would publish a green check that verified nothing. The
 flag self-clears within one aggregator refresh cycle of the 0117
 deploy; the aggregator logs a Debug line naming the pair until it does.
-**A green check with `subset_bound_checked=false` still means only "the
-SAC has not over-minted", not "the two sides reconcile."**
+**A green check with `subset_bound_checked=false` checked nothing:
+leg 2 is the only leg that feeds the gauge, so its divergence is 0 by
+construction.**
 
 **What is STILL not covered.** Two things, and neither is closed by
 E4/N-F3(b):
@@ -159,8 +168,9 @@ E4/N-F3(b):
 2. **An UNDER-counted `SACWrapped`.** Leg 2 is an upper bound on
    escrow, not a proof that escrow was fully observed. The documented
    BLND/EURC/KALE/PHO dormant-pool-balance case sits *below*
-   `sac_total` and passes leg 2 quietly — it is caught by leg 1
-   instead, and cured by
+   `sac_total` and passes leg 2 quietly. Since leg 1 no longer pages,
+   nothing alerts on it: it shows only as a positive
+   `over_mint_stroops` on the WARN/Debug line. It is cured by
    `supply seed-sac-balances -full-history` (§Mitigation). Per-contract
    seed provenance in `sac_balance_seed_provenance` (migration 0102) is
    how you tell "expected, never full-history seeded" from "actually
@@ -215,9 +225,8 @@ Decision tree (2026-07-08: read `wrap_class` off the firing series first — it 
 
 | wrap_class | Direction | Likely cause | Mitigation |
 | ---------- | --------- | ------------ | ---------- |
-| `partial_wrap` on **BLND / EURC / KALE / PHO** | SAC > Classic | **Almost certainly the dormant pool-held SAC balance below the ~62M current-state floor** — the standing cause, see the section above | `supply seed-sac-balances -full-history` for that contract, then verify via `sac_balance_seed_provenance`. Check that table FIRST: a pair with no `full_history` row has not had the fix applied yet |
-| `partial_wrap` (any other pair) | SAC > Classic (the ONLY direction that can fire for this class) | Algorithm 2 undercounted classic supply (missed a trustline / claimable / LP / SAC-balance entry) OR Algorithm 3 double-counted a mint | Replay the affected ledger range through the trustline-delta indexer (Algorithm 2 undercounted, the more common case); if that doesn't close the gap, check Algorithm 3's mint-event replay for a duplicate |
-| `partial_wrap` | Classic > SAC | **Not possible — this alert cannot fire in this direction for `partial_wrap`.** If you somehow see this, the metric computation itself regressed; check `internal/supply/crosscheck.go`'s `CrossCheckSubsetBound` first, not the data |
+| `partial_wrap` (any pair) | SACWrapped > SAC (leg 2, the ONLY leg that can fire for this class) | Algorithm 3 missed mint events for the SAC, or double-counted a burn | Follow [`sep41-mint-recovery.md`](../sep41-mint-recovery.md) for that contract |
+| `partial_wrap` | SAC > Classic only (`escrow_excess_stroops` 0) | **Not possible — leg 1 is diagnostic-only and does not feed the gauge.** If you see this, the metric computation itself regressed; check `internal/supply/crosscheck.go`'s `CrossCheckSubsetBound` first, not the data |
 | `full_wrap` (operator-attested; none configured as of 2026-07-08) | Classic > SAC | Algorithm 3 missed mint events (rare — events are durable) | Replay the SAC contract's event range from Galexie; rerun Algorithm 3 |
 | `full_wrap` | Classic < SAC | Algorithm 2 missed a trustline / claimable / LP entry change | Replay the affected ledger range through the trustline-delta indexer; rerun Algorithm 2 |
 | either | Both readings stale | Aggregator orchestrator stalled; cross-check is comparing old data | Check `stellarindex_aggregator_silent` runbook first |
@@ -287,7 +296,14 @@ below is the generic path.
       `status: UNCHECKED` when a partial-wrap pair's classic snapshot
       carries no `sac_wrapped_stroops`: the escrow leg did not run, so
       divergence 0 verifies nothing. That is not a divergence; re-run
-      once a newer classic snapshot has been recorded.
+      once a newer classic snapshot has been recorded. And it is
+      non-zero with `status: MISALIGNED` when the two snapshots were
+      computed more than 1000 ledgers apart (`CrossCheckLedgerTolerance`)
+      — the same refusal the aggregator reports as `misaligned` on
+      [`supply-cross-check-unevaluable`](supply-cross-check-unevaluable.md).
+      There is no verdict to read; the `primary_ledger` /
+      `counterpart_ledger` lines name the stalled side, whose supply
+      refresh must catch up before the comparison means anything.
 
 - [ ] **Replay the affected range.** Per-algorithm replay
       subcommands aren't shipped yet — the operator path today is

@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -226,9 +227,14 @@ func TestWriteSnapshotFailureTextfile_CarriesLastSuccessTimestamp(t *testing.T) 
 		if n := len(grepLines(t, body, "# TYPE stellarindex_supply_snapshot_last_success_timestamp ")); n != 1 {
 			t.Errorf("day %d: want exactly 1 TYPE line for the family, got %d:\n%s", day, n, body)
 		}
-		// …and the failure itself must still be reported.
-		if !strings.Contains(body, `stellarindex_supply_snapshot_unit_failed{asset_key="native"} 1`) {
-			t.Errorf("day %d: failure write should emit unit_failed=1:\n%s", day, body)
+		// …and the failure itself must still be reported, under the
+		// same asset_key as the carried last_success sample so the two
+		// alert tiers that read them fire on one series identity.
+		if !strings.Contains(body, `stellarindex_supply_snapshot_unit_failed{asset_key="XLM"} 1`) {
+			t.Errorf("day %d: failure write should emit unit_failed=1 for XLM:\n%s", day, body)
+		}
+		if keys := assetKeyLabels(body); len(keys) != 1 || keys[0] != "XLM" {
+			t.Errorf("day %d: want one shared asset_key XLM in the file, got %q:\n%s", day, keys, body)
 		}
 		// No stale value gauges from the seeded success run — they
 		// would read as a supply figure the failed run never computed.
@@ -255,9 +261,23 @@ func TestWriteSnapshotFailureTextfile_NoPriorFileEmitsNothing(t *testing.T) {
 	if strings.Contains(string(raw), "stellarindex_supply_snapshot_last_success_timestamp") {
 		t.Errorf("no prior success to carry, must not fabricate one:\n%s", raw)
 	}
-	if !strings.Contains(string(raw), `stellarindex_supply_snapshot_unit_failed{asset_key="native"} 1`) {
-		t.Errorf("first-run failure should still emit unit_failed=1:\n%s", raw)
+	if !strings.Contains(string(raw), `stellarindex_supply_snapshot_unit_failed{asset_key="XLM"} 1`) {
+		t.Errorf("first-run failure should still emit unit_failed=1 for XLM:\n%s", raw)
 	}
+}
+
+// assetKeyLabels returns the distinct asset_key label values in a
+// textfile body, in first-seen order.
+func assetKeyLabels(body string) []string {
+	var keys []string
+	seen := map[string]bool{}
+	for _, m := range regexp.MustCompile(`asset_key="([^"]*)"`).FindAllStringSubmatch(body, -1) {
+		if !seen[m[1]] {
+			seen[m[1]] = true
+			keys = append(keys, m[1])
+		}
+	}
+	return keys
 }
 
 // TestWriteSnapshotFailureTextfile_UnreadablePriorFileIsNotErased pins the
