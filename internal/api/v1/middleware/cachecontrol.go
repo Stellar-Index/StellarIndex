@@ -24,8 +24,9 @@ import (
 //     `/v1/diagnostics/*` is operator-facing live data — the
 //     explorer polls it every 15 s, so caching defeats the UX).
 //   - **Closed-bucket historical + catalogues** (`/v1/history*`,
-//     `/v1/ohlc`, `/v1/vwap`, `/v1/twap`, `/v1/markets`, `/v1/pairs`,
-//     `/v1/oracle/*`, `/v1/sources`, `/v1/assets*`, `/v1/issuers*`,
+//     `/v1/ohlc`, `/v1/markets`, `/v1/pairs`,
+//     `/v1/oracle/streams` and other non-SEP-40 `/v1/oracle/*`,
+//     `/v1/sources`, `/v1/assets*`, `/v1/issuers*`,
 //     `/v1/changes/*`) → `public, max-age=60, s-maxage=300` (1 min
 //     client / 5 min CDN). Closed buckets are immutable per
 //     ADR-0015, but the trailing-edge boundary advances as time
@@ -34,6 +35,11 @@ import (
 //   - **Current price + asset detail** → `public, max-age=30,
 //     s-maxage=60` (more aggressive refresh; these update on every
 //     bucket close).
+//   - **Scam-gated price reads** (`/v1/price`, `/v1/price/batch`,
+//     `/v1/price/changes`, `/v1/price/at`, `/v1/vwap`, `/v1/twap`,
+//     the SEP-40 passthroughs) → `public, max-age=30, s-maxage=5`
+//     (shortBandPolicy / SLOPriceRoutes). A shared cache entry must
+//     not outlive a scam-withhold flip by more than one probe tick.
 //
 // Handlers MAY override the middleware's directive by setting
 // Cache-Control before they call writeJSON / writeProblem (the
@@ -306,6 +312,21 @@ func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 // the in-progress bucket, same as /v1/price/changes above) — none of
 // them belong in the 300 s catalogue band's `/v1/oracle/` prefix
 // arm either.
+//
+// SLOPriceRoutes names every route above so
+// TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe iterates the actual
+// set instead of a hand-typed copy — #820: the copy silently omitted the
+// three SEP-40 passthroughs after they were carved out here.
+var SLOPriceRoutes = []string{
+	"/v1/price",
+	"/v1/price/batch",
+	"/v1/price/changes",
+	"/v1/oracle/latest",
+	"/v1/oracle/lastprice",
+	"/v1/oracle/prices",
+	"/v1/oracle/x_last_price",
+}
+
 func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 	switch {
 	case path == "/v1/price",
@@ -314,7 +335,19 @@ func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 		path == "/v1/oracle/latest",
 		path == "/v1/oracle/lastprice",
 		path == "/v1/oracle/prices",
-		path == "/v1/oracle/x_last_price":
+		path == "/v1/oracle/x_last_price",
+		// #820 follow-up: /v1/price/at, /v1/vwap and /v1/twap are the same
+		// hazard on a different surface — each calls the scam gate
+		// (writeIfScamWithheld in price_at.go/vwap.go/twap.go) and, until
+		// this carve-out, sat in the 300 s catalogue band below by nothing
+		// more than "closed-bucket price data looks cacheable". A CDN
+		// entry minted a second before a scam flag flips serves the
+		// pre-freeze price for up to 300 s after the flip, while the
+		// origin's own withheld 404 is `no-store`. The short band bounds
+		// that window the same way it bounds the SEP-40 passthroughs'.
+		path == "/v1/price/at",
+		path == "/v1/vwap",
+		path == "/v1/twap":
 		if cdnEnabled {
 			return "public, max-age=30, s-maxage=5", true
 		}
@@ -491,12 +524,11 @@ func routePolicy(path string, cdnEnabled bool) (string, bool) {
 	// trailing-edge boundary advances; s-maxage=300 caps how long
 	// a CDN entry can lag the boundary.
 	case strings.HasPrefix(path, "/v1/history"),
-		// Point-in-time price — an immutable closed bucket keyed by a
-		// fixed (asset, quote, ts); as cacheable as /v1/ohlc.
-		path == "/v1/price/at",
+		// /v1/price/at, /v1/vwap and /v1/twap moved to shortBandPolicy
+		// (#820 follow-up) — each is a scam-gated price surface and must
+		// not outlive a withhold flip in a shared cache the way an
+		// immutable OHLC bucket safely can.
 		path == "/v1/ohlc",
-		path == "/v1/vwap",
-		path == "/v1/twap",
 		path == "/v1/markets",
 		// Trailing-24h volume-by-source aggregate behind the market and
 		// asset pages; the same cadence as /v1/markets.

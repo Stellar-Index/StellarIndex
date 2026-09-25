@@ -73,6 +73,12 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		// Multi-horizon change strip tracks the current-price band
 		// (anchor moves on every bucket close).
 		{"/v1/price/changes", "public, max-age=30, s-maxage=5"},
+		// Scam-gated price surfaces (#820 follow-up) — same band as
+		// /v1/price: a shared cache entry must not outlive a
+		// scam-withhold flip.
+		{"/v1/price/at", "public, max-age=30, s-maxage=5"},
+		{"/v1/vwap", "public, max-age=30, s-maxage=5"},
+		{"/v1/twap", "public, max-age=30, s-maxage=5"},
 
 		// Current asset detail — short cache
 		{"/v1/assets", "public, max-age=30, s-maxage=60"},
@@ -90,11 +96,10 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		// Historical / closed-bucket
 		{"/v1/history", "public, max-age=60, s-maxage=300"},
 		{"/v1/history/since-inception", "public, max-age=60, s-maxage=300"},
-		// Point-in-time price — immutable closed bucket keyed by ts.
-		{"/v1/price/at", "public, max-age=60, s-maxage=300"},
+		// /v1/price/at, /v1/vwap and /v1/twap are scam-gated price
+		// surfaces (#820) and take the short band; see
+		// TestPolicyForPath_PinsDirectives' shortBandPolicy cases below.
 		{"/v1/ohlc", "public, max-age=60, s-maxage=300"},
-		{"/v1/vwap", "public, max-age=60, s-maxage=300"},
-		{"/v1/twap", "public, max-age=60, s-maxage=300"},
 		{"/v1/markets", "public, max-age=60, s-maxage=300"},
 		{"/v1/pairs", "public, max-age=60, s-maxage=300"},
 		{"/v1/sources", "public, max-age=60, s-maxage=300"},
@@ -276,8 +281,8 @@ func TestPolicyForPath_CDNDisabled(t *testing.T) {
 		{"/v1/contracts", "public, max-age=10"},
 		{"/v1/history", "public, max-age=60"},
 		{"/v1/ohlc", "public, max-age=60"},
-		{"/v1/vwap", "public, max-age=60"},
-		{"/v1/twap", "public, max-age=60"},
+		{"/v1/vwap", "public, max-age=30"},
+		{"/v1/twap", "public, max-age=30"},
 		{"/v1/markets", "public, max-age=60"},
 		{"/v1/pairs", "public, max-age=60"},
 		{"/v1/sources", "public, max-age=60"},
@@ -374,7 +379,7 @@ func TestPolicyForPath_OracleSEP40PassthroughsShareTheShortBand(t *testing.T) {
 // edge. The test fails if someone raises it back.
 func TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe(t *testing.T) {
 	const probeBudgetSeconds = 30 // headroom inside the 150s target
-	for _, path := range []string{"/v1/price", "/v1/price/batch", "/v1/price/changes", "/v1/oracle/latest"} {
+	for _, path := range SLOPriceRoutes {
 		got := policyForPath(path, true)
 		m := regexp.MustCompile(`s-maxage=(\d+)`).FindStringSubmatch(got)
 		if m == nil {
