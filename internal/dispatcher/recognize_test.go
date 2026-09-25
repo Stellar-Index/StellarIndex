@@ -67,3 +67,23 @@ func TestRecognize_ValidateFailureIsRecognitionGap(t *testing.T) {
 		t.Errorf("Recognize(stable) = (%q,%v), want (delta,true)", name, ok)
 	}
 }
+
+// TestRecognize_OverlappingMatchDoesNotFallThrough proves CA2-A25-correct-3:
+// when two decoders both match the same event shape and the first's
+// Validate() fails, Recognize must report a recognition gap (ok == false),
+// not fall through and report the second decoder as the match. dispatchOne
+// (dispatcher.go) commits to the first Matches()==true decoder and returns
+// on its decode failure without trying later decoders; Recognize must agree.
+func TestRecognize_OverlappingMatchDoesNotFallThrough(t *testing.T) {
+	first := &validatingFakeDecoder{
+		fakeDecoder: fakeDecoder{name: "first", topic0: "overlap"},
+		validateErr: errors.New("scval: unexpected arity"),
+	}
+	second := &fakeDecoder{name: "second", topic0: "overlap"}
+	disp := New(first, second)
+
+	if name, ok := disp.Recognize(events.Event{Topic: []string{"overlap"}}); ok {
+		t.Errorf("Recognize(overlap) = (%q,%v), want ok=false: first decoder's Validate failed, "+
+			"so this is a recognition gap, not a match on %q", name, ok, "second")
+	}
+}
