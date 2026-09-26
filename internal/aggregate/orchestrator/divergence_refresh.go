@@ -22,7 +22,7 @@ import (
 // Best-effort: per-pair errors are counted via
 // `obs.DivergenceRefreshTotal{outcome=…}` and logged at WARN; the
 // Tick's overall outcome label is unaffected. The cache TTL
-// (cachekeys.DivergenceTTL = 5 min) is the safety net — even if a
+// (the refresh cadence plus a worst-case pass) is the safety net — even if a
 // few ticks fail, the API hot-path still serves stale-but-valid
 // data while the worker recovers.
 //

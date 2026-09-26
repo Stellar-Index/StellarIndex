@@ -117,9 +117,32 @@ const assetHoldersMaxLimit = 500
 const assetHoldersRefreshTimeout = 90 * time.Second
 
 type assetHoldersEntry struct {
-	holders  []clickhouse.AssetHolder
-	total    int64
-	cachedAt time.Time
+	holders    []clickhouse.AssetHolder
+	total      int64
+	cachedAt   time.Time
+	asOfLedger uint32
+}
+
+// snapshotVintage is when a cached snapshot was computed and the lake ledger
+// read just before its scan. A handler stamps as_of and as_of_ledger from ONE
+// of these, so the two cannot come from different reads.
+type snapshotVintage struct {
+	at     time.Time
+	ledger uint32
+}
+
+// vintageLedger reads the lake watermark for a snapshot about to be computed.
+// Read BEFORE the scan, it never names a ledger later than the data scanned;
+// 0 (as_of_ledger omitted) when no watermark is available.
+func (h *Handler) vintageLedger(ctx context.Context) uint32 {
+	if h.LakeWatermark == nil {
+		return 0
+	}
+	l, _, ok := h.LakeWatermark(ctx)
+	if !ok {
+		return 0
+	}
+	return l
 }
 
 // assetHoldersCache is the TTL+bounded cache behind
@@ -220,6 +243,7 @@ func (h *Handler) refreshAssetHolders(asset string) *keyFlight {
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), assetHoldersRefreshTimeout)
 		defer cancel()
+		ledger := h.vintageLedger(rctx)
 		holders, total, err := h.Reader.AssetHolders(rctx, asset, assetHoldersMaxLimit)
 		obs.ObserveExplorerSWRRefresh("asset_holders", start, err)
 		if err != nil {
@@ -227,7 +251,7 @@ func (h *Handler) refreshAssetHolders(asset string) *keyFlight {
 			h.Logger.Warn("asset holders detached refresh failed", "asset", asset, "err", err)
 			return
 		}
-		h.assetHolders.put(asset, assetHoldersEntry{holders: holders, total: total, cachedAt: time.Now()})
+		h.assetHolders.put(asset, assetHoldersEntry{holders: holders, total: total, cachedAt: time.Now(), asOfLedger: ledger})
 	}()
 	return fl
 }
@@ -239,12 +263,12 @@ func (h *Handler) refreshAssetHolders(asset string) *keyFlight {
 // well within it; a huge asset 503s THIS request but the scan keeps
 // running, so a retry lands warm). The returned slice is capped at `limit`;
 // the total holder count is limit-independent.
-func (h *Handler) assetHoldersCached(ctx context.Context, asset string, limit int) (holders []clickhouse.AssetHolder, total int64, asOf time.Time, degraded bool, err error) {
+func (h *Handler) assetHoldersCached(ctx context.Context, asset string, limit int) (holders []clickhouse.AssetHolder, total int64, asOf snapshotVintage, degraded bool, err error) {
 	if e, ok, fresh := h.assetHolders.get(asset); ok {
 		if !fresh {
 			h.refreshAssetHolders(asset) //nolint:contextcheck // intentional detach — the rescan must outlive this request (see refreshAssetHolders)
 		}
-		return sliceHolders(e.holders, limit), e.total, e.cachedAt, !fresh, nil
+		return sliceHolders(e.holders, limit), e.total, snapshotVintage{e.cachedAt, e.asOfLedger}, !fresh, nil
 	}
 	// Stone-cold: wait for the detached compute, bounded by OUR deadline
 	// only — the compute itself is not.
@@ -252,14 +276,14 @@ func (h *Handler) assetHoldersCached(ctx context.Context, asset string, limit in
 	select {
 	case <-fl.done:
 		if e, ok, _ := h.assetHolders.get(asset); ok {
-			return sliceHolders(e.holders, limit), e.total, e.cachedAt, false, nil
+			return sliceHolders(e.holders, limit), e.total, snapshotVintage{e.cachedAt, e.asOfLedger}, false, nil
 		}
 		if fl.err != nil {
-			return nil, 0, time.Time{}, false, fl.err
+			return nil, 0, snapshotVintage{}, false, fl.err
 		}
-		return nil, 0, time.Time{}, false, errRefreshFailed
+		return nil, 0, snapshotVintage{}, false, errRefreshFailed
 	case <-ctx.Done():
-		return nil, 0, time.Time{}, false, ctx.Err()
+		return nil, 0, snapshotVintage{}, false, ctx.Err()
 	}
 }
 

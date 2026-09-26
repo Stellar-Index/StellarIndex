@@ -19,12 +19,12 @@ import (
 func TestAcquireHoldersRollupLockSerializesConcurrentRuns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ch-holders-rollup.lock")
 
-	release, err := acquireHoldersRollupLock(path)
+	release, err := acquireRollupLock("ch-holders-rollup", path)
 	if err != nil {
 		t.Fatalf("first acquireHoldersRollupLock: %v", err)
 	}
 
-	if _, err := acquireHoldersRollupLock(path); err == nil {
+	if _, err := acquireRollupLock("ch-holders-rollup", path); err == nil {
 		t.Fatal("a second run acquired the lock while the first still holds it — runs are not serialized")
 	} else if !strings.Contains(err.Error(), "already locked") {
 		t.Errorf("error does not describe the contention: %v", err)
@@ -32,7 +32,7 @@ func TestAcquireHoldersRollupLockSerializesConcurrentRuns(t *testing.T) {
 
 	release()
 
-	release2, err := acquireHoldersRollupLock(path)
+	release2, err := acquireRollupLock("ch-holders-rollup", path)
 	if err != nil {
 		t.Fatalf("acquireHoldersRollupLock after release: %v", err)
 	}
@@ -45,13 +45,13 @@ func TestAcquireHoldersRollupLockSerializesConcurrentRuns(t *testing.T) {
 func TestAcquireHoldersRollupLockFallsBackWhenDirMissing(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "does-not-exist", "ch-holders-rollup.lock")
 
-	release, err := acquireHoldersRollupLock(missing)
+	release, err := acquireRollupLock("ch-holders-rollup", missing)
 	if err != nil {
 		t.Fatalf("acquireHoldersRollupLock with a missing preferred dir: %v", err)
 	}
 	defer release()
 
-	if _, err := acquireHoldersRollupLock(missing); err == nil {
+	if _, err := acquireRollupLock("ch-holders-rollup", missing); err == nil {
 		t.Fatal("a second run acquired the lock via the fallback path while the first still holds it")
 	}
 }

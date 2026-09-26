@@ -93,6 +93,7 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	workers := fs.Int("workers", projectedRebuildDefaultWorkers, "concurrent ledger-window workers; soft-capped at 8 (see RunProjectedRebuild's PG pool-sizing note)")
 	resume := fs.Bool("resume", true, "skip windows already checkpointed by a prior -write run for this source")
 	write := fs.Bool("write", false, "actually write to Postgres via pipeline.HandleEvent (default: dry-run, count + report only, no checkpoints)")
+	heartbeat := fs.String("heartbeat", "", "node_exporter textfile path for the liveness/last-exit gauges. Empty = "+opsutil.DefaultTextfileDir+"/ops_job_projected_rebuild_<source>.prom when that directory exists (r1), otherwise no heartbeat at all")
 	allowLiveOverlap := fs.Bool("allow-live-overlap", false, "DANGEROUS: bypass the live-cursor guard and run even though the live projector's cursor is inside [-from,-to]. Only pass this if you have independently verified the live projector will not process this range concurrently — see the ADR-0048 D3 one-writer contract in this command's doc comment.")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -243,20 +244,37 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 			fromLedger, toLedger)
 	}
 
+	hb := opsutil.NewJobHeartbeat("projected-rebuild-"+*sourceName, *heartbeat, nil)
+	if hb.Enabled() {
+		fmt.Fprintf(os.Stderr, "projected-rebuild: heartbeat -> %s\n", hb.Path())
+	}
+	hb.Start()
 	result, runErr := RunProjectedRebuild(ctx, ProjectedRebuildOptions{
-		Store:   store,
-		ChAddr:  *chAddr,
-		Source:  src,
-		From:    fromLedger,
-		To:      toLedger,
-		Window:  windowSize,
-		Workers: numWorkers,
-		Write:   *write,
-		Resume:  *resume,
-		Logger:  logger,
+		Store:     store,
+		ChAddr:    *chAddr,
+		Source:    src,
+		From:      fromLedger,
+		To:        toLedger,
+		Window:    windowSize,
+		Workers:   numWorkers,
+		Write:     *write,
+		Resume:    *resume,
+		Logger:    logger,
+		Heartbeat: hb,
 	})
 	printProjectedRebuildSummary(*sourceName, fromLedger, toLedger, *write, result)
-	return projectedRebuildOutcome(result, runErr, ctx.Err() != nil)
+	return finishProjectedRebuild(hb, result, runErr, ctx.Err() != nil)
+}
+
+// finishProjectedRebuild records the verdict on the job heartbeat as well as
+// the exit status: under run-heavy-job.sh nobody reads the exit code, and
+// stellarindex_ops_job_last_exit_ok == 0 is what stellarindex_ops_job_run_failed
+// alerts on. An interrupted run exits 0 but did not cover its range, so it is
+// not recorded as clean.
+func finishProjectedRebuild(hb *opsutil.JobHeartbeat, r ProjectedRebuildResult, runErr error, interrupted bool) error {
+	err := projectedRebuildOutcome(r, runErr, interrupted)
+	hb.Stop(err == nil && runErr == nil)
+	return err
 }
 
 // errProjectedRebuildIncomplete marks a run that finished without a fatal
@@ -441,6 +459,9 @@ type ProjectedRebuildOptions struct {
 	// ProgressInterval overrides the periodic progress-log cadence; <= 0
 	// uses projectedRebuildProgressInterval.
 	ProgressInterval time.Duration
+	// Heartbeat receives covered-ledger progress each progress tick, so
+	// stellarindex_ops_job_no_progress sees a healthy run move. Nil is inert.
+	Heartbeat *opsutil.JobHeartbeat
 }
 
 // applyProjectedEvent decodes one lake event and writes its outputs,
@@ -675,7 +696,7 @@ func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (Pro
 	go func() {
 		defer progressWG.Done()
 		runProjectedRebuildProgressLoop(progressCtx, logger, opts.Source.Name, opts.ProgressInterval,
-			start, len(pending), pendingLedgers, counters)
+			start, len(pending), pendingLedgers, counters, opts.Heartbeat)
 	}()
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -781,7 +802,7 @@ func runProjectedRebuildWorker(ctx context.Context, sched *windowScheduler, opts
 func runProjectedRebuildProgressLoop(
 	progressCtx context.Context, logger *slog.Logger, sourceName string, interval time.Duration,
 	start time.Time, totalWindows int, pendingLedgers int64,
-	counters *projectedRebuildCounters,
+	counters *projectedRebuildCounters, hb *opsutil.JobHeartbeat,
 ) {
 	if interval <= 0 {
 		interval = projectedRebuildProgressInterval
@@ -795,6 +816,7 @@ func runProjectedRebuildProgressLoop(
 		case <-t.C:
 			elapsed := time.Since(start)
 			done := counters.completedLedgers.Load()
+			hb.Progress(uint64(done), 0)
 			rate := float64(done) / elapsed.Seconds()
 			eta := "unknown"
 			if rate > 0 {

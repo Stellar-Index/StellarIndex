@@ -124,10 +124,7 @@
 
 - name: Ensure required MinIO buckets exist
   ansible.builtin.command: "/usr/local/bin/mc mb --ignore-existing local/{{ item }}"
-  loop:
-    - galexie-live       # galexie's continuous ledger-meta export target
-    - galexie-archive    # mirror of SDF's history archive (phase 2)
-    - backups            # pgBackRest WAL + rdb dumps (phase 2)
+  loop: "{{ minio_buckets }}"
   register: mc_mb
   changed_when: "'Bucket created successfully' in mc_mb.stdout"
 

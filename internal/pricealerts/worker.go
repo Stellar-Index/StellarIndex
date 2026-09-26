@@ -19,6 +19,31 @@ import (
 // DefaultInterval is the sweep cadence when Options.Interval is unset.
 const DefaultInterval = 30 * time.Second
 
+// alertTimeoutDivisor sets each alert's evaluation budget to a fraction of
+// the sweep interval. The sweep is serial, so without a per-alert deadline
+// one slow alert (a never-traded pair whose VWAP probe walks evicted
+// chunks) holds every other account's alerts for up to the 30 m
+// background statement timeout.
+const alertTimeoutDivisor = 3
+
+// Per-alert outcomes recorded on stellarindex_price_alert_evaluated_total.
+const (
+	outcomeFired        = "fired"
+	outcomeNotCrossed   = "not_crossed"
+	outcomeNoPrice      = "no_price"
+	outcomeCoolingDown  = "cooling_down"
+	outcomeNoSubscriber = "no_subscriber"
+	outcomeClaimLost    = "claim_lost"
+	outcomeError        = "error"
+	outcomeTimeout      = "timeout"
+)
+
+// AlertOutcomes is the complete per-alert outcome vocabulary.
+var AlertOutcomes = []string{
+	outcomeFired, outcomeNotCrossed, outcomeNoPrice, outcomeCoolingDown,
+	outcomeNoSubscriber, outcomeClaimLost, outcomeError, outcomeTimeout,
+}
+
 // AlertStore is the read/mark seam the evaluator needs from the
 // platform price-alert store. Satisfied by
 // postgresstore.PriceAlertStore.
@@ -58,12 +83,13 @@ type Options struct {
 // Worker sweeps enabled price alerts on a ticker and enqueues
 // `price.alert` webhook deliveries when a threshold is crossed.
 type Worker struct {
-	alerts   AlertStore
-	webhooks WebhookEnqueuer
-	prices   PriceReader
-	interval time.Duration
-	logger   *slog.Logger
-	now      func() time.Time
+	alerts       AlertStore
+	webhooks     WebhookEnqueuer
+	prices       PriceReader
+	interval     time.Duration
+	alertTimeout time.Duration
+	logger       *slog.Logger
+	now          func() time.Time
 }
 
 // New builds a Worker. Panics if any store seam is nil (a wiring bug —
@@ -84,6 +110,10 @@ func New(alerts AlertStore, webhooks WebhookEnqueuer, prices PriceReader, opts O
 	if w.interval <= 0 {
 		w.interval = DefaultInterval
 	}
+	w.alertTimeout = w.interval / alertTimeoutDivisor
+	for _, outcome := range AlertOutcomes {
+		obs.PriceAlertEvaluatedTotal.WithLabelValues(outcome)
+	}
 	if w.logger == nil {
 		w.logger = slog.Default()
 	}
@@ -100,6 +130,9 @@ func (w *Worker) Run(ctx context.Context) error {
 	tick := time.NewTicker(w.interval)
 	defer tick.Stop()
 	w.logger.Info("price-alert evaluator started", "interval", w.interval)
+	// Seed the staleness clock so a first sweep that never completes
+	// still ages the gauge instead of leaving it at the disabled-host 0.
+	obs.PriceAlertLastSweepUnix.Set(float64(w.now().Unix()))
 	for {
 		w.Sweep(ctx)
 		select {
@@ -118,12 +151,15 @@ func (w *Worker) Sweep(ctx context.Context) {
 	start := w.now()
 	outcome := w.sweepOnce(ctx)
 	w.observe(outcome, start)
+	obs.PriceAlertLastSweepUnix.Set(float64(w.now().Unix()))
 }
 
 // sweepOnce performs the work and returns the sweep outcome label
 // ("ok" | "list_error" | "partial_error").
 func (w *Worker) sweepOnce(ctx context.Context) string {
-	alerts, err := w.alerts.ListEnabledPriceAlerts(ctx)
+	listCtx, cancel := context.WithTimeout(ctx, w.interval)
+	alerts, err := w.alerts.ListEnabledPriceAlerts(listCtx)
+	cancel()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return "ok"
@@ -134,10 +170,12 @@ func (w *Worker) sweepOnce(ctx context.Context) string {
 	now := w.now()
 	hadError := false
 	for _, a := range alerts {
-		if err := w.evaluateOne(ctx, a, now); err != nil {
-			if errors.Is(err, context.Canceled) {
-				return "ok"
-			}
+		outcome, err := w.evaluateOne(ctx, a, now)
+		if errors.Is(err, context.Canceled) {
+			return "ok"
+		}
+		obs.PriceAlertEvaluatedTotal.WithLabelValues(outcome).Inc()
+		if err != nil {
 			hadError = true
 			w.logger.Warn("price-alert evaluate failed",
 				"err", err, "alert_id", a.ID, "account_id", a.AccountID,
@@ -150,43 +188,90 @@ func (w *Worker) sweepOnce(ctx context.Context) string {
 	return "ok"
 }
 
-// evaluateOne evaluates a single alert against the latest closed VWAP.
-// Returns a non-nil error only for genuine failures (bad row, price-read
-// error, enqueue error) — a benign no-price / not-crossed / cooling-down
-// / no-subscribed-webhook outcome returns nil.
-func (w *Worker) evaluateOne(ctx context.Context, a platform.PriceAlert, now time.Time) error {
+// evaluateOne evaluates a single alert against the latest closed VWAP and
+// returns its per-alert outcome. The error is non-nil only for a genuine
+// failure (bad row, price-read, claim or enqueue error, or the alert's
+// deadline) — a benign no-price / not-crossed / cooling-down /
+// no-subscriber / claim-lost outcome returns nil.
+//
+// The reads and the fan-out each get their own alertTimeout budget from
+// the sweep context. A crossing is claimed before it is enqueued, so a
+// fan-out left with whatever the reads did not spend could claim the
+// crossing and then run out of time before enqueueing it.
+func (w *Worker) evaluateOne(ctx context.Context, a platform.PriceAlert, now time.Time) (string, error) {
+	readCtx, cancel := context.WithTimeout(ctx, w.alertTimeout)
+	c, outcome, err := w.checkCrossing(readCtx, a, now)
+	cancel()
+	if err != nil {
+		return w.failureOutcome(readCtx, err)
+	}
+	if c == nil {
+		return outcome, nil
+	}
+	fireCtx, cancel := context.WithTimeout(ctx, w.alertTimeout)
+	defer cancel()
+	outcome, err = w.fire(fireCtx, a, now, c)
+	if err != nil {
+		return w.failureOutcome(fireCtx, err)
+	}
+	return outcome, nil
+}
+
+// failureOutcome classes a stage error as the alert's own deadline or a
+// plain error. The stage context is checked as well as the error chain
+// because a driver may surface a cancelled statement without wrapping
+// context.DeadlineExceeded.
+func (w *Worker) failureOutcome(stageCtx context.Context, err error) (string, error) {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(stageCtx.Err(), context.DeadlineExceeded) {
+		return outcomeTimeout, fmt.Errorf("exceeded %s per-alert budget: %w", w.alertTimeout, err)
+	}
+	return outcomeError, err
+}
+
+// crossing is an alert whose condition holds, outside cooldown, with at
+// least one subscribed webhook to deliver it to.
+type crossing struct {
+	base, quote canonical.Asset
+	priceStr    string
+	bucketClose time.Time
+	hooks       []platform.CustomerWebhook
+}
+
+// checkCrossing does every read an alert needs before it can fire. A nil
+// crossing with a nil error means a benign outcome, returned as its label.
+func (w *Worker) checkCrossing(ctx context.Context, a platform.PriceAlert, now time.Time) (*crossing, string, error) {
 	base, err := canonical.ParseAsset(a.BaseAsset)
 	if err != nil {
-		return fmt.Errorf("parse base asset %q: %w", a.BaseAsset, err)
+		return nil, "", fmt.Errorf("parse base asset %q: %w", a.BaseAsset, err)
 	}
 	quote, err := canonical.ParseAsset(a.QuoteAsset)
 	if err != nil {
-		return fmt.Errorf("parse quote asset %q: %w", a.QuoteAsset, err)
+		return nil, "", fmt.Errorf("parse quote asset %q: %w", a.QuoteAsset, err)
 	}
 
 	priceStr, bucketClose, ok, err := w.prices.LatestVWAP(ctx, base, quote)
 	if err != nil {
-		return fmt.Errorf("read latest vwap: %w", err)
+		return nil, "", fmt.Errorf("read latest vwap: %w", err)
 	}
 	if !ok {
 		// No closed bucket in scope — benign (like divergence no_vwap).
-		return nil
+		return nil, outcomeNoPrice, nil
 	}
 
 	crossed, err := conditionCrossed(a.Condition, priceStr, a.Threshold)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 	if !crossed {
-		return nil
+		return nil, outcomeNotCrossed, nil
 	}
 	if w.coolingDown(a, now) {
-		return nil
+		return nil, outcomeCoolingDown, nil
 	}
 
 	hooks, err := w.subscribedHooks(ctx, a.AccountID)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 	if len(hooks) == 0 {
 		// Condition holds but the account has no webhook subscribed to
@@ -194,11 +279,16 @@ func (w *Worker) evaluateOne(ctx context.Context, a platform.PriceAlert, now tim
 		// the next tick delivers. Not an error.
 		w.logger.Debug("price alert crossed but no subscribed webhook",
 			"alert_id", a.ID, "account_id", a.AccountID)
-		return nil
+		return nil, outcomeNoSubscriber, nil
 	}
-	payload, err := buildPayload(a, base, quote, priceStr, bucketClose, now)
+	return &crossing{base: base, quote: quote, priceStr: priceStr, bucketClose: bucketClose, hooks: hooks}, "", nil
+}
+
+// fire claims the crossing and fans it out to every subscribed webhook.
+func (w *Worker) fire(ctx context.Context, a platform.PriceAlert, now time.Time, c *crossing) (string, error) {
+	payload, err := buildPayload(a, c.base, c.quote, c.priceStr, c.bucketClose, now)
 	if err != nil {
-		return fmt.Errorf("build payload: %w", err)
+		return "", fmt.Errorf("build payload: %w", err)
 	}
 	// Claim the crossing BEFORE enqueuing (NTF-PA-01). The persisted
 	// LastFiredAt is this crossing's idempotency key: when the mark only
@@ -221,7 +311,7 @@ func (w *Worker) evaluateOne(ctx context.Context, a platform.PriceAlert, now tim
 	// Only one of them can win the row-locked UPDATE (#368 M10).
 	claimed, err := w.alerts.ClaimPriceAlertFire(ctx, a.ID, now)
 	if err != nil {
-		return fmt.Errorf("claim fire: %w", err)
+		return "", fmt.Errorf("claim fire: %w", err)
 	}
 	if !claimed {
 		// Someone else owns this crossing's cooldown window, or the alert
@@ -229,15 +319,15 @@ func (w *Worker) evaluateOne(ctx context.Context, a platform.PriceAlert, now tim
 		// is the guard working, not a failure.
 		w.logger.Info("price alert crossing already claimed — skipping fan-out",
 			"alert_id", a.ID, "account_id", a.AccountID)
-		return nil
+		return outcomeClaimLost, nil
 	}
-	enqueued, err := w.enqueueAll(ctx, hooks, payload)
+	enqueued, err := w.enqueueAll(ctx, c.hooks, payload)
 	w.logger.Info("price alert fired",
 		"alert_id", a.ID, "account_id", a.AccountID,
-		"pair", base.String()+"/"+quote.String(),
+		"pair", c.base.String()+"/"+c.quote.String(),
 		"condition", string(a.Condition), "threshold", a.Threshold,
-		"observed", priceStr, "deliveries", enqueued, "targets", len(hooks))
-	return err
+		"observed", c.priceStr, "deliveries", enqueued, "targets", len(c.hooks))
+	return outcomeFired, err
 }
 
 // coolingDown reports whether the alert fired recently enough that its

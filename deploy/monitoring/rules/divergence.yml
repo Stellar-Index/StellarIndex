@@ -179,7 +179,7 @@ groups:
       # outcome dominates the success rate. CoinGecko / Chainlink
       # unreachable, marshal failure, or Redis cache write failing.
       # Sustained means `flags.divergence_warning` goes stale across
-      # the API surface (the cache TTL is 5 min — we have a few-tick
+      # the API surface (the cache TTL is >= 5 min — we have a few-tick
       # grace window before consumers see staleness).
       #
       # Threshold: `refresh_error` rate exceeds `ok` rate AND total
@@ -205,7 +205,7 @@ groups:
             More refresh_error outcomes than ok over the last 5 min for
             30+ min sustained. CoinGecko / Chainlink RPC reachability is
             the usual cause; the API's `flags.divergence_warning` stops
-            updating and goes stale once the 5-min cache TTL elapses.
+            updating and goes stale once the >= 5-min cache TTL elapses.
             Check the upstream reference's status, then the aggregator's
             `divergence refresher wired` startup log line for which
             references are configured.
@@ -244,7 +244,7 @@ groups:
       # (every pair frozen, min_usd_volume above real volume, the VWAP
       # writer regressed) or no outcome at all (the pass dies before
       # counting) satisfies neither while every div:<asset> key drains
-      # after its 5-min TTL. Gated on the refresher being wired: an
+      # after its >= 5-min TTL. Gated on the refresher being wired: an
       # operator who disables every reference publishes wired=0.
       - alert: stellarindex_divergence_no_ok_outcomes
         expr: |
@@ -266,6 +266,59 @@ groups:
             false fleet-wide. Check which outcome the pass IS producing
             (no_vwap = every pair frozen or below min_usd_volume; nothing
             at all = the pass is not completing); see the runbook.
+
+      # GH-679: one reference failing most of its lookups. The pass-level
+      # rules above only see a pair whose EVERY reference failed; one dark
+      # reference leaves each pass `ok` while it can drop pairs below
+      # min_sources_for_warning (the quorum rule below). asset_unsupported
+      # (coverage) and too_stale_to_compare (a daily-heartbeat feed between
+      # pushes) are properties of the feed, not outages, so both are left
+      # out of both sides of the ratio.
+      - alert: stellarindex_divergence_reference_failing
+        expr: |
+          sum by (reference) (rate(stellarindex_divergence_reference_total{outcome!~"ok|asset_unsupported|too_stale_to_compare"}[15m]))
+            >
+          0.5 * sum by (reference) (rate(stellarindex_divergence_reference_total{outcome!~"asset_unsupported|too_stale_to_compare"}[15m]))
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: divergence
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-reference.md
+          summary: "Divergence reference {{ $labels.reference }} failing most lookups (P3)"
+          description: |
+            More than half of {{ $labels.reference }}'s divergence lookups
+            (asset_unsupported and too_stale_to_compare excluded) failed
+            over 15 min, sustained 30+ min. The pass still counts `ok` while any other reference
+            answers, so this is the only signal for a partial reference
+            outage. Break the failures down by `outcome` on
+            stellarindex_divergence_reference_total, then the runbook.
+
+      # GH-679: a pair's refreshes all ended below min_sources_for_warning.
+      # Below quorum the warning verdict is carried forward, never
+      # re-evaluated, so a live depeg on the pair cannot warn while the
+      # pass-level outcome stays `ok`. max_over_time spans ~5 refreshes
+      # at the default cadence, so one flaky reference answer does not
+      # trip it.
+      - alert: stellarindex_divergence_pair_below_quorum
+        expr: |
+          max by (pair) (max_over_time(stellarindex_divergence_pair_quorum_met[30m])) == 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: divergence
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-reference.md
+          summary: "Divergence detection disarmed for {{ $labels.pair }} — below reference quorum (P3)"
+          description: |
+            Every divergence refresh of {{ $labels.pair }} for 60+ min had
+            fewer responding references than min_sources_for_warning, so
+            its divergence warning is frozen at its last evaluated value
+            and divergence_checked reads false. Check which reference
+            dropped out (stellarindex_divergence_reference_total by
+            outcome); see the runbook.
 
       # GH-641: a Chainlink feed's configured decimals disagrees with the
       # AggregatorV3 proxy's on-chain decimals() view. The reader REFUSES

@@ -12,6 +12,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
+// creatorsRollupLockPath is where chCreatorsRollup takes its exclusive
+// advisory lock. Same state directory as the other rollup locks (see
+// holdersRollupLockPath).
+const creatorsRollupLockPath = "/var/lib/stellarindex/ch-creators-rollup.lock"
+
 // ch-creators-rollup — #351: recompute the account-creator league table
 // (funder → accounts created, with the created set's surviving accounts
 // and current XLM) into staging and atomically exchange it live
@@ -34,13 +39,28 @@ import (
 //
 // The same cycle writes the coverage span it aggregated, so the API
 // never has to assume the board covers the whole chain.
+//
+// Takes an exclusive advisory lock before it runs anything: this cycle
+// and ch-holders-rollup's timer both TRUNCATE -> fill -> EXCHANGE their
+// own global staging tables, and a manual `stellarindex-ops
+// ch-creators-rollup` invocation can otherwise race a concurrent one on
+// those same tables. See acquireRollupLock (rollup_lock.go).
 func chCreatorsRollup(args []string) error {
 	fs := flag.NewFlagSet("ch-creators-rollup", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	cfgPath := fs.String("config", "", "Path to TOML config file — supplies stellar.movements_floor_ledger, the network's P23 boundary the two creation arms split at (default: the pubnet boundary)")
+	lockPath := fs.String("lock-file", creatorsRollupLockPath,
+		"path to the exclusive advisory lock serializing this run against the timer or a second concurrent invocation")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+
+	unlock, err := acquireRollupLock("ch-creators-rollup", *lockPath)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 

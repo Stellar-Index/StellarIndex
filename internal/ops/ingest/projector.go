@@ -59,12 +59,17 @@ func projectorReplay(args []string) error {
 	refreshCAGGs := fs.Bool("refresh-caggs", true, "After the projector re-walks the rewound range, re-materialize the price continuous aggregates over it. The CAGG policies only roll forward, so re-projected historical trades are invisible to every OHLC/VWAP read until this runs")
 	catchUp := fs.Bool("wait", true, "Wait for the projector to re-walk the rewound range before refreshing the CAGGs. -wait=false returns as soon as the cursor is rewound and leaves the refresh to the operator")
 	catchUpTimeout := fs.Duration("wait-timeout", 30*time.Minute, "How long to wait for the projector to re-walk the rewound range")
+	refreshOnly := fs.Bool("refresh-only", false, "Recovery mode: re-materialize the price CAGGs over [-from,-refresh-to] WITHOUT rewinding the cursor. Use this after a -wait-timeout instead of re-running with the same -from — a plain re-run recomputes the rewind target from the now partially-advanced cursor and re-walks the whole range again, never refreshing the gap left by the timed-out run. Requires -refresh-to; refuses if the projector has not actually re-walked up to -refresh-to yet")
+	refreshTo := fs.Uint("refresh-to", 0, "Upper bound (inclusive) of the ledger range to refresh when -refresh-only is set")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *cfgPath == "" || *source == "" || *from == 0 {
+	if *cfgPath == "" || *source == "" || uint32(*from) == 0 {
 		return errors.New("-config, -source, and -from are required")
+	}
+	if *refreshOnly {
+		return projectorRefreshOnly(*cfgPath, *source, uint32(*from), uint32(*refreshTo), gate)
 	}
 	// Before the config load and before any store access: a refusal
 	// must not depend on a reachable database, and applies to -dry-run
@@ -120,9 +125,6 @@ func projectorReplay(args []string) error {
 	}
 	currentLedger := cursor.LastLedger
 	target := uint32(*from)
-	if target == 0 {
-		return fmt.Errorf("invalid -from %d", *from)
-	}
 	if target >= currentLedger {
 		// The cursor has NOT reached the requested ledger, so there is
 		// nothing to rewind: the live projector's forward pass covers it.
@@ -197,6 +199,59 @@ func projectorReplay(args []string) error {
 		chunkRange{from: target, to: currentLedger},
 		replayFollowUp{refreshCAGGs: *refreshCAGGs, wait: *catchUp, waitTimeout: *catchUpTimeout},
 	)
+}
+
+// projectorRefreshOnly is projector-replay's -refresh-only recovery path:
+// re-materialize the price CAGGs over an explicit [from,to] ledger range
+// WITHOUT touching the cursor. It exists because the only recovery
+// awaitProjectorCursor's timeout used to offer — "re-run with the same
+// -from" — rewinds again from the projector's now partially-advanced
+// cursor and re-walks the whole range from scratch, so the ledgers the
+// timed-out run already re-projected (but couldn't refresh in time)
+// never get a refresh of their own (CA2-A19-correct-8). This path skips
+// checkReplayBackfillSafe and the rewind entirely: no decoding happens
+// here, only a refresh_continuous_aggregate over rows the projector has
+// already written. It still fails closed if the cursor has not actually
+// reached `to` — the same "don't refresh rows that aren't there yet"
+// invariant awaitProjectorCursor enforces on the rewind path.
+func projectorRefreshOnly(cfgPath, source string, from, to uint32, gate *opsutil.WriteGate) error {
+	if to == 0 || to < from {
+		return errors.New("-refresh-only requires -refresh-to >= -from")
+	}
+	gate.Banner()
+	if gate.DryRun() {
+		_, _ = fmt.Fprintf(os.Stdout,
+			"dry-run: would refresh the price CAGGs over ledgers [%d,%d] for source=%q (no cursor rewind)\n",
+			from, to, source)
+		return nil
+	}
+	cfg, err := config.LoadWithEnv(cfgPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
+	if err != nil {
+		return fmt.Errorf("open postgres: %w", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	cursor, err := store.GetCursor(ctx, "projector", source)
+	if err != nil {
+		return fmt.Errorf("read projector cursor: %w", err)
+	}
+	if cursor.LastLedger < to {
+		return fmt.Errorf("refusing to refresh [%d,%d]: projector cursor for %q is only at %d, %d ledger(s) short of %d — the range is not fully re-projected yet; wait for the projector to catch up and re-run",
+			from, to, source, cursor.LastLedger, to-cursor.LastLedger, to)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	if err := refreshCAGGsForChunk(ctx, logger, store, chunkRange{from: from, to: to}); err != nil {
+		return fmt.Errorf("refresh price CAGGs over ledgers [%d,%d]: %w", from, to, err)
+	}
+	_, _ = fmt.Fprintf(os.Stdout, "price CAGGs re-materialized over [%d,%d] (no cursor rewind)\n", from, to)
+	return nil
 }
 
 // checkReplayBackfillSafe refuses a replay of a source whose decoder has
@@ -345,7 +400,7 @@ func rematerializeReplayedRange(logger *slog.Logger, store replayFinisher, sourc
 	case !opts.wait:
 		logger.Warn("not waiting for the projector to re-walk (-wait=false); the CAGG refresh is now the operator's",
 			"from", replayed.from, "to", replayed.to,
-			"follow_up", "once the projector cursor passes the pre-rewind ledger, re-run with -from the same value, or refresh the price CAGGs over the range by hand",
+			"follow_up", "once the projector cursor passes the pre-rewind ledger, refresh WITHOUT rewinding: projector-replay -source <source> -from <original -from> -refresh-only -refresh-to <pre-rewind ledger> (re-running with -from alone rewinds and re-walks again)",
 		)
 		return nil
 	}
@@ -406,8 +461,8 @@ func awaitProjectorCursor(ctx context.Context, logger *slog.Logger, r projectorC
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("projector cursor for %q is at ledger %d after %s, still short of the pre-rewind ledger %d: the replayed range is not fully re-projected, so the price CAGGs were NOT refreshed over it. Let the projector catch up and re-run this command with the same -from (the rewind is already durable and idempotent), or raise -wait-timeout",
-				source, cursor.LastLedger, budget, target)
+			return fmt.Errorf("projector cursor for %q is at ledger %d after %s, still short of the pre-rewind ledger %d: the replayed range is not fully re-projected, so the price CAGGs were NOT refreshed over it. Do NOT re-run this command with the same -from — the rewind is durable, but a re-run recomputes the target from the now partially-advanced cursor (%d) and re-walks that whole range again, never refreshing the gap this run already covers. Instead let the projector keep catching up, then refresh what it re-walked without rewinding: projector-replay -source %s -from <original -from> -refresh-only -refresh-to %d (raise it once the cursor passes %d, or raise -wait-timeout and re-run the full wait)",
+				source, cursor.LastLedger, budget, target, cursor.LastLedger, source, cursor.LastLedger, target)
 		}
 		select {
 		case <-ctx.Done():

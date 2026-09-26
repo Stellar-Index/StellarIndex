@@ -249,24 +249,10 @@ func backfill(args []string) error {
 	// shared store's connection pool fans across chunks (postgres
 	// max_connections is the only ceiling — typical 100 vs ~3 conns
 	// per chunk = 30+ chunks supported on stock config).
-	var wg sync.WaitGroup
-	errCh := make(chan error, len(chunks))
-	for i, c := range chunks {
-		wg.Add(1)
-		chunkLogger := logger.With("chunk", i, "chunk_from", c.from, "chunk_to", c.to)
-		go runChunkGuarded(chunkLogger, fmt.Sprintf("backfill-chunk-%d", i), i, c, errCh, &wg, func() error {
-			return runBackfillChunk(rootCtx, chunkLogger, opts, cfg, store, c)
-		})
-	}
-	wg.Wait()
-	close(errCh)
-
-	var combined []error
-	for e := range errCh {
-		combined = append(combined, e)
-	}
-	if len(combined) > 0 {
-		return errors.Join(combined...)
+	if err := runChunksGuarded(logger, "backfill-chunk", chunks, func(chunkLogger *slog.Logger, c chunkRange) error {
+		return runBackfillChunk(rootCtx, chunkLogger, opts, cfg, store, c)
+	}); err != nil {
+		return err
 	}
 
 	logger.Info("backfill complete",
@@ -299,6 +285,29 @@ func runChunkGuarded(logger *slog.Logger, name string, i int, c chunkRange, errC
 	}
 }
 
+// runChunksGuarded runs every chunk concurrently, each under
+// runChunkGuarded, and joins their errors. It is the one fan-out for
+// backfill and resume-stalled, so neither can spawn an unguarded chunk.
+func runChunksGuarded(logger *slog.Logger, name string, chunks []chunkRange, run func(*slog.Logger, chunkRange) error) error {
+	var wg sync.WaitGroup
+	errCh := make(chan error, len(chunks))
+	for i, c := range chunks {
+		wg.Add(1)
+		chunkLogger := logger.With("chunk", i, "chunk_from", c.from, "chunk_to", c.to)
+		go runChunkGuarded(chunkLogger, fmt.Sprintf("%s-%d", name, i), i, c, errCh, &wg, func() error {
+			return run(chunkLogger, c)
+		})
+	}
+	wg.Wait()
+	close(errCh)
+
+	var combined []error
+	for e := range errCh {
+		combined = append(combined, e)
+	}
+	return errors.Join(combined...)
+}
+
 // buildChunkDispatcher constructs the per-chunk dispatcher and,
 // when the soroban-events pseudo-source is in play, wires the
 // RawEventSink (ADR-0029). Returns the dispatcher + the sink (nil
@@ -316,6 +325,12 @@ func buildChunkDispatcher(
 	store *timescale.Store,
 	pseudo bool,
 ) (*dispatcher.Dispatcher, *sorobanevents.AsyncSink, error) {
+	// Every entry point (backfill, resume-stalled) reaches the decoders
+	// through here, so the source policy is enforced here, not only at
+	// flag parse.
+	if err := checkBackfillSourcePolicy(opts.sources, cfg, opts.from, opts.to); err != nil {
+		return nil, nil, err
+	}
 	realSources := filterOutSorobanEventsPseudo(opts.sources)
 
 	var soroswapOpts []soroswap.DecoderOption
@@ -331,8 +346,8 @@ func buildChunkDispatcher(
 			return nil, nil, fmt.Errorf("soroswap registry: %w", err)
 		}
 	}
-	// gated=nil is safe only because checkBackfillNotProjected refused
-	// every projector-owned source at flag parse: an empty identity gate
+	// gated=nil is safe only because checkBackfillSourcePolicy above
+	// refused every projector-owned source: an empty identity gate
 	// here would otherwise make blend write zero rows and exit 0, and
 	// SinkModeAll would make the rest a second writer (invariant [7]).
 	disp, err := pipeline.BuildDispatcher(realSources, cfg.Oracle, nil, soroswapOpts...)
@@ -1011,10 +1026,7 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 		return opts, cfg, errors.New("no sources to backfill — set -source or cfg.Ingestion.EnabledSources")
 	}
 
-	if err := checkBackfillNotProjected(sources, cfg); err != nil {
-		return opts, cfg, err
-	}
-	if err := checkBackfillSources(sources, uint32(*from), uint32(*to)); err != nil {
+	if err := checkBackfillSourcePolicy(sources, cfg, uint32(*from), uint32(*to)); err != nil {
 		return opts, cfg, err
 	}
 
@@ -1085,6 +1097,17 @@ func filterOutSorobanEventsPseudo(sources []string) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// checkBackfillSourcePolicy is the single source-admission rule for every
+// path that replays ledgers through runBackfillChunk: no projector-owned
+// source (invariant [7]) and no source without a current WASM-audit
+// attestation (BackfillSafe).
+func checkBackfillSourcePolicy(sources []string, cfg config.Config, fromLedger, toLedger uint32) error {
+	if err := checkBackfillNotProjected(sources, cfg); err != nil {
+		return err
+	}
+	return checkBackfillSources(sources, fromLedger, toLedger)
 }
 
 // checkBackfillSources returns nil when every source in `sources`

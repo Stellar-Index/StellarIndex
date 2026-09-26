@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -95,7 +97,7 @@ func TestAssetHoldersCached_StaleServedDegradedAndRefreshed(t *testing.T) {
 	if err != nil || total != 1 || len(holders) != 1 {
 		t.Fatalf("stale serve: holders=%d total=%d err=%v, want the stale entry", len(holders), total, err)
 	}
-	if !degraded || !asOf.Equal(staleAt) {
+	if !degraded || !asOf.at.Equal(staleAt) {
 		t.Errorf("stale serve: degraded=%v asOf=%v, want degraded=true with the entry's real time %v", degraded, asOf, staleAt)
 	}
 
@@ -125,6 +127,31 @@ func TestAssetHoldersCached_FailedRefreshKeepsStaleEntry(t *testing.T) {
 	// The failed refresh must not blank the entry.
 	if e, ok, _ := h.assetHolders.get("native"); !ok || e.total != 1 {
 		t.Errorf("failed refresh blanked the stale entry: ok=%v", ok)
+	}
+}
+
+// TestAssetHolders_AsOfLedgerIsSnapshotVintage pins #621 on the holders
+// board: the refresh stamps the watermark it read before its scan, and the
+// handler serves THAT, not a later serve-time watermark read.
+func TestAssetHolders_AsOfLedgerIsSnapshotVintage(t *testing.T) {
+	const fillLedger, serveLedger = 63_400_000, 63_400_178
+	h, rec := wealthTestHandler(&swrReader{capReader: &capReader{probe: &deadlineProbe{}}})
+	h.LakeWatermark = func(context.Context) (uint32, bool, bool) { return fillLedger, false, true }
+	if _, _, v, _, err := h.assetHoldersCached(context.Background(), "native", 10); err != nil || v.ledger != fillLedger {
+		t.Fatalf("cold fill stamped ledger %d (err=%v), want the pre-scan watermark %d", v.ledger, err, fillLedger)
+	}
+
+	h.LakeWatermark = func(context.Context) (uint32, bool, bool) { return serveLedger, false, true }
+	req := httptest.NewRequest(http.MethodGet, "/v1/assets/native/holders", nil)
+	req.SetPathValue("asset_id", "native")
+	h.AssetHolders(httptest.NewRecorder(), req)
+	view, ok := rec.view.(AssetHoldersView)
+	if !ok {
+		t.Fatalf("payload was %T (status %d), want AssetHoldersView", rec.view, rec.status)
+	}
+	if view.AsOfLedger != fillLedger {
+		t.Errorf("as_of_ledger = %d, want the board's %d (not the serve-time watermark %d)",
+			view.AsOfLedger, fillLedger, serveLedger)
 	}
 }
 

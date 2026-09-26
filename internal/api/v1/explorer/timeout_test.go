@@ -231,9 +231,9 @@ func (r *capReader) AccountsByWealth(ctx context.Context, _ []string, _ []float6
 // AccountsByWealthCached records the deadline like its uncached sibling so
 // the timeout-propagation probes still observe this call, and reports
 // warm-and-fresh so handlers proceed down the normal path.
-func (r *capReader) AccountsByWealthCached(ctx context.Context, _ []string, _ []float64, _ int) ([]clickhouse.AccountWealth, string, time.Time, bool) {
+func (r *capReader) AccountsByWealthCached(ctx context.Context, _ []string, _ []float64, _ int) (clickhouse.AccountWealthSnapshot, bool) {
 	r.probe.record(ctx)
-	return nil, clickhouse.WealthBasisUSD, time.Now(), true
+	return clickhouse.AccountWealthSnapshot{Basis: clickhouse.WealthBasisUSD, AsOf: time.Now()}, true
 }
 
 func (r *capReader) SoroswapPairReserves(ctx context.Context, _ []string) (map[string]clickhouse.SoroswapPairState, error) {

@@ -49,7 +49,37 @@ type Result struct {
 	// FailureCount is len(Failures). Combined with SuccessCount,
 	// the operator can see the full reference universe outcome.
 	FailureCount int
+
+	// Outcomes maps EVERY reference Name() → a bounded outcome class
+	// (one of [ReferenceOutcomes]): "ok" for a Sources entry, a failure
+	// class for a Failures entry. Failures carries verbatim error text,
+	// which is unbounded; this is its metric-label-safe twin.
+	Outcomes map[string]string
 }
+
+// Bounded per-reference outcome classes recorded in [Result.Outcomes].
+const (
+	OutcomeOK                = "ok"
+	OutcomeAssetUnsupported  = "asset_unsupported"
+	OutcomePriceUnavailable  = "price_unavailable"
+	OutcomeTooStale          = "too_stale_to_compare"
+	OutcomeInvalidPrice      = "invalid_price"
+	OutcomeTimeout           = "timeout"
+	OutcomeDeadlineExceeded  = "overall_deadline_exceeded"
+	OutcomePanicked          = "panicked"
+	OutcomeError             = "error"
+	invalidPriceFailureLabel = "non-positive or non-finite price"
+)
+
+// ReferenceOutcomes is the complete [Result.Outcomes] vocabulary.
+var ReferenceOutcomes = []string{
+	OutcomeOK, OutcomeAssetUnsupported, OutcomePriceUnavailable, OutcomeTooStale,
+	OutcomeInvalidPrice, OutcomeTimeout, OutcomeDeadlineExceeded, OutcomePanicked, OutcomeError,
+}
+
+// errReferencePanicked wraps a recovered reference panic so
+// [errorOutcome] can class it without parsing the message.
+var errReferencePanicked = errors.New("reference panicked")
 
 // CompareOptions tunes [Compare]'s behaviour.
 type CompareOptions struct {
@@ -90,7 +120,7 @@ const overallTimeoutFactor = 2
 // per-reference context timeout (which surfaces as the underlying
 // "context deadline exceeded") precisely so operators can tell "slow
 // upstream" from "this reference ignores cancellation".
-const overallDeadlineLabel = "overall_deadline_exceeded"
+const overallDeadlineLabel = OutcomeDeadlineExceeded
 
 // Compare gathers prices from each reference in parallel and
 // computes the divergence between ourPrice and the median of the
@@ -147,6 +177,7 @@ func Compare(
 		OurPrice: ourPrice,
 		Sources:  map[string]float64{},
 		Failures: map[string]string{},
+		Outcomes: map[string]string{},
 	}
 
 	if len(refs) == 0 {
@@ -190,7 +221,7 @@ func Compare(
 					// so this is a non-blocking write.
 					results <- fetchOutcome{
 						name: name,
-						err:  fmt.Errorf("reference panicked: %v", rv),
+						err:  fmt.Errorf("%w: %v", errReferencePanicked, rv),
 					}
 				}
 			}()
@@ -253,10 +284,13 @@ func collectOutcomes(
 			switch {
 			case o.err != nil:
 				res.Failures[o.name] = classifyError(o.err)
+				res.Outcomes[o.name] = errorOutcome(o.err)
 			case !isFinitePositive(o.price):
-				res.Failures[o.name] = "non-positive or non-finite price"
+				res.Failures[o.name] = invalidPriceFailureLabel
+				res.Outcomes[o.name] = OutcomeInvalidPrice
 			default:
 				res.Sources[o.name] = o.price
+				res.Outcomes[o.name] = OutcomeOK
 				prices = append(prices, o.price)
 			}
 		case <-deadline.C:
@@ -264,6 +298,7 @@ func collectOutcomes(
 			// deadline failure and serve what did arrive.
 			for name := range pending {
 				res.Failures[name] = overallDeadlineLabel
+				res.Outcomes[name] = OutcomeDeadlineExceeded
 			}
 			return prices
 		}
@@ -309,6 +344,26 @@ func CountAgreeing(ourPrice float64, sources map[string]float64, thresholdPct fl
 		}
 	}
 	return n
+}
+
+// errorOutcome is classifyError's bounded twin for [Result.Outcomes]:
+// the same sentinels, but every unrecognised error collapses to one
+// class instead of passing its text through.
+func errorOutcome(err error) string {
+	switch {
+	case errors.Is(err, ErrAssetUnsupported):
+		return OutcomeAssetUnsupported
+	case errors.Is(err, ErrPriceUnavailable):
+		return OutcomePriceUnavailable
+	case errors.Is(err, ErrTooStaleToCompare):
+		return OutcomeTooStale
+	case errors.Is(err, errReferencePanicked):
+		return OutcomePanicked
+	case errors.Is(err, context.DeadlineExceeded):
+		return OutcomeTimeout
+	default:
+		return OutcomeError
+	}
 }
 
 // classifyError maps known sentinels to short stable labels so the
