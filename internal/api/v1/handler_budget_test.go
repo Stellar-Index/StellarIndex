@@ -456,6 +456,8 @@ var inlineDetachments = map[string]string{
 		"known residual as rwaCuratedSnapshotWithin",
 	"dashboardauth/middleware.go#newTouchCtx": "constructor for the context the async " +
 		"TouchSession goroutine runs under; never used on the request goroutine",
+	"dashboardauth/handlers.go#HandleLogin": "the magic-link send after the token is durably " +
+		"written, which a client disconnect must not abort; bounded by sendTimeout",
 	"middleware/ratelimit.go#throttleContext": "the rate-limit take runs before the handler " +
 		"and must count an aborted request; bounded by throttleTakeTimeout",
 	"middleware/usage.go#UsageTracker": "post-response usage metering, which must count an " +
