@@ -73,6 +73,12 @@ type ClaimableBalanceSeed struct {
 	// time, both for point-in-time correctness and so a re-seed upserts the
 	// same row instead of appending a second one.
 	CloseTime time.Time
+
+	// IsRemoval marks a tombstone: a balance the served tier still holds as
+	// live whose latest lake change is its claim (or clawback). LedgerSeq and
+	// CloseTime are the removal's; Balance is zero; AssetKey is the served
+	// row's, so the tombstone supersedes it in the served reader's pick.
+	IsRemoval bool
 }
 
 const (
@@ -138,30 +144,42 @@ const (
 // hours and NO output until the end: the reduction can only emit once the last
 // window has been folded, so every insert lands after the scan rather than
 // interleaved with it. Silence is not a hang.
-func StreamClaimableBalanceSeeds(ctx context.Context, addr string, assets map[string]struct{}, fn func(ClaimableBalanceSeed) error) error {
+//
+// Under walk.VerifyLake the range is proven intact before anything is emitted
+// (a hole that hides a claim would resurrect the claimed balance); the returned
+// [SeedEvidence] records what was reduced and verified.
+//
+// `served` maps hex claimable id → asset_key for every balance the served tier
+// currently holds as live. Each one whose latest lake change is a removal is
+// emitted as a tombstone at that removal, so a re-seed retracts a balance
+// claimed while the live observer was not recording. Nil retracts nothing.
+func StreamClaimableBalanceSeeds(ctx context.Context, addr string, assets map[string]struct{}, served map[string]string, walk SeedWalk, fn func(ClaimableBalanceSeed) error) (SeedEvidence, error) {
+	red := newClaimableSeedReducer(assets)
+	if err := red.retractServed(served); err != nil {
+		return SeedEvidence{}, err
+	}
 	conn, err := openRead(ctx, addr)
 	if err != nil {
-		return err
+		return SeedEvidence{}, err
 	}
 	defer func() { _ = conn.Close() }()
 
-	minLedger, maxLedger, err := entryChangeLedgerBounds(ctx, conn)
+	ev, err := resolveSeedWalk(ctx, conn, addr, walk)
 	if err != nil {
-		return err
+		return SeedEvidence{}, err
 	}
 
-	red := newClaimableSeedReducer(assets)
 	win := newAdaptiveLedgerWindow(claimableSeedLedgerWindow, claimableSeedMinLedgerWindow, claimableSeedWidenAfter)
-	err = walkLedgerWindows(minLedger, maxLedger, win, func(from, to uint32) error {
+	err = walkLedgerWindows(ev.FromLedger, ev.ToLedger, win, walk.progressScan(func(from, to uint32) error {
 		if err := red.startWindow(from); err != nil {
 			return err
 		}
 		return scanClaimableSeedWindow(ctx, conn, from, to, red)
-	})
+	}))
 	if err != nil {
-		return err
+		return SeedEvidence{}, err
 	}
-	return red.emit(fn)
+	return ev, red.emit(fn)
 }
 
 // scanClaimableSeedWindow reduces one ledger window server-side to at most one
@@ -313,17 +331,45 @@ type claimableSeedReducer struct {
 	live map[[32]byte]claimableSeedWinner
 	dead map[[32]byte]lakeEntryChangeOrder
 
+	// served is the served tier's live set (id → asset_key); retired holds,
+	// for those ids only, a latest-seen removal. Unlike `dead` it is never
+	// compacted: it is what emit turns into tombstones, and it is bounded by
+	// the served set rather than by chain history.
+	served  map[[32]byte]string
+	retired map[[32]byte]claimableSeedRemoval
+
 	windowStart    uint32
 	haveWindowSeen bool
 }
 
 func newClaimableSeedReducer(assets map[string]struct{}) *claimableSeedReducer {
 	return &claimableSeedReducer{
-		assets: assets,
-		intern: make(map[string]string),
-		live:   make(map[[32]byte]claimableSeedWinner),
-		dead:   make(map[[32]byte]lakeEntryChangeOrder),
+		assets:  assets,
+		intern:  make(map[string]string),
+		live:    make(map[[32]byte]claimableSeedWinner),
+		dead:    make(map[[32]byte]lakeEntryChangeOrder),
+		retired: make(map[[32]byte]claimableSeedRemoval),
 	}
+}
+
+// claimableSeedRemoval is where a served-live balance left the ledger.
+type claimableSeedRemoval struct {
+	order     lakeEntryChangeOrder
+	closeTime time.Time
+}
+
+// retractServed arms tombstones for the served tier's live set (hex id →
+// asset_key).
+func (r *claimableSeedReducer) retractServed(served map[string]string) error {
+	r.served = make(map[[32]byte]string, len(served))
+	for hexID, assetKey := range served {
+		raw, err := hex.DecodeString(hexID)
+		if err != nil || len(raw) != 32 {
+			return fmt.Errorf("clickhouse: claimable seed: served claimable_id %q is not a 32-byte hex id", hexID)
+		}
+		r.served[[32]byte(raw)] = assetKey
+	}
+	return nil
 }
 
 // startWindow declares that every row offered from now until the next call
@@ -385,11 +431,18 @@ func (r *claimableSeedReducer) offer(keyXDR, entryXDR, changeType string, closeT
 	if prev, seen := r.dead[id]; seen && !ord.after(prev) {
 		return nil
 	}
+	if prev, seen := r.retired[id]; seen && !ord.after(prev.order) {
+		return nil
+	}
 	if changeType == "removed" {
 		delete(r.live, id)
 		r.dead[id] = ord
+		if _, isServed := r.served[id]; isServed {
+			r.retired[id] = claimableSeedRemoval{order: ord, closeTime: closeTime.UTC()}
+		}
 		return nil
 	}
+	delete(r.retired, id)
 
 	win, inScope, err := r.decodeLiveEntry(entryXDR)
 	if err == nil && !inScope {
@@ -450,14 +503,33 @@ func (r *claimableSeedReducer) internAssetKey(k string) string {
 // the reduction happens in a Go map. Sorting the raw 32-byte ids is the same
 // order as sorting their lowercase hex, which is what the ClaimableID strings
 // carry.
+//
+// Tombstones for served-live balances whose latest change is a removal are
+// emitted in the same order (live and retired ids are disjoint).
 func (r *claimableSeedReducer) emit(fn func(ClaimableBalanceSeed) error) error {
-	ids := make([][32]byte, 0, len(r.live))
+	ids := make([][32]byte, 0, len(r.live)+len(r.retired))
 	for id := range r.live {
+		ids = append(ids, id)
+	}
+	for id := range r.retired {
 		ids = append(ids, id)
 	}
 	sort.Slice(ids, func(i, j int) bool { return bytes.Compare(ids[i][:], ids[j][:]) < 0 })
 
 	for _, id := range ids {
+		if rm, retired := r.retired[id]; retired {
+			if err := fn(ClaimableBalanceSeed{
+				ClaimableID: hex.EncodeToString(id[:]),
+				AssetKey:    r.served[id],
+				Balance:     big.NewInt(0),
+				LedgerSeq:   rm.order.ledgerSeq,
+				CloseTime:   rm.closeTime,
+				IsRemoval:   true,
+			}); err != nil {
+				return err
+			}
+			continue
+		}
 		w := r.live[id]
 		if w.decodeErr != nil {
 			return fmt.Errorf("clickhouse: claimable seed %s at ledger %d: %w",

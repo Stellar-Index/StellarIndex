@@ -243,23 +243,28 @@ below is the generic path.
       alert is expected until it is:
       ```sql
       SELECT contract_id, asset_key, source, holders_seeded,
+             holders_retracted, lake_verified_through,
              min_ledger_seen, max_ledger_seen, seeded_at
         FROM sac_balance_seed_provenance
        WHERE asset_key LIKE 'BLND:%' OR asset_key LIKE 'EURC:%'
           OR asset_key LIKE 'KALE:%' OR asset_key LIKE 'PHO:%'
        ORDER BY asset_key;
       ```
-      `source = 'full_history'` **and** `min_ledger_seen` well below
-      62,000,000 is the evidence the floor was actually reached — a
-      `full_history` label with a high `min_ledger_seen` means the scan
-      ran but found nothing old, which is a different (real) finding.
-      The row does not record which binary wrote it. Passes before the
-      TTL-archival filter (2026-07-28) seeded archived balances as live:
-      that was PHO's +157 %, cleared by the approved DELETE of
-      2026-07-29. If `seeded_at` predates the binary you are running,
-      re-seed anyway. The current binary does not stamp a wrapper's row
-      when it could not check the TTL of every watched key, or when the
-      wrapper matched no Balance entry; the pass exits non-zero instead.
+      **A `full_history` row with `lake_verified_through` NULL has not
+      been fixed**, whatever its `min_ledger_seen` says: it was written
+      before migration 0182, by a binary that neither verified the lake
+      nor, before 2026-07-28, filtered TTL-archived balances (PHO's
+      +157 %). Re-seed it. Only a row with `lake_verified_through` set is
+      evidence: the pass proved `stellar.ledgers` contiguous and
+      hash-linked through that ledger before emitting anything, resolved
+      the TTL of every watched key, and wrote `holders_retracted`
+      tombstones for the removed and archived holders. On such a row,
+      `min_ledger_seen` well below 62,000,000 is the evidence the floor
+      was reached; a high `min_ledger_seen` means the scan found nothing
+      old, which is a different (real) finding. The binary does not stamp
+      a wrapper's row when it could not check the TTL of every watched
+      key, or when the wrapper matched no Balance entry; the pass exits
+      non-zero instead.
 - [ ] **Re-seed from the complete append-log.** Dry-run first, per the
       convention; the full-history scan reads
       `stellar.ledger_entry_changes` (complete to genesis) instead of
@@ -273,13 +278,22 @@ below is the generic path.
         stellarindex-ops supply seed-sac-balances \
         -config /etc/stellarindex.toml -full-history -write
       ```
+      To re-seed only the wrappers you are fixing, add
+      `-contracts <id>,<id>` (ids from `[supply.sac_wrappers]`); only
+      their provenance rows change, and the pass prints a `PARTIAL`
+      banner. The walk is silent for about an hour but reports ledgers
+      reduced to the `ops_job="supply-seed-sac-balances"` heartbeat.
       The printed `sum=<stroops>` per contract should rise by the
       dormant pool holding; that delta is what the gauge was showing.
       An error naming `no stellar.ttl_live_until row` means this host's
       TTL projection is not backfilled: run Step 2 of
       `deploy/clickhouse/ttl_live_until.sql`, then re-run. Do not work
       around it, because keeping those keys would re-seed archived
-      balances as live. `matched no Balance entry` names a
+      balances as live. An error naming `lake is not intact over the
+      range it would reduce` names the first missing or mis-linked
+      ledger: nothing was written. Heal it (`ch-live-catchup` near the
+      tip, `ch-backfill` below it) and re-run; a hole lets the seed elect
+      a superseded balance as current. `matched no Balance entry` names a
       `[supply.sac_wrappers]` contract id that found nothing; check it.
       A holder whose entry was removed or TTL-archived is written as a
       zero-balance tombstone at the removal or archival ledger and is
@@ -293,8 +307,9 @@ below is the generic path.
 - [ ] **Verify convergence** after the aggregator's next refresher tick
       (`aggregator_refresh_cadence`, default 5m) — the gauge should
       drop to 0 for the re-seeded pair. If it does NOT drop and
-      provenance shows a genuine `full_history` seed reaching below the
-      floor, then this pair really is anomalous: escalate to the
+      provenance shows a genuine `full_history` seed (non-NULL
+      `lake_verified_through`) reaching below the floor, then this pair
+      really is anomalous: escalate to the
       generic path below and treat it as fresh corruption.
 - [ ] **Record the outcome** in
       [`audit-remediation-operator-actions.md`](../audit-remediation-operator-actions.md)

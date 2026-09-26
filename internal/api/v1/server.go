@@ -89,7 +89,7 @@ type ReadyChecker interface {
 // This constant MUST equal the head under migrations/; the parity test
 // TestExpectedSchemaVersionMatchesMigrationsHead fails CI if a migration
 // is added without bumping it.
-const ExpectedSchemaVersion uint = 181
+const ExpectedSchemaVersion uint = 183
 
 // nonAtomicMigrationVersions lists migration numbers whose up.sql commits
 // mid-file, breaking golang-migrate's one-transaction-per-file guarantee
