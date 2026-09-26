@@ -388,7 +388,8 @@ func TestCreatorsRollupJoinsOutsideTheWalk(t *testing.T) {
 		t.Fatal("the board no longer joins the live account entries; live_accounts " +
 			"and live_stroops would stop describing the created set")
 	}
-	if !strings.Contains(board, "FROM stellar.account_creators_ops AS c") {
+	if !strings.Contains(board, "FROM stellar.account_creators_ops\n") ||
+		strings.Contains(board, "stellar.account_movements") || strings.Contains(board, "stellar.operations") {
 		t.Error("the board must join the working table the walk wrote, not re-scan the archive")
 	}
 	// The build side is pinned to the account-entry population so the
@@ -432,6 +433,27 @@ func TestCreatorsRollupLiveAccountsDedupeRecycledAddresses(t *testing.T) {
 		t.Error("the (creator, created) dedupe must sit inside the live-join subquery, " +
 			"nested below its own outer per-creator GROUP BY, or the per-event fan-out " +
 			"survives into sum(live_stroops)")
+	}
+}
+
+// TestCreatorsRollupLiveCreditsLatestCreatorOnly guards the cross-creator
+// recycle: A creates X, X merges, B re-creates X. The live join must credit
+// X's current incarnation to its latest creator only, or X is counted once
+// per creator in live_accounts_total. Executing proof:
+// test/integration/creators_rollup_cross_creator_recycle_test.go.
+func TestCreatorsRollupLiveCreditsLatestCreatorOnly(t *testing.T) {
+	board := creatorsRollupStatement(t, "account_creators_rollup_staging")
+
+	latest := strings.Index(board, "argMax(creator, (ledger, creator)) AS creator")
+	collapse := strings.Index(board, "GROUP BY created\n")
+	join := strings.Index(board, "LEFT JOIN (\n\t                 SELECT account_id, balance")
+	if latest == -1 || collapse == -1 || join == -1 || !(latest < collapse && collapse < join) {
+		t.Error("the live join's left side is not one row per created address attributed to its " +
+			"latest creator; an address recycled by different creators is live under each of them")
+	}
+	if strings.Contains(board, "FROM stellar.account_creators_ops AS c") {
+		t.Error("the live join reads per-creation rows directly; every creator that ever " +
+			"created a recycled address is credited with its current balance")
 	}
 }
 
