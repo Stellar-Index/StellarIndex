@@ -950,7 +950,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 			}
 			var ng int
 			for _, tgt := range targets {
-				gaps, gerr := store.FindPerSourceLedgerGaps(ctx, tgt, int64(lo), int64(hi), 1)
+				gaps, gerr := store.FindPerSourceLedgerGaps(ctx, tgt, int64(lo), int64(hi), 1, 0)
 				if gerr != nil {
 					return fmt.Errorf("ch-rebuild: find sdex gaps: %w", gerr)
 				}

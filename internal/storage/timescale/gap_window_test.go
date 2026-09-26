@@ -1,6 +1,7 @@
 package timescale
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -8,6 +9,56 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
+
+// TestPerSourceLedgerGapsQuerySeedsAcrossWindowBoundary pins the query
+// SHAPE half of the CA2-A10/A11 fix (the DB-backed behaviour is proven
+// in test/integration/gap_detector_seed_test.go): the seed placeholder
+// ($4) must be UNION-ALLed into the scanned ledger set, guarded so a
+// non-positive or in-window seed is a no-op, for every registered
+// target — this is the mechanism that lets a gap spanning two scan
+// cycles still pair inside the LATER cycle's window.
+func TestPerSourceLedgerGapsQuerySeedsAcrossWindowBoundary(t *testing.T) {
+	t.Parallel()
+	for _, target := range DefaultGapDetectorTargets {
+		got := perSourceLedgerGapsQuery(target)
+		if !strings.Contains(got, "$4::bigint > 0 AND $4::bigint < $1") {
+			t.Errorf("%s/%s: query has no seed guard:\n%s", target.Source, target.Table, got)
+		}
+		if !strings.Contains(got, "UNION ALL") {
+			t.Errorf("%s/%s: query does not UNION the seed row into the scanned set:\n%s", target.Source, target.Table, got)
+		}
+	}
+}
+
+// TestMaxLedgerInWindowSkipsCensusOverrideTargets pins that
+// [Store.MaxLedgerInWindow] — the query that persists the next cycle's
+// seed — refuses any target carrying a DistinctLedgerCountSQL override
+// (soroban-events) before ever touching the database. That override
+// exists because the generic scan is a full-table-cost query on an
+// unindexed column; silently running MaxLedgerInWindow's generic
+// MAX(ledger) query for that target would pay the identical cost under
+// a different name. The early return happens before any DB access, so
+// a nil *Store proves the short-circuit without a live connection.
+func TestMaxLedgerInWindowSkipsCensusOverrideTargets(t *testing.T) {
+	t.Parallel()
+	var store *Store
+	var sorobanEvents GapDetectorTarget
+	for _, target := range DefaultGapDetectorTargets {
+		if target.Source == "soroban-events" {
+			sorobanEvents = target
+		}
+	}
+	if sorobanEvents.DistinctLedgerCountSQL == "" {
+		t.Fatal("soroban-events target has no DistinctLedgerCountSQL override; test fixture assumption is stale")
+	}
+	ledger, ok, err := store.MaxLedgerInWindow(t.Context(), sorobanEvents, 1000, 2000)
+	if err != nil {
+		t.Fatalf("MaxLedgerInWindow on override target: %v", err)
+	}
+	if ok || ledger != 0 {
+		t.Fatalf("MaxLedgerInWindow(soroban-events) = (%d,%v); want (0,false) — it must never run the generic scan", ledger, ok)
+	}
+}
 
 // TestComputeGapScanWindow pins the trailing-window arithmetic that
 // replaced the [genesis, tip] full-history scan (2026-07-06 IO-
