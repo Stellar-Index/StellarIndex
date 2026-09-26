@@ -347,18 +347,17 @@ const perSourcePoolsCTE = `
               COALESCE(SUM(p.sum_usd_priced)
                        FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0)
               +
-              -- Per row, on the raw spelling: a folded group can mix spellings,
-              -- and only a native/SAC leg carries 7-decimal stroops.
-              COALESCE(SUM(
-                CASE
-                  WHEN p.base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-                    THEN p.sum_base_unpriced
-                  WHEN p.quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-                    THEN p.sum_quote_unpriced
-                  ELSE 0
-                END
-              ) FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0) / 1e7::numeric
-                * COALESCE((SELECT vwap FROM xlm_usd), 0)
+              CASE
+                WHEN p.base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+                  THEN COALESCE(SUM(p.sum_base_unpriced)
+                                FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0) / 1e7::numeric
+                       * COALESCE((SELECT vwap FROM xlm_usd), 0)
+                WHEN p.quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
+                  THEN COALESCE(SUM(p.sum_quote_unpriced)
+                                FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0) / 1e7::numeric
+                       * COALESCE((SELECT vwap FROM xlm_usd), 0)
+                ELSE 0
+              END
             )::text AS vol_24h_usd,
             last(p.bucket_last_price, p.bucket_last_ts)::text AS last_price
           FROM pools_per_source_1h p
