@@ -337,9 +337,12 @@ func TestInsertMEVEvent_ArgsAndIdempotency(t *testing.T) {
 		DetailJSON:       []byte(`{"legs":2,"notional_usd":"1234.56"}`),
 	}
 
+	// RETURNING (xmax = 0): a row of true is a fresh insert; no row is a
+	// conflict that kept the stored evidence.
 	store, conn := newScriptedStore(t,
-		scriptedResult{rowsAffected: 1},
-		scriptedResult{rowsAffected: 0},
+		scriptedResult{cols: []string{"inserted"}, rows: [][]driver.Value{{true}}},
+		scriptedResult{cols: []string{"inserted"}},
+		scriptedResult{cols: []string{"inserted"}, rows: [][]driver.Value{{false}}},
 	)
 
 	inserted, err := store.InsertMEVEvent(context.Background(), ev)
@@ -389,8 +392,20 @@ func TestInsertMEVEvent_ArgsAndIdempotency(t *testing.T) {
 	if len(stmt.args) != 9 || !strings.Contains(stmt.sql, "$8, NULL, $9") {
 		t.Errorf("profit_usd must be written NULL (9 binds, literal NULL):\n%s", stmt.sql)
 	}
-	if !strings.Contains(stmt.sql, "ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING") {
+	if !strings.Contains(stmt.sql, "ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL DO UPDATE") {
 		t.Errorf("InsertMEVEvent lost its idempotency arm — a re-scanned window would mint duplicate public accusations:\n%s", stmt.sql)
+	}
+	// Only evidence that CONTAINS the stored legs may replace them (#1248).
+	if !strings.Contains(stmt.sql, "WHERE (EXCLUDED.detail -> 'legs') @> (mev_events.detail -> 'legs')") {
+		t.Errorf("InsertMEVEvent's conflict update is not guarded by legs containment:\n%s", stmt.sql)
+	}
+
+	superseded, err := store.InsertMEVEvent(context.Background(), ev)
+	if err != nil {
+		t.Fatalf("InsertMEVEvent (superseding): %v", err)
+	}
+	if superseded {
+		t.Error("an evidence update reported inserted=true; xmax <> 0 means the row already existed")
 	}
 }
 
@@ -416,30 +431,6 @@ func TestInsertMEVEvent_CrossAssetKindStoresNullAsset(t *testing.T) {
 		if v := conn.stmts[0].arg(t, n); v != (sql.NullString{}) {
 			t.Errorf("$%d = %#v, want an invalid sql.NullString (binds SQL NULL)", n, v)
 		}
-	}
-}
-
-// ─── PruneMEVEvents ───────────────────────────────────────────────────
-
-// TestPruneMEVEvents_BoundAndCount: mev_events is a plain table with no
-// retention policy, so this delete is the only thing bounding it. The
-// cutoff is exclusive (rows exactly at `before` survive) and the removed
-// count is returned for the worker's retention metric.
-func TestPruneMEVEvents_BoundAndCount(t *testing.T) {
-	store, conn := newScriptedStore(t, scriptedResult{rowsAffected: 17})
-
-	before := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
-	removed, err := store.PruneMEVEvents(context.Background(), before)
-	if err != nil {
-		t.Fatalf("PruneMEVEvents: %v", err)
-	}
-	if removed != 17 {
-		t.Errorf("removed = %d, want 17", removed)
-	}
-	stmt := conn.only(t)
-	wantTime(t, stmt.arg(t, 1), before)
-	if !strings.Contains(stmt.sql, "DELETE FROM mev_events WHERE detected_at < $1") {
-		t.Errorf("PruneMEVEvents SQL = %q; want an exclusive detected_at < $1 delete", stmt.sql)
 	}
 }
 

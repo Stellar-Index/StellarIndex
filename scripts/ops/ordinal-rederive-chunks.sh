@@ -12,14 +12,13 @@
 #     of sampled accounts came to serve a stale pre-transaction balance.
 #     D3 alone cannot fix them; the ordinals must exist first.
 #
-#   * NOT d2-ordinal-reproject.sh. That script ends in REPLACE PARTITION,
-#     which is safe on the STATIC partitions 39-53 it was written for but
-#     NOT on partition 63 — live ingest appends there continuously, so any
-#     row written between the staging snapshot and the replace would be
-#     silently dropped. ch-backfill re-derives through ExtractLedger ->
-#     extractLedgerEntryChanges and writes idempotent RMT rows that
-#     supersede by ingested_at. No partition swap, safe against live
-#     ingest.
+#   * NOT d2-ordinal-reproject.sh, which is retired and refuses to run:
+#     its SQL ranking is the EntryWalkVersion-1 order, not the ledger-wide
+#     three-phase walk the writer uses. ch-backfill re-derives through
+#     ExtractLedger -> extractLedgerEntryChanges (the current walk) and
+#     writes idempotent RMT rows that supersede by ingested_at. No
+#     partition swap, safe against live ingest. START/BAND_END select any
+#     range, including partitions 39-53, which D2 left in version-1 order.
 #
 #   * CHUNKED because ch-backfill has no resume: one long run that dies
 #     loses all progress. Each ~110k-ledger chunk is durable on its own,

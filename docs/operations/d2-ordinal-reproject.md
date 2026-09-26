@@ -1,10 +1,26 @@
 ---
 title: D2 — in-CH intra_ledger_seq reproject
 last_verified: 2026-07-23
-status: COMPLETE — all partitions 39–53 done + verified (2026-07-23; see v1-launch-plan.md §0)
+status: RETIRED — the formula is the EntryWalkVersion-1 order; do not run (see the notice below)
 ---
 
 # D2 — in-CH `intra_ledger_seq` reproject
+
+> **RETIRED — do not run `scripts/ops/d2-ordinal-reproject.sh`; it now refuses.**
+> Its formula ranks each ledger's rows by `(tx_index, change_index)`, the
+> per-transaction walk of `dispatcher.EntryWalkVersion` 1. Since 2026-07-26 the
+> writer emits the ledger-wide three-phase walk (version 2: every tx's fee
+> changes, then every tx's apply phase, then every post-apply refund), and no
+> SQL over the lake reproduces it — fee, before, after and refund changes all
+> carry `op_index = -1`. The "empirical proof" below compared against
+> version-1 ordinals and proves nothing about version 2.
+>
+> Partitions 39–53 were reprojected by this script on 2026-07-23, before the
+> version-2 walk shipped, so they carry version-1 positions. Re-derive a range
+> through the Go walk with `scripts/ops/ordinal-rederive-chunks.sh`
+> (`ch-backfill`), following
+> [entry-walk-renumbering.md](runbooks/entry-walk-renumbering.md). The rest of
+> this page is kept as the record of what was run.
 
 Restores the per-ledger ordinal on the full-fidelity-but-un-ordinaled rows in
 `stellar.ledger_entry_changes`, so `ledger_entries_current`'s ReplacingMergeTree
@@ -26,7 +42,7 @@ because every entry modification emits `state` + `updated`.
 Cannot be scoped down: sampling 50k ledgers found 90.78% of (ledger, key) pairs
 have multiple changes, and **all** 50,001 ledgers had at least one.
 
-## The formula — VALIDATED, do not change without re-validating
+## The formula — RETIRED (EntryWalkVersion 1 order; wrong for version 2)
 
 ```sql
 intra_ledger_seq =

@@ -1,188 +1,27 @@
 #!/usr/bin/env bash
-# D2 — in-CH intra_ledger_seq reproject for stellar.ledger_entry_changes.
+# d2-ordinal-reproject.sh — RETIRED. Refuses to run, whatever its arguments.
 #
-# Restores the per-ledger ordinal on full-fidelity-but-un-ordinaled rows so
-# ledger_entries_current's ReplacingMergeTree dedup picks the LAST intra-ledger
-# change to a key rather than an arbitrary one (audit C2-4c). See
-# docs/operations/d2-ordinal-reproject.md for the validated formula, the
-# census-row data-loss guard, and why chunking is mandatory.
+# It recomputed stellar.ledger_entry_changes.intra_ledger_seq in SQL, ranking
+# each ledger's rows by (tx_index, change_index): the per-transaction walk that
+# dispatcher.EntryWalkVersion 1 described. The writer has emitted the
+# ledger-wide three-phase walk (EntryWalkVersion 2: every tx's fee changes,
+# then every tx's apply phase, then every post-apply refund) since 2026-07-26,
+# and the lake cannot reproduce that order in SQL — fee, before, after and
+# refund changes all carry op_index -1, so a row does not say which phase it
+# came from. Running this stamps version-1 positions over version-2 ones.
 #
-# Per partition: build a staging table chunk-by-chunk, VERIFY it, then
-# REPLACE PARTITION atomically. Resumable — completed partitions are recorded
-# and skipped. Idempotent — recomputing a correct partition yields identical
-# ordinals.
-#
-# Usage:
-#   d2-ordinal-reproject.sh <first_partition> <last_partition> [chunk_ledgers]
-#   d2-ordinal-reproject.sh 45 45          # canary a single partition
-#   d2-ordinal-reproject.sh 39 53          # the full D2 range
-#
-# Run it under the heavy-job wrapper so the data-pool watchdog can stop it:
-#   run-heavy-job.sh d2-reproject /usr/local/sbin/d2-ordinal-reproject.sh 45 45
+# Re-derive through the Go walk instead: scripts/ops/ordinal-rederive-chunks.sh
+# (ch-backfill -> extractLedgerEntryChanges), following
+# docs/operations/runbooks/entry-walk-renumbering.md. The file is kept, not
+# deleted, so a copy re-installed from this repo overwrites the old one on a
+# host with a refusal rather than leaving it runnable.
 set -euo pipefail
 
-# Optional ops-user credentials (STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD,
-# e.g. from /etc/default/stellarindex-ops). Handed to clickhouse-client via its
-# CLICKHOUSE_USER/CLICKHOUSE_PASSWORD env — never argv, which ps and the journal
-# would show. Unset ⇒ nothing exported; the default user exactly as before.
-if [ -n "${STELLARINDEX_CLICKHOUSE_OPS_USER:-}" ]; then
-  export CLICKHOUSE_USER="$STELLARINDEX_CLICKHOUSE_OPS_USER"
-  export CLICKHOUSE_PASSWORD="${STELLARINDEX_CLICKHOUSE_OPS_PASSWORD:-}"
-fi
-CH="${CH:-clickhouse-client --port 9300}"
-STATE="${D2_STATE:-/var/lib/ch-backfill/d2-done-partitions.txt}"
-FIRST="${1:?first partition}"
-LAST="${2:?last partition}"
-# Ledgers per INSERT. 2500 measured at ~16.2M rows in 24s on partition 45.
-# 25000 was tried first and blew the server's 72 GiB cap outright
-# (MEMORY_LIMIT_EXCEEDED while reading the WIDE entry_xdr/key_xdr columns for
-# ~170M rows). Keep this small; the win from bigger chunks is round-trip
-# overhead only, and the loss is a dead run hours in.
-CHUNK="${3:-2500}"
-SEED=4294967295              # MaxUint32 — ledger_entries_current seed rows, if any
-COLS_NO_ORD="ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_type, key_xdr, entry_xdr, ingested_at, account_id, asset, balance"
-
-mkdir -p "$(dirname "$STATE")"; touch "$STATE"
-log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) d2: $*"; }
-# Per-query limits: cap well under the server's 72 GiB so a chunk SPILLS to disk
-# instead of being killed. This job must never be the reason the server OOMs —
-# live ingest shares the box.
-#
-# THREADS=10 of 20 cores. The canary's first pass ran with 4 and measured 26%
-# user CPU / 65% idle with disks at only ~30% util and peak query memory of
-# 2.91 GiB against the 20 GiB cap — i.e. nothing was saturated except the thread
-# cap itself (4/20 cores ≈ the 26% observed). 10 leaves half the box for live
-# ingest and the API while roughly doubling throughput.
-#
-# NOTE: do NOT parallelise across partitions instead. One partition's staging
-# consumed ~550 GiB of pool; two concurrently would leave under the 300 GiB
-# data-pool watchdog floor and get the job killed mid-run.
-D2_THREADS="${D2_THREADS:-10}"
-q()   { $CH --max_execution_time 3600 \
-            --max_memory_usage 20000000000 \
-            --max_bytes_before_external_sort 4000000000 \
-            --max_bytes_before_external_group_by 4000000000 \
-            --max_threads "$D2_THREADS" \
-            -q "$1"; }
-
-# Destructive-DDL size guard (docs/operations/clickhouse-destructive-ddl.md).
-# REPLACE PARTITION drops the target partition and DROP TABLE drops the
-# ~550 GiB stage — both are refused by max_partition/table_size_to_drop
-# (50 GiB, pinned by ansible 21-clickhouse-drop-guard.yml) unless
-# /var/lib/clickhouse/flags/force_drop_table exists. The flag is
-# consumed by ONE oversize drop, and left in place if the drop was
-# under the limit — so it is touched immediately before each guarded
-# statement and removed right after, never left armed. Require the
-# operator to say so up front (a ZFS snapshot of data/clickhouse first
-# is the procedure) rather than fail hours in on the first REPLACE.
-CH_FLAGS_DIR="${CH_FLAGS_DIR:-/var/lib/clickhouse/flags}"
-if [ "${D2_FORCE_DROP:-}" != "yes" ]; then
-  echo "refusing: D2 replaces partitions of stellar.ledger_entry_changes and drops a >50 GiB stage." >&2
-  echo "Take a ZFS snapshot of data/clickhouse, then re-run with D2_FORCE_DROP=yes" >&2
-  echo "(docs/operations/clickhouse-destructive-ddl.md)." >&2
-  exit 1
-fi
-# guarded_ddl "<statement>" — arm the force flag for exactly this statement.
-guarded_ddl() {
-  # belt-and-braces: a SIGTERM between touch and rm must not leave the flag armed
-  trap 'rm -f "$CH_FLAGS_DIR/force_drop_table"' EXIT
-  touch "$CH_FLAGS_DIR/force_drop_table"; chown clickhouse:clickhouse "$CH_FLAGS_DIR/force_drop_table" 2>/dev/null || true
-  log "force_drop_table armed for: $1"
-  local rc=0; q "$1" || rc=$?
-  rm -f "$CH_FLAGS_DIR/force_drop_table"
-  return $rc
-}
-
-for P in $(seq "$FIRST" "$LAST"); do
-  if grep -qx "$P" "$STATE"; then log "partition $P already done — skipping"; continue; fi
-
-  LO=$(( P * 1000000 )); HI=$(( LO + 999999 ))
-  STAGE="stellar.lec_stage_${P}"
-  log "=== partition $P  ledgers [$LO,$HI] ==="
-
-  # Counts read with FINAL so they are the DEDUPED (RMT-collapsed) row
-  # counts. A re-ingested ledger range leaves exact-duplicate rows across
-  # unmerged parts (measured 2x for ledgers 44,115,806-44,117,805 in
-  # partition 44, 11.18M dup rows). Staging is built from the deduped source
-  # (`AS lec FINAL` below), so the verification must compare against the
-  # deduped source count — a raw count would always exceed staging and abort
-  # a correct run. Same failure class as the transactions-side dup the join
-  # subquery already handles, but on the ledger_entry_changes source itself.
-  SRC_TOTAL=$(q "SELECT count() FROM stellar.ledger_entry_changes FINAL WHERE ledger_seq BETWEEN $LO AND $HI")
-  SRC_CENSUS=$(q "SELECT count() FROM stellar.ledger_entry_changes FINAL WHERE ledger_seq BETWEEN $LO AND $HI AND tx_hash = ''")
-  SRC_SEED=$(q "SELECT count() FROM stellar.ledger_entry_changes WHERE ledger_seq BETWEEN $LO AND $HI AND intra_ledger_seq = $SEED")
-  log "source rows=$SRC_TOTAL census=$SRC_CENSUS seed=$SRC_SEED"
-  if [ "$SRC_TOTAL" = "0" ]; then log "partition $P empty — recording done"; echo "$P" >> "$STATE"; continue; fi
-  # Seed rows would need to be carried through the window untouched. None were
-  # measured in 38-54; refuse rather than silently mishandle them if that changes.
-  if [ "$SRC_SEED" != "0" ]; then log "ABORT: $SRC_SEED seed rows in partition $P — not handled by this script"; exit 1; fi
-
-  guarded_ddl "DROP TABLE IF EXISTS $STAGE"
-  q "CREATE TABLE $STAGE AS stellar.ledger_entry_changes"
-
-  for (( CLO=LO; CLO<=HI; CLO+=CHUNK )); do
-    CHI=$(( CLO + CHUNK - 1 )); [ "$CHI" -gt "$HI" ] && CHI=$HI
-    # (1) real rows — ordinal recomputed in the canonical walk order.
-    #     ORDER BY tx_index, change_index ONLY. op_index must NOT appear:
-    #     it is -1 for fee/TxChangesBefore/After, which would interleave
-    #     tx-level and per-op changes wrongly (the update->remove bug).
-    # (2) census rows (tx_hash='') — NO transaction to join, so they are
-    #     preserved verbatim and EXCLUDED from the window. An inner join
-    #     alone would drop them, and REPLACE PARTITION would then delete
-    #     them permanently (~9M rows across the D2 range). They are removed
-    #     deliberately later, by the cleanup phase.
-    # Named column list: intra_ledger_seq was appended by ALTER TABLE, so
-    # a positional INSERT depends on it staying last — a future ADD COLUMN
-    # or the documented DROP COLUMN rollback would shift it silently.
-    q "INSERT INTO $STAGE ($COLS_NO_ORD, intra_ledger_seq)
-       SELECT lec.ledger_seq, lec.close_time, lec.tx_hash, lec.op_index, lec.change_index,
-              lec.change_type, lec.entry_type, lec.key_xdr, lec.entry_xdr, lec.ingested_at,
-              lec.account_id, lec.asset, lec.balance,
-              toUInt32(row_number() OVER (PARTITION BY lec.ledger_seq
-                                          ORDER BY t.tx_index, lec.change_index) - 1)
-       FROM stellar.ledger_entry_changes AS lec FINAL
-       INNER JOIN (
-         -- DEDUP THE JOIN SIDE. stellar.transactions is a ReplacingMergeTree and
-         -- the backfill re-ran ranges, so old partitions carry UNMERGED duplicate
-         -- parts — measured exactly 2x for ledger 45000000 (320 rows / 160 hashes).
-         -- Joining raw multiplies every lec row by the duplicate factor, so
-         -- row_number() numbers ~2x as many positions and the ordinals come out
-         -- silently DOUBLED. The staging RMT then collapses the duplicate rows on
-         -- merge, hiding the inflation from a naive row-count check — the counts
-         -- reconcile while every ordinal is wrong. argMax on the sort key gives
-         -- exactly one tx_index per (ledger_seq, tx_hash).
-         SELECT ledger_seq, tx_hash, argMax(tx_index, ingested_at) AS tx_index
-         FROM stellar.transactions
-         WHERE ledger_seq BETWEEN $CLO AND $CHI
-         GROUP BY ledger_seq, tx_hash
-       ) AS t
-         ON t.ledger_seq = lec.ledger_seq AND t.tx_hash = lec.tx_hash
-       WHERE lec.ledger_seq BETWEEN $CLO AND $CHI AND lec.tx_hash != ''
-       UNION ALL
-       SELECT $COLS_NO_ORD, intra_ledger_seq
-       FROM stellar.ledger_entry_changes FINAL
-       WHERE ledger_seq BETWEEN $CLO AND $CHI AND tx_hash = ''"
-    log "  chunk [$CLO,$CHI] inserted"
-  done
-
-  # ---- verification gate: every check must pass before REPLACE ----
-  STG_TOTAL=$(q "SELECT count() FROM $STAGE")
-  STG_CENSUS=$(q "SELECT count() FROM $STAGE WHERE tx_hash = ''")
-  # per-ledger ordinals over non-census rows must be a contiguous 0..N-1 set
-  BAD_LEDGERS=$(q "SELECT count() FROM (
-      SELECT ledger_seq FROM $STAGE WHERE tx_hash != ''
-      GROUP BY ledger_seq
-      HAVING max(intra_ledger_seq) + 1 != count() OR uniqExact(intra_ledger_seq) != count())")
-  log "verify: stage rows=$STG_TOTAL (src $SRC_TOTAL) census=$STG_CENSUS (src $SRC_CENSUS) bad_ledgers=$BAD_LEDGERS"
-
-  if [ "$STG_TOTAL" != "$SRC_TOTAL" ]; then log "ABORT p$P: row count mismatch — REFUSING to replace"; exit 1; fi
-  if [ "$STG_CENSUS" != "$SRC_CENSUS" ]; then log "ABORT p$P: census rows lost — REFUSING to replace"; exit 1; fi
-  if [ "$BAD_LEDGERS" != "0" ]; then log "ABORT p$P: $BAD_LEDGERS ledgers with non-contiguous ordinals — REFUSING"; exit 1; fi
-
-  guarded_ddl "ALTER TABLE stellar.ledger_entry_changes REPLACE PARTITION $P FROM $STAGE"
-  guarded_ddl "DROP TABLE $STAGE"
-  echo "$P" >> "$STATE"
-  log "partition $P DONE + verified"
-done
-
-log "all partitions [$FIRST,$LAST] complete"
+cat >&2 <<'MSG'
+d2-ordinal-reproject.sh is retired: it computes intra_ledger_seq in the
+per-transaction walk order (EntryWalkVersion 1), not the ledger-wide
+three-phase order the writer uses (EntryWalkVersion 2).
+Use scripts/ops/ordinal-rederive-chunks.sh and
+docs/operations/runbooks/entry-walk-renumbering.md instead.
+MSG
+exit 2

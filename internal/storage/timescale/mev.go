@@ -2,6 +2,8 @@ package timescale
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -220,13 +222,15 @@ func (s *Store) BlendFillsForMEVScan(ctx context.Context, since time.Time, limit
 	return out, nil
 }
 
-// InsertMEVEvent persists a detected MEV event, idempotent on
-// dedup_key (ON CONFLICT DO NOTHING). Returns inserted=false when the
-// event already existed. profit_usd is written NULL: no detector
-// estimates attacker profit, and trade notional is not profit.
-// Satisfies mev.Sink.
-func (s *Store) InsertMEVEvent(ctx context.Context, e domain.MEVStoredEvent) (bool, error) {
-	const q = `
+// insertMEVEventQuery is idempotent on dedup_key, but a re-scan whose
+// evidence CONTAINS the stored row's legs replaces its evidence columns: a
+// later overlapping scan that found more victims or more round-trip fills
+// supersedes the first partial detection instead of being dropped. A scan
+// that saw less (its window slid past earlier legs) never overwrites.
+// detected_at and the ledger keep the first detection's identity. RETURNING
+// xmax = 0 is true only for a fresh insert, so an update is not counted as
+// a new event.
+const insertMEVEventQuery = `
         INSERT INTO mev_events (
             detected_at, detected_at_ledger, kind,
             asset_id, quote_id, tx_hashes, accounts,
@@ -236,36 +240,33 @@ func (s *Store) InsertMEVEvent(ctx context.Context, e domain.MEVStoredEvent) (bo
             $4, $5, $6, $7,
             $8, NULL, $9
         )
-        ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING
+        ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL DO UPDATE
+           SET tx_hashes = EXCLUDED.tx_hashes,
+               accounts  = EXCLUDED.accounts,
+               detail    = EXCLUDED.detail
+         WHERE (EXCLUDED.detail -> 'legs') @> (mev_events.detail -> 'legs')
+           AND EXCLUDED.detail IS DISTINCT FROM mev_events.detail
+        RETURNING (xmax = 0)
     `
-	res, err := s.db.ExecContext(ctx, q,
+
+// InsertMEVEvent persists a detected MEV event (see insertMEVEventQuery).
+// Returns inserted=true only for a new event. profit_usd is written NULL:
+// no detector estimates attacker profit, and trade notional is not profit.
+// Satisfies mev.Sink.
+func (s *Store) InsertMEVEvent(ctx context.Context, e domain.MEVStoredEvent) (bool, error) {
+	var inserted bool
+	err := s.db.QueryRowContext(ctx, insertMEVEventQuery,
 		e.Timestamp.UTC(), int(e.DetectedAtLedger), e.Kind,
 		nullString(e.AssetID), nullString(e.QuoteID), e.TxHashes, e.Accounts,
 		string(e.DetailJSON), e.DedupKey,
-	)
+	).Scan(&inserted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil // conflict, stored evidence kept
+	}
 	if err != nil {
 		return false, fmt.Errorf("timescale: InsertMEVEvent: %w", err)
 	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
-}
-
-// PruneMEVEvents deletes mev_events whose detected_at is strictly before
-// `before`, returning the row count removed. mev_events is a plain
-// (non-hypertable) table with no TimescaleDB retention policy, and its
-// rows are DERIVED, re-derivable detector output — so the MEV worker
-// calls this each tick to bound the table to a retention window rather
-// than letting flagged-event history grow without limit. The
-// mev_events_detected_idx (detected_at DESC) index keeps the delete a
-// bounded range scan. Satisfies mev.Pruner.
-func (s *Store) PruneMEVEvents(ctx context.Context, before time.Time) (int64, error) {
-	const q = `DELETE FROM mev_events WHERE detected_at < $1`
-	res, err := s.db.ExecContext(ctx, q, before.UTC())
-	if err != nil {
-		return 0, fmt.Errorf("timescale: PruneMEVEvents: %w", err)
-	}
-	n, _ := res.RowsAffected()
-	return n, nil
+	return inserted, nil
 }
 
 // MEVEventRow is one mev_events row for the /v1/mev read path.
