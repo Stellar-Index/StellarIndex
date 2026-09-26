@@ -39,7 +39,14 @@ type SACBalanceSeedProvenance struct {
 	HoldersSeeded int
 	MinLedgerSeen *uint32 // nil when HoldersSeeded == 0
 	MaxLedgerSeen *uint32 // nil when HoldersSeeded == 0
-	SeededAt      time.Time
+	// LakeVerifiedThrough is the ledger through which the lake was proven
+	// intact before a full_history pass emitted anything (migration 0182).
+	// Required for full_history: the source label alone is not evidence.
+	LakeVerifiedThrough *uint32
+	// HoldersRetracted counts the removed / TTL-archived holders written as
+	// tombstones; nil only on rows read back from before migration 0182.
+	HoldersRetracted *int
+	SeededAt         time.Time
 }
 
 // UpsertSACBalanceSeedProvenance records (or overwrites) the most recent
@@ -62,13 +69,20 @@ func (s *Store) UpsertSACBalanceSeedProvenance(ctx context.Context, p SACBalance
 	if p.HoldersSeeded < 0 {
 		return fmt.Errorf("timescale: UpsertSACBalanceSeedProvenance %s: negative HoldersSeeded %d", p.ContractID, p.HoldersSeeded)
 	}
+	if p.Source == SACBalanceSeedSourceFullHistory && p.LakeVerifiedThrough == nil {
+		return fmt.Errorf("timescale: UpsertSACBalanceSeedProvenance %s: full_history without LakeVerifiedThrough — the pass did not prove the lake intact", p.ContractID)
+	}
+	if p.HoldersRetracted != nil && *p.HoldersRetracted < 0 {
+		return fmt.Errorf("timescale: UpsertSACBalanceSeedProvenance %s: negative HoldersRetracted %d", p.ContractID, *p.HoldersRetracted)
+	}
 
 	const q = `
         INSERT INTO sac_balance_seed_provenance (
             contract_id, asset_key, source, holders_seeded,
-            min_ledger_seen, max_ledger_seen, seeded_at
+            min_ledger_seen, max_ledger_seen,
+            lake_verified_through, holders_retracted, seeded_at
         ) VALUES (
-            $1, $2, $3, $4, $5, $6, now()
+            $1, $2, $3, $4, $5, $6, $7, $8, now()
         )
         ON CONFLICT (contract_id) DO UPDATE SET
             asset_key       = EXCLUDED.asset_key,
@@ -76,6 +90,8 @@ func (s *Store) UpsertSACBalanceSeedProvenance(ctx context.Context, p SACBalance
             holders_seeded  = EXCLUDED.holders_seeded,
             min_ledger_seen = EXCLUDED.min_ledger_seen,
             max_ledger_seen = EXCLUDED.max_ledger_seen,
+            lake_verified_through = EXCLUDED.lake_verified_through,
+            holders_retracted     = EXCLUDED.holders_retracted,
             seeded_at       = now()
     `
 	var minLedger, maxLedger sql.NullInt64
@@ -85,8 +101,16 @@ func (s *Store) UpsertSACBalanceSeedProvenance(ctx context.Context, p SACBalance
 	if p.MaxLedgerSeen != nil {
 		maxLedger = sql.NullInt64{Int64: int64(*p.MaxLedgerSeen), Valid: true}
 	}
+	var verified, retracted sql.NullInt64
+	if p.LakeVerifiedThrough != nil {
+		verified = sql.NullInt64{Int64: int64(*p.LakeVerifiedThrough), Valid: true}
+	}
+	if p.HoldersRetracted != nil {
+		retracted = sql.NullInt64{Int64: int64(*p.HoldersRetracted), Valid: true}
+	}
 	if _, err := s.db.ExecContext(ctx, q,
 		p.ContractID, p.AssetKey, string(p.Source), p.HoldersSeeded, minLedger, maxLedger,
+		verified, retracted,
 	); err != nil {
 		return fmt.Errorf("timescale: UpsertSACBalanceSeedProvenance %s: %w", p.ContractID, err)
 	}
@@ -103,7 +127,8 @@ func (s *Store) SACBalanceSeedProvenanceFor(ctx context.Context, contractID stri
 	}
 	const q = `
         SELECT contract_id, asset_key, source, holders_seeded,
-               min_ledger_seen, max_ledger_seen, seeded_at
+               min_ledger_seen, max_ledger_seen,
+               lake_verified_through, holders_retracted, seeded_at
           FROM sac_balance_seed_provenance
          WHERE contract_id = $1
     `
@@ -111,10 +136,12 @@ func (s *Store) SACBalanceSeedProvenanceFor(ctx context.Context, contractID stri
 		p                    SACBalanceSeedProvenance
 		source               string
 		minLedger, maxLedger sql.NullInt64
+		verified             sql.Null[uint32]
+		retracted            sql.Null[int]
 	)
 	err := s.db.QueryRowContext(ctx, q, contractID).Scan(
 		&p.ContractID, &p.AssetKey, &source, &p.HoldersSeeded,
-		&minLedger, &maxLedger, &p.SeededAt,
+		&minLedger, &maxLedger, &verified, &retracted, &p.SeededAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SACBalanceSeedProvenance{}, false, nil
@@ -130,6 +157,12 @@ func (s *Store) SACBalanceSeedProvenanceFor(ctx context.Context, contractID stri
 	if maxLedger.Valid {
 		v := uint32(maxLedger.Int64) //nolint:gosec // ledger seq fits uint32
 		p.MaxLedgerSeen = &v
+	}
+	if verified.Valid {
+		p.LakeVerifiedThrough = &verified.V
+	}
+	if retracted.Valid {
+		p.HoldersRetracted = &retracted.V
 	}
 	p.SeededAt = p.SeededAt.UTC()
 	return p, true, nil

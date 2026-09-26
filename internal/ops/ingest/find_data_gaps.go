@@ -132,7 +132,7 @@ func findDataGaps(args []string) error {
 
 	multi := findDataGapsMultiReport{ScannedAt: time.Now().UTC()}
 	for _, target := range targets {
-		gaps, err := store.FindPerSourceLedgerGaps(rootCtx, target, *from, *to, *minGapSize)
+		gaps, err := store.FindPerSourceLedgerGaps(rootCtx, target, *from, *to, *minGapSize, 0)
 		if err != nil {
 			return fmt.Errorf("find gaps source=%s table=%s: %w", target.Source, target.Table, err)
 		}

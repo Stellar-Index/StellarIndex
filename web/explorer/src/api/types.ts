@@ -4910,9 +4910,9 @@ export interface paths {
          * Unified account-activity feed (ClickHouse movement archive + Postgres tail), newest first.
          * @description ADR-0048 D5: the ClickHouse `stellar.account_movements` movement
          *     archive (ADR-0047/0048 D2) merged, at read time, with the Postgres
-         *     `sep41_transfers` "recent tail" — the one feed spanning an
-         *     address's ENTIRE classic-asset movement history, not just its
-         *     recent SEP-41 activity. Newest first, keyset-paged with
+         *     `sep41_transfers` "recent tail": an address's classic-asset
+         *     movements before P23 and its `transfer` movements from P23 on
+         *     (see KIND SCOPE below). Newest first, keyset-paged with
          *     `?cursor=<opaque>` (echo back `next_cursor`); the cursor is the
          *     composite `(ledger, tx_hash, op_index, leg_index)` plus the
          *     archive watermark the scroll was pinned to.
@@ -4938,7 +4938,16 @@ export interface paths {
          *     page reads the live watermark and pins it into `next_cursor`, so
          *     every page of one scroll shares one boundary; `coverage_note`
          *     names it. The server asserts non-overlap on every request (logs an
-         *     error if ever violated) rather than only documenting it.
+         *     error if ever violated) rather than only documenting it. A cursor
+         *     pinned above the current watermark is rejected with 400
+         *     `invalid-cursor`; restart the scroll without a cursor.
+         *
+         *     KIND SCOPE: from P23 on, both arms carry `transfer` movements
+         *     only. CAP-67 `mint`, `burn` and `clawback` events — every payment
+         *     to or from an asset's issuer among them — are not served after
+         *     P23, and fees and order-book fills are not served at any ledger.
+         *     A `?kind=` other than `transfer` therefore returns pre-P23 rows
+         *     only, and `coverage_note` says so.
          *
          *     SCOPE GAP (documented, not a bug): the Postgres tail only surfaces
          *     `sep41_transfers` rows with `event_kind = 'transfer'` — a pure
@@ -23163,7 +23172,7 @@ export interface operations {
                 limit?: number;
                 /** @description Opaque keyset cursor from a prior response's next_cursor. */
                 cursor?: string;
-                /** @description Filter by movement_kind exact match (e.g. payment, transfer, liquidity_pool_deposit). Omitted = any kind. */
+                /** @description Filter by movement_kind exact match (e.g. payment, transfer, liquidity_pool_deposit). Omitted = any kind. Only `transfer` is served at and after P23 (ledger 58,762,517); any other kind returns pre-P23 rows only. */
                 kind?: string;
                 /** @description Filter by direction. */
                 direction?: "sent" | "received" | "self";

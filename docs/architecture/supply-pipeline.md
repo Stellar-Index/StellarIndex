@@ -367,10 +367,15 @@ path between the hypertable and the served API needed to change.
 non-dry-run pass upserts one row per watched contract recording `source`
 (`current_state` | `full_history`), `holders_seeded`, and
 `min_ledger_seen` / `max_ledger_seen` — the ledger range of the holders'
-own last-modified ledgers, not the ledger the scan ran at. A
-`full_history` row with `min_ledger_seen` well below 62,000,000 is
-direct evidence the floor gap was actually reached for that contract,
-not just a source-label claim. This table is a pure audit trail — it is
+own last-modified ledgers, not the ledger the scan ran at — plus, since
+migration 0182, `holders_retracted` and `lake_verified_through`. A
+`full_history` row is stamped only when the walk proved
+`stellar.ledgers` contiguous and hash-linked through
+`lake_verified_through` before emitting anything; a `full_history` row
+with that column NULL predates the check and the TTL-archival filter and
+is not evidence. On a verified row, `min_ledger_seen` well below
+62,000,000 is direct evidence the floor gap was actually reached for
+that contract. This table is a pure audit trail — it is
 never read by `ClassicSupplyAt` / `SumSACBalancesAtOrBefore` / the
 computed `Supply` — its purpose is letting an operator (or a future
 `supply_cross_check_divergence` downgrade decision, see

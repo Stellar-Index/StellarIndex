@@ -26,8 +26,8 @@ import (
 func substanceAtQuery(t *testing.T, asOf time.Time, window time.Duration, g HistoryGranularity) recordedStmt {
 	t.Helper()
 	store, conn := newScriptedStore(t, scriptedResult{
-		cols: []string{"volume_usd", "buckets", "span_seconds"},
-		rows: [][]driver.Value{{"0", int64(0), int64(0)}},
+		cols: []string{"volume_usd", "buckets", "span_seconds", "valued_buckets"},
+		rows: [][]driver.Value{{"0", int64(0), int64(0), int64(0)}},
 	})
 	bases, quotes := testXLMUSDCLegs(t)
 	if _, err := store.PairMarketSubstanceAt(context.Background(), bases, quotes, asOf, window, g); err != nil {

@@ -77,13 +77,9 @@ run() {
     D2_STATE="$TMP/state/d2.$mode" D3_STATE="$TMP/state/d3.$mode"
     STATE="$TMP/state/st.$mode" LOG="$TMP/backfill.log"
     HOST=stub-host INTERVAL=0 DRIVER_PAT=no-such-driver-$$
-    # D2 refuses to start without an explicit destructive-DDL
-    # acknowledgement (#286) — it exits BEFORE its first query, so
-    # without this the credential contract below never gets a stub
-    # invocation to assert on. Acknowledging is safe here: the stubbed
-    # clickhouse-client fails the first (read-only) query, so the script
-    # bails long before any REPLACE PARTITION or DROP. CH_FLAGS_DIR is
-    # redirected so a future code path can never touch the real
+    # The destructive-DDL acknowledgement the retired D2 script used to
+    # need (#286): supplied so its refusal is proven unconditional.
+    # CH_FLAGS_DIR is redirected so no code path can touch the real
     # /var/lib/clickhouse/flags.
     D2_FORCE_DROP=yes CH_FLAGS_DIR="$TMP/flags"
   )
@@ -143,9 +139,16 @@ check live-catchup ch-live-catchup.sh \
   "--port 9300 -q SELECT max(ledger_seq) FROM stellar.ledgers"
 check supply-seed ch-supply-flows-seed.sh \
   "--port 9300 -q SELECT max(ledger_seq) FROM stellar.ledgers"
-check d2 d2-ordinal-reproject.sh \
-  "--port 9300 --max_execution_time 3600 --max_memory_usage 20000000000 --max_bytes_before_external_sort 4000000000 --max_bytes_before_external_group_by 4000000000 --max_threads 10 -q SELECT count() FROM stellar.ledger_entry_changes FINAL WHERE ledger_seq BETWEEN 45000000 AND 45999999" \
-  45 45
+# d2-ordinal-reproject.sh is retired (#1156): it ranked rows in the
+# EntryWalkVersion-1 order. It must refuse before its first query even with
+# the destructive-DDL acknowledgement that used to let it proceed.
+run d2 set "$OPS_DIR/d2-ordinal-reproject.sh" 45 45
+d2_rc=$?
+if [ "$d2_rc" -ne 0 ] && [ ! -s "$REC" ] && grep -q 'is retired' "$TMP/out.d2.set"; then
+  ok "d2-ordinal-reproject.sh: retired — exits $d2_rc without calling clickhouse-client"
+else
+  bad "d2-ordinal-reproject.sh: expected a retirement refusal with no clickhouse-client call, got rc=$d2_rc, calls=$(wc -l < "$REC")"
+fi
 check d3 d3-lecur-v2-rebuild.sh \
   "--port 9300 --max_execution_time 3600 --max_memory_usage 20000000000 --max_bytes_before_external_sort 4000000000 --max_bytes_before_external_group_by 4000000000 --max_threads 10 -q SELECT max(ledger_seq) FROM stellar.ledger_entry_changes" \
   probe-ordinals

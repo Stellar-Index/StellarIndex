@@ -400,9 +400,54 @@ func TestDetectWashTrades_RoundTrip(t *testing.T) {
 	if len(c.Accounts) != 2 {
 		t.Errorf("accounts = %v", c.Accounts)
 	}
-	wantDedup := "wash_trade:rt:2026-07-04:USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN|native:" + lo + "|" + hi
+	// Symmetric parties: naming the alphabetically-first one as the
+	// principal accused an arbitrary side (#1251).
+	if c.Taker != "" {
+		t.Errorf("round trip names %q as taker; it has two parties and no principal", c.Taker)
+	}
+	wantDedup := "wash_trade:rt:2026-07-04T12:00:00Z:USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN|native:" + lo + "|" + hi
 	if c.DedupKey() != wantDedup {
 		t.Errorf("dedup = %q, want %q", c.DedupKey(), wantDedup)
+	}
+}
+
+// A round trip's identity is a bucket one scan can see whole, not the UTC
+// day (#1248). Keyed on the day, the evening's round trip collided with the
+// morning's stored row and its evidence was dropped.
+func TestDetectWashTrades_RoundTripKeyedOnBucketNotDay(t *testing.T) {
+	x, y := washAccount(t, 2), washAccount(t, 3)
+	slice := func(ts time.Time, txs [4]string) []canonical.Trade {
+		out := make([]canonical.Trade, 0, 4)
+		for i, tx := range txs {
+			maker, taker := y, x
+			if i%2 == 1 {
+				maker, taker = x, y
+			}
+			out = append(out, mkTrade(t, tOpt{
+				tx: tx, ledger: uint32(300 + i), ts: ts.Add(time.Duration(i) * time.Minute),
+				maker: maker, taker: taker, base: "native", quote: usdc,
+			}))
+		}
+		return out
+	}
+	morning := DetectWashTrades(slice(baseTS.Add(-3*time.Hour), [4]string{txA, txB, txC, txD}), nil)
+	evening := DetectWashTrades(slice(baseTS.Add(6*time.Hour), [4]string{txA, txB, txC, txD}), nil)
+	if len(morning) != 1 || len(evening) != 1 {
+		t.Fatalf("got %d / %d candidates, want 1 / 1", len(morning), len(evening))
+	}
+	if morning[0].DedupKey() == evening[0].DedupKey() {
+		t.Errorf("round trips nine hours apart share dedup key %q; the later one is dropped on conflict", morning[0].DedupKey())
+	}
+}
+
+// Some scan must see a whole round-trip bucket, or no stored row ever holds
+// its complete evidence: the bucket plus one worker tick must fit in the
+// default scan window.
+func TestRoundTripBucketFitsTheScanWindow(t *testing.T) {
+	const tick = 5 * time.Minute // cmd/stellarindex-aggregator runs the worker every 5m
+	w := NewWorker(&fakeScanner{}, &fakeSink{}, WorkerConfig{})
+	if roundTripBucket+tick > w.window {
+		t.Errorf("roundTripBucket %v + tick %v exceeds the %v scan window", roundTripBucket, tick, w.window)
 	}
 }
 

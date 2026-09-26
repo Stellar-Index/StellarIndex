@@ -630,7 +630,7 @@ Subcommands:
                           keep the reserve reader on the static fallback
                           forever. Idempotent; the live observer
                           supersedes seeded rows on the next real change.
-  supply seed-sac-balances -config PATH [-ch-addr ADDR] [-full-history] [-write]
+  supply seed-sac-balances -config PATH [-ch-addr ADDR] [-full-history] [-contracts LIST] [-timeout DUR] [-heartbeat PATH] [-write]
                           Seed sac_balance_observations from the lake for
                           every current Balance(Address) entry of each
                           [supply].sac_wrappers contract (ADR-0022 /
@@ -641,7 +641,7 @@ Subcommands:
                           ~ledger-62M-floored current-state projection —
                           heavier, walked in ledger windows, run under
                           run-heavy-job.sh only.
-  supply seed-claimable-balances -config PATH [-ch-addr ADDR] [-assets LIST] [-timeout DUR] [-write]
+  supply seed-claimable-balances -config PATH [-ch-addr ADDR] [-assets LIST] [-timeout DUR] [-heartbeat PATH] [-write]
                           Seed claimable_observations from the ClickHouse
                           lake for every currently-LIVE claimable balance
                           paying a classic credit asset (ADR-0022 /

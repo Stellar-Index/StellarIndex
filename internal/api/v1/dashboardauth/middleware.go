@@ -20,6 +20,12 @@ import (
 // shouldn't keep the goroutine alive.
 const touchTimeout = 2 * time.Second
 
+// sendTimeout caps an outbound mail send that runs after a durable
+// write has already landed (e.g. the magic-link token). The request
+// context is deliberately not used for cancellation there: a client
+// disconnect must not read the same as a provider failure.
+const sendTimeout = 10 * time.Second
+
 // newTouchCtx returns a fresh context for the async TouchSession
 // goroutine. It uses context.WithoutCancel to inherit values
 // (logger / tracing / etc) from the request context but

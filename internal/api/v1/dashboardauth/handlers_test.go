@@ -756,4 +756,26 @@ func TestTruncateUA_RuneSafe(t *testing.T) {
 	}
 }
 
+// TestTruncateUA_BreaksOutOfTemplateDelimiter — RLT-320/RSEC-N1: the
+// plaintext magic-link template renders the UA inside a literal
+// "({{.UserAgent}})" with no escaping. A UA that closes that paren
+// early and adds prose must not survive truncateUA, or the rendered
+// email reads as a trusted, DKIM-signed alert authored by the account
+// owner's own browser.
+func TestTruncateUA_BreaksOutOfTemplateDelimiter(t *testing.T) {
+	ua := `Mozilla/5.0) URGENT: call +1-555-0100 to secure your account (`
+
+	got := truncateUA(ua)
+
+	for _, bad := range []string{"(", ")", ":", "!"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("truncateUA(%q) = %q, still contains delimiter-breaking char %q", ua, got, bad)
+		}
+	}
+	want := "Mozilla/5.0 URGENT call +1-555-0100 to secure your account "
+	if got != want {
+		t.Errorf("truncateUA(%q) = %q, want %q", ua, got, want)
+	}
+}
+
 // TestMaskEmail moved to internal/pii with the implementation (#346 F8).

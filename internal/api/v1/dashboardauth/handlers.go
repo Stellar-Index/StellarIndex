@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -497,7 +498,14 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/login")
 		return
 	}
-	if err := h.cfg.Sender.Send(r.Context(), msg); err != nil {
+	// The magic-link token is already durably written above; a caller
+	// disconnecting (or a ctx cancellation racing the write) must not
+	// abort the send with the same request context, or a client-triggered
+	// cancellation looks identical to a genuine provider failure. Same
+	// context.WithoutCancel idiom as newTouchCtx (middleware.go).
+	sendCtx, cancelSend := context.WithTimeout(context.WithoutCancel(r.Context()), sendTimeout)
+	defer cancelSend()
+	if err := h.cfg.Sender.Send(sendCtx, msg); err != nil {
 		// Instrument the mail outage (task #33 / W8 recon 9c): the send
 		// failure is otherwise swallowed here (200 either way, see below),
 		// so without this counter a Resend outage that silently kills login
@@ -1207,14 +1215,22 @@ func safeText(s string, maxRunes int) string {
 	return s
 }
 
+// uaDangerousChars strips the characters a crafted UA needs to break
+// out of the plaintext magic-link template's literal "(...)" delimiter
+// or otherwise read as unrelated, trusted-looking prose: quoting/paren
+// chars that can close the delimiter early, sentence punctuation
+// ("URGENT:", "call us!"), and Unicode bidi-override / zero-width /
+// line-separator code points (not caught by safeText's <0x20 check,
+// since they aren't ASCII control chars). RLT-320/RSEC-N1: safeText
+// (CS-071) only ever stopped control-char line injection — printable
+// content was rendered verbatim, and the HTML template's escaping
+// (html/template) has no plaintext equivalent.
+var uaDangerousChars = regexp.MustCompile(
+	"[()\"'`:!?<>\\[\\]{}\u200b\u200e\u200f\u2028\u2029\u0085\u202a-\u202e\u2066-\u2069]")
+
 func truncateUA(ua string) string {
 	const maxUALen = 256
-	// CS-071: the UA is rendered verbatim into the plaintext magic-link
-	// email body, so a client-supplied CR/LF (or other control char) could
-	// inject arbitrary lines ("URGENT: account compromised — call …") into a
-	// trusted, DKIM-signed, branded email. (The HTML variant is
-	// html/template-escaped; this closes the plaintext gap.)
-	return safeText(ua, maxUALen)
+	return uaDangerousChars.ReplaceAllString(safeText(ua, maxUALen), "")
 }
 
 // slugFromEmail derives an account slug from the local part of

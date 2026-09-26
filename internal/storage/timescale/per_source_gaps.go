@@ -2,6 +2,7 @@ package timescale
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -535,46 +536,43 @@ func ApplicableGapDetectorTargets(targets []GapDetectorTarget, network string, l
 	return out
 }
 
-// FindPerSourceLedgerGaps finds contiguous ledger-coverage gaps
-// >= minGapSize in the named hypertable, restricted to
-// [from, to]. Same LAG()-over-DISTINCT shape as
-// [FindSorobanEventsLedgerGaps] but parameterised so the gap
-// detector can iterate over every per-source target with one code
-// path.
+// perSourceLedgerGapsQuery builds the LAG()-over-DISTINCT gap query for
+// target, extracted so its shape is unit-testable without a database
+// (mirrors [countDistinctLedgersQuery]'s pattern).
 //
-// SAFETY: target.Table and target.LedgerColumn are interpolated
-// directly into the SQL (Postgres `$N` binding does not work for
-// identifiers). Callers MUST pass a [GapDetectorTarget] from
-// [DefaultGapDetectorTargets] (a compile-time const list); never
-// from user input. The function does NOT validate the identifier
-// shape — the invariant is upstream, in the caller.
-func (s *Store) FindPerSourceLedgerGaps(ctx context.Context, target GapDetectorTarget, from, to, minGapSize int64) ([]LedgerGap, error) {
-	if from < 0 || to < from {
-		return nil, fmt.Errorf("timescale: FindPerSourceLedgerGaps invalid range [%d,%d]", from, to)
-	}
-	if to == 0 {
-		// Defensive: caller passed an unresolved tip. Return empty
-		// rather than scanning the whole table.
-		return nil, nil
-	}
-
-	// Identifier interpolation is safe-by-construction (callers pass
-	// a compile-time const from DefaultGapDetectorTargets; ADR-0030
-	// makes this invariant load-bearing).
+// The `seeded` CTE UNION-ALLs a synthetic ledger row at $4 (the
+// caller's seed) whenever $4 is positive and below the window's `from`
+// ($1). Without a seed, a gap that spans a scan-window boundary — one
+// row just below `from`, the next row `from`+N — is invisible: the
+// preceding row never entered the CTE, so LAG's first pairing inside
+// the window has no `prev_l` and is dropped by `WHERE prev_l IS NOT
+// NULL`. Every steady-state gap threshold (>= 1000 ledgers) is wider
+// than a 30-min or 6h incremental window, so this boundary-split class
+// was the dominant failure mode in steady state (CA2-A10/A11 audit,
+// 2026-09-23). Seeding with the last ledger the PREVIOUS cycle observed
+// present restores the pairing across the boundary at zero extra scan
+// cost — the seed is a single literal row, not a second query over the
+// table.
+func perSourceLedgerGapsQuery(target GapDetectorTarget) string {
 	filter := ""
 	if target.WhereFilter != "" {
 		filter = " AND (" + target.WhereFilter + ")"
 	}
 	//nolint:gosec // G201: identifiers from compile-time const list per ADR-0030
-	query := fmt.Sprintf(`
+	return fmt.Sprintf(`
 		WITH ledgers AS (
 		    SELECT DISTINCT %[1]s AS ledger
 		    FROM %[2]s
 		    WHERE %[1]s BETWEEN $1 AND $2%[3]s
 		),
+		seeded AS (
+		    SELECT ledger FROM ledgers
+		    UNION ALL
+		    SELECT $4::bigint WHERE $4::bigint > 0 AND $4::bigint < $1
+		),
 		ordered AS (
 		    SELECT ledger, LAG(ledger) OVER (ORDER BY ledger) AS prev_l
-		    FROM ledgers
+		    FROM seeded
 		)
 		SELECT prev_l + 1 AS gap_start,
 		       ledger - 1 AS gap_end,
@@ -584,6 +582,78 @@ func (s *Store) FindPerSourceLedgerGaps(ctx context.Context, target GapDetectorT
 		  AND ledger - prev_l - 1 >= $3
 		ORDER BY gap_size DESC
 	`, target.LedgerColumn, target.Table, filter)
+}
+
+// maxLedgerInWindowQuery builds the generic "highest present ledger in
+// [from,to]" query for target, mirroring [countDistinctLedgersQuery].
+// Used to persist the seed [perSourceLedgerGapsQuery] reads on the NEXT
+// cycle. Not routed through any DistinctLedgerCountSQL override: a
+// target with one (soroban-events) opted out of the generic scan
+// because it is a full-table cost on an unindexed column, and the same
+// cost applies here, so [Store.MaxLedgerInWindow] skips those targets
+// entirely rather than substituting a differently-scoped answer.
+func maxLedgerInWindowQuery(target GapDetectorTarget) string {
+	filter := ""
+	if target.WhereFilter != "" {
+		filter = " AND (" + target.WhereFilter + ")"
+	}
+	//nolint:gosec // G201: identifiers from compile-time const list per ADR-0030
+	return fmt.Sprintf(`SELECT MAX(%[1]s) FROM %[2]s WHERE %[1]s BETWEEN $1 AND $2%[3]s`,
+		target.LedgerColumn, target.Table, filter)
+}
+
+// MaxLedgerInWindow returns the highest ledger present in [from,to] for
+// target, and ok=false when the window has no rows at all (NULL max).
+// Skips targets carrying a [GapDetectorTarget.DistinctLedgerCountSQL]
+// override (soroban-events) — see [maxLedgerInWindowQuery].
+func (s *Store) MaxLedgerInWindow(ctx context.Context, target GapDetectorTarget, from, to int64) (int64, bool, error) {
+	if target.DistinctLedgerCountSQL != "" {
+		return 0, false, nil
+	}
+	if from < 0 || to < from || to == 0 {
+		return 0, false, nil
+	}
+	var ledger sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, maxLedgerInWindowQuery(target), from, to).Scan(&ledger); err != nil {
+		return 0, false, fmt.Errorf("timescale: MaxLedgerInWindow %s [%d,%d]: %w", target.Table, from, to, err)
+	}
+	if !ledger.Valid {
+		return 0, false, nil
+	}
+	return ledger.Int64, true, nil
+}
+
+// FindPerSourceLedgerGaps finds contiguous ledger-coverage gaps
+// >= minGapSize in the named hypertable, restricted to
+// [from, to]. Same LAG()-over-DISTINCT shape as
+// [FindSorobanEventsLedgerGaps] but parameterised so the gap
+// detector can iterate over every per-source target with one code
+// path.
+//
+// seedLedger, when positive and below `from`, is UNION-ALLed into the
+// scan as a synthetic prior row so a gap that spans the caller's window
+// boundary (the common steady-state shape once the incremental window
+// is narrower than the threshold — see [perSourceLedgerGapsQuery]) is
+// still detected. Pass 0 for "no seed" (every existing caller besides
+// the gap detector's own steady-state cycle).
+//
+// SAFETY: target.Table and target.LedgerColumn are interpolated
+// directly into the SQL (Postgres `$N` binding does not work for
+// identifiers). Callers MUST pass a [GapDetectorTarget] from
+// [DefaultGapDetectorTargets] (a compile-time const list); never
+// from user input. The function does NOT validate the identifier
+// shape — the invariant is upstream, in the caller.
+func (s *Store) FindPerSourceLedgerGaps(ctx context.Context, target GapDetectorTarget, from, to, minGapSize, seedLedger int64) ([]LedgerGap, error) {
+	if from < 0 || to < from {
+		return nil, fmt.Errorf("timescale: FindPerSourceLedgerGaps invalid range [%d,%d]", from, to)
+	}
+	if to == 0 {
+		// Defensive: caller passed an unresolved tip. Return empty
+		// rather than scanning the whole table.
+		return nil, nil
+	}
+
+	query := perSourceLedgerGapsQuery(target)
 
 	// SQL-level statement_timeout backstop: when the Go-side ctx
 	// times out mid-query the database/sql driver tries to cancel
@@ -605,7 +675,7 @@ func (s *Store) FindPerSourceLedgerGaps(ctx context.Context, target GapDetectorT
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL statement_timeout = '%d'", gapDetectorStatementTimeoutMS)); err != nil {
 		return nil, fmt.Errorf("timescale: FindPerSourceLedgerGaps SET: %w", err)
 	}
-	rows, err := tx.QueryContext(ctx, query, from, to, minGapSize)
+	rows, err := tx.QueryContext(ctx, query, from, to, minGapSize, seedLedger)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: FindPerSourceLedgerGaps %s [%d,%d, min %d]: %w",
 			target.Table, from, to, minGapSize, err)
