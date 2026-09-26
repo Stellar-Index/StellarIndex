@@ -284,7 +284,7 @@ func (s *Server) changeSummaryWithheld(w http.ResponseWriter, r *http.Request, r
 	}
 	var allowed bool
 	if row.EntityType == "coin" {
-		allowed = s.listingPriceAllowed(ctx, base)
+		allowed = s.assetPriceAllowed(ctx, base, changeSummaryGateSurface)
 	} else {
 		allowed = s.substance.Allowed(ctx, base, quote, changeSummaryGateSurface)
 	}

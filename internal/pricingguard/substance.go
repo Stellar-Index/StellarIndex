@@ -167,6 +167,7 @@ const substanceCacheMax = 8192
 
 type substanceVerdict struct {
 	allowed bool
+	floor   SubstanceFloor
 	expires time.Time
 }
 
@@ -197,15 +198,23 @@ type SubstanceGateOptions struct {
 	Logger *slog.Logger
 }
 
-// NewSubstanceGate builds a gate over the store.
+// NewSubstanceGate builds a gate over the store and logs the floors it
+// enforces, defaults resolved: an unset key runs at a value no config
+// file shows.
 func NewSubstanceGate(store SubstanceStore, opts SubstanceGateOptions) *SubstanceGate {
-	return &SubstanceGate{
+	g := &SubstanceGate{
 		store:   store,
 		policy:  opts.Policy.withDefaults(),
 		logger:  opts.Logger,
 		cache:   make(map[string]substanceVerdict),
 		atCache: make(map[string]substanceVerdict),
 	}
+	if g.logger != nil {
+		g.logger.Info("substance gate armed",
+			"min_volume_usd", g.policy.MinVolumeUSD.RatString(), "min_buckets", g.policy.MinBuckets,
+			"min_span", g.policy.MinSpan.String(), "window", g.policy.Window.String())
+	}
+	return g
 }
 
 // SubstanceGated reports whether the pair is in scope for the gate at
@@ -227,9 +236,10 @@ func SubstanceGated(base, quote canonical.Asset) bool {
 }
 
 // SubstanceVerdicter is the per-pair verdict seam [AssetSubstanceVerdict]
-// folds over; *SubstanceGate satisfies it.
+// folds over; *SubstanceGate satisfies it. Probe is uncounted, so the
+// asset-level decision can count once however many quotes it tries.
 type SubstanceVerdicter interface {
-	Verdict(ctx context.Context, base, quote canonical.Asset, surface string) (allowed, measured bool)
+	Probe(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool, floor SubstanceFloor)
 }
 
 // fiatUSD is the USD quote every asset-level verdict tries.
@@ -244,13 +254,17 @@ var fiatUSD = func() canonical.Asset {
 // AssetSubstanceVerdict is the substance gate's answer for a single
 // asset's USD price rather than one pair. The backing quotes are XLM,
 // fiat:USD (the alias union covers the CEX series) and each
-// operator-declared USD peg in usdPegs. Allowed when the asset is out of
-// scope (no on-chain identity), is native (definitionally liquid; its
-// identity pairs degenerate under the alias union), or when ANY backing
-// quote clears the floor. measured is false when no quote cleared and at
-// least one could not be measured. The /v1/assets listing and the
-// priceless-popular tripwire both ask this, so "withheld" means one
-// thing on the surface and on the alert. A nil gate allows.
+// operator-declared USD peg in usdPegs; the degenerate identity pair is
+// skipped. Allowed when the asset is out of scope (no on-chain
+// identity), is native (definitionally liquid; its identity pairs
+// degenerate under the alias union), or when ANY backing quote clears
+// the floor. measured is false when no quote cleared and at least one
+// could not be measured. The /v1/assets listing and the priceless-popular
+// tripwire both ask this, so "withheld" means one thing on the surface
+// and on the alert. A nil gate allows.
+//
+// The quotes are probes of ONE decision, so the withheld/unmeasured
+// metrics count the asset once under `surface`, not once per quote.
 func AssetSubstanceVerdict(
 	ctx context.Context, gate SubstanceVerdicter, asset canonical.Asset,
 	usdPegs []canonical.Asset, surface string,
@@ -267,16 +281,73 @@ func AssetSubstanceVerdict(
 	}
 	quotes := append([]canonical.Asset{canonical.NativeAsset(), fiatUSD}, usdPegs...)
 	measured = true
+	var floor SubstanceFloor
 	for _, quote := range quotes {
-		ok, m := gate.Verdict(ctx, asset, quote, surface)
+		if asset.Equal(quote) {
+			continue
+		}
+		ok, m, f := gate.Probe(ctx, asset, quote)
 		if ok && m {
 			return true, true
 		}
 		if !m {
 			measured = false
 		}
+		floor = furthestFloor(floor, f)
 	}
+	countVerdict(surface, false, measured, floor)
 	return false, measured
+}
+
+// SubstanceFloor names the floor a withheld market failed; it is the
+// `floor` label on obs.PriceServeSubstanceWithheldTotal. The floors are
+// checked in the order below, so a market that fails on volume cleared
+// both persistence floors.
+type SubstanceFloor string
+
+const (
+	// FloorNone: every floor cleared.
+	FloorNone SubstanceFloor = ""
+	// FloorBuckets: too few distinct active buckets in the window.
+	FloorBuckets SubstanceFloor = "buckets"
+	// FloorSpan: the active buckets span too little wall-clock.
+	FloorSpan SubstanceFloor = "span"
+	// FloorVolume: USD volume below the floor, measured over a market
+	// most of whose active buckets carried a USD valuation.
+	FloorVolume SubstanceFloor = "volume"
+	// FloorVolumeUnvalued: USD volume below the floor AND fewer than half
+	// the active buckets carried a USD valuation — the insert-time
+	// waterfall could not value this market (a SEP-41/SEP-41 pair, or an
+	// XLM anchor outage), so the dollar floor failed for want of a dollar
+	// figure rather than on evidence of thinness. Still withheld: an
+	// unvaluable market's volume cannot be verified, and waiving the floor
+	// for it would admit exactly the self-minted pair the gate exists for.
+	FloorVolumeUnvalued SubstanceFloor = "volume_unvalued"
+)
+
+// floorRank orders floors by how far a market got through the checks.
+var floorRank = map[SubstanceFloor]int{
+	FloorNone: 0, FloorBuckets: 1, FloorSpan: 2, FloorVolume: 3, FloorVolumeUnvalued: 4,
+}
+
+// furthestFloor is the floor of whichever of two refused quotes got
+// further — the asset's best market names why the asset was withheld.
+func furthestFloor(a, b SubstanceFloor) SubstanceFloor {
+	if floorRank[b] > floorRank[a] {
+		return b
+	}
+	return a
+}
+
+// countVerdict records one gate decision on the withheld/unmeasured
+// metrics; an allowed decision is not counted.
+func countVerdict(surface string, allowed, measured bool, floor SubstanceFloor) {
+	switch {
+	case !measured:
+		obs.PriceServeSubstanceUnmeasuredTotal.WithLabelValues(surface).Inc()
+	case !allowed:
+		obs.PriceServeSubstanceWithheldTotal.WithLabelValues(surface, string(floor)).Inc()
+	}
 }
 
 // SubstanceOK is the pure decision: does the measured substance clear
@@ -285,19 +356,28 @@ func AssetSubstanceVerdict(
 // with "if the volume cannot be verified, the floor cannot be
 // verified".
 func SubstanceOK(volumeUSD *big.Rat, buckets, spanSeconds int64, policy SubstancePolicy) bool {
+	return FailedFloor(volumeUSD, buckets, buckets, spanSeconds, policy) == FloorNone
+}
+
+// FailedFloor is [SubstanceOK] naming the first floor the measurement
+// fails, or [FloorNone]. valuedBuckets (active buckets carrying a USD
+// valuation) only labels a volume failure; it never changes the verdict.
+func FailedFloor(volumeUSD *big.Rat, buckets, valuedBuckets, spanSeconds int64, policy SubstancePolicy) SubstanceFloor {
 	if volumeUSD == nil {
 		volumeUSD = new(big.Rat)
 	}
-	if volumeUSD.Cmp(policy.MinVolumeUSD) < 0 {
-		return false
+	switch {
+	case buckets < policy.MinBuckets:
+		return FloorBuckets
+	case time.Duration(spanSeconds)*time.Second < policy.MinSpan:
+		return FloorSpan
+	case volumeUSD.Cmp(policy.MinVolumeUSD) < 0:
+		if 2*valuedBuckets < buckets {
+			return FloorVolumeUnvalued
+		}
+		return FloorVolume
 	}
-	if buckets < policy.MinBuckets {
-		return false
-	}
-	if time.Duration(spanSeconds)*time.Second < policy.MinSpan {
-		return false
-	}
-	return true
+	return FloorNone
 }
 
 // Allowed reports whether an aggregated price claim for (base, quote)
@@ -335,11 +415,20 @@ func (g *SubstanceGate) Allowed(ctx context.Context, base, quote canonical.Asset
 // obs.PriceServeSubstanceUnmeasuredTotal. A nil gate and an out-of-scope
 // pair are measured-and-allowed: no verdict is owed for them.
 func (g *SubstanceGate) Verdict(ctx context.Context, base, quote canonical.Asset, surface string) (allowed, measured bool) {
+	allowed, measured, floor := g.Probe(ctx, base, quote)
+	countVerdict(surface, allowed, measured, floor)
+	return allowed, measured
+}
+
+// Probe is [SubstanceGate.Verdict] without the metrics, also naming the
+// floor a withheld pair failed. It is for a caller that folds several
+// pairs into one decision and counts that decision itself.
+func (g *SubstanceGate) Probe(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool, floor SubstanceFloor) {
 	if g == nil {
-		return true, true
+		return true, true, FloorNone
 	}
 	if !SubstanceGated(base, quote) {
-		return true, true
+		return true, true, FloorNone
 	}
 	key := pairCacheKey(base, quote)
 	now := g.clock()
@@ -347,47 +436,46 @@ func (g *SubstanceGate) Verdict(ctx context.Context, base, quote canonical.Asset
 	prior, hadPrior := g.cache[key]
 	if hadPrior && now.Before(prior.expires) {
 		g.mu.Unlock()
-		if !prior.allowed {
-			obs.PriceServeSubstanceWithheldTotal.WithLabelValues(surface).Inc()
-		}
-		return prior.allowed, true
+		return prior.allowed, true, prior.floor
 	}
 	g.mu.Unlock()
 
-	allowed, measured = g.measure(ctx, base, quote)
+	allowed, measured, floor = g.measure(ctx, base, quote)
 	if !measured {
 		// Not cached, so the next request re-measures.
-		obs.PriceServeSubstanceUnmeasuredTotal.WithLabelValues(surface).Inc()
-		return false, false
+		return false, false, FloorNone
 	}
 	g.mu.Lock()
 	if len(g.cache) >= substanceCacheMax {
 		g.cache = make(map[string]substanceVerdict)
 	}
-	g.cache[key] = substanceVerdict{allowed: allowed, expires: now.Add(substanceCacheTTL)}
+	g.cache[key] = substanceVerdict{allowed: allowed, floor: floor, expires: now.Add(substanceCacheTTL)}
 	g.mu.Unlock()
-	if !allowed {
-		obs.PriceServeSubstanceWithheldTotal.WithLabelValues(surface).Inc()
-		// Log on verdict TRANSITIONS only — first observation of a pair,
-		// or a flip from allowed. The steady state (hundreds of thin
-		// long-tail pairs re-measured every TTL expiry) produced 6,000
-		// WARNs/hour on r1 (2026-08-05), churning the journald ring
-		// buffer past anything an operator could triage; the metric is
-		// the volume signal, the log is the change signal.
-		if g.logger != nil && (!hadPrior || prior.allowed) {
-			g.logger.Warn("substance gate: aggregated price withheld — trailing market below serve floor",
-				"base", base.String(), "quote", quote.String(), "surface", surface)
-		}
-	} else if g.logger != nil && hadPrior && !prior.allowed {
-		g.logger.Info("substance gate: pair recovered above the serve floor — price serving resumed",
-			"base", base.String(), "quote", quote.String(), "surface", surface)
+	g.logTransition(base, quote, allowed, floor, hadPrior, prior.allowed)
+	return allowed, true, floor
+}
+
+// logTransition logs a pair's verdict on TRANSITIONS only — first
+// observation, or a flip. The steady state (hundreds of thin long-tail
+// pairs re-measured every TTL expiry) produced 6,000 WARNs/hour on r1
+// (2026-08-05); the metric is the volume signal, the log is the change
+// signal.
+func (g *SubstanceGate) logTransition(base, quote canonical.Asset, allowed bool, floor SubstanceFloor, hadPrior, priorAllowed bool) {
+	if g.logger == nil {
+		return
 	}
-	return allowed, true
+	if !allowed && (!hadPrior || priorAllowed) {
+		g.logger.Warn("substance gate: aggregated price withheld — trailing market below serve floor",
+			"base", base.String(), "quote", quote.String(), "floor", string(floor))
+	} else if allowed && hadPrior && !priorAllowed {
+		g.logger.Info("substance gate: pair recovered above the serve floor — price serving resumed",
+			"base", base.String(), "quote", quote.String())
+	}
 }
 
 // measure runs the alias-union substance measurement. measured=false
 // means an infrastructure error prevented a verdict.
-func (g *SubstanceGate) measure(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool) {
+func (g *SubstanceGate) measure(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool, floor SubstanceFloor) {
 	return g.measureUnion(ctx, base, quote, g.policy,
 		func(ctx context.Context, bases, quotes []canonical.Asset) (timescale.MarketSubstance, error) {
 			return g.store.PairMarketSubstance(ctx, bases, quotes, g.policy.Window)
@@ -403,21 +491,22 @@ func (g *SubstanceGate) measure(ctx context.Context, base, quote canonical.Asset
 func (g *SubstanceGate) measureUnion(
 	ctx context.Context, base, quote canonical.Asset, policy SubstancePolicy,
 	read func(ctx context.Context, bases, quotes []canonical.Asset) (timescale.MarketSubstance, error),
-) (allowed, measured bool) {
+) (allowed, measured bool, floor SubstanceFloor) {
 	sub, err := read(ctx, canonical.AssetAliases(base), canonical.AssetAliases(quote))
 	if err != nil {
 		if g.logger != nil && ctx.Err() == nil {
 			g.logger.Warn("substance gate: measurement failed — no verdict for the pair",
 				"base", base.String(), "quote", quote.String(), "err", err)
 		}
-		return true, false
+		return true, false, FloorNone
 	}
 	vol, ok := new(big.Rat).SetString(sub.VolumeUSD)
 	if !ok {
 		// An unparsable volume verifies nothing, so it fails the volume leg.
 		vol = new(big.Rat)
 	}
-	return SubstanceOK(vol, sub.Buckets, sub.SpanSeconds, policy), true
+	floor = FailedFloor(vol, sub.Buckets, sub.ValuedBuckets, sub.SpanSeconds, policy)
+	return floor == FloorNone, true, floor
 }
 
 // hourGrainPolicy is the floor a market is held to when its legs are
@@ -514,29 +603,24 @@ func (g *SubstanceGate) AllowedAt(ctx context.Context, base, quote canonical.Ass
 	prior, hadPrior := g.atCache[key]
 	g.mu.Unlock()
 	if hadPrior && now.Before(prior.expires) {
-		if !prior.allowed {
-			obs.PriceServeSubstanceWithheldTotal.WithLabelValues(surface).Inc()
-		}
+		countVerdict(surface, prior.allowed, true, prior.floor)
 		return prior.allowed
 	}
 
-	allowed, measured := g.measureUnion(ctx, base, quote, policy,
+	allowed, measured, floor := g.measureUnion(ctx, base, quote, policy,
 		func(ctx context.Context, bases, quotes []canonical.Asset) (timescale.MarketSubstance, error) {
 			return g.store.PairMarketSubstanceAt(ctx, bases, quotes, asOf, policy.Window, grain)
 		})
+	countVerdict(surface, allowed, measured, floor)
 	if !measured {
-		obs.PriceServeSubstanceUnmeasuredTotal.WithLabelValues(surface).Inc()
 		return true
 	}
 	g.mu.Lock()
 	if len(g.atCache) >= substanceCacheMax {
 		g.atCache = make(map[string]substanceVerdict)
 	}
-	g.atCache[key] = substanceVerdict{allowed: allowed, expires: now.Add(substanceCacheTTL)}
+	g.atCache[key] = substanceVerdict{allowed: allowed, floor: floor, expires: now.Add(substanceCacheTTL)}
 	g.mu.Unlock()
-	if !allowed {
-		obs.PriceServeSubstanceWithheldTotal.WithLabelValues(surface).Inc()
-	}
 	return allowed
 }
 

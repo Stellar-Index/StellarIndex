@@ -265,6 +265,20 @@ func (g Gate) PriceWithholdingAt(ctx context.Context, base, quote canonical.Asse
 	return WithholdingFor(g.Scam.WithheldPair(ctx, base, quote, surface), g.Substance.AllowedAt(ctx, base, quote, at, surface))
 }
 
+// AssetValueWithholding is the gate's answer for an ASSET's USD value
+// rather than one pair: withheld when its issuer is flagged, or when no
+// backing quote ([AssetSubstanceVerdict]) clears the substance floor on
+// evidence. An unmeasured asset is served, the pair gate's fail-open.
+// Each half counts the asset once, however many quotes it probes; the
+// flag short-circuits the substance probes.
+func (g Gate) AssetValueWithholding(ctx context.Context, asset canonical.Asset, usdPegs []canonical.Asset, surface string) Withholding {
+	if g.Scam.withheldLeg(ctx, asset, surface) {
+		return WithheldFlaggedIssuer
+	}
+	allowed, measured := AssetSubstanceVerdict(ctx, g.Substance, asset, usdPegs, surface)
+	return WithholdingFor(false, allowed || !measured)
+}
+
 // WithholdingFor folds the two gates' verdicts into one; a flagged issuer
 // takes precedence. Callers holding their own gate seams fold through here.
 func WithholdingFor(scamFlagged, substanceAllowed bool) Withholding {

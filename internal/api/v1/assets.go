@@ -1614,7 +1614,13 @@ func (s *Server) applySubstanceGateToListing(ctx context.Context, rows []AssetDe
 // that only need yes/no. It fails CLOSED: an unmeasured row is not
 // allowed.
 func (s *Server) listingPriceAllowed(ctx context.Context, asset canonical.Asset) bool {
-	allowed, _ := s.listingSubstanceVerdict(ctx, asset)
+	return s.assetPriceAllowed(ctx, asset, "listing")
+}
+
+// assetPriceAllowed is [Server.listingPriceAllowed] for a caller that is
+// not the listing, counted under its own `surface`.
+func (s *Server) assetPriceAllowed(ctx context.Context, asset canonical.Asset, surface string) bool {
+	allowed, _ := pricingguard.AssetSubstanceVerdict(ctx, s.substance, asset, s.usdPeggedClassics, surface)
 	return allowed
 }
 

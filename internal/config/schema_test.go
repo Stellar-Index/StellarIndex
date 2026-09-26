@@ -100,15 +100,20 @@ func assertDefaultSubstancePolicy(t *testing.T, label string, pg cfg.PricingGuar
 }
 
 // TestPricingGuard_RejectsUnsatisfiableOrOverflowingSubstance: a span floor
-// at or above the window, a bucket floor above the window's minute count, or
-// a window that wraps time.Duration must fail the load — the first two
-// withhold every pair, the last serves every pair unguarded, all silently.
+// above what the window's closed buckets can span, a bucket floor above the
+// count they can hold, or a window that wraps time.Duration must fail the
+// load — the first two withhold every pair, the last serves every pair
+// unguarded, all silently. Off a minute boundary a 24h window holds 1439
+// closed buckets spanning 1438 minutes; 1440 buckets or a 1439-minute span
+// clear only on a read landing exactly on the minute.
 func TestPricingGuard_RejectsUnsatisfiableOrOverflowingSubstance(t *testing.T) {
 	reject := map[string]string{
 		"span equals default window":   "substance_min_span_minutes = 1440",
+		"span one under window":        "substance_min_span_minutes = 1439",
 		"span above default window":    "substance_min_span_minutes = 2000",
 		"span equals explicit window":  "substance_min_span_minutes = 120\nsubstance_window_hours = 2",
 		"default span vs short window": "substance_window_hours = 6",
+		"buckets at window":            "substance_min_buckets = 1440",
 		"buckets above window":         "substance_min_buckets = 1441",
 		"window wraps Duration":        "substance_window_hours = 3000000",
 		"window above cap":             "substance_window_hours = 9601",
@@ -126,8 +131,8 @@ func TestPricingGuard_RejectsUnsatisfiableOrOverflowingSubstance(t *testing.T) {
 	}
 	accept := map[string]string{
 		"defaults":                 "",
-		"span just under window":   "substance_min_span_minutes = 1439",
-		"buckets at window":        "substance_min_buckets = 1440",
+		"span at reachable bound":  "substance_min_span_minutes = 1438",
+		"buckets at closed count":  "substance_min_buckets = 1439",
 		"window at cap":            "substance_window_hours = 9600",
 		"short window, short span": "substance_min_span_minutes = 60\nsubstance_window_hours = 2",
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
 func strptr(s string) *string { return &s }
@@ -206,8 +207,8 @@ func (g *stubListingGate) Allowed(_ context.Context, base, quote canonical.Asset
 	return g.allow[base.String()+"|"+quote.String()]
 }
 
-func (g *stubListingGate) Verdict(ctx context.Context, base, quote canonical.Asset, surface string) (allowed, measured bool) {
-	return g.Allowed(ctx, base, quote, surface), true
+func (g *stubListingGate) Probe(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool, floor pricingguard.SubstanceFloor) {
+	return g.Allowed(ctx, base, quote, "probe"), true, pricingguard.FloorNone
 }
 
 // TestApplySubstanceGateToListing — the listing's price_usd enrichment
