@@ -44,9 +44,10 @@
   # needs core >= 28 by 2026-09-16, else galexie's captive core refuses to sync
   # past the upgrade ledger and ingestion halts): pin stellar_core_version to
   # the target in inventory (e.g. "28.0.1-3508.947aad841.noble") and this
-  # installs/upgrades to exactly that. Leave it unset ("") for the fresh-host
-  # "latest available" install (test nets) or the never-upgrade behavior on an
-  # existing host. See docs/operations/protocol-upgrades.md.
+  # installs/upgrades to exactly that. Unset (""), a deploy never upgrades an
+  # existing binary; stellar-core-auto-upgrade.timer (below) does, verified
+  # and with rollback. A pin also stops the timer. See
+  # docs/operations/protocol-upgrades.md.
   ansible.builtin.apt:
     name: "stellar-core{{ ('=' + stellar_core_version) if (stellar_core_version | default('')) else '' }}"
     state: present
@@ -722,6 +723,38 @@
   when:
     # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
     - not (ansible_check_mode and galexie_archive_tip_lag_units is changed)
+
+# The version-lag page detected core 29.0.0 within a day and then sat
+# unactioned for 2.5 days of a 7-day runway to the P29 vote. The timer installs
+# a newer apt core itself, verified against the ledger tip with rollback.
+- name: Install stellar-core-auto-upgrade
+  ansible.builtin.copy:
+    src: stellar-core-auto-upgrade.sh
+    dest: /usr/local/sbin/stellar-core-auto-upgrade
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install stellar-core-auto-upgrade systemd service + timer
+  ansible.builtin.template:
+    src: "systemd/{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - stellar-core-auto-upgrade.service
+    - stellar-core-auto-upgrade.timer
+  notify: Reload systemd
+  register: stellar_core_auto_upgrade_units
+
+- name: Enable stellar-core-auto-upgrade.timer
+  ansible.builtin.systemd:
+    name: stellar-core-auto-upgrade.timer
+    state: "{{ 'started' if stellar_core_auto_upgrade else 'stopped' }}"
+    enabled: "{{ stellar_core_auto_upgrade | bool }}"
+    daemon_reload: true
+  when:
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and stellar_core_auto_upgrade_units is changed)
 
 # DR-asset shape guard: hourly partition-contiguity scan of the
 # durable mirror (holes/overlaps other than the declared trim page).

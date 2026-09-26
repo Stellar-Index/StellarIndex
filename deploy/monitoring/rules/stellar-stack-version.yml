@@ -181,6 +181,51 @@ groups:
             patterns" section of the runbook covers the API-degradation
             case.
 
+      # ── Core auto-upgrade (stellar-core-auto-upgrade.timer) ──
+      # The timer acts on the lag the alerts above detect. rolled_back means
+      # a new core did not advance the tip and the old one is back: ingest is
+      # fine today, but that old core halts at the next protocol vote.
+      - alert: stellarindex_stellar_core_autoupgrade_failed
+        expr: stellarindex_stellar_core_autoupgrade_result{result=~"rolled_back|failed"} == 1
+        for: 5m
+        labels:
+          severity: page
+          team: stellarindex
+          component: stellar-stack
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+          summary: "stellar-core auto-upgrade to {{ $labels.candidate }} {{ $labels.result }} ({{ $labels.reason }})"
+          description: |
+            stellar-core-auto-upgrade could not move core from
+            {{ $labels.installed }} to {{ $labels.candidate }} with the
+            galexie tip advancing. rolled_back: the previous core is
+            reinstalled and ingest continues, until the next protocol
+            vote halts it. failed: ingest may be down now. Read
+            `journalctl -u stellar-core-auto-upgrade -u galexie`, then
+            follow the runbook's coordinated-upgrade checklist by hand.
+
+      # Two missed 6-hourly runs, or never ran: the timer is dead and the
+      # lag alerts are back to depending on a human.
+      - alert: stellarindex_stellar_core_autoupgrade_stale
+        expr: |
+          (time() - max without (file) (stellarindex_stellar_core_autoupgrade_last_run_timestamp_seconds)) > 64800
+          or
+          absent_over_time(stellarindex_stellar_core_autoupgrade_last_run_timestamp_seconds[1d])
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: stellar-stack
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+          summary: "stellar-core auto-upgrade has not completed a run in 18h"
+          description: |
+            stellar-core-auto-upgrade.timer has not completed a run in
+            three 6-hour periods. Check `systemctl status
+            stellar-core-auto-upgrade.timer` and the service journal. A
+            result of skipped with reason pinned or stop_file is a
+            deliberate hold and still counts as a run.
+
       # ── Reactive backstop: a component CANNOT DECODE current ledger meta ──
       # The proactive guard above (version_lag) is the primary defence and
       # should fire first. This catches the case it structurally cannot:

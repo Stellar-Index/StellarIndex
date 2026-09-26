@@ -28,8 +28,8 @@ enforces it); any per-alert detail page follows it.
 
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
-  | `page` | 60 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 213 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `page` | 61 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
+  | `ticket` | 214 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -347,6 +347,8 @@ textfile collector.
 | `stellarindex_stellar_stack_lagging` | `stellarindex_stellar_stack_version_lag` per `component` | >= 1 for 2 d | ticket | [stellar-stack-version-lag](runbooks/stellar-stack-version-lag.md) |
 | `stellarindex_stellar_stack_protocol_lag` | same | >= 2 for 6 h | page | [stellar-stack-version-lag](runbooks/stellar-stack-version-lag.md) |
 | `stellarindex_stellar_stack_probe_degraded` | `stellarindex_stellar_stack_probe_success`, plus `node_textfile_mtime_seconds` for the probe's own file | a run could not classify an installed component, the file has not been rewritten in 48 h, or the canary was never written — for > 1 h | ticket | [stellar-stack-version-lag](runbooks/stellar-stack-version-lag.md) |
+| `stellarindex_stellar_core_autoupgrade_failed` | `stellarindex_stellar_core_autoupgrade_result{result=~"rolled_back|failed"}` | == 1 for > 5 min: a newer core did not advance the galexie tip and was rolled back, or the rollback stalled too | page | [stellar-stack-version-lag](runbooks/stellar-stack-version-lag.md) |
+| `stellarindex_stellar_core_autoupgrade_stale` | `stellarindex_stellar_core_autoupgrade_last_run_timestamp_seconds` | no completed run in 18 h, or never written in 1 d — for > 1 h | ticket | [stellar-stack-version-lag](runbooks/stellar-stack-version-lag.md) |
 | `stellarindex_ledger_meta_decode_failing` | `stellarindex_ledger_meta_decode_failures_total` per `unit` | > 0 for 10 m | page | [ledger-meta-decode-failing](runbooks/ledger-meta-decode-failing.md) |
 | `stellarindex_ledger_meta_decode_probe_stale` | `stellarindex_ledger_meta_decode_probe_updated_seconds` | age > 1 h for 30 m | ticket | [ledger-meta-decode-failing](runbooks/ledger-meta-decode-failing.md) |
 

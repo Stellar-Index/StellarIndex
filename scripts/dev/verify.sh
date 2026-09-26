@@ -355,6 +355,7 @@ echo "=== data-freshness watchdog self-test ===" && ./scripts/ci/data-freshness-
 echo "=== TimescaleDB job/CAGG probe self-test ===" && ./scripts/ci/timescale-jobs-probe-test.sh
 echo "=== galexie catchup probe self-test ===" && ./scripts/ci/galexie-catchup-probe-test.sh
 echo "=== galexie archive contiguity self-test ===" && ./scripts/ci/galexie-archive-contiguity-test.sh
+echo "=== stellar-core auto-upgrade self-test ===" && ./scripts/ci/stellar-core-auto-upgrade-test.sh
 echo "=== galexie archive tip-lag self-test ===" && ./scripts/ci/galexie-archive-tip-lag-test.sh
 # BASE_SHA-gated. Both this and lint-replay-plan.sh below take their
 # comparison base from the environment, and with none set they print a skip

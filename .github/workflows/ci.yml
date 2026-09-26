@@ -1533,6 +1533,11 @@ jobs:
         # on that bucket's shape. These fixtures run the shipped script
         # against a stubbed mc. No MinIO, no systemd.
         run: ./scripts/ci/galexie-archive-contiguity-test.sh
+      - name: stellar-core auto-upgrade self-test
+        # The timer that installs a newer apt stellar-core under galexie and
+        # rolls back when the ledger tip stalls. These fixtures run the shipped
+        # script against stubbed apt/dpkg/systemctl. No systemd, no apt.
+        run: ./scripts/ci/stellar-core-auto-upgrade-test.sh
       - name: galexie archive tip-lag self-test
         # An unreadable bucket published lag 0 with a fresh success stamp,
         # disarming every tip-lag threshold. Runs the shipped script against
