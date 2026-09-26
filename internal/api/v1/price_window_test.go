@@ -5,6 +5,7 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -137,6 +138,57 @@ func TestHandlePriceWindowed_CompositeFlags(t *testing.T) {
 			if !strings.Contains(body, want) {
 				t.Errorf("body missing %s: %s", want, body)
 			}
+		}
+	})
+}
+
+// heldWindowStub serves one window's value observed at a fixed instant,
+// standing in for a vwap: key a freeze keeps alive past its window.
+type heldWindowStub struct{ observedAt time.Time }
+
+func (s heldWindowStub) LookupTriangulatedVWAP(context.Context, canonical.Asset, canonical.Asset, time.Duration) (CachedVWAP, bool, error) {
+	return CachedVWAP{Value: "0.998", ObservedAt: s.observedAt}, true, nil
+}
+
+// TestHandlePriceWindowed_FrozenIsStale pins GH-761: a frozen pair's
+// ?window= value is the one the freeze holds, below the window's
+// baseline, so it ships flags.stale=true exactly as the default path does.
+func TestHandlePriceWindowed_FrozenIsStale(t *testing.T) {
+	asset, _ := canonical.ParseAsset("crypto:USDC")
+	quote, _ := canonical.ParseAsset("fiat:USD")
+	heldAt := time.Now().UTC().Add(-2*time.Hour - 20*time.Minute).Truncate(time.Minute)
+	serve := func(t *testing.T, s *Server) (PriceSnapshot, Flags) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/v1/price?asset=crypto:USDC&quote=fiat:USD&window=300", nil)
+		s.handlePriceWindowed(rec, req, asset, quote, "300")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+		}
+		var env struct {
+			Data  PriceSnapshot `json:"data"`
+			Flags Flags         `json:"flags"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+			t.Fatalf("decode: %v body %s", err, rec.Body.String())
+		}
+		return env.Data, env.Flags
+	}
+
+	t.Run("frozen serve is stale and carries the held observation time", func(t *testing.T) {
+		snap, flags := serve(t, &Server{triangulated: heldWindowStub{observedAt: heldAt}, freeze: frozenPairStub{}})
+		if !flags.Frozen || !flags.Stale {
+			t.Errorf("frozen ?window= serve: frozen=%v stale=%v, want both true", flags.Frozen, flags.Stale)
+		}
+		if got := time.Time(snap.ObservedAt); !got.Equal(heldAt) {
+			t.Errorf("observed_at = %s, want the held value's %s", got, heldAt)
+		}
+	})
+
+	t.Run("unfrozen serve is in-contract", func(t *testing.T) {
+		_, flags := serve(t, &Server{triangulated: heldWindowStub{observedAt: time.Now().UTC()}})
+		if flags.Frozen || flags.Stale {
+			t.Errorf("unfrozen ?window= serve: frozen=%v stale=%v, want both false", flags.Frozen, flags.Stale)
 		}
 	})
 }
