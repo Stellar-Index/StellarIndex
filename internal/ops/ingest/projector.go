@@ -65,15 +65,11 @@ func projectorReplay(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *cfgPath == "" || *source == "" || *from == 0 {
+	if *cfgPath == "" || *source == "" || uint32(*from) == 0 {
 		return errors.New("-config, -source, and -from are required")
 	}
 	if *refreshOnly {
-		if *refreshTo == 0 || uint32(*refreshTo) < uint32(*from) {
-			return errors.New("-refresh-only requires -refresh-to >= -from")
-		}
-		gate.Banner()
-		return projectorRefreshOnly(*cfgPath, *source, uint32(*from), uint32(*refreshTo), gate.DryRun())
+		return projectorRefreshOnly(*cfgPath, *source, uint32(*from), uint32(*refreshTo), gate)
 	}
 	// Before the config load and before any store access: a refusal
 	// must not depend on a reachable database, and applies to -dry-run
@@ -129,9 +125,6 @@ func projectorReplay(args []string) error {
 	}
 	currentLedger := cursor.LastLedger
 	target := uint32(*from)
-	if target == 0 {
-		return fmt.Errorf("invalid -from %d", *from)
-	}
 	if target >= currentLedger {
 		// The cursor has NOT reached the requested ledger, so there is
 		// nothing to rewind: the live projector's forward pass covers it.
@@ -221,8 +214,12 @@ func projectorReplay(args []string) error {
 // already written. It still fails closed if the cursor has not actually
 // reached `to` — the same "don't refresh rows that aren't there yet"
 // invariant awaitProjectorCursor enforces on the rewind path.
-func projectorRefreshOnly(cfgPath, source string, from, to uint32, dryRun bool) error {
-	if dryRun {
+func projectorRefreshOnly(cfgPath, source string, from, to uint32, gate *opsutil.WriteGate) error {
+	if to == 0 || to < from {
+		return errors.New("-refresh-only requires -refresh-to >= -from")
+	}
+	gate.Banner()
+	if gate.DryRun() {
 		_, _ = fmt.Fprintf(os.Stdout,
 			"dry-run: would refresh the price CAGGs over ledgers [%d,%d] for source=%q (no cursor rewind)\n",
 			from, to, source)
