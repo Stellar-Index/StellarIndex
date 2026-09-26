@@ -104,13 +104,9 @@ the `env:` column.
 | Key | Type | Default | Env override | Description |
 | --- | ---- | ------- | ------------ | ----------- |
 | `external.binance.enabled` | `bool` | `false` | — | Whether this connector runs. Off by default — no network egress until operator opts in. |
-| `external.binance.poll_interval` | `int64` | _(required)_ | — | Override the connector's built-in default poll cadence (e.g. "120s"). Empty/zero uses the connector default. |
 | `external.kraken.enabled` | `bool` | `false` | — | Whether this connector runs. Off by default — no network egress until operator opts in. |
-| `external.kraken.poll_interval` | `int64` | _(required)_ | — | Override the connector's built-in default poll cadence (e.g. "120s"). Empty/zero uses the connector default. |
 | `external.bitstamp.enabled` | `bool` | `false` | — | Whether this connector runs. Off by default — no network egress until operator opts in. |
-| `external.bitstamp.poll_interval` | `int64` | _(required)_ | — | Override the connector's built-in default poll cadence (e.g. "120s"). Empty/zero uses the connector default. |
 | `external.coinbase.enabled` | `bool` | `false` | — | Whether this connector runs. Off by default — no network egress until operator opts in. |
-| `external.coinbase.poll_interval` | `int64` | _(required)_ | — | Override the connector's built-in default poll cadence (e.g. "120s"). Empty/zero uses the connector default. |
 | `external.exchangeratesapi.enabled` | `bool` | `false` | — | Whether this connector runs. Off by default. |
 | `external.exchangeratesapi.api_key` | `string` | _(required)_ | `EXCHANGERATESAPI_KEY` | ExchangeRatesApi access key. Prefer env var; TOML fallback exists for local-dev convenience. |
 | `external.exchangeratesapi.base` | `string` | `USD` | — | Base currency (USD, EUR, GBP, …). Defaults to USD. Free tier locked to EUR; paid tier accepts any allow-listed fiat. |
@@ -123,7 +119,7 @@ the `env:` column.
 | `external.cryptocompare.enabled` | `bool` | `false` | — | Whether this connector runs. Off by default. |
 | `external.cryptocompare.api_key` | `string` | _(required)_ | `CRYPTOCOMPARE_API_KEY` | CryptoCompare API key, passed as 'Authorization: Apikey <KEY>'. Prefer env var. |
 | `external.ecb.enabled` | `bool` | `false` | — | Whether this connector runs. Off by default — no network egress until operator opts in. |
-| `external.ecb.poll_interval` | `int64` | _(required)_ | — | Override the connector's built-in default poll cadence (e.g. "120s"). Empty/zero uses the connector default. |
+| `external.ecb.poll_interval` | `int64` | _(required)_ | — | Override the connector's built-in default poll cadence (e.g. "12h"). Empty/zero uses the connector default. |
 | `external.chainlink.enabled` | `bool` | `false` | — | Whether the Chainlink ingest poller runs. Off by default. |
 | `external.chainlink.rpc_url` | `string` | _(required)_ | `CHAINLINK_RPC_URL` | Ethereum mainnet JSON-RPC endpoint (Alchemy / Infura / public). For Alchemy this includes the API key in the URL path (.../v2/<KEY>) — treat the whole value as a secret. Prefer env var. |
 | `external.chainlink.poll_interval` | `int64` | _(required)_ | — | Override the default 30s poll cadence. Empty/zero uses the package default. |
