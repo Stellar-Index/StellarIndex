@@ -3780,7 +3780,7 @@ export interface paths {
          *     server-side immediately and use it to HMAC-verify the
          *     X-StellarIndex-Signature header on inbound POSTs. URL must
          *     be https:// on the default port (443) and at most 2048
-         *     bytes. Owner / admin / member roles can register;
+         *     characters. Owner / admin / member roles can register;
          *     viewer + billing 403. Webhook quota is tier-aware (free 10,
          *     partner 100 — deployment-overridable); exceeding it
          *     returns 409, as does a url this account already registered.
@@ -20460,6 +20460,15 @@ export interface operations {
              *     (`cross-site-request-blocked`).
              */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description No webhook with this id on this account (absent, already deleted, or another account's). */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
