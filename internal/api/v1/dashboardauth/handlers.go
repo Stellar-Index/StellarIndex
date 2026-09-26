@@ -1226,7 +1226,7 @@ func safeText(s string, maxRunes int) string {
 // content was rendered verbatim, and the HTML template's escaping
 // (html/template) has no plaintext equivalent.
 var uaDangerousChars = regexp.MustCompile(
-	"[()\"'`:!?<>\\[\\]{}​‎‏  \u0085‪-‮⁦-⁩]")
+	"[()\"'`:!?<>\\[\\]{}\u200b\u200e\u200f\u2028\u2029\u0085\u202a-\u202e\u2066-\u2069]")
 
 func truncateUA(ua string) string {
 	const maxUALen = 256
