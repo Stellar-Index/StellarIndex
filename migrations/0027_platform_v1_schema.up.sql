@@ -230,8 +230,7 @@ CREATE INDEX api_keys_expires_idx ON api_keys (expires_at)
 -- /24-/48 GDPR prefix-truncation is performed anywhere. The IP
 -- data the platform DOES retain lives at FULL resolution in the
 -- live paths — `magic_link_tokens.requested_ip`,
--- `api_keys.last_used_ip`, `audit_log.ip`, and
--- `sessions.ip_first_seen`/`ip_last_seen` — and is kept
+-- `api_keys.last_used_ip`, and `audit_log.ip` — and is kept
 -- un-truncated deliberately: it backs session-hijack / abuse
 -- forensics and the anti-inbox-bomb throttle, controls that a
 -- prefix-mask would defeat. If this hypertable is ever wired,
