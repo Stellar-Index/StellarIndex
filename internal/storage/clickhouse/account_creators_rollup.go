@@ -371,6 +371,11 @@ func creatorsBoardSteps() []rollupStep {
 		// inner subquery collapses to one row per pair before the live
 		// join is resolved; accounts_created/funded_stroops are immutable
 		// history and stay per-event, as documented on AccountCreatorRow.
+		// That pair is the address's LATEST creation: an account cannot be
+		// created while it exists, so the live incarnation is the one its
+		// last creator made, and an address recycled by different creators
+		// is live under that creator alone. Same-ledger ties break on
+		// creator, so one row is credited, never several.
 		{sql: `INSERT INTO stellar.account_creators_rollup_staging
 	     (rank, creator, accounts_created, funded_stroops, live_accounts, live_stroops,
 	      first_ledger, last_ledger, first_created_at, last_created_at)
@@ -407,7 +412,11 @@ func creatorsBoardSteps() []rollupStep {
 	                    c.created AS created,
 	                    max(e.account_id != '') AS is_live,
 	                    any(e.balance) AS live_balance
-	             FROM stellar.account_creators_ops AS c
+	             FROM (
+	                 SELECT created, argMax(creator, (ledger, creator)) AS creator
+	                 FROM stellar.account_creators_ops
+	                 GROUP BY created
+	             ) AS c
 	             LEFT JOIN (
 	                 SELECT account_id, balance
 	                 FROM stellar.ledger_entries_current FINAL
