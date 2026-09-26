@@ -74,6 +74,11 @@ import (
 // last window has been reduced, so all inserts land at the end of the scan
 // rather than interleaved with it. Silence is not a hang.
 //
+// Before walking, the full-history pass proves stellar.ledgers contiguous and
+// hash-linked over the range it reduces and refuses otherwise: a hole hides the
+// change that superseded an entry. Its provenance row records the ledger the
+// lake was verified through; the -full-history flag alone stamps nothing.
+//
 // Flags:
 //
 //	-config PATH     Required. Operator TOML config (provides
@@ -86,6 +91,11 @@ import (
 //	-timeout DUR     Whole-run deadline (default 12h). All writes happen
 //	                 after the scan, so a deadline that expires mid-scan
 //	                 loses the whole pass.
+//	-contracts LIST  Comma-separated [supply.sac_wrappers] contract ids to
+//	                 scope the pass to (default: every configured wrapper).
+//	                 Only the scoped wrappers' provenance rows are touched.
+//	-heartbeat PATH  node_exporter textfile for the ops-job heartbeat
+//	                 (default: the textfile-collector dir when present).
 //	-write           Apply. Without it the pass is a dry run: read + print
 //	                 per-contract holder count + summed balance, nothing
 //	                 written (-dry-run is a no-op alias).
@@ -95,6 +105,8 @@ func supplySeedSACBalances(args []string) error {
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	fullHistory := fs.Bool("full-history", false, "Read stellar.ledger_entry_changes (complete to genesis) instead of the floor-limited stellar.ledger_entries_current — closes the ~62M current-state coverage floor (heavier; run-heavy-job.sh only)")
 	timeout := fs.Duration("timeout", 12*time.Hour, "Whole-run deadline; every insert lands after the lake scan, so an expiring deadline loses the entire pass")
+	contracts := fs.String("contracts", "", "Comma-separated [supply.sac_wrappers] contract ids to scope the pass to. EMPTY (the default) seeds every configured wrapper; only the scoped wrappers' provenance is touched")
+	heartbeat := fs.String("heartbeat", "", "node_exporter textfile path for the liveness/progress gauges. Empty = "+opsutil.DefaultTextfileDir+"/ops_job_supply_seed_sac_balances.prom when that directory exists (r1), otherwise no heartbeat")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -109,35 +121,77 @@ func supplySeedSACBalances(args []string) error {
 	if err := cfg.Supply.Validate(); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	watched := cfg.Supply.SACWrappers
-	if len(watched) == 0 {
-		return errors.New("supply seed-sac-balances: no [supply.sac_wrappers] configured — nothing to seed")
+	watched, err := scopeSACWrappers(cfg.Supply.SACWrappers, *contracts)
+	if err != nil {
+		return err
 	}
 	gate.Banner()
-	dryRun := gate.DryRun()
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	var store *timescale.Store
-	if !dryRun {
-		store, err = timescale.Open(ctx, cfg.Storage.PostgresDSN)
+	run := sacSeedRun{chAddr: *chAddr, watched: watched, fullHistory: *fullHistory, dryRun: gate.DryRun()}
+	if !run.dryRun {
+		store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = store.Close() }()
+		run.store = store
 	}
+	hb := startSeedHeartbeat("supply-seed-sac-balances", *heartbeat)
+	err = run.seed(ctx, &seedProgress{hb: hb})
+	hb.Stop(err == nil)
+	if len(watched) < len(cfg.Supply.SACWrappers) {
+		fmt.Printf("─── PARTIAL ─── scoped to %d of %d SAC wrapper(s) via -contracts; the rest were not re-seeded and keep their provenance.\n", len(watched), len(cfg.Supply.SACWrappers))
+	}
+	return err
+}
 
-	stream := clickhouse.StreamSACBalanceSeeds
+// scopeSACWrappers narrows the configured wrapper set to -contracts. Every
+// listed id must be configured: a typo is an error, never an empty pass.
+func scopeSACWrappers(configured map[string]string, contractsRaw string) (map[string]string, error) {
+	if len(configured) == 0 {
+		return nil, errors.New("supply seed-sac-balances: no [supply.sac_wrappers] configured — nothing to seed")
+	}
+	var ids []string
+	for _, f := range strings.Split(contractsRaw, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			ids = append(ids, f)
+		}
+	}
+	if len(ids) == 0 {
+		return configured, nil
+	}
+	out := make(map[string]string, len(ids))
+	for _, id := range ids {
+		ak, ok := configured[id]
+		if !ok {
+			return nil, fmt.Errorf("-contracts: %s is not a [supply.sac_wrappers] contract id", id)
+		}
+		out[id] = ak
+	}
+	return out, nil
+}
+
+// sacSeedRun is one seed-sac-balances pass over an already-scoped wrapper set.
+type sacSeedRun struct {
+	chAddr      string
+	watched     map[string]string
+	fullHistory bool
+	dryRun      bool
+	store       *timescale.Store // nil in dry-run
+}
+
+func (r sacSeedRun) seed(ctx context.Context, progress *seedProgress) error {
 	source := timescale.SACBalanceSeedSourceCurrentState
-	if *fullHistory {
-		stream = clickhouse.StreamSACBalanceSeedsFullHistory
+	if r.fullHistory {
 		source = timescale.SACBalanceSeedSourceFullHistory
 	}
-
-	tallies := make(map[string]*sacSeedTally, len(watched))
+	tallies := make(map[string]*sacSeedTally, len(r.watched))
 	var total int
-	err = stream(ctx, *chAddr, watched, func(seed clickhouse.SACBalanceSeed) error {
+	walk := clickhouse.SeedWalk{VerifyLake: true, Progress: progress.window}
+	ev, err := streamSACSeeds(ctx, r.chAddr, r.watched, r.fullHistory, walk, func(seed clickhouse.SACBalanceSeed) error {
 		t := tallies[seed.ContractID]
 		if t == nil {
 			t = &sacSeedTally{sum: big.NewInt(0)}
@@ -145,10 +199,11 @@ func supplySeedSACBalances(args []string) error {
 		}
 		t.add(seed)
 		total++
-		if dryRun {
+		progress.row()
+		if r.dryRun {
 			return nil
 		}
-		return store.InsertSACBalanceObservation(ctx, timescale.SACBalanceObservation{
+		return r.store.InsertSACBalanceObservation(ctx, timescale.SACBalanceObservation{
 			ContractID: seed.ContractID,
 			AssetKey:   seed.AssetKey,
 			Holder:     seed.Holder,
@@ -167,15 +222,24 @@ func supplySeedSACBalances(args []string) error {
 		return err
 	}
 
-	printSACSeedSummary(watched, tallies, total, dryRun)
+	printSACSeedSummary(r.watched, tallies, total, r.dryRun)
 
 	var provErr error
-	if !dryRun {
-		if err := writeSACSeedProvenance(ctx, store, watched, tallies, source); err != nil {
+	if !r.dryRun {
+		if err := writeSACSeedProvenance(ctx, r.store, r.watched, tallies, source, ev); err != nil {
 			provErr = fmt.Errorf("write seed provenance: %w", err)
 		}
 	}
-	return errors.Join(unmatchedSACWrappersErr(watched, tallies), provErr)
+	return errors.Join(unmatchedSACWrappersErr(r.watched, tallies), provErr)
+}
+
+// streamSACSeeds runs the pass's lake reader. Only the full-history walk yields
+// lake evidence: the current-state read is not a coverage claim.
+func streamSACSeeds(ctx context.Context, addr string, watched map[string]string, fullHistory bool, walk clickhouse.SeedWalk, fn func(clickhouse.SACBalanceSeed) error) (clickhouse.SeedEvidence, error) {
+	if !fullHistory {
+		return clickhouse.SeedEvidence{}, clickhouse.StreamSACBalanceSeeds(ctx, addr, watched, fn)
+	}
+	return clickhouse.StreamSACBalanceSeedsFullHistory(ctx, addr, watched, walk, fn)
 }
 
 // sacSeedTally is a per-contract running tally for the seed summary +
@@ -267,7 +331,7 @@ func checkSACSeedShrink(prev timescale.SACBalanceSeedProvenance, source timescal
 // A contract that fails [checkSACSeedShrink] keeps its previous row. Best-effort
 // per contract: a failure is reported but does not unwind the observations
 // already committed (the audit trail is secondary to the supply data itself).
-func writeSACSeedProvenance(ctx context.Context, store *timescale.Store, watched map[string]string, tallies map[string]*sacSeedTally, source timescale.SACBalanceSeedSource) error {
+func writeSACSeedProvenance(ctx context.Context, store *timescale.Store, watched map[string]string, tallies map[string]*sacSeedTally, source timescale.SACBalanceSeedSource, ev clickhouse.SeedEvidence) error {
 	var errs []error
 	for cid, ak := range watched {
 		t := tallies[cid]
@@ -285,21 +349,43 @@ func writeSACSeedProvenance(ctx context.Context, store *timescale.Store, watched
 				continue
 			}
 		}
-		p := timescale.SACBalanceSeedProvenance{
-			ContractID:    cid,
-			AssetKey:      ak,
-			Source:        source,
-			HoldersSeeded: t.holders,
-		}
-		if t.haveLedgerBounds {
-			minL, maxL := t.minLedger, t.maxLedger
-			p.MinLedgerSeen, p.MaxLedgerSeen = &minL, &maxL
+		p, err := sacSeedProvenance(cid, ak, source, ev, t)
+		if err != nil {
+			errs = append(errs, err)
+			continue
 		}
 		if err := store.UpsertSACBalanceSeedProvenance(ctx, p); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// sacSeedProvenance builds one contract's provenance row from what the pass
+// established. A full_history row carries the ledger the lake was proven intact
+// through; without that evidence the -full-history flag alone stamps nothing.
+func sacSeedProvenance(cid, ak string, source timescale.SACBalanceSeedSource, ev clickhouse.SeedEvidence, t *sacSeedTally) (timescale.SACBalanceSeedProvenance, error) {
+	retracted := t.retracted
+	p := timescale.SACBalanceSeedProvenance{
+		ContractID:       cid,
+		AssetKey:         ak,
+		Source:           source,
+		HoldersSeeded:    t.holders,
+		HoldersRetracted: &retracted,
+	}
+	if t.haveLedgerBounds {
+		minL, maxL := t.minLedger, t.maxLedger
+		p.MinLedgerSeen, p.MaxLedgerSeen = &minL, &maxL
+	}
+	if source != timescale.SACBalanceSeedSourceFullHistory {
+		return p, nil
+	}
+	if ev.LakeVerifiedThrough == 0 {
+		return timescale.SACBalanceSeedProvenance{}, fmt.Errorf("%s: full_history pass carries no lake verification; provenance left unchanged", cid)
+	}
+	through := ev.LakeVerifiedThrough
+	p.LakeVerifiedThrough = &through
+	return p, nil
 }
 
 // printSACSeedSummary prints one stable line per watched wrapper

@@ -129,3 +129,33 @@ func TestCheckSACSeedShrink(t *testing.T) {
 		t.Errorf("cross-source: err = %v, want nil", err)
 	}
 }
+
+// TestSACSeedProvenance_FullHistoryNeedsLakeEvidence — GH #713: the
+// full_history stamp comes from what the walk proved, not from -full-history.
+// A pass with no lake verification stamps nothing; a verified one records the
+// ledger it was verified through and its retractions.
+func TestSACSeedProvenance_FullHistoryNeedsLakeEvidence(t *testing.T) {
+	full := timescale.SACBalanceSeedSourceFullHistory
+	tally := &sacSeedTally{holders: 6, retracted: 39, sum: big.NewInt(1)}
+	tally.observe(41_500_000)
+
+	if _, err := sacSeedProvenance("CPHO", "PHO:G1", full, clickhouse.SeedEvidence{FromLedger: 2, ToLedger: 63_000_000}, tally); err == nil {
+		t.Fatal("an unverified walk produced a full_history provenance row")
+	}
+
+	p, err := sacSeedProvenance("CPHO", "PHO:G1", full, clickhouse.SeedEvidence{FromLedger: 2, ToLedger: 63_000_000, LakeVerifiedThrough: 63_000_000}, tally)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.LakeVerifiedThrough == nil || *p.LakeVerifiedThrough != 63_000_000 {
+		t.Errorf("LakeVerifiedThrough = %v, want 63000000", p.LakeVerifiedThrough)
+	}
+	if p.HoldersRetracted == nil || *p.HoldersRetracted != 39 || p.HoldersSeeded != 6 {
+		t.Errorf("HoldersSeeded=%d HoldersRetracted=%v, want 6 and 39", p.HoldersSeeded, p.HoldersRetracted)
+	}
+
+	cs, err := sacSeedProvenance("CPHO", "PHO:G1", timescale.SACBalanceSeedSourceCurrentState, clickhouse.SeedEvidence{}, tally)
+	if err != nil || cs.LakeVerifiedThrough != nil {
+		t.Errorf("current_state: err=%v LakeVerifiedThrough=%v, want a row with no coverage claim", err, cs.LakeVerifiedThrough)
+	}
+}

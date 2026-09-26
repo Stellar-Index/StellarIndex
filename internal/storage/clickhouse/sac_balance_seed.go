@@ -443,46 +443,50 @@ func ledgerCloseTimesBatch(ctx context.Context, conn driver.Conn, seqs []uint32,
 // scan by 38 — hours of saturated I/O on the host that also runs galexie's
 // captive core (AGENTS.md heavy-job doctrine). Windowing bounds the footprint
 // on the axis it actually grows along; splitting by contract does not.
-func StreamSACBalanceSeedsFullHistory(ctx context.Context, addr string, watched map[string]string, fn func(SACBalanceSeed) error) error {
+//
+// The returned [SeedEvidence] is what the walk established: the range it
+// reduced and, under walk.VerifyLake, the ledger through which the lake was
+// proven intact before anything was emitted.
+func StreamSACBalanceSeedsFullHistory(ctx context.Context, addr string, watched map[string]string, walk SeedWalk, fn func(SACBalanceSeed) error) (SeedEvidence, error) {
 	if len(watched) == 0 {
-		return errors.New("clickhouse: StreamSACBalanceSeedsFullHistory: empty watched SAC-wrapper set")
+		return SeedEvidence{}, errors.New("clickhouse: StreamSACBalanceSeedsFullHistory: empty watched SAC-wrapper set")
 	}
 	conn, err := openRead(ctx, addr)
 	if err != nil {
-		return err
+		return SeedEvidence{}, err
 	}
 	defer func() { _ = conn.Close() }()
 
 	needles, err := sacWatchedContractNeedles(watched)
 	if err != nil {
-		return err
+		return SeedEvidence{}, err
 	}
-	minLedger, maxLedger, err := entryChangeLedgerBounds(ctx, conn)
+	ev, err := resolveSeedWalk(ctx, conn, addr, walk)
 	if err != nil {
-		return err
+		return SeedEvidence{}, err
 	}
 
 	// Windows are walked in ascending ledger order and never overlap, so the
 	// per-window server-side reduction plus the Go reduction across windows is
 	// exactly the reduction the single unbounded GROUP BY performed.
 	red := newSACSeedReducer(watched)
-	err = walkSACSeedWindows(minLedger, maxLedger, func(from, to uint32) error {
+	err = walkSACSeedWindows(ev.FromLedger, ev.ToLedger, walk.progressScan(func(from, to uint32) error {
 		return scanSACSeedWindow(ctx, conn, needles, from, to, red)
-	})
+	}))
 	if err != nil {
-		return err
+		return SeedEvidence{}, err
 	}
-	// Liveness is judged at the lake's own tip: the seed reconstructs CURRENT
-	// state, so an entry archived before that tip is not part of it.
-	retracted, err := red.retractArchived(ctx, conn, maxLedger)
+	// Liveness is judged at the walk's upper bound: the seed reconstructs
+	// state as of that ledger, so an entry archived before it is not part of it.
+	retracted, err := red.retractArchived(ctx, conn, ev.ToLedger)
 	if err != nil {
-		return err
+		return SeedEvidence{}, err
 	}
 	if retracted > 0 {
 		slog.InfoContext(ctx, "sac seed: retracted archived contract_data entries",
-			"retracted", retracted, "distinct_keys", len(red.best), "as_of_ledger", maxLedger)
+			"retracted", retracted, "distinct_keys", len(red.best), "as_of_ledger", ev.ToLedger)
 	}
-	return red.emit(fn)
+	return ev, red.emit(fn)
 }
 
 // walkSACSeedWindows walks the full-history seed's ledger windows. A memory-

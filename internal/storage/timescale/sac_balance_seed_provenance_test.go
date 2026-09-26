@@ -57,6 +57,18 @@ func TestUpsertSACBalanceSeedProvenance_RejectsNegativeHoldersSeeded(t *testing.
 	}
 }
 
+func TestUpsertSACBalanceSeedProvenance_RejectsUnverifiedFullHistory(t *testing.T) {
+	s := &Store{}
+	err := s.UpsertSACBalanceSeedProvenance(context.Background(), SACBalanceSeedProvenance{
+		ContractID: "CBZ7M5B3Y4WWBZ5XK5UZCAFOEZ23KSSZXYECYX3IXM6E2JOLQC52DK32",
+		AssetKey:   "PHO:GAX5...",
+		Source:     SACBalanceSeedSourceFullHistory,
+	})
+	if err == nil || !strings.Contains(err.Error(), "LakeVerifiedThrough") {
+		t.Errorf("err=%v should refuse full_history without LakeVerifiedThrough", err)
+	}
+}
+
 func TestSACBalanceSeedProvenanceFor_RejectsEmptyContractID(t *testing.T) {
 	s := &Store{}
 	_, _, err := s.SACBalanceSeedProvenanceFor(context.Background(), "")

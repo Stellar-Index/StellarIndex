@@ -153,19 +153,29 @@ func TestSACBalanceSeedProvenanceRoundTrip(t *testing.T) {
 	if got.MinLedgerSeen == nil || *got.MinLedgerSeen != 65_000_000 {
 		t.Errorf("MinLedgerSeen = %v, want 65000000", got.MinLedgerSeen)
 	}
+	if got.LakeVerifiedThrough != nil || got.HoldersRetracted != nil {
+		t.Errorf("LakeVerifiedThrough=%v HoldersRetracted=%v, want both nil when the upsert set neither", got.LakeVerifiedThrough, got.HoldersRetracted)
+	}
 
 	// Second pass: -full-history, reaching well below the ~62M floor —
 	// OVERWRITES the row (one row per contract), evidencing the floor
 	// was actually reached via a min_ledger_seen far below 62,000,000.
 	minL2, maxL2 := uint32(41_500_000), uint32(70_000_000)
-	if err := store.UpsertSACBalanceSeedProvenance(ctx, timescale.SACBalanceSeedProvenance{
+	verified, retracted := uint32(70_000_123), 39
+	unproven := timescale.SACBalanceSeedProvenance{
 		ContractID:    contractID,
 		AssetKey:      assetKey,
 		Source:        timescale.SACBalanceSeedSourceFullHistory,
 		HoldersSeeded: 40,
 		MinLedgerSeen: &minL2,
 		MaxLedgerSeen: &maxL2,
-	}); err != nil {
+	}
+	if err := store.UpsertSACBalanceSeedProvenance(ctx, unproven); err == nil {
+		t.Fatal("a full_history row without LakeVerifiedThrough was stamped; the source label alone is not evidence")
+	}
+	proven := unproven
+	proven.LakeVerifiedThrough, proven.HoldersRetracted = &verified, &retracted
+	if err := store.UpsertSACBalanceSeedProvenance(ctx, proven); err != nil {
 		t.Fatalf("UpsertSACBalanceSeedProvenance (full_history): %v", err)
 	}
 	got, ok, err = store.SACBalanceSeedProvenanceFor(ctx, contractID)
@@ -181,6 +191,12 @@ func TestSACBalanceSeedProvenanceRoundTrip(t *testing.T) {
 	if got.HoldersSeeded != 40 {
 		t.Errorf("HoldersSeeded = %d, want 40", got.HoldersSeeded)
 	}
+	if got.LakeVerifiedThrough == nil || *got.LakeVerifiedThrough != verified {
+		t.Errorf("LakeVerifiedThrough = %v, want %d", got.LakeVerifiedThrough, verified)
+	}
+	if got.HoldersRetracted == nil || *got.HoldersRetracted != retracted {
+		t.Errorf("HoldersRetracted = %v, want %d", got.HoldersRetracted, retracted)
+	}
 	if got.MinLedgerSeen == nil || *got.MinLedgerSeen >= 62_000_000 {
 		t.Errorf("MinLedgerSeen = %v, want < 62,000,000 (evidence the full-history pass reached below the current-state floor)", got.MinLedgerSeen)
 	}
@@ -190,9 +206,10 @@ func TestSACBalanceSeedProvenanceRoundTrip(t *testing.T) {
 	// min/max pair.
 	const emptyContract = "CEMPTYWRAPPERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	if err := store.UpsertSACBalanceSeedProvenance(ctx, timescale.SACBalanceSeedProvenance{
-		ContractID: emptyContract,
-		AssetKey:   "NOPE:GISSUER",
-		Source:     timescale.SACBalanceSeedSourceFullHistory,
+		ContractID:          emptyContract,
+		AssetKey:            "NOPE:GISSUER",
+		Source:              timescale.SACBalanceSeedSourceFullHistory,
+		LakeVerifiedThrough: &verified,
 	}); err != nil {
 		t.Fatalf("UpsertSACBalanceSeedProvenance (zero holders): %v", err)
 	}

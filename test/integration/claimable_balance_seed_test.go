@@ -135,7 +135,7 @@ func cbsSeedsByID(t *testing.T, ctx context.Context, addr string, assets map[str
 			windows, cbsMaxWalkWindows, culprit)
 	}
 	out := map[string]chstore.ClaimableBalanceSeed{}
-	if err := chstore.StreamClaimableBalanceSeeds(ctx, addr, assets, func(s chstore.ClaimableBalanceSeed) error {
+	if _, err := chstore.StreamClaimableBalanceSeeds(ctx, addr, assets, nil, chstore.SeedWalk{}, func(s chstore.ClaimableBalanceSeed) error {
 		out[s.ClaimableID] = s
 		return nil
 	}); err != nil {
@@ -390,7 +390,7 @@ func TestClaimableSeed_WalkStaysBoundedAfterHighLedgerFixtures(t *testing.T) {
 	}
 
 	start := time.Now()
-	err := chstore.StreamClaimableBalanceSeeds(ctx, addr, nil, func(chstore.ClaimableBalanceSeed) error { return nil })
+	_, err := chstore.StreamClaimableBalanceSeeds(ctx, addr, nil, nil, chstore.SeedWalk{}, func(chstore.ClaimableBalanceSeed) error { return nil })
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("seed walk over %d windows failed after %s (budget %s): %v", windows, elapsed.Round(time.Millisecond), cbsWalkBudget, err)

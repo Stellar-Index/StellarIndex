@@ -2,6 +2,7 @@ package supply
 
 import (
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
@@ -127,8 +128,8 @@ func TestClaimableSeedWriterDryRunTallies(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedWriterRowShape — every buffered row must carry the seed
-// posture: is_removal=false (the reducer only ever emits LIVE balances) and
+// TestClaimableSeedWriterRowShape — every buffered live row must carry the seed
+// posture: is_removal=false and
 // intra_ledger_seq = SeedIntraLedgerSeq, so a live per-ledger observation can
 // never overwrite the reconstructed final state and a re-seed stays corrective
 // (audit-2026-07-16 C2-6).
@@ -145,7 +146,7 @@ func TestClaimableSeedWriterRowShape(t *testing.T) {
 	}
 	row := w.pending[0]
 	if row.IsRemoval {
-		t.Error("IsRemoval = true; the reducer emits only live balances, so a seeded row is never a tombstone")
+		t.Error("IsRemoval = true for a live seed; only a tombstone seed may write a removal row")
 	}
 	if row.IntraLedgerSeq != timescale.SeedIntraLedgerSeq {
 		t.Errorf("IntraLedgerSeq = %d, want SeedIntraLedgerSeq (%d)", row.IntraLedgerSeq, timescale.SeedIntraLedgerSeq)
@@ -155,5 +156,50 @@ func TestClaimableSeedWriterRowShape(t *testing.T) {
 	}
 	if row.Balance.Cmp(big.NewInt(42)) != 0 {
 		t.Errorf("Balance = %s, want 42", row.Balance)
+	}
+}
+
+// TestClaimableSeedWriterTombstone — GH #712: a tombstone seed is written as an
+// is_removal row at the claim's ledger, counted as a retraction rather than a
+// balance, and resolves its served id.
+func TestClaimableSeedWriterTombstone(t *testing.T) {
+	aqua := "AQUA:" + seedClaimableIssuer
+	w := &claimableSeedWriter{
+		tallies:    map[string]*claimableSeedTally{},
+		unresolved: map[string]timescale.LiveClaimable{"claimed": {AssetKey: aqua, Ledger: 34_000_000}},
+	}
+	if err := w.add(clickhouse.ClaimableBalanceSeed{
+		ClaimableID: "claimed", AssetKey: aqua, Balance: big.NewInt(0), LedgerSeq: 48_000_000, IsRemoval: true,
+	}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if len(w.pending) != 1 || !w.pending[0].IsRemoval || w.pending[0].Ledger != 48_000_000 {
+		t.Fatalf("pending = %+v, want one is_removal row at the claim ledger 48000000", w.pending)
+	}
+	if w.pending[0].IntraLedgerSeq != timescale.SeedIntraLedgerSeq {
+		t.Errorf("IntraLedgerSeq = %d, want SeedIntraLedgerSeq", w.pending[0].IntraLedgerSeq)
+	}
+	if tl := w.tallies[aqua]; tl.count != 0 || tl.retracted != 1 || tl.sum.Sign() != 0 || w.total != 0 || w.retracted != 1 {
+		t.Errorf("tally = {count:%d retracted:%d sum:%s} total=%d retracted=%d, want a retraction only", tl.count, tl.retracted, tl.sum, w.total, w.retracted)
+	}
+	if len(w.unresolved) != 0 {
+		t.Errorf("unresolved = %v, want the retracted id resolved", w.unresolved)
+	}
+}
+
+// TestUnresolvedClaimablesErr — a served-live balance the walk has no record of
+// fails the pass by name; one newer than the walk's upper ledger is not judged.
+func TestUnresolvedClaimablesErr(t *testing.T) {
+	unresolved := map[string]timescale.LiveClaimable{
+		"old":   {AssetKey: "AQUA:G1", Ledger: 40_000_000},
+		"newer": {AssetKey: "AQUA:G1", Ledger: 60_000_001},
+	}
+	err := unresolvedClaimablesErr(unresolved, 60_000_000)
+	if err == nil || !strings.Contains(err.Error(), "1 served-live claimable") || !strings.Contains(err.Error(), "old AQUA:G1") {
+		t.Errorf("err = %v, want exactly the pre-walk-tip balance named", err)
+	}
+	delete(unresolved, "old")
+	if err := unresolvedClaimablesErr(unresolved, 60_000_000); err != nil {
+		t.Errorf("err = %v, want nil for a balance newer than the walk", err)
 	}
 }
