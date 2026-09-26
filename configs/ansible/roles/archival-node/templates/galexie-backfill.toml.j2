@@ -11,9 +11,11 @@
 # admin_port + destination bucket + captive_core_toml_path differ
 # from the live instance; everything else is identical.
 
-# HTTP port for galexie's own metrics / admin endpoint (bound
-# loopback). Distinct from the live-tail instance's port so both
-# galexie processes can run side-by-side.
+# HTTP port for galexie's own metrics / admin endpoint. Distinct
+# from the live-tail instance's port so both galexie processes can
+# run side-by-side. Not loopback-bound by galexie itself (see
+# galexie.toml.j2's admin_port comment) — closed to the outside by
+# 11-firewall.yml's default-deny; only on-box traffic reaches it.
 admin_port = {{ galexie_backfill_admin_port }}
 
 # ──── Datastore — where exported ledger meta lands ─────────────────

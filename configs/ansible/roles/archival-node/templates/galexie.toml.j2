@@ -3,7 +3,14 @@
 # source tree (fetched at galexie-v26.0.0). If galexie's config
 # schema changes, cross-reference this file against that example.
 
-# HTTP port for galexie's own metrics / admin endpoint (bound loopback).
+# HTTP port for galexie's own metrics / admin endpoint. Galexie's
+# `admin_port` setting takes a bare int (no bind-host option) and
+# binds all interfaces (see stellar-galexie internal/app.go
+# newAdminServer) — it is NOT loopback-only by itself. Exposure is
+# closed by 11-firewall.yml's default-deny: this port is deliberately
+# absent from both public_allow_ports and internal_allow_ports, so
+# only on-box traffic (the local Prometheus scrape via `iif lo`)
+# reaches it.
 admin_port = {{ galexie_admin_port }}
 
 # ──── Datastore — where exported ledger meta lands ─────────────────

@@ -1157,8 +1157,11 @@ galexie_files_per_partition: 64000      # ~1 checkpoint per partition
 # in place).
 galexie_backfill_ledgers_per_file:    "{{ galexie_ledgers_per_file }}"
 galexie_backfill_files_per_partition: "{{ galexie_files_per_partition }}"
-galexie_admin_port:          6061          # live-tail galexie: metrics + admin HTTP, loopback only
-galexie_backfill_admin_port: 6062          # archive-backfill galexie: distinct port so both instances coexist
+galexie_admin_port:          6061          # live-tail galexie: metrics + admin HTTP. Galexie binds all
+                                            # interfaces (no bind-host option); 11-firewall.yml's
+                                            # default-deny keeps it off-box, not the process itself.
+galexie_backfill_admin_port: 6062          # archive-backfill galexie: distinct port so both instances coexist.
+                                            # Same all-interfaces caveat as galexie_admin_port above.
 
 # ───── MinIO ─────────────────────────────────────────────────────────
 # [Per-region:
