@@ -177,7 +177,7 @@ func buildClassicGapGate(ctx context.Context, store *timescale.Store, tip uint32
 	if !ok {
 		return classicGapGate{}, nil // no served sdex rows at all — can't gate
 	}
-	gaps, err := store.FindPerSourceLedgerGaps(ctx, target, int64(floor), int64(tip), minGapSize)
+	gaps, err := store.FindPerSourceLedgerGaps(ctx, target, int64(floor), int64(tip), minGapSize, 0)
 	if err != nil {
 		return classicGapGate{}, err
 	}
@@ -212,11 +212,145 @@ func anyPlanNeedsClassicGate(plans []stalledCursorPlan) bool {
 	return false
 }
 
+// decoderGapResult is one Soroban decoder's data-derived gap evidence,
+// keyed by decoder name in a [decoderGapIndex].
+//
+// resolved=false means no [timescale.GapDetectorTarget] is registered
+// for this decoder at all — there is NO table this gate can check.
+// Callers MUST treat unresolved as "cannot confirm clean", never as
+// "clean": the whole point of per-decoder gating (CA2-A19) is that a
+// decoder's OWN table is the only honest evidence of its own rows: the
+// soroban_events pseudo-table it used to be checked against is written
+// by live ingest regardless of which decoders are backfilled, so it
+// says nothing about a specific decoder's rows.
+type decoderGapResult struct {
+	resolved bool
+	gaps     []timescale.LedgerGap
+}
+
+// decoderGapIndex maps a decoder name (a `pipeline.SorobanSourceNames`
+// entry, or [SorobanEventsPseudoSource]) to its resolved gap evidence.
+// Built once per resume-stalled run by [buildDecoderGapIndex] so the
+// (possibly several) data-gap scans happen up front, and the gate
+// itself stays a pure function over precomputed inputs.
+type decoderGapIndex map[string]decoderGapResult
+
+// perDecoderGapTargets returns every registered
+// [timescale.GapDetectorTarget] whose [timescale.GapDetectorTarget.SourceNetKey]
+// matches decoder — a decoder can own MULTIPLE tables sharing one
+// canonical source (blend -> blend_auctions/positions/emissions/admin),
+// and every one of them must be checked: a decoder is clean only when
+// ALL of its tables are.
+func perDecoderGapTargets(decoder string) []timescale.GapDetectorTarget {
+	var out []timescale.GapDetectorTarget
+	for _, t := range timescale.DefaultGapDetectorTargets {
+		if t.SourceNetKey() == decoder {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// distinctSorobanDecoderNames returns the sorted, de-duplicated set of
+// real (non-pseudo) Soroban decoder names present in any not-yet-skipped
+// plan's source list — the set [buildDecoderGapIndex] needs to resolve.
+func distinctSorobanDecoderNames(plans []stalledCursorPlan) []string {
+	seen := make(map[string]struct{})
+	for _, p := range plans {
+		if p.skip {
+			continue
+		}
+		for _, s := range p.sources {
+			if s == SorobanEventsPseudoSource {
+				continue
+			}
+			if _, ok := sorobanDecoderNames[s]; ok {
+				seen[s] = struct{}{}
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// buildDecoderGapIndex resolves the per-decoder gap evidence
+// [gateAgainstDataGaps] needs. [SorobanEventsPseudoSource] always
+// resolves against sorobanEventsGaps (the ground truth for a raw
+// soroban_events-only backfill). Every OTHER Soroban decoder actually
+// present in `plans` is resolved against the UNION of its OWN
+// registered [timescale.GapDetectorTarget] tables (see
+// [perDecoderGapTargets]) — never against soroban_events, which the
+// resumed decoders don't write (CA2-A19). A decoder with no registered
+// target resolves to resolved=false; the gate then fails closed
+// (stays actionable) rather than trusting evidence that doesn't exist.
+func buildDecoderGapIndex(ctx context.Context, store *timescale.Store, plans []stalledCursorPlan, sorobanEventsGaps []timescale.LedgerGap, tip uint32, minGapSize int64) (decoderGapIndex, error) {
+	idx := decoderGapIndex{
+		SorobanEventsPseudoSource: {resolved: true, gaps: sorobanEventsGaps},
+	}
+	for _, name := range distinctSorobanDecoderNames(plans) {
+		targets := perDecoderGapTargets(name)
+		if len(targets) == 0 {
+			idx[name] = decoderGapResult{resolved: false}
+			continue
+		}
+		var union []timescale.LedgerGap
+		for _, target := range targets {
+			if int64(tip) < target.Genesis {
+				continue // not yet live on this deployment — no rows possible, no gap
+			}
+			gaps, err := store.FindPerSourceLedgerGaps(ctx, target, target.Genesis, int64(tip), minGapSize, 0)
+			if err != nil {
+				return nil, fmt.Errorf("per-decoder data gap %s/%s: %w", name, target.Table, err)
+			}
+			union = append(union, gaps...)
+		}
+		idx[name] = decoderGapResult{resolved: true, gaps: union}
+	}
+	return idx, nil
+}
+
+// decoderPortionHasGap reports whether ANY source in `sources` shows a
+// real data-derived gap overlapping [from,to] — OR could not be
+// resolved at all. Unresolved counts as "has a gap" so the caller
+// fails closed: it is the fix for CA2-A19's false-skip class (a
+// decoder's own table said nothing because nothing checked it).
+func decoderPortionHasGap(sources []string, from, to uint32, idx decoderGapIndex) bool {
+	for _, s := range sources {
+		res, ok := idx[s]
+		if !ok || !res.resolved {
+			return true
+		}
+		if overlapsAnyDataGap(from, to, res.gaps) {
+			return true
+		}
+	}
+	return false
+}
+
+// sorobanSourcesOf filters a mixed plan's decoder CSV down to its
+// Soroban-era portion (excludes SDEX), for the soroban-side half of
+// [gateMixedPlan].
+func sorobanSourcesOf(sources []string) []string {
+	out := make([]string, 0, len(sources))
+	for _, s := range sources {
+		if _, ok := sorobanDecoderNames[s]; ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // gateAgainstDataGaps narrows the actionable plan list to those
 // whose remaining range overlaps a real data-gap. Soroban-era plans
-// gate against soroban_events ground truth
-// (FindSorobanEventsLedgerGaps); SDEX-only plans gate against the
-// per-source trades[source='sdex'] scan carried in classic
+// gate against their OWN registered per-decoder tables (see
+// [decoderGapIndex] / CA2-A19 — soroban_events is reserved for
+// [SorobanEventsPseudoSource] plans, since it is the only one that
+// table is actually ground truth for); SDEX-only plans gate against
+// the per-source trades[source='sdex'] scan carried in classic
 // (retention-scoped — see classicGapGate). MIXED plans (both Soroban
 // and SDEX decoders present) gate against BOTH — see gateMixedPlan.
 //
@@ -225,7 +359,7 @@ func anyPlanNeedsClassicGate(plans []stalledCursorPlan) bool {
 // false positives — sibling cursors had already completed the work
 // and the data was in trades / soroban_events. Walking them would
 // have been days of redundant LCM I/O.
-func gateAgainstDataGaps(plans []stalledCursorPlan, gaps []timescale.LedgerGap, classic classicGapGate, forceClassic bool) []stalledCursorPlan {
+func gateAgainstDataGaps(plans []stalledCursorPlan, decoderGaps decoderGapIndex, classic classicGapGate, forceClassic bool) []stalledCursorPlan {
 	out := make([]stalledCursorPlan, len(plans))
 	copy(out, plans)
 	for i := range out {
@@ -236,11 +370,11 @@ func gateAgainstDataGaps(plans []stalledCursorPlan, gaps []timescale.LedgerGap, 
 		case !planHasSorobanDecoder(out[i].sources):
 			gateClassicPlan(&out[i], classic, forceClassic)
 		case hasNonSorobanDecoder(out[i].sources):
-			gateMixedPlan(&out[i], gaps, classic, forceClassic)
+			gateMixedPlan(&out[i], decoderGaps, classic, forceClassic)
 		default:
-			if !overlapsAnyDataGap(out[i].rangeFrom, out[i].rangeTo, gaps) {
+			if !decoderPortionHasGap(out[i].sources, out[i].rangeFrom, out[i].rangeTo, decoderGaps) {
 				out[i].skip = true
-				out[i].skipReason = "remaining range fully covered by sibling cursors (no soroban_events gap overlap) — cursor inventory false-positive"
+				out[i].skipReason = "remaining range fully covered by sibling cursors (no per-decoder data gap overlap) — cursor inventory false-positive"
 			}
 		}
 	}
@@ -249,15 +383,15 @@ func gateAgainstDataGaps(plans []stalledCursorPlan, gaps []timescale.LedgerGap, 
 
 // gateMixedPlan handles a plan whose decoder CSV contains BOTH a
 // Soroban decoder and a non-Soroban (SDEX) decoder. DAT-11: a clean
-// soroban_events check alone is NOT sufficient grounds to call the
-// whole plan a cursor-inventory false positive — SDEX flows through a
-// different table (trades[source='sdex']), so a real SDEX-side gap
-// could exist even when the Soroban side is fully covered by sibling
-// cursors. A real gap on EITHER side keeps the plan actionable; only
-// when BOTH sides are independently confirmed clean (or the operator
-// opted into --force-classic-cursors) is it skipped.
-func gateMixedPlan(p *stalledCursorPlan, gaps []timescale.LedgerGap, classic classicGapGate, forceClassic bool) {
-	if overlapsAnyDataGap(p.rangeFrom, p.rangeTo, gaps) {
+// soroban side alone is NOT sufficient grounds to call the whole plan
+// a cursor-inventory false positive — SDEX flows through a different
+// table (trades[source='sdex']), so a real SDEX-side gap could exist
+// even when the Soroban side is fully covered by sibling cursors. A
+// real (or unresolved — CA2-A19) gap on EITHER side keeps the plan
+// actionable; only when BOTH sides are independently confirmed clean
+// (or the operator opted into --force-classic-cursors) is it skipped.
+func gateMixedPlan(p *stalledCursorPlan, decoderGaps decoderGapIndex, classic classicGapGate, forceClassic bool) {
+	if decoderPortionHasGap(sorobanSourcesOf(p.sources), p.rangeFrom, p.rangeTo, decoderGaps) {
 		return // soroban side alone already justifies the resume
 	}
 	// Soroban side is clean. Do NOT conclude false-positive without
@@ -565,6 +699,10 @@ func resumeStalled(args []string) error {
 	if err != nil {
 		return fmt.Errorf("find data gaps for gate: %w", err)
 	}
+	decoderGaps, err := buildDecoderGapIndex(gateCtx, store, plans, dataGaps, tipCursor.LastLedger, opts.dataGapMinSize)
+	if err != nil {
+		return fmt.Errorf("find per-decoder data gaps for gate: %w", err)
+	}
 	// SDEX-only plans get their own data-derived gate (trades
 	// doesn't flow through soroban_events). The scan is the gap
 	// detector's heaviest, so build it only when a classic-only
@@ -577,7 +715,7 @@ func resumeStalled(args []string) error {
 			return fmt.Errorf("sdex data-gap gate: %w", err)
 		}
 	}
-	plans = gateAgainstDataGaps(plans, dataGaps, classicGate, opts.forceClassic)
+	plans = gateAgainstDataGaps(plans, decoderGaps, classicGate, opts.forceClassic)
 	plans = applyMaxResumesCap(plans, opts.maxResumes)
 
 	actionable := 0

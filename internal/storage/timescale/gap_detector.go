@@ -102,6 +102,19 @@ const GapDetectorFirstScanCap = int64(2_000_000)
 // aggregation (aggregateBackfill / ledgerStreamLagSeconds) ignores it.
 const gapDetectorHighWaterSource = "gap-detector-scan"
 
+// gapDetectorLastPresentSource is the ingestion_cursors `source` under
+// which the detector persists, per target, the highest ledger it
+// observed PRESENT in the last window it scanned (not the scan
+// high-water itself, which advances every cycle regardless of whether
+// any row existed). Read back as the seed for
+// [Store.FindPerSourceLedgerGaps] so a gap that spans a scan-window
+// boundary — the dominant steady-state failure mode once the
+// incremental window is narrower than every gap threshold (CA2-A10/
+// A11 audit, 2026-09-23) — still pairs with the row that follows it
+// after the writer resumes, instead of being silently dropped because
+// the preceding row fell in an earlier, already-scanned window.
+const gapDetectorLastPresentSource = "gap-detector-last-present"
+
 // computeGapScanWindow returns the lower bound `from` of the trailing
 // window a detector cycle scans for a target, given the live `tip`,
 // the source `genesis`, the previously persisted scan `prevHighWater`
@@ -153,6 +166,51 @@ func gapScanHighWater(ctx context.Context, store *Store, logger *slog.Logger, ta
 		logger.Warn("gap-detector: read scan high-water failed; using SafetyLookback trailing window",
 			"source", target.Source, "table", target.Table, "err", err)
 		return 0, false
+	}
+}
+
+// gapScanSeed reads the last-present-ledger cursor persisted by the
+// previous cycle's scan (see [gapDetectorLastPresentSource]). Returns 0
+// ("no seed") when none is persisted yet or the read fails — the scan
+// falls back to today's un-seeded, interior-only behaviour rather than
+// blocking on the read. Targets carrying a DistinctLedgerCountSQL
+// override (soroban-events) never get a seed: the MAX(ledger) probe
+// this seed depends on is the same full-scan cost that override exists
+// to avoid (see [maxLedgerInWindowQuery]).
+func gapScanSeed(ctx context.Context, store *Store, target GapDetectorTarget) int64 {
+	if target.DistinctLedgerCountSQL != "" {
+		return 0
+	}
+	c, err := store.GetCursor(ctx, gapDetectorLastPresentSource, targetKey(target))
+	if err != nil {
+		return 0
+	}
+	return int64(c.LastLedger)
+}
+
+// persistGapScanSeed records this window's highest present ledger as
+// the seed the NEXT cycle's scan reads (see [gapScanSeed]).
+// UpsertCursor's monotonic-forward guard means a quiet window (max <=
+// the already-persisted value) is a safe no-op; skipped entirely for
+// the DistinctLedgerCountSQL-override targets, same reasoning as
+// [gapScanSeed]. Failures are non-fatal: the next cycle just falls back
+// to an un-seeded scan.
+func persistGapScanSeed(ctx context.Context, store *Store, logger *slog.Logger, target GapDetectorTarget, from, tip int64) {
+	if target.DistinctLedgerCountSQL != "" {
+		return
+	}
+	maxPresent, ok, err := store.MaxLedgerInWindow(ctx, target, from, tip)
+	if err != nil {
+		logger.Warn("gap-detector: max-ledger-in-window failed (next-cycle seed unaffected)",
+			"source", target.Source, "table", target.Table, "err", err)
+		return
+	}
+	if !ok || maxPresent <= 0 {
+		return
+	}
+	if err := store.UpsertCursor(ctx, gapDetectorLastPresentSource, targetKey(target), uint32(maxPresent)); err != nil { //nolint:gosec // maxPresent is bounded by tip, a uint32 ledger seq widened to int64
+		logger.Warn("gap-detector: persist last-present seed failed",
+			"source", target.Source, "table", target.Table, "err", err)
 	}
 }
 
@@ -401,6 +459,34 @@ func runOneGapDetectorCycle(ctx context.Context, store *Store, logger *slog.Logg
 	}
 }
 
+// gapScanFrom computes this cycle's trailing-window lower bound for
+// target (see [computeGapScanWindow]) and logs the first-ever scan.
+//
+// INCREMENTAL TRAILING WINDOW (2026-07-06 IO-saturation incident):
+// scan only [from, tip], not [genesis, tip]. Re-walking the whole
+// [genesis, tip] LAG-over-DISTINCT every 30 min cost two ~13-min
+// scans per cycle once sep41_transfers reached ~13M distinct
+// ledgers (~700M rows) — near-continuous IO saturation that blew
+// p95/p99. Deep history is the ADR-0033 completeness verdict's
+// domain (all 17 sources); the detector only needs the frontier.
+//
+// `from` is still floored at target.Genesis: below it live
+// pre-genesis "gaps" (ranges where the protocol didn't exist) that
+// used to deflate gap_free_pct — aquarius 2026-06-01 dropped to
+// 94.5% from a 551,779-ledger pre-genesis gap. The SAME `from`
+// feeds the distinct/expected coverage math the caller runs after so
+// density stays coherent (numerator + denominator both scoped to the
+// window).
+func gapScanFrom(ctx context.Context, store *Store, logger *slog.Logger, target GapDetectorTarget, tip int64) int64 {
+	prevHighWater, firstRun := gapScanHighWater(ctx, store, logger, target)
+	from := computeGapScanWindow(target.Genesis, tip, prevHighWater, firstRun)
+	if firstRun {
+		logger.Info("gap-detector: first scan for target — bounded to the trailing FirstScanCap window; deep history is the ADR-0033 completeness verdict's domain",
+			"source", target.Source, "table", target.Table, "from", from, "tip", tip)
+	}
+	return from
+}
+
 // scanOneGapDetectorTarget runs one target's scan + metric
 // emission under its own timeout. Separated from
 // runOneGapDetectorCycle so the cycle loop reads as "for each
@@ -416,28 +502,9 @@ func scanOneGapDetectorTarget(ctx context.Context, store *Store, logger *slog.Lo
 	scanCtx, cancel := context.WithTimeout(ctx, gapDetectorPerTargetTimeout)
 	defer cancel()
 
-	// INCREMENTAL TRAILING WINDOW (2026-07-06 IO-saturation incident):
-	// scan only [from, tip], not [genesis, tip]. Re-walking the whole
-	// [genesis, tip] LAG-over-DISTINCT every 30 min cost two ~13-min
-	// scans per cycle once sep41_transfers reached ~13M distinct
-	// ledgers (~700M rows) — near-continuous IO saturation that blew
-	// p95/p99. Deep history is the ADR-0033 completeness verdict's
-	// domain (all 17 sources); the detector only needs the frontier.
-	//
-	// `from` is still floored at target.Genesis: below it live
-	// pre-genesis "gaps" (ranges where the protocol didn't exist) that
-	// used to deflate gap_free_pct — aquarius 2026-06-01 dropped to
-	// 94.5% from a 551,779-ledger pre-genesis gap. The SAME `from`
-	// feeds the distinct/expected coverage math below so density stays
-	// coherent (numerator + denominator both scoped to the window).
-	prevHighWater, firstRun := gapScanHighWater(scanCtx, store, logger, target)
-	from := computeGapScanWindow(target.Genesis, tip, prevHighWater, firstRun)
-	if firstRun {
-		logger.Info("gap-detector: first scan for target — bounded to the trailing FirstScanCap window; deep history is the ADR-0033 completeness verdict's domain",
-			"source", target.Source, "table", target.Table, "from", from, "tip", tip)
-	}
-
-	gaps, err := store.FindPerSourceLedgerGaps(scanCtx, target, from, tip, target.EffectiveMinGapSize())
+	from := gapScanFrom(scanCtx, store, logger, target, tip)
+	seed := gapScanSeed(scanCtx, store, target)
+	gaps, err := store.FindPerSourceLedgerGaps(scanCtx, target, from, tip, target.EffectiveMinGapSize(), seed)
 	if err != nil {
 		// A non-ok outcome MUST be loud: this is the only signal that a
 		// heavy scan is timing out (Go ctx deadline / SQL statement_timeout)
@@ -469,6 +536,8 @@ func scanOneGapDetectorTarget(ctx context.Context, store *Store, logger *slog.Lo
 				"source", target.Source, "table", target.Table, "err", err)
 		}
 	}
+
+	persistGapScanSeed(scanCtx, store, logger, target, from, tip)
 
 	// ADR-0031: alongside the gap scan, count distinct ledgers over the
 	// SAME trailing [from, tip] window so the data-derived density

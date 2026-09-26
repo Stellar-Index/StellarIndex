@@ -390,7 +390,11 @@ func TestGateAgainstDataGaps_HappyPath(t *testing.T) {
 		},
 	}
 
-	out := gateAgainstDataGaps(plans, gaps, classicGapGate{}, false)
+	decoderGaps := decoderGapIndex{
+		"aquarius": {resolved: true, gaps: gaps},
+		"soroswap": {resolved: true, gaps: gaps},
+	}
+	out := gateAgainstDataGaps(plans, decoderGaps, classicGapGate{}, false)
 
 	// out[0] is the actionable real-gap one — gate should keep it un-skipped.
 	if out[0].skip {
@@ -402,7 +406,7 @@ func TestGateAgainstDataGaps_HappyPath(t *testing.T) {
 	if !out[1].skip {
 		t.Errorf("plan[1] soroswap/false-positive should be skipped after gate; got actionable")
 	}
-	if !strings.Contains(out[1].skipReason, "no soroban_events gap overlap") {
+	if !strings.Contains(out[1].skipReason, "no per-decoder data gap overlap") {
 		t.Errorf("plan[1] skip reason should mention false-positive; got %q", out[1].skipReason)
 	}
 	if !out[2].skip {
@@ -413,6 +417,62 @@ func TestGateAgainstDataGaps_HappyPath(t *testing.T) {
 	}
 	if !out[3].skip || out[3].skipReason != "doesn't match shape" {
 		t.Errorf("plan[3] pre-existing skip should be untouched by the gate; got skip=%v reason=%q", out[3].skip, out[3].skipReason)
+	}
+}
+
+// TestGateAgainstDataGaps_PerDecoderGateIgnoresSorobanEvents is the
+// CA2-A19 regression: a Soroban DECODER plan (as opposed to a raw
+// [SorobanEventsPseudoSource] backfill) must be gated on its OWN
+// registered table(s), never on soroban_events. soroban_events is
+// written by live ingest for every Soroban event regardless of which
+// decoders are enabled, so a clean soroban_events scan says nothing
+// about whether "blend"'s own tables have the rows a stalled blend
+// backfill was supposed to write. Fixture: soroban_events reads clean
+// (as it would after live ingest already saw the raw events) while
+// blend's own registered target shows a real, overlapping gap — the
+// plan MUST stay actionable.
+func TestGateAgainstDataGaps_PerDecoderGateIgnoresSorobanEvents(t *testing.T) {
+	plans := []stalledCursorPlan{
+		{
+			cursor:    timescale.Cursor{Sub: "51500000-51600000:blend"},
+			rangeFrom: 51_500_100,
+			rangeTo:   51_500_900,
+			sources:   []string{"blend"},
+		},
+	}
+	decoderGaps := decoderGapIndex{
+		SorobanEventsPseudoSource: {resolved: true, gaps: nil}, // soroban_events: clean
+		"blend":                   {resolved: true, gaps: []timescale.LedgerGap{{Start: 51_500_200, End: 51_500_800, Size: 601}}},
+	}
+	out := gateAgainstDataGaps(plans, decoderGaps, classicGapGate{}, false)
+	if out[0].skip {
+		t.Fatalf("blend's own gap must keep the plan actionable regardless of a clean soroban_events scan; got skip=%v reason=%q",
+			out[0].skip, out[0].skipReason)
+	}
+}
+
+// TestGateAgainstDataGaps_PerDecoderUnresolvedFailsClosed is CA2-A19's
+// second half: a decoder with NO registered [timescale.GapDetectorTarget]
+// at all must NOT be treated as clean just because it has no evidence —
+// that would re-open the same false-skip class with an even weaker
+// excuse ("we never checked" instead of "we checked the wrong table").
+func TestGateAgainstDataGaps_PerDecoderUnresolvedFailsClosed(t *testing.T) {
+	plans := []stalledCursorPlan{
+		{
+			cursor:    timescale.Cursor{Sub: "51500000-51600000:blend"},
+			rangeFrom: 51_500_100,
+			rangeTo:   51_500_900,
+			sources:   []string{"blend"},
+		},
+	}
+	decoderGaps := decoderGapIndex{
+		SorobanEventsPseudoSource: {resolved: true, gaps: nil},
+		// "blend" deliberately absent — simulates no registered target.
+	}
+	out := gateAgainstDataGaps(plans, decoderGaps, classicGapGate{}, false)
+	if out[0].skip {
+		t.Fatalf("an unresolved decoder must fail closed (stay actionable), not be treated as clean; got skip=%v reason=%q",
+			out[0].skip, out[0].skipReason)
 	}
 }
 
@@ -431,7 +491,7 @@ func TestGateAgainstDataGaps_ForceClassic(t *testing.T) {
 			sources:   []string{"sdex"},
 		},
 	}
-	out := gateAgainstDataGaps(plans, nil, classicGapGate{}, true) // forceClassic=true
+	out := gateAgainstDataGaps(plans, decoderGapIndex{}, classicGapGate{}, true) // forceClassic=true
 	if out[0].skip {
 		t.Errorf("with --force-classic-cursors the SDEX plan must stay actionable; got skip=%v reason=%q", out[0].skip, out[0].skipReason)
 	}
@@ -453,16 +513,19 @@ func TestGateAgainstDataGaps_MixedPlanChecksBothSides(t *testing.T) {
 		}
 	}
 
+	sorobanClean := decoderGapIndex{"aquarius": {resolved: true}}
+
 	t.Run("soroban side has a real gap — actionable without even checking classic", func(t *testing.T) {
 		gaps := []timescale.LedgerGap{{Start: 61_200_000, End: 61_300_000, Size: 100_001}}
-		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, gaps, classicGapGate{}, false)
+		idx := decoderGapIndex{"aquarius": {resolved: true, gaps: gaps}}
+		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, idx, classicGapGate{}, false)
 		if out[0].skip {
 			t.Fatalf("soroban-side real gap must keep the mixed plan actionable; got skip=%v reason=%q", out[0].skip, out[0].skipReason)
 		}
 	})
 
 	t.Run("soroban clean, classic gate unavailable — must SKIP, not silently act (and must not claim false-positive)", func(t *testing.T) {
-		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, nil, classicGapGate{}, false)
+		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, sorobanClean, classicGapGate{}, false)
 		if !out[0].skip {
 			t.Fatalf("soroban-clean + SDEX-gate-unavailable must SKIP a mixed plan (unverified SDEX side); got actionable")
 		}
@@ -480,7 +543,7 @@ func TestGateAgainstDataGaps_MixedPlanChecksBothSides(t *testing.T) {
 			floor:     60_000_000,
 			gaps:      []timescale.LedgerGap{{Start: 61_150_000, End: 61_250_000, Size: 100_001}},
 		}
-		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, nil, gate, false)
+		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, sorobanClean, gate, false)
 		if out[0].skip {
 			t.Fatalf("a real SDEX-side gap must keep the mixed plan actionable; got skip=%v reason=%q", out[0].skip, out[0].skipReason)
 		}
@@ -492,14 +555,14 @@ func TestGateAgainstDataGaps_MixedPlanChecksBothSides(t *testing.T) {
 			floor:     60_000_000,
 			gaps:      nil, // no sdex gap anywhere in the retained window
 		}
-		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, nil, gate, false)
+		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, sorobanClean, gate, false)
 		if !out[0].skip {
 			t.Fatalf("both sides clean must skip the mixed plan; got actionable")
 		}
 	})
 
 	t.Run("force-classic opts the SDEX side out of the gate — actionable on soroban-clean alone", func(t *testing.T) {
-		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, nil, classicGapGate{}, true)
+		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, sorobanClean, classicGapGate{}, true)
 		if out[0].skip {
 			t.Fatalf("--force-classic-cursors must make a soroban-clean mixed plan actionable even with no classic gate; got skip=%v reason=%q", out[0].skip, out[0].skipReason)
 		}
