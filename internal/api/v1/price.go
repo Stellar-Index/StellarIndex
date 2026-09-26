@@ -239,13 +239,13 @@ func priceWithheldReason(err error) PriceWithheldReason {
 // serving path ("tip", "price_read", …) — see
 // obs.PriceServeSubstanceWithheldTotal.
 //
-// Allowed fails open when the pair cannot be measured. Verdict reports
-// that case as measured=false (allowed=false) for surfaces that must
-// not publish an unverified price — the listing, see
-// [Server.listingSubstanceVerdict].
+// Allowed fails open when the pair cannot be measured. Probe reports
+// that case as measured=false (allowed=false), uncounted, for the
+// asset-level verdict that must not publish an unverified price — the
+// listing, see [Server.listingSubstanceVerdict].
 type PriceSubstanceGate interface {
 	Allowed(ctx context.Context, base, quote canonical.Asset, surface string) bool
-	Verdict(ctx context.Context, base, quote canonical.Asset, surface string) (allowed, measured bool)
+	Probe(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool, floor pricingguard.SubstanceFloor)
 }
 
 // PriceScamGate is the serving-side scam-issuer gate seam: it withholds

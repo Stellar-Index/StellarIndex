@@ -3833,19 +3833,19 @@ const dexTVLGateSurface = "dex_tvl"
 // question the DEX TVL snapshot asks per reserve leg (#338): may this
 // platform publish a USD valuation of this asset at all?
 //
-// It answers by routing through priceWithheld — never by consulting
-// either gate itself, which is the MSP-cluster invariant
+// It answers through pricingguard.Gate — never by consulting either
+// gate half itself, which is the MSP-cluster invariant
 // (TestWithholdingGatesAreSpelledOnlyAtTheChokepoint) — so the TVL
 // figure can never drift out of step with what /v1/price serves for
 // the same asset.
 //
-// The quote fan-out mirrors v1.Server.listingPriceAllowed exactly: an
-// asset's value is publishable when ANY of its plausible backing pairs
-// clears the floor (vs XLM, the dominant on-chain quote; vs fiat:USD,
-// which the alias union extends to the CEX-fed crypto:X series; or vs
-// an operator-declared USD peg, the resolver's direct_usd route). The
-// scam verdict is quote-independent, so a flagged issuer withholds on
-// every arm and the whole asset is refused.
+// The quote fan-out is v1.Server.listingPriceAllowed's, via the shared
+// pricingguard.AssetSubstanceVerdict: an asset's value is publishable
+// when ANY of its plausible backing pairs clears the floor (vs XLM, the
+// dominant on-chain quote; vs fiat:USD, which the alias union extends to
+// the CEX-fed crypto:X series; or vs an operator-declared USD peg, the
+// resolver's direct_usd route). The scam verdict is quote-independent,
+// so a flagged issuer refuses the whole asset.
 type dexTVLValueGate struct {
 	substance *pricingguard.SubstanceGate
 	scam      *pricingguard.ScamGate
@@ -3896,22 +3896,12 @@ func (g dexTVLValueGate) Screens() []string {
 // value. Native XLM is never withheld — it is definitionally liquid and
 // its identity pairs degenerate under the alias union, the same
 // exemption listingPriceAllowed carries.
+//
+// The per-quote fan-out is one decision, so it is asked of the Gate as
+// one question: the withheld metrics count the asset once per refresh.
 func (g dexTVLValueGate) ValueWithheld(ctx context.Context, asset canonical.Asset) bool {
-	if asset.Type == canonical.AssetNative {
-		return false
-	}
-	quotes := make([]canonical.Asset, 0, 2+len(g.usdPegs))
-	quotes = append(quotes, canonical.NativeAsset(), usdQuoteAsset)
-	quotes = append(quotes, g.usdPegs...)
-	for _, quote := range quotes {
-		if asset.Equal(quote) {
-			continue // degenerate identity pair
-		}
-		if priceWithheld(ctx, g.substance, g.scam, asset, quote, dexTVLGateSurface) == pricingguard.NotWithheld {
-			return false
-		}
-	}
-	return true
+	gate := pricingguard.Gate{Substance: g.substance, Scam: g.scam}
+	return gate.AssetValueWithholding(ctx, asset, g.usdPegs, dexTVLGateSurface) != pricingguard.NotWithheld
 }
 
 // buildSubstanceGate maps the [pricing_guard] config section onto the

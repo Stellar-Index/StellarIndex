@@ -61,7 +61,7 @@ func assetKeys(set []canonical.Asset) []string {
 func substanceQuery(t *testing.T, window time.Duration, row []driver.Value) (recordedStmt, MarketSubstance) {
 	t.Helper()
 	store, conn := newScriptedStore(t, scriptedResult{
-		cols: []string{"volume_usd", "buckets", "span_seconds"},
+		cols: []string{"volume_usd", "buckets", "span_seconds", "valued_buckets"},
 		rows: [][]driver.Value{row},
 	})
 	bases, quotes := testXLMUSDCLegs(t)
@@ -78,7 +78,7 @@ func substanceQuery(t *testing.T, window time.Duration, row []driver.Value) (rec
 // now()` spelling puts a function on the indexed column, which is the
 // drift UNAUTH-DOS-3 found on the sibling reader.
 func TestPairMarketSubstance_ClosedBucketPredicate(t *testing.T) {
-	stmt, _ := substanceQuery(t, time.Hour, []driver.Value{"0", int64(0), int64(0)})
+	stmt, _ := substanceQuery(t, time.Hour, []driver.Value{"0", int64(0), int64(0), int64(0)})
 
 	if !strings.Contains(stmt.sql, "bucket <= now() - INTERVAL '1 minute'") {
 		t.Errorf(`substance query is missing the closed-bucket predicate
@@ -105,7 +105,7 @@ SQL:
 // load-bearing, and a one-armed measurement understates every two-sided
 // market.
 func TestPairMarketSubstance_ReadsBothStoredDirections(t *testing.T) {
-	stmt, _ := substanceQuery(t, time.Hour, []driver.Value{"0", int64(0), int64(0)})
+	stmt, _ := substanceQuery(t, time.Hour, []driver.Value{"0", int64(0), int64(0), int64(0)})
 
 	norm := regexp.MustCompile(`\s+`).ReplaceAllString(stmt.sql, " ")
 	for _, arm := range []string{
@@ -144,7 +144,7 @@ func TestPairMarketSubstance_BindsPairAndLiteralLowerBound(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	bases, quotes := testXLMUSDCLegs(t)
 	before := time.Now().UTC()
-	stmt, _ := substanceQuery(t, 6*time.Hour, []driver.Value{"0", int64(0), int64(0)})
+	stmt, _ := substanceQuery(t, 6*time.Hour, []driver.Value{"0", int64(0), int64(0), int64(0)})
 	after := time.Now().UTC()
 
 	if len(stmt.args) != 2 {
@@ -190,7 +190,7 @@ SQL:
 // row per direction) report 2, so a single-minute burst on a two-sided
 // dust market would clear a MinBuckets=2 floor on its own.
 func TestPairMarketSubstance_GroupsByBucket(t *testing.T) {
-	stmt, _ := substanceQuery(t, time.Hour, []driver.Value{"0", int64(0), int64(0)})
+	stmt, _ := substanceQuery(t, time.Hour, []driver.Value{"0", int64(0), int64(0), int64(0)})
 
 	norm := regexp.MustCompile(`\s+`).ReplaceAllString(stmt.sql, " ")
 	if !strings.Contains(norm, "GROUP BY bucket") {
@@ -213,7 +213,7 @@ func TestPairMarketSubstance_GroupsByBucket(t *testing.T) {
 // move a pair across a floor set at the same magnitude.
 func TestPairMarketSubstance_VolumeIsAnExactDecimalString(t *testing.T) {
 	const exact = "123456789012345678.123456789"
-	_, sub := substanceQuery(t, time.Hour, []driver.Value{exact, int64(7), int64(1860)})
+	_, sub := substanceQuery(t, time.Hour, []driver.Value{exact, int64(7), int64(1860), int64(5)})
 
 	if sub.VolumeUSD != exact {
 		t.Errorf("VolumeUSD = %s, want the NUMERIC verbatim %s (ADR-0003: no float64 hop)",
@@ -225,6 +225,20 @@ func TestPairMarketSubstance_VolumeIsAnExactDecimalString(t *testing.T) {
 	if sub.SpanSeconds != 1860 {
 		t.Errorf("SpanSeconds = %d, want 1860", sub.SpanSeconds)
 	}
+	if sub.ValuedBuckets != 5 {
+		t.Errorf("ValuedBuckets = %d, want 5", sub.ValuedBuckets)
+	}
+}
+
+// TestPairMarketSubstance_CountsUSDValuedBuckets pins the fourth column:
+// the per-bucket valued count the gate uses to tell an unvaluable market
+// from a thin one. It must be computed over the bucket-grouped USD sum,
+// not over raw rows.
+func TestPairMarketSubstance_CountsUSDValuedBuckets(t *testing.T) {
+	stmt, _ := substanceQuery(t, time.Hour, []driver.Value{"0", int64(0), int64(0), int64(0)})
+	if !strings.Contains(stmt.sql, "count(*) FILTER (WHERE bucket_usd > 0)") {
+		t.Errorf("PairMarketSubstance does not count USD-valued buckets:\n%s", stmt.sql)
+	}
 }
 
 // TestPairMarketSubstance_EmptyPairIsZeroNotError — absence of market is
@@ -232,7 +246,7 @@ func TestPairMarketSubstance_VolumeIsAnExactDecimalString(t *testing.T) {
 // measurement failed"; collapsing them would make a DB blip look like a
 // thin market (or, worse, the reverse if the caller defaulted open).
 func TestPairMarketSubstance_EmptyPairIsZeroNotError(t *testing.T) {
-	_, sub := substanceQuery(t, time.Hour, []driver.Value{"0", int64(0), int64(0)})
+	_, sub := substanceQuery(t, time.Hour, []driver.Value{"0", int64(0), int64(0), int64(0)})
 
 	if sub != (MarketSubstance{VolumeUSD: "0"}) {
 		t.Errorf("empty pair = %+v, want {VolumeUSD:0 Buckets:0 SpanSeconds:0}", sub)

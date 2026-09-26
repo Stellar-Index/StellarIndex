@@ -14,6 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
 // flippableSubstanceGate allows until refuse is set, then withholds —
@@ -24,8 +25,8 @@ func (g *flippableSubstanceGate) Allowed(context.Context, canonical.Asset, canon
 	return !g.refuse.Load()
 }
 
-func (g *flippableSubstanceGate) Verdict(ctx context.Context, base, quote canonical.Asset, surface string) (allowed, measured bool) {
-	return g.Allowed(ctx, base, quote, surface), true
+func (g *flippableSubstanceGate) Probe(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool, floor pricingguard.SubstanceFloor) {
+	return g.Allowed(ctx, base, quote, "probe"), true, pricingguard.FloorNone
 }
 
 // readSSEFrame reads one SSE frame and returns its event type and data,

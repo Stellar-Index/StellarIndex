@@ -2444,11 +2444,14 @@ func (s *Store) OHLCSeriesReBucketed(
 // to VolumeUSD (the CAGG stores sum(coalesce(usd_volume, 0))) — so an
 // unvaluable market fails a positive volume floor BY CONSTRUCTION,
 // which is the fail-closed posture the gate wants: if the volume cannot
-// be verified, the floor cannot be verified.
+// be verified, the floor cannot be verified. ValuedBuckets counts the
+// buckets whose summed volume_usd is positive, so the gate can tell
+// that failure from a market that was valued and found thin.
 type MarketSubstance struct {
-	VolumeUSD   string
-	Buckets     int64
-	SpanSeconds int64
+	VolumeUSD     string
+	Buckets       int64
+	SpanSeconds   int64
+	ValuedBuckets int64
 }
 
 // substanceLegs renders the two spelling sets a substance read binds as
@@ -2498,7 +2501,8 @@ func (s *Store) PairMarketSubstance(ctx context.Context, bases, quotes []canonic
 	q := fmt.Sprintf(`
         SELECT COALESCE(sum(bucket_usd), 0)::text,
                count(*),
-               COALESCE(EXTRACT(EPOCH FROM (max(bucket) - min(bucket)))::bigint, 0)
+               COALESCE(EXTRACT(EPOCH FROM (max(bucket) - min(bucket)))::bigint, 0),
+               count(*) FILTER (WHERE bucket_usd > 0)
           FROM (
             SELECT bucket, sum(volume_usd) AS bucket_usd
               FROM (
@@ -2518,7 +2522,7 @@ func (s *Store) PairMarketSubstance(ctx context.Context, bases, quotes []canonic
     `, lower) //nolint:gosec // G201: see note above
 	var sub MarketSubstance
 	if err := s.db.QueryRowContext(ctx, q, baseKeys, quoteKeys).Scan(
-		&sub.VolumeUSD, &sub.Buckets, &sub.SpanSeconds,
+		&sub.VolumeUSD, &sub.Buckets, &sub.SpanSeconds, &sub.ValuedBuckets,
 	); err != nil {
 		return MarketSubstance{}, fmt.Errorf("timescale: PairMarketSubstance: %w", err)
 	}
@@ -2583,7 +2587,8 @@ func (s *Store) PairMarketSubstanceAt(
 	q := fmt.Sprintf(`
         SELECT COALESCE(sum(bucket_usd), 0)::text,
                count(*),
-               COALESCE(EXTRACT(EPOCH FROM (max(bucket) - min(bucket)))::bigint, 0)
+               COALESCE(EXTRACT(EPOCH FROM (max(bucket) - min(bucket)))::bigint, 0),
+               count(*) FILTER (WHERE bucket_usd > 0)
           FROM (
             SELECT bucket, sum(volume_usd) AS bucket_usd
               FROM (
@@ -2605,7 +2610,7 @@ func (s *Store) PairMarketSubstanceAt(
     `, string(g), g.closedBucketInterval(), upper.Format(layout), lower.Format(layout)) //nolint:gosec // G201: see note above
 	var sub MarketSubstance
 	if err := s.db.QueryRowContext(ctx, q, baseKeys, quoteKeys).Scan(
-		&sub.VolumeUSD, &sub.Buckets, &sub.SpanSeconds,
+		&sub.VolumeUSD, &sub.Buckets, &sub.SpanSeconds, &sub.ValuedBuckets,
 	); err != nil {
 		return MarketSubstance{}, fmt.Errorf("timescale: PairMarketSubstanceAt: %w", err)
 	}

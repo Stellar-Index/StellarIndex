@@ -383,9 +383,11 @@ const maxSubstanceWindowHours = 400 * 24
 
 // validateSubstanceSatisfiable rejects floor combinations no market can
 // clear (every pair withheld) or a window that overflows time.Duration
-// (every pair served unguarded). The trailing window holds at most
-// window*60 closed 1m buckets and spans under window*60 minutes. A 0 knob
-// is checked at the default it resolves to.
+// (every pair served unguarded). The window is `bucket >= now-window AND
+// bucket <= now-1min`; at any instant not on a minute boundary — nearly
+// every read — that admits window*60-1 closed 1m buckets spanning
+// window*60-2 minutes, so those are the largest floors a market can
+// reliably clear. A 0 knob is checked at the default it resolves to.
 func (pg PricingGuardConfig) validateSubstanceSatisfiable() error {
 	def := defaultPricingGuardConfig()
 	windowHours := cmp.Or(pg.SubstanceWindowHours, def.SubstanceWindowHours)
@@ -396,15 +398,15 @@ func (pg PricingGuardConfig) validateSubstanceSatisfiable() error {
 			ErrInvalidConfig, windowHours, maxSubstanceWindowHours)
 	}
 	windowMinutes := windowHours * 60
-	if spanMinutes >= windowMinutes {
-		return fmt.Errorf("%w: pricing_guard: substance_min_span_minutes (effective %d) must be less than "+
-			"substance_window_hours*60 (effective %d) — no market can span its whole window, so every pair would be withheld",
-			ErrInvalidConfig, spanMinutes, windowMinutes)
+	if spanMinutes > windowMinutes-2 {
+		return fmt.Errorf("%w: pricing_guard: substance_min_span_minutes (effective %d) must be at most "+
+			"substance_window_hours*60-2 (effective %d) — the window's closed buckets span no more, so every pair would be withheld",
+			ErrInvalidConfig, spanMinutes, windowMinutes-2)
 	}
-	if buckets > windowMinutes {
-		return fmt.Errorf("%w: pricing_guard: substance_min_buckets (effective %d) must not exceed "+
-			"substance_window_hours*60 (effective %d) 1-minute buckets — every pair would be withheld",
-			ErrInvalidConfig, buckets, windowMinutes)
+	if buckets > windowMinutes-1 {
+		return fmt.Errorf("%w: pricing_guard: substance_min_buckets (effective %d) must be at most "+
+			"substance_window_hours*60-1 (effective %d) closed 1-minute buckets — every pair would be withheld",
+			ErrInvalidConfig, buckets, windowMinutes-1)
 	}
 	return nil
 }

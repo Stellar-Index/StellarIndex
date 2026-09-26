@@ -14,6 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
 // Regression suite for Q162 / RLT-299: /v1/price/stream fanned out, in
@@ -80,8 +81,8 @@ func (g *closedStreamGate) Allowed(_ context.Context, _, _ canonical.Asset, surf
 	return !g.record(surface)
 }
 
-func (g *closedStreamGate) Verdict(ctx context.Context, base, quote canonical.Asset, surface string) (allowed, measured bool) {
-	return g.Allowed(ctx, base, quote, surface), true
+func (g *closedStreamGate) Probe(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool, floor pricingguard.SubstanceFloor) {
+	return g.Allowed(ctx, base, quote, "probe"), true, pricingguard.FloorNone
 }
 
 // Withheld implements v1.PriceScamGate (flagged issuer).

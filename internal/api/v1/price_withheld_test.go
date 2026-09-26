@@ -88,8 +88,8 @@ func (g *stubSubstanceGate) Allowed(_ context.Context, _, _ canonical.Asset, sur
 	return g.allow
 }
 
-func (g *stubSubstanceGate) Verdict(ctx context.Context, base, quote canonical.Asset, surface string) (allowed, measured bool) {
-	return g.Allowed(ctx, base, quote, surface), true
+func (g *stubSubstanceGate) Probe(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool, floor pricingguard.SubstanceFloor) {
+	return g.Allowed(ctx, base, quote, "probe"), true, pricingguard.FloorNone
 }
 
 func TestPriceTip_Withheld_Distinct404Type(t *testing.T) {

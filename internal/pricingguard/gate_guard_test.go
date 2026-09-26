@@ -14,9 +14,10 @@ import (
 // gateMethods are Gate's decision methods: asking one of these is what
 // "consulted the withholding decision" means.
 var gateMethods = map[string]bool{
-	"PriceWithheld":      true,
-	"PriceWithholding":   true,
-	"PriceWithholdingAt": true,
+	"PriceWithheld":         true,
+	"PriceWithholding":      true,
+	"PriceWithholdingAt":    true,
+	"AssetValueWithholding": true,
 }
 
 // halfMethods are the SubstanceGate / ScamGate decision methods. A binary
@@ -26,6 +27,7 @@ var halfMethods = map[string]bool{
 	"Allowed":      true,
 	"AllowedAt":    true,
 	"Verdict":      true,
+	"Probe":        true,
 	"Withheld":     true,
 	"WithheldPair": true,
 }

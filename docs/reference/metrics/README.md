@@ -2577,10 +2577,10 @@ metric watches for.
 
 ### `stellarindex_price_serve_substance_withheld_total`
 
-Counter, label `surface` (`price_read` | `tip` | `oracle` |
-`asset_headline` | `price_alert` | `dex_tvl`).
+Counter, labels `surface` (the table below) and `floor` (`buckets` |
+`span` | `volume` | `volume_unvalued`).
 
-Fires once per aggregated-price serve WITHHELD by the serving-side
+Fires once per aggregated-price decision WITHHELD by the serving-side
 thin-market substance gate (`internal/pricingguard.SubstanceGate`,
 `[pricing_guard]` config, 2026-08-04 valuation incident): the
 requested pair has an on-chain leg and its trailing market activity
@@ -2588,7 +2588,55 @@ requested pair has an on-chain leg and its trailing market activity
 union, both directions) is below the serve floor, so the surface
 returned the `price-withheld` verdict instead of a price. Raw
 surfaces (`/v1/observations`, `/v1/ohlc`, `/v1/history`) still serve
-the pair.
+the pair. An asset-level decision (`listing`, `change_summary` coin
+rows, `dex_tvl`, `priceless_coverage`, the `transitive` far leg)
+probes XLM, `fiat:USD` and each declared USD peg but counts once per
+asset; `transitive` counts once per refused candidate hop.
+
+`floor` is the first floor the market failed, checked in the order
+buckets, span, volume — so `volume` and `volume_unvalued` both mean the
+market cleared the two persistence floors. `volume_unvalued` means fewer
+than half of its active buckets carried a USD valuation: the insert-time
+`usd_volume` waterfall could not value it (a SEP-41/SEP-41 pair, or
+XLM-quoted trades during an XLM/USD anchor outage), so `prices_1m`
+reads its volume as $0. Such a market is still withheld — an
+unvaluable volume cannot be verified — but a jump in `volume_unvalued`
+with no matching rise in `volume` points at the valuation pipeline, not
+at the markets.
+
+The `surface` values below are shared by all four price-serve gate
+counters (this one, `stellarindex_price_serve_substance_unmeasured_total`,
+`stellarindex_price_serve_scam_withheld_total` and
+`stellarindex_scam_gate_lookup_failures_total`); the Gates column says
+which of the two gates each surface consults. The table is pinned to
+the call sites by `TestPriceServeSurfaceLabelsAreDocumented`
+(`internal/pricingguard`).
+
+| Surface | Gates | Serving path |
+|---|---|---|
+| `anomalies` | both | `/v1/anomalies` rows |
+| `asset_headline` | both | the asset headline price (GlobalAssetView) |
+| `change_summary` | both | `/v1/changes` summary |
+| `chart` | scam | `/v1/chart` series |
+| `dex_tvl` | both | DEX TVL snapshot refresh valuing pool reserve legs (background) |
+| `divergence` | both | `/v1/divergence` rows |
+| `divergence_webhook` | both | aggregator divergence webhooks |
+| `freeze_webhook` | both | aggregator freeze webhooks |
+| `history_series` | scam | `/v1/history` series |
+| `listing` | substance | `/v1/assets` listing rows, catalogue listing price, asset-detail overlay |
+| `markets` | scam | `/v1/markets` last price |
+| `oracle` | both | SEP-40 oracle passthrough |
+| `pairs` | scam | `/v1/pairs` last price |
+| `pools` | scam | `/v1/pools` last price |
+| `price_alert` | both | customer price-alert evaluator (aggregator) |
+| `price_at` | both | point-in-time reads (`/v1/price/at`, `/v1/price/changes`) |
+| `price_read` | both | the shared `/v1/price` + batch + assets-enrichment reader |
+| `price_stream` | both | the closed-bucket price stream |
+| `priceless_coverage` | substance | priceless-popular coverage tripwire (background) |
+| `tip` | both | `/v1/price/tip` |
+| `transitive` | both | one-hop transitive USD price, both legs |
+| `twap` | scam | `/v1/twap` |
+| `vwap` | scam | `/v1/vwap` |
 
 When to look at it: a steady non-zero rate is EXPECTED — Stellar's
 long tail of dust pairs is large, and each withheld request is the
@@ -2610,8 +2658,9 @@ never as a smaller number claiming to be exact.
 
 ### `stellarindex_price_serve_substance_unmeasured_total`
 
-Counter, label `surface` (same set as
-`stellarindex_price_serve_substance_withheld_total`, plus `listing`).
+Counter, label `surface` (the shared table under
+`stellarindex_price_serve_substance_withheld_total`; surfaces that
+consult the substance gate).
 
 Fires once per substance-gate verdict that could not be reached: the
 trailing-substance read errored or ran out of request deadline, so the
@@ -2646,10 +2695,11 @@ Dashboard-only, no alert rule.
 
 ### `stellarindex_price_serve_scam_withheld_total`
 
-Counter, label `surface` (`price_read` | `tip` | `oracle` |
-`asset_headline` | `dex_tvl`).
+Counter, label `surface` (the shared table under
+`stellarindex_price_serve_substance_withheld_total`; surfaces that
+consult the scam gate).
 
-Fires once per aggregated-price serve WITHHELD by the serving-side
+Fires once per aggregated-price decision WITHHELD by the serving-side
 scam-pricing gate (`internal/pricingguard.ScamGate`): the requested
 asset's ISSUER carries a scam-class tag
 (`malicious`/`unsafe`/`fraud`/`scam`/`hack`/`phishing`) in the curated
