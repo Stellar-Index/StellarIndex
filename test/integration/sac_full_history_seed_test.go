@@ -113,7 +113,7 @@ func TestSACFullHistorySeed_RecoversDormantPoolHolder(t *testing.T) {
 
 	// (2) The full-history reader recovers it directly from the append-log.
 	var got *chstore.SACBalanceSeed
-	if err := chstore.StreamSACBalanceSeedsFullHistory(ctx, addr, watched, func(seed chstore.SACBalanceSeed) error {
+	if _, err := chstore.StreamSACBalanceSeedsFullHistory(ctx, addr, watched, chstore.SeedWalk{}, func(seed chstore.SACBalanceSeed) error {
 		if seed.Holder == poolAddr {
 			s := seed
 			got = &s
@@ -184,7 +184,7 @@ func TestSACFullHistorySeed_LatestWriteWins(t *testing.T) {
 
 	watched := map[string]string{sac: asset}
 	var got *chstore.SACBalanceSeed
-	if err := chstore.StreamSACBalanceSeedsFullHistory(ctx, addr, watched, func(seed chstore.SACBalanceSeed) error {
+	if _, err := chstore.StreamSACBalanceSeedsFullHistory(ctx, addr, watched, chstore.SeedWalk{}, func(seed chstore.SACBalanceSeed) error {
 		if seed.Holder == holder {
 			s := seed
 			got = &s
@@ -263,7 +263,7 @@ func TestSACFullHistorySeed_SameLedgerRemovalCoherence(t *testing.T) {
 	// live, nonzero-balance emission would mean the deleted balance was
 	// RESURRECTED — that's what this test guards against.
 	var resurrected, tombstones int
-	if err := chstore.StreamSACBalanceSeedsFullHistory(ctx, addr, watched, func(seed chstore.SACBalanceSeed) error {
+	if _, err := chstore.StreamSACBalanceSeedsFullHistory(ctx, addr, watched, chstore.SeedWalk{}, func(seed chstore.SACBalanceSeed) error {
 		if seed.Holder != holder {
 			return nil
 		}
@@ -325,7 +325,7 @@ func TestSACFullHistorySeed_SameLedgerRecreateWins(t *testing.T) {
 
 	watched := map[string]string{sac: asset}
 	var got *chstore.SACBalanceSeed
-	if err := chstore.StreamSACBalanceSeedsFullHistory(ctx, addr, watched, func(seed chstore.SACBalanceSeed) error {
+	if _, err := chstore.StreamSACBalanceSeedsFullHistory(ctx, addr, watched, chstore.SeedWalk{}, func(seed chstore.SACBalanceSeed) error {
 		if seed.Holder == holder {
 			s := seed
 			got = &s

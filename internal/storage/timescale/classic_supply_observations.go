@@ -279,6 +279,55 @@ func dedupeClaimableObservations(rows []ClaimableObservation) []ClaimableObserva
 // own contract: it reconstructs the ledger's final state from the lake,
 // so it belongs at the END of the intra-ledger order.
 
+// LiveClaimable is a claimable balance's latest served observation when that
+// observation is live.
+type LiveClaimable struct {
+	AssetKey string
+	Ledger   uint32
+}
+
+// LiveClaimableObservations returns, by claimable_id, every claimable balance
+// whose latest served observation is live, picked exactly as
+// SumClaimableBalancesAtOrBefore picks at the tip. `supply
+// seed-claimable-balances` retracts each one the lake shows removed.
+func (s *Store) LiveClaimableObservations(ctx context.Context) (map[string]LiveClaimable, error) {
+	const q = `
+        SELECT claimable_id, asset_key, ledger
+          FROM (
+            SELECT DISTINCT ON (asset_key, claimable_id)
+                   claimable_id, asset_key, ledger, is_removal
+              FROM claimable_observations
+             ORDER BY asset_key, claimable_id, ledger DESC, intra_ledger_seq DESC
+          ) latest
+         WHERE NOT is_removal
+    `
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: LiveClaimableObservations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[string]LiveClaimable)
+	for rows.Next() {
+		var (
+			id  string
+			row LiveClaimable
+		)
+		if err := rows.Scan(&id, &row.AssetKey, &row.Ledger); err != nil {
+			return nil, fmt.Errorf("timescale: LiveClaimableObservations scan: %w", err)
+		}
+		if prev, dup := out[id]; dup && prev.AssetKey != row.AssetKey {
+			// A claimable balance's asset is immutable; two live assets for
+			// one id means the served rows are wrong, not the lake.
+			return nil, fmt.Errorf("timescale: LiveClaimableObservations: claimable %s is live under both %s and %s", id, prev.AssetKey, row.AssetKey)
+		}
+		out[id] = row
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: LiveClaimableObservations: %w", err)
+	}
+	return out, nil
+}
+
 // SumClaimableBalancesAtOrBefore — same shape as
 // SumTrustlineBalancesAtOrBefore, keyed on claimable_id.
 func (s *Store) SumClaimableBalancesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error) {

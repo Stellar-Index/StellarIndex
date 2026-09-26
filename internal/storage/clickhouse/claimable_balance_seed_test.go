@@ -737,3 +737,64 @@ func TestClaimableSeedWindowPolicy(t *testing.T) {
 		t.Fatalf("width %d exceeded the initial cap %d", w.width, claimableSeedLedgerWindow)
 	}
 }
+
+// TestClaimableSeedReducer_RetractsServedClaim pins GH #712: a balance the
+// served tier still holds as live, claimed in a later window, comes out as a
+// tombstone at the claim (served asset, zero balance, the claim's ledger and
+// close time), and survives the tombstone compaction that bounds memory. A
+// claimed balance the served tier does not hold emits nothing; a served
+// balance still live emits its live seed.
+func TestClaimableSeedReducer_RetractsServedClaim(t *testing.T) {
+	claimedID, strangerID, liveID := cbID(0x91), cbID(0x92), cbID(0x93)
+	claimedAt := time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)
+	r := newCBReducer(t, nil)
+	if err := r.retractServed(map[string]string{
+		hex.EncodeToString(claimedID[:]): cbAssetKey,
+		hex.EncodeToString(liveID[:]):    cbAssetKey,
+	}); err != nil {
+		t.Fatalf("retractServed: %v", err)
+	}
+	for _, id := range [][32]byte{claimedID, strangerID, liveID} {
+		if err := r.offer(cbKeyXDR(t, id), cbEntryXDR(t, id, cbAsset4(t, "AQUA"), 999),
+			"created", time.Now().UTC(), cbOrd(34_000_000, 1, "aa", 0, 0)); err != nil {
+			t.Fatalf("offer create: %v", err)
+		}
+	}
+	if err := r.startWindow(48_000_000); err != nil {
+		t.Fatalf("startWindow: %v", err)
+	}
+	for _, id := range [][32]byte{claimedID, strangerID} {
+		if err := r.offer(cbKeyXDR(t, id), "", "removed", claimedAt, cbOrd(48_000_000, 2, "bb", 0, 1)); err != nil {
+			t.Fatalf("offer claim: %v", err)
+		}
+	}
+	if err := r.startWindow(60_000_000); err != nil { // compacts the claim's dead-set entry
+		t.Fatalf("startWindow: %v", err)
+	}
+
+	got := map[string]ClaimableBalanceSeed{}
+	for _, s := range collectClaimableSeeds(t, r) {
+		got[s.ClaimableID] = s
+	}
+	if len(got) != 2 {
+		t.Fatalf("emitted %d seeds (%v), want the tombstone and the live balance", len(got), got)
+	}
+	tomb, ok := got[hex.EncodeToString(claimedID[:])]
+	if !ok {
+		t.Fatal("no tombstone for the served balance the lake shows claimed; its served row keeps counting forever")
+	}
+	want := ClaimableBalanceSeed{ClaimableID: hex.EncodeToString(claimedID[:]), AssetKey: cbAssetKey, LedgerSeq: 48_000_000, CloseTime: claimedAt, IsRemoval: true}
+	if !tomb.IsRemoval || tomb.AssetKey != want.AssetKey || tomb.LedgerSeq != want.LedgerSeq || !tomb.CloseTime.Equal(claimedAt) || tomb.Balance.Sign() != 0 {
+		t.Errorf("tombstone = %+v, want %+v with a zero balance", tomb, want)
+	}
+	if live := got[hex.EncodeToString(liveID[:])]; live.IsRemoval || live.Balance.Cmp(big.NewInt(999)) != 0 {
+		t.Errorf("served live balance = %+v, want its live seed of 999", live)
+	}
+}
+
+func TestClaimableSeedReducer_RetractServedRejectsBadID(t *testing.T) {
+	r := newClaimableSeedReducer(nil)
+	if err := r.retractServed(map[string]string{"not-hex": cbAssetKey}); err == nil {
+		t.Error("a malformed served claimable_id was accepted")
+	}
+}

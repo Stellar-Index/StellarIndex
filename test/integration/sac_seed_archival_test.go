@@ -66,7 +66,7 @@ func TestSACSeed_ArchivedHolderRetractedAtArchivalLedger(t *testing.T) {
 	watched := map[string]string{sac: asset}
 	readers := map[string]func(context.Context, string, map[string]string, func(chstore.SACBalanceSeed) error) error{
 		"current-state": chstore.StreamSACBalanceSeeds,
-		"full-history":  chstore.StreamSACBalanceSeedsFullHistory,
+		"full-history":  sacFullHistoryUnverified,
 	}
 	for name, stream := range readers {
 		var got []chstore.SACBalanceSeed
@@ -124,7 +124,7 @@ func TestSACSeed_UncoveredTTLRefuses(t *testing.T) {
 	watched := map[string]string{sac: asset}
 	readers := map[string]func(context.Context, string, map[string]string, func(chstore.SACBalanceSeed) error) error{
 		"current-state": chstore.StreamSACBalanceSeeds,
-		"full-history":  chstore.StreamSACBalanceSeedsFullHistory,
+		"full-history":  sacFullHistoryUnverified,
 	}
 	for name, stream := range readers {
 		var emitted int
@@ -141,4 +141,11 @@ func TestSACSeed_UncoveredTTLRefuses(t *testing.T) {
 			t.Errorf("%s: emitted %d seeds for the uncovered holder, want 0", name, emitted)
 		}
 	}
+}
+
+// sacFullHistoryUnverified is the full-history reader over the synthetic test
+// lake, which carries stellar.ledgers rows only where a fixture needs them.
+func sacFullHistoryUnverified(ctx context.Context, addr string, watched map[string]string, fn func(chstore.SACBalanceSeed) error) error {
+	_, err := chstore.StreamSACBalanceSeedsFullHistory(ctx, addr, watched, chstore.SeedWalk{}, fn)
+	return err
 }
