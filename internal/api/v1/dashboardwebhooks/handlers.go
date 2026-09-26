@@ -522,8 +522,8 @@ func validateWebhookURL(ctx context.Context, raw string) error {
 	if raw == "" {
 		return errors.New("url is required")
 	}
-	if len(raw) > maxWebhookURLLen {
-		return fmt.Errorf("url must be at most %d bytes", maxWebhookURLLen)
+	if utf8.RuneCountInString(raw) > maxWebhookURLLen {
+		return fmt.Errorf("url must be at most %d characters", maxWebhookURLLen)
 	}
 	if !strings.HasPrefix(raw, "https://") {
 		return errors.New("url must start with https:// (TLS required for HMAC integrity)")

@@ -32372,7 +32372,7 @@
               "request": {
                 "name": "Customer dashboard — register a new webhook.",
                 "description": {
-                  "content": "Session-gated. Returns the signing secret ONCE — store it\nserver-side immediately and use it to HMAC-verify the\nX-StellarIndex-Signature header on inbound POSTs. URL must\nbe https:// on the default port (443) and at most 2048\nbytes. Owner / admin / member roles can register;\nviewer + billing 403. Webhook quota is tier-aware (free 10,\npartner 100 — deployment-overridable); exceeding it\nreturns 409, as does a url this account already registered.\n",
+                  "content": "Session-gated. Returns the signing secret ONCE — store it\nserver-side immediately and use it to HMAC-verify the\nX-StellarIndex-Signature header on inbound POSTs. URL must\nbe https:// on the default port (443) and at most 2048\ncharacters. Owner / admin / member roles can register;\nviewer + billing 403. Webhook quota is tier-aware (free 10,\npartner 100 — deployment-overridable); exceeding it\nreturns 409, as does a url this account already registered.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -33513,6 +33513,61 @@
                       },
                       "status": "Forbidden",
                       "code": 403,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "No webhook with this id on this account (absent, already deleted, or another account's).",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "webhooks",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          },
+                          {
+                            "description": {
+                              "content": "Added as a part of security scheme: apikey",
+                              "type": "text/plain"
+                            },
+                            "key": "stellarindex_session",
+                            "value": "<API Key>"
+                          }
+                        ],
+                        "method": "DELETE",
+                        "body": {}
+                      },
+                      "status": "Not Found",
+                      "code": 404,
                       "header": [
                         {
                           "key": "Content-Type",
