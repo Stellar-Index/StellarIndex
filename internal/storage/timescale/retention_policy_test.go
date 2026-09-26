@@ -1,6 +1,10 @@
 package timescale
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -39,6 +43,10 @@ import (
 // policies than this ledger counts, never more. Corroborated against
 // r1's live `timescaledb_information.jobs` on 2026-09-07, which held
 // exactly one — `api_usage_events` — before 0156.
+//
+// That one-way claim covers migrations only. A Go pruner deletes on a
+// schedule without any policy, so those are ledgered separately by
+// TestGoAgePruners_AreExactlyTheDeclaredSet at the end of this file.
 
 var (
 	// addRetentionCallRe / removeRetentionCallRe match one call to
@@ -570,5 +578,101 @@ func TestRetentionPolicies_ReadmeRule4DefersToTheDeclaredSet(t *testing.T) {
 	}
 	if strings.Contains(rule, "refresh policy + retention policy") {
 		t.Error("migrations/README.md rule 4 still mandates a retention policy on every new CAGG")
+	}
+}
+
+// ageDeleteRe / ageCutoffRe find a Go-side pruner: one SQL string literal
+// that deletes from a relation AND compares a timestamp column against a
+// cutoff. A Go pruner deletes data on a schedule exactly as
+// add_retention_policy does, so it is ledgered the same way.
+var (
+	ageDeleteRe = regexp.MustCompile(`(?is)\bDELETE\s+FROM\s+([a-z_][a-z0-9_]*)`)
+	ageCutoffRe = regexp.MustCompile(`(?i)\b[a-z_]*(_at|ts|bucket|last_updated)\s*<\s*(\$[0-9]+|now\(\))`)
+)
+
+// goAgePrunedRelations returns relation → first file for every non-test Go
+// string literal under internal/ and cmd/ that deletes rows by age.
+func goAgePrunedRelations(t *testing.T) map[string]string {
+	t.Helper()
+	root := findRepoRoot(t)
+	found := map[string]string{}
+	scanned := 0
+	for _, dir := range []string{"internal", "cmd"} {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return err
+			}
+			scanned++
+			return collectAgeDeletes(path, root, found)
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", dir, err)
+		}
+	}
+	if scanned == 0 {
+		t.Fatal("no Go sources scanned — the census has gone vacuous")
+	}
+	return found
+}
+
+func collectAgeDeletes(path, root string, found map[string]string) error {
+	f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	if err != nil {
+		return err
+	}
+	rel, _ := filepath.Rel(root, path)
+	ast.Inspect(f, func(n ast.Node) bool {
+		lit, ok := n.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING || !ageCutoffRe.MatchString(lit.Value) {
+			return true
+		}
+		for _, m := range ageDeleteRe.FindAllStringSubmatch(lit.Value, -1) {
+			if _, seen := found[m[1]]; !seen {
+				found[m[1]] = rel
+			}
+		}
+		return true
+	})
+	return nil
+}
+
+// Every relation a Go pruner deletes from by age is named here with the
+// reason it is safe, as a migration-side policy must be. mev_events is
+// deliberately absent: it is served history the detectors cannot re-derive
+// (they scan a 30-minute trailing window), and launch-plan row D5 contracts
+// that the served tier keeps what it indexes (#1168).
+func TestGoAgePruners_AreExactlyTheDeclaredSet(t *testing.T) {
+	const (
+		snapshot = "rolling snapshot recomputed every refresh; the delete drops superseded rows"
+		resync   = "directory re-synced from its source; the delete drops rows the latest sync did not see"
+	)
+	want := map[string]string{
+		"asset_volume_24h":        snapshot,
+		"asset_volume_character":  snapshot,
+		"asset_price_snapshot":    snapshot,
+		"protocol_events_24h":     snapshot,
+		"account_directory":       resync,
+		"asset_listing_directory": resync,
+		"rwa_curated_directory":   resync,
+		"ingestion_cursors":       "cursors of retired sources, never history",
+		"sessions":                "expired or revoked auth sessions",
+		"magic_link_tokens":       "expired single-use login tokens",
+		"login_code_lockouts":     "stale login rate-limit state",
+		"accounts":                "lost signup-race orphans with no users or keys",
+		"webhook_deliveries":      "finished delivery attempts (internal/retentionreaper)",
+	}
+	got := goAgePrunedRelations(t)
+	for rel, file := range got {
+		if _, ok := want[rel]; !ok {
+			t.Errorf("%s deletes %s rows by age and %s is NOT in the declared set. A Go pruner "+
+				"deletes data on a schedule like a retention policy: add it here with the reason "+
+				"it is safe to drop, or remove the delete.", file, rel, rel)
+		}
+	}
+	for rel := range want {
+		if _, ok := got[rel]; !ok {
+			t.Errorf("%s is declared as Go-pruned but no age-based DELETE for it was found — "+
+				"drop it from the declared set", rel)
+		}
 	}
 }

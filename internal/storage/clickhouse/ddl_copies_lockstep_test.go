@@ -153,19 +153,34 @@ func TestLecurV2RebuildScriptMatchesOperatorDDL(t *testing.T) {
 		"deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql", operator)
 }
 
-// TestD2OrdinalReprojectInsertNamesItsColumns pins d2-ordinal-reproject.sh's
-// staging INSERT to an EXPLICIT target column list. $STAGE is `CREATE TABLE
-// $STAGE AS stellar.ledger_entry_changes`, so a positional INSERT depends on
-// intra_ledger_seq staying the LAST column of stellar.ledger_entry_changes —
-// true only because tier1_schema.sql:216-222 documents it was appended by
-// ALTER TABLE. The next ADD COLUMN, or the documented `DROP COLUMN IF EXISTS
-// intra_ledger_seq` rollback, shifts it and a positional INSERT would land a
-// value in the wrong column with no query error (GH-1169).
-func TestD2OrdinalReprojectInsertNamesItsColumns(t *testing.T) {
+// TestNoOpsScriptRanksLedgerEntryChangesInSQL fails when an operator script or
+// lake DDL numbers rows per ledger with a SQL window. intra_ledger_seq is the
+// position in the Go walk (dispatcher.EntryWalkVersion), whose fee, before,
+// after and refund changes all carry op_index -1, so no ranking over the lake's
+// columns reproduces it: d2-ordinal-reproject.sh ranked by (tx_index,
+// change_index), the retired version-1 order (#1156). Re-derive through
+// ch-backfill (scripts/ops/ordinal-rederive-chunks.sh) instead.
+func TestNoOpsScriptRanksLedgerEntryChangesInSQL(t *testing.T) {
 	root := lockstepRepoRoot(t)
-	script := lockstepReadFile(t, root, filepath.Join("scripts", "ops", "d2-ordinal-reproject.sh"))
-	want := regexp.MustCompile(`INSERT INTO \$STAGE\s*\([^)]*intra_ledger_seq[^)]*\)`)
-	if !want.MatchString(script) {
-		t.Fatal("scripts/ops/d2-ordinal-reproject.sh: INSERT INTO $STAGE does not name its target columns (including intra_ledger_seq) — it relies on positional order matching stellar.ledger_entry_changes's current column layout")
+	var files []string
+	for _, glob := range []string{"scripts/ops/*.sh", "deploy/clickhouse/*.sql", "deploy/clickhouse/*.sh"} {
+		m, err := filepath.Glob(filepath.Join(root, filepath.FromSlash(glob)))
+		if err != nil {
+			t.Fatalf("glob %s: %v", glob, err)
+		}
+		files = append(files, m...)
+	}
+	if len(files) == 0 {
+		t.Fatal("no scripts or lake DDL found — the scan has gone vacuous; fix the globs")
+	}
+	perLedgerRank := regexp.MustCompile(`(?i)row_number\(\)\s*OVER\s*\(\s*PARTITION\s+BY\s+[\w.]*ledger_seq\b`)
+	comment := regexp.MustCompile(`(?m)^\s*(#|--).*$`)
+	for _, f := range files {
+		rel, _ := filepath.Rel(root, f)
+		body := comment.ReplaceAllString(lockstepReadFile(t, root, rel), "")
+		if perLedgerRank.MatchString(body) {
+			t.Errorf("%s ranks rows per ledger_seq in SQL — intra_ledger_seq must come from the Go "+
+				"entry walk (dispatcher.EntryWalkVersion), not a window over lake columns", rel)
+		}
 	}
 }
