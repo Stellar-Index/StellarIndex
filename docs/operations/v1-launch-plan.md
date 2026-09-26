@@ -1495,7 +1495,7 @@ older `### D — Decisions only the maintainer can make` table further down, **t
 | **D2** | **ACCEPTED-RISK + tested restore at v1.** Single box per region; multi-region ratified (ADR-0050) but deferred post-v1 with the reasoning in `docs/architecture/multi-region-ha.md` §0c. | the maintainer, "trust your recommendations" |
 | **D3** | **SIGNED OFF.** ClickHouse posture = ADR-0043 §2.1 schema+state snapshot + re-derive, plus the rolling ZFS snapshots that went live 2026-08-29. Do NOT resurrect full-lake copies. | the maintainer, explicit |
 | **D4** | **BUILD ALL THREE.** Order-book depth (#337), DEX TVL (#338), per-token oracle pages (#336). No retraction of site copy. | the maintainer, explicit |
-| **D5** | **ACCEPTED — but the basis I first recorded was WRONG and is corrected here.** Nothing in the served tier is pruned except `api_usage_events` (12 months, migration 0027). Migration **0031** removed retention from `trades`, `prices_1m` and `prices_15m`; **0040** removed it from `oracle_updates`; migration 0116 documents that the only surviving `add_retention_policy` in the tree is `api_usage_events`, verified against r1's live `timescaledb_information.jobs` on 2026-07-25 — re-verified 2026-08-29 (one registered retention job: api_usage_events, last success 08-28). Live data confirms it: `trades` holds 2018-07-01→now (738,248,187 rows), `oracle_updates` 2025-09-09→now. **So the v1 contract is 'we retain everything we index', not a set of windows.** My first draft of this row listed 30/90-day windows as the contract; that would have published a false and self-harming limit. The real limits worth stating to customers are COVERAGE, not retention: on-chain SDEX trades begin 2026-03-12 (see #349), CEX series begin 2018-07-01 (Kraken) and 2026-05-05 (Binance/Coinbase/Bitstamp). | the maintainer, "trust your recommendations"; corrected 2026-08-29 |
+| **D5** | **ACCEPTED — but the basis I first recorded was WRONG and is corrected here.** Nothing in the served tier is pruned except `api_usage_events` (12 months, migration 0027). Migration **0031** removed retention from `trades`, `prices_1m` and `prices_15m`; **0040** removed it from `oracle_updates`; migration 0116 documents that the only surviving `add_retention_policy` in the tree is `api_usage_events`, verified against r1's live `timescaledb_information.jobs` on 2026-07-25 — re-verified 2026-08-29 (one registered retention job: api_usage_events, last success 08-28). Live data confirms it: `trades` holds 2018-07-01→now (738,248,187 rows), `oracle_updates` 2025-09-09→now. **So the v1 contract is 'we retain everything we index', not a set of windows.** My first draft of this row listed 30/90-day windows as the contract; that would have published a false and self-harming limit. The real limits worth stating to customers are COVERAGE, not retention: on-chain SDEX trades begin 2026-03-12 (see #349), CEX series begin 2018-07-01 (Kraken) and 2026-05-05 (Binance/Coinbase/Bitstamp). **Amended 2026-09-26 (#1168):** the "only `api_usage_events`" sentence has gone stale in two directions. Migrations since added declared, reasoned policies on `prices_1m` (90 days, recomputable from `trades`), `usage_daily` and `price_source_contributions`; the authoritative list is `TestRetentionPolicies_AreExactlyTheDeclaredSet`. And a Go pruner in the MEV worker deleted `mev_events` older than 90 days, which no migration ledger saw. That pruner is removed: `/v1/mev` is served history the detectors cannot re-derive, since they scan a 30-minute trailing window, so it falls under this contract. Go-side age deletes are now ledgered too, in `TestGoAgePruners_AreExactlyTheDeclaredSet`, and `mev_events` is not in that list. | the maintainer, "trust your recommendations"; corrected 2026-08-29 |
 | **D6** | **ACCEPTED as documented-unfillable.** Genesis edge [2 → 287,404]; recover via op-replay if ever needed. | the maintainer, "trust your recommendations" |
 | **D8** | **OVERRIDDEN → FIX FOR v1** (was: post-v1). The `*_FUNDAMENTAL` RedStone feeds publish a NAV ratio in BTC but are registered `quote=fiat:USD`, so `/v1/oracle/streams` serves `crypto:SolvBTC.BBN_FUNDAMENTAL = $1.00` for a token worth ~$78,313. Contained (RedStone is `IncludeInVWAP=false`, so no published price is wrong) but publicly visible with `mapped=true`. Fix in flight. | the maintainer, explicit |
 | **D9** | **DROPPED.** Stripe C3-081 reconcile closed as a formal DROP citing ADR-0049 (anon/free/partner access model). | the maintainer, "trust your recommendations" |
@@ -3981,27 +3981,27 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
    `scripts/ops/d3-lecur-v2-rebuild.sh` (staged on r1 at
    /usr/local/sbin).
    **PRE-STEP (mandatory — §2.4's C2-4c reproduction proves D3 alone
-   cannot fix the affected accounts). Use the ALREADY-PROVEN D2
-   script, not a bespoke ch-backfill:**
+   cannot fix the affected accounts). Re-derive through the Go walk
+   with `scripts/ops/ordinal-rederive-chunks.sh` (`ch-backfill`), NOT
+   the D2 script:** `d2-ordinal-reproject.sh` is RETIRED and refuses to
+   run (#1156). Its formula ranks by `(tx_index, change_index)`, the
+   `EntryWalkVersion` 1 order the writer abandoned on 2026-07-26, so
+   running it stamps version-1 positions over version-2 ones.
    ```
-   # ZFS snapshot of data/clickhouse first, then the explicit ack
-   # (docs/operations/clickhouse-destructive-ddl.md)
-   D2_FORCE_DROP=yes run-heavy-job.sh d2-p63 /usr/local/sbin/d2-ordinal-reproject.sh 63 63
-   D2_FORCE_DROP=yes run-heavy-job.sh d2-p38 /usr/local/sbin/d2-ordinal-reproject.sh 38 38
+   START=63000000 BAND_END=63550000 \
+     run-heavy-job.sh ord-chunks /usr/local/sbin/ordinal-rederive-chunks.sh
    ```
-   Recomputing an already-ordinaled range is idempotent (the D2 doc
-   proves the formula reproduces live-written ordinals EXACTLY above
-   ledger 63,555,000), so covering all of partition 63 is safe even
-   though only [63.0M, 63.55M) needs it.
-   **Three preconditions VERIFIED 2026-07-27 — this is safe to run:**
+   **Three preconditions VERIFIED 2026-07-27 (the first two about the
+   append log, which still hold; the D2-formula clause is superseded):**
    - The append-log is COMPLETE. The `state` and `updated` rows for one
      change carry DIFFERENT `change_index` (362 vs 363 on the sampled
      account), so they have different ORDER BY keys and both coexist.
      Nothing was lost — only the current-state dedup is ambiguous.
-   - Because `change_index` differs, the D2 formula
-     (`row_number() OVER (PARTITION BY ledger_seq ORDER BY tx_index,
-     change_index)`) gives the two rows DISTINCT ordinals — exactly
-     what D3's composite version needs to stop tying.
+   - Because `change_index` differs, a re-derive gives the two rows
+     DISTINCT ordinals — exactly what D3's composite version needs to
+     stop tying. (This originally cited the D2 SQL formula, which is
+     the retired version-1 order; the Go walk gives distinct ordinals
+     for the same reason.)
    - `ledger_entry_changes` is `ReplacingMergeTree(ingested_at)`
      ORDER BY `(ledger_seq, tx_hash, op_index, change_index)`; the
      re-derive preserves that key, so new rows SUPERSEDE old ones by

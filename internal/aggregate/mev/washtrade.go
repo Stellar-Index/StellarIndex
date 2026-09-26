@@ -2,6 +2,7 @@ package mev
 
 import (
 	"sort"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -14,8 +15,8 @@ const (
 		"self-cross. Volume changed hands from the account to itself; the " +
 		"observation inflates apparent activity without transferring value."
 	washRoundTripNote = "Two accounts repeatedly took each other's offers on the same " +
-		"pair in both directions within one UTC day (≥2 fills each direction in the " +
-		"scan window). Back-and-forth of this shape is the classic wash signature, " +
+		"pair in both directions within one 15-minute UTC bucket (≥2 fills each " +
+		"direction). Back-and-forth of this shape is the classic wash signature, " +
 		"but it is also what tight two-party market-making looks like — treat as a " +
 		"candidate, not proof."
 
@@ -23,6 +24,14 @@ const (
 	// two-account round-trip variant: one crossing each way happens in
 	// ordinary trading; repeated back-and-forth is the signal.
 	roundTripMinPerDirection = 2
+
+	// roundTripBucket is the round-trip event's time identity. It must fit
+	// inside the worker's scan window minus one tick, so some scan sees the
+	// whole bucket and its evidence supersedes every earlier partial one
+	// (InsertMEVEvent). A UTC day could never be seen whole by a 30-minute
+	// scan, so the first slice to cross the threshold was published for the
+	// entire day.
+	roundTripBucket = 15 * time.Minute
 )
 
 // washLeg is one trade in a wash-trading candidate's evidence.
@@ -58,8 +67,9 @@ type washDetail struct {
 //     (tx, account).
 //   - round_trip: two accounts fill each other's offers on the same
 //     (unordered) pair in BOTH directions, ≥2 fills per direction,
-//     bucketed by UTC day so re-scans of overlapping windows dedup
-//     deterministically. One candidate per (pair, account-pair, day).
+//     bucketed by roundTripBucket so re-scans of overlapping windows
+//     dedup deterministically. One candidate per (pair, account-pair,
+//     bucket).
 //
 // Both variants only fire where maker is an account (see accountMaker):
 // SDEX order-book fills. Soroban AMM rows leave maker empty and SDEX
@@ -136,8 +146,8 @@ func detectRoundTrips(trades []canonical.Trade, usdVolume []string) []Candidate 
 		if a > b {
 			a, b = b, a
 		}
-		day := t.Timestamp.UTC().Format("2006-01-02")
-		key := day + ":" + unorderedPairKey(t) + ":" + a + "|" + b
+		bucket := t.Timestamp.UTC().Truncate(roundTripBucket).Format(time.RFC3339)
+		key := bucket + ":" + unorderedPairKey(t) + ":" + a + "|" + b
 		if _, seen := groups[key]; !seen {
 			order = append(order, key)
 		}
@@ -154,7 +164,7 @@ func detectRoundTrips(trades []canonical.Trade, usdVolume []string) []Candidate 
 	return out
 }
 
-// buildRoundTripCandidate tests one (day, pair, account-pair) bucket
+// buildRoundTripCandidate tests one (bucket, pair, account-pair) group
 // for the ≥2-fills-each-direction shape.
 func buildRoundTripCandidate(trades []canonical.Trade, usdVolume []string, key string, idxs []int) (Candidate, bool) {
 	// Direction = who took. The bucket holds exactly two accounts.
@@ -194,13 +204,15 @@ func buildRoundTripCandidate(trades []canonical.Trade, usdVolume []string, key s
 		DetectedAtLedger: t0.Ledger,
 		Timestamp:        t0.Timestamp.UTC(),
 		TxHash:           t0.TxHash,
-		Taker:            accounts[0],
-		TxHashes:         distinctTxHashes(trades, idxs),
-		Accounts:         accounts,
-		Assets:           pairAssets(t0),
-		Sources:          distinctSources(trades, idxs),
-		NotionalUSD:      notional,
-		// The bucket key (day + pair + account pair) IS the identity:
+		// No Taker: a round trip has two symmetric parties and no
+		// principal. Accounts carries both; Dedup replaces the kind:tx:taker
+		// default that would otherwise read it.
+		TxHashes:    distinctTxHashes(trades, idxs),
+		Accounts:    accounts,
+		Assets:      pairAssets(t0),
+		Sources:     distinctSources(trades, idxs),
+		NotionalUSD: notional,
+		// The bucket key (bucket + pair + account pair) IS the identity:
 		// a sliding scan window re-detects the same bucket without
 		// duplicating it.
 		Dedup: KindWashTrade + ":rt:" + key,

@@ -20,10 +20,10 @@ type TradeScanner interface {
 }
 
 // Sink persists a detected event. InsertMEVEvent is idempotent on
-// StoredEvent.DedupKey (ON CONFLICT DO NOTHING) — it returns
-// inserted=false when the event was already present, so a re-scan of
-// an overlapping window doesn't double-count. Production:
-// timescale.Store.
+// StoredEvent.DedupKey — it returns inserted=false when the event was
+// already present, so a re-scan of an overlapping window doesn't
+// double-count; a re-scan whose legs contain the stored legs replaces
+// the stored evidence. Production: timescale.Store.
 type Sink interface {
 	InsertMEVEvent(ctx context.Context, e StoredEvent) (inserted bool, err error)
 }
@@ -42,16 +42,6 @@ type OracleScanner interface {
 // detection.
 type AuctionScanner interface {
 	BlendFillsForMEVScan(ctx context.Context, since time.Time, limit int) ([]AuctionFill, error)
-}
-
-// Pruner drops mev_events past a retention cutoff so the table cannot
-// grow unbounded. mev_events is DERIVED, re-derivable output (the
-// detectors re-scan the trades/oracle hypertables every tick) and the
-// /v1/mev read path only shows recent events, so aged rows are safe to
-// delete. Production: timescale.Store.PruneMEVEvents. Optional — nil
-// disables pruning.
-type Pruner interface {
-	PruneMEVEvents(ctx context.Context, before time.Time) (removed int64, err error)
 }
 
 // TxOrderResolver resolves tx hashes to their intra-ledger
@@ -162,19 +152,11 @@ type Worker struct {
 	// a background dial retry (K024), while Run is already ticking on
 	// another goroutine — hence atomic rather than a plain field.
 	order     atomic.Pointer[TxOrderResolver]
-	pruner    Pruner // optional
 	logger    *slog.Logger
 	window    time.Duration
 	scanLimit int
-	retention time.Duration
 	obs       Observer
 }
-
-// defaultRetention bounds mev_events when a Pruner is wired but no
-// Retention is set. 90 days matches the retention the raw hypertables
-// historically carried (migrations 0001/0003) and keeps a quarter of
-// accusation history for the /mev feed while preventing unbounded growth.
-const defaultRetention = 90 * 24 * time.Hour
 
 // Observer records per-run outcomes. nil → no-op (NopObserver).
 // Truncated fires once per input scan (ScanInput*) that hit ScanLimit.
@@ -197,19 +179,18 @@ const (
 // Oracles / Auctions / Order are optional inputs: each nil seam
 // simply disables the detectors that need it (see the interface docs)
 // — detection degrades honestly rather than guessing.
-// Pruner, when set, bounds mev_events to Retention (defaulting to
-// defaultRetention). A nil Pruner disables retention — growth is then
-// unbounded, so production wiring MUST supply one.
+//
+// There is no retention knob: the worker never deletes mev_events. The
+// detectors only see a trailing window, so a pruned event cannot be
+// re-derived, and the served tier keeps what it indexes (launch-plan D5).
 type WorkerConfig struct {
 	Window    time.Duration
 	ScanLimit int
-	Retention time.Duration
 	Logger    *slog.Logger
 	Observer  Observer
 	Oracles   OracleScanner
 	Auctions  AuctionScanner
 	Order     TxOrderResolver
-	Pruner    Pruner
 }
 
 // NewWorker builds a Worker. scanner + sink are required.
@@ -219,9 +200,6 @@ func NewWorker(scanner TradeScanner, sink Sink, cfg WorkerConfig) *Worker {
 	}
 	if cfg.ScanLimit <= 0 {
 		cfg.ScanLimit = 50_000
-	}
-	if cfg.Pruner != nil && cfg.Retention <= 0 {
-		cfg.Retention = defaultRetention
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -235,11 +213,9 @@ func NewWorker(scanner TradeScanner, sink Sink, cfg WorkerConfig) *Worker {
 		sink:      sink,
 		oracles:   cfg.Oracles,
 		auctions:  cfg.Auctions,
-		pruner:    cfg.Pruner,
 		logger:    cfg.Logger,
 		window:    cfg.Window,
 		scanLimit: cfg.ScanLimit,
-		retention: cfg.Retention,
 		obs:       obs,
 	}
 	if cfg.Order != nil {
@@ -294,34 +270,11 @@ func (w *Worker) RunOnce(ctx context.Context, now time.Time) (detected, inserted
 			inserted++
 		}
 	}
-	w.pruneOld(ctx, now)
 	w.obs.Run("ok", time.Since(start), detected, inserted)
 	if inserted > 0 {
 		w.logger.Info("mev: detection run", "detected", detected, "inserted", inserted, "scanned", len(trades))
 	}
 	return detected, inserted, nil
-}
-
-// pruneOld drops mev_events older than the retention window so the table
-// stays bounded. Best-effort: the rows are fully re-derivable and the
-// read feed only surfaces recent events, so a prune failure logs and is
-// retried next tick — it never fails the detection run. No-op when no
-// Pruner is wired.
-func (w *Worker) pruneOld(ctx context.Context, now time.Time) {
-	if w.pruner == nil || w.retention <= 0 {
-		return
-	}
-	before := now.Add(-w.retention)
-	removed, err := w.pruner.PruneMEVEvents(ctx, before)
-	if err != nil {
-		if ctx.Err() == nil {
-			w.logger.Warn("mev: prune of aged events failed — retention not enforced this tick", "err", err, "before", before)
-		}
-		return
-	}
-	if removed > 0 {
-		w.logger.Info("mev: pruned events past retention", "removed", removed, "before", before)
-	}
 }
 
 // Run drives RunOnce on a ticker until ctx is cancelled. It runs once
