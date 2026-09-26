@@ -21,6 +21,15 @@ crosses the upgrade ledger:
 
 ## The core-upgrade procedure
 
+`stellar-core-auto-upgrade.timer` does this unattended every 6 hours: when
+apt.stellar.org offers a newer core it stops galexie, installs it, restores the
+captive-core config group, and waits for galexie to write past its stop tip,
+reinstalling the previous version if it does not
+(`stellarindex_stellar_core_autoupgrade_failed` pages). Core 29.0.0 reached apt
+2026-09-24 with the mainnet P29 vote on 2026-10-01, so a week is the runway to
+plan for. The manual procedure below is for a pinned host, a rollback, or a
+hold (`touch /var/lib/stellarindex/stellar-core-auto-upgrade.stop`).
+
 ```sh
 # 1. Pin the target apt version in the region inventory:
 #    stellar_core_version: "28.0.1-3508.947aad841.noble"

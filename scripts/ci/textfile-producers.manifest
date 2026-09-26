@@ -32,6 +32,7 @@ configs/ansible/roles/archival-node/files/galexie-archive-contiguity.sh   galexi
 configs/ansible/roles/archival-node/files/galexie-archive-tip-lag.sh      galexie_archive_tip_lag.prom       scripts/ci/galexie-archive-tip-lag-test.sh
 configs/ansible/roles/archival-node/files/ledger-meta-decode-probe.sh     ledger_meta_decode.prom            -
 configs/ansible/roles/archival-node/files/memory-mappings.sh              memory_mappings.prom               scripts/ci/memory-mappings-test.sh
+configs/ansible/roles/archival-node/files/stellar-core-auto-upgrade.sh    stellar_core_autoupgrade.prom      scripts/ci/stellar-core-auto-upgrade-test.sh
 configs/ansible/roles/archival-node/templates/pgbackrest-backup.sh.j2     pgbackrest_backup.prom             scripts/ci/pgbackrest-backup-test.sh
 configs/healthchecks/smoke.sh                                             api_smoke.prom                     scripts/ci/smoke-textfile-test.sh
 configs/healthchecks/hc-ping.sh                                           hc_ping_${check}.prom              internal/ops/chops/healthcheck_ping_delivery_test.go

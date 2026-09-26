@@ -102,6 +102,11 @@ which is exactly what happened across 2026-07-08 → 2026-07-09.
       CAP status) before starting — this sets how much runway you
       have, not how fast you need to move today.
 - [ ] **stellar-core** (apt):
+      `stellar-core-auto-upgrade.timer` normally does this within 6 h of
+      the apt publish and records the outcome in
+      `stellarindex_stellar_core_autoupgrade_result`. Run the steps
+      below by hand only when that alert fired, the host is pinned, or
+      the stop file is set.
       ```sh
       ssh r1
       sudo apt-get update

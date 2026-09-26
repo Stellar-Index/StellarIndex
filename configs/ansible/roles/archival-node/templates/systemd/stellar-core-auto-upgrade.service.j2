@@ -1,0 +1,22 @@
+# systemd service: install apt's newer stellar-core under galexie, verify the
+# ledger tip advances, roll back if it does not. See the script header.
+[Unit]
+Description=Stellar Index — stellar-core auto-upgrade (apt candidate, verified, rollback)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+After=network-online.target minio.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Environment=STELLAR_CORE_PIN={{ stellar_core_version | default('') }}
+ExecStart=/usr/local/sbin/stellar-core-auto-upgrade
+# The script waits up to 45 min for the tip, twice when it rolls back.
+TimeoutStartSec=6000
+# No ProtectSystem: apt/dpkg must write /usr and /etc. Restarts go through
+# systemd over D-Bus, so the cgroup and kernel protections cost nothing.
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true

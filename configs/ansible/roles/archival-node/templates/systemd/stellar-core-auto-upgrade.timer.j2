@@ -1,0 +1,13 @@
+# systemd timer: every 6h, so a skipped run (archive fill in flight) retries
+# the same day. SDF has given one week between a core release and a mainnet
+# vote (29.0.0: published 2026-09-24, vote 2026-10-01).
+[Unit]
+Description=Stellar Index — stellar-core auto-upgrade every 6h
+
+[Timer]
+OnCalendar=*-*-* 03,09,15,21:17:00 UTC
+RandomizedDelaySec=20m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
