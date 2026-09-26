@@ -34,7 +34,10 @@ import (
 func TestAccountMovements_CeilingIsAppliedBeforeTheLimit(t *testing.T) {
 	const limit = accountMovementsDefaultLimit // what the probe handler's ParseLimit returns
 	base := timescale.SEP41MovementsFloorLedger
-	wm := base - 5_000 // the cap67 archive's watermark: the CH arm's ceiling
+	// The cap67 archive's watermark: the CH arm's ceiling. Post-P23, as the
+	// derive only ever records one there; a sub-floor value covers no
+	// post-P23 ledger and leaves the ceiling at the P23 boundary (GH-622).
+	wm := base + 5_000
 	when := time.Unix(1_700_000_000, 0).UTC()
 
 	// The archive holds, newest first: 40 rows ABOVE the watermark (the
