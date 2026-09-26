@@ -3,6 +3,7 @@ package explorer
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -245,67 +246,11 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 
 	chCur := clickhouse.AccountMovementCursor{Ledger: cur.Ledger, TxHash: cur.TxHash, OpIndex: cur.OpIndex, LegIndex: cur.LegIndex}
 
-	// Dynamic archive boundary (inventory #1): the cap67-derived
-	// archive covers ALL assets through its watermark; the Postgres
-	// tail covers watched tokens above it. ONE watermark value drives
-	// BOTH the CH ceiling and the PG floor so the arms stay gap-free and
-	// double-count-free even while the derive is mid-catch-up (rows
-	// landing between the two reads are excluded from CH by the ceiling
-	// and served by PG above the floor).
-	//
-	// The watermark advances every derive window (seconds — a continuous
-	// follow daemon), so a
-	// paginated scroll must NOT re-read the live value on each page — that
-	// would move the CH/PG split under the cursor and silently drop the
-	// native/unwatched sliver between the old and new boundary
-	// (W1-chrollup-2). The first page reads the live watermark and pins it
-	// into next_cursor; continuation pages reuse that pinned value, so the
-	// whole sequence shares one boundary and one honest coverage note.
-	var wm uint32
-	if cur.HasPinnedWatermark {
-		wm = cur.PinnedWatermark
-	} else {
-		liveWM, wmErr := h.Reader.Cap67MovementsWatermark(ctx)
-		if wmErr != nil {
-			// Fail closed (W1-chrollup-1): a watermark read error must NOT
-			// disable the CH ceiling. The cap67 archive may be fully
-			// populated to the tip, and serving it untrimmed alongside the
-			// Postgres watched-token tail double-lists every post-P23
-			// watched transfer. Fall back to the static P23 boundary (wm=0
-			// => CH ceilinged at P23-1 below, PG floored at P23) so the arms
-			// stay disjoint and only the post-P23 native sliver degrades to
-			// watched-tokens-only — exactly the scope the wm==0 coverage
-			// note already discloses.
-			h.Logger.Warn("cap67 movements watermark read failed — failing closed to the static P23 boundary", "err", wmErr)
-			liveWM = 0
-		}
-		wm = liveWM
+	wm, ok := h.movementsWatermark(ctx, w, r, cur)
+	if !ok {
+		return
 	}
-
-	// Clamp the CH arm to its ceiling ALWAYS — not only when wm>0
-	// (W1-chrollup-1). With a populated cap67 archive but a zero/failed
-	// watermark, an unclamped CH arm returns cap67_derived rows across the
-	// whole post-P23 range that the Postgres tail ALSO serves, double-
-	// listing every post-P23 watched transfer. When the watermark is
-	// unknown/absent the ceiling is the static P23 boundary
-	// (MovementsFloor()-1): a no-op for a genuinely-absent archive
-	// (no post-P23 rows exist) and a real trim for a populated one.
-	//
-	// The ceiling is a SQL predicate on the CH read, NOT a post-read trim
-	// (F055). Trimming the fetched page in Go happens AFTER the SQL LIMIT,
-	// so a page whose `limit` newest rows all sit above the ceiling —
-	// routine while the cap67 follow daemon is mid-window, and permanent
-	// for any account busier than one page per derive tick — collapsed to
-	// zero rows; len(merged) != limit then suppressed next_cursor and the
-	// account's entire pre-watermark history became unreachable. Pushing
-	// the bound into the WHERE clause fills each page from the servable
-	// rows instead. HasMaxLedger (not a MaxLedger>0 sentinel) carries the
-	// clamp because ceiling 0 is REACHABLE — an installed genesis floor
-	// (testnet/futurenet) with no watermark — and must serve nothing here.
-	chCeiling := timescale.MovementsFloor() - 1
-	if wm > 0 {
-		chCeiling = wm
-	}
+	chCeiling, pgFloor := movementsSplit(wm)
 	chFilter := filter
 	chFilter.MaxLedger = chCeiling
 	chFilter.HasMaxLedger = true
@@ -327,12 +272,11 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pgFloor := timescale.MovementsFloor()
-	if wm+1 > pgFloor {
-		pgFloor = wm + 1
-	}
 	pgRows, tailNote := h.fetchSEP41MovementsTail(ctx, g, limit, cur, filter, pgFloor)
 	coverageNote := movementsCoverageNote(wm, tailNote)
+	if filter.Kind != "" && filter.Kind != "transfer" {
+		coverageNote = movementsPreP23KindNote(filter.Kind)
+	}
 	h.assertMovementsNonOverlap(chRows, pgRows, pgFloor)
 
 	merged := mergeAccountMovementRows(chRows, pgRows, limit)
@@ -348,6 +292,72 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 		out.NextCursor = encodeMovementCursor(merged[len(merged)-1], wm)
 	}
 	h.WriteJSON(w, out, h.movementsStale(ctx, wm))
+}
+
+// movementsWatermark resolves the cap67 archive watermark that splits this
+// page between the ClickHouse archive and the Postgres tail (inventory #1).
+// ONE value drives BOTH the CH ceiling and the PG floor so the arms stay
+// gap-free and double-count-free while the derive is mid-catch-up.
+//
+// The live watermark advances every derive window, so a paginated scroll
+// reuses the value page 1 pinned into next_cursor rather than moving the
+// split under the cursor (W1-chrollup-2). The pin is client-supplied, so it
+// is re-validated against the live value on every page: a pin above it
+// would ceiling CH at ledgers not yet derived and floor PG above them,
+// dropping that range from both arms (GH-622) — reject it as an invalid
+// cursor. A pin at or below the live value is only ever more conservative.
+//
+// A read error fails closed to wm=0 (W1-chrollup-1): the static P23
+// boundary keeps the arms disjoint even against a fully populated archive,
+// and the wm==0 coverage note discloses the reduced post-P23 scope. A pin
+// cannot be validated then, so it is not trusted either.
+func (h *Handler) movementsWatermark(ctx context.Context, w http.ResponseWriter, r *http.Request, cur movementCursorParts) (uint32, bool) {
+	liveWM, err := h.Reader.Cap67MovementsWatermark(ctx)
+	if err != nil {
+		h.Logger.Warn("cap67 movements watermark read failed — failing closed to the static P23 boundary", "err", err)
+		return 0, true
+	}
+	if !cur.HasPinnedWatermark {
+		return postP23Boundary(liveWM), true
+	}
+	if cur.PinnedWatermark > liveWM {
+		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-cursor",
+			"Invalid cursor", http.StatusBadRequest,
+			"cursor is ahead of the movement archive boundary; restart pagination without a cursor")
+		return 0, false
+	}
+	return postP23Boundary(cur.PinnedWatermark), true
+}
+
+// postP23Boundary folds a watermark below the P23 floor to 0: it covers no
+// post-P23 ledger, so the feed's scope (and coverage note) is the no-archive
+// one rather than "all assets through" a pre-P23 ledger.
+func postP23Boundary(wm uint32) uint32 {
+	if wm < timescale.MovementsFloor() {
+		return 0
+	}
+	return wm
+}
+
+// movementsSplit maps the archive watermark to the CH arm's inclusive
+// ledger ceiling and the PG tail's inclusive floor, with
+// pgFloor == chCeiling+1 always so no ledger falls between the arms.
+//
+// The ceiling is never below the static P23 boundary: the classic archive
+// owns everything under it and the tail never reads beneath it, so a
+// watermark there would hide pre-P23 history from both arms. With wm == 0
+// (no archive, or a failed read) the ceiling is that boundary — a no-op
+// for an absent archive and a real trim for a populated one, which is what
+// stops cap67_derived rows double-listing with the tail (W1-chrollup-1).
+// The ceiling is applied as a SQL predicate, not a post-read trim (F055).
+// Ceiling 0 is reachable (a genesis floor with no watermark) and serves
+// nothing, hence HasMaxLedger rather than a MaxLedger>0 sentinel.
+func movementsSplit(wm uint32) (chCeiling, pgFloor uint32) {
+	chCeiling = timescale.MovementsFloor() - 1
+	if wm > chCeiling {
+		chCeiling = min(wm, math.MaxUint32-1) // keep chCeiling+1 representable
+	}
+	return chCeiling, chCeiling + 1
 }
 
 // cap67MovementsStaleLedgers is how far the lake tip may run past the
@@ -416,7 +426,31 @@ func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, l
 // progress marker, not a verdict: account_movements is not a reconcile
 // target and has no /v1/coverage row, so the note must not call it
 // complete.
+//
+// Every variant ends with movementsKindGapNote: the note scopes kinds as
+// well as assets.
 func movementsCoverageNote(wm uint32, tailNote string) string {
+	return movementsArchiveNote(wm, tailNote) + "; " + movementsKindGapNote
+}
+
+// movementsKindGapNote names what no arm serves. The cap67 archive and the
+// Postgres tail both carry CAP-67 `transfer` events only (mint, burn and
+// clawback live in sep41_supply_events and are not derived into movements),
+// and classicmovements has no fee or order-book-fill kind at any epoch.
+const movementsKindGapNote = "from 2025-09-03 (P23) on, this feed carries transfer movements only — " +
+	"mint, burn and clawback (including every payment to or from an asset's issuer) are not served, " +
+	"and fees and order-book fills are not served at any ledger"
+
+// movementsPreP23KindNote replaces the archive note under a ?kind= filter
+// other than transfer: only the pre-P23 classic archive can match it, so
+// the results stop at the P23 boundary however far the archive has run.
+func movementsPreP23KindNote(kind string) string {
+	return fmt.Sprintf("movement_kind %q is served only before ledger %d (2025-09-03, P23): from P23 on, "+
+		"this feed carries transfer movements only, so these results stop at that boundary; see "+
+		"/accounts/{g}/operations for later activity", kind, timescale.MovementsFloor())
+}
+
+func movementsArchiveNote(wm uint32, tailNote string) string {
 	if tailNote != "" {
 		return tailNote
 	}
