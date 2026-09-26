@@ -14,10 +14,10 @@ import (
 // TestDistinctPairsRanksCryptoXLMAsQuote is GH-1100: quoteRankSQL used
 // to recognise only "native" and the SAC address as XLM, so a market
 // recorded in the crypto:XLM off-chain spelling ranked as an ordinary
-// token (rank 1) instead of XLM (rank 2). Stored as (base=crypto:ZEC,
+// token (rank 1) instead of XLM (rank 2). Stored as (base=crypto:XRP,
 // quote=crypto:XLM) — the correct canonical orientation keeps that
-// order (XLM outranks ZEC), but the pre-fix rank tie broke on string
-// comparison ("crypto:ZEC" > "crypto:XLM") and flipped it, swapping
+// order (XLM outranks XRP), but the pre-fix rank tie broke on string
+// comparison ("crypto:XRP" > "crypto:XLM") and flipped it, swapping
 // which leg the listing reports as base and which as quote.
 func TestDistinctPairsRanksCryptoXLMAsQuote(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -30,9 +30,9 @@ func TestDistinctPairsRanksCryptoXLMAsQuote(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	zec := c.Asset{Type: c.AssetCrypto, Code: "ZEC"}
+	xrp := c.Asset{Type: c.AssetCrypto, Code: "XRP"}
 	xlm := c.Asset{Type: c.AssetCrypto, Code: "XLM"}
-	pair, err := c.NewPair(zec, xlm)
+	pair, err := c.NewPair(xrp, xlm)
 	if err != nil {
 		t.Fatalf("NewPair: %v", err)
 	}
@@ -53,16 +53,16 @@ func TestDistinctPairsRanksCryptoXLMAsQuote(t *testing.T) {
 	}
 	var found bool
 	for _, m := range rows {
-		if m.Pair.Base.String() != zec.String() && m.Pair.Quote.String() != zec.String() {
+		if m.Pair.Base.String() != xrp.String() && m.Pair.Quote.String() != xrp.String() {
 			continue
 		}
 		found = true
-		if m.Pair.Base.String() != zec.String() || m.Pair.Quote.String() != xlm.String() {
+		if m.Pair.Base.String() != xrp.String() || m.Pair.Quote.String() != xlm.String() {
 			t.Errorf("canonical pair = (%s, %s), want (%s, %s) — crypto:XLM must rank as quote",
-				m.Pair.Base.String(), m.Pair.Quote.String(), zec.String(), xlm.String())
+				m.Pair.Base.String(), m.Pair.Quote.String(), xrp.String(), xlm.String())
 		}
 	}
 	if !found {
-		t.Fatalf("DistinctPairs did not return the seeded ZEC/XLM market: %+v", rows)
+		t.Fatalf("DistinctPairs did not return the seeded XRP/XLM market: %+v", rows)
 	}
 }
