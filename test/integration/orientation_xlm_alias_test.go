@@ -51,14 +51,20 @@ func TestDistinctPairsRanksCryptoXLMAsQuote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DistinctPairs: %v", err)
 	}
+	// The listing folds XLM spellings (GH-1098), so the quote may come back
+	// as any of XLM's alias forms; what this test pins is the orientation.
+	xlmForms := map[string]bool{}
+	for _, a := range c.AssetAliases(xlm) {
+		xlmForms[a.String()] = true
+	}
 	var found bool
 	for _, m := range rows {
 		if m.Pair.Base.String() != xrp.String() && m.Pair.Quote.String() != xrp.String() {
 			continue
 		}
 		found = true
-		if m.Pair.Base.String() != xrp.String() || m.Pair.Quote.String() != xlm.String() {
-			t.Errorf("canonical pair = (%s, %s), want (%s, %s) — crypto:XLM must rank as quote",
+		if m.Pair.Base.String() != xrp.String() || !xlmForms[m.Pair.Quote.String()] {
+			t.Errorf("canonical pair = (%s, %s), want (%s, an XLM form of %s) — XLM must rank as quote",
 				m.Pair.Base.String(), m.Pair.Quote.String(), xrp.String(), xlm.String())
 		}
 	}
