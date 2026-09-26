@@ -95,8 +95,9 @@ func (s *Server) transitiveCandidateAllowed(ctx context.Context, asset canonical
 	// the catalogue prices through — native/XLM-SAC, fiat:USD, or an
 	// operator-declared USD peg. listingPriceAllowed already encodes
 	// exactly that policy, so reuse it rather than restate it and risk
-	// the two drifting.
-	return s.listingPriceAllowed(ctx, hop)
+	// the two drifting — counted as "transitive", since no listing row
+	// was served.
+	return s.assetPriceAllowed(ctx, hop, "transitive")
 }
 
 // normalizeTransitiveUSD applies the dex-nonstandard-decimals forward

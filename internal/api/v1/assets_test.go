@@ -12,6 +12,7 @@ import (
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -913,15 +914,15 @@ func TestAssetGet_ClassicSlugResolves(t *testing.T) {
 
 // unmeasuredSubstanceGate is a substance gate whose store cannot answer
 // (error or request deadline): Allowed fails open as the production gate
-// does, Verdict reports that no verdict was reached.
+// does, Probe reports that no verdict was reached.
 type unmeasuredSubstanceGate struct{}
 
 func (unmeasuredSubstanceGate) Allowed(context.Context, canonical.Asset, canonical.Asset, string) bool {
 	return true
 }
 
-func (unmeasuredSubstanceGate) Verdict(context.Context, canonical.Asset, canonical.Asset, string) (allowed, measured bool) {
-	return false, false
+func (unmeasuredSubstanceGate) Probe(context.Context, canonical.Asset, canonical.Asset) (allowed, measured bool, floor pricingguard.SubstanceFloor) {
+	return false, false, pricingguard.FloorNone
 }
 
 // TestAssetList_SubstanceUnmeasured_WithholdsPriceAndStampsStale pins
