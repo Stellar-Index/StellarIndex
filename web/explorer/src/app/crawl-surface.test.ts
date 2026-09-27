@@ -140,7 +140,7 @@ describe('sitemap', () => {
       orphaned,
       `sitemapped but unreachable from the nav/footer: ${orphaned.join(', ')}`,
     ).toEqual([]);
-  });
+  }, 15_000); // walks the whole route graph and builds the sitemap; 5 s flakes under verify's parallel lanes
 
   /**
    * And the reverse: a sitemap entry that names no page at all. The
