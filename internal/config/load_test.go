@@ -49,6 +49,37 @@ postgres_dsn = "postgres://u:p@h/db"
 	}
 }
 
+// TestLoadReader_MetricsListenSet — GH-1130: MetricsListenSet must
+// distinguish "operator wrote obs.metrics_listen in the file" from
+// "left at Default()'s value", so a consumer (e.g. the aggregator's
+// single-host port shift) can tell an explicit choice from a default.
+func TestLoadReader_MetricsListenSet(t *testing.T) {
+	c, err := cfg.LoadReader(strings.NewReader(`
+[stellar]
+network = "pubnet"
+`), "test.toml")
+	if err != nil {
+		t.Fatalf("LoadReader: %v", err)
+	}
+	if c.Obs.MetricsListenSet {
+		t.Error("MetricsListenSet = true for a file that omits obs.metrics_listen")
+	}
+
+	c, err = cfg.LoadReader(strings.NewReader(`
+[stellar]
+network = "pubnet"
+
+[obs]
+metrics_listen = "127.0.0.1:9464"
+`), "test.toml")
+	if err != nil {
+		t.Fatalf("LoadReader: %v", err)
+	}
+	if !c.Obs.MetricsListenSet {
+		t.Error("MetricsListenSet = false for a file that explicitly sets obs.metrics_listen")
+	}
+}
+
 // TestLoadReader_RedisClosedBucketChannel — RLT-347: the closed-bucket
 // stream channel must be a real config key that round-trips into
 // StorageConfig, not silently dropped, so cmd/stellarindex-aggregator

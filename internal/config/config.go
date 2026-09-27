@@ -2078,11 +2078,20 @@ func (sc SupplyConfig) validateFullyWrappedSACs() error {
 // doesn't need a sidecar port). Trace fields are reserved for the
 // future tracing rollout — see [ObsConfig.TraceExporter].
 type ObsConfig struct {
-	MetricsListen string  `toml:"metrics_listen" doc:"Bind address for the dedicated /metrics Prometheus endpoint. Read by the indexer, the aggregator, and the long-lived ops binaries (cross-region-monitor, verify-archive --metrics). The API binary serves /metrics on its public listener and ignores this field." default:"127.0.0.1:9464"`
-	LogLevel      string  `toml:"log_level" doc:"Minimum log level — debug / info / warn / error." default:"info"`
-	LogFormat     string  `toml:"log_format" doc:"Log format — json / text / console ('text' and 'console' are synonyms)." default:"json"`
-	TraceExporter string  `toml:"trace_exporter" doc:"OpenTelemetry trace exporter. Currently only 'none' is wired in this build; the 'otlp' value is reserved for the future tracing rollout and is rejected by Validate() until the exporter is implemented (so an operator setting it doesn't think tracing is on when it isn't)." default:"none"`
-	TraceSample   float64 `toml:"trace_sample" doc:"Trace sampling ratio — 0.0 (none) to 1.0 (all). Read by the future tracing rollout; ignored in this build." default:"0.1"`
+	MetricsListen string `toml:"metrics_listen" doc:"Bind address for the dedicated /metrics Prometheus endpoint. Read by the indexer, the aggregator, and the long-lived ops binaries (cross-region-monitor, verify-archive --metrics). The API binary serves /metrics on its public listener and ignores this field." default:"127.0.0.1:9464"`
+	// MetricsListenSet records whether obs.metrics_listen was present
+	// in the loaded TOML file, as opposed to left at Default()'s
+	// value. Populated by LoadReader from toml.MetaData — never set
+	// by the decoder itself (toml:"-"). The aggregator's single-host
+	// port-collision shift (cmd/stellarindex-aggregator/main.go) reads
+	// this instead of comparing MetricsListen by value, so an operator
+	// who explicitly pins 127.0.0.1:9464 for the aggregator is honoured
+	// instead of silently overridden (GH-1130).
+	MetricsListenSet bool    `toml:"-"`
+	LogLevel         string  `toml:"log_level" doc:"Minimum log level — debug / info / warn / error." default:"info"`
+	LogFormat        string  `toml:"log_format" doc:"Log format — json / text / console ('text' and 'console' are synonyms)." default:"json"`
+	TraceExporter    string  `toml:"trace_exporter" doc:"OpenTelemetry trace exporter. Currently only 'none' is wired in this build; the 'otlp' value is reserved for the future tracing rollout and is rejected by Validate() until the exporter is implemented (so an operator setting it doesn't think tracing is on when it isn't)." default:"none"`
+	TraceSample      float64 `toml:"trace_sample" doc:"Trace sampling ratio — 0.0 (none) to 1.0 (all). Read by the future tracing rollout; ignored in this build." default:"0.1"`
 }
 
 // Default returns a Config pre-populated with every field's default
