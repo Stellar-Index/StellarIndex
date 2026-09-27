@@ -333,3 +333,82 @@ func bespokeKPI(blk *timescale.BespokeBlock, label string) *timescale.BespokeKPI
 	}
 	return nil
 }
+
+// TestBespokeDEX24hBoundaryHourExcludedFromBothReaders pins GH-1113: a
+// trade in the hour bucket that floors to exactly `now() - 24h` must be
+// excluded by BOTH readers of source_volume_1h identically. Before the
+// fix, GetSourceVolumeHistory24h floored its window with
+// `date_trunc('hour', NOW() - 24h)` (a >=, 25-bucket window) and included
+// this boundary bucket, while the bespoke 24h KPI/series (a strict `>`,
+// 24-bucket window) excluded it — the same trade counted by one 24h
+// reader of the source page and not the other.
+func TestBespokeDEX24hBoundaryHourExcludedFromBothReaders(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	spec, err := timescale.NewUSDVolumeQuoteSpec(
+		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"}, nil)
+	if err != nil {
+		t.Fatalf("spec: %v", err)
+	}
+	store.SetUSDVolumeQuoteSpec(spec)
+
+	xlm := c.NativeAsset()
+	usdc, err := c.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	xlmUSDC, _ := c.NewPair(xlm, usdc)
+
+	// Land squarely in the hour bucket the buggy date_trunc() floor used
+	// to pull in as an extra 25th bucket.
+	boundaryHour := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Hour)
+	ts := boundaryHour.Add(1 * time.Minute)
+	if err := store.InsertTrade(ctx, mkIntegrationTrade("soroswap", 1, ts, xlmUSDC, 1_000_000_000, 500_000_000)); err != nil {
+		t.Fatalf("InsertTrade: %v", err)
+	}
+	if _, err := store.DB().ExecContext(ctx,
+		`CALL refresh_continuous_aggregate('source_volume_1h', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh source_volume_1h: %v", err)
+	}
+
+	// Sanity: the fixture really landed in the boundary bucket.
+	var bucketCount int
+	if err := store.DB().QueryRowContext(ctx, `
+		SELECT count(*) FROM source_volume_1h
+		 WHERE source = 'soroswap' AND bucket = date_trunc('hour', now() - INTERVAL '24 hours')`,
+	).Scan(&bucketCount); err != nil {
+		t.Fatalf("read boundary bucket: %v", err)
+	}
+	if bucketCount != 1 {
+		t.Fatalf("fixture: boundary bucket has %d source_volume_1h row(s), want 1", bucketCount)
+	}
+
+	blk, err := store.BuildProtocolBespoke(ctx, "soroswap", "dex", 1)
+	if err != nil {
+		t.Fatalf("BuildProtocolBespoke: %v", err)
+	}
+	if blk != nil {
+		if vol := bespokeKPI(blk, "USD volume (1d)"); vol != nil && vol.Value != "0.00" {
+			t.Fatalf("fixture: bespoke 24h KPI = %s, want 0.00 (boundary-hour trade excluded)", vol.Value)
+		}
+	}
+
+	hist, err := store.GetSourceVolumeHistory24h(ctx)
+	if err != nil {
+		t.Fatalf("GetSourceVolumeHistory24h: %v", err)
+	}
+	for _, b := range hist {
+		if b.Source == "soroswap" {
+			t.Errorf("GetSourceVolumeHistory24h must exclude the boundary-hour bucket like the bespoke 24h reader does, got %+v", b)
+		}
+	}
+}
