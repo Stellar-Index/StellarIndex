@@ -754,14 +754,20 @@ function currencyResult(c: CurrencyEntry): Result {
 
 // lookupAssetID resolves a code (e.g. "USDC") to its canonical
 // asset_id (e.g. "USDC-GA5Z…") using the loaded coins set. "XLM"
-// special-cases to "native". Returns null when no match — caller
-// falls back to /markets.
+// special-cases to "native". A code alone is not a safe asset key
+// (AGENTS.md: "ALWAYS key an asset on (code, issuer)... NEVER on code
+// alone" — a scam token can claim any ticker), so this excludes rows
+// the API already flagged as `unverified_ticker_collision` and, when
+// more than one legitimate row still shares the code, refuses to
+// guess. Returns null on no match / ambiguity — caller falls back to
+// /markets instead of linking to a spoofed issuer.
 function lookupAssetID(coins: Coin[], code: string): string | null {
   if (code === 'XLM') return 'native';
-  for (const c of coins) {
-    if (c.code === code) return c.asset_id;
-  }
-  return null;
+  const candidates = coins.filter(
+    (c) => c.code === code && !c.unverified_ticker_collision,
+  );
+  if (candidates.length !== 1) return null;
+  return candidates[0].asset_id;
 }
 
 function coinResult(c: Coin, verified: boolean): Result {

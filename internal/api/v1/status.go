@@ -229,11 +229,12 @@ type PrometheusStatusBackend struct {
 }
 
 func (p *PrometheusStatusBackend) Heartbeats(ctx context.Context) (map[string]time.Time, error) {
-	// up{job=...} returns 1 if scrape succeeded, 0 otherwise.
-	// The metric's timestamp is the scrape time — we want the
-	// latest scrape time per job, which we derive from
-	// timestamp(up{job=...}).
-	const q = `timestamp(up{job=~"stellarindex-indexer|stellarindex-aggregator|stellarindex-api"})`
+	// up{job=...} returns 1 if scrape succeeded, 0 otherwise, and
+	// Prometheus writes a sample (with the scrape's timestamp) on
+	// failed scrapes too. Filtering on ==1 before taking the
+	// timestamp means a crashed target's heartbeat goes stale
+	// instead of refreshing every failed scrape.
+	const q = `max_over_time(timestamp(up{job=~"stellarindex-indexer|stellarindex-aggregator|stellarindex-api"} == 1)[5m:15s])`
 	res, err := p.queryVector(ctx, q)
 	if err != nil {
 		return nil, err
