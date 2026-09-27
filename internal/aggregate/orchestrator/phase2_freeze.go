@@ -172,7 +172,13 @@ const releaseAgreementMaxPct = 5.0
 func releaseCorroborated(c confidenceComputation, candidate *big.Rat, ref compositeReference, compositeBandPct float64) bool {
 	switch {
 	case ref.resolved():
-		if ref.divergencePct <= compositeBandPct {
+		// Exact Rat compare, matching how the verdict above it was
+		// decided (composite_reference.go) — a float64 divergencePct
+		// compare here would put the release boundary at the mercy of
+		// binary rounding on a decision that gates whether a held,
+		// possibly-manipulated price is released.
+		band := new(big.Rat).SetFloat64(compositeBandPct / 100.0)
+		if band != nil && ref.deviationRatio != nil && ref.deviationRatio.Cmp(band) <= 0 {
 			return true
 		}
 	case c.TriangulationChecked && math.Abs(c.TriangulationDivergencePct) <= releaseAgreementMaxPct:

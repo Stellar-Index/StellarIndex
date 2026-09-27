@@ -11,6 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
 // GlobalAssetView is the wire shape served by `/v1/assets/{slug}`
@@ -169,6 +170,16 @@ func (s *Server) populateGlobalCryptoPrice(ctx context.Context, view GlobalAsset
 		}
 		s.logger.Warn("global asset view: ComputeGlobalPrice failed",
 			"ticker", vc.Ticker, "err", err)
+		return view
+	}
+
+	// Same substance/scam gate the classic /v1/assets listing and
+	// /v1/price hold this pair to (RLT-352): unlike
+	// [fillGlobalPriceFromOnChain]'s on-chain fallback below, and
+	// unlike [populateFiatView]'s reference-rate path, this tier had no
+	// gate of its own, so a scam-flagged issuer or a dust-thin market
+	// withheld everywhere else could still headline here.
+	if withheldBy(ctx, s.substance, s.scam, base, quote, "global_asset") != pricingguard.NotWithheld {
 		return view
 	}
 

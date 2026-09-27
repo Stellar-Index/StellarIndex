@@ -160,7 +160,18 @@ func FuzzReleaseCorroborated(f *testing.F) {
 		}
 		ref := compositeReference{verdict: compositeVerdictUnavailable}
 		if refResolved {
-			ref = compositeReference{verdict: compositeVerdictRefuted, divergencePct: math.Abs(refPct)}
+			// deviationRatio is the exact-Rat value releaseCorroborated
+			// actually reads; divergencePct is carried alongside it only
+			// because production always sets both (composite_reference.go).
+			absRatio := new(big.Rat)
+			if absRatio.SetFloat64(math.Abs(refPct)/100.0) == nil {
+				return
+			}
+			ref = compositeReference{
+				verdict:        compositeVerdictRefuted,
+				divergencePct:  math.Abs(refPct),
+				deviationRatio: absRatio,
+			}
 		}
 		c := confidenceComputation{TriangulationChecked: triChecked, TriangulationDivergencePct: triPct}
 		band := DefaultCompositeReferenceReleaseBandPct

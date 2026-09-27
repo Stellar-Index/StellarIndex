@@ -109,7 +109,7 @@ trap 'rm -f "$TMP"' EXIT
 # ticket it raises until then is the reminder.
 #
 # shellcheck disable=SC2129  # the appends below are separate on purpose: each is a distinct query with its own reasoning between them, and a single `{ … } >> $TMP` would bury that
-"$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH f AS (
   -- Crypto oracles (reflector/redstone/band/chainlink/coingecko) update every
   -- few minutes → 3h threshold. ECB is the exception: a DAILY FX reference
@@ -126,9 +126,14 @@ WITH f AS (
   --
   -- 76h, NOT 48h, and the number is not arbitrary: it mirrors
   -- `aggregate.composite_reference.fx_max_age_hours` (default 76,
-  -- internal/config/config.go) — the budget the SERVING path already
-  -- applies to its FX leg. An alert stricter than the tolerance the code
-  -- actually uses reports a fault the system does not have.
+  -- internal/config/config.go) — the budget the /v1/price
+  -- fiat-cross-rate serving path already applies to its FX leg
+  -- (`pricing_guard.fx_cross_max_age_hours`, T650). That is one of
+  -- several fiat-FX consumers, not "the" serving path singular: the
+  -- declared-peg market-cap fallback (assets.go's declaredPegFXMaxAge)
+  -- runs its own, independent, wider 7-day tolerance. An alert
+  -- stricter than the tightest tolerance any consumer actually uses
+  -- reports a fault the system does not have.
   --
   -- 48h could not survive a weekend. `massive` publishes a business-day
   -- snapshot and FX markets close, so Friday's bucket is the freshest
@@ -179,6 +184,9 @@ UNION ALL
 SELECT 'stellarindex_data_freshness_stale{domain="'||domain||'",source="'||src||'"} '||(COALESCE(age, thr + 1) > thr)::int::text
   FROM f;
 SQL
+then
+  echo "data-freshness: per-domain oracle/fx/supply/cursor freshness query failed — its gauges skipped this tick, others unaffected" >&2
+fi
 
 # CS-102: the `supply` domain above measures max(time) across the WHOLE table,
 # so it only proves SOME asset is publishing. On 2026-07-28 that read green
@@ -196,7 +204,7 @@ SQL
 # own newest observation, the set an all-stop froze stays in view and its ages
 # go on climbing, while an asset genuinely retired 30 days before the last
 # publication still ages out of the watched set as intended.
-"$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH newest AS (SELECT max(time) AS t FROM asset_supply_history),
      per_asset AS (
   SELECT asset_key, extract(epoch FROM now()-max(time)) AS age
@@ -210,6 +218,9 @@ UNION ALL
 SELECT 'stellarindex_supply_asset_max_age_seconds '||COALESCE(round(max(age)),0)::text
   FROM per_asset;
 SQL
+then
+  echo "data-freshness: supply asset staleness query failed — its gauges skipped this tick, others unaffected" >&2
+fi
 
 # Per-source completeness verdict (latest snapshot per source): 1 = incomplete.
 #
@@ -223,12 +234,15 @@ SQL
 # source's row incomplete and still alerts here. The system row is exported
 # below as a COUNT so a registry regression (a whole protocol's shapes suddenly
 # unattributed — the rozo/BACKLOG-89 class) shows as a step change instead.
-"$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 SELECT 'stellarindex_completeness_incomplete{source="'||source||'"} '||(NOT complete)::int::text
   FROM (SELECT DISTINCT ON (source) source, complete
           FROM completeness_snapshots ORDER BY source, computed_at DESC) s
  WHERE source <> 'recognition';
 SQL
+then
+  echo "data-freshness: completeness_incomplete verdict query failed — its gauges skipped this tick, others unaffected" >&2
+fi
 
 # Per-source recognition verdict — the OWNED bucket.
 #
@@ -248,12 +262,15 @@ SQL
 # from completeness_incomplete above: it is the unowned census, not a source,
 # and its recognition_ok is false permanently by construction (it can only be
 # true if no un-indexed Soroban contract exists anywhere on the network).
-"$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 SELECT 'stellarindex_recognition_ok{source="'||source||'"} '||recognition_ok::int::text
   FROM (SELECT DISTINCT ON (source) source, recognition_ok
           FROM completeness_snapshots ORDER BY source, computed_at DESC) s
  WHERE source <> 'recognition';
 SQL
+then
+  echo "data-freshness: recognition_ok verdict query failed — its gauges skipped this tick, others unaffected" >&2
+fi
 
 # System recognition census count, parsed from the snapshot's detail text
 # ("<N> unrecognized shape(s) on <M> unowned contract(s) (earliest ledger L) —
@@ -263,13 +280,16 @@ SQL
 # reword that dropped the numeric prefix would make this substring() report 0
 # shapes silently — the under-reporting direction. The COALESCE is kept as a
 # belt-and-braces fallback for a row written before that format existed.
-"$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 SELECT 'stellarindex_recognition_unattributed_shapes '||
        COALESCE(substring(detail FROM '^[0-9]+'), '0')
   FROM (SELECT detail FROM completeness_snapshots
          WHERE source = 'recognition'
          ORDER BY computed_at DESC LIMIT 1) r;
 SQL
+then
+  echo "data-freshness: recognition unattributed-shape census query failed — its gauges skipped this tick, others unaffected" >&2
+fi
 
 # W1-migrations-1 / REC-01 / F047 / F116 / T425: a continuous aggregate that a
 # migration recreated WITH NO DATA — or that a replay rewrote the base rows of —
@@ -308,7 +328,7 @@ SQL
 # DOWN, so a healthy view's oldest bar is at or before the oldest trade) and
 # the 2-day gate keeps a fresh deploy's legitimate initial-materialization
 # window from false-firing.
-"$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH base AS (SELECT min(ts) AS tmin FROM trades),
      ret AS (
        SELECT hypertable_name AS view_name,
@@ -348,19 +368,25 @@ UNION ALL
 SELECT 'stellarindex_twap_history_missing{view="'||view_name||'"} '||missing::text
   FROM j WHERE view_name LIKE 'twap%';
 SQL
+then
+  echo "data-freshness: emptied-continuous-aggregate detector query failed — its gauges skipped this tick, others unaffected" >&2
+fi
 
 # CS-090: a verdict can read complete=true while its watermark lags the live
 # network head (a mid-walk stall or a manual small -to). complete/computed_at
 # alone can't see that, so emit the per-source lag (live ingest cursor tip −
 # verdict watermark) — a source verified only to an old ledger becomes
 # observable/alertable instead of showing a green "N/N complete" badge.
-"$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH tip AS (SELECT max(last_ledger) AS t FROM ingestion_cursors)
 SELECT 'stellarindex_completeness_watermark_lag_ledgers{source="'||s.source||'"} '
        ||greatest(0, (SELECT t FROM tip) - s.watermark_ledger)::text
   FROM (SELECT DISTINCT ON (source) source, watermark_ledger
           FROM completeness_snapshots ORDER BY source, computed_at DESC) s;
 SQL
+then
+  echo "data-freshness: completeness watermark lag query failed — its gauges skipped this tick, others unaffected" >&2
+fi
 
 # supply_flows (ClickHouse) is the per-token mint/burn/clawback set that backs
 # /v1/assets SEP-41 supply — TokenSupply() sums it FINAL on-demand, so its

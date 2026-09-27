@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"math/big"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
@@ -267,5 +268,44 @@ func TestPhase2FreezeFires_CalibratedToADRZBand(t *testing.T) {
 					got, DefaultPhase2ConfidenceMaxFreeze)
 			}
 		})
+	}
+}
+
+// TestReleaseCorroborated_DecidedInExactRatSpace pins RLT-263: a
+// resolved composite reference must gate mid-hold release on
+// [compositeReference.deviationRatio] (exact *big.Rat), not on the
+// divergencePct float64 mirror that composite_reference.go keeps only
+// for reporting. A deviation genuinely 3% away from the composite, with
+// a 2% release band, must never release — regardless of what the float
+// mirror says — because a float64 compare puts the boundary at the
+// mercy of binary rounding on a decision that gates whether a held,
+// possibly-manipulated price is served.
+func TestReleaseCorroborated_DecidedInExactRatSpace(t *testing.T) {
+	ref := compositeReference{
+		verdict: compositeVerdictRefuted,
+		// The float64 mirror alone says "release" (1.9 <= 2.0 band) —
+		// deliberately inconsistent with deviationRatio below, so the
+		// only way this test can pass is if releaseCorroborated reads
+		// deviationRatio.
+		divergencePct: 1.9,
+		// The exact ratio actually measured: 3%, past the 2% band.
+		deviationRatio: big.NewRat(3, 100),
+	}
+	conf := confidenceComputation{}
+	if releaseCorroborated(conf, nil, ref, 2.0) {
+		t.Fatalf("released at an exact 3%% deviation against a 2%% band " +
+			"(divergencePct's stale float64 mirror said 1.9%%) — the release " +
+			"gate is reading the float mirror instead of the exact ratio")
+	}
+
+	// Sanity: the same band with a deviation genuinely inside it does
+	// release, so the fix isn't just "always refuse".
+	refInside := compositeReference{
+		verdict:        compositeVerdictRefuted,
+		divergencePct:  1.9,
+		deviationRatio: big.NewRat(1, 100), // 1% — inside the 2% band
+	}
+	if !releaseCorroborated(conf, nil, refInside, 2.0) {
+		t.Fatalf("did not release at an exact 1%% deviation against a 2%% band")
 	}
 }

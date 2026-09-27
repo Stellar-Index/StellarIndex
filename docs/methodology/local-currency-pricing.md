@@ -1,6 +1,6 @@
 ---
 title: Local-currency pricing
-last_verified: 2026-09-02
+last_verified: 2026-09-27
 status: current
 ---
 
@@ -59,7 +59,11 @@ price. If you are reconciling a number, those are the inputs.
 The two legs have different clocks, and this matters:
 
 - The **USD leg** is a closed-bucket aggregate, typically seconds old.
-- The **FX rate** is a **daily** fix. It can be up to ~24 hours old.
+- The **FX rate** is a **daily** fix, and it pauses over market
+  closes. It can be up to ~76 hours old (a business-day feed spans a
+  weekend close: Friday's fix is the freshest thing that exists until
+  Monday). Older than that and we refuse to serve it rather than
+  compose a price from a stale rate (`pricing_guard.fx_cross_max_age_hours`).
 
 `observed_at` on the response is the USD leg's timestamp — the market
 observation the price derives from. It is not a claim that the FX

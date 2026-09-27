@@ -109,8 +109,10 @@ func madRat(vals []*big.Rat, centre *big.Rat) *big.Rat {
 var zeroScaleRelFloor = big.NewRat(1, 200)
 
 // robustCentreScale returns the robust centre (median) and the
-// σ-equivalent scale (madToStd · MAD) of vals, all exact. vals must be
-// non-empty.
+// σ-equivalent scale (madToStd · MAD) of vals, all exact. vals is
+// expected non-empty (every caller today guards it); an empty vals
+// returns nil, nil rather than dereferencing the nil [medianRat]
+// result, the same defensive posture medianRat itself takes (L5).
 //
 // MAD is 0 exactly when a strict majority of vals are equal. Rather
 // than return a zero scale — which collapses every caller's band to
@@ -118,6 +120,9 @@ var zeroScaleRelFloor = big.NewRat(1, 200)
 // falls back to [zeroScaleRelFloor]·|centre|. A zero centre has no
 // relative floor to compute, so it keeps the zero scale.
 func robustCentreScale(vals []*big.Rat) (centre, scale *big.Rat) {
+	if len(vals) == 0 {
+		return nil, nil
+	}
 	centre = medianRat(vals)
 	scale = new(big.Rat).Mul(madToStd, madRat(vals, centre))
 	if scale.Sign() == 0 {

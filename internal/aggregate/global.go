@@ -393,9 +393,12 @@ var aggregatorMADFactor = big.NewRat(5, 1)
 // It computes the EXACT median of the sources' prices (each projected
 // onto [aggregatorCommonDecimals]) and drops any source whose deviation
 // from that median exceeds aggregatorMADFactor·(1.4826·MAD). When a
-// strict majority of sources agree exactly (MAD == 0) any divergent
-// source is dropped. All comparison arithmetic is exact *big.Rat
-// (ADR-0003).
+// strict majority of sources agree exactly (MAD == 0), [robustCentreScale]
+// substitutes [zeroScaleRelFloor]·|centre| for the scale rather than
+// zero, so the band is not a single point: a source within
+// aggregatorMADFactor·zeroScaleRelFloor (±2.5% at the shipped
+// defaults) of the majority price is NOT dropped, only one further out
+// is. All comparison arithmetic is exact *big.Rat (ADR-0003).
 //
 // The deviation is measured in RATIO space ([symmetricDev], MNY-22 /
 // finding K004), not additively in price space. The additive band

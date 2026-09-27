@@ -408,5 +408,71 @@ else
   bad "rc=$RC err='$ERR' published='$(cat "$PUB")'"
 fi
 
+# ─── 8. a single psql query failure must not take down the whole tick ─
+#
+# Seven bare `"$PSQL" ... >> "$TMP" <<'SQL'` invocations run under this
+# script's own `set -euo pipefail` with none of the `if ! …; then …; fi`
+# guard the ClickHouse probe uses. Any one of the seven — a lock timeout,
+# a dropped connection, a relation renamed out from under it — aborted the
+# whole script before the atomic `mv`, so node_exporter went on re-serving
+# the PREVIOUS data_freshness.prom untouched and every gauge froze at its
+# last value, including the ones the other six queries would have updated
+# fine (F081).
+echo "data-freshness-test: a single psql query failure does not abort the tick"
+
+QSRC="$WORK/queries.sh"
+{
+  printf '%s\n' "${STRICT:-set -euo pipefail}"
+  # shellcheck disable=SC2016  # emitted into the harness verbatim; must not expand here
+  printf 'PSQL="$1"\nSTELLARINDEX_POSTGRES_DSN="dummy"\nTMP="$2"\n'
+  awk '/^# shellcheck disable=SC2129/ { p = 1; next } /^SF_AGE=""$/ { p = 0 } p' "$SRC"
+} > "$QSRC"
+# shellcheck disable=SC2016  # the literal $PSQL is the pattern being searched for
+guarded_count="$(grep -c '^if ! "\$PSQL"' "$QSRC")"
+if [[ "$guarded_count" == 7 ]]; then
+  ok "extracted region carries all 7 guarded psql invocations"
+else
+  bad "extraction found $guarded_count guarded invocations, want 7 — the markers drifted"
+fi
+
+mkdir -p "$WORK/psqlbin"
+cat > "$WORK/psqlbin/psql" <<'SH'
+#!/usr/bin/env bash
+# Stub: reads the heredoc body on stdin. Fails only the one call whose
+# query text contains PSQL_FAIL_MARKER; every other call emits one
+# deterministic sample line, standing in for that query's real output.
+body="$(cat)"
+case "$body" in
+  *"${PSQL_FAIL_MARKER}"*)
+    echo "psql: stubbed query failure" >&2
+    exit 1
+    ;;
+esac
+echo "stellarindex_test_sample 1"
+exit 0
+SH
+chmod +x "$WORK/psqlbin/psql"
+
+QTMP="$WORK/queries-out.$RANDOM"
+: > "$QTMP"
+QERR="$(PSQL_FAIL_MARKER='stellarindex_recognition_ok{source="' bash "$QSRC" "$WORK/psqlbin/psql" "$QTMP" 2>&1 >/dev/null)"
+QRC=$?
+
+if [[ $QRC -eq 0 ]]; then
+  ok "one failing psql call still lets the region exit 0 (the atomic mv is reached)"
+else
+  bad "rc=$QRC (want 0): a single psql failure still aborts the whole tick"
+fi
+if [[ "$(grep -c '^stellarindex_test_sample 1$' "$QTMP")" == 6 ]]; then
+  ok "the other 6 queries' output still reaches the textfile"
+else
+  bad "expected 6 surviving samples, textfile has: $(cat "$QTMP")"
+fi
+if [[ "$QERR" == *"recognition_ok verdict query failed"* ]]; then
+  ok "the skipped query is named on stderr (journal-visible)"
+else
+  bad "no mention of the failed query on stderr: $QERR"
+fi
+
 printf 'data-freshness-test: %d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]
