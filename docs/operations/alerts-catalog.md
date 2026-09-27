@@ -28,8 +28,8 @@ enforces it); any per-alert detail page follows it.
 
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
-  | `page` | 61 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 216 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `page` | 65 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
+  | `ticket` | 218 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -150,7 +150,7 @@ signal lands.
 | `stellarindex_config_assertion_failed` | a load-bearing guard config (rsyslog suppress / journald cap / CH-logs-on-ZFS / nft 443 / redis cap / supply reserves) is missing or reverted — hourly config-assertions.sh producer | ==0 for 65m | ticket | [config-assertion-failed](runbooks/config-assertion-failed.md) |
 | `stellarindex_config_assertions_stale` | the config-assertions producer itself went silent (>2h without fresh textfile output) | for 30m | ticket | [config-assertion-failed](runbooks/config-assertion-failed.md) |
 | `stellarindex_patroni_textfile_stale` | `time() - node_textfile_mtime_seconds{file="patroni.prom"}` — patroni-textfile-scraper.timer (30s) went silent | > 10 min, for 5 min | ticket | [patroni-textfile-stale](runbooks/patroni-textfile-stale.md) |
-| `stellarindex_textfile_producer_stale` | `time() - node_textfile_mtime_seconds` (no `file=` selector — catch-all for every textfile-collector producer with no dedicated staleness alert, GH-899) | > 24 h, for 30 min | ticket | [textfile-producer-stale](runbooks/textfile-producer-stale.md) |
+| `stellarindex_textfile_producer_stale` | `time() - node_textfile_mtime_seconds` (no `file=` selector — catch-all for every textfile-collector producer with no dedicated staleness alert, GH-899; excludes `ops_job_*.pid<N>.prom` orphans, `ops_job_backfill.prom` and `restore_drill*.prom`, each false-firing on this 24h threshold) | > 24 h, for 30 min | ticket | [textfile-producer-stale](runbooks/textfile-producer-stale.md) |
 | `stellarindex_node_root_disk_filling_fast` | predict_linear 10m trend on root avail reaching 0 within 30 min (AND avail < 50%) — the log-flood early warning (the 2026-06-11 class fills root in ~5 min, faster than the static page can be acted on) | trend < 0 for 2m | page | [node-root-disk-filling-fast](runbooks/node-root-disk-filling-fast.md) |
 | `stellarindex_node_root_disk_full` | same expr on `mountpoint="/"` (distinct from DB vol — root FS holds /var/log + /tmp + /var/cache) | < 10 % | page | [node-root-disk-full](runbooks/node-root-disk-full.md) |
 | `stellarindex_node_root_disk_warning` | same | < 20 % | ticket | [node-root-disk-warning](runbooks/node-root-disk-warning.md) |
@@ -187,6 +187,7 @@ signal lands.
 | `stellarindex_zfs_snapshot_pool_free_unreadable` | `stellarindex_zfs_snapshot_pool_free_unreadable` (error textfile; job refused to prune/snapshot) | == 1 for ≥ 10 min | ticket | [zfs-snapshots](runbooks/zfs-snapshots.md) |
 | `stellarindex_restore_drill_failed` | `stellarindex_restore_drill_failures` (per `repo`) | > 0 for ≥ 30 min (most recent run of either drill failed/aborted) | ticket | [restore-drill-failed](runbooks/restore-drill-failed.md) |
 | `stellarindex_restore_drill_offsite_stale` | `time() - stellarindex_restore_drill_last_success_unix{repo="2"}` (or `absent_over_time(...{repo="2"}[35d])`) — the OFF-SITE repo2/S3 drill (`restore-drill-offsite.timer`, the 15th); a green repo1 drill says nothing about it | > 35 d for ≥ 30 min, or never recorded | ticket | [restore-drill-offsite-stale](runbooks/restore-drill-offsite-stale.md) |
+| `stellarindex_restore_drill_textfile_stale` | `time() - node_textfile_mtime_seconds{file=~"restore_drill.*\.prom"}` — OBS-2 mtime backstop for the case the monthly timer dies before ever writing a fresh gauge, same pattern as `stellarindex_patroni_textfile_stale` | > 35 d, for 30 min | ticket | [restore-drill-stale](runbooks/restore-drill-stale.md) |
 | `stellarindex_backup_offsite_stale` | `up{job="pgbackrest_exporter"} == 1 unless on (instance) (pgbackrest_backup_info{repo_key="2"} unless … offset 8d)` — no repo2 (S3 off-site) backup series younger than 8 d, or repo2 never written; repo1-fresh/repo2-stale is invisible to the two alerts above | for ≥ 1 h | ticket | [backup-offsite-stale](runbooks/backup-offsite-stale.md) |
 
 ## Cache / serving alerts
@@ -199,7 +200,7 @@ signal lands.
 | `stellarindex_redis_replication_broken` | `redis_connected_slaves` per master | < expected for > 2 min | ticket | [redis-replication](runbooks/redis-replication.md) |
 | `stellarindex_redis_sentinel_textfile_stale` | `time() - node_textfile_mtime_seconds{file="redis_sentinel.prom"}` — redis-sentinel-textfile-scraper.timer (30s) went silent | > 10 min, for 5 min | ticket | [redis-sentinel-textfile-stale](runbooks/redis-sentinel-textfile-stale.md) |
 | `stellarindex_redis_writes_blocked` | `redis_rdb_last_bgsave_status` per master (also surfaces as `MISCONF` errors in client logs) | == 0 for > 60 s | page | [redis-write-blocked-disk-full](runbooks/redis-write-blocked-disk-full.md) |
-| `stellarindex_redis_write_rejected_oom` | `rate(redis_errors_total{err="OOM"}[5m])` | > 0 for > 2 min | page | [redis-memory](runbooks/redis-memory.md) |
+| `stellarindex_redis_write_rejected_oom` | `rate(redis_errors_total{err=~"OOM\|READONLY\|NOREPLICAS"}[5m])` | > 0 for > 2 min | page | [redis-memory](runbooks/redis-memory.md) |
 
 ## API plane alerts
 
@@ -610,7 +611,8 @@ auto-unfreeze at all. Rules in
 | `stellarindex_cross_region_fetch_errors` | `sum by (region, pair, metric) (rate(stellarindex_cross_region_fetch_errors_total[15m]))` | > 0 for ≥ 10 min (a region fetch is failing; that region isn't being compared) | ticket | [cross-region-divergence](runbooks/cross-region-divergence.md) |
 | `stellarindex_cross_region_check_stale` | `time() - stellarindex_cross_region_last_run_timestamp_seconds` | > 300s for ≥ 5 min (the check loop has stopped completing sweeps; every comparison is blind) | ticket | [cross-region-divergence](runbooks/cross-region-divergence.md) |
 | `stellarindex_signup_reaper_failing` | `rate(stellarindex_signup_reaper_runs_total{outcome="error"}[6h]) > rate(...{outcome="ok"}[6h])` | sustained 30 min | ticket | [signup-reaper-failing](runbooks/signup-reaper-failing.md) |
-| `stellarindex_ratelimit_fail_open` | `sum(rate(stellarindex_ratelimit_fail_open_total[5m]))` | > 0 for ≥ 10 min (rate limiter bypassing on a Redis error) | ticket | [ratelimit-fail-open](runbooks/ratelimit-fail-open.md) |
+| `stellarindex_ratelimit_fail_open` | `sum(increase(stellarindex_ratelimit_fail_open_total[15m]))` | > 100 in 15 min (rate limiter bypassing on a Redis error; the prior `rate(...) > 0 for 10m` form could never fire — the fail-open window is capped at the 30s dwell time, so the rate never sustains for 10 straight minutes) | ticket | [ratelimit-fail-open](runbooks/ratelimit-fail-open.md) |
+| `stellarindex_ratelimit_fail_closed` | `sum(rate(stellarindex_ratelimit_fail_closed_total[5m]))` | > 0 for ≥ 2 min (past the fail-open dwell time, the limiter is now failing CLOSED — every request in the bucket gets a 503; 2026-09-16: 2.03M 503s over 2h53m) | page | [ratelimit-fail-open](runbooks/ratelimit-fail-open.md) |
 | `stellarindex_monthly_quota_fail_open` | `sum(rate(stellarindex_monthly_quota_fail_open_total[5m]))` | > 0 for ≥ 10 min (metered-spend ceiling bypassing on a counter read error) | ticket | [monthly-quota-fail-open](runbooks/monthly-quota-fail-open.md) |
 | `stellarindex_scam_gate_fail_open` | `sum by (surface) (rate(stellarindex_scam_gate_lookup_failures_total[5m]))` | > 0 for ≥ 5 min (scam-pricing gate serving directory-flagged issuers' prices on an `account_directory` lookup error) | ticket | [scam-gate-fail-open](runbooks/scam-gate-fail-open.md) |
 | `stellarindex_admin_audit_write_failing` | `sum by (surface) (increase(stellarindex_admin_audit_write_failures_total[1h]))` | > 0 for ≥ 5 min (a privileged mutation committed with no durable audit row) | ticket | [admin-audit-write-failing](runbooks/admin-audit-write-failing.md) |
@@ -654,6 +656,10 @@ auto-unfreeze at all. Rules in
 | `stellarindex_nvme_wear_high` | `nvme_percentage_used_ratio` | > 0.80 for > 1 h | ticket | [nvme-smart](runbooks/nvme-smart.md) |
 | `stellarindex_nvme_spare_low` | `nvme_available_spare_ratio` | < 0.20 for > 30 min | page | [nvme-smart](runbooks/nvme-smart.md) |
 | `stellarindex_nvme_media_errors` | `increase(nvme_media_errors_total[24h])` | > 0 for > 5 min | ticket | [nvme-smart](runbooks/nvme-smart.md) |
+| `stellarindex_md_array_degraded` | `node_md_disks{state="failed"}` — r1's OS/boot disks are mdadm RAID1 (md0 swap, md1 /) | > 0 for > 5 min | page | [md-array-degraded](runbooks/md-array-degraded.md) |
+| `stellarindex_filesystem_readonly` | `node_filesystem_readonly` (excludes pseudo-filesystems: tmpfs/squashfs/overlay/nsfs/ramfs) | == 1 for > 5 min | page | [filesystem-readonly](runbooks/filesystem-readonly.md) |
+| `stellarindex_nvme_critical_warning` | `nvme_critical_warning` — the drive controller's own SMART critical_warning bitmask | > 0 for > 5 min | page | [nvme-smart](runbooks/nvme-smart.md) |
+| `stellarindex_wal_archive_stale` | `pg_stat_archiver_last_archive_age` (postgres_exporter's built-in `pg_stat_archiver` collector; same signal `wal_archive_max_age_seconds` on `/diagnostics/backups` reads) | > 600 s for > 10 min (14d max observed was 82s) | ticket | [backup-failed](runbooks/backup-failed.md) |
 | `stellarindex_process_mappings_high` | `stellarindex_process_memory_mappings_ratio` | > 0.25 of `vm.max_map_count` for > 15 min (~5x the measured 4.5 % steady state) | ticket | [memory-mappings](runbooks/memory-mappings.md) |
 | `stellarindex_process_mappings_critical` | `stellarindex_process_memory_mappings_ratio` | > 0.50 of `vm.max_map_count` for > 2 min | page | [memory-mappings](runbooks/memory-mappings.md) |
 | `stellarindex_process_mappings_exhaustion_projected` | `predict_linear(stellarindex_process_memory_mappings[30m], 3600)` vs `..._limit`, floored at `..._ratio > 0.10` | projected to reach the limit within 1 h, for > 5 min | page | [memory-mappings](runbooks/memory-mappings.md) |
