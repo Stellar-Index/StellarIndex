@@ -45,8 +45,10 @@ import (
 // GROUP BY/argMax whose hash state would scale with the ~hundreds of
 // millions of distinct offer keys ever created. max_threads=4 pins the
 // fan-out (the 2026-07 campaign measured default fan-out costing 40× the
-// memory of a pinned scan on this table's part layout).
-const liveOfferScanSettings = "SETTINGS max_threads = 4, max_memory_usage = 8589934592"
+// memory of a pinned scan on this table's part layout). Pinned off like
+// blendReserveStateQuery: pushing the change_type filter to PREWHERE ahead
+// of the FINAL collapse can surface a superseded, non-removed offer version.
+const liveOfferScanSettings = "SETTINGS max_threads = 4, max_memory_usage = 8589934592, optimize_move_to_prewhere_if_final = 0"
 
 // LiveOffer is one live classic offer decoded from its ledger entry.
 // Amounts/prices are classic protocol types (int64 stroops, int32 price
