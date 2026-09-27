@@ -46,6 +46,43 @@ func TestEmitMarkdown_hasGeneratedBanner(t *testing.T) {
 	}
 }
 
+// TestDescribe_durationFieldTypeLabel pins GH-1132: a time.Duration field
+// must render as "duration" in the generated reference, not the underlying
+// Kind's "int64" (an operator-facing lie about the accepted TOML shape,
+// e.g. "30m").
+func TestDescribe_durationFieldTypeLabel(t *testing.T) {
+	fields := cfg.Describe()
+	for _, f := range fields {
+		if f.Path == "storage.background_statement_timeout" {
+			if f.Type != "duration" {
+				t.Fatalf("storage.background_statement_timeout: Type = %q, want %q", f.Type, "duration")
+			}
+			return
+		}
+	}
+	t.Fatal("storage.background_statement_timeout not found in Describe() output")
+}
+
+// TestDescribe_explicitEmptyDefaultIsNotRequired pins GH-1132: a field
+// tagged `default:""` documents an intentional empty default, distinct
+// from a field with no `default` tag at all. Both must not be reported as
+// Required — a real config with the field left unset is valid.
+func TestDescribe_explicitEmptyDefaultIsNotRequired(t *testing.T) {
+	fields := cfg.Describe()
+	for _, f := range fields {
+		if f.Path == "external.exchangeratesapi.api_key" {
+			if f.Required {
+				t.Fatalf("external.exchangeratesapi.api_key: Required = true, want false (explicit default:\"\")")
+			}
+			if f.Default != "" {
+				t.Fatalf("external.exchangeratesapi.api_key: Default = %q, want empty string", f.Default)
+			}
+			return
+		}
+	}
+	t.Fatal("external.exchangeratesapi.api_key not found in Describe() output")
+}
+
 func TestDefault_isValidShape(t *testing.T) {
 	c := cfg.Default()
 	if c.Region.ID == "" {

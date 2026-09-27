@@ -1,0 +1,17 @@
+# Pinned Ansible toolchain versions (GH-896). One source of truth for the
+# three workflows that install Ansible (deploy.yml, ansible-drift.yml,
+# ci.yml) — sourced by scripts/ci/install-ansible.sh so a version bump is a
+# one-file edit instead of an independent hunt through each workflow.
+#
+# ANSIBLE_CORE_VERSION: deploy.yml's lean `pip install ansible-core` (F-1299
+# exact pin — no bundled community collections, requirements.yml is the sole
+# collection source of truth for the real r1 apply).
+#
+# ANSIBLE_VERSION: the full `ansible` metapackage pipx-installs in
+# ansible-drift.yml and ci.yml for syntax-check / lint / dry-run. It carries
+# its own bundled collections at whatever version pipx resolves for this
+# pin (F146) — deliberately different from ANSIBLE_CORE_VERSION's leaner
+# install, not a drift bug. Both pins move together only if a bump note
+# says so; bumping either alone is normal.
+ANSIBLE_CORE_VERSION=2.18.4
+ANSIBLE_VERSION=14.2.0

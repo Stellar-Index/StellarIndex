@@ -879,6 +879,15 @@ jobs:
         run: |
           ./scripts/ci/check-verify-parity-test.sh
           ./scripts/ci/check-verify-parity.sh
+      - name: verifier image pins (+ self-test)
+        # GH-1257: check-verify-image-pins.sh only ran via scripts/dev/
+        # verify.sh, so the Dockerfile ARG and docs-postman.sh's
+        # CONVERTER_VERSION could drift apart with nothing in CI to
+        # notice. Same placement rationale as the parity gate above:
+        # validates the PR's own copy of both files, pre-restore.
+        run: |
+          ./scripts/ci/check-verify-image-pins-test.sh
+          ./scripts/ci/check-verify-image-pins.sh
       - name: restore-drill contract + abort-path tests
         # restore-drill.sh needs root + pgbackrest + Postgres to run for
         # real; these pin (a) its ch-backfill flag contract statically and
@@ -1456,6 +1465,17 @@ jobs:
         run: ./scripts/ci/lint-ansible-tasks.sh
       - name: lint-ansible-tasks self-test
         run: ./scripts/ci/lint-ansible-tasks-test.sh
+      - name: lint-ansible-toolchain-pin (+ self-test)
+        # GH-896: deploy.yml, ansible-drift.yml and ci.yml each used to
+        # spell out their own ansible/ansible-core version inline, so a
+        # bump landing in one workflow and not the others went unnoticed
+        # until the collections a lint job resolved diverged from the
+        # ones a real deploy applied. All three now route through
+        # scripts/ci/install-ansible.sh + configs/ansible/toolchain.txt;
+        # this keeps a future edit from reintroducing an inline pin.
+        run: |
+          ./scripts/ci/lint-ansible-toolchain-pin-test.sh
+          ./scripts/ci/lint-ansible-toolchain-pin.sh
       - name: check-ansible-drift self-test
         # OBS-drift (audit-2026-07-23): fixtures for the codified≠live
         # verdict ansible-drift.yml calls. The load-bearing case runs the
@@ -1971,6 +1991,21 @@ jobs:
             echo "::error::Generated Postman collection is stale. Run 'make docs-postman' locally and commit the result."
             exit 1
           fi
+      - name: Generated config reference is in sync
+        # GH-1132: docs/reference/config/README.md is generated from
+        # internal/config/config.go struct tags but, unlike the API
+        # reference and Postman collection above, had no CI regen-diff —
+        # only lint-docs.sh's forward check (a tag missing from the doc
+        # entirely), never a type/default drift on an already-documented
+        # key. scripts/dev/verify.sh already regenerates it; this makes
+        # the same check unavoidable in CI for a contributor who never
+        # runs verify.sh.
+        run: |
+          go run ./cmd/stellarindex-ops docs-config > docs/reference/config/README.md
+          if ! git diff --exit-code -- docs/reference/config/README.md; then
+            echo "::error::Generated config reference is stale. Run 'make docs-config' locally and commit the result."
+            exit 1
+          fi
 
   # ────────────────────────────────────────────────────────────────
   # Showcase site — typecheck, lint, build the Next.js app at
@@ -2195,7 +2230,7 @@ jobs:
         # job now lints against the same collections deploy.yml applies.
         run: |
           set -euo pipefail
-          pipx install --include-deps 'ansible==14.2.0'
+          ./scripts/ci/install-ansible.sh bundle
           pipx install 'ansible-lint==26.6.0'
           ansible-galaxy collection install -r configs/ansible/requirements.yml
       - name: Syntax check (secrets stubbed — structure only)

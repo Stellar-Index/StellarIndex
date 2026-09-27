@@ -224,7 +224,7 @@ jobs:
         # does.
         run: |
           set -euo pipefail
-          pipx install --include-deps 'ansible==14.2.0'
+          ./scripts/ci/install-ansible.sh bundle
           pipx inject ansible 'passlib==1.7.4'
           ansible-galaxy collection install -r configs/ansible/requirements.yml
 
