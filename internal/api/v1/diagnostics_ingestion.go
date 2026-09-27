@@ -506,8 +506,9 @@ func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Reque
 	// #16: serve from the background-refreshed snapshot when present —
 	// sub-millisecond instead of the 200-500ms inline build. Falls back
 	// to inline-build when the refresher hasn't fired yet (process just
-	// booted) so first-request-after-restart is never stuck.
-	if entry := s.ingestionSnapshot.Load(); entry != nil {
+	// booted), or has died and gone stale, so first-request-after-restart
+	// and a dead-refresher request are never stuck on frozen data.
+	if entry := s.freshIngestionSnapshot(); entry != nil {
 		w.Header().Set("Cache-Control", "public, max-age=15, s-maxage=15")
 		writeJSON(w, entry.snap, ingestionFlags(entry.snap))
 		return
@@ -553,11 +554,35 @@ func ingestionFlags(snap IngestionDiagnostics) Flags {
 }
 
 // ingestionSnapshotEntry wraps a computed IngestionDiagnostics for
-// atomic storage. Kept separate from the response type so future
-// per-snapshot metadata (computedAt for staleness checks, build
-// duration for an SLI) lands here without bloating the wire shape.
+// atomic storage, plus computedAt so the handler can tell a fresh
+// snapshot from one the background refresher stopped updating.
 type ingestionSnapshotEntry struct {
-	snap IngestionDiagnostics
+	snap       IngestionDiagnostics
+	computedAt time.Time
+}
+
+// ingestionSnapshotCadence is how often StartIngestionSnapshotRefresh
+// rebuilds the snapshot. ingestionSnapshotMaxAge is the handler's
+// staleness gate: a few missed/slow cycles are tolerated (a single
+// slow build shouldn't flip every request to the inline path), but a
+// refresher that has stopped entirely — e.g. panicked out of its loop
+// — must not serve a frozen snapshot forever with as_of stamped "now".
+const (
+	ingestionSnapshotCadence = 15 * time.Second
+	ingestionSnapshotMaxAge  = 4 * ingestionSnapshotCadence
+)
+
+// freshIngestionSnapshot returns the background-refreshed snapshot if
+// one exists and is within ingestionSnapshotMaxAge, or nil otherwise.
+// Every reader of s.ingestionSnapshot (handleDiagnosticsIngestion,
+// handleSourceHealth) must go through this instead of Load() directly
+// — a dead refresher must not serve a frozen snapshot forever.
+func (s *Server) freshIngestionSnapshot() *ingestionSnapshotEntry {
+	entry := s.ingestionSnapshot.Load()
+	if entry == nil || time.Since(entry.computedAt) > ingestionSnapshotMaxAge {
+		return nil
+	}
+	return entry
 }
 
 // StartIngestionSnapshotRefresh launches a background goroutine that
@@ -575,7 +600,7 @@ type ingestionSnapshotEntry struct {
 // post-restart cold-cache windows that the cache header already
 // permits anyway.
 func (s *Server) StartIngestionSnapshotRefresh(ctx context.Context) {
-	const cadence = 15 * time.Second
+	const cadence = ingestionSnapshotCadence
 	// Fire once immediately so the first user request hits the warm
 	// path. Build under its own per-call ctx — independent of the
 	// caller's parent ctx — for the same outlive-request-lifetime
@@ -599,11 +624,11 @@ func (s *Server) StartIngestionSnapshotRefresh(ctx context.Context) {
 				// flag fires regardless of the prior build's flag.
 				keep := prev.snap
 				keep.degraded = true
-				s.ingestionSnapshot.Store(&ingestionSnapshotEntry{snap: keep})
+				s.ingestionSnapshot.Store(&ingestionSnapshotEntry{snap: keep, computedAt: time.Now()})
 				return
 			}
 		}
-		s.ingestionSnapshot.Store(&ingestionSnapshotEntry{snap: out})
+		s.ingestionSnapshot.Store(&ingestionSnapshotEntry{snap: out, computedAt: time.Now()})
 	}
 	doRefresh()
 	t := time.NewTicker(cadence)

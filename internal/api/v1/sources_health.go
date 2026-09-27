@@ -34,14 +34,15 @@ func (s *Server) handleSourceHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var rows []SourceHealthRow
-	if entry := s.ingestionSnapshot.Load(); entry != nil {
+	if entry := s.freshIngestionSnapshot(); entry != nil {
 		rows = entry.snap.Sources
 	}
 	if len(rows) == 0 {
-		// Cold start: the refresher hasn't fired yet. Same ceiling as
-		// the snapshot's sources filler; buildSourceHealth soft-fails
-		// its stat reads so the worst case is registry metadata with
-		// zeroed counters, not an error.
+		// Cold start, or the refresher has died and gone stale (see
+		// freshIngestionSnapshot). Same ceiling as the snapshot's
+		// sources filler; buildSourceHealth soft-fails its stat reads
+		// so the worst case is registry metadata with zeroed counters,
+		// not an error.
 		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 		defer cancel()
 		rows = buildSourceHealth(ctx, s)

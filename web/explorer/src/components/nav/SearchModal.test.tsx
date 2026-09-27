@@ -83,6 +83,47 @@ describe('SearchModal verified badge', () => {
   });
 });
 
+// CA2-A36: a same-code collision must not resolve the pair-jump link.
+// lookupAssetID used to return the first coin whose `code` matched,
+// ignoring `unverified_ticker_collision` — so a spoofed issuer with more
+// observations (sorted earlier in the top-100 list) could become the
+// base of the /markets/<id>~native link instead of the real asset.
+describe('SearchModal pair-jump collision safety', () => {
+  const aqua = (over: Record<string, unknown>) =>
+    ({
+      asset_id: 'AQUA-GREAL',
+      code: 'AQUA',
+      slug: 'AQUA',
+      name: 'Aquarius',
+      symbol: 'AQUA',
+      unverified_ticker_collision: false,
+      ...over,
+    }) as never;
+
+  it('does not link a code collision to the spoofed issuer sorted first', () => {
+    const spoofed = aqua({
+      asset_id: 'AQUA-GSPOOF',
+      unverified_ticker_collision: true,
+    });
+    const real = aqua({});
+    // Spoofed entry listed first, mirroring an impersonator with more
+    // observations sorting ahead of the real asset in the top-100 list.
+    const results = search('AQUA/XLM', [spoofed, real], [], false);
+    const pair = results.find((r) => r.type === 'pair');
+    expect(pair?.href).not.toContain('AQUA-GSPOOF');
+    expect(pair?.href).toBe('/markets/AQUA-GREAL~native');
+  });
+
+  it('refuses to guess when every candidate is a flagged collision', () => {
+    const spoofedOnly = aqua({
+      asset_id: 'AQUA-GSPOOF',
+      unverified_ticker_collision: true,
+    });
+    const results = search('AQUA/XLM', [spoofedOnly], [], false);
+    expect(results.some((r) => r.type === 'pair')).toBe(false);
+  });
+});
+
 // F094: the ISO-4217 direct-jump result must land on the same canonical
 // /external/assets/{friendly-slug} URL as the plain currency row
 // (currencyResult / assetHrefFor) — not a bare /assets/{TICKER} that has

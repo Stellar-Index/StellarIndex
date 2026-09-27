@@ -150,6 +150,80 @@ src_rc=$?
 if [ "$src_rc" -eq 0 ]; then ok "structural: $(cat "$SOUT")"; else bad "structural: $(cat "$SOUT")"; fi
 rm -f "$SOUT"
 
+# ── structural: crash-loop stability window (CA2-A37) ───────────────────
+# GH-1167 replaced `systemctl is-active` with a real /readyz probe, but
+# both stop retrying at the FIRST success — a binary that panics after
+# passing its first probe still reports a healthy deploy (systemd's own
+# Restart=on-failure then crash-loops it with no rollback). This pins the
+# structural shape of the fix: a second, delayed re-check that fails
+# closed if systemd's own restart counter moved during the hold.
+echo "deploy-sync-test: structural (health-probe stability window)"
+SOUT2="$(mktemp)"
+python3 - "configs/ansible/tasks/deploy-one-binary.yml" > "$SOUT2" 2>&1 <<'PY'
+import sys, yaml
+
+path = sys.argv[1]
+with open(path) as fh:
+    tasks = yaml.safe_load(fh)
+
+def flatten(tasks):
+    out = []
+    for t in tasks or []:
+        if not isinstance(t, dict):
+            continue
+        if "block" in t:
+            out += flatten(t.get("block"))
+            out += flatten(t.get("rescue"))
+            continue
+        out.append(t)
+    return out
+
+flat = flatten(tasks)
+names = [t.get("name", "") for t in flat]
+
+def idx(substr):
+    for i, n in enumerate(names):
+        if substr in n:
+            return i
+    return -1
+
+fails = []
+first_api = idx("Health probe — API endpoint")
+first_daemon = idx("Health probe — daemon /readyz")
+capture = idx("Capture restart count for stability check")
+window = idx("Stability window")
+recheck = idx("Re-check restart count after the stability window")
+assert_task = idx("Fail if the service crash-looped after its first health probe")
+recorded = idx("Record successful swap")
+
+checks = [("first API probe", first_api), ("first daemon probe", first_daemon),
+          ("NRestarts capture", capture), ("stability window pause", window),
+          ("NRestarts re-check", recheck), ("crash-loop assert", assert_task),
+          ("record successful swap", recorded)]
+for label, i in checks:
+    if i < 0:
+        fails.append("missing task: %s" % label)
+
+if not fails:
+    if not (max(first_api, first_daemon) < capture < window < recheck < assert_task < recorded):
+        fails.append("stability-window tasks are not ordered strictly between the first health "
+                     "probe and 'Record successful swap' (%s)"
+                     % ", ".join("%s=%d" % (l, i) for l, i in checks))
+    that = str(flat[assert_task].get("ansible.builtin.assert", {}).get("that", ""))
+    if "nrestarts_stability" not in that or "nrestarts_after_probe" not in that:
+        fails.append("crash-loop assert does not compare nrestarts_after_probe to "
+                     "nrestarts_stability: %r" % that)
+
+print("checked %d task(s) in %s" % (len(flat), path))
+for f in fails:
+    print("FAIL — " + f)
+sys.exit(1 if fails else 0)
+PY
+src_rc2=$?
+if [ "$src_rc2" -eq 0 ]; then ok "structural (stability window): $(cat "$SOUT2")"
+else bad "structural (stability window): $(cat "$SOUT2")"; fi
+rm -f "$SOUT2"
+
 # ── behavioural ────────────────────────────────────────────────────────
 if ! command -v ansible-playbook >/dev/null; then
   echo "deploy-sync-test: FAIL — ansible-playbook not on PATH (this test must not pass vacuously)" >&2

@@ -432,6 +432,31 @@ func TestPrometheusStatusBackend_QueryShape(t *testing.T) {
 	}
 }
 
+// TestPrometheusStatusBackend_HeartbeatQueryIgnoresFailedScrapes pins the
+// PromQL query shape: Prometheus writes an up=0 sample (with the scrape's
+// own timestamp) on a FAILED scrape too, so a query that takes
+// timestamp(up{...}) without filtering on the value never goes stale for a
+// crashed target. The query must filter on `== 1` (successful scrapes
+// only) before taking the timestamp.
+func TestPrometheusStatusBackend_HeartbeatQueryIgnoresFailedScrapes(t *testing.T) {
+	var gotQuery string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("query")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+	}))
+	defer ts.Close()
+
+	p := &PrometheusStatusBackend{URL: ts.URL}
+	if _, err := p.Heartbeats(context.Background()); err != nil {
+		t.Fatalf("Heartbeats: %v", err)
+	}
+
+	if !strings.Contains(gotQuery, "== 1") {
+		t.Errorf("heartbeat query = %q, want it to filter on up==1 so a failing scrape (up=0) does not refresh the heartbeat timestamp", gotQuery)
+	}
+}
+
 func TestPrometheusStatusBackend_IncidentsParsesAlertsAndCounts(t *testing.T) {
 	// Three firing alerts: 1 page, 1 ticket, 1 informational, plus
 	// the deadmansswitch which the query excludes server-side. The
