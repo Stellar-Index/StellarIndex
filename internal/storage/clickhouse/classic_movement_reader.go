@@ -59,9 +59,18 @@ func classicOpTypeInList(opTypes []string) string {
 //
 // Mirrors StreamSDEXOps's shape and its NO-FINAL / grace_hash-join
 // rationale (see that function's doc comment for the full incident
-// history): duplicate rows from unmerged ReplacingMergeTree parts
-// are harmless here too — every classic_movements writer is
-// ON CONFLICT DO NOTHING idempotent (migration 0105's PK). The
+// history): duplicate rows from unmerged ReplacingMergeTree parts on
+// the WRITE side are harmless — stellar.account_movements is itself a
+// ReplacingMergeTree (ADR-0048 D2), so a redundant re-derived row
+// collapses on its own ORDER BY key. The Postgres classic_movements
+// writer this comment used to cite for that claim (migration 0105) is
+// retired (ADR-0048 D2) and was never the mechanism anyway. On the
+// READ side a duplicate op is NOT harmless: it fans out to k*m
+// identical ClassicOp rows here, and a caller that counts them 1:1
+// against Movement events (classic-movements-backfill's -verify)
+// double-counts every duplicate. Callers that count MUST dedupe on
+// (ledger_seq, tx_hash, op_index) themselves — see
+// classicMovementsDecodeOpsSurface's `seen` map (CA2-A14). The
 // successful-tx restriction matters for the same reason it does for
 // SDEX: a failed tx's op results can still carry stale/partial data
 // for ops that ran before the failing one, but those movements were

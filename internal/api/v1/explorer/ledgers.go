@@ -180,7 +180,8 @@ func (h *Handler) LedgersList(w http.ResponseWriter, r *http.Request) {
 	if n := len(rows); n > 0 {
 		out.NextBefore = rows[n-1].Seq
 	}
-	h.WriteJSON(w, out, false)
+	_, stale, _ := h.LakeWatermark(ctx)
+	h.WriteJSON(w, out, stale)
 }
 
 // parseLedgerSeq parses the {seq} path segment as a uint32. ok=false (after a
@@ -233,7 +234,8 @@ func (h *Handler) LedgerDetail(w http.ResponseWriter, r *http.Request) {
 			"ledger "+strconv.FormatUint(uint64(seq), 10)+" is not in the indexed range")
 		return
 	}
-	h.WriteJSON(w, ledgerView(l), false)
+	_, stale, _ := h.LakeWatermark(ctx)
+	h.WriteJSON(w, ledgerView(l), stale)
 }
 
 // LedgerTransactionsView is the wire response for GET /v1/ledgers/{seq}/transactions.
@@ -294,5 +296,6 @@ func (h *Handler) LedgerTransactions(w http.ResponseWriter, r *http.Request) {
 		out.Total = hdr.TxCount
 		out.Truncated = hdr.TxCount > uint32(len(rows))
 	}
-	h.WriteJSON(w, out, false)
+	_, stale, _ := h.LakeWatermark(ctx)
+	h.WriteJSON(w, out, stale)
 }

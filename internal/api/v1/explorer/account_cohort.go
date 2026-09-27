@@ -244,7 +244,8 @@ func (h *Handler) AccountGraphCohort(w http.ResponseWriter, r *http.Request) {
 			"the cohort rollup hasn't completed its first cycle on this deployment yet; retry shortly")
 		return
 	}
-	h.WriteJSON(w, h.accountCohortView(ctx, cohort), false)
+	_, stale, _ := h.LakeWatermark(ctx)
+	h.WriteJSON(w, h.accountCohortView(ctx, cohort), stale)
 }
 
 func (h *Handler) accountCohortView(ctx context.Context, c clickhouse.AccountCohort) AccountCohortView {

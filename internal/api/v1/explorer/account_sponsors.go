@@ -137,5 +137,6 @@ func (h *Handler) AccountSponsors(w http.ResponseWriter, r *http.Request) {
 			LastSeenAt:          c.LastSeenAt.UTC().Format(time.RFC3339),
 		})
 	}
-	h.WriteJSON(w, out, false)
+	_, stale, _ := h.LakeWatermark(ctx)
+	h.WriteJSON(w, out, stale)
 }
