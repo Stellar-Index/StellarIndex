@@ -74,9 +74,9 @@ type RedisSignupVerifier struct {
 }
 
 // DefaultSignupVerifyTTL is the recommended Reserve TTL when
-// the caller doesn't pass a custom value. 24 hours matches the
-// dashboard magic-link TTL and gives operators / customers
-// breathing room across a workday.
+// the caller doesn't pass a custom value. Deliberately far longer
+// than the dashboard magic-link TTL (15 minutes by default): 24 hours gives
+// customers breathing room across a workday.
 const DefaultSignupVerifyTTL = 24 * time.Hour
 
 // NewRedisSignupVerifier constructs a verifier. rdb MUST be

@@ -101,3 +101,58 @@ func TestSignupVerifyEmailer_EscapesVerifyURLInHTML(t *testing.T) {
 		t.Fatalf("ordinary URL mangled:\n got: %s\nwant substring: %s", rec.last.HTML, want)
 	}
 }
+
+// TestSignupVerifyEmailer_CopyFollowsRequireVerificationFlag pins GH-737:
+// under signup_require_email_verification=true (the shipped default)
+// RequireEmailVerified 403s the signup key until the link is clicked, so the
+// mail must say so instead of promising the key works immediately. With the
+// gate off the key does work at once and the mail keeps saying that.
+func TestSignupVerifyEmailer_CopyFollowsRequireVerificationFlag(t *testing.T) {
+	const verifyURL = "https://api.stellarindex.io/v1/signup/verify?token=Zm9v"
+	cases := []struct {
+		name    string
+		require bool
+		want    []string
+		reject  []string
+	}{
+		{
+			name:    "gate on",
+			require: true,
+			want:    []string{"inactive", "signup-verify-required"},
+			reject:  []string{"immediately"},
+		},
+		{
+			name:    "gate off",
+			require: false,
+			want:    []string{"immediately"},
+			reject:  []string{"inactive", "signup-verify-required"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingNotifySender{}
+			emailer := signupVerifyEmailerOrNil(rec, "Stellar Index <hello@stellarindex.io>", tc.require)
+			if emailer == nil {
+				t.Fatal("signupVerifyEmailerOrNil = nil for a configured sender")
+			}
+			if err := emailer.SendSignupVerification(context.Background(), "alice@example.com", verifyURL); err != nil {
+				t.Fatalf("SendSignupVerification: %v", err)
+			}
+			for body, got := range map[string]string{"text": rec.last.Text, "html": rec.last.HTML} {
+				for _, w := range tc.want {
+					if !strings.Contains(got, w) {
+						t.Errorf("%s body missing %q:\n%s", body, w, got)
+					}
+				}
+				for _, r := range tc.reject {
+					if strings.Contains(got, r) {
+						t.Errorf("%s body must not contain %q:\n%s", body, r, got)
+					}
+				}
+				if !strings.Contains(got, verifyURL) {
+					t.Errorf("%s body missing verify URL:\n%s", body, got)
+				}
+			}
+		})
+	}
+}

@@ -133,6 +133,36 @@ func TestMagicLinkMessage_Renders(t *testing.T) {
 	}
 }
 
+// TestMagicLinkMessage_StatesSameBrowserConstraint pins GH-737: the callback
+// 403s without the stellarindex_login_intent cookie set by the requesting
+// browser, so the mail must say the link is browser-bound and point other
+// devices at the code (HandleVerifyCode does not need the cookie).
+func TestMagicLinkMessage_StatesSameBrowserConstraint(t *testing.T) {
+	msg, err := notify.MagicLinkMessage(
+		"Stellar Index <hello@stellarindex.io>",
+		"alice@example.com",
+		notify.MagicLinkInput{
+			LinkURL:          "https://app.stellarindex.io/auth/callback?token=abc",
+			Code:             "123456",
+			ExpiresInMinutes: 15,
+		},
+	)
+	if err != nil {
+		t.Fatalf("MagicLinkMessage: %v", err)
+	}
+	for _, want := range []string{"only works in the browser where", "on any other device, enter the code instead"} {
+		if !strings.Contains(strings.ReplaceAll(msg.HTML, "\n", " "), want) {
+			t.Errorf("HTML missing %q", want)
+		}
+		if !strings.Contains(strings.ReplaceAll(msg.Text, "\n", " "), want) {
+			t.Errorf("Text missing %q", want)
+		}
+	}
+	if strings.Contains(msg.HTML, "Or just click to sign in") {
+		t.Error("HTML still offers the link unconditionally")
+	}
+}
+
 func TestResendSender_HappyPath(t *testing.T) {
 	var receivedAuth, receivedBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

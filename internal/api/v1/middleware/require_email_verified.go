@@ -38,10 +38,9 @@ import (
 //     `signup-` identifier prefix get 403 + Problem-JSON with
 //     a clear pointer at the verify endpoint.
 //
-// Opt-in per deployment: the api binary mounts this middleware
-// only when `cfg.API.SignupRequireEmailVerification` is true
-// (the config flag defaults to false so existing customer keys
-// keep working through the rollout window).
+// The api binary mounts this middleware only when
+// `cfg.API.SignupRequireEmailVerification` is true (the default;
+// operators opt out explicitly).
 //
 // Wire AFTER `Auth` (so SubjectFrom returns) and AFTER
 // `KeyPolicy` (which has its own per-key gates) but BEFORE
