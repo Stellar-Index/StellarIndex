@@ -41,6 +41,44 @@ import (
 
 const methodologyPagePath = "web/explorer/src/app/methodology/page.tsx"
 
+// anomaliesPagePath is the /anomalies page's REASONS list — the same
+// drift risk as /methodology, for the freeze-reason vocabulary
+// instead of the pricing vocabulary (GH-1079).
+const anomaliesPagePath = "web/explorer/src/app/anomalies/page.tsx"
+
+// freezeEventsSourcePath is mapFreezeReason's home. It is unexported
+// (package timescale), so this test greps its source text for the
+// string literals it actually returns rather than calling it — the
+// only way an external test package can pin an unexported function's
+// range.
+const freezeEventsSourcePath = "internal/storage/timescale/freeze_events.go"
+
+// TestAnomaliesPage_ReasonsAreReachable pins GH-1079: the /anomalies
+// page's REASONS list used to include `single_source` and `manual`,
+// neither of which mapFreezeReason ever returns — a reader could look
+// for a freeze reason on the timeline that the automated mapper is
+// structurally incapable of writing. Every name the page lists as a
+// freeze reason must be one of mapFreezeReason's real return values.
+func TestAnomaliesPage_ReasonsAreReachable(t *testing.T) {
+	page := methodologyReadRepoFile(t, anomaliesPagePath)
+	mapper := methodologyReadRepoFile(t, freezeEventsSourcePath)
+
+	nameRe := regexp.MustCompile(`name:\s*'([a-z_]+)'`)
+	names := nameRe.FindAllStringSubmatch(page, -1)
+	if len(names) == 0 {
+		t.Fatalf("%s: no REASONS entries found — the scan is broken, not the prose", anomaliesPagePath)
+	}
+	for _, m := range names {
+		name := m[1]
+		returnRe := regexp.MustCompile(`return\s*"` + regexp.QuoteMeta(name) + `"`)
+		if !returnRe.MatchString(mapper) {
+			t.Errorf("%s lists freeze reason %q, but mapFreezeReason (%s) never returns it — "+
+				"a reader would look for a reason the automated mapper cannot write",
+				anomaliesPagePath, name, freezeEventsSourcePath)
+		}
+	}
+}
+
 func methodologyRepoRoot(t *testing.T) string {
 	t.Helper()
 	// internal/api/v1 -> repo root

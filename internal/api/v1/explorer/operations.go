@@ -568,7 +568,10 @@ func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 		h.unavailable(w, r)
 		return
 	}
-	windowDays := h.ParseWindowDays(r, 30)
+	windowDays, ok := h.ParseWindowDays(w, r, 30)
+	if !ok {
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()

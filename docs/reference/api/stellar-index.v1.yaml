@@ -3376,6 +3376,21 @@ paths:
                             recovered_at_ledger: { type: [integer, "null"], format: int64 }
                             firing:              { type: boolean }
                             detail:              { type: object }
+                            hold_until:
+                              type: [string, "null"]
+                              format: date-time
+                              description: >-
+                                When the current ADR-0019 hold segment expires and the
+                                freeze re-evaluates (release / extend / escalate). `null`
+                                on a freeze recorded before the lifecycle columns existed.
+                            escalated:
+                              type: [boolean, "null"]
+                              description: >-
+                                True once the extension ladder has run out and the freeze
+                                is awaiting operator review — it does NOT auto-clear on its
+                                own; only `stellarindex-ops freeze-unfreeze` releases it.
+                                `null` on a freeze recorded before the lifecycle columns
+                                existed.
                       daily:
                         type: [array, "null"]
                         description: >-

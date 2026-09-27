@@ -356,7 +356,9 @@ func run(cfgPath string, dryRun bool) error {
 		// row, so refreshing the Redis TTL doesn't create duplicates.
 		// See migrations/0018_create_freeze_events.up.sql + Phase 2
 		// of docs/architecture/explorer-implementation-plan.md.
-		sinkOpts := []timescale.FreezeEventSinkOption{}
+		sinkOpts := []timescale.FreezeEventSinkOption{
+			timescale.WithFreezeLedgerProvider(divergenceLedgerAdapter{cursors: store}),
+		}
 		// F-1249 (codex audit-2026-05-12): customer-webhook fan-out
 		// for `anomaly.freeze`. The aggregator owns the freeze
 		// signal; the API binary owns the delivery worker. Both

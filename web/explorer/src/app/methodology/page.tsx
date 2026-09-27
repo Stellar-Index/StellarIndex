@@ -103,7 +103,7 @@ export default function MethodologyPage() {
             exchange
           </code>
           . No per-venue weighting tier or boost — the weight is the
-          trade&apos;s quote-side volume, period. A million dollars of XLM/USD
+          trade&apos;s base-side volume, period. A million dollars of XLM/USD
           trading at $0.12 on Coinbase counts the same as a million dollars of
           XLM/USD trading at $0.12 on Soroswap.
         </p>

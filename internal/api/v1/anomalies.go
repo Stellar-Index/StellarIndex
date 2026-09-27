@@ -72,6 +72,11 @@ type DailyReasonCountV struct {
 // FreezeEventView mirrors a freeze_events row. recovered_at is null
 // while the freeze is currently firing. frozen_value is a decimal
 // string (ADR-0003).
+// Escalated and HoldUntil are the ADR-0019 lifecycle fields (migration
+// 0119): the only way a customer surface can tell a 10-minute
+// uncorroborated hold apart from a freeze that has climbed the
+// extension ladder and now stays firing until manual unfreeze. Both
+// are nil on a pre-0119 row or once the freeze has cleared.
 type FreezeEventView struct {
 	AssetID           string          `json:"asset_id"`
 	QuoteID           string          `json:"quote_id"`
@@ -83,6 +88,8 @@ type FreezeEventView struct {
 	RecoveredAtLedger *int64          `json:"recovered_at_ledger"`
 	Firing            bool            `json:"firing"`
 	Detail            json.RawMessage `json:"detail,omitempty"`
+	HoldUntil         *string         `json:"hold_until"`
+	Escalated         *bool           `json:"escalated"`
 }
 
 // handleAnomalies serves GET /v1/anomalies — the freeze timeline
@@ -105,7 +112,10 @@ func (s *Server) handleAnomalies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	firingOnly := r.URL.Query().Get("firing") == "true"
-	windowDays := parseWindowDays(r, 30)
+	windowDays, ok := parseWindowDays(w, r, 30)
+	if !ok {
+		return
+	}
 
 	events, err := s.anomalies.ListFreezeEvents(r.Context(), firingOnly, limit)
 	if err != nil {
@@ -211,6 +221,11 @@ func freezeEventView(e timescale.FreezeEventRow) FreezeEventView {
 	if e.Detail == "" {
 		v.Detail = nil // omit rather than emit "null"
 	}
+	if e.HoldUntil != nil {
+		s := e.HoldUntil.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
+		v.HoldUntil = &s
+	}
+	v.Escalated = e.Escalated
 	return v
 }
 
@@ -256,7 +271,10 @@ func (s *Server) handleDivergence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	firingOnly := r.URL.Query().Get("firing") == "true"
-	windowDays := parseWindowDays(r, 7)
+	windowDays, ok := parseWindowDays(w, r, 7)
+	if !ok {
+		return
+	}
 
 	rows, err := s.divergences.ListDivergenceLatest(r.Context(), windowDays, firingOnly, limit)
 	if err != nil {
@@ -484,16 +502,22 @@ func (s *Server) divergenceSeriesWithheld(w http.ResponseWriter, r *http.Request
 	return false
 }
 
-// parseWindowDays reads an optional ?window_days= positive int,
-// clamped to [1, 365]; def when absent or malformed.
-func parseWindowDays(r *http.Request, def int) int {
+// parseWindowDays reads an optional ?window_days= positive int in
+// [1, 365]; def when absent. A present but out-of-range or unparseable
+// value writes a 400 (matching the sibling ?days= and ?limit= params)
+// rather than silently falling back to def, so a caller can't be told
+// its window was honored when it was ignored.
+func parseWindowDays(w http.ResponseWriter, r *http.Request, def int) (int, bool) {
 	raw := r.URL.Query().Get("window_days")
 	if raw == "" {
-		return def
+		return def, true
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 1 || n > 365 {
-		return def
+		writeProblem(w, r, "https://api.stellarindex.io/errors/invalid-parameter",
+			"Invalid window_days", http.StatusBadRequest,
+			"window_days must be an integer in [1, 365]")
+		return 0, false
 	}
-	return n
+	return n, true
 }
