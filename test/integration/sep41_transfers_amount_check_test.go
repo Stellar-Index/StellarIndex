@@ -5,19 +5,16 @@ package integration_test
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// TestSEP41TransfersAmountCheck executes 0174 (T090) over two populated
-// compressed chunks, the shape on which a bare CHECK ALTER corrupts on
-// timescaledb 2.26.4. After it a negative or missing transfer amount is
-// refused with the named CHECK — including into a recompressed chunk —
-// legitimate shapes still land, and the down restores the pre-0174 schema.
-func TestSEP41TransfersAmountCheck(t *testing.T) {
+// TestMigration0174_NoOpLeavesCompressedChunksCompressed pins the v0.92.1
+// neutralisation of 0174: over two populated compressed chunks it
+// decompresses nothing and adds no constraint, leaves the version clean at
+// 174, and its down succeeds both on that no-op state and on the v0.92.0
+// state, where the old body had added sep41_transfers_amount_check.
+func TestMigration0174_NoOpLeavesCompressedChunksCompressed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -29,56 +26,64 @@ func TestSEP41TransfersAmountCheck(t *testing.T) {
 	defer db.Close()
 
 	applyMigrationsUpTo(t, dsn, 173)
-	if err := insertSEP41TransferAmount(ctx, db, 0, "transfer", "-1"); err != nil {
-		t.Fatalf("pre-0174 negative transfer amount was refused (%v): the schema already had a CHECK and this test would be vacuous", err)
-	}
-	if _, err := db.ExecContext(ctx, `DELETE FROM sep41_transfers`); err != nil {
-		t.Fatalf("clear pre-0174 row: %v", err)
-	}
 	if err := insertSEP41TransferAmount(ctx, db, 1, "transfer", "7"); err != nil {
 		t.Fatalf("seed 2026-09 row: %v", err)
 	}
 	seedCompressedSEP41TransferChunk(t, ctx, db)
 
 	applyMigrationsUpTo(t, dsn, 174)
-	seedCompressedSEP41TransferChunk(t, ctx, db)
-	requireCompressedSEP41TransferChunks(t, ctx, db, 2, "recompressed after 0174")
-
-	refused := []struct {
-		kind, amount string
-	}{
-		{"transfer", "-1"},
-		{"approve", "-170141183460469231731687303715884105728"},
-		{"transfer", ""},
-		{"approve", ""},
-		{"set_admin", "-5"},
+	requireCompressedSEP41TransferChunks(t, ctx, db, 2, "after the 0174 no-op")
+	requireSEP41AmountCheck(t, ctx, db, false, "after the 0174 no-op")
+	requireSchemaVersion(t, ctx, db, 174)
+	if err := insertSEP41TransferAmount(ctx, db, 2, "set_admin", "-5"); err != nil {
+		t.Fatalf("after the 0174 no-op a row the old CHECK refused was refused anyway (%v): something still adds the constraint", err)
 	}
-	for i, c := range refused {
-		err := insertSEP41TransferAmount(ctx, db, 10+i, c.kind, c.amount)
-		var pgErr *pgconn.PgError
-		if !errors.As(err, &pgErr) || pgErr.Code != "23514" || pgErr.ConstraintName != "sep41_transfers_amount_check" {
-			t.Errorf("%s amount %q after 0174: err = %v, want check_violation on sep41_transfers_amount_check", c.kind, c.amount, err)
-		}
+	if _, err := db.ExecContext(ctx, `DELETE FROM sep41_transfers WHERE op_index = 2`); err != nil {
+		t.Fatalf("clear the probe row: %v", err)
 	}
 
-	accepted := []struct {
-		kind, amount string
-	}{
-		{"transfer", "0"},
-		{"approve", "170141183460469231731687303715884105727"},
-		{"set_admin", ""},
-		{"set_authorized", ""},
-	}
-	for i, c := range accepted {
-		if err := insertSEP41TransferAmount(ctx, db, 20+i, c.kind, c.amount); err != nil {
-			t.Errorf("%s amount %q after 0174 refused: %v", c.kind, c.amount, err)
-		}
-	}
-
-	seedCompressedSEP41TransferChunk(t, ctx, db)
 	applyMigrationsUpTo(t, dsn, 173)
-	if err := insertSEP41TransferAmount(ctx, db, 30, "transfer", "-1"); err != nil {
-		t.Fatalf("after 0174 down, negative transfer amount still refused: %v", err)
+	requireSEP41AmountCheck(t, ctx, db, false, "after 0174 down from the no-op")
+
+	// The v0.92.0 state: the old body ran, so the CHECK exists at 174.
+	if _, err := db.ExecContext(ctx, `SELECT decompress_chunk(c, true) FROM show_chunks('sep41_transfers') c`); err != nil {
+		t.Fatalf("decompress for the v0.92.0 0174 state: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		ALTER TABLE sep41_transfers ADD CONSTRAINT sep41_transfers_amount_check
+		    CHECK ((amount IS NULL OR amount >= 0)
+		           AND (event_kind NOT IN ('transfer', 'approve') OR amount IS NOT NULL))`); err != nil {
+		t.Fatalf("recreate the v0.92.0 0174 state: %v", err)
+	}
+	applyMigrationsUpTo(t, dsn, 174)
+	requireSEP41AmountCheck(t, ctx, db, true, "v0.92.0 state after the 0174 no-op")
+	applyMigrationsUpTo(t, dsn, 173)
+	requireSEP41AmountCheck(t, ctx, db, false, "after 0174 down from the v0.92.0 state")
+}
+
+func requireSEP41AmountCheck(t *testing.T, ctx context.Context, db *sql.DB, want bool, when string) {
+	t.Helper()
+	var n int
+	if err := db.QueryRowContext(ctx, `
+		SELECT count(*) FROM pg_constraint
+		 WHERE conname = 'sep41_transfers_amount_check'
+		   AND conrelid = 'sep41_transfers'::regclass`).Scan(&n); err != nil {
+		t.Fatalf("read pg_constraint: %v", err)
+	}
+	if (n == 1) != want {
+		t.Fatalf("%s: sep41_transfers_amount_check present = %v, want %v", when, n == 1, want)
+	}
+}
+
+func requireSchemaVersion(t *testing.T, ctx context.Context, db *sql.DB, want int) {
+	t.Helper()
+	var version int
+	var dirty bool
+	if err := db.QueryRowContext(ctx, `SELECT version, dirty FROM schema_migrations`).Scan(&version, &dirty); err != nil {
+		t.Fatalf("read schema_migrations: %v", err)
+	}
+	if version != want || dirty {
+		t.Fatalf("schema_migrations = %d dirty=%v, want %d clean", version, dirty, want)
 	}
 }
 
@@ -99,8 +104,7 @@ func insertSEP41TransferAmount(ctx context.Context, db *sql.DB, op int, kind, am
 }
 
 // seedCompressedSEP41TransferChunk upserts one valid row in an old chunk and
-// compresses both chunks, the shape production is in when 0174 applies and
-// after its compression policy next runs.
+// compresses both chunks, the shape production is in when 0174 applies.
 func seedCompressedSEP41TransferChunk(t *testing.T, ctx context.Context, db *sql.DB) {
 	t.Helper()
 	if _, err := db.ExecContext(ctx, `
@@ -111,8 +115,7 @@ func seedCompressedSEP41TransferChunk(t *testing.T, ctx context.Context, db *sql
 		ON CONFLICT DO NOTHING`); err != nil {
 		t.Fatalf("seed historical sep41_transfers row: %v", err)
 	}
-	// Counted from compress_chunk itself: reading timescaledb_information.chunks
-	// before 0174 applies masks the 2.26.4 CHECK corruption this test pins.
+	// Counted from compress_chunk itself, not timescaledb_information.chunks.
 	var n int
 	if err := db.QueryRowContext(ctx, `
 		SELECT count(*) FROM (

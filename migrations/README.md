@@ -216,7 +216,36 @@ Mechanics for a correctable edit — all three in ONE commit:
 
 Not covered by this rule, and still forbidden: renumbering, deleting, or
 re-purposing a shipped migration; changing a shipped `up.sql`'s SQL for
-ANY reason, including a bug in it (ship a corrective migration instead).
+ANY reason, including a bug in it (ship a corrective migration instead),
+with the single exception below.
+
+### Neutralising an unapplied migration
+
+A corrective migration cannot fix an UP body whose damage happens when
+that body itself runs: golang-migrate applies N before any later number.
+0174 (v0.92.0) was one — a 780 GB decompress inside the deploy. For that
+case only, a shipped UP body may be replaced by a no-op (`SELECT 1;`) in
+the next patch release, when ALL of these hold:
+
+1. **Nobody we operate has applied it.** Every environment's
+   `schema_migrations.version` is measured `< N` and `dirty = f`, and the
+   measurement (host, value, date) is in the commit message.
+2. **The number and both files are kept.** Never delete or renumber:
+   golang-migrate cannot advance a database whose current version has no
+   file (`Next(N)` returns not-exist).
+3. **The DOWN reverses both bodies** — the old one and the no-op (e.g.
+   `DROP CONSTRAINT IF EXISTS`).
+4. **A database that ran the old body is in a state the new code
+   tolerates.** Say why in the header (0174: the kept CHECK is a superset
+   of the Go row contract).
+5. **The release notes say so**, including who could have run the old
+   body: anyone who built from source or self-hosted the release between
+   the migration's commit and the patch.
+6. **The old body is kept as a comment** in the header, with the reason it
+   was neutralised, so the header still describes the file.
+
+The checksum baseline moves in the same commit (`--write`), as for any
+correctable edit. Anything short of all six is a corrective migration.
 
 ## Conventions
 
@@ -421,7 +450,7 @@ rejects a row that is not.
 | 0171 | [`0171_widen_remaining_chunk_intervals.up.sql`](0171_widen_remaining_chunk_intervals.up.sql) | Widens the nine hypertables 0062 missed to 7-day chunks: `oracle_updates`, `api_usage_events`, `soroswap_skim_events`, `blend_positions`, `blend_emissions`, `blend_admin`, `sep41_transfers`, `blend_backstop_events` (all 1 day) and `aquarius_rewards_events` (3 days). A 1-day interval accrues thousands of chunks and every `ON CONFLICT` insert walks them all (0062's trades pathology), so a fresh node re-accrued that lock pressure on these tables. `set_chunk_time_interval` sizes future chunks only: nothing is rewritten. Rows stay uncompressed up to 7 days longer, and an `api_usage_events` row lives up to 12 months + 7 days under its retention policy. `internal/storage/timescale/chunk_interval_floor_test.go` fails if any hypertable ends the migration set narrower than 7 days; `test/integration/chunk_interval_floor_test.go` executes it. Down is a documented no-op, as 0062's is. |
 | 0172 | [`0172_pin_cagg_materialized_only.up.sql`](0172_pin_cagg_materialized_only.up.sql) | Pins `timescaledb.materialized_only = true` on the 18 served CAGGs (`prices_*` ×7, `twap_1h/1d`, `oracle_prices_*` ×7, `supply_1d`, `dex_volume_by_pair_1d`) — the property ADR-0015's closed-bucket invariant rests on for every reader without its own `bucket <= now() - INTERVAL` guard. Previously each view inherited the TimescaleDB default at CREATE time and 0115/0126/0147/0166 carried the prior value forward, so nothing asserted it. `source_volume_1h` (0069) and `pools_per_source_1h` (0076) stay real-time by design. Idempotent, rewrites only the view definitions, needs no re-materialization. Executed from a real-time starting state in `test/integration/cagg_materialized_only_test.go`, which also fails on any CAGG left real-time outside that two-view allowlist. Down is a no-op. |
 | 0173 | [`0173_divergence_observations_status_comment.up.sql`](0173_divergence_observations_status_comment.up.sql) | Re-issues the `COMMENT ON` for `divergence_observations.status`: 0019 said the threshold is per-(reference, pair) (the worker has one service-wide `threshold_pct`) and that the API flag is "any reference firing" (`flags.divergence_warning` needs `min_sources_for_warning` answering references, a median breach or zero agreeing references, and the `WarningPersistence` debounce). Catalog-only — no heap, no index, no chunk. Down restores 0019's string verbatim. Up and down are executed in `test/integration/divergence_status_comment_test.go`. |
-| 0174 | [`0174_sep41_transfers_amount_check.up.sql`](0174_sep41_transfers_amount_check.up.sql) | Adds `sep41_transfers_amount_check` (T090): any `amount` present is `>= 0`, and `transfer`/`approve` rows must carry one; `set_admin`/`set_authorized` stay NULL. 0047 left the column unconstrained, so the ch-rebuild COPY path could store what the per-row writer refuses (the Go writers now share `validateSEP41TransferRows`). Decompresses every chunk first (the 0101/0148 step): on timescaledb 2.26.4 a CHECK on `amount` added over two or more compressed chunks fails with a corrupted-plan error, `NOT VALID` included; the compression policy recompresses them. A failed apply means a pre-existing bad row: re-derive its window with `projector-replay -source sep41_transfers`, never delete it. Up over two compressed chunks, refusal after recompression, the pre-0174 state and down are executed in `test/integration/sep41_transfers_amount_check_test.go`. |
+| 0174 | [`0174_sep41_transfers_amount_check.up.sql`](0174_sep41_transfers_amount_check.up.sql) | **No-op since v0.92.1** (neutralised before any environment we operate applied it; see "Neutralising an unapplied migration"). As shipped in v0.92.0 it decompressed every `sep41_transfers` chunk (780 GB on r1) and added `sep41_transfers_amount_check` (T090): any `amount` present is `>= 0`, and `transfer`/`approve` rows must carry one. That contract is now enforced only by `validateSEP41TransferRows`, shared by the per-row and COPY writers and pinned to the CHECK predicate by `TestValidateSEP41TransferRows_RowContractMatchesCheck`. A v0.92.0 database keeps the CHECK (a superset); the down drops it `IF EXISTS`. Adding the CHECK is a later offline operator step that must test `pg_constraint` first. The no-op over compressed chunks and its down are executed in `test/integration/sep41_transfers_amount_check_test.go`. |
 | 0175 | [`0175_usd_volume_restamp_log.up.sql`](0175_usd_volume_restamp_log.up.sql) | Creates `usd_volume_restamp_log`: one row per `trades.usd_volume` rewrite by `stellarindex-ops usd-volume-restamp`, carrying the trade key, the prior `usd_volume`/`derive_generation` and what the run wrote. Written in the UPDATE's own REPEATABLE READ transaction by `timescale.Store.restampTradesUSDVolume`, which every restamp tier goes through. The run is keyed by `derive_generation`; the header carries the undo statement. Plain table, no retention. The down REFUSES while the table holds rows. Before-image, undo and down are executed in `test/integration/usd_volume_restamp_test.go`, `usd_volume_restamp_xlmbase_test.go` and `usd_volume_restamp_log_test.go`. |
 | 0176 | [`0176_oracle_updates_pk_comment.up.sql`](0176_oracle_updates_pk_comment.up.sql) | Re-issues the `COMMENT ON` for `oracle_updates` (T094): 0003 claimed "one row per (source, ledger, tx_hash, op_index)", but the PRIMARY KEY also carries `ts` (required by TimescaleDB for any unique constraint on a hypertable) even though `ts` is excluded from `canonical.OracleUpdate.ID()`. A decoder fix to `ts` derivation (e.g. the 2026-08-03 Band resolution-timestamp fix) therefore makes a replayed row a NEW key, not a conflict with the stale one, and ON CONFLICT on this PK will not merge them — replay must DELETE the stale row by `(source, ledger, tx_hash, op_index)` first. Catalog-only — no heap, no index, no chunk. Down restores 0003's string verbatim. Up and down are executed in `test/integration/oracle_updates_pk_comment_test.go`. |
 | 0177 | [`0177_account_directory_override_by.up.sql`](0177_account_directory_override_by.up.sql) | `account_directory.override_by` (GH #858): who lifted a scam flag, written by `stellarindex-ops directory-override -clear-scam-flag` from `-actor` (default: the OS login). CHECK `account_directory_override_by_chk`: a `source = 'operator-override'` row must name a non-blank operator and any other row none, the same shape as 0170's reason CHECK. Existing override rows are backfilled with a named placeholder before the CHECK validates. Down drops the column and CHECK; override rows keep their ownership and reason. Up, backfill, CHECK and down are executed in `test/integration/account_directory_override_test.go`. |

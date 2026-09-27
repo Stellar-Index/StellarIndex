@@ -1,4 +1,29 @@
--- 0174 up — CHECK sep41_transfers.amount (T090).
+-- 0174 up — NEUTRALISED in v0.92.1: this file is a no-op.
+--
+-- As shipped in v0.92.0 it decompressed every sep41_transfers chunk and
+-- added the CHECK below in one implicit transaction. On r1 that is 32
+-- chunks, 55 GB compressed and 780 GB decompressed: it cannot finish
+-- under the deploy's 5-minute statement_timeout, and failing leaves the
+-- DB dirty at 174 with 0164/0166 already committed. No environment we
+-- operate had applied it (r1, testnet and futurenet all measured at
+-- schema_migrations 162, 2026-09-28), so the body is neutralised under
+-- the migrations/README.md "Neutralising an unapplied migration"
+-- exception. The number and both files stay: golang-migrate cannot
+-- advance a database whose current version has no file.
+--
+-- The row contract is enforced by validateSEP41TransferRows
+-- (internal/storage/timescale/sep41_transfers.go) on both writers, and
+-- that function mirrors the CHECK exactly. A database that applied the
+-- v0.92.0 body keeps the CHECK, which is a superset of that contract and
+-- is fine. Adding the CHECK everywhere is a later offline operator step
+-- (pause compression, decompress chunk by chunk under a WAL guard, ADD
+-- CONSTRAINT, recompress) that must first test pg_constraint for
+-- sep41_transfers_amount_check, because a v0.92.0 database already has it.
+--
+-- The original header follows, kept for the record; it describes the
+-- v0.92.0 body, not this one.
+--
+-- (v0.92.0) 0174 up — CHECK sep41_transfers.amount (T090).
 --
 -- 0047 declared `amount numeric` with no constraint, unlike its sibling
 -- sep41_supply_events (0015: NOT NULL CHECK (amount >= 0)). The per-row
@@ -27,11 +52,13 @@
 -- by the old COPY path is negative or missing its amount. Re-derive that
 -- window (`stellarindex-ops projector-replay -config PATH -source
 -- sep41_transfers -from <ledger>`); do not delete rows to get past it.
+--
+-- The v0.92.0 body, recorded so it is recognised, never to be run inside
+-- a deploy:
+--
+--   DO NOT RUN: SELECT decompress_chunk(c, true) FROM show_chunks('sep41_transfers') c;
+--   DO NOT RUN: ALTER TABLE sep41_transfers ADD CONSTRAINT sep41_transfers_amount_check
+--       CHECK ((amount IS NULL OR amount >= 0)
+--              AND (event_kind NOT IN ('transfer', 'approve') OR amount IS NOT NULL));
 
-SELECT decompress_chunk(c, true) FROM show_chunks('sep41_transfers') c;
-
-ALTER TABLE sep41_transfers ADD CONSTRAINT sep41_transfers_amount_check  -- migration-compat:ok the previous binary's per-row writer already rejects every row this refuses, and its COPY path falls back per-row on a rejected batch
-    CHECK (
-        (amount IS NULL OR amount >= 0)
-        AND (event_kind NOT IN ('transfer', 'approve') OR amount IS NOT NULL)
-    );
+SELECT 1;

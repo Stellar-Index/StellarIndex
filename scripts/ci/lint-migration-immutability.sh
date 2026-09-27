@@ -51,7 +51,8 @@
 #   header COMMENTS may be corrected through the baseline-refresh path
 #   (lint-migration-immutability --write) and said so in the commit
 #   message; anything stored in the database (COMMENT ON, defaults)
-#   needs a new migration.
+#   needs a new migration. The one exception to UP immutability is the
+#   README's "Neutralising an unapplied migration" (0174, v0.92.1).
 #
 #   This gate deliberately cannot tell those apart — it hashes bytes,
 #   and a hash cannot know whether the changed line was above BEGIN;.
