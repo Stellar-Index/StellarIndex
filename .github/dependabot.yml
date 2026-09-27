@@ -64,6 +64,11 @@ updates:
       docker-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    # A Go minor bump must move with go.mod's go/toolchain directive
+    # (lint-go-toolchain-parity.sh); take it deliberately, not via a pin PR.
+    ignore:
+      - dependency-name: golang
+        update-types: ["version-update:semver-minor"]
 
   # docker/verify/Dockerfile lives one level down and is invisible to the
   # /docker entry above.
@@ -78,6 +83,11 @@ updates:
       docker-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    # A Go minor bump must move with go.mod's go/toolchain directive
+    # (lint-go-toolchain-parity.sh); take it deliberately, not via a pin PR.
+    ignore:
+      - dependency-name: golang
+        update-types: ["version-update:semver-minor"]
 
   # F-1207 (codex audit-2026-05-12): npm/pnpm ecosystems for the
   # Next.js apps. Without these, Dependabot doesn't surface
