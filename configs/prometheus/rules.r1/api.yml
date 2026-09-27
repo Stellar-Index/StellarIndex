@@ -400,33 +400,68 @@ groups:
       # was built for, and it did not catch this one (that alert covers a
       # missing Registry, not an unreferenced metric).
       #
-      # rate() over 5m with for: 10m fires only on SUSTAINED bypass, so a
-      # single-request Redis blip during a failover doesn't ticket, while
-      # "the limiter has been off for ten minutes" always does. Expect it
-      # to correlate with the Redis readyz probe going red — if it fires
-      # ALONE, the limiter is failing open for a reason the health probe
-      # can't see (auth to Redis, key eviction, script error).
+      # 14d-review (2026-09-27): `rate(...[5m]) > 0 for: 10m` can NEVER
+      # fire. The limiter's fail-open window is capped at
+      # ratelimit.DefaultDwellTime (30s) — past that it fails CLOSED
+      # instead (503, see stellarindex_ratelimit_fail_closed below) and
+      # the counter goes flat. A sustained-rate condition needs ten
+      # straight minutes of nonzero rate, which this metric structurally
+      # cannot produce once the dwell time has chopped it up. Switched to
+      # a count over a wider window: >100 bypassed requests in 15m
+      # tickets regardless of how the dwell time shapes the underlying
+      # rate.
       - alert: stellarindex_ratelimit_fail_open
-        expr: sum(rate(stellarindex_ratelimit_fail_open_total[5m])) > 0
-        for: 10m
+        expr: sum(increase(stellarindex_ratelimit_fail_open_total[15m])) > 100
+        for: 0m
         labels:
           severity: ticket
           team: stellarindex
           component: api
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ratelimit-fail-open.md
-          summary: "Rate limiting is FAILING OPEN ({{ $value | humanize }} req/s bypassing the limiter)"
+          summary: "Rate limiting FAILED OPEN {{ $value | humanize }} times in 15m"
           description: |
-            The API rate limiter could not reach its Redis backing store and
-            let the requests through unlimited, continuously for the last
-            10 minutes. Per-key quotas, burst protection and the abuse
-            ceiling are all inert for the duration: a single caller can
+            The API rate limiter could not reach its Redis backing store
+            and let more than 100 requests through unlimited in the last
+            15 minutes. Per-key quotas, burst protection and the abuse
+            ceiling are intermittently inert: a single caller can
             saturate the serving plane, and metered usage still records
-            (billing is unaffected) while the throughput cap is not enforced.
+            (billing is unaffected) while the throughput cap is not
+            always enforced.
 
             Check the Redis readyz probe first — this normally moves
             together with it. If Redis is healthy, the failure is in the
             limiter's own path (auth, evicted script, key namespace).
+
+      # Companion to the fail-open alert above: past the same dwell
+      # time (ratelimit.DefaultDwellTime, 30s) of continuous Redis
+      # errors, the limiter flips from failing open to failing CLOSED —
+      # every request in the affected bucket gets a 503
+      # (errors/throttle-unavailable, Retry-After: 30) instead of being
+      # served. That is the whole API down for anyone hitting a
+      # rate-limited path, not a narrowed surface: the 2026-09-16
+      # incident held this state for 2h53m and served 2.03M 503s.
+      # `for: 2m`, not 10m — a fail-closed window is an ongoing outage
+      # from the first second, not a tolerable blip.
+      - alert: stellarindex_ratelimit_fail_closed
+        expr: sum(rate(stellarindex_ratelimit_fail_closed_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: page
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ratelimit-fail-open.md
+          summary: "Rate limiting is FAILING CLOSED — the API is 503ing rate-limited requests"
+          description: |
+            The rate limiter's Redis calls have been failing longer than
+            the fail-open dwell time, so it has flipped to failing
+            CLOSED: every request in the affected bucket now gets a 503
+            (errors/throttle-unavailable) instead of being served. This
+            is outright customer-visible API unavailability, not a
+            throttling side-effect — the 2026-09-16 incident held this
+            state for 2h53m and served 2.03M 503s. Clears once Redis has
+            answered without error for the same dwell time.
 
       # C3-082 (audit-2026-07-23): the monthly-quota middleware fails OPEN
       # on a backing-store error — correct, because the cap is billing

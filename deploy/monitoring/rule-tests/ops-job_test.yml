@@ -394,17 +394,27 @@ tests:
         alertname: stellarindex_ops_job_no_progress
         exp_alerts: []
 
-  # ── C6-032: the rate limiter is failing open ─────────────────────
-  # Redis is erroring; every request bypasses the limiter. Sustained
-  # for well past the 10-minute `for`.
+  # ── 14d-review (2026-09-27): the fail-open rule's OLD shape
+  # (`rate(...[5m]) > 0 for: 10m`) could never fire in production —
+  # the fail-open window is capped at the 30s dwell time, so a real
+  # episode is a single short burst followed by TRUE ZERO (the limiter
+  # flips to failing closed instead), never ten CONSECUTIVE minutes of
+  # nonzero rate. This fixture models exactly that shape: one burst of
+  # 150 bypassed requests at t=15m, then flat forever after (Redis
+  # stayed down, but fail-open itself stopped incrementing).
+  #
+  # increase(...[15m]) sees the burst enter and leave its lookback
+  # window as time advances; rate(...[5m]) sees the same burst for
+  # only ~5 minutes before going back to exactly 0 — never the 10
+  # straight minutes the old rule required.
   - interval: 1m
-    name: a sustained rate-limiter bypass tickets
+    name: a single bypass burst tickets under the count rule
     input_series:
       - series: 'stellarindex_ratelimit_fail_open_total'
-        values: '0+600x60'
+        values: '0+0x15 150+0x60'
 
     alert_rule_test:
-      - eval_time: 40m
+      - eval_time: 25m
         alertname: stellarindex_ratelimit_fail_open
         exp_alerts:
           - exp_labels:
@@ -413,32 +423,76 @@ tests:
               component: api
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ratelimit-fail-open.md
-              summary: "Rate limiting is FAILING OPEN (10 req/s bypassing the limiter)"
+              summary: "Rate limiting FAILED OPEN 150 times in 15m"
               description: |
-                The API rate limiter could not reach its Redis backing store and
-                let the requests through unlimited, continuously for the last
-                10 minutes. Per-key quotas, burst protection and the abuse
-                ceiling are all inert for the duration: a single caller can
+                The API rate limiter could not reach its Redis backing store
+                and let more than 100 requests through unlimited in the last
+                15 minutes. Per-key quotas, burst protection and the abuse
+                ceiling are intermittently inert: a single caller can
                 saturate the serving plane, and metered usage still records
-                (billing is unaffected) while the throughput cap is not enforced.
+                (billing is unaffected) while the throughput cap is not
+                always enforced.
 
                 Check the Redis readyz probe first — this normally moves
                 together with it. If Redis is healthy, the failure is in the
                 limiter's own path (auth, evicted script, key namespace).
 
-  # ── C6-032: a momentary blip must NOT ticket ─────────────────────
-  # One failover second bumps the counter once and it goes flat again.
-  # The 10-minute `for` on rate() must absorb it — an alert that pages on
-  # every Redis failover is an alert that gets silenced.
+  # ── a small one-off bypass stays quiet ────────────────────────────
+  # Same burst shape, but only 10 requests — well under the >100
+  # threshold in any 15m window.
   - interval: 1m
-    name: a one-off bypass during a failover stays quiet
+    name: a small one-off bypass stays quiet
     input_series:
       - series: 'stellarindex_ratelimit_fail_open_total'
-        values: '0+0x10 3+0x60'
+        values: '0+0x15 10+0x60'
 
     alert_rule_test:
-      - eval_time: 40m
+      - eval_time: 25m
         alertname: stellarindex_ratelimit_fail_open
+        exp_alerts: []
+
+  # ── companion: the limiter is failing CLOSED ──────────────────────
+  # Past the fail-open dwell time, the limiter stops incrementing
+  # fail_open_total and starts incrementing fail_closed_total instead
+  # — every request in the bucket now gets a 503. Steady increments
+  # for well past the 2-minute `for`.
+  - interval: 1m
+    name: a sustained fail-closed state pages
+    input_series:
+      - series: 'stellarindex_ratelimit_fail_closed_total'
+        values: '0+60x30'
+
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ratelimit_fail_closed
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ratelimit-fail-open.md
+              summary: "Rate limiting is FAILING CLOSED — the API is 503ing rate-limited requests"
+              description: |
+                The rate limiter's Redis calls have been failing longer than
+                the fail-open dwell time, so it has flipped to failing
+                CLOSED: every request in the affected bucket now gets a 503
+                (errors/throttle-unavailable) instead of being served. This
+                is outright customer-visible API unavailability, not a
+                throttling side-effect — the 2026-09-16 incident held this
+                state for 2h53m and served 2.03M 503s. Clears once Redis has
+                answered without error for the same dwell time.
+
+  # ── fail-closed: no errors, no page ───────────────────────────────
+  - interval: 1m
+    name: a healthy limiter with no fail-closed events stays quiet
+    input_series:
+      - series: 'stellarindex_ratelimit_fail_closed_total'
+        values: '0+0x30'
+
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ratelimit_fail_closed
         exp_alerts: []
 
   # ── C6-020 / 2026-09-09: a chunk decompress is WORK, not a hang ──

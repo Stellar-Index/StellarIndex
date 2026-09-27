@@ -5,16 +5,16 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellarindex_ratelimit_fail_open`
+# Runbook — `stellarindex_ratelimit_fail_open` / `stellarindex_ratelimit_fail_closed`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_ratelimit_fail_open` (P3 / ticket) |
+| Alert | `stellarindex_ratelimit_fail_open` (P3 / ticket) — bypassing unlimited. `stellarindex_ratelimit_fail_closed` (page) — the companion alert below: past the same dwell time, the limiter serves 503s instead. |
 | Detected by | Prometheus rule in `deploy/monitoring/rules/api.yml` and the R1 single-host overlay `configs/prometheus/rules.r1/api.yml`. |
 | Typical MTTR | 5–30 min: usually resolves itself the moment Redis is reachable again; the fix is whatever made Redis unreachable. |
-| Impact | The API's per-key rate limit is **not being enforced**. Requests are served unlimited. Metering/billing still records usage, so this is a throughput/abuse exposure, not a revenue-loss one. |
+| Impact | `_fail_open`: the API's per-key rate limit is **not being enforced**; requests are served unlimited. Metering/billing still records usage, so this is a throughput/abuse exposure, not a revenue-loss one. `_fail_closed`: every request hitting the affected bucket gets a 503 — outright customer-visible API unavailability, not a narrowed throttling effect (2026-09-16: 2.03M 503s over 2h53m). |
 
 ## What this fires on
 
@@ -34,22 +34,44 @@ closed state clears only after the same dwell time of *unbroken*
 Redis successes; a flapping Redis keeps it armed. The anonymous and
 authenticated tiers are separate buckets with separate clocks.
 
-So this alert sees the fail-open portion only: repeated short error
-episodes, each starting a fresh fail-open window. A hard, sustained
-Redis outage shows up as API `503`s and a red Redis readiness check,
-**not** as this alert (the counter goes flat about 30s in, and
-`for: 10m` never elapses).
+So `stellarindex_ratelimit_fail_open` sees the fail-open portion only:
+repeated short error episodes, each starting a fresh fail-open window.
+A hard, sustained Redis outage shows up as `stellarindex_ratelimit_fail_closed`
+(below) and a red Redis readiness check, not as continued fail-open —
+the counter goes flat about 30s in.
 
 The counter has existed since the limiter shipped. Until C6-032
 (audit-2026-07-23) **nothing in either rule tree selected it**, so the
 limiter could be off for an arbitrary length of time with zero pages —
 registered-but-unalerted, the same shape as a dead alert.
 
-The rule fires on `rate(...[5m]) > 0` sustained `for: 10m`, so:
+**2026-09-27 fix:** the original rule fired on `rate(...[5m]) > 0`
+sustained `for: 10m` — which could **never** fire, for the exact reason
+the previous paragraph explains: the fail-open window is capped at the
+30s dwell time, so the rate flattens out long before a 10-minute
+sustained condition could mature. It shipped dead and stayed dead
+through the 09-16 incident. The rule now counts instead of rating:
+`sum(increase(stellarindex_ratelimit_fail_open_total[15m])) > 100`,
+`for: 0m` — more than 100 bypassed requests in a 15-minute window,
+regardless of how the dwell time chops up the underlying rate.
 
-- a one-off blip during a Redis failover does **not** ticket;
-- "the limiter has been bypassing requests continuously for ten
-  minutes" always does.
+## `stellarindex_ratelimit_fail_closed`
+
+Past the same dwell time (`ratelimit.DefaultDwellTime`, 30s) of
+*continuous* Redis errors on a bucket, the limiter stops failing open
+and fails **closed** instead: every request in that bucket gets a 503
+(`errors/throttle-unavailable`, `Retry-After: 30`,
+`writeThrottleUnavailableProblem`) rather than being served. This is
+the shape a hard, sustained Redis outage actually takes — not
+continued fail-open. It clears once Redis has answered without error
+for the same dwell time; a flapping Redis keeps it armed.
+
+`expr: sum(rate(stellarindex_ratelimit_fail_closed_total[5m])) > 0`,
+`for: 2m`, `severity: page` — 2 minutes, not the fail-open rule's
+window, because a fail-closed state is an ongoing customer-visible
+outage from the first second, not a tolerable blip. The 2026-09-16
+incident held this state for 2h53m and served 2.03M 503s before it was
+caught — the gap this alert closes.
 
 ## Quick diagnosis (≤ 5 min)
 
