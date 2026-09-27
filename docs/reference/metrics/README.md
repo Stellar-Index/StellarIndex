@@ -2658,6 +2658,7 @@ the call sites by `TestPriceServeSurfaceLabelsAreDocumented`
 | `divergence` | both | `/v1/divergence` rows |
 | `divergence_webhook` | both | aggregator divergence webhooks |
 | `freeze_webhook` | both | aggregator freeze webhooks |
+| `global_asset` | both | `/v1/assets/{slug}` aggregated crypto price (GlobalAssetView) |
 | `history_series` | scam | `/v1/history` series |
 | `listing` | substance | `/v1/assets` listing rows, catalogue listing price, asset-detail overlay |
 | `markets` | scam | `/v1/markets` last price |
