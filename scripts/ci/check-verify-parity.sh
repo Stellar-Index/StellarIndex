@@ -75,7 +75,13 @@ extract_invoked() {
 #                         coverage-floor.sh: their SELF-TESTS are in verify.sh
 #                         and are what guard the logic. lint-go-toolchain-
 #                         parity.sh is NOT here — it runs bare and is mirrored.
-LOCAL_EXEMPT="govulncheck-gated.sh integration-shard.sh coverage-floor.sh fuzz-smoke.sh check-change-class.sh check-dependabot-toolchain-bump.sh"
+#   install-ansible.sh   an INSTALLER (GH-896), not a gate: `core`/`bundle`
+#                         put pip/pipx-installed Ansible on the runner. It has
+#                         no local pre-push analogue — verify.sh does not
+#                         install a toolchain — and no exit-nonzero verdict to
+#                         mirror. lint-ansible-toolchain-pin.sh, the gate that
+#                         checks every workflow ROUTES THROUGH it, is mirrored.
+LOCAL_EXEMPT="govulncheck-gated.sh integration-shard.sh coverage-floor.sh fuzz-smoke.sh check-change-class.sh check-dependabot-toolchain-bump.sh install-ansible.sh"
 
 ci_scripts="$(extract_invoked <"$CI_YML" || true)"
 

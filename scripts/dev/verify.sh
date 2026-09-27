@@ -325,6 +325,8 @@ echo "=== ch-schema-snapshot self-test ===" && ./scripts/ops/ch-schema-snapshot-
 echo "=== ch-schema-drift self-test ===" && ./configs/ansible/roles/archival-node/files/ch-schema-drift-test.sh
 echo "=== Ansible task lint (pipefail/bash, secret-on-argv) ===" && ./scripts/ci/lint-ansible-tasks.sh
 echo "=== Ansible task lint self-test ===" && ./scripts/ci/lint-ansible-tasks-test.sh
+echo "=== Ansible toolchain pin self-test ===" && ./scripts/ci/lint-ansible-toolchain-pin-test.sh
+echo "=== Ansible toolchain pin (no inline version in a workflow) ===" && ./scripts/ci/lint-ansible-toolchain-pin.sh
 echo "=== Ansible-drift decision-core self-test ===" && ./scripts/ci/check-ansible-drift-test.sh
 echo "=== Ansible collection pin parity self-test ===" && ./scripts/ci/ansible-collection-pin-parity-test.sh
 echo "=== Ansible collection pin parity wiring self-test ===" && ./scripts/ci/verify-ansible-pin-parity-wiring-test.sh
@@ -409,6 +411,12 @@ echo "=== ClickHouse ops-user contract self-test ===" && ./scripts/ops/ch-ops-us
 # enforces the CI-\>verify direction for scripts/ci, so it could not have
 # caught this. Run it here explicitly.
 echo "=== Changed-file dispatcher self-test ===" && ./scripts/dev/lint-changed-test.sh
+# GH-775: pins commit-identity-range.sh's new-branch/tag fallback (a
+# detached-HEAD checkout with the branch's own commit also present as a
+# remote-tracking ref) against the exact regression that made the range
+# come back empty and the job report "checking 0 commit(s)" as a pass.
+# The self-test existed but ran nowhere until now.
+echo "=== Commit-identity range self-test ===" && ./scripts/ci/commit-identity-range-test.sh
 # govulncheck (F-0057). Graceful-skip when not installed locally —
 # CI installs it via `make deps`. Mirrors the promtool pattern.
 if command -v govulncheck >/dev/null 2>&1; then
