@@ -640,7 +640,17 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// activates only when [api.streaming].pairs is non-empty.
 	// L3.9 PR 2/2 wires the Redis pub/sub subscriber against this
 	// Hub further down (gated on rdb != nil).
-	hub := streaming.NewHub(0)
+	hub := streaming.NewHub(cfg.API.Streaming.BufferSize)
+	// Topic retention overrides (GH-1128, audit-2026-09-25):
+	// SetTopicIdleTTL/SetMaxTopics existed since the Hub's original
+	// wiring but nothing called them, so every deployment silently
+	// ran the compiled-in defaults (15m / 4096) with no operator
+	// control — the same class of defect as MaxConcurrentStreams
+	// above. api.streaming.topic_idle_ttl / max_topics now drive
+	// them, defaulting to those same values so behaviour is
+	// unchanged unless an operator opts into something different.
+	hub.SetTopicIdleTTL(cfg.API.Streaming.TopicIdleTTL)
+	hub.SetMaxTopics(cfg.API.Streaming.MaxTopics)
 
 	// Per-IP concurrent-SSE-connection cap (C3-8, audit-2026-07-16). The
 	// global cap alone lets one client hold the whole budget; this bounds

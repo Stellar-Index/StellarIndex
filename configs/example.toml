@@ -608,6 +608,9 @@ pairs = []
 # max_concurrent_streams        = 8192   # global concurrent SSE cap; <= 0 disables
 # max_tip_producers             = 512    # global cap on distinct shared tip-stream producers; negative disables
 # max_tip_producers_per_caller  = 24     # per-caller share of max_tip_producers; negative disables
+# buffer_size                   = 256    # per-topic ring-buffer capacity; <= 0 keeps the built-in default
+# topic_idle_ttl                = "15m"  # subscriber-less topic reap threshold; <= 0 keeps the built-in default
+# max_topics                    = 4096   # ceiling on distinct live topics; <= 0 keeps the built-in default
 
 # SEP-10 Web Auth. Active when auth_mode = "sep10" or when the
 # /v1/auth/sep10/* endpoints are exposed. Seed + JWT secret are env
