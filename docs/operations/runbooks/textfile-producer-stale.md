@@ -36,6 +36,19 @@ every manifest producer's `.prom` output must be selected by a rule
 (this one or a dedicated one), so a new producer with neither is a CI
 failure, not a silent gap.
 
+**2026-09-27: three exclusions added**, each a false-fire the 14d
+Prometheus review found, none a dead producer:
+
+- `ops_job_*.pid<N>.prom` — the fallback file `opsutil.pidPath` writes
+  when a run loses the heartbeat flock. Nothing rewrites it again once
+  that run exits (`sweepStalePIDFiles` only reaps it while another
+  primary run is active), so it is an orphan by construction.
+- `ops_job_backfill.prom` — backfill is a one-off maintenance job with
+  no timer; a long gap between runs is expected, not a dead cron.
+- `restore_drill*.prom` — monthly timer against this rule's 24h
+  threshold. Now carries its own threshold instead:
+  `stellarindex_restore_drill_textfile_stale` (35d, same file below).
+
 ## Diagnosis
 
 ```sh
@@ -54,8 +67,10 @@ API, ClickHouse, S3/MinIO) it queries being unreachable.
 ## Related
 
 - [patroni-textfile-stale](patroni-textfile-stale.md),
-  [config-assertion-failed](config-assertion-failed.md) — the
-  dedicated, tighter alerts this backstop defers to.
+  [config-assertion-failed](config-assertion-failed.md),
+  [restore-drill-stale](restore-drill-stale.md) — the dedicated,
+  tighter (or, for restore-drill, more patient) alerts this backstop
+  defers to.
 - `scripts/ci/textfile-producers.manifest` — every producer this
   alert covers.
 
@@ -63,3 +78,8 @@ API, ClickHouse, S3/MinIO) it queries being unreachable.
 
 - **2026-09-25** — created (GH-899): backstop for the 60 producers
   with no dedicated staleness alert.
+- **2026-09-27** — excluded `ops_job_*.pid<N>.prom`,
+  `ops_job_backfill.prom` and `restore_drill*.prom` after a 14d
+  Prometheus review found all three false-firing; added the
+  companion `stellarindex_restore_drill_textfile_stale` (35d) for the
+  last one.

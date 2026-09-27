@@ -1279,8 +1279,24 @@ groups:
       # sooner; this is the backstop for everything else. 24h is well above
       # every known producer's expected refresh interval, so it never
       # duplicates a tighter alert, only catches what nothing else does.
+      #
+      # 14d-review (2026-09-27) false-fire exclusions:
+      #   - `ops_job_*.pid<N>.prom` (opsutil.pidPath): the fallback file a
+      #     run writes when it loses the heartbeat flock. Nothing ever
+      #     rewrites it again once that run exits — sweepStalePIDFiles
+      #     only reaps it while ANOTHER primary run is active — so it is
+      #     an orphan by construction, not a dead producer.
+      #   - `ops_job_backfill.prom`: backfill is a one-off maintenance job
+      #     with no timer, so a long gap between runs is normal, not a
+      #     dead cron.
+      #   - `restore_drill*.prom`: monthly timer against a 24h threshold
+      #     (see stellarindex_restore_drill_textfile_stale below, which
+      #     carries the right threshold for this producer).
       - alert: stellarindex_textfile_producer_stale
-        expr: time() - node_textfile_mtime_seconds > 86400
+        expr: |
+          time() - node_textfile_mtime_seconds{
+            file!~".*/ops_job_.*\\.pid[0-9]+\\.prom$|.*/ops_job_backfill\\.prom$|.*/restore_drill.*\\.prom$"
+          } > 86400
         for: 30m
         labels:
           severity: ticket
@@ -1296,3 +1312,27 @@ groups:
             this file and `systemctl status` its unit. This is a catch-all:
             most producers should have fired their own, tighter alert long
             before this one does.
+
+      # Companion to the catch-all above, which excludes this producer:
+      # restore-drill.sh runs on a MONTHLY timer (restore-drill.timer /
+      # restore-drill-offsite.timer), so its 24h backstop false-fires
+      # between runs every single month. stellarindex_restore_drill_stale
+      # / _offsite_stale already watch the CONTENT signal
+      # (stellarindex_restore_drill_last_success_unix, 40d/35d) — this is
+      # the same OBS-2 mtime backstop pattern as
+      # stellarindex_patroni_textfile_stale for the case the timer itself
+      # dies before ever writing a fresh gauge.
+      - alert: stellarindex_restore_drill_textfile_stale
+        expr: time() - node_textfile_mtime_seconds{file=~".*/restore_drill.*\\.prom$"} > (35 * 24 * 3600)
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-stale.md
+          summary: "restore-drill textfile {{ $labels.file }} has not been refreshed in 35d+ on {{ $labels.instance }}"
+          description: |
+            node_exporter has not seen a fresh mtime on {{ $labels.file }}
+            for 35+ days despite the monthly restore-drill timer.
+            `systemctl status restore-drill.timer restore-drill-offsite.timer`.

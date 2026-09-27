@@ -1536,3 +1536,152 @@ tests:
       - eval_time: 71h
         alertname: stellarindex_timescale_job_failures_climbing
         exp_alerts: []
+
+  # ── 14d-review (2026-09-27): the textfile_producer_stale catch-all
+  # false-fires on three producer shapes with no dedicated staleness
+  # alert: ops_job's pid-orphan siblings, the one-off backfill job, and
+  # the monthly restore-drill files. This pins the exclusion — and
+  # that it does NOT over-exclude other ops_job primaries, which
+  # should still trip the catch-all like any other producer.
+  - interval: 1m
+    name: textfile_producer_stale excludes pid-orphans, backfill and restore-drill only
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/some_other_producer.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x50600'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_ch_rebuild.pid4242.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x50600'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_backfill.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x50600'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_projector_replay.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x50600'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/restore_drill.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x50600'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/restore_drill_repo2.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x50600'
+    alert_rule_test:
+      # Past the 24h + 30m threshold: an unrelated producer and a
+      # non-backfill, non-pid ops_job primary both fire — proving the
+      # exclusion is scoped to the three named shapes, not to every
+      # ops_job_* file.
+      - eval_time: 26h
+        alertname: stellarindex_textfile_producer_stale
+        exp_alerts:
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/some_other_producer.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/some_other_producer.prom has not been refreshed in 24h+ on r1:9100"
+              description: |
+                node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/some_other_producer.prom
+                for 24+ hours. Its producing timer/cron has likely died; check
+                scripts/ci/textfile-producers.manifest for which script owns
+                this file and `systemctl status` its unit. This is a catch-all:
+                most producers should have fired their own, tighter alert long
+                before this one does.
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/ops_job_projector_replay.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/ops_job_projector_replay.prom has not been refreshed in 24h+ on r1:9100"
+              description: |
+                node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/ops_job_projector_replay.prom
+                for 24+ hours. Its producing timer/cron has likely died; check
+                scripts/ci/textfile-producers.manifest for which script owns
+                this file and `systemctl status` its unit. This is a catch-all:
+                most producers should have fired their own, tighter alert long
+                before this one does.
+      # Still past 35d: the restore-drill files stay excluded from the
+      # catch-all forever (no double-alerting with the dedicated rule
+      # below), the other two exclusions likewise.
+      - eval_time: 841h
+        alertname: stellarindex_textfile_producer_stale
+        exp_alerts:
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/some_other_producer.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/some_other_producer.prom has not been refreshed in 24h+ on r1:9100"
+              description: |
+                node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/some_other_producer.prom
+                for 24+ hours. Its producing timer/cron has likely died; check
+                scripts/ci/textfile-producers.manifest for which script owns
+                this file and `systemctl status` its unit. This is a catch-all:
+                most producers should have fired their own, tighter alert long
+                before this one does.
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/ops_job_projector_replay.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-producer-stale.md
+              summary: "textfile-collector file /var/lib/node_exporter/textfile_collector/ops_job_projector_replay.prom has not been refreshed in 24h+ on r1:9100"
+              description: |
+                node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/ops_job_projector_replay.prom
+                for 24+ hours. Its producing timer/cron has likely died; check
+                scripts/ci/textfile-producers.manifest for which script owns
+                this file and `systemctl status` its unit. This is a catch-all:
+                most producers should have fired their own, tighter alert long
+                before this one does.
+
+  # ── companion: stellarindex_restore_drill_textfile_stale carries the
+  # 35d threshold the catch-all now excludes restore_drill*.prom from.
+  - interval: 1m
+    name: restore_drill_textfile_stale fires past 35d, quiet before it
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/restore_drill.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x50600'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/restore_drill_repo2.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x50600'
+    alert_rule_test:
+      - eval_time: 839h
+        alertname: stellarindex_restore_drill_textfile_stale
+        exp_alerts: []
+      - eval_time: 841h
+        alertname: stellarindex_restore_drill_textfile_stale
+        exp_alerts:
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/restore_drill.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-stale.md
+              summary: "restore-drill textfile /var/lib/node_exporter/textfile_collector/restore_drill.prom has not been refreshed in 35d+ on r1:9100"
+              description: |
+                node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/restore_drill.prom
+                for 35+ days despite the monthly restore-drill timer.
+                `systemctl status restore-drill.timer restore-drill-offsite.timer`.
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/restore_drill_repo2.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-stale.md
+              summary: "restore-drill textfile /var/lib/node_exporter/textfile_collector/restore_drill_repo2.prom has not been refreshed in 35d+ on r1:9100"
+              description: |
+                node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/restore_drill_repo2.prom
+                for 35+ days despite the monthly restore-drill timer.
+                `systemctl status restore-drill.timer restore-drill-offsite.timer`.

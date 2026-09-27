@@ -11,7 +11,7 @@ severity: P3
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_restore_drill_stale` |
+| Alert | `stellarindex_restore_drill_stale`. Companion: `stellarindex_restore_drill_textfile_stale` (`storage.yml`, 35d, mtime-only backstop — see below). |
 | Severity | P3 (ticket) |
 | Detected by | `deploy/monitoring/rules/restore-drill.yml` |
 | Typical MTTR | 30 min (to confirm cause) + up to 4 h (a full drill run) |
@@ -43,6 +43,18 @@ severity: P3
 - No fully-successful monthly restore-drill has been recorded in over
   40 days (one missed monthly cycle plus slack), or none has ever been
   recorded.
+
+## `stellarindex_restore_drill_textfile_stale`
+
+`storage.yml`'s generic `stellarindex_textfile_producer_stale` catch-all
+excludes `restore_drill*.prom` (its 24h threshold false-fires against a
+monthly timer). This rule carries the right threshold instead:
+`time() - node_textfile_mtime_seconds{file=~"restore_drill.*\.prom"} > 35d`,
+`for: 30m`, `severity: ticket`. It is a pure mtime backstop — same OBS-2
+pattern as `stellarindex_patroni_textfile_stale` — for the case the
+timer dies before ever writing a fresh gauge at all; `_stale` above
+(the content signal on `..._last_success_unix`) is the primary alert
+and fires first in every other scenario.
 
 ## Lake RTO is now a measured number (#343, 2026-09-02)
 
@@ -159,3 +171,6 @@ cat /var/lib/node_exporter/textfile_collector/restore_drill.prom
   repo1); the off-site drill gets its own timer, textfile and ticket.
   Until the first labelled repo1 run, the un-labelled series the selector
   tolerates is the 2026-09-03 repo2 hand-run's.
+- 2026-09-27 — added the companion `stellarindex_restore_drill_textfile_stale`
+  mtime backstop (`storage.yml`) after the generic catch-all's 24h
+  threshold was found false-firing on this producer's monthly cadence.
