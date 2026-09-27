@@ -418,7 +418,8 @@ render "$TMP/twohosts.json" "$TMP/out-hosts-ok" --host r1
 expect 'the same two-host extract renders once a host is named' 0 'wrote'
 HOSTED="$TMP/out-hosts-ok/$(ls "$TMP/out-hosts-ok")"
 assert_contains 'the named host is the one recorded' "$HOSTED" "| Probe host | \`r1\` |"
-assert_absent 'the other deployment is not silently folded in' "$HOSTED" 'r2'
+# The report embeds the extract's mktemp path, which can itself contain "r2".
+assert_absent 'the other deployment is not silently folded in' "$HOSTED" "\`r2\`"
 
 render "$TMP/short.json" "$TMP/out-short"
 expect 'an effective window under the floor → rc 2 REFUSED' 2 'below the --min-window'
