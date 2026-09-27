@@ -207,6 +207,21 @@ zfs_datasets:
     logbias: "throughput"
     primarycache: "metadata"
     mountpoint: "/var/lib/postgresql"
+  # pg_wal (/var/lib/postgresql/wal/15-main/pg_wal, symlinked from the data
+  # directory), moved off the 49 GB root in v0.92.1; the 2026-05-17
+  # pool-full emergency had put it on /pgwal. A CHILD of postgres so the
+  # recursive rolling snapshot captures data and WAL in one instant. Every
+  # tuning property is local because the parent's 8K / throughput /
+  # metadata-only values are wrong for sequential WAL writes, and the
+  # refreservation keeps other datasets from starving WAL as the pool fills.
+  - name: "postgres/wal"
+    recordsize: "131072"
+    compression: "lz4"
+    atime: "off"
+    logbias: "latency"
+    primarycache: "all"
+    refreservation: "274877906944"   # 256 GiB
+    mountpoint: "/var/lib/postgresql/wal"
   # "core" dataset (for the primary stellar-core daemon's bucket dir
   # at /var/lib/stellar-core) is intentionally NOT in this list
   # while run_stellar_core=false. When flipping to true for Phase-3

@@ -127,6 +127,9 @@ required = [
      "the Galexie LCM archive — the CDP source of truth the lake and the "
      "served tier are re-derived from (NS03)"),
     ("/var/lib/postgresql", "the served money state"),
+    ("/var/lib/postgresql/wal",
+     "pg_wal: a data snapshot without the WAL of the same instant is not "
+     "crash-consistent"),
     ("/var/lib/clickhouse", "the Tier-1 lake"),
 ]
 
@@ -138,15 +141,18 @@ for mount, why in required:
         rc = 1
         continue
     full = "%s/%s" % (pool, ds)
-    if full in covered:
-        print("  ok   %s is snapshotted (%d d) — %s" % (full, covered[full], why))
+    # Snapshots are recursive (zfs-snapshot.sh), so a covered ancestor
+    # covers a child in the same instant.
+    via = [c for c in covered if full == c or full.startswith(c + "/")]
+    if via:
+        print("  ok   %s is snapshotted via %s (%d d) — %s" % (full, via[0], covered[via[0]], why))
     else:
         print("  FAIL %s has NO rolling snapshot — %s" % (full, why))
         rc = 1
 sys.exit(rc)
 PY_EOF
   rc=$?
-  if [ "$rc" -eq 0 ]; then pass=$((pass + 3)); else fail=$((fail + 1)); fi
+  if [ "$rc" -eq 0 ]; then pass=$((pass + 4)); else fail=$((fail + 1)); fi
 fi
 
 # ─── 2. the script's own default, through the script's own parser ──────

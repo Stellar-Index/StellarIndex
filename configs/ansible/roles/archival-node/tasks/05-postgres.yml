@@ -83,10 +83,12 @@
     # nearest existing ancestor so df still describes the right volume.
     d="$target"
     while [ ! -d "$d" ] && [ "$d" != "/" ]; do d=$(dirname "$d"); done
-    printf '%s %s %s %s %s\n' "$d" \
+    # Field 6, the filesystem type, decides the ZFS-only WAL settings in
+    # postgresql.conf.j2 from where pg_wal really is, not from a variable.
+    printf '%s %s %s %s %s %s\n' "$d" \
       "$(df -P -BM "$d" | tail -1 | awk '{print $4}' | tr -dc 0-9)" \
       "$(df -P "$d" | tail -1 | awk '{print $1}')" \
-      "$used" "$state"
+      "$used" "$state" "$(stat -f -c %T "$d")"
   register: pg_wal_fs
   changed_when: false
   check_mode: false

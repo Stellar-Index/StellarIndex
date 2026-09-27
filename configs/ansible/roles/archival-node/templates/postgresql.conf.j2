@@ -71,6 +71,14 @@ wal_compression           = {{ postgres_wal_compression }}
 synchronous_commit        = on
 checkpoint_timeout        = 15min
 checkpoint_completion_target = 0.9
+{% if ((pg_wal_fs | default({})).stdout | default('')).split()[5:6] == ['zfs'] %}
+# pg_wal is on ZFS (copy-on-write, measured by 05-postgres.yml): zero-filling
+# a new segment or recycling an old one only costs extra writes there. While
+# pg_wal is on ext4 these stay at their defaults, because a sparse segment on
+# a full root filesystem fails mid-write instead of at creation.
+wal_init_zero             = off
+wal_recycle               = off
+{% endif %}
 # WAL sizing. The 2GB this replaced was never chosen against this
 # workload: the 2026-07-03 drift audit found 8GB sitting inert in the
 # file while postgresql.auto.conf overrode it to 2GB, and codified the
@@ -132,6 +140,11 @@ checkpoint_completion_target = 0.9
 # max_wal_size is SIGHUP, so this applies on reload and needs no
 # restart — which is also why a bad value reaches production without a
 # restart to think twice about.
+#
+# v0.92.1 moves r1's pg_wal onto the data/postgres/wal dataset (256 GiB
+# reserved); r1's inventory then raises postgres_max_wal_size, and the
+# guard above is what refuses that value on a host whose pg_wal has not
+# moved.
 #
 # THE INTENDED PAIR IS max_wal_size = 2GB, min_wal_size = 512MB. That is
 # the pair the 2026-07-03 drift audit codified as the proven effective

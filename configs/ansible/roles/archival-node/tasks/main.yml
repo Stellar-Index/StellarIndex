@@ -123,7 +123,7 @@
   # postgres + clickhouse dirs are EXCLUDED — their package installers create
   # and own /var/lib/postgresql and /var/lib/clickhouse; pre-creating them
   # root-owned would break the cluster/server init.
-  loop: "{{ zfs_datasets | rejectattr('name', 'in', ['postgres', 'clickhouse']) | list }}"
+  loop: "{{ zfs_datasets | rejectattr('name', 'in', ['postgres', 'postgres/wal', 'clickhouse']) | list }}"
   loop_control:
     label: "{{ item.mountpoint }}"
   when: zfs_data_pool_type | default('') == ''

@@ -180,6 +180,7 @@
          | combine({'atime': item.atime} if item.atime is defined else {})
          | combine({'logbias': item.logbias} if item.logbias is defined else {})
          | combine({'primarycache': item.primarycache} if item.primarycache is defined else {})
+         | combine({'refreservation': item.refreservation} if item.refreservation is defined else {})
          | combine({'mountpoint': item.mountpoint}) }}
   loop: "{{ zfs_datasets }}"
   loop_control:
