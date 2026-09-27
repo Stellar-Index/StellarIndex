@@ -195,6 +195,11 @@ zfs_datasets:
     # (0750); the 0755 default here ping-ponged the mode every apply
     # and kept the drift check permanently red (2026-07-27).
     dir_mode: "0750"
+    # Holds hashdb.bin (ADR-0016 drift detector) among other state.
+    # Deliberately not in zfs_snapshot_datasets below and not in
+    # docs/operations/off-site-backup-plan.md's streams — see that
+    # doc's §3 note for why (disposable, regenerated on next indexer
+    # start).
   - name: "postgres"
     recordsize: "8192"
     compression: "zstd"

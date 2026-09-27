@@ -1858,12 +1858,17 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 
 	// Speculative-account reaper (F-1255). Deletes orphan `accounts`
 	// rows left by a lost signup race — Suspended with a `signup-race:`
-	// reason, no user + no key. On by default; runs only when the
-	// dashboard's Postgres account store is wired (the reaper's
+	// reason, no user + no key. POST /v1/register (the source of those
+	// races) is wired off platformAccountStore/Postgres alone — NOT off
+	// the dashboard bundle, which stays nil when api.dashboard.base_url
+	// is unset — so the reaper binds to the same platformAccountStore
+	// seam registration uses, not dashboardBundle.accounts, or a
+	// Postgres-without-dashboard deployment accepts registrations with
+	// no reaper ever running. Runs only when Postgres is reachable (the
 	// concrete store implements the narrow OrphanStore seam). Bounded
 	// to rootCtx for graceful shutdown, same as the workers above.
 	if cfg.SignupReaper.Enabled {
-		if orphans, ok := dashboardBundle.accounts.(signupreaper.OrphanStore); ok && orphans != nil {
+		if orphans, ok := platformAccountStore.(signupreaper.OrphanStore); ok && orphans != nil {
 			reaper := signupreaper.New(orphans, signupreaper.Options{
 				Interval: time.Duration(cfg.SignupReaper.IntervalMinutes) * time.Minute,
 				MinAge:   time.Duration(cfg.SignupReaper.MinAgeMinutes) * time.Minute,
@@ -1881,7 +1886,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 				"interval_minutes", cfg.SignupReaper.IntervalMinutes,
 				"min_age_minutes", cfg.SignupReaper.MinAgeMinutes)
 		} else {
-			logger.Info("signup-reaper enabled but dashboard/Postgres account store not wired — skipping")
+			logger.Info("signup-reaper enabled but Postgres account store not wired — skipping")
 		}
 	}
 
