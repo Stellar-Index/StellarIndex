@@ -13,10 +13,10 @@ Environment=STELLAR_CORE_PIN={{ stellar_core_version | default('') }}
 ExecStart=/usr/local/sbin/stellar-core-auto-upgrade
 # The script waits up to 45 min for the tip, twice when it rolls back.
 TimeoutStartSec=6000
-# No ProtectSystem: apt/dpkg must write /usr and /etc. Restarts go through
-# systemd over D-Bus, so the cgroup and kernel protections cost nothing.
+# No ProtectSystem: apt/dpkg must write /usr and /etc. No NoNewPrivileges:
+# apt-get update drops to _apt via seteuid, which it forbids (r1: "seteuid 42
+# failed"). Restarts go over D-Bus, so the cgroup/kernel protections are free.
 PrivateTmp=true
-NoNewPrivileges=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
