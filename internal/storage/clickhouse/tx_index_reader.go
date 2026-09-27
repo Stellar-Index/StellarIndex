@@ -7,6 +7,8 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // TxIndexReader resolves tx hashes to their intra-ledger application
@@ -43,9 +45,9 @@ func NewTxIndexReader(ctx context.Context, addr string) (*TxIndexReader, error) 
 	return &TxIndexReader{conn: conn}, nil
 }
 
-// txIndexChunk bounds each IN-list lookup; tx_hash is the table's
-// primary key so every chunk is a set of PK point lookups.
-const txIndexChunk = 2000
+// txIndexChunk bounds each IN-list: the table has no partition, so a wide
+// list reads a granule per unmerged part per key and trips MEMORY_LIMIT.
+const txIndexChunk = 500
 
 // TxIndexes returns tx_hash → tx_index for every hash the lake knows.
 // Missing hashes (not yet indexed — the tx_hash_index historical
@@ -53,15 +55,17 @@ const txIndexChunk = 2000
 // degrade rather than guess. max() collapses ReplacingMergeTree
 // duplicates that haven't merged yet (tx_index is identical across
 // duplicates of one hash).
+//
+// A failed chunk aborts the call: a partial map would read as "legitimately
+// unindexed" to the MEV worker. MEVLakeOrderLookupSkippedTotal counts it.
 func (r *TxIndexReader) TxIndexes(ctx context.Context, hashes []string) (map[string]uint32, error) {
 	out := make(map[string]uint32, len(hashes))
-	for start := 0; start < len(hashes); start += txIndexChunk {
-		end := start + txIndexChunk
-		if end > len(hashes) {
-			end = len(hashes)
-		}
-		if err := r.txIndexesChunk(ctx, hashes[start:end], out); err != nil {
-			return nil, err
+	for _, chunk := range chunkStrings(hashes, txIndexChunk) {
+		if err := r.txIndexesChunk(ctx, chunk, out); err != nil {
+			if ctx.Err() == nil {
+				obs.MEVLakeOrderLookupSkippedTotal.Add(float64(len(hashes)))
+			}
+			return nil, fmt.Errorf("chunk of %d hashes: %w", len(chunk), err)
 		}
 	}
 	return out, nil

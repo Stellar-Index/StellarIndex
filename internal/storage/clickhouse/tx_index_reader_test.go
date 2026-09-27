@@ -1,6 +1,7 @@
 package clickhouse
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -8,6 +9,9 @@ import (
 	"testing"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // hashes builds n distinct 64-hex-ish tx hashes.
@@ -168,5 +172,50 @@ func TestTxIndexes_TruncatedStreamIsAnError(t *testing.T) {
 	r := &TxIndexReader{conn: conn}
 	if _, err := r.TxIndexes(t.Context(), []string{"aa", "bb"}); !errors.Is(err, truncated) {
 		t.Fatalf("err = %v, want it to wrap %v", err, truncated)
+	}
+}
+
+// TestTxIndexes_ChunkFailureIncrementsSkippedMetric is the visibility half
+// of the ChunkFailureAbortsWithoutAPartialMap contract: an aborted lookup
+// used to be silent past a single log line the mev worker emits on a
+// best-effort basis. obs.MEVLakeOrderLookupSkippedTotal must move so a
+// sustained MEMORY_LIMIT_EXCEEDED rate on stellar.tx_hash_index (the
+// prod incident this bounds) shows up on a dashboard/alert, not just logs.
+func TestTxIndexes_ChunkFailureIncrementsSkippedMetric(t *testing.T) {
+	before := testutil.ToFloat64(obs.MEVLakeOrderLookupSkippedTotal)
+
+	boom := errors.New("memory limit exceeded")
+	conn := &stubConn{respond: func(string) (driver.Rows, error) { return nil, boom }}
+	r := &TxIndexReader{conn: conn}
+
+	in := hashes(3)
+	if _, err := r.TxIndexes(t.Context(), in); !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want it to wrap %v", err, boom)
+	}
+
+	got := testutil.ToFloat64(obs.MEVLakeOrderLookupSkippedTotal) - before
+	if got != float64(len(in)) {
+		t.Errorf("MEVLakeOrderLookupSkippedTotal += %v, want %d (every hash in the aborted call)", got, len(in))
+	}
+}
+
+// TestTxIndexes_ContextCanceledDoesNotCountAsASkip — a query failing
+// because the caller's context was canceled (worker shutdown, tick
+// deadline) is not the MEMORY_LIMIT skip this metric tracks; counting it
+// would make the metric fire on every ordinary shutdown.
+func TestTxIndexes_ContextCanceledDoesNotCountAsASkip(t *testing.T) {
+	before := testutil.ToFloat64(obs.MEVLakeOrderLookupSkippedTotal)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	conn := &stubConn{respond: func(string) (driver.Rows, error) { return nil, context.Canceled }}
+	r := &TxIndexReader{conn: conn}
+
+	if _, err := r.TxIndexes(ctx, hashes(3)); err == nil {
+		t.Fatal("TxIndexes: want an error on a canceled context")
+	}
+
+	if got := testutil.ToFloat64(obs.MEVLakeOrderLookupSkippedTotal); got != before {
+		t.Errorf("MEVLakeOrderLookupSkippedTotal = %v, want unchanged at %v on context cancellation", got, before)
 	}
 }

@@ -3833,6 +3833,19 @@ cap and some patterns in those bursts are going undetected; the fix is
 a code change to `mev.WorkerConfig` (`ScanLimit`, `Window`) in the
 aggregator.
 
+### `stellarindex_mev_lake_order_lookup_skipped_total`
+
+Counter, no labels.
+
+Tx hashes left unordered because a chunk of the ClickHouse
+`stellar.tx_hash_index` lookup failed (usually `MEMORY_LIMIT_EXCEEDED`).
+One failed chunk aborts the whole call, so the counter adds every hash in
+that call and the sandwich detectors skip the tick instead of guessing an
+order.
+
+**When to look:** any sustained rate means sandwich detection is being
+skipped; lower `txIndexChunk` in `internal/storage/clickhouse/tx_index_reader.go`.
+
 ### `stellarindex_mev_detect_duration_seconds`
 
 Histogram, label `outcome` (same set as the runs counter).

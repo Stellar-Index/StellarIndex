@@ -285,6 +285,7 @@ func registerAppMetricsTail() {
 		MEVEventsInsertedTotal,
 		MEVDetectDurationSeconds,
 		MEVScanTruncatedTotal,
+		MEVLakeOrderLookupSkippedTotal,
 
 		PostgresPingTotal,
 		PostgresPingFailureStreak,
@@ -2845,6 +2846,14 @@ var MEVScanTruncatedTotal = prometheus.NewCounterVec(
 		Help: "MEV detector input scans that hit ScanLimit — detection ran over a partial (newest-N) slice of the window.",
 	},
 	[]string{"input"},
+)
+
+// MEVLakeOrderLookupSkippedTotal counts tx hashes left unordered because a tx_hash_index chunk failed.
+var MEVLakeOrderLookupSkippedTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_mev_lake_order_lookup_skipped_total",
+		Help: "tx hashes dropped from ClickHouse tx_hash_index resolution because a lookup chunk failed (e.g. MEMORY_LIMIT_EXCEEDED); the whole call's hashes are left unordered for that tick rather than guessed.",
+	},
 )
 
 // OracleStreamRowsUnparsedTotal counts oracle_updates rows dropped by
