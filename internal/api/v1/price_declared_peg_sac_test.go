@@ -655,17 +655,21 @@ func assertDeclarationServed(t *testing.T, env pegEnvelope, spelling string) {
 // through the ungated spelling, exactly the market a directory-flagged
 // issuer had withheld.
 //
-// Both spellings must serve what the classic id served before the peg's
-// SAC form joined the walk: the declaration.
+// The refusal here is the scam gate's, carrying the reason the served
+// binary's reader attaches (cmd/stellarindex-api storePriceReader), so
+// both spellings serve what the classic id served before the peg's SAC
+// form joined the walk: the declaration. The substance gate's refusal of
+// the same book is TestPrice_DeclaredPegXLMCrossSubstanceRefusalWithholds.
 //
 // RED with a withheld leg treated as "no market" (pegXLMLegNoMarket in
-// place of pegXLMLegRefused): price 2.0000000000, price_type vwap,
+// place of pegXLMLegFlagged): price 2.0000000000, price_type vwap,
 // sources ["coinbase","soroswap"] — the refused market republished
 // through the pool.
 func TestPrice_DeclaredPegXLMCrossWithheldClassicBookNeverReachesTheSACBook(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
 	at := time.Unix(1745000000, 0).UTC()
-	reader := withheldClassicBookLivePoolReader(at, v1.ErrPriceWithheld)
+	reader := withheldClassicBookLivePoolReader(at,
+		v1.PriceWithheldError(pricingguard.WithheldFlaggedIssuer))
 	srv := v1.New(v1.Options{
 		Prices:            reader,
 		USDPeggedClassics: []canonical.Asset{usdc},
@@ -686,6 +690,96 @@ func TestPrice_DeclaredPegXLMCrossWithheldClassicBookNeverReachesTheSACBook(t *t
 			"a refusal must end the spelling walk, not redirect it to an ungated spelling", asked)
 	}
 	assertNoPegSelfPairRead(t, asked)
+}
+
+// TestPrice_DeclaredPegXLMCrossSubstanceRefusalWithholds pins that a
+// declared peg whose XLM book the SUBSTANCE gate refuses is withheld on
+// every surface that reads the stablecoin fallback, not answered with the
+// flat declaration. The substance gate measures the alias union, so its
+// refusal is about the asset's own market being thin; printing 1.0 over
+// it hides the refusal and asserts a peg nobody could observe. A refusal
+// that does not say which gate fired is treated the same way (fail
+// closed): only a flagged-issuer refusal keeps the declaration.
+//
+// RED on the pre-fix route, which collapsed every refusal into ok=false
+// and published the declaration: 200 {"price":"1.000000000000",
+// "price_type":"peg"} on /v1/price for both spellings and on
+// /v1/oracle/x_last_price.
+func TestPrice_DeclaredPegXLMCrossSubstanceRefusalWithholds(t *testing.T) {
+	cases := map[string]error{
+		"substance":    v1.PriceWithheldError(pricingguard.WithheldThinMarket),
+		"unattributed": v1.ErrPriceWithheld,
+	}
+	for name, refusal := range cases {
+		t.Run(name, func(t *testing.T) {
+			usdc := installPegAliasRegistry(t)
+			at := time.Unix(1745000000, 0).UTC()
+			reader := withheldClassicBookLivePoolReader(at, refusal)
+			srv := v1.New(v1.Options{
+				Prices:            reader,
+				USDPeggedClassics: []canonical.Asset{usdc},
+				PegDeclaredAt:     declaredPegAdoptedAt,
+			})
+			ts := startHTTPTest(t, srv.Handler())
+
+			for _, spelling := range []string{pegAliasUSDCClassic, pegAliasUSDCSAC} {
+				assertPriceWithheld(t, ts.URL+"/v1/price?asset="+spelling+"&quote=fiat:USD")
+				assertPriceWithheld(t, ts.URL+"/v1/oracle/x_last_price?base="+spelling+"&quote=fiat:USD")
+			}
+			asked := reader.pairsAsked()
+			if callIndex(asked, pegAliasUSDCClassic+"/native") < 0 {
+				t.Errorf("the classic book was never read (asked=%v) — the withholding would "+
+					"then not be the gate's", asked)
+			}
+			if callIndex(asked, pegAliasUSDCSAC+"/"+canonical.XLMSacContractID) >= 0 {
+				t.Errorf("the peg's SAC book was read after its classic book was WITHHELD (asked=%v)", asked)
+			}
+		})
+	}
+}
+
+// TestPrice_DeclaredPegXLMCrossPivotRefusalWithholds pins the same rule
+// on the cross's OTHER leg: the peg's XLM book prices, but the XLM/fiat:USD
+// pivot comes back withheld. A cross missing a refused leg is not "no
+// market" either, so the declaration must not answer over it.
+//
+// RED on the pre-fix route, which returned a bare false for any pivot
+// error: 200 {"price":"1.000000000000","price_type":"peg"}.
+func TestPrice_DeclaredPegXLMCrossPivotRefusalWithholds(t *testing.T) {
+	usdc := installPegAliasRegistry(t)
+	at := time.Unix(1745000000, 0).UTC()
+	reader := withheldClassicBookLivePoolReader(at, nil)
+	reader.errs = map[string]error{
+		"crypto:XLM/fiat:USD": v1.PriceWithheldError(pricingguard.WithheldThinMarket),
+	}
+	srv := v1.New(v1.Options{
+		Prices:            reader,
+		USDPeggedClassics: []canonical.Asset{usdc},
+		PegDeclaredAt:     declaredPegAdoptedAt,
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	assertPriceWithheld(t, ts.URL+"/v1/price?asset="+pegAliasUSDCClassic+"&quote=fiat:USD")
+	if callIndex(reader.pairsAsked(), "crypto:XLM/fiat:USD") < 0 {
+		t.Errorf("the pivot was never read (asked=%v)", reader.pairsAsked())
+	}
+}
+
+// assertPriceWithheld checks url answers 404 with the price-withheld
+// problem type and serves no price.
+func assertPriceWithheld(t *testing.T, url string) {
+	t.Helper()
+	resp := mustGet(t, url)
+	body, err := readAll(resp)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(body, "errors/price-withheld") {
+		t.Errorf("%s: status = %d body %s, want 404 errors/price-withheld", url, resp.StatusCode, body)
+	}
+	if strings.Contains(body, "1.000000000000") {
+		t.Errorf("%s: the declaration was served over a refused market: %s", url, body)
+	}
 }
 
 // TestPrice_DeclaredPegXLMCrossReadFailureNeverReachesTheSACBook pins
@@ -887,8 +981,9 @@ func TestPrice_DeclaredPegXLMCrossDegenerateClassicPriceNeverReachesTheSACBook(t
 // scamGatedPegReader wires the REAL pricingguard.ScamGate onto the
 // recording reader the way cmd/stellarindex-api's storePriceReader wires
 // it on the served binary: the raw requested base goes to the gate once a
-// row has been found, and a refusal becomes v1.ErrPriceWithheld — the
-// error every arm of the peg route branches on. /v1/price has no
+// row has been found, and a refusal becomes v1.ErrPriceWithheld carrying
+// the flagged-issuer reason — the error every arm of the peg route
+// branches on. /v1/price has no
 // handler-side gate call the way /v1/vwap, /v1/twap, /v1/price/tip and
 // /v1/chart do, so this seam is the ONLY place a withholding decision
 // reaches it, and every combination of the peg's XLM cross passes through
@@ -906,7 +1001,7 @@ type scamGatedPegReader struct {
 func (r *scamGatedPegReader) LatestPrice(ctx context.Context, a, q canonical.Asset) (v1.PriceSnapshot, []string, bool, error) {
 	snap, srcs, stale, err := r.recordingPriceReader.LatestPrice(ctx, a, q)
 	if err == nil && r.scam.Withheld(ctx, a, "price_read") {
-		return v1.PriceSnapshot{}, nil, false, v1.ErrPriceWithheld
+		return v1.PriceSnapshot{}, nil, false, v1.PriceWithheldError(pricingguard.WithheldFlaggedIssuer)
 	}
 	return snap, srcs, stale, err
 }
@@ -991,7 +1086,7 @@ func flaggedPegLivePoolReader(at time.Time, f sacSpellingFixture) *scamGatedPegR
 // answer for a SOROBAN base:
 //
 //   - the gate resolves the base to the flagged classic issuance, refuses,
-//     and pegXLMLegRefused ends the walk, so the declaration serves; or
+//     and pegXLMLegFlagged ends the walk, so the declaration serves; or
 //   - the gate sees a non-classic base, has nothing to say, and the
 //     flagged issuer's price is republished through the pool — under the
 //     CLASSIC spelling as well, because the cross prices the peg as an
