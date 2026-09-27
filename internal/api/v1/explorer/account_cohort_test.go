@@ -584,3 +584,17 @@ func TestAccountCohortView_FlowAssetsTruncatedFlag(t *testing.T) {
 		t.Errorf("assets_truncated = %v under the cap (1 asset), want false", got)
 	}
 }
+
+// GH-646: price_cap is spec-required and non-omitempty, so an uncovered
+// cohort must still report the real cap rather than the zero value — a
+// budget-exhausted price walk (which also serves 0 priced/unpriced) must
+// stay distinguishable from "no market" by price_cap alone.
+func TestAccountCohortView_PriceCapSetWhenNotCovered(t *testing.T) {
+	h := &Handler{}
+	snap := clickhouse.AccountCohort{Root: "GROOT", Relation: "created", Covered: false}
+	v := h.accountCohortView(context.Background(), snap)
+
+	if v.Valuation.PriceCap != cohortPricedHoldingsCap {
+		t.Errorf("price_cap = %d on the not-covered branch, want %d", v.Valuation.PriceCap, cohortPricedHoldingsCap)
+	}
+}
