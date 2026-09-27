@@ -10,7 +10,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -621,6 +623,164 @@ func TestTriangulate_HealthyLegStillPublishes(t *testing.T) {
 	}
 	if got != "0.900000000000" {
 		t.Errorf("target = %q, want 0.900000000000 (1.00 × 0.90)", got)
+	}
+}
+
+// TestRecordComposite_PublishesRouteCorroborationGauge (GH-1023): the
+// router corroboration count behind the last published composite is
+// exported per (pair, window) — previously it lived only in the
+// in-process lastComposites map, so the audit trail carried no series
+// distinguishing it from path_count or the venue source count.
+func TestRecordComposite_PublishesRouteCorroborationGauge(t *testing.T) {
+	cache, _ := newTestRedis(t)
+	o := New(nil, cache, Config{})
+	pair := mkPair(t, "crypto", "XLM", "fiat", "EUR")
+	window := 5 * time.Minute
+
+	o.recordComposite(pair, window, big.NewRat(72, 1000), 3, 0.8, false)
+
+	got := testutil.ToFloat64(obs.AggregatorRouteCorroborationCount.WithLabelValues(pair.String(), windowLabel(window)))
+	if got != 3 {
+		t.Errorf("AggregatorRouteCorroborationCount(%s, %s) = %v, want 3", pair.String(), windowLabel(window), got)
+	}
+}
+
+// perPairFreezeMarker is a [FreezeMarker] fake keyed by (asset, quote),
+// unlike [recordingFreezeMarker] (which models a single global marker
+// slot). Needed whenever a test freezes one pair while a DIFFERENT pair
+// also exercises the phase-2 rehydrate-from-marker path in the same
+// tick — a shared, asset-agnostic fake would leak the first pair's
+// "present" state into the second pair's LoadState read.
+type perPairFreezeMarker struct {
+	marks []recordedMark
+	state map[string]freeze.State
+}
+
+func perPairFreezeKey(asset, quote canonical.Asset) string {
+	return asset.String() + "/" + quote.String()
+}
+
+func (m *perPairFreezeMarker) Mark(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) error {
+	return m.MarkHold(ctx, asset, quote, frozenValue, decision, freeze.State{}, 0)
+}
+
+func (m *perPairFreezeMarker) MarkHold(_ context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision, state freeze.State, ttl time.Duration) error {
+	m.marks = append(m.marks, recordedMark{
+		asset: asset, quote: quote, frozenValue: frozenValue, decision: decision, state: state, ttl: ttl,
+	})
+	if m.state == nil {
+		m.state = make(map[string]freeze.State)
+	}
+	m.state[perPairFreezeKey(asset, quote)] = state
+	return nil
+}
+
+func (m *perPairFreezeMarker) LoadState(_ context.Context, asset, quote canonical.Asset) (freeze.State, bool, error) {
+	st, ok := m.state[perPairFreezeKey(asset, quote)]
+	return st, ok, nil
+}
+
+func (m *perPairFreezeMarker) Clear(_ context.Context, asset, quote canonical.Asset) error {
+	delete(m.state, perPairFreezeKey(asset, quote))
+	return nil
+}
+
+// TestTriangulate_FrozenLegTargetPublishedDirectlyIsNotLaundered
+// (CA2-A21-correct-2): a leg of the chain freezes and the route around
+// it is unreachable (ErrNoRoute), but the TARGET published its own
+// fresh direct print this same tick. That value is not a last-known-
+// good — inheriting the freeze onto it would Expire a fresh key down to
+// FreezeTTL and stamp flags.frozen=true on a price nothing actually
+// froze. The fix must serve it unmarked: outcome
+// frozen_leg_direct_served, no freeze marker, no second
+// AnomalyFreezeEngagedTotal increment.
+func TestTriangulate_FrozenLegTargetPublishedDirectlyIsNotLaundered(t *testing.T) {
+	ctx := context.Background()
+	leg1 := xlmUsdtPair(t)                             // crypto:XLM/crypto:USDT — freezes this tick
+	leg2 := mkPair(t, "crypto", "USDT", "fiat", "EUR") // healthy, cached
+	target := mkPair(t, "crypto", "XLM", "fiat", "EUR")
+	window := 5 * time.Minute
+
+	cache, mr := newTestRedis(t)
+	marker := &perPairFreezeMarker{}
+	o := New(nil, cache, Config{
+		// target is ALSO a directly-priced pair: the per-pair refresh
+		// (which runs before triangulateAll) publishes it fresh this tick.
+		Pairs:        []canonical.Pair{leg1, target},
+		Windows:      []time.Duration{window},
+		Anomaly:      newAnomalyChecker(t, leg1),
+		FreezeWriter: marker,
+		Triangulations: []TriangulationChain{{
+			Target: target,
+			Legs:   []canonical.Pair{leg1, leg2},
+		}},
+	})
+
+	leg2Key := cachekeys.VWAP(leg2.Base, leg2.Quote, window).String()
+	targetKey := cachekeys.VWAP(target.Base, target.Quote, window).String()
+	cache.Set(ctx, leg2Key, "0.900000000000", time.Minute)
+
+	// leg1: prev = $1.00, this tick single-source prints ~$2.10 — well
+	// past the 2% freeze threshold, so leg1 freezes and contributes no
+	// edge. leg2 is cached and healthy, but with leg1 gone there is no
+	// path from XLM to EUR (CombineRoutes returns ErrNoRoute for target).
+	o.prevVWAPs[leg1.String()+":"+window.String()] = big.NewRat(1, 1)
+	o.store = &mockStore{perPair: map[string][]canonical.Trade{
+		leg1.String(): {
+			buildTrade(t, big.NewInt(100_000_000), big.NewInt(210_000_000), time.Now()),
+		},
+		// target's own direct market: a plain, undeviated first print —
+		// nothing here should ever be treated as anomalous.
+		target.String(): {
+			buildTrade(t, big.NewInt(100_000_000), big.NewInt(90_000_000), time.Now()),
+		},
+	}}
+
+	beforeDirectServed := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues(outcomeFrozenLegDirectServed))
+	beforeFrozenLeg := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues(outcomeFrozenLeg))
+	beforeEngaged := testutil.ToFloat64(obs.AnomalyFreezeEngagedTotal.WithLabelValues(string(anomaly.ClassStablecoin)))
+
+	if err := o.Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	// 1. The outcome is the new, distinct one — not folded into
+	// frozen_leg (which would mean a freeze was inherited) or missing_leg
+	// (which would mean the chains-dry alert fires for a target that is
+	// not dry at all).
+	afterDirectServed := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues(outcomeFrozenLegDirectServed))
+	if afterDirectServed-beforeDirectServed != 1 {
+		t.Errorf("%s counter delta = %v, want 1", outcomeFrozenLegDirectServed, afterDirectServed-beforeDirectServed)
+	}
+	afterFrozenLeg := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues(outcomeFrozenLeg))
+	if afterFrozenLeg-beforeFrozenLeg != 0 {
+		t.Errorf("%s counter delta = %v, want 0 (no inheritance)", outcomeFrozenLeg, afterFrozenLeg-beforeFrozenLeg)
+	}
+
+	// 2. The target's fresh direct print is actually there, unmarked —
+	// nothing laundered it away.
+	if !mr.Exists(targetKey) {
+		t.Fatalf("target key %q missing — the direct print should have served", targetKey)
+	}
+
+	// 3. No freeze marker was written for the target: inheritLegFreeze
+	// must not have run. Only leg1's OWN freeze (a different pair) may
+	// appear.
+	for _, m := range marker.marks {
+		if m.asset.Equal(target.Base) && m.quote.Equal(target.Quote) {
+			t.Errorf("freeze marker written for target %s (reason %q) — the fresh direct print was wrongly marked frozen",
+				target.String(), m.decision.Reason)
+		}
+	}
+
+	// 4. AnomalyFreezeEngagedTotal increments exactly once, for leg1's
+	// own freeze. Before the fix, inheritLegFreeze fired a SECOND
+	// increment (same class, since target shares leg1's Base asset) for
+	// a target that was never frozen.
+	afterEngaged := testutil.ToFloat64(obs.AnomalyFreezeEngagedTotal.WithLabelValues(string(anomaly.ClassStablecoin)))
+	if afterEngaged-beforeEngaged != 1 {
+		t.Errorf("AnomalyFreezeEngagedTotal(%s) delta = %v, want 1 (leg1's own freeze only)",
+			anomaly.ClassStablecoin, afterEngaged-beforeEngaged)
 	}
 }
 
