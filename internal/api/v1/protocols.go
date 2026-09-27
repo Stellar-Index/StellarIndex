@@ -719,7 +719,7 @@ func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 	// comment above) — the directory has no per-row analytics.status to
 	// carry a health signal, unlike the detail path.
 	events, _ := s.protocolEvents24h(ctx)
-	verdicts, verdictsStale := s.protocolVerdicts(ctx)
+	verdicts, _, verdictsStale := s.protocolVerdicts(ctx)
 	tvls, tvlTotal := s.protocolTVLsAndTotal()
 
 	view := ProtocolsView{Protocols: make([]ProtocolView, 0, len(protocolRegistry))}
@@ -862,17 +862,20 @@ func (s *Server) protocolDetailBuilder(meta ProtocolMeta, windowDays int) func(c
 // everything is present but the bespoke block came from the last-good
 // cache past its staleness horizon; otherwise "unavailable" — so a
 // degraded build is explicit on the wire instead of masquerading as
-// present zeros / silent absence. contract_count and events_24h can each
-// fail independently of the lake/bespoke halves (a roster count read or
-// the stats union can error while the rest of the build is healthy), so
-// their health feeds the same status instead of degrading silently.
+// present zeros / silent absence. contract_count, events_24h and the
+// completeness verdict can each fail independently of the lake/bespoke
+// halves (a roster count read, the stats union, or the completeness
+// snapshot list can error while the rest of the build is healthy), so
+// their health feeds the same status instead of degrading silently — a
+// verdict-read error used to be indistinguishable from "no snapshot
+// exists" (CA2-A06-correct-5).
 func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, windowDays int) ProtocolDetailView {
 	contracts, rosterOK := s.protocolRoster(ctx, meta)
 	classifyContractKinds(contracts, meta.Factories)
 	s.enrichContractTokens(ctx, meta, contracts)
 	contractCount, contractCountOK := s.detailContractCount(ctx, meta, contracts)
 	events, eventsOK := s.protocolEvents24h(ctx)
-	verdicts, verdictsStale := s.protocolVerdicts(ctx)
+	verdicts, verdictsOK, verdictsStale := s.protocolVerdicts(ctx)
 	v := ProtocolDetailView{
 		ProtocolView:     buildProtocolView(meta, contractCount, events, verdicts),
 		verdictsStale:    verdictsStale,
@@ -885,7 +888,7 @@ func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, win
 	bespokeOK, bespokeStale := s.enrichBespoke(ctx, meta, &v, windowDays)
 	status := protocolAnalyticsOK
 	switch {
-	case !rosterOK || !lakeOK || !bespokeOK || !contractCountOK || !eventsOK || ctx.Err() != nil:
+	case !rosterOK || !lakeOK || !bespokeOK || !contractCountOK || !eventsOK || !verdictsOK || ctx.Err() != nil:
 		status = protocolAnalyticsUnavailable
 	case bespokeStale:
 		status = protocolAnalyticsStale
@@ -1117,22 +1120,23 @@ func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta,
 	// it's appended single-threaded after the barrier.
 	var wg sync.WaitGroup
 	var seriesOK, breakdownOK, contractsOK bool
-	wg.Add(3)
+	wg.Add(2)
 	// Detached from the handler goroutine, so middleware.Recoverer does
 	// not cover these — a panic would kill the process. Recovering
 	// leaves that fill's OK flag false, which is exactly the "this fill
 	// failed" signal `seriesOK && breakdownOK && contractsOK` already
 	// carries: the analytics block is marked incomplete and must not
 	// displace a healthy cached entry.
+	//
+	// Series and breakdown run as ONE fill, not two: each used to try its
+	// own fast query and fall back to raw independently, so a fast
+	// breakdown timeout could pair a fast (day-grain) series with a raw
+	// (ledger-window) breakdown — different windows from the same build,
+	// silently breaking sum(EventBreakdown)==EventsTotal (CA2-A06-correct-2).
 	go func() {
 		defer wg.Done()
-		defer worker.Recover(s.logger, "api-protocol-series-fill")
-		seriesOK = s.fillProtocolSeries(ctx, meta.Name, ids, plan, view)
-	}()
-	go func() {
-		defer wg.Done()
-		defer worker.Recover(s.logger, "api-protocol-breakdown-fill")
-		breakdownOK = s.fillProtocolBreakdown(ctx, meta.Name, ids, plan, view)
+		defer worker.Recover(s.logger, "api-protocol-series-breakdown-fill")
+		seriesOK, breakdownOK = s.fillProtocolSeriesAndBreakdown(ctx, meta.Name, ids, plan, view)
 	}()
 	go func() {
 		defer wg.Done()
@@ -1184,46 +1188,64 @@ func protocolContractIDs(contracts []ProtocolContractView, factories []string) [
 	return ids
 }
 
-// fillProtocolBreakdown populates EventBreakdown (degrades on error).
+// fillProtocolSeriesAndBreakdown fills BOTH the daily ActivitySeries
+// (+EventsTotal) and the event-type breakdown from the SAME source —
+// fast or raw — for this build. Each degrades independently on its own
+// error (an ok flag per field, same contract as every other fill here);
+// what it does NOT allow is one succeeding on the fast pre-aggregation
+// while the other succeeds on the raw ledger-window scan, because those
+// two windows differ (day-grain vs ledger-window) and the wire's
+// sum(EventBreakdown)==EventsTotal invariant assumes one shared window.
+//
+// Before this, protocolBreakdown and protocolSeries each tried fast and
+// fell back to raw independently: a fast breakdown timeout with a
+// succeeding fast series left the breakdown on the ~104-day raw window
+// while the series stayed on the ~90-day fast window, so the typed
+// breakdown sum could exceed EventsTotal without either fill reporting a
+// failure (CA2-A06-correct-2). Now EITHER fast query erroring forces BOTH
+// onto raw together.
 //
 // The breakdown groups by topic[0]'s denormalized symbol (topic_0_sym),
 // which the lake only populates when topic[0] is a plain Symbol SCVal.
 // Many Soroban DEX events carry a non-Symbol topic[0] — Soroswap's
 // swap/sync events are the dominant case (190k+ over a 90d window with an
 // empty topic_0_sym) — so the typed breakdown alone under-counts the true
-// event total by a wide margin, and is empty entirely for protocols whose
-// every event is non-Symbol-topic'd (the phoenix "empty breakdown but the
-// chart has data" case). To keep the breakdown reconciled with EventsTotal
-// (which fillProtocolSeries sets from the unfiltered count), append a
-// synthetic "untyped" bucket carrying the remainder. EventsTotal must
-// already be set (series is filled first in enrichProtocolAnalytics).
-func (s *Server) fillProtocolBreakdown(ctx context.Context, name string, ids []string, plan protocolActivityPlan, view *ProtocolDetailView) bool {
-	breakdown, err := s.protocolBreakdown(ctx, ids, plan)
-	if err != nil {
-		s.logger.Warn("protocol event breakdown failed", "source", name, "err", err)
-		return false
+// event total by a wide margin. To keep it reconciled with EventsTotal,
+// reconcileProtocolBreakdown appends a synthetic "untyped" bucket after
+// both fields here are set.
+func (s *Server) fillProtocolSeriesAndBreakdown(ctx context.Context, name string, ids []string, plan protocolActivityPlan, view *ProtocolDetailView) (seriesOK, breakdownOK bool) {
+	if plan.fast != nil {
+		series, sErr := plan.fast.ProtocolDailyActivityFast(ctx, ids, plan.sinceDay)
+		breakdown, bErr := plan.fast.ProtocolEventBreakdownFast(ctx, ids, plan.sinceDay)
+		if sErr == nil && bErr == nil {
+			applyProtocolSeries(view, series)
+			applyProtocolBreakdown(view, breakdown)
+			return true, true
+		}
+		s.logger.Warn("fast series/breakdown would split across windows; raw fallback for both",
+			"source", name, "series_err", sErr, "breakdown_err", bErr)
 	}
-	view.EventBreakdown = make([]ProtocolEventTypeView, 0, len(breakdown)+1)
-	for _, b := range breakdown {
-		view.EventBreakdown = append(view.EventBreakdown, ProtocolEventTypeView{EventType: b.EventType, Count: int64(b.Count)})
+	series, sErr := s.protocolActivity.ProtocolDailyActivity(ctx, ids, plan.sinceLedger)
+	if sErr != nil {
+		s.logger.Warn("protocol daily activity failed", "source", name, "err", sErr)
+	} else {
+		applyProtocolSeries(view, series)
 	}
-	// The reconciling "untyped" remainder bucket is appended by
-	// reconcileProtocolBreakdown after the parallel reads complete (it needs
-	// EventsTotal, which fillProtocolSeries sets concurrently).
-	return true
+	breakdown, bErr := s.protocolActivity.ProtocolEventBreakdown(ctx, ids, plan.sinceLedger)
+	if bErr != nil {
+		s.logger.Warn("protocol event breakdown failed", "source", name, "err", bErr)
+	} else {
+		applyProtocolBreakdown(view, breakdown)
+	}
+	return sErr == nil, bErr == nil
 }
 
-// fillProtocolSeries populates the daily ActivitySeries + EventsTotal
-// (degrades on error). EventsTotal is the unfiltered contract-event count
-// over the window (the sum of the daily points), which is the
-// authoritative total the breakdown reconciles against — NOT the typed
-// breakdown sum, which excludes non-Symbol-topic'd events.
-func (s *Server) fillProtocolSeries(ctx context.Context, name string, ids []string, plan protocolActivityPlan, view *ProtocolDetailView) bool {
-	series, err := s.protocolSeries(ctx, ids, plan)
-	if err != nil {
-		s.logger.Warn("protocol daily activity failed", "source", name, "err", err)
-		return false
-	}
+// applyProtocolSeries projects the daily points onto the view and sets
+// EventsTotal — the unfiltered contract-event count over the window (the
+// sum of the daily points), which is the authoritative total the
+// breakdown reconciles against, NOT the typed breakdown sum (which
+// excludes non-Symbol-topic'd events).
+func applyProtocolSeries(view *ProtocolDetailView, series []clickhouse.ProtocolDailyPoint) {
 	view.ActivitySeries = make([]ProtocolActivityPointView, 0, len(series))
 	var total int64
 	for _, p := range series {
@@ -1231,7 +1253,17 @@ func (s *Server) fillProtocolSeries(ctx context.Context, name string, ids []stri
 		total += int64(p.Events)
 	}
 	view.EventsTotal = total
-	return true
+}
+
+// applyProtocolBreakdown projects the typed event-count rows onto the
+// view. The reconciling "untyped" remainder bucket is appended by
+// reconcileProtocolBreakdown after both fields are set (it needs
+// EventsTotal).
+func applyProtocolBreakdown(view *ProtocolDetailView, breakdown []clickhouse.ProtocolEventTypeCount) {
+	view.EventBreakdown = make([]ProtocolEventTypeView, 0, len(breakdown)+1)
+	for _, b := range breakdown {
+		view.EventBreakdown = append(view.EventBreakdown, ProtocolEventTypeView{EventType: b.EventType, Count: int64(b.Count)})
+	}
 }
 
 // fillProtocolContractActivity merges per-contract event counts + last-seen onto
@@ -1435,23 +1467,30 @@ func (s *Server) protocolEvents24h(ctx context.Context) (map[string]int64, bool)
 }
 
 // protocolVerdicts reads the latest completeness verdict per source plus
-// the /v1/coverage freshness gate over them, degrading to an empty map
-// (verdict summaries absent, nothing to qualify) when the reader is nil
-// or errors.
-func (s *Server) protocolVerdicts(ctx context.Context) (map[string]timescale.CompletenessSnapshot, bool) {
+// the /v1/coverage freshness gate over them. ok=true covers BOTH a nil
+// reader (not wired — the documented "no completeness snapshot exists"
+// shape [Completeness]'s field doc describes) and a successful read;
+// ok=false is reserved for a read ERROR, so a caller can distinguish
+// "genuinely no snapshot" from "the snapshot read failed" instead of both
+// collapsing to the identical nil map (CA2-A06-correct-5) — the same
+// split protocolEvents24h already makes for its own reader. stale is
+// independent of ok: it is false whenever there is nothing to be stale
+// about (nil reader or a failed read), true only when a successful
+// read's own verdicts are stale.
+func (s *Server) protocolVerdicts(ctx context.Context) (verdicts map[string]timescale.CompletenessSnapshot, ok, stale bool) {
 	if s.completenessReader == nil {
-		return nil, false
+		return nil, true, false
 	}
-	snaps, stale, err := s.completenessVerdicts(ctx)
+	snaps, verdictsStale, err := s.completenessVerdicts(ctx)
 	if err != nil {
 		s.logger.Warn("protocols completeness read failed", "err", err)
-		return nil, false
+		return nil, false, false
 	}
 	out := make(map[string]timescale.CompletenessSnapshot, len(snaps))
 	for _, sn := range snaps {
 		out[sn.Source] = sn
 	}
-	return out, stale
+	return out, true, verdictsStale
 }
 
 // protocolContractsErr returns name's registered instances in the unified
@@ -1596,26 +1635,4 @@ type protocolActivityPlan struct {
 	// sinceDay is then its day-grain cutoff (derived from the same tip).
 	fast     protocolFastActivityReader
 	sinceDay time.Time
-}
-
-func (s *Server) protocolBreakdown(ctx context.Context, ids []string, plan protocolActivityPlan) ([]clickhouse.ProtocolEventTypeCount, error) {
-	if plan.fast != nil {
-		out, err := plan.fast.ProtocolEventBreakdownFast(ctx, ids, plan.sinceDay)
-		if err == nil {
-			return out, nil
-		}
-		s.logger.Warn("fast breakdown failed; raw fallback", "err", err)
-	}
-	return s.protocolActivity.ProtocolEventBreakdown(ctx, ids, plan.sinceLedger)
-}
-
-func (s *Server) protocolSeries(ctx context.Context, ids []string, plan protocolActivityPlan) ([]clickhouse.ProtocolDailyPoint, error) {
-	if plan.fast != nil {
-		out, err := plan.fast.ProtocolDailyActivityFast(ctx, ids, plan.sinceDay)
-		if err == nil {
-			return out, nil
-		}
-		s.logger.Warn("fast series failed; raw fallback", "err", err)
-	}
-	return s.protocolActivity.ProtocolDailyActivity(ctx, ids, plan.sinceLedger)
 }
