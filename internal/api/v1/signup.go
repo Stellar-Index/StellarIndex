@@ -253,9 +253,9 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 	//     email. Best-effort: the key is already minted and the
 	//     plaintext is about to be returned to the customer; a
 	//     verifier or sender failure here logs at warn and drops
-	//     `email_verification_sent: false` on the wire. The full
-	//     close (validator gate that rejects unverified keys)
-	//     ships in wave 45 behind a config flag.
+	//     `email_verification_sent: false` on the wire. Under
+	//     signup_require_email_verification the key 403s until
+	//     verified, and there is no resend route yet.
 	emailSent := s.issueSignupVerification(r, rec.KeyID, req.Email)
 
 	// 11. Reply with plaintext (shown ONCE) + audit record.
@@ -277,9 +277,8 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 // succeed. Either leg failing — verifier nil, emailer nil,
 // token-gen err, Reserve err, Send err — returns false; the
 // signup-handler caller treats `false` as the cue to set
-// `email_verification_sent: false` on the wire (the customer
-// can still use the key today; a future validator-gate wave
-// will start enforcing).
+// `email_verification_sent: false` on the wire (the key works
+// only if signup_require_email_verification is off).
 //
 // All failure paths log at warn so operators see drift; none
 // short-circuit the customer's signup response (the audit's

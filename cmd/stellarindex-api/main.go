@@ -1363,7 +1363,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Signups:             signupTracker,
 		SignupIPThrottle:    signupIPThrottle,
 		SignupVerifier:      signupVerifier,
-		SignupVerifyEmailer: signupVerifyEmailerOrNil(dashboardBundle.sender, dashboardBundle.emailFrom),
+		SignupVerifyEmailer: signupVerifyEmailerOrNil(dashboardBundle.sender, dashboardBundle.emailFrom, cfg.API.SignupRequireEmailVerification),
 		// F-1218 wave 45 (codex audit-2026-05-12): the verify
 		// handler flips the EmailVerifiedAt flag on the
 		// underlying Redis-stored API key record after Consume.
@@ -4718,45 +4718,68 @@ func warnOpenCORS(logger *slog.Logger, allowedOrigins []string, authMode string)
 // interface to the underlying notify.Sender + an EmailFrom
 // address. F-1218 wave 44 (codex audit-2026-05-12).
 //
-// The plaintext email body (English-only at v1) tells the
-// customer the link is single-use and expires in 24h, mirroring
-// the dashboard magic-link copy. HTML body included so spam
-// filters don't down-rank the message; text body is the
-// authoritative content for screen readers and plaintext
-// clients.
+// requireVerification mirrors cfg.API.SignupRequireEmailVerification:
+// the mail must not promise a working key when RequireEmailVerified
+// 403s it until the link is clicked.
 type signupVerifyEmailerAdapter struct {
-	sender notify.Sender
-	from   string
+	sender              notify.Sender
+	from                string
+	requireVerification bool
 }
 
-// signupVerifyHTMLTemplate escapes verifyURL contextually: it embeds the
-// client-supplied Host header, so it is not trusted markup.
+// signupVerifyMailData is the HTML template input; VerifyURL embeds the
+// client-supplied Host header, so it is escaped contextually.
+type signupVerifyMailData struct {
+	VerifyURL           string
+	RequireVerification bool
+}
+
 var signupVerifyHTMLTemplate = template.Must(template.New("signup_verify.html").Parse(
 	"<p>Welcome to the Stellar Index API.</p>" +
 		"<p>Click the link below to confirm your email address. " +
 		"The link is single-use and expires in 24 hours.</p>" +
-		`<p><a href="{{.}}">{{.}}</a></p>` +
+		`<p><a href="{{.VerifyURL}}">{{.VerifyURL}}</a></p>` +
+		"{{if .RequireVerification}}" +
+		"<p>The API key returned in the signup response is inactive until you " +
+		"confirm: every request made with it is rejected (HTTP 403, " +
+		"<code>signup-verify-required</code>) until you click the link above.</p>" +
+		"{{else}}" +
 		"<p>You can use the API key returned in the signup response " +
 		"immediately. Confirmation flips an <code>email_verified=true</code> " +
 		"flag on the key so the dashboard can surface it as a verified account.</p>" +
+		"{{end}}" +
 		"<p>If you didn't sign up, you can safely ignore this email.</p>"))
+
+// signupVerifyTextBody renders the plaintext body, the authoritative
+// content for screen readers and plaintext clients.
+func signupVerifyTextBody(verifyURL string, requireVerification bool) string {
+	keyStatus := "You can use the API key returned in the signup response\n" +
+		"immediately. Confirmation flips a `email_verified=true`\n" +
+		"flag on the key so the dashboard can surface it as a\n" +
+		"verified account.\n\n"
+	if requireVerification {
+		keyStatus = "The API key returned in the signup response is inactive\n" +
+			"until you confirm: every request made with it is rejected\n" +
+			"(HTTP 403, signup-verify-required) until you click the\n" +
+			"link above.\n\n"
+	}
+	return "Welcome to the Stellar Index API.\n\n" +
+		"Click the link below to confirm your email address. The\n" +
+		"link is single-use and expires in 24 hours.\n\n" +
+		verifyURL + "\n\n" +
+		keyStatus +
+		"If you didn't sign up, you can safely ignore this email.\n"
+}
 
 func (a *signupVerifyEmailerAdapter) SendSignupVerification(ctx context.Context, toEmail, verifyURL string) error {
 	if a == nil || a.sender == nil {
 		return errors.New("signupVerifyEmailer: not configured")
 	}
 	subject := "Confirm your Stellar Index signup"
-	textBody := "Welcome to the Stellar Index API.\n\n" +
-		"Click the link below to confirm your email address. The\n" +
-		"link is single-use and expires in 24 hours.\n\n" +
-		verifyURL + "\n\n" +
-		"You can use the API key returned in the signup response\n" +
-		"immediately. Confirmation flips a `email_verified=true`\n" +
-		"flag on the key so the dashboard can surface it as a\n" +
-		"verified account.\n\n" +
-		"If you didn't sign up, you can safely ignore this email.\n"
+	textBody := signupVerifyTextBody(verifyURL, a.requireVerification)
 	var hb strings.Builder
-	if err := signupVerifyHTMLTemplate.Execute(&hb, verifyURL); err != nil {
+	data := signupVerifyMailData{VerifyURL: verifyURL, RequireVerification: a.requireVerification}
+	if err := signupVerifyHTMLTemplate.Execute(&hb, data); err != nil {
 		return fmt.Errorf("signupVerifyEmailer: render html body: %w", err)
 	}
 	htmlBody := hb.String()
@@ -4819,7 +4842,8 @@ func requireEmailVerifiedOrNil(enabled bool) middleware.Middleware {
 // when both a real sender and a non-empty EmailFrom are wired;
 // otherwise nil so the signup handler skips the email send and
 // reports `email_verification_sent: false` on the wire.
-func signupVerifyEmailerOrNil(sender notify.Sender, from string) v1.SignupVerifyEmailer {
+// requireVerification selects the mail copy describing the key's state.
+func signupVerifyEmailerOrNil(sender notify.Sender, from string, requireVerification bool) v1.SignupVerifyEmailer {
 	if sender == nil || from == "" {
 		return nil
 	}
@@ -4837,7 +4861,7 @@ func signupVerifyEmailerOrNil(sender notify.Sender, from string) v1.SignupVerify
 		// honestly says `email_verification_sent: false`.
 		return nil
 	}
-	return &signupVerifyEmailerAdapter{sender: sender, from: from}
+	return &signupVerifyEmailerAdapter{sender: sender, from: from, requireVerification: requireVerification}
 }
 
 // touchUsageMiddlewareOrNil returns the wired TouchUsage

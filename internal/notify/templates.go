@@ -92,7 +92,7 @@ const magicLinkHTMLTemplate = `<!DOCTYPE html>
         <span style="display:inline-block;font-family:'SF Mono',Menlo,Consolas,monospace;font-size:32px;font-weight:600;letter-spacing:0.35em;background:#f1f5f9;color:#0f172a;padding:16px 24px;border-radius:8px;">{{.Code}}</span>
       </p>
       <p style="margin:0 0 24px;color:#94a3b8;font-size:13px;line-height:1.5;text-align:center;">Expires in {{.ExpiresInMinutes}} minutes · single use</p>
-      <p style="margin:0 0 24px;color:#64748b;font-size:13px;line-height:1.5;">Or just click to sign in:</p>
+      <p style="margin:0 0 24px;color:#64748b;font-size:13px;line-height:1.5;">Or click to sign in. The button only works in the browser where you requested this email; on any other device, enter the code instead.</p>
       <p style="margin:0 0 24px;">
         <a href="{{.LinkURL}}" style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;font-weight:500;">Sign in</a>
       </p>
@@ -112,7 +112,8 @@ Enter this code on the sign-in page (expires in {{.ExpiresInMinutes}} minutes, s
 
   {{.Code}}
 
-Or click this link to sign in:
+Or click this link to sign in. The link only works in the browser where
+you requested this email; on any other device, enter the code instead.
 
   {{.LinkURL}}
 
