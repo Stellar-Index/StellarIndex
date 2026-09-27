@@ -38,3 +38,4 @@ galexie-archive-tip-lag.service:PrivateTmp
 galexie-archive-tip-lag.service:ProtectKernelTunables
 galexie-archive-tip-lag.service:ProtectKernelModules
 galexie-archive-tip-lag.service:ProtectControlGroups
+stellar-core-auto-upgrade.service:NoNewPrivileges  # apt-get update seteuid()s to _apt; NNP makes it fail
