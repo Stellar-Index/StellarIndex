@@ -4,8 +4,10 @@
 package v1_test
 
 import (
+	"encoding/json"
 	"math/big"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -182,6 +184,103 @@ func TestFiatVWAPUniformOnChainUnchanged(t *testing.T) {
 	if env.Data.BaseVolume != "20000000000" {
 		t.Errorf("uniform-7dp vwap base_volume = %q, want 20000000000 (2·10^10 raw, "+
 			"unchanged — a uniform window must not be rescaled)", env.Data.BaseVolume)
+	}
+}
+
+// TestVWAPStatesVolumeScale pins that /v1/vwap names the smallest-unit scale
+// its base_volume/quote_volume are in. The same 2000 XLM serves as
+// 200000000000 in a mixed CEX+on-chain fiat window and 20000000000 in an
+// on-chain-only one (the two tests above); without a stated scale a client
+// dividing by one constant is off tenfold on one of them. The outlier case
+// pins that the scale is taken before FilterOutliers: dropping the only CEX
+// print leaves the surviving on-chain volumes lifted to 8dp.
+func TestVWAPStatesVolumeScale(t *testing.T) {
+	usdc, _ := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	usdcCrypto, _ := canonical.ParseAsset("crypto:USDC")
+	xlmNative, _ := canonical.ParseAsset("native")
+	xlmTicker, _ := canonical.ParseAsset("crypto:XLM")
+	usdt, _ := canonical.ParseAsset("crypto:USDT")
+	onchainPair, _ := canonical.NewPair(xlmNative, usdc)
+	backerPair, _ := canonical.NewPair(xlmNative, usdcCrypto)
+	cexPair, _ := canonical.NewPair(xlmTicker, usdt)
+	t0 := scaleNormBucketStart()
+	xlm := func(n int64, dec int) *big.Int { return new(big.Int).Mul(big.NewInt(n), scaleNormPow10(dec)) }
+
+	onchainNearTen := make([]canonical.Trade, 0, 4)
+	for i, quote := range []int64{1000, 1010, 1020, 990} { // 10000 XLM @ ~0.10
+		onchainNearTen = append(onchainNearTen, scaleNormTrade("sdex", onchainPair, uint32(10+i),
+			t0.Add(time.Duration(i)*time.Minute), xlm(10000, 7), xlm(quote, 7)))
+	}
+
+	cases := []struct {
+		name, query  string
+		trades       map[string][]canonical.Trade
+		wantDecimals string
+		wantFiltered int
+	}{
+		{
+			name:  "mixed on-chain and CEX fiat window",
+			query: "base=native&quote=fiat:USD",
+			trades: map[string][]canonical.Trade{
+				fiatParityPairKey(onchainPair): {scaleNormTrade("sdex", onchainPair, 1, t0, xlm(1000, 7), xlm(100, 7))},
+				fiatParityPairKey(cexPair):     {scaleNormTrade("binance", cexPair, 2, t0.Add(5*time.Minute), xlm(1000, 8), xlm(120, 8))},
+			},
+			wantDecimals: "8",
+		},
+		{
+			name:  "on-chain-only fiat window",
+			query: "base=native&quote=fiat:USD",
+			trades: map[string][]canonical.Trade{
+				fiatParityPairKey(onchainPair): {scaleNormTrade("sdex", onchainPair, 1, t0, xlm(1000, 7), xlm(100, 7))},
+				fiatParityPairKey(backerPair):  {scaleNormTrade("soroswap", backerPair, 2, t0.Add(time.Minute), xlm(1000, 7), xlm(200, 7))},
+			},
+			wantDecimals: "7",
+		},
+		{
+			name:  "only CEX print filtered as outlier",
+			query: "base=native&quote=fiat:USD&outlier_sigma=3",
+			trades: map[string][]canonical.Trade{
+				fiatParityPairKey(onchainPair): onchainNearTen,
+				fiatParityPairKey(cexPair):     {scaleNormTrade("binance", cexPair, 20, t0.Add(30*time.Minute), xlm(1000, 8), xlm(5000, 8))},
+			},
+			wantDecimals: "8",
+			wantFiltered: 1,
+		},
+		{
+			name:  "unregistered source",
+			query: "base=native&quote=" + usdc.String(),
+			trades: map[string][]canonical.Trade{
+				fiatParityPairKey(onchainPair): {scaleNormTrade("unregistered-venue", onchainPair, 1, t0, xlm(1000, 7), xlm(100, 7))},
+			},
+			wantDecimals: "null",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httpTestServer(t, v1.New(v1.Options{
+				History:           &fiatConstituentReader{tradesByPair: tc.trades},
+				USDPeggedClassics: []canonical.Asset{usdc},
+			}))
+			resp := mustGet(t, ts.URL+"/v1/vwap?"+tc.query+scaleNormWindow())
+			if resp.StatusCode != http.StatusOK {
+				body, _ := readAll(resp)
+				t.Fatalf("vwap status = %d, want 200: %s", resp.StatusCode, body)
+			}
+			var env struct {
+				Data map[string]json.RawMessage `json:"data"`
+			}
+			mustDecode(t, resp, &env)
+			if got := string(env.Data["outliers_filtered"]); got != strconv.Itoa(tc.wantFiltered) {
+				t.Fatalf("outliers_filtered = %s, want %d (fixture no longer exercises its case)", got, tc.wantFiltered)
+			}
+			for _, key := range []string{"base_volume_decimals", "quote_volume_decimals"} {
+				got, present := env.Data[key]
+				if !present || string(got) != tc.wantDecimals {
+					t.Errorf("%s = %q (present=%v), want %s: base_volume=%s", key, got, present,
+						tc.wantDecimals, env.Data["base_volume"])
+				}
+			}
+		})
 	}
 }
 

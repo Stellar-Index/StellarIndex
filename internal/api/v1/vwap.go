@@ -16,8 +16,11 @@ import (
 // VWAPResult is the wire shape for /v1/vwap responses.
 //
 // Price is the volume-weighted mean as a decimal string (10-digit
-// precision, consistent with /v1/history + /v1/ohlc). Volumes are
-// raw integer strings in the asset's smallest unit.
+// precision, consistent with /v1/history + /v1/ohlc). Volumes are raw
+// smallest-unit integer strings at the per-SOURCE scale of the venues in
+// the window (7 on-chain, 8 CEX, 6 FX), lifted to one common scale when a
+// fiat quote merges venues; BaseVolumeDecimals / QuoteVolumeDecimals
+// state that scale, as [OHLCBar] does.
 //
 // OutliersFiltered reports how many trades the sigma filter
 // removed before the VWAP computation — zero when outlier_sigma=0
@@ -40,14 +43,18 @@ import (
 // interpret a truncated price, so it is stated here and in the
 // OpenAPI description.
 type VWAPResult struct {
-	From             WireTime `json:"from"`
-	To               WireTime `json:"to"`
-	Price            string   `json:"price"`
-	BaseVolume       string   `json:"base_volume"`
-	QuoteVolume      string   `json:"quote_volume"`
-	TradeCount       int      `json:"trade_count"`
-	OutliersFiltered int      `json:"outliers_filtered"`
-	Truncated        bool     `json:"truncated"`
+	From        WireTime `json:"from"`
+	To          WireTime `json:"to"`
+	Price       string   `json:"price"`
+	BaseVolume  string   `json:"base_volume"`
+	QuoteVolume string   `json:"quote_volume"`
+	// nil when a contributing trade's source is unrecognised: the sums
+	// are then not convertible to asset units.
+	BaseVolumeDecimals  *int `json:"base_volume_decimals"`
+	QuoteVolumeDecimals *int `json:"quote_volume_decimals"`
+	TradeCount          int  `json:"trade_count"`
+	OutliersFiltered    int  `json:"outliers_filtered"`
+	Truncated           bool `json:"truncated"`
 }
 
 // handleVWAP serves GET /v1/vwap?base=...&quote=...&from=...&to=...&outlier_sigma=...
@@ -127,19 +134,9 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sigma := 0.0
-	if raw := r.URL.Query().Get("outlier_sigma"); raw != "" {
-		v, err := strconv.ParseFloat(raw, 64)
-		// NaN comparisons are always false, so `v < 0` doesn't catch
-		// ParseFloat("NaN"). Also reject ±Inf explicitly.
-		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/invalid-sigma",
-				"Invalid outlier_sigma", http.StatusBadRequest,
-				"outlier_sigma must be a non-negative finite number; omit or 0 disables filtering")
-			return
-		}
-		sigma = v
+	sigma, ok := parseVWAPOutlierSigma(w, r)
+	if !ok {
+		return
 	}
 
 	// maxTrades caps each single-shot aggregation. Hitting the cap
@@ -164,6 +161,10 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+
+	// Before FilterOutliers: the filter drops trades but does not un-lift
+	// the survivors, so only the fetched slice states their scale (F096).
+	volumeDecimals := commonAmountScaleDecimals(trades)
 
 	pre := len(trades)
 	if sigma > 0 {
@@ -212,15 +213,37 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	// (GH-1045), never ORed across the base's other quotes.
 	firing, checked := s.lookupDivergenceFlag(r.Context(), base, quote)
 	writeJSON(w, VWAPResult{
-		From:             WireTime(from),
-		To:               WireTime(to),
-		Price:            ratToDecimal(price, ohlcPriceDigits),
-		BaseVolume:       aggregate.TotalBaseVolume(trades).String(),
-		QuoteVolume:      aggregate.TotalQuoteVolume(trades).String(),
-		TradeCount:       len(trades),
-		OutliersFiltered: outliersFiltered,
-		Truncated:        pre == maxTrades,
+		From:                WireTime(from),
+		To:                  WireTime(to),
+		Price:               ratToDecimal(price, ohlcPriceDigits),
+		BaseVolume:          aggregate.TotalBaseVolume(trades).String(),
+		QuoteVolume:         aggregate.TotalQuoteVolume(trades).String(),
+		BaseVolumeDecimals:  wireScaleDecimals(volumeDecimals),
+		QuoteVolumeDecimals: wireScaleDecimals(volumeDecimals),
+		TradeCount:          len(trades),
+		OutliersFiltered:    outliersFiltered,
+		Truncated:           pre == maxTrades,
 	}, Flags{Triangulated: triangulated, DivergenceWarning: firing, DivergenceChecked: checked})
+}
+
+// parseVWAPOutlierSigma parses ?outlier_sigma=, defaulting to 0 (no
+// filtering). Reports ok=false after writing a problem+json.
+func parseVWAPOutlierSigma(w http.ResponseWriter, r *http.Request) (float64, bool) {
+	raw := r.URL.Query().Get("outlier_sigma")
+	if raw == "" {
+		return 0, true
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	// NaN comparisons are always false, so `v < 0` doesn't catch
+	// ParseFloat("NaN"). Also reject ±Inf explicitly.
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-sigma",
+			"Invalid outlier_sigma", http.StatusBadRequest,
+			"outlier_sigma must be a non-negative finite number; omit or 0 disables filtering")
+		return 0, false
+	}
+	return v, true
 }
 
 // fetchVWAPTrades is the trade-fetch + error-dispatch wrapper extracted

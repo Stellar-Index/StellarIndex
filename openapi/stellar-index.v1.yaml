@@ -19036,12 +19036,43 @@ components:
             request supplied `to` explicitly, this echoes the
             request value.
         price:             { type: string, description: "VWAP decimal, 10 digits." }
-        base_volume:       { type: string }
-        quote_volume:      { type: string }
+        base_volume:
+          type: string
+          description: |
+            Σ base_amount as a raw smallest-unit integer. The smallest
+            unit is NOT a fixed stroop — it is the per-SOURCE scale of the
+            venues in the window (on-chain DEX 7 decimals, CEX 8, FX feeds
+            6), lifted to one common scale when a fiat quote merges
+            venues. Divide by 10^`base_volume_decimals` to get asset
+            units; dividing by a hardcoded 1e7 overstates any window
+            holding a CEX trade tenfold.
+        quote_volume:
+          type: string
+          description: |
+            Σ quote_amount as a raw smallest-unit integer, on the same
+            per-source scale as `base_volume`. Divide by
+            10^`quote_volume_decimals` to get asset units.
+        base_volume_decimals:
+          type: [integer, "null"]
+          description: |
+            Decimal exponent of `base_volume`: asset units =
+            base_volume / 10^base_volume_decimals. Resolved over the
+            trades as fetched, so it stays correct when the outlier
+            filter removes the only venue that set it. `null` when a
+            contributing trade's source has no registry entry:
+            `base_volume` is then not convertible to asset units and must
+            not be divided by a guessed scale.
+        quote_volume_decimals:
+          type: [integer, "null"]
+          description: |
+            Decimal exponent of `quote_volume` — see
+            `base_volume_decimals`. Equal to it today (a source stamps
+            both legs of a trade at one scale); carried separately because
+            a scale belongs to an amount, not to a pair.
         trade_count:       { type: integer }
         outliers_filtered: { type: integer }
         truncated:         { type: boolean }
-      required: [from, to, price, base_volume, quote_volume, trade_count, outliers_filtered, truncated]
+      required: [from, to, price, base_volume, quote_volume, base_volume_decimals, quote_volume_decimals, trade_count, outliers_filtered, truncated]
 
     VWAPEnvelope:
       allOf:
