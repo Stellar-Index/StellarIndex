@@ -5,7 +5,7 @@ status: living
 severity: P1
 ---
 
-# Runbook — `stellarindex_timescale_backup_failed` / `_backup_none_24h` / `stellarindex_pgbackrest_backup_metrics_absent` / `_backup_unit_failed`
+# Runbook — `stellarindex_timescale_backup_failed` / `_backup_none_24h` / `stellarindex_pgbackrest_backup_metrics_absent` / `_backup_unit_failed` / `stellarindex_wal_archive_stale`
 
 ## At a glance
 
@@ -179,6 +179,29 @@ and the alert resolves within ~15 min.
       Prometheus (allow ≤ 10 min exporter lag) AND both alerts resolve in
       Alertmanager.
 
+## `stellarindex_wal_archive_stale`
+
+`pg_stat_archiver_last_archive_age > 600`, `for: 10m`,
+`severity: ticket` — `configs/prometheus/rules.r1/infra.yml` /
+`deploy/monitoring/rules/infra.yml` (a different rule file from the
+alerts above: it reads postgres_exporter's built-in `pg_stat_archiver`
+collector, not pgbackrest's). This wires an alert onto the manual
+`SELECT ... FROM pg_stat_archiver` check in Quick diagnosis above,
+which until now required an operator to run it by hand to notice
+archiving had stalled — the same signal
+`internal/api/v1/diagnostics_backups.go` reads for
+`postgres.wal_archive_max_age_seconds` on `/diagnostics/backups`.
+14d max observed was 82 s, so 600 s is well above steady state.
+
+Continuous WAL archiving into repo1 (and repo2, since `archive-push`
+fans out to every repo) is what holds the 5-min RPO between full
+backups — see Step 4 above. A stalled archiver with backups otherwise
+green is a leading indicator: the RPO is already wider than believed,
+even though `_backup_none_24h` won't fire until a full backup is also
+overdue. Check `pg_stat_archiver.failed_count` and repo1's free space
+(`zfs-pool-full.md`) first — the same root causes as #1 and #3 above
+usually explain both symptoms together.
+
 ## Root cause analysis
 
 - Backup log from the last successful through the first failure.
@@ -224,6 +247,9 @@ and the alert resolves within ~15 min.
 
 ## Changelog
 
+- 2026-09-27 — added `stellarindex_wal_archive_stale`
+  (`pg_stat_archiver_last_archive_age`, ticket, `infra.yml`) — wires the
+  manual `pg_stat_archiver` check above to an alert.
 - 2026-08-28 — added `stellarindex_pgbackrest_backup_metrics_absent`
   (page) + `stellarindex_pgbackrest_backup_unit_failed` (ticket) and their
   mitigation section (audit finding backup-restore-1: the `min by

@@ -250,6 +250,136 @@ tests:
                 replacement during the next maintenance window even if ZFS
                 isn't complaining yet.
 
+  # ── 14d-review (2026-09-27): r1's OS/boot disks are mdadm RAID1
+  # (md0 swap, md1 /) — a failed member on one array must not be
+  # masked by the other array staying healthy.
+  - interval: 1m
+    name: a failed mdadm member pages, a healthy array stays quiet
+    input_series:
+      - series: 'node_md_disks{device="md1",state="failed",instance="r1:9100"}'
+        values: '1+0x10'
+      - series: 'node_md_disks{device="md1",state="active",instance="r1:9100"}'
+        values: '1+0x10'
+      - series: 'node_md_disks{device="md0",state="failed",instance="r1:9100"}'
+        values: '0+0x10'
+      - series: 'node_md_disks{device="md0",state="active",instance="r1:9100"}'
+        values: '2+0x10'
+
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_md_array_degraded
+        exp_alerts:
+          - exp_labels:
+              device: md1
+              state: failed
+              instance: r1:9100
+              severity: page
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/md-array-degraded.md
+              summary: "mdadm array md1 on r1:9100 has a failed member disk"
+              description: |
+                node_md_disks reports a disk in the `failed` state for
+                md1. A RAID1 array tolerates exactly one
+                failed member — this is the moment redundancy is lost, not
+                yet a data-loss event. Check `cat /proc/mdstat` and replace
+                the failed member before a second disk fails.
+
+  # ── filesystem forced read-only: distinct from disk-full ──────────
+  # Excludes pseudo-filesystems (tmpfs here) that are read-only by
+  # design, not by failure.
+  - interval: 1m
+    name: a real filesystem forced read-only pages, tmpfs stays excluded
+    input_series:
+      - series: 'node_filesystem_readonly{device="/dev/md1",mountpoint="/",fstype="ext4",instance="r1:9100"}'
+        values: '1+0x10'
+      - series: 'node_filesystem_readonly{device="tmpfs",mountpoint="/run",fstype="tmpfs",instance="r1:9100"}'
+        values: '1+0x10'
+      - series: 'node_filesystem_readonly{device="/dev/sdb1",mountpoint="/var/lib/postgresql",fstype="ext4",instance="r1:9100"}'
+        values: '0+0x10'
+
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_filesystem_readonly
+        exp_alerts:
+          - exp_labels:
+              device: /dev/md1
+              mountpoint: /
+              fstype: ext4
+              instance: r1:9100
+              severity: page
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/filesystem-readonly.md
+              summary: "Filesystem / on r1:9100 is READ-ONLY"
+              description: |
+                / (/dev/md1) has been
+                remounted read-only by the kernel, almost always on an
+                unrecoverable disk error. Every write to it — Postgres WAL if
+                it's the DB volume, application logs if it's root — is now
+                failing outright. `dmesg -T | grep -i "remount-ro\|EXT4-fs error\|XFS.*Corruption"`.
+
+  # ── the drive controller's own composite health bitmask ───────────
+  - interval: 1m
+    name: an NVMe critical_warning bit pages
+    input_series:
+      - series: 'nvme_critical_warning{device="nvme0n1",instance="r1:9100"}'
+        values: '1+0x10'
+      - series: 'nvme_critical_warning{device="nvme1n1",instance="r1:9100"}'
+        values: '0+0x10'
+
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_nvme_critical_warning
+        exp_alerts:
+          - exp_labels:
+              device: nvme0n1
+              instance: r1:9100
+              severity: page
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
+              summary: "NVMe nvme0n1 reports a critical warning (1)"
+              description: |
+                The drive controller's own critical_warning bitmask is
+                nonzero on nvme0n1 — the strongest signal this
+                alert set has, direct from the drive rather than inferred
+                from wear/spare/media counters. `smartctl -a` the device and
+                treat as the other nvme-smart.md alerts.
+
+  # ── continuous WAL archiving holds the 5-min RPO between backups ──
+  # 600s threshold; 14d max observed on r1 was 82s, well under it.
+  - interval: 1m
+    name: stalled WAL archiving tickets, steady-state stays quiet
+    input_series:
+      - series: 'pg_stat_archiver_last_archive_age{instance="r1:9100"}'
+        values: '700+0x15'
+      - series: 'pg_stat_archiver_last_archive_age{instance="r1-replica:9100"}'
+        values: '82+0x15'
+
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_wal_archive_stale
+        exp_alerts:
+          - exp_labels:
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+              summary: "WAL archiving on r1:9100 is 11m 40s behind"
+              description: |
+                The newest archived WAL segment is over 10 minutes old.
+                Continuous WAL archiving into repo1 (and repo2) is what holds
+                the 5-min RPO between full pgBackRest backups — see
+                backup-failed.md's Step 4. Check
+                `pg_stat_archiver.failed_count` and repo1's free space
+                (`zfs-pool-full.md`) first.
+
   # ── T583: no rule existed on node_textfile_scrape_error ────────────
   # Pins that a sustained textfile-collector parse error rings after
   # the 15m debounce, and NOT before it (the tmp+mv atomic-write

@@ -7,11 +7,12 @@ severity: P2
 
 # Runbook — NVMe drive health
 
-Covers four alerts, all of which end in the same decision — *do we replace a
+Covers five alerts, all of which end in the same decision — *do we replace a
 drive, and how soon* — but which fire at very different points on that curve:
 
 | Alert | What it means | Urgency |
 | ----- | ------------- | ------- |
+| `stellarindex_nvme_critical_warning` | The controller's own SMART critical_warning bitmask is nonzero | **P1** — direct from the drive, not inferred |
 | `stellarindex_nvme_smart_warn` | The controller logged a new error | P2 |
 | `stellarindex_nvme_wear_high` | >80% of rated write endurance consumed | P3 — procurement trigger |
 | `stellarindex_nvme_spare_low` | <20% reserve blocks left | **P1** — late-stage, moves shortly before failure |
@@ -47,6 +48,20 @@ to watch it.
 | Detected by | `deploy/monitoring/rules/infra.yml` (and the r1 twin in `configs/prometheus/rules.r1/infra.yml`) |
 | Typical MTTR | hours – days (replacement lead time) |
 | Impact | Not immediately customer-visible. An IO error is the drive saying "I'm starting to fail." The raidz1 `data` pool tolerates exactly ONE full drive failure; a single IO error is fine — until it isn't, and there is no second margin. |
+
+## `stellarindex_nvme_critical_warning`
+
+`nvme_critical_warning > 0`, `for: 5m`, `severity: page`
+(`configs/prometheus/rules.r1/infra.yml` / `deploy/monitoring/rules/infra.yml`,
+group `stellarindex.infra`) — the same packaged nvme collector as the
+three wear alerts, reading nvme-cli's `critical_warning` field
+verbatim. This bitmask is the controller's own composite health flag
+(temperature threshold, spare capacity, reliability degraded, media in
+read-only mode, or backup device failure) — treat any nonzero value as
+the strongest signal in this runbook, since it comes straight from the
+drive rather than being inferred from wear/spare/media counters. Same
+diagnosis and mitigation path as the other alerts below;
+`smartctl -a /dev/nvmeXn1` decodes exactly which bit(s) are set.
 
 ## Symptoms
 
@@ -131,6 +146,9 @@ ssh <host> 'zpool status -v'
 
 ## Changelog
 
+- 2026-09-27 — added `stellarindex_nvme_critical_warning`
+  (`nvme_critical_warning`, page) — the composite controller bitmask,
+  previously unalerted despite the same collector publishing it.
 - 2026-09-03 — `smart_warn` repointed from `node_disk_io_errors_total`
   (not a node_exporter metric, so the alert had never been able to fire)
   to `nvme_num_err_log_entries_total`, from the same nvme collector

@@ -401,3 +401,105 @@ groups:
             despite a 30s timer. stellarindex_haproxy_vip_owner is
             reading a frozen file, not live VRRP state. `systemctl
             status keepalived-textfile-scraper.timer`.
+
+      # r1's boot/root disks are mdadm RAID1 (installimage SWRAID 1):
+      # md0 = swap, md1 = / (configs/libvirt/installimage-host.conf,
+      # docs/operations/r1-deployment-state.md). node_exporter's mdadm
+      # collector publishes `node_md_disks{device,state}` — a component
+      # dropping out of an array is a redundancy loss on the SAME class
+      # of failure stellarindex_zfs_pool_degraded pages for the data
+      # pool, just on the OS disks instead.
+      - alert: stellarindex_md_array_degraded
+        expr: node_md_disks{state="failed"} > 0
+        for: 5m
+        labels:
+          severity: page
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/md-array-degraded.md
+          summary: "mdadm array {{ $labels.device }} on {{ $labels.instance }} has a failed member disk"
+          description: |
+            node_md_disks reports a disk in the `failed` state for
+            {{ $labels.device }}. A RAID1 array tolerates exactly one
+            failed member — this is the moment redundancy is lost, not
+            yet a data-loss event. Check `cat /proc/mdstat` and replace
+            the failed member before a second disk fails.
+
+      # A filesystem remounted read-only (kernel-forced, on an
+      # unrecoverable block I/O error or detected corruption) is a
+      # distinct failure mode from running out of space — writes fail
+      # outright rather than degrading, and none of the disk-full alerts
+      # (stellarindex_node_root_disk_*, stellarindex_timescale_disk_*)
+      # can see it since the filesystem still reports free space.
+      # fstype-excluded: pseudo-filesystems node_exporter also reports on
+      # that are read-only by design, not by failure.
+      - alert: stellarindex_filesystem_readonly
+        expr: node_filesystem_readonly{fstype!~"tmpfs|squashfs|overlay|nsfs|ramfs"} == 1
+        for: 5m
+        labels:
+          severity: page
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/filesystem-readonly.md
+          summary: "Filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} is READ-ONLY"
+          description: |
+            {{ $labels.mountpoint }} ({{ $labels.device }}) has been
+            remounted read-only by the kernel, almost always on an
+            unrecoverable disk error. Every write to it — Postgres WAL if
+            it's the DB volume, application logs if it's root — is now
+            failing outright. `dmesg -T | grep -i "remount-ro\|EXT4-fs error\|XFS.*Corruption"`.
+
+      # Composite bitmask straight from the drive controller's SMART log
+      # (nvme-cli's `critical_warning` field), published by the same
+      # packaged nvme collector the three storage.yml wear alerts read
+      # (nvme_percentage_used_ratio, nvme_available_spare_ratio,
+      # nvme_media_errors_total) — see nvme-smart.md. Any nonzero value
+      # means the controller itself has flagged a condition (temperature,
+      # spare capacity, reliability, read-only mode, or backup device
+      # failure) rather than something this alert set had to infer.
+      - alert: stellarindex_nvme_critical_warning
+        expr: nvme_critical_warning > 0
+        for: 5m
+        labels:
+          severity: page
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
+          summary: "NVMe {{ $labels.device }} reports a critical warning ({{ $value }})"
+          description: |
+            The drive controller's own critical_warning bitmask is
+            nonzero on {{ $labels.device }} — the strongest signal this
+            alert set has, direct from the drive rather than inferred
+            from wear/spare/media counters. `smartctl -a` the device and
+            treat as the other nvme-smart.md alerts.
+
+      # pg_stat_archiver_last_archive_age (postgres_exporter's built-in
+      # pg_stat_archiver collector) is the same signal
+      # internal/api/v1/diagnostics_backups.go reads for
+      # `postgres.wal_archive_max_age_seconds`, and the same view the
+      # backup-failed.md runbook's manual `SELECT ... FROM
+      # pg_stat_archiver` check already relies on — this wires that
+      # check to an alert instead of requiring an operator to run it by
+      # hand. Continuous WAL archiving is what holds the 5-min RPO
+      # between full backups (backup-failed.md); 14d max observed was
+      # 82s, so 600s is well above steady state.
+      - alert: stellarindex_wal_archive_stale
+        expr: pg_stat_archiver_last_archive_age > 600
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
+          summary: "WAL archiving on {{ $labels.instance }} is {{ $value | humanizeDuration }} behind"
+          description: |
+            The newest archived WAL segment is over 10 minutes old.
+            Continuous WAL archiving into repo1 (and repo2) is what holds
+            the 5-min RPO between full pgBackRest backups — see
+            backup-failed.md's Step 4. Check
+            `pg_stat_archiver.failed_count` and repo1's free space
+            (`zfs-pool-full.md`) first.
