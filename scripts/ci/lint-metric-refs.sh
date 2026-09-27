@@ -111,12 +111,6 @@ KNOWN_INERT=(
   # Prometheus registry; a gauge would be high-cardinality (out of scope).
   stellarindex_our_price
   stellarindex_reference_price
-  # api.yml — stellarindex_ratelimit_fail_closed reads
-  # stellarindex_ratelimit_fail_closed_total; the fail-closed branch
-  # (internal/api/v1/middleware/ratelimit.go's writeThrottleUnavailableProblem)
-  # currently only logs, it doesn't increment a counter. Producer lands
-  # in fix/redis-write-refusal-metrics.
-  stellarindex_ratelimit_fail_closed_total
 )
 
 # Third-party exporter metrics intentionally referenced by exprs. Listed
