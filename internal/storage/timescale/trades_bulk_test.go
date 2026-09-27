@@ -2,10 +2,14 @@ package timescale
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
 	"math/big"
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -216,5 +220,29 @@ func TestBulkTradeValues_NullUSDVolume(t *testing.T) {
 	if !ok || usd.Valid {
 		t.Fatalf("usd_volume = %#v, want an invalid sql.NullString (SQL NULL) — an unpriceable "+
 			"trade must store NULL, exactly as the row writers store it", row[9])
+	}
+}
+
+// TestBulkCopyFallsBack pins which COPY errors replay the buffer through the
+// idempotent upsert instead of failing the batch: a unique violation (the range
+// stopped being empty) and 53400 (TimescaleDB's tuple-decompression cap, hit
+// when the PK check decompresses an overlapping compressed segment).
+func TestBulkCopyFallsBack(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"unique violation", &pgconn.PgError{Code: "23505"}, true},
+		{"decompression limit", &pgconn.PgError{Code: "53400"}, true},
+		{"wrapped decompression limit", fmt.Errorf("copy: %w", &pgconn.PgError{Code: "53400"}), true},
+		{"check violation", &pgconn.PgError{Code: "23514"}, false},
+		{"plain error", errors.New("53400"), false},
+		{"nil", nil, false},
+	}
+	for _, tc := range cases {
+		if got := bulkCopyFallsBack(tc.err); got != tc.want {
+			t.Errorf("%s: bulkCopyFallsBack = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

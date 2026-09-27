@@ -237,11 +237,10 @@ func (s *Store) BulkBackfillTrades(ctx context.Context, trades []canonical.Trade
 		s.recordBulkLandedEffects(ctx, rows[p[0]:p[1]])
 	}
 	if cerr != nil {
-		if isUniqueViolation(cerr) {
-			// The range stopped being empty under us. Replay the whole buffer
-			// through the idempotent upsert; it converges over the partitions
-			// that already landed.
-			return s.bulkFallback(ctx, trades, fmt.Sprintf("COPY hit a unique violation (%v)", cerr))
+		if bulkCopyFallsBack(cerr) {
+			// Replay the whole buffer through the idempotent upsert; it
+			// converges over the partitions that already landed.
+			return s.bulkFallback(ctx, trades, fmt.Sprintf("COPY refused (%v)", cerr))
 		}
 		return BulkBackfillResult{}, cerr
 	}
@@ -711,8 +710,11 @@ func (s *Store) recordBulkLandedEffects(ctx context.Context, rows []canonical.Tr
 	}
 }
 
-// isUniqueViolation reports whether err is Postgres 23505.
-func isUniqueViolation(err error) bool {
+// bulkCopyFallsBack reports whether a COPY error is one the upsert fallback
+// recovers: 23505 (the range stopped being empty under us) or 53400 (the PK
+// check decompressed an overlapping compressed segment past the DML cap; the
+// upsert lifts that cap itself).
+func bulkCopyFallsBack(err error) bool {
 	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+	return errors.As(err, &pgErr) && (pgErr.Code == "23505" || pgErr.Code == "53400")
 }

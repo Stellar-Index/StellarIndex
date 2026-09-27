@@ -1593,7 +1593,7 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 func (s *Store) filterStorableTrades(trades []canonical.Trade) []canonical.Trade {
 	firstBad := -1
 	for i := range trades {
-		if trades[i].Validate() != nil {
+		if ValidateStorableTrade(trades[i]) != nil {
 			firstBad = i
 			break
 		}
@@ -1604,7 +1604,7 @@ func (s *Store) filterStorableTrades(trades []canonical.Trade) []canonical.Trade
 	storable := make([]canonical.Trade, firstBad, len(trades))
 	copy(storable, trades[:firstBad])
 	for _, t := range trades[firstBad:] {
-		err := t.Validate()
+		err := ValidateStorableTrade(t)
 		if err == nil {
 			storable = append(storable, t)
 			continue
@@ -1621,6 +1621,10 @@ func (s *Store) filterStorableTrades(trades []canonical.Trade) []canonical.Trade
 	}
 	return storable
 }
+
+// ValidateStorableTrade is the gate filterStorableTrades drops rows on: a
+// non-nil error means the served trades tier will not hold t.
+func ValidateStorableTrade(t canonical.Trade) error { return t.Validate() }
 
 // isOneSideZeroFill reports whether t is the SDEX rounding artifact where
 // exactly one leg rounded to 0 while the other stayed positive — the single

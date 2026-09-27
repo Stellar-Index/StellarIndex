@@ -6,11 +6,14 @@ package chops
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
@@ -66,7 +69,7 @@ func TestDrainAndWriteCountsOnlyWritten(t *testing.T) {
 		w := okWriter()
 		w.handle = func(context.Context, consumer.Event) error { return errInsert }
 
-		written, failed := drainAndWrite(ctx, logger, w, buf, true)
+		written, failed, _ := drainAndWrite(ctx, logger, w, buf, true)
 		if written["reflector"] != 0 {
 			t.Errorf("written[reflector] = %d, want 0 (all inserts failed)", written["reflector"])
 		}
@@ -77,7 +80,7 @@ func TestDrainAndWriteCountsOnlyWritten(t *testing.T) {
 
 	t.Run("HandleEvent success counts as written", func(t *testing.T) {
 		buf := []consumer.Event{fakeProtoEvent{src: "reflector"}, fakeProtoEvent{src: "reflector"}}
-		written, failed := drainAndWrite(ctx, logger, okWriter(), buf, true)
+		written, failed, _ := drainAndWrite(ctx, logger, okWriter(), buf, true)
 		if written["reflector"] != 2 {
 			t.Errorf("written[reflector] = %d, want 2", written["reflector"])
 		}
@@ -87,12 +90,12 @@ func TestDrainAndWriteCountsOnlyWritten(t *testing.T) {
 	})
 
 	t.Run("trade batch + per-row fallback both fail => failed, not written", func(t *testing.T) {
-		buf := []consumer.Event{soroswap.TradeEvent{}, soroswap.TradeEvent{}}
+		buf := []consumer.Event{storableTradeEvent(t, 1, 0), storableTradeEvent(t, 1, 1)}
 		w := okWriter()
 		w.batchTrades = func(context.Context, []canonical.Trade) error { return errInsert }
 		w.insertTrade = func(context.Context, canonical.Trade) error { return errInsert }
 
-		written, failed := drainAndWrite(ctx, logger, w, buf, true)
+		written, failed, _ := drainAndWrite(ctx, logger, w, buf, true)
 		src := soroswap.SourceName
 		if written[src] != 0 {
 			t.Errorf("written[%s] = %d, want 0 (batch + per-row both failed)", src, written[src])
@@ -103,11 +106,11 @@ func TestDrainAndWriteCountsOnlyWritten(t *testing.T) {
 	})
 
 	t.Run("trade batch fails but per-row fallback succeeds => written", func(t *testing.T) {
-		buf := []consumer.Event{soroswap.TradeEvent{}, soroswap.TradeEvent{}}
+		buf := []consumer.Event{storableTradeEvent(t, 1, 0), storableTradeEvent(t, 1, 1)}
 		w := okWriter()
 		w.batchTrades = func(context.Context, []canonical.Trade) error { return errInsert }
 		// insertTrade stays nil (succeeds)
-		written, failed := drainAndWrite(ctx, logger, w, buf, true)
+		written, failed, _ := drainAndWrite(ctx, logger, w, buf, true)
 		src := soroswap.SourceName
 		if written[src] != 2 {
 			t.Errorf("written[%s] = %d, want 2 (per-row fallback recovered)", src, written[src])
@@ -118,11 +121,11 @@ func TestDrainAndWriteCountsOnlyWritten(t *testing.T) {
 	})
 
 	t.Run("dry-run counts every event as would-write and persists nothing", func(t *testing.T) {
-		buf := []consumer.Event{fakeProtoEvent{src: "reflector"}, soroswap.TradeEvent{}}
+		buf := []consumer.Event{fakeProtoEvent{src: "reflector"}, storableTradeEvent(t, 1, 0)}
 		handleCalls := 0
 		w := okWriter()
 		w.handle = func(context.Context, consumer.Event) error { handleCalls++; return nil }
-		written, failed := drainAndWrite(ctx, logger, w, buf, false)
+		written, failed, _ := drainAndWrite(ctx, logger, w, buf, false)
 		if handleCalls != 0 {
 			t.Errorf("handle called %d times in dry-run, want 0", handleCalls)
 		}
@@ -133,6 +136,147 @@ func TestDrainAndWriteCountsOnlyWritten(t *testing.T) {
 			t.Errorf("dry-run failed = %v, want empty", failed)
 		}
 	})
+}
+
+// storableTradeEvent is a soroswap trade that passes canonical.Trade.Validate,
+// i.e. one the served trades tier would actually hold.
+func storableTradeEvent(t *testing.T, ledger, op uint32) soroswap.TradeEvent {
+	t.Helper()
+	xlm, err := canonical.NewCryptoAsset("XLM")
+	if err != nil {
+		t.Fatal(err)
+	}
+	btc, err := canonical.NewCryptoAsset("BTC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := canonical.NewPair(xlm, btc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return soroswap.TradeEvent{Trade: canonical.Trade{
+		Source:      soroswap.SourceName,
+		Ledger:      ledger,
+		TxHash:      fmt.Sprintf("%064x", uint64(ledger)<<32|uint64(op)),
+		OpIndex:     op,
+		Timestamp:   time.Unix(1_700_000_000+int64(ledger)*5, 0).UTC(),
+		Pair:        pair,
+		BaseAmount:  canonical.NewAmount(big.NewInt(10)),
+		QuoteAmount: canonical.NewAmount(big.NewInt(20)),
+	}}
+}
+
+// oneSideZeroTradeEvent is the SDEX-style fill whose quote leg rounded to 0:
+// the store's filterStorableTrades drops it before the INSERT.
+func oneSideZeroTradeEvent(t *testing.T, ledger, op uint32) soroswap.TradeEvent {
+	t.Helper()
+	ev := storableTradeEvent(t, ledger, op)
+	ev.Trade.QuoteAmount = canonical.NewAmount(big.NewInt(0))
+	return ev
+}
+
+// TestDrainAndWriteCountsDroppedTradesSeparately pins that a trade the served
+// tier refuses (filterStorableTrades drops it inside a SUCCESSFUL batch call)
+// is reported as dropped, never as written.
+func TestDrainAndWriteCountsDroppedTradesSeparately(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx := context.Background()
+	src := soroswap.SourceName
+	buf := []consumer.Event{
+		storableTradeEvent(t, 1, 0),
+		oneSideZeroTradeEvent(t, 1, 1),
+		storableTradeEvent(t, 2, 0),
+	}
+
+	cases := []struct {
+		name        string
+		batchErr    error
+		write       bool
+		wantWritten int
+		wantDropped int
+		wantPerRow  int // insertTrade calls
+	}{
+		{name: "batch succeeds", write: true, wantWritten: 2, wantDropped: 1},
+		{name: "batch fails, per-row fallback skips the unstorable row", batchErr: errInsert, write: true, wantWritten: 2, wantDropped: 1, wantPerRow: 2},
+		{name: "dry-run predicts the same split", wantWritten: 2, wantDropped: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := okWriter()
+			w.batchTrades = func(context.Context, []canonical.Trade) error { return tc.batchErr }
+			perRow := 0
+			w.insertTrade = func(_ context.Context, tr canonical.Trade) error {
+				perRow++
+				return tr.Validate()
+			}
+			written, failed, dropped := drainAndWrite(ctx, logger, w, buf, tc.write)
+			if written[src] != tc.wantWritten || dropped[src] != tc.wantDropped || failed[src] != 0 {
+				t.Errorf("written=%d dropped=%d failed=%d, want %d/%d/0",
+					written[src], dropped[src], failed[src], tc.wantWritten, tc.wantDropped)
+			}
+			if perRow != tc.wantPerRow {
+				t.Errorf("insertTrade calls = %d, want %d", perRow, tc.wantPerRow)
+			}
+		})
+	}
+}
+
+// TestDrainAndWriteCutsTradeBatchesOnLedgerBoundary pins that no ledger's
+// trades are split across two batches. The bulk COPY writer's emptiness probe
+// is `ledger BETWEEN min AND max`; a ledger split across batches N and N+1
+// makes N+1 find N's tail and refuse the COPY on every batch.
+func TestDrainAndWriteCutsTradeBatchesOnLedgerBoundary(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx := context.Background()
+
+	perLedger := []struct{ ledger, n uint32 }{
+		{1, upsertTradeBatchN * 6 / 10},
+		{2, upsertTradeBatchN * 9 / 10},
+		{3, upsertTradeBatchN / 5},
+		{4, upsertTradeBatchN},
+		{5, 1},
+	}
+	var buf []consumer.Event
+	for _, pl := range perLedger {
+		for op := range pl.n {
+			buf = append(buf, storableTradeEvent(t, pl.ledger, op))
+		}
+	}
+
+	for _, bulk := range []bool{false, true} {
+		t.Run(fmt.Sprintf("bulk=%v", bulk), func(t *testing.T) {
+			var batches [][]canonical.Trade
+			record := func(b []canonical.Trade) {
+				batches = append(batches, append([]canonical.Trade(nil), b...))
+			}
+			w := okWriter()
+			w.batchTrades = func(_ context.Context, b []canonical.Trade) error { record(b); return nil }
+			if bulk {
+				w.bulkTrades = func(_ context.Context, b []canonical.Trade) (timescale.BulkBackfillResult, error) {
+					record(b)
+					return timescale.BulkBackfillResult{Path: timescale.BulkBackfillPathCopy}, nil
+				}
+			}
+			written, failed, _ := drainAndWrite(ctx, logger, w, buf, true)
+			if written[soroswap.SourceName] != len(buf) || len(failed) != 0 {
+				t.Fatalf("written=%v failed=%v, want all %d written", written, failed, len(buf))
+			}
+			batchOf := map[uint32]int{}
+			total := 0
+			for i, b := range batches {
+				total += len(b)
+				for _, tr := range b {
+					if prev, seen := batchOf[tr.Ledger]; seen && prev != i {
+						t.Fatalf("ledger %d spans batches %d and %d", tr.Ledger, prev, i)
+					}
+					batchOf[tr.Ledger] = i
+				}
+			}
+			if total != len(buf) {
+				t.Errorf("batched %d rows, want %d", total, len(buf))
+			}
+		})
+	}
 }
 
 // TestParseCSVList pins the -contracts flag parse: trimmed, order-preserving,
