@@ -4765,8 +4765,18 @@ func parseFiatPeggedClassics(raw map[string]string, logger *slog.Logger) map[str
 }
 
 func warnOpenCORS(logger *slog.Logger, allowedOrigins []string, authMode string) {
-	wildcardOnly := len(allowedOrigins) == 1 && allowedOrigins[0] == "*"
-	if !wildcardOnly {
+	// Match middleware.CORS's own wildcard test (allowed["*"] set
+	// membership) rather than requiring "*" to be the ONLY entry — a
+	// config like ["*", "https://evil.com"] is just as wide open, since
+	// CORS() echoes "*" to every origin regardless of the extra entries.
+	hasWildcard := false
+	for _, o := range allowedOrigins {
+		if o == "*" {
+			hasWildcard = true
+			break
+		}
+	}
+	if !hasWildcard {
 		return
 	}
 	switch authMode {
