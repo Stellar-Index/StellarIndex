@@ -359,6 +359,13 @@ allowed_origins = ["https://stellarindex.io", "https://api.stellarindex.io", "ht
 # cross-origin requests to /v1/account/*; valid only beside the explicit
 # allowed_origins list above (the API panics at boot beside ["*"]).
 allow_credentials = true
+# RSEC-X1 (audit-2026-09-18): allowed_origins above is a public READ
+# allow-list (status./docs. only ever read /v1/ledger/tip; testnet./
+# futurenet. are the cross-network tip-switcher). None of those need a
+# cookie riding cross-origin, and none should be trusted to bypass the
+# same-site write guard. Only the surfaces that actually serve the
+# dashboard/account UI carry the session cookie cross-origin.
+credentialed_origins = ["https://stellarindex.io", "https://www.stellarindex.io", "https://dashboard.stellarindex.io"]
 # AC7 onboarding fix (2026-06-13): verification-gated signup stays OFF
 # until a verified-sender domain is set up end-to-end.
 signup_require_email_verification = false

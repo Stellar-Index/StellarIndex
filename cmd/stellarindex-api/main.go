@@ -374,8 +374,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	var cors middleware.Middleware
 	if len(cfg.API.AllowedOrigins) > 0 {
 		cors = middleware.CORS(middleware.CORSOptions{
-			AllowedOrigins:   cfg.API.AllowedOrigins,
-			AllowCredentials: cfg.API.AllowCredentials,
+			AllowedOrigins:      cfg.API.AllowedOrigins,
+			AllowCredentials:    cfg.API.AllowCredentials,
+			CredentialedOrigins: cfg.API.CredentialedOrigins,
 			// API-08 (audit-2026-07-23): CORSOptions' own default
 			// (GET/HEAD/OPTIONS/POST) omits DELETE and PATCH, but the
 			// v1 mux registers DELETE /v1/account/keys/{keyID} and

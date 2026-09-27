@@ -22,15 +22,29 @@ type CORSOptions struct {
 	AllowedOrigins []string
 
 	// AllowCredentials emits `Access-Control-Allow-Credentials: true`
-	// on preflight + actual responses to allowed origins. Required
-	// for credentialed cross-origin fetches (cookies, HTTP auth,
-	// client TLS certs). Without it browsers strip cookies from the
-	// request and reject Set-Cookie from the response.
+	// on preflight + actual responses to CredentialedOrigins (never
+	// to the rest of AllowedOrigins). Required for credentialed
+	// cross-origin fetches (cookies, HTTP auth, client TLS certs).
+	// Without it browsers strip cookies from the request and reject
+	// Set-Cookie from the response.
 	//
 	// Required by /v1/account/me + /v1/account/keys (magic-link
 	// session cookie auth). Off by default — enabling it is a
 	// per-deployment policy decision the operator makes via config.
 	AllowCredentials bool
+
+	// CredentialedOrigins is the subset of AllowedOrigins trusted for
+	// credentialed access: they receive
+	// Access-Control-Allow-Credentials: true, and
+	// [RequireSameSiteWrite] treats a plain Origin match against this
+	// list as sufficient to bypass the same-site write guard.
+	//
+	// RSEC-X1: AllowedOrigins is a public READ allow-list — a
+	// status/docs subdomain that only ever reads /v1/ledger/tip has
+	// no business being trusted to drive a cookie-authenticated
+	// write. Ignored when AllowCredentials is false. Must be a
+	// subset of AllowedOrigins; the constructor panics otherwise.
+	CredentialedOrigins []string
 
 	// AllowedMethods defaults to {GET, HEAD, OPTIONS, POST} when
 	// empty — matches the v1 surface (POST /v1/account/keys,
@@ -112,6 +126,14 @@ func CORS(opts CORSOptions) Middleware { //nolint:gocognit // origin allow-list 
 		// rather than ship a CORS policy no browser will honour.
 		panic("middleware.CORS: AllowedOrigins=[\"*\"] is incompatible with AllowCredentials=true")
 	}
+	credentialed := buildOriginSet(opts.CredentialedOrigins)
+	for origin := range credentialed {
+		if !allowed[origin] {
+			// A credentialed origin that isn't even CORS-readable is
+			// certainly a misconfiguration, not a narrower policy.
+			panic("middleware.CORS: CredentialedOrigins contains an origin not in AllowedOrigins: " + origin)
+		}
+	}
 	methods := strings.Join(defaultIfEmpty(opts.AllowedMethods,
 		[]string{"GET", "HEAD", "OPTIONS", "POST"}), ", ")
 	headers := strings.Join(defaultIfEmpty(opts.AllowedHeaders, DefaultCORSAllowedHeaders), ", ")
@@ -122,7 +144,10 @@ func CORS(opts CORSOptions) Middleware { //nolint:gocognit // origin allow-list 
 	}
 	maxAgeStr := strconv.Itoa(maxAge)
 	allowCredentials := opts.AllowCredentials
-	policy := &OriginPolicy{allowed: allowed, credentials: allowCredentials}
+	// The write-guard policy is scoped to CredentialedOrigins, NOT the
+	// full read allow-list — that's the RSEC-X1 fix. See
+	// [OriginPolicy.AllowsCredentialed].
+	policy := &OriginPolicy{allowed: credentialed, credentials: allowCredentials}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -151,7 +176,7 @@ func CORS(opts CORSOptions) Middleware { //nolint:gocognit // origin allow-list 
 				} else {
 					w.Header().Set("Access-Control-Allow-Origin", origin)
 				}
-				if allowCredentials {
+				if allowCredentials && credentialed[origin] {
 					w.Header().Set("Access-Control-Allow-Credentials", "true")
 				}
 				w.Header().Set("Access-Control-Expose-Headers", exposed)
@@ -172,13 +197,15 @@ func CORS(opts CORSOptions) Middleware { //nolint:gocognit // origin allow-list 
 				obs.APICORSDecisionsTotal.WithLabelValues("denied").Inc()
 			}
 
-			// Publish the operator's allow-list so the same-site write
-			// guard (see [RequireSameSiteWrite]) can reuse the ONE
-			// configured list instead of growing a second, drift-prone
-			// copy of it. The policy value is built once at
-			// construction and shared by pointer, so this costs one
-			// context node per request and no per-request allocation
-			// of the list itself.
+			// Publish the operator's CredentialedOrigins so the
+			// same-site write guard (see [RequireSameSiteWrite]) can
+			// reuse the same narrower list rather than growing a
+			// second, drift-prone copy of it (RSEC-X1: this is
+			// deliberately NOT the full AllowedOrigins read allow-
+			// list). The policy value is built once at construction
+			// and shared by pointer, so this costs one context node
+			// per request and no per-request allocation of the list
+			// itself.
 			r = r.WithContext(withOriginPolicy(r.Context(), policy))
 
 			if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {

@@ -559,6 +559,14 @@ trusted_proxy_cidrs      = []
 # at boot if both are set.
 # allow_credentials = false
 
+# credentialed_origins — subset of allowed_origins trusted to receive
+# Access-Control-Allow-Credentials and to bypass the same-site write
+# guard (RSEC-X1). allowed_origins is a public READ allow-list; only
+# list here the hostname(s) that actually serve the cookie-authed
+# dashboard UI. Ignored when allow_credentials is false. Empty
+# (default) trusts none, even if allowed_origins is non-empty.
+# credentialed_origins = []
+
 # tls_cert_probe_hosts — hostnames whose TLS leaf cert NotAfter is
 # periodically probed and surfaced as
 # stellarindex_tls_cert_not_after_unix{host} (F-0051). Empty disables
