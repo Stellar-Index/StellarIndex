@@ -142,11 +142,14 @@ func TestPricelessCoverage_AMMConcentration(t *testing.T) {
 	}
 
 	// The quote leg is not a USD peg, so insert-time usd_volume is NULL.
-	// Stamp a flat $1,000 per fill: every asset then holds $20,000 of 7d
-	// and 24h volume — over the popularity floor ($10k) and over the
-	// substance serve floor ($1k), so the wash exclusion is the ONLY
-	// guard that can decide any of them.
-	if _, err := store.DB().ExecContext(ctx, `UPDATE trades SET usd_volume = 1000`); err != nil {
+	// Stamp a flat $2,000 per fill: every asset then holds $40,000 of 7d
+	// and 24h volume. The popularity floor is measured on
+	// MARKET-CHARACTER volume (raw minus the top counterparty pair's own
+	// volume — see popularPriceless), so sdex_pair's legitimate 50%-share
+	// two-market-maker book must clear the floor even AFTER half its
+	// volume is subtracted; $1,000/fill left it sitting exactly on the
+	// floor post-discount, which is what motivated the bump.
+	if _, err := store.DB().ExecContext(ctx, `UPDATE trades SET usd_volume = 2000`); err != nil {
 		t.Fatalf("stamp usd_volume: %v", err)
 	}
 
@@ -174,8 +177,8 @@ func TestPricelessCoverage_AMMConcentration(t *testing.T) {
 			t.Errorf("%s: %s missing from the candidate set", tc.label, tc.asset)
 			continue
 		}
-		if sig.Volume7dUSD != 20_000 {
-			t.Errorf("%s: vol_7d = %v, want 20000", tc.label, sig.Volume7dUSD)
+		if sig.Volume7dUSD != 40_000 {
+			t.Errorf("%s: vol_7d = %v, want 40000", tc.label, sig.Volume7dUSD)
 		}
 		if math.Abs(sig.TopAccountPairVolShare-tc.wantTopPair) > 1e-9 {
 			t.Errorf("%s: top_account_pair_share = %v, want %v",

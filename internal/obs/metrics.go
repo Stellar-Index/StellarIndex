@@ -2433,15 +2433,18 @@ var AssetsPopularPriceless = prometheus.NewGauge(
 )
 
 // PricelessCoverageCheckRunsTotal — per-sweep outcome counter for the
-// priceless-popular tripwire. `ok` = the candidate read + classify pass
-// completed; `error` = the catalogue read failed (Postgres unreachable /
-// query error), leaving the gauge stale. A sustained `error` rate (or a
-// stalled `last_success_unix`) means the tripwire itself is blind — the
-// paging-not-browsing guarantee is off until it recovers.
+// priceless-popular tripwire. `ok` = the candidate read + every probe
+// answered; `degraded` = the read succeeded but one or more per-candidate
+// classic-alias probes hit their timeout, so the count may undercount a
+// real gap rather than reflect one; `error` = the catalogue read failed
+// (Postgres unreachable / query error), leaving the gauge stale. A
+// sustained `error` or `degraded` rate (or a stalled `last_success_unix`)
+// means the tripwire itself is unreliable — the paging-not-browsing
+// guarantee is off until it recovers.
 var PricelessCoverageCheckRunsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_priceless_coverage_check_runs_total",
-		Help: "Priceless-popular coverage-check sweep outcomes (ok|error).",
+		Help: "Priceless-popular coverage-check sweep outcomes (ok|degraded|error).",
 	},
 	[]string{"outcome"},
 )
