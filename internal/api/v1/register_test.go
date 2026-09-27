@@ -19,9 +19,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 	"github.com/Stellar-Index/StellarIndex/internal/signupreaper"
 )
@@ -375,6 +377,28 @@ func TestRegister_ThrottleReturns429(t *testing.T) {
 	}
 	if len(keys.byID) != 0 {
 		t.Errorf("throttled request must not mint a key; keys=%d", len(keys.byID))
+	}
+}
+
+// A throttle past its dwell-time fails signup CLOSED; the 503 must be
+// counted so a Redis outage that takes signup offline is visible.
+func TestRegister_ThrottleUnavailableFailsClosedAndCounts(t *testing.T) {
+	accounts := newFakeRegisterAccountStore()
+	keys := newFakeRegisterKeyStore()
+	throttle := &fakeRegisterIPThrottle{err: auth.ErrThrottleUnavailable}
+	ts := newRegisterTestServer(t, accounts, keys, throttle)
+	closed := obs.RateLimitFailClosedTotal.WithLabelValues(obs.RateLimiterSignupIP)
+	before := testutil.ToFloat64(closed)
+
+	resp := postRegister(t, ts.URL, "application/json", `{}`)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+	if got := testutil.ToFloat64(closed) - before; got != 1 {
+		t.Errorf("fail_closed_total{limiter=signup_ip} delta = %v, want 1", got)
+	}
+	if len(accounts.created) != 0 {
+		t.Errorf("fail-closed request must not create an account; created=%d", len(accounts.created))
 	}
 }
 

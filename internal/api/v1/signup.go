@@ -14,6 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/notify"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -378,6 +379,7 @@ func (s *Server) signupIPThrottleOK(w http.ResponseWriter, r *http.Request) bool
 		w.Header().Set("Retry-After", "30")
 		s.logger.Warn("signup IP throttle unavailable; failing closed (sustained Redis errors)",
 			"err", err, "ip", ip)
+		obs.RateLimitFailClosedTotal.WithLabelValues(obs.RateLimiterSignupIP).Inc()
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/throttle-unavailable",
 			"Throttle layer unavailable", http.StatusServiceUnavailable,

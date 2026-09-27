@@ -71,10 +71,15 @@ func TestAuth_FailedAuthThrottle_FailsClosedOnSustainedOutage(t *testing.T) {
 	// (block with 429 + Retry-After) rather than let credential
 	// guessing continue unbounded for the rest of the outage.
 	fakeNow = fakeNow.Add(31 * time.Second)
+	closed := obs.RateLimitFailClosedTotal.WithLabelValues(obs.RateLimiterFailedAuth)
+	before := testutil.ToFloat64(closed)
 	w2 := httptest.NewRecorder()
 	h.ServeHTTP(w2, badReq())
 	if w2.Code != http.StatusTooManyRequests {
 		t.Fatalf("sustained outage: status = %d, want 429 (fail-closed, not a bare 401)", w2.Code)
+	}
+	if got := testutil.ToFloat64(closed) - before; got != 1 {
+		t.Errorf("fail_closed_total{limiter=failed_auth} delta = %v, want 1", got)
 	}
 	if ra := w2.Header().Get("Retry-After"); ra == "" {
 		t.Error("fail-closed response during sustained outage must carry Retry-After")

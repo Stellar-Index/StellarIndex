@@ -336,6 +336,7 @@ func takeFailedAuthBucket(ctx context.Context, limiter *ratelimit.Bucket, key st
 			// writeThrottleUnavailableProblem's Retry-After — matches
 			// [ratelimit.DefaultDwellTime] so clients that obey it
 			// naturally space retries past a typical Redis fail-over.
+			obs.RateLimitFailClosedTotal.WithLabelValues(obs.RateLimiterFailedAuth).Inc()
 			return true, int(ratelimit.DefaultDwellTime.Seconds())
 		}
 		return false, 0

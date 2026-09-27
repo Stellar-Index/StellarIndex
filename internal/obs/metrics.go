@@ -331,6 +331,7 @@ func registerAppMetricsTail() {
 	registerStorageAndExplorerMetrics()
 	registerAuthReaperMetrics()
 	registerFailedAuthMetrics()
+	registerRedisFailureMetrics()
 
 	seedBoundedLabelSeries()
 }
@@ -375,6 +376,16 @@ func registerFailedAuthMetrics() {
 	Registry.MustRegister(FailedAuthTotal)
 	FailedAuthTotal.WithLabelValues(FailedAuthRejected)
 	FailedAuthTotal.WithLabelValues(FailedAuthThrottled)
+}
+
+// registerRedisFailureMetrics registers and zero-seeds the signals for a
+// failing or write-refusing Redis, so the first failure is a visible
+// increase() rather than the silent first sample of a new child.
+func registerRedisFailureMetrics() {
+	Registry.MustRegister(RateLimitFailClosedTotal)
+	for _, limiter := range []string{RateLimiterAPI, RateLimiterFailedAuth, RateLimiterSignupIP} {
+		RateLimitFailClosedTotal.WithLabelValues(limiter)
+	}
 }
 
 // registerAuthReaperMetrics registers the platform-table reapers' metrics
@@ -1992,6 +2003,25 @@ var RateLimitFailOpenTotal = prometheus.NewCounter(
 		Name: "stellarindex_ratelimit_fail_open_total",
 		Help: "Requests that bypassed rate-limiting because Redis errored.",
 	},
+)
+
+// RateLimitFailClosedTotal — requests rejected (503 or 429) because a
+// Redis-backed throttle had been erroring for longer than its dwell-time.
+// The fail-open counter stops moving once the dwell elapses, so without
+// this a whole-API outage from a write-refusing Redis is invisible here.
+var RateLimitFailClosedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_ratelimit_fail_closed_total",
+		Help: "Requests rejected because a Redis-backed throttle was unavailable past its dwell-time, by limiter.",
+	},
+	[]string{"limiter"},
+)
+
+// Label values for [RateLimitFailClosedTotal].
+const (
+	RateLimiterAPI        = "api"
+	RateLimiterFailedAuth = "failed_auth"
+	RateLimiterSignupIP   = "signup_ip"
 )
 
 // MonthlyQuotaFailOpenTotal — counter of requests that skipped the

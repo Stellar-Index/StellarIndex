@@ -9,10 +9,12 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
@@ -224,6 +226,40 @@ func TestRateLimit_FailsOpenOnRedisError(t *testing.T) {
 	// Rate-limit headers should be absent (we didn't compute them).
 	if got := w.Header().Get("X-RateLimit-Limit"); got != "" {
 		t.Errorf("X-RateLimit-Limit should be absent on failure, got %q", got)
+	}
+}
+
+// A sustained Redis outage flips the limiter to fail-closed 503s; each one
+// must be counted, since the fail-open counter stops moving at that point.
+func TestRateLimit_FailClosedPastDwellIsCounted(t *testing.T) {
+	mr := miniredis.RunT(t)
+	addr := mr.Addr()
+	mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: addr, MaxRetries: -1})
+	t.Cleanup(func() { _ = rdb.Close() })
+	clock := newManualClock()
+	b := ratelimit.New(rdb, 1, time.Minute, ratelimit.WithClock(clock.now))
+	h := middleware.RateLimit(b, fixedKeyFn("k-closed"), nil, nil)(okHandler())
+	closed := obs.RateLimitFailClosedTotal.WithLabelValues(obs.RateLimiterAPI)
+	before := testutil.ToFloat64(closed)
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("inside dwell: status = %d, want 200 (fail-open)", w.Code)
+	}
+	if got := testutil.ToFloat64(closed) - before; got != 0 {
+		t.Fatalf("fail-open request counted as fail-closed: delta = %v", got)
+	}
+
+	clock.advance(ratelimit.DefaultDwellTime + time.Second)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("past dwell: status = %d, want 503", w.Code)
+	}
+	if got := testutil.ToFloat64(closed) - before; got != 1 {
+		t.Fatalf("fail_closed_total{limiter=api} delta = %v, want 1", got)
 	}
 }
 

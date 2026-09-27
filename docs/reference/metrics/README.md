@@ -1606,6 +1606,23 @@ signal that correlates with `redis` readyz turning red.
 Alert: `stellarindex_ratelimit_fail_open` →
 [ratelimit-fail-open](../../operations/runbooks/ratelimit-fail-open.md).
 
+### `stellarindex_ratelimit_fail_closed_total`
+
+Counter, label `limiter` (`api` / `failed_auth` / `signup_ip`).
+Pre-seeded at zero.
+
+Requests rejected because a Redis-backed throttle had been erroring for
+longer than its dwell-time (`ratelimit.DefaultDwellTime`, 30s). Past
+that point the limiter fails **closed** and
+`stellarindex_ratelimit_fail_open_total` stops moving:
+
+- `api` — the main rate-limit middleware answers 503
+  `throttle-unavailable` to every request on the affected bucket. A
+  sustained rate here is a whole-API outage.
+- `failed_auth` — the credential-stuffing throttle answers 429 to bad
+  credentials.
+- `signup_ip` — `/v1/signup` and `/v1/register` answer 503.
+
 ### `stellarindex_monthly_quota_fail_open_total`
 
 Counter, no labels.

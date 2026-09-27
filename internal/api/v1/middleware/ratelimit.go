@@ -212,6 +212,7 @@ func (c *rateLimitCharge) spend(w http.ResponseWriter, r *http.Request, tokens i
 			// F-0150 (audit-2026-05-27).
 			c.logger.Warn("ratelimit unavailable — failing closed (sustained Redis errors)",
 				"err", err, "key", c.key, "request_id", RequestIDFrom(r))
+			obs.RateLimitFailClosedTotal.WithLabelValues(obs.RateLimiterAPI).Inc()
 			writeThrottleUnavailableProblem(w, r)
 			return false
 		}
