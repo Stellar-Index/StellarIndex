@@ -14756,7 +14756,7 @@ components:
         name: { type: string, example: blend }
         category:
           type: string
-          enum: [dex, amm, lending, yield, bridge, oracle, token]
+          enum: [dex, amm, lending, yield, bridge, oracle]
         description: { type: string }
         genesis_ledger:
           type: integer

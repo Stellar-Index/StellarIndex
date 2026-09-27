@@ -28,7 +28,7 @@ type ProtocolMeta struct {
 	// Name is the canonical source name — the same identifier used by
 	// completeness_snapshots, protocol_contracts and /v1/coverage.
 	Name string
-	// Category is one of: dex | amm | lending | yield | bridge | oracle | token.
+	// Category is one of: dex | amm | lending | yield | bridge | oracle.
 	Category string
 	// Description is a single human sentence for the directory card.
 	Description string

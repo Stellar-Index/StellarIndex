@@ -7077,7 +7077,7 @@ export interface components {
             /** @example blend */
             name: string;
             /** @enum {string} */
-            category: "dex" | "amm" | "lending" | "yield" | "bridge" | "oracle" | "token";
+            category: "dex" | "amm" | "lending" | "yield" | "bridge" | "oracle";
             description: string;
             /**
              * Format: int64
