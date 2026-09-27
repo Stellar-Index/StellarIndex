@@ -264,3 +264,100 @@ func TestExplorer_AccountPositions_EmptyIsHonest(t *testing.T) {
 		t.Error("note should be present even on an empty result")
 	}
 }
+
+// TestExplorer_AccountPositions_AuctionSupersededBlendLeg pins how a Blend
+// leg a liquidation auction moved is served: never its pre-liquidation
+// underlying net. A partly seized leg (and a filler's leg only a received
+// lot created, whose own net is "0") is open with amount ""; a leg whose
+// b/d-token balance is exactly zero is a closed "0"; an untouched leg
+// keeps its net.
+func TestExplorer_AccountPositions_AuctionSupersededBlendLeg(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	reader := &stubPositionsReader{blend: []timescale.BlendPositionFold{
+		{
+			Pool: "CPOOLLIQ", Asset: "CUSDC1",
+			HasSupplyLeg: true, SupplyNet: "100000000000", SupplySuperseded: true, SupplyTokens: "0",
+			SupplyLastActivity: now, SupplyLastLedger: 206,
+			HasBorrowLeg: true, BorrowNet: "50000000000", BorrowSuperseded: true, BorrowTokens: "1234",
+			BorrowLastActivity: now, BorrowLastLedger: 206,
+		},
+		{
+			Pool: "CPOOLFILL", Asset: "CUSDC1",
+			HasSupplyLeg: true, SupplyNet: "0", SupplySuperseded: true, SupplyTokens: "200",
+			SupplyLastActivity: now, SupplyLastLedger: 207,
+		},
+		{
+			Pool: "CPOOLPLAIN", Asset: "CUSDC1",
+			HasSupplyLeg: true, SupplyNet: "10", SupplyTokens: "9", SupplyLastActivity: now, SupplyLastLedger: 100,
+		},
+	}}
+	open := map[string]positionWant{
+		"blend/lending_borrow/CPOOLLIQ":   {"", "superseded_by_auction"},
+		"blend/lending_supply/CPOOLFILL":  {"", "superseded_by_auction"},
+		"blend/lending_supply/CPOOLPLAIN": {"10", "net_underlying_at_event_time"},
+	}
+	assertPositions(t, servePositions(t, reader, false), open)
+	open["blend/lending_supply/CPOOLLIQ"] = positionWant{"0", "superseded_by_auction"}
+	assertPositions(t, servePositions(t, reader, true), open)
+}
+
+// TestExplorer_AccountPositions_UnpublishedCreditHasNoAmount pins that a
+// sorocredit position with no published statement is served with amount
+// "" and amount_semantics not_yet_published — never "0" presented as the
+// protocol's published figure — and stays open by default.
+func TestExplorer_AccountPositions_UnpublishedCreditHasNoAmount(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	got := servePositions(t, &stubPositionsReader{credit: []timescale.CreditPositionFold{{
+		CollateralContract: "CCOLLATNEW", PositionUUID: "uuid-new",
+		OpenedAt: now, OpenedLedger: 300, LatestAmount: "", Withdrawn: false,
+	}}}, false)
+	assertPositions(t, got, map[string]positionWant{"sorocredit/credit/CCOLLATNEW": {"", "not_yet_published"}})
+	if p := got["sorocredit/credit/CCOLLATNEW"]; p.Basis != "stateful" || p.LastActivity.Ledger != 300 {
+		t.Errorf("unpublished credit = %+v, want basis stateful, last_activity at the open event (ledger 300)", p)
+	}
+}
+
+// positionWant is one expected position's amount and amount_semantics.
+type positionWant struct{ amount, semantics string }
+
+// servePositions serves reader's folds through the handler and keys the
+// positions protocol/kind/venue.
+func servePositions(t *testing.T, reader *stubPositionsReader, includeClosed bool) map[string]v1.PositionEntry {
+	t.Helper()
+	srv := v1.New(v1.Options{Positions: reader, ProtocolPoolTokens: &stubPoolTokensReader{}})
+	url := httpTestServer(t, srv).URL + "/v1/accounts/" + testG + "/positions"
+	if includeClosed {
+		url += "?include_closed=true"
+	}
+	resp := mustGet(t, url)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var body struct {
+		Data v1.AccountPositionsView `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	got := map[string]v1.PositionEntry{}
+	for _, p := range body.Data.Positions {
+		got[p.Protocol+"/"+p.PositionKind+"/"+p.Venue] = p
+	}
+	return got
+}
+
+// assertPositions requires exactly the want positions.
+func assertPositions(t *testing.T, got map[string]v1.PositionEntry, want map[string]positionWant) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("positions = %+v, want exactly %v", got, want)
+	}
+	for key, w := range want {
+		p, ok := got[key]
+		if !ok {
+			t.Errorf("%s missing", key)
+			continue
+		}
+		if p.Amount != w.amount || p.AmountSemantics != w.semantics {
+			t.Errorf("%s = amount %q semantics %q, want %q %q", key, p.Amount, p.AmountSemantics, w.amount, w.semantics)
+		}
+	}
+}

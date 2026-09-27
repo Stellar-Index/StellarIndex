@@ -34,6 +34,8 @@ const SEMANTICS_LABEL: Record<string, string> = {
   shares: 'share/LP-token count',
   stateful_current: "protocol's latest published figure",
   signed_delta_sum_unconfirmed_unit: 'signed delta sum (unit unconfirmed)',
+  superseded_by_auction: 'moved by a liquidation auction (amount unknown)',
+  not_yet_published: 'no figure published yet',
 };
 
 const POSITION_KIND_LABEL: Record<string, string> = {
@@ -247,7 +249,7 @@ function PositionRow({ p }: { p: AccountPosition }) {
         {p.assets && p.assets.length > 0 ? p.assets.join(' / ') : '—'}
       </Td>
       <Td align="right" className="font-mono">
-        {p.amount}
+        {p.amount === '' ? '—' : p.amount}
       </Td>
       <Td>
         <div className="text-ink-muted text-xs whitespace-nowrap">

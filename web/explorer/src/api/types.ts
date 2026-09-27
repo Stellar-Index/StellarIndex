@@ -5812,7 +5812,12 @@ export interface components {
              *     internal/api/v1/explorer/positions.go).
              */
             assets?: string[];
-            /** @description Decimal string (ADR-0003) — see amount_semantics for exactly what this number represents. */
+            /**
+             * @description Decimal string (ADR-0003) — see amount_semantics for exactly
+             *     what this number represents. The empty string means the
+             *     quantity is unknown (superseded_by_auction,
+             *     not_yet_published), never a verified zero.
+             */
             amount: string;
             /**
              * @description REQUIRED documentation of what `amount` IS — determined per
@@ -5834,9 +5839,20 @@ export interface components {
              *         confirmed (Aquarius gauge position_update — see
              *         internal/sources/aquarius/decode_rewards.go's
              *         best-effort field-mapping doc comment).
+             *       - superseded_by_auction: a Blend supply/borrow leg a
+             *         liquidation or bad-debt auction fill (as the auctioned
+             *         account or the filler) or a bad_debt write-off has moved
+             *         b/d-tokens into or out of. Those moves carry no
+             *         underlying amount, so no net is served: amount is ""
+             *         unless the leg's b/d-token balance, counting every such
+             *         move, is exactly zero, when amount is "0" and the
+             *         position is closed.
+             *       - not_yet_published: a stateful position the protocol has
+             *         published no figure for yet (a just-opened sorocredit
+             *         position); amount is "".
              * @enum {string}
              */
-            amount_semantics: "net_underlying_at_event_time" | "shares" | "stateful_current" | "signed_delta_sum_unconfirmed_unit";
+            amount_semantics: "net_underlying_at_event_time" | "shares" | "stateful_current" | "signed_delta_sum_unconfirmed_unit" | "superseded_by_auction" | "not_yet_published";
             /** @description The most recent contributing event's ledger + close time. */
             last_activity: {
                 ledger: number;
@@ -23370,7 +23386,7 @@ export interface operations {
                      *           }
                      *         ],
                      *         "include_closed": false,
-                     *         "note": "Amounts are on-chain quantities only — no USD or other valuation is applied. event_derived positions are a sum of historical per-event amounts and do NOT model interest, fees, or exchange-rate accrual since each event; see each position's amount_semantics for exactly what the number represents, and basis for whether it was derived here or read from the protocol's own published state."
+                     *         "note": "Amounts are on-chain quantities only — no USD or other valuation is applied. event_derived positions are a sum of historical per-event amounts and do NOT model interest, fees, or exchange-rate accrual since each event, and a Blend leg a liquidation or bad-debt auction has moved carries no net (superseded_by_auction); see each position's amount_semantics for exactly what the number represents, and basis for whether it was derived here or read from the protocol's own published state."
                      *       },
                      *       "as_of": "2026-07-10T22:39:31.01258567Z",
                      *       "flags": {

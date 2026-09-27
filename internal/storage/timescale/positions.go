@@ -86,50 +86,150 @@ func queryFold[T any](ctx context.Context, db *sql.DB, label, query string, args
 // reflect interest accrued since each event — amount_semantics
 // "net_underlying_at_event_time" at the handler layer documents this
 // explicitly per event.
+//
+// SupplySuperseded / BorrowSuperseded mark a leg an auction or bad-debt
+// write-off has moved b/d-tokens into or out of (blendAuctionMovesSQL).
+// Those moves carry no underlying amount, so SupplyNet/BorrowNet stop
+// describing the position and stay wrong after any later event. For such
+// a leg SupplyTokens/BorrowTokens is its exact b/d-token balance (the
+// events' b_or_d_amount plus every move), which is how the handler tells
+// a fully seized leg (zero tokens) from a partly seized one. A superseded
+// leg exists even with no blend_positions row (a filler that only ever
+// received a lot), and its last activity includes the move.
 type BlendPositionFold struct {
 	Pool               string
 	Asset              string
 	HasSupplyLeg       bool
 	SupplyNet          string
+	SupplySuperseded   bool
+	SupplyTokens       string
 	SupplyLastActivity time.Time
 	SupplyLastLedger   uint32
 	HasBorrowLeg       bool
 	BorrowNet          string
+	BorrowSuperseded   bool
+	BorrowTokens       string
 	BorrowLastActivity time.Time
 	BorrowLastLedger   uint32
 }
 
+// blendSupplyTokenExpr / blendBorrowTokenExpr sign blend_positions.b_or_d_amount
+// (b-tokens minted/burnt, d-tokens minted/burnt) the way blendSupplyNetExpr /
+// blendBorrowNetExpr sign token_amount.
+const (
+	blendSupplyTokenExpr = `CASE WHEN event_kind IN ('supply','supply_collateral') THEN b_or_d_amount
+	                            WHEN event_kind IN ('withdraw','withdraw_collateral') THEN -b_or_d_amount END`
+	blendBorrowTokenExpr = `CASE WHEN event_kind IN ('borrow','flash_loan') THEN b_or_d_amount
+	                            WHEN event_kind = 'repay' THEN -b_or_d_amount END`
+)
+
+// blendAuctionMovesSQL yields one (pool, asset, addr, side, delta, ledger,
+// ts) row per movement of an account's b-tokens (side 'supply') or
+// d-tokens (side 'borrow') that blend_positions cannot hold; delta is the
+// signed token amount:
+//
+//   - a UserLiquidation (0) fill moves the filled lot bTokens and bid
+//     dTokens from the auctioned user to the filler (the event carries the
+//     filled portion — docs/operations/wasm-audits/blend.md);
+//   - a BadDebt (1) fill moves the auctioned account's bid dTokens to the
+//     filler; its lot is backstop tokens, not a pool position;
+//   - a bad_debt emission moves the user's dTokens to the backstop.
+//
+// Interest (2) auctions trade underlying only and move no pool position.
+// blendAuctionMovesForUserSQL is the same set pre-filtered to the account
+// bound to $1 before the lot/bid expansion.
+const (
+	blendFillMovesSQL = `
+		SELECT a.pool, x.elem->>'asset' AS asset, p.addr, x.side,
+		       p.sign * (x.elem->>'amount')::numeric AS delta, a.ledger, a.ts
+		  FROM blend_auctions a
+		 CROSS JOIN LATERAL (VALUES (a.user_address, -1), (a.filler, 1)) AS p(addr, sign)
+		 CROSS JOIN LATERAL (
+		        SELECT l, 'supply'::text FROM jsonb_array_elements(
+		               CASE WHEN a.auction_type = 0 AND jsonb_typeof(a.lot) = 'array' THEN a.lot END) l
+		        UNION ALL
+		        SELECT b, 'borrow'::text FROM jsonb_array_elements(
+		               CASE WHEN jsonb_typeof(a.bid) = 'array' THEN a.bid END) b
+		       ) AS x(elem, side)
+		 WHERE a.event_kind = 'fill' AND a.auction_type IN (0, 1) AND p.addr IS NOT NULL`
+	blendBadDebtMovesSQL = `
+		SELECT pool, asset, user_address, 'borrow'::text, -amount, ledger, ledger_close_time
+		  FROM blend_emissions
+		 WHERE event_kind = 'bad_debt' AND asset IS NOT NULL AND user_address IS NOT NULL
+		   AND amount IS NOT NULL`
+	blendAuctionMovesSQL        = blendFillMovesSQL + ` UNION ALL ` + blendBadDebtMovesSQL
+	blendAuctionMovesForUserSQL = blendFillMovesSQL + ` AND (a.user_address = $1 OR a.filler = $1)
+		UNION ALL ` + blendBadDebtMovesSQL + ` AND user_address = $1`
+)
+
+// blendPositionsByUserSQL is BlendPositionsByUser's query: the account's
+// blend_positions nets FULL JOINed to its auction moves, so a moved leg
+// is flagged and a leg only a move created still appears.
+const blendPositionsByUserSQL = `
+		WITH ev AS (
+		  SELECT pool, asset,
+		         COUNT(*) FILTER (WHERE event_kind IN (` + lendingSupplySideKinds + `)) AS s_n,
+		         COALESCE(SUM(` + blendSupplyNetExpr + `),0) AS s_net,
+		         COALESCE(SUM(` + blendSupplyTokenExpr + `),0) AS s_tok,
+		         MAX(ledger_close_time) FILTER (WHERE event_kind IN (` + lendingSupplySideKinds + `)) AS s_ts,
+		         MAX(ledger) FILTER (WHERE event_kind IN (` + lendingSupplySideKinds + `)) AS s_ledger,
+		         COUNT(*) FILTER (WHERE event_kind IN (` + lendingBorrowSideKinds + `)) AS b_n,
+		         COALESCE(SUM(` + blendBorrowNetExpr + `),0) AS b_net,
+		         COALESCE(SUM(` + blendBorrowTokenExpr + `),0) AS b_tok,
+		         MAX(ledger_close_time) FILTER (WHERE event_kind IN (` + lendingBorrowSideKinds + `)) AS b_ts,
+		         MAX(ledger) FILTER (WHERE event_kind IN (` + lendingBorrowSideKinds + `)) AS b_ledger
+		    FROM blend_positions
+		   WHERE user_address = $1
+		   GROUP BY pool, asset
+		), mv AS (
+		  SELECT pool, asset,
+		         COUNT(*) FILTER (WHERE side = 'supply') AS s_n,
+		         COALESCE(SUM(delta) FILTER (WHERE side = 'supply'),0) AS s_tok,
+		         MAX(ts) FILTER (WHERE side = 'supply') AS s_ts,
+		         MAX(ledger) FILTER (WHERE side = 'supply') AS s_ledger,
+		         COUNT(*) FILTER (WHERE side = 'borrow') AS b_n,
+		         COALESCE(SUM(delta) FILTER (WHERE side = 'borrow'),0) AS b_tok,
+		         MAX(ts) FILTER (WHERE side = 'borrow') AS b_ts,
+		         MAX(ledger) FILTER (WHERE side = 'borrow') AS b_ledger
+		    FROM (` + blendAuctionMovesForUserSQL + `) m
+		   WHERE addr = $1
+		   GROUP BY pool, asset
+		)
+		SELECT COALESCE(e.pool, m.pool), COALESCE(e.asset, m.asset),
+		       COALESCE(e.s_n,0) + COALESCE(m.s_n,0) > 0,
+		       COALESCE(e.s_net,0)::text,
+		       COALESCE(m.s_n,0) > 0,
+		       (COALESCE(e.s_tok,0) + COALESCE(m.s_tok,0))::text,
+		       GREATEST(e.s_ts, m.s_ts), GREATEST(e.s_ledger, m.s_ledger),
+		       COALESCE(e.b_n,0) + COALESCE(m.b_n,0) > 0,
+		       COALESCE(e.b_net,0)::text,
+		       COALESCE(m.b_n,0) > 0,
+		       (COALESCE(e.b_tok,0) + COALESCE(m.b_tok,0))::text,
+		       GREATEST(e.b_ts, m.b_ts), GREATEST(e.b_ledger, m.b_ledger)
+		  FROM ev e
+		  FULL JOIN mv m ON m.pool = e.pool AND m.asset = e.asset
+		 LIMIT $2`
+
 // BlendPositionsByUser folds blend_positions into one row per (pool,
-// asset) the user has ever touched via any blend_positions event,
-// computing an independent net for the supply side and the borrow side
-// (see BlendPositionFold's doc comment for the column/sign convention).
+// asset) the user has ever touched via any blend_positions event or
+// auction move, computing an independent net for the supply side and the
+// borrow side (see BlendPositionFold's doc comment for the column/sign
+// convention and the superseded flags).
 //
 // Sargable: `WHERE user_address = $1` is served by
 // blend_positions_user_ts_idx (migration 0107); the GROUP BY then
-// operates only on that user's own (typically tiny) row set.
+// operates only on that user's own (typically tiny) row set. The move
+// side reads only fill and bad_debt rows, which are rare.
 func (s *Store) BlendPositionsByUser(ctx context.Context, address string) ([]BlendPositionFold, error) {
-	const q = `
-		SELECT pool, asset,
-		       (COUNT(*) FILTER (WHERE event_kind IN (` + lendingSupplySideKinds + `))) > 0,
-		       COALESCE(SUM(` + blendSupplyNetExpr + `),0)::text,
-		       MAX(ledger_close_time) FILTER (WHERE event_kind IN (` + lendingSupplySideKinds + `)),
-		       MAX(ledger) FILTER (WHERE event_kind IN (` + lendingSupplySideKinds + `)),
-		       (COUNT(*) FILTER (WHERE event_kind IN (` + lendingBorrowSideKinds + `))) > 0,
-		       COALESCE(SUM(` + blendBorrowNetExpr + `),0)::text,
-		       MAX(ledger_close_time) FILTER (WHERE event_kind IN (` + lendingBorrowSideKinds + `)),
-		       MAX(ledger) FILTER (WHERE event_kind IN (` + lendingBorrowSideKinds + `))
-		  FROM blend_positions
-		 WHERE user_address = $1
-		 GROUP BY pool, asset
-		 LIMIT $2`
-	return queryFold(ctx, s.db, "BlendPositionsByUser", q, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (BlendPositionFold, error) {
+	return queryFold(ctx, s.db, "BlendPositionsByUser", blendPositionsByUserSQL, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (BlendPositionFold, error) {
 		var (
 			f                              BlendPositionFold
 			supplyActivity, borrowActivity sql.NullTime
 			supplyLedger, borrowLedger     sql.NullInt64
 		)
-		if err := rows.Scan(&f.Pool, &f.Asset, &f.HasSupplyLeg, &f.SupplyNet, &supplyActivity, &supplyLedger,
-			&f.HasBorrowLeg, &f.BorrowNet, &borrowActivity, &borrowLedger); err != nil {
+		if err := rows.Scan(&f.Pool, &f.Asset, &f.HasSupplyLeg, &f.SupplyNet, &f.SupplySuperseded, &f.SupplyTokens,
+			&supplyActivity, &supplyLedger, &f.HasBorrowLeg, &f.BorrowNet, &f.BorrowSuperseded, &f.BorrowTokens,
+			&borrowActivity, &borrowLedger); err != nil {
 			return f, err
 		}
 		if supplyActivity.Valid {

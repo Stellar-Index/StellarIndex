@@ -95,21 +95,30 @@ func (s *Store) scanHolders(ctx context.Context, protocol, kind, q string) ([]De
 // blendPositionHolders folds blend_positions per (user, pool, asset) into a
 // supply leg and a borrow leg — the same CASE arithmetic as
 // BlendPositionsByUser, without the user predicate and with the user in
-// the GROUP BY. Uses blend_positions_pool_user_asset_idx.
+// the GROUP BY. Uses blend_positions_pool_user_asset_idx. A leg an
+// auction or bad-debt write-off has moved (blendAuctionMovesSQL) is left
+// out: its underlying net no longer describes the position, and the
+// pre-liquidation figure must not rank as an open holding.
 func (s *Store) blendPositionHolders(ctx context.Context) ([]DeFiPositionHolder, error) {
 	const supply = `
 		SELECT pool, asset, user_address,
 		       COALESCE(SUM(` + blendSupplyNetExpr + `),0)::text,
 		       MAX(ledger_close_time), MAX(ledger)
-		  FROM blend_positions
+		  FROM blend_positions bp
 		 WHERE event_kind IN (` + lendingSupplySideKinds + `)
+		   AND NOT EXISTS (SELECT 1 FROM (` + blendAuctionMovesSQL + `) m
+		                    WHERE m.side = 'supply' AND m.pool = bp.pool
+		                      AND m.asset = bp.asset AND m.addr = bp.user_address)
 		 GROUP BY pool, asset, user_address`
 	const borrow = `
 		SELECT pool, asset, user_address,
 		       COALESCE(SUM(` + blendBorrowNetExpr + `),0)::text,
 		       MAX(ledger_close_time), MAX(ledger)
-		  FROM blend_positions
+		  FROM blend_positions bp
 		 WHERE event_kind IN (` + lendingBorrowSideKinds + `)
+		   AND NOT EXISTS (SELECT 1 FROM (` + blendAuctionMovesSQL + `) m
+		                    WHERE m.side = 'borrow' AND m.pool = bp.pool
+		                      AND m.asset = bp.asset AND m.addr = bp.user_address)
 		 GROUP BY pool, asset, user_address`
 	a, err := s.scanHolders(ctx, "blend", holderKindLendingSupply, supply)
 	if err != nil {
