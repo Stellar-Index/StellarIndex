@@ -39,3 +39,54 @@ groups:
             the Resend status + credentials per the runbook.
 
             Runbook: docs/operations/runbooks/notify-send-failure.md
+
+      # Mirror of the rule in deploy/monitoring/rules/notify.yml (Q268/
+      # RLT-324). The ratio rule above is 0/0 = NaN whenever a template has
+      # sent nothing at all in 15m, so it cannot see the mailer having
+      # stopped being invoked entirely. Dead-man's-switch companion: fires
+      # on sustained total absence of send attempts across both templates.
+      - alert: stellarindex_notify_no_send_activity
+        expr: sum(increase(stellarindex_notify_sends_total[6h])) == 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: notify
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+          summary: "No transactional email send attempts (any result) in 6h"
+          description: |
+            stellarindex_notify_sends_total has not incremented, for either
+            template or either result, in the last 6 hours. On a live
+            deployment this means the mailer has stopped being invoked
+            entirely — not merely failing — which the failure-ratio alert
+            cannot see (0 failed / 0 sent is NaN, not "> 0.5"). Check that
+            the dashboard-login and signup-verify handlers are still calling
+            internal/notify.Sender.Send, and that this is not a known-quiet
+            non-production deployment (silence this alert there instead of
+            widening the window).
+
+            Runbook: docs/operations/runbooks/notify-send-failure.md
+
+      # Mirror of the rule in deploy/monitoring/rules/notify.yml (Q268/
+      # RLT-324). Absolute-rate companion to the ratio rule: a persistent
+      # failure trickle on a high-volume template can stay under the 50%
+      # ratio threshold indefinitely while still failing real users.
+      - alert: stellarindex_notify_send_failures_sustained
+        expr: sum by (template) (rate(stellarindex_notify_sends_total{result="failed"}[15m])) > 0
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: notify
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+          summary: "Transactional email ({{ $labels.template }}) has been failing continuously for 1h"
+          description: |
+            {{ $labels.template }} email sends have included at least one
+            failure in every 15m window for the last hour — a persistent
+            failure trickle that may never cross the 50%-ratio alert's
+            threshold if send volume is high, but still means some fraction
+            of users never received their magic link or confirmation email.
+
+            Runbook: docs/operations/runbooks/notify-send-failure.md

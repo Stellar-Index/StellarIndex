@@ -9,7 +9,7 @@ import "testing"
 // whitespace are folded away BEFORE hashing, so every spelling of one inbox
 // maps to the same Redis key fragment (one throttle bucket).
 func TestHashEmail_NormalisesBeforeHashing(t *testing.T) {
-	canonical := hashEmail("victim@x.com")
+	canonical := HashEmail("victim@x.com")
 
 	// Every spelling of the same inbox must collapse to the canonical hash.
 	for _, spelling := range []string{
@@ -18,16 +18,16 @@ func TestHashEmail_NormalisesBeforeHashing(t *testing.T) {
 		"  victim@x.com",
 		"victim@x.com\t",
 	} {
-		if got := hashEmail(spelling); got != canonical {
-			t.Errorf("hashEmail(%q) = %q, want %q (normalise case + whitespace before hashing)",
+		if got := HashEmail(spelling); got != canonical {
+			t.Errorf("HashEmail(%q) = %q, want %q (normalise case + whitespace before hashing)",
 				spelling, got, canonical)
 		}
 	}
 
 	// Non-vacuity: a genuinely different address must NOT collide — this
 	// rejects a "return a constant" degenerate normalisation.
-	if got := hashEmail("someone-else@x.com"); got == canonical {
-		t.Errorf("hashEmail(distinct address) collided with %q — normalisation must not erase identity", canonical)
+	if got := HashEmail("someone-else@x.com"); got == canonical {
+		t.Errorf("HashEmail(distinct address) collided with %q — normalisation must not erase identity", canonical)
 	}
 }
 
@@ -39,7 +39,7 @@ func TestHashEmail_NormalisesBeforeHashing(t *testing.T) {
 func TestHashEmail_RFC5322SpellingsShareOneBucket(t *testing.T) {
 	t.Parallel()
 
-	want := hashEmail("victim@example.com")
+	want := HashEmail("victim@example.com")
 	for _, spelling := range []string{
 		"victim@example.com",
 		"  Victim@Example.COM  ",
@@ -48,14 +48,14 @@ func TestHashEmail_RFC5322SpellingsShareOneBucket(t *testing.T) {
 		`"Display Name" <victim@example.com>`,
 		`Display Name <victim@example.com>`,
 	} {
-		if got := hashEmail(spelling); got != want {
-			t.Errorf("hashEmail(%q) = %s, want %s — a re-spelling of the same inbox "+
+		if got := HashEmail(spelling); got != want {
+			t.Errorf("HashEmail(%q) = %s, want %s — a re-spelling of the same inbox "+
 				"got its own throttle budget", spelling, got, want)
 		}
 	}
 
 	// Different inboxes must still separate.
-	if hashEmail("other@example.com") == want {
+	if HashEmail("other@example.com") == want {
 		t.Error("distinct addresses collided into one bucket")
 	}
 }
@@ -65,10 +65,50 @@ func TestHashEmail_RFC5322SpellingsShareOneBucket(t *testing.T) {
 func TestHashEmail_UnparseableFallsBackToCaseTrim(t *testing.T) {
 	t.Parallel()
 
-	if hashEmail(" NOT-AN-ADDRESS ") != hashEmail("not-an-address") {
+	if HashEmail(" NOT-AN-ADDRESS ") != HashEmail("not-an-address") {
 		t.Error("unparseable input lost its case/trim normalisation")
 	}
-	if hashEmail("garbage-a") == hashEmail("garbage-b") {
+	if HashEmail("garbage-a") == HashEmail("garbage-b") {
 		t.Error("distinct unparseable inputs collapsed to one bucket")
+	}
+}
+
+// RLT-324 / RSEC-N2: a `+tag` subaddress or a gmail dot re-spelling must
+// share the target inbox's bucket, or an attacker mints a fresh 5/hour
+// budget per spelling and the per-email cap never engages.
+func TestHashEmail_PlusTagAndGmailDotFolding(t *testing.T) {
+	t.Parallel()
+
+	want := HashEmail("victim@gmail.com")
+	for _, spelling := range []string{
+		"victim@gmail.com",
+		"victim+1@gmail.com",
+		"victim+anything@gmail.com",
+		"vic.tim@gmail.com",
+		"v.i.c.t.i.m@gmail.com",
+		"VIC.TIM+xyz@GMAIL.com",
+		"victim@googlemail.com",
+		"vic.tim+1@googlemail.com",
+	} {
+		if got := HashEmail(spelling); got != want {
+			t.Errorf("HashEmail(%q) = %s, want %s — a +tag/gmail-dot re-spelling "+
+				"of the same inbox got its own throttle budget", spelling, got, want)
+		}
+	}
+
+	// +tag stripping applies on non-gmail domains too (general subaddressing
+	// convention), but dot-folding must NOT — a non-gmail provider may treat
+	// dots as significant.
+	plain := HashEmail("victim@example.com")
+	if got := HashEmail("victim+work@example.com"); got != plain {
+		t.Errorf("HashEmail(+tag on non-gmail) = %s, want %s", got, plain)
+	}
+	if got := HashEmail("vic.tim@example.com"); got == plain {
+		t.Error("dot-folding must be gmail-only: vic.tim@example.com wrongly collapsed to victim@example.com")
+	}
+
+	// Non-vacuity: a genuinely different gmail inbox must not collide.
+	if HashEmail("someoneelse@gmail.com") == want {
+		t.Error("distinct gmail inbox collided with victim@gmail.com")
 	}
 }

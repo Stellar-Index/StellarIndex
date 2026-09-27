@@ -124,7 +124,7 @@ func (t *RedisLoginThrottle) Allow(ctx context.Context, ip, email string) (bool,
 	// Per-target-email cap (the email-bomb dimension). An empty email
 	// shouldn't reach here (handler validates first) but guard anyway.
 	if email != "" {
-		ok, err := t.incrUnderCap(ctx, t.keyPrefix+"mail:"+hashEmail(email), t.maxPerMail)
+		ok, err := t.incrUnderCap(ctx, t.keyPrefix+"mail:"+HashEmail(email), t.maxPerMail)
 		allowed = allowed && ok
 		if err != nil && firstErr == nil {
 			firstErr = err
@@ -174,11 +174,14 @@ func (t *RedisLoginThrottle) incrUnderCap(ctx context.Context, keyBase string, l
 	return int(count) <= limit, nil
 }
 
-// hashEmail returns a short stable digest of a canonicalised email for use as
+// HashEmail returns a short stable digest of a canonicalised email for use as
 // a Redis key fragment — never the plaintext address. Normalisation is applied
 // HERE so the per-target-email cap buckets every spelling of one inbox to the
 // same key regardless of whether the caller pre-normalised — the throttle
 // invariant is self-enforcing rather than a promise the caller must keep.
+// Exported so the Redis-less in-process fallback (cmd/stellarindex-api's
+// inProcessLoginThrottle) shares this identity instead of hand-rolling its
+// own un-canonicalised sha256 (F010).
 //
 // Canonicalisation is RFC-5322 aware, not just case+trim: the addr-spec is
 // extracted so `victim@x.com`, `<victim@x.com>` and `"display" <victim@x.com>`
@@ -187,22 +190,46 @@ func (t *RedisLoginThrottle) incrUnderCap(ctx context.Context, keyBase string, l
 // entire purpose is bounding inbox-bombing, was bypassable by re-spelling the
 // target (cold audit 2026-08-03). Unparseable input falls back to case+trim,
 // which is strictly no worse than the previous behaviour.
-func hashEmail(email string) string {
-	normalized := canonicalEmail(email)
+func HashEmail(email string) string {
+	normalized := CanonicalEmail(email)
 	sum := sha256.Sum256([]byte(normalized))
 	return hex.EncodeToString(sum[:8])
 }
 
-// canonicalEmail reduces an address to its lower-cased addr-spec
-// ("user@host"), stripping any display name and angle brackets. Returns the
-// lower-cased, trimmed input when it does not parse as an address — callers
-// use this only for throttle-bucket identity, so a best-effort answer is
-// correct; it must never reject.
-func canonicalEmail(email string) string {
+// CanonicalEmail reduces an address to its lower-cased addr-spec
+// ("user@host"), stripping any display name and angle brackets, a `+tag`
+// subaddress suffix, and — for gmail.com/googlemail.com only, where it is a
+// documented provider convention rather than a general RFC rule — dots in
+// the local part. Returns the lower-cased, trimmed input when it does not
+// parse as an address — callers use this only for throttle-bucket identity,
+// so a best-effort answer is correct; it must never reject.
+//
+// Without this, `victim+1@gmail.com`, `victim+2@gmail.com` and
+// `vic.tim@gmail.com` each mint their own per-email budget while all three
+// deliver to one inbox (RLT-324 / RSEC-N2) — the same re-spelling bypass the
+// RFC-5322 addr-spec extraction closed for angle-bracket/display-name
+// spellings, just via subaddressing instead.
+func CanonicalEmail(email string) string {
 	trimmed := strings.ToLower(strings.TrimSpace(email))
-	addr, err := mail.ParseAddress(trimmed)
-	if err != nil {
-		return trimmed
+	addrSpec := trimmed
+	if addr, err := mail.ParseAddress(trimmed); err == nil {
+		addrSpec = strings.ToLower(strings.TrimSpace(addr.Address))
 	}
-	return strings.ToLower(strings.TrimSpace(addr.Address))
+	local, domain, ok := strings.Cut(addrSpec, "@")
+	if !ok {
+		return addrSpec
+	}
+	if tag := strings.IndexByte(local, '+'); tag >= 0 {
+		local = local[:tag]
+	}
+	if domain == "googlemail.com" {
+		// googlemail.com is Google's own historical alias for gmail.com
+		// (same mailbox, same provider) — fold it so the two domain
+		// spellings share one bucket too.
+		domain = "gmail.com"
+	}
+	if domain == "gmail.com" {
+		local = strings.ReplaceAll(local, ".", "")
+	}
+	return local + "@" + domain
 }
