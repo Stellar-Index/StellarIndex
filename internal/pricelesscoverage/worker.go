@@ -52,6 +52,14 @@ const DefaultInterval = 10 * time.Minute
 // its last good value), never fatal. Options.SweepTimeout <= 0 uses this.
 const DefaultSweepTimeout = 5 * time.Minute
 
+// DefaultProbeTimeout bounds ONE candidate's classic-alias probe
+// (resolveSAC + isPriced). Each candidate gets its own context derived
+// from the sweep's PARENT context rather than the shared sweepCtx, so a
+// sweep running long against a cold cache does not leave every remaining
+// probe sharing a near-expired deadline — which would time many of them
+// out together and read identically to a real mass coverage gap.
+const DefaultProbeTimeout = 15 * time.Second
+
 // Popularity + market-character thresholds. The floor numbers are the
 // task-directed values; the concentration threshold matches the serving
 // stack. "Withheld" is not a threshold here: it is the serving gate's own
@@ -106,6 +114,9 @@ type Options struct {
 	// SweepTimeout bounds one sweep's candidate read. <= 0 falls back to
 	// DefaultSweepTimeout.
 	SweepTimeout time.Duration
+	// ProbeTimeout bounds ONE candidate's classic-alias probe. <= 0 falls
+	// back to DefaultProbeTimeout.
+	ProbeTimeout time.Duration
 	Logger       *slog.Logger
 	// Clock lets tests pin "now" for the last-success timestamp. Defaults
 	// to time.Now().UTC.
@@ -125,6 +136,7 @@ type Worker struct {
 	withheld     func(ctx context.Context, assetID string) bool
 	interval     time.Duration
 	sweepTimeout time.Duration
+	probeTimeout time.Duration
 	logger       *slog.Logger
 	now          func() time.Time
 }
@@ -141,6 +153,7 @@ func New(reader CandidateReader, opts Options) *Worker {
 		withheld:     opts.Withheld,
 		interval:     opts.Interval,
 		sweepTimeout: opts.SweepTimeout,
+		probeTimeout: opts.ProbeTimeout,
 		logger:       opts.Logger,
 		now:          opts.Clock,
 	}
@@ -152,6 +165,9 @@ func New(reader CandidateReader, opts Options) *Worker {
 	}
 	if w.sweepTimeout <= 0 {
 		w.sweepTimeout = DefaultSweepTimeout
+	}
+	if w.probeTimeout <= 0 {
+		w.probeTimeout = DefaultProbeTimeout
 	}
 	if w.logger == nil {
 		w.logger = slog.Default()
@@ -209,23 +225,35 @@ func (w *Worker) Sweep(ctx context.Context) {
 		obs.PricelessCoverageCheckRunsTotal.WithLabelValues("error").Inc()
 		return
 	}
-	count := 0
+	count, probeTimeouts := 0, 0
 	for _, sig := range sigs {
 		if !popularPriceless(sig) {
 			continue
 		}
-		classic, priced := w.pricedViaClassicAlias(sweepCtx, sig.AssetID)
+		// Each candidate's probe gets its OWN bounded context derived from
+		// the sweep's parent, not the shared sweepCtx: late in a long sweep
+		// sweepCtx's remaining budget shrinks toward zero, and every
+		// still-unprocessed candidate sharing it would time out together —
+		// indistinguishable from a real mass coverage gap.
+		probeCtx, probeCancel := context.WithTimeout(ctx, w.probeTimeout)
+		classic, priced, timedOut := w.pricedViaClassicAlias(probeCtx, sig.AssetID)
+		if timedOut {
+			probeTimeouts++
+		}
 		if priced {
 			w.logger.Info("priceless-popular coverage: SAC candidate is priced under its classic asset",
 				"asset_id", sig.AssetID, "classic_asset", classic,
 				"volume_7d_usd", sig.Volume7dUSD, "trades_7d", sig.Trades7d)
+			probeCancel()
 			continue
 		}
-		if w.withheld != nil && w.withheld(sweepCtx, sig.AssetID) {
+		if w.withheld != nil && w.withheld(probeCtx, sig.AssetID) {
 			w.logger.Info("priceless-popular coverage: substance gate withholds the price; not a gap",
 				"asset_id", sig.AssetID, "volume_24h_usd", sig.Volume24hUSD)
+			probeCancel()
 			continue
 		}
+		probeCancel()
 		count++
 		w.logger.Warn("priceless-popular coverage gap: market-popular asset has no price",
 			"asset_id", sig.AssetID,
@@ -236,32 +264,44 @@ func (w *Worker) Sweep(ctx context.Context) {
 			"attributed_vol_share", sig.AttributedVolShare)
 	}
 	obs.AssetsPopularPriceless.Set(float64(count))
-	obs.PricelessCoverageCheckRunsTotal.WithLabelValues("ok").Inc()
+	// A burst of per-probe timeouts is reported distinctly from a clean
+	// pass: "ok" means every candidate's probe actually answered, so an
+	// operator reading a mass coverage gap under "ok" can trust it is
+	// real, not a timeout burst masquerading as one.
+	outcome := "ok"
+	if probeTimeouts > 0 {
+		w.logger.Warn("priceless-popular coverage sweep: probe timeouts during sweep",
+			"probe_timeouts", probeTimeouts, "candidates", len(sigs))
+		outcome = "degraded"
+	}
+	obs.PricelessCoverageCheckRunsTotal.WithLabelValues(outcome).Inc()
 	obs.PricelessCoverageCheckLastSuccessUnix.Set(float64(w.now().Unix()))
 }
 
 // pricedViaClassicAlias resolves a C… candidate to its classic asset and
 // asks whether THAT is priced. Returns the classic id (empty when the
-// candidate is not a resolvable SAC) and the verdict. A resolver or probe
-// error is logged and treated as "not priced": the tripwire fails loud,
-// never quiet.
-func (w *Worker) pricedViaClassicAlias(ctx context.Context, assetID string) (string, bool) {
+// candidate is not a resolvable SAC), the verdict, and whether the probe
+// itself hit ctx's deadline. A resolver or probe error is logged and
+// treated as "not priced": the tripwire fails loud, never quiet — but a
+// timeout is also reported to the caller so a burst of them can be told
+// apart from a real gap.
+func (w *Worker) pricedViaClassicAlias(ctx context.Context, assetID string) (string, bool, bool) {
 	resolveSACPtr := w.resolveSAC.Load()
 	if resolveSACPtr == nil || w.isPriced == nil || !looksLikeContractID(assetID) {
-		return "", false
+		return "", false, false
 	}
 	resolveSAC := *resolveSACPtr
 	classic, ok := resolveSAC(ctx, assetID)
 	if !ok || classic == "" || classic == assetID {
-		return "", false
+		return "", false, errors.Is(ctx.Err(), context.DeadlineExceeded)
 	}
 	priced, err := w.isPriced(ctx, classic)
 	if err != nil {
 		w.logger.Warn("priceless-popular coverage: priced probe for the classic alias failed; treating as priceless",
 			"asset_id", assetID, "classic_asset", classic, "err", err)
-		return classic, false
+		return classic, false, errors.Is(err, context.DeadlineExceeded)
 	}
-	return classic, priced
+	return classic, priced, false
 }
 
 // looksLikeContractID is the C-strkey shape: 56 chars, leading C.
@@ -281,7 +321,14 @@ func popularPriceless(s timescale.AssetCoverageSignals) bool {
 	if washConcentrated(s) {
 		return false // volume-painting wash is not a real market
 	}
-	return s.Volume7dUSD > FloorVolume7dUSD || s.Trades7d > FloorTrades7d
+	// The floor is measured on MARKET-CHARACTER volume/trades: the top
+	// counterparty pair's own volume and trade count (paired from one row
+	// — see top_pair_ranked) are subtracted first, so a sub-90%-share wash
+	// pair cannot inflate an asset past the floor on volume the pair alone
+	// contributed.
+	marketVol := s.Volume7dUSD - s.TopAccountPairVolUSD
+	marketTrades := s.Trades7d - s.TopAccountPairTrades7d
+	return marketVol > FloorVolume7dUSD || marketTrades > FloorTrades7d
 }
 
 // washConcentrated reports whether the asset's volume is dominated by a

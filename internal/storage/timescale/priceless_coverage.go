@@ -22,9 +22,10 @@ type AssetCoverageSignals struct {
 	// a USD proxy or native/XLM-SAC quote). When true the asset is priced,
 	// not a coverage gap.
 	HasPriceUSD bool
-	// Volume7dUSD / Trades7d are the trailing-7d priced volume + trade
-	// count the popularity floor is measured against (AFTER the classifier
-	// discounts wash — see TopAccountPairVolShare).
+	// Volume7dUSD / Trades7d are the trailing-7d RAW priced volume + trade
+	// count, before any wash discount. The classifier subtracts
+	// TopAccountPairVolUSD / TopAccountPairTrades7d from these before
+	// comparing to the popularity floor — see popularPriceless.
 	Volume7dUSD float64
 	Trades7d    int64
 	// Volume24hUSD is the trailing-24h priced volume, logged beside a
@@ -54,6 +55,12 @@ type AssetCoverageSignals struct {
 	// but it tells an operator reading the alert whether a low
 	// concentration means "broad market" or "venue without accounts".
 	AttributedVolShare float64
+	// TopAccountPairVolUSD / TopAccountPairTrades7d are the SAME top
+	// counterparty key's raw volume and trade count (paired from one row,
+	// never independent MAXes — see top_pair_ranked), subtracted from
+	// Volume7dUSD/Trades7d to get the market-character popularity signal.
+	TopAccountPairVolUSD   float64
+	TopAccountPairTrades7d int64
 }
 
 // coverageQuoteProxies is the USD/XLM-proxy quote set a servable price is
@@ -131,19 +138,33 @@ actor_key AS (
   SELECT base_asset AS asset_id,
          LEAST(COALESCE(maker, taker), COALESCE(taker, maker))    AS actor_lo,
          GREATEST(COALESCE(maker, taker), COALESCE(taker, maker)) AS actor_hi,
-         SUM(usd_volume) AS pv
+         SUM(usd_volume) AS pv,
+         COUNT(*)        AS trades
     FROM trades
    WHERE ts >= now() - INTERVAL '7 days'
      AND usd_volume IS NOT NULL
      AND (maker IS NOT NULL OR taker IS NOT NULL)
    GROUP BY 1, 2, 3
 ),
+-- The top pair's trade COUNT must come from the same row as its volume
+-- MAX, not an independent MAX(trades) aggregate — a busier but smaller
+-- pair would otherwise donate its count to the biggest-volume pair's
+-- discount, understating how much of trades_7d the wash pair itself
+-- accounts for. ROW_NUMBER over one ORDER BY keeps volume and count
+-- paired to the same counterparty key.
+top_pair_ranked AS (
+  SELECT asset_id, pv, trades,
+         SUM(pv) OVER (PARTITION BY asset_id) AS attributed_vol,
+         ROW_NUMBER() OVER (PARTITION BY asset_id ORDER BY pv DESC) AS rn
+    FROM actor_key
+),
 top_pair AS (
   SELECT asset_id,
-         MAX(pv)::double precision AS top_pair_vol,
-         SUM(pv)::double precision AS attributed_vol
-    FROM actor_key
-   GROUP BY asset_id
+         pv::double precision     AS top_pair_vol,
+         trades                   AS top_pair_trades,
+         attributed_vol::double precision AS attributed_vol
+    FROM top_pair_ranked
+   WHERE rn = 1
 ),
 -- "Priced directly" = the catalogue's direct_usd / asset_vs_xlm reach,
 -- in BOTH stored directions of the XLM leg, PLUS the proxies themselves.
@@ -170,7 +191,9 @@ top_pair AS (
          ELSE 0 END                                             AS top_pair_share,
     CASE WHEN v.vol_7d > 0
          THEN COALESCE(tp.attributed_vol, 0) / v.vol_7d
-         ELSE 0 END                                             AS attributed_vol_share
+         ELSE 0 END                                             AS attributed_vol_share,
+    COALESCE(tp.top_pair_vol, 0)                                AS top_pair_vol,
+    COALESCE(tp.top_pair_trades, 0)                             AS top_pair_trades
   FROM vol7d v
   LEFT JOIN vol24h   v24 ON v24.asset_id = v.asset_id
   LEFT JOIN top_pair tp  ON tp.asset_id  = v.asset_id
@@ -200,6 +223,8 @@ func (s *Store) PopularPricelessCandidates(ctx context.Context) ([]AssetCoverage
 			&sig.Volume24hUSD,
 			&sig.TopAccountPairVolShare,
 			&sig.AttributedVolShare,
+			&sig.TopAccountPairVolUSD,
+			&sig.TopAccountPairTrades7d,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: PopularPricelessCandidates scan: %w", err)
 		}
@@ -211,23 +236,39 @@ func (s *Store) PopularPricelessCandidates(ctx context.Context) ([]AssetCoverage
 	return out, nil
 }
 
+// substanceFloorHaving is the "not decoration" substance gate applied to a
+// GROUP BY asset_id over prices_1m (SUM(volume_usd), COUNT(DISTINCT
+// bucket), MIN/MAX(bucket)): the same three floors one_hop's `priced` CTE
+// applies below. priced_direct shares this HAVING clause so its "is this
+// asset priced?" answer cannot drift from one_hop's — a single unqualified
+// prices_1m row used to count directly without it (GH-942).
+const substanceFloorHaving = `SUM(volume_usd) >= 1000                                   -- pricingguard DefaultSubstanceMinVolumeUSD
+     AND COUNT(DISTINCT bucket) >= 20                          -- pricingguard DefaultSubstanceMinBuckets
+     AND EXTRACT(EPOCH FROM (MAX(bucket) - MIN(bucket))) >= 21600 -- pricingguard DefaultSubstanceMinSpan (6h)`
+
 // pricelessPricedCTEs is the "what counts as priced" half of the tripwire's
 // query — priced_direct, one_hop and priced — as one text so that a
 // single-asset probe asks EXACTLY the same question the sweep asks. Both
 // queries splice it after their own leading CTEs; it ends with the
 // `priced` CTE closed, no trailing comma.
 const pricelessPricedCTEs = `priced_direct AS (
-  SELECT DISTINCT base_asset AS asset_id
+  SELECT base_asset AS asset_id
     FROM prices_1m
    WHERE bucket >= now() - INTERVAL '24 hours'
+     AND bucket <= now() - INTERVAL '1 minute'
      AND vwap IS NOT NULL
      AND quote_asset IN (` + coverageQuoteProxies + `)
+   GROUP BY base_asset
+  HAVING ` + substanceFloorHaving + `
   UNION
-  SELECT DISTINCT quote_asset AS asset_id
+  SELECT quote_asset AS asset_id
     FROM prices_1m
    WHERE bucket >= now() - INTERVAL '24 hours'
+     AND bucket <= now() - INTERVAL '1 minute'
      AND vwap > 0
      AND base_asset IN (` + xlmQuotes + `)
+   GROUP BY quote_asset
+  HAVING ` + substanceFloorHaving + `
   UNION
   SELECT unnest(ARRAY[` + coverageQuoteProxies + `])
 ),
