@@ -38,7 +38,9 @@ func fuzzRows(spec string) []timescale.Vwap1mRow {
 	return rows
 }
 
-func fuzzVWAPText(s string) bool { return len(s) <= 64 && !strings.ContainsAny(s, "eE") }
+// big.Rat.SetString accepts binary exponents too: "1p9999999" alone takes
+// >10 s through the guard, which the fuzzer reports as a hung worker.
+func fuzzVWAPText(s string) bool { return len(s) <= 64 && !strings.ContainsAny(s, "eEpP") }
 
 // scaleRow multiplies a parseable VWAP by k exactly; unparseable text is
 // left as-is so it stays unparseable.
