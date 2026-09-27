@@ -89,6 +89,48 @@ func TestAssetGet_SlugDispatch_GlobalView(t *testing.T) {
 	}
 }
 
+// TestAssetGet_SlugDispatch_GlobalView_SubstanceWithheld pins RLT-352:
+// the global CEX/aggregator tier (populateGlobalCryptoPrice) must be
+// held to the same substance gate as the classic /v1/assets listing and
+// /v1/price, not just the on-chain fallback tier below it. Before the
+// fix this tier had no gate at all, so a thin/dust market the rest of
+// the API withholds still headlined on /v1/assets/{slug}.
+func TestAssetGet_SlugDispatch_GlobalView_SubstanceWithheld(t *testing.T) {
+	cat := newTestCatalogue(t)
+	reader := &stubGlobalPriceReader{}
+	reader.vwap.price = "1.00050000000000"
+	reader.vwap.asOf = time.Now().UTC().Truncate(time.Second)
+	reader.vwap.tradeCount = 12
+	reader.vwap.sources = []string{"coinbase", "binance"}
+	reader.vwap.ok = true
+
+	gate := &stubSubstanceGate{allow: false}
+	srv := v1.New(v1.Options{
+		VerifiedCurrencies: cat,
+		GlobalPrice:        reader,
+		GlobalPriceOpts: aggregate.GlobalPriceOptions{
+			AggregatorSources: []string{"coingecko"},
+		},
+		Substance: gate,
+	})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/assets/usdc")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.GlobalAssetView `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if env.Data.PriceUSD != nil {
+		t.Errorf("price_usd = %v, want withheld — the substance gate refuses this pair", *env.Data.PriceUSD)
+	}
+	if len(gate.surfaces) == 0 {
+		t.Error("substance gate was never consulted for the global asset view")
+	}
+}
+
 func TestAssetGet_SlugDispatch_StellarOnlyTokenNoPrice(t *testing.T) {
 	// AQUA is in the catalogue but `crypto:AQUA` won't be on the
 	// canonical crypto allow-list (it's a Stellar-only token).

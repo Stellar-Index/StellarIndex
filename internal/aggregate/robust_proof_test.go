@@ -94,3 +94,19 @@ func TestGuardServedVWAP_ThinHistoryNotFullyOpen(t *testing.T) {
 		t.Fatalf("empty baseline must fail open (accept=%v lkg=%d)", accept, lkg)
 	}
 }
+
+// TestRobustCentreScale_EmptyValsDoesNotPanic pins the RLT-263 latent
+// panic: medianRat(nil) returns nil (its own documented defensive
+// behaviour), and robustCentreScale used to pass that nil straight into
+// madRat -> big.Rat.Sub as the subtrahend with no guard of its own,
+// which panics on a nil-pointer dereference rather than returning the
+// same "nothing to judge" nil, nil every other empty-input path here
+// uses. Every current caller happens to guard len(vals)>0 first, but
+// the guard belongs on the shared primitive, not on each caller's
+// memory of doing so.
+func TestRobustCentreScale_EmptyValsDoesNotPanic(t *testing.T) {
+	centre, scale := robustCentreScale(nil)
+	if centre != nil || scale != nil {
+		t.Fatalf("robustCentreScale(nil) = (%v, %v), want (nil, nil)", centre, scale)
+	}
+}

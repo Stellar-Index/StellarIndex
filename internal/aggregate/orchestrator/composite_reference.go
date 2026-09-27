@@ -330,8 +330,16 @@ type compositeReference struct {
 
 	// divergencePct is |direct − composite| / composite × 100 when the
 	// reference resolved (the same orientation as
-	// [Orchestrator.triangulationDivergencePct]).
+	// [Orchestrator.triangulationDivergencePct]). Reporting only — a
+	// float64 mirror of [deviationRatio] for gauges and log lines.
 	divergencePct float64
+
+	// deviationRatio is the same |direct − composite| / composite as
+	// divergencePct, but exact *big.Rat: the value [releaseCorroborated]
+	// must compare against its own band, so the mid-hold release
+	// decision is decided in the same exact space as the verdict above
+	// it, not at the mercy of float64 binary rounding at the boundary.
+	deviationRatio *big.Rat
 
 	// legSources maps each chain leg (canonical pair string) to the
 	// distinct source count behind it on this bucket (FX legs: the
@@ -560,6 +568,7 @@ func (o *Orchestrator) resolveCompositeReference(
 	ref.divergencePct = math.Abs(directF-compositeF) / compositeF * 100.0
 	deviation := new(big.Rat).Sub(direct, composite)
 	deviation.Abs(deviation).Quo(deviation, composite)
+	ref.deviationRatio = deviation
 	tolerance := big.NewRat(int64(cfg.ToleranceBps), 10_000)
 	if deviation.Cmp(tolerance) <= 0 {
 		ref.verdict = compositeVerdictCorroborated
