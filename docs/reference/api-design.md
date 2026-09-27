@@ -1,6 +1,6 @@
 ---
 title: API Design — Stellar Index v1
-last_verified: 2026-05-03
+last_verified: 2026-09-27
 status: ratified — `openapi/stellar-index.v1.yaml` is the binding contract; this doc records design intent
 ---
 
@@ -478,7 +478,7 @@ Free and Partner, plus anonymous callers:
 
 | Tier | How obtained | Per-key default (req/min) | Per-key ceiling (req/min) | Identity |
 | ---- | ------------ | ------------------------: | ------------------------: | -------- |
-| Anonymous | no API key | **60** | n/a (`[api].anon_rate_limit_per_min`) | per IP (XFF-aware via `api.trusted_proxy_cidrs`) |
+| Anonymous | no API key | `[api].anon_rate_limit_per_min` (code default **60**; r1 runs it higher — read `X-RateLimit-Limit`, don't hard-code either number) | n/a (`[api].anon_rate_limit_per_min`) | per IP (XFF-aware via `api.trusted_proxy_cidrs`) |
 | Free | `POST /v1/signup` (every registered account's default) | **1,000** | **1,000** | per API key |
 | Partner | staff-set `tier` on `PATCH /v1/admin/accounts/{id}` | **1,000** | **100,000** | per API key |
 
@@ -524,10 +524,12 @@ X-RateLimit-Remaining: 987
 ```
 
 The `X-RateLimit-Limit` header reflects the *active* budget for
-the current request's identity — anonymous callers see 60,
-authenticated callers see their key's budget (1,000 by default, up to
-the tier ceiling above), raised to at least the account's
-`rate_limit_per_min_override` when one is set.
+the current request's identity — anonymous callers see the deployment's
+configured `anon_rate_limit_per_min` (code default 60; see
+[getting-started.md](../getting-started.md#rate-limits) for the live
+r1 value), authenticated callers see their key's budget (1,000 by
+default, up to the tier ceiling above), raised to at least the
+account's `rate_limit_per_min_override` when one is set.
 
 ---
 

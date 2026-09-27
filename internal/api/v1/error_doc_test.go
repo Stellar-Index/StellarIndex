@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -75,6 +77,36 @@ func TestHandleErrorDoc(t *testing.T) {
 			t.Error("HTML missing docs link")
 		}
 	})
+}
+
+// TestAPIDesignDoc_AnonymousRateLimitNotHardcoded — GH-626: §7.1 of
+// api-design.md once asserted anonymous callers "see 60" as a live fact,
+// while r1 runs anon_rate_limit_per_min far higher (docs/getting-started.md
+// puts it at 6,000). The doc must describe 60 as the code default and point
+// at the live-value source instead of restating it as fact.
+func TestAPIDesignDoc_AnonymousRateLimitNotHardcoded(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
+		t.Fatalf("repo root %s has no go.mod: %v", root, err)
+	}
+	b, err := os.ReadFile(filepath.Join(root, "docs", "reference", "api-design.md"))
+	if err != nil {
+		t.Fatalf("read api-design.md: %v", err)
+	}
+	doc := string(b)
+
+	if strings.Contains(doc, "anonymous callers see 60,") {
+		t.Error("api-design.md still hard-codes the anonymous rate limit as 60; " +
+			"r1's live anon_rate_limit_per_min differs (see docs/getting-started.md) " +
+			"and the doc must describe 60 as the code default, not the live value")
+	}
+	if !strings.Contains(doc, "getting-started.md#rate-limits") {
+		t.Error("api-design.md's rate-limit section no longer points readers at " +
+			"docs/getting-started.md#rate-limits for the live anonymous limit")
+	}
 }
 
 func TestHumaniseErrorSlug(t *testing.T) {
