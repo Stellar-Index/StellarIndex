@@ -1803,7 +1803,9 @@ type RWACuratedPublished struct {
 // "published_totals" (no per-asset row is readable — the curator's list
 // is private — and Published carries what it publishes), "unavailable"
 // (a curator is wired but nothing of its is inside its recognition
-// bound), or "unwired". The three value figures are decimal strings in
+// bound, OR the curated snapshot answered but the contract-catalogue
+// read behind the per-asset rows did not), or "unwired". The three
+// value figures are decimal strings in
 // USD; AdditionalValueUSD counts only rows NOT in the verified set, so
 // CombinedValueUSD = VerifiedValueUSD + AdditionalValueUSD without
 // double counting a token both sides recognise.

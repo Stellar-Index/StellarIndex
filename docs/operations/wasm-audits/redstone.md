@@ -115,9 +115,9 @@ defends against decoding an unrelated call's args as feed IDs.
 ### Known-feeds allow-list
 
 Per AGENTS.md, Redstone has **19 mainnet feeds** (at audit time —
-the relayer expanded to 30 feeds on 2026-07-24; the live list is
-`internal/sources/redstone/feeds.go`, per-feed evidence in
-`docs/protocols/redstone.md`). Feed IDs from op
+the relayer expanded to 30 feeds on 2026-07-24, then to 32 (Upshift,
+earnUSDC); the live list is `internal/sources/redstone/feeds.go`,
+per-feed evidence in `docs/protocols/redstone.md`). Feed IDs from op
 args that aren't on the known-feeds allow-list are skipped per-entry
 with `ErrUnknownFeedID` (other feeds in the same event still land).
 A new feed listed on Redstone's mainnet adapter without our
@@ -218,7 +218,8 @@ worker chunk before that ledger.
 - U256 price type matches `scval.AsU256ToBigInt`.
 - **Live ingest health**: 0 `ErrFeedIDCountMismatch` /
   `ErrWrongFunctionCall` / `ErrUnknownFeedID` rate spikes since
-  the ContractCallDecoder hook landed (PR #166).
+  the ContractCallDecoder hook landed (commit `ee0360da4`, "wire
+  band + comet + redstone decoders").
 - No `update_current_contract_wasm` events for ~36 days through
   scan-end rule out further drift.
 

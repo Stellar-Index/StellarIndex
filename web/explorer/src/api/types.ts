@@ -1337,10 +1337,14 @@ export interface paths {
         };
         /**
          * Latest oracle reading per source for an asset.
-         * @description Returns one OracleReading per source (reflector-dex /
+         * @description Returns one OracleReading per (source, quote) — reflector-dex /
          *     reflector-cex / reflector-fx / redstone / band /
-         *     coingecko) that has observed the asset. Optional source
-         *     filter restricts to a single source.
+         *     coingecko — that has observed the asset. A single source can
+         *     return MORE than one row when it publishes the asset against
+         *     more than one live quote (e.g. Redstone's EUROC/EUR and
+         *     EUROC/USD are two independent feeds, not the same reading
+         *     twice). Optional source filter restricts to a single source;
+         *     optional quote filter restricts to a single quote.
          *
          *     Asset translation: classic Stellar identifiers map to the
          *     global crypto ticker the oracles publish under — so
@@ -14279,6 +14283,8 @@ export interface operations {
                 asset: components["parameters"]["AssetQuery"];
                 /** @description Optional. Restrict to a single source name. */
                 source?: string;
+                /** @description Optional. Restrict to a single quote asset id (e.g. `fiat:USD`, `fiat:EUR`) — disambiguates a source that publishes the same base asset against more than one live quote. */
+                quote?: string;
             };
             header?: never;
             path?: never;

@@ -24,6 +24,22 @@ func wireTimePtr(t *time.Time) *WireTime {
 	return &w
 }
 
+// wireTimeOrNil lifts a value-typed instant that may legitimately never
+// have happened (an unverified email, a session that never logged in)
+// onto the wire as absent rather than the zero instant. A struct-typed
+// WireTime field ignores `omitempty` (it is never the empty value Go's
+// encoding/json checks for), so the zero time renders as the literal
+// string "0001-01-01T00:00:00Z" — which json.Unmarshal on the SDK's
+// *time.Time side allocates a non-nil pointer for, indistinguishable
+// from a real timestamp.
+func wireTimeOrNil(t time.Time) *WireTime {
+	if t.IsZero() {
+		return nil
+	}
+	w := WireTime(t)
+	return &w
+}
+
 // wireTimeUnptr is [wireTimePtr]'s inverse: it hands an optional wire
 // instant back to handler-side code that works in [time.Time],
 // preserving nil.

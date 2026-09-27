@@ -152,10 +152,20 @@ func (s *Store) LatestOracleUpdatesForAsset(ctx context.Context, asset canonical
 }
 
 // LatestOracleUpdatesForAssets is the multi-key variant — returns
-// the most-recent observation per source across the union of the
-// supplied asset keys. The DISTINCT ON (source) pick keeps the
-// observation with the highest (ts, ledger) per source, regardless
-// of which input key it matched.
+// the most-recent observation per (source, quote) across the union
+// of the supplied asset keys. The DISTINCT ON (source, quote) pick
+// keeps the observation with the highest (ts, ledger) per that pair,
+// regardless of which input key it matched.
+//
+// quote is INCLUDED in the distinct key rather than collapsed to one
+// row per source: a single source can publish the SAME base asset
+// against two different quotes as two independent live feeds (e.g.
+// Redstone's EUROC/EUR and EUROC/USD — see feeds.go). Collapsing on
+// source alone silently kept whichever quote happened to publish most
+// recently, which is a live-feed coin flip, not a "latest reading".
+// Callers that want exactly one row disambiguate with quoteFilter (the
+// v1 handler's `?quote=`); an empty quoteFilter returns every live
+// quote so the caller can see the ambiguity rather than have it hidden.
 //
 // Use case: the v1 handler calls this with a translation list —
 // e.g. user-facing `native` expands to `[native, crypto:XLM]`
@@ -170,7 +180,7 @@ func (s *Store) LatestOracleUpdatesForAssets(ctx context.Context, assets []canon
 		keys[i] = a.String()
 	}
 	const q = `
-        SELECT DISTINCT ON (source)
+        SELECT DISTINCT ON (source, quote)
                source, COALESCE(contract_id, ''),
                ledger, tx_hash, op_index, ts,
                asset, quote,
@@ -180,7 +190,7 @@ func (s *Store) LatestOracleUpdatesForAssets(ctx context.Context, assets []canon
           FROM oracle_updates
          WHERE asset = ANY($1)
            AND ($2 = '' OR source = $2)
-         ORDER BY source, ts DESC, ledger DESC
+         ORDER BY source, quote, ts DESC, ledger DESC
     `
 	rows, err := s.db.QueryContext(ctx, q, keys, sourceFilter)
 	if err != nil {

@@ -26,6 +26,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/incidents"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/version"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
@@ -440,6 +441,12 @@ type Server struct {
 	rwaPremCache  *rwaPremiumHistory
 	rwaPremAt     time.Time
 	rwaPremFlight chan struct{}
+	// rwaPremiumSubstance is the operator-configured thin-market floor
+	// (the SAME [pricingguard.SubstanceGate] policy /v1/price serves
+	// against), used to derive rwaPremiumDayFloor. Zero value falls
+	// back to the pricingguard package defaults — see
+	// [rwaPremiumDayFloorFor].
+	rwaPremiumSubstance pricingguard.SubstancePolicy
 	// marketHistory backs the market leg of that series — the observed
 	// daily dollar VWAP the oracle's NAV is measured against. See
 	// [RWAMarketHistoryReader].
@@ -795,6 +802,12 @@ type Options struct {
 	// premium with one leg missing is not a shorter series, it is no
 	// series.
 	MarketHistory RWAMarketHistoryReader
+	// RWAPremiumSubstance is the resolved thin-market floor
+	// /v1/rwa/premium's day-clearing check derives from — the SAME
+	// policy the live [pricingguard.SubstanceGate] serves /v1/price
+	// against (pass substanceGate.Policy()). Zero value falls back to
+	// the pricingguard package defaults.
+	RWAPremiumSubstance pricingguard.SubstancePolicy
 	// Sep1Cache, when non-nil, enables the SEP-1 overlay on
 	// /v1/assets/{id}. The handler reads from the `issuers.sep1_payload`
 	// JSONB column populated by `stellarindex-ops sep1-refresh`.
@@ -1714,6 +1727,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		oracle:                  opts.Oracle,
 		oracleHistory:           opts.OracleHistory,
 		marketHistory:           opts.MarketHistory,
+		rwaPremiumSubstance:     opts.RWAPremiumSubstance,
 		sep1Cache:               opts.Sep1Cache,
 		accounts:                opts.Accounts,
 		accountKeyQuota:         opts.AccountKeyQuota,

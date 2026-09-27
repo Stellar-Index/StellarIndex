@@ -650,7 +650,7 @@ func (s *Server) cachedRWAValueHistory(ctx context.Context) rwaValueHistory {
 	s.rwaHistFlight = done
 	s.rwaHistMu.Unlock()
 
-	built := s.buildRWAValueHistory(ctx)
+	built := s.rwaValueHistoryBuildSafely(ctx)
 
 	s.rwaHistMu.Lock()
 	if built.available {
@@ -663,6 +663,19 @@ func (s *Server) cachedRWAValueHistory(ctx context.Context) rwaValueHistory {
 	s.rwaHistMu.Unlock()
 	close(done)
 	return built
+}
+
+// rwaValueHistoryBuildSafely runs buildRWAValueHistory and converts a
+// panic into an unavailable result rather than leaving rwaHistFlight set
+// forever — a panic between "flight registered" and "flight cleared"
+// would otherwise wedge every future caller in the single-flight wait.
+func (s *Server) rwaValueHistoryBuildSafely(ctx context.Context) (built rwaValueHistory) {
+	defer func() {
+		if r := recover(); r != nil {
+			built = rwaValueHistory{}
+		}
+	}()
+	return s.buildRWAValueHistory(ctx)
 }
 
 // buildRWAValueHistory assembles one history: today's membership, the

@@ -228,8 +228,11 @@ type RWACuratedSummary struct {
 	// Status is "served" (the curator's per-asset rows are below),
 	// "published_totals" (no per-asset row is readable, and the
 	// curator's published totals are in Published), "unavailable"
-	// (neither answered inside its bound) or "unwired" (no reader
-	// configured).
+	// (neither answered inside its bound, INCLUDING a failed
+	// contract-catalogue read after a successful curated-snapshot read —
+	// that failure must not report as "served" with zero assets, which
+	// reads identically to a curator with nothing curated) or "unwired"
+	// (no reader configured).
 	Status string `json:"status"`
 	// Assets counts curated rows served; AlsoVerified counts the subset
 	// the verified set already carries.
@@ -400,7 +403,7 @@ func rwaApplyCuratorReference(a *RWAAsset, e timescale.CuratedRWAEntry, now time
 
 // ─── summary ────────────────────────────────────────────────────────
 
-func rwaCuratedSummarise(snap rwaCurated, rows []RWAAsset, verifiedRef *string, now time.Time) *RWACuratedSummary {
+func rwaCuratedSummarise(snap rwaCurated, rows []RWAAsset, degraded bool, verifiedRef *string, now time.Time) *RWACuratedSummary {
 	out := &RWACuratedSummary{
 		Curator: rwaCuratorDune,
 		Basis:   rwaCuratedBasisProse,
@@ -425,6 +428,12 @@ func rwaCuratedSummarise(snap rwaCurated, rows []RWAAsset, verifiedRef *string, 
 		out.Status = "published_totals"
 		return out
 	case !snap.available:
+		out.Status = "unavailable"
+		return out
+	case degraded:
+		// The curated snapshot answered, but the contract-catalogue read
+		// behind the per-asset rows did not — this is not "zero curated
+		// assets", it is the same unanswered-read case as above.
 		out.Status = "unavailable"
 		return out
 	}
@@ -553,6 +562,6 @@ func (s *Server) attachRWACurated(
 	members := rwaCuratedMembership(snap, view.Assets)
 	rows, _, degraded := s.rwaCuratedRows(valuationCtx, members, now)
 	view.CuratedAssets = rows
-	view.Curated = rwaCuratedSummarise(snap, rows, view.Summary.ReferenceValuation.ValueUSD, now)
+	view.Curated = rwaCuratedSummarise(snap, rows, degraded, view.Summary.ReferenceValuation.ValueUSD, now)
 	return degraded
 }
