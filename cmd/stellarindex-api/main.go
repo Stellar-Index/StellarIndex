@@ -607,12 +607,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			"min_sources_for_warning", cfg.Divergence.MinSourcesForWarning)
 	}
 
-	// Home-domain lookup chains the live LCM resolver (#298 +
-	// account_observations table) with the operator-static
-	// MetadataConfig map per ADR-0021. An observation is final, even
-	// one with no home_domain; static covers unobserved issuers and
-	// storage errors.
-	homeDomainLookup := metadata.ChainedHomeDomainLookup(
+	// Home-domain lookups per ADR-0021; see newHomeDomainLookups for why
+	// the detail surfaces get the chain split around their live read.
+	homeDomainLookup := newHomeDomainLookups(
 		metadata.NewLCMHomeDomainResolver(metadataStoreLookup{s: store}),
 		cfg.Metadata.HomeDomainFor,
 		func(msg string, kv ...any) {
@@ -717,7 +714,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// 14-day-window aggregations over the trades hypertable
 	// (~450-500 ms cold), so a 60 s cache absorbs polling fan-out
 	// without delaying new-listing surfacing more than once-a-minute.
-	var assetReader v1.AssetReader = storeAssetReader{s: store, homeDomainLookup: homeDomainLookup}
+	var assetReader v1.AssetReader = storeAssetReader{s: store, homeDomainLookup: homeDomainLookup.listing, detailHomeDomainLookup: homeDomainLookup.detail}
 	var marketsReader v1.MarketsReader = storeMarketsReader{s: store}
 	if rdb != nil {
 		assetReader = cachedAssetReader{
@@ -1404,6 +1401,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		ContractCatalogue:  store,
 		LakeWatermark:      lakeWatermarkReader,
 		Explorer:           explorerReader,
+		StaticHomeDomain:   homeDomainLookup.static,
 		Volume:             storeVolumeReader{s: store},
 		Change24h:          storeChange24hReader{s: store, pegs: usdPegs, decimals: nonstandardDecimalsCache, logger: logger},
 		PriceAt:            storePriceAtReader{s: store, substance: substanceGate, scam: scamGate, logger: logger.With("component", "price-at-guard")},
@@ -2876,13 +2874,35 @@ func clickhouseReadyChecks(addr string, er *clickhouse.ExplorerReader, dialErr e
 // the typed boundary: the store returns canonical.Asset; the API
 // layer owns the wire-shape conversion to v1.AssetDetail.
 //
-// homeDomainLookup is metadata.ChainedHomeDomainLookup. Returns
+// homeDomainLookup (listing rows) and detailHomeDomainLookup (GetAsset)
+// are the two surface lookups from newHomeDomainLookups. Each returns
 // ("", false) when no domain is known; the AssetDetail then has
 // HomeDomain==nil and the overlay handler stamps
 // sep1_status="not_fetched" for that case.
 type storeAssetReader struct {
-	s                *timescale.Store
-	homeDomainLookup func(ctx context.Context, issuer string) (string, bool)
+	s                      *timescale.Store
+	homeDomainLookup       func(ctx context.Context, issuer string) (string, bool)
+	detailHomeDomainLookup func(ctx context.Context, issuer string) (string, bool)
+}
+
+// homeDomainLookups is the ADR-0021 home-domain chain (observation, then
+// the operator-static map) split by surface. The listing has no live
+// on-chain read, so it takes the whole chain. The asset-detail surfaces
+// run v1's live ClickHouse AccountEntry read, which must outrank the
+// static map: detail carries only the observation layer, and static is
+// handed to v1 to consult after that read.
+type homeDomainLookups struct {
+	listing func(ctx context.Context, issuer string) (string, bool)
+	detail  func(ctx context.Context, issuer string) (string, bool)
+	static  func(ctx context.Context, issuer string) (string, bool)
+}
+
+func newHomeDomainLookups(live *metadata.LCMHomeDomainResolver, static func(issuer string) (string, bool), warnFn func(msg string, kv ...any)) homeDomainLookups {
+	return homeDomainLookups{
+		listing: metadata.ChainedHomeDomainLookup(live, static, warnFn),
+		detail:  metadata.ObservedHomeDomainLookup(live, warnFn),
+		static:  metadata.StaticHomeDomainFallback(live, static, warnFn),
+	}
 }
 
 // ClassicAssetBySlug satisfies v1's optional classicSlugResolver
@@ -2912,7 +2932,7 @@ func (r storeAssetReader) GetAsset(ctx context.Context, a canonical.Asset) (v1.A
 	if !has {
 		return v1.AssetDetail{}, v1.ErrAssetNotFound
 	}
-	detail := assetToDetail(ctx, a, r.homeDomainLookup)
+	detail := assetToDetail(ctx, a, r.detailHomeDomainLookup)
 
 	// Best-effort F2 enrichment from the per-asset stats lookup
 	// — same data the /v1/coins listing carries. Failures here
@@ -4124,8 +4144,8 @@ func (r storePriceReader) RecentClosedVWAP1mExists(ctx context.Context, base, qu
 // fields become nil pointers when empty so the JSON omits them.
 //
 // homeDomainLookup populates HomeDomain for classic assets whose
-// issuer has a known home_domain (observed on chain, else the
-// operator's cfg.Metadata.IssuerHomeDomains). When one is known, the
+// issuer has a known home_domain (one of the homeDomainLookups). When
+// one is known, the
 // SEP-1 overlay handler downstream resolves stellar.toml and fills the
 // overlay fields; otherwise HomeDomain stays nil and the handler
 // stamps sep1_status="not_fetched". Pass nil for the lookup if the

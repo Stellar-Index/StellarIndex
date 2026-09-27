@@ -89,18 +89,52 @@ func ChainedHomeDomainLookup(
 	warnFn func(msg string, kv ...any),
 ) func(ctx context.Context, issuer string) (string, bool) {
 	return func(ctx context.Context, issuer string) (string, bool) {
-		ctx, cancel := contextWithTimeoutMs(ctx, lcmLookupTimeoutMs)
-		defer cancel()
-		hd, err := live.HomeDomainFor(ctx, issuer)
-		switch {
-		case err != nil:
-			if warnFn != nil {
-				warnFn("LCM home-domain resolver failed; falling back to static map",
-					"issuer", issuer, "err", err)
-			}
-		case hd.Observed:
+		if hd := observeHomeDomain(ctx, live, issuer, warnFn); hd.Observed {
 			return hd.Domain, hd.Domain != ""
 		}
 		return static(issuer)
 	}
+}
+
+// ObservedHomeDomainLookup is layer 1 of [ChainedHomeDomainLookup] alone:
+// ("", false) for an unobserved issuer or a storage error. For a caller
+// that runs its own live on-chain read before the static map.
+func ObservedHomeDomainLookup(
+	live *LCMHomeDomainResolver,
+	warnFn func(msg string, kv ...any),
+) func(ctx context.Context, issuer string) (string, bool) {
+	return ChainedHomeDomainLookup(live, func(string) (string, bool) { return "", false }, warnFn)
+}
+
+// StaticHomeDomainFallback is the static tail of [ChainedHomeDomainLookup]
+// alone: it answers only when the issuer has no observation (or the read
+// failed), so an observed on-chain clear still suppresses the static map.
+func StaticHomeDomainFallback(
+	live *LCMHomeDomainResolver,
+	static func(issuer string) (string, bool),
+	warnFn func(msg string, kv ...any),
+) func(ctx context.Context, issuer string) (string, bool) {
+	return func(ctx context.Context, issuer string) (string, bool) {
+		if observeHomeDomain(ctx, live, issuer, warnFn).Observed {
+			return "", false
+		}
+		return static(issuer)
+	}
+}
+
+// observeHomeDomain reads the issuer's latest observation under the
+// caller's ctx bounded to lcmLookupTimeoutMs; a storage error is logged
+// and reported as unobserved.
+func observeHomeDomain(ctx context.Context, live *LCMHomeDomainResolver, issuer string, warnFn func(msg string, kv ...any)) IssuerHomeDomain {
+	ctx, cancel := contextWithTimeoutMs(ctx, lcmLookupTimeoutMs)
+	defer cancel()
+	hd, err := live.HomeDomainFor(ctx, issuer)
+	if err != nil {
+		if warnFn != nil {
+			warnFn("LCM home-domain resolver failed; falling back to static map",
+				"issuer", issuer, "err", err)
+		}
+		return IssuerHomeDomain{}
+	}
+	return hd
 }

@@ -186,3 +186,35 @@ func TestChainedHomeDomainLookup_FallsBackOnStorageError(t *testing.T) {
 		t.Errorf("warnFn not called on storage error")
 	}
 }
+
+// TestSplitHomeDomainLayers — ObservedHomeDomainLookup never answers from
+// the static map, and StaticHomeDomainFallback answers only for an
+// unobserved issuer (or a failed read), so an observed clear still
+// suppresses the static entry when a caller runs its own read between them.
+func TestSplitHomeDomainLayers(t *testing.T) {
+	live := NewLCMHomeDomainResolver(&fakeLookup{rows: map[string]string{
+		"GLIVE": "live.example.com", "GCLEAR": "",
+	}})
+	broken := NewLCMHomeDomainResolver(&fakeLookup{err: errors.New("network down")})
+	staticFn := func(string) (string, bool) { return "static.example.com", true }
+	cases := []struct {
+		name   string
+		lookup func(context.Context, string) (string, bool)
+		issuer string
+		want   string
+	}{
+		{"observed: hit", ObservedHomeDomainLookup(live, nil), "GLIVE", "live.example.com"},
+		{"observed: unobserved skips static", ObservedHomeDomainLookup(live, nil), "GNONE", ""},
+		{"observed: storage error skips static", ObservedHomeDomainLookup(broken, nil), "GLIVE", ""},
+		{"static: observed domain suppresses", StaticHomeDomainFallback(live, staticFn, nil), "GLIVE", ""},
+		{"static: observed clear suppresses", StaticHomeDomainFallback(live, staticFn, nil), "GCLEAR", ""},
+		{"static: unobserved answers", StaticHomeDomainFallback(live, staticFn, nil), "GNONE", "static.example.com"},
+		{"static: storage error answers", StaticHomeDomainFallback(broken, staticFn, nil), "GLIVE", "static.example.com"},
+	}
+	for _, tc := range cases {
+		domain, ok := tc.lookup(context.Background(), tc.issuer)
+		if domain != tc.want || ok != (tc.want != "") {
+			t.Errorf("%s: got (%q, %v), want %q", tc.name, domain, ok, tc.want)
+		}
+	}
+}

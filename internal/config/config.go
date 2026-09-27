@@ -669,7 +669,9 @@ func defaultDivergenceConfig() DivergenceConfig {
 // `internal/sources/accounts` observer writes for the accounts it
 // watches. An observed account's on-chain home_domain is final —
 // including an observed absence — so the static map only answers for
-// issuers the observer has not seen.
+// issuers the observer has not seen. On /v1/assets/{id} (and its
+// /metadata route) the live ClickHouse account-state read also outranks
+// the static map.
 type MetadataConfig struct {
 	// IssuerHomeDomains maps issuer-account G-strkey → home-domain.
 	// E.g. `"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" = "centre.io"`.

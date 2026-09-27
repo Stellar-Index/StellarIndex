@@ -205,8 +205,8 @@ func (s *Server) onChainHomeDomain(ctx context.Context, issuer string) (domain s
 }
 
 // backfillHomeDomain fills an empty detail.HomeDomain for a classic
-// asset: live on-chain account state first, curated knownIssuers map
-// as last resort. Shared by both asset-detail surfaces
+// asset: live on-chain account state first, then the operator-static
+// map (s.staticHomeDomain), curated knownIssuers map as last resort. Shared by both asset-detail surfaces
 // (handleAssetGet + the metadata route) so they stay in lockstep on
 // the domain their SEP-1 overlays verify against.
 //
@@ -228,6 +228,9 @@ func (s *Server) backfillHomeDomain(ctx context.Context, detail *AssetDetail) (d
 	hd, degraded := s.onChainHomeDomain(ctx, *detail.Issuer)
 	if degraded {
 		return true
+	}
+	if hd == "" && s.staticHomeDomain != nil {
+		hd, _ = s.staticHomeDomain(ctx, *detail.Issuer)
 	}
 	if hd == "" {
 		hd, _ = enrichIssuer(*detail.Issuer, "", "")

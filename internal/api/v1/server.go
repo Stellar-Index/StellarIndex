@@ -464,9 +464,10 @@ type Server struct {
 	// fxCrossMaxAge bounds how old the forex snapshot's matched rate may
 	// be before [Server.tryFiatCrossRate] / [Server.tryUSDAnchoredFiatCross]
 	// refuse to serve it (T650). See fxCrossStale's doc comment.
-	fxCrossMaxAge   time.Duration
-	explorer        ExplorerReader
-	explorerHandler *explorerpkg.Handler // network-explorer endpoints (ADR-0038); see explorer.go
+	fxCrossMaxAge    time.Duration
+	explorer         ExplorerReader
+	staticHomeDomain func(ctx context.Context, issuer string) (string, bool)
+	explorerHandler  *explorerpkg.Handler // network-explorer endpoints (ADR-0038); see explorer.go
 	// directory resolves curated third-party issuer labels
 	// (account_directory, migration 0136) for the additive
 	// issuer_directory_* fields on /v1/assets + /v1/assets/{id}.
@@ -1286,6 +1287,12 @@ type Options struct {
 	// *clickhouse.ExplorerReader satisfies it. Nil → those routes 503.
 	Explorer ExplorerReader
 
+	// StaticHomeDomain, when non-nil, is the operator-static
+	// [metadata.issuer_home_domains] map (gated on no AccountEntry
+	// observation). The asset-detail backfill consults it AFTER the live
+	// on-chain read and before the curated knownIssuers map.
+	StaticHomeDomain func(ctx context.Context, issuer string) (string, bool)
+
 	// SEP41Movements, when non-nil, backs the Postgres "recent tail"
 	// half of GET /v1/accounts/{g_strkey}/movements' merge (ADR-0048
 	// D5) — timescale.Store satisfies it via
@@ -1759,6 +1766,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		currencies:              opts.Currencies,
 		fxCrossMaxAge:           fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours),
 		explorer:                opts.Explorer,
+		staticHomeDomain:        opts.StaticHomeDomain,
 		directory:               opts.Directory,
 		volumeCharacter:         opts.VolumeCharacter,
 		fxHistory:               opts.FXHistory,
