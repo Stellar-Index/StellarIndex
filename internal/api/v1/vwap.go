@@ -208,10 +208,10 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		aggregate.ResolveDecimals(s.nonstandardDecimals, base),
 		aggregate.ResolveDecimals(s.nonstandardDecimals, quote))
 
-	// Cross-reference verdict, keyed on the requested (base, quote) pair
-	// like the price surfaces (lookupDivergenceFlag) — quote-specific
-	// (GH-1045), never ORed across the base's other quotes.
-	firing, checked := s.lookupDivergenceFlag(r.Context(), base, quote)
+	// No cross-reference verdict (GH-1045): the worker's verdict compares
+	// the aggregator's shortest-window VWAP now, and this value is computed
+	// here from raw trades over a caller-chosen [from, to), so the verdict
+	// never saw it — the same reason /v1/price/at carries none.
 	writeJSON(w, VWAPResult{
 		From:                WireTime(from),
 		To:                  WireTime(to),
@@ -223,7 +223,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		TradeCount:          len(trades),
 		OutliersFiltered:    outliersFiltered,
 		Truncated:           pre == maxTrades,
-	}, Flags{Triangulated: triangulated, DivergenceWarning: firing, DivergenceChecked: checked})
+	}, Flags{Triangulated: triangulated})
 }
 
 // parseVWAPOutlierSigma parses ?outlier_sigma=, defaulting to 0 (no

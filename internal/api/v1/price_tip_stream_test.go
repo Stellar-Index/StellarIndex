@@ -392,7 +392,7 @@ func TestPriceTipStream_PayloadJSONIsValid(t *testing.T) {
 
 // tipStreamDivergenceCase is one cached-verdict shape and the flags a
 // tip_update must carry for it. Shared by the two producer-shape tests
-// below so both walk the same three directions.
+// below so both cover the same four shapes.
 type tipStreamDivergenceCase struct {
 	name        string
 	verdicts    map[string]struct{ firing, checked bool }
@@ -403,17 +403,21 @@ type tipStreamDivergenceCase struct {
 func tipStreamDivergenceCases() []tipStreamDivergenceCase {
 	return []tipStreamDivergenceCase{
 		{
-			// The r1 shape: the worker refreshed `crypto:XLM`, the
-			// stream was asked for `native`.
-			name:        "clean verdict under a sibling spelling",
-			verdicts:    map[string]struct{ firing, checked bool }{"crypto:XLM": {firing: false, checked: true}},
+			name:        "clean verdict under the requested spelling",
+			verdicts:    map[string]struct{ firing, checked bool }{"native": {firing: false, checked: true}},
 			wantChecked: true,
 		},
 		{
-			name:        "firing verdict under a sibling spelling",
-			verdicts:    map[string]struct{ firing, checked bool }{"crypto:XLM": {firing: true, checked: true}},
+			name:        "firing verdict under the requested spelling",
+			verdicts:    map[string]struct{ firing, checked bool }{"native": {firing: true, checked: true}},
 			wantChecked: true,
 			wantWarning: true,
+		},
+		{
+			// GH-1045: crypto:XLM's verdict is a check on a different
+			// venue population than the one the stream was asked for.
+			name:     "verdict only under a sibling spelling",
+			verdicts: map[string]struct{ firing, checked bool }{"crypto:XLM": {firing: true, checked: true}},
 		},
 		{
 			// The flag is a claim, not a default.
@@ -426,11 +430,8 @@ func tipStreamDivergenceCases() []tipStreamDivergenceCase {
 // TWO frames to the expected divergence flags: the handler builds the
 // pre-flight frame itself and the producer — per-connection or
 // Hub-shared — builds every later one, so a regression in either path
-// shows on exactly one of them. It then checks the lookup record: the
-// pre-flight frame is built on the handler goroutine before any producer
-// starts, so its lookups lead the record — requested spelling first, and
-// with no verdict anywhere every alias tried before the flag is left
-// false.
+// shows on exactly one of them. It then checks the lookup record: every
+// lookup asked for the requested spelling and no other.
 func assertTipStreamDivergenceFlags(t *testing.T, url string, div *stubAliasDivergenceLooker, tc tipStreamDivergenceCase) {
 	t.Helper()
 	resp, err := http.Get(url + "/v1/price/tip/stream?asset=native&quote=fiat:USD&window_seconds=1")
@@ -459,19 +460,12 @@ func assertTipStreamDivergenceFlags(t *testing.T, url string, div *stubAliasDive
 	}
 
 	asked := div.askedSpellings()
-	if len(asked) == 0 || asked[0] != "native" {
-		t.Fatalf("lookup order = %v, want the requested spelling first", asked)
+	if len(asked) == 0 {
+		t.Fatal("the verdict was never looked up")
 	}
-	if tc.wantChecked {
-		return
-	}
-	aliases := canonical.AssetAliases(canonical.NativeAsset())
-	if len(asked) < len(aliases) {
-		t.Fatalf("spellings tried = %v, want every alias before reporting unchecked", asked)
-	}
-	for i, a := range aliases {
-		if asked[i] != a.String() {
-			t.Errorf("lookup %d = %q, want %q (walk must cover every alias in order)", i, asked[i], a.String())
+	for i, a := range asked {
+		if a != "native" {
+			t.Errorf("lookup %d asked %q, want only the requested native", i, a)
 		}
 	}
 }
@@ -479,8 +473,8 @@ func assertTipStreamDivergenceFlags(t *testing.T, url string, div *stubAliasDive
 // TestPriceTipStream_DivergenceCheckedFollowsAssetAliases — the stream is
 // documented as the request endpoint's "same compute logic", and the
 // envelope flags are part of that: every tip_update carries the verdict a
-// GET on the same pair would at that instant, looked up by base across
-// the asset's canonical spellings. Before this the per-connection
+// GET on the same pair would at that instant, asked for the requested
+// spelling only. Before this the per-connection
 // producer built its flags without the lookup, so a stream and a GET on
 // the same pair disagreed on `divergence_checked` at the same moment.
 // Hub-less server, so both frames come off the per-connection producer

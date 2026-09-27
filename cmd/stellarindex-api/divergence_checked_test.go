@@ -141,7 +141,7 @@ func TestDivergenceAdapter_ChecksMatchWorkerQuorum(t *testing.T) {
 			seedCachedDivergence(t, rdb, pair, cached)
 
 			adapter := newDivergenceAdapter(svc)
-			firing, checked, err := adapter.DivergenceFiringFor(context.Background(), xlm, usd)
+			firing, checked, _, err := adapter.DivergenceFiringFor(context.Background(), xlm, usd)
 			if err != nil {
 				t.Fatalf("DivergenceFiringFor: %v", err)
 			}
@@ -197,12 +197,16 @@ func TestDivergenceAdapter_QuoteSpecific(t *testing.T) {
 	})
 	seedCachedDivergence(t, rdb, usdPair, divergence.CachedResult{
 		SuccessCount: 3, DivergencePct: 0.1, AgreementCount: 3, WarningFired: false,
+		WindowSeconds: 300,
 	})
 
 	adapter := newDivergenceAdapter(svc)
-	firing, checked, err := adapter.DivergenceFiringFor(context.Background(), xlm, usd)
+	firing, checked, window, err := adapter.DivergenceFiringFor(context.Background(), xlm, usd)
 	if err != nil {
 		t.Fatalf("DivergenceFiringFor: %v", err)
+	}
+	if window != 5*time.Minute {
+		t.Errorf("window = %v, want the verdict's recorded 5m", window)
 	}
 	if !checked {
 		t.Fatalf("checked = false, want true — the USD pair has its own quorum-meeting cached result")
@@ -238,7 +242,7 @@ func TestDivergenceAdapter_UnsetQuorumIsNotAlwaysChecked(t *testing.T) {
 		seedCachedDivergence(t, rdb, canonical.Pair{Base: xlm, Quote: usd}, divergence.CachedResult{
 			SuccessCount: 1, AgreementCount: 1, ComputedAt: time.Now().UTC(),
 		})
-		_, checked, err := newDivergenceAdapter(svc).DivergenceFiringFor(context.Background(), xlm, usd)
+		_, checked, _, err := newDivergenceAdapter(svc).DivergenceFiringFor(context.Background(), xlm, usd)
 		if err != nil {
 			t.Fatalf("DivergenceFiringFor: %v", err)
 		}

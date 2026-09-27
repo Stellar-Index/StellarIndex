@@ -118,6 +118,10 @@ type CachedResult struct {
 	// from the last evaluated refresh.
 	Pinned bool `json:"our_price_pinned,omitempty"`
 
+	// WindowSeconds is the aggregation window of the VWAP OurPrice was
+	// ([ServiceOptions.Window]); 0 when the writer did not record one.
+	WindowSeconds int `json:"window_seconds,omitempty"`
+
 	// ComputedAt is when the worker wrote this result. RFC 3339 UTC.
 	ComputedAt time.Time `json:"computed_at"`
 }
@@ -216,6 +220,12 @@ type ServiceOptions struct {
 	// Zero means the cadence is at most WarningPersistence.
 	RefreshInterval time.Duration
 
+	// Window is the aggregation window whose VWAP the caller passes as
+	// ourPrice (the aggregator's shortest). It is stamped on every cached
+	// verdict so a reader serving a value over another window can tell the
+	// verdict does not speak to it. Zero leaves the verdict unscoped.
+	Window time.Duration
+
 	// PairCount is how many pairs one refresh pass visits. The caller
 	// refreshes them sequentially, so a pair's div: key is rewritten up
 	// to RefreshInterval plus a whole pass after its previous write;
@@ -272,6 +282,7 @@ type Service struct {
 	cache       Cache
 	threshold   float64
 	minSources  int
+	window      time.Duration
 	timeout     time.Duration
 	persistence time.Duration
 	maxGap      time.Duration
@@ -366,6 +377,7 @@ func NewService(opts ServiceOptions) (*Service, error) {
 		cache:        opts.Cache,
 		threshold:    threshold,
 		minSources:   minSources,
+		window:       opts.Window,
 		timeout:      timeout,
 		persistence:  persistence,
 		sink:         opts.ObservationSink,
@@ -530,6 +542,7 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 		FailureCount:   res.FailureCount,
 		AgreementCount: agreeing,
 		Pinned:         pinned,
+		WindowSeconds:  int(s.window / time.Second),
 		ComputedAt:     time.Now().UTC(),
 	}
 
@@ -757,13 +770,14 @@ func (s *Service) flushObservations(
 		// api/v1.moneyStr) so RecordObservation never binds a raw
 		// float64 into a NUMERIC column.
 		if err := s.sink.RecordObservation(ctx, ObservationRecord{
-			Pair:       pair,
-			Reference:  refName,
-			OurPrice:   strconv.FormatFloat(ourPrice, 'f', -1, 64),
-			RefPrice:   strconv.FormatFloat(refPrice, 'f', -1, 64),
-			DeltaPct:   strconv.FormatFloat(deltaPct, 'f', -1, 64),
-			Firing:     firing,
-			ObservedAt: observedAt,
+			Pair:          pair,
+			Reference:     refName,
+			OurPrice:      strconv.FormatFloat(ourPrice, 'f', -1, 64),
+			RefPrice:      strconv.FormatFloat(refPrice, 'f', -1, 64),
+			DeltaPct:      strconv.FormatFloat(deltaPct, 'f', -1, 64),
+			Firing:        firing,
+			ObservedAt:    observedAt,
+			RefObservedAt: res.SourcesAsOf[refName],
 		}); err != nil && s.logger != nil {
 			// Best-effort write — the Redis cache (load-bearing for
 			// flags.divergence_warning) already succeeded. Log so
@@ -941,11 +955,13 @@ func (s *Service) LookupCachedPair(ctx context.Context, pair canonical.Pair) (Ca
 // WarningFired itself was gated on. It can only move the flag
 // true→false: a below-quorum RefreshPair write never sets
 // WarningFired true in the first place, so (firing=true, checked=false)
-// cannot occur.
-func (s *Service) LookupCachedPairVerdict(ctx context.Context, pair canonical.Pair) (firing, checked bool, err error) {
+// cannot occur. window is the aggregation window the verdict compared
+// ([CachedResult.WindowSeconds]), 0 when unrecorded.
+func (s *Service) LookupCachedPairVerdict(ctx context.Context, pair canonical.Pair) (firing, checked bool, window time.Duration, err error) {
 	cached, found, err := s.LookupCachedPair(ctx, pair)
 	if err != nil || !found {
-		return false, false, err
+		return false, false, 0, err
 	}
-	return cached.WarningFired, cached.SuccessCount >= s.minSources, nil
+	return cached.WarningFired, cached.SuccessCount >= s.minSources,
+		time.Duration(cached.WindowSeconds) * time.Second, nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
 	"reflect"
@@ -637,13 +638,14 @@ func TestPrice_StablecoinFiatProxy_CrossPegQuoteSkips(t *testing.T) {
 type stubDivergenceLooker struct {
 	firing  bool
 	checked bool
+	window  time.Duration // the verdict's recorded window; 0 = unrecorded
 	err     error
 	calls   int
 }
 
-func (s *stubDivergenceLooker) DivergenceFiringFor(_ context.Context, _, _ canonical.Asset) (firing, checked bool, err error) {
+func (s *stubDivergenceLooker) DivergenceFiringFor(_ context.Context, _, _ canonical.Asset) (firing, checked bool, window time.Duration, err error) {
 	s.calls++
-	return s.firing, s.checked, s.err
+	return s.firing, s.checked, s.window, s.err
 }
 
 // stubConfidenceLooker is a minimal v1.ConfidenceLooker for tests.
@@ -890,14 +892,16 @@ type stubAliasDivergenceLooker struct {
 	// while the test goroutine reads the record back.
 	mu    sync.Mutex
 	asked []string
+	// window is every verdict's recorded aggregation window.
+	window time.Duration
 }
 
-func (s *stubAliasDivergenceLooker) DivergenceFiringFor(_ context.Context, a, _ canonical.Asset) (firing, checked bool, err error) {
+func (s *stubAliasDivergenceLooker) DivergenceFiringFor(_ context.Context, a, _ canonical.Asset) (firing, checked bool, window time.Duration, err error) {
 	s.mu.Lock()
 	s.asked = append(s.asked, a.String())
 	s.mu.Unlock()
 	v := s.verdicts[a.String()]
-	return v.firing, v.checked, nil
+	return v.firing, v.checked, s.window, nil
 }
 
 // askedSpellings returns a copy of the consulted-spelling record.
@@ -907,17 +911,15 @@ func (s *stubAliasDivergenceLooker) askedSpellings() []string {
 	return append([]string(nil), s.asked...)
 }
 
-// TestPrice_DivergenceCheckedFollowsAssetAliases — the cross-reference
-// verdict is cached under whichever XLM spelling the aggregator refreshed
-// (`crypto:XLM` on r1), so a lookup keyed on the raw request asset reports
-// divergence_checked=false for `native` while ?asset=crypto:XLM reports
-// true for the byte-identical price. Per CS-087 that false reads as "could
-// not verify", so the lookup must walk the alias set the way the price
-// read itself does.
-func TestPrice_DivergenceCheckedFollowsAssetAliases(t *testing.T) {
+// TestPrice_DivergenceCheckedFollowsServedSpelling — the r1 shape: the
+// worker refreshes `crypto:XLM/fiat:USD` and the price read for `native`
+// resolves to that same market. The verdict is asked for the served
+// spelling, so ?asset=native reports the check that describes the price it
+// returns, and no other spelling is consulted.
+func TestPrice_DivergenceCheckedFollowsServedSpelling(t *testing.T) {
 	reader := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.18726015145022901497", PriceType: "vwap"},
+			"crypto:XLM/fiat:USD": {Price: "0.18726015145022901497", PriceType: "vwap"},
 		},
 	}
 	div := &stubAliasDivergenceLooker{
@@ -930,48 +932,57 @@ func TestPrice_DivergenceCheckedFollowsAssetAliases(t *testing.T) {
 
 	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
 	body, _ := readAll(resp)
-	if !strings.Contains(body, `"divergence_checked":true`) {
-		t.Errorf("divergence_checked should follow the alias holding the verdict: %s", body)
+	if !strings.Contains(body, `"divergence_checked":true`) || !strings.Contains(body, `"divergence_warning":false`) {
+		t.Errorf("want the served crypto:XLM market's clean verdict (warning=false, checked=true): %s", body)
 	}
-	if !strings.Contains(body, `"divergence_warning":false`) {
-		t.Errorf("verdict is clean, so the warning must stay false: %s", body)
-	}
-	if len(div.askedSpellings()) == 0 || div.askedSpellings()[0] != "native" {
-		t.Errorf("lookup order = %v, want the requested spelling first", div.askedSpellings())
+	if asked := div.askedSpellings(); len(asked) != 1 || asked[0] != "crypto:XLM" {
+		t.Errorf("spellings asked = %v, want only the served crypto:XLM", asked)
 	}
 }
 
-// TestPrice_DivergenceCheckedFalseWhenNoAliasWasChecked — the flag is a
-// claim, not a default: when NO spelling of the asset carries a verdict
-// the response must still say divergence_checked=false, and every alias
-// must have been tried before concluding that.
-func TestPrice_DivergenceCheckedFalseWhenNoAliasWasChecked(t *testing.T) {
+// TestPrice_DivergenceVerdictNeverFromAnotherSpelling — GH-1045: the price
+// is served from `native` (the SDEX book) and only `crypto:XLM` (the CEX
+// market) holds a verdict. Falling through to it vouched for an SDEX price
+// with a check that never saw it; the served market has no verdict, so the
+// response must say unchecked.
+func TestPrice_DivergenceVerdictNeverFromAnotherSpelling(t *testing.T) {
 	reader := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{
 			"native/fiat:USD": {Price: "0.18726015145022901497", PriceType: "vwap"},
 		},
 	}
-	div := &stubAliasDivergenceLooker{}
-	srv := v1.New(v1.Options{Prices: reader, Divergence: div})
-	ts := startHTTPTest(t, srv.Handler())
+	for _, sibling := range []struct {
+		name    string
+		verdict struct{ firing, checked bool }
+	}{
+		{"clean sibling verdict", struct{ firing, checked bool }{firing: false, checked: true}},
+		{"firing sibling verdict", struct{ firing, checked bool }{firing: true, checked: true}},
+	} {
+		t.Run(sibling.name, func(t *testing.T) {
+			div := &stubAliasDivergenceLooker{
+				verdicts: map[string]struct{ firing, checked bool }{"crypto:XLM": sibling.verdict},
+			}
+			srv := v1.New(v1.Options{Prices: reader, Divergence: div})
+			ts := startHTTPTest(t, srv.Handler())
 
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"divergence_checked":false`) {
-		t.Errorf("divergence_checked must stay false with no cached verdict: %s", body)
-	}
-	if len(div.askedSpellings()) != len(canonical.AssetAliases(canonical.NativeAsset())) {
-		t.Errorf("spellings tried = %v, want every alias before reporting unchecked", div.askedSpellings())
+			resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
+			body, _ := readAll(resp)
+			if !strings.Contains(body, `"divergence_checked":false`) || !strings.Contains(body, `"divergence_warning":false`) {
+				t.Errorf("crypto:XLM's verdict reached a native-served price; want (warning=false, checked=false): %s", body)
+			}
+			if asked := div.askedSpellings(); len(asked) != 1 || asked[0] != "native" {
+				t.Errorf("spellings asked = %v, want only the served native", asked)
+			}
+		})
 	}
 }
 
-// TestPrice_DivergenceFreshVerdictBeatsStandingWarning — a below-quorum
-// record carries the pair's last evaluated warning forward
-// (firing=true, checked=false). That is not a verdict, so the alias walk
-// must not stop on it: a checked verdict under a later spelling is the
-// answer. Stopping on the first non-empty record served a stale warning
-// as the price's only cross-check result beside a fresh clean one.
-func TestPrice_DivergenceFreshVerdictBeatsStandingWarning(t *testing.T) {
+// TestPrice_DivergenceStandingWarningOnServedSpelling — a below-quorum
+// record carries the served pair's last evaluated warning forward
+// (firing=true, checked=false). It is served as such, flagged unchecked,
+// and a sibling spelling's fresh clean verdict does not replace it: that
+// verdict describes a different market.
+func TestPrice_DivergenceStandingWarningOnServedSpelling(t *testing.T) {
 	reader := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{
 			"native/fiat:USD": {Price: "0.18726015145022901497", PriceType: "vwap"},
@@ -988,35 +999,8 @@ func TestPrice_DivergenceFreshVerdictBeatsStandingWarning(t *testing.T) {
 
 	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
 	body, _ := readAll(resp)
-	if !strings.Contains(body, `"divergence_checked":true`) || !strings.Contains(body, `"divergence_warning":false`) {
-		t.Errorf("want the fresh clean verdict (warning=false, checked=true), got: %s", body)
-	}
-}
-
-// TestPrice_DivergenceStandingWarningKeptWhenNoVerdict — with no spelling
-// reaching a quorum, a carried-forward warning is still served, flagged
-// unchecked, rather than being dropped to (false, false).
-func TestPrice_DivergenceStandingWarningKeptWhenNoVerdict(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.18726015145022901497", PriceType: "vwap"},
-		},
-	}
-	div := &stubAliasDivergenceLooker{
-		verdicts: map[string]struct{ firing, checked bool }{
-			"crypto:XLM": {firing: true, checked: false},
-		},
-	}
-	srv := v1.New(v1.Options{Prices: reader, Divergence: div})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	body, _ := readAll(resp)
 	if !strings.Contains(body, `"divergence_checked":false`) || !strings.Contains(body, `"divergence_warning":true`) {
-		t.Errorf("want the standing warning (warning=true, checked=false), got: %s", body)
-	}
-	if len(div.askedSpellings()) != len(canonical.AssetAliases(canonical.NativeAsset())) {
-		t.Errorf("spellings tried = %v, want every alias before settling on a standing warning", div.askedSpellings())
+		t.Errorf("want native's standing warning (warning=true, checked=false), got: %s", body)
 	}
 }
 
@@ -1063,6 +1047,7 @@ func TestPrice_DivergenceWalkStartsAtServedAlias(t *testing.T) {
 // must be asked for that same (a, q), as the freeze check beside it is.
 func TestPriceWindowed_DivergenceWalkStartsAtServedAlias(t *testing.T) {
 	div := conflictingXLMVerdicts()
+	div.window = 5 * time.Minute
 	srv := v1.New(v1.Options{
 		Prices:       &stubPriceReader{},
 		Divergence:   div,
@@ -1074,11 +1059,59 @@ func TestPriceWindowed_DivergenceWalkStartsAtServedAlias(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", status, body)
 	}
-	if !strings.Contains(body, `"divergence_warning":false`) {
-		t.Errorf("verdict must come from the served crypto:XLM market (clean), not native: %s", body)
+	if !strings.Contains(body, `"divergence_warning":false`) || !strings.Contains(body, `"divergence_checked":true`) {
+		t.Errorf("verdict must come from the served crypto:XLM market (clean, checked), not native: %s", body)
 	}
 	if asked := div.askedSpellings(); len(asked) == 0 || asked[0] != "crypto:XLM" {
 		t.Errorf("lookup order = %v, want the served spelling crypto:XLM first", asked)
+	}
+}
+
+// TestPriceWindowed_DivergenceVerdictScopedToItsWindow — GH-1045: the
+// worker's verdict compares the aggregator's shortest-window VWAP (5m
+// here). ?window=300 serves that window and carries the verdict;
+// ?window=3600 serves a different number the check never saw and must
+// report neither the warning nor checked; and a verdict that recorded no
+// window cannot be matched to any.
+func TestPriceWindowed_DivergenceVerdictScopedToItsWindow(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		verdictWindow time.Duration
+		window        string
+		wantChecked   bool
+		wantWarning   bool
+	}{
+		{"served window is the verdict's", 5 * time.Minute, "300", true, true},
+		{"served window is longer", 5 * time.Minute, "3600", false, false},
+		{"served window is the day", 5 * time.Minute, "86400", false, false},
+		{"verdict recorded no window", 0, "300", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			div := &stubDivergenceLooker{firing: true, checked: true, window: tc.verdictWindow}
+			srv := v1.New(v1.Options{
+				Prices:     &stubPriceReader{},
+				Divergence: div,
+				Triangulated: lkgPairs{
+					"crypto:BTC/fiat:USD/300":   "60000",
+					"crypto:BTC/fiat:USD/3600":  "59000",
+					"crypto:BTC/fiat:USD/86400": "58000",
+				},
+			})
+			ts := startHTTPTest(t, srv.Handler())
+
+			status, body := getBody(t, ts.URL+"/v1/price?asset=crypto:BTC&quote=fiat:USD&window="+tc.window)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", status, body)
+			}
+			for _, want := range []string{
+				fmt.Sprintf(`"divergence_checked":%t`, tc.wantChecked),
+				fmt.Sprintf(`"divergence_warning":%t`, tc.wantWarning),
+			} {
+				if !strings.Contains(body, want) {
+					t.Errorf("body missing %s: %s", want, body)
+				}
+			}
+		})
 	}
 }
 
@@ -1086,9 +1119,9 @@ func TestPriceWindowed_DivergenceWalkStartsAtServedAlias(t *testing.T) {
 // the shape of a store that is down for every spelling at once.
 type failingDivergenceLooker struct{ calls atomic.Int32 }
 
-func (f *failingDivergenceLooker) DivergenceFiringFor(context.Context, canonical.Asset, canonical.Asset) (firing, checked bool, err error) {
+func (f *failingDivergenceLooker) DivergenceFiringFor(context.Context, canonical.Asset, canonical.Asset) (firing, checked bool, window time.Duration, err error) {
 	f.calls.Add(1)
-	return false, false, errors.New("redis exploded")
+	return false, false, 0, errors.New("redis exploded")
 }
 
 // TestPrice_DivergenceLookupErrorStopsTheWalk — the spellings share one

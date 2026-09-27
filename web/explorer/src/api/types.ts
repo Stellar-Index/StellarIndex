@@ -684,9 +684,9 @@ export interface paths {
          *     - First event fires synchronously on connect (no waiting a
          *       full window).
          *     - `flags.divergence_warning` / `flags.divergence_checked` are
-         *       looked up per event — by base, across the asset's canonical
-         *       spellings — exactly as `/v1/price/tip` does, so a
-         *       `tip_update` carries the verdict a GET at that instant would.
+         *       looked up per event — for the requested (base, quote) spelling
+         *       only — exactly as `/v1/price/tip` does, so a `tip_update`
+         *       carries the verdict a GET at that instant would.
          *     - Pre-flight 404 when the pair has no observations: SSE
          *       can't change status mid-stream, so emptiness is detected
          *       before the response body switches to `text/event-stream`.
@@ -1269,12 +1269,10 @@ export interface paths {
          *     the window end. Narrow the window and retry for an exact
          *     VWAP.
          *
-         *     `flags.divergence_checked` / `flags.divergence_warning` are the
-         *     base's CURRENT cross-reference verdict — the aggregator's
-         *     shortest-window VWAP now against the external references now —
-         *     not a re-check of the requested `[from, to)` window: a
-         *     historical window can carry `divergence_checked: true` about a
-         *     number the check never saw.
+         *     `flags.divergence_checked` / `flags.divergence_warning` are
+         *     always `false` here: the cross-reference verdict compares the
+         *     aggregator's shortest-window VWAP now, never this value computed
+         *     over the requested `[from, to)`, so it is not consulted.
          */
         get: operations["getVwap"];
         put?: never;
@@ -6922,7 +6920,7 @@ export interface components {
             /** @default false */
             divergence_warning: boolean;
             /**
-             * @description True only when a live cross-reference divergence check ran (at least `min_sources_for_warning` responding references, the quorum the warning is gated on). When false the check is blind (references dark, or no record yet), so a `false` warning must not be read as "prices agree" (CS-087); a `true` warning is the last evaluated verdict carried forward through the outage, not a fresh one. Set on the surfaces that consult the verdict — `/v1/price`, its `?window=` variant, `/v1/price/tip`, `/v1/price/tip/stream` and `/v1/vwap` — looked up by BASE across every canonical spelling of the asset. On every other envelope that carries `flags` the field is `false` and means "not consulted on this surface", never "checked and clean": `/v1/price/at`, `/v1/price/batch`, `/v1/twap`, the SEP-40 passthroughs, `/v1/observations` and `/v1/observations/stream` never ask, so `divergence_warning` is not meaningful there. `/v1/price/at` is the point-in-time read and answers about a past bucket, which the verdict — a claim about the CURRENT cross-reference state — does not speak to. The observations pair is the deliberate case: raw per-source trades carry no aggregated value for a base-level verdict to vouch for. On `/v1/price/tip/stream` the lookup carries its own short budget (1s) inside the tick: a verdict store too slow to answer within it leaves the field `false` on that event rather than delaying the emission, so a `false` there can also mean "the check did not answer in time". The stream degrades the flag, never the cadence.
+             * @description True only when a live cross-reference divergence check ran (at least `min_sources_for_warning` responding references, the quorum the warning is gated on). When false the check is blind (references dark, or no record yet), so a `false` warning must not be read as "prices agree" (CS-087); a `true` warning is the last evaluated verdict carried forward through the outage, not a fresh one. Set on the surfaces that consult the verdict — `/v1/price`, its `?window=` variant, `/v1/price/tip` and `/v1/price/tip/stream` — for the exact (base, quote) spelling the value was served from, never another spelling's market (XLM's `native` and `crypto:XLM` are different venue populations). The verdict compares the aggregator's shortest-window VWAP, so a rolling `?window=` (300/3600/86400) carries it only for that window and reports `false` for any other. On every other envelope that carries `flags` the field is `false` and means "not consulted on this surface", never "checked and clean": `/v1/price/at`, `/v1/price/batch`, `/v1/twap`, `/v1/vwap`, the SEP-40 passthroughs, `/v1/observations` and `/v1/observations/stream` never ask, so `divergence_warning` is not meaningful there. `/v1/price/at` is the point-in-time read and answers about a past bucket, and `/v1/vwap` computes over a caller-chosen range from raw trades; the verdict — a claim about the CURRENT shortest-window VWAP — speaks to neither. The observations pair is the deliberate case: raw per-source trades carry no aggregated value for a base-level verdict to vouch for. On `/v1/price/tip/stream` the lookup carries its own short budget (1s) inside the tick: a verdict store too slow to answer within it leaves the field `false` on that event rather than delaying the emission, so a `false` there can also mean "the check did not answer in time". The stream degrades the flag, never the cadence.
              * @default false
              */
             divergence_checked: boolean;
@@ -12836,7 +12834,7 @@ export interface operations {
     getPrice: {
         parameters: {
             query: {
-                /** @description Aggregation window in seconds (board #43; proposal: the current-price window is query-selectable). Default 60 = the closed 1-minute bucket (ADR-0015 semantics, unchanged). 300/3600/86400 serve the aggregator's continuously-published rolling VWAP for that window; a window the aggregator has not published for the pair is a 404, never a silent substitution. Sub-minute rolling windows: /v1/price/tip. */
+                /** @description Aggregation window in seconds (board #43; proposal: the current-price window is query-selectable). Default 60 = the closed 1-minute bucket (ADR-0015 semantics, unchanged). 300/3600/86400 serve the aggregator's continuously-published rolling VWAP for that window; a window the aggregator has not published for the pair is a 404, never a silent substitution. Sub-minute rolling windows: /v1/price/tip. On 300/3600/86400, `flags.divergence_checked` / `divergence_warning` are set only when the window is the one the cross-reference verdict was computed over (the aggregator's shortest, 300 by default); any other reports both `false`. */
                 window?: "60" | "300" | "3600" | "86400";
                 /**
                  * @description Canonical asset identifier — matches the `asset_id` on
@@ -15019,7 +15017,8 @@ export interface operations {
                      *             "our_price": "62543.07358731602",
                      *             "ref_price": "62608.75585288",
                      *             "delta_pct": "-0.10490907329051442",
-                     *             "status": "clear"
+                     *             "status": "clear",
+                     *             "ref_observed_at": "2026-07-03T22:36:11Z"
                      *           },
                      *           {
                      *             "asset_id": "crypto:ETH",
@@ -15030,7 +15029,8 @@ export interface operations {
                      *             "our_price": "1757.84660921192",
                      *             "ref_price": "1756.21",
                      *             "delta_pct": "0.09318983560735354",
-                     *             "status": "clear"
+                     *             "status": "clear",
+                     *             "ref_observed_at": "2026-07-03T22:36:52Z"
                      *           }
                      *         ]
                      *       },
@@ -15060,6 +15060,11 @@ export interface operations {
                                 delta_pct?: string;
                                 /** @enum {string} */
                                 status?: "clear" | "firing";
+                                /**
+                                 * Format: date-time
+                                 * @description When the reference observed `ref_price` (oracle round time, CoinGecko last_updated_at, on-chain ledger close). `observed_at` is the comparison time, so their difference is the reference's age when compared, at most 1h (76h for fiat/fiat FX pairs, whose quotes pause over market closes). Null on rows recorded before the reference time was stored.
+                                 */
+                                ref_observed_at?: string | null;
                             }[];
                         };
                     };

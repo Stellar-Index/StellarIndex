@@ -94,16 +94,20 @@ type Flags struct {
 	// forward through the outage, not a fresh one.
 	//
 	// Set on the surfaces that consult the verdict: /v1/price, its
-	// ?window= variant, /v1/price/tip, /v1/price/tip/stream and /v1/vwap —
-	// each looking it up by BASE across every canonical spelling of the
-	// asset (lookupDivergenceFlag). On every other envelope that carries
-	// Flags the field is false and means "not consulted on this
-	// surface", never "checked and clean": /v1/price/at,
-	// /v1/price/batch, /v1/twap, the SEP-40 passthroughs,
-	// /v1/observations and its stream all serve values the looker is
-	// never asked about. /v1/price/at is the point-in-time read and
-	// answers about a past bucket, which the verdict — a claim about the
-	// CURRENT cross-reference state — does not speak to. The
+	// ?window= variant, /v1/price/tip and /v1/price/tip/stream — each
+	// asking for the exact (base, quote) spelling the value was served
+	// from, never another alias's market (lookupDivergenceFlag). The
+	// ?window= variant carries it only when the requested window is the
+	// one the verdict was computed over (the aggregator's shortest). On
+	// every other envelope that carries Flags the field is false and
+	// means "not consulted on this surface", never "checked and clean":
+	// /v1/price/at, /v1/price/batch, /v1/twap, /v1/vwap, the SEP-40
+	// passthroughs, /v1/observations and its stream all serve values the
+	// looker is never asked about. /v1/price/at is the point-in-time read
+	// and answers about a past bucket, and /v1/vwap computes over a
+	// caller-chosen range from raw trades; the verdict — a claim about
+	// the CURRENT shortest-window VWAP against the references — speaks to
+	// neither. The
 	// observations pair is the deliberate case — raw per-source rows
 	// carry no aggregated value for a base-level verdict to vouch for
 	// (see handleObservations).

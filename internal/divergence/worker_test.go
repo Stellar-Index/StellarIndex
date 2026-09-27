@@ -542,6 +542,79 @@ func TestRefreshPair_ObservationStampedWithComparisonTime(t *testing.T) {
 	}
 }
 
+// TestRefreshPair_ObservationCarriesReferenceAsOf — each row records when
+// ITS reference observed the price (GH-823), not only the comparison time:
+// two references answering the same comparison from different instants must
+// persist different RefObservedAt values, so a reader can tell a fresh quote
+// from a 50-minute-old one that still passed the comparability ceiling.
+func TestRefreshPair_ObservationCarriesReferenceAsOf(t *testing.T) {
+	comparedAt := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	freshAsOf := comparedAt.Add(-30 * time.Second)
+	agedAsOf := comparedAt.Add(-50 * time.Minute)
+
+	sink := &recordingObservationSink{}
+	svc, _, _ := newTestService(t, []divergence.Reference{
+		&stubReference{name: "chainlink", price: 1.00, asOf: freshAsOf},
+		&stubReference{name: "coingecko", price: 1.01, asOf: agedAsOf},
+	}, divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 1,
+		ObservationSink:      sink,
+	})
+
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, comparedAt); err != nil {
+		t.Fatalf("RefreshPair: %v", err)
+	}
+	want := map[string]time.Time{"chainlink": freshAsOf, "coingecko": agedAsOf}
+	if len(sink.records) != len(want) {
+		t.Fatalf("sink got %d records, want %d", len(sink.records), len(want))
+	}
+	for _, r := range sink.records {
+		if !r.RefObservedAt.Equal(want[r.Reference]) {
+			t.Errorf("ref %s: RefObservedAt = %v, want the quote's AsOf %v",
+				r.Reference, r.RefObservedAt, want[r.Reference])
+		}
+		if !r.ObservedAt.Equal(comparedAt) {
+			t.Errorf("ref %s: ObservedAt = %v, want the comparison time %v", r.Reference, r.ObservedAt, comparedAt)
+		}
+	}
+}
+
+// TestRefreshPair_StampsVerdictWindow — the cached verdict names the
+// aggregation window its OurPrice was computed over (GH-1045), so an API
+// surface serving a different window can tell the verdict does not speak to
+// its value; a service built without a window leaves the verdict unscoped.
+func TestRefreshPair_StampsVerdictWindow(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		window time.Duration
+		want   time.Duration
+	}{
+		{"shortest window recorded", 5 * time.Minute, 5 * time.Minute},
+		{"no window configured", 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, rdb, _ := newTestService(t, []divergence.Reference{
+				&stubReference{name: "chainlink", price: 1.00},
+				&stubReference{name: "coingecko", price: 1.00},
+			}, divergence.ServiceOptions{Threshold: 5.0, MinSourcesForWarning: 2, Window: tc.window})
+			if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now()); err != nil {
+				t.Fatalf("RefreshPair: %v", err)
+			}
+			if got := readDivergence(t, rdb, xlmUSD(t)).WindowSeconds; got != int(tc.want/time.Second) {
+				t.Errorf("cached WindowSeconds = %d, want %d", got, int(tc.want/time.Second))
+			}
+			_, checked, window, err := svc.LookupCachedPairVerdict(context.Background(), xlmUSD(t))
+			if err != nil || !checked {
+				t.Fatalf("LookupCachedPairVerdict: checked=%v err=%v, want a checked verdict", checked, err)
+			}
+			if window != tc.want {
+				t.Errorf("verdict window = %v, want %v", window, tc.want)
+			}
+		})
+	}
+}
+
 // TestRefreshPair_ObservationFallsBackWhenNoComparisonTime — a caller
 // that supplies no comparison time keeps the previous behaviour (the
 // worker's own computed-at) rather than persisting a zero timestamp

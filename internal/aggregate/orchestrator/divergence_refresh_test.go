@@ -403,3 +403,25 @@ func TestRefreshDivergenceAll_MinIntervalZeroPreservesLegacy(t *testing.T) {
 		t.Errorf("legacy mode (zero interval): got %d calls, want 3 (every tick)", got)
 	}
 }
+
+// TestShortestWindowIsTheDivergenceRefreshWindow — the divergence service
+// stamps ShortestWindow(configured) on every verdict, so it must be exactly
+// the window refreshDivergenceAll compares, Windows[0] of the orchestrator
+// New builds from the same configuration.
+func TestShortestWindowIsTheDivergenceRefreshWindow(t *testing.T) {
+	for _, ws := range [][]time.Duration{
+		nil,
+		{},
+		{0, -time.Minute},
+		{time.Hour, 15 * time.Minute, 24 * time.Hour},
+		{time.Hour, time.Hour},
+	} {
+		o := New(nil, nil, Config{Windows: ws})
+		if got, want := ShortestWindow(ws), o.cfg.Windows[0]; got != want {
+			t.Errorf("ShortestWindow(%v) = %v, want the refresh window %v", ws, got, want)
+		}
+	}
+	if got := ShortestWindow([]time.Duration{time.Hour, 15 * time.Minute}); got != 15*time.Minute {
+		t.Errorf("ShortestWindow = %v, want 15m", got)
+	}
+}

@@ -483,6 +483,7 @@ func run(cfgPath string, dryRun bool) error {
 				timescale.WithDivergenceLedgerProvider(divergenceLedgerAdapter{cursors: store}),
 			),
 			RefreshInterval: divergenceRefreshCadence(cfg.Aggregate),
+			Window:          orchestrator.ShortestWindow(windows),
 			PairCount:       len(pairs),
 			Logger:          logger.With("component", "divergence"),
 			OnWarningFired:  divWarningHook,

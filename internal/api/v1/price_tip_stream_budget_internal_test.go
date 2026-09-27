@@ -4,8 +4,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // TestTipStreamDivergenceBudgetHoldsItsTwoReferences pins the two
@@ -150,38 +148,5 @@ func TestTipDivergenceStallLogAgesOutAStaleResidue(t *testing.T) {
 	if sup != 0 {
 		t.Errorf("suppressed_since_last = %d on a new incident's first line, want 0 — "+
 			"the previous incident's residue must be aged out, not attributed to this one", sup)
-	}
-}
-
-// TestTipStreamDivergenceBudgetCoversTheAliasWalk pins the arithmetic
-// the budget's rationale is written from. The lookup is not one record
-// read: [Server.lookupDivergenceFlag] walks every canonical spelling
-// SEQUENTIALLY under the single sub-budget, so the per-spelling
-// tolerance is the budget divided by the family size. If a family grows,
-// that tolerance shrinks and the documented figure stops being true —
-// this fails rather than letting the comment rot.
-func TestTipStreamDivergenceBudgetCoversTheAliasWalk(t *testing.T) {
-	native, err := canonical.ParseAsset("native")
-	if err != nil {
-		t.Fatalf("parse native: %v", err)
-	}
-	spellings := len(assetAliases(native))
-	if spellings != 3 {
-		t.Fatalf("XLM family = %d spellings, but the budget's rationale states 3 (and ~333ms per spelling); "+
-			"per-spelling tolerance is now %v — update the comment on tipStreamDivergenceBudget",
-			spellings, tipStreamDivergenceBudget/time.Duration(spellings))
-	}
-	perSpelling := tipStreamDivergenceBudget / time.Duration(spellings)
-	if perSpelling < 300*time.Millisecond {
-		t.Errorf("per-spelling tolerance = %v, below the ~333ms the rationale claims", perSpelling)
-	}
-	// A base outside any alias family costs one spelling and gets the
-	// whole budget — the rationale says so, so pin it.
-	btc, err := canonical.ParseAsset("crypto:BTC")
-	if err != nil {
-		t.Fatalf("parse crypto:BTC: %v", err)
-	}
-	if n := len(assetAliases(btc)); n != 1 {
-		t.Errorf("crypto:BTC = %d spellings, want 1 — the single-spelling claim in the rationale no longer holds", n)
 	}
 }

@@ -26,4 +26,7 @@ type DivergenceObservationRecord struct {
 	DeltaPct   string
 	Firing     bool
 	ObservedAt time.Time
+	// RefObservedAt is when the reference's upstream observed RefPrice
+	// (the quote's AsOf); ObservedAt is the comparison time.
+	RefObservedAt time.Time
 }

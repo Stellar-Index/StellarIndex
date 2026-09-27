@@ -46,25 +46,14 @@ const tipStreamTickTimeout = 8 * time.Second
 // already means "could not verify" (CS-087) — so a degraded auxiliary
 // signal must degrade the FLAG, never the stream.
 //
-// One second is chosen against two references rather than picked, and
-// what it has to cover is a FAN-OUT, not one record read. Per spelling,
-// divergence.LookupCached issues 1 SMEMBERS over the base index plus one
-// SEQUENTIAL GET per indexed quote — 7 commands for a base with 6
-// indexed quotes — and [Server.lookupDivergenceFlag] wraps that in an
-// alias walk of up to three canonical spellings, so an XLM-family base
-// can cost up to 21 sequential round-trips inside this one budget.
-// XLM's family is three spellings today, so the effective per-spelling
-// tolerance is about 333ms; a base outside an alias family has one
-// spelling and gets the full second.
-//
-// That is still ample for a healthy store: these are precomputed records
-// the cross-reference worker refreshes out of band, so a healthy read is
-// low-millisecond and a whole 21-trip walk lands far inside 333ms per
-// spelling. It is deliberately NOT ample for a degraded one — a store
-// answering every read in a uniform 400ms exhausts the walk and the
-// event goes out unchecked, which is the trade this constant exists to
-// make: at 400ms per read the stream would otherwise be spending over a
-// second per emission on an optional flag.
+// One second is chosen against two references rather than picked. The
+// first is the read itself: one GET of the requested pair's div: record
+// (divergence.Service.LookupCachedPairVerdict), no alias walk and no
+// per-base fan-out, and the record is precomputed by the cross-reference
+// worker out of band, so a healthy read is low-millisecond. It is
+// deliberately NOT ample for a wedged store: a read still pending after a
+// second sends the event out unchecked, which is the trade this constant
+// exists to make.
 //
 // The second reference is the cadence: a second is an eighth of the tick
 // budget and at most a fifth of the DEFAULT 5s window, so a wedged store

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
@@ -232,6 +233,9 @@ type DivergenceObsV struct {
 	RefPrice         string `json:"ref_price"`
 	DeltaPct         string `json:"delta_pct"`
 	Status           string `json:"status"`
+	// RefObservedAt is when the reference observed RefPrice; null on rows
+	// recorded before the reference time was stored.
+	RefObservedAt *string `json:"ref_observed_at"`
 }
 
 // handleDivergence serves GET /v1/divergence — the current
@@ -281,9 +285,20 @@ func (s *Server) handleDivergence(w http.ResponseWriter, r *http.Request) {
 			RefPrice:         d.RefPrice,
 			DeltaPct:         d.DeltaPct,
 			Status:           d.Status,
+			RefObservedAt:    divergenceRefObservedAt(d.RefObservedAt),
 		})
 	}
 	writeJSON(w, out, Flags{})
+}
+
+// divergenceRefObservedAt renders a row's reference time in observed_at's
+// format, nil when the row predates it being recorded.
+func divergenceRefObservedAt(t *time.Time) *string {
+	if t == nil {
+		return nil
+	}
+	s := t.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
+	return &s
 }
 
 // Surfaces labelling the withholding metrics on the anomaly/divergence reads.
