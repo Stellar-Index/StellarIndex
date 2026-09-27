@@ -201,9 +201,26 @@ Alerts in `deploy/monitoring/rules/supply-refresh.yml`.
 
 The two paths are mutually exclusive at the operator level —
 write idempotency makes a double-fire correctness-safe (the
-hypertable's `(asset_key, ledger_sequence)` PK and `ON CONFLICT
-DO NOTHING` dedupe), but operators should disable one when
-flipping to the other to avoid redundant work.
+`asset_supply_history_asset_ledger_idx` unique constraint upserts,
+and a row is replaced only by a write with an equal or higher
+`derive_generation`, migration 0109), but operators should disable
+one when flipping to the other to avoid redundant work.
+
+### Corrective re-derive and `supply_1d`
+
+`supply snapshot` stamps a positive `derive_generation`, so a run
+with `-ledger N` re-derives that ledger's row in place. The
+market-cap-over-time chart reads the `supply_1d` continuous
+aggregate (`DailyCirculatingSupply`), not the hypertable, and that
+aggregate's refresh policy (migration 0066) looks back only 7 days.
+When the snapshot's UTC day is more than 6 days old,
+`persistSnapshot` (`internal/ops/supply/supply.go`) refreshes
+`supply_1d` over that day padded by a day each side. A failed
+refresh fails the run non-zero: the row is written but not served,
+and nothing else will fold it in, so re-run the same `-ledger`
+snapshot (the upsert is idempotent) until its refresh succeeds. The
+aggregator path (B) writes at the latest known ledger only, inside
+the policy window.
 
 ## Cross-check between Algorithm 2 and Algorithm 3
 

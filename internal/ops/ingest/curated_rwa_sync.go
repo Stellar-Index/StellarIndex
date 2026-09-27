@@ -131,11 +131,7 @@ func curatedRWASync(args []string) error {
 		// empty placeholder would otherwise read as a sync that never
 		// ran, which is a different problem with a different fix.
 		fmt.Fprintln(os.Stderr, "curated-rwa-sync: REFUSED — DUNE_API_KEY ([external.dune] api_key) is not set; this run cannot read the curator and will not pretend it did")
-		if *textfile != "" {
-			if err := writeCuratedRWATextfile(*textfile, curatedRWACounts{}, true, true); err != nil {
-				fmt.Fprintf(os.Stderr, "curated-rwa-sync: WARN textfile: %v\n", err)
-			}
-		}
+		stampCuratedRWATextfile(*textfile, curatedRWACounts{}, false, true)
 		return nil
 	}
 	gate.Banner()
@@ -155,15 +151,15 @@ func curatedRWASync(args []string) error {
 		counts.Rows, counts.Kept, counts.Months, counts.LatestMonthEnd, counts.LatestTotalUSD,
 		counts.ExecutedAt.UTC().Format(time.RFC3339), counts.Malformed, counts.Datapoints)
 
-	if *textfile != "" {
-		if err := writeCuratedRWATextfile(*textfile, counts, dryRun, false); err != nil {
-			fmt.Fprintf(os.Stderr, "curated-rwa-sync: WARN textfile: %v\n", err)
-		}
-	}
 	if dryRun {
+		stampCuratedRWATextfile(*textfile, counts, false, false)
 		fmt.Println("Dry run — nothing written.")
 		return nil
 	}
+
+	// Stamped only once the cache write commits: a failed Open or replace
+	// stamps nothing, like a failed read, so last_run_unix ages and the
+	// 30 h staleness alert fires instead of vouching for the run.
 
 	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
 	if err != nil {
@@ -175,6 +171,7 @@ func curatedRWASync(args []string) error {
 	if err != nil {
 		return err
 	}
+	stampCuratedRWATextfile(*textfile, counts, true, false)
 	fmt.Printf("Synced: %d rows replaced across %d series (curator=%s).\n", inserted, 2, curatedRWACuratorDune)
 	return nil
 }
@@ -601,13 +598,24 @@ func sortPublishedRowsByMonth(rows []timescale.CuratedRWAPublishedRow) {
 
 // ─── textfile ───────────────────────────────────────────────────────
 
+// stampCuratedRWATextfile writes the textfile when one was asked for; a
+// failure to stamp is a warning, never the run's outcome.
+func stampCuratedRWATextfile(path string, c curatedRWACounts, written, refused bool) {
+	if path == "" {
+		return
+	}
+	if err := writeCuratedRWATextfile(path, c, written, refused); err != nil {
+		fmt.Fprintf(os.Stderr, "curated-rwa-sync: WARN textfile: %v\n", err)
+	}
+}
+
 // writeCuratedRWATextfile records the run for node_exporter. Written
 // whole to a sibling temp file and renamed, so the collector never reads
 // a half-written exposition; every family shares the file's fate.
-func writeCuratedRWATextfile(path string, c curatedRWACounts, dryRun, refused bool) error {
+func writeCuratedRWATextfile(path string, c curatedRWACounts, written, refused bool) error {
 	var b strings.Builder
 	lbl := fmt.Sprintf(`{curator=%q}`, curatedRWACuratorDune)
-	fmt.Fprintf(&b, "# HELP stellarindex_curated_rwa_sync_last_run_unix Unix time the most recent curated-RWA sync finished, pass or fail.\n# TYPE stellarindex_curated_rwa_sync_last_run_unix gauge\nstellarindex_curated_rwa_sync_last_run_unix%s %d\n", lbl, time.Now().Unix())
+	fmt.Fprintf(&b, "# HELP stellarindex_curated_rwa_sync_last_run_unix Unix time the most recent curated-RWA sync completed: a refusal, a dry run or a committed write. A failed read or write stamps nothing.\n# TYPE stellarindex_curated_rwa_sync_last_run_unix gauge\nstellarindex_curated_rwa_sync_last_run_unix%s %d\n", lbl, time.Now().Unix())
 	fmt.Fprintf(&b, "# HELP stellarindex_curated_rwa_sync_rows Rows of the curator's published series kept by the most recent sync (monthly totals plus the per-subclass split).\n# TYPE stellarindex_curated_rwa_sync_rows gauge\nstellarindex_curated_rwa_sync_rows%s %d\n", lbl, c.Kept)
 	fmt.Fprintf(&b, "# HELP stellarindex_curated_rwa_sync_datapoints_read Datapoints the curator's platform reported metering for the results the most recent sync read. Reads of a public query's latest result bill by datapoint (a fraction of a credit) and never execute the query; there is no execution cost to report.\n# TYPE stellarindex_curated_rwa_sync_datapoints_read gauge\nstellarindex_curated_rwa_sync_datapoints_read%s %d\n", lbl, c.Datapoints)
 	var executed int64
@@ -615,11 +623,11 @@ func writeCuratedRWATextfile(path string, c curatedRWACounts, dryRun, refused bo
 		executed = c.ExecutedAt.Unix()
 	}
 	fmt.Fprintf(&b, "# HELP stellarindex_curated_rwa_sync_executed_at_unix Unix time the curator's public total query last ran, as read by the most recent sync (0 when nothing was read). The published figure is as fresh as this, not as fresh as the sync.\n# TYPE stellarindex_curated_rwa_sync_executed_at_unix gauge\nstellarindex_curated_rwa_sync_executed_at_unix%s %d\n", lbl, executed)
-	written := 1
-	if dryRun {
-		written = 0
+	writtenV := 0
+	if written {
+		writtenV = 1
 	}
-	fmt.Fprintf(&b, "# HELP stellarindex_curated_rwa_sync_written Whether the most recent sync wrote the cache (0 on a dry run).\n# TYPE stellarindex_curated_rwa_sync_written gauge\nstellarindex_curated_rwa_sync_written%s %d\n", lbl, written)
+	fmt.Fprintf(&b, "# HELP stellarindex_curated_rwa_sync_written Whether the most recent sync committed the cache write (0 on a dry run or a refusal).\n# TYPE stellarindex_curated_rwa_sync_written gauge\nstellarindex_curated_rwa_sync_written%s %d\n", lbl, writtenV)
 	refusedV := 0
 	if refused {
 		refusedV = 1
