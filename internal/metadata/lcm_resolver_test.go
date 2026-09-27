@@ -6,19 +6,23 @@ import (
 	"testing"
 )
 
+// fakeLookup: an issuer present in rows is observed with that domain
+// ("" = observed with no home_domain); absent = never observed.
 type fakeLookup struct {
 	rows          map[string]string
 	err           error
 	gotAsOfLedger uint32 // captures the asOf the resolver passed
+	gotCtxErr     error  // ctx.Err() at read time
 }
 
-func (f *fakeLookup) HomeDomainAtOrBefore(_ context.Context, issuer string, asOfLedger uint32) (string, bool, error) {
+func (f *fakeLookup) HomeDomainAtOrBefore(ctx context.Context, issuer string, asOfLedger uint32) (IssuerHomeDomain, error) {
 	f.gotAsOfLedger = asOfLedger
+	f.gotCtxErr = ctx.Err()
 	if f.err != nil {
-		return "", false, f.err
+		return IssuerHomeDomain{}, f.err
 	}
 	d, ok := f.rows[issuer]
-	return d, ok, nil
+	return IssuerHomeDomain{Observed: ok, Domain: d}, nil
 }
 
 // TestLCMHomeDomainResolver_AsOfFitsInPostgresInt32 pins the
@@ -32,7 +36,7 @@ func TestLCMHomeDomainResolver_AsOfFitsInPostgresInt32(t *testing.T) {
 	const maxInt32 = uint32(1<<31 - 1) // 2,147,483,647
 	lookup := &fakeLookup{rows: map[string]string{}}
 	r := NewLCMHomeDomainResolver(lookup)
-	_, _, _ = r.HomeDomainFor(context.Background(), "GA1")
+	_, _ = r.HomeDomainFor(context.Background(), "GA1")
 	if lookup.gotAsOfLedger > maxInt32 {
 		t.Errorf("resolver passed asOfLedger=%d which overflows postgres int4 (max %d). Use math.MaxInt32 not ^uint32(0).",
 			lookup.gotAsOfLedger, maxInt32)
@@ -46,27 +50,37 @@ func TestLCMHomeDomainResolver_HappyPath(t *testing.T) {
 	r := NewLCMHomeDomainResolver(&fakeLookup{rows: map[string]string{
 		"GA1": "stellarindex.io",
 	}})
-	domain, ok, err := r.HomeDomainFor(context.Background(), "GA1")
+	got, err := r.HomeDomainFor(context.Background(), "GA1")
 	if err != nil {
 		t.Fatalf("HomeDomainFor: %v", err)
 	}
-	if !ok || domain != "stellarindex.io" {
-		t.Errorf("got (%q, %v), want (stellarindex.io, true)", domain, ok)
+	if want := (IssuerHomeDomain{Observed: true, Domain: "stellarindex.io"}); got != want {
+		t.Errorf("got %+v, want %+v", got, want)
 	}
 }
 
-// TestLCMHomeDomainResolver_NotObserved — issuer has no
-// observation. The resolver returns ("", false, nil) — same
-// shape as "observed but empty" because the closure caller has
-// to fall through to the static map either way.
-func TestLCMHomeDomainResolver_NotObserved(t *testing.T) {
-	r := NewLCMHomeDomainResolver(&fakeLookup{rows: map[string]string{}})
-	domain, ok, err := r.HomeDomainFor(context.Background(), "GA_UNKNOWN")
+// TestLCMHomeDomainResolver_ObservedWithoutDomain — an observation whose
+// AccountEntry carries no home_domain is reported as observed, distinct
+// from "never observed".
+func TestLCMHomeDomainResolver_ObservedWithoutDomain(t *testing.T) {
+	r := NewLCMHomeDomainResolver(&fakeLookup{rows: map[string]string{"GA1": ""}})
+	got, err := r.HomeDomainFor(context.Background(), "GA1")
 	if err != nil {
 		t.Fatalf("HomeDomainFor: %v", err)
 	}
-	if ok || domain != "" {
-		t.Errorf("got (%q, %v), want (empty, false)", domain, ok)
+	if want := (IssuerHomeDomain{Observed: true}); got != want {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestLCMHomeDomainResolver_NotObserved(t *testing.T) {
+	r := NewLCMHomeDomainResolver(&fakeLookup{rows: map[string]string{}})
+	got, err := r.HomeDomainFor(context.Background(), "GA_UNKNOWN")
+	if err != nil {
+		t.Fatalf("HomeDomainFor: %v", err)
+	}
+	if got != (IssuerHomeDomain{}) {
+		t.Errorf("got %+v, want not observed", got)
 	}
 }
 
@@ -75,7 +89,7 @@ func TestLCMHomeDomainResolver_NotObserved(t *testing.T) {
 // static.
 func TestLCMHomeDomainResolver_StoreError(t *testing.T) {
 	r := NewLCMHomeDomainResolver(&fakeLookup{err: errors.New("network")})
-	_, _, err := r.HomeDomainFor(context.Background(), "GA1")
+	_, err := r.HomeDomainFor(context.Background(), "GA1")
 	if !errors.Is(err, ErrLCMUnavailable) {
 		t.Errorf("err=%v want wrapping ErrLCMUnavailable", err)
 	}
@@ -93,12 +107,33 @@ func TestChainedHomeDomainLookup_LiveWins(t *testing.T) {
 		return "static.example.com", true
 	}
 	lookup := ChainedHomeDomainLookup(live, staticFn, nil)
-	domain, ok := lookup("GA1")
+	domain, ok := lookup(context.Background(), "GA1")
 	if !ok || domain != "live.example.com" {
 		t.Errorf("got (%q, %v), want (live.example.com, true)", domain, ok)
 	}
 	if staticCalled != 0 {
 		t.Errorf("static called %d times when LCM hit, want 0", staticCalled)
+	}
+}
+
+// TestChainedHomeDomainLookup_ObservedClearSuppressesStatic — an issuer
+// whose latest observation carries no home_domain (cleared on chain, or
+// merged) must resolve to no domain; the operator's static entry must not
+// re-assert an identity the issuer withdrew.
+func TestChainedHomeDomainLookup_ObservedClearSuppressesStatic(t *testing.T) {
+	live := NewLCMHomeDomainResolver(&fakeLookup{rows: map[string]string{"GA1": ""}})
+	staticCalled := 0
+	staticFn := func(string) (string, bool) {
+		staticCalled++
+		return "static.example.com", true
+	}
+	lookup := ChainedHomeDomainLookup(live, staticFn, nil)
+	domain, ok := lookup(context.Background(), "GA1")
+	if ok || domain != "" {
+		t.Errorf("got (%q, %v), want (\"\", false): on-chain clear must win over static", domain, ok)
+	}
+	if staticCalled != 0 {
+		t.Errorf("static called %d times for an observed issuer, want 0", staticCalled)
 	}
 }
 
@@ -113,9 +148,23 @@ func TestChainedHomeDomainLookup_FallsBackOnNoObservation(t *testing.T) {
 		return "", false
 	}
 	lookup := ChainedHomeDomainLookup(live, staticFn, nil)
-	domain, ok := lookup("GA1")
+	domain, ok := lookup(context.Background(), "GA1")
 	if !ok || domain != "static.example.com" {
 		t.Errorf("got (%q, %v), want (static.example.com, true)", domain, ok)
+	}
+}
+
+// TestChainedHomeDomainLookup_UsesCallerContext — the store read runs
+// under the request context, so a disconnected client cancels it.
+func TestChainedHomeDomainLookup_UsesCallerContext(t *testing.T) {
+	fake := &fakeLookup{rows: map[string]string{}}
+	lookup := ChainedHomeDomainLookup(NewLCMHomeDomainResolver(fake),
+		func(string) (string, bool) { return "", false }, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	lookup(ctx, "GA1")
+	if !errors.Is(fake.gotCtxErr, context.Canceled) {
+		t.Fatal("store read did not inherit the caller's cancelled context")
 	}
 }
 
@@ -129,7 +178,7 @@ func TestChainedHomeDomainLookup_FallsBackOnStorageError(t *testing.T) {
 		return "static.example.com", true
 	}
 	lookup := ChainedHomeDomainLookup(live, staticFn, warnFn)
-	domain, ok := lookup("GA1")
+	domain, ok := lookup(context.Background(), "GA1")
 	if !ok || domain != "static.example.com" {
 		t.Errorf("got (%q, %v), want (static.example.com, true)", domain, ok)
 	}

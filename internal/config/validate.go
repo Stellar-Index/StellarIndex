@@ -113,6 +113,9 @@ func (c Config) Validate() error {
 	if err := c.Supply.Validate(); err != nil {
 		return err
 	}
+	if err := c.Metadata.validate(); err != nil {
+		return err
+	}
 	if err := c.PriceAlerts.validate(); err != nil {
 		return err
 	}

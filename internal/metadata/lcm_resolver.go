@@ -7,31 +7,35 @@ import (
 	"math"
 )
 
-// AccountObservationLookup is the storage-side primitive the
-// [LCMHomeDomainResolver] consumes. Production impl is
-// timescale.Store.LatestAccountObservationAtOrBefore via an
-// adapter; tests pass in-memory fakes.
+// IssuerHomeDomain is one on-chain reading of an account's home_domain.
 //
-// Returns ErrNoObservation (or a similar storage-side typed
-// error) when the account has no observation; the resolver
-// translates that into ("", false, nil) so the chained-fallback
-// caller drops to the operator-static map.
-type AccountObservationLookup interface {
-	HomeDomainAtOrBefore(ctx context.Context, issuer string, asOfLedger uint32) (string, bool, error)
+// Observed=false: no AccountEntry observation exists for the account, so
+// the chain has told us nothing and the operator-static map may answer.
+// Observed=true, Domain=="": the latest observation says the account has
+// no home_domain (never set, cleared by SetOptions, or the account was
+// merged). The ledger is authoritative here: an issuer that clears its
+// home_domain has withdrawn the identity claim, and a static value must
+// not re-assert it.
+type IssuerHomeDomain struct {
+	Observed bool
+	Domain   string
 }
 
-// LCMHomeDomainResolver replaces the operator-static
-// `[metadata.issuer_home_domains]` map with live data observed by
-// the AccountEntry observer (Task #54). Per ADR-0021 the static map
-// stays in tree as a bootstrap fallback — operators that flip
-// to LCM keep the static entries for issuers the observer hasn't
-// backfilled yet.
-//
-// Wire shape matches the existing
-// `MetadataConfig.HomeDomainFor(issuer string) (string, bool)`
-// closure that the API binary passes to storeAssetReader. The
-// resolver bakes a context-with-timeout internally so the call
-// site's signature can stay sync.
+// AccountObservationLookup is the storage-side primitive the
+// [LCMHomeDomainResolver] consumes. Production impl adapts
+// timescale.Store.LatestAccountObservationAtOrBefore; tests pass fakes.
+// A missing observation is IssuerHomeDomain{Observed: false} with a nil
+// error; only storage failures return an error.
+type AccountObservationLookup interface {
+	HomeDomainAtOrBefore(ctx context.Context, issuer string, asOfLedger uint32) (IssuerHomeDomain, error)
+}
+
+// LCMHomeDomainResolver reads the latest home_domain the AccountEntry
+// observer recorded in `account_observations` for an issuer. It only
+// knows accounts the indexer watches (`[metadata].watched_issuer_accounts`
+// plus `[supply].sdf_reserve_accounts`); per ADR-0021 the operator-static
+// `[metadata.issuer_home_domains]` map answers for accounts with no
+// observation.
 type LCMHomeDomainResolver struct {
 	store AccountObservationLookup
 }
@@ -41,35 +45,20 @@ func NewLCMHomeDomainResolver(store AccountObservationLookup) *LCMHomeDomainReso
 	return &LCMHomeDomainResolver{store: store}
 }
 
-// HomeDomainFor returns the most recently observed HomeDomain for
-// the issuer's G-strkey. Returns ("", false, nil) when no
-// observation exists OR the most-recent observation has an empty
-// HomeDomain (operator-static-map fallback applies in both
-// cases — they're indistinguishable from the consumer's POV).
-//
-// Storage-layer errors are wrapped, not swallowed — the closure
-// adapter logs them but presents ("", false) to the legacy
-// signature so the asset-detail handler still serves the response.
-func (r *LCMHomeDomainResolver) HomeDomainFor(ctx context.Context, issuer string) (string, bool, error) {
-	// Sentinel for "no upper bound, give me the latest observation."
-	// MUST fit in postgres int4 (the `account_observations.ledger`
-	// column type) — the previous `^uint32(0)` (MaxUint32) overflowed
-	// every call with `pq: value "4294967295" is out of range for
-	// type integer (22003)`, defeating the LCM path on r1 and
-	// silently routing every issuer through the static-map fallback.
-	// math.MaxInt32 (2,147,483,647) is far past Stellar's current
-	// ledger (~62M @ 5 ledgers/sec → ~13y of headroom) so the
-	// "ledger <= sentinel" semantics are preserved without overflow.
+// HomeDomainFor returns the latest observed home_domain reading for the
+// issuer's G-strkey. Storage errors are wrapped in [ErrLCMUnavailable].
+func (r *LCMHomeDomainResolver) HomeDomainFor(ctx context.Context, issuer string) (IssuerHomeDomain, error) {
+	// "Latest observation" sentinel; must fit the int4 ledger column
+	// (^uint32(0) overflowed it with pq 22003 on every call).
 	const observerLatestLedger = uint32(math.MaxInt32)
-	domain, ok, err := r.store.HomeDomainAtOrBefore(ctx, issuer, observerLatestLedger)
+	hd, err := r.store.HomeDomainAtOrBefore(ctx, issuer, observerLatestLedger)
 	if err != nil {
-		// Wrap so the caller can errors.Is for fall-back behaviour.
-		return "", false, fmt.Errorf("%w: %w", ErrLCMUnavailable, err)
+		return IssuerHomeDomain{}, fmt.Errorf("%w: %w", ErrLCMUnavailable, err)
 	}
-	if !ok || domain == "" {
-		return "", false, nil
+	if !hd.Observed {
+		return IssuerHomeDomain{}, nil
 	}
-	return domain, true, nil
+	return hd, nil
 }
 
 // ErrLCMUnavailable signals the LCM-derived path failed to read
@@ -77,40 +66,40 @@ func (r *LCMHomeDomainResolver) HomeDomainFor(ctx context.Context, issuer string
 // caller logs + drops to the static map.
 var ErrLCMUnavailable = errors.New("metadata: LCM resolver storage error")
 
-// ChainedHomeDomainLookup composes a live LCM resolver with an
-// operator-static fallback map into a single sync function value
-// matching the existing
-// `func(issuer string) (string, bool)` signature that
-// storeAssetReader.homeDomainLookup expects.
+// lcmLookupTimeoutMs bounds one resolver read inside the caller's request
+// context so a slow store degrades to the static map instead of stalling
+// the response.
+const lcmLookupTimeoutMs = 100
+
+// ChainedHomeDomainLookup composes the live LCM resolver with the
+// operator-static map (`cfg.Metadata.HomeDomainFor`):
 //
-// On every call:
+//  1. An observation exists → its reading is final: (domain, true) when
+//     the account carries a home_domain, ("", false) when it does not.
+//     The static map is NOT consulted, so an on-chain clear or merge
+//     cannot be overridden by operator config.
+//  2. No observation → the static map answers.
+//  3. Storage error → warnFn logs and the static map answers.
 //
-//  1. Try the LCM resolver with a baked-in 100ms timeout. If it
-//     returns a non-empty domain, return it.
-//  2. If LCM returned ("", false, nil) (no observation OR empty
-//     domain), fall through to the static map.
-//  3. If LCM returned a wrapped ErrLCMUnavailable (storage error),
-//     log via the supplied warnFn and fall through to the static map.
-//
-// `static` mirrors `cfg.Metadata.HomeDomainFor`. `warnFn` is the
-// API binary's logger hook — pass a no-op for tests.
+// The read runs under the caller's ctx (bounded to 100ms), so a client
+// that disconnects cancels it.
 func ChainedHomeDomainLookup(
 	live *LCMHomeDomainResolver,
 	static func(issuer string) (string, bool),
 	warnFn func(msg string, kv ...any),
-) func(issuer string) (string, bool) {
-	return func(issuer string) (string, bool) {
-		ctx, cancel := contextWithTimeoutMs(100)
+) func(ctx context.Context, issuer string) (string, bool) {
+	return func(ctx context.Context, issuer string) (string, bool) {
+		ctx, cancel := contextWithTimeoutMs(ctx, lcmLookupTimeoutMs)
 		defer cancel()
-		domain, ok, err := live.HomeDomainFor(ctx, issuer)
+		hd, err := live.HomeDomainFor(ctx, issuer)
 		switch {
 		case err != nil:
 			if warnFn != nil {
 				warnFn("LCM home-domain resolver failed; falling back to static map",
 					"issuer", issuer, "err", err)
 			}
-		case ok:
-			return domain, true
+		case hd.Observed:
+			return hd.Domain, hd.Domain != ""
 		}
 		return static(issuer)
 	}

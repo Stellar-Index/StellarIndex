@@ -661,26 +661,36 @@ func defaultDivergenceConfig() DivergenceConfig {
 	}
 }
 
-// MetadataConfig configures the asset-metadata overlay path. Today
-// it carries one knob — the curated issuer-account → home-domain
-// fallback map — which the API binary chains BEHIND the live
-// LCM-derived resolver in [internal/metadata.ChainedHomeDomainLookup]:
-// the live resolver
-// ([internal/metadata.LCMHomeDomainResolver], reading from the
-// `account_observations` hypertable populated by the
-// `internal/sources/accounts` observer, Task #54) returns the
-// AccountEntry.HomeDomain for any issuer it has seen on-chain;
-// uncovered issuers fall through to the static map. The map's job
-// today is bootstrapping issuers we want overlay coverage for
-// before their AccountEntry has flowed through the indexer (or
-// when the on-chain home_domain field is empty).
+// MetadataConfig configures the asset-metadata overlay path. The API
+// binary chains the curated issuer → home-domain map BEHIND the live
+// LCM-derived resolver ([internal/metadata.ChainedHomeDomainLookup]),
+// which reads the `account_observations` rows the
+// `internal/sources/accounts` observer writes for the accounts it
+// watches. An observed account's on-chain home_domain is final —
+// including an observed absence — so the static map only answers for
+// issuers the observer has not seen.
 type MetadataConfig struct {
 	// IssuerHomeDomains maps issuer-account G-strkey → home-domain.
 	// E.g. `"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" = "centre.io"`.
 	// Empty entries (`""`) are equivalent to the key being absent.
 	// TOML representation: `[metadata.issuer_home_domains]` table with
 	// one entry per issuer.
-	IssuerHomeDomains map[string]string `toml:"issuer_home_domains" doc:"Static curated map of issuer-account G-strkey → home-domain. Layered behind the live LCM-derived resolver as a fallback for issuers whose AccountEntry hasn't been observed yet (or whose on-chain home_domain field is empty)." default:"{}"`
+	IssuerHomeDomains map[string]string `toml:"issuer_home_domains" doc:"Static curated map of issuer-account G-strkey → home-domain. Fallback for issuers with no AccountEntry observation; an observed on-chain home_domain, or an observed absence of one, always wins." default:"{}"`
+
+	// WatchedIssuerAccounts are the issuer G-strkeys whose AccountEntry
+	// the indexer observes for home_domain. Kept apart from
+	// [SupplyConfig.SDFReserveAccounts], whose members are subtracted
+	// from XLM circulating supply.
+	WatchedIssuerAccounts []string `toml:"watched_issuer_accounts" doc:"Issuer-account G-strkeys whose AccountEntry the indexer observes so the API serves their on-chain home_domain. Independent of [supply].sdf_reserve_accounts: watching an issuer here does not change circulating supply." default:"[]"`
+}
+
+func (m MetadataConfig) validate() error {
+	for i, acc := range m.WatchedIssuerAccounts {
+		if !canonical.IsAccountID(acc) {
+			return fmt.Errorf("metadata: watched_issuer_accounts[%d] %q is not a valid G-strkey", i, acc)
+		}
+	}
+	return nil
 }
 
 // HomeDomainFor returns the home-domain registered for the issuer,

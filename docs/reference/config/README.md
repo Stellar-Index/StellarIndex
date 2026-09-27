@@ -229,7 +229,8 @@ the `env:` column.
 
 | Key | Type | Default | Env override | Description |
 | --- | ---- | ------- | ------------ | ----------- |
-| `metadata.issuer_home_domains` | `map` | `{}` | — | Static curated map of issuer-account G-strkey → home-domain. Layered behind the live LCM-derived resolver as a fallback for issuers whose AccountEntry hasn't been observed yet (or whose on-chain home_domain field is empty). |
+| `metadata.issuer_home_domains` | `map` | `{}` | — | Static curated map of issuer-account G-strkey → home-domain. Fallback for issuers with no AccountEntry observation; an observed on-chain home_domain, or an observed absence of one, always wins. |
+| `metadata.watched_issuer_accounts` | `[]string` | `[]` | — | Issuer-account G-strkeys whose AccountEntry the indexer observes so the API serves their on-chain home_domain. Independent of [supply].sdf_reserve_accounts: watching an issuer here does not change circulating supply. |
 
 ### `[supply]`
 

@@ -44,7 +44,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 
 ## SEP-1 / stellar.toml + verified currency
 - Fetch+parse toml (SSRF-guarded, Redis-cached, coalesced) → `metadata.NewResolver(opts)` + `metadata.NewCache(resolver, rdb).Resolve(ctx, domain)`
-- Issuer home_domain as-of ledger → `metadata.NewLCMHomeDomainResolver`, `ChainedHomeDomainLookup`
+- Issuer home_domain, latest observed (watched issuers only) → `metadata.NewLCMHomeDomainResolver`, `ChainedHomeDomainLookup`
 - Verified currency → `currency.LoadEmbedded().LookupBySlug/LookupByTicker/LookupByStellarAssetID`, `.Browseable`, `.ByClass`, `.CoinGeckoIDs` (never auto-populate seed.yaml)
 
 ## SSRF-guarded outbound fetch — ⚠ **DUPLICATED, needs extraction (D4 M0-2)**
