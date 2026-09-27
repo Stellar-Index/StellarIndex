@@ -580,6 +580,58 @@ func TestInProcessLoginThrottle_EnforcesPerIPCap(t *testing.T) {
 	}
 }
 
+// TestInProcessLoginThrottle_ExhaustedIPDoesNotSpendEmailBudget —
+// CA2-A30-correct-4. Pre-fix, Allow spent the per-email budget
+// unconditionally, even on a call already denied by an exhausted
+// per-IP bucket. An attacker who repeatedly hits their own exhausted
+// IP against a victim address could drain that victim's per-email
+// budget for free, denying the victim's own legitimate send from a
+// different IP for the rest of the window. Asserts the corrected
+// value: once the calling IP's bucket is exhausted, further calls
+// must not touch a distinct email's per-email budget at all.
+func TestInProcessLoginThrottle_ExhaustedIPDoesNotSpendEmailBudget(t *testing.T) {
+	th := newInProcessLoginThrottle()
+	ctx := context.Background()
+	const attackerIP = "203.0.113.77"
+	const victim = "victim@example.com"
+
+	// Exhaust the attacker IP's own per-IP cap first, using distinct
+	// filler emails so none of these touches the victim's budget.
+	for i := 0; i < inProcessLoginThrottleMaxPerIP; i++ {
+		allowed, err := th.Allow(ctx, attackerIP, fmt.Sprintf("filler%d@example.com", i))
+		if err != nil {
+			t.Fatalf("filler call %d: unexpected error: %v", i, err)
+		}
+		if !allowed {
+			t.Fatalf("filler call %d: expected allowed while filling the per-IP cap", i)
+		}
+	}
+
+	// The attacker IP's per-IP bucket is now exhausted. Every further
+	// call from it targeting the victim must be denied on IP alone, and
+	// must not spend the victim's separate per-email budget.
+	for i := 0; i < inProcessLoginThrottleMaxPerEmail; i++ {
+		allowed, err := th.Allow(ctx, attackerIP, victim)
+		if err != nil {
+			t.Fatalf("attack call %d: unexpected error: %v", i, err)
+		}
+		if allowed {
+			t.Fatalf("attack call %d: expected denied — attacker IP's per-IP cap is exhausted", i)
+		}
+	}
+
+	// The victim's email budget must still be fully intact: a
+	// legitimate send to the same address from a FRESH IP must be
+	// allowed.
+	allowed, err := th.Allow(ctx, "198.51.100.200", victim)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !allowed {
+		t.Error("an attacker repeatedly hitting their own exhausted per-IP cap must not spend the victim email's per-email budget")
+	}
+}
+
 // TestInProcessLoginThrottle_MasksIPv6ToSlash64 — F010. Pre-fix, the
 // in-process fallback keyed the per-IP bucket on the raw address, so a
 // caller with one routable IPv6 /64 allocation could mint a fresh /128 —
