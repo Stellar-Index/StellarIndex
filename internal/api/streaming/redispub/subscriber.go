@@ -87,6 +87,7 @@ func NewSubscriber(cache RedisSubscriber, channel string, hub Hub, logger *slog.
 	for _, o := range subscribeOutcomes {
 		obs.APIStreamSubscribeTotal.WithLabelValues(o)
 	}
+	installChannelDropCounter()
 	return &Subscriber{
 		cache: cache, channel: channel, hub: hub, logger: logger,
 		forwarded: make(map[string]topicMark),
@@ -124,17 +125,67 @@ func (s *Subscriber) claim(topic string, ev *ClosedBucketEvent, now time.Time) b
 // Outcome labels for [obs.APIStreamSubscribeTotal]. Each rejection
 // cause that points a responder somewhere different gets its own label.
 const (
-	outcomeOK               = "ok"
-	outcomeDecodeError      = "decode_error"
-	outcomeMalformed        = "malformed"
-	outcomeFutureObservedAt = "future_observed_at"
-	outcomeStaleObservedAt  = "stale_observed_at"
-	outcomeDuplicate        = "duplicate"
+	outcomeOK                  = "ok"
+	outcomeDecodeError         = "decode_error"
+	outcomeMalformed           = "malformed"
+	outcomeFutureObservedAt    = "future_observed_at"
+	outcomeStaleObservedAt     = "stale_observed_at"
+	outcomeDuplicate           = "duplicate"
+	outcomeDroppedSlowConsumer = "dropped_slow_consumer"
 )
 
 var subscribeOutcomes = []string{
 	outcomeOK, outcomeDecodeError, outcomeMalformed, outcomeFutureObservedAt, outcomeStaleObservedAt,
-	outcomeDuplicate,
+	outcomeDuplicate, outcomeDroppedSlowConsumer,
+}
+
+// subscribeChannelSize and subscribeChannelSendTimeout are passed to
+// PubSub.Channel explicitly instead of taking go-redis's defaults (100
+// messages / 1 minute), so the buffer this Subscriber runs on is a
+// documented choice, not an implicit library default (GH-753).
+const (
+	subscribeChannelSize        = 100
+	subscribeChannelSendTimeout = time.Minute
+)
+
+// channelFullLogFormat is the exact format string go-redis v9.22.0's
+// PubSub.Channel goroutine logs when WithChannelSendTimeout elapses and
+// it drops a message (pubsub.go: initMsgChan). go-redis exposes no other
+// hook for this event, so [installChannelDropCounter] matches on it to
+// turn an operator-invisible log line into a counted outcome. Pinned to
+// this go-redis version's wording; a version bump that changes it only
+// loses the count (fails safe — messages still process, they just stop
+// tripping "dropped_slow_consumer"), never a false positive elsewhere.
+const channelFullLogFormat = "redis: %v channel is full for %s (message is dropped)"
+
+// channelDropCounterOnce guards [installChannelDropCounter]: go-redis's
+// logger is a single package-global var, and this Subscriber is one per
+// binary (see [NewSubscriber]), so installing it more than once would
+// just replace an identical wrapper.
+var channelDropCounterOnce sync.Once
+
+// installChannelDropCounter installs a go-redis logger that increments
+// [obs.APIStreamSubscribeTotal]'s dropped_slow_consumer outcome whenever
+// go-redis logs a PubSub.Channel drop, then forwards the line unchanged.
+// Safe process-wide: this package is the only caller of PubSub.Channel
+// in this binary (grepped at fix time), so no other component's log
+// lines carry [channelFullLogFormat].
+func installChannelDropCounter() {
+	channelDropCounterOnce.Do(func() {
+		redis.SetLogger(channelDropCountingLogger{})
+	})
+}
+
+// channelDropCountingLogger implements go-redis's internal.Logging
+// interface structurally (Printf(ctx, format, args...)) without
+// importing its internal package.
+type channelDropCountingLogger struct{}
+
+func (channelDropCountingLogger) Printf(_ context.Context, format string, v ...interface{}) {
+	if format == channelFullLogFormat {
+		obs.APIStreamSubscribeTotal.WithLabelValues(outcomeDroppedSlowConsumer).Inc()
+	}
+	slog.Default().Warn(fmt.Sprintf(format, v...))
 }
 
 // Sentinels validateEvent wraps so handleMessage can label the drop by
@@ -183,7 +234,10 @@ func (s *Subscriber) Run(ctx context.Context) error {
 		}
 	}()
 
-	ch := pubsub.Channel()
+	ch := pubsub.Channel(
+		redis.WithChannelSize(subscribeChannelSize),
+		redis.WithChannelSendTimeout(subscribeChannelSendTimeout),
+	)
 	s.logger.Info("redispub: subscriber listening", "channel", s.channel)
 
 	for {

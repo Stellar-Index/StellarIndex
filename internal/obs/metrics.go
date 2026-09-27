@@ -3181,6 +3181,10 @@ var AggregatorStreamPublishTotal = prometheus.NewCounterVec(
 //   - "duplicate" — valid, but its topic already fanned out this bucket
 //     or a newer one; dropped. A sustained rate means more than one
 //     aggregator is publishing on the channel.
+//   - "dropped_slow_consumer" — go-redis's PubSub.Channel buffer filled
+//     and WithChannelSendTimeout elapsed before this handler could drain
+//     it (GH-753): a stalled Hub or a long GC pause, not a wire-format or
+//     clock fault. Previously silent — only logged, never counted.
 //
 // Seeded by redispub.NewSubscriber, so only a process that wires a
 // subscriber exports it.
