@@ -59,6 +59,11 @@ func TestSweep_StalledAlertTimesOutAndOthersStillFire(t *testing.T) {
 	w := New(alerts, hooks, stallingPrices{stallBase: "crypto:BTC", price: "0.20"}, Options{
 		Interval: 300 * time.Millisecond,
 		Logger:   quietLogger(),
+		// Pin "now" alongside stallingPrices' fixed healthy-pair bucket
+		// (2026-07-05 11:59:00) so the freshness check (maxPriceStaleness)
+		// sees a 1-minute-old bucket rather than one aged off the real
+		// wall clock against a timestamp fixed at test-authoring time.
+		Clock: func() time.Time { return time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC) },
 	})
 
 	timeoutBefore, firedBefore := evaluated(outcomeTimeout), evaluated(outcomeFired)
