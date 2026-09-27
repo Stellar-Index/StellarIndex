@@ -33,8 +33,11 @@ account/auth surface was pivoted to a self-service, no-payments model:
   `cmd/stellarindex-api/main.go`), not by charge.
 - **Open self-service registration.** `POST /v1/register` mints an account
   + first API key anonymously (`internal/api/v1/register.go`); it is a
-  create-only surface (`RegisterAccountCreator`) guarded by a same-site
-  write check (`internal/api/v1/csrf.go`) and the shared signup IP throttle
+  create-only surface (`RegisterAccountCreator`) guarded by a required
+  `Content-Type: application/json` gate (`internal/api/v1/csrf.go`, which
+  forces a CORS preflight on any cross-site browser POST; the Origin-based
+  `middleware.RequireSameSiteWrite` is deliberately not mounted because
+  legitimate API callers send no Origin) and the shared signup IP throttle
   (`internal/auth/signup_ip_throttle.go`), not by prior authentication.
 - **Passkeys as the account credential.** WebAuthn credentials
   (`internal/platform/webauthncredential.go`,
@@ -61,7 +64,7 @@ dashboard account surface. There is no payment/billing surface in v1.**
   payment-processor surface to secure; passkeys avoid a password store.
 - **Negative / accepted risk envelope (to be ratified):** an open
   key-minting endpoint is an abuse surface. It is bounded today by the
-  same-site write check + signup IP throttle + free-tier `MonthlyQuota`, and
+  JSON Content-Type gate + signup IP throttle + free-tier `MonthlyQuota`, and
   register-path orphans (PG account/key written, validator mirror failed)
   are marked `signup-race:` for the `signupreaper` to reclaim
   (`internal/api/v1/register.go`, `internal/signupreaper`). Known open edges

@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"errors"
 	"net"
 	"sync"
 	"testing"
@@ -16,7 +17,7 @@ import (
 )
 
 // The verify-code handler compares a submitted code only against the
-// tokens ReserveLoginCodeCandidates hands it, and only after
+// one token ReserveLoginCode hands it, and only after
 // RegisterFailedLoginCode has admitted the attempt. Both caps therefore
 // hold under a concurrent burst only if those two statements serialise
 // in Postgres — which is what this pins, with real row locks.
@@ -73,16 +74,17 @@ func TestLoginCodeReservation(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				<-start
-				got, err := tokens.ReserveLoginCodeCandidates(ctx, email, maxAttempts)
+				_, err := tokens.ReserveLoginCode(ctx, email, maxAttempts)
+				if errors.Is(err, platform.ErrNotFound) {
+					return
+				}
 				if err != nil {
 					errs <- err
 					return
 				}
-				if len(got) > 0 {
-					mu.Lock()
-					handOuts++
-					mu.Unlock()
-				}
+				mu.Lock()
+				handOuts++
+				mu.Unlock()
 			}()
 		}
 		close(start)
@@ -104,15 +106,15 @@ func TestLoginCodeReservation(t *testing.T) {
 		}
 		other := mint(t, "someone-else@example.com", 1, platform.TokenPurposeLogin, time.Hour)[0]
 
-		got, err := tokens.ReserveLoginCodeCandidates(ctx, email, maxAttempts)
+		got, err := tokens.ReserveLoginCode(ctx, email, maxAttempts)
 		if err != nil {
 			t.Fatalf("reserve: %v", err)
 		}
-		if len(got) != 1 || string(got[0].TokenHash) != string(live) {
-			t.Fatalf("reserved %d rows, want exactly the one live token", len(got))
+		if string(got.TokenHash) != string(live) {
+			t.Fatal("reserved a token other than the one live token")
 		}
-		if got[0].Attempts != 1 {
-			t.Errorf("returned Attempts = %d, want 1 (post-charge)", got[0].Attempts)
+		if got.Attempts != 1 {
+			t.Errorf("returned Attempts = %d, want 1 (post-charge)", got.Attempts)
 		}
 		for name, h := range map[string][]byte{"expired": expired, "consumed": consumed, "other email": other} {
 			if n := attemptsOf(t, h); n != 0 {
@@ -133,17 +135,26 @@ func TestLoginCodeReservation(t *testing.T) {
 	})
 
 	// Several live tokens per address is the normal case (a user who asks
-	// twice); every call locks all of them, so lock order matters.
-	t.Run("ConcurrentBurstOverSeveralTokensNeitherDeadlocksNorOvercharges", func(t *testing.T) {
+	// twice). Only the newest is ever a code candidate: one guess compared
+	// against N codes would have N-in-1e6 odds while the per-email budget
+	// counts it once. Once the newest is capped, no older token steps in.
+	t.Run("ConcurrentBurstOverSeveralTokensChargesOnlyTheNewest", func(t *testing.T) {
 		const email = "reserve-multi@example.com"
 		hashes := mint(t, email, 3, platform.TokenPurposeLogin, time.Hour)
+		newest := hashes[len(hashes)-1]
 		if got := burst(t, email, 50); got != maxAttempts {
-			t.Errorf("%d of 50 concurrent reservations were handed candidates, want exactly %d", got, maxAttempts)
+			t.Errorf("%d of 50 concurrent reservations were handed a candidate, want exactly %d", got, maxAttempts)
 		}
-		for i, h := range hashes {
-			if n := attemptsOf(t, h); n != maxAttempts {
-				t.Errorf("token %d: attempts = %d, want %d", i, n, maxAttempts)
+		if n := attemptsOf(t, newest); n != maxAttempts {
+			t.Errorf("newest token: attempts = %d, want %d", n, maxAttempts)
+		}
+		for i, h := range hashes[:len(hashes)-1] {
+			if n := attemptsOf(t, h); n != 0 {
+				t.Errorf("older token %d: attempts = %d, want 0 — it was a code candidate", i, n)
 			}
+		}
+		if _, err := tokens.ReserveLoginCode(ctx, email, maxAttempts); !errors.Is(err, platform.ErrNotFound) {
+			t.Errorf("reserve after the newest was capped: err = %v, want ErrNotFound (no older token may step in)", err)
 		}
 	})
 

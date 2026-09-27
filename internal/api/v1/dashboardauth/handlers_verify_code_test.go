@@ -125,6 +125,53 @@ func TestHandleVerifyCode_AttemptCapRetiresToken(t *testing.T) {
 	}
 }
 
+// TestHandleVerifyCode_OnlyTheNewestCodeIsACandidate — the durable
+// per-email budget charges one failure per request, so a request must
+// compare one code. Matching against every live mint let an attacker who
+// triggered N sign-in emails hit any of N codes per guess.
+func TestHandleVerifyCode_OnlyTheNewestCodeIsACandidate(t *testing.T) {
+	const email = "asked-twice@example.com"
+	r := newTestRig(t)
+	older := r.loginAndCode(t, email)
+	newer := r.loginAndCode(t, email)
+	if older == newer {
+		t.Skip("the two mints drew the same 6-digit code (1 in 1e6)")
+	}
+
+	w := r.postVerifyCode(t, email, older)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("superseded code: status = %d, want 400 — a guess was compared against more than one live code", w.Code)
+	}
+	if sessionCookieSet(w) {
+		t.Fatal("superseded code minted a session")
+	}
+	if w := r.postVerifyCode(t, email, newer); w.Code != http.StatusOK {
+		t.Fatalf("newest code: status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleVerifyCode_OlderCodeDoesNotStepInAfterNewestIsCapped — once
+// the newest token has burned its attempts, an older live token must not
+// become the candidate, or an attacker gets maxCodeAttempts per mint back.
+func TestHandleVerifyCode_OlderCodeDoesNotStepInAfterNewestIsCapped(t *testing.T) {
+	const email = "stepin@example.com"
+	r := newTestRig(t)
+	older := r.loginAndCode(t, email)
+	newer := r.loginAndCode(t, email)
+	for i := 0; i < maxCodeAttempts; i++ {
+		guess := wrongCode(newer)
+		if guess == older {
+			guess = wrongCode(guess)
+		}
+		if w := r.postVerifyCode(t, email, guess); w.Code != http.StatusBadRequest {
+			t.Fatalf("miss %d: status = %d, want 400", i, w.Code)
+		}
+	}
+	if w := r.postVerifyCode(t, email, older); w.Code != http.StatusBadRequest {
+		t.Fatalf("older code after the newest was capped: status = %d, want 400", w.Code)
+	}
+}
+
 func TestHandleVerifyCode_SingleUse(t *testing.T) {
 	r := newTestRig(t)
 	code := r.loginAndCode(t, "once@example.com")
