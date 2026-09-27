@@ -79,7 +79,15 @@ clickhouse_projector_source = {{ stellarindex_clickhouse_projector_source | defa
 clickhouse_serving_user = "{{ clickhouse_serving_user if (stellarindex_clickhouse_serving_enabled | default(false)) else '' }}"
 
 [ingestion]
-enabled_sources       = {{ stellarindex_enabled_sources | to_json }}
+# The oracle sources (reflector-dex/cex/fx, redstone, band) are consumed
+# only by the aggregator — same gate as [oracle.*] below and
+# status_services/aggregator_refresh_enabled further down. Filtered out
+# here rather than trusted to every inventory's stellarindex_enabled_sources
+# override: a host that sets run_aggregator: false and forgets to also
+# override the source list would otherwise ship oracle contracts with no
+# aggregator to feed them.
+{% set stellarindex_oracle_sources = ['reflector-dex', 'reflector-cex', 'reflector-fx', 'redstone', 'band'] %}
+enabled_sources       = {{ (stellarindex_enabled_sources if run_aggregator | default(true) | bool else (stellarindex_enabled_sources | reject('in', stellarindex_oracle_sources) | list)) | to_json }}
 backfill_from_ledger  = {{ stellarindex_backfill_from_ledger | int }}
 
 [ingestion.projector]
