@@ -2343,6 +2343,14 @@ jobs:
         # bound to all interfaces. Structural grep, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-exporter-listen-address-test.sh
+      - name: prometheus port var wiring test (SL19)
+        # prometheus.yml.j2, prometheus.service.j2 and 06-firewall.yml
+        # hardcoded literal 9090/9093 instead of referencing
+        # prometheus_port/alertmanager_port, so overriding the port in
+        # inventory silently left the scrape config, external URL and
+        # firewall pointed at the old port. Structural grep, no hosts.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-prometheus-port-var-test.sh
       - name: node-exporter-collectors package install test (T630)
         # The apt/nvme systemd drop-ins repoint ExecStart at
         # /usr/share/prometheus-node-exporter-collectors/{apt_info,

@@ -18,7 +18,7 @@ alerting:
     - static_configs:
         - targets:
 {% for h in groups['prometheus_pair'] %}
-            - "{{ hostvars[h].ansible_host }}:9093"
+            - "{{ hostvars[h].ansible_host }}:{{ alertmanager_port }}"
 {% endfor %}
 
 scrape_configs:
@@ -27,7 +27,7 @@ scrape_configs:
     static_configs:
       - targets:
 {% for h in groups['prometheus_pair'] %}
-          - "{{ hostvars[h].ansible_host }}:9090"
+          - "{{ hostvars[h].ansible_host }}:{{ prometheus_port }}"
 {% endfor %}
         labels:
           service: prometheus
@@ -36,7 +36,7 @@ scrape_configs:
     static_configs:
       - targets:
 {% for h in groups['prometheus_pair'] %}
-          - "{{ hostvars[h].ansible_host }}:9093"
+          - "{{ hostvars[h].ansible_host }}:{{ alertmanager_port }}"
 {% endfor %}
         labels:
           service: alertmanager

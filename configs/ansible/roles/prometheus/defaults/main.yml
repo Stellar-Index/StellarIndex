@@ -26,8 +26,16 @@ prometheus_retention_size: "0"   # 0 = no size limit; time-based eviction only
 #
 # Operators still SSH-tunnel for the web UI — the firewall
 # blocks public; SSH bypasses the firewall.
-prometheus_listen: "0.0.0.0:9090"
-alertmanager_listen: "0.0.0.0:9093"
+#
+# SL19: prometheus_port/alertmanager_port are the single source of
+# truth for these two ports. prometheus.yml.j2, prometheus.service.j2
+# and 06-firewall.yml all reference them instead of literal 9090/9093
+# so the three never drift out of sync with prometheus_listen /
+# alertmanager_listen below.
+prometheus_port: 9090
+alertmanager_port: 9093
+prometheus_listen: "0.0.0.0:{{ prometheus_port }}"
+alertmanager_listen: "0.0.0.0:{{ alertmanager_port }}"
 
 # T643: the firewall (06-firewall.yml, @internal_v4/@internal_v6) was the
 # ONLY control on 9090/9093 — anything inside prometheus_internal_cidrs
