@@ -55,6 +55,29 @@ func TestDistinctShapesWindowQuery_BoundedSettings(t *testing.T) {
 	}
 }
 
+// TestDistinctShapesWatchedQuery_IncludesTopicsAndContracts pins the
+// watched-SEP41 scoped census (GH-1295): unlike the global scan's NOT IN
+// exclusion, this query INCLUDEs the given topic[0] set and restricts to the
+// given contract set — the shape that lets a watched SEP-41 source's own
+// classic-token event kinds be audited without re-scanning the firehose for
+// every contract in the lake.
+func TestDistinctShapesWatchedQuery_IncludesTopicsAndContracts(t *testing.T) {
+	q := distinctShapesWatchedQuery(FirehoseExcludeSyms, []string{"CAAA", "CBBB"})
+	for _, required := range []string{
+		"topic_0_sym IN ('transfer','mint','burn','clawback','approve','set_authorized')",
+		"contract_id IN ('CAAA','CBBB')",
+		"GROUP BY contract_id, topic_0_sym",
+		"WHERE ledger_seq BETWEEN ? AND ?",
+	} {
+		if !strings.Contains(q, required) {
+			t.Errorf("watched shape scan missing %q:\n%s", required, q)
+		}
+	}
+	if strings.Contains(q, "NOT IN") {
+		t.Errorf("watched shape scan must INCLUDE the topic set, not exclude it:\n%s", q)
+	}
+}
+
 // TestShapeExemplarQuery — phase 2 fetches each shape's representative pinned
 // to the shape's OWN MaxLedger (primary-key range of one ledger per shape),
 // with lake-sourced identity strings escaped.
