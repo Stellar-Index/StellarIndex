@@ -1557,6 +1557,19 @@ type StreamingConfig struct {
 	// MaxTipProducersPerCaller caps the [MaxTipProducers] slots one
 	// client-IP-derived caller may hold minted. Negative disables it.
 	MaxTipProducersPerCaller int `toml:"max_tip_producers_per_caller" doc:"Per-caller cap on minted shared tip-stream producers, charged to the client-IP-derived principal for the life of the registry entry (through its linger). Prevents one address from filling the whole MaxTipProducers pool. Negative disables the per-caller quota; 0 keeps the built-in default." default:"24"`
+
+	// BufferSize is the per-topic ring-buffer capacity for the
+	// closed-bucket Hub. <= 0 keeps streaming.DefaultBufferSize (256).
+	BufferSize int `toml:"buffer_size" doc:"Per-topic ring-buffer capacity for the streaming Hub — how many recent closed-bucket events a late-subscribing client can replay. <= 0 keeps the built-in default (256)." default:"256"`
+
+	// TopicIdleTTL overrides how long a subscriber-less Hub topic
+	// keeps its buffer before the reaper drops it. <= 0 keeps
+	// streaming.DefaultTopicIdleTTL (15m).
+	TopicIdleTTL time.Duration `toml:"topic_idle_ttl" doc:"How long a Hub topic with no subscribers keeps its replay buffer before the reaper drops it. <= 0 keeps the built-in default (15m)." default:"15m"`
+
+	// MaxTopics overrides the Hub's topic-map ceiling. <= 0 keeps
+	// streaming.DefaultMaxTopics (4096).
+	MaxTopics int `toml:"max_topics" doc:"Ceiling on distinct live topics the Hub tracks (one per (asset, quote) pair actually subscribed to), independent of [Pairs] — guards unbounded topic growth from ad-hoc subscriptions. <= 0 keeps the built-in default (4096)." default:"4096"`
 }
 
 // SEP10Config configures the SEP-10 Web Auth validator. Both
@@ -2204,6 +2217,9 @@ func defaultAPIConfig() APIConfig {
 			MaxConcurrentStreams:     8192,
 			MaxTipProducers:          512,
 			MaxTipProducersPerCaller: 24,
+			BufferSize:               256,
+			TopicIdleTTL:             15 * time.Minute,
+			MaxTopics:                4096,
 		},
 	}
 }
