@@ -67,6 +67,13 @@ through our pipeline to the API response is preserved with full
 | JSON API output | **String** (never a JSON number — they're IEEE 754 doubles, 53-bit precision) |
 | OpenAPI schema | `type: string`, `format: i128` (custom format tag) |
 
+> **Amendment (2026-09-27, GH #926).** The OpenAPI row is not what
+> ships: no schema in `openapi/stellar-index.v1.yaml` carries a
+> `format: i128` tag. A 128-bit value is `type: string` with the
+> decimal-string contract stated in the field's `description`, and the
+> wire guard is `internal/canonical/wire_money_guard_test.go` (see
+> Enforcement). The row is preserved as the original record.
+
 No code path in the repo is allowed to hold one of these values in
 `int64`, `uint64`, `float32`, or `float64`. No exceptions.
 
@@ -158,6 +165,14 @@ verified-correct implementation in
 >   `bps`/`count`/`entries` marks it as not an amount), whose Go type
 >   marshals to a JSON number, and whose tag lacks `,string`. It covers
 >   named response structs only, not `map[string]any` payloads.
+>
+> **Amendment (2026-09-27, GH #926).** "The only escapes today" above is
+> out of date: `defindex_fees.fee_index`
+> (`migrations/0146_create_defindex_fees.up.sql`) also carries one. It
+> is the Vec-position primary-key discriminator of the
+> `distributed_fees` fan-out, not a money value, so the escape is
+> legitimate. The authoritative list is the `lint-money:ok` markers
+> under `migrations/`, not a count in this document.
 
 - **CI grep-lint — `scripts/ci/lint-i128.sh` (built 2026-07-01, wired into
   `make verify`).** Fast Go-side first line of defence: rejects

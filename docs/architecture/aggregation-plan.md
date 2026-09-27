@@ -205,10 +205,13 @@ runtime concern.
 Per [ADR-0015](../adr/0015-last-closed-bucket-rate-serving.md), the
 API endpoints above (`/v1/price`, `/v1/vwap`, `/v1/twap`,
 `/v1/ohlc`) NEVER expose the in-progress (currently-filling)
-window — only the most recent **closed** bucket. The orchestrator
-writes both the in-progress and closed-window CAGG rows to
-Timescale; query handlers MUST filter `bucket_to_ts <= now()` so
-clients only ever see immutable, content-addressed values.
+window — only the most recent **closed** bucket. The CAGG rows
+(`prices_1m` and its rollups) are materialised by TimescaleDB's
+continuous-aggregate refresh policies, which keep the in-progress
+bucket current too; the orchestrator writes only the Redis VWAP.
+Query handlers MUST filter `bucket <= now() - INTERVAL '<granularity>'`
+(a row carries only its start, `bucket`) so clients only ever see
+closed buckets; #689 tracks routing every read through one guard.
 
 This is what makes "all 3 regions serve exactly the same rate" a
 real property rather than a hopeful one: closed-bucket rows are
