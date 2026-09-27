@@ -82,6 +82,14 @@ Concretely:
   is the only writer for these CAGG rows. Once it writes a row
   for window `[t, t+W)`, that row is immutable.
 
+> **Amendment (2026-09-27, GH #926).** The aggregator orchestrator
+> writes no CAGG rows. `internal/aggregate/orchestrator` publishes the
+> rolling VWAP to Redis (`cachekeys.VWAP`); the closed-bucket rows in
+> `prices_1m` and its rollups (`prices_15m` … `prices_1mo`) are
+> materialised by TimescaleDB continuous-aggregate refresh policies over
+> `trades`, declared in `migrations/`. There is no application writer
+> for them. The bullet above is preserved as the original record.
+
 The in-progress bucket — the one the aggregator is currently
 filling — is never exposed via the public API. It exists only
 internally for the next refresh tick to read from when computing
@@ -127,6 +135,17 @@ the next closed row.
   query handlers (`internal/api/v1/`) MUST filter out the
   in-progress row by checking that `bucket_to_ts <= now()`. A test
   per endpoint asserts this.
+
+> **Amendment (2026-09-27, GH #926).** There is no `bucket_to_ts`
+> column: a CAGG row carries only its start, `bucket`. The shipped guard
+> is `bucket <= now() - INTERVAL '<granularity>'`
+> (`HistoryGranularity.closedBucketInterval`,
+> `internal/storage/timescale/aggregates.go`), and it is not yet applied
+> through one chokepoint — #689 tracks its several spellings and the
+> unguarded reads. Nor is there a closed-bucket test per endpoint:
+> `internal/api/v1/closed_bucket_internal_test.go` tests the `from`/`to`
+> parameter clamp, not a handler's query. The bullet above is preserved
+> as the original record.
 
 - **Downstream design impact — cross-region traffic routing is now
   trivial.** No need for "primary-region affinity" or "always route

@@ -115,6 +115,17 @@ exhaustive). For sources that emit no events (Band — see AGENTS.md
 surprise list), coverage signal is instead derived from the
 `oracle_updates` table filtered by `source = '<name>'`.
 
+> **Amendment (2026-09-27, GH #926).** `sources.Source.TopicSymbols()`
+> was never added. The shipped density counts distinct ledgers per
+> gap-detector target, from its own table or its declared count query
+> (`Store.CountDistinctLedgers`,
+> `internal/storage/timescale/source_coverage.go`, over
+> `DefaultGapDetectorTargets`), not `soroban_events` filtered by a
+> claimed topic list; topic-level completeness is ADR-0033 Claim 2a,
+> answered by `Dispatcher.Recognize`. The paragraph above is preserved
+> as the original record.
+> <!-- adr-absent-identifier: TopicSymbols — never built; see the amendment above -->
+
 ### Classic-DEX (SDEX)
 
 ```

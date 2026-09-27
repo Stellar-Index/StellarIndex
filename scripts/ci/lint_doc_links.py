@@ -24,10 +24,20 @@ Exclusions, both deliberate:
     fence count is reported rather than silently blinding the rest of a file.
   * `_template` / `*TEMPLATE*` files carry placeholder targets on purpose.
 
-ADR PATHS IN CODE SPANS — the one exception to skipping backticks. Runbooks
+ADR PATHS IN CODE SPANS — the first exception to skipping backticks. Runbooks
 cite ADRs as `docs/adr/NNNN-slug.md` in backticks, which renders as no link,
 so a renamed ADR left them dangling silently. ADR filenames are numbered and
 never placeholders, so a backticked repo-root ADR path must resolve too.
+
+GO IDENTIFIERS IN ADR CODE SPANS — an ADR that names `Type.Method`, `pkg.Func`
+or `name()` in backticks is telling an implementer what to call. A span whose
+final identifier appears in no .go file is a phantom: ADRs named
+`source.HandledTopics()` and `sources.Source.TopicSymbols()`, neither of which
+was ever built, and a reader implementing against them builds the wrong thing.
+Because ADR text is immutable, a phantom is corrected by a dated amendment and
+the preserved original is acknowledged in the same file with
+`<!-- adr-absent-identifier: Name — reason -->`. A marker for a name that now
+exists, or that no span in the file uses, is stale and fails.
 
 Usage:
   lint_doc_links.py                every tracked + untracked markdown file
@@ -53,6 +63,9 @@ FENCE = re.compile(r"^\s*(```|~~~)")
 LINK = re.compile(r"\]\(([^)\s]+)\)")
 HEAD = re.compile(r"^#{1,6}\s+(.*?)\s*$")
 ADR_SPAN = re.compile(r"`(docs/adr/[0-9]{4}-[^`\s]+\.md)`")
+GO_SPAN = re.compile(r"`((?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*)(\(\))?`")
+ABSENT_MARK = re.compile(r"<!--\s*adr-absent-identifier:(.*?)-->")
+ABSENT_BODY = re.compile(r"^\s*([A-Za-z_]\w*)\s+(?:—|--)\s*\S")
 
 
 def _git(*args):
@@ -85,6 +98,80 @@ def _adr_span_fails(path, lineno, line):
             fails.append((path, lineno, target, "ADR path in a code span does not exist"))
         elif _ignored(target):
             fails.append((path, lineno, target, "ADR path in a code span is GITIGNORED"))
+    return fails
+
+
+def _go_span_names(line):
+    """Identifiers a code span names as Go: a selector with an exported tail, or a call."""
+    names = []
+    for m in GO_SPAN.finditer(line):
+        parts = m.group(1).split(".")
+        if m.group(2) or (len(parts) > 1 and parts[-1][:1].isupper()):
+            names.append(parts[-1])
+    return names
+
+
+def _existing_go_identifiers(names):
+    """The subset of names that occur as a whole word in a tracked or untracked .go file."""
+    if not names:
+        return set(), None
+    cmd = ["git", "grep", "--untracked", "-h", "-o", "-w", "-F"]
+    for n in sorted(names):
+        cmd += ["-e", n]
+    res = subprocess.run(cmd + ["--", "*.go"], capture_output=True, text=True)
+    if res.returncode not in (0, 1):
+        return set(), res.stderr.strip() or f"git grep exited {res.returncode}"
+    return set(res.stdout.split()), None
+
+
+def _scan_adr(path, lines):
+    """Go-shaped spans [(lineno, name)], markers {name: lineno}, and malformed-marker fails."""
+    spans, marks, fails = [], {}, []
+    infence = False
+    for lineno, line in enumerate(lines, 1):
+        for m in ABSENT_MARK.finditer(line):
+            body = ABSENT_BODY.match(m.group(1))
+            if body:
+                marks[body.group(1)] = lineno
+            else:
+                fails.append((path, lineno, "", "malformed adr-absent-identifier marker — "
+                                                 "write <!-- adr-absent-identifier: Name — reason -->"))
+        if FENCE.match(line):
+            infence = not infence
+            continue
+        if not infence:
+            spans.extend((lineno, n) for n in _go_span_names(line))
+    return spans, marks, fails
+
+
+def adr_identifier_fails(adrs):
+    """Fails for Go identifiers named in ADR code spans that exist nowhere in the tree.
+
+    adrs maps each ADR path to its lines; one git grep resolves every name.
+    """
+    scanned = {p: _scan_adr(p, lines) for p, lines in adrs.items()}
+    names = {n for spans, marks, _ in scanned.values() for n in [*(x for _, x in spans), *marks]}
+    have, err = _existing_go_identifiers(names)
+    if err:
+        return [("docs/adr", 0, "", f"cannot resolve ADR identifiers against the tree: {err}")]
+    fails = []
+    for path, (spans, marks, bad) in scanned.items():
+        fails.extend(bad)
+        used = set()
+        for lineno, name in spans:
+            used.add(name)
+            if name not in have and name not in marks:
+                fails.append((path, lineno, name,
+                              "Go identifier in an ADR code span exists in no .go file — correct it "
+                              "with a dated amendment and mark the preserved original with "
+                              "<!-- adr-absent-identifier: Name — reason -->"))
+        for name, lineno in marks.items():
+            if name in have:
+                fails.append((path, lineno, name, "stale adr-absent-identifier marker — the "
+                                                  "identifier now exists in the tree; remove it"))
+            elif name not in used:
+                fails.append((path, lineno, name, "stale adr-absent-identifier marker — no code "
+                                                  "span in this file names it; remove it"))
     return fails
 
 
@@ -154,6 +241,7 @@ def main():
             | set(_git("ls-files", "-z", "--others", "--exclude-standard", "*.md"))
         )
     fails = []
+    adrs = {}
     for path in files:
         base = os.path.basename(path)
         if base.startswith("_template") or "TEMPLATE" in base:
@@ -166,6 +254,8 @@ def main():
             fails.append((path, 0, "", "has an ODD number of code fences — everything after "
                                        "the stray fence goes unscanned, so this gate is blind to it"))
             continue
+        if path.startswith("docs/adr/"):
+            adrs[path] = lines
         infence = False
         for lineno, line in enumerate(lines, 1):
             if FENCE.match(line):
@@ -196,6 +286,8 @@ def main():
                         fails.append((path, lineno, target,
                                       f"{os.path.basename(dest)} has no heading anchor "
                                       f"#{slug(frag)}"))
+
+    fails.extend(adr_identifier_fails(adrs))
 
     for path, lineno, target, why in fails:
         loc = f"{path}:{lineno}" if lineno else path

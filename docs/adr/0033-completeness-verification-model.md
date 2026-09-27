@@ -213,6 +213,16 @@ guessing from the confidence path.
 **feeders and verifiers** of `ledger_ingest_log`, not as parallel
 sources of truth.
 
+> **Amendment (2026-09-27, GH #926).** None of the three feeds or
+> verifies `ledger_ingest_log`: `internal/hashdb`,
+> `internal/archivecompleteness` and `verify-archive`
+> (`internal/ops/archive`) never reference it (the 2026-07-24 note at
+> the top records the same for `hashdb`). The row is written by the
+> indexer and by `census-backfill`, and its contiguity and hash chain
+> are checked by `compute-completeness` (Claim 1). The three remain
+> independent checks. The paragraph above is preserved as the original
+> record.
+
 ### Claim 2a — Recognition (topic-completeness)
 
 For every source, the set of event topics emitted on-chain by its
@@ -236,6 +246,16 @@ upgrades that add a topic
 (`docs/architecture/contract-schema-evolution.md`): the moment a new
 topic appears on-chain, recognition fails loudly instead of the event
 being silently skipped.
+
+> **Amendment (2026-09-27, GH #926).** No source has a
+> `HandledTopics()` method, here or in phase 3 below. Recognition is
+> `Dispatcher.Recognize` (`internal/dispatcher/recognize.go`): each
+> distinct `(contract_id, topic)` shape in the lake is replayed through
+> the same `Matches()` predicates the live dispatch walk runs, so the
+> claimed set cannot drift from what the decoders handle — stronger
+> than a declared topic list. The original text is preserved as the
+> record.
+> <!-- adr-absent-identifier: HandledTopics — never built; recognition is Dispatcher.Recognize (amendment above) -->
 
 ### Claim 2b — Projection reconciliation (Soroban)
 
@@ -288,6 +308,18 @@ anti-join parity for SDEX would require materializing a classic-trade
 raw census; given pre-2024 SDEX volume, count-reconciliation plus the
 Hubble anchor is the chosen cost/confidence trade. We may add the
 raw census later if a discrepancy demands it.
+
+> **Amendment (2026-09-27, GH #926).** No shipped reconcile evaluates
+> the formula above. `classic_trade_effect_count` is still written, but
+> it counts claims `trades` cannot hold (one-side-zero fills, claims the
+> decoder drops as malformed), so it never reconciles. Both
+> `compute-completeness` (with or without `-ch`) and
+> `verify-reconciliation` instead re-derive the expected per-ledger SDEX
+> count by running the SDEX decoder over the certified ClickHouse
+> operations and counting the distinct trades that pass the served
+> write filter (`reDeriveSDEXCensusViaDecoder`,
+> `internal/ops/chops/compute_completeness.go`). The formula is
+> preserved as the original record.
 
 ### External (CEX / FX) — a different completeness class
 

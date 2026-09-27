@@ -53,6 +53,16 @@ Adopt a four-tier architecture, routing data by access pattern:
   protocol entities + pricing CAGGs (small, indexed, hot). The existing
   stack and the right tool for this tier.
 
+> **Amendment (2026-09-27, GH #926).** Tier 3 is not the only served
+> tier. [ADR-0038](0038-network-explorer.md) and
+> [ADR-0048](0048-serve-by-query-shape.md) sanction serving some v1
+> surfaces directly from ClickHouse, and handlers do: among them
+> `internal/api/v1/issuers.go`, `pools_reserves.go`, `rwa_history.go`,
+> `sdex_orderbook.go` and `protocol_bespoke_cache.go`, plus the lake
+> liveness gating in `server.go`. Pricing and the decoded protocol
+> entities remain Postgres-served. The bullet above is preserved as the
+> original record.
+
 **Dataflow:** one *structural* galexie walk populates ClickHouse (historic
 backfill + live fan-out). **Protocol decoders read ClickHouse, not
 galexie** (their logic is unchanged; only the input source moves). The
@@ -89,6 +99,16 @@ removed in the same phase that replaces them. Full inventory in the plan
 doc §10; clean-cutover guarantee (one authoritative path at all times) in
 §10e.
 
+> **Amendment (2026-09-27, GH #926).** Read "removed in the same phase"
+> as the plan, not the state: the items checked here are all still
+> present. The indexer writes `soroban_events` on every ledger
+> (`cmd/stellarindex-indexer/main.go`), `ledger_ingest_log` is written
+> and read (ADR-0033 Claim 1), `internal/sources/sorobanevents` is
+> imported by the projector and the completeness reconciler, and
+> `backfill -source soroban-events` is live
+> (`internal/ops/ingest/backfill.go`). The decommission is tracked in
+> #803. The paragraph above is preserved as the original record.
+
 This supersedes ADR-0029 (the Postgres landing zone) and amends the
 coverage/projection ADRs to read from ClickHouse + reconcile against the
 LCM census.
@@ -118,6 +138,8 @@ have no lake substrate to rebuild from today. They continue to run live off the
 dispatcher's `LedgerEntryChangeDecoder` hook into Postgres, so production
 serving is unaffected — only *bulk re-derivation of that observer class* is
 blocked.
+
+<!-- adr-absent-identifier: GetChanges — upstream go-stellar-sdk ingest.LedgerTransaction method, not an in-tree symbol -->
 
 This is an **accepted exclusion**, not a silent gap: the cost of per-op change
 attribution (walking each `LedgerTransaction`'s `GetChanges()` plus the

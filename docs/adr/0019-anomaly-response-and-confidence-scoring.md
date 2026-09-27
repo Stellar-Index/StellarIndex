@@ -152,6 +152,19 @@ superseded_by: null
 > it reaches the release decision only through `confidence`, which is
 > graded and self-correcting.
 >
+> **Amendment (2026-09-27, GH #926) — the comparator is not pinned.**
+> The paragraph above says the `prevVWAP` comparator is pinned for the
+> whole freeze and that the pinning defeats the park-the-price evasion.
+> Neither holds as shipped. `prevVWAPs` does not advance on a refused
+> bucket, but the Phase 2 scorer reads `frozenPrevVWAPs`, a shadow set
+> to each refused bucket's fresh VWAP (`Orchestrator.decideBucket`,
+> `internal/aggregate/orchestrator/orchestrator.go`), so a mid-freeze
+> bucket scores its per-tick return — the shadow comparator the
+> 2026-08-24 paragraph above refers to. A held price therefore reads
+> calm; the control that defeats the park-the-price evasion is the
+> `release_corroborated` leg, not pinning. The paragraph above is
+> preserved as the original record.
+>
 > **Operator surface.** Every duration is tunable under
 > `[anomaly.phase2]` with the ADR values as defaults. Force-unfreeze is
 > `DEL freeze:<asset>:<quote>`: the aggregator detects the missing
@@ -483,6 +496,17 @@ superseded_by: null
 > `internal/aggregate/orchestrator` / `internal/aggregate/confidence`'s
 > owner — not made in this doc pass.
 
+> **Amendment (2026-09-27, GH #926) — "no freeze eligibility" is Phase 2
+> only.** A pair with no baseline is still subject to the Phase 1
+> class-threshold freeze. `Orchestrator.evaluateAndMaybeFreeze` measures
+> the price step against the previous VWAP with no baseline input
+> (`anomaly.Checker.Evaluate` skips only when there is no previous price
+> at all) and, when a single-source step reaches the class `FreezePct`,
+> drives the shared freeze lifecycle with a `Fires: true` signal. So a
+> new or low-history asset can be frozen, by the class-deviation rule
+> rather than the three-signal AND; it still publishes no `confidence`
+> field.
+
 ## Context
 
 [ADR-0017](0017-archive-completeness-invariants.md) protects us
@@ -634,6 +658,19 @@ customers and on-call operators can see WHY confidence dropped):
 }
 ```
 
+> **Amendment (2026-09-27, GH #926) — the worked JSON above is not the
+> wire.** No field in it ships under that name and unit.
+> `confidence_factors` (`ConfidenceFactors`, `internal/api/v1/price.go`;
+> the `/v1/price` schema in `openapi/stellar-index.v1.yaml`) carries
+> seven factor values, each in [0, 1] — `z_score`, `source_count`,
+> `diversity`, `liquidity`, `cross_oracle`, `baseline_quality` and
+> `triangulation_agreement` — plus the evidence fields
+> `cross_oracle_checked`, `cross_oracle_agreement` (an integer count),
+> `liquidity_measured` and `triangulation_checked`. There is no raw
+> source count, USD liquidity, divergence percentage or
+> `baseline_age_days` on the wire. The block is preserved as the
+> authoring-time sketch.
+
 ### Freeze policy
 
 Freeze fires only when **all three** of the following hold:
@@ -704,6 +741,21 @@ When freeze fires:
   "what's happening right now" and a manipulation IS happening.
 - The observations surface (`/v1/observations`) ignores freeze —
   returns raw per-source data unchanged.
+
+> **Amendment (2026-09-27, GH #926) — a frozen response does not force
+> `divergence_warning`.** As shipped, a frozen `/v1/price` carries
+> `flags.frozen: true` and `flags.single_source: true`, but
+> `flags.divergence_warning` comes only from the cross-reference
+> divergence service and is read together with `divergence_checked`,
+> exactly as on an unfrozen response (`Server.handlePriceTail`,
+> `internal/api/v1/price.go`). The freeze runs no cross-reference check,
+> so forcing the flag would publish `divergence_warning: true` with
+> `divergence_checked: false`, the uninterpretable state CS-087 removed;
+> the same reasoning keeps an anomaly warn out of the flag (the
+> `decision.IsWarn()` branch in `internal/aggregate/orchestrator/orchestrator.go`).
+> Consumers detect a freeze by `flags.frozen`, read with
+> `flags.frozen_checked`. The first bullet is preserved as the original
+> record.
 
 **Freeze duration:**
 - Initial: 30 minutes
@@ -777,6 +829,19 @@ This stays robust to legitimate regime changes (asset matures,
 gains liquidity) — those happen across all three windows
 proportionally, so no single window reports them as anomalous.
 
+> **Amendment (2026-09-27, GH #926).** "Fires on the **smallest**
+> z-score" contradicts its own parenthetical; the parenthetical is what
+> ships. `MultiBaseline.MaxZScore` (`internal/aggregate/baseline/multi.go`)
+> takes the LARGEST z across the windows holding at least
+> `MinZScoreSamples` returns, so any one window over threshold fires.
+> There is no minimum-z method. `MaxZScore` also scores single-bucket
+> spikes only and is blind to a slow drift at every window length (each
+> window's median moves with the drift), so the third bullet is not
+> delivered by it: the frog-boiling defence is the separate
+> `MultiBaseline.MaxDriftZScore` statistic, which the freeze-duration
+> amendment at the top keeps out of the fire, extend and release
+> decisions.
+
 ### Bootstrap (warmup) policy for new assets
 
 Newly-listed assets have no baseline. Three options were
@@ -794,6 +859,13 @@ For an asset with < 30 days of history:
 
 After 30 days, transition to learned per-asset baseline
 automatically.
+
+> **Amendment (2026-09-27, GH #926).** `confidence_factors.baseline_age_days`
+> does not exist (see the amendment under "Multi-factor confidence
+> score"), so there is nothing by that name to gate on. As shipped, a
+> pair without a usable baseline publishes no `confidence` at all (the
+> DOC-05 amendment at the top); its absence is the signal a customer
+> can gate on.
 
 ## Consequences
 

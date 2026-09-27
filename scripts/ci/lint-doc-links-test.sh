@@ -26,17 +26,21 @@ cd "$(dirname "$0")/../.." || exit 1
 
 GATE="scripts/ci/lint-doc-links.sh"
 FIX="docs/zz-lint-doc-links-fixture.md"
+ADR_FIX="docs/adr/zz-lint-doc-links-fixture.md"
 PASS=0; FAIL=0
 # shellcheck disable=SC2317,SC2329  # invoked indirectly by the EXIT trap
-cleanup() { rm -f "$FIX"; }
+cleanup() { rm -f "$FIX" "$ADR_FIX"; }
 trap cleanup EXIT
 
-check() { # <name> <expected ok|red> [full] — scoped to $FIX unless "full"
-          # is passed, in which case the gate runs its default whole-tree
-          # discovery with no file list.
+check() { # <name> <expected ok|red> [full|adr] — scoped to $FIX unless
+          # "full" is passed, in which case the gate runs its default
+          # whole-tree discovery with no file list, or "adr", which scopes
+          # it to $ADR_FIX.
   local name="$1" want="$2" scope="${3:-scoped}" rc
   if [ "$scope" = full ]; then
     bash "$GATE" >/dev/null 2>&1; rc=$?
+  elif [ "$scope" = adr ]; then
+    bash "$GATE" "$ADR_FIX" >/dev/null 2>&1; rc=$?
   else
     bash "$GATE" "$FIX" >/dev/null 2>&1; rc=$?
   fi
@@ -107,20 +111,45 @@ check "a link to a GITIGNORED target is caught" red
 git checkout -- .gitignore 2>/dev/null || sed -i.bak '/zz-ignored-fixture-dir/d' .gitignore
 rm -rf docs/zz-ignored-fixture-dir .gitignore.bak
 
+# ADR code spans that name a Go identifier must resolve to one in the tree:
+# ADRs had named HandledTopics() and TopicSymbols(), which were never built.
+ghost="NoSuchAdrIdentifier$$"
+# shellcheck disable=SC2016  # the backticks are literal fixture content
+printf '# fixture\n\nCall `source.%s()` per source.\n' "$ghost" > "$ADR_FIX"
+check "an ADR code span naming a Go identifier absent from the tree is caught" red adr
+# shellcheck disable=SC2016  # the backticks are literal fixture content
+printf '# fixture\n\nRecognition is `Dispatcher.Recognize`, via `Recognize()`.\n' > "$ADR_FIX"
+check "an ADR code span naming a real Go identifier resolves" ok adr
+# shellcheck disable=SC2016  # the backticks are literal fixture content
+printf '# fixture\n\nCall `source.%s()`.\n<!-- adr-absent-identifier: %s — never built -->\n' "$ghost" "$ghost" > "$ADR_FIX"
+check "a marked absent identifier in an ADR is accepted" ok adr
+# shellcheck disable=SC2016  # the backticks are literal fixture content
+printf '# fixture\n\nCall `source.%s()`.\n<!-- adr-absent-identifier: %s -->\n' "$ghost" "$ghost" > "$ADR_FIX"
+check "an absent-identifier marker with no reason is caught" red adr
+# shellcheck disable=SC2016  # the backticks are literal fixture content
+printf '# fixture\n\nSee `Dispatcher.Recognize`.\n<!-- adr-absent-identifier: Recognize — stale -->\n' > "$ADR_FIX"
+check "a marker for an identifier that now exists is caught as stale" red adr
+printf '# fixture\n\nNo spans here.\n<!-- adr-absent-identifier: %s — marks nothing -->\n' "$ghost" > "$ADR_FIX"
+check "a marker no code span in the file uses is caught as stale" red adr
+rm -f "$ADR_FIX"
+# shellcheck disable=SC2016  # the backticks are literal fixture content
+printf '# fixture\n\nCall `source.%s()`.\n' "$ghost" > "$FIX"
+check "a Go-shaped span outside docs/adr is not identifier-checked" ok
+
 rm -f "$FIX"
 check "clean tree passes again" ok full
 
-# This run does 3 full-tree scans (clean/untracked/clean-again) plus 10
-# scoped, near-instant ones; a regression back to always-full-scan does 13
+# This run does 3 full-tree scans (clean/untracked/clean-again) plus 17
+# scoped, near-instant ones; a regression back to always-full-scan does 20
 # full-tree scans. 6x a single scan sits well above the 3 this run needs and
-# well below the 13 the defect this test exists to catch would cost.
+# well below the 20 the defect this test exists to catch would cost.
 total_s=$((SECONDS - t0))
 budget_s=$((single_scan_s * 6))
 if [ "$total_s" -le "$budget_s" ]; then
-  printf '  ok   %s\n' "self-test cost stays near 3 full scans, not 13 (${total_s}s <= ${budget_s}s budget, single scan ~${single_scan_s}s)"
+  printf '  ok   %s\n' "self-test cost stays near 3 full scans, not 20 (${total_s}s <= ${budget_s}s budget, single scan ~${single_scan_s}s)"
   PASS=$((PASS+1))
 else
-  printf '  FAIL %s\n' "self-test cost stays near 3 full scans, not 13 (${total_s}s > ${budget_s}s budget, single scan ~${single_scan_s}s — a check likely regressed to an unscoped full-tree call)"
+  printf '  FAIL %s\n' "self-test cost stays near 3 full scans, not 20 (${total_s}s > ${budget_s}s budget, single scan ~${single_scan_s}s — a check likely regressed to an unscoped full-tree call)"
   FAIL=$((FAIL+1))
 fi
 
