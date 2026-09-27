@@ -903,3 +903,30 @@ func TestHandleUpdate_DuplicateURLConflicts(t *testing.T) {
 		t.Errorf("rejected update rewrote url to %q", got)
 	}
 }
+
+// TestDTOs_TimestampsRenderUTC pins the wire rendering of every webhook
+// and delivery timestamp: Postgres hands timestamptz back in the process's
+// local zone, and a raw time.Time field would emit that offset instead of Z.
+func TestDTOs_TimestampsRenderUTC(t *testing.T) {
+	at := time.Date(2026, 6, 1, 2, 0, 0, 0, time.FixedZone("CEST", 2*60*60))
+	hook, err := json.Marshal(toDTO(platform.CustomerWebhook{CreatedAt: at, UpdatedAt: at}))
+	if err != nil {
+		t.Fatalf("marshal webhook: %v", err)
+	}
+	delivery, err := json.Marshal(toDeliveryDTO(platform.WebhookDelivery{
+		NextAttemptAt: at, DeliveredAt: at, CreatedAt: at,
+	}))
+	if err != nil {
+		t.Fatalf("marshal delivery: %v", err)
+	}
+	for body, fields := range map[string][]string{
+		string(hook):     {"created_at", "updated_at"},
+		string(delivery): {"next_attempt_at", "delivered_at", "created_at"},
+	} {
+		for _, field := range fields {
+			if want := `"` + field + `":"2026-06-01T00:00:00Z"`; !strings.Contains(body, want) {
+				t.Errorf("DTO %s: want %s, got %s", field, want, body)
+			}
+		}
+	}
+}

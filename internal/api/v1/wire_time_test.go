@@ -133,8 +133,8 @@ func TestWireTime_OutOfRangeYearRendersNull(t *testing.T) {
 // /v1/history/since-inception came to serve `+02:00` and `+01:00`.
 //
 // The package set is walked, not listed, so a new package that marshals
-// to a client is covered the day it is created. A struct that is not on
-// the wire, or a known offender, is named in wireTimeExclusions.
+// to a client is covered the day it is created. A struct that never
+// reaches a client is named in wireTimeExclusions; nothing else is.
 func TestWireTime_NoRawTimeOnTheWire(t *testing.T) {
 	fset := token.NewFileSet()
 	byDir := parseAPITree(t, fset)
@@ -173,17 +173,6 @@ func TestWireTime_NoRawTimeOnTheWire(t *testing.T) {
 var wireTimeExclusions = map[string]string{
 	"streaming/redispub.ClosedBucketEvent": "aggregator-to-API Redis message; the subscriber " +
 		"validates it and re-marshals the client frame, so this struct never reaches a client",
-
-	// Known offenders: these reach a client as raw time.Time. The packages
-	// cannot import WireTime (v1's tests import redispub; the dashboard
-	// packages sit beside v1), so fixing them means moving WireTime to a
-	// leaf package. Remove each entry as it is fixed; never add one.
-	"streaming/redispub.closedBucketEnvelope": "known offender: /v1/price/stream frame as_of",
-	"streaming/redispub.closedBucketWireData": "known offender: /v1/price/stream frame observed_at",
-	"v1/dashboardkeys.keyDTO":                 "known offender: Postgres-sourced key timestamps",
-	"v1/dashboardwebhooks.webhookDTO":         "known offender: Postgres-sourced webhook timestamps",
-	"v1/dashboardwebhooks.deliveryDTO":        "known offender: Postgres-sourced delivery timestamps",
-	"v1/dashboardpricealerts.priceAlertDTO":   "known offender: Postgres-sourced alert timestamps",
 }
 
 // parseAPITree parses the non-test sources of every package under

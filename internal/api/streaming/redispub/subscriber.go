@@ -14,6 +14,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/wiretime"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
@@ -312,10 +313,10 @@ func (s *Subscriber) handleMessage(payload []byte) {
 			Quote:         ev.Quote,
 			Price:         ev.ValueDecimal,
 			PriceType:     "vwap",
-			ObservedAt:    ev.ObservedAt,
+			ObservedAt:    wiretime.Time(ev.ObservedAt),
 			WindowSeconds: ev.WindowSeconds,
 		},
-		AsOf: ev.ObservedAt,
+		AsOf: wiretime.Time(ev.ObservedAt),
 	})
 	if err != nil {
 		// Marshalling a fully-typed, already-decoded struct cannot
@@ -337,16 +338,16 @@ func (s *Subscriber) handleMessage(payload []byte) {
 // flags as "not evaluated".
 type closedBucketEnvelope struct {
 	Data closedBucketWireData `json:"data"`
-	AsOf time.Time            `json:"as_of"`
+	AsOf wiretime.Time        `json:"as_of"`
 }
 
 type closedBucketWireData struct {
-	AssetID       string    `json:"asset_id"`
-	Quote         string    `json:"quote"`
-	Price         string    `json:"price"`
-	PriceType     string    `json:"price_type"`
-	ObservedAt    time.Time `json:"observed_at"`
-	WindowSeconds int64     `json:"window_seconds"`
+	AssetID       string        `json:"asset_id"`
+	Quote         string        `json:"quote"`
+	Price         string        `json:"price"`
+	PriceType     string        `json:"price_type"`
+	ObservedAt    wiretime.Time `json:"observed_at"`
+	WindowSeconds int64         `json:"window_seconds"`
 }
 
 const (

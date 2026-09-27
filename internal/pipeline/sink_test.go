@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"go/ast"
+	"go/parser"
 	"go/token"
 	"io"
+	"io/fs"
 	"log/slog"
 	"math"
 	"os"
@@ -273,21 +275,20 @@ func TestShutdownBudgets_MainWiresConstants(t *testing.T) {
 // the cursor advanced. They must all go through persistEventResilient
 // (block-and-retry on infra, isolate+count on a permanent data fault).
 //
-// Structural because it is a wiring invariant over every call site in
-// those two functions, which no single behavioural test can cover. The
-// policy itself is proven behaviourally by the retryInfra /
-// classifyFault tests, end-to-end by
-// TestPersistEvents_DataFaultEventIsCountedAsDropped, and — for the
-// shutdown-race half — by
+// Structural because it is a wiring invariant over every call site, which
+// no single behavioural test can cover. The scan is the whole package, not
+// a list of drain functions: the only functions allowed to call
+// handleEvent directly are the two that bind it (sinkEventBinders), and
+// every drain site is discovered by its persistEventResilient call. The
+// policy itself is proven behaviourally by the retryInfra / classifyFault
+// tests, end-to-end by TestPersistEvents_DataFaultEventIsCountedAsDropped,
+// and — for the shutdown-race half — by
 // TestPersistWorker_ShutdownRacingInFlightEventWrite_EventLandsNotLost,
 // which the eventPersister seam (#368 M3) made possible.
 func TestSinkDrain_NonTradeWritesAreResilient(t *testing.T) {
-	fset := token.NewFileSet()
-	sink := parseFile(t, fset, "sink.go")
-
-	for _, fn := range []string{"persistWorker", "drainBufferedEvents"} {
-		decl := funcDecl(t, sink, fn)
-		resilient := 0
+	resilient := map[string]int{}
+	for _, decl := range packageFuncDecls(t) {
+		name := decl.Name.Name
 		ast.Inspect(decl, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
@@ -299,16 +300,54 @@ func TestSinkDrain_NonTradeWritesAreResilient(t *testing.T) {
 			}
 			switch id.Name {
 			case "HandleEvent", "handleEvent":
-				t.Errorf("%s calls %s directly — its error is discarded, so a Postgres infrastructure fault drops the event while the cursor advances (REL-08). Route it through persistEventResilient", fn, id.Name)
+				if !sinkEventBinders[name] {
+					t.Errorf("%s calls %s directly — its error handling bypasses persistEventResilient, so a Postgres infrastructure fault drops the event while the cursor advances (REL-08). Route it through persistEventResilient", name, id.Name)
+				}
 			case "persistEventResilient":
-				resilient++
+				resilient[name]++
 			}
 			return true
 		})
-		if resilient == 0 {
-			t.Errorf("%s has no persistEventResilient call — non-trade served-tier writes are unprotected on the drain path (REL-08)", fn)
+	}
+	// Out-of-old-scope canaries: the scan used to name only persistWorker
+	// and drainBufferedEvents, so these three shutdown drains went unread.
+	for _, fn := range []string{"persistWorker", "drainBufferedEvents", "drainInFlightNow", "persistCarried", "drainFinalPass"} {
+		if resilient[fn] == 0 {
+			t.Errorf("drain site %s has no persistEventResilient call — non-trade served-tier writes are unprotected on that path (REL-08), or the scan no longer reaches it", fn)
 		}
 	}
+}
+
+// sinkEventBinders are the only functions that may call handleEvent
+// directly: the exported wrapper and the eventPersister every drain uses.
+var sinkEventBinders = map[string]bool{"HandleEvent": true, "storeEventPersister": true}
+
+// packageFuncDecls parses every non-test source in this package and
+// returns its top-level functions and methods.
+func packageFuncDecls(t *testing.T) []*ast.FuncDecl {
+	t.Helper()
+	pkgs, err := parser.ParseDir(token.NewFileSet(), ".", func(fi fs.FileInfo) bool {
+		return !strings.HasSuffix(fi.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatalf("parse package: %v", err)
+	}
+	var out []*ast.FuncDecl
+	found := false
+	for _, pkg := range pkgs {
+		for _, f := range pkg.Files {
+			for _, d := range f.Decls {
+				if fd, ok := d.(*ast.FuncDecl); ok {
+					out = append(out, fd)
+					found = found || fd.Name.Name == "persistEventResilient"
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("package scan found no persistEventResilient — it would pass vacuously")
+	}
+	return out
 }
 
 // TestPersistEvents_DataFaultEventIsCountedAsDropped — REL-08(c)

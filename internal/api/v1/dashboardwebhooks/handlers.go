@@ -21,6 +21,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardauth"
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/api/wiretime"
 	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 	"github.com/Stellar-Index/StellarIndex/internal/nettools"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
@@ -114,13 +115,13 @@ func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 // re-expose the bytes; rotation happens by delete + recreate.
 // See [platform.CustomerWebhook] for the at-rest model.
 type webhookDTO struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	URL       string    `json:"url"`
-	Events    []string  `json:"events"`
-	Enabled   bool      `json:"enabled"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string        `json:"id"`
+	Name      string        `json:"name"`
+	URL       string        `json:"url"`
+	Events    []string      `json:"events"`
+	Enabled   bool          `json:"enabled"`
+	CreatedAt wiretime.Time `json:"created_at"`
+	UpdatedAt wiretime.Time `json:"updated_at"`
 }
 
 func toDTO(w platform.CustomerWebhook) webhookDTO {
@@ -130,8 +131,8 @@ func toDTO(w platform.CustomerWebhook) webhookDTO {
 		URL:       w.URL,
 		Events:    w.Events,
 		Enabled:   w.Enabled,
-		CreatedAt: w.CreatedAt,
-		UpdatedAt: w.UpdatedAt,
+		CreatedAt: wiretime.Time(w.CreatedAt),
+		UpdatedAt: wiretime.Time(w.UpdatedAt),
 	}
 }
 
@@ -142,11 +143,11 @@ type deliveryDTO struct {
 	// Pointer times so a zero value (no retry scheduled / not yet
 	// delivered) is genuinely omitted — omitempty does NOT omit a zero
 	// time.Time (it's a non-empty struct).
-	NextAttemptAt      *time.Time `json:"next_attempt_at,omitempty"`
-	DeliveredAt        *time.Time `json:"delivered_at,omitempty"`
-	LastError          string     `json:"last_error,omitempty"`
-	LastResponseStatus int        `json:"last_response_status,omitempty"`
-	CreatedAt          time.Time  `json:"created_at"`
+	NextAttemptAt      *wiretime.Time `json:"next_attempt_at,omitempty"`
+	DeliveredAt        *wiretime.Time `json:"delivered_at,omitempty"`
+	LastError          string         `json:"last_error,omitempty"`
+	LastResponseStatus int            `json:"last_response_status,omitempty"`
+	CreatedAt          wiretime.Time  `json:"created_at"`
 }
 
 func toDeliveryDTO(d platform.WebhookDelivery) deliveryDTO {
@@ -154,22 +155,12 @@ func toDeliveryDTO(d platform.WebhookDelivery) deliveryDTO {
 		ID:                 d.ID.String(),
 		EventType:          d.EventType,
 		AttemptCount:       d.AttemptCount,
-		NextAttemptAt:      nilIfZero(d.NextAttemptAt),
-		DeliveredAt:        nilIfZero(d.DeliveredAt),
+		NextAttemptAt:      wiretime.NilIfZero(d.NextAttemptAt),
+		DeliveredAt:        wiretime.NilIfZero(d.DeliveredAt),
 		LastError:          d.LastError,
 		LastResponseStatus: d.LastResponseStatus,
-		CreatedAt:          d.CreatedAt,
+		CreatedAt:          wiretime.Time(d.CreatedAt),
 	}
-}
-
-// nilIfZero returns nil for a zero time.Time so the DTO's `omitempty`
-// pointer fields are genuinely omitted rather than serialized as the
-// year-1 zero timestamp.
-func nilIfZero(t time.Time) *time.Time {
-	if t.IsZero() {
-		return nil
-	}
-	return &t
 }
 
 type listResponse struct {

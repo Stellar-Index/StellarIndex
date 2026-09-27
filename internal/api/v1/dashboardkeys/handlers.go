@@ -21,6 +21,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardauth"
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/api/wiretime"
 	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
@@ -157,11 +158,11 @@ type keyDTO struct {
 	// actually omits — `omitempty` does NOT omit a zero time.Time (it's a
 	// non-empty struct), which previously serialized "0001-01-01T00:00:00Z"
 	// and made a fresh key look revoked + "last used ~2025 years ago".
-	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
-	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
-	RevokedReason string     `json:"revoked_reason,omitempty"`
-	LastUsedAt    *time.Time `json:"last_used_at,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
+	ExpiresAt     *wiretime.Time `json:"expires_at,omitempty"`
+	RevokedAt     *wiretime.Time `json:"revoked_at,omitempty"`
+	RevokedReason string         `json:"revoked_reason,omitempty"`
+	LastUsedAt    *wiretime.Time `json:"last_used_at,omitempty"`
+	CreatedAt     wiretime.Time  `json:"created_at"`
 }
 
 func toDTO(k platform.APIKey) keyDTO {
@@ -176,11 +177,11 @@ func toDTO(k platform.APIKey) keyDTO {
 		UsageAlertThresholdPct: k.UsageAlertThresholdPct,
 		Scopes:                 k.Scopes,
 		RefererAllowlist:       k.RefererAllowlist,
-		ExpiresAt:              nilIfZero(k.ExpiresAt),
-		RevokedAt:              nilIfZero(k.RevokedAt),
+		ExpiresAt:              wiretime.NilIfZero(k.ExpiresAt),
+		RevokedAt:              wiretime.NilIfZero(k.RevokedAt),
 		RevokedReason:          k.RevokedReason,
-		LastUsedAt:             nilIfZero(k.LastUsedAt),
-		CreatedAt:              k.CreatedAt,
+		LastUsedAt:             wiretime.NilIfZero(k.LastUsedAt),
+		CreatedAt:              wiretime.Time(k.CreatedAt),
 	}
 	if len(k.IPAllowlist) > 0 {
 		dto.IPAllowlist = make([]string, len(k.IPAllowlist))
@@ -189,16 +190,6 @@ func toDTO(k platform.APIKey) keyDTO {
 		}
 	}
 	return dto
-}
-
-// nilIfZero returns nil for a zero time.Time so the DTO's `omitempty` pointer
-// fields are genuinely omitted (absent = no expiry / not revoked / never used)
-// rather than serialized as the year-1 zero timestamp.
-func nilIfZero(t time.Time) *time.Time {
-	if t.IsZero() {
-		return nil
-	}
-	return &t
 }
 
 // listRevokedLimit caps the revoked history HandleList returns. Revoked rows
