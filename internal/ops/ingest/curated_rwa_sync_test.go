@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -456,11 +458,80 @@ api_key = "fixture-dune-key"
 	}
 }
 
+// TestCuratedRWASync_AFailedWriteStampsNothing — a run that reads the
+// curator but cannot commit the cache must not stamp the textfile. A
+// stamp there set `_written 1` and a fresh last_run_unix, so the 30 h
+// staleness alert stayed silent through every failing write.
+func TestCuratedRWASync_AFailedWriteStampsNothing(t *testing.T) {
+	byQuery := map[int64][]map[string]any{
+		curatedRWAQueryMonthlyTotal: {
+			{"month_end": "2025-07-31", "total_rwa_market_cap_usd": json.Number("3900000000")},
+			{"month_end": "2025-08-31", "total_rwa_market_cap_usd": json.Number("4004795860")},
+			{"month_end": "2025-09-30", "total_rwa_market_cap_usd": json.Number("4280000000")},
+		},
+		curatedRWAQueryMonthlyBySubclass: {
+			{"month_end": "2025-08-31", "asset_subclass": "US Treasuries", "market_cap_usd": json.Number("3100000000")},
+			{"month_end": "2025-09-30", "asset_subclass": "US Treasuries", "market_cap_usd": json.Number("3900000000")},
+		},
+	}
+	plain, gets, _ := stubDuneResults(t, byQuery, "QUERY_STATE_COMPLETED")
+	upstream, err := url.Parse(plain.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The run refuses a non-https base URL, so front the stub with TLS
+	// and trust its certificate for the length of this (serial) test.
+	tlsSrv := httptest.NewTLSServer(httputil.NewSingleHostReverseProxy(upstream))
+	t.Cleanup(tlsSrv.Close)
+	prevTransport := http.DefaultTransport
+	http.DefaultTransport = tlsSrv.Client().Transport
+	t.Cleanup(func() { http.DefaultTransport = prevTransport })
+
+	// Nothing listens on port 1: the read succeeds, the Open fails.
+	const deadDSN = "postgres://good:good@127.0.0.1:1/stellarindex?sslmode=disable"
+	t.Setenv("DUNE_API_KEY", "fixture-dune-key")
+	t.Setenv("STELLARINDEX_POSTGRES_DSN", deadDSN)
+	cfgPath := filepath.Join(t.TempDir(), "stellarindex.toml")
+	if err := os.WriteFile(cfgPath, []byte("[storage]\npostgres_dsn = \""+deadDSN+"\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prom := filepath.Join(t.TempDir(), "curated.prom")
+	err = curatedRWASync([]string{"-config", cfgPath, "-textfile", prom, "-base-url", tlsSrv.URL, "-timeout", "20s", "-write"})
+	if err == nil {
+		t.Fatal("write against a dead DSN: err = nil, want the Open failure")
+	}
+	if gets.Load() == 0 {
+		t.Fatalf("the run never read the curator (err = %v); the write path was not reached", err)
+	}
+	if raw, statErr := os.ReadFile(prom); !os.IsNotExist(statErr) {
+		t.Errorf("failed write stamped the textfile (%v):\n%s", statErr, raw)
+	}
+
+	// The same read as a dry run does stamp, and says nothing was written.
+	if err := curatedRWASync([]string{"-config", cfgPath, "-textfile", prom, "-base-url", tlsSrv.URL, "-timeout", "20s"}); err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	if raw, err := os.ReadFile(prom); err != nil || !strings.Contains(string(raw), `stellarindex_curated_rwa_sync_written{curator="dune:stellar"} 0`) {
+		t.Errorf("dry run: textfile = %q, %v; want it stamped with written 0", raw, err)
+	}
+}
+
+func TestCuratedRWATextfile_StampsACommittedWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "curated.prom")
+	if err := writeCuratedRWATextfile(path, curatedRWACounts{Kept: 5}, true, false); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(raw), `stellarindex_curated_rwa_sync_written{curator="dune:stellar"} 1`) {
+		t.Errorf("committed write: textfile = %q, %v; want written 1", raw, err)
+	}
+}
+
 func TestCuratedRWATextfile_ShapeAndAtomicity(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "curated_rwa_sync.prom")
 	c := curatedRWACounts{Kept: 224, Datapoints: 448, ExecutedAt: time.Unix(1789000000, 0)}
-	if err := writeCuratedRWATextfile(path, c, true, false); err != nil {
+	if err := writeCuratedRWATextfile(path, c, false, false); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	b, _ := os.ReadFile(path)
@@ -490,7 +561,7 @@ func TestCuratedRWATextfile_ShapeAndAtomicity(t *testing.T) {
 // staleness alert measures the timer, not the key — and says it refused.
 func TestCuratedRWATextfileStampsARefusedRun(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "curated.prom")
-	if err := writeCuratedRWATextfile(path, curatedRWACounts{}, true, true); err != nil {
+	if err := writeCuratedRWATextfile(path, curatedRWACounts{}, false, true); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(path)
