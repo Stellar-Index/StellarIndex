@@ -344,6 +344,12 @@ type AssetDetail struct {
 	// change pills or market-history-derived valuation fields.
 	PriceBasis string `json:"price_basis,omitempty"`
 
+	// PriceWithheldReason is set only when PriceUSD is nil because the
+	// price was withheld rather than never observed, in the reason
+	// vocabulary of the `price-withheld` 404: "substance",
+	// "scam_issuer", "upstream_leg" or "unattributed".
+	PriceWithheldReason string `json:"price_withheld_reason,omitempty"`
+
 	// MarketCapUSD = circulating × USD price / 10^Decimals,
 	// formatted to two fractional digits. Null when supply or USD
 	// price is unavailable.

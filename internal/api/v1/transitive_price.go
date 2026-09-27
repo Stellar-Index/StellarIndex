@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -73,22 +74,18 @@ func (s *Server) transitiveCandidateAllowed(ctx context.Context, asset canonical
 		return false
 	}
 
-	// The scam gate, asked about the asset AND the hop through the
-	// package's one pair spelling. A price derived through a flagged
-	// issuer's market is that market's price; /v1/price refuses it for
-	// the hop itself, so it must not reappear here one conversion removed.
-	if scamWithheld(ctx, s.scam, asset, hop, "transitive") {
+	// Near leg, the market converting asset into hop, through the
+	// package's one fold of both gates. The scam half covers asset AND
+	// hop: a price derived through a flagged issuer's market is that
+	// market's price; /v1/price refuses it for the hop itself, so it must
+	// not reappear here one conversion removed.
+	if withheldBy(ctx, s.substance, s.scam, asset, hop, "transitive") != pricingguard.NotWithheld {
 		return false
 	}
 
-	// The substance gate is the other half — with it not wired we must
-	// NOT invent a price the gate never saw.
+	// With the substance gate not wired the fold above allowed the leg by
+	// default, and we must NOT invent a price the gate never saw.
 	if s.substance == nil {
-		return false
-	}
-
-	// Near leg: the market converting asset into hop.
-	if !s.substance.Allowed(ctx, asset, hop, "transitive") {
 		return false
 	}
 	// Far leg: the hop must stand on its own against the SAME quote set

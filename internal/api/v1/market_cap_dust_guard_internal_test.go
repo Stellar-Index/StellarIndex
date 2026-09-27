@@ -247,6 +247,13 @@ func TestApplySubstanceGateToListing(t *testing.T) {
 	if rows[1].Change24hPct != nil {
 		t.Error("thin pair must lose its change pills (derived from the withheld price)")
 	}
+	if rows[1].PriceWithheldReason != PriceWithheldSubstance {
+		t.Errorf("thin pair price_withheld_reason = %q, want %q: a withheld row must not read as never-traded",
+			rows[1].PriceWithheldReason, PriceWithheldSubstance)
+	}
+	if rows[0].PriceWithheldReason != "" {
+		t.Errorf("deep pair price_withheld_reason = %q, want none", rows[0].PriceWithheldReason)
+	}
 	if rows[2].PriceUSD == nil {
 		t.Error("native must never be gated on the listing")
 	}

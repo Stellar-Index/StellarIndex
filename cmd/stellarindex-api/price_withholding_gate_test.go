@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -212,63 +213,134 @@ func TestPriceWithheldChokepointHonoursBothGates(t *testing.T) {
 // passed CI until this was restored. main.go still cited this test by
 // name the whole time.
 //
-// The rule: the gate METHODS (.Allowed / .Withheld on a gate receiver)
-// may be named in exactly one place — priceWithheld(). Every other
-// call site is a second spelling that can drift out of step.
+// The rule: a gate HALF's decision method may be named only inside a
+// chokepoint — priceWithheld() here, and in the handler package
+// withheldBy() (the fold) and scamWithheld() (the pair question it
+// asks). Every other call site is a second spelling that can drift out
+// of step. The scan covers main.go AND every non-test file under
+// internal/api: a guard bound to main.go could not see the handler
+// package, so /v1/price/stream's hand-written gate was invisible to the
+// very test its comment cited as its drift guard.
 func TestWithholdingGatesAreSpelledOnlyAtTheChokepoint(t *testing.T) {
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", nil, 0)
+	files := []gateSpellingFile{{dir: ".", path: "main.go"}}
+	files = append(files, apiSourceFiles(t, apiTreeDir)...)
+	permitted := 0
+	for _, sf := range files {
+		f, err := parser.ParseFile(fset, sf.path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", sf.path, err)
+		}
+		violations, n := gateSpellingViolations(fset, sf.dir, f)
+		permitted += n
+		for _, v := range violations {
+			t.Error(v)
+		}
+	}
+	// withheldBy's .Allowed plus scamWithheld's .WithheldPair and .Withheld:
+	// a scan that no longer sees them no longer sees the handler package.
+	if permitted < 3 {
+		t.Errorf("found %d gate-half calls inside the chokepoints across %d files, want >= 3 — the scan is broken, not the code clean",
+			permitted, len(files))
+	}
+}
+
+// TestGateSpellingGuardCatchesHandlerPackageSites plants the shapes the
+// guard exists for, so a narrowed predicate fails here rather than going
+// green over the tree.
+func TestGateSpellingGuardCatchesHandlerPackageSites(t *testing.T) {
+	shapes := []struct{ name, dir, src string }{
+		{"substance half in a handler", v1ChokepointDir, `func (s *Server) h() bool { return s.substance.Allowed(ctx, a, b, "x") }`},
+		{"scam half in a handler", v1ChokepointDir, `func (s *Server) h() bool { return s.scam.WithheldPair(ctx, a, b, "x") }`},
+		{"renamed local", v1ChokepointDir, `func (s *Server) h() bool { g := s.substance; return g.AllowedAt(ctx, a, b, at, "x") }`},
+		{"chokepoint name in another package", "../../internal/api/streaming", `func withheldBy() bool { return sub.Allowed(ctx, a, b, "x") }`},
+		{"main.go outside priceWithheld", ".", `func (r storePriceReader) f() bool { return r.substance.Allowed(ctx, a, b, "x") }`},
+	}
+	for _, sh := range shapes {
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, "planted.go", "package p\n"+sh.src, 0)
+		if err != nil {
+			t.Fatalf("%s: %v", sh.name, err)
+		}
+		if v, _ := gateSpellingViolations(fset, sh.dir, f); len(v) != 1 {
+			t.Errorf("%s: got %d violations, want 1", sh.name, len(v))
+		}
+	}
+}
+
+// apiTreeDir is every handler package the API binary serves from.
+const apiTreeDir = "../../internal/api"
+
+// v1ChokepointDir is where withheldBy and scamWithheld live; the
+// exemption is keyed on (dir, name) so a same-named function elsewhere
+// earns nothing.
+const v1ChokepointDir = "../../internal/api/v1"
+
+// gateHalfMethods mirrors pricingguard's halfMethods: the SubstanceGate /
+// ScamGate decision methods.
+var gateHalfMethods = map[string]bool{
+	"Allowed": true, "AllowedAt": true, "Verdict": true, "Probe": true,
+	"Withheld": true, "WithheldPair": true,
+}
+
+var gateChokepoints = map[string]bool{
+	".:priceWithheld":                 true,
+	v1ChokepointDir + ":withheldBy":   true,
+	v1ChokepointDir + ":scamWithheld": true,
+}
+
+type gateSpellingFile struct{ dir, path string }
+
+func apiSourceFiles(t *testing.T, root string) []gateSpellingFile {
+	t.Helper()
+	var out []gateSpellingFile
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		out = append(out, gateSpellingFile{dir: filepath.Dir(path), path: path})
+		return nil
+	})
 	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
+		t.Fatalf("walk %s: %v", root, err)
 	}
+	return out
+}
 
-	// Method names that ARE the withholding decision. Called anywhere but the
-	// chokepoint, they are a second spelling that can drift.
-	gateMethods := map[string]string{
-		"Allowed":  "substance gate",
-		"Withheld": "scam gate",
-	}
-
-	ast.Inspect(f, func(n ast.Node) bool {
-		fn, ok := n.(*ast.FuncDecl)
-		if !ok {
-			return true
+// gateSpellingViolations reports every gate-half call in f outside a
+// chokepoint, and counts the ones inside.
+func gateSpellingViolations(fset *token.FileSet, dir string, f *ast.File) (violations []string, permitted int) {
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
 		}
-		if fn.Name.Name == "priceWithheld" {
-			return false // the one legitimate spelling
-		}
-		ast.Inspect(fn, func(n ast.Node) bool {
+		exempt := gateChokepoints[dir+":"+fn.Name.Name]
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
 				return true
 			}
 			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok {
+			if !ok || !gateHalfMethods[sel.Sel.Name] {
 				return true
 			}
-			which, isGate := gateMethods[sel.Sel.Name]
-			if !isGate || !gateReceiver(sel.X) {
+			if exempt {
+				permitted++
 				return true
 			}
-			t.Errorf("%s: calls the %s directly (%s) at %s — route it through "+
-				"priceWithheld() instead. A hand-written call site can consult one "+
-				"gate and forget the other, which is exactly how the last-trade arm "+
-				"came to honour the thin-market floor but not the scam decision.",
-				enclosingName(fn), which, exprString(sel), fset.Position(call.Pos()))
+			violations = append(violations, fmt.Sprintf("%s: calls a gate half directly (%s) at %s — route it through "+
+				"priceWithheld() (cmd/stellarindex-api) or withheldBy() (internal/api/v1). A hand-written call site "+
+				"can consult one gate and forget the other, which is exactly how the last-trade arm came to honour "+
+				"the thin-market floor but not the scam decision.",
+				enclosingName(fn), exprString(sel), fset.Position(call.Pos())))
 			return true
 		})
-		return false
-	})
-}
-
-func gateReceiver(expr ast.Expr) bool {
-	switch t := expr.(type) {
-	case *ast.SelectorExpr:
-		return t.Sel.Name == "substance" || t.Sel.Name == "scam"
-	case *ast.Ident:
-		return t.Name == "substance" || t.Name == "scam"
 	}
-	return false
+	return violations, permitted
 }
 
 func enclosingName(fn *ast.FuncDecl) string {
