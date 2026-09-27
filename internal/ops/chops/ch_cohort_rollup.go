@@ -101,7 +101,7 @@ func chCohortRollup(args []string) error {
 	// to be installed here too — without it only XLM's three forms fold
 	// and a SAC-quoted month of USDC would price under the C… id nothing
 	// joins on. Fail-closed on a malformed wrapper, as the API does.
-	aliasRegistry, err := canonical.NewAliasRegistry(cfg.Supply.SACWrappers)
+	aliasRegistry, err := canonical.NewAliasRegistry(cfg.Stellar.Passphrase(), cfg.Supply.SACWrappers)
 	if err != nil {
 		return fmt.Errorf("alias registry: %w", err)
 	}

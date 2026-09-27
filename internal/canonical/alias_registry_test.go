@@ -3,16 +3,20 @@
 
 package canonical
 
-import "testing"
+import (
+	"os"
+	"regexp"
+	"strings"
+	"testing"
+)
 
-// A realistic USDC classic form and a (distinct, valid) C-strkey standing
-// in for its Stellar Asset Contract wrapper. The issuer is Circle's live
-// USDC issuer (already used by TestAssetAliases); the contract is a valid
-// C-strkey distinct from the XLM SAC, so the family is keyed on the exact
-// address, never on "is a C-address".
+// Circle's live USDC issuer and its pubnet Stellar Asset Contract, as
+// configured in the archival-node sac_wrappers template.
 const (
 	usdcIssuer  = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-	usdcSACAddr = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+	usdcSACAddr = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+	// A valid C-strkey that is NOT USDC's SAC.
+	unrelatedContract = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
 )
 
 // installTestRegistry builds a registry from wrappers, installs it as the
@@ -20,7 +24,7 @@ const (
 // mutation never leaks to another test.
 func installTestRegistry(t *testing.T, wrappers map[string]string) {
 	t.Helper()
-	reg, err := NewAliasRegistry(wrappers)
+	reg, err := NewAliasRegistry(PubnetPassphrase, wrappers)
 	if err != nil {
 		t.Fatalf("NewAliasRegistry(%v): %v", wrappers, err)
 	}
@@ -132,10 +136,10 @@ func TestAliasRegistry_XLMBaselineUnclobbered(t *testing.T) {
 // silently dropped wrapper (a dropped wrapper is invisible under-counted
 // volume — the exact defect the registry removes).
 func TestNewAliasRegistry_FailsClosedOnMalformed(t *testing.T) {
-	if _, err := NewAliasRegistry(map[string]string{"not-a-contract-id": "USDC:" + usdcIssuer}); err == nil {
+	if _, err := NewAliasRegistry(PubnetPassphrase, map[string]string{"not-a-contract-id": "USDC:" + usdcIssuer}); err == nil {
 		t.Error("NewAliasRegistry accepted a malformed contract id, want error")
 	}
-	if _, err := NewAliasRegistry(map[string]string{usdcSACAddr: "not a valid asset key"}); err == nil {
+	if _, err := NewAliasRegistry(PubnetPassphrase, map[string]string{usdcSACAddr: "not a valid asset key"}); err == nil {
 		t.Error("NewAliasRegistry accepted a malformed asset key, want error")
 	}
 }
@@ -150,6 +154,79 @@ func TestNewAliasRegistry_SkipsSelfMap(t *testing.T) {
 	}
 	if got := AssetAliases(sac); len(got) != 1 || !got[0].Equal(sac) {
 		t.Errorf("self-mapped SAC = %v, want just itself", forms(got))
+	}
+}
+
+// TestNewAliasRegistry_RejectsMispairedSAC: a wrapper whose contract is
+// not the derived SAC of its asset would alias an arbitrary contract onto
+// the classic identity (a scam-gate bypass), so it must fail the build.
+func TestNewAliasRegistry_RejectsMispairedSAC(t *testing.T) {
+	_, err := NewAliasRegistry(PubnetPassphrase, map[string]string{unrelatedContract: "USDC:" + usdcIssuer})
+	if err == nil || !strings.Contains(err.Error(), "is not the SAC of") {
+		t.Fatalf("NewAliasRegistry(mis-paired) err = %v, want derivation mismatch", err)
+	}
+	// Same pairing is only valid on the network it was derived for.
+	if _, err := NewAliasRegistry(TestnetPassphrase, map[string]string{usdcSACAddr: "USDC:" + usdcIssuer}); err == nil {
+		t.Error("NewAliasRegistry accepted a pubnet SAC id under the testnet passphrase, want error")
+	}
+	// A SEP-41 contract mapped onto a different contract has no SAC.
+	if _, err := NewAliasRegistry(PubnetPassphrase, map[string]string{unrelatedContract: usdcSACAddr}); err == nil {
+		t.Error("NewAliasRegistry accepted contract→other-contract, want error")
+	}
+}
+
+// TestNewAliasRegistry_RejectsDuplicateClassic: a second contract claiming
+// an already-wrapped classic asset is an error, not a silent skip.
+func TestNewAliasRegistry_RejectsDuplicateClassic(t *testing.T) {
+	_, err := NewAliasRegistry(PubnetPassphrase, map[string]string{
+		usdcSACAddr:       "USDC:" + usdcIssuer,
+		unrelatedContract: "USDC-" + usdcIssuer,
+	})
+	if err == nil {
+		t.Fatal("NewAliasRegistry accepted two contracts for one classic asset, want error")
+	}
+}
+
+// TestNewAliasRegistry_AcceptsConfiguredWrappers: every pair in the
+// archival-node template's [supply.sac_wrappers] derives correctly (so the
+// deployed config still boots), and a verified XLM SAC → native entry is
+// accepted as the baseline family.
+func TestNewAliasRegistry_AcceptsConfiguredWrappers(t *testing.T) {
+	const tmpl = "../../configs/ansible/roles/archival-node/templates/stellarindex.toml.j2"
+	raw, err := os.ReadFile(tmpl)
+	if err != nil {
+		t.Fatalf("read %s: %v", tmpl, err)
+	}
+	_, section, ok := strings.Cut(string(raw), "[supply.sac_wrappers]\n")
+	if !ok {
+		t.Fatalf("%s: no [supply.sac_wrappers] table", tmpl)
+	}
+	entry := regexp.MustCompile(`^"(C[A-Z2-7]{55})"\s*=\s*"([^"]+)"$`)
+	wrappers := map[string]string{XLMSacContractID: "native"}
+	for _, line := range strings.Split(section, "\n") {
+		m := entry.FindStringSubmatch(strings.TrimSpace(line))
+		if m == nil {
+			break
+		}
+		wrappers[m[1]] = m[2]
+	}
+	if len(wrappers) < 3 || wrappers[usdcSACAddr] != "USDC:"+usdcIssuer {
+		t.Fatalf("parsed %d wrappers from %s, want the USDC pair among several", len(wrappers)-1, tmpl)
+	}
+
+	reg, err := NewAliasRegistry(PubnetPassphrase, wrappers)
+	if err != nil {
+		t.Fatalf("NewAliasRegistry(configured wrappers): %v", err)
+	}
+	usdc, err := NewClassicAsset("USDC", usdcIssuer)
+	if err != nil {
+		t.Fatalf("classic: %v", err)
+	}
+	if got := forms(reg.Aliases(usdc)); len(got) != 2 || got[1] != usdcSACAddr {
+		t.Errorf("Aliases(USDC) = %v, want [USDC, %s]", got, usdcSACAddr)
+	}
+	if got := reg.Aliases(NativeAsset()); len(got) != len(xlmAliasFamily) {
+		t.Errorf("Aliases(native) = %v, want the XLM baseline family", forms(got))
 	}
 }
 

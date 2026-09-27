@@ -118,7 +118,7 @@ func TestScamGateWithheldPair_ResolvesSACOnTheQuoteLeg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("soroban asset: %v", err)
 	}
-	reg, err := canonical.NewAliasRegistry(map[string]string{sacID: "RIO:" + pairLegFlaggedIssuer})
+	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{sacID: "RIO:" + pairLegFlaggedIssuer})
 	if err != nil {
 		t.Fatalf("alias registry: %v", err)
 	}

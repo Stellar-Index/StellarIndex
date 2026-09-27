@@ -211,7 +211,7 @@ func TestOracleReference_PairMapping_XLMDualIdentity(t *testing.T) {
 func TestOracleReference_BaseKeysCoverEveryAliasFamily(t *testing.T) {
 	const usdcClassic = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	const usdcSACContract = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
-	reg, err := canonical.NewAliasRegistry(map[string]string{usdcSACContract: usdcClassic})
+	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{usdcSACContract: usdcClassic})
 	if err != nil {
 		t.Fatalf("NewAliasRegistry: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestOracleReference_BaseKeysCoverEveryAliasFamily(t *testing.T) {
 func TestOracleReference_QuoteKeysNeverMapUSDCToUSD(t *testing.T) {
 	const usdcClassic = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	const usdcSACContract = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
-	reg, err := canonical.NewAliasRegistry(map[string]string{usdcSACContract: usdcClassic})
+	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{usdcSACContract: usdcClassic})
 	if err != nil {
 		t.Fatalf("NewAliasRegistry: %v", err)
 	}
