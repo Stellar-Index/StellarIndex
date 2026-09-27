@@ -23,17 +23,30 @@
 -- deploy that applies this migration:
 --
 --   stellarindex-ops projector-replay -config /etc/stellarindex.toml \
---     -source cctp -from 62146641
+--     -source cctp -from 62146641 -write -refresh-caggs=false
 --   stellarindex-ops projector-replay -config /etc/stellarindex.toml \
---     -source rozo -from 60829397
+--     -source rozo -from 60829397 -write -refresh-caggs=false
 --
 -- Until each replay completes, reads of that source serve empty —
 -- honest-absent, never double-counted. No other table is touched: the
 -- cctp/rozo trade-adjacent tables (if any) key off a different PK and
 -- were not part of the 0112 discriminator change.
 --
--- Neither table runs a compression policy (0112's own note — capability
--- only), so no decompress step is needed before the DELETE.
+-- Compression: both tables are compressed on r1 (measured 2026-09-28,
+-- timescaledb 2.26.4: cctp_events 148,660 rows in 21 of 23 chunks
+-- compressed, rozo_events 407 rows in 31 of 32; policy_compression jobs
+-- 1063 and 1072 are scheduled), so this file's earlier "no compression
+-- policy" claim was wrong. No decompress step is needed anyway: an
+-- unqualified DELETE takes timescaledb's direct compressed-batch delete
+-- (enable_compressed_direct_batch_delete, on by default), which drops
+-- whole batches without decompressing them, so it does not count against
+-- max_tuples_decompressed_per_dml_transaction (100,000). Pinned above the
+-- cap on 2.26.4 by TestMigration0164_DeletesCompressedRowsAboveDMLDecompressCap.
+--
+-- The replays above need -write (projector-replay is a dry run without
+-- it) and -refresh-caggs=false: neither source writes trades or oracle
+-- rows, so the default cagg refresh would be a full-range price refresh
+-- for nothing.
 
 BEGIN;
 
