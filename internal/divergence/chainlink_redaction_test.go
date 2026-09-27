@@ -114,6 +114,53 @@ func TestChainlink_RPCRedirectNotFollowed(t *testing.T) {
 	}
 }
 
+// slowRPC returns a server that sleeps past any short context deadline
+// before answering, so a request against it produces a real
+// context.DeadlineExceeded wrapped in the *url.Error http.Client.Do
+// returns — the exact shape an RPC-timeout classification needs to
+// see through the redactor.
+func slowRPC(t *testing.T, delay time.Duration) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(delay)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestChainlink_TransportTimeout_ClassifiesAsTimeout_NotError — issue
+// #1148. RedactURLError used to be wrapped with "%s" (chainlink.go's
+// ethCall), which stringifies the error and discards the chain: the
+// resulting error satisfied nothing via errors.Is, so a genuine RPC
+// timeout fell into errorOutcome's default case (OutcomeError) instead
+// of OutcomeTimeout. The redacted error must still unwrap to
+// context.DeadlineExceeded while never rendering the keyed endpoint.
+func TestChainlink_TransportTimeout_ClassifiesAsTimeout_NotError(t *testing.T) {
+	srv := slowRPC(t, 200*time.Millisecond)
+	ref := NewChainlinkReference(ChainlinkOptions{
+		HTTPClient: srv.Client(),
+		RPCURL:     srv.URL + chainlinkSecretPath,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	_, err := priceOf(ref.LookupQuote(ctx, mustPair(t, "crypto:BTC", "fiat:USD"), time.Now()))
+	if err == nil {
+		t.Fatal("LookupQuote against a slow RPC past its context deadline: want error, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want errors.Is(err, context.DeadlineExceeded) to hold through the redactor", err)
+	}
+	if got := errorOutcome(err); got != OutcomeTimeout {
+		t.Fatalf("errorOutcome(err) = %q, want %q", got, OutcomeTimeout)
+	}
+	if msg := err.Error(); strings.Contains(msg, chainlinkSecretPath) {
+		t.Errorf("timeout error leaks the keyed endpoint path: %s", msg)
+	}
+}
+
 // TestChainlink_BadRequestURL_RedactsKeyedEndpoint — NS12, second URL
 // -bearing path in the same function: http.NewRequestWithContext runs
 // url.Parse, and its failure is itself a *url.Error carrying the raw
