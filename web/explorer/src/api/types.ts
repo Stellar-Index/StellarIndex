@@ -4604,9 +4604,11 @@ export interface paths {
          * @description The contract's "change over time": each distinct WASM executable its
          *     instance has pointed at, in chronological order, so an in-place
          *     `update_contract` upgrade surfaces as a new version (ledger +
-         *     close time + wasm hash). Reconstructed from the captured
-         *     `ledger_entry_changes` instance entries; empty when the instance isn't
-         *     in the captured window (fills with the Phase-C backfill).
+         *     close time + wasm hash). Read from the contract-instance write
+         *     timeline, which covers Soroban activation (ledger 50,457,429) to tip.
+         *     A contract with no WASM instance write — never deployed, a Stellar
+         *     Asset Contract, or an unknown id — returns 200 with an empty
+         *     `versions` array, not 404.
          */
         get: operations["getContractCodeHistory"];
         put?: never;

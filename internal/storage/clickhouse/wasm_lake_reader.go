@@ -316,9 +316,8 @@ const contractCodeHistoryQuery = `SELECT ledger_seq, close_time, entry_xdr FROM 
 // contract instance has pointed at, in chronological order, so an in-place
 // `update_contract` upgrade surfaces as a new version. Reads the instance
 // contract_data entry's executable across the captured changes and collapses
-// consecutive identical hashes. Coverage = the captured entry-change window
-// (same substrate as the "see the code" view); fills back with the Phase-C
-// backfill. Empty (not an error) when the contract's instance isn't captured.
+// consecutive identical hashes. Empty (not an error) when the contract has no
+// wasm instance write: never deployed, a SAC, or not a contract at all.
 func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID string) ([]ContractCodeVersion, error) {
 	dec, err := strkey.Decode(strkey.VersionByteContract, contractID)
 	if err != nil {
@@ -327,41 +326,18 @@ func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID str
 	var cidHash xdr.Hash
 	copy(cidHash[:], dec)
 
-	// Index-first (inventory #26 item 3): the keyed
-	// contract_instance_changes timeline turns this from a scan-shaped
-	// key_xdr predicate over the whole changes log (8s+ cold, the last
-	// persistent 503 class in the 2026-08-09 route sweep) into a
-	// primary-key walk. Fallback keeps the legacy scan for deployments
-	// without the index, and for contracts the index has not reached.
+	// A present, non-empty index is authoritative, misses included: it is
+	// backfilled from Soroban genesis and its MV captures every row the legacy
+	// predicate can decode, so the legacy scan (a full read of the key_xdr
+	// bloom, ~30 s) could only return nothing on a miss.
 	if r.instanceChangesIndexAvailable(ctx) {
-		out, authoritative, err := r.contractCodeHistoryFromIndex(ctx, cidHash)
-		if err != nil || authoritative {
-			return out, err
-		}
+		return r.contractCodeHistoryIndexed(ctx, cidHash)
 	}
 	return r.contractCodeHistoryLegacy(ctx, cidHash)
 }
 
-// contractCodeHistoryFromIndex reads the indexed timeline. An empty result is
-// authoritative only when the index holds a row for this contract (a SAC):
-// the availability probe is table-global and cannot see partial backfill, so
-// a miss falls through to the legacy scan exactly as contractWasmHash does.
-func (r *ExplorerReader) contractCodeHistoryFromIndex(ctx context.Context, cid xdr.Hash) ([]ContractCodeVersion, bool, error) {
-	out, err := r.contractCodeHistoryIndexed(ctx, cid)
-	if err != nil || len(out) > 0 {
-		return out, true, err
-	}
-	_, ok, err := r.contractWasmHashIndexed(ctx, cid)
-	if errors.Is(err, ErrContractIsSAC) {
-		return nil, true, nil
-	}
-	if err != nil {
-		return nil, true, err
-	}
-	return nil, ok, nil
-}
-
-// contractCodeHistoryLegacy is ContractCodeHistory's scan over the changes log.
+// contractCodeHistoryLegacy is ContractCodeHistory's scan over the changes
+// log, for a deployment whose contract_instance_changes is absent or empty.
 func (r *ExplorerReader) contractCodeHistoryLegacy(ctx context.Context, cidHash xdr.Hash) ([]ContractCodeVersion, error) {
 	keys, err := instanceKeyXDR(cidHash)
 	if err != nil {

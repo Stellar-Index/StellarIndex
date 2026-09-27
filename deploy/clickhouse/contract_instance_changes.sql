@@ -65,24 +65,21 @@
 -- genesis backfill, rename cut-over).
 --
 -- OPERATOR CONTRACT (same as contract_active_ledgers): table-level
--- presence + non-empty gates the fast path on/off. PER-CONTRACT
--- emptiness ("instance never captured") is deliberately NOT trusted as
--- authoritative: contractWasmHash (internal/storage/clickhouse/
--- wasm_lake_reader.go, audit REC-04) and ContractCodeHistory both treat
--- an index miss as unproven — the table-global probe cannot see PARTIAL
--- backfill coverage — and fall through to the legacy ledger_entries_current
--- read rather than returning "no wasm". Apply this DDL, then run the
--- windowed historical backfill to genesis — serialized with other heavy
--- jobs:
+-- presence + non-empty gates the fast path on/off. ContractCodeHistory
+-- (internal/storage/clickhouse/wasm_lake_reader.go) then TRUSTS
+-- per-contract emptiness and returns an empty timeline without the
+-- ledger_entry_changes key_xdr scan. contractWasmHash (audit REC-04) still
+-- falls through to the PK-keyed ledger_entries_current read on a miss.
+-- Apply this DDL, then IMMEDIATELY run the windowed historical backfill to
+-- genesis — serialized with other heavy jobs:
 --
 --   /usr/local/sbin/run-heavy-job.sh instance-changes-backfill \
 --     /usr/local/bin/stellarindex-ops ch-instance-backfill \
 --     -ch-addr 127.0.0.1:9300 -from 2 -window 2000000 -write
 --
--- Leaving the table applied-but-unbackfilled on a lake with history costs
--- PERFORMANCE, not correctness: cold contracts keep paying the legacy scan
--- until the backfill catches them, but the fallback means they never
--- resolve "no wasm" / a truncated upgrade timeline stamped as complete.
+-- Do NOT leave the table applied-but-unbackfilled on a lake with history:
+-- code-history would serve empty / truncated upgrade timelines for
+-- contracts the backfill has not reached.
 --
 -- ── Step 3: verify ──────────────────────────────────────────────────────
 -- Spot-check N contracts already present in the index: its captured

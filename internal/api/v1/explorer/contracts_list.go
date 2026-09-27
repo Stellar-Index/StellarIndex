@@ -261,8 +261,8 @@ type ContractCodeHistoryView struct {
 // ContractCodeHistory serves GET /v1/contracts/{contract_id}/code-history
 // — the contract's WASM-hash timeline ("change over time"): each distinct
 // executable the contract instance has pointed at, chronologically, so an
-// in-place upgrade shows as a new version. Empty when the instance isn't in the
-// captured ledger window (fills with the Phase-C backfill).
+// in-place upgrade shows as a new version. 200 with empty versions when the
+// contract has no WASM instance write.
 func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

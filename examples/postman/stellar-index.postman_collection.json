@@ -18481,7 +18481,7 @@
                   "request": {
                     "name": "Contract code/upgrade history — WASM-hash timeline.",
                     "description": {
-                      "content": "The contract's \"change over time\": each distinct WASM executable its\ninstance has pointed at, in chronological order, so an in-place\n`update_contract` upgrade surfaces as a new version (ledger +\nclose time + wasm hash). Reconstructed from the captured\n`ledger_entry_changes` instance entries; empty when the instance isn't\nin the captured window (fills with the Phase-C backfill).\n",
+                      "content": "The contract's \"change over time\": each distinct WASM executable its\ninstance has pointed at, in chronological order, so an in-place\n`update_contract` upgrade surfaces as a new version (ledger +\nclose time + wasm hash). Read from the contract-instance write\ntimeline, which covers Soroban activation (ledger 50,457,429) to tip.\nA contract with no WASM instance write — never deployed, a Stellar\nAsset Contract, or an unknown id — returns 200 with an empty\n`versions` array, not 404.\n",
                       "type": "text/plain"
                     },
                     "url": {
