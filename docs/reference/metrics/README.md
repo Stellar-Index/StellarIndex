@@ -1567,6 +1567,15 @@ behaviour (no threshold, no alert) while leaving the gap visible.
 
 ## API layer (api binary)
 
+Three surfaces of the price-serve gate counters below are the
+exception: `price_alert`, `divergence_webhook` and `freeze_webhook`
+are emitted by the **aggregator** binary, not this one —
+`cmd/stellarindex-aggregator/main.go`'s price-alert evaluator and
+`cmd/stellarindex-aggregator/webhook_withholding.go` (the sole call
+site for the latter two) consult the same shared gate before a
+signed delivery goes out. A dashboard summing the counter without a
+`job` selector mixes both processes.
+
 ### `stellarindex_price_staleness_seconds`
 
 Gauge, label `asset`.
@@ -2631,7 +2640,11 @@ The `surface` values below are shared by all four price-serve gate
 counters (this one, `stellarindex_price_serve_substance_unmeasured_total`,
 `stellarindex_price_serve_scam_withheld_total` and
 `stellarindex_scam_gate_lookup_failures_total`); the Gates column says
-which of the two gates each surface consults. The table is pinned to
+which of the two gates each surface consults. All four counters are
+emitted by BOTH the api and aggregator binaries — see the "API layer
+(api binary)" section header above for the three aggregator-only
+surfaces — so a query without a `job` selector sums across processes.
+The table is pinned to
 the call sites by `TestPriceServeSurfaceLabelsAreDocumented`
 (`internal/pricingguard`).
 
