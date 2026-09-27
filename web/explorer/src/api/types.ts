@@ -10784,8 +10784,39 @@ export interface components {
             to: string;
             /** @description VWAP decimal, 10 digits. */
             price: string;
+            /**
+             * @description Σ base_amount as a raw smallest-unit integer. The smallest
+             *     unit is NOT a fixed stroop — it is the per-SOURCE scale of the
+             *     venues in the window (on-chain DEX 7 decimals, CEX 8, FX feeds
+             *     6), lifted to one common scale when a fiat quote merges
+             *     venues. Divide by 10^`base_volume_decimals` to get asset
+             *     units; dividing by a hardcoded 1e7 overstates any window
+             *     holding a CEX trade tenfold.
+             */
             base_volume: string;
+            /**
+             * @description Σ quote_amount as a raw smallest-unit integer, on the same
+             *     per-source scale as `base_volume`. Divide by
+             *     10^`quote_volume_decimals` to get asset units.
+             */
             quote_volume: string;
+            /**
+             * @description Decimal exponent of `base_volume`: asset units =
+             *     base_volume / 10^base_volume_decimals. Resolved over the
+             *     trades as fetched, so it stays correct when the outlier
+             *     filter removes the only venue that set it. `null` when a
+             *     contributing trade's source has no registry entry:
+             *     `base_volume` is then not convertible to asset units and must
+             *     not be divided by a guessed scale.
+             */
+            base_volume_decimals: number | null;
+            /**
+             * @description Decimal exponent of `quote_volume` — see
+             *     `base_volume_decimals`. Equal to it today (a source stamps
+             *     both legs of a trade at one scale); carried separately because
+             *     a scale belongs to an amount, not to a pair.
+             */
+            quote_volume_decimals: number | null;
             trade_count: number;
             outliers_filtered: number;
             truncated: boolean;

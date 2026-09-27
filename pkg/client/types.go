@@ -1290,15 +1290,23 @@ type LendingPool struct {
 // VWAP. Clients should narrow the window and retry. For fixed
 // cross-region-consistent VWAPs use [Client.Price] (closed-bucket
 // per ADR-0015) instead.
+//
+// Volumes are smallest-unit integers at the per-SOURCE scale of the
+// window's venues; render asset units as BaseVolume /
+// 10^BaseVolumeDecimals, never a hardcoded 1e7.
 type VWAPResult struct {
-	From             time.Time `json:"from"`
-	To               time.Time `json:"to"`
-	Price            string    `json:"price"`
-	BaseVolume       string    `json:"base_volume"`
-	QuoteVolume      string    `json:"quote_volume"`
-	TradeCount       int       `json:"trade_count"`
-	OutliersFiltered int       `json:"outliers_filtered"`
-	Truncated        bool      `json:"truncated"`
+	From        time.Time `json:"from"`
+	To          time.Time `json:"to"`
+	Price       string    `json:"price"`
+	BaseVolume  string    `json:"base_volume"`
+	QuoteVolume string    `json:"quote_volume"`
+	// nil when a contributing trade's source is unrecognised: the sums
+	// are then not convertible to asset units.
+	BaseVolumeDecimals  *int `json:"base_volume_decimals"`
+	QuoteVolumeDecimals *int `json:"quote_volume_decimals"`
+	TradeCount          int  `json:"trade_count"`
+	OutliersFiltered    int  `json:"outliers_filtered"`
+	Truncated           bool `json:"truncated"`
 }
 
 // TWAPResult is the data shape returned by [Client.TWAP] —
