@@ -91,16 +91,18 @@ type TokenStore interface {
 	// already consumed; ErrTokenExpired if past expires_at.
 	ConsumeMagicLinkToken(ctx context.Context, tokenHash []byte) (MagicLinkToken, error)
 
-	// ReserveLoginCodeCandidates charges one code attempt to every
-	// active (unconsumed, unexpired) login-purpose token for an email
-	// whose Attempts is below maxAttempts, and returns exactly the
-	// charged rows (post-increment Attempts, most-recent first). Backs
+	// ReserveLoginCode charges one code attempt to the email's NEWEST
+	// active (unconsumed, unexpired) login-purpose token, provided its
+	// Attempts is below maxAttempts, and returns it post-increment. Backs
 	// the email-code sign-in path: the caller may compare the submitted
-	// code only against the returned rows. Charge and cap check are one
-	// atomic step, so concurrent callers can never be handed a token
-	// more than maxAttempts times in total. Returns an empty slice (not
-	// an error) when none qualify.
-	ReserveLoginCodeCandidates(ctx context.Context, email string, maxAttempts int) ([]MagicLinkToken, error)
+	// code only against the returned row. Exactly one code per guess is
+	// what keeps a guess's odds at 1 in 1e6 — the per-email failure budget
+	// counts a request, not a comparison — so a newer mint supersedes an
+	// older one's code (its magic link is untouched). Charge and cap check
+	// are one atomic step, so concurrent callers can never be handed a
+	// token more than maxAttempts times in total. ErrNotFound when the
+	// newest active token is absent or already at the cap.
+	ReserveLoginCode(ctx context.Context, email string, maxAttempts int) (MagicLinkToken, error)
 
 	// RegisterFailedLoginCode records ONE failed code attempt against
 	// the email itself — the durable dimension a token re-mint cannot

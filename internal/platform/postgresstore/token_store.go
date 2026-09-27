@@ -139,69 +139,63 @@ func (r *TokenStore) ConsumeMagicLinkToken(ctx context.Context, tokenHash []byte
 	return out, nil
 }
 
-// ReserveLoginCodeCandidates charges one attempt to every active login
-// token for the email that is still under maxAttempts and returns the
-// charged rows. The verify-code handler recomputes each row's 6-digit
-// code from its hash, so the full rows come back (TokenHash is the
-// load-bearing field).
+// ReserveLoginCode charges one attempt to the email's newest active
+// login token, if it is still under maxAttempts, and returns the charged
+// row. The verify-code handler recomputes the row's 6-digit code from
+// its hash, so the full row comes back (TokenHash is the load-bearing
+// field).
+//
+// Only the newest token is selected, and the cap is checked on it rather
+// than used to pick among tokens: an older token must never step in as
+// the candidate, or the number of codes a guess can hit would again grow
+// with the number of mints (see [platform.TokenStore.ReserveLoginCode]).
 //
 // Charge and cap check are one statement so the cap holds under
-// concurrency: FOR UPDATE makes a racing call wait for the row and
-// re-check `attempts < $3` against the committed value (READ COMMITTED
-// re-evaluation), and a call whose re-check fails is not handed that
-// token. Locks are taken in token_hash order so two calls charging the
-// same address's several tokens cannot deadlock.
-func (r *TokenStore) ReserveLoginCodeCandidates(ctx context.Context, email string, maxAttempts int) ([]platform.MagicLinkToken, error) {
+// concurrency: FOR UPDATE makes a racing call wait for the row, and the
+// UPDATE re-checks `attempts < $3` against the committed value (READ
+// COMMITTED re-evaluation), so a call whose re-check fails is not handed
+// the token.
+func (r *TokenStore) ReserveLoginCode(ctx context.Context, email string, maxAttempts int) (platform.MagicLinkToken, error) {
 	now := r.now()
 	const q = `
-		WITH target AS (
+		WITH newest AS (
 		    SELECT token_hash
 		      FROM magic_link_tokens
 		     WHERE email = $1
 		       AND purpose = 'login'
 		       AND consumed_at IS NULL
 		       AND expires_at > $2
-		       AND attempts < $3
-		     ORDER BY token_hash
+		     ORDER BY created_at DESC, token_hash DESC
+		     LIMIT 1
 		       FOR UPDATE
-		), charged AS (
-		    UPDATE magic_link_tokens m
-		       SET attempts = m.attempts + 1
-		      FROM target
-		     WHERE m.token_hash = target.token_hash
-		    RETURNING m.token_hash, m.email, m.purpose, m.expires_at, m.consumed_at,
-		              m.requested_ip, m.created_at, m.attempts
 		)
-		SELECT token_hash, email, purpose, expires_at, consumed_at,
-		       requested_ip, created_at, attempts
-		  FROM charged
-		 ORDER BY created_at DESC
+		UPDATE magic_link_tokens m
+		   SET attempts = m.attempts + 1
+		  FROM newest
+		 WHERE m.token_hash = newest.token_hash
+		   AND m.attempts < $3
+		RETURNING m.token_hash, m.email, m.purpose, m.expires_at, m.consumed_at,
+		          m.requested_ip, m.created_at, m.attempts
 	`
-	rows, err := r.s.db.QueryContext(ctx, q, email, now, maxAttempts)
+	var (
+		t          platform.MagicLinkToken
+		consumedAt sql.NullTime
+		ipText     string
+	)
+	err := r.s.db.QueryRowContext(ctx, q, email, now, maxAttempts).Scan(
+		&t.TokenHash, &t.Email, &t.Purpose, &t.ExpiresAt,
+		&consumedAt, &ipText, &t.CreatedAt, &t.Attempts,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return platform.MagicLinkToken{}, platform.ErrNotFound
+	}
 	if err != nil {
-		return nil, fmt.Errorf("reserve login code candidates: %w", err)
+		return platform.MagicLinkToken{}, fmt.Errorf("reserve login code: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	var out []platform.MagicLinkToken
-	for rows.Next() {
-		var (
-			t          platform.MagicLinkToken
-			consumedAt sql.NullTime
-			ipText     string
-		)
-		if err := rows.Scan(
-			&t.TokenHash, &t.Email, &t.Purpose, &t.ExpiresAt,
-			&consumedAt, &ipText, &t.CreatedAt, &t.Attempts,
-		); err != nil {
-			return nil, fmt.Errorf("reserve login code candidates scan: %w", err)
-		}
-		if consumedAt.Valid {
-			t.ConsumedAt = consumedAt.Time
-		}
-		out = append(out, t)
+	if consumedAt.Valid {
+		t.ConsumedAt = consumedAt.Time
 	}
-	return out, rows.Err()
+	return t, nil
 }
 
 // RegisterFailedLoginCode records one failed 6-digit-code attempt
@@ -415,7 +409,7 @@ func (r *TokenStore) CountLoginCodeLockouts(ctx context.Context) (int64, error) 
 // nobody clicks is never consumed).
 //
 // Every row past `expires_at` is TERMINAL: ConsumeMagicLinkToken and
-// ReserveLoginCodeCandidates both require `expires_at > now`, so an
+// ReserveLoginCode both require `expires_at > now`, so an
 // expired row can never again be redeemed regardless of its
 // consumed_at. The reaper's retention keeps expired rows a while for
 // forensics and to preserve the expired-vs-absent distinction

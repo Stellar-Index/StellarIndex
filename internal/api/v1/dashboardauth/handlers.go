@@ -138,8 +138,9 @@ type Config struct {
 	EmailFrom string
 	// MagicLinkTTL — link validity. Default 15 minutes.
 	MagicLinkTTL time.Duration
-	// SessionTTL — cookie session lifetime. Default 30 days
-	// rolling.
+	// SessionTTL — cookie session lifetime from sign-in. Default 30
+	// days, fixed: TouchSession records activity but never extends
+	// expires_at.
 	SessionTTL time.Duration
 	// CookieSecure — set Secure flag on the cookie. Production
 	// = true; local dev = false (the dashboard runs over
@@ -171,9 +172,10 @@ func (c *Config) validate() error {
 		// The 6-digit code derivation must NEVER run unkeyed (that is
 		// the vulnerability this secret exists to close — see
 		// [Generator.CodeForHash]). No configured secret → random
-		// per-process one: codes stay verifiable within this process's
-		// lifetime, and a restart merely invalidates in-flight codes
-		// (≤15 min; the magic link keeps working).
+		// per-process one, which also keys the passkey ceremony cookie.
+		// Both stay unforgeable, but neither verifies on another
+		// instance or after a restart: in-flight codes and passkey
+		// ceremonies fail (the magic link keeps working).
 		secret := make([]byte, 32)
 		if _, err := c.Generator.Read(secret); err != nil {
 			return fmt.Errorf("dashboardauth: generate code secret: %w", err)
@@ -324,7 +326,9 @@ const maxCodeAttempts = 5
 // on one targeted address.
 //
 // These numbers cut that to ~10 guesses/day ≈ 3.7e-3/year — two orders
-// of magnitude down — at a usability cost that is close to zero,
+// of magnitude down, and only because each guess is compared against ONE
+// code (the newest mint's); matching against every live mint would
+// multiply it by the send throttle's 5 — at a usability cost that is close to zero,
 // because the lockout gates the CODE path only: the magic link in the
 // same email keeps working, exactly as maxCodeAttempts already does.
 // A legitimate user would have to mistype ten times in a day to meet
@@ -634,17 +638,18 @@ type verifyCodeResponse struct {
 // credentialed fetch: the Set-Cookie rides the response and the SPA
 // navigates itself. Same find-or-create-on-first-login semantics.
 //
-// The code is matched only against the email's in-flight login tokens,
-// and every attempt is charged — per token and per email — BEFORE it is
-// compared, atomically in the store, so a burst of concurrent guesses
+// The code is matched only against the email's NEWEST in-flight login
+// token — one comparison per request, so each guess has 1-in-1e6 odds no
+// matter how many sign-in emails an attacker has triggered — and every
+// attempt is charged — per token and per email — BEFORE it is compared, atomically in the store, so a burst of concurrent guesses
 // gets no more comparisons than sequential ones (see [maxCodeAttempts],
 // [maxDurableCodeFailures]). All failure modes return one generic error
 // so a caller can't tell "no token" from "wrong code" from "too many
 // attempts".
 //
 // Non-matching includes CORRECT-BUT-STALE. A code whose token has
-// expired, been consumed, or already burned [maxCodeAttempts] is not a
-// candidate, so submitting it registers a durable per-email failure
+// expired, been consumed, burned [maxCodeAttempts], or been superseded
+// by a newer sign-in email is not a candidate, so submitting it registers a durable per-email failure
 // (C3-032) exactly as a wrong guess does. That is deliberate — the
 // server cannot distinguish "the owner pasted yesterday's code" from
 // "an attacker guessed a value that happens to match a dead token"
@@ -689,26 +694,18 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cands, err := h.cfg.Tokens.ReserveLoginCodeCandidates(r.Context(), email, maxCodeAttempts)
-	if err != nil {
-		h.cfg.Logger.Error("reserve login code candidates", "err", err, "email", maskEmail(email))
+	cand, err := h.cfg.Tokens.ReserveLoginCode(r.Context(), email, maxCodeAttempts)
+	if err != nil && !errors.Is(err, platform.ErrNotFound) {
+		h.cfg.Logger.Error("reserve login code", "err", err, "email", maskEmail(email))
 		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/verify-code")
 		return
 	}
-
-	var matchedHash []byte
-	for i := range cands {
-		expected := h.cfg.Generator.CodeForHash(cands[i].TokenHash)
-		if subtle.ConstantTimeCompare([]byte(expected), []byte(code)) == 1 {
-			matchedHash = cands[i].TokenHash
-			break
-		}
-	}
-	if matchedHash == nil {
+	if err != nil || subtle.ConstantTimeCompare([]byte(h.cfg.Generator.CodeForHash(cand.TokenHash)), []byte(code)) != 1 {
 		// Wrong (or no) code. Both counters were already charged above.
 		writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
 		return
 	}
+	matchedHash := cand.TokenHash
 
 	// Atomically consume the matched token so the code can't be
 	// replayed and so it races safely against a magic-link click or a

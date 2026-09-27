@@ -308,6 +308,7 @@ type fakeTokenStore struct {
 	// candidateHandOuts counts login-candidate lookups that returned at
 	// least one token: each is one request whose code the handler compares.
 	candidateHandOuts int
+	lastCreated       time.Time
 	now               func() time.Time
 }
 
@@ -345,7 +346,13 @@ func tokenKey(hash []byte) string {
 func (f *fakeTokenStore) CreateMagicLinkToken(_ context.Context, t platform.MagicLinkToken) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// Strictly increasing, as Postgres's µs now() effectively is across
+	// requests, so "newest token" is well defined under a frozen clock.
 	t.CreatedAt = f.now()
+	if !t.CreatedAt.After(f.lastCreated) {
+		t.CreatedAt = f.lastCreated.Add(time.Microsecond)
+	}
+	f.lastCreated = t.CreatedAt
 	f.tokens[tokenKey(t.TokenHash)] = t
 	return nil
 }
@@ -388,30 +395,36 @@ func (f *fakeTokenStore) ConsumableLoginCandidates(_ context.Context, email stri
 	return out, nil
 }
 
-// ReserveLoginCodeCandidates mirrors the Postgres statement: check and
-// charge happen under one lock, so no caller sees a pre-charge count.
-func (f *fakeTokenStore) ReserveLoginCodeCandidates(_ context.Context, email string, maxAttempts int) ([]platform.MagicLinkToken, error) {
+// ReserveLoginCode mirrors the Postgres statement: the newest active
+// token is chosen first and only then cap-checked, under one lock, so no
+// caller sees a pre-charge count and an older token never steps in.
+func (f *fakeTokenStore) ReserveLoginCode(_ context.Context, email string, maxAttempts int) (platform.MagicLinkToken, error) {
 	f.enterWrite()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	now := f.now()
-	var out []platform.MagicLinkToken
+	var (
+		newestKey string
+		newest    platform.MagicLinkToken
+	)
 	for k, t := range f.tokens {
 		if t.Email != email || t.Purpose != platform.TokenPurposeLogin {
 			continue
 		}
-		if !t.ConsumedAt.IsZero() || !t.ExpiresAt.After(now) || t.Attempts >= maxAttempts {
+		if !t.ConsumedAt.IsZero() || !t.ExpiresAt.After(now) {
 			continue
 		}
-		t.Attempts++
-		f.tokens[k] = t
-		out = append(out, t)
+		if newestKey == "" || t.CreatedAt.After(newest.CreatedAt) {
+			newestKey, newest = k, t
+		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
-	if len(out) > 0 {
-		f.candidateHandOuts++
+	if newestKey == "" || newest.Attempts >= maxAttempts {
+		return platform.MagicLinkToken{}, platform.ErrNotFound
 	}
-	return out, nil
+	newest.Attempts++
+	f.tokens[newestKey] = newest
+	f.candidateHandOuts++
+	return newest, nil
 }
 
 // IncrementLoginCodeAttempts and ConsumableLoginCandidates are the

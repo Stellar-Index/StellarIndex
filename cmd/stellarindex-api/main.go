@@ -2400,15 +2400,18 @@ func wireDashboardAuthThrottles(authCfg *dashboardauth.Config, rdb redis.Univers
 // secret keying the 6-digit-code derivation + the passkey
 // ceremony-cookie MAC. Without the env, dashboardauth's validate()
 // falls back to a random per-process secret — still keyed (a DB read
-// alone can never reveal a code), but in-flight codes stop verifying
-// across a restart, so production sets the env.
+// alone can never reveal a code, a ceremony cookie cannot be forged),
+// but codes and passkey ceremonies stop verifying across a restart or
+// on another instance, so production sets the env.
 func buildDashboardGenerator(cfg config.DashboardConfig, logger *slog.Logger) *dashboardauth.Generator {
 	generator := dashboardauth.NewGenerator()
 	if secret := os.Getenv(cfg.CodeSecretEnv); secret != "" {
 		generator.Secret = []byte(secret)
 	} else {
 		logger.Warn("dashboard code secret env unset — using a random per-process secret; "+
-			"in-flight sign-in codes will not survive a restart", "env", cfg.CodeSecretEnv)
+			"in-flight sign-in codes and passkey ceremonies will not survive a restart, "+
+			"and behind more than one API instance both fail whenever a request lands on another instance",
+			"env", cfg.CodeSecretEnv)
 	}
 	return generator
 }
