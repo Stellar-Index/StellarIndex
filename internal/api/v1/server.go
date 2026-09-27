@@ -512,6 +512,9 @@ type Server struct {
 	// the http.Server hands it to RegisterOnShutdown — see
 	// [Server.BeginStreamDrain].
 	streamDrain *streaming.Drain
+	// streamRevalidate re-runs the auth/policy/quota gates for an open
+	// stream at each heartbeat; see [Server.buildStreamRevalidator].
+	streamRevalidate func(*http.Request) bool
 	// tipProducers is the shared tip-stream producer registry (RT-1):
 	// one compute loop per distinct (asset, quote, window) publishing
 	// into the hub, refcounted by open /v1/price/tip/stream
@@ -1439,8 +1442,9 @@ type Options struct {
 	// via [streaming.Stream] inside the handler.
 	//
 	// Leave nil to make `/v1/price/stream` return 503 — the rest
-	// of the v1 API serves cleanly. The tip + observations stream
-	// endpoints do NOT use this Hub; they are per-connection-tick.
+	// of the v1 API serves cleanly. /v1/price/tip/stream also uses it
+	// when set (shared tip producers); see internal/api/streaming/doc.go
+	// for which streams replay from it.
 	Hub *streaming.Hub
 
 	// Confidence, when non-nil, populates the confidence + factors
@@ -1820,6 +1824,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 	loadIncidents(s, logger)
 	warnIfSep1CacheLacksFetchState(s, logger)
 	s.mountRoutes()
+	s.streamRevalidate = s.buildStreamRevalidator()
 	return s
 }
 
@@ -1974,13 +1979,61 @@ func (s *Server) BeginStreamDrain() { s.streamDrain.Begin() }
 
 // streamOptions is the [streaming.StreamOptions] every stream handler
 // on this Server passes. Centralised so a new stream endpoint picks up
-// the shutdown drain by construction rather than by remembering to —
-// the failure mode otherwise is silent and only shows up as a 30s
-// deploy stall when that one endpoint happens to have a client
-// attached.
+// the shutdown drain and the per-heartbeat credential re-check by
+// construction rather than by remembering to — the failure mode
+// otherwise is silent (a 30s deploy stall; a revoked key that keeps
+// streaming).
 func (s *Server) streamOptions() streaming.StreamOptions {
-	return streaming.StreamOptions{Drain: s.streamDrain}
+	return streaming.StreamOptions{Drain: s.streamDrain, Revalidate: s.streamRevalidate}
 }
+
+// streamRevalidationGates are the middlewareStack entries an open stream
+// re-runs at each heartbeat: the ones that decide whether this caller
+// may be served at all. RateLimit is deliberately absent — re-running it
+// would spend a token per heartbeat, and a per-minute limit is an
+// admission control, not a revocation.
+var streamRevalidationGates = map[string]bool{
+	"PublicRoutes":         true,
+	"Auth":                 true,
+	"KeyPolicy":            true,
+	"RequireEmailVerified": true,
+	"MonthlyQuota":         true,
+}
+
+// buildStreamRevalidator returns the [streaming.StreamOptions.Revalidate]
+// hook: the request is replayed through the same gate middlewares, in
+// the same order as [Server.middlewareStack], with a terminal handler
+// that records it was reached. Any gate that answers instead (401 for a
+// revoked key or expired token, 403 for a policy change, 429 for an
+// exhausted quota) fails the check. Nil when no gate is configured.
+func (s *Server) buildStreamRevalidator() func(*http.Request) bool {
+	var gates []middleware.Middleware
+	for _, e := range s.middlewareStack() {
+		if streamRevalidationGates[e.name] {
+			gates = append(gates, e.mw)
+		}
+	}
+	if len(gates) == 0 {
+		return nil
+	}
+	return func(r *http.Request) bool {
+		admitted := false
+		var h http.Handler = http.HandlerFunc(func(http.ResponseWriter, *http.Request) { admitted = true })
+		for i := len(gates) - 1; i >= 0; i-- {
+			h = gates[i](h)
+		}
+		h.ServeHTTP(discardResponseWriter{header: http.Header{}}, r)
+		return admitted
+	}
+}
+
+// discardResponseWriter swallows a revalidation gate's rejection body;
+// only whether the gate called through matters.
+type discardResponseWriter struct{ header http.Header }
+
+func (d discardResponseWriter) Header() http.Header         { return d.header }
+func (d discardResponseWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (d discardResponseWriter) WriteHeader(int)             {}
 
 // Handler returns the mux wrapped in [Server.middlewareStack], outermost
 // first.

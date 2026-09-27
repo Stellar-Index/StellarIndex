@@ -24,7 +24,8 @@ export interface StreamFrame<T> {
  * useStreamJSON — subscribe to `eventType` frames on an SSE endpoint
  * and return the latest JSON-parsed payload. Pass `url: null` to
  * disable (hook order stays stable). Malformed frames keep the last
- * good value.
+ * good value; a hard connection failure drops it (null) until the
+ * reopened stream delivers a new frame.
  */
 function useStreamJSON<T>(
   url: string | null,
@@ -43,13 +44,22 @@ function useStreamJSON<T>(
 
   useEffect(() => {
     if (!url) return;
-    return subscribeStream(url, eventType, (data) => {
-      try {
-        setFrame({ data: JSON.parse(data) as T, receivedAt: Date.now() });
-      } catch {
-        // Keep the last good frame.
-      }
-    });
+    return subscribeStream(
+      url,
+      eventType,
+      (data) => {
+        try {
+          setFrame({ data: JSON.parse(data) as T, receivedAt: Date.now() });
+        } catch {
+          // Keep the last good frame.
+        }
+      },
+      // A hard-failed connection must stop rendering as live at once, not
+      // after the caller's staleness window; callers fall back on null.
+      (status) => {
+        if (status === 'reconnecting') setFrame(null);
+      },
+    );
   }, [url, eventType]);
 
   return frame;

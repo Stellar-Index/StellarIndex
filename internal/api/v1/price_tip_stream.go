@@ -83,9 +83,9 @@ const tipStreamDivergenceStallInterval = time.Minute
 //
 // Wire shape per connection:
 //
-//   - Headers: Content-Type: text/event-stream + Cache-Control:
-//     no-cache + X-Accel-Buffering: no (set by the streaming.Stream
-//     scaffolding).
+//   - Headers: Content-Type: text/event-stream + X-Accel-Buffering: no
+//     (set by the streaming writer); Cache-Control is the route policy
+//     from the CacheControl middleware, which the writer keeps.
 //   - Initial event: a tip_update emitted as soon as the first
 //     compute completes (so the client doesn't sit on a heartbeat-only
 //     stream when data is already available).

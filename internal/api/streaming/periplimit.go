@@ -115,10 +115,11 @@ func acquireIPStreamSlot(r *http.Request) (release func(), ok bool) {
 }
 
 // ActiveStreamsForIP reports the current open-stream count attributed to
-// ip — a diagnostic/test hook. The ip must match what the configured
-// resolver produces.
+// ip — a diagnostic/test hook. ip is an address as the configured
+// resolver produces it; it is masked the way acquireIPStreamSlot keys it.
 func ActiveStreamsForIP(ip string) int {
+	key := ratelimit.ThrottleIPKey(ip)
 	streamIPMu.Lock()
 	defer streamIPMu.Unlock()
-	return streamsPerIP[ip]
+	return streamsPerIP[key]
 }

@@ -157,6 +157,12 @@ func TestStream_PerIPCapAggregatesIPv6Slash64(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 
+	// The diagnostic takes an address as the resolver produced it and
+	// reports that address's bucket, not an unmasked miss.
+	if got := streaming.ActiveStreamsForIP("2001:db8:1234:5678::1"); got != capN {
+		t.Errorf("ActiveStreamsForIP(first address) = %d, want %d (its /64 bucket)", got, capN)
+	}
+
 	cancel()
 	for _, r := range held {
 		_ = r.Body.Close()

@@ -154,6 +154,14 @@ type StreamOptions struct {
 	// stall. See [Drain] for the mechanism and for why this is not
 	// http.Server.BaseContext.
 	Drain *Drain
+
+	// Revalidate, when wired, re-runs the request's credential, key
+	// policy and quota checks at every heartbeat; false ends the stream.
+	// Those checks are per-request middleware, so without this a key
+	// revoked (or a quota exhausted, a tier downgraded) after admission
+	// keeps streaming until the client leaves. Nil means no re-check;
+	// v1's Server.streamOptions supplies it for every stream endpoint.
+	Revalidate func(*http.Request) bool
 }
 
 // Stream wires an http.ResponseWriter into the Hub for the supplied
@@ -168,10 +176,10 @@ type StreamOptions struct {
 //  4. Emits comment-only heartbeat frames at HeartbeatInterval to
 //     keep proxies from idling out the connection.
 //
-// Stream is the convenience constructor for Hub-driven endpoints
-// (the closed-bucket /v1/price/stream). Per-connection-tick
-// endpoints (/v1/price/tip/stream, /v1/observations/stream) bypass
-// the Hub and feed events through [StreamFromChannel] directly.
+// Stream is the convenience constructor for a Hub-driven endpoint.
+// The v1 endpoints subscribe (or run a per-connection producer)
+// themselves and feed [StreamFromChannelPreAdmitted]; see doc.go for
+// which of them replay from a Hub.
 func Stream(w http.ResponseWriter, r *http.Request, hub *Hub, topics []string, opts StreamOptions) {
 	// Admission FIRST. hub.Subscribe allocates a Hub topic keyed by
 	// `topics` — client-controlled on /v1/price/stream — so a
@@ -251,15 +259,7 @@ func writeStream(w http.ResponseWriter, r *http.Request, ch <-chan Event, opts S
 		_ = rc.SetWriteDeadline(time.Now().Add(streamWriteDeadline))
 	}
 
-	// SSE headers per WHATWG. Setting these BEFORE WriteHeader so
-	// the first frame goes out cleanly. X-Accel-Buffering disables
-	// nginx response buffering; Connection: keep-alive is implicit
-	// in HTTP/1.1 and harmless on HTTP/2.
-	h := w.Header()
-	h.Set("Content-Type", "text/event-stream")
-	h.Set("Cache-Control", "no-cache")
-	h.Set("Connection", "keep-alive")
-	h.Set("X-Accel-Buffering", "no")
+	setSSEHeaders(w.Header())
 	w.WriteHeader(http.StatusOK)
 
 	heartbeat := opts.HeartbeatInterval
@@ -308,6 +308,10 @@ func writeStream(w http.ResponseWriter, r *http.Request, ch <-chan Event, opts S
 			}
 			flusher.Flush()
 		case <-ticker.C:
+			if opts.Revalidate != nil && !opts.Revalidate(r) {
+				endStreamForRevocation(w, flusher, setWriteDeadline)
+				return
+			}
 			setWriteDeadline()
 			if _, err := fmt.Fprint(w, ":keepalive\n\n"); err != nil {
 				return
@@ -315,6 +319,37 @@ func writeStream(w http.ResponseWriter, r *http.Request, ch <-chan Event, opts S
 			flusher.Flush()
 		}
 	}
+}
+
+// setSSEHeaders writes the SSE response headers per WHATWG, before
+// WriteHeader so the first frame goes out cleanly. X-Accel-Buffering
+// disables nginx response buffering; Connection: keep-alive is implicit
+// in HTTP/1.1 and harmless on HTTP/2.
+//
+// Cache-Control is a fallback only: the v1 CacheControl middleware has
+// already set the per-route policy (`no-store` on /v1/price/stream,
+// `private, …` on tip/observations), and overwriting it would turn
+// no-store into a storable response and drop `private`.
+func setSSEHeaders(h http.Header) {
+	h.Set("Content-Type", "text/event-stream")
+	if h.Get("Cache-Control") == "" {
+		h.Set("Cache-Control", "no-store")
+	}
+	h.Set("Connection", "keep-alive")
+	h.Set("X-Accel-Buffering", "no")
+}
+
+// endStreamForRevocation ends a stream whose credential, key policy or
+// quota no longer admits it. The last frame is an SSE comment, as in
+// [endStreamForDrain]; the client's reconnect then gets the 401 / 403 /
+// 429 problem response from the middleware, which is the in-band
+// signal, and a conforming EventSource stops on that non-200.
+func endStreamForRevocation(w http.ResponseWriter, flusher http.Flusher, setWriteDeadline func()) {
+	setWriteDeadline()
+	if _, err := fmt.Fprint(w, ":revoked\n\n"); err != nil {
+		return
+	}
+	flusher.Flush()
 }
 
 // endStreamForDrain closes a stream the SERVER is ending, as cleanly as

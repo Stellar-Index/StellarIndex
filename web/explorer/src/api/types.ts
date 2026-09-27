@@ -686,7 +686,10 @@ export interface paths {
          *     - `flags.divergence_warning` / `flags.divergence_checked` are
          *       looked up per event — for the requested (base, quote) spelling
          *       only — exactly as `/v1/price/tip` does, so a `tip_update`
-         *       carries the verdict a GET at that instant would.
+         *       carries the verdict a GET at that instant would — except
+         *       that the stream's lookup has a 1 s budget, and a verdict
+         *       store too slow to answer leaves `divergence_checked: false`
+         *       on that event rather than delaying it.
          *     - Pre-flight 404 when the pair has no observations: SSE
          *       can't change status mid-stream, so emptiness is detected
          *       before the response body switches to `text/event-stream`.
@@ -894,6 +897,18 @@ export interface paths {
          *       publishing path evaluated them — absent flags mean "not
          *       evaluated", never "fresh". The aggregator's 300 / 3600 /
          *       86400 series carry neither.
+         *     - The 60-second series (`window_seconds=60`, operator-configured
+         *       pairs) carries `flags.stale`, and `flags.frozen_checked: true`
+         *       when the ADR-0019 freeze marker was read for every spelling
+         *       of the pair. While the pair is frozen, each new bucket is
+         *       replaced by a `price_frozen` event — `data` holds the
+         *       bucket's `asset_id`, `quote`, `observed_at` and
+         *       `window_seconds` but no `price`, and `flags` is
+         *       `{"stale": <bool>, "frozen": true, "frozen_checked": true}`
+         *       (`stale` is the same verdict on that bucket a `price_update`
+         *       would have carried) — because that
+         *       bucket is the value the freeze refused (`/v1/price` serves
+         *       the held value or refuses instead).
          *     - `observed_at` and `as_of` are both the END of the closed
          *       1-minute bucket the event was computed at, so they are
          *       equal on every event. `price` is the VWAP over
@@ -2517,9 +2532,11 @@ export interface paths {
          *     - First event fires synchronously on connect with the current
          *       tip.
          *     - Recurring events fire once per new ledger (poll cadence
-         *       ~2s), plus a keepalive refresh every ~10s if the ledger has
+         *       500 ms), plus a keepalive refresh every ~10s if the ledger has
          *       not advanced — so `lag_seconds` stays current even during an
          *       ingest stall.
+         *     - No `Last-Event-ID` resume: every connection starts from the
+         *       current tip, and a reconnect's first event is that tip.
          *     - Heartbeats every 15 s as comment lines.
          *     - Each event's `data` payload mirrors the `/v1/ledger/tip`
          *       envelope (`data` + `as_of`) so one type decodes both the
@@ -6870,8 +6887,10 @@ export interface components {
          *       observed a meaningful divergence; treat with caution.
          *     - `frozen` — anomaly detection refused to publish the new
          *       bucket; this response carries the previous bucket's
-         *       last-known-good value (ADR-0019). Only fires on `/v1/price`;
-         *       tip + observations surfaces ignore freeze.
+         *       last-known-good value (ADR-0019). Only fires on `/v1/price`
+         *       and on the 60-second `/v1/price/stream` series' `price_frozen`
+         *       event (which carries no value); tip + observations surfaces
+         *       ignore freeze.
          *     - `frozen_checked` — true only when the freeze marker was
          *       actually read (looker wired and the read succeeded). When
          *       false, `frozen` is NOT meaningful — the check never ran, so
@@ -13433,10 +13452,7 @@ export interface operations {
                 /** @description Tick cadence in seconds. */
                 interval_seconds?: number;
             };
-            header?: {
-                /** @description Opaque ID for resuming a previously-broken stream. */
-                "Last-Event-ID"?: string;
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -17469,10 +17485,7 @@ export interface operations {
     streamLedgerTip: {
         parameters: {
             query?: never;
-            header?: {
-                /** @description Opaque ID for resuming a previously-broken stream. */
-                "Last-Event-ID"?: string;
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };
