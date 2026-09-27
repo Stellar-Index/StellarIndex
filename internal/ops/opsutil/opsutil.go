@@ -193,6 +193,25 @@ func PrintWriteBanner(write bool) bool {
 	return false
 }
 
+// RequireExplicitRange refuses an implicit full-history run: a windowed CH
+// backfill left with every bound at its default silently starts the
+// entire history (ledger 2..tip). fs must already be parsed. full is the
+// subcommand's own "-full" flag value (true opts into the whole history on
+// purpose); jobName and rowEstimate name the command and its approximate
+// row count in the error message. Extracted from ch-txindex-backfill
+// (GH-1192) so every windowed CH backfill enforces the same footgun guard
+// instead of only the one that happened to grow it first.
+func RequireExplicitRange(fs *flag.FlagSet, full bool, jobName, rowEstimate string) error {
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if !full && !set["from"] && !set["to"] {
+		return fmt.Errorf(
+			"refusing an implicit full-history backfill (ledger 2..tip, ~%s rows on r1): pass -from (a resume point / lower bound), -to (an upper bound), or -full to run the entire history from scratch (%s)",
+			rowEstimate, jobName)
+	}
+	return nil
+}
+
 // SignalContext returns a context that cancels on SIGINT / SIGTERM so
 // long-running passes (backfill-router, tag-routed-via, the ch-*
 // ClickHouse walkers) can flush a final checkpoint and exit cleanly.

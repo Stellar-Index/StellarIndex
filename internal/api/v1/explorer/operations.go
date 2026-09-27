@@ -195,7 +195,7 @@ func opViewLight(o clickhouse.OpRow) OpView {
 		TxIndex:       o.TxIndex,
 		OpIndex:       o.OpIndex,
 		SourceAccount: o.SourceAccount,
-		Type:          normalizeLakeOpType(o.OpType),
+		Type:          xdrjson.OpTypeNameFromEnumString(o.OpType),
 	}
 }
 
@@ -405,7 +405,7 @@ func (h *Handler) refreshOpTypeStats() {
 		}
 		v := make([]OpTypeStatV, len(stats))
 		for i, st := range stats {
-			v[i] = OpTypeStatV{Type: normalizeLakeOpType(st.OpType), Count: st.Count}
+			v[i] = OpTypeStatV{Type: xdrjson.OpTypeNameFromEnumString(st.OpType), Count: st.Count}
 		}
 		h.opTypeStats.put(v)
 	}()
@@ -426,6 +426,12 @@ type OperationsView struct {
 	// while assembling this page, so operations without transaction_successful
 	// are of UNKNOWN outcome rather than known-applied (opsOutcomeCoverageNote).
 	CoverageNote string `json:"coverage_note,omitempty"`
+	// Total and Truncated are set only on the ?ledger= arm (GH-1135): the
+	// ledger header's exact operation count vs len(Operations), the same
+	// shape LedgerTransactionsView already gives /v1/ledgers/{seq}/transactions.
+	// Zero/false on the no-cursor directory arm, which pages instead.
+	Total     uint32 `json:"total,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
 }
 
 // OpTypeStatV is one op-type's count in the trailing-24h window.
@@ -497,6 +503,16 @@ func (h *Handler) Operations(w http.ResponseWriter, r *http.Request) {
 		out.Operations[i] = opView(o)
 	}
 	out.CoverageNote = h.stampTxOutcomes(ctx, out.Operations, rows)
+	// GH-1135: len(rows)==limit alone can't distinguish "exactly limit ops"
+	// from "truncated at limit", so read the ledger header's exact op
+	// count — the same shape LedgerTransactions already gives its route. A
+	// header-read hiccup only loses this metadata, not the served page.
+	if hdr, found, herr := h.Reader.LedgerBySeq(ctx, seq); herr != nil {
+		h.Logger.Warn("explorer LedgerBySeq (operations total) failed", "err", herr, "seq", seq)
+	} else if found {
+		out.Total = hdr.OpCount
+		out.Truncated = hdr.OpCount > uint32(len(rows))
+	}
 	h.WriteJSON(w, out, false)
 }
 

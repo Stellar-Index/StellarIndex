@@ -11,6 +11,7 @@ package xdrjson
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
@@ -58,6 +59,35 @@ func OpTypeName(t xdr.OperationType) string {
 		return s
 	}
 	return fmt.Sprintf("unknown_%d", int(t))
+}
+
+// opTypeNameByEnumString is opTypeName reindexed by the SDK's CamelCase enum
+// string (xdr.OperationType.String(), e.g. "OperationTypeManageSellOffer") —
+// the form the ClickHouse lake stores in stellar.operations.op_type. Built
+// once from the same source map as OpTypeName so the two vocabularies can
+// never drift.
+var opTypeNameByEnumString = func() map[string]string {
+	m := make(map[string]string, len(opTypeName))
+	for t, name := range opTypeName {
+		m[t.String()] = name
+	}
+	return m
+}()
+
+// OpTypeNameFromEnumString returns the same snake_case wire name OpTypeName
+// gives its enum, but from the lake's stored CamelCase enum string (GH-1136:
+// the /v1/operations directory and op_type_stats served this via a naive
+// lowercase-and-strip-prefix fallback instead of the controlled vocabulary,
+// so invokehostfunction/manageselloffer diverged from every other read
+// path's invoke_host_function/manage_sell_offer). Falls back to a
+// lowercased, "OperationType"-stripped best effort for a string the map
+// doesn't cover (forward-compat for a future protocol op decoded before
+// this package's map is updated).
+func OpTypeNameFromEnumString(s string) string {
+	if name, ok := opTypeNameByEnumString[s]; ok {
+		return name
+	}
+	return strings.ToLower(strings.TrimPrefix(s, "OperationType"))
 }
 
 // DecodedOp is the result of decoding one operation body.
