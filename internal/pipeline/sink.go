@@ -1533,6 +1533,22 @@ func persistTrade(ctx context.Context, logger *slog.Logger, w tradeWriter, t can
 	return nil
 }
 
+// recordOracleMetricIfMapped emits the paired staleness gauges
+// ([obs.RecordOracleUpdate]) for every mapped oracle asset, but skips
+// [canonical.AssetOracleRaw] rows. Capture-totality persists every
+// oracle-published symbol verbatim, including ones on no allow-list,
+// so an unmapped ("raw:<symbol>") row would otherwise mint its own
+// unbounded asset label value — exactly the "passthrough every asset"
+// cardinality risk OracleLastUpdateUnix's doc warns about. Raw rows
+// are record-layer only and are never compared by the interpretation
+// layer, so they have nothing to alert on here.
+func recordOracleMetricIfMapped(source string, asset canonical.Asset, updatedAtUnix float64) {
+	if !asset.IsMapped() {
+		return
+	}
+	obs.RecordOracleUpdate(source, asset.String(), updatedAtUnix)
+}
+
 func persistOracle(ctx context.Context, logger *slog.Logger, store *timescale.Store, u canonical.OracleUpdate) error {
 	if err := store.InsertOracleUpdate(ctx, u); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(u.Source, "oracle").Inc()
@@ -1546,12 +1562,7 @@ func persistOracle(ctx context.Context, logger *slog.Logger, store *timescale.St
 		)
 		return err
 	}
-	// One call, two gauges: the observation's age and the staleness
-	// budget that age is judged against (issue #478). They MUST share a
-	// label set — stellarindex_oracle_stale compares them directly —
-	// so they are emitted together rather than from two call sites that
-	// could drift.
-	obs.RecordOracleUpdate(u.Source, u.Asset.String(), float64(u.Timestamp.Unix()))
+	recordOracleMetricIfMapped(u.Source, u.Asset, float64(u.Timestamp.Unix()))
 	logger.Debug("oracle update ingested",
 		"source", u.Source,
 		"ledger", u.Ledger,

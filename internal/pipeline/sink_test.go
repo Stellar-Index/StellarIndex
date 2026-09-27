@@ -758,3 +758,35 @@ func TestPersistWorker_Phase3ParallelWriteCountsOnlyInProjector(t *testing.T) {
 		})
 	}
 }
+
+// TestRecordOracleMetricIfMapped_SkipsUnmappedRawAsset pins Q099: a
+// capture-totality "raw:<symbol>" row must never mint its own
+// stellarindex_oracle_last_update_unix / _staleness_budget_seconds
+// label value, or an unbounded set of unmapped oracle symbols would
+// give the two gauges unbounded cardinality. A mapped asset must still
+// go through untouched.
+func TestRecordOracleMetricIfMapped_SkipsUnmappedRawAsset(t *testing.T) {
+	const source = "q099-test-source"
+
+	raw, err := canonical.NewOracleRawAsset("Q099UNMAPPEDTESTSYMBOL")
+	if err != nil {
+		t.Fatalf("NewOracleRawAsset: %v", err)
+	}
+	mapped := canonical.NativeAsset()
+
+	seriesBefore := testutil.CollectAndCount(obs.OracleLastUpdateUnix)
+
+	recordOracleMetricIfMapped(source, raw, 111)
+	if got := testutil.CollectAndCount(obs.OracleLastUpdateUnix); got != seriesBefore {
+		t.Fatalf("raw asset %s: OracleLastUpdateUnix series count = %d, want unchanged at %d (raw rows must not acquire a label)",
+			raw, got, seriesBefore)
+	}
+
+	recordOracleMetricIfMapped(source, mapped, 222)
+	if got := testutil.CollectAndCount(obs.OracleLastUpdateUnix); got != seriesBefore+1 {
+		t.Fatalf("mapped asset %s: OracleLastUpdateUnix series count = %d, want %d", mapped, got, seriesBefore+1)
+	}
+	if got := testutil.ToFloat64(obs.OracleLastUpdateUnix.WithLabelValues(source, mapped.String())); got != 222 {
+		t.Errorf("mapped asset OracleLastUpdateUnix = %v, want 222", got)
+	}
+}

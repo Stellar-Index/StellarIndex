@@ -14338,7 +14338,7 @@ components:
         See ADR-0019 for the freeze policy.
       properties:
         event:                { type: string, enum: [anomaly.freeze] }
-        asset:                { type: string, description: "Canonical asset_id of the base asset (e.g. `native`, `credit:USDC:G…`, `C…` for Soroban)." }
+        asset:                { type: string, description: "Canonical asset_id of the base asset (e.g. `native`, `USDC-G…` for a classic asset, `C…` for Soroban)." }
         quote:                { type: string, description: "Canonical asset_id of the quote asset (e.g. `fiat:USD`)." }
         frozen_value:         { type: string, description: "The price value we pinned the pair to during the freeze (decimal as a string to preserve precision). Absent when the pair froze on its first observed bucket: there was no prior price to pin, and the API serves none for it." }
         reason:
