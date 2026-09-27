@@ -44,12 +44,38 @@
 --   CALL refresh_continuous_aggregate('prices_1mo', now() - INTERVAL '6 months', now(), force => true);
 --   CALL refresh_continuous_aggregate('twap_1h', now() - INTERVAL '7 days', now(), force => true);
 --   CALL refresh_continuous_aggregate('twap_1d', now() - INTERVAL '7 days', now(), force => true);
---   CALL refresh_continuous_aggregate('pools_per_source_1h', now() - INTERVAL '7 days', now(), force => true);
+--   CALL refresh_continuous_aggregate('pools_per_source_1h', now() - INTERVAL '14 days', now(), force => true);
+--
+-- pools_per_source_1h gets 14 days, not 7: /v1/pools and
+-- /v1/markets?source= read it over MarketsRecencyWindow (14 d,
+-- internal/storage/timescale/markets.go), so a 7-day refresh drops every
+-- pool whose last trade is 7-14 days old until the walk reaches it.
 --
 -- then walk older windows the same way, prices_1m first for each window.
 -- Once pools_per_source_1h is whole, restore its real-time tail (0076):
 --
 --   ALTER MATERIALIZED VIEW pools_per_source_1h SET (timescaledb.materialized_only = false);
+--
+-- ─── ⚠ OPERATOR: pools_per_source_1h history this DROP destroys ─────
+-- The dropped pools_per_source_1h (0036) was materialized from `trades`
+-- when `trades` held history it no longer does: on r1 its 2023-06 buckets
+-- sum 76,392,293 SDEX trades against 35,624 `trades` rows (2026-09-28),
+-- ~96 GB across 2015-11..now. The rebuilt view can only re-derive what
+-- `trades` holds. On a deployment like that, copy the materialization to
+-- a plain table BEFORE applying, with the view's refresh-policy job
+-- paused (alter_job(<job_id>, scheduled => false)) so the source is
+-- stable, one transaction per year, and compare count/sums exactly per
+-- year before migrating:
+--
+--   CREATE TABLE public.pools_per_source_1h_archive
+--     (LIKE <pools_per_source_1h's materialization hypertable> INCLUDING DEFAULTS);
+--   INSERT INTO public.pools_per_source_1h_archive
+--   SELECT * FROM <materialization hypertable>
+--    WHERE bucket >= <year start> AND bucket < <next year start>;
+--
+-- Read the materialization hypertable, not the view: the view is
+-- real-time and unions raw `trades` past the watermark. r1's procedure is
+-- in the v0.92.1 operator plan.
 --
 -- The NULL-start TWAP refresh stays forbidden (0156):
 --
