@@ -114,8 +114,8 @@
           tcp dport 22 ip6 saddr @ssh_allowed_v6 ct state new accept comment "ssh-v6"
 
           # Prometheus + Alertmanager API + gossip (TCP).
-          tcp dport { 9090, 9093, {{ alertmanager_cluster_listen_port }} } ip saddr @internal_v4 accept comment "prometheus-stack-tcp"
-          tcp dport { 9090, 9093, {{ alertmanager_cluster_listen_port }} } ip6 saddr @internal_v6 accept comment "prometheus-stack-tcp-v6"
+          tcp dport { {{ prometheus_port }}, {{ alertmanager_port }}, {{ alertmanager_cluster_listen_port }} } ip saddr @internal_v4 accept comment "prometheus-stack-tcp"
+          tcp dport { {{ prometheus_port }}, {{ alertmanager_port }}, {{ alertmanager_cluster_listen_port }} } ip6 saddr @internal_v6 accept comment "prometheus-stack-tcp-v6"
           # Alertmanager cluster gossip (UDP).
           udp dport {{ alertmanager_cluster_listen_port }} ip saddr @internal_v4 accept comment "alertmanager-cluster-udp"
           udp dport {{ alertmanager_cluster_listen_port }} ip6 saddr @internal_v6 accept comment "alertmanager-cluster-udp-v6"

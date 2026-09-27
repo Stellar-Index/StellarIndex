@@ -21,7 +21,7 @@ ExecStart=/usr/local/bin/prometheus \
   --web.config.file=/etc/prometheus/web-config.yml \
 {% endif %}
   --web.listen-address={{ prometheus_listen }} \
-  --web.external-url=http://{{ inventory_hostname }}:9090/
+  --web.external-url=http://{{ inventory_hostname }}:{{ prometheus_port }}/
 
 ExecReload=/bin/kill -HUP $MAINPID
 KillMode=process
