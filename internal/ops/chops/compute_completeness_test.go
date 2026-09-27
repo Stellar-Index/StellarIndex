@@ -101,6 +101,40 @@ func TestRunRecognitionScan_CleanScanPassesGapsThrough(t *testing.T) {
 	}
 }
 
+// TestRecognitionGlobalExcludeSyms_ExcludesFirehoseNotClassicToken pins
+// GH-1295: the global CH recognition census must exclude
+// clickhouse.FirehoseExcludeSyms (ClassicTokenTopic0Syms minus set_admin),
+// never the full ClassicTokenTopic0Syms. Excluding set_admin wholesale hid
+// the Blend/Comet pool-level set_admin collision on the shared "POOL" topic,
+// and — combined with watchedSep41RecognitionShapes not existing — made a
+// watched SEP-41 source silently dropping its own transfer/mint/burn/…
+// events unreachable: the shape never entered the census at all.
+func TestRecognitionGlobalExcludeSyms_ExcludesFirehoseNotClassicToken(t *testing.T) {
+	if !reflect.DeepEqual(recognitionGlobalExcludeSyms, clickhouse.FirehoseExcludeSyms) {
+		t.Fatalf("global recognition census must exclude clickhouse.FirehoseExcludeSyms, got %v", recognitionGlobalExcludeSyms)
+	}
+	if reflect.DeepEqual(recognitionGlobalExcludeSyms, clickhouse.ClassicTokenTopic0Syms) {
+		t.Fatalf("global recognition census must NOT exclude the full ClassicTokenTopic0Syms " +
+			"(GH-1295): that hides the Blend/Comet set_admin collision and makes a watched " +
+			"SEP-41 source's own event kinds unreachable")
+	}
+}
+
+// TestWatchedSep41RecognitionShapes_EmptyWatchListScansNothing pins the
+// short-circuit: an empty watched_sep41_contracts means the SEP-41 supply
+// pipeline is off (config.go's own doc), so there is no source whose own
+// event kinds could be silently dropped — a real CH dial would be wasted
+// work, not a correctness requirement.
+func TestWatchedSep41RecognitionShapes_EmptyWatchListScansNothing(t *testing.T) {
+	shapes, err := watchedSep41RecognitionShapes(context.Background(), config.Config{}, "unreachable:0", 0, 100)
+	if err != nil {
+		t.Fatalf("empty watch list must short-circuit without dialing ClickHouse, got err: %v", err)
+	}
+	if shapes != nil {
+		t.Errorf("empty watch list must scan nothing, got %v", shapes)
+	}
+}
+
 // TestProjectionDelta_PerLedgerCatchesNetting pins the CS-084 fix:
 // a real drop in one ledger masked by a phantom overcount in another
 // nets to Δ=0 under a totals compare — the strict per-ledger default
