@@ -541,6 +541,16 @@ type AssetDetail struct {
 	// detection.
 	UnverifiedWarning *UnverifiedWarning `json:"unverified_warning,omitempty"`
 
+	// FiatCodeAnchor points at the catalogue's fiat denomination when
+	// the requested asset's code names a sovereign currency (USD, EUR,
+	// …) with no Stellar issuance of its own — the shape SEP-1 gives a
+	// fiat anchor's deposit token. Populated by handleAssetGet via the
+	// verified-currency catalogue; nil for any code the catalogue does
+	// not hold as a fiat denomination. Distinct from UnverifiedWarning:
+	// a fiat code is a denomination, never an impersonation claim, so
+	// this never suppresses market_cap_usd (K033/F006).
+	FiatCodeAnchor *FiatCodeAnchor `json:"fiat_code_anchor,omitempty"`
+
 	// UnverifiedTickerCollision is the per-row trust signal on the
 	// /v1/assets LISTING: true when this row's (code, issuer) uses a
 	// verified currency's Stellar ticker but is NOT the verified
@@ -579,6 +589,22 @@ type UnverifiedWarning struct {
 	// Note is a one-sentence warning rendered verbatim by clients.
 	// Composed server-side from the verified currency's metadata
 	// so the wording stays consistent.
+	Note string `json:"note"`
+}
+
+// FiatCodeAnchor is the body attached to /v1/assets/{id} when the
+// requested classic asset's code names a catalogue fiat denomination
+// with no Stellar issuance of its own. Neutral by design: it never
+// carries an impersonation verdict and its presence never suppresses
+// market_cap_usd.
+type FiatCodeAnchor struct {
+	// Ticker is the ISO-4217 code the asset denominates in ("USD").
+	Ticker string `json:"ticker"`
+	// KnownAnchor is true when the issuer is in the catalogue's
+	// operator-curated known-anchor set for this ticker — an
+	// affirmatively recognised anchor rather than merely unflagged.
+	KnownAnchor bool `json:"known_anchor"`
+	// Note is a one-sentence, verbatim-safe-to-render summary.
 	Note string `json:"note"`
 }
 
@@ -3871,7 +3897,34 @@ func (s *Server) verifiedCurrencyFlags(detail *AssetDetail, asset canonical.Asse
 	if applyUnverifiedWarning(detail, asset, s.verifiedCurrencies) {
 		flags.UnverifiedTickerCollision = true
 	}
+	applyFiatCodeAnchorNote(detail, asset, s.verifiedCurrencies)
 	return flags
+}
+
+// applyFiatCodeAnchorNote stamps detail.FiatCodeAnchor when asset is a
+// classic Stellar asset whose code names a catalogue fiat denomination
+// (USD, EUR, …) with no Stellar issuance of its own — the shape SEP-1
+// mandates for a fiat anchor's deposit token (anchor_asset_type=fiat).
+// Neutral note only: never an impersonation verdict, never a
+// market-cap suppression (K033/F006, following applyUnverifiedWarning
+// which already stopped fiat codes from colliding via StellarCollision).
+func applyFiatCodeAnchorNote(detail *AssetDetail, asset canonical.Asset, cat *currency.Catalogue) {
+	if cat == nil || asset.Type != canonical.AssetClassic {
+		return
+	}
+	denom, knownAnchor, ok := cat.FiatCodeAnchor(asset.Code, asset.Issuer)
+	if !ok {
+		return
+	}
+	note := fmt.Sprintf("issuer-declared %s token; verify the anchor", denom.Ticker)
+	if knownAnchor {
+		note = fmt.Sprintf("%s token issued by a recognised anchor for %s", denom.Ticker, denom.Name)
+	}
+	detail.FiatCodeAnchor = &FiatCodeAnchor{
+		Ticker:      denom.Ticker,
+		KnownAnchor: knownAnchor,
+		Note:        note,
+	}
 }
 
 // stampListingCollisions sets AssetDetail.UnverifiedTickerCollision on

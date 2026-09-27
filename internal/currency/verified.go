@@ -97,6 +97,15 @@ type VerifiedCurrency struct {
 	// CoinMarketCapIDs() so the protected reference-price pipeline is
 	// unaffected. Set via `reference_only: true` in seed.yaml.
 	ReferenceOnly bool
+	// KnownAnchorIssuers is an operator-curated list of Stellar account
+	// ids affirmatively recognised as issuing a SEP-1 anchor deposit
+	// token for this fiat denomination (e.g. a regulated USD anchor's
+	// issuer for the USD entry). Meaningful only on a ClassFiat entry
+	// with no Stellar issuance of its own; empty means "no anchor
+	// curated yet", not "no legitimate anchor exists". Consulted by
+	// FiatCodeAnchor, never by StellarCollision. Set via
+	// `known_anchors:` in seed.yaml.
+	KnownAnchorIssuers []string
 }
 
 // IssuanceEntry is the Stellar issuance identity for a verified
@@ -163,6 +172,7 @@ type rawCurrency struct {
 	SupplyDecimals      int           `yaml:"supply_decimals"`
 	Issuance            []rawIssuance `yaml:"networks"`
 	ReferenceOnly       bool          `yaml:"reference_only"`
+	KnownAnchors        []string      `yaml:"known_anchors"`
 }
 
 type rawIssuance struct {
@@ -281,6 +291,7 @@ func buildVerifiedCurrency(rc rawCurrency) (*VerifiedCurrency, error) {
 		CirculatingSupply:   rc.CirculatingSupply,
 		SupplyDecimals:      rc.SupplyDecimals,
 		ReferenceOnly:       rc.ReferenceOnly,
+		KnownAnchorIssuers:  rc.KnownAnchors,
 		Issuance:            make([]IssuanceEntry, 0, len(rc.Issuance)),
 	}
 	for _, rn := range rc.Issuance {
@@ -587,6 +598,34 @@ func (c *Catalogue) FiatDenomination(code string) (*VerifiedCurrency, bool) {
 	}
 	v, ok := c.byFiatCode[strings.ToUpper(code)]
 	return v, ok
+}
+
+// FiatCodeAnchor answers the anchor-verdict question StellarCollision
+// deliberately never gates on (K033/F006): given a classic asset's
+// (code, issuer), is code a catalogue fiat denomination, and if so is
+// issuer in that entry's operator-curated known-anchor set?
+//
+// Returns (nil, false, false) when code is not a fiat denomination —
+// callers must not attach a fiat-anchor note in that case. Returns
+// (denomination, false, true) for a fiat code whose issuer is not yet
+// curated: a neutral "declared, unverified anchor" note, never an
+// impersonation warning and never a market-cap suppression. Returns
+// (denomination, true, true) when issuer is a recognised anchor for
+// that currency.
+func (c *Catalogue) FiatCodeAnchor(code, issuer string) (denomination *VerifiedCurrency, knownAnchor, ok bool) {
+	if c == nil || issuer == "" {
+		return nil, false, false
+	}
+	v, ok := c.FiatDenomination(code)
+	if !ok {
+		return nil, false, false
+	}
+	for _, a := range v.KnownAnchorIssuers {
+		if a == issuer {
+			return v, true, true
+		}
+	}
+	return v, false, true
 }
 
 // StellarEntry returns the Stellar network entry for a verified
