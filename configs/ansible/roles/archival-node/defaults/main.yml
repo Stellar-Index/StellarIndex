@@ -613,6 +613,16 @@ run_stellarindex: true
 # aggregate output from the same inputs), so the full 13-source set
 # is the default rather than a per-region knob. Matches r1's live
 # /etc/stellarindex.toml.
+#
+# This is the PUBNET default and stays a plain list — lint-source-
+# enablement.sh's read_yaml_list parses it as one and fails closed on
+# anything else (Jinja included), and §7 relies on no pubnet inventory
+# overriding it. The reflector-dex/cex/fx, redstone and band oracle
+# entries are consumed only by the aggregator; stellarindex.toml.j2
+# derives the rendered [ingestion] enabled_sources from run_aggregator
+# so a host that turns the aggregator off (and does not itself override
+# this list) doesn't ship oracle contracts the indexer has no aggregator
+# to feed.
 stellarindex_enabled_sources:
   - "soroswap"
   - "soroswap-router"
