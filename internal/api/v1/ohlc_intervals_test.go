@@ -101,3 +101,27 @@ func TestOHLCIntervals_ParserAcceptsExactlyTheRouteTable(t *testing.T) {
 		}
 	}
 }
+
+// TestOHLCIntervals_DescriptionNamesEveryFoldedRoute — the operation
+// description's prose enumerating which intervals are re-bucketed
+// from a finer continuous aggregate must name every folded route in
+// [timescale.OHLCRoutes], not just the ones true when it was last
+// hand-edited (GH-644: the prose named only 5m/30m/4h after 2h, 12h,
+// 3d and 2w were added as folded routes).
+func TestOHLCIntervals_DescriptionNamesEveryFoldedRoute(t *testing.T) {
+	spec := loadOpenAPISpec(t)
+	op := spec.Paths["/ohlc"]["get"]
+	if op == nil {
+		t.Fatal("spec has no GET /ohlc")
+	}
+	for _, r := range timescale.OHLCRoutes {
+		if !r.Folded() {
+			continue
+		}
+		if !strings.Contains(op.Description, r.Interval) {
+			t.Errorf("GET /ohlc description does not mention folded interval %q "+
+				"(source %s, fold %s); it must name every OHLCRoutes entry with "+
+				"Folded() == true", r.Interval, r.Source, r.Fold)
+		}
+	}
+}

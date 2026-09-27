@@ -1261,8 +1261,12 @@ export interface paths {
          *            (1m → :00, 1h → top of hour, 1d → 00:00 UTC).
          *          - `from` = `to - limit * interval`.
          *
-         *        5m, 30m, and 4h are CAGG-re-bucketed from finer-grain
-         *        continuous aggregates (5m/30m ← prices_1m, 4h ← prices_1h).
+         *        5m, 30m, 2h, 4h, 12h, 3d and 2w are CAGG-re-bucketed from
+         *        finer-grain continuous aggregates (5m/30m ← prices_1m;
+         *        2h/4h/12h ← prices_1h; 3d ← prices_1d; 2w ← prices_1w) —
+         *        see `internal/storage/timescale/ohlc_routes.go`'s
+         *        `OHLCRoutes` table, the single declaration this list must
+         *        track.
          */
         get: operations["getOhlc"];
         put?: never;

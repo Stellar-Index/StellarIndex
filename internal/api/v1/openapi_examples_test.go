@@ -141,7 +141,8 @@ type openAPISpec struct {
 }
 
 type openAPIOperation struct {
-	Parameters []openAPIParameter `yaml:"parameters"`
+	Description string             `yaml:"description"`
+	Parameters  []openAPIParameter `yaml:"parameters"`
 }
 
 type openAPIParameter struct {
