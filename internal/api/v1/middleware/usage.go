@@ -117,11 +117,15 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 			n := units.get()
 			if billableClass(class, deadlineFired.Load()) {
 				// Legacy total: billable traffic only (quota input).
+				// The counter is the alertable signal; a per-request log
+				// line would flood during an outage.
 				if err := counter.IncrementBy(ctx, id, n); err != nil {
+					obs.UsageUnitsDroppedTotal.WithLabelValues(obs.UsageCounterBillable).Add(float64(n))
 					logger.Debug("usage: increment failed", "err", err, "subject", id)
 				}
 			}
 			if err := counter.IncrementDetailBy(ctx, id, family, class, n); err != nil {
+				obs.UsageUnitsDroppedTotal.WithLabelValues(obs.UsageCounterDetail).Add(float64(n))
 				logger.Debug("usage: detail increment failed",
 					"err", err, "subject", id, "endpoint", family, "class", class)
 			}

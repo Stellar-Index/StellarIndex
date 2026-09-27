@@ -2045,6 +2045,18 @@ Alert: `stellarindex_customer_webhook_fanout_failing` →
 
 C3-023 (audit-2026-07-23).
 
+### `stellarindex_usage_units_dropped_total`
+
+Counter, label `counter` (`billable` / `detail`). Pre-seeded at zero.
+
+Request units the API served but failed to write to the Redis usage
+counters (`internal/api/v1/middleware/usage.go`). Metering is
+best-effort, so the request still succeeds. `billable` is the per-day
+total that `MonthlyQuota` enforces against: a dropped unit there is
+unmetered quota and cannot be reconstructed. `detail` is the
+per-endpoint hash behind `/v1/account/usage`. The Redis error class is
+on `stellarindex_redis_command_errors_total`.
+
 ### `stellarindex_usage_rollup_sweeps_total`
 
 Counter, label `outcome` (`ok` / `scan_error` / `sink_error`).

@@ -382,12 +382,15 @@ func registerFailedAuthMetrics() {
 // failing or write-refusing Redis, so the first failure is a visible
 // increase() rather than the silent first sample of a new child.
 func registerRedisFailureMetrics() {
-	Registry.MustRegister(RateLimitFailClosedTotal, RedisCommandErrorsTotal)
+	Registry.MustRegister(RateLimitFailClosedTotal, RedisCommandErrorsTotal, UsageUnitsDroppedTotal)
 	for _, limiter := range []string{RateLimiterAPI, RateLimiterFailedAuth, RateLimiterSignupIP} {
 		RateLimitFailClosedTotal.WithLabelValues(limiter)
 	}
 	for _, class := range RedisErrorClasses {
 		RedisCommandErrorsTotal.WithLabelValues(class)
+	}
+	for _, counter := range []string{UsageCounterBillable, UsageCounterDetail} {
+		UsageUnitsDroppedTotal.WithLabelValues(counter)
 	}
 }
 
@@ -2250,6 +2253,24 @@ var UsageRollupSweepsTotal = prometheus.NewCounterVec(
 		Help: "Usage-rollup worker sweep outcomes (ok|scan_error|sink_error).",
 	},
 	[]string{"outcome"},
+)
+
+// UsageUnitsDroppedTotal — request units the API served but failed to
+// record in the Redis usage counters. Metering is best-effort, so the
+// request still succeeds; a dropped `billable` unit is unmetered quota
+// and cannot be reconstructed afterwards.
+var UsageUnitsDroppedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_usage_units_dropped_total",
+		Help: "Request units whose usage-counter write failed, by counter (billable|detail).",
+	},
+	[]string{"counter"},
+)
+
+// Label values for [UsageUnitsDroppedTotal].
+const (
+	UsageCounterBillable = "billable"
+	UsageCounterDetail   = "detail"
 )
 
 // UsageRollupSweepDurationSeconds — latency histogram for one

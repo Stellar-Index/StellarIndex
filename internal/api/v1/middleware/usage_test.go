@@ -8,10 +8,12 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/usage"
 )
 
@@ -365,6 +367,44 @@ func TestUsageTracker_ResolveRoute_ThrottledBeforeDispatch(t *testing.T) {
 
 // TestUsageTracker_AnonymousSkipped — no subject → no counters at
 // all (nothing to bill).
+// A write-refusing Redis must not fail the request, but every unit it
+// drops must be counted: the billable total is the monthly-quota input.
+func TestUsageTracker_RefusedWriteCountsDroppedUnits(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	if err := rdb.Ping(context.Background()).Err(); err != nil {
+		t.Fatal(err)
+	}
+	mr.SetError("MISCONF Redis is configured to save RDB snapshots, but it's currently unable to persist to disk")
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/price", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	stamp := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			sub := auth.Subject{Tier: auth.TierAPIKey, KeyID: "kid_drop"}
+			next.ServeHTTP(w, r.WithContext(auth.WithSubject(r.Context(), sub)))
+		})
+	}
+	h := middleware.Chain(mux, stamp, middleware.UsageTracker(usage.New(rdb), nil))
+
+	billable := obs.UsageUnitsDroppedTotal.WithLabelValues(obs.UsageCounterBillable)
+	detail := obs.UsageUnitsDroppedTotal.WithLabelValues(obs.UsageCounterDetail)
+	b0, d0 := testutil.ToFloat64(billable), testutil.ToFloat64(detail)
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/price", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — metering must stay best-effort", w.Code)
+	}
+	if got := testutil.ToFloat64(billable) - b0; got != 1 {
+		t.Errorf("billable units dropped delta = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(detail) - d0; got != 1 {
+		t.Errorf("detail units dropped delta = %v, want 1", got)
+	}
+}
+
 func TestUsageTracker_AnonymousSkipped(t *testing.T) {
 	ts, counter := usageTestStack(t, auth.Subject{}, "GET /v1/price", http.StatusOK)
 	resp, err := http.Get(ts.URL + "/v1/price")

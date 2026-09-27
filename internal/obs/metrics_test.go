@@ -114,6 +114,7 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 		"stellarindex_ratelimit_fail_open_total",
 		"stellarindex_ratelimit_fail_closed_total",
 		"stellarindex_redis_command_errors_total",
+		"stellarindex_usage_units_dropped_total",
 		"stellarindex_failed_auth_total",
 		"stellarindex_sep1_cache_ops_total",
 		"stellarindex_cursor_last_ledger",
