@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // Composite corroboration (2026-07-25).
@@ -123,6 +124,8 @@ func (o *Orchestrator) recordComposite(
 		combinedConfidence: combinedConfidence,
 		diverged:           diverged,
 	}
+	obs.AggregatorRouteCorroborationCount.WithLabelValues(target.String(), windowLabel(window)).
+		Set(float64(corroborationCount))
 }
 
 // routeCorroborationCount returns the number of INDEPENDENT, tightly-

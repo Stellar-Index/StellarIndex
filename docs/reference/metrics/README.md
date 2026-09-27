@@ -2881,7 +2881,8 @@ the reference set.
 ### `stellarindex_aggregator_triangulations_total`
 
 Counter, label `outcome` (`ok` / `missing_leg` / `parse_error` /
-`redis_error` / `frozen_leg` / `low_confidence` / `proxy_pivot`).
+`redis_error` / `frozen_leg` / `frozen_leg_direct_served` /
+`low_confidence` / `proxy_pivot`).
 
 Triangulation outcomes per tick × chain × window. The aggregator
 runs one row per (chain, window) per tick after the per-pair
@@ -2899,6 +2900,15 @@ that carries no frozen flag of its own. The freeze is inherited onto
 the target pair instead. Treat a sustained `frozen_leg` rate as
 "the chain's legs are under anomaly protection", not as an error.
 
+`frozen_leg_direct_served` (CA2-A21-correct-2) is the narrower case where
+the route around the frozen leg is unreachable (`ErrNoRoute`), but the
+target ALSO published its own direct print this tick. That fresh,
+independently-checked value is not a last-known-good: no freeze is
+inherited onto it, its TTL is left alone, and it serves unmarked. A
+sustained `frozen_leg_direct_served` rate means legs are freezing around
+targets that keep pricing themselves directly — informational, not an
+error, and distinct from `missing_leg` (nothing here is dry).
+
 `low_confidence` and `proxy_pivot` also leave the direct price serving
 and write only the composite_meta flags. `proxy_pivot` means a priced
 leg took prints through the stablecoin-fiat proxy and those stablecoin
@@ -2907,7 +2917,7 @@ composite-reference leg-dispersion bound (a de-peg): the composite would
 multiply a stablecoin price by a real-USD FX rate.
 `composite_meta.pivot_surface_refusal` names the leg.
 
-All seven outcomes are pre-seeded at zero in `internal/obs`, so
+All eight outcomes are pre-seeded at zero in `internal/obs`, so
 `rate()` / `absent()` on any of them is a real zero rather than a gap
 before the first event.
 
@@ -2954,6 +2964,19 @@ venue-specific → the freeze engages as before. `unavailable` = a leg
 could not back a reference (thin, not refreshed, FX stale or not
 FX-class) → freeze as before, the reason names the cause. Cardinality:
 allow-list × windows × 3.
+
+### `stellarindex_aggregator_route_corroboration_count`
+
+Gauge, labels `pair`, `window`.
+
+The router's independent, tightly-agreeing, non-diverged route count
+behind the last composite published for (pair, window) — the router
+corroboration count (GH-1023), NOT `path_count` (the raw survivor-set
+size before the tight-agreement / independence filter) and not the
+venue source count phase2_freeze's freeze reason carries as
+`sources=`. The freeze reason's paired `route_corroboration=` field
+mirrors this gauge's value at decision time; `composite_meta`'s
+`corroboration_count` carries the same number per composite.
 
 ### `stellarindex_aggregator_composite_reference_leg_sources`
 

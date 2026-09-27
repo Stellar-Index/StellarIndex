@@ -206,6 +206,7 @@ func registerFreezeLifecycleMetrics() {
 		AggregatorCompositeReferenceLegSources,
 		AggregatorCompositeReferenceLegDispersionBps,
 		AggregatorCompositeFreezeSuppressedTotal,
+		AggregatorRouteCorroborationCount,
 	)
 }
 
@@ -434,7 +435,7 @@ func seedBoundedLabelSeries() {
 	// publish a derived price because a leg was frozen" was the one
 	// outcome an operator could not distinguish from "this metric is
 	// dead" until it first fired.
-	for _, outcome := range []string{"ok", "missing_leg", "parse_error", "redis_error", "frozen_leg", "low_confidence", "proxy_pivot"} {
+	for _, outcome := range []string{"ok", "missing_leg", "parse_error", "redis_error", "frozen_leg", "frozen_leg_direct_served", "low_confidence", "proxy_pivot"} {
 		AggregatorTriangulationsTotal.WithLabelValues(outcome)
 	}
 	// The self-pair exploit detector is EXPECTED to sit at zero indefinitely
@@ -4098,7 +4099,7 @@ var AnomalyFreezeRecoverySweepDurationSeconds = prometheus.NewHistogramVec(
 var AggregatorTriangulationsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_triangulations_total",
-		Help: "Aggregator triangulation outcomes per tick × chain × window (graph-router priced). Outcome ∈ {ok, missing_leg, parse_error, redis_error, frozen_leg, low_confidence, proxy_pivot}. low_confidence = no route cleared min_route_confidence, so the composite was flagged but NOT published over the direct price. proxy_pivot = a priced leg's stablecoin-proxy prints disagree with its own-quote prints, so the composite was flagged but NOT published over the direct price.",
+		Help: "Aggregator triangulation outcomes per tick × chain × window (graph-router priced). Outcome ∈ {ok, missing_leg, parse_error, redis_error, frozen_leg, frozen_leg_direct_served, low_confidence, proxy_pivot}. low_confidence = no route cleared min_route_confidence, so the composite was flagged but NOT published over the direct price. proxy_pivot = a priced leg's stablecoin-proxy prints disagree with its own-quote prints, so the composite was flagged but NOT published over the direct price. frozen_leg_direct_served = a leg froze and the route around it is unreachable, but the target published its own direct print this tick anyway — served unmarked, no freeze inherited.",
 	},
 	[]string{"outcome"},
 )
@@ -4119,6 +4120,22 @@ var AggregatorCompositeCorroboration = prometheus.NewGaugeVec(
 		Help: "Current-bucket composite-reference verdict per (pair, window): 1 on the active verdict ∈ {corroborated, refuted, unavailable}, 0 on the others. Only structurally single-venue allow-listed targets are evaluated.",
 	},
 	[]string{"pair", "window", "verdict"},
+)
+
+// AggregatorRouteCorroborationCount — the router's independent,
+// tightly-agreeing, non-diverged route count behind the last published
+// composite for (pair, window) (GH-1023). This is the ROUTER count, not
+// path_count (the raw survivor-set size before the tight-agreement /
+// independence filter) and not the venue source count phase2_freeze's
+// `sources=` reads — see [orchestrator.compositeMeta.CorroborationCount]
+// and the freeze reason's paired `sources=` / `route_corroboration=`
+// fields, which this gauge mirrors for dashboards.
+var AggregatorRouteCorroborationCount = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_route_corroboration_count",
+		Help: "Router corroboration count (independent, tightly-agreeing, non-diverged routes) behind the last published composite, per (pair, window). Distinct from path_count and from the venue source count in the freeze reason's sources= field.",
+	},
+	[]string{"pair", "window"},
 )
 
 // AggregatorCompositeReferenceLegSources — distinct venue / provider

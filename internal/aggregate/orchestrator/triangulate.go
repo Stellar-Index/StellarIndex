@@ -296,7 +296,19 @@ func (o *Orchestrator) routeTarget(
 		// inheritance (MNY-22): the target keeps serving its LKG and
 		// carries flags.frozen. Otherwise the legs are simply dry/absent —
 		// the missing_leg the chains-dry alert watches.
+		//
+		// But the target may have published its OWN direct print this tick
+		// (tickEdgePrice) even though the route around it is unreachable —
+		// e.g. XLM/USD frozen, XLM/GBP printed directly, XLM/EUR dry. That
+		// fresh, independently-checked value is not an LKG: inheriting the
+		// freeze onto it would Expire it down to FreezeTTL and stamp
+		// flags.frozen=true on a price nothing actually froze. Serve it
+		// unmarked instead — a distinct outcome, not "missing_leg" (that
+		// feeds the chains-dry alert, and nothing here is dry).
 		if st.frozen {
+			if _, ok := o.tickEdgePrice(chain.Target, window); ok {
+				return outcomeFrozenLegDirectServed
+			}
 			o.inheritLegFreeze(ctx, chain, window, st.frozenLeg)
 			return outcomeFrozenLeg
 		}
@@ -814,6 +826,14 @@ func fxLegProvenance(leg canonical.Pair) []string {
 // for "a leg of this chain was frozen this tick, so the chain did not
 // publish" (MNY-22).
 const outcomeFrozenLeg = "frozen_leg"
+
+// outcomeFrozenLegDirectServed is the [obs.AggregatorTriangulationsTotal]
+// label for "a leg of this chain was frozen this tick, the route around it
+// is unreachable, but the target published its own direct print this tick
+// anyway" (CA2-A21-correct-2). Unlike [outcomeFrozenLeg], no freeze is
+// inherited: the direct value is fresh, not an LKG, so it serves unmarked
+// and its TTL is left alone.
+const outcomeFrozenLegDirectServed = "frozen_leg_direct_served"
 
 // outcomeStaleLeg is legPriceFromCache's refusal of a leg this
 // orchestrator refreshes itself but did not publish this tick. The
