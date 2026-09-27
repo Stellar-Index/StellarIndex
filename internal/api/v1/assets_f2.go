@@ -364,13 +364,17 @@ func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asse
 	if s.prices == nil || detail.PriceUSD != nil {
 		return 0
 	}
-	usdPrice, sourceCount, ok := s.lookupUSDPriceWithSources(ctx, asset)
-	if !ok {
+	l := s.lookupUSDPriceWithSources(ctx, asset)
+	if l.withheld != "" {
+		detail.PriceWithheldReason = l.withheld
 		return 0
 	}
-	priceCopy := usdPrice
+	if l.price == "" {
+		return 0
+	}
+	priceCopy := l.price
 	detail.PriceUSD = &priceCopy
-	return sourceCount
+	return l.sources
 }
 
 // marketCapRefused is the pre-figure half of the valuation guards shared by
@@ -520,28 +524,37 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 // priceFallback isn't reachable (the supply / change-24h paths
 // bypass the /v1/price handler entirely).
 func (s *Server) lookupUSDPrice(ctx context.Context, asset canonical.Asset) (string, bool) {
-	price, _, ok := s.lookupUSDPriceWithSources(ctx, asset)
-	return price, ok
+	l := s.lookupUSDPriceWithSources(ctx, asset)
+	return l.price, l.price != ""
+}
+
+// usdPriceLookup is [Server.lookupUSDPriceWithSources]'s verdict: served
+// (price set), withheld (withheld set) or absent (neither). Withheld is
+// its own state so a withheld asset cannot read as one that never traded.
+type usdPriceLookup struct {
+	price    string
+	sources  int
+	withheld PriceWithheldReason
 }
 
 // lookupUSDPriceWithSources is [Server.lookupUSDPrice] plus the number of
 // DISTINCT venues that backed the returned price — the liquidity signal the
-// market-cap valuation guard needs (see [dustLiquiditySuppressed]). It is the
-// single implementation; lookupUSDPrice is the thin (price, ok) wrapper kept
-// for the callers (explorer seam, lending, change-24h) that don't need the
-// venue count. sourceCount is 0 when ok is false.
-func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.Asset) (string, int, bool) {
+// market-cap valuation guard needs (see [dustLiquiditySuppressed]) — and the
+// withholding verdict. It is the single implementation; lookupUSDPrice is the
+// thin (price, ok) wrapper for callers (lending, change-24h) that may only
+// use a served price and have no field to report a withholding on.
+func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.Asset) usdPriceLookup {
 	if s.prices == nil {
 		// Options documents Prices as independently optional ("nil →
 		// 503"); populatePriceUSD guards this, but populateChange24h
 		// reaches us via a different path. Guard here so a
 		// Prices==nil,Change24h!=nil wiring can't nil-panic.
-		return "", 0, false
+		return usdPriceLookup{}
 	}
 	if asset.Equal(defaultPriceQuote) {
 		// fiat:USD priced against fiat:USD is meaningless;
 		// short-circuit before the reader rejects it.
-		return "", 0, false
+		return usdPriceLookup{}
 	}
 	// Alias-aware read — the SAME resolution /v1/price uses. XLM
 	// surfaces in two canonical forms (`native` per-network and
@@ -554,6 +567,11 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 	// resolve to the same canonical USD price. Non-aliased assets are
 	// unaffected (assetAliases returns [asset] for everything else).
 	snap, sources, _, err := s.readPriceWithAliases(ctx, s.prices, asset, defaultPriceQuote)
+	if errors.Is(err, ErrPriceWithheld) {
+		// Withheld beats every fallback, as on /v1/price: the proxy below
+		// would re-serve the refused market through a side door.
+		return usdPriceLookup{withheld: priceWithheldReason(err)}
+	}
 	if err == nil && snap.Price != "" {
 		// dex-nonstandard-decimals forward normalization (M2):
 		// readPriceWithAliases returns the RAW asset/fiat:USD ratio. This is
@@ -563,15 +581,20 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 		// fixes every one at once. Byte-identical no-op for a 7dp asset. (The
 		// proxy branch below self-normalizes inside tryStablecoinFiatProxy.)
 		s.normalizeRawPriceSnapshot(&snap, asset, defaultPriceQuote)
-		return snap.Price, len(sources), true
+		return usdPriceLookup{price: snap.Price, sources: len(sources)}
 	}
 	// Read-time stablecoin-fiat proxy fallback (matches the
 	// handler-side fix in #1217 / tryStablecoinFiatProxy). Already
 	// decimals-normalized inside tryStablecoinFiatProxy — do NOT re-apply.
-	if proxy, proxySources, ok, _ := s.tryStablecoinFiatProxy(ctx, asset, defaultPriceQuote); ok && proxy.Price != "" {
-		return proxy.Price, len(proxySources), true
+	proxy, proxySources, ok, withheld := s.tryStablecoinFiatProxy(ctx, asset, defaultPriceQuote)
+	if ok && proxy.Price != "" {
+		return usdPriceLookup{price: proxy.Price, sources: len(proxySources)}
 	}
-	return "", 0, false
+	if withheld {
+		// The verdict /v1/price and the tip report for a withheld peg leg.
+		return usdPriceLookup{withheld: PriceWithheldUpstreamLeg}
+	}
+	return usdPriceLookup{}
 }
 
 // populateChange24h fills detail.Change24hPct via the

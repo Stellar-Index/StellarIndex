@@ -214,7 +214,9 @@ func withheldReasonFor(w pricingguard.Withholding) PriceWithheldReason {
 // withheldBy folds the server's two gate seams into one verdict, with
 // pricingguard's precedence: the scam gate is asked FIRST (a pair both
 // gates refuse is reported under the flag, not as merely thin), the
-// substance gate always. Nil gates withhold nothing.
+// substance gate always. Nil gates withhold nothing. It and scamWithheld
+// are the package's only permitted gate-half calls
+// (cmd/stellarindex-api TestWithholdingGatesAreSpelledOnlyAtTheChokepoint).
 func withheldBy(ctx context.Context, substance PriceSubstanceGate, scam PriceScamGate, asset, quote canonical.Asset, surface string) pricingguard.Withholding {
 	scamFlagged := scamWithheld(ctx, scam, asset, quote, surface)
 	substanceAllowed := substance == nil || substance.Allowed(ctx, asset, quote, surface)
