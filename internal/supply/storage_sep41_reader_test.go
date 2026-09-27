@@ -16,8 +16,11 @@ type fakeSEP41Store struct {
 	totalsErr       error
 	holderBalances  map[string]*big.Int // key: "holder:assetKey"
 	holderLookupErr error
-	genesisSeeded   bool
-	genesisErr      error
+	// trustlines is TrustlineBalanceForAccountAtOrBefore's table, keyed
+	// "account|assetKey".
+	trustlines    map[string]*big.Int
+	genesisSeeded bool
+	genesisErr    error
 	// minLedger is returned by MinSEP41ComponentLedger; defaults to 0
 	// (gate-skip).
 	minLedger uint32
@@ -36,6 +39,13 @@ func (f *fakeSEP41Store) SACBalanceForContractAtOrBefore(_ context.Context, hold
 	}
 	key := holder + ":" + assetKey
 	if v, ok := f.holderBalances[key]; ok {
+		return v, nil
+	}
+	return big.NewInt(0), nil
+}
+
+func (f *fakeSEP41Store) TrustlineBalanceForAccountAtOrBefore(_ context.Context, accountID, assetKey string, _ uint32) (*big.Int, error) {
+	if v, ok := f.trustlines[accountID+"|"+assetKey]; ok {
 		return v, nil
 	}
 	return big.NewInt(0), nil
@@ -74,7 +84,7 @@ func TestStorageSEP41SupplyReader_HappyPath(t *testing.T) {
 			Clawback: big.NewInt(500),
 		},
 	}
-	r := NewStorageSEP41SupplyReader(store)
+	r := NewStorageSEP41SupplyReader(store, nil)
 	asset := mustSorobanAsset(t, tContract)
 	got, err := r.SEP41SupplyAt(context.Background(), asset, LockedSet{}, 100)
 	if err != nil {
@@ -114,7 +124,7 @@ func TestStorageSEP41SupplyReader_MinLedgerPropagates(t *testing.T) {
 		},
 		minLedger: 98_765,
 	}
-	r := NewStorageSEP41SupplyReader(store)
+	r := NewStorageSEP41SupplyReader(store, nil)
 	asset := mustSorobanAsset(t, tContract)
 	got, err := r.SEP41SupplyAt(context.Background(), asset, LockedSet{}, 100_000)
 	if err != nil {
@@ -140,7 +150,7 @@ func TestStorageSEP41SupplyReader_GenesisSeededPropagates(t *testing.T) {
 			},
 			genesisSeeded: seeded,
 		}
-		r := NewStorageSEP41SupplyReader(store)
+		r := NewStorageSEP41SupplyReader(store, nil)
 		got, err := r.SEP41SupplyAt(context.Background(), asset, LockedSet{}, 100)
 		if err != nil {
 			t.Fatalf("SEP41SupplyAt (seeded=%v): %v", seeded, err)
@@ -155,7 +165,7 @@ func TestStorageSEP41SupplyReader_GenesisSeededPropagates(t *testing.T) {
 		totals:     SEP41KindTotals{Mint: big.NewInt(1), Burn: big.NewInt(0), Clawback: big.NewInt(0)},
 		genesisErr: errors.New("DB blip"),
 	}
-	got, err := NewStorageSEP41SupplyReader(store).SEP41SupplyAt(context.Background(), asset, LockedSet{}, 100)
+	got, err := NewStorageSEP41SupplyReader(store, nil).SEP41SupplyAt(context.Background(), asset, LockedSet{}, 100)
 	if err != nil {
 		t.Fatalf("SEP41SupplyAt (genesis err): %v", err)
 	}
@@ -165,7 +175,7 @@ func TestStorageSEP41SupplyReader_GenesisSeededPropagates(t *testing.T) {
 }
 
 func TestStorageSEP41SupplyReader_RejectsNonSoroban(t *testing.T) {
-	r := NewStorageSEP41SupplyReader(&fakeSEP41Store{})
+	r := NewStorageSEP41SupplyReader(&fakeSEP41Store{}, nil)
 	_, err := r.SEP41SupplyAt(context.Background(), canonical.NativeAsset(), LockedSet{}, 1)
 	if !errors.Is(err, ErrNotSoroban) {
 		t.Errorf("err=%v want wrapping ErrNotSoroban", err)
@@ -174,7 +184,7 @@ func TestStorageSEP41SupplyReader_RejectsNonSoroban(t *testing.T) {
 
 func TestStorageSEP41SupplyReader_PropagatesTotalsError(t *testing.T) {
 	store := &fakeSEP41Store{totalsErr: errors.New("DB unreachable")}
-	r := NewStorageSEP41SupplyReader(store)
+	r := NewStorageSEP41SupplyReader(store, nil)
 	asset := mustSorobanAsset(t, tContract)
 	_, err := r.SEP41SupplyAt(context.Background(), asset, LockedSet{}, 1)
 	if err == nil || !strings.Contains(err.Error(), "kind totals") {
@@ -200,7 +210,7 @@ func TestStorageSEP41SupplyReader_LockedSetSummed(t *testing.T) {
 			"C_LOCKED_1:" + tContract: big.NewInt(50),
 		},
 	}
-	r := NewStorageSEP41SupplyReader(store)
+	r := NewStorageSEP41SupplyReader(store, nil)
 	asset := mustSorobanAsset(t, tContract)
 	locked := LockedSet{
 		Accounts:  []string{"G_LOCKED_1", "G_LOCKED_2"},
@@ -229,7 +239,7 @@ func TestAssetBoundSEP41Computer_HappyPath(t *testing.T) {
 			Clawback: big.NewInt(0),
 		},
 	}
-	reader := NewStorageSEP41SupplyReader(store)
+	reader := NewStorageSEP41SupplyReader(store, nil)
 	computer, err := NewSEP41Computer(Policy{}, reader)
 	if err != nil {
 		t.Fatalf("NewSEP41Computer: %v", err)
@@ -267,10 +277,41 @@ func TestAssetBoundSEP41Computer_HappyPath(t *testing.T) {
 }
 
 func TestAssetBoundSEP41Computer_RejectsNonSoroban(t *testing.T) {
-	reader := NewStorageSEP41SupplyReader(&fakeSEP41Store{})
+	reader := NewStorageSEP41SupplyReader(&fakeSEP41Store{}, nil)
 	computer, _ := NewSEP41Computer(Policy{}, reader)
 	_, err := NewAssetBoundSEP41Computer(computer, canonical.NativeAsset())
 	if !errors.Is(err, ErrNotSoroban) {
 		t.Errorf("err=%v want wrapping ErrNotSoroban", err)
+	}
+}
+
+// A SAC's balance rows are stored under its classic CODE:ISSUER key and its
+// G holders' balances are trustlines, so a locked set keyed on the SAC must
+// read there; querying under the contract id reads 0 for every member.
+func TestStorageSEP41SupplyReader_SACLockedSetReadsClassicKey(t *testing.T) {
+	const (
+		usdcKey         = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		treasuryAccount = "GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4"
+		vestingContract = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+	)
+	sacClassicKeys, err := SACClassicKeys(map[string]string{tContract: "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"})
+	if err != nil {
+		t.Fatalf("SACClassicKeys: %v", err)
+	}
+	store := &fakeSEP41Store{
+		totals:         SEP41KindTotals{Mint: big.NewInt(10_000), Burn: big.NewInt(0), Clawback: big.NewInt(0)},
+		trustlines:     map[string]*big.Int{treasuryAccount + "|" + usdcKey: big.NewInt(3_000)},
+		holderBalances: map[string]*big.Int{vestingContract + ":" + usdcKey: big.NewInt(1_500)},
+	}
+	got, err := NewStorageSEP41SupplyReader(store, sacClassicKeys).SEP41SupplyAt(context.Background(),
+		mustSorobanAsset(t, tContract), LockedSet{Accounts: []string{treasuryAccount}, Contracts: []string{vestingContract}}, 100)
+	if err != nil {
+		t.Fatalf("SEP41SupplyAt: %v", err)
+	}
+	if got.LockedAccountBalances.Cmp(big.NewInt(3_000)) != 0 {
+		t.Errorf("LockedAccountBalances=%s want 3000 (the G holder's %s trustline)", got.LockedAccountBalances, usdcKey)
+	}
+	if got.LockedContractBalances.Cmp(big.NewInt(1_500)) != 0 {
+		t.Errorf("LockedContractBalances=%s want 1500 (the C holder's SAC balance under %s)", got.LockedContractBalances, usdcKey)
 	}
 }

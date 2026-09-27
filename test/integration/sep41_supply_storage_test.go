@@ -37,6 +37,10 @@ func (a sep41StoreAdapter) SACBalanceForContractAtOrBefore(ctx context.Context, 
 	return a.s.SACBalanceForContractAtOrBefore(ctx, holder, assetKey, asOfLedger)
 }
 
+func (a sep41StoreAdapter) TrustlineBalanceForAccountAtOrBefore(ctx context.Context, accountID, assetKey string, asOfLedger uint32) (*big.Int, error) {
+	return a.s.TrustlineBalanceForAccountAtOrBefore(ctx, accountID, assetKey, asOfLedger)
+}
+
 func (a sep41StoreAdapter) MinSEP41ComponentLedger(ctx context.Context, contractID string, asOfLedger uint32) (uint32, error) {
 	return a.s.MinSEP41ComponentLedger(ctx, contractID, asOfLedger)
 }
@@ -376,7 +380,7 @@ func TestSEP41GenesisBaseline_LifetimeSupplyEndToEnd(t *testing.T) {
 	settleSEP41Cursor(t, ctx, store, sep41SettledTestCursorLedger)
 
 	// Real production reader → computer over the store.
-	reader := supply.NewStorageSEP41SupplyReader(sep41StoreAdapter{s: store})
+	reader := supply.NewStorageSEP41SupplyReader(sep41StoreAdapter{s: store}, nil)
 	computer, err := supply.NewSEP41Computer(supply.Policy{}, reader)
 	if err != nil {
 		t.Fatalf("NewSEP41Computer: %v", err)

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -64,6 +65,39 @@ func CanonicalizeWatchedClassic(entries []string) ([]string, error) {
 			return nil, fmt.Errorf("supply: watched classic asset %q: want canonical CODE-ISSUER form, got a %s asset", e, a.Type)
 		}
 		out = append(out, a.Code+":"+a.Issuer)
+	}
+	return out, nil
+}
+
+// SACWrapperAssetKey is the asset_key the sac_balances observer stamps
+// on a [supply] sac_wrappers entry's balance rows: the CODE:ISSUER key
+// of a SAC-wrapped classic asset (classic=true), else the value verbatim
+// (a pure SEP-41 contract → contract self-map). Readers resolve through
+// it too, so they query the key the writer wrote.
+func SACWrapperAssetKey(value string) (key string, classic bool, err error) {
+	if !strings.ContainsAny(value, "-:") {
+		return value, false, nil
+	}
+	canon, err := CanonicalizeWatchedClassic([]string{value})
+	if err != nil {
+		return "", false, err
+	}
+	return canon[0], true, nil
+}
+
+// SACClassicKeys maps each SAC contract of a sac_wrappers map to the
+// classic asset_key its balance rows are stored under, omitting pure
+// SEP-41 self-maps.
+func SACClassicKeys(wrappers map[string]string) (map[string]string, error) {
+	out := make(map[string]string, len(wrappers))
+	for cid, v := range wrappers {
+		key, classic, err := SACWrapperAssetKey(v)
+		if err != nil {
+			return nil, fmt.Errorf("supply: sac_wrappers[%q]: %w", cid, err)
+		}
+		if classic {
+			out[cid] = key
+		}
 	}
 	return out, nil
 }

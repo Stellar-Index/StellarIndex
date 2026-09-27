@@ -1345,7 +1345,11 @@ func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, closeTimes 
 	if err != nil {
 		return nil, err
 	}
-	sep41Reader := supply.NewStorageSEP41SupplyReader(supplyAggregatorSEP41Store{s: store})
+	sacClassicKeys, err := supply.SACClassicKeys(cfg.Supply.SACWrappers)
+	if err != nil {
+		return nil, err
+	}
+	sep41Reader := supply.NewStorageSEP41SupplyReader(supplyAggregatorSEP41Store{s: store}, sacClassicKeys)
 	sep41Computer, err := supply.NewSEP41Computer(policy, sep41Reader)
 	if err != nil {
 		return nil, fmt.Errorf("sep41 computer: %w", err)
@@ -1761,6 +1765,10 @@ func (a supplyAggregatorSEP41Store) SEP41KindTotalsAtOrBefore(ctx context.Contex
 
 func (a supplyAggregatorSEP41Store) SACBalanceForContractAtOrBefore(ctx context.Context, holder, assetKey string, asOfLedger uint32) (*big.Int, error) {
 	return a.s.SACBalanceForContractAtOrBefore(ctx, holder, assetKey, asOfLedger)
+}
+
+func (a supplyAggregatorSEP41Store) TrustlineBalanceForAccountAtOrBefore(ctx context.Context, accountID, assetKey string, asOfLedger uint32) (*big.Int, error) {
+	return a.s.TrustlineBalanceForAccountAtOrBefore(ctx, accountID, assetKey, asOfLedger)
 }
 
 func (a supplyAggregatorSEP41Store) MinSEP41ComponentLedger(ctx context.Context, contractID string, asOfLedger uint32) (uint32, error) {

@@ -2,6 +2,7 @@ package config
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -1766,7 +1767,7 @@ type SupplyConfig struct {
 	// sites (buildClassicRefreshers, buildSEP41Refreshers)
 	// hardcoded supply.Policy{}, so an operator-intended
 	// treasury/vesting exclusion silently never applied.
-	PerAssetLockedSets map[string]SupplyLockedSetConfig `toml:"per_asset_locked_sets" doc:"Per-asset override of the default locked-set (issuer-only for classic, admin-only for SEP-41) excluded from circulating_supply. Map key: a watched_classic_assets entry ('CODE-G...' or 'CODE:G...') or a watched_sep41_contracts C-strkey; 'XLM' and unwatched keys are rejected at startup. Empty map preserves the per-algorithm default for every asset." default:"{}"`
+	PerAssetLockedSets map[string]SupplyLockedSetConfig `toml:"per_asset_locked_sets" doc:"Per-asset override of the default locked-set (issuer-only for classic, admin-only for SEP-41) excluded from circulating_supply. Map key: a watched_classic_assets entry ('CODE-G...' or 'CODE:G...') or a watched_sep41_contracts C-strkey; 'XLM' and unwatched keys are rejected at startup. Members must be observed or startup fails: a classic key's contracts need a sac_wrappers entry for its SAC; a SEP-41 key needs a sac_wrappers entry mapping it to itself, or to its classic asset (a SAC), whose accounts then also need that asset in watched_classic_assets. Empty map preserves the per-algorithm default for every asset." default:"{}"`
 
 	// MaxSupplyOverrides forces max_supply for a specific asset,
 	// beating both the SEP-1 declaration and the per-algorithm
@@ -1831,6 +1832,8 @@ type SupplyLockedSetConfig struct {
 //  7. Every PerAssetLockedSets / MaxSupplyOverrides key resolves to
 //     exactly one watched classic or SEP-41 asset, for the same
 //     exact-match reason. XLM is rejected: Algorithm 1 reads neither.
+//  8. Every PerAssetLockedSets member is a holder kind an observer
+//     records for that asset (see validateLockedSetCoverage).
 func (sc SupplyConfig) Validate() error {
 	for i, acc := range sc.SDFReserveAccounts {
 		if !canonical.IsAccountID(acc) {
@@ -1944,7 +1947,76 @@ func (sc SupplyConfig) validatePolicyOverrideKeys() error {
 	if err := requireWatchedSupplyKeys("per_asset_locked_sets", lockedSets, watched, want); err != nil {
 		return err
 	}
-	return requireWatchedSupplyKeys("max_supply_overrides", maxSupply, watched, want)
+	if err := requireWatchedSupplyKeys("max_supply_overrides", maxSupply, watched, want); err != nil {
+		return err
+	}
+	return sc.validateLockedSetCoverage(lockedSets, watched)
+}
+
+// sacWrapperRows is the asset_key the sac_balances observer stamps on one
+// sac_wrappers contract's balance rows.
+type sacWrapperRows struct {
+	assetKey string
+	classic  bool
+}
+
+// validateLockedSetCoverage is check 8 of [SupplyConfig.Validate]. The
+// locked-set readers read a holder with no observation row as a zero
+// balance, so a member no observer records would exclude nothing while the
+// snapshot still claims the override basis. Coverage is checked per (asset,
+// holder kind), never per row: a never-funded holder legitimately has none.
+func (sc SupplyConfig) validateLockedSetCoverage(lockedSets map[string]SupplyLockedSetConfig, watched map[string]struct{}) error {
+	rows := make(map[string]sacWrapperRows, len(sc.SACWrappers))
+	sacWrapped := map[string]struct{}{}
+	for cid, v := range sc.SACWrappers {
+		key, classic, err := supply.SACWrapperAssetKey(v)
+		if err != nil {
+			return fmt.Errorf("supply: sac_wrappers[%q]: %w", cid, err)
+		}
+		rows[cid] = sacWrapperRows{assetKey: key, classic: classic}
+		if classic {
+			sacWrapped[key] = struct{}{}
+		}
+	}
+	keys := make([]string, 0, len(lockedSets))
+	for key := range lockedSets {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if err := lockedSetObserved(key, lockedSets[key], rows, sacWrapped, watched); err != nil {
+			return fmt.Errorf("supply: per_asset_locked_sets[%q]: %w", key, err)
+		}
+	}
+	return nil
+}
+
+// lockedSetObserved reports the first holder kind of ls that no observer
+// records for the asset key (supply.AssetKey form).
+func lockedSetObserved(key string, ls SupplyLockedSetConfig, rows map[string]sacWrapperRows, sacWrapped, watched map[string]struct{}) error {
+	if !canonical.IsContractID(key) {
+		// Classic: accounts are trustlines, observed for every watched asset.
+		if _, ok := sacWrapped[key]; len(ls.Contracts) > 0 && !ok {
+			return fmt.Errorf("contracts hold %s through its SAC, but no sac_wrappers entry maps a SAC to it, so each would exclude 0", key)
+		}
+		return nil
+	}
+	if len(ls.Accounts) == 0 && len(ls.Contracts) == 0 {
+		return nil
+	}
+	r, ok := rows[key]
+	switch {
+	case !ok:
+		return errors.New("the contract is not a sac_wrappers key, so no holder balance is observed and each member would exclude 0 (map it to itself, or to its classic asset if it is a SAC)")
+	case r.assetKey == key:
+		return nil
+	case !r.classic:
+		return fmt.Errorf("sac_wrappers maps the contract to %q, neither itself nor a classic asset, so no holder balance is observed", r.assetKey)
+	}
+	if _, ok := watched[r.assetKey]; len(ls.Accounts) > 0 && !ok {
+		return fmt.Errorf("accounts hold this SAC as %s trustlines, which are observed only for watched_classic_assets; add %s there", r.assetKey, r.assetKey)
+	}
+	return nil
 }
 
 // watchedSupplyKeys is the supply.AssetKey set of the watched classic

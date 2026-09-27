@@ -20,10 +20,13 @@ import (
 // contracts share the same `DataKey::Balance(Address) → i128`
 // shape as the SAC wrapper, so once an operator adds the
 // SEP-41 contract to `[supply.sac_wrappers]` the same observer
-// populates locked-set lookups for it.
+// populates locked-set lookups for it. A SAC's rows are stored under
+// its classic CODE:ISSUER key, and its G holders' balances are
+// trustlines, hence TrustlineBalanceForAccountAtOrBefore.
 type SEP41SupplyStore interface {
 	SEP41KindTotalsAtOrBefore(ctx context.Context, contractID string, asOfLedger uint32) (SEP41KindTotals, error)
 	SACBalanceForContractAtOrBefore(ctx context.Context, contractHolder, assetKey string, asOfLedger uint32) (*big.Int, error)
+	TrustlineBalanceForAccountAtOrBefore(ctx context.Context, accountID, assetKey string, asOfLedger uint32) (*big.Int, error)
 
 	// MinSEP41ComponentLedger returns MAX(ledger) of the sole
 	// SEP-41 component table (sep41_supply_events) for the
@@ -83,11 +86,15 @@ type SEP41KindTotals struct {
 // single-digit, so the round-trip cost is bounded.
 type StorageSEP41SupplyReader struct {
 	store SEP41SupplyStore
+	// sacClassicKeys is [SACClassicKeys] of the observer's sac_wrappers.
+	sacClassicKeys map[string]string
 }
 
-// NewStorageSEP41SupplyReader constructs the reader.
-func NewStorageSEP41SupplyReader(store SEP41SupplyStore) *StorageSEP41SupplyReader {
-	return &StorageSEP41SupplyReader{store: store}
+// NewStorageSEP41SupplyReader constructs the reader. sacClassicKeys is
+// [SACClassicKeys] of the sac_wrappers the sac_balances observer runs
+// with; nil means no watched contract is a SAC.
+func NewStorageSEP41SupplyReader(store SEP41SupplyStore, sacClassicKeys map[string]string) *StorageSEP41SupplyReader {
+	return &StorageSEP41SupplyReader{store: store, sacClassicKeys: sacClassicKeys}
 }
 
 // SEP41SupplyAt implements [SEP41SupplyReader]. Performs the
@@ -110,11 +117,6 @@ func (r *StorageSEP41SupplyReader) SEP41SupplyAt(ctx context.Context, asset cano
 		return SEP41SupplyComponents{}, fmt.Errorf("supply: SEP41 kind totals for %s: %w", contractID, err)
 	}
 
-	// SEP-41 holders' balances live in the contract's own
-	// ContractData entries under DataKey::Balance(Address). The
-	// SAC observer queries those by (contract_id, holder); for
-	// pure SEP-41 contracts the asset_key is the contract_id
-	// itself per supply.AssetKey.
 	lockedAccounts, err := r.sumPerHolder(ctx, locked.Accounts, contractID, ledger)
 	if err != nil {
 		return SEP41SupplyComponents{}, fmt.Errorf("supply: locked-accounts sum for %s: %w", contractID, err)
@@ -153,19 +155,47 @@ func (r *StorageSEP41SupplyReader) SEP41SupplyAt(ctx context.Context, asset cano
 	}, nil
 }
 
-func (r *StorageSEP41SupplyReader) sumPerHolder(ctx context.Context, holders []string, assetKey string, ledger uint32) (*big.Int, error) {
+func (r *StorageSEP41SupplyReader) sumPerHolder(ctx context.Context, holders []string, contractID string, ledger uint32) (*big.Int, error) {
 	total := big.NewInt(0)
 	for _, h := range holders {
 		if h == "" {
 			return nil, errors.New("supply: empty holder in LockedSet")
 		}
-		bal, err := r.store.SACBalanceForContractAtOrBefore(ctx, h, assetKey, ledger)
+		bal, err := r.holderBalance(ctx, h, contractID, ledger)
 		if err != nil {
-			return nil, fmt.Errorf("sac lookup for %s: %w", h, err)
+			return nil, err
 		}
 		total = new(big.Int).Add(total, bal)
 	}
 	return total, nil
+}
+
+// holderBalance reads holder's balance of contractID where the observers
+// wrote it. A pure SEP-41 contract keeps every holder's balance in its own
+// ContractData, stored under the contract id. A SAC keeps only contract
+// holders there, under its classic key; a G holder's balance is a trustline.
+// Config validation guarantees each configured holder is so observed.
+func (r *StorageSEP41SupplyReader) holderBalance(ctx context.Context, holder, contractID string, ledger uint32) (*big.Int, error) {
+	classicKey, isSAC := r.sacClassicKeys[contractID]
+	if !isSAC {
+		bal, err := r.store.SACBalanceForContractAtOrBefore(ctx, holder, contractID, ledger)
+		if err != nil {
+			return nil, fmt.Errorf("sac lookup for %s: %w", holder, err)
+		}
+		return bal, nil
+	}
+	if canonical.IsAccountID(holder) {
+		bal, err := r.store.TrustlineBalanceForAccountAtOrBefore(ctx, holder, classicKey, ledger)
+		if err != nil {
+			return nil, fmt.Errorf("trustline lookup for %s: %w", holder, err)
+		}
+		return bal, nil
+	}
+	bal, err := r.store.SACBalanceForContractAtOrBefore(ctx, holder, classicKey, ledger)
+	if err != nil {
+		return nil, fmt.Errorf("sac lookup for %s: %w", holder, err)
+	}
+	return bal, nil
 }
 
 // Compile-time check.
