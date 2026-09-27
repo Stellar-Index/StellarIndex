@@ -2295,7 +2295,24 @@ func newInProcessLoginThrottle() *inProcessLoginThrottle {
 // the signature is kept for interface conformance.
 func (t *inProcessLoginThrottle) Allow(ctx context.Context, ip, email string) (bool, error) {
 	allowed := true
-	if email != "" {
+	if ip != "" {
+		// Masked to the throttle-key identity — see [ratelimit.ThrottleIPKey]
+		// — so an IPv6 /64 can't rotate a fresh /128 per request and mint
+		// an unbounded number of per-IP budgets (F010).
+		res, _ := t.perIP.Take(ctx, "ip:"+ratelimit.ThrottleIPKey(ip))
+		allowed = res.Allowed
+	}
+	// The per-email Take is gated behind a passing per-IP Take (checked
+	// first, above): an IP whose own bucket is already exhausted must not
+	// still be able to spend a NEW email's per-email budget on a call
+	// that's denied anyway. Unconditional per-email spending let an
+	// attacker with one exhausted IP insert one new tracked key per
+	// distinct target address, and localStore's fixed 100k-key cap folds
+	// every key beyond that into a single shared overflow bucket sized to
+	// ONE per-email limit (5) — so filling the store denies magic-link
+	// sends to every not-yet-tracked email for the rest of the window
+	// (CA2-A30-correct-4).
+	if allowed && email != "" {
 		// dashboardauth.LoginThrottle's doc requires implementations to
 		// hash the (canonicalised) email before keying on it. Uses
 		// auth.HashEmail — the same canonicalisation (RFC-5322 addr-spec,
@@ -2303,14 +2320,7 @@ func (t *inProcessLoginThrottle) Allow(ctx context.Context, ip, email string) (b
 		// this Redis-less fallback can't be bypassed by a re-spelling
 		// that the fleet-wide path already closes (F010).
 		res, _ := t.perEmail.Take(ctx, "mail:"+auth.HashEmail(email))
-		allowed = allowed && res.Allowed
-	}
-	if ip != "" {
-		// Masked to the throttle-key identity — see [ratelimit.ThrottleIPKey]
-		// — so an IPv6 /64 can't rotate a fresh /128 per request and mint
-		// an unbounded number of per-IP budgets (F010).
-		res, _ := t.perIP.Take(ctx, "ip:"+ratelimit.ThrottleIPKey(ip))
-		allowed = allowed && res.Allowed
+		allowed = res.Allowed
 	}
 	return allowed, nil
 }
