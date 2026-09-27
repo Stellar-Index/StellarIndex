@@ -148,37 +148,26 @@ enable_stablecoin_fiat_proxy = true
 min_usd_volume = 10000  # per-pair USD-volume floor for VWAP publication (anti-manipulation + confidence). Re-enabled 2026-07-01: the CEX connectors landed and flow live volume (binance/coinbase/kraken/bitstamp, millions of trades), so fiat:USD pairs clear $10k/window easily while thin/manipulable pairs are gated. (Was 0 during the on-chain-only bootstrap.)
 
 # Graph-router cross-rate knobs (Step 2, 2026-08). The triangulation
-# targets below are now priced by the graph router (internal/aggregate/
+# targets below are priced by the graph router (internal/aggregate/
 # router.go) over the edge set built from this tick's priced-pair VWAPs
 # plus the resolved chain legs. A target reachable by ONE route (the
 # current config, one chain per target) behaves exactly like the old
-# static single-chain multiply; a target reached by ≥2 agreeing,
-# confidence-gated routes is corroborated, and that CORROBORATION COUNT (not
-# pathCount) widens the anomaly-freeze's source_count leg so a thin FX cross
-# stops false-firing.
+# static single-chain multiply.
 #
-# CORRECTION 2026-08-27: this comment previously said "pathCount", which is
-# wrong and misled a change into thinking two routes were sufficient.
-# router.go is explicit that pathCount is "the serving multiplicity carried on
-# the composite meta -- NOT the number the freeze trusts". The freeze reads
-# corroborationCount, which is far tighter: >=2 EDGE-DISJOINT routes whose
-# prices agree within routerCorroborationAgreePct (3%), and whose weakest-link
-# confidence each clears corroborationMinConfidence (0.5). A brand-new pair has
-# no volatility baseline, so its edge confidence is capped at ~0.27 and cannot
-# corroborate at all until a baseline matures.
-#
-# 2026-08-28 (design: docs/design/composite-route-corroboration-for-
-# structurally-single-venue.md): with the pair set below every target has
-# exactly ONE hub route (through USD), so corroborationCount is always 1 and
-# the freeze's source_count widening never executes — structurally
-# single-venue targets (crypto:XLM/fiat:GBP) run the signed freeze-and-
-# auto-release posture (design §10). The USD-FX-derived hub route must NEVER
-# be counted as a second source. A real second route needs an EDGE-DISJOINT
-# market (design §8.1: crypto:XLM/crypto:BTC in `pairs`, which also exposes
-# it as a served /v1/price pair and is NOT min_usd_volume-gated — operator
-# decision pending). Never add a non-USD fiat/fiat leg (EUR/GBP): the FX
-# snap derives it from the same fx_quotes USD rows as USD/GBP, so the router
-# would count one data row as two independent routes.
+# Route corroboration NEVER counts as a second source. ADR-0019 (amendment
+# 2026-07-25 §2) forbids it: routes through our own graph re-use our own
+# legs, so counting them would disarm the freeze's `source_count <= 1` leg on
+# exactly the thin single-venue pairs chains exist for. Both freeze phases
+# read the distinct-venue count only; path_count is the serving multiplicity.
+# The router's corroboration count (edge-disjoint routes agreeing within 3%,
+# each weakest link strictly above the 0.5 bootstrap cap) is audit-only:
+# composite_meta.corroboration_count and route_corroboration= in the freeze
+# reason, beside -- never merged into -- sources=.
+# Structurally single-venue targets (crypto:XLM/fiat:GBP) run the signed
+# freeze-and-auto-release posture (design: docs/design/composite-route-
+# corroboration-for-structurally-single-venue.md §10). Never add a non-USD
+# fiat/fiat leg (EUR/GBP): the FX snap derives it from the same fx_quotes USD
+# rows as USD/GBP, so one data row would read as two independent routes.
 #
 # 2026-08-29 amendment: see the §10.1 note above `[[aggregate.triangulations]]`
 # below — for the two allow-listed targets (crypto:XLM/fiat:GBP and

@@ -451,7 +451,8 @@ type PriceSnapshot struct {
 	// (omitempty hides). Nil pointer = "not available" (typically
 	// pre-launch when the aggregator's confidence-compute path
 	// isn't running yet); a populated value means the bucket has
-	// a fresh score in the cache.
+	// a score in the cache. On a frozen response it is the held
+	// last-known-good bucket's own score, kept alive for the hold.
 	Confidence *float64 `json:"confidence,omitempty"`
 
 	// ConfidenceFactors is the per-factor decomposition that

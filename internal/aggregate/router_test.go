@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -935,6 +936,41 @@ func TestRouter_CorroborationRequiresConfidenceFloor(t *testing.T) {
 		t.Errorf("corroborationCount = %d, want 0 — route B's weakest leg (conf 0.2) is below the "+
 			"corroboration confidence floor, so a thin route must not count as an independent "+
 			"confirmation even though it agrees exactly and is edge-disjoint", corroboration)
+	}
+}
+
+// GH-1026: the corroboration floor is strictly above the bootstrap cap. Every
+// unscored edge, cache-only leg and still-bootstrapping pair carries exactly
+// the cap, so two edge-disjoint, exactly-agreeing routes built only from such
+// edges must not corroborate; one hair above the cap they do.
+func TestRouter_BootstrapCapRoutesDoNotCorroborate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		conf float64
+		want int
+	}{
+		{"at_bootstrap_cap", confidence.BootstrapConfidenceCap, 0},
+		{"above_bootstrap_cap", confidence.BootstrapConfidenceCap + 0.01, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			edges := mustEdges(t,
+				rq(obscure, xlm, 2, 1, tc.conf), rq(xlm, gbp, 3, 10, tc.conf), // A: 3/5
+				rq(obscure, usd, 3, 1, tc.conf), rq(usd, gbp, 1, 5, tc.conf), //  B: 3/5
+			)
+			_, _, _, _, corroboration, diverged, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
+			if err != nil {
+				t.Fatalf("CombineRoutes: %v", err)
+			}
+			if diverged {
+				t.Fatal("diverged = true, want false (both routes are 3/5)")
+			}
+			if corroboration != tc.want {
+				t.Errorf("corroborationCount = %d at weakest-link confidence %v, want %d", corroboration, tc.conf, tc.want)
+			}
+			if got := aggregate.ClearsRouteTrustFloor(tc.conf); got != (tc.want > 0) {
+				t.Errorf("ClearsRouteTrustFloor(%v) = %v, want %v", tc.conf, got, tc.want > 0)
+			}
+		})
 	}
 }
 

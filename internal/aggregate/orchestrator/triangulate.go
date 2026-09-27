@@ -154,12 +154,11 @@ const legEdgeConfidence = 1.0
 // signal from [newEdgeQuote]). Unlike an FX leg it has unknown freshness
 // and provenance, so it must be able to be the route's LIMITING edge rather
 // than silently entering at max trust and dragging a stale crypto price
-// through a hub at full confidence (L1). Set to the reroute/corroboration
-// floor (0.5): a cache-only route sits exactly at the trust boundary —
-// confident enough to publish + corroborate, but out-trusted by any priced
-// pair scoring above it, and correctly limiting any route that also carries a
-// thinner priced leg.
-const cachedLegConfidence = 0.5
+// through a hub at full confidence (L1). Set to the bootstrap cap, the
+// trust an unscored edge gets: a cache-only route still serves as an
+// ordinary chain, but it cannot clear the strict [aggregate.RouteTrustFloor],
+// so it can neither displace a direct price as a reroute nor corroborate.
+const cachedLegConfidence = confidence.BootstrapConfidenceCap
 
 // buildWindowEdges assembles the cross-rate edge graph for one window:
 // this tick's priced-pair VWAPs (each with its real per-pair
@@ -239,20 +238,6 @@ func (o *Orchestrator) resolveChainLegs(
 	return st
 }
 
-// rerouteMinConfidence is the SANE confidence floor a leg-substitution
-// reroute must clear before its composite may publish OVER the direct
-// price (R3). It applies IN ADDITION to (and independently of)
-// min_route_confidence — the shipped config leaves that knob at 0, so
-// without this floor a dry FX leg could silently reroute through thin
-// crypto cross-pairs and overwrite the direct price with an unvetted
-// substitute. A reroute below this floor does not publish: the direct
-// price serves and the reroute is flagged. It does NOT gate the ordinary
-// (all-legs-present) chain, only reroutes. 0.5 is the same weakest-link
-// floor the dust-edge guard uses (route_test.go): a substitute whose
-// flimsiest leg is below it is not trustworthy enough to displace a
-// direct market.
-const rerouteMinConfidence = 0.5
-
 // routeTarget prices ONE target through the window's edge graph and
 // returns the [obs.AggregatorTriangulationsTotal] outcome label.
 //
@@ -264,7 +249,7 @@ const rerouteMinConfidence = 0.5
 // triangulation-chains-dry alert reads); an unreachable target whose leg
 // was frozen inherits the freeze ("frozen_leg", MNY-22). "low_confidence"
 // covers both "no route clears min_route_confidence" AND (R3) "a
-// leg-substitution reroute did not clear rerouteMinConfidence": in both
+// leg-substitution reroute did not clear [aggregate.RouteTrustFloor]": in both
 // the composite is flagged but NOT published over the direct price.
 // "proxy_pivot" does the same when a priced leg's stablecoin-proxy prints
 // disagree with its own-quote prints ([Orchestrator.refuseProxyPivot]).
@@ -272,9 +257,14 @@ const rerouteMinConfidence = 0.5
 // R3 — when a configured leg is DRY (st.legDry) but the router still
 // reaches the target, the composite came from a SUBSTITUTE path. The
 // reroute is kept (it is the multi-path robustness we want) but it is (a)
-// gated on rerouteMinConfidence so a thin substitute cannot silently
+// gated on [aggregate.RouteTrustFloor] so a thin substitute cannot silently
 // displace the direct price, and (b) flagged (compositeMeta.Rerouted) so
 // the substitution is observable rather than a silent behaviour change.
+// The gate applies IN ADDITION to min_route_confidence (which ships at 0)
+// and only to reroutes, never to the ordinary all-legs-present chain. It is
+// strict and sits at the bootstrap cap, so a substitute whose weakest leg is
+// unscored, cache-only or still bootstrapping cannot displace a direct
+// market.
 //
 // H2 — a leg FROZEN this tick (st.frozen) that the router still reaches the
 // target AROUND is the same kind of substitution as a dry leg, so it is gated
@@ -320,7 +310,7 @@ func (o *Orchestrator) routeTarget(
 	// A leg was DRY, or a leg FROZE this tick and the router reached the
 	// target by walking AROUND it (st.frozen with a route found, not
 	// ErrNoRoute) — either way the composite came from a SUBSTITUTE path, so
-	// it is gated on rerouteMinConfidence and flagged Rerouted the same way
+	// it is gated on the route trust floor and flagged Rerouted the same way
 	// (H2). A frozen leg's LKG was declined upstream; a reroute around it must
 	// not silently republish at max trust any more than a dry-leg reroute may.
 	rerouted := st.legDry || st.frozen
@@ -343,7 +333,7 @@ func (o *Orchestrator) routeTarget(
 		return outcomeFrozenLeg
 	}
 
-	if lowConf || (rerouted && combinedConf < rerouteMinConfidence) {
+	if lowConf || (rerouted && !aggregate.ClearsRouteTrustFloor(combinedConf)) {
 		// Either every route runs through a dust/thin edge below
 		// min_route_confidence, OR this is a leg-substitution reroute (R3)
 		// whose best route does not clear the sane reroute floor. In both
@@ -360,7 +350,7 @@ func (o *Orchestrator) routeTarget(
 				"dry_leg", st.dryLeg.String(),
 				"window", window.String(),
 				"combined_confidence", combinedConf,
-				"floor", rerouteMinConfidence,
+				"floor", aggregate.RouteTrustFloor,
 			)
 		}
 		o.writeCompositeMeta(ctx, chain.Target, window, compositeMeta{
@@ -385,7 +375,7 @@ func (o *Orchestrator) routeTarget(
 // cache key (served instead of the target's held direct print for the
 // tick, provenance stamped, and streamed), records it as this tick's corroboration for the next tick,
 // and carries its quality flags for Step 3. rerouted marks a publish that
-// came from a leg-substitution path (R3) — it cleared rerouteMinConfidence
+// came from a leg-substitution path (R3) — it cleared the route trust floor
 // so it publishes, but the substitution is flagged for observability.
 func (o *Orchestrator) publishComposite(
 	ctx context.Context,
@@ -421,6 +411,7 @@ func (o *Orchestrator) publishComposite(
 	metaBody, err := json.Marshal(o.withPivotComposition(chain, window, o.withCorroborationBasis(chain.Target, window, compositeMeta{
 		ServedRouteCount:   servedRouteCount,
 		PathCount:          pathCount,
+		CorroborationCount: corroboration,
 		CombinedConfidence: combinedConf,
 		LowConfidence:      false,
 		Diverged:           diverged,
@@ -551,12 +542,12 @@ func (o *Orchestrator) tickEdgePrice(pair canonical.Pair, window time.Duration) 
 // is the state the scorer itself treats as stricter than bootstrap (a
 // negative BaselineAgeDays sentinel caps the score). Uncapped, a bare
 // source-count factor (0.731 at 4 sources, 0.953 at 6) OUTRANKED every
-// fully-scored edge and cleared both the reroute and corroboration
-// gates that a scored edge only ties — so the least-evidenced edges,
-// with no z-score, no liquidity measure and no cross-oracle check, were
-// the ones setting composites and widening the freeze's source-count
-// leg (cold audit 2026-08-03). Ranking among unscorable edges is
-// preserved below the cap.
+// fully-scored edge and cleared the reroute and corroboration gates —
+// so the least-evidenced edges, with no z-score, no liquidity measure and
+// no cross-oracle check, were the ones setting composites (cold audit
+// 2026-08-03). Capped, an unscored edge cannot clear those gates at all:
+// they are strictly above the cap ([aggregate.RouteTrustFloor]). Ranking
+// among unscorable edges is preserved below the cap.
 func edgeConfidence(conf confidenceComputation, confOK bool, trades []canonical.Trade) float64 {
 	if confOK {
 		return conf.Score.Confidence
@@ -581,15 +572,20 @@ type compositeMeta struct {
 	// value came from a single top-confidence outlier route ServedRouteCount
 	// names. Read PathCount as "surviving route population", never as "how
 	// many routes back this value" — that question is ServedRouteCount's.
-	ServedRouteCount   int     `json:"served_route_count"`
-	PathCount          int     `json:"path_count"`
+	ServedRouteCount int `json:"served_route_count"`
+	PathCount        int `json:"path_count"`
+	// CorroborationCount is the router's independent, tightly-agreeing
+	// route count behind a PUBLISHED composite (aggregate.CombineRoutes'
+	// corroborationCount); 0 on every refusal. Audit only: it never feeds a
+	// source count (triangulate_corroborate.go).
+	CorroborationCount int     `json:"corroboration_count"`
 	CombinedConfidence float64 `json:"combined_confidence"`
 	LowConfidence      bool    `json:"low_confidence"`
 	Diverged           bool    `json:"diverged"`
 	// Rerouted marks a composite whose route(s) substituted around a DRY
 	// configured chain leg (R3). true means the documented direct chain
 	// could not resolve and the router walked an alternative path; when it
-	// also failed rerouteMinConfidence the composite was NOT published over
+	// also failed the route trust floor the composite was NOT published over
 	// the direct price (LowConfidence is set too). Lets Step 3 / the API
 	// surface a leg-substitution instead of it being a silent change.
 	Rerouted bool `json:"rerouted,omitempty"`

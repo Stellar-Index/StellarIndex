@@ -8,6 +8,7 @@ import (
 	"math/bits"
 	"sort"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -87,8 +88,8 @@ const (
 
 	// routerCorroborationAgreePct is the TIGHT pairwise-agreement band, in
 	// percent, two surviving routes' composites must fall within of each
-	// other before either is counted as CORROBORATING the other for the
-	// anomaly-freeze source_count leg (see corroboratingRouteCount /
+	// other before either is counted as CORROBORATING the other (see
+	// corroboratingRouteCount /
 	// [CombineRoutes]'s corroborationCount return). It is deliberately
 	// MUCH tighter than routerOutlierPermitPct (40): merely surviving the
 	// loose outlier band is "not an outlier", NOT "agrees". Corroboration
@@ -97,7 +98,7 @@ const (
 	// median — so the bar is a few percent. Measured against the SMALLER
 	// of the two prices (the conservative, fail-closed denominator).
 	// Serving is unaffected; this only tightens what COUNTS as
-	// corroboration for the freeze.
+	// corroboration.
 	routerCorroborationAgreePct = 3
 
 	// maxCorroborationRoutes caps the brute-force set-packing / clique
@@ -105,22 +106,29 @@ const (
 	// shortest-route set for a real target is a handful, so the exact
 	// 2^n enumeration is trivial; beyond this many survivors it falls
 	// back to a greedy (UNDER-counting, fail-closed) estimate rather than
-	// risk a pathological blow-up. Under-counting can only make the
-	// freeze fire MORE readily, never suppress it falsely.
+	// risk a pathological blow-up. Under-counting can only understate
+	// corroboration, never overstate it.
 	maxCorroborationRoutes = 16
 )
 
-// corroborationMinConfidence is the weakest-link confidence floor a route
-// must clear before it may COUNT toward the anti-manipulation corroboration
-// count (see corroboratingRouteCount / [CombineRoutes]). min_route_confidence
-// ships at 0 so SERVING stays permissive, but corroboration is a structural
-// independence claim the anomaly-freeze source_count leg trusts: without a
-// floor a thin, dust-confidence route that merely happens to agree tightly
-// and be edge-disjoint would count as a full independent confirmation and
-// widen the freeze — exactly the fake the count exists to resist (M2). 0.5
-// mirrors the orchestrator's rerouteMinConfidence weakest-link floor: a route
-// too thin to displace a direct price is too thin to corroborate one.
-const corroborationMinConfidence = 0.5
+// RouteTrustFloor is the weakest-link confidence a route must score
+// STRICTLY ABOVE before it may publish as a leg-substitution reroute or
+// COUNT toward the corroboration count (see corroboratingRouteCount /
+// [CombineRoutes]). min_route_confidence ships at 0 so SERVING stays
+// permissive; these two gates are the trust checks it leaves open (M2, R3).
+//
+// It is the bootstrap cap, and the comparison is strict, because the cap is
+// what every edge the scorer could not vouch for carries: an unscored edge
+// is clamped to it, a cache-only leg enters at it, and a still-bootstrapping
+// pair's score is pinned to it. A floor the cap can reach is a gate every
+// such route clears.
+const RouteTrustFloor = confidence.BootstrapConfidenceCap
+
+// ClearsRouteTrustFloor reports whether a route's weakest-link confidence
+// is strictly above [RouteTrustFloor].
+func ClearsRouteTrustFloor(weakestLink float64) bool {
+	return weakestLink > RouteTrustFloor
+}
 
 // RouteLeg is one directed edge of the exchange graph AND one hop of a
 // resolved route (an edge and a leg are the same object): 1 unit of
@@ -480,12 +488,12 @@ type scoredRoute struct {
 //     (GH-1022: the two sets can be disjoint, e.g. a thin divergent
 //     majority survives median-relative omission while the served price
 //     came from a single top-confidence outlier route) — and NOT the
-//     number the freeze trusts. It stays 1 for a single-route target (the
+//     corroboration count. It stays 1 for a single-route target (the
 //     whole production config today), byte-identical to the
 //     pre-corroboration behaviour.
 //   - corroborationCount: the number of INDEPENDENT, TIGHTLY-AGREEING,
-//     NON-DIVERGED routes that back the composite — the anti-manipulation
-//     count Step 2 feeds into the anomaly-freeze source_count leg. This is
+//     NON-DIVERGED routes that back the composite — an audit signal only;
+//     it never feeds a source count (ADR-0019 amendment 2026-07-25 §2). This is
 //     STRICTLY tighter than pathCount: it is 0 when the result diverged;
 //     0 when no two survivors agree within routerCorroborationAgreePct
 //     (loosely-agreeing routes inside the 40% band do NOT corroborate);
@@ -546,7 +554,7 @@ func CombineRoutes(
 	// with the loose outlier band, unchanged: a lower-confidence route still
 	// corroborates and can trip diverged; it just cannot move the served
 	// price above. pathCount is the surviving serving multiplicity carried on
-	// the composite meta (NOT what the freeze trusts — that is
+	// the composite meta (NOT the independence claim — that is
 	// corroborationCount, and NOT what produced the served value — that is
 	// servedRouteCount above).
 	keep := omitOutlierIndices(pricesOf(gated), routerOutlierPermitPct)
@@ -742,8 +750,8 @@ func spreadExceeds(vals []*big.Rat, pct int) bool {
 
 // corroboratingRouteCount is the anti-manipulation corroboration count:
 // the number of INDEPENDENT, tightly-agreeing, non-diverged routes that
-// back the composite. It is what [CombineRoutes] feeds the anomaly-freeze
-// source_count leg, and it is deliberately much stricter than the raw
+// back the composite ([CombineRoutes]' corroborationCount), and it is
+// deliberately much stricter than the raw
 // survivor count so that "N routes agree" means "N genuinely independent
 // routes actually agree" — the property a manipulator must not be able to
 // fake by wash-trading a single shared leg.
@@ -754,18 +762,14 @@ func spreadExceeds(vals []*big.Rat, pct int) bool {
 //     still spread past routerDivergenceSpreadPct, the picture is not
 //     clean enough to corroborate anything (fail closed).
 //   - 0 or 1 survivor → that count. A single route is the "one unverified
-//     path" baseline (1); MAX-ed against the direct source count in the
-//     orchestrator it can never raise it, so this is byte-identical to
-//     the pre-corroboration behaviour for the single-route production
-//     config.
+//     path" baseline (1).
 //   - ≥ 2 survivors that do NOT contain a tightly-agreeing pair (no two
 //     within routerCorroborationAgreePct) → 0. Two routes that merely
 //     fall inside the loose 40% outlier band but actively disagree are
 //     evidence of a PROBLEM, not corroboration — drop below the
-//     single-path baseline so a disagreeing cross cannot suppress the
-//     freeze.
-//   - a route whose weakest-link confidence is below
-//     [corroborationMinConfidence] may NOT count toward corroboration at all,
+//     single-path baseline.
+//   - a route whose weakest-link confidence does not clear
+//     [RouteTrustFloor] may NOT count toward corroboration at all,
 //     regardless of how tightly it agrees or how edge-disjoint it is (M2). A
 //     thin, dust-confidence route is not an independent confirmation just
 //     because min_route_confidence ships at 0 for serving — so it is excluded
@@ -792,7 +796,7 @@ func corroboratingRouteCount(survivors []scoredRoute, diverged bool) int {
 	// pair, so a thin route that merely agrees + is edge-disjoint counts for
 	// nothing.
 	confident := func(i int) bool {
-		return survivors[i].confidence >= corroborationMinConfidence
+		return ClearsRouteTrustFloor(survivors[i].confidence)
 	}
 	agree := func(i, j int) bool {
 		return confident(i) && confident(j) &&
@@ -826,8 +830,8 @@ func corroboratingRouteCount(survivors []scoredRoute, diverged bool) int {
 // exact by brute force up to maxCorroborationRoutes routes and a
 // fail-closed (under-counting) greedy estimate beyond.
 //
-// This is the pure independence primitive behind the freeze's
-// corroboration count (see corroboratingRouteCount); exported so the
+// This is the pure independence primitive behind the corroboration
+// count (see corroboratingRouteCount); exported so the
 // shared-bottleneck case can be pinned directly.
 func MaxEdgeDisjointRoutes(routes [][]RouteLeg) int {
 	n := len(routes)
@@ -914,8 +918,8 @@ func edgeSetsDisjoint(a, b map[string]struct{}) bool {
 // which every pair is connected() — a maximum clique. n is tiny (a
 // shortest-route set), so up to maxCorroborationRoutes it enumerates
 // every subset exactly; beyond that it returns a greedy clique, which
-// can only UNDER-estimate (fail closed: fewer corroborating routes ⇒ the
-// freeze fires more readily, never less).
+// can only UNDER-estimate (fail closed: corroboration is understated,
+// never overstated).
 func maxCliqueSize(n int, connected func(i, j int) bool) int {
 	if n <= 0 {
 		return 0
