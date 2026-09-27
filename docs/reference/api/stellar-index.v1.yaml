@@ -10608,6 +10608,12 @@ paths:
                           then of UNKNOWN outcome (possibly a FAILED transaction),
                           not applied. Absent = every operation carries its true
                           transaction outcome.
+                      total:
+                        type: integer
+                        description: "Ledger-scoped mode only: the ledger's exact operation count from its header. Absent in directory mode, which pages instead."
+                      truncated:
+                        type: boolean
+                        description: "Ledger-scoped mode only: true when total exceeds len(operations) — the page was cut at ?limit= with no cursor to continue. Absent in directory mode."
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 

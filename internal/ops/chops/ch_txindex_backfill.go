@@ -1,7 +1,6 @@
 package chops
 
 import (
-	"flag"
 	"fmt"
 	"os"
 
@@ -56,13 +55,8 @@ func parseTxIndexBackfillFlags(args []string) (txIndexBackfillPlan, error) {
 		return txIndexBackfillPlan{}, fmt.Errorf("-from and -window must be > 0")
 	}
 
-	// Which bounds did the operator name explicitly? A bare run leaves all
-	// unset, which is the footgun we refuse below.
-	set := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
-	if !*full && !set["from"] && !set["to"] {
-		return txIndexBackfillPlan{}, fmt.Errorf(
-			"refusing an implicit full-history backfill (ledger 2..tip, ~10.2B rows on r1): pass -from (a resume point / lower bound), -to (an upper bound), or -full to run the entire history from scratch")
+	if err := opsutil.RequireExplicitRange(fs, *full, "ch-txindex-backfill", "10.2B"); err != nil {
+		return txIndexBackfillPlan{}, err
 	}
 	if err := gate.RequireStatedMode(); err != nil {
 		return txIndexBackfillPlan{}, fmt.Errorf("ch-txindex-backfill: %w", err)

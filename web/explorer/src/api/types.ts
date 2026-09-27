@@ -21987,6 +21987,10 @@ export interface operations {
                              *     transaction outcome.
                              */
                             coverage_note?: string;
+                            /** @description Ledger-scoped mode only: the ledger's exact operation count from its header. Absent in directory mode, which pages instead. */
+                            total?: number;
+                            /** @description Ledger-scoped mode only: true when total exceeds len(operations) — the page was cut at ?limit= with no cursor to continue. Absent in directory mode. */
+                            truncated?: boolean;
                         };
                     };
                 };

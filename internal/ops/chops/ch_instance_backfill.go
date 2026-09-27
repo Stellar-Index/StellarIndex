@@ -17,7 +17,9 @@ import (
 // the history behind it. MUST run to completion promptly after the DDL
 // — the reader trusts a present + non-empty index as complete (see the
 // DDL's operator contract). Same r1 cautions as the sibling backfills:
-// serialize, run under run-heavy-job.sh, resume with the printed -from.
+// serialize, run under run-heavy-job.sh, resume with the printed -from —
+// including the same implicit-full-run refusal (a bare invocation needs
+// an explicit -from/-to or -full; GH-1192).
 func chInstanceBackfill(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("ch-instance-backfill")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
@@ -28,11 +30,15 @@ func chInstanceBackfill(args []string) error {
 		"target table in the stellar database: "+clickhouse.ContractInstanceChangesTable+
 			", or "+clickhouse.ContractInstanceChangesV2Table+
 			" during deploy/clickhouse/contract_instance_changes_tx_key.sql")
+	full := fs.Bool("full", false, "run the ENTIRE history (ledger 2 .. current lake tip). Required to run without an explicit -from/-to, so a bare invocation never starts the full backfill by accident.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *from == 0 || *window == 0 {
 		return fmt.Errorf("-from and -window must be > 0")
+	}
+	if err := opsutil.RequireExplicitRange(fs, *full, "ch-instance-backfill", "history"); err != nil {
+		return err
 	}
 	if err := gate.RequireStatedMode(); err != nil {
 		return fmt.Errorf("ch-instance-backfill: %w", err)
