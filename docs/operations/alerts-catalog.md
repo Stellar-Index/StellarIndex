@@ -29,7 +29,7 @@ enforces it); any per-alert detail page follows it.
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 61 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 214 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 216 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -225,6 +225,8 @@ is the only signal a mail outage leaves.
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_notify_send_failure_ratio_high` | `sum by (template) (rate(stellarindex_notify_sends_total{result="failed"}[15m])) / sum by (template) (rate(stellarindex_notify_sends_total[15m]))` | > 0.5 for 15 min (a mail provider outage — new logins / signup confirmations stop delivering; existing sessions + keys unaffected) | ticket | [notify-send-failure](runbooks/notify-send-failure.md) |
+| `stellarindex_notify_no_send_activity` | `sum(increase(stellarindex_notify_sends_total[6h]))` | == 0 (dead-man's switch: the ratio rule is 0/0 = NaN when nothing has been attempted, so total silence for 6h needs its own signal) | ticket | [notify-send-failure](runbooks/notify-send-failure.md) |
+| `stellarindex_notify_send_failures_sustained` | `sum by (template) (rate(stellarindex_notify_sends_total{result="failed"}[15m]))` | > 0 for 1 h (absolute-rate companion — a persistent failure trickle under the 50% ratio threshold still means real users never got their email) | ticket | [notify-send-failure](runbooks/notify-send-failure.md) |
 
 ## SLA-probe alerts
 

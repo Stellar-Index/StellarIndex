@@ -43,9 +43,7 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -2299,16 +2297,19 @@ func (t *inProcessLoginThrottle) Allow(ctx context.Context, ip, email string) (b
 	allowed := true
 	if email != "" {
 		// dashboardauth.LoginThrottle's doc requires implementations to
-		// hash the (already-lowercased) email before keying on it —
-		// mirrors auth.RedisLoginThrottle's hashEmail, kept local so
-		// this adapter doesn't need an internal/auth import for one
-		// unexported helper.
-		sum := sha256.Sum256([]byte(email))
-		res, _ := t.perEmail.Take(ctx, "mail:"+hex.EncodeToString(sum[:8]))
+		// hash the (canonicalised) email before keying on it. Uses
+		// auth.HashEmail — the same canonicalisation (RFC-5322 addr-spec,
+		// +tag stripping, gmail dot-folding) as RedisLoginThrottle, so
+		// this Redis-less fallback can't be bypassed by a re-spelling
+		// that the fleet-wide path already closes (F010).
+		res, _ := t.perEmail.Take(ctx, "mail:"+auth.HashEmail(email))
 		allowed = allowed && res.Allowed
 	}
 	if ip != "" {
-		res, _ := t.perIP.Take(ctx, "ip:"+ip)
+		// Masked to the throttle-key identity — see [ratelimit.ThrottleIPKey]
+		// — so an IPv6 /64 can't rotate a fresh /128 per request and mint
+		// an unbounded number of per-IP budgets (F010).
+		res, _ := t.perIP.Take(ctx, "ip:"+ratelimit.ThrottleIPKey(ip))
 		allowed = allowed && res.Allowed
 	}
 	return allowed, nil
@@ -2343,7 +2344,10 @@ func (t *inProcessSignupIPThrottle) CheckIP(ctx context.Context, ip string) erro
 	if ip == "" {
 		return nil
 	}
-	res, _ := t.bucket.Take(ctx, ip)
+	// Masked to the throttle-key identity (F010) — see
+	// [ratelimit.ThrottleIPKey] for why a bare IPv6 address is the wrong
+	// key.
+	res, _ := t.bucket.Take(ctx, ratelimit.ThrottleIPKey(ip))
 	if !res.Allowed {
 		return auth.ErrSignupRateLimited
 	}

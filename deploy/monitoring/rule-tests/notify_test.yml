@@ -1,0 +1,128 @@
+# promtool unit tests for ../rules/notify.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/notify_test.yml
+#
+# Q268/RLT-324: stellarindex_notify_send_failure_ratio_high is 0/0 = NaN
+# whenever a template has zero send attempts, so a mailer that stops being
+# invoked entirely reads identically to a legitimately quiet window. Case 1
+# proves the new stellarindex_notify_no_send_activity dead-man's-switch
+# catches sustained total silence; case 2 proves it stays silent once any
+# send (success or failure) has happened recently.
+#
+# Case 3 proves the new stellarindex_notify_send_failures_sustained
+# companion pages on a persistent low-ratio failure trickle (well under the
+# 50% ratio threshold) that the ratio rule alone would never catch; case 4
+# proves a template with only occasional, non-sustained failures stays
+# silent.
+
+rule_files:
+  - ../rules/notify.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Case 1: total silence for 6h — the dead-man's switch ───────────
+  - interval: 1m
+    name: zero send attempts of either result for 6h fires the dead-man alert
+    input_series:
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="sent"}'
+        values: '0+0x400'
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="failed"}'
+        values: '0+0x400'
+      - series: 'stellarindex_notify_sends_total{template="signup-verify",result="sent"}'
+        values: '0+0x400'
+      - series: 'stellarindex_notify_sends_total{template="signup-verify",result="failed"}'
+        values: '0+0x400'
+    alert_rule_test:
+      - eval_time: 360m
+        alertname: stellarindex_notify_no_send_activity
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: notify
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+              summary: "No transactional email send attempts (any result) in 6h"
+              description: |
+                stellarindex_notify_sends_total has not incremented, for either
+                template or either result, in the last 6 hours. On a live
+                deployment this means the mailer has stopped being invoked
+                entirely — not merely failing — which the failure-ratio alert
+                cannot see (0 failed / 0 sent is NaN, not "> 0.5"). Check that
+                the dashboard-login and signup-verify handlers are still calling
+                internal/notify.Sender.Send, and that this is not a known-quiet
+                non-production deployment (silence this alert there instead of
+                widening the window).
+
+                Runbook: docs/operations/runbooks/notify-send-failure.md
+
+  # ── Case 2: a single recent send anywhere keeps it silent ──────────
+  - interval: 1m
+    name: any recent send activity silences the dead-man alert
+    input_series:
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="sent"}'
+        values: '0x300 1+0x100'
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="failed"}'
+        values: '0+0x400'
+      - series: 'stellarindex_notify_sends_total{template="signup-verify",result="sent"}'
+        values: '0+0x400'
+      - series: 'stellarindex_notify_sends_total{template="signup-verify",result="failed"}'
+        values: '0+0x400'
+    alert_rule_test:
+      - eval_time: 400m
+        alertname: stellarindex_notify_no_send_activity
+        exp_alerts: []
+
+  # ── Case 3: a low, persistent failure trickle under the 50% ratio ──
+  # magic-link sends 10/min successfully and 1/min failing throughout: a
+  # ~9% failure ratio the ratio rule never fires on, sustained past the 1h
+  # dwell.
+  - interval: 1m
+    name: a sustained low-ratio failure trickle fires the absolute-rate companion
+    input_series:
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="sent"}'
+        values: '0+10x150'
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="failed"}'
+        values: '0+1x150'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_notify_send_failures_sustained
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: stellarindex_notify_send_failures_sustained
+        exp_alerts:
+          - exp_labels:
+              template: magic-link
+              severity: ticket
+              team: stellarindex
+              component: notify
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+              summary: "Transactional email (magic-link) has been failing continuously for 1h"
+              description: |
+                magic-link email sends have included at least one
+                failure in every 15m window for the last hour — a persistent
+                failure trickle that may never cross the 50%-ratio alert's
+                threshold if send volume is high, but still means some fraction
+                of users never received their magic link or confirmation email.
+
+                Runbook: docs/operations/runbooks/notify-send-failure.md
+      # The pre-existing ratio rule must stay silent throughout — proves
+      # this is a genuinely NEW signal, not a duplicate of the ratio alert.
+      - eval_time: 90m
+        alertname: stellarindex_notify_send_failure_ratio_high
+        exp_alerts: []
+
+  # ── Case 4: an occasional, non-sustained failure stays silent ──────
+  - interval: 1m
+    name: an isolated failure blip does not fire the sustained-failure alert
+    input_series:
+      - series: 'stellarindex_notify_sends_total{template="signup-verify",result="sent"}'
+        values: '0+10x150'
+      - series: 'stellarindex_notify_sends_total{template="signup-verify",result="failed"}'
+        values: '0 0+1x5 5x144'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_notify_send_failures_sustained
+        exp_alerts: []

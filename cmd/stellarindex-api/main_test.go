@@ -580,6 +580,91 @@ func TestInProcessLoginThrottle_EnforcesPerIPCap(t *testing.T) {
 	}
 }
 
+// TestInProcessLoginThrottle_MasksIPv6ToSlash64 — F010. Pre-fix, the
+// in-process fallback keyed the per-IP bucket on the raw address, so a
+// caller with one routable IPv6 /64 allocation could mint a fresh /128 —
+// and therefore a fresh, empty throttle bucket — on every request,
+// bypassing the cap entirely. Asserts the corrected value: two /128s
+// inside the same /64 share one budget.
+func TestInProcessLoginThrottle_MasksIPv6ToSlash64(t *testing.T) {
+	th := newInProcessLoginThrottle()
+	ctx := context.Background()
+	for i := 0; i < inProcessLoginThrottleMaxPerIP; i++ {
+		// A distinct /128 each call, all inside 2001:db8:1234::/64.
+		ip := fmt.Sprintf("2001:db8:1234::%x", i+1)
+		allowed, err := th.Allow(ctx, ip, fmt.Sprintf("user%d@example.com", i))
+		if err != nil {
+			t.Fatalf("call %d: unexpected error: %v", i, err)
+		}
+		if !allowed {
+			t.Fatalf("call %d (ip=%s): expected allowed within the per-IP cap (max=%d)", i, ip, inProcessLoginThrottleMaxPerIP)
+		}
+	}
+	// One more /128 from the SAME /64 must be denied — proves the /64 is
+	// one shared budget, not a fresh one per address.
+	allowed, err := th.Allow(ctx, "2001:db8:1234::ffff", "spray-target@example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if allowed {
+		t.Errorf("expected a %d-th distinct /128 inside the same /64 to be DENIED (cap=%d), got allowed",
+			inProcessLoginThrottleMaxPerIP+1, inProcessLoginThrottleMaxPerIP)
+	}
+	// A /128 in a DIFFERENT /64 must be unaffected.
+	allowed, err = th.Allow(ctx, "2001:db8:5678::1", "other@example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !allowed {
+		t.Error("a distinct /64 must not be throttled by another /64's exhausted cap")
+	}
+}
+
+// TestInProcessLoginThrottle_CanonicalizesEmailBeforeHashing — F010. The
+// fallback must share auth.RedisLoginThrottle's email identity: a +tag
+// re-spelling of the same inbox must not get its own throttle budget.
+func TestInProcessLoginThrottle_CanonicalizesEmailBeforeHashing(t *testing.T) {
+	th := newInProcessLoginThrottle()
+	ctx := context.Background()
+	for i := 0; i < inProcessLoginThrottleMaxPerEmail; i++ {
+		// Every send re-spells the SAME inbox via a different +tag.
+		email := fmt.Sprintf("victim+%d@gmail.com", i)
+		allowed, err := th.Allow(ctx, fmt.Sprintf("203.0.113.%d", i), email)
+		if err != nil {
+			t.Fatalf("call %d: unexpected error: %v", i, err)
+		}
+		if !allowed {
+			t.Fatalf("call %d: expected allowed within the per-email cap (max=%d)", i, inProcessLoginThrottleMaxPerEmail)
+		}
+	}
+	allowed, err := th.Allow(ctx, "203.0.113.250", "victim@gmail.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if allowed {
+		t.Errorf("expected a %d-th +tag re-spelling of the same inbox to be DENIED (cap=%d), got allowed",
+			inProcessLoginThrottleMaxPerEmail+1, inProcessLoginThrottleMaxPerEmail)
+	}
+}
+
+// TestInProcessSignupIPThrottle_MasksIPv6ToSlash64 — F010, same class of
+// bug on the signup-IP fallback: CheckIP keyed on the raw address.
+func TestInProcessSignupIPThrottle_MasksIPv6ToSlash64(t *testing.T) {
+	th := newInProcessSignupIPThrottle()
+	ctx := context.Background()
+	for i := 0; i < inProcessSignupIPThrottleMaxPerHour; i++ {
+		ip := fmt.Sprintf("2001:db8:9999::%x", i+1)
+		if err := th.CheckIP(ctx, ip); err != nil {
+			t.Fatalf("call %d (ip=%s): expected nil error within the cap (max=%d), got %v",
+				i, ip, inProcessSignupIPThrottleMaxPerHour, err)
+		}
+	}
+	err := th.CheckIP(ctx, "2001:db8:9999::ffff")
+	if !errors.Is(err, auth.ErrSignupRateLimited) {
+		t.Errorf("expected a distinct /128 inside the same exhausted /64 to hit auth.ErrSignupRateLimited, got %v", err)
+	}
+}
+
 // TestInProcessSignupIPThrottle_EnforcesPerIPCap — NTF-08
 // (audit-2026-07-23). Asserts the corrected value: the (max+1)th
 // signup from one IP within the window is denied with
