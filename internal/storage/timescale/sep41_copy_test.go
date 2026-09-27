@@ -100,6 +100,9 @@ func TestCopyMergeSEP41Transfers_RejectsRowsThePerRowPathRejects(t *testing.T) {
 		{"set_authorized without flag", func(r *SEP41TransferRow) {
 			r.Kind, r.Authorized = SEP41SetAuthorized, nil
 		}, "row 1 set_authorized missing Authorized"},
+		{"negative set_admin", func(r *SEP41TransferRow) {
+			r.Kind, r.Amount = SEP41SetAdmin, big.NewInt(-5)
+		}, "row 1 set_admin negative Amount -5"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -123,5 +126,44 @@ func TestCopyMergeSEP41Transfers_RejectsRowsThePerRowPathRejects(t *testing.T) {
 				t.Fatalf("CopyMergeSEP41Transfers err = %v, want %q", err, want)
 			}
 		})
+	}
+}
+
+// TestValidateSEP41TransferRows_RowContractMatchesCheck pins the Go row
+// contract to sep41_transfers_amount_check's predicate, kind by kind: with
+// 0174 a no-op, this function is the only thing enforcing it.
+func TestValidateSEP41TransferRows_RowContractMatchesCheck(t *testing.T) {
+	authorized := true
+	kinds := []SEP41TransferKind{SEP41Transfer, SEP41Approve, SEP41SetAdmin, SEP41SetAuthorized}
+	amounts := []struct {
+		name string
+		v    *big.Int
+	}{
+		{"nil", nil},
+		{"zero", big.NewInt(0)},
+		{"positive", big.NewInt(7)},
+		{"negative", big.NewInt(-1)},
+		{"negative i128 min", new(big.Int).Neg(new(big.Int).Lsh(big.NewInt(1), 127))},
+	}
+	for _, k := range kinds {
+		for _, a := range amounts {
+			t.Run(string(k)+"/"+a.name, func(t *testing.T) {
+				row := SEP41TransferRow{
+					ContractID: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+					TxHash:     "tx-t090",
+					Kind:       k,
+					Amount:     a.v,
+					Authorized: &authorized,
+				}
+				// The CHECK: (amount IS NULL OR amount >= 0)
+				//        AND (kind NOT IN (transfer, approve) OR amount IS NOT NULL)
+				checkAccepts := (a.v == nil || a.v.Sign() >= 0) &&
+					(!(k == SEP41Transfer || k == SEP41Approve) || a.v != nil)
+				err := validateSEP41TransferRows("op", []SEP41TransferRow{row})
+				if (err == nil) != checkAccepts {
+					t.Fatalf("validateSEP41TransferRows err = %v, CHECK accepts = %v", err, checkAccepts)
+				}
+			})
+		}
 	}
 }

@@ -140,17 +140,13 @@ func validateSEP41TransferRows(op string, rows []SEP41TransferRow) error {
 		if !r.Kind.IsValid() {
 			return fmt.Errorf("timescale: %s: row %d invalid Kind %q", op, i, r.Kind)
 		}
-		// Only value-bearing kinds require a non-negative Amount; SetAdmin /
-		// SetAuthorized carry no amount (Authorized is checked separately below).
-		//exhaustive:ignore
-		switch r.Kind {
-		case SEP41Transfer, SEP41Approve:
-			if r.Amount == nil {
-				return fmt.Errorf("timescale: %s: row %d %s missing Amount", op, i, r.Kind)
-			}
-			if r.Amount.Sign() < 0 {
-				return fmt.Errorf("timescale: %s: row %d %s negative Amount %s", op, i, r.Kind, r.Amount)
-			}
+		// Mirrors sep41_transfers_amount_check exactly; nothing in the
+		// database enforces it while 0174 is a no-op.
+		if r.Amount != nil && r.Amount.Sign() < 0 {
+			return fmt.Errorf("timescale: %s: row %d %s negative Amount %s", op, i, r.Kind, r.Amount)
+		}
+		if (r.Kind == SEP41Transfer || r.Kind == SEP41Approve) && r.Amount == nil {
+			return fmt.Errorf("timescale: %s: row %d %s missing Amount", op, i, r.Kind)
 		}
 		if r.Kind == SEP41SetAuthorized && r.Authorized == nil {
 			return fmt.Errorf("timescale: %s: row %d set_authorized missing Authorized", op, i)
