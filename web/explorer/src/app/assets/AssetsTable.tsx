@@ -189,7 +189,7 @@ export function AssetsTable({
   // jump to the top of an ascending sort.
   const sortColumns: SortColumn<Coin, string>[] = [
     { key: 'asset', value: (c) => c.code ?? c.slug, initialDir: 'asc' },
-    { key: 'class', value: (c) => c.kind ?? c.type, initialDir: 'asc' },
+    { key: 'class', value: (c) => c.class ?? null, initialDir: 'asc' },
     ...(pricing
       ? ([
           { key: 'price', value: (c) => parseDec(c.price_usd) },
@@ -672,6 +672,8 @@ function AssetRow({
             <span className="text-ink-body font-mono tabular-nums">
               ${formatCompact(marketCap)}
             </span>
+          ) : coin.market_cap_decimals_mismatch ? (
+            <Dash title="Refused: the on-chain decimals() and the price projection disagree (self-clearing)" />
           ) : coin.market_cap_low_liquidity ? (
             <Dash title="Withheld: the price behind it comes from negligible liquidity" />
           ) : (

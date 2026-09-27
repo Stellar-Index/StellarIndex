@@ -184,7 +184,9 @@ function Row({
               </svg>
             </span>
           )}
-          <span className="text-ink-muted text-[11px]">{coin.slug}</span>
+          <span className="text-ink-muted text-[11px]">
+            {coinSlug(coin)}
+          </span>
           <ScamBadge tags={coin.issuer_directory_tags} />
         </Link>
       </Td>
