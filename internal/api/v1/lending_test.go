@@ -594,7 +594,7 @@ func TestLendingPoolReserves_PartialTVLIsLowerBound(t *testing.T) {
 	priced, unpriced := mkCStrkey(t, 40), mkCStrkey(t, 41)
 	reserve := func(asset string, supplied int64) clickhouse.BlendReserveState {
 		return clickhouse.BlendReserveState{
-			Pool: pool, Asset: asset, Decimals: 7,
+			Pool: pool, Asset: asset, Decimals: 7, DecimalsFound: true,
 			Metrics: blend.ReserveMetrics{
 				SuppliedUnderlying: big.NewInt(supplied),
 				BorrowedUnderlying: big.NewInt(0),

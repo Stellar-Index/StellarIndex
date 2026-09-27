@@ -46,7 +46,7 @@ pnpm dev
 
 ```sh
 pnpm dev                # next dev (HMR)
-pnpm build              # next build (production)
+pnpm build              # copy the OpenAPI spec into public/, next build, verify the shipped spec (production)
 pnpm typecheck          # tsc --noEmit
 pnpm lint               # eslint .
 pnpm format             # prettier --write

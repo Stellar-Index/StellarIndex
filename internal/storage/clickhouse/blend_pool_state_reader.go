@@ -16,12 +16,17 @@ import (
 // params + decimals) may not be captured (it's written rarely, often
 // before the contract-storage capture window began) — Metrics.HasAPR
 // reflects that, and Decimals falls back to 7 (the Stellar/SAC default).
+//
+// DecimalsFound reports whether Decimals came from the reserve's config.
+// When false the exponent is a placeholder: a caller must not publish a
+// decimalised money figure from it (see [ContractStorageSupply.DecimalsFound]).
 type BlendReserveState struct {
-	Pool     string
-	Asset    string // reserve underlying token (C-strkey)
-	Decimals uint32
-	Data     blend.ReserveData
-	Metrics  blend.ReserveMetrics
+	Pool          string
+	Asset         string // reserve underlying token (C-strkey)
+	Decimals      uint32
+	DecimalsFound bool
+	Data          blend.ReserveData
+	Metrics       blend.ReserveMetrics
 }
 
 // blendReserveStateQuery is the batched current-state lookup for a
@@ -167,7 +172,8 @@ func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, ver
 	// Assemble in the caller's asset order. ResData (the state) is
 	// mandatory; the rate-model config is optional — with it we report
 	// APY + the real decimals, without it supplied/borrowed/utilization
-	// (config-free) + default decimals 7, APY omitted (HasAPR=false).
+	// (config-free) + placeholder decimals 7 (DecimalsFound=false), APY
+	// omitted (HasAPR=false).
 	out := make([]BlendReserveState, 0, len(assets))
 	for _, asset := range assets {
 		rd := dataByAsset[asset]
@@ -175,19 +181,22 @@ func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, ver
 			continue
 		}
 		decimals := uint32(7)
+		decimalsFound := false
 		var metrics blend.ReserveMetrics
 		if cfg, ok := configs[asset]; ok {
 			decimals = cfg.Decimals
+			decimalsFound = true
 			metrics = blend.Metrics(*rd, cfg, bstop)
 		} else {
 			metrics = blend.BaseMetrics(*rd)
 		}
 		out = append(out, BlendReserveState{
-			Pool:     pool,
-			Asset:    asset,
-			Decimals: decimals,
-			Data:     *rd,
-			Metrics:  metrics,
+			Pool:          pool,
+			Asset:         asset,
+			Decimals:      decimals,
+			DecimalsFound: decimalsFound,
+			Data:          *rd,
+			Metrics:       metrics,
 		})
 	}
 	return out, nil

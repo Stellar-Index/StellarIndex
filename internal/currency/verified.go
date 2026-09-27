@@ -388,6 +388,23 @@ func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
 // off-Stellar ASSET, so EVERY classic `USDT-G…` is by construction an
 // impersonator and every issuer is the right answer to report.
 //
+// Policy for a legitimately-anchored wrapper (DOM-02): there is no separate
+// anchor allowlist, and there must not be one — internal/currency is a
+// hand-vetted trust surface (AGENTS.md: "NEVER auto-populate ... adding a
+// currency is a code change") and an allowlist keyed on ticker alone would
+// reopen exactly the impersonation vector this function closes. The
+// mechanism is the one already used for every other reclassification: if
+// an anchor issues a genuine bridged/wrapped form of a ticker-only entry
+// (e.g. a regulated WBTC issuance) on Stellar, add that issuance as a
+// `network: stellar` entry on the SAME catalogue entry in seed.yaml.
+// indexStellarEntries then indexes it into byStellarCode as the verified
+// issuer before this function ever runs (`indexed` is only false, and this
+// function only reached, when the entry has NO Stellar issuance yet), so
+// the wrapper becomes the answer StellarCollision reports instead of an
+// impersonation target. Until that code change lands, every classic asset
+// bearing the ticker has no verified issuer to be a legitimate instance of,
+// so flagging all of them is the fail-closed, correct default.
+//
 // A SOVEREIGN CURRENCY is the one kind of entry that reasoning does not
 // reach, so ClassFiat lands in byFiatCode instead (K033). USDT, XRP and
 // BTC each name a token somebody issues somewhere, and a classic

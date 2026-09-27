@@ -1558,9 +1558,11 @@ export interface paths {
          *
          *     USD values (`supplied_usd` / `borrowed_usd`, and the pool
          *     `tvl_usd` = Σ supplied_usd) are BEST-EFFORT: present when we hold
-         *     a USD price for the reserve's underlying token, null otherwise —
-         *     the token-unit amounts + utilization + APR are always exact. A
-         *     `tvl_usd` that leaves out an unpriced reserve carries
+         *     a USD price for the reserve's underlying token AND its decimals
+         *     are established (the pool's reserve config, a SAC's fixed 7, or
+         *     the token's own declared decimals), null otherwise — the
+         *     token-unit amounts + utilization + APR are always exact. A
+         *     `tvl_usd` that leaves out a reserve without a USD value carries
          *     `lower_bound: true`.
          *     Coverage = the live contract-storage capture window; a reserve
          *     with no captured entry is absent.
