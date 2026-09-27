@@ -13,6 +13,9 @@
 # pin. With --keep it is `manual-<label>` and is NEVER auto-destroyed —
 # you own its deletion.
 #
+# The snapshot is recursive: data/postgres includes its child
+# data/postgres/wal (pg_wal), so data and WAL come from one instant.
+#
 # The min-free guard applies either way: on a pool under the floor
 # this prunes older auto snapshots first and REFUSES (exit 1) if that
 # is not enough. Do not work around it; free space is the fix.

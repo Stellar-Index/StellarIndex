@@ -21,7 +21,9 @@
 #   6. `now <ds>` takes one auto snapshot; `--keep <label>` takes a
 #      manual-* one that a later rotate leaves alone;
 #   7. the textfile carries the alert-facing gauges with the correct
-#      values.
+#      values;
+#   8. snapshot and destroy are recursive: a child dataset (pg_wal's
+#      data/postgres/wal) is captured and pruned with its parent.
 #
 # Run: bash scripts/ci/zfs-snapshot-test.sh
 set -uo pipefail
@@ -81,20 +83,36 @@ case "$cmd" in
     grep -qx "$target" "$P/datasets" || { echo "cannot open '$target': dataset does not exist" >&2; exit 1; }
     echo "$target"; exit 0 ;;
   snapshot)
-    full="$1"; ds="${full%%@*}"
+    # zfs snapshot [-r] <ds@snap>; -r also snapshots every descendant.
+    rec=""; [[ "$1" == "-r" ]] && { rec=1; shift; }
+    full="$1"; ds="${full%%@*}"; snap="${full#*@}"
     grep -qx "$ds" "$P/datasets" || { echo "cannot create snapshot '$full': no such dataset" >&2; exit 1; }
     grep -q "^${full}"$'\t' "$P/snapshots" 2>/dev/null && { echo "cannot create snapshot '$full': dataset already exists" >&2; exit 1; }
-    printf '%s\t%s\t%s\n' "$full" "$(date +%s)" 0 >> "$P/snapshots"
-    echo "$full" >> "$P/created"; exit 0 ;;
+    targets="$ds"
+    [[ -n "$rec" ]] && targets="$(grep -E "^${ds}(/|\$)" "$P/datasets")"
+    for d in $targets; do
+      printf '%s\t%s\t%s\n' "$d@$snap" "$(date +%s)" 0 >> "$P/snapshots"
+      echo "$d@$snap" >> "$P/created"
+    done
+    exit 0 ;;
   destroy)
-    full="$1"
+    # zfs destroy [-r] <ds@snap>; -r also destroys <descendant>@snap.
+    rec=""; [[ "$1" == "-r" ]] && { rec=1; shift; }
+    full="$1"; ds="${full%%@*}"; snap="${full#*@}"
     line="$(grep "^${full}"$'\t' "$P/snapshots" 2>/dev/null || true)"
     [[ -n "$line" ]] || { echo "could not find any snapshots to destroy; check snapshot names." >&2; exit 1; }
-    used="$(printf '%s' "$line" | cut -f3)"
-    grep -v "^${full}"$'\t' "$P/snapshots" > "$P/snapshots.new" || true
-    mv "$P/snapshots.new" "$P/snapshots"
-    echo $(( $(cat "$P/free") + used )) > "$P/free"
-    echo "$full" >> "$P/destroyed"; exit 0 ;;
+    targets="$ds"
+    [[ -n "$rec" ]] && targets="$(grep -E "^${ds}(/|\$)" "$P/datasets")"
+    for d in $targets; do
+      line="$(grep "^${d}@${snap}"$'\t' "$P/snapshots" 2>/dev/null || true)"
+      [[ -n "$line" ]] || continue
+      used="$(printf '%s' "$line" | cut -f3)"
+      grep -v "^${d}@${snap}"$'\t' "$P/snapshots" > "$P/snapshots.new" || true
+      mv "$P/snapshots.new" "$P/snapshots"
+      echo $(( $(cat "$P/free") + used )) > "$P/free"
+      echo "$d@$snap" >> "$P/destroyed"
+    done
+    exit 0 ;;
   get)
     # zfs get -Hp -o value usedbysnapshots <ds>
     ds="${*: -1}"
@@ -411,6 +429,25 @@ res $? "destroy_auto_snapshot refuses a bare dataset name" "rc=$rc"
 choke "data/clickhouse@auto-$(stamp_days_ago 5)"; rc=$?
 t "$rc" -eq 0 -a "$(n_destroyed)" -eq 1
 res $? "destroy_auto_snapshot destroys a managed auto-* snapshot (control)" "rc=$rc destroyed=[$(destroyed_list)]"
+
+echo "zfs-snapshot-test: a child dataset rides its parent's snapshot and retention"
+# data/postgres/wal holds pg_wal: a data-directory snapshot without the WAL
+# of the same instant is not crash-consistent, so the child must be
+# snapshotted atomically with its parent and pruned with it.
+reset_pool $(( 5 * TIB ))
+printf '%s\n' data/postgres/wal >> "$FAKE_POOL/datasets"
+add_snap "data/postgres/wal@auto-$(stamp_days_ago 9)" "$(days_ago 9)" $(( 1 * GB ))
+add_snap "data/postgres/wal@auto-$(stamp_days_ago 6)" "$(days_ago 6)" $(( 1 * GB ))
+"$SCRIPT" rotate 2>"$TMP/log-rec"; rc=$?
+res $rc "rotate with a child dataset exits 0" "$(cat "$TMP/log-rec")"
+new_pg="$(grep -E '^data/postgres@auto-' "$FAKE_POOL/created")"
+t -n "$new_pg" && grep -qx "data/postgres/wal@${new_pg#*@}" "$FAKE_POOL/created"
+res $? "the child gets a snapshot with its parent's name in the same run" "created=[$(created_list)]"
+was_destroyed "data/postgres/wal@auto-$(stamp_days_ago 9)" \
+  && ! was_destroyed "data/postgres/wal@auto-$(stamp_days_ago 6)"
+res $? "the child's snapshot is destroyed with its parent's (9d) and kept with it (6d)" "destroyed=[$(destroyed_list)]"
+protected_intact
+res $? "recursive destroy leaves manual-/operator/unmanaged snapshots alone" "destroyed=[$(destroyed_list)]"
 
 echo "zfs-snapshot-test: config validation"
 ZFS_SNAPSHOT_DATASETS="data/clickhouse" "$SCRIPT" rotate 2>/dev/null; rc=$?

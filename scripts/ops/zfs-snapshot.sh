@@ -62,7 +62,11 @@
 #   - Only snapshots named `auto-YYYYMMDD-HHMM` are ever destroyed.
 #     Anything else (`manual-*`, `pre-migration`, an operator's
 #     hand-made snapshot) is invisible to retention AND to the guard.
-#   - Only datasets in $ZFS_SNAPSHOT_DATASETS are touched at all.
+#   - Only datasets in $ZFS_SNAPSHOT_DATASETS, and their descendants, are
+#     touched at all. Snapshot and destroy are recursive (-r) so a child
+#     dataset is captured in the same atomic instant as its parent:
+#     data/postgres/wal holds pg_wal, and a data-directory snapshot without
+#     the WAL of the same instant is not crash-consistent.
 #   - The guard never prunes a dataset's newest auto snapshot.
 #   - Every `zfs` call is idempotent from the caller's view: taking an
 #     already-existing snapshot name is a no-op success, destroying an
@@ -242,7 +246,7 @@ destroy_auto_snapshot() {
     log "destroy $full: already gone (no-op)"
     return 0
   fi
-  zfs destroy "$full" || die "zfs destroy $full failed"
+  zfs destroy -r "$full" || die "zfs destroy -r $full failed"
   log "destroyed $full ($why)"
 }
 
@@ -252,7 +256,7 @@ take_snapshot() {
     log "snapshot $full already exists (no-op)"
     return 0
   fi
-  zfs snapshot "$full" || die "zfs snapshot $full failed"
+  zfs snapshot -r "$full" || die "zfs snapshot -r $full failed"
   log "created $full"
 }
 
