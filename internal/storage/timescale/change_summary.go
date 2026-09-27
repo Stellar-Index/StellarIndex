@@ -242,16 +242,16 @@ func strPtrOrNil(s *string) any {
 // rows of the same bucket be adjacent, which any bucket ordering
 // gives.
 const timedVWAPs1mForChangeSummaryQuery = `
-		SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+		SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
 		       COALESCE(trade_count, 0), sources
 		  FROM (
-		    SELECT bucket, base_asset, vwap, volume, trade_count, sources
+		    SELECT bucket, base_asset, vwap, volume_priced, trade_count, sources
 		      FROM prices_1m
 		     WHERE base_asset = $1 AND quote_asset = $2
 		       AND bucket >= $3
 		       AND bucket <= LEAST($4::timestamptz, now()) - INTERVAL '1 minute'
 		    UNION ALL
-		    SELECT bucket, base_asset, vwap, volume, trade_count, sources
+		    SELECT bucket, base_asset, vwap, volume_priced, trade_count, sources
 		      FROM prices_1m
 		     WHERE base_asset = $2 AND quote_asset = $1
 		       AND bucket >= $3

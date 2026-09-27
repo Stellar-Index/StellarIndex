@@ -24,7 +24,7 @@ import (
 //
 // The XLM leg is `base_amount` for an XLM-base trade and `quote_amount`
 // for an XLM-quote one — the same stroop sums prices_1m exposes as
-// `volume` and `vwap * volume` — and `/1e7 * xlm_usd` converts it to USD.
+// `volume` and `volume_quote` — and `/1e7 * xlm_usd` converts it to USD.
 // Trades with no valuation and no XLM leg (pure SEP-41/SEP-41) still
 // contribute nothing — valuing those needs a per-token oracle, matching
 // the GetSourceStats boundary.

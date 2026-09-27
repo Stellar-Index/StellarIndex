@@ -37,12 +37,12 @@ type MarketDay struct {
 	// alias spelling of it (its SAC wrapper) are folded onto it.
 	AssetID string
 	// VWAP is the day's volume-weighted average price in dollars, as
-	// exact NUMERIC text (ADR-0003 — never a float). Weighted by BASE
-	// volume across the day's hour buckets, which recovers the day's
-	// true sum(quote)/sum(base): each hour's vwap is that hour's own
-	// sum(quote)/sum(base), so weighting it by that hour's base volume
-	// and dividing by the total base volume is an identity, not an
-	// approximation.
+	// exact NUMERIC text (ADR-0003 — never a float). Weighted by each
+	// hour's volume_priced, which recovers the day's true
+	// sum(quote)/sum(base) over priceable trades: each hour's vwap is that
+	// hour's own ratio over the same trades, so the weighting is an
+	// identity, not an approximation. `volume` also counts zero-leg
+	// trades and would skew it.
 	VWAP string
 	// VolumeUSD is the day's dollar volume over the same buckets. The
 	// first leg of the substance floor.
@@ -149,7 +149,7 @@ const dailyMarketDaysQuery = `
         )
         SELECT time_bucket('1 day', bucket)                                     AS day,
                family.member,
-               (sum(vwap * volume) / sum(volume))::text                         AS vwap,
+               (sum(vwap * volume_priced) / sum(volume_priced))::text           AS vwap,
                COALESCE(sum(volume_usd), 0)::text                               AS volume_usd,
                count(DISTINCT bucket)                                           AS hours,
                COALESCE(EXTRACT(EPOCH FROM (max(bucket) - min(bucket)))::bigint, 0) AS span_seconds,
@@ -162,7 +162,7 @@ const dailyMarketDaysQuery = `
            AND bucket >= $3
            AND bucket <  $4::timestamptz + INTERVAL '1 day'
            AND vwap IS NOT NULL
-           AND volume > 0
+           AND volume_priced > 0
          GROUP BY day, family.member
          ORDER BY day ASC, family.member ASC
     `

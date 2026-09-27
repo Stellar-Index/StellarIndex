@@ -10,14 +10,12 @@ import (
 	"time"
 )
 
-// The price CAGGs store Σ(base) as `volume` but no Σ(quote), so both OHLC
-// readers rebuild the missing leg from vwap·volume. vwap is a rounded
-// NUMERIC division, so the bare product is an integer sum plus a
-// fractional residue (1e6/3e6 · 3e6 = 999999.99999999999999), served
-// verbatim as a volume documented to be an integer smallest-unit sum.
-// Every rebuilt leg must therefore be rounded back to the integer it is;
-// test/integration's TestOHLCRebuiltVolumeIsTheIntegerSum executes it.
-func TestOHLCRebuiltVolumeLegsAreRounded(t *testing.T) {
+// Both OHLC readers take each bar's quote leg (and a flipped row's base
+// leg) from the stored volume_quote (migration 0187). Rebuilding it as
+// vwap·volume counts a zero-quote trade's base at the bucket price and
+// drops a zero-base trade's quote; test/integration's
+// TestOHLCVolumeLegsReadVolumeQuote executes it on such a bucket.
+func TestOHLCVolumeLegsReadVolumeQuote(t *testing.T) {
 	pair := ohlcSourcesPair(t)
 	bucket := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
 	for name, run := range map[string]func(*Store) error{
@@ -36,14 +34,16 @@ func TestOHLCRebuiltVolumeLegsAreRounded(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 		sql := conn.statements()[0]
-		// One rebuilt leg per direction: the requested row's quote, the
+		// One stored leg per direction: the requested row's quote, the
 		// flipped row's base.
-		if n := strings.Count(sql, "vwap * volume"); n != 2 {
-			t.Fatalf("%s rebuilds %d volume legs from vwap*volume, want 2:\n%s", name, n, sql)
+		if n := strings.Count(sql, "ELSE volume_quote END"); n != 1 {
+			t.Errorf("%s: flipped base leg not read from volume_quote:\n%s", name, sql)
 		}
-		if n := strings.Count(sql, "round(vwap * volume)"); n != 2 {
-			t.Errorf("%s: %d of 2 rebuilt volume legs are rounded; an unrounded one serves "+
-				"the division's residue as a fractional stroop sum:\n%s", name, n, sql)
+		if n := strings.Count(sql, "THEN volume_quote ELSE"); n != 1 {
+			t.Errorf("%s: requested quote leg not read from volume_quote:\n%s", name, sql)
+		}
+		if strings.Contains(sql, "vwap * volume") {
+			t.Errorf("%s still rebuilds a volume leg from vwap*volume:\n%s", name, sql)
 		}
 	}
 }

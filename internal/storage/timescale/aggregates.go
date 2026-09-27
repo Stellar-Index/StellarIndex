@@ -158,10 +158,12 @@ func (g HistoryGranularity) Seconds() int {
 // same market lands in the CAGG as BOTH (A,B) and (B,A) rows — every
 // serving read has to fold the two together itself.
 //
-//   - vwapText and volumeText are the row's NUMERIC columns as text
-//     (ADR-0003 — no float round-trip). Per migration 0002,
-//     vwap = Σquote_amount / Σbase_amount and volume = Σbase_amount,
-//     both in THAT ROW's own orientation and raw (smallest-unit) terms.
+//   - vwapText and volumeText are the row's `vwap` and `volume_priced`
+//     NUMERIC columns as text (ADR-0003 — no float round-trip). Per
+//     migration 0187 both cover priceable rows only (both legs > 0):
+//     vwap = Σquote / Σbase and volume_priced = Σbase, in THAT ROW's own
+//     orientation and raw (smallest-unit) terms. `volume` also counts
+//     zero-leg rows, so it is not vwap's denominator and cannot weight it.
 //   - flipped marks a row stored (quote, base) relative to the
 //     orientation the caller asked for.
 type dirVWAP struct {
@@ -201,14 +203,13 @@ func formatCombinedVWAP(r *big.Rat) string {
 // two directions is to re-express each row's two legs in the REQUESTED
 // orientation's units and re-divide the sums:
 //
-//	requested base  leg = volume          (flipped row: vwap × volume)
-//	requested quote leg = vwap × volume   (flipped row: volume)
+//	requested base  leg = volume_priced          (flipped row: vwap × volume_priced)
+//	requested quote leg = vwap × volume_priced   (flipped row: volume_priced)
 //
-// A flipped row's `volume` is Σ of the requested QUOTE asset, and its
-// vwap × volume reconstructs Σ of the requested BASE asset — the same
-// Σquote = vwap·Σbase identity [Store.OHLCSeries] already uses to derive
-// quote_amount. Both directions therefore contribute in the same raw
-// units and the quotient is the true union VWAP.
+// A flipped row's `volume_priced` is Σ of the requested QUOTE asset, and its
+// vwap × volume_priced reconstructs Σ of the requested BASE asset over
+// the same priceable trades. Both directions therefore contribute in the
+// same raw units and the quotient is the true union VWAP.
 //
 // This replaces a TRADE-COUNT-weighted mean of {vwap, 1/vwap_flipped}.
 // That is not a VWAP at all: it weights a hundred dust trades above one
@@ -485,13 +486,13 @@ func (s *Store) HistoryPoints(ctx context.Context, p canonical.Pair, granularity
 	// enum, not user input. See HistoryGranularity.Validate above.
 	q := fmt.Sprintf(`
 		SELECT * FROM (
-		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text, volume_usd::text
+		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text, volume_usd::text
 		       FROM %[1]s
 		      WHERE base_asset = $1 AND quote_asset = $2
 		        AND bucket <= now() - INTERVAL '%[2]s'
 		      ORDER BY bucket ASC%[3]s)
 		    UNION ALL
-		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text, volume_usd::text
+		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text, volume_usd::text
 		       FROM %[1]s
 		      WHERE base_asset = $2 AND quote_asset = $1
 		        AND bucket <= now() - INTERVAL '%[2]s'
@@ -692,12 +693,12 @@ func (s *Store) HistoryPointsInRange(
 	// enum, not user input. See HistoryGranularity.Validate.
 	q := fmt.Sprintf(`
 		SELECT * FROM (
-		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text, volume_usd::text
+		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text, volume_usd::text
 		       FROM %[1]s
 		      WHERE base_asset = $1 AND quote_asset = $2%[2]s
 		      ORDER BY bucket ASC%[3]s)
 		    UNION ALL
-		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text, volume_usd::text
+		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text, volume_usd::text
 		       FROM %[1]s
 		      WHERE base_asset = $2 AND quote_asset = $1%[2]s
 		      ORDER BY bucket ASC%[3]s)
@@ -977,7 +978,7 @@ type Vwap1mRow struct {
 // measurement and the reason.
 const recentClosedVWAP1mForPairQuery = `
         SELECT * FROM (
-            (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
                     COALESCE(trade_count, 0), sources
                FROM prices_1m
               WHERE base_asset = $1 AND quote_asset = $2
@@ -985,7 +986,7 @@ const recentClosedVWAP1mForPairQuery = `
               ORDER BY bucket DESC
               LIMIT $3)
             UNION ALL
-            (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
                     COALESCE(trade_count, 0), sources
                FROM prices_1m
               WHERE base_asset = $2 AND quote_asset = $1
@@ -1030,7 +1031,7 @@ func (s *Store) RecentClosedVWAP1mForPair(ctx context.Context, p canonical.Pair,
 // for the measurement and the reason.
 const recentClosedVWAP1mCombinedTemplate = `
         SELECT * FROM (
-            (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
                     COALESCE(trade_count, 0), sources
                FROM prices_1m
               WHERE base_asset = $1 AND quote_asset = $2
@@ -1039,7 +1040,7 @@ const recentClosedVWAP1mCombinedTemplate = `
               ORDER BY bucket DESC
               LIMIT $3)
             UNION ALL
-            (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
                     COALESCE(trade_count, 0), sources
                FROM prices_1m
               WHERE base_asset = $2 AND quote_asset = $1
@@ -1101,7 +1102,7 @@ func (s *Store) RecentClosedVWAP1mCombined(ctx context.Context, p canonical.Pair
 // branches for plan-time chunk pruning.
 const closedVWAP1mCombinedBeforeTemplate = `
         SELECT * FROM (
-            (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
                     COALESCE(trade_count, 0), sources
                FROM prices_1m
               WHERE base_asset = $1 AND quote_asset = $2
@@ -1110,7 +1111,7 @@ const closedVWAP1mCombinedBeforeTemplate = `
               ORDER BY bucket DESC
               LIMIT $3)
             UNION ALL
-            (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
                     COALESCE(trade_count, 0), sources
                FROM prices_1m
               WHERE base_asset = $2 AND quote_asset = $1
@@ -1258,7 +1259,7 @@ func scanCombinedVwap1mRows(rows *sql.Rows, p canonical.Pair, limit int, what st
 // TestBothDirectionReadersUseUnionNotOr.
 const closedVWAP1mAtOrBeforeQuery = `
         SELECT * FROM (
-            (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
                     COALESCE(trade_count, 0), sources
                FROM prices_1m
               WHERE base_asset = $1 AND quote_asset = $2
@@ -1266,7 +1267,7 @@ const closedVWAP1mAtOrBeforeQuery = `
               ORDER BY bucket DESC
               LIMIT 2)
             UNION ALL
-            (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
                     COALESCE(trade_count, 0), sources
                FROM prices_1m
               WHERE base_asset = $2 AND quote_asset = $1
@@ -1430,19 +1431,19 @@ const closedVWAPAtOrBeforeQueryTemplate = `
         ) u
     ),
     r AS (
-        SELECT base_asset, vwap::text AS vwap, COALESCE(volume, 0)::text AS volume
+        SELECT base_asset, vwap::text AS vwap, COALESCE(volume_priced, 0)::text AS volume_priced
           FROM %[1]s
          WHERE bucket = (SELECT b FROM latest)
            AND bucket >= TIMESTAMPTZ '%[3]s'
            AND base_asset = $1 AND quote_asset = $2
         UNION ALL
-        SELECT base_asset, vwap::text AS vwap, COALESCE(volume, 0)::text AS volume
+        SELECT base_asset, vwap::text AS vwap, COALESCE(volume_priced, 0)::text AS volume_priced
           FROM %[1]s
          WHERE bucket = (SELECT b FROM latest)
            AND bucket >= TIMESTAMPTZ '%[3]s'
            AND base_asset = $2 AND quote_asset = $1
     )
-    SELECT (SELECT b FROM latest), base_asset, vwap, volume
+    SELECT (SELECT b FROM latest), base_asset, vwap, volume_priced
       FROM r
 `
 
@@ -1722,21 +1723,21 @@ const latestClosedVWAP1mTemplate = `
             ) u
         ),
         r AS (
-            SELECT base_asset, vwap::text AS vwap, COALESCE(volume, 0)::text AS volume,
+            SELECT base_asset, vwap::text AS vwap, COALESCE(volume_priced, 0)::text AS volume_priced,
                    COALESCE(trade_count, 0) AS tc, sources
               FROM prices_1m
              WHERE bucket = (SELECT b FROM latest)
                %[1]s
                AND base_asset = $1 AND quote_asset = $2
             UNION ALL
-            SELECT base_asset, vwap::text AS vwap, COALESCE(volume, 0)::text AS volume,
+            SELECT base_asset, vwap::text AS vwap, COALESCE(volume_priced, 0)::text AS volume_priced,
                    COALESCE(trade_count, 0) AS tc, sources
               FROM prices_1m
              WHERE bucket = (SELECT b FROM latest)
                %[1]s
                AND base_asset = $2 AND quote_asset = $1
         )
-        SELECT (SELECT b FROM latest), base_asset, vwap, volume, tc, sources
+        SELECT (SELECT b FROM latest), base_asset, vwap, volume_priced, tc, sources
           FROM r
     `
 
@@ -1793,35 +1794,35 @@ func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from,
 	//
 	// The combine is the VOLUME-weighted union — Σ(requested quote leg)
 	// / Σ(requested base leg), each row's legs re-expressed in the
-	// requested orientation via Σquote = vwap·Σbase (the identity
-	// [combineDirVWAP] and [Store.OHLCSeries] use). Weighting the two
+	// requested orientation via Σquote = vwap·volume_priced (the identity
+	// [combineDirVWAP] uses). Weighting the two
 	// directions by TRADE COUNT, as this did, is not a VWAP at all and
 	// biased every baseline on a two-sided market. The division stays in
 	// NUMERIC and only the final value casts to float8 — this series
 	// feeds statistical baseline math whose float contract is documented
 	// on [Store.VWAPsForPair1m].
 	const q = `
-        SELECT (SUM(CASE WHEN base_asset = $1 THEN vwap * COALESCE(volume, 0)
-                         ELSE COALESCE(volume, 0) END)
-                  / NULLIF(SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume, 0)
-                                    ELSE vwap * COALESCE(volume, 0) END), 0))::float8 AS vwap,
+        SELECT (SUM(CASE WHEN base_asset = $1 THEN vwap * COALESCE(volume_priced, 0)
+                         ELSE COALESCE(volume_priced, 0) END)
+                  / NULLIF(SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume_priced, 0)
+                                    ELSE vwap * COALESCE(volume_priced, 0) END), 0))::float8 AS vwap,
                bucket + INTERVAL '1 minute'
           FROM (
-            (SELECT bucket, base_asset, vwap, volume
+            (SELECT bucket, base_asset, vwap, volume_priced
                FROM prices_1m
               WHERE base_asset = $1 AND quote_asset = $2
                 AND bucket >= $3
                 AND bucket <  $4)
             UNION ALL
-            (SELECT bucket, base_asset, vwap, volume
+            (SELECT bucket, base_asset, vwap, volume_priced
                FROM prices_1m
               WHERE base_asset = $2 AND quote_asset = $1
                 AND bucket >= $3
                 AND bucket <  $4)
           ) AS both_directions
          GROUP BY bucket
-        HAVING SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume, 0)
-                        ELSE vwap * COALESCE(volume, 0) END) > 0
+        HAVING SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume_priced, 0)
+                        ELSE vwap * COALESCE(volume_priced, 0) END) > 0
          ORDER BY bucket ASC
     `
 	rows, err := s.db.QueryContext(ctx, q,
@@ -1870,26 +1871,26 @@ func (s *Store) VWAPsForPair1m(ctx context.Context, p canonical.Pair, from, to t
 	// direction the CAGG happened to store. See TimedVWAPsForPair1m /
 	// combineDirVWAP / canonical.Orient.
 	const q = `
-        SELECT (SUM(CASE WHEN base_asset = $1 THEN vwap * COALESCE(volume, 0)
-                         ELSE COALESCE(volume, 0) END)
-                  / NULLIF(SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume, 0)
-                                    ELSE vwap * COALESCE(volume, 0) END), 0))::float8 AS vwap
+        SELECT (SUM(CASE WHEN base_asset = $1 THEN vwap * COALESCE(volume_priced, 0)
+                         ELSE COALESCE(volume_priced, 0) END)
+                  / NULLIF(SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume_priced, 0)
+                                    ELSE vwap * COALESCE(volume_priced, 0) END), 0))::float8 AS vwap
           FROM (
-            (SELECT bucket, base_asset, vwap, volume
+            (SELECT bucket, base_asset, vwap, volume_priced
                FROM prices_1m
               WHERE base_asset = $1 AND quote_asset = $2
                 AND bucket >= $3
                 AND bucket <  $4)
             UNION ALL
-            (SELECT bucket, base_asset, vwap, volume
+            (SELECT bucket, base_asset, vwap, volume_priced
                FROM prices_1m
               WHERE base_asset = $2 AND quote_asset = $1
                 AND bucket >= $3
                 AND bucket <  $4)
           ) AS both_directions
          GROUP BY bucket
-        HAVING SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume, 0)
-                        ELSE vwap * COALESCE(volume, 0) END) > 0
+        HAVING SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume_priced, 0)
+                        ELSE vwap * COALESCE(volume_priced, 0) END) > 0
          ORDER BY bucket ASC
     `
 	rows, err := s.db.QueryContext(ctx, q,
@@ -2092,13 +2093,10 @@ type OHLCBar struct {
 // never reaching `to` — a stale slice for exactly the wide-window
 // request a caller sizes `limit` down to bound.
 //
-// The CAGG stores no Σ(quote), so it (and a flipped row's base leg) is
-// rebuilt as `round(vwap * volume)`. vwap is one NUMERIC division,
-// rounded to ~16 significant digits, so the bare product misses the
-// integer Σ(quote) by a fractional residue; rounding recovers it exactly
-// while Σ(quote) is below 10^16 smallest units per stored row, and to
-// within about one part in 10^16 above that. Exact at any size needs a
-// stored volume_quote — see migrations/README.md rule 8.
+// Σ(quote) (and a flipped row's base leg) is the stored `volume_quote`
+// (migration 0187), exact at any size and counting zero-leg trades on
+// the same footing as `volume`. `vwap * volume` would count a zero-quote
+// trade's base at the bucket price and drop a zero-base trade's quote.
 func (s *Store) OHLCSeries(
 	ctx context.Context,
 	p canonical.Pair,
@@ -2151,13 +2149,13 @@ func (s *Store) OHLCSeries(
 		        CASE WHEN base_asset = $1 THEN last_price  ELSE 1.0 / NULLIF(last_price, 0)  END AS c,
 		        CASE WHEN base_asset = $1 THEN high_price  ELSE 1.0 / NULLIF(low_price, 0)   END AS hi,
 		        CASE WHEN base_asset = $1 THEN low_price   ELSE 1.0 / NULLIF(high_price, 0)  END AS lo,
-		        CASE WHEN base_asset = $1 THEN volume               ELSE round(vwap * volume) END AS base_vol,
-		        CASE WHEN base_asset = $1 THEN round(vwap * volume) ELSE volume               END AS quote_vol,
+		        CASE WHEN base_asset = $1 THEN volume       ELSE volume_quote END AS base_vol,
+		        CASE WHEN base_asset = $1 THEN volume_quote ELSE volume       END AS quote_vol,
 		        trade_count AS tc,
 		        sources     AS srcs
 		      FROM (
 		        (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
-		                vwap, volume, trade_count, sources
+		                volume, volume_quote, trade_count, sources
 		           FROM %[1]s
 		          WHERE base_asset = $1 AND quote_asset = $2
 		            AND bucket >= $3
@@ -2165,7 +2163,7 @@ func (s *Store) OHLCSeries(
 		            AND bucket <= now() - INTERVAL '%[2]s')
 		        UNION ALL
 		        (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
-		                vwap, volume, trade_count, sources
+		                volume, volume_quote, trade_count, sources
 		           FROM %[1]s
 		          WHERE base_asset = $2 AND quote_asset = $1
 		            AND bucket >= $3
@@ -2258,20 +2256,20 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		               CASE WHEN base_asset = $1 THEN last_price  ELSE 1.0 / NULLIF(last_price, 0)  END AS c,
 		               CASE WHEN base_asset = $1 THEN high_price  ELSE 1.0 / NULLIF(low_price, 0)   END AS hi,
 		               CASE WHEN base_asset = $1 THEN low_price   ELSE 1.0 / NULLIF(high_price, 0)  END AS lo,
-		               CASE WHEN base_asset = $1 THEN volume               ELSE round(vwap * volume) END AS base_vol,
-		               CASE WHEN base_asset = $1 THEN round(vwap * volume) ELSE volume               END AS quote_vol,
+		               CASE WHEN base_asset = $1 THEN volume       ELSE volume_quote END AS base_vol,
+		               CASE WHEN base_asset = $1 THEN volume_quote ELSE volume       END AS quote_vol,
 		               trade_count AS tc,
 		               sources     AS srcs
 		          FROM (
 		            (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
-		                    vwap, volume, trade_count, sources
+		                    volume, volume_quote, trade_count, sources
 		               FROM %[1]s
 		              WHERE base_asset = $1 AND quote_asset = $2
 		                AND bucket >= $3
 		                AND bucket <  $4)
 		            UNION ALL
 		            (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
-		                    vwap, volume, trade_count, sources
+		                    volume, volume_quote, trade_count, sources
 		               FROM %[1]s
 		              WHERE base_asset = $2 AND quote_asset = $1
 		                AND bucket >= $3
@@ -2315,7 +2313,7 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 //   - high  = max(high_price)
 //   - low   = min(low_price)
 //   - base_volume  = Σ volume
-//   - quote_volume = Σ round(vwap * volume)  (Σ quote; see [Store.OHLCSeries])
+//   - quote_volume = Σ volume_quote  (see [Store.OHLCSeries])
 //   - trade_count  = Σ trade_count
 //
 // `outInterval` MUST be an integer multiple of the source CAGG's

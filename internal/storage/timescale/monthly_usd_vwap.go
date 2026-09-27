@@ -44,13 +44,13 @@ type MonthlyUSDVWAP struct {
 // cast explicitly: an untyped bind beside a timestamptz column is the
 // 42883 trap.
 const monthlyUSDVWAPsSQL = `
-SELECT bucket, base_asset, vwap::text, volume::text, COALESCE(volume_usd, 0)::text, sources
+SELECT bucket, base_asset, vwap::text, volume_priced::text, COALESCE(volume_usd, 0)::text, sources
   FROM prices_1mo
  WHERE quote_asset IN (` + usdProxyQuotes + `)
    AND bucket >= $1::timestamptz
    AND bucket <  $2::timestamptz
    AND vwap IS NOT NULL
-   AND volume > 0
+   AND volume_priced > 0
  ORDER BY bucket, base_asset`
 
 // MonthlyUSDVWAPs folds prices_1mo's USD-quoted rows into ONE row per
@@ -88,8 +88,9 @@ func (s *Store) MonthlyUSDVWAPs(ctx context.Context, from, to time.Time, sourceD
 	return foldMonthlyUSDVWAPs(in, sourceDecimals)
 }
 
-// monthlyUSDVWAPRow is one prices_1mo row as stored: vwap and volume in
-// the base spelling's raw stored unit.
+// monthlyUSDVWAPRow is one prices_1mo row as stored: vwap and its weight
+// volume_priced (Σbase over the trades vwap covers) in the base
+// spelling's raw stored unit.
 type monthlyUSDVWAPRow struct {
 	month             time.Time
 	base              string

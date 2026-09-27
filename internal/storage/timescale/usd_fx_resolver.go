@@ -784,17 +784,18 @@ func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Ass
 //
 // The quote-side notional has no such dependency: it is derived from
 // the bucket's own stored amounts, which exist the instant the trade
-// inserts. `vwap * volume` reconstructs Σ(quote_amount) for the bucket
-// — prices_1m defines vwap as Σ(quote)/Σ(base) and volume as Σ(base),
-// so the product cancels back to the quote sum, up to NUMERIC's ~16
-// significant digits of division rounding (immaterial against a
-// one-cent threshold). And this query only ever matches rows whose
+// inserts. `vwap * volume_priced` is Σ(quote_amount) over the trades
+// the vwap was computed from (both legs > 0, migration 0187), up to
+// NUMERIC's ~16 significant digits of division rounding (immaterial
+// against a one-cent threshold). Not `volume_quote`: that also counts
+// zero-base trades, which would let a quote-only row carry a dust fill's
+// price over the floor. And this query only ever matches rows whose
 // `quote_asset` IS one of the operator's pegs, so that sum is already
 // denominated in dollars modulo the peg assumption the whole resolver
 // rests on.
 const directLegMinQuoteVolume = "0.01"
 
-// pegQuoteScaleDenominator converts a prices_1m `volume`/`vwap` product
+// pegQuoteScaleDenominator converts a prices_1m `vwap * volume_priced` product
 // from raw stroops to whole units of the quote asset. Trade amounts are
 // stored unscaled (see [canonical.Amount]), and the pegs this leg
 // queries are classic Stellar assets, which the protocol fixes at
@@ -907,7 +908,7 @@ func (r *VWAPUSDFXResolver) queryDirectLeg(ctx context.Context, asset canonical.
 		   AND quote_asset = ANY($2)
 		   AND bucket     <= $3
 		   AND vwap        > 0
-		   AND vwap * volume / %d::numeric >= $4::numeric`, pegQuoteScaleDenominator)
+		   AND vwap * volume_priced / %d::numeric >= $4::numeric`, pegQuoteScaleDenominator)
 	args := []any{
 		asset.String(),
 		r.pegForms,

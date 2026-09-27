@@ -247,8 +247,11 @@ const (
 // the arm's (asset, quote) orientation and the leg sums are re-divided,
 // the SQL form of [combineDirVWAP]:
 //
-//	(asset, q) row: asset leg = volume,         q leg = vwap × volume
-//	(q, asset) row: asset leg = vwap × volume,  q leg = volume
+//	(asset, q) row: asset leg = volume_priced,         q leg = vwap × volume_priced
+//	(q, asset) row: asset leg = vwap × volume_priced,  q leg = volume_priced
+//
+// volume_priced, not volume: vwap covers only trades with both legs > 0
+// (migration 0187), so its weight must too.
 //
 // Reading one direction, or preferring one, priced an asset from
 // whichever side of its book last traded in that orientation: days old,
@@ -268,18 +271,18 @@ func unionPriceArmCTE(name, quotes, window, asset string) string {
 		    FROM (
 		      SELECT u.*, max(u.bucket) OVER (PARTITION BY u.asset_id) AS newest
 		        FROM (
-		          SELECT base_asset AS asset_id, bucket, volume AS asset_leg,
-		                 vwap * volume AS quote_leg, sources
+		          SELECT base_asset AS asset_id, bucket, volume_priced AS asset_leg,
+		                 vwap * volume_priced AS quote_leg, sources
 		            FROM prices_1m
 		           WHERE quote_asset IN (%[2]s)%[4]s
 		             AND %[3]s
-		             AND vwap > 0 AND volume > 0
+		             AND vwap > 0 AND volume_priced > 0
 		          UNION ALL
-		          SELECT quote_asset, bucket, vwap * volume, volume, sources
+		          SELECT quote_asset, bucket, vwap * volume_priced, volume_priced, sources
 		            FROM prices_1m
 		           WHERE base_asset IN (%[2]s)%[5]s
 		             AND %[3]s
-		             AND vwap > 0 AND volume > 0
+		             AND vwap > 0 AND volume_priced > 0
 		        ) u
 		    ) r
 		   WHERE bucket = newest

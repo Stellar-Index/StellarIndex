@@ -134,11 +134,11 @@ func TestClosedVWAPAtOrBeforeQueryShape(t *testing.T) {
 		!strings.Contains(q, "base_asset = $2 AND quote_asset = $1") {
 		t.Error("query does not combine both stored directions of the pair")
 	}
-	// The query hands each direction's raw (base_asset, vwap, volume) to
-	// Go: the direction fold is [combineDirVWAP]'s exact volume-weighted
-	// union (R-004/R-007, audit-2026-07-23), not SQL. `volume` is what
-	// makes that possible, so it MUST be selected.
-	if !strings.Contains(q, "COALESCE(volume, 0)::text AS volume") {
+	// The query hands each direction's raw (base_asset, vwap,
+	// volume_priced) to Go: the direction fold is [combineDirVWAP]'s exact
+	// volume-weighted union, not SQL. volume_priced is vwap's own
+	// denominator; `volume` also counts zero-leg trades.
+	if !strings.Contains(q, "COALESCE(volume_priced, 0)::text AS volume_priced") {
 		t.Error("query does not select each direction's volume (needed for the volume-weighted union)")
 	}
 	// The SQL must NOT weight or invert the directions itself. Both of
@@ -224,9 +224,9 @@ func TestRecentClosedVWAP1mCombinedQueryShape(t *testing.T) {
 		t.Error("combined query does not read both stored directions")
 	}
 	// Raw per-direction rows: base_asset tells Go which rows are flipped
-	// and volume is the weight [combineDirVWAP] folds them with. The
+	// and volume_priced is the weight [combineDirVWAP] folds them with. The
 	// baseline and the served candidate MUST run the identical combine.
-	if !strings.Contains(q, "COALESCE(volume, 0)::text") {
+	if !strings.Contains(q, "COALESCE(volume_priced, 0)::text") {
 		t.Error("combined query does not select each direction's volume (needed for the volume-weighted union)")
 	}
 	if !strings.Contains(q, "SELECT bucket, base_asset, vwap::text") {
