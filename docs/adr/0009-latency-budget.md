@@ -126,10 +126,12 @@ handler tests as `// budget: pXX = N ms`:
   per route + status (per `internal/obs/metrics.go`). Existing
   alerts in alerts-catalog:
   - `stellarindex_api_latency_p95_high` — > 500 ms p95 sustained
-    > 2 min (2.5× the steady-state target — leaves room before
-    paging on the P2)
+    > 10 min (2.5× the steady-state target; the longer window rides
+    out transient bursts — deploy cold caches, a brief load spike —
+    and only fires on a genuinely sustained slowdown)
   - `stellarindex_api_latency_p99_high` — > 2 s p99 sustained
-    > 2 min (4× the cache-cold budget — paging threshold)
+    > 10 min (4× the cache-cold budget; same rationale — rides out
+    transient tail-latency bursts before paging)
 - **Load-test gate** — an SLA-validation load test
   exercises the budget under 2,000 rps on cache-served endpoints.
   Failure to meet p95 ≤ 200 ms / p99 ≤ 500 ms blocks the release.
