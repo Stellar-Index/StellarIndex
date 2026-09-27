@@ -2368,13 +2368,13 @@ var PriceAlertEvalTotal = prometheus.NewCounterVec(
 
 // PriceAlertEvaluatedTotal — one increment per alert per sweep, labelled
 // by that alert's outcome (pricealerts.AlertOutcomes): fired, not_crossed,
-// no_price, cooling_down, no_subscriber, claim_lost, error, timeout.
+// no_price, stale, cooling_down, no_subscriber, claim_lost, error, timeout.
 // PriceAlertEvalTotal's `partial_error` is one sample per sweep whether
 // one alert or all of them failed; this counter separates the two.
 var PriceAlertEvaluatedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_alert_evaluated_total",
-		Help: "Per-alert price-alert evaluation outcomes (fired|not_crossed|no_price|cooling_down|no_subscriber|claim_lost|error|timeout).",
+		Help: "Per-alert price-alert evaluation outcomes (fired|not_crossed|no_price|stale|cooling_down|no_subscriber|claim_lost|error|timeout).",
 	},
 	[]string{"outcome"},
 )

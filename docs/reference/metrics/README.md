@@ -2163,12 +2163,15 @@ configs/prometheus/rules.r1/price-alerts.yml).
 
 ### `stellarindex_price_alert_evaluated_total`
 
-Counter, label `outcome` (`fired` / `not_crossed` / `no_price` /
+Counter, label `outcome` (`fired` / `not_crossed` / `no_price` / `stale` /
 `cooling_down` / `no_subscriber` / `claim_lost` / `error` / `timeout`),
 every child seeded when the evaluator is built.
 
 One increment per alert per sweep. `timeout` is the alert's own deadline
 (a third of the sweep interval) expiring on its reads or its fan-out.
+`stale` is a closed VWAP bucket older than the evaluator's own freshness
+budget (`maxPriceStaleness`, 15 min) — rejected rather than notifying off
+a price that no longer describes a live crossing.
 More than half of evaluations ending in `error` / `timeout` for 30 min
 fires `stellarindex_price_alert_evaluations_failing`.
 

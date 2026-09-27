@@ -410,6 +410,45 @@ func TestSweep_NoPrice_NoFire(t *testing.T) {
 	}
 }
 
+// TestSweep_StalePrice_NoFire proves the evaluator rejects a crossing
+// built off a closed VWAP bucket older than its own freshness budget
+// (GH-664): the condition is crossed and there is no cooldown in the
+// way, but the bucket closed well outside maxPriceStaleness of "now", so
+// the alert must not fire and the `stale` outcome must be recorded.
+func TestSweep_StalePrice_NoFire(t *testing.T) {
+	acct := uuid.New()
+	alert := platform.PriceAlert{
+		ID: uuid.New(), AccountID: acct,
+		BaseAsset: "native", QuoteAsset: "fiat:USD",
+		Condition: platform.AlertAbove, Threshold: "0.15", Enabled: true,
+	}
+	alerts := &fakeAlertStore{enabled: []platform.PriceAlert{alert}}
+	hooks := &fakeWebhooks{byAcct: map[uuid.UUID][]platform.CustomerWebhook{
+		acct: {priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert))},
+	}}
+	// "now" in buildWorker is fixed at 2026-07-05 12:00:00 UTC; a bucket
+	// that closed 14 days earlier crosses the threshold but is far
+	// outside any live-crossing freshness budget.
+	prices := fakePrices{
+		price:  "0.20",
+		bucket: time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC),
+		ok:     true,
+	}
+
+	before := obstest.CounterValue(obs.PriceAlertEvaluatedTotal.WithLabelValues(outcomeStale))
+	buildWorker(alerts, hooks, prices).Sweep(context.Background())
+
+	if len(hooks.enqueued) != 0 {
+		t.Errorf("stale price → no fire, got %d deliveries", len(hooks.enqueued))
+	}
+	if len(alerts.firedIDs) != 0 {
+		t.Errorf("stale price must not claim a fire, got %+v", alerts.firedIDs)
+	}
+	if after := obstest.CounterValue(obs.PriceAlertEvaluatedTotal.WithLabelValues(outcomeStale)); after-before != 1 {
+		t.Errorf("stale outcome counter did not advance by 1 (%v -> %v)", before, after)
+	}
+}
+
 func TestSweep_ListError_RecordsOutcome(t *testing.T) {
 	alerts := &fakeAlertStore{listErr: errors.New("db down")}
 	hooks := &fakeWebhooks{byAcct: map[uuid.UUID][]platform.CustomerWebhook{}}

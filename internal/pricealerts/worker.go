@@ -26,11 +26,22 @@ const DefaultInterval = 30 * time.Second
 // background statement timeout.
 const alertTimeoutDivisor = 3
 
+// maxPriceStaleness bounds how old the closed VWAP bucket an alert
+// evaluates against may be. LatestVWAP's own gate
+// (timescale.latestVWAPGateWindow) allows a bucket up to 14 DAYS old —
+// generous for general price serving, but a "price crossed a threshold"
+// notification built off a bucket that stale is no longer describing a
+// live crossing (GH-664). 15 one-minute buckets is a wide margin over
+// the evaluator's own 30 s-default sweep cadence while still rejecting
+// the multi-day-stale case the gate lets through.
+const maxPriceStaleness = 15 * time.Minute
+
 // Per-alert outcomes recorded on stellarindex_price_alert_evaluated_total.
 const (
 	outcomeFired        = "fired"
 	outcomeNotCrossed   = "not_crossed"
 	outcomeNoPrice      = "no_price"
+	outcomeStale        = "stale"
 	outcomeCoolingDown  = "cooling_down"
 	outcomeNoSubscriber = "no_subscriber"
 	outcomeClaimLost    = "claim_lost"
@@ -40,7 +51,7 @@ const (
 
 // AlertOutcomes is the complete per-alert outcome vocabulary.
 var AlertOutcomes = []string{
-	outcomeFired, outcomeNotCrossed, outcomeNoPrice, outcomeCoolingDown,
+	outcomeFired, outcomeNotCrossed, outcomeNoPrice, outcomeStale, outcomeCoolingDown,
 	outcomeNoSubscriber, outcomeClaimLost, outcomeError, outcomeTimeout,
 }
 
@@ -256,6 +267,16 @@ func (w *Worker) checkCrossing(ctx context.Context, a platform.PriceAlert, now t
 	if !ok {
 		// No closed bucket in scope — benign (like divergence no_vwap).
 		return nil, outcomeNoPrice, nil
+	}
+	if age := now.Sub(bucketClose); age > maxPriceStaleness {
+		// The bucket is real but too old to describe a live crossing
+		// (GH-664) — LatestVWAP's own freshness gate is generous (up to
+		// 14 days) for general price serving, so the evaluator enforces
+		// its own tighter budget rather than notifying off a stale price.
+		w.logger.Debug("price alert price stale — skipping",
+			"alert_id", a.ID, "account_id", a.AccountID,
+			"bucket_close", bucketClose, "age", age)
+		return nil, outcomeStale, nil
 	}
 
 	crossed, err := conditionCrossed(a.Condition, priceStr, a.Threshold)
