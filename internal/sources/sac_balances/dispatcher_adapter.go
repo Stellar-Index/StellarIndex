@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"strings"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
@@ -70,22 +69,15 @@ func NewObserver(wrappers map[string]string) (*Observer, error) {
 		if ak == "" {
 			return nil, fmt.Errorf("sac_balances: empty asset_key for SAC contract %s", cid)
 		}
-		// A SAC-wrapped classic asset carries a CODE-ISSUER asset_key that
-		// must match the colon-form supply.AssetKey the trustline /
-		// claimable / LP observers emit for the SAME classic asset; run it
-		// through the shared canonicalizer so a dash-form operator entry is
-		// not silently under-counted (the 2026-07-02 watched-set bug,
-		// supply.CanonicalizeWatchedClassic). Pure SEP-41 wrappers map
-		// contract_id → contract_id — a bare C-strkey, not a classic
-		// asset — and pass through unchanged.
-		if strings.ContainsAny(ak, "-:") {
-			canon, cerr := supply.CanonicalizeWatchedClassic([]string{ak})
-			if cerr != nil {
-				return nil, fmt.Errorf("sac_balances: asset_key for SAC contract %s: %w", cid, cerr)
-			}
-			ak = canon[0]
+		// A SAC-wrapped classic asset's key must match the colon-form
+		// supply.AssetKey the trustline / claimable / LP observers emit, so a
+		// dash-form entry is not silently under-counted. The supply readers
+		// resolve through the same helper, so reader and writer agree.
+		key, _, err := supply.SACWrapperAssetKey(ak)
+		if err != nil {
+			return nil, fmt.Errorf("sac_balances: asset_key for SAC contract %s: %w", cid, err)
 		}
-		cleaned[cid] = ak
+		cleaned[cid] = key
 	}
 	return &Observer{wrappers: cleaned}, nil
 }
