@@ -1487,6 +1487,12 @@ stellarindex_sdf_reserve_accounts:
   - "GANII5Y2LABEBK74NWNKS4NREX2T52YTBGQDRDKVBFRIIF5VE4ORYOVY"
   - "GBEZOC5U4TVH7ZY5N3FLYHTCZSI6VFGTULG7PBITLF5ZEBPJXFT46YZM"
 
+# Issuer accounts the indexer observes for their on-chain home_domain
+# ([metadata].watched_issuer_accounts). NEVER add an issuer to the
+# reserve list above to observe it: that subtracts its XLM from
+# circulating supply. Empty = no issuer is observed.
+stellarindex_metadata_watched_issuer_accounts: []
+
 # Point-in-time balance snapshot (stroops, 2026-07-02) — the supply
 # writer's fallback until account_observations covers each account
 # (config.go SupplyConfig: every account above MUST appear here or the

@@ -306,6 +306,26 @@ func oracleStalenessOverrides(oracle config.OracleConfig) []obs.OracleStalenessO
 	return out
 }
 
+// AccountObserverWatchSet is the account set the accounts observer
+// watches: the SDF reserve accounts plus the metadata-watched issuers,
+// deduplicated in first-seen order. Empty means the observer is not
+// registered. The indexer gates the observer's watermark on the same
+// set.
+func AccountObserverWatchSet(sup config.SupplyConfig, meta config.MetadataConfig) []string {
+	seen := make(map[string]struct{}, len(sup.SDFReserveAccounts)+len(meta.WatchedIssuerAccounts))
+	var out []string
+	for _, lists := range [][]string{sup.SDFReserveAccounts, meta.WatchedIssuerAccounts} {
+		for _, acc := range lists {
+			if _, dup := seen[acc]; dup {
+				continue
+			}
+			seen[acc] = struct{}{}
+			out = append(out, acc)
+		}
+	}
+	return out
+}
+
 // RegisterSupplyEntryDecoders attaches the LCM-based supply observers
 // to disp based on the supply config. Each observer is opt-in: an
 // empty watched-set leaves the corresponding observer unregistered
@@ -316,10 +336,12 @@ func oracleStalenessOverrides(oracle config.OracleConfig) []obs.OracleStalenessO
 //
 // Currently wired:
 //
-//   - accounts.Observer — backed by [supply.SDFReserveAccounts].
-//     Powers Algorithm 1 (XLM circulating supply) by recording
-//     AccountEntry balance changes for the operator-curated reserve
-//     account set into `account_observations`.
+//   - accounts.Observer — backed by [AccountObserverWatchSet]:
+//     [supply.SDFReserveAccounts] (Algorithm 1 XLM circulating supply)
+//     plus [metadata.WatchedIssuerAccounts] (issuer home_domain). Records
+//     AccountEntry changes into `account_observations`; each reader
+//     queries by account id, so the union does not leak issuers into
+//     the reserve sum.
 //   - trustlines.Observer — backed by [supply.WatchedClassicAssets].
 //     Records TrustLineEntry balance changes for the watched
 //     classic assets into `classic_supply_trustline_observations`.
@@ -346,10 +368,10 @@ func oracleStalenessOverrides(oracle config.OracleConfig) []obs.OracleStalenessO
 // Decoder, not LedgerEntryChangeDecoder); it ships in
 // [RegisterSupplyEventDecoders] alongside the LedgerEntry registration
 // here so an indexer that wants the full supply pipeline calls both.
-func RegisterSupplyEntryDecoders(disp *dispatcher.Dispatcher, sup config.SupplyConfig) ([]string, error) {
+func RegisterSupplyEntryDecoders(disp *dispatcher.Dispatcher, sup config.SupplyConfig, meta config.MetadataConfig) ([]string, error) {
 	var registered []string
-	if len(sup.SDFReserveAccounts) > 0 {
-		obs, err := accounts.NewObserver(sup.SDFReserveAccounts)
+	if watched := AccountObserverWatchSet(sup, meta); len(watched) > 0 {
+		obs, err := accounts.NewObserver(watched)
 		if err != nil {
 			return nil, fmt.Errorf("accounts observer: %w", err)
 		}

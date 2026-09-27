@@ -186,16 +186,26 @@ thundering herd.
 
 ### Adding a curated issuer → home-domain mapping
 
-The on-chain `AccountEntry.HomeDomain` isn't currently indexed in
-our trades hypertable, so when an issuer's home-domain is missing
-or wrong on-chain, the API has nothing to feed to the SEP-1
-resolver. Operators close that gap via a curated map:
+The API reads an issuer's on-chain `AccountEntry.HomeDomain` from
+`account_observations` for the accounts listed in
+`[metadata].watched_issuer_accounts` (never add an issuer to
+`[supply].sdf_reserve_accounts` for this: that subtracts its XLM from
+circulating supply). For issuers with no observation, a curated map
+supplies the home-domain:
 
 ```toml
 # /etc/stellarindex.toml
+[metadata]
+watched_issuer_accounts = ["GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"]
+
 [metadata.issuer_home_domains]
 "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" = "centre.io"
 ```
+
+An observation always wins over the curated map, including an
+observation that the account has no home_domain (cleared by
+`SetOptions`, or the account merged): the API then serves no
+home_domain rather than the curated value.
 
 The map's only job is supplying `home_domain` for the SEP-1
 resolver lookup; the resolver then fetches the issuer's

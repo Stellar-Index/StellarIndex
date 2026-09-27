@@ -64,6 +64,9 @@ func (s *Store) InsertAccountObservation(ctx context.Context, o domain.AccountOb
             intra_ledger_seq = EXCLUDED.intra_ledger_seq
         WHERE account_observations.intra_ledger_seq <= EXCLUDED.intra_ledger_seq
     `
+	// NULL = the AccountEntry carries no home_domain (the protocol has no
+	// unset-vs-empty distinction). "Never observed" is the absence of a
+	// row, which is what readers must key the static fallback on.
 	var homeDomain sql.NullString
 	if o.HomeDomain != "" {
 		homeDomain = sql.NullString{String: o.HomeDomain, Valid: true}
@@ -111,8 +114,8 @@ type AccountObservation struct {
 // [ErrNotFound] when the account has no observations in scope
 // (caller falls back to operator-static config per ADR-0021).
 //
-// Used by the LCMReserveBalanceReader + LCMHomeDomainResolver
-// shipping in the next PR.
+// Used by the LCMReserveBalanceReader and (via the API's
+// metadataStoreLookup) the LCMHomeDomainResolver.
 //
 // Schema constraint: `account_observations.ledger` is `integer`
 // (postgres int4 = signed 32-bit, max 2,147,483,647). The Go

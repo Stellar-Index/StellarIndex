@@ -608,9 +608,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 
 	// Home-domain lookup chains the live LCM resolver (#298 +
 	// account_observations table) with the operator-static
-	// MetadataConfig map per ADR-0021. Live wins when an
-	// observation exists; static fallback covers issuers the
-	// observer hasn't backfilled yet OR storage transient errors.
+	// MetadataConfig map per ADR-0021. An observation is final, even
+	// one with no home_domain; static covers unobserved issuers and
+	// storage errors.
 	homeDomainLookup := metadata.ChainedHomeDomainLookup(
 		metadata.NewLCMHomeDomainResolver(metadataStoreLookup{s: store}),
 		cfg.Metadata.HomeDomainFor,
@@ -2875,13 +2875,13 @@ func clickhouseReadyChecks(addr string, er *clickhouse.ExplorerReader, dialErr e
 // the typed boundary: the store returns canonical.Asset; the API
 // layer owns the wire-shape conversion to v1.AssetDetail.
 //
-// homeDomainLookup is the curated issuer → home-domain map from
-// cfg.Metadata. Returns ("", false) for un-curated issuers; the
-// AssetDetail then has HomeDomain==nil and the overlay handler
-// stamps sep1_status="not_fetched" for that case.
+// homeDomainLookup is metadata.ChainedHomeDomainLookup. Returns
+// ("", false) when no domain is known; the AssetDetail then has
+// HomeDomain==nil and the overlay handler stamps
+// sep1_status="not_fetched" for that case.
 type storeAssetReader struct {
 	s                *timescale.Store
-	homeDomainLookup func(issuer string) (string, bool)
+	homeDomainLookup func(ctx context.Context, issuer string) (string, bool)
 }
 
 // ClassicAssetBySlug satisfies v1's optional classicSlugResolver
@@ -2898,7 +2898,7 @@ func (r storeAssetReader) ListAssets(ctx context.Context, cursor string, limit i
 	}
 	out := make([]v1.AssetDetail, len(assets))
 	for i, a := range assets {
-		out[i] = assetToDetail(a, r.homeDomainLookup)
+		out[i] = assetToDetail(ctx, a, r.homeDomainLookup)
 	}
 	return out, next, nil
 }
@@ -2911,7 +2911,7 @@ func (r storeAssetReader) GetAsset(ctx context.Context, a canonical.Asset) (v1.A
 	if !has {
 		return v1.AssetDetail{}, v1.ErrAssetNotFound
 	}
-	detail := assetToDetail(a, r.homeDomainLookup)
+	detail := assetToDetail(ctx, a, r.homeDomainLookup)
 
 	// Best-effort F2 enrichment from the per-asset stats lookup
 	// — same data the /v1/coins listing carries. Failures here
@@ -4123,17 +4123,17 @@ func (r storePriceReader) RecentClosedVWAP1mExists(ctx context.Context, base, qu
 // fields become nil pointers when empty so the JSON omits them.
 //
 // homeDomainLookup populates HomeDomain for classic assets whose
-// issuer is on the operator's curated map (cfg.Metadata.IssuerHomeDomains).
-// When the issuer is curated, the SEP-1 overlay handler downstream
-// resolves stellar.toml and fills the overlay fields. When the
-// issuer is NOT curated, HomeDomain stays nil and the handler
+// issuer has a known home_domain (observed on chain, else the
+// operator's cfg.Metadata.IssuerHomeDomains). When one is known, the
+// SEP-1 overlay handler downstream resolves stellar.toml and fills the
+// overlay fields; otherwise HomeDomain stays nil and the handler
 // stamps sep1_status="not_fetched". Pass nil for the lookup if the
 // caller doesn't have one (tests + scaffolding paths).
 //
 // SAC-wrapped classics + Soroban tokens have no issuer in the
 // classic sense — HomeDomain stays nil; sep1_status falls through
 // to "not_applicable" via the handler.
-func assetToDetail(a canonical.Asset, homeDomainLookup func(issuer string) (string, bool)) v1.AssetDetail {
+func assetToDetail(ctx context.Context, a canonical.Asset, homeDomainLookup func(ctx context.Context, issuer string) (string, bool)) v1.AssetDetail {
 	d := v1.AssetDetail{
 		AssetID: a.String(),
 		Type:    string(a.Type),
@@ -4153,7 +4153,7 @@ func assetToDetail(a canonical.Asset, homeDomainLookup func(issuer string) (stri
 		// applySep1Overlay runs and stamps the resulting status; with
 		// HomeDomain set + s.meta nil, the handler stamps "not_fetched".
 		if homeDomainLookup != nil {
-			if hd, ok := homeDomainLookup(a.Issuer); ok {
+			if hd, ok := homeDomainLookup(ctx, a.Issuer); ok {
 				d.HomeDomain = &hd
 				// Clear the "not_applicable" so the handler's overlay
 				// logic kicks in. The handler stamps the right value
@@ -4170,27 +4170,28 @@ func assetToDetail(a canonical.Asset, homeDomainLookup func(issuer string) (stri
 }
 
 // metadataStoreLookup adapts *timescale.Store to
-// metadata.AccountObservationLookup. Projects the timescale
-// AccountObservation row's *string HomeDomain into the
-// (string, bool, error) shape the resolver consumes —
-// HomeDomain==nil → ("", false, nil) (no observation), pointer-to-
-// empty → ("", false, nil) (observed but operator never set a
-// domain), pointer-to-non-empty → (value, true, nil).
-type metadataStoreLookup struct{ s *timescale.Store }
+// metadata.AccountObservationLookup. Only the absence of a row means
+// "not observed"; a row with NULL home_domain or is_removal=true is an
+// observation that the account has no home_domain.
+type metadataStoreLookup struct{ s accountObservationReader }
 
-func (a metadataStoreLookup) HomeDomainAtOrBefore(ctx context.Context, issuer string, asOfLedger uint32) (string, bool, error) {
+type accountObservationReader interface {
+	LatestAccountObservationAtOrBefore(ctx context.Context, accountID string, asOfLedger uint32) (timescale.AccountObservation, error)
+}
+
+func (a metadataStoreLookup) HomeDomainAtOrBefore(ctx context.Context, issuer string, asOfLedger uint32) (metadata.IssuerHomeDomain, error) {
 	row, err := a.s.LatestAccountObservationAtOrBefore(ctx, issuer, asOfLedger)
+	if errors.Is(err, timescale.ErrNotFound) {
+		return metadata.IssuerHomeDomain{}, nil
+	}
 	if err != nil {
-		// timescale.ErrNotFound → no observation; return ("", false, nil).
-		if errors.Is(err, timescale.ErrNotFound) {
-			return "", false, nil
-		}
-		return "", false, err
+		return metadata.IssuerHomeDomain{}, err
 	}
-	if row.HomeDomain == nil || *row.HomeDomain == "" {
-		return "", false, nil
+	hd := metadata.IssuerHomeDomain{Observed: true}
+	if !row.IsRemoval && row.HomeDomain != nil {
+		hd.Domain = *row.HomeDomain
 	}
-	return *row.HomeDomain, true, nil
+	return hd, nil
 }
 
 // storeVolumeReader adapts *timescale.Store to v1.VolumeReader.
