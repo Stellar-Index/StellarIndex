@@ -155,13 +155,6 @@ func TestBothDirectionReadersKeepSargableBucketBound(t *testing.T) {
 // OR fold itself is banned for every read in every file by
 // TestPairReadsNeverFoldDirectionsWithOr.
 
-// pairFoldFwd / pairFoldRev are the two single-direction predicates a
-// both-orientations read must contain.
-const (
-	pairFoldFwd = "base_asset = $1 AND quote_asset = $2"
-	pairFoldRev = "base_asset = $2 AND quote_asset = $1"
-)
-
 // bucketOrderedRe matches an ORDER BY on a bucket column (`bucket`,
 // `n.bucket`, `out_bucket`).
 var bucketOrderedRe = regexp.MustCompile(`ORDER BY\s+[a-z_.]*bucket`)
