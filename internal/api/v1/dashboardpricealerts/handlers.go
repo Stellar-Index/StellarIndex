@@ -16,6 +16,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardauth"
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/api/wiretime"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
@@ -96,9 +97,9 @@ type priceAlertDTO struct {
 	Enabled         bool   `json:"enabled"`
 	// Pointer so a zero LastFiredAt (never fired) is genuinely omitted —
 	// omitempty does NOT omit a zero time.Time (it's a non-empty struct).
-	LastFiredAt *time.Time `json:"last_fired_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	LastFiredAt *wiretime.Time `json:"last_fired_at,omitempty"`
+	CreatedAt   wiretime.Time  `json:"created_at"`
+	UpdatedAt   wiretime.Time  `json:"updated_at"`
 }
 
 func toDTO(a platform.PriceAlert) priceAlertDTO {
@@ -110,20 +111,10 @@ func toDTO(a platform.PriceAlert) priceAlertDTO {
 		Threshold:       a.Threshold,
 		CooldownSeconds: a.CooldownSeconds,
 		Enabled:         a.Enabled,
-		LastFiredAt:     nilIfZero(a.LastFiredAt),
-		CreatedAt:       a.CreatedAt,
-		UpdatedAt:       a.UpdatedAt,
+		LastFiredAt:     wiretime.NilIfZero(a.LastFiredAt),
+		CreatedAt:       wiretime.Time(a.CreatedAt),
+		UpdatedAt:       wiretime.Time(a.UpdatedAt),
 	}
-}
-
-// nilIfZero returns nil for a zero time.Time so the DTO's `omitempty`
-// pointer field is genuinely omitted rather than serialized as the
-// year-1 zero timestamp.
-func nilIfZero(t time.Time) *time.Time {
-	if t.IsZero() {
-		return nil
-	}
-	return &t
 }
 
 type listResponse struct {

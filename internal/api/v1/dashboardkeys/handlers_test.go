@@ -684,7 +684,7 @@ var _ platform.APIKeyStore = (*fakeKeyStore)(nil)
 // TestToDTO_OmitsZeroTimes is the regression for the dashboard bugs where a
 // fresh key looked "revoked" + "last used ~2025 years ago": a zero time.Time
 // with `omitempty` is NOT omitted (it's a non-empty struct → "0001-01-01...").
-// Pointer times + nilIfZero must drop them so a never-revoked / never-used /
+// Pointer times + wiretime.NilIfZero must drop them so a never-revoked / never-used /
 // never-expiring key omits the fields entirely.
 func TestToDTO_OmitsZeroTimes(t *testing.T) {
 	dto := toDTO(platform.APIKey{
@@ -969,5 +969,23 @@ func TestHandleList_ServesTheEnforcedKeyCeiling(t *testing.T) {
 	}
 	if body := w.Body.String(); !strings.Contains(body, "2 unrevoked keys") || !strings.Contains(body, "expired keys hold their slot") {
 		t.Errorf("409 body = %s, want it to count unrevoked keys and say expired ones hold a slot", body)
+	}
+}
+
+// TestToDTO_TimestampsRenderUTC pins the wire rendering of every key
+// timestamp: Postgres hands timestamptz back in the process's local zone,
+// and a raw time.Time field would emit that offset instead of Z.
+func TestToDTO_TimestampsRenderUTC(t *testing.T) {
+	at := time.Date(2026, 6, 1, 2, 0, 0, 0, time.FixedZone("CEST", 2*60*60))
+	b, err := json.Marshal(toDTO(platform.APIKey{
+		ID: "kid_1", CreatedAt: at, ExpiresAt: at, RevokedAt: at, LastUsedAt: at,
+	}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, field := range []string{"created_at", "expires_at", "revoked_at", "last_used_at"} {
+		if want := `"` + field + `":"2026-06-01T00:00:00Z"`; !strings.Contains(string(b), want) {
+			t.Errorf("DTO %s: want %s, got %s", field, want, b)
+		}
 	}
 }

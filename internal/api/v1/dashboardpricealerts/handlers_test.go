@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -551,5 +552,21 @@ func TestHandleList_ServesTheEnforcedAlertCeiling(t *testing.T) {
 	}
 	if got := string(raw["max_alerts"]); got != "1" {
 		t.Errorf("max_alerts = %q, want 1 (the AlertQuotas override create enforces)", got)
+	}
+}
+
+// TestToDTO_TimestampsRenderUTC pins the wire rendering of every alert
+// timestamp: Postgres hands timestamptz back in the process's local zone,
+// and a raw time.Time field would emit that offset instead of Z.
+func TestToDTO_TimestampsRenderUTC(t *testing.T) {
+	at := time.Date(2026, 6, 1, 2, 0, 0, 0, time.FixedZone("CEST", 2*60*60))
+	b, err := json.Marshal(toDTO(platform.PriceAlert{CreatedAt: at, UpdatedAt: at, LastFiredAt: at}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, field := range []string{"created_at", "updated_at", "last_fired_at"} {
+		if want := `"` + field + `":"2026-06-01T00:00:00Z"`; !strings.Contains(string(b), want) {
+			t.Errorf("DTO %s: want %s, got %s", field, want, b)
+		}
 	}
 }
