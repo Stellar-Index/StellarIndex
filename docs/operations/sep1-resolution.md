@@ -205,7 +205,10 @@ watched_issuer_accounts = ["GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4
 An observation always wins over the curated map, including an
 observation that the account has no home_domain (cleared by
 `SetOptions`, or the account merged): the API then serves no
-home_domain rather than the curated value.
+home_domain rather than the curated value. On `/v1/assets/{id}` and
+`/v1/assets/{id}/metadata`, an unobserved issuer's live ClickHouse
+account state is read before the curated map, and wins when it
+carries a home_domain.
 
 The map's only job is supplying `home_domain` for the SEP-1
 resolver lookup; the resolver then fetches the issuer's
