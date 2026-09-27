@@ -10060,6 +10060,21 @@ export interface components {
              * @default false
              */
             unverified_ticker_collision: boolean;
+            /**
+             * @description Attached when the requested classic asset's code names a
+             *     verified-currency catalogue sovereign denomination (USD,
+             *     EUR, …) that has no Stellar issuance of its own — the
+             *     shape a SEP-1 fiat anchor's deposit token takes
+             *     (anchor_asset_type=fiat). Distinct from
+             *     `unverified_warning`: a fiat code names a denomination,
+             *     not a Stellar identity, so this is a neutral note, never
+             *     an impersonation verdict, and its presence never
+             *     suppresses `market_cap_usd`.
+             *
+             *     Null for non-classic assets and for any code the
+             *     catalogue does not hold as a fiat denomination.
+             */
+            fiat_code_anchor?: components["schemas"]["FiatCodeAnchor"] | null;
         };
         /**
          * @description Pointer at the verified Stellar-canonical asset when an
@@ -10077,6 +10092,19 @@ export interface components {
             /** @description Short attribution (e.g. "Circle (centre.io)"). Empty when the catalogue entry didn't include a verified_issuer_label. */
             verified_issuer?: string | null;
             /** @description One-sentence warning rendered verbatim by clients. */
+            note: string;
+        };
+        /**
+         * @description Neutral note attached when a classic asset's code names a
+         *     catalogue fiat denomination with no Stellar issuance of its
+         *     own. Never an impersonation verdict.
+         */
+        FiatCodeAnchor: {
+            /** @description ISO-4217 code the asset denominates in (e.g. "USD"). */
+            ticker: string;
+            /** @description True when the issuer is in the catalogue's operator-curated known-anchor set for this ticker. */
+            known_anchor: boolean;
+            /** @description One-sentence summary rendered verbatim by clients. */
             note: string;
         };
         /**

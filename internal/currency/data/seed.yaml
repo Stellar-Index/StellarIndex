@@ -393,6 +393,14 @@ verified_currencies:
   # Slugs follow the friendly-name convention so URLs are readable
   # (/assets/us-dollar rather than /assets/usd). The all-caps ticker
   # remains the canonical identifier for FX lookups + display.
+  #
+  # `known_anchors:` (optional, per entry) is an operator-curated list of
+  # Stellar issuer account ids affirmatively recognised as running a
+  # SEP-1 fiat anchor for this currency (anchor_asset_type=fiat,
+  # anchor_asset=<ticker>). Unlisted issuers of the same code are not
+  # flagged as impersonators (K033) — they simply get no known_anchor=true
+  # affirmation yet. Adding an issuer here is a hand-vetted trust
+  # decision, same bar as adding a currency; leave empty until vetted.
 
   - ticker: USD
     slug: us-dollar

@@ -465,6 +465,15 @@ type AssetDetail struct {
 	// carries the richer UnverifiedWarning body instead.
 	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
 
+	// FiatCodeAnchor points at the catalogue's fiat denomination when
+	// the requested asset's code names a sovereign currency (USD, EUR,
+	// …) with no Stellar issuance of its own. Distinct from
+	// UnverifiedWarning: a fiat code is a denomination, never an
+	// impersonation claim, so its presence never suppresses
+	// MarketCapUSD. Nil for any code the catalogue does not hold as a
+	// fiat denomination.
+	FiatCodeAnchor *FiatCodeAnchor `json:"fiat_code_anchor,omitempty"`
+
 	// ─── Asset-catalogue overlay listing fields (spec'd 2026-07-02,
 	// board #33; populated when the server's AssetsReader is wired) ──
 	Slug             string           `json:"slug,omitempty"`
@@ -536,6 +545,19 @@ type UnverifiedWarning struct {
 	// didn't include a verified_issuer_label.
 	VerifiedIssuer string `json:"verified_issuer,omitempty"`
 	// Note is a one-sentence warning rendered verbatim by the client.
+	Note string `json:"note"`
+}
+
+// FiatCodeAnchor is the neutral note attached to AssetDetail when the
+// asset's code names a catalogue fiat denomination with no Stellar
+// issuance of its own. Never an impersonation verdict.
+type FiatCodeAnchor struct {
+	// Ticker is the ISO-4217 code the asset denominates in.
+	Ticker string `json:"ticker"`
+	// KnownAnchor is true when the issuer is in the catalogue's
+	// operator-curated known-anchor set for this ticker.
+	KnownAnchor bool `json:"known_anchor"`
+	// Note is a one-sentence summary rendered verbatim by the client.
 	Note string `json:"note"`
 }
 
