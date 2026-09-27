@@ -2198,7 +2198,7 @@ func (s *Server) marketCapSeriesRefused(ctx context.Context, base canonical.Asse
 	}
 	sources := 0
 	if probe.VolumeUSD24h != nil && s.minMarketCapVolumeUSD > 0 {
-		_, sources, _ = s.lookupUSDPriceWithSources(ctx, base)
+		sources = s.lookupUSDPriceWithSources(ctx, base).sources
 	}
 	if refused, lowLiquidity = s.marketCapRefused(base, sources, probe.VolumeUSD24h); refused {
 		return refused, lowLiquidity

@@ -146,6 +146,12 @@ func suppressScamIssuerPricing(d *AssetDetail) {
 	if d == nil || !issuerPricingWithheld(d) {
 		return
 	}
+	if d.PriceUSD != nil {
+		d.PriceWithheldReason = PriceWithheldUnattributed
+		if pricingguard.IsDirectoryScamFlagged(d.IssuerDirectoryTags) {
+			d.PriceWithheldReason = PriceWithheldScamIssuer
+		}
+	}
 	d.PriceUSD = nil
 	d.MarketCapUSD = nil
 	d.FDVUSD = nil
