@@ -152,3 +152,53 @@ func TestMuxedCounterpartiesResolveToBaseAccount(t *testing.T) {
 		}
 	})
 }
+
+// TestMuxedDestinationCarriedInAttributes pins GH-1118: baseAccountAddress
+// resolves ToAddress to the base G for lookup, but that drops the M-strkey
+// an exchange actually addressed the deposit to, and /v1/accounts/{M…}
+// has no way to attribute the row back to that sub-account. The receiver
+// side row must carry the M-strkey in Attributes["destination_muxed"].
+func TestMuxedDestinationCarriedInAttributes(t *testing.T) {
+	source, _ := mkAccount(t, 0xa0)
+	usdc := mkAlphanum4Asset(t, "USDC", 0xa1)
+
+	t.Run("payment destination", func(t *testing.T) {
+		mAddr, gAddr, muxed := mkMuxedAccount(t, 0xa2, 555)
+		op := xdr.Operation{Body: xdr.OperationBody{
+			Type: xdr.OperationTypePayment,
+			PaymentOp: &xdr.PaymentOp{
+				Destination: muxed,
+				Asset:       usdc,
+				Amount:      xdr.Int64(1_0000000),
+			},
+		}}
+		m := decodeOneMovement(t, op, mkPaymentSuccessResult(), source)
+
+		if m.ToAddress != gAddr {
+			t.Fatalf("ToAddress = %q, want base account %q", m.ToAddress, gAddr)
+		}
+		got, _ := m.Attributes["destination_muxed"].(string)
+		if got != mAddr {
+			t.Fatalf("Attributes[destination_muxed] = %q, want the M-strkey %q the deposit was actually sent to", got, mAddr)
+		}
+	})
+
+	t.Run("plain ed25519 destination carries no muxed attribute", func(t *testing.T) {
+		destAddr, dest := mkAccount(t, 0xa3)
+		op := xdr.Operation{Body: xdr.OperationBody{
+			Type: xdr.OperationTypePayment,
+			PaymentOp: &xdr.PaymentOp{
+				Destination: xdr.MuxedAccount{Type: xdr.CryptoKeyTypeKeyTypeEd25519, Ed25519: dest.Ed25519},
+				Asset:       usdc,
+				Amount:      xdr.Int64(1),
+			},
+		}}
+		m := decodeOneMovement(t, op, mkPaymentSuccessResult(), source)
+		if m.ToAddress != destAddr {
+			t.Fatalf("ToAddress = %q, want %q", m.ToAddress, destAddr)
+		}
+		if _, ok := m.Attributes["destination_muxed"]; ok {
+			t.Fatalf("Attributes[destination_muxed] set for a non-muxed destination: %v", m.Attributes)
+		}
+	})
+}

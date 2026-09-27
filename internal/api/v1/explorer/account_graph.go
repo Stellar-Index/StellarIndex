@@ -260,7 +260,8 @@ func (h *Handler) AccountGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.WriteJSON(w, accountGraphView(g, relation, limit, graph), false)
+	_, stale, _ := h.LakeWatermark(ctx)
+	h.WriteJSON(w, accountGraphView(g, relation, limit, graph), stale)
 }
 
 // accountGraphView renders the reader snapshot onto the wire contract.

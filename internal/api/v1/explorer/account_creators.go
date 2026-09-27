@@ -187,5 +187,6 @@ func (h *Handler) AccountCreators(w http.ResponseWriter, r *http.Request) {
 			LastCreatedAt:   c.LastCreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
-	h.WriteJSON(w, out, false)
+	_, stale, _ := h.LakeWatermark(ctx)
+	h.WriteJSON(w, out, stale)
 }

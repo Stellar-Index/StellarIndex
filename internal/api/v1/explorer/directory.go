@@ -142,5 +142,6 @@ func (h *Handler) DirectoryLookup(w http.ResponseWriter, r *http.Request) {
 	for addr, e := range found {
 		out.Entries[addr] = *dirInfoV(e)
 	}
-	h.WriteJSON(w, out, false)
+	_, stale, _ := h.LakeWatermark(ctx)
+	h.WriteJSON(w, out, stale)
 }

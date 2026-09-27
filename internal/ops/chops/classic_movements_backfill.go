@@ -474,41 +474,62 @@ func classicMovementsAttemptWindow(
 // classicMovementsResolvePendingClaimableBalances, called after
 // classicMovementsDecodeEntryChangesSurface (see that call site).
 func classicMovementsDecodeOpsSurface(winCtx context.Context, chAddr string, dec *classicmovements.Decoder, opTypes []string, wlo, whi uint32, res *windowResult) error {
+	// classicOpsQuery joins stellar.operations to stellar.operation_results
+	// without FINAL (see that query's doc comment): an unmerged
+	// ReplacingMergeTree part fans one op out to k*m identical rows.
+	// seen (threaded into classicMovementsDecodeOp) collapses the stream to
+	// one op per (ledger, tx_hash, op_index) before it is decoded or
+	// counted at all — CA2-A14.
+	seen := make(map[classicMovementOpKey]struct{})
 	werr := clickhouse.StreamClassicOps(winCtx, chAddr, wlo, whi, opTypes, func(op clickhouse.ClassicOp) error {
-		res.windowRead++
-		outs, derr := dec.Decode(dispatcher.OpContext{
-			Ledger:   op.Ledger,
-			ClosedAt: op.ClosedAt,
-			TxHash:   op.TxHash,
-			TxSource: op.Source,
-			OpIndex:  int(op.OpIndex),
-			Op:       op.Op,
-			OpResult: op.OpResult,
-		})
-		if derr != nil {
-			// Non-fatal per the OpDecoder contract (count + skip). In
-			// practice this should only ever be ErrMalformedMovement —
-			// StreamClassicOps already scoped the CH read to opTypes, so
-			// ErrUnsupportedOpType should never fire here.
-			fmt.Fprintf(os.Stderr, "classic-movements-backfill: decode error (ledger %d tx %s op %d): %v\n",
-				op.Ledger, op.TxHash, op.OpIndex, derr)
-			return nil
-		}
-		for _, ev := range outs {
-			me, ok := ev.(classicmovements.MovementEvent)
-			if !ok {
-				continue
-			}
-			res.windowDecoded++
-			res.windowCounts[me.Movement.Kind]++
-			res.batch = append(res.batch, accountMovementOf(me.Movement))
-		}
+		classicMovementsDecodeOp(dec, seen, op, res)
 		return nil
 	})
 	if werr != nil {
 		return fmt.Errorf("stream classic ops [%d,%d]: %w", wlo, whi, werr)
 	}
 	return nil
+}
+
+// classicMovementsDecodeOp handles one ClassicOp row from
+// classicMovementsDecodeOpsSurface's StreamClassicOps callback: dedupe
+// against seen (CA2-A14), decode, and accumulate into res. Split out of
+// the callback so the dedup is independently testable without a live
+// ClickHouse connection (StreamClassicOps dials its own).
+func classicMovementsDecodeOp(dec *classicmovements.Decoder, seen map[classicMovementOpKey]struct{}, op clickhouse.ClassicOp, res *windowResult) {
+	res.windowRead++
+	key := classicMovementOpKey{Ledger: op.Ledger, TxHash: op.TxHash, OpIndex: int32(op.OpIndex)} //nolint:gosec // OpIndex is a non-negative XDR index.
+	if _, dup := seen[key]; dup {
+		return
+	}
+	seen[key] = struct{}{}
+	outs, derr := dec.Decode(dispatcher.OpContext{
+		Ledger:   op.Ledger,
+		ClosedAt: op.ClosedAt,
+		TxHash:   op.TxHash,
+		TxSource: op.Source,
+		OpIndex:  int(op.OpIndex),
+		Op:       op.Op,
+		OpResult: op.OpResult,
+	})
+	if derr != nil {
+		// Non-fatal per the OpDecoder contract (count + skip). In
+		// practice this should only ever be ErrMalformedMovement —
+		// StreamClassicOps already scoped the CH read to opTypes, so
+		// ErrUnsupportedOpType should never fire here.
+		fmt.Fprintf(os.Stderr, "classic-movements-backfill: decode error (ledger %d tx %s op %d): %v\n",
+			op.Ledger, op.TxHash, op.OpIndex, derr)
+		return
+	}
+	for _, ev := range outs {
+		me, ok := ev.(classicmovements.MovementEvent)
+		if !ok {
+			continue
+		}
+		res.windowDecoded++
+		res.windowCounts[me.Movement.Kind]++
+		res.batch = append(res.batch, accountMovementOf(me.Movement))
+	}
 }
 
 // classicMovementsResolvePendingClaimableBalances is the ADR-0047
@@ -678,9 +699,16 @@ func classicMovementsDecodeEntryChangesSurface(winCtx context.Context, chAddr st
 		}
 	}
 
+	seenEC := make(map[classicMovementOpKey]struct{})
 	werr2 := clickhouse.StreamClassicOps(winCtx, chAddr, wlo, whi, entryChangeOpTypes, func(op clickhouse.ClassicOp) error {
 		res.windowEntryChangeRead++
 		k := classicMovementOpKey{Ledger: op.Ledger, TxHash: op.TxHash, OpIndex: int32(op.OpIndex)} //nolint:gosec // OpIndex is a non-negative XDR index.
+		// Same StreamClassicOps duplication as classicMovementsDecodeOpsSurface
+		// above (CA2-A14) — collapse to one op before it drives a handler.
+		if _, dup := seenEC[k]; dup {
+			return nil
+		}
+		seenEC[k] = struct{}{}
 		switch op.Op.Body.Type {
 		case xdr.OperationTypeLiquidityPoolDeposit, xdr.OperationTypeLiquidityPoolWithdraw:
 			classicMovementsHandleLiquidityPoolOp(op, lpChanges[k], fidelityPresent, res)

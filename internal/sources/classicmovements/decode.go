@@ -194,7 +194,26 @@ func decodePayment(ledger uint32, closedAt time.Time, txHash string, opIndex uin
 		Amount:          canonical.NewAmount(big.NewInt(int64(body.Amount))),
 		FromAddress:     fromAddr,
 		ToAddress:       dest,
+		Attributes:      muxedDestinationAttrs(body.Destination),
 	}}, nil
+}
+
+// muxedDestinationAttrs carries the M-strkey a caller actually addressed
+// their deposit to, for a receiver-side row whose ToAddress has already been
+// resolved to the base G (baseAccountAddress) for lookup. Without it the
+// muxed routing label — the thing an exchange gives out as a deposit
+// address — is dropped entirely and /v1/accounts/{M…}/movements has no way
+// to say which rows were meant for that sub-account (GH-1118). Returns nil
+// (omitted from JSON) for a non-muxed destination.
+func muxedDestinationAttrs(m xdr.MuxedAccount) map[string]any {
+	if m.Type != xdr.CryptoKeyTypeKeyTypeMuxedEd25519 {
+		return nil
+	}
+	addr, err := m.GetAddress()
+	if err != nil {
+		return nil
+	}
+	return map[string]any{"destination_muxed": addr}
 }
 
 // opSucceeded reports whether an operation reached its own
@@ -241,7 +260,11 @@ func opSucceeded(result xdr.OperationResult) bool {
 func baseAccountAddress(m xdr.MuxedAccount) (string, error) {
 	switch m.Type {
 	case xdr.CryptoKeyTypeKeyTypeEd25519, xdr.CryptoKeyTypeKeyTypeMuxedEd25519:
-		return m.ToAccountId().Address(), nil
+		// AccountId.Address() panics on an encode error; GetAddress() is the
+		// same encode with the error returned instead, which is what every
+		// caller here already unwraps via the derr/herr pattern (GH-1117).
+		aid := m.ToAccountId()
+		return aid.GetAddress()
 	default:
 		return "", fmt.Errorf("unknown muxed account type %v", m.Type)
 	}
@@ -813,5 +836,6 @@ func decodeAccountMerge(ledger uint32, closedAt time.Time, txHash string, opInde
 		Amount:          canonical.NewAmount(big.NewInt(int64(bal))),
 		FromAddress:     fromAddr,
 		ToAddress:       destAddr,
+		Attributes:      muxedDestinationAttrs(destMuxed),
 	}}, nil
 }

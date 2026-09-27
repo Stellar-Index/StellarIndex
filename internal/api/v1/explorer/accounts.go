@@ -42,14 +42,24 @@ type AccountOperationsView struct {
 // capture + backfill.
 const accountScopeAll = "all"
 
-// parseAccountStrkey validates the {g_strkey} path segment. ok=false (after a
-// problem+json) on an invalid strkey.
+// parseAccountStrkey validates the {g_strkey} path segment, accepting either
+// a G-strkey or an M-strkey (muxed). A muxed address is resolved to its
+// underlying G before the lake read: ledger state and account_movements'
+// `address`/`counterparty` columns are keyed on G-strkey equality (see
+// baseAccountAddress in internal/sources/classicmovements/decode.go), so a
+// query for the M-form must resolve or every muxed-attributed row is
+// unreachable (GH-1118). ok=false (after a problem+json) on an invalid strkey.
 func (h *Handler) parseAccountStrkey(w http.ResponseWriter, r *http.Request) (string, bool) {
 	g := r.PathValue("g_strkey")
+	if canonical.IsMuxedAccount(g) {
+		if base, ok := canonical.MuxedAccountID(g); ok {
+			return base, true
+		}
+	}
 	if !canonical.IsAccountID(g) {
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-account",
 			"Invalid account", http.StatusBadRequest,
-			"the account must be a valid G-strkey")
+			"the account must be a valid G-strkey or M-strkey")
 		return "", false
 	}
 	return g, true
@@ -103,7 +113,8 @@ func (h *Handler) AccountTransactions(w http.ResponseWriter, r *http.Request) {
 		last := rows[n-1]
 		out.NextCursor = encodeCursor(last.Seq, last.TxIndex)
 	}
-	h.WriteJSON(w, out, false)
+	_, stale, _ := h.LakeWatermark(ctx)
+	h.WriteJSON(w, out, stale)
 }
 
 // AccountOperations serves GET /v1/accounts/{g_strkey}/operations —
@@ -158,5 +169,6 @@ func (h *Handler) AccountOperations(w http.ResponseWriter, r *http.Request) {
 		last := rows[n-1]
 		out.NextCursor = encodeCursor(last.Seq, last.TxIndex, last.OpIndex)
 	}
-	h.WriteJSON(w, out, false)
+	_, stale, _ := h.LakeWatermark(ctx)
+	h.WriteJSON(w, out, stale)
 }

@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
@@ -203,5 +204,42 @@ func TestClaimAtomCount_perOpVariant(t *testing.T) {
 				t.Fatalf("claimAtomCount(%s) = %d, want %d", tc.name, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestLedgerHeaderCounts_FailedTxBasisMismatch pins GH-1068's remaining
+// gap: extractOps counts a FAILED transaction's operations into
+// ext.Ledger.OpCount (and TxCount, at the call site in extract.go),
+// while extractEvents excludes a failed transaction entirely from
+// ext.Ledger.SorobanEventCount. The three counts LedgerView exposes
+// (tx_count, op_count, soroban_event_count) therefore run on two
+// different bases with no field distinguishing them.
+//
+// This test documents the DEFECT as it stands — it passes today and is
+// meant to start failing (and be deleted) once tx_count/op_count are
+// either gated on `successful` to match soroban_event_count, or a
+// successful_tx_count/applied_op_count pair is added alongside them.
+// The fix needs a new stellar.ledgers column (deploy/clickhouse DDL) and
+// touches internal/storage/clickhouse/sink.go and explorer_reader.go,
+// both outside this unit's assigned files.
+func TestLedgerHeaderCounts_FailedTxBasisMismatch(t *testing.T) {
+	ev := gateContractEvent(t)
+	tx := gateTx(t, ev, false) // failed transaction
+	tx.Envelope.V1.Tx.Operations = []xdr.Operation{{Body: xdr.OperationBody{
+		Type:      xdr.OperationTypePayment,
+		PaymentOp: &xdr.PaymentOp{Destination: xdr.MustMuxedAddress(ecTestG), Asset: claimNative, Amount: 1},
+	}}}
+
+	ext := &LedgerExtract{}
+	extractOps(ext, tx, 100, time.Unix(1_700_000_000, 0).UTC(), "failedtxhash", ecTestG, 0, false)
+	extractEvents(ext, tx, 100, time.Unix(1_700_000_000, 0).UTC(), "failedtxhash", nil, false)
+
+	if ext.Ledger.OpCount == 0 {
+		t.Fatalf("OpCount = 0, want > 0 — extractOps counts a failed tx's ops unconditionally " +
+			"(if this now reads 0, the bases have converged and this test/GH-1068 should be revisited)")
+	}
+	if ext.Ledger.SorobanEventCount != 0 {
+		t.Fatalf("SorobanEventCount = %d, want 0 — extractEvents excludes a failed tx entirely",
+			ext.Ledger.SorobanEventCount)
 	}
 }
