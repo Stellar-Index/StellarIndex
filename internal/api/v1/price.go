@@ -3466,8 +3466,9 @@ func (s *Server) handlePriceWindowed(w http.ResponseWriter, r *http.Request, ass
 	// reader's withholding chokepoint nor [Server.priceFallback]'s gate
 	// can see it, and `?window=300` alone re-served a directory-flagged
 	// issuer's aggregated price at 200 (RLT-350). Same posture and same
-	// problem type as every other withheld price surface; scam only, for
-	// the reason spelled out on [Server.priceFallback]. Both legs, via
+	// problem type as every other withheld price surface; the substance
+	// half is owed only once the read shows a literal market — see
+	// [Server.windowedWithholding]. Both legs, via
 	// the package's one [scamWithheld] spelling — the alias loop below
 	// reads under alias spellings of the SAME market, so the requested
 	// pair is the right subject for the verdict.
@@ -3475,6 +3476,10 @@ func (s *Server) handlePriceWindowed(w http.ResponseWriter, r *http.Request, ass
 		return
 	}
 	if v, a, q, found := s.lookupCachedVWAPAliased(r.Context(), assetAliases(asset), assetAliases(quote), window); found {
+		if withheld := s.windowedWithholding(r.Context(), asset, quote, a, q, v.Triangulated); withheld != pricingguard.NotWithheld {
+			writePriceWithheldProblem(w, r, asset, quote, withheldReasonFor(withheld))
+			return
+		}
 		snap := PriceSnapshot{
 			AssetID:       asset.String(),
 			Quote:         quote.String(),
@@ -3490,6 +3495,31 @@ func (s *Server) handlePriceWindowed(w http.ResponseWriter, r *http.Request, ass
 		"https://api.stellarindex.io/errors/price-not-found",
 		"No price for pair at this window", http.StatusNotFound,
 		"the aggregator has not published a "+rawWindow+"s VWAP for "+asset.String()+" / "+quote.String())
+}
+
+// windowedWithholding is the full withholding verdict for a ?window=
+// value read under (a, q), owed exactly where the default window owes
+// it: a direct VWAP of a literal on-chain market, which window=60 serves
+// only through the gated reader. A triangulated or fiat/crypto-quoted
+// value has no literal market to measure and stays scam-only, as on
+// [Server.priceFallback]. Asked about the requested pair; the floor is
+// measured on the alias union either way.
+func (s *Server) windowedWithholding(ctx context.Context, asset, quote, a, q canonical.Asset, triangulated bool) pricingguard.Withholding {
+	if triangulated || !onChainAsset(a) || !onChainAsset(q) {
+		return pricingguard.NotWithheld
+	}
+	return withheldBy(ctx, s.substance, s.scam, asset, quote, "price_read")
+}
+
+// onChainAsset reports whether a is an asset class with permissionless
+// on-chain markets — the legs a literal prices_1m market is traded in.
+func onChainAsset(a canonical.Asset) bool {
+	switch a.Type {
+	case canonical.AssetNative, canonical.AssetClassic, canonical.AssetSoroban:
+		return true
+	default:
+		return false
+	}
 }
 
 // windowedPriceFlags assembles the envelope flags for a ?window= value

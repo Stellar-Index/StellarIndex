@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 type windowVWAPStub struct{ windows map[time.Duration]string }
@@ -191,4 +193,87 @@ func TestHandlePriceWindowed_FrozenIsStale(t *testing.T) {
 			t.Errorf("unfrozen ?window= serve: frozen=%v stale=%v, want both false", flags.Frozen, flags.Stale)
 		}
 	})
+}
+
+// substanceStoreStub answers every substance read with one measurement.
+type substanceStoreStub struct{ sub timescale.MarketSubstance }
+
+func (s substanceStoreStub) PairMarketSubstance(context.Context, []canonical.Asset, []canonical.Asset, time.Duration) (timescale.MarketSubstance, error) {
+	return s.sub, nil
+}
+
+func (s substanceStoreStub) PairMarketSubstanceAt(context.Context, []canonical.Asset, []canonical.Asset, time.Time, time.Duration, timescale.HistoryGranularity) (timescale.MarketSubstance, error) {
+	return s.sub, nil
+}
+
+// provenanceWindowStub serves one value for every window, carrying the
+// aggregator's triangulation provenance.
+type provenanceWindowStub struct{ triangulated bool }
+
+func (s provenanceWindowStub) LookupTriangulatedVWAP(context.Context, canonical.Asset, canonical.Asset, time.Duration) (CachedVWAP, bool, error) {
+	return CachedVWAP{Value: "0.0042", ObservedAt: time.Now().UTC(), Triangulated: s.triangulated}, true, nil
+}
+
+// TestHandlePriceWindowed_SubstanceGate pins that ?window= withholds a
+// thin literal on-chain market exactly as the default window does: the
+// reader behind window=60 404s such a pair price-withheld, so the same
+// pair must not answer 200 under another window. The market here clears
+// any volume floor but has too few active buckets — the half of the
+// floor the aggregator's min_usd_volume never checks. Triangulated and
+// fiat-quoted values have no literal market and stay served, as on the
+// default path's cache fallback.
+func TestHandlePriceWindowed_SubstanceGate(t *testing.T) {
+	aqua, err := canonical.ParseAsset("AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	usdc, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	usd, err := canonical.ParseAsset("fiat:USD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	thin := timescale.MarketSubstance{VolumeUSD: "5000000", Buckets: 5, SpanSeconds: 12 * 3600, ValuedBuckets: 5}
+	deep := timescale.MarketSubstance{VolumeUSD: "5000000", Buckets: 600, SpanSeconds: 20 * 3600, ValuedBuckets: 600}
+	gate := func(sub timescale.MarketSubstance) *pricingguard.SubstanceGate {
+		return pricingguard.NewSubstanceGate(substanceStoreStub{sub: sub}, pricingguard.SubstanceGateOptions{})
+	}
+	cases := []struct {
+		name         string
+		quote        canonical.Asset
+		triangulated bool
+		sub          timescale.MarketSubstance
+		wantStatus   int
+	}{
+		{"thin direct on-chain market is withheld", usdc, false, thin, http.StatusNotFound},
+		{"substantive direct on-chain market is served", usdc, false, deep, http.StatusOK},
+		{"triangulated value stays scam-only", usdc, true, thin, http.StatusOK},
+		{"fiat-quoted proxy value has no literal market", usd, false, thin, http.StatusOK},
+	}
+	for _, tc := range cases {
+		for _, window := range []string{"300", "3600", "86400"} {
+			t.Run(tc.name+"/window="+window, func(t *testing.T) {
+				s := &Server{triangulated: provenanceWindowStub{triangulated: tc.triangulated}, substance: gate(tc.sub)}
+				rec := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodGet, "/v1/price?window="+window, nil)
+				s.handlePriceWindowed(rec, req, aqua, tc.quote, window)
+				if rec.Code != tc.wantStatus {
+					t.Fatalf("status %d, want %d; body %s", rec.Code, tc.wantStatus, rec.Body.String())
+				}
+				body := rec.Body.String()
+				if tc.wantStatus == http.StatusNotFound {
+					if !strings.Contains(body, "errors/price-withheld") || !strings.Contains(body, "market too thin") {
+						t.Errorf("withheld body must carry the thin-market price-withheld problem: %s", body)
+					}
+					if strings.Contains(body, "0.0042") {
+						t.Errorf("withheld body leaked the cached VWAP: %s", body)
+					}
+				} else if !strings.Contains(body, `"price":"0.0042"`) {
+					t.Errorf("served body missing the cached VWAP: %s", body)
+				}
+			})
+		}
+	}
 }
