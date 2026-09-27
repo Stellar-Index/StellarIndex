@@ -45,7 +45,7 @@ func TestBuildDispatcher_FoldsWhitespaceAndCaseInSourceNames(t *testing.T) {
 // BuildDispatcher left it.
 func TestRegisterSupplyEntryDecoders_AccountsNoOpWhenEmpty(t *testing.T) {
 	disp := dispatcher.New()
-	registered, err := RegisterSupplyEntryDecoders(disp, config.SupplyConfig{})
+	registered, err := RegisterSupplyEntryDecoders(disp, config.SupplyConfig{}, config.MetadataConfig{})
 	if err != nil {
 		t.Fatalf("RegisterSupplyEntryDecoders: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestRegisterSupplyEntryDecoders_AccountsRegistersWhenWatched(t *testing.T) 
 	cfg := config.SupplyConfig{
 		SDFReserveAccounts: []string{realisticGStrkey},
 	}
-	registered, err := RegisterSupplyEntryDecoders(disp, cfg)
+	registered, err := RegisterSupplyEntryDecoders(disp, cfg, config.MetadataConfig{})
 	if err != nil {
 		t.Fatalf("RegisterSupplyEntryDecoders: %v", err)
 	}
@@ -73,6 +73,36 @@ func TestRegisterSupplyEntryDecoders_AccountsRegistersWhenWatched(t *testing.T) 
 	}
 	if registered[0] != "accounts" {
 		t.Errorf("registered[0] = %q, want 'accounts'", registered[0])
+	}
+}
+
+// TestRegisterSupplyEntryDecoders_AccountsRegistersForIssuersOnly pins the
+// decoupling of issuer home_domain observation from the SDF reserve list:
+// watching an issuer must not require adding it to sdf_reserve_accounts,
+// which would subtract its XLM from circulating supply.
+func TestRegisterSupplyEntryDecoders_AccountsRegistersForIssuersOnly(t *testing.T) {
+	disp := dispatcher.New()
+	meta := config.MetadataConfig{WatchedIssuerAccounts: []string{realisticGStrkey}}
+	registered, err := RegisterSupplyEntryDecoders(disp, config.SupplyConfig{}, meta)
+	if err != nil {
+		t.Fatalf("RegisterSupplyEntryDecoders: %v", err)
+	}
+	if len(registered) != 1 || registered[0] != "accounts" {
+		t.Fatalf("registered = %v, want [accounts]", registered)
+	}
+}
+
+func TestAccountObserverWatchSet_UnionDeduped(t *testing.T) {
+	const issuer = "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2"
+	sup := config.SupplyConfig{SDFReserveAccounts: []string{realisticGStrkey}}
+	meta := config.MetadataConfig{WatchedIssuerAccounts: []string{issuer, realisticGStrkey}}
+	got := AccountObserverWatchSet(sup, meta)
+	want := []string{realisticGStrkey, issuer}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("AccountObserverWatchSet = %v, want %v", got, want)
+	}
+	if len(sup.SDFReserveAccounts) != 1 {
+		t.Fatalf("SDFReserveAccounts mutated to %v; issuers must never join the reserve list", sup.SDFReserveAccounts)
 	}
 }
 
@@ -87,7 +117,7 @@ func TestRegisterSupplyEntryDecoders_RejectsEmptyStrkey(t *testing.T) {
 	cfg := config.SupplyConfig{
 		SDFReserveAccounts: []string{realisticGStrkey, ""},
 	}
-	_, err := RegisterSupplyEntryDecoders(disp, cfg)
+	_, err := RegisterSupplyEntryDecoders(disp, cfg, config.MetadataConfig{})
 	if err == nil {
 		t.Fatal("expected error for empty G-strkey in watched-accounts list")
 	}
@@ -104,7 +134,7 @@ func TestRegisterSupplyEntryDecoders_ClassicTrioRegisters(t *testing.T) {
 	cfg := config.SupplyConfig{
 		WatchedClassicAssets: []string{"USDC-" + realisticGStrkey},
 	}
-	registered, err := RegisterSupplyEntryDecoders(disp, cfg)
+	registered, err := RegisterSupplyEntryDecoders(disp, cfg, config.MetadataConfig{})
 	if err != nil {
 		t.Fatalf("RegisterSupplyEntryDecoders: %v", err)
 	}
@@ -134,7 +164,7 @@ func TestRegisterSupplyEntryDecoders_SACRegistersWhenWrappers(t *testing.T) {
 	cfg := config.SupplyConfig{
 		SACWrappers: map[string]string{realisticCStrkey: "USDC:" + realisticGStrkey},
 	}
-	registered, err := RegisterSupplyEntryDecoders(disp, cfg)
+	registered, err := RegisterSupplyEntryDecoders(disp, cfg, config.MetadataConfig{})
 	if err != nil {
 		t.Fatalf("RegisterSupplyEntryDecoders: %v", err)
 	}
@@ -154,7 +184,7 @@ func TestRegisterSupplyEntryDecoders_FullConfigRegistersFive(t *testing.T) {
 		WatchedClassicAssets: []string{"USDC-" + realisticGStrkey},
 		SACWrappers:          map[string]string{realisticCStrkey: "USDC:" + realisticGStrkey},
 	}
-	registered, err := RegisterSupplyEntryDecoders(disp, cfg)
+	registered, err := RegisterSupplyEntryDecoders(disp, cfg, config.MetadataConfig{})
 	if err != nil {
 		t.Fatalf("RegisterSupplyEntryDecoders: %v", err)
 	}

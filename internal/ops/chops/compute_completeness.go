@@ -2467,23 +2467,48 @@ func countsAbove(m map[uint32]int, b uint32) map[uint32]int {
 	return out
 }
 
+// recognitionGlobalExcludeSyms is the topic exclusion for the CH-backed
+// global recognition census. MUST be FirehoseExcludeSyms, not the wider
+// ClassicTokenTopic0Syms (GH-1295): excluding set_admin entirely hides the
+// Blend/Comet pool-level set_admin collision on the shared "POOL" topic. A
+// package var (not inlined) so the wiring choice is unit-testable without a
+// live ClickHouse connection.
+var recognitionGlobalExcludeSyms = clickhouse.FirehoseExcludeSyms
+
 // computeRecognitionGapsCH is the CH-backed recognition audit: distinct
-// (contract, topic) shapes from the certified lake (excluding the CAP-67
-// classic-token firehose — sep41 isn't enabled, so it's out of protocol scope)
-// run through the dispatcher's Recognize(). Fast + off the serving DB vs the
-// Postgres soroban_events scan in computeRecognitionGaps.
+// (contract, topic) shapes from the certified lake, run through the
+// dispatcher's Recognize(). Fast + off the serving DB vs the Postgres
+// soroban_events scan in computeRecognitionGaps.
+//
+// The global scan excludes FirehoseExcludeSyms (the CAP-67 classic-token
+// topics minus set_admin — see that var's doc): auditing every contract in
+// the lake for transfer/mint/burn/… would re-scan the 447 M-row firehose for
+// a set no enabled protocol decoder consumes. But watched_sep41_contracts
+// DOES consume exactly those topics, so excluding them wholesale made a
+// SEP-41 source silently dropping its OWN events unreachable (GH-1295), and
+// excluding set_admin only from the exclusion (not entirely) is what
+// surfaces the Blend/Comet pool-level set_admin collision on the shared
+// "POOL" topic. watchedSep41RecognitionShapes re-adds exactly those excluded
+// topics, scoped to the watched contract set, so both stay auditable without
+// the firehose cost.
 func computeRecognitionGapsCH(ctx context.Context, cfg config.Config, chAddr string, gated map[string][]contractid.Option, from, tip uint32, soroswapOpts ...soroswap.DecoderOption) ([]completeness.RecognitionGap, error) {
 	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gated, soroswapOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("build dispatcher: %w", err)
 	}
-	shapes, err := clickhouse.DistinctTopicShapes(ctx, chAddr, from, tip, clickhouse.ClassicTokenTopic0Syms)
+	shapes, err := clickhouse.DistinctTopicShapes(ctx, chAddr, from, tip, recognitionGlobalExcludeSyms)
 	if err != nil {
 		return nil, err
 	}
 	if verr := recognitionScanEmptyErr(len(shapes), from, tip); verr != nil {
 		return nil, verr
 	}
+	watched, err := watchedSep41RecognitionShapes(ctx, cfg, chAddr, from, tip)
+	if err != nil {
+		return nil, err
+	}
+	shapes = append(shapes, watched...)
+
 	var gaps []completeness.RecognitionGap
 	for _, s := range shapes {
 		if _, ok := disp.Recognize(s.Event()); ok {
@@ -2499,6 +2524,19 @@ func computeRecognitionGapsCH(ctx context.Context, cfg config.Config, chAddr str
 		})
 	}
 	return gaps, nil
+}
+
+// watchedSep41RecognitionShapes is the watched-set-scoped half of the
+// recognition census (GH-1295): the CAP-67 topics FirehoseExcludeSyms drops
+// from the global scan, restricted to the operator-curated
+// watched_sep41_contracts, so a watched source dropping its own event kinds
+// still produces a recognition gap. Empty watch list means nothing to audit.
+func watchedSep41RecognitionShapes(ctx context.Context, cfg config.Config, chAddr string, from, tip uint32) ([]clickhouse.TopicShape, error) {
+	watched := cfg.Supply.WatchedSEP41Contracts
+	if len(watched) == 0 {
+		return nil, nil
+	}
+	return clickhouse.DistinctTopicShapesForWatchedContracts(ctx, chAddr, from, tip, clickhouse.FirehoseExcludeSyms, watched)
 }
 
 // computeRecognitionGaps runs the global recognition audit over the

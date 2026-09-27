@@ -672,6 +672,15 @@ func TestValidate_SDFReserveAccountMalformedRejected(t *testing.T) {
 	}
 }
 
+func TestValidate_WatchedIssuerAccountMalformedRejected(t *testing.T) {
+	c := config.Default()
+	c.Metadata.WatchedIssuerAccounts = []string{"GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2", "USDC"}
+	err := c.Validate()
+	if err == nil || !strings.Contains(err.Error(), "watched_issuer_accounts[1]") {
+		t.Fatalf("err = %v; want a watched_issuer_accounts[1] rejection", err)
+	}
+}
+
 // TestValidate_SDFReserveAccountBadChecksumRejected — an entry with the
 // right prefix, length and alphabet but a wrong CRC (one character
 // flipped) matches no on-chain account, so its reserve balance would

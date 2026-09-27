@@ -111,12 +111,56 @@ func DistinctTopicShapes(ctx context.Context, addr string, from, to uint32, excl
 		return nil, err
 	}
 
+	return finishShapeScan(ctx, conn, acc)
+}
+
+// DistinctTopicShapesForWatchedContracts scopes the distinct-shape scan to a
+// specific topic[0] set AND a specific contract set. It exists for the
+// watched-SEP41 recognition census: FirehoseExcludeSyms drops the CAP-67
+// classic-token topics from the global scan (see DistinctTopicShapes) because
+// auditing them for every contract in the lake would re-scan the 447 M-row
+// firehose, but that means a watched SEP-41 source silently dropping its OWN
+// transfer/mint/burn/… events is invisible to the global census. Restricting
+// both topic[0] AND contract_id keeps that source's own kinds auditable at
+// the same bounded cost as the global scan (a handful of contracts, not the
+// whole firehose). Returns (nil, nil) if either input set is empty — no
+// watched contracts or nothing to look for means nothing to scan.
+func DistinctTopicShapesForWatchedContracts(ctx context.Context, addr string, from, to uint32, topic0, contractIDs []string) ([]TopicShape, error) {
+	if len(topic0) == 0 || len(contractIDs) == 0 {
+		return nil, nil
+	}
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conn.Close() }()
+
+	acc := make(map[shapeKey]*TopicShape)
+	scanQ := distinctShapesWatchedQuery(topic0, contractIDs)
+	err = forEachLedgerWindow(from, to, recognitionScanWindow, func(lo, hi uint32) error {
+		rows, qerr := conn.Query(ctx, scanQ, lo, hi)
+		if qerr != nil {
+			return fmt.Errorf("clickhouse: distinct topic shapes (watched) [%d,%d]: %w", lo, hi, qerr)
+		}
+		defer func() { _ = rows.Close() }()
+		return mergeShapeWindow(rows, acc)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return finishShapeScan(ctx, conn, acc)
+}
+
+// finishShapeScan sorts the accumulated distinct shapes (count-descending
+// like the old ORDER BY cnt DESC, identity tie-break for deterministic
+// output) and fills their exemplars. Shared by DistinctTopicShapes and
+// DistinctTopicShapesForWatchedContracts — only the phase-1 scan query
+// differs between them.
+func finishShapeScan(ctx context.Context, conn driver.Conn, acc map[shapeKey]*TopicShape) ([]TopicShape, error) {
 	out := make([]TopicShape, 0, len(acc))
 	for _, s := range acc {
 		out = append(out, *s)
 	}
-	// Count-descending like the old ORDER BY cnt DESC; identity tie-break for
-	// deterministic output.
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Count != out[j].Count {
 			return out[i].Count > out[j].Count
@@ -141,6 +185,28 @@ func distinctShapesWindowQuery(excludeTopic0 []string) string {
 	if len(excludeTopic0) > 0 {
 		where += " AND topic_0_sym NOT IN (" + sqlQuoteList(excludeTopic0) + ")"
 	}
+	return fmt.Sprintf(`
+		SELECT
+			contract_id,
+			topic_0_sym,
+			count() AS cnt,
+			min(ledger_seq) AS lo,
+			max(ledger_seq) AS hi
+		FROM stellar.contract_events
+		%s
+		GROUP BY contract_id, topic_0_sym
+		%s`, where, boundedScanSettings)
+}
+
+// distinctShapesWatchedQuery is the phase-1 scan for
+// DistinctTopicShapesForWatchedContracts: same narrow-column shape as
+// distinctShapesWindowQuery, but INCLUDE (not exclude) on topic[0] and an
+// added contract_id restriction. contractIDs are lake-sourced strkeys, so
+// escaped like the exemplar query's identity literals rather than assumed
+// compile-time constants.
+func distinctShapesWatchedQuery(topic0, contractIDs []string) string {
+	where := fmt.Sprintf("WHERE ledger_seq BETWEEN ? AND ? AND topic_0_sym IN (%s) AND contract_id IN (%s)",
+		sqlQuoteList(topic0), sqlQuoteEscapedList(contractIDs))
 	return fmt.Sprintf(`
 		SELECT
 			contract_id,

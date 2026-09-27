@@ -85,6 +85,14 @@ var (
 	// loop; not an error the caller sees but an internal signal.
 	ErrRequestedReconnect = errors.New("bitstamp: server requested reconnect")
 
+	// ErrSubscriptionRejected — venue answered a subscribe request
+	// with `bts:error` (e.g. a delisted or malformed pair). Not
+	// fatal: the socket and its other already-subscribed channels
+	// stay live. The streamer logs it and flips
+	// obs.CEXStreamSubscriptionRejected so a dead pair doesn't hide
+	// behind a sibling's still-fresh CEXStreamLastTradeUnix.
+	ErrSubscriptionRejected = errors.New("bitstamp: subscription rejected")
+
 	// ErrDustTrade — base × price floor-divided to a 0 quote
 	// amount. Tiny bitstamp lots (e.g. 1e-8 XLM at $0.16) underflow
 	// the canonical.NewAmount integer scale (10^8). Real trades, but

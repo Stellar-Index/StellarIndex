@@ -129,15 +129,18 @@ func TestRunIssuerFlags_ChainRecheckWritesOnlyWhatTheChainChanged(t *testing.T) 
 	}
 }
 
-// TestRunIssuerFlags_ChainRecheckNeverBlanksAStoredDomain keeps the pass from
-// over-reaching. A live entry that declares NO domain is not a retraction: the
-// lake's lookup only returns accounts that DECLARE one, so an empty value
-// means "not read". Nothing about such a row has changed, so it must be
-// neither blanked nor rewritten.
-func TestRunIssuerFlags_ChainRecheckNeverBlanksAStoredDomain(t *testing.T) {
+// TestRunIssuerFlags_ChainRecheckClearsADomainTheChainNoLongerDeclares is the
+// cleared-domain half of the lapsed-domain takeover. BulkAccountAuthFlags
+// returns every LIVE account and decodes home_domain from its entry, so an
+// empty reading is the account declaring none — not a field the lake did not
+// return. The anchor below ran SetOptions(home_domain="") at the SAME ledger
+// the row was filled at, so nothing but the domain distinguishes the reading
+// from the record: the pass must still write it, or the lapsed name stays in
+// the SEP-1 refresh queue.
+func TestRunIssuerFlags_ChainRecheckClearsADomainTheChainNoLongerDeclares(t *testing.T) {
 	store := &stubIssuerFlagsStore{
 		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
-			onRecord(lapsedDomainIssuer, 0x1, "still-declared.example",
+			onRecord(lapsedDomainIssuer, 0x1, "lapsed-former.example",
 				timescale.AuthFlagsSourceLive, 64100000),
 		},
 	}
@@ -149,9 +152,94 @@ func TestRunIssuerFlags_ChainRecheckNeverBlanksAStoredDomain(t *testing.T) {
 	if err := runIssuerFlags(context.Background(), store, reader, runOpts()); err != nil {
 		t.Fatalf("runIssuerFlags: %v", err)
 	}
+	got, ok := store.allPersisted()[lapsedDomainIssuer]
+	if !ok {
+		t.Fatalf("persisted %v, want %s rewritten — the chain no longer declares the stored domain",
+			store.allPersisted(), lapsedDomainIssuer)
+	}
+	if got.Source != timescale.AuthFlagsSourceLive || got.HomeDomain != "" {
+		t.Errorf("persisted source=%q home_domain=%q, want a live reading declaring none", got.Source, got.HomeDomain)
+	}
+}
+
+// TestRunIssuerFlags_ChainRecheckLeavesAnUnchangedDeclaredNoneAlone keeps the
+// pass writing only differences: a row that already holds no domain agrees
+// with a live entry that declares none.
+func TestRunIssuerFlags_ChainRecheckLeavesAnUnchangedDeclaredNoneAlone(t *testing.T) {
+	store := &stubIssuerFlagsStore{
+		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
+			onRecord(lapsedDomainIssuer, 0x1, "", timescale.AuthFlagsSourceLive, 64100000),
+		},
+	}
+	reader := &stubIssuerFlagsReader{
+		live: map[string]clickhouse.AccountAuthFlags{
+			lapsedDomainIssuer: liveReading(64100000, 0x1, ""),
+		},
+	}
+	if err := runIssuerFlags(context.Background(), store, reader, runOpts()); err != nil {
+		t.Fatalf("runIssuerFlags: %v", err)
+	}
 	if got := store.allPersisted(); len(got) != 0 {
-		t.Errorf("persisted %v, want nothing — an entry that declares no domain is not a retraction "+
-			"of the one on record, and the persist statement would not change the column anyway", got)
+		t.Errorf("persisted %v, want nothing — the row already agrees with the chain", got)
+	}
+}
+
+// TestRunIssuerFlags_ChainRecheckRelabelsAnIssuerThatMergedAfterFilling is the
+// merged half. A row filled `live` whose account has since merged is absent
+// from the live reader; the pass used to leave it alone, so it kept its `live`
+// label and home_domain for good. It must now ask the last-known reader, and
+// write what that reader returns: the removal-ledger flags and NO domain. A
+// key neither reader answers for (a coverage gap) is still left untouched.
+func TestRunIssuerFlags_ChainRecheckRelabelsAnIssuerThatMergedAfterFilling(t *testing.T) {
+	store := &stubIssuerFlagsStore{
+		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
+			onRecord(mergedIssuerA, 0, "stellarbrunch.com", timescale.AuthFlagsSourceLive, 50000000),
+			onRecord(absentIssuer, 0, "somewhere.example", timescale.AuthFlagsSourceLive, 64100000),
+		},
+	}
+	reader := &stubIssuerFlagsReader{
+		lastKnown: map[string]clickhouse.AccountAuthFlags{
+			mergedIssuerA: lastKnownReading(mergedIssuerALedger, 0),
+		},
+	}
+	if err := runIssuerFlags(context.Background(), store, reader, runOpts()); err != nil {
+		t.Fatalf("runIssuerFlags: %v", err)
+	}
+	persisted := store.allPersisted()
+	got, ok := persisted[mergedIssuerA]
+	if !ok {
+		t.Fatalf("persisted %v, want %s relabelled — it merged after its row was filled", persisted, mergedIssuerA)
+	}
+	if got.Source != timescale.AuthFlagsSourceLastKnownBeforeRemoval || got.HomeDomain != "" ||
+		got.AsOfLedger == nil || *got.AsOfLedger != mergedIssuerALedger {
+		t.Errorf("persisted %+v, want a last-known reading as of %d with no home_domain", got, mergedIssuerALedger)
+	}
+	if _, ok := persisted[absentIssuer]; ok {
+		t.Errorf("%s was rewritten, but neither reader answered for it", absentIssuer)
+	}
+}
+
+// TestRunIssuerFlags_ChainRecheckClearsAMergedRowsStoredDomain covers rows
+// already labelled last-known that still hold a domain stored while the
+// account was live. The queue offers them; the account is still merged, and
+// re-writing the same reading clears the identity.
+func TestRunIssuerFlags_ChainRecheckClearsAMergedRowsStoredDomain(t *testing.T) {
+	store := &stubIssuerFlagsStore{
+		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
+			onRecord(mergedIssuerA, 0, "stellarbrunch.com",
+				timescale.AuthFlagsSourceLastKnownBeforeRemoval, mergedIssuerALedger),
+		},
+	}
+	reader := &stubIssuerFlagsReader{
+		lastKnown: map[string]clickhouse.AccountAuthFlags{
+			mergedIssuerA: lastKnownReading(mergedIssuerALedger, 0),
+		},
+	}
+	if err := runIssuerFlags(context.Background(), store, reader, runOpts()); err != nil {
+		t.Fatalf("runIssuerFlags: %v", err)
+	}
+	if got, ok := store.allPersisted()[mergedIssuerA]; !ok || got.HomeDomain != "" {
+		t.Errorf("persisted %v, want %s re-written with no home_domain", store.allPersisted(), mergedIssuerA)
 	}
 }
 

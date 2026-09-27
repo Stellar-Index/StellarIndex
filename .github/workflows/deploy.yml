@@ -1014,14 +1014,16 @@ jobs:
 
       - name: Install Ansible
         # F-1299 (codex audit-2026-05-13): EXACT pins for both
-        # ansible-core and pip itself. Pre-fix `'ansible-core==2.18.*'`
-        # let any 2.18.x patch land at deploy time, including future
-        # 2.18.999. The requirements.yml file is also now exact-pinned.
-        # Bumps are a deliberate three-file edit: this pin, the
-        # requirements.yml pin, and a deploy-replay confirmation.
+        # ansible-core and pip itself. Pre-fix, a wildcard patch pin
+        # let any 2.18.x land at deploy time, including a future
+        # untested patch. The requirements.yml file is also now
+        # exact-pinned. Bumps are a deliberate two-file edit:
+        # configs/ansible/toolchain.txt and the requirements.yml pin,
+        # plus a deploy-replay confirmation (GH-896: the version
+        # itself lives in toolchain.txt, read by install-ansible.sh,
+        # not here — see lint-ansible-toolchain-pin.sh).
         run: |
-          python3 -m pip install 'pip==24.3.1'
-          python3 -m pip install 'ansible-core==2.18.4'
+          ./scripts/ci/install-ansible.sh core
           # `ansible-core` ships only the bundled collections; anything
           # from Galaxy must be installed separately, and requirements.yml
           # is the source of truth for ALL collection pins (posix,

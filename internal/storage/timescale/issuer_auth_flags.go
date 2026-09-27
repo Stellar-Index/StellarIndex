@@ -165,6 +165,28 @@ func (s *Store) IssuerGStrkeysNeedingRecheck(ctx context.Context, limit int) ([]
 	return out, nil
 }
 
+// persistHomeDomain is what [Store.PersistIssuerAuthFlags] assigns to
+// home_domain; it is named because the SEP-1 reset must compare against the
+// exact same expression.
+const persistHomeDomain = `CASE $7::text
+		        WHEN '` + AuthFlagsSourceLive + `' THEN NULLIF($6, '')
+		        WHEN '` + AuthFlagsSourceLastKnownBeforeRemoval + `' THEN NULL
+		        ELSE COALESCE(NULLIF($6, ''), home_domain) END`
+
+//nolint:gosec // G202: fragments are constant SQL (column names, CASE literals, persistHomeDomain/sep1ResetOnHomeDomainChange); values bind via $N
+var persistIssuerAuthFlagsQuery = `
+		UPDATE issuers SET
+		    auth_required  = $2,
+		    auth_revocable = $3,
+		    auth_immutable = $4,
+		    auth_clawback  = $5,
+		    home_domain    = ` + persistHomeDomain + `,` + sep1ResetOnHomeDomainChange(persistHomeDomain) + `,
+		    auth_flags_source = CASE WHEN $7::text = ''
+		                             THEN auth_flags_source ELSE $7::text END,
+		    auth_flags_as_of_ledger = CASE WHEN $7::text = ''
+		                             THEN auth_flags_as_of_ledger ELSE $8::integer END
+		 WHERE g_strkey = $1`
+
 // PersistIssuerAuthFlags writes decoded auth flags for the given issuers,
 // returning how many rows it actually changed.
 //
@@ -183,8 +205,21 @@ func (s *Store) IssuerGStrkeysNeedingRecheck(ctx context.Context, limit int) ([]
 // issuer rows from account entries would put accounts in the issuers
 // table that never issued anything.
 //
-// home_domain: a non-empty reading OVERWRITES whatever the row held; an
-// empty one leaves the row alone.
+// home_domain follows the reading's provenance, and a row whose domain changes
+// has its SEP-1 state unbound in the same statement (see
+// sep1ResetOnHomeDomainChange):
+//
+//   - live: the column becomes exactly what the AccountEntry declares, and an
+//     empty reading CLEARS it. clickhouse.BulkAccountAuthFlags returns every
+//     live account and decodes the field from its entry, so "" there is the
+//     account declaring none, not a field the lake did not return.
+//   - last_known_before_removal: the column is cleared. A merged account's
+//     self-declared identity can no longer be checked against SEP-1's
+//     bidirectional [[CURRENCIES]] back-reference, which is why validate()
+//     refuses to write one; retaining a domain stored while it was live is the
+//     same impersonation surface.
+//   - "" (unlabelled): a non-empty value overwrites, an empty one leaves the
+//     row alone, because nothing says what produced it.
 //
 // It used to be the other way round — COALESCE kept the stored value,
 // "because the SEP-1 resolver's domain is better sourced than the
@@ -195,14 +230,9 @@ func (s *Store) IssuerGStrkeysNeedingRecheck(ctx context.Context, limit int) ([]
 // write-once: an anchor that moved domain on-chain and let the old name
 // lapse could never take its identity back, because nothing would ever
 // overwrite the lapsed name the SEP-1 refresh keeps fetching. See
-// [Store.SyncIssuerHomeDomain].
-//
-// Empty still leaves the row untouched, and that is not symmetry for its
-// own sake: [IssuerAuthFlags.validate] REFUSES a
-// last_known_before_removal reading that carries a domain, so an empty
-// value arriving here means either a merged account (whose self-declared
-// identity is deliberately not persisted) or a field the lake did not
-// return — never "the account declares none".
+// [Store.SyncIssuerHomeDomain]. Treating an empty reading as "not read"
+// kept the column frozen the same way for an anchor that CLEARED its domain,
+// or merged its account, and let the name lapse.
 //
 // # PROVENANCE (#374)
 //
@@ -228,19 +258,7 @@ func (s *Store) PersistIssuerAuthFlags(ctx context.Context, flags []IssuerAuthFl
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	const q = `
-		UPDATE issuers SET
-		    auth_required  = $2,
-		    auth_revocable = $3,
-		    auth_immutable = $4,
-		    auth_clawback  = $5,
-		    home_domain    = COALESCE(NULLIF($6, ''), home_domain),
-		    auth_flags_source = CASE WHEN $7::text = ''
-		                             THEN auth_flags_source ELSE $7::text END,
-		    auth_flags_as_of_ledger = CASE WHEN $7::text = ''
-		                             THEN auth_flags_as_of_ledger ELSE $8::integer END
-		 WHERE g_strkey = $1`
-	stmt, err := tx.PrepareContext(ctx, q)
+	stmt, err := tx.PrepareContext(ctx, persistIssuerAuthFlagsQuery)
 	if err != nil {
 		return 0, fmt.Errorf("timescale: PersistIssuerAuthFlags prepare: %w", err)
 	}

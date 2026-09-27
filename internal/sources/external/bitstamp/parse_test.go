@@ -88,15 +88,48 @@ func TestParseFrame_RequestReconnect(t *testing.T) {
 }
 
 func TestParseFrame_SubscriptionSucceededIgnored(t *testing.T) {
+	// Success is signalled via subscriptionAck{Accepted: true} — not
+	// a parse failure — so the streamer can clear a prior rejection
+	// gauge on this channel. It must never be ErrSubscriptionRejected.
 	raw := []byte(`{"event":"bts:subscription_succeeded","channel":"live_trades_xlmusd","data":{}}`)
 	trade, isTrade, err := parseFrame(raw, mustPairs(t))
-	if err != nil {
-		t.Errorf("should not err on subscription_succeeded, got %v", err)
+	if errors.Is(err, ErrSubscriptionRejected) {
+		t.Errorf("subscription_succeeded must not surface as ErrSubscriptionRejected, got %v", err)
 	}
 	if isTrade {
 		t.Error("subscription_succeeded should not be treated as trade")
 	}
 	_ = trade
+}
+
+// TestParseFrame_SubscriptionErrorSurfacesRejection is the CA2-A18-
+// harden-3 guard: a bts:error rejecting a subscribe request must
+// surface as ErrSubscriptionRejected, not be swallowed as (nil, nil).
+// Swallowing it left a rejected/delisted pair with no error, log or
+// metric — the venue's other, still-accepted pairs kept the shared
+// per-source CEXStreamLastTradeUnix gauge fresh, hiding the dead one.
+func TestParseFrame_SubscriptionErrorSurfacesRejection(t *testing.T) {
+	raw := []byte(`{"event":"bts:error","channel":"live_trades_xlmbtc","data":{"message":"Bad subscription string."}}`)
+	_, isTrade, err := parseFrame(raw, mustPairs(t))
+	if isTrade {
+		t.Error("bts:error should not be treated as trade")
+	}
+	if !errors.Is(err, ErrSubscriptionRejected) {
+		t.Fatalf("expected ErrSubscriptionRejected, got %v", err)
+	}
+	var ack *subscriptionAck
+	if !errors.As(err, &ack) {
+		t.Fatalf("expected *subscriptionAck in the error chain, got %v", err)
+	}
+	if ack.Channel != "live_trades_xlmbtc" {
+		t.Errorf("ack.Channel = %q, want live_trades_xlmbtc", ack.Channel)
+	}
+	if ack.Message != "Bad subscription string." {
+		t.Errorf("ack.Message = %q, want the venue message", ack.Message)
+	}
+	if ack.Accepted {
+		t.Error("ack.Accepted = true, want false for bts:error")
+	}
 }
 
 func TestParseFrame_UnknownEventIgnored(t *testing.T) {

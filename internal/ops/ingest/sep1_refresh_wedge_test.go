@@ -46,6 +46,9 @@ issuer = "GBEHIND"
 type sep1CallLog struct {
 	mu  sync.Mutex
 	seq []string
+	// moved names issuers whose home_domain the store reports as changed
+	// since the candidate was read, so the payload write lands nowhere.
+	moved map[string]bool
 }
 
 func (l *sep1CallLog) add(step string) {
@@ -65,9 +68,9 @@ func (l *sep1CallLog) MarkIssuerSep1Failed(_ context.Context, gStrkey string) (i
 	return 1, nil
 }
 
-func (l *sep1CallLog) SetIssuerSep1Payload(_ context.Context, gStrkey string, _ []byte) error {
+func (l *sep1CallLog) SetIssuerSep1Payload(_ context.Context, gStrkey, _ string, _ []byte) (bool, error) {
 	l.add("write " + gStrkey)
-	return nil
+	return !l.moved[gStrkey], nil
 }
 
 // count returns how many times step appears in the log.
@@ -199,6 +202,19 @@ func TestSep1RefreshLoopMarksBeforeASuccessToo(t *testing.T) {
 	want := "[mark GBEHIND fetch GBEHIND write GBEHIND]"
 	if got := fmt.Sprint(log.steps()); got != want {
 		t.Errorf("call order = %s; want %s", got, want)
+	}
+}
+
+// A payload discarded because home_domain moved mid-fetch is not a failed
+// attempt: the move already reset the row's ladder, so the key must stay out
+// of the systemic unwind's list.
+func TestSep1RefreshLoopMovedDomainIsNotAFailure(t *testing.T) {
+	log := &sep1CallLog{moved: map[string]bool{"GBEHIND": true}}
+	srv, domain := sep1TestDomain(t, log, "GBEHIND", healthyTOML)
+	ok, failed := sep1RefreshLoop(context.Background(), log, sep1TestResolver(srv),
+		[]timescale.IssuerSep1Candidate{{GStrkey: "GBEHIND", HomeDomain: domain}}, false)
+	if ok != 1 || len(failed) != 0 {
+		t.Fatalf("sep1RefreshLoop = (%d, %v); want (1, [])", ok, failed)
 	}
 }
 

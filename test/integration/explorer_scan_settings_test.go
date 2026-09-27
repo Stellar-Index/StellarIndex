@@ -235,7 +235,7 @@ func TestExplorerScanQueries_ExecuteAgainstServer(t *testing.T) {
 			return err
 		},
 		"AccountsByWealth": func() error {
-			_, err := r.AccountsByWealth(ctx, []string{"native"}, []float64{0.4}, 5)
+			_, err := r.AccountsByWealth(ctx, []string{"native"}, []string{"0.4"}, 5)
 			return err
 		},
 		"AccountsUnspendable": func() error {

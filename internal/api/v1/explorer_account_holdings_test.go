@@ -116,7 +116,7 @@ func TestExplorer_AccountState_TrustlineKindsAndHoldingScope(t *testing.T) {
 // The wealth ranking counts classic holdings only, so it is a lower bound.
 func TestExplorer_AccountsList_DeclaresClassicOnlyLowerBound(t *testing.T) {
 	srv := v1.New(v1.Options{
-		Explorer: &stubExplorerReader{wealth: []clickhouse.AccountWealth{{AccountID: testG, USD: 1}}},
+		Explorer: &stubExplorerReader{wealth: []clickhouse.AccountWealth{{AccountID: testG, Value: big.NewRat(1, 1)}}},
 		Prices:   &stubPriceReader{},
 	})
 	resp := mustGet(t, httpTestServer(t, srv).URL+"/v1/accounts")

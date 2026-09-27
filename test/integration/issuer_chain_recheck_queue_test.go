@@ -218,6 +218,8 @@ func TestIssuersNeedingChainRecheck(t *testing.T) {
 	t.Run("a merged row stays out of the queue after its own re-check", func(t *testing.T) {
 		// The two queues partition the filled rows; if this one ever picked
 		// up last-known rows they would be read from the lake twice a night.
+		// A merged row leaves it once its persisted reading has cleared the
+		// domain it held while live, which the seed persist above already did.
 		got, err := store.IssuersNeedingChainRecheck(ctx, 0)
 		if err != nil {
 			t.Fatalf("IssuersNeedingChainRecheck: %v", err)
@@ -227,8 +229,8 @@ func TestIssuersNeedingChainRecheck(t *testing.T) {
 				t.Errorf("queue offers the merged row %s; the last-known queue already carries it", mergedIssuer)
 			}
 		}
-		if got := homeDomainOfRow(t, mergedIssuer); got != "stellarbrunch.com" {
-			t.Errorf("merged row's home_domain = %q, want it untouched", got)
+		if got := homeDomainOfRow(t, mergedIssuer); got != "" {
+			t.Errorf("merged row's home_domain = %q, want empty — a merged account's identity is not kept", got)
 		}
 	})
 }

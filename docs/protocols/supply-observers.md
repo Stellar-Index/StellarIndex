@@ -48,10 +48,13 @@ readers aggregate at refresh time.
 | `liquidity_pools` | 0022 | `LedgerEntryChangeDecoder` | `LiquidityPoolEntry` reserve changes (up to 2 observations/change — one per watched side) | LP-reserve table |
 | `sac_balances` | 0022 | `LedgerEntryChangeDecoder` | `ContractData` deltas matching the SEP-41 balance key `Vec(Symbol("Balance"), Address(holder))` on watched SAC wrappers | `sac_balance_observations` |
 
-The `accounts` observer is dual-purpose: `supply.LCMReserveBalanceReader`
-reads reserve balances for circulating-supply, and
-`metadata.LCMHomeDomainResolver` reads issuer home-domains for the
-metadata overlay (both replace the old operator-static config maps).
+The `accounts` observer is dual-purpose. It watches the union of
+`[supply].sdf_reserve_accounts` and `[metadata].watched_issuer_accounts`;
+`supply.LCMReserveBalanceReader` reads the reserve accounts' balances for
+circulating supply, and `metadata.LCMHomeDomainResolver` reads the latest
+home-domain of watched issuers. Both read by account id, so a watched
+issuer never enters the reserve sum. Each sits ahead of an
+operator-static config map.
 
 ## Known limitations (material to a supply figure)
 

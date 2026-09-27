@@ -82,6 +82,7 @@ type homeDomainLookup interface {
 // needs, so the loop can be exercised without Postgres.
 type homeDomainWriter interface {
 	SyncIssuerHomeDomain(ctx context.Context, gStrkey, homeDomain string) (bool, error)
+	ClearIssuerHomeDomain(ctx context.Context, gStrkey string) (bool, error)
 }
 
 // issuerEnrichLoop resolves and writes home_domain in fixed-size batches.
@@ -106,7 +107,11 @@ func issuerEnrichLoop(ctx context.Context, er homeDomainLookup, store homeDomain
 			failedBatches++
 			continue
 		}
-		found += len(domains)
+		for _, d := range domains {
+			if d != "" {
+				found++
+			}
+		}
 		if !dryRun {
 			n, uerr := updateIssuerHomeDomains(ctx, store, domains)
 			updated += n
@@ -149,6 +154,10 @@ func loadIssuerGStrkeys(ctx context.Context, store *timescale.Store) ([]string, 
 // that was an identity defect rather than a conservatism, and why the only
 // other writer of the column had the same clause for the same absent reason.
 //
+// An empty domain is an account the lake READ as declaring none, and clears
+// the row: keeping a domain the account has cleared leaves the lapsed name in
+// the SEP-1 refresh's fetch queue for whoever registers it next.
+//
 // A single row's write failure no longer aborts the rest of the batch —
 // every domain in the batch still gets its write attempt, and the caller
 // learns via the returned error how many failed.
@@ -156,7 +165,13 @@ func updateIssuerHomeDomains(ctx context.Context, store homeDomainWriter, domain
 	n, failed := 0, 0
 	var lastErr error
 	for g, domain := range domains {
-		changed, err := store.SyncIssuerHomeDomain(ctx, g, domain)
+		var changed bool
+		var err error
+		if domain == "" {
+			changed, err = store.ClearIssuerHomeDomain(ctx, g)
+		} else {
+			changed, err = store.SyncIssuerHomeDomain(ctx, g, domain)
+		}
 		if err != nil {
 			failed++
 			lastErr = err

@@ -29,14 +29,52 @@ func (f *fakeHomeDomainLookup) AccountHomeDomains(_ context.Context, accounts []
 
 type fakeHomeDomainWriter struct {
 	written map[string]string
+	cleared []string
 }
 
 func (f *fakeHomeDomainWriter) SyncIssuerHomeDomain(_ context.Context, gStrkey, homeDomain string) (bool, error) {
+	if homeDomain == "" {
+		// The real store refuses "" as "not read"; a caller that sends a
+		// declared-none reading here has silently kept the stale domain.
+		return false, nil
+	}
 	if f.written == nil {
 		f.written = map[string]string{}
 	}
 	f.written[gStrkey] = homeDomain
 	return true, nil
+}
+
+func (f *fakeHomeDomainWriter) ClearIssuerHomeDomain(_ context.Context, gStrkey string) (bool, error) {
+	f.cleared = append(f.cleared, gStrkey)
+	return true, nil
+}
+
+// TestUpdateIssuerHomeDomains_ClearsADomainTheAccountNoLongerDeclares — the
+// lake reader returns "" for a live account that declares no home_domain, and
+// that must reach the row as a clear, not be dropped as "not read".
+func TestUpdateIssuerHomeDomains_ClearsADomainTheAccountNoLongerDeclares(t *testing.T) {
+	const (
+		cleared  = "GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55"
+		declared = "GBFXOHVAS7DXHZPMPZL4HDPPMGSSJBWDGEOXSYHMPTSJKDFHPPFXFZ2K"
+	)
+	writer := &fakeHomeDomainWriter{}
+	n, err := updateIssuerHomeDomains(context.Background(), writer, map[string]string{
+		cleared:  "",
+		declared: "ultracapital.xyz",
+	})
+	if err != nil {
+		t.Fatalf("updateIssuerHomeDomains: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("changed = %d, want 2", n)
+	}
+	if len(writer.cleared) != 1 || writer.cleared[0] != cleared {
+		t.Errorf("cleared %v, want [%s]", writer.cleared, cleared)
+	}
+	if writer.written[declared] != "ultracapital.xyz" {
+		t.Errorf("written %v, want %s → ultracapital.xyz", writer.written, declared)
+	}
 }
 
 // TestIssuerEnrichLoop_ContinuesPastBatchFailure proves that a single

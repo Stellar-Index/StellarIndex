@@ -404,6 +404,11 @@ code_secret_env    = "STELLARINDEX_DASHBOARD_CODE_SECRET"
 cookie_secure      = true
 cookie_domain      = "{{ stellarindex_dashboard_cookie_domain | default('.stellarindex.io') }}"
 
+# Issuers observed for on-chain home_domain; kept out of
+# [supply].sdf_reserve_accounts, which feeds circulating supply.
+[metadata]
+watched_issuer_accounts = {{ stellarindex_metadata_watched_issuer_accounts | default([]) | to_json }}
+
 # ──────────────────────────────────────────────────────────────────
 # [supply] — operator-curated registries.
 # Added 2026-05-07: SAC wrapper resolution map. Sources verified

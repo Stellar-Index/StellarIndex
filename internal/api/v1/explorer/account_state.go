@@ -2,6 +2,7 @@ package explorer
 
 import (
 	"context"
+	"math/big"
 	"net/http"
 	"strconv"
 	"sync"
@@ -78,7 +79,7 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	// there is none — the lean networks run no aggregator, so usdPriceMap comes
 	// back empty — fall back to ranking by native XLM balance rather than 503ing
 	// or serving an empty list. The native fallback is exactly the single key
-	// "native" priced at 1.0, so sum(balance × price) is the XLM quantity; the
+	// "native" priced at 1, so sum(balance × price) is the XLM quantity; the
 	// cache records the basis (wealthBasis) and the handler reads it back so the
 	// served numbers are labelled correctly.
 	assets, prices := h.wealthRankingInputs(ctx)
@@ -130,7 +131,7 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 		if snap.Basis == clickhouse.WealthBasisNative {
 			row.Value = stroops7(a.NativeStroops.BigInt())
 		} else {
-			row.Value = strconv.FormatFloat(a.USD, 'f', 2, 64)
+			row.Value = formatUSD(a.Value)
 			row.USDValue = row.Value // back-compat alias, USD basis only
 		}
 		out.Accounts[i] = row
@@ -165,7 +166,7 @@ const usdPriceMapTTL = 10 * time.Minute
 
 type usdPriceMapEntry struct {
 	assets   []string
-	prices   []float64
+	prices   []string
 	cachedAt time.Time
 }
 
@@ -176,7 +177,7 @@ var (
 
 // usdPriceMap builds parallel (asset, price) arrays for wealth ranking,
 // memoised for [usdPriceMapTTL]. See the const's doc for why.
-func (h *Handler) usdPriceMap(ctx context.Context) (assets []string, prices []float64) {
+func (h *Handler) usdPriceMap(ctx context.Context) (assets, prices []string) {
 	usdPriceMapMu.Lock()
 	if c := usdPriceMapCache; c.assets != nil && time.Since(c.cachedAt) < usdPriceMapTTL {
 		usdPriceMapMu.Unlock()
@@ -196,20 +197,20 @@ func (h *Handler) usdPriceMap(ctx context.Context) (assets []string, prices []fl
 // wealthRankingInputs returns the (asset, price) arrays to rank account wealth
 // by. It is the USD price map where one exists; where it doesn't — pricing
 // disabled, or the catalogue is empty because no aggregator runs (the lean
-// test nets) — it returns the native-XLM fallback (key "native" priced at 1.0)
+// test nets) — it returns the native-XLM fallback (key "native" priced at 1)
 // so the ranking is by native XLM balance instead of coming back empty. Both
 // the request path and the prewarmer call this so the cache is populated with
 // one consistent basis (wealthBasis derives it from these inputs).
-func (h *Handler) wealthRankingInputs(ctx context.Context) (assets []string, prices []float64) {
+func (h *Handler) wealthRankingInputs(ctx context.Context) (assets, prices []string) {
 	if h.PricingEnabled {
 		if a, p := h.usdPriceMap(ctx); len(a) > 0 {
 			return a, p
 		}
 	}
-	return []string{"native"}, []float64{1.0}
+	return []string{"native"}, []string{"1"}
 }
 
-func (h *Handler) usdPriceMapUncached(ctx context.Context) (assets []string, prices []float64) {
+func (h *Handler) usdPriceMapUncached(ctx context.Context) (assets, prices []string) {
 	for _, key := range h.priceableAssetIDs() {
 		asset, err := canonical.ParseAsset(key)
 		if err != nil {
@@ -219,12 +220,11 @@ func (h *Handler) usdPriceMapUncached(ctx context.Context) (assets []string, pri
 		if !ok {
 			continue
 		}
-		p, perr := strconv.ParseFloat(raw, 64)
-		if perr != nil || p <= 0 {
+		if p, ok := new(big.Rat).SetString(raw); !ok || p.Sign() <= 0 {
 			continue
 		}
 		assets = append(assets, key)
-		prices = append(prices, p)
+		prices = append(prices, raw)
 	}
 	return assets, prices
 }

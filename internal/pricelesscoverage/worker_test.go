@@ -85,6 +85,23 @@ func TestPopularPriceless_Census(t *testing.T) {
 			},
 			want: true,
 		},
+		{
+			// Mid-range wash: 0.80 share is BELOW the 0.90 all-or-nothing
+			// gate, so washConcentrated does not exclude it. But $16k of
+			// the $20k raw 7d volume is that one wash pair — the
+			// market-character volume is only $4k, under the $10k floor.
+			// A raw-volume comparison fires here; the market-character
+			// discount must not.
+			name: "mid_range_wash_discount_silent",
+			in: timescale.AssetCoverageSignals{
+				AssetID: "MIDWASH-GISSUER", HasPriceUSD: false,
+				Volume7dUSD: 20_000, Trades7d: 200, Volume24hUSD: 15_000,
+				TopAccountPairVolShare: 0.80,
+				TopAccountPairVolUSD:   16_000,
+				TopAccountPairTrades7d: 160,
+			},
+			want: false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -302,5 +319,49 @@ func TestSweep_AliasProbeErrorStaysAGap(t *testing.T) {
 	w.Sweep(context.Background())
 	if got := testutil.ToFloat64(obs.AssetsPopularPriceless); got != 1 {
 		t.Errorf("gauge = %v, want 1: a failed probe is not a price", got)
+	}
+}
+
+// A per-candidate probe timeout is reported distinctly from a clean sweep,
+// so an operator does not read a timeout burst as a confirmed mass gap.
+func TestSweep_ProbeTimeoutReportsDegradedOutcome(t *testing.T) {
+	sigs := []timescale.AssetCoverageSignals{
+		{AssetID: ybtcSAC, Volume7dUSD: 43_823, Trades7d: 11, Volume24hUSD: 5_000},
+	}
+	w := New(&fakeReader{sigs: sigs}, Options{
+		ResolveSAC: func(context.Context, string) (string, bool) { return "yBTC-G", true },
+		IsPriced:   func(context.Context, string) (bool, error) { return false, context.DeadlineExceeded },
+	})
+	before := testutil.ToFloat64(obs.PricelessCoverageCheckRunsTotal.WithLabelValues("degraded"))
+	w.Sweep(context.Background())
+	if after := testutil.ToFloat64(obs.PricelessCoverageCheckRunsTotal.WithLabelValues("degraded")); after != before+1 {
+		t.Errorf("degraded outcome count = %v, want %v", after, before+1)
+	}
+}
+
+// Each candidate's probe must get its OWN bounded context, not the shared
+// sweepCtx: a sweep whose SweepTimeout has already elapsed by the time it
+// reaches a probe must not hand that probe an already-expired deadline —
+// every remaining candidate would then time out together, indistinguishable
+// from a real mass coverage gap.
+func TestSweep_ProbeContextIndependentOfSweepTimeout(t *testing.T) {
+	var probeDeadline time.Duration
+	sigs := []timescale.AssetCoverageSignals{
+		{AssetID: ybtcSAC, Volume7dUSD: 43_823, Trades7d: 11, Volume24hUSD: 5_000},
+	}
+	w := New(&fakeReader{sigs: sigs}, Options{
+		SweepTimeout: time.Nanosecond, // sweepCtx is already past its deadline once probes run
+		ResolveSAC: func(ctx context.Context, _ string) (string, bool) {
+			if dl, ok := ctx.Deadline(); ok {
+				probeDeadline = time.Until(dl)
+			}
+			return "yBTC-G", true
+		},
+		IsPriced: func(context.Context, string) (bool, error) { return true, nil },
+	})
+	w.Sweep(context.Background())
+	if probeDeadline <= 0 {
+		t.Fatalf("probe context deadline = %v, want > 0: the probe inherited an already-expired "+
+			"sweepCtx instead of getting its own bounded context", probeDeadline)
 	}
 }

@@ -173,7 +173,9 @@ const recognitionAxisMeaning = "Event shapes on Soroban contracts that no indexe
 	"not missing data: no source we publish is dropping events because of it, and it can never reach zero on a " +
 	"public network, so it is reported as its own audit axis and is excluded from complete_sources / total_sources. " +
 	"A source silently dropping its OWN events is the opposite case and appears as recognition_ok=false on that " +
-	"source's row in `sources`, where it does fail the headline."
+	"source's row in `sources`, where it does fail the headline — including a watched SEP-41 source dropping its " +
+	"own classic-token transfer/mint/burn/… kinds, via a watched-contract-scoped census that audits them without " +
+	"re-scanning the whole classic-token firehose for every source."
 
 // CoverageVerdictsView is the envelope data field of GET /v1/coverage.
 type CoverageVerdictsView struct {

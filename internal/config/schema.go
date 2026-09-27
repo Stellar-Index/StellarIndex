@@ -85,14 +85,14 @@ func containerRow(f reflect.StructField, path, typeLabel, label string) SchemaFi
 	if doc == "" {
 		panic(fmt.Sprintf("config schema: %s %s missing required `doc:` tag", label, path))
 	}
-	def := f.Tag.Get("default")
+	def, hasDefault := f.Tag.Lookup("default")
 	return SchemaField{
 		Path:     path,
 		Type:     typeLabel,
 		Default:  def,
 		Env:      f.Tag.Get("env"),
 		Doc:      doc,
-		Required: def == "",
+		Required: !hasDefault,
 	}
 }
 
@@ -101,18 +101,23 @@ func leafRow(f reflect.StructField, path string) SchemaField {
 	if doc == "" {
 		panic(fmt.Sprintf("config schema: field %s is missing the required `doc:` tag", path))
 	}
-	def := f.Tag.Get("default")
+	def, hasDefault := f.Tag.Lookup("default")
 	return SchemaField{
 		Path:     path,
 		Type:     typeLabel(f.Type),
 		Default:  def,
 		Env:      f.Tag.Get("env"),
 		Doc:      doc,
-		Required: def == "",
+		Required: !hasDefault,
 	}
 }
 
+var durationType = reflect.TypeOf(time.Duration(0))
+
 func typeLabel(t reflect.Type) string {
+	if t == durationType {
+		return "duration"
+	}
 	switch t.Kind() {
 	case reflect.Slice:
 		return "[]" + typeLabel(t.Elem())
@@ -173,7 +178,7 @@ the ` + "`env:`" + ` column.
 		}
 		for _, f := range section.fields {
 			def := f.Default
-			if def == "" {
+			if f.Required {
 				def = "_(required)_"
 			} else {
 				def = "`" + def + "`"

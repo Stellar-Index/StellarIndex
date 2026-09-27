@@ -629,10 +629,12 @@ cookie_secure           = true
 
 # ──────────────────────────────────────────────────────────────────
 # Metadata — asset metadata overlay (issuer -> home-domain).
-# Layered behind the live LCM-derived resolver as a fallback for
-# issuers not yet observed on-chain, or whose home_domain is empty.
+# watched_issuer_accounts: issuers whose AccountEntry the indexer
+# observes; their on-chain home_domain (or its absence) is served.
+# issuer_home_domains: static fallback for issuers never observed.
 # ──────────────────────────────────────────────────────────────────
 [metadata]
+# watched_issuer_accounts = ["GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"]
 # [metadata.issuer_home_domains]
 # "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" = "centre.io"
 

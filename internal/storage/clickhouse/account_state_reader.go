@@ -400,9 +400,10 @@ func (r *ExplorerReader) holdersBoard(ctx context.Context, holdersQ string, hold
 // AccountWealth is one row of the wealth-ranked accounts directory.
 type AccountWealth struct {
 	AccountID string
-	// USD is the ranking key: sum(balance × price) in float64. On the usd basis
-	// it is dollars; on the native_xlm basis read NativeStroops instead.
-	USD float64
+	// Value is the ranking key and the served figure: the exact sum of
+	// balance × price in whole units of the basis (dollars on the usd basis,
+	// XLM on native_xlm).
+	Value *big.Rat
 	// NativeStroops is the account entry's exact XLM balance in stroops — the
 	// served value on the native_xlm basis, where USD's float64 cannot carry
 	// the 7th decimal above 2^53 stroops (~900.7M XLM).
@@ -420,8 +421,11 @@ type AccountWealth struct {
 // k = "native" for the account entry, else the trustline asset.
 // has(assets, k) keeps only priced rows; indexOf maps the key to its price.
 // Sum per account, rank desc. native_stroops carries the exact XLM balance
-// (widened before summing) and breaks float ties, so the native_xlm order is
-// exact too.
+// (widened before summing).
+//
+// The sum is Decimal256, never Float64, because it is the served figure: Int64
+// stroops times a price cast to 18 places fits Decimal256's 76 digits with
+// ~39 to spare, and the stroop-to-unit division happens in Go, exactly.
 //
 // This is a background-refresh query (never on a request deadline — see
 // accounts_wealth_cache.go). The FINAL scan of 43.6M current-state rows
@@ -439,8 +443,9 @@ type AccountWealth struct {
 // completed refresh stored. The settings live in SQL text (not
 // clickhouse.WithSettings) so the pin is test-assertable and immune to the
 // driver's observed context-settings drop (see cbLookupCreatesQuery).
-const accountsByWealthQuery = `SELECT account_id,
-		sum(toFloat64(balance) / 1e7 * arrayElement(?, indexOf(?, k))) AS usd,
+const accountsByWealthQuery = `WITH arrayMap(p -> toDecimal256(p, 18), ?) AS px,
+		sum(toDecimal256(balance, 0) * arrayElement(px, indexOf(?, k))) AS stroop_value
+		SELECT account_id, toString(stroop_value),
 		sumIf(toInt128(balance), k = 'native') AS native_stroops
 		FROM (
 			SELECT account_id, balance, if(entry_type = 'account', 'native', asset) AS k
@@ -449,26 +454,55 @@ const accountsByWealthQuery = `SELECT account_id,
 		)
 		WHERE has(?, k)
 		GROUP BY account_id
-		HAVING usd > 0
-		ORDER BY usd DESC, native_stroops DESC
+		HAVING stroop_value > 0
+		ORDER BY stroop_value DESC, native_stroops DESC, account_id
 		LIMIT ?
 		SETTINGS max_threads = 4, max_memory_usage = 8589934592, max_execution_time = 150`
+
+// stroopsPerUnit converts a stroop-denominated sum to whole units.
+var stroopsPerUnit = big.NewRat(10_000_000, 1)
+
+// wealthPriceScale is the fractional precision accountsByWealthQuery casts
+// each price to; wealthPriceArgs renders to it so ClickHouse never meets a form
+// (exponent, fraction) it cannot parse, and a price quoted past 18 places is
+// rounded here, visibly, rather than inside the cast.
+const wealthPriceScale = 18
+
+// wealthPriceArgs renders each price as a plain decimal at wealthPriceScale,
+// refusing one that is not a positive number: a single bad element would fail
+// the whole ranking in ClickHouse rather than just its own asset.
+func wealthPriceArgs(prices []string) ([]string, error) {
+	out := make([]string, len(prices))
+	for i, p := range prices {
+		r, ok := new(big.Rat).SetString(p)
+		if !ok || r.Sign() <= 0 {
+			return nil, fmt.Errorf("clickhouse: accounts by wealth: price %q is not a positive decimal", p)
+		}
+		out[i] = r.FloatString(wealthPriceScale)
+	}
+	return out, nil
+}
 
 // AccountsByWealth ranks accounts by total USD value of their holdings —
 // native XLM (the account entry) plus every trustline asset for which the
 // caller supplied a USD price. assets/prices are parallel arrays (assets[i]
-// priced at prices[i]; the native XLM key is "native"). Computed over the
-// current-state projection in one pass (sum balance×price per account); only
-// priced assets contribute. Coverage tracks the entry-change capture +
-// backfill — accounts/assets not yet captured simply aren't ranked yet.
-func (r *ExplorerReader) AccountsByWealth(ctx context.Context, assets []string, prices []float64, limit int) ([]AccountWealth, error) {
+// priced at prices[i], a decimal string; the native XLM key is "native").
+// Computed over the current-state projection in one pass (sum balance×price
+// per account); only priced assets contribute. Coverage tracks the
+// entry-change capture + backfill — accounts/assets not yet captured simply
+// aren't ranked yet.
+func (r *ExplorerReader) AccountsByWealth(ctx context.Context, assets, prices []string, limit int) ([]AccountWealth, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	if len(assets) == 0 || len(assets) != len(prices) {
 		return nil, nil
 	}
-	rows, err := r.conn.Query(ctx, accountsByWealthQuery, prices, assets, assets, limit)
+	px, err := wealthPriceArgs(prices)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.conn.Query(ctx, accountsByWealthQuery, px, assets, assets, limit)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: accounts by wealth: %w", err)
 	}
@@ -477,11 +511,17 @@ func (r *ExplorerReader) AccountsByWealth(ctx context.Context, assets []string, 
 	for rows.Next() {
 		var (
 			w      AccountWealth
+			stroop string
 			native big.Int
 		)
-		if err := rows.Scan(&w.AccountID, &w.USD, &native); err != nil {
+		if err := rows.Scan(&w.AccountID, &stroop, &native); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan account wealth: %w", err)
 		}
+		v, ok := new(big.Rat).SetString(stroop)
+		if !ok {
+			return nil, fmt.Errorf("clickhouse: account wealth %s: unparseable sum %q", w.AccountID, stroop)
+		}
+		w.Value = v.Quo(v, stroopsPerUnit)
 		w.NativeStroops = canonical.NewAmount(&native)
 		out = append(out, w)
 	}
@@ -556,10 +596,13 @@ func signerAddress(k xdr.SignerKey) string {
 }
 
 // AccountHomeDomains returns account → home_domain for the given accounts that
-// carry a non-empty home_domain in the current-state projection. Batch helper
+// have a live, decodable entry in the current-state projection. Batch helper
 // for the issuer-enrich backfill: the lake doesn't denormalize home_domain to a
-// column, so it's decoded from the account entry XDR. Accounts with no entry /
-// no home_domain are simply absent from the map.
+// column, so it's decoded from the account entry XDR.
+//
+// Three states, and callers must keep them apart: a non-empty value is the
+// declared domain, "" is an entry that was READ and declares none, and an
+// absent key was not read (no live entry, or an undecodable one).
 func (r *ExplorerReader) AccountHomeDomains(ctx context.Context, accounts []string) (map[string]string, error) {
 	if len(accounts) == 0 {
 		return map[string]string{}, nil
@@ -582,9 +625,7 @@ func (r *ExplorerReader) AccountHomeDomains(ctx context.Context, accounts []stri
 			continue
 		}
 		if acc, ok := le.Data.GetAccount(); ok {
-			if hd := string(acc.HomeDomain); hd != "" {
-				out[acct] = hd
-			}
+			out[acct] = string(acc.HomeDomain)
 		}
 	}
 	return out, rows.Err()
