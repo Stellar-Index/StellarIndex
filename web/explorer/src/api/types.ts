@@ -15015,6 +15015,13 @@ export interface operations {
                                 recovered_at_ledger?: number | null;
                                 firing?: boolean;
                                 detail?: Record<string, never>;
+                                /**
+                                 * Format: date-time
+                                 * @description When the current ADR-0019 hold segment expires and the freeze re-evaluates (release / extend / escalate). `null` on a freeze recorded before the lifecycle columns existed.
+                                 */
+                                hold_until?: string | null;
+                                /** @description True once the extension ladder has run out and the freeze is awaiting operator review — it does NOT auto-clear on its own; only `stellarindex-ops freeze-unfreeze` releases it. `null` on a freeze recorded before the lifecycle columns existed. */
+                                escalated?: boolean | null;
                             }[];
                             /** @description Per-(UTC day, reason) freeze tally over the same window as reason_tally — only populated when `?include=daily` was requested. `null` means "not requested"; `[]` means "requested, zero freezes in the window". Days with zero freezes carry no entries. */
                             daily?: {

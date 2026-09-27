@@ -323,7 +323,7 @@ func newProbeHandler(reader ExplorerReader, positions PositionsReader) *Handler 
 		ParseLimit: func(_ http.ResponseWriter, _ *http.Request, def, _ int) (int, bool) {
 			return def, true
 		},
-		ParseWindowDays: func(_ *http.Request, def int) int { return def },
+		ParseWindowDays: func(_ http.ResponseWriter, _ *http.Request, def int) (int, bool) { return def, true },
 		LakeWatermark:   func(_ context.Context) (uint32, bool, bool) { return 0, false, false },
 		IsKnownSAC:      func(string) bool { return false },
 		ClientAborted:   func(*http.Request, error) bool { return false },

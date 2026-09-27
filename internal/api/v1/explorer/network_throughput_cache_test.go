@@ -308,7 +308,7 @@ func TestPrewarmNetworkThroughput_WarmsTheEntryTheHandlerReads(t *testing.T) {
 // over, would silently clear a bucket that is still genuinely incomplete.
 func TestNetworkThroughput_PartialIsReadFromTheBucketNotWallClock(t *testing.T) {
 	h, _ := newThroughputHandler()
-	h.ParseWindowDays = func(_ *http.Request, def int) int { return def }
+	h.ParseWindowDays = func(_ http.ResponseWriter, _ *http.Request, def int) (int, bool) { return def, true }
 	h.ClientAborted = func(*http.Request, error) bool { return false }
 	h.WriteProblem = func(w http.ResponseWriter, _ *http.Request, _, _ string, status int, _ string) {
 		w.WriteHeader(status)

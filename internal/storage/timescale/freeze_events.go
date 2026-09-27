@@ -86,6 +86,15 @@ func WithFreezeHook(hook FreezeHook) FreezeEventSinkOption {
 	}
 }
 
+// WithFreezeLedgerProvider wires the ledger seam so inserts stamp a
+// real frozen_at_ledger instead of the 0 sentinel. Mirrors
+// WithDivergenceLedgerProvider (divergence_observations.go).
+func WithFreezeLedgerProvider(p LedgerProvider) FreezeEventSinkOption {
+	return func(s *FreezeEventSink) {
+		s.getLedger = p
+	}
+}
+
 // RecordFreeze implements freeze.EventSink.
 //
 // Idempotent: if a row already exists for (asset, quote) with
@@ -767,6 +776,9 @@ func (s *FreezeEventSink) MarkRecovered(ctx context.Context, asset, quote canoni
 // FreezeEventRow is one freeze_events row for the /v1/anomalies read
 // path. RecoveredAt is nil while the freeze is currently firing.
 // Detail is the raw jsonb text (the API passes it through).
+// The ADR-0019 lifecycle fields (migration 0119) are nil on a row
+// written before 0119, or once the freeze has cleared and the ladder
+// no longer applies.
 type FreezeEventRow struct {
 	AssetID           string
 	QuoteID           string
@@ -777,6 +789,10 @@ type FreezeEventRow struct {
 	RecoveredAt       *time.Time
 	RecoveredAtLedger *int64
 	Detail            string // "" when NULL
+	HoldUntil         *time.Time
+	ExtensionsUsed    *int
+	Escalated         *bool
+	Corroborated      *bool
 }
 
 // ListFreezeEvents returns freeze events newest-first. firingOnly
@@ -790,7 +806,8 @@ func (s *Store) ListFreezeEvents(ctx context.Context, firingOnly bool, limit int
 		SELECT asset_id, quote_id, frozen_at, frozen_at_ledger, reason,
 		       frozen_value::text,
 		       recovered_at, recovered_at_ledger,
-		       COALESCE(detail::text, '')
+		       COALESCE(detail::text, ''),
+		       hold_until, extensions_used, escalated, corroborated
 		  FROM freeze_events`
 	if firingOnly {
 		q += ` WHERE recovered_at IS NULL`
@@ -804,12 +821,17 @@ func (s *Store) ListFreezeEvents(ctx context.Context, firingOnly bool, limit int
 	var out []FreezeEventRow
 	for rows.Next() {
 		var (
-			r         FreezeEventRow
-			recAt     sql.NullTime
-			recLedger sql.NullInt64
+			r            FreezeEventRow
+			recAt        sql.NullTime
+			recLedger    sql.NullInt64
+			holdUntil    sql.NullTime
+			extsUsed     sql.NullInt64
+			escalated    sql.NullBool
+			corroborated sql.NullBool
 		)
 		if err := rows.Scan(&r.AssetID, &r.QuoteID, &r.FrozenAt, &r.FrozenAtLedger,
-			&r.Reason, &r.FrozenValue, &recAt, &recLedger, &r.Detail); err != nil {
+			&r.Reason, &r.FrozenValue, &recAt, &recLedger, &r.Detail,
+			&holdUntil, &extsUsed, &escalated, &corroborated); err != nil {
 			return nil, fmt.Errorf("timescale: ListFreezeEvents scan: %w", err)
 		}
 		if recAt.Valid {
@@ -819,6 +841,22 @@ func (s *Store) ListFreezeEvents(ctx context.Context, firingOnly bool, limit int
 		if recLedger.Valid {
 			v := recLedger.Int64
 			r.RecoveredAtLedger = &v
+		}
+		if holdUntil.Valid {
+			t := holdUntil.Time.UTC()
+			r.HoldUntil = &t
+		}
+		if extsUsed.Valid {
+			v := int(extsUsed.Int64)
+			r.ExtensionsUsed = &v
+		}
+		if escalated.Valid {
+			v := escalated.Bool
+			r.Escalated = &v
+		}
+		if corroborated.Valid {
+			v := corroborated.Bool
+			r.Corroborated = &v
 		}
 		out = append(out, r)
 	}

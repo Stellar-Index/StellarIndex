@@ -15,13 +15,14 @@ export const metadata: Metadata = {
   alternates: { canonical: '/anomalies' },
 };
 
+// Only these three are ever written by the automated freeze mapper
+// (internal/storage/timescale/freeze_events.go's mapFreezeReason).
+// `single_source` and `manual` are reserved reason-CHECK values with
+// no writer yet — single-source deviations currently fold into
+// `outlier_storm`, and `manual` awaits a genuinely operator-initiated
+// freeze path — so they are deliberately omitted here rather than
+// listed as things a reader could see fire.
 const REASONS: { name: string; trigger: string; meaning: string }[] = [
-  {
-    name: 'single_source',
-    trigger: 'Only one source contributing in the window',
-    meaning:
-      "We refuse to serve a price that's based on a single venue. The pair freezes until at least one additional source is observed contributing.",
-  },
   {
     name: 'divergence',
     trigger: 'Persistent gap vs an external reference',
@@ -30,21 +31,15 @@ const REASONS: { name: string; trigger: string; meaning: string }[] = [
   },
   {
     name: 'outlier_storm',
-    trigger: 'Many trades flagged as outliers within a tight window',
+    trigger: 'Low confidence, high z-score, and a thin source count together',
     meaning:
-      'The aggregator\'s outlier filter rejected a high fraction of recent contributions. Usually a ledger-level shock; the freeze prevents the surviving inliers from setting a misleading "VWAP".',
-  },
-  {
-    name: 'manual',
-    trigger: 'Operator-initiated freeze',
-    meaning:
-      'An operator triggered the freeze via a Redis-direct write — used during incident response to halt serving for one pair without taking the whole API down.',
+      'The Phase 2 confidence/z-score/source-count signals all crossed threshold at once — the ADR-0019 freeze condition is an AND of all three, not any one alone. Usually a ledger-level shock; the freeze prevents the surviving inliers from setting a misleading "VWAP".',
   },
   {
     name: 'other',
     trigger: 'Unclassified automated freeze',
     meaning:
-      'An automated freeze whose decision shape the recorder did not recognize. Should be rare; distinct from "manual" so automated events are never mislabeled as operator actions.',
+      'An automated freeze whose decision shape the recorder did not recognize. Should be rare.',
   },
 ];
 
@@ -94,10 +89,16 @@ export default function AnomaliesPage() {
           >
             ADR-0019
           </Link>
-          , a freeze fires when one of these conditions holds. While frozen, the
+          , a Phase 2 freeze fires only when confidence, z-score, and source
+          count ALL cross threshold together (an AND, not an OR) —{' '}
+          <code className="font-mono text-xs">divergence</code> is the
+          separate Phase 2 multi-source-disagreement path. While frozen, the
           API still serves the last good value — but with{' '}
           <code className="font-mono text-xs">flags.frozen=true</code> so
-          consumers know not to act on it.
+          consumers know not to act on it. A freeze holds for 10 or 30
+          minutes, extends up to four times, and then ESCALATES: an escalated
+          freeze does not auto-clear and stays firing until an operator runs{' '}
+          <code className="font-mono text-xs">freeze-unfreeze</code>.
         </p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {REASONS.map((r) => (

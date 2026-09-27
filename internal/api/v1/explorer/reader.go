@@ -420,7 +420,7 @@ type Handler struct {
 	IsKnownSAC      func(contractID string) bool
 	LakeWatermark   func(ctx context.Context) (ledger uint32, stale bool, ok bool)
 	ParseLimit      func(w http.ResponseWriter, r *http.Request, def, maxN int) (int, bool)
-	ParseWindowDays func(r *http.Request, def int) int
+	ParseWindowDays func(w http.ResponseWriter, r *http.Request, def int) (int, bool)
 
 	WriteJSON func(w http.ResponseWriter, data any, stale bool)
 	// WriteJSONAt is WriteJSON with an explicit envelope as_of — used by the
