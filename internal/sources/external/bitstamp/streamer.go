@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/wsclient"
 )
@@ -103,6 +105,11 @@ func (s *Streamer) Start(ctx context.Context, pairs []canonical.Pair) (<-chan ca
 		},
 		HandleFrame: func(data []byte) ([]canonical.Trade, error) {
 			trade, isTrade, err := parseFrame(data, s.PairMap)
+			var ack *subscriptionAck
+			if errors.As(err, &ack) {
+				recordSubscriptionAck(logger, ack)
+				return nil, nil
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -142,6 +149,29 @@ func classifyDisconnect(err error) string {
 		return "server_requested"
 	}
 	return wsclient.ClassifyDisconnect(err)
+}
+
+// unknownAckSymbol stands in for a subscription ack with no
+// attributable channel (e.g. a malformed-string bts:error carrying no
+// channel echo) so the venue cannot mint arbitrary metric labels.
+const unknownAckSymbol = "unknown"
+
+// recordSubscriptionAck flags a rejected symbol rather than dropping
+// the connection: Bitstamp answers per channel, so the other
+// already-subscribed pairs on this socket stay live and a reconnect
+// would only interrupt them.
+func recordSubscriptionAck(logger *slog.Logger, ack *subscriptionAck) {
+	symbol := strings.TrimPrefix(ack.Channel, ChannelPrefix)
+	if symbol == "" {
+		symbol = unknownAckSymbol
+	}
+	if ack.Accepted {
+		obs.CEXStreamSubscriptionRejected.WithLabelValues(SourceName, symbol).Set(0)
+		return
+	}
+	obs.CEXStreamSubscriptionRejected.WithLabelValues(SourceName, symbol).Set(1)
+	logger.Error("bitstamp rejected the trade subscription; the pair will deliver no trades",
+		"source", SourceName, "channel", ack.Channel, "venue_error", ack.Message)
 }
 
 func (s *Streamer) symbolsFor(pairs []canonical.Pair) ([]string, error) {

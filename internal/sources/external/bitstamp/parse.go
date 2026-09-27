@@ -44,10 +44,42 @@ type tradePayload struct {
 	SellOrderID    int64  `json:"sell_order_id"`
 }
 
+// errPayload is the `data` shape of a `bts:error` frame — a rejected
+// or malformed subscription request.
+type errPayload struct {
+	Message string `json:"message"`
+}
+
+// subscriptionAck signals a subscription confirm/reject event back to
+// the streamer, modeled as an error purely as a signalling channel
+// (like ErrRequestedReconnect) — an Accepted ack is not a failure.
+// Carries the venue's channel name + message so the streamer can
+// attribute its per-symbol rejection metric and log line.
+type subscriptionAck struct {
+	Channel  string
+	Message  string
+	Accepted bool
+}
+
+func (a *subscriptionAck) Error() string {
+	if a.Accepted {
+		return fmt.Sprintf("bitstamp: subscription accepted for channel %q", a.Channel)
+	}
+	return fmt.Sprintf("bitstamp: subscription rejected for channel %q: %s", a.Channel, a.Message)
+}
+
+func (a *subscriptionAck) Unwrap() error {
+	if a.Accepted {
+		return nil
+	}
+	return ErrSubscriptionRejected
+}
+
 // parseFrame dispatches on the envelope's `event` field. Trade
-// frames yield one canonical.Trade; subscription confirms / errors /
-// reconnect requests return (nil, nil) or signalled via
-// ErrRequestedReconnect so the streamer can react.
+// frames yield one canonical.Trade; subscription confirms / rejects
+// signal a *subscriptionAck; reconnect requests signal
+// ErrRequestedReconnect — the streamer inspects the error chain to
+// react to both.
 func parseFrame(raw []byte, pairMap map[string]canonical.Pair) (canonical.Trade, bool, error) {
 	var env eventEnvelope
 	if err := json.Unmarshal(raw, &env); err != nil {
@@ -65,14 +97,15 @@ func parseFrame(raw []byte, pairMap map[string]canonical.Pair) (canonical.Trade,
 		// Signal the streamer to close + reconnect. Not a parse
 		// failure — the caller inspects the error chain.
 		return canonical.Trade{}, false, ErrRequestedReconnect
-	case EventSubscriptionSucceeded,
-		EventUnsubscriptionSucceeded,
-		EventError:
-		// Not our concern at the parse layer. A `bts:error` on a
-		// subscribe request is rare; if it ever matters we surface
-		// it here via a dedicated sentinel. For now, swallow and
-		// continue.
-		return canonical.Trade{}, false, nil
+	case EventSubscriptionSucceeded, EventUnsubscriptionSucceeded:
+		return canonical.Trade{}, false, &subscriptionAck{Channel: env.Channel, Accepted: true}
+	case EventError:
+		var e errPayload
+		// Best-effort decode: even if the data shape is unexpected,
+		// still surface the rejection with an empty message rather
+		// than swallowing it.
+		_ = json.Unmarshal(env.Data, &e)
+		return canonical.Trade{}, false, &subscriptionAck{Channel: env.Channel, Message: e.Message}
 	}
 
 	// Unknown event types are also ignored — keeps the stream
