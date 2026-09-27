@@ -57,15 +57,29 @@ groups:
       # T611: under `maxmemory-policy noeviction`, a full-memory Redis
       # doesn't evict — it REJECTS writes with an OOM error, invisible
       # to stellarindex_redis_evictions_high (an eviction-rate alert).
-      # redis_errors_total{err="OOM"} is the prometheus-redis-exporter
-      # counter fed by Redis's Errorstats section (INFO ERRORSTATS
-      # `errorstat_OOM`). The multi-host topology defaults to
-      # volatile-lru (redis-sentinel/defaults/main.yml), which never
-      # evicts the TTL-less credential records (GH #1317); it rejects
-      # writes OOM once only those remain, or on a can't-evict-fast-
-      # enough burst, and this catches both plus a noeviction override.
+      # redis_errors_total{err=...} is the prometheus-redis-exporter
+      # counter fed by Redis's Errorstats section (INFO ERRORSTATS). The
+      # multi-host topology defaults to volatile-lru
+      # (redis-sentinel/defaults/main.yml), which never evicts the
+      # TTL-less credential records (GH #1317); it rejects writes OOM
+      # once only those remain, or on a can't-evict-fast-enough burst,
+      # and this catches both plus a noeviction override.
+      #
+      # 14d-review (2026-09-27): widened past OOM alone to also catch
+      # READONLY (a replica that stopped accepting writes — commonly
+      # min-replicas-to-write or a stale primary handoff during
+      # failover) and NOREPLICAS (min-replicas-to-write itself refusing
+      # because too few replicas are connected — the live form of this
+      # multi-host topology's ADR-0024 1-primary-2-replica requirement).
+      # All three are the same customer-visible shape — writes refused
+      # outright, not degraded — and none is covered by
+      # stellarindex_redis_writes_blocked (that alert is bgsave-status,
+      # a distinct disk-full mechanism); adding a second rule for each
+      # would double-page one event, so this rule absorbs all three.
+      # Deliberately NOT widened to MISCONF/EXECABORT — those already
+      # page via stellarindex_redis_writes_blocked.
       - alert: stellarindex_redis_write_rejected_oom
-        expr: rate(redis_errors_total{err="OOM"}[5m]) > 0
+        expr: rate(redis_errors_total{err=~"OOM|READONLY|NOREPLICAS"}[5m]) > 0
         for: 2m
         labels:
           severity: page
@@ -73,11 +87,16 @@ groups:
           component: cache
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-memory.md
-          summary: "Redis {{ $labels.instance }} rejecting writes (OOM)"
+          summary: "Redis {{ $labels.instance }} rejecting writes ({{ $labels.err }})"
           description: |
-            Redis is at maxmemory and rejecting writes outright rather
-            than making room. Application writes are failing now, not
-            just degrading. Scale up or free memory immediately.
+            Redis is refusing writes outright rather than degrading —
+            {{ $labels.err }}: OOM (at maxmemory, noeviction/nowhere
+            left to evict), READONLY (this instance stopped accepting
+            writes — check for a stale primary handoff) or NOREPLICAS
+            (min-replicas-to-write blocking on too few connected
+            replicas). Application writes are failing now, not just
+            degrading. Scale up / free memory (OOM) or fix the
+            replication topology (READONLY/NOREPLICAS) immediately.
 
       # F-1329: `redis_expected_slaves` is defined NOWHERE (no exporter,
       # no recording rule, no external label) — the comparison silently

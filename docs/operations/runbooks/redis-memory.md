@@ -5,14 +5,14 @@ status: current
 severity: P2
 ---
 
-# Runbook — `stellarindex_redis_memory_saturated` / `_evictions_high`
+# Runbook — `stellarindex_redis_memory_saturated` / `_evictions_high` / `_write_rejected_oom`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `stellarindex_redis_memory_saturated` (> 90 % memory), `stellarindex_redis_evictions_high` (> 100/s) |
-| Severity | P2 (`severity: ticket`) |
+| Alerts | `stellarindex_redis_memory_saturated` (> 90 % memory), `stellarindex_redis_evictions_high` (> 100/s), `stellarindex_redis_write_rejected_oom` (`severity: page` — Redis is refusing writes outright: `err=~"OOM\|READONLY\|NOREPLICAS"`, see below) |
+| Severity | P2 (`severity: ticket`) for the memory-pressure pair; `page` for `_write_rejected_oom` |
 | Detected by | `configs/prometheus/rules.r1/cache.yml` (group `stellarindex.cache`, both alerts `severity: ticket`, `for: 5m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/cache.yml`. |
 | Typical MTTR | 30 min (scale-up) – hours (cleanup / policy change) |
 | Impact | Depends on `maxmemory-policy` (see Quick diagnosis step 0): under `volatile-lru` (multi-host default), eviction of TTL-bearing keys only — the TTL-less `apikey:` credential records are never evicted (GH #1317); hot keys may get knocked out; cache hit-rate drops; API falls back to Timescale more often → elevated p95/p99 latency; rate-limit counters can get evicted early → some clients get fresh quotas. Under `noeviction`, WRITE ERRORS instead of evictions — cache writes and rate-limit INCRs start failing. |
@@ -121,6 +121,34 @@ ssh root@136.243.90.96 'redis-cli --memkeys'   # requires redis-cli 6.0+
 - Who shipped the growth pattern (git blame on the writer).
 - Is the alert threshold (90 %) still right or is the box simply
   underprovisioned?
+
+## `stellarindex_redis_write_rejected_oom`
+
+`expr: rate(redis_errors_total{err=~"OOM\|READONLY\|NOREPLICAS"}[5m]) > 0`,
+`for: 2m`, `severity: page`. Three distinct causes surfaced through the
+same prometheus-redis-exporter Errorstats counter, all with the same
+customer-visible shape — writes refused outright, not degraded:
+
+- **`OOM`** — at `maxmemory`, nothing left to evict (noeviction) or
+  can't evict fast enough. This is the write-failure end state of the
+  memory-pressure symptoms above — go to Quick diagnosis / Typical root
+  causes 1–4.
+- **`READONLY`** — this instance stopped accepting writes. On a
+  single-node r1 this means a config drift (`replica-read-only`) or a
+  script/transaction against a stale role; on the multi-host
+  Sentinel topology it means a stale primary handoff — check
+  `redis-cli info replication` for `role:` and confirm Sentinel agrees.
+- **`NOREPLICAS`** — `min-replicas-to-write` is refusing because too
+  few replicas are connected (ADR-0024's 1-primary-2-replica
+  requirement). Check `redis_connected_slaves` — if it's already
+  low, this is the same underlying event `redis-replication.md`
+  covers, just seen from the write side instead of the replica-count
+  side.
+
+Deliberately NOT widened to `MISCONF`/`EXECABORT` —
+`stellarindex_redis_writes_blocked` (`redis-write-blocked-disk-full.md`)
+already pages on those (a disk-full bgsave failure); a second rule
+would double-page the same event.
 
 ## Known false-positive patterns
 
