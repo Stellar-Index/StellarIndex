@@ -106,6 +106,7 @@ type scriptedFastStub struct {
 	rawSeries    int
 	rawBreak     int
 	seriesPoint  []clickhouse.ProtocolDailyPoint
+	breakdownErr error // injected failure for ProtocolEventBreakdownFast
 }
 
 func (s *scriptedFastStub) DailyActivityAvailable(context.Context) (bool, bool) {
@@ -137,6 +138,9 @@ func (s *scriptedFastStub) ProtocolEventBreakdownFast(context.Context, []string,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.fastBreak++
+	if s.breakdownErr != nil {
+		return nil, s.breakdownErr
+	}
 	return nil, nil
 }
 
@@ -229,6 +233,13 @@ func (r erroringCountReader) CountSourceContracts(context.Context, string) (int6
 type erroringStatsReader struct{ err error }
 
 func (r erroringStatsReader) CountRecentEventsBySource(context.Context) (map[string]int64, error) {
+	return nil, r.err
+}
+
+// erroringCompletenessReader is a CompletenessReader whose read always fails.
+type erroringCompletenessReader struct{ err error }
+
+func (r erroringCompletenessReader) ListCompletenessSnapshots(context.Context) ([]timescale.CompletenessSnapshot, error) {
 	return nil, r.err
 }
 
@@ -437,5 +448,60 @@ func TestProtocolWindowFloor_UsesCloseTimeNotLedgerCount(t *testing.T) {
 	wantDay := protocolWindowCloseTime(tip).AddDate(0, 0, -protocolActivityWindowDays)
 	if !sinceDay.Equal(wantDay) {
 		t.Fatalf("sinceDay = %v, want %v (fast-path cutoff must share the same close_time boundary)", sinceDay, wantDay)
+	}
+}
+
+// TestEnrichProtocolAnalytics_FastBreakdownErrorForcesBothToRaw pins
+// CA2-A06-correct-2: a fast breakdown error must not leave the series on
+// the fast (day-grain) window while the breakdown falls back alone to the
+// raw (ledger-window) source — the two windows differ, and the wire's
+// sum(EventBreakdown)==EventsTotal invariant assumes one shared window
+// per build. Before the fix, protocolBreakdown and protocolSeries each
+// fell back fast->raw independently, so this exact script (fast series ok,
+// fast breakdown erroring) left rawBreak==1 but rawSeries==0 — a split.
+func TestEnrichProtocolAnalytics_FastBreakdownErrorForcesBothToRaw(t *testing.T) {
+	stub := &scriptedFastStub{
+		answers:      []probeAnswer{{true, true}},
+		seriesPoint:  []clickhouse.ProtocolDailyPoint{{Date: "2026-07-30", Events: 3}},
+		breakdownErr: errors.New("fast breakdown timeout"),
+	}
+	srv := New(Options{ProtocolActivity: stub})
+	meta, ok := protocolByName("soroswap")
+	if !ok {
+		t.Fatal("soroswap missing from registry")
+	}
+	view := ProtocolDetailView{ProtocolView: ProtocolView{Name: meta.Name}}
+	if !srv.enrichProtocolAnalytics(context.Background(), meta, &view) {
+		t.Fatal("enrich degraded despite a raw fallback being available")
+	}
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if stub.rawSeries != 1 || stub.rawBreak != 1 {
+		t.Fatalf("raw series/breakdown = %d/%d, want 1/1: a fast breakdown error must force BOTH fills onto raw together, not just the failing one",
+			stub.rawSeries, stub.rawBreak)
+	}
+}
+
+// TestBuildProtocolDetail_VerdictReadErrorDegradesStatus pins
+// CA2-A06-correct-5: a completeness-verdict read error must flip
+// analytics.status to "unavailable" — before the fix protocolVerdicts
+// collapsed a read error and a genuinely-absent snapshot to the identical
+// nil map, so a transient Postgres error built (and could cache) a view
+// stamped "ok" with no completeness block, indistinguishable from "this
+// protocol has never been audited".
+func TestBuildProtocolDetail_VerdictReadErrorDegradesStatus(t *testing.T) {
+	meta, ok := protocolByName("cctp")
+	if !ok {
+		t.Fatal("cctp missing from registry")
+	}
+	srv := New(Options{
+		ProtocolActivity:   prewarmActivityStub{},
+		ProtocolBespoke:    &bespokeStub{},
+		CompletenessReader: erroringCompletenessReader{err: errors.New("verdict read failed")},
+	})
+	v := srv.buildProtocolDetail(context.Background(), meta, protocolActivityWindowDays)
+	if v.Analytics == nil || v.Analytics.Status != protocolAnalyticsUnavailable {
+		t.Fatalf("status = %+v, want %q: a failed completeness-verdict read must not read as a healthy build",
+			v.Analytics, protocolAnalyticsUnavailable)
 	}
 }
