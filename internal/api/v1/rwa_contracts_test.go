@@ -338,6 +338,14 @@ func TestRWAContracts_UnreadScaleValuesNothingFromAnySupply(t *testing.T) {
 			if a.Valuation.Status != v1.RWAValuationDecimalsUnknown {
 				t.Errorf("status = %q, want %q", a.Valuation.Status, v1.RWAValuationDecimalsUnknown)
 			}
+			// GH-533: decimals itself must not serve the catalogue's
+			// unread default (7) beside a supply and a status that says
+			// the scale was never read — a consumer following the field
+			// description alone (divide circulating_supply by
+			// 10^decimals) would misvalue the row by a false exponent.
+			if a.Decimals != nil {
+				t.Errorf("decimals = %v with the scale unread, want nil (not the catalogue default)", *a.Decimals)
+			}
 			if view.Summary.MarketCapUSD != nil {
 				t.Errorf("summary market_cap_usd = %q, want absent", *view.Summary.MarketCapUSD)
 			}
