@@ -125,6 +125,12 @@ curl -s https://api.stellarindex.io/v1/rwa/assets | jq '.curated | {status, asse
    the query's current columns on dune.com and adjust. A layout change
    is a code change with a test, not an ops fix.
 
+   **Journal shows `Read N rows; kept …` and then a Postgres error** — the
+   curator was read but the cache write failed (DSN, pool, constraint, or
+   the `-timeout` expiring mid-commit). A failed write stamps nothing, so
+   `last_run_unix` keeps the last committed run's time and this alert
+   fires on it. Fix the database side and re-run the unit.
+
    **`executed_at_unix` frozen while `last_run_unix` advances** — the
    run is healthy and the CURATOR has stopped refreshing its queries;
    `stellarindex_curated_rwa_published_stale` fires once it is 72 hours
