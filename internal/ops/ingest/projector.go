@@ -5,8 +5,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
@@ -51,7 +51,7 @@ const replayNotReachedMsg = "projector cursor for source=%q is at ledger %d, whi
 // leaving that as a sentence in a runbook (K006). `-refresh-caggs=false`
 // opts out explicitly and says what it costs. See
 // docs/operations/runbooks/projector-replay.md.
-func projectorReplay(args []string) error {
+func projectorReplay(w io.Writer, args []string) error {
 	fs := flag.NewFlagSet("projector-replay", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	source := fs.String("source", "", "Projector source name to rewind (required); see internal/projector/registry.go for the list")
@@ -69,7 +69,7 @@ func projectorReplay(args []string) error {
 		return errors.New("-config, -source, and -from are required")
 	}
 	if *refreshOnly {
-		return projectorRefreshOnly(*cfgPath, *source, uint32(*from), uint32(*refreshTo), gate)
+		return projectorRefreshOnly(w, *cfgPath, *source, uint32(*from), uint32(*refreshTo), gate)
 	}
 	// Before the config load and before any store access: a refusal
 	// must not depend on a reachable database, and applies to -dry-run
@@ -128,11 +128,11 @@ func projectorReplay(args []string) error {
 	if target >= currentLedger {
 		// The cursor has NOT reached the requested ledger, so there is
 		// nothing to rewind: the live projector's forward pass covers it.
-		_, _ = fmt.Fprintf(os.Stdout, replayNotReachedMsg, *source, currentLedger, target, target-currentLedger)
+		_, _ = fmt.Fprintf(w, replayNotReachedMsg, *source, currentLedger, target, target-currentLedger)
 		return nil
 	}
 
-	_, _ = fmt.Fprintf(os.Stdout,
+	_, _ = fmt.Fprintf(w,
 		"rewind projector cursor source=%q from %d → %d (delta = %d ledgers)\n",
 		*source, currentLedger, target, currentLedger-target)
 	// Projector cursor is "last fully-processed ledger." Rewinding
@@ -144,15 +144,15 @@ func projectorReplay(args []string) error {
 		rewindTo--
 	}
 	if dryRun {
-		_, _ = fmt.Fprintf(os.Stdout,
+		_, _ = fmt.Fprintf(w,
 			"dry-run: would RecordProjectionDirtyWindow(%q, [%d,%d]) then UpsertCursor(projector, %q, %d)\n",
 			*source, target, currentLedger, *source, rewindTo)
 		if *refreshCAGGs && *catchUp {
-			_, _ = fmt.Fprintf(os.Stdout,
+			_, _ = fmt.Fprintf(w,
 				"dry-run: would then wait up to %s for the projector cursor to reach %d and refresh the price CAGGs over ledgers [%d,%d]\n",
 				*catchUpTimeout, currentLedger, target, currentLedger)
 		}
-		printSEP41ReplayDryRunNote(*source)
+		printSEP41ReplayDryRunNote(w, *source)
 		return nil
 	}
 	// Record the dirty window BEFORE the rewind, and FAIL the replay if the
@@ -176,7 +176,7 @@ func projectorReplay(args []string) error {
 	}); err != nil {
 		return fmt.Errorf("record dirty window (refusing to rewind without it — the completeness verifier would carry a stale claim over the rewritten range): %w", err)
 	}
-	_, _ = fmt.Fprintf(os.Stdout,
+	_, _ = fmt.Fprintf(w,
 		"recorded projection dirty window source=%q [%d,%d] — compute-completeness will force a re-reconcile of this range before carrying any projection claim over it\n",
 		*source, target, currentLedger)
 	// RewindCursor, NOT UpsertCursor: the upsert path carries a
@@ -186,16 +186,16 @@ func projectorReplay(args []string) error {
 	if err := store.RewindCursor(ctx, "projector", *source, rewindTo); err != nil {
 		return fmt.Errorf("rewind cursor: %w", err)
 	}
-	_, _ = fmt.Fprintf(os.Stdout,
+	_, _ = fmt.Fprintf(w,
 		"projector cursor rewound — next projector cycle (≤ 5s) will start re-projecting from ledger %d\n",
 		target)
 
-	if err := reportSEP41RollupReset(ctx, store, *source); err != nil {
+	if err := reportSEP41RollupReset(ctx, w, store, *source); err != nil {
 		return err
 	}
 
 	return rematerializeReplayedRange(
-		slog.New(slog.NewTextHandler(os.Stdout, nil)), store, *source,
+		w, slog.New(slog.NewTextHandler(w, nil)), store, *source,
 		chunkRange{from: target, to: currentLedger},
 		replayFollowUp{refreshCAGGs: *refreshCAGGs, wait: *catchUp, waitTimeout: *catchUpTimeout},
 	)
@@ -214,13 +214,13 @@ func projectorReplay(args []string) error {
 // already written. It still fails closed if the cursor has not actually
 // reached `to` — the same "don't refresh rows that aren't there yet"
 // invariant awaitProjectorCursor enforces on the rewind path.
-func projectorRefreshOnly(cfgPath, source string, from, to uint32, gate *opsutil.WriteGate) error {
+func projectorRefreshOnly(w io.Writer, cfgPath, source string, from, to uint32, gate *opsutil.WriteGate) error {
 	if to == 0 || to < from {
 		return errors.New("-refresh-only requires -refresh-to >= -from")
 	}
 	gate.Banner()
 	if gate.DryRun() {
-		_, _ = fmt.Fprintf(os.Stdout,
+		_, _ = fmt.Fprintf(w,
 			"dry-run: would refresh the price CAGGs over ledgers [%d,%d] for source=%q (no cursor rewind)\n",
 			from, to, source)
 		return nil
@@ -246,11 +246,11 @@ func projectorRefreshOnly(cfgPath, source string, from, to uint32, gate *opsutil
 			from, to, source, cursor.LastLedger, to-cursor.LastLedger, to)
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	logger := slog.New(slog.NewTextHandler(w, nil))
 	if err := refreshCAGGsForChunk(ctx, logger, store, chunkRange{from: from, to: to}); err != nil {
 		return fmt.Errorf("refresh price CAGGs over ledgers [%d,%d]: %w", from, to, err)
 	}
-	_, _ = fmt.Fprintf(os.Stdout, "price CAGGs re-materialized over [%d,%d] (no cursor rewind)\n", from, to)
+	_, _ = fmt.Fprintf(w, "price CAGGs re-materialized over [%d,%d] (no cursor rewind)\n", from, to)
 	return nil
 }
 
@@ -340,13 +340,13 @@ func resetSEP41RollupAfterReplay(ctx context.Context, store sep41RollupResetter,
 // printSEP41ReplayDryRunNote) purely to keep that function's branch count
 // under the cognitive-complexity limit — see rematerializeReplayedRange's
 // own godoc for the identical reason the CAGG-refresh tail was split out.
-func reportSEP41RollupReset(ctx context.Context, store sep41RollupResetter, source string) error {
+func reportSEP41RollupReset(ctx context.Context, w io.Writer, store sep41RollupResetter, source string) error {
 	reset, n, err := resetSEP41RollupAfterReplay(ctx, store, source)
 	if err != nil {
 		return fmt.Errorf("reset sep41_supply_rollup fold after replay (the cursor rewind is already durable, but served SEP-41 supply stays wrong for any row this replay corrects at or below the old fold checkpoint until the fold is reset): %w", err)
 	}
 	if reset {
-		_, _ = fmt.Fprintf(os.Stdout,
+		_, _ = fmt.Fprintf(w,
 			"reset %d sep41_supply_rollup fold row(s) — the aggregator worker will re-fold sep41_supply_events from zero as the replayed range lands (genesis baseline preserved)\n", n)
 	}
 	return nil
@@ -356,11 +356,11 @@ func reportSEP41RollupReset(ctx context.Context, store sep41RollupResetter, sour
 // reset a real run of `-source sep41_supply` would perform. Split out of
 // projectorReplay's dry-run block for the same cognitive-complexity reason
 // as reportSEP41RollupReset.
-func printSEP41ReplayDryRunNote(source string) {
+func printSEP41ReplayDryRunNote(w io.Writer, source string) {
 	if source != sep41supply.SourceName {
 		return
 	}
-	_, _ = fmt.Fprintf(os.Stdout,
+	_, _ = fmt.Fprintf(w,
 		"dry-run: would then ResetSEP41SupplyRollupFold(nil) — the rewound range may already be behind the sep41_supply_rollup fold checkpoint, and the fold only ever looks ABOVE it\n")
 }
 
@@ -389,7 +389,7 @@ type replayFinisher interface {
 //
 // Both opt-outs return nil on purpose — the rewind they follow is
 // already durable — and each logs what the operator now owes.
-func rematerializeReplayedRange(logger *slog.Logger, store replayFinisher, source string, replayed chunkRange, opts replayFollowUp) error {
+func rematerializeReplayedRange(w io.Writer, logger *slog.Logger, store replayFinisher, source string, replayed chunkRange, opts replayFollowUp) error {
 	switch {
 	case !opts.refreshCAGGs:
 		logger.Warn("skipping post-replay CAGG refresh (-refresh-caggs=false)",
@@ -417,7 +417,7 @@ func rematerializeReplayedRange(logger *slog.Logger, store replayFinisher, sourc
 		return fmt.Errorf("post-replay CAGG refresh over ledgers [%d,%d]: %w — the re-projected trades are in the hypertable but no OHLC/VWAP read can reach them until a refresh covers this range; re-run this command with the same -from, or refresh the views by hand",
 			replayed.from, replayed.to, err)
 	}
-	_, _ = fmt.Fprintf(os.Stdout,
+	_, _ = fmt.Fprintf(w,
 		"price CAGGs re-materialized over the replayed range [%d,%d]\n",
 		replayed.from, replayed.to)
 	return nil

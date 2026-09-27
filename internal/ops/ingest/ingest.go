@@ -16,6 +16,7 @@ package ingest
 
 import (
 	"fmt"
+	"os"
 )
 
 // Run is the internal/ops/ingest package's entry point — see
@@ -57,7 +58,7 @@ func Run(args []string) error { //nolint:gocyclo // flat command-dispatch switch
 	case "seed-entry-counts":
 		return seedEntryCounts(args[1:])
 	case "projector-replay":
-		return projectorReplay(args[1:])
+		return projectorReplay(os.Stdout, args[1:])
 	case "scan-soroban-events":
 		return scanSorobanEvents(args[1:])
 	case "state-snapshot":
