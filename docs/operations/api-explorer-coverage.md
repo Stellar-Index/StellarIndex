@@ -207,7 +207,7 @@ page carries.
 | `/dashboard/keys/{id}` | DELETE | 3 | account.ts:revokeKey | /dashboard/keys |
 | `/dashboard/webhooks` | GET, POST | 3 | account.ts:createDashboardWebhook, account.ts:listDashboardWebhooks | /dashboard/webhooks |
 | `/dashboard/webhooks/{id}` | PATCH, DELETE | 3 | account.ts:deleteDashboardWebhook, account.ts:updateDashboardWebhook | /dashboard/webhooks |
-| `/dashboard/webhooks/{id}/deliveries` | GET | 1 | — | — |
+| `/dashboard/webhooks/{id}/deliveries` | GET | 1 | account.ts:listWebhookDeliveries | /dashboard/webhooks |
 | `/dashboard/price-alerts` | GET, POST | 3 | account.ts:createPriceAlert, account.ts:listPriceAlerts | /dashboard/price-alerts |
 | `/dashboard/price-alerts/{id}` | PATCH, DELETE | 3 | account.ts:deletePriceAlert, account.ts:updatePriceAlert | /dashboard/price-alerts |
 | `/auth/login` | POST | 3 | app/signin/SignInForm.tsx, app/status/StatusPageClient.tsx | /signin, /signup, /status |
@@ -307,16 +307,11 @@ vendors", "canonical fiat rates" — so an exhaustive-list gate would be
 noise. Nothing *named* can be wrong; something registered can be
 unmentioned.
 
-### Account/admin surfaces with no UI (11)
+### Account/admin surfaces with no UI (10)
 
 Consistent gaps, all behind auth, all returning a correct `401` when
 probed unauthenticated:
 
-- **Webhook deliveries (1)** — `/dashboard/webhooks/{id}/deliveries`.
-  `/dashboard/webhooks` now lists, creates, edits and deletes endpoints,
-  but shows no delivery history, so a user can configure where a
-  `price.alert` goes and still cannot see whether it arrived or why it
-  failed.
 - **Staff admin (5)** — `/admin/keys`, `/admin/keys/{keyID}`,
   `/admin/accounts/{id}`, `/admin/status-notices`,
   `/admin/status-notices/{id}/resolve`. `/dashboard/admin` exists and
