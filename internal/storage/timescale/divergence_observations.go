@@ -73,22 +73,26 @@ func (s *DivergenceSink) RecordObservation(ctx context.Context, obs domain.Diver
 	if obs.Firing {
 		status = "firing"
 	}
+	var refAt sql.NullTime
+	if !obs.RefObservedAt.IsZero() {
+		refAt = sql.NullTime{Time: obs.RefObservedAt.UTC(), Valid: true}
+	}
 
 	const q = `
 		INSERT INTO divergence_observations (
 		    asset_id, quote_id, reference,
 		    observed_at, observed_at_ledger,
 		    our_price, ref_price, delta_pct,
-		    status
+		    status, ref_observed_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (asset_id, quote_id, reference, observed_at) DO NOTHING
 	`
 	if _, err := s.db.ExecContext(ctx, q,
 		obs.Pair.Base.String(), obs.Pair.Quote.String(), obs.Reference,
 		obs.ObservedAt.UTC(), int64(ledger),
 		obs.OurPrice, obs.RefPrice, obs.DeltaPct,
-		status,
+		status, refAt,
 	); err != nil {
 		return fmt.Errorf("timescale: RecordObservation %s/%s/%s: %w",
 			obs.Pair.Base.String(), obs.Pair.Quote.String(), obs.Reference, err)
@@ -108,6 +112,9 @@ type DivergenceRow struct {
 	RefPrice         string
 	DeltaPct         string
 	Status           string
+	// RefObservedAt is when the reference observed RefPrice; nil on rows
+	// written before migration 0186 recorded it.
+	RefObservedAt *time.Time
 }
 
 // ListDivergenceLatest returns the LATEST observation per (asset,
@@ -130,13 +137,14 @@ func (s *Store) ListDivergenceLatest(ctx context.Context, sinceDays int, firingO
 		WITH latest AS (
 			SELECT DISTINCT ON (asset_id, quote_id, reference)
 			       asset_id, quote_id, reference, observed_at, observed_at_ledger,
-			       our_price::text, ref_price::text, delta_pct::text, status
+			       our_price::text, ref_price::text, delta_pct::text, status,
+			       ref_observed_at
 			  FROM divergence_observations
 			 WHERE observed_at > now() - make_interval(days => $1)
 			 ORDER BY asset_id, quote_id, reference, observed_at DESC
 		)
 		SELECT asset_id, quote_id, reference, observed_at, observed_at_ledger,
-		       our_price, ref_price, delta_pct, status
+		       our_price, ref_price, delta_pct, status, ref_observed_at
 		  FROM latest`
 	if firingOnly {
 		q += ` WHERE status = 'firing'`
@@ -150,9 +158,14 @@ func (s *Store) ListDivergenceLatest(ctx context.Context, sinceDays int, firingO
 	var out []DivergenceRow
 	for rows.Next() {
 		var r DivergenceRow
+		var refAt sql.NullTime
 		if err := rows.Scan(&r.AssetID, &r.QuoteID, &r.Reference, &r.ObservedAt,
-			&r.ObservedAtLedger, &r.OurPrice, &r.RefPrice, &r.DeltaPct, &r.Status); err != nil {
+			&r.ObservedAtLedger, &r.OurPrice, &r.RefPrice, &r.DeltaPct, &r.Status, &refAt); err != nil {
 			return nil, fmt.Errorf("timescale: ListDivergenceLatest scan: %w", err)
+		}
+		if refAt.Valid {
+			at := refAt.Time.UTC()
+			r.RefObservedAt = &at
 		}
 		out = append(out, r)
 	}

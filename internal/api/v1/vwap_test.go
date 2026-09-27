@@ -274,89 +274,44 @@ func TestVWAP_NoPegLeaves404(t *testing.T) {
 	}
 }
 
-// TestVWAP_DivergenceCheckedFollowsAssetAliases — /v1/vwap never
-// consulted the cross-reference verdict at all, so `divergence_checked`
-// was a constant false on every envelope while /v1/price reported true
-// for the same base one request away. The verdict is cached under
-// whichever XLM spelling the aggregator refreshed (`crypto:XLM` on r1),
-// so the surface must both consult it AND walk the alias set the way the
-// price surfaces do, requested spelling first.
-func TestVWAP_DivergenceCheckedFollowsAssetAliases(t *testing.T) {
-	reader := &stubHistoryReader{
-		trades: []canonical.Trade{mkVWAPTrade(20, 40), mkVWAPTrade(100, 300)},
-	}
-	div := &stubAliasDivergenceLooker{
-		verdicts: map[string]struct{ firing, checked bool }{
-			"crypto:XLM": {firing: false, checked: true},
-		},
-	}
-	srv := v1.New(v1.Options{History: reader, Divergence: div})
-	ts := httpTestServer(t, srv)
+// TestVWAP_CarriesNoDivergenceVerdict — GH-1045: the cross-reference
+// verdict compares the aggregator's shortest-window VWAP now, while
+// /v1/vwap computes over a caller-chosen [from, to) from raw trades. A
+// January window shipped today's `divergence_checked: true`, vouching for
+// a number the check never saw. With a checked, firing verdict cached under
+// every spelling, the envelope must still report neither, and the looker
+// must not be asked.
+func TestVWAP_CarriesNoDivergenceVerdict(t *testing.T) {
+	verdict := struct{ firing, checked bool }{firing: true, checked: true}
+	for _, query := range []string{
+		"/v1/vwap?base=native&quote=fiat:USD",
+		"/v1/vwap?base=native&quote=fiat:USD&from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z",
+	} {
+		t.Run(query, func(t *testing.T) {
+			reader := &stubHistoryReader{
+				trades: []canonical.Trade{mkVWAPTrade(20, 40), mkVWAPTrade(100, 300)},
+			}
+			div := &stubAliasDivergenceLooker{
+				verdicts: map[string]struct{ firing, checked bool }{
+					"native": verdict, "crypto:XLM": verdict,
+				},
+			}
+			srv := v1.New(v1.Options{History: reader, Divergence: div})
+			ts := httpTestServer(t, srv)
 
-	resp := mustGet(t, ts.URL+"/v1/vwap?base=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"divergence_checked":true`) {
-		t.Errorf("divergence_checked should follow the alias holding the verdict: %s", body)
-	}
-	if !strings.Contains(body, `"divergence_warning":false`) {
-		t.Errorf("verdict is clean, so the warning must stay false: %s", body)
-	}
-	if len(div.askedSpellings()) == 0 || div.askedSpellings()[0] != "native" {
-		t.Errorf("lookup order = %v, want the requested spelling first", div.askedSpellings())
-	}
-}
-
-// TestVWAP_DivergenceWarningPropagates — a FIRING verdict reaches the
-// /v1/vwap envelope as (warning=true, checked=true), the pair CS-087
-// defines as the only meaningful warning.
-func TestVWAP_DivergenceWarningPropagates(t *testing.T) {
-	reader := &stubHistoryReader{
-		trades: []canonical.Trade{mkVWAPTrade(20, 40), mkVWAPTrade(100, 300)},
-	}
-	div := &stubAliasDivergenceLooker{
-		verdicts: map[string]struct{ firing, checked bool }{
-			"native": {firing: true, checked: true},
-		},
-	}
-	srv := v1.New(v1.Options{History: reader, Divergence: div})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/vwap?base=native&quote=fiat:USD")
-	body, _ := readAll(resp)
-	for _, want := range []string{`"divergence_warning":true`, `"divergence_checked":true`} {
-		if !strings.Contains(body, want) {
-			t.Errorf("body missing %q: %s", want, body)
-		}
-	}
-}
-
-// TestVWAP_DivergenceCheckedFalseWhenNoVerdict — the flag is a claim,
-// not a default: with no verdict cached under ANY spelling the envelope
-// must still say divergence_checked=false, and every alias must have
-// been tried before concluding that.
-func TestVWAP_DivergenceCheckedFalseWhenNoVerdict(t *testing.T) {
-	reader := &stubHistoryReader{
-		trades: []canonical.Trade{mkVWAPTrade(20, 40), mkVWAPTrade(100, 300)},
-	}
-	div := &stubAliasDivergenceLooker{}
-	srv := v1.New(v1.Options{History: reader, Divergence: div})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/vwap?base=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"divergence_checked":false`) {
-		t.Errorf("divergence_checked must stay false with no cached verdict: %s", body)
-	}
-	if !strings.Contains(body, `"divergence_warning":false`) {
-		t.Errorf("no verdict means no warning: %s", body)
-	}
-	if len(div.askedSpellings()) != len(canonical.AssetAliases(canonical.NativeAsset())) {
-		t.Errorf("spellings tried = %v, want every alias before reporting unchecked", div.askedSpellings())
+			resp := mustGet(t, ts.URL+query)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d", resp.StatusCode)
+			}
+			body, _ := readAll(resp)
+			for _, want := range []string{`"divergence_checked":false`, `"divergence_warning":false`} {
+				if !strings.Contains(body, want) {
+					t.Errorf("body missing %s: %s", want, body)
+				}
+			}
+			if asked := div.askedSpellings(); len(asked) != 0 {
+				t.Errorf("verdict looked up for %v; /v1/vwap must not consult it", asked)
+			}
+		})
 	}
 }

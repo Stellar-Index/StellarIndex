@@ -707,6 +707,22 @@ func normalizeWindows(ws []time.Duration) []time.Duration {
 	return slices.Compact(out)
 }
 
+// effectiveWindows is the window set [New] runs for a configured one:
+// normalized, or [DefaultWindows] when nothing positive was configured.
+func effectiveWindows(ws []time.Duration) []time.Duration {
+	if out := normalizeWindows(ws); len(out) > 0 {
+		return out
+	}
+	return DefaultWindows
+}
+
+// ShortestWindow is the window whose VWAP the divergence refresh compares
+// for a configured window set: Windows[0] of an orchestrator built from ws.
+// The divergence service stamps it on every verdict it caches.
+func ShortestWindow(ws []time.Duration) time.Duration {
+	return effectiveWindows(ws)[0]
+}
+
 // closedBucket is the aggregator's closed-bucket granularity: every
 // window ends at the last closed boundary of this size (ADR-0015 — serve
 // the last closed bucket, never an in-progress one). One minute is the
@@ -1022,10 +1038,7 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 	if cfg.TickTimeout <= 0 {
 		cfg.TickTimeout = DefaultTickTimeoutIntervals * cfg.Interval
 	}
-	cfg.Windows = normalizeWindows(cfg.Windows)
-	if len(cfg.Windows) == 0 {
-		cfg.Windows = DefaultWindows
-	}
+	cfg.Windows = effectiveWindows(cfg.Windows)
 	if cfg.MaxTradesPerWindow <= 0 {
 		cfg.MaxTradesPerWindow = DefaultMaxTradesPerWindow
 	}

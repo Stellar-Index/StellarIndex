@@ -2713,11 +2713,11 @@ func newDivergenceAdapter(svc *divergence.Service) divergenceAdapter {
 // The quorum behind `checked` (LookupCachedPairVerdict) is the
 // service's own, so it cannot drift from the one WarningFired was
 // gated on, and (firing=true, checked=false) cannot occur: a firing
-// pair met the quorum.
-func (a divergenceAdapter) DivergenceFiringFor(ctx context.Context, asset, quote canonical.Asset) (firing, checked bool, err error) {
+// pair met the quorum. window is the verdict's recorded aggregation window.
+func (a divergenceAdapter) DivergenceFiringFor(ctx context.Context, asset, quote canonical.Asset) (firing, checked bool, window time.Duration, err error) {
 	pair, perr := canonical.NewPair(asset, quote)
 	if perr != nil {
-		return false, false, nil //nolint:nilerr // intentional: an unconstructible pair reports unchecked
+		return false, false, 0, nil //nolint:nilerr // intentional: an unconstructible pair reports unchecked
 	}
 	return a.svc.LookupCachedPairVerdict(ctx, pair)
 }

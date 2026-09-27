@@ -55,7 +55,10 @@ type DivergenceLooker interface {
 	// quote of the base together (worker.go's per-base index), which
 	// attached a warning computed against a market the served value
 	// never touched.
-	DivergenceFiringFor(ctx context.Context, asset, quote canonical.Asset) (firing, checked bool, err error)
+	//
+	// window is the aggregation window of the VWAP the verdict compared
+	// (the aggregator's shortest), 0 when the cached record names none.
+	DivergenceFiringFor(ctx context.Context, asset, quote canonical.Asset) (firing, checked bool, window time.Duration, err error)
 }
 
 // FrozenLooker is the read-side interface the v1 server uses to
@@ -952,9 +955,7 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	default:
 		flags.SingleSource = marketSingleSource(snapshot, sources)
 	}
-	// The divergence walk starts at governing and still falls through to
-	// other aliases on a miss — see lookupDivergenceFlag.
-	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), governing, quote)
+	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), governing, quote, 0)
 	writeJSON(w, snapshot, flags, sources...)
 }
 
@@ -2516,86 +2517,51 @@ func (s *Server) attachConfidence(r *http.Request, snap *PriceSnapshot, asset, q
 }
 
 // lookupDivergenceFlag is the shared best-effort divergence lookup for
-// every surface that serves an aggregated value the cross-reference
-// verdict speaks to: `/v1/price`, its windowed variant, `/v1/price/tip`,
-// `/v1/price/tip/stream` (per event, from the producer goroutine — hence
-// a context rather than a request) and `/v1/vwap`. Returns (false, false)
-// when no DivergenceLooker is wired, when no spelling holds a verdict, or
-// when the lookup errors — better to serve a fresh price without a
-// verdict than to 5xx because a Redis blip lost the cached divergence
-// record.
+// every surface that serves a value the cross-reference verdict speaks to:
+// `/v1/price`, its windowed variant, `/v1/price/tip` and
+// `/v1/price/tip/stream` (per event, from the producer goroutine — hence a
+// context rather than a request). Returns (false, false) when no
+// DivergenceLooker is wired, when the pair holds no verdict, when the
+// verdict does not speak to the served window, or when the lookup errors —
+// better to serve a fresh price without a verdict than to 5xx because a
+// Redis blip lost the cached divergence record.
 //
-// quote is held FIXED across the walk; only the base's alias spellings
-// are tried. Callers pass the spelling the price was served from, so the
-// walk STARTS at the served market — but a miss there still falls
-// through to the other aliases, so the verdict can describe a different
-// venue population than the price (open under #1045, as is scoping the
-// verdict to the requested window).
+// asset and quote are the spelling the value was SERVED from, and only that
+// pair is asked (GH-1045). The aggregator keys each verdict on the literal
+// pair it priced, and XLM's spellings are disjoint venue populations: a walk
+// on to the next alias attached crypto:XLM's CEX-checked verdict to a price
+// read from native's SDEX book, vouching for a market the check never saw.
+// When the served spelling holds no verdict the answer is "unchecked".
 //
-// Loops the alias set, exactly as readPriceWithAliases and
-// attachConfidence do. Without this the verdict silently vanished for
-// XLM's canonical `native` spelling: the aggregator refreshes the check
-// under whichever form carries the shortest-window VWAP (`crypto:XLM` on
-// r1 — which is also the form the PRICE read resolves to), but the
-// divergence key was built from the raw request asset, so
-// /v1/price?asset=native and ?asset=crypto:XLM returned the
-// byte-identical price with divergence_checked false and true
-// respectively (r1-verified 2026-09-03). Per CS-087 that false reads as
-// "could not verify", which is the wrong answer for a value four
-// references had just agreed on — and the same envelope's
-// confidence_factors.cross_oracle_checked, which already walks aliases,
-// said true right beside it.
+// window is the aggregation window of the served value, or 0 on a surface
+// serving the current price, which is what the verdict describes. A verdict
+// the worker computed over another window (or one that recorded none)
+// reaches no conclusion about a windowed value, so it reports (false, false)
+// there, as /v1/price/at does for a past bucket.
 //
-// The first spelling that reaches a verdict wins and short-circuits the
-// rest, matching attachConfidence: a per-spelling miss (no cached record,
-// or one below the worker's quorum) is not an answer, so keep walking.
-// Verdicts are never combined across spellings — a warning under a
-// later alias is not folded into a clean verdict found under an earlier
-// one. An ERROR ends the walk, also as attachConfidence does: the
-// spellings share one backing store, so a store that failed for the
-// first is not going to answer for the second, and stopping keeps a
-// Redis outage at one round-trip and at most one WARN per request rather
-// than one per alias — at most, because an error that IS the context's
-// (cancelled, or a deadline the caller set deliberately) is not news
-// about the store and is left to whoever set that deadline. The (warning=true, checked=false) pair stays
-// unreachable because a fired warning necessarily met that quorum.
-func (s *Server) lookupDivergenceFlag(ctx context.Context, asset, quote canonical.Asset) (firing, checked bool) {
+// An error that IS the context's (cancelled, or a deadline the caller set
+// deliberately — the tip stream hands this an expiring sub-budget on
+// purpose) says nothing about the store and is not logged; the stream
+// reports its own stall instead, rate-limited (tipStreamFlags). The test is
+// on the ERROR, not on ctx.Err(): a genuine store failure — connection
+// refused, LOADING, a malformed cached blob — must still be logged even when
+// it surfaces beside a context that has already expired.
+func (s *Server) lookupDivergenceFlag(ctx context.Context, asset, quote canonical.Asset, window time.Duration) (firing, checked bool) {
 	if s.divergence == nil {
 		return false, false
 	}
-	standing := false
-	for _, a := range assetAliases(asset) {
-		gotFiring, gotChecked, err := s.divergence.DivergenceFiringFor(ctx, a, quote)
-		if err != nil {
-			// Suppress errors that ARE the context's — a cancellation or
-			// an expiry says nothing about the store, only that the
-			// caller stopped waiting. Cancellation was already excluded;
-			// expiry joins it because the tip stream now hands this an
-			// expiring sub-budget on purpose, and logging that would put
-			// one line per tick per stream in the log at exactly the
-			// moment an operator needs to read it (the stream reports
-			// its own stall instead, rate-limited — tipStreamFlags).
-			//
-			// The test is on the ERROR, not on ctx.Err(): a genuine
-			// store failure — connection refused, LOADING, a malformed
-			// cached blob — must still be logged even when it surfaces
-			// beside a context that has already expired. Keying on
-			// ctx.Err() would silence it on the four surfaces that have
-			// no stall reporter of their own (/v1/price, its ?window=
-			// variant, /v1/price/tip and /v1/vwap), where a request that
-			// overran its budget on an earlier read is an ordinary shape.
-			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-				s.logger.Warn("divergence lookup failed",
-					"err", err, "asset", a.String())
-			}
-			break
+	firing, checked, verdictWindow, err := s.divergence.DivergenceFiringFor(ctx, asset, quote)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			s.logger.Warn("divergence lookup failed",
+				"err", err, "asset", asset.String(), "quote", quote.String())
 		}
-		if gotChecked {
-			return gotFiring, true
-		}
-		standing = standing || gotFiring
+		return false, false
 	}
-	return standing, false
+	if window > 0 && verdictWindow != window {
+		return false, false
+	}
+	return firing, checked
 }
 
 // attachCompositeFlags surfaces the aggregator's router-quality
@@ -3542,7 +3508,7 @@ func (s *Server) windowedPriceFlags(r *http.Request, a, q canonical.Asset, windo
 	flags.SingleSource = frozenVal
 	flags.Stale = frozenVal
 	s.attachCompositeFlags(r, &flags, a, q, window, triangulated)
-	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), a, q)
+	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), a, q, window)
 	return flags
 }
 

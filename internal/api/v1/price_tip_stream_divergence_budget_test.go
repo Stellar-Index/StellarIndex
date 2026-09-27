@@ -51,14 +51,14 @@ func newGatedDivergenceLooker(firing, checked bool) *gatedDivergenceLooker {
 	}
 }
 
-func (g *gatedDivergenceLooker) DivergenceFiringFor(ctx context.Context, _, _ canonical.Asset) (firing, checked bool, err error) {
+func (g *gatedDivergenceLooker) DivergenceFiringFor(ctx context.Context, _, _ canonical.Asset) (firing, checked bool, window time.Duration, err error) {
 	g.calls.Add(1)
 	g.once.Do(func() { close(g.entered) })
 	select {
 	case <-g.release:
-		return g.firing, g.checked, nil
+		return g.firing, g.checked, 0, nil
 	case <-ctx.Done():
-		return false, false, ctx.Err()
+		return false, false, 0, ctx.Err()
 	}
 }
 
@@ -163,15 +163,15 @@ type timedLooker struct {
 	calls   atomic.Int32
 }
 
-func (l *timedLooker) DivergenceFiringFor(ctx context.Context, _, _ canonical.Asset) (firing, checked bool, err error) {
+func (l *timedLooker) DivergenceFiringFor(ctx context.Context, _, _ canonical.Asset) (firing, checked bool, window time.Duration, err error) {
 	l.calls.Add(1)
 	t := time.NewTimer(l.delay)
 	defer t.Stop()
 	select {
 	case <-t.C:
-		return l.firing, l.checked, nil
+		return l.firing, l.checked, 0, nil
 	case <-ctx.Done():
-		return false, false, ctx.Err()
+		return false, false, 0, ctx.Err()
 	}
 }
 
@@ -574,9 +574,9 @@ type storeDownLooker struct{ calls atomic.Int32 }
 
 var errDivergenceStoreDown = errors.New("divergence: cache get div:crypto:BTC/fiat:USD: dial tcp: connect: connection refused")
 
-func (l *storeDownLooker) DivergenceFiringFor(context.Context, canonical.Asset, canonical.Asset) (firing, checked bool, err error) {
+func (l *storeDownLooker) DivergenceFiringFor(context.Context, canonical.Asset, canonical.Asset) (firing, checked bool, window time.Duration, err error) {
 	l.calls.Add(1)
-	return false, false, errDivergenceStoreDown
+	return false, false, 0, errDivergenceStoreDown
 }
 
 // TestPriceDivergence_GenuineStoreErrorIsLoggedEvenPastTheBudget — the

@@ -36,6 +36,10 @@ type Result struct {
 	// successful references appear here.
 	Sources map[string]float64
 
+	// SourcesAsOf maps reference Name() → when that reference's upstream
+	// observed its Sources price (the quote's AsOf). Same keys as Sources.
+	SourcesAsOf map[string]time.Time
+
 	// Failures maps reference Name() → error message. Empty when
 	// every reference succeeded; non-empty entries indicate which
 	// sources we couldn't reach this run.
@@ -173,11 +177,12 @@ func Compare(
 	}
 
 	res := Result{
-		Pair:     pair,
-		OurPrice: ourPrice,
-		Sources:  map[string]float64{},
-		Failures: map[string]string{},
-		Outcomes: map[string]string{},
+		Pair:        pair,
+		OurPrice:    ourPrice,
+		Sources:     map[string]float64{},
+		SourcesAsOf: map[string]time.Time{},
+		Failures:    map[string]string{},
+		Outcomes:    map[string]string{},
 	}
 
 	if len(refs) == 0 {
@@ -232,7 +237,7 @@ func Compare(
 			if err == nil {
 				err = checkComparable(q, pair, observedAt)
 			}
-			results <- fetchOutcome{name: name, price: q.Price, err: err}
+			results <- fetchOutcome{name: name, price: q.Price, asOf: q.AsOf, err: err}
 		}(ref)
 	}
 	prices := collectOutcomes(results, pending, len(refs), opts.OverallTimeout, &res)
@@ -255,6 +260,7 @@ func Compare(
 type fetchOutcome struct {
 	name  string
 	price float64
+	asOf  time.Time
 	err   error
 }
 
@@ -290,6 +296,7 @@ func collectOutcomes(
 				res.Outcomes[o.name] = OutcomeInvalidPrice
 			default:
 				res.Sources[o.name] = o.price
+				res.SourcesAsOf[o.name] = o.asOf
 				res.Outcomes[o.name] = OutcomeOK
 				prices = append(prices, o.price)
 			}

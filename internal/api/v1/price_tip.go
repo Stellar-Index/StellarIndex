@@ -147,13 +147,13 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 // Per ADR-0018: stale stays FALSE on either branch — both are
 // in-contract on this surface. The staleness bit PriceReader sets for
 // /v1/price is deliberately ignored; tip has its own envelope contract.
-// divergence_warning/divergence_checked come from the shared
-// alias-walking lookup, keyed on the requested (base, quote) pair like
-// every other surface that carries them (GH-1045: quote-specific, never
-// ORed across the base's other quotes).
+// divergence_warning/divergence_checked come from the shared lookup,
+// asked for the requested (base, quote) spelling only (GH-1045:
+// quote-specific, never ORed across the base's other quotes, never read
+// from another alias's market).
 func (s *Server) tipFlags(ctx context.Context, snap PriceSnapshot, asset, quote canonical.Asset, sources []string) Flags {
 	flags := Flags{SingleSource: marketSingleSource(snap, sources)}
-	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(ctx, asset, quote)
+	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(ctx, asset, quote, 0)
 	return flags
 }
 
