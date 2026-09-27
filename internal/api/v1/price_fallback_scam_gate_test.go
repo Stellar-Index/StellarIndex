@@ -209,10 +209,9 @@ func TestPriceBatchFallbackWithholdsScamFlaggedBase(t *testing.T) {
 // reaches it by its own path:
 //
 //   - /v1/price — the reader misses (ErrPriceNotFound) and the handler
-//     runs priceFallback, whose layer 1 is the cache;
-//   - /v1/price?window=N — dispatched from handlePrice BEFORE the
-//     reader is consulted, straight to the per-window cache keys, so
-//     neither the reader chokepoint nor the fallback gate can see it;
+//     runs priceFallback, whose layer 1 is the cache; ?window=N is
+//     rejected outright (GH-762 — the retired surface never reaches
+//     the cache at all, so it has no gate of its own to test here);
 //   - /v1/price/tip — its own cache branch, gated at the top of
 //     computeTip (already correct; here so a regression there fails
 //     alongside its siblings rather than silently);
@@ -230,9 +229,6 @@ func TestCachedVWAPSurfacesWithholdScamFlaggedMarket(t *testing.T) {
 		path string
 	}{
 		{"/v1/price", "/v1/price?asset=" + base.String() + "&quote=fiat:USD"},
-		{"/v1/price?window=300", "/v1/price?window=300&asset=" + base.String() + "&quote=fiat:USD"},
-		{"/v1/price?window=3600", "/v1/price?window=3600&asset=" + base.String() + "&quote=fiat:USD"},
-		{"/v1/price?window=86400", "/v1/price?window=86400&asset=" + base.String() + "&quote=fiat:USD"},
 		{"/v1/price/tip", "/v1/price/tip?asset=" + base.String() + "&quote=fiat:USD"},
 		{"/v1/oracle/lastprice", "/v1/oracle/lastprice?asset=" + base.String()},
 		{"/v1/oracle/x_last_price", "/v1/oracle/x_last_price?base=" + base.String() + "&quote=fiat:USD"},
@@ -264,52 +260,5 @@ func TestCachedVWAPSurfacesWithholdScamFlaggedMarket(t *testing.T) {
 				t.Errorf("%s never consulted the scam gate", surface.name)
 			}
 		})
-	}
-}
-
-// TestPriceWindowedWithholdsScamFlaggedQuote — both legs here too: the
-// windowed price of XLM IN a flagged issuer's asset is the flagged
-// market's own windowed price, inverted.
-func TestPriceWindowedWithholdsScamFlaggedQuote(t *testing.T) {
-	quote := fallbackFlaggedBase(t)
-	gate := &fallbackScamGate{withheld: map[string]bool{quote.String(): true}}
-	srv := v1.New(v1.Options{
-		Prices:       &stubPriceReader{err: v1.ErrPriceNotFound},
-		Triangulated: &cachedVWAPLooker{value: "138.4"},
-		Scam:         gate,
-	})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?window=3600&asset=native&quote="+quote.String())
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("/v1/price?window=3600 status = %d, want 404 for a flagged QUOTE. Body: %s",
-			resp.StatusCode, body)
-	}
-	if strings.Contains(string(body), "138.4") {
-		t.Errorf("the withheld price value leaked through the windowed route: %s", body)
-	}
-}
-
-// TestPriceWindowedServesUnflaggedPair is the non-regression half for
-// the windowed route.
-func TestPriceWindowedServesUnflaggedPair(t *testing.T) {
-	flagged := fallbackFlaggedBase(t)
-	gate := &fallbackScamGate{withheld: map[string]bool{flagged.String(): true}}
-	srv := v1.New(v1.Options{
-		Prices:       &stubPriceReader{err: v1.ErrPriceNotFound},
-		Triangulated: &cachedVWAPLooker{value: "0.1242"},
-		Scam:         gate,
-	})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?window=300&asset=native&quote=fiat:USD")
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 — an unflagged pair must still serve its windowed "+
-			"VWAP. Body: %s", resp.StatusCode, body)
-	}
-	if !strings.Contains(string(body), `"window_seconds":300`) {
-		t.Errorf("body missing the windowed snapshot: %s", body)
 	}
 }

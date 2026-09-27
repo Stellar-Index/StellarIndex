@@ -62,7 +62,6 @@ func TestVWAPCacheServesTheValuesObservationTime(t *testing.T) {
 		query  string
 	}{
 		{"fallback", false, "/v1/price?asset=crypto:XLM&quote=fiat:GBP"},
-		{"windowed", false, "/v1/price?asset=crypto:XLM&quote=fiat:GBP&window=300"},
 		{"frozen held value", true, "/v1/price?asset=crypto:XLM&quote=fiat:GBP"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

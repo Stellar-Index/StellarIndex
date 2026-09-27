@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math/big"
 	"net/http"
 	"reflect"
@@ -1076,79 +1075,6 @@ func TestPrice_DivergenceWalkStartsAtServedAlias(t *testing.T) {
 	}
 	if asked := div.askedSpellings(); len(asked) == 0 || asked[0] != "crypto:XLM" {
 		t.Errorf("lookup order = %v, want the served spelling crypto:XLM first", asked)
-	}
-}
-
-// TestPriceWindowed_DivergenceWalkStartsAtServedAlias — the ?window=
-// branch reads the VWAP under whichever alias pair holds it; the verdict
-// must be asked for that same (a, q), as the freeze check beside it is.
-func TestPriceWindowed_DivergenceWalkStartsAtServedAlias(t *testing.T) {
-	div := conflictingXLMVerdicts()
-	div.window = 5 * time.Minute
-	srv := v1.New(v1.Options{
-		Prices:       &stubPriceReader{},
-		Divergence:   div,
-		Triangulated: lkgPairs{"crypto:XLM/fiat:USD/300": "0.2051"},
-	})
-	ts := startHTTPTest(t, srv.Handler())
-
-	status, body := getBody(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD&window=300")
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want 200: %s", status, body)
-	}
-	if !strings.Contains(body, `"divergence_warning":false`) || !strings.Contains(body, `"divergence_checked":true`) {
-		t.Errorf("verdict must come from the served crypto:XLM market (clean, checked), not native: %s", body)
-	}
-	if asked := div.askedSpellings(); len(asked) == 0 || asked[0] != "crypto:XLM" {
-		t.Errorf("lookup order = %v, want the served spelling crypto:XLM first", asked)
-	}
-}
-
-// TestPriceWindowed_DivergenceVerdictScopedToItsWindow — GH-1045: the
-// worker's verdict compares the aggregator's shortest-window VWAP (5m
-// here). ?window=300 serves that window and carries the verdict;
-// ?window=3600 serves a different number the check never saw and must
-// report neither the warning nor checked; and a verdict that recorded no
-// window cannot be matched to any.
-func TestPriceWindowed_DivergenceVerdictScopedToItsWindow(t *testing.T) {
-	for _, tc := range []struct {
-		name          string
-		verdictWindow time.Duration
-		window        string
-		wantChecked   bool
-		wantWarning   bool
-	}{
-		{"served window is the verdict's", 5 * time.Minute, "300", true, true},
-		{"served window is longer", 5 * time.Minute, "3600", false, false},
-		{"served window is the day", 5 * time.Minute, "86400", false, false},
-		{"verdict recorded no window", 0, "300", false, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			div := &stubDivergenceLooker{firing: true, checked: true, window: tc.verdictWindow}
-			srv := v1.New(v1.Options{
-				Prices:     &stubPriceReader{},
-				Divergence: div,
-				Triangulated: lkgPairs{
-					"crypto:BTC/fiat:USD/300":   "60000",
-					"crypto:BTC/fiat:USD/3600":  "59000",
-					"crypto:BTC/fiat:USD/86400": "58000",
-				},
-			})
-			ts := startHTTPTest(t, srv.Handler())
-
-			status, body := getBody(t, ts.URL+"/v1/price?asset=crypto:BTC&quote=fiat:USD&window="+tc.window)
-			if status != http.StatusOK {
-				t.Fatalf("status = %d, want 200: %s", status, body)
-			}
-			for _, want := range []string{
-				fmt.Sprintf(`"divergence_checked":%t`, tc.wantChecked),
-				fmt.Sprintf(`"divergence_warning":%t`, tc.wantWarning),
-			} {
-				if !strings.Contains(body, want) {
-					t.Errorf("body missing %s: %s", want, body)
-				}
-			}
-		})
 	}
 }
 

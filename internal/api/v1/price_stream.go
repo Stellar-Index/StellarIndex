@@ -143,7 +143,7 @@ func (s *Server) closedStreamWithheld(ctx context.Context, asset, quote canonica
 //
 // So a connection forwards a frame only when no higher-priority spelling
 // produced a bucket within [cachekeys.VWAPMaxAge] of it. The priority is
-// /v1/price?window='s read order (assetAliases on each leg, the caller's
+// /v1/price's alias read order (assetAliases on each leg, the caller's
 // own spelling first) and the horizon is the age at which that read stops
 // finding the preferred key, so the stream follows the series the REST
 // surface serves. Time is the frame's bucket end, not the wall clock, so
