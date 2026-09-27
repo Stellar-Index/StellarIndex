@@ -8,9 +8,13 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -879,5 +883,37 @@ func TestHistorySinceInception_GranularityForwarded(t *testing.T) {
 	}
 	if reader.lastCall.granularity != "15m" {
 		t.Errorf("reader saw granularity=%q, want 15m", reader.lastCall.granularity)
+	}
+}
+
+// TestSpecDeclares404OnScamWithholdingRoutes pins GH-1145: both
+// /history/since-inception and /chart return a 404 price-withheld when
+// seriesWithheldForScam fires (see handleHistorySinceInception and
+// handleChart), but neither route declared a 404 in the OpenAPI
+// contract — a spec-driven client would treat it as endpoint-not-found
+// and fall back elsewhere, the same harm #1087 fixed for the price
+// stream.
+func TestSpecDeclares404OnScamWithholdingRoutes(t *testing.T) {
+	specPath := filepath.Join(moduleRoot(t), "openapi", "stellar-index.v1.yaml")
+	raw, err := os.ReadFile(specPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spec struct {
+		Paths map[string]map[string]struct {
+			Responses map[string]any `yaml:"responses"`
+		} `yaml:"paths"`
+	}
+	if err := yaml.Unmarshal(raw, &spec); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/history/since-inception", "/chart"} {
+		op, ok := spec.Paths[path]["get"]
+		if !ok {
+			t.Fatalf("spec has no GET %s", path)
+		}
+		if _, ok := op.Responses["404"]; !ok {
+			t.Errorf("GET %s does not declare 404, but seriesWithheldForScam serves one", path)
+		}
 	}
 }

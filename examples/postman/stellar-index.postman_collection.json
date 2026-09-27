@@ -7905,7 +7905,7 @@
               "request": {
                 "name": "Closed-bucket historical VWAP series for one asset/quote pair.",
                 "description": {
-                  "content": "Returns every CLOSED bucket from the requested continuous\naggregate ladder (`1m`, `15m`, `1h`, `4h`, `1d`, `1w`,\n`1mo`) for the requested asset/quote pair. This is the\nbucketed history surface; `/history` remains the raw\nper-trade endpoint.\n\nSpellings and fallbacks follow /v1/chart: a pair with no\nbuckets under the requested spelling is retried under its\nalias spellings (same asset, `flags.triangulated` stays\nfalse); a fiat-quoted pair with none under any spelling is\nserved through the operator-declared USD pegs and, when no peg\nanswers, derived through XLM — both stamp\n`flags.triangulated=true`, and `asset_id` / `quote` still echo\nthe request.\n\n**This endpoint returns at most 50 000 buckets and takes the\nOLDEST ones.** Unlike `/v1/chart` it has no window parameter,\nso there is nothing to derive a served width from and the\nrequested `granularity` is always the one served — a `1m`\nrequest on a long-lived pair therefore stops early rather than\nbeing coarsened. Measured 2026-09-09 on `native`/`fiat:USD`:\n`granularity=1m` returned exactly 50 000 points ending\n2018-02-21, while `granularity=1d` returned 3 341 points\nspanning 2017-01-17 to yesterday. `flags.stale` is raised when\nthe series may be short. For a bounded window with an\nautomatically fitted width, use `/v1/chart`.\n\nThe base leg is named `asset` here, NOT `base`, and there is no\n`base=` alias — unlike `/v1/history`, whose canonical spelling\nis `base=` with `asset=` accepted as an alias. The two history\nsurfaces are deliberately asymmetric because this one is a\nprice series keyed like `/v1/price`, not a trade feed.\n\n`granularity=1m` may additionally be bounded to the last 90\ndays (migration 0156); coarser widths hold the deployment's\nfull history. This surface reads oldest-bucket-first, so where\nthat window is enabled the bound is the first thing it meets.\n",
+                  "content": "Returns every CLOSED bucket from the requested continuous\naggregate ladder (`1m`, `15m`, `1h`, `4h`, `1d`, `1w`,\n`1mo`) for the requested asset/quote pair. This is the\nbucketed history surface; `/history` remains the raw\nper-trade endpoint.\n\nSpellings and fallbacks follow /v1/chart: a pair with no\nbuckets under the requested spelling is retried under its\nalias spellings (same asset, `flags.triangulated` stays\nfalse); a fiat-quoted pair with none under any spelling is\nserved through the operator-declared USD pegs and, when no peg\nanswers, derived through XLM — both stamp\n`flags.triangulated=true`, and `asset_id` / `quote` still echo\nthe request.\n\n**This endpoint returns at most 50 000 buckets and takes the\nOLDEST ones.** Unlike `/v1/chart` it has no window parameter,\nso there is nothing to derive a served width from and the\nrequested `granularity` is always the one served — a `1m`\nrequest on a long-lived pair therefore stops early rather than\nbeing coarsened. Measured 2026-09-09 on `native`/`fiat:USD`:\n`granularity=1m` returned exactly 50 000 points ending\n2018-02-21, while `granularity=1d` returned 3 341 points\nspanning 2017-01-17 to yesterday. `flags.stale` is raised when\nthe series may be short. For a bounded window with an\nautomatically fitted width, use `/v1/chart`.\n\nThe base leg is named `asset` here, NOT `base`, and there is no\n`base=` alias — unlike `/v1/history`, whose canonical spelling\nis `base=` with `asset=` accepted as an alias. The two history\nsurfaces are deliberately asymmetric because this one is a\nprice series keyed like `/v1/price`, not a trade feed.\n\n`granularity=1m` may additionally be bounded to the last 90\ndays (migration 0156); coarser widths hold the deployment's\nfull history. This surface reads oldest-bucket-first, so where\nthat window is enabled the bound is the first thing it meets.\n\nA pair on a directory-flagged scam issuer is a 404 of type\n`price-withheld` (`scam_issuer`), the same gate and vocabulary\nas `/v1/price` and `/v1/chart`, never an empty 200.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -8074,6 +8074,69 @@
                   },
                   "status": "Bad Request",
                   "code": 400,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Not found.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "history",
+                        "since-inception"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) Canonical asset identifier — matches the `asset_id` on\nresponse bodies. Query-parameter form is the shorter `asset`\nper the handler implementations (/v1/price, /v1/oracle/latest).\nStrict canonical form only — `XLM` / `USDC` are rejected;\nuse `native` for XLM and the full `<code>-<G…>` strkey for\ncredit assets.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "asset",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Quote-side asset. Either a canonical asset identifier (`native`,\n`<code>-<issuer>`, contract ID) for crypto-quoted pairs, or\nthe `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,\n`fiat:EUR`). Default `fiat:USD`.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "quote",
+                          "value": "fiat:USD"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Bucket width for the returned series (`1m` = 1 minute …\n`1mo` = 1 month). When omitted the server picks a sensible\nwidth for the requested timeframe (e.g. `1m` for `1h`,\n`1h` for `1w`) so the series stays a few hundred points.\n\n**Requested width, not necessarily the served one.** A single\nresponse carries at most 50 000 buckets, so a\n(`timeframe`, `granularity`) pair whose grid is wider than\nthat cannot be answered at the width asked for. Rather than\nreturn the oldest 50 000 buckets and stop — which is what a\n`?timeframe=1y&granularity=1m` request used to get: 36 of the\n365 days requested, ending three months early, under a\nresponse that still claimed `1m` — the series is served at the\nfinest width that DOES fit and the response's own\n`granularity` reports it. Today that affects exactly one\ncombination: `timeframe=1y` with `granularity=1m` is served at\n`15m` (525 600 grid points against 35 040). Read the response\n`granularity`, not the request, to label an axis.\n\n`timeframe=all` is never coarsened: it asks for whatever the\ndeployment holds, so its point count is a property of the data\nrather than of the request, and it is routinely well under the\ncap.\n\n**`1m` may be bounded to 90 days.** The minute aggregate is the\none rung a deployment can put a retention window on (migration\n0156, 90 days, shipped disabled); every coarser width holds the\ndeployment's full history. Where the window is enabled, a `1m`\nseries over an older window comes back empty rather than wrong,\nand the raw trades behind it are still reachable through\n`/v1/history`.\n (This can only be one of 1m,15m,1h,4h,1d,1w,1mo)",
+                            "type": "text/plain"
+                          },
+                          "key": "granularity",
+                          "value": "1w"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "Not Found",
+                  "code": 404,
                   "header": [
                     {
                       "key": "Content-Type",
@@ -8328,7 +8391,7 @@
           "request": {
             "name": "Rolling-window chart series for an asset/quote pair.",
             "description": {
-              "content": "Returns CLOSED CAGG buckets within a rolling time window for\none asset/quote pair, shaped as `(timeframe, granularity,\nprice_type) → points[]` per the V1 chart contract.\n\nDefaults: `quote=fiat:USD`, `timeframe=24h`,\n`granularity` per the timeframe table below, `price_type=vwap`.\n\nDefault-granularity table (per ADR-0020):\n\n| Timeframe | Default granularity |\n| --------- | ------------------- |\n| `1h`      | `1m`                |\n| `24h`     | `15m`               |\n| `1w`      | `1h`                |\n| `1mo`     | `4h`                |\n| `1y`      | `1d`                |\n| `all`     | `1d`                |\n\nA response carries at most 50 000 buckets. When the requested\n(`timeframe`, `granularity`) grid is wider than that, the\nseries is served at the finest width that fits and\n`data.granularity` reports the width actually served —\n`timeframe=1y&granularity=1m` is served at `15m`. The\nalternative, which this replaces, was the oldest 50 000\nminute buckets of the year with nothing on the wire to say the\nwindow had been cut to a tenth. `timeframe=all` is never\ncoarsened (its size is a property of the data, not of the\nrequest). `1m` may additionally be bounded to 90 days on a\ngiven deployment — see the `granularity` parameter.\n\n`price_type=twap` returns a time-weighted series from the\n`twap_1h` / `twap_1d` continuous aggregates. TWAP is\ntime-weighted at 1-minute resolution (each minute's mean price\ncounts once, regardless of how many trades printed in it), but\nonly minutes that TRADED are sampled — an empty minute is not\ncarried forward, so a thin pair's bar is the mean of the few\nminutes that printed, not a weighting of every minute in the\nhour or day. A fill under $0.01 notional (or with no USD\nvaluation) does not move a bar that holds any fill at or\nabove that floor. It is served only at\n1h or 1d granularity — the requested\n`granularity` is snapped onto the nearer of the two and the\nresponse reports the grain actually served. Single-bar TWAP\nover an arbitrary window stays on `/v1/twap` (LOCF Δt-weighted\ncompute from raw trades).\n\nXLM's canonical spellings (`native`, `crypto:XLM`, its SAC) are\ndifferent venue populations, so a pair with no buckets under the\nrequested spelling is retried under the others and the first\npopulated series answers. An alias spelling is the same asset,\nnot a proxy — `asset_id` still echoes what was asked for and\n`flags.triangulated` stays false. The USD-pegged stablecoin\nproxy is tried only after every spelling comes back empty, and\nthat one does stamp `flags.triangulated=true`. When no proxy\nanswers either, a non-XLM asset's series is derived through\nXLM — its XLM-quoted series multiplied, bucket by bucket, by\nXLM's own series in the requested fiat (analogous to the\nADR-0051 composition, but pivoting through XLM rather than\nUSD: the USD peg's own USD series has no USD leg to anchor\non) — and stamped\n`flags.triangulated=true`. That route runs strictly last, so a\ndirectly observed market always wins over a derived one; it is\nhow the declared USD peg itself, which nothing on chain quotes\nin USD, charts its actual traded dollar price rather than an\nempty series or an asserted 1.0.\n\nAn EMPTY default-vwap series carries `coverage_from`: the\nearliest daily bucket held for anything this chain of reads\ndraws on — the pair under every spelling, each proxy pair, and\nthe XLM cross as one candidate whose floor is the later of its\ntwo legs. With the field present an empty window reads\n\"quiet since then\"; absent, nothing is held for the pair (or\nthe floor could not be read). The window always ends at now, so\n`flags.outside_coverage` never fires on this surface.\n\nFiat:fiat pairs are served from the daily `fx_quotes`\nreference-rate series (sub-daily granularities replicate the\ndaily bar). Cross-fiat pairs where neither side is USD\n(e.g. `asset=fiat:EUR&quote=fiat:JPY`) are triangulated on\nread through both USD legs — `rate_usd[quote] /\nrate_usd[base]` per shared day, same algebra as /v1/price's\ncross-rate fallback — and stamp `flags.triangulated=true`.\n",
+              "content": "Returns CLOSED CAGG buckets within a rolling time window for\none asset/quote pair, shaped as `(timeframe, granularity,\nprice_type) → points[]` per the V1 chart contract.\n\nDefaults: `quote=fiat:USD`, `timeframe=24h`,\n`granularity` per the timeframe table below, `price_type=vwap`.\n\nDefault-granularity table (per ADR-0020):\n\n| Timeframe | Default granularity |\n| --------- | ------------------- |\n| `1h`      | `1m`                |\n| `24h`     | `15m`               |\n| `1w`      | `1h`                |\n| `1mo`     | `4h`                |\n| `1y`      | `1d`                |\n| `all`     | `1d`                |\n\nA response carries at most 50 000 buckets. When the requested\n(`timeframe`, `granularity`) grid is wider than that, the\nseries is served at the finest width that fits and\n`data.granularity` reports the width actually served —\n`timeframe=1y&granularity=1m` is served at `15m`. The\nalternative, which this replaces, was the oldest 50 000\nminute buckets of the year with nothing on the wire to say the\nwindow had been cut to a tenth. `timeframe=all` is never\ncoarsened (its size is a property of the data, not of the\nrequest). `1m` may additionally be bounded to 90 days on a\ngiven deployment — see the `granularity` parameter.\n\n`price_type=twap` returns a time-weighted series from the\n`twap_1h` / `twap_1d` continuous aggregates. TWAP is\ntime-weighted at 1-minute resolution (each minute's mean price\ncounts once, regardless of how many trades printed in it), but\nonly minutes that TRADED are sampled — an empty minute is not\ncarried forward, so a thin pair's bar is the mean of the few\nminutes that printed, not a weighting of every minute in the\nhour or day. A fill under $0.01 notional (or with no USD\nvaluation) does not move a bar that holds any fill at or\nabove that floor. It is served only at\n1h or 1d granularity — the requested\n`granularity` is snapped onto the nearer of the two and the\nresponse reports the grain actually served. Single-bar TWAP\nover an arbitrary window stays on `/v1/twap` (LOCF Δt-weighted\ncompute from raw trades).\n\nXLM's canonical spellings (`native`, `crypto:XLM`, its SAC) are\ndifferent venue populations, so a pair with no buckets under the\nrequested spelling is retried under the others and the first\npopulated series answers. An alias spelling is the same asset,\nnot a proxy — `asset_id` still echoes what was asked for and\n`flags.triangulated` stays false. The USD-pegged stablecoin\nproxy is tried only after every spelling comes back empty, and\nthat one does stamp `flags.triangulated=true`. When no proxy\nanswers either, a non-XLM asset's series is derived through\nXLM — its XLM-quoted series multiplied, bucket by bucket, by\nXLM's own series in the requested fiat (analogous to the\nADR-0051 composition, but pivoting through XLM rather than\nUSD: the USD peg's own USD series has no USD leg to anchor\non) — and stamped\n`flags.triangulated=true`. That route runs strictly last, so a\ndirectly observed market always wins over a derived one; it is\nhow the declared USD peg itself, which nothing on chain quotes\nin USD, charts its actual traded dollar price rather than an\nempty series or an asserted 1.0.\n\nAn EMPTY default-vwap series carries `coverage_from`: the\nearliest daily bucket held for anything this chain of reads\ndraws on — the pair under every spelling, each proxy pair, and\nthe XLM cross as one candidate whose floor is the later of its\ntwo legs. With the field present an empty window reads\n\"quiet since then\"; absent, nothing is held for the pair (or\nthe floor could not be read). The window always ends at now, so\n`flags.outside_coverage` never fires on this surface.\n\nFiat:fiat pairs are served from the daily `fx_quotes`\nreference-rate series (sub-daily granularities replicate the\ndaily bar). Cross-fiat pairs where neither side is USD\n(e.g. `asset=fiat:EUR&quote=fiat:JPY`) are triangulated on\nread through both USD legs — `rate_usd[quote] /\nrate_usd[base]` per shared day, same algebra as /v1/price's\ncross-rate fallback — and stamp `flags.triangulated=true`.\n\nA pair on a directory-flagged scam issuer is a 404 of type\n`price-withheld` (`scam_issuer`), the same gate and vocabulary\nas `/v1/price` and `/v1/history/since-inception`, never an\nempty 200.\n",
               "type": "text/plain"
             },
             "url": {
@@ -8548,6 +8611,86 @@
               },
               "status": "Bad Request",
               "code": 400,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+              "cookie": [],
+              "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "Not found.",
+              "originalRequest": {
+                "url": {
+                  "path": [
+                    "chart"
+                  ],
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "query": [
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "(Required) Canonical asset identifier — matches the `asset_id` on\nresponse bodies. Query-parameter form is the shorter `asset`\nper the handler implementations (/v1/price, /v1/oracle/latest).\nStrict canonical form only — `XLM` / `USDC` are rejected;\nuse `native` for XLM and the full `<code>-<G…>` strkey for\ncredit assets.\n",
+                        "type": "text/plain"
+                      },
+                      "key": "asset",
+                      "value": "<string>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Quote-side asset. Either a canonical asset identifier (`native`,\n`<code>-<issuer>`, contract ID) for crypto-quoted pairs, or\nthe `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,\n`fiat:EUR`). Default `fiat:USD`.\n",
+                        "type": "text/plain"
+                      },
+                      "key": "quote",
+                      "value": "fiat:USD"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Rolling lookback window anchored at now — `24h` means\n\"the last 24 hours\", `all` means \"since first observation\".\nShorthand alternative to explicit `from`/`to` bounds on the\nchart/series surfaces. Default `24h`.\n (This can only be one of 1h,24h,1w,1mo,1y,all)",
+                        "type": "text/plain"
+                      },
+                      "key": "timeframe",
+                      "value": "24h"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Bucket width for the returned series (`1m` = 1 minute …\n`1mo` = 1 month). When omitted the server picks a sensible\nwidth for the requested timeframe (e.g. `1m` for `1h`,\n`1h` for `1w`) so the series stays a few hundred points.\n\n**Requested width, not necessarily the served one.** A single\nresponse carries at most 50 000 buckets, so a\n(`timeframe`, `granularity`) pair whose grid is wider than\nthat cannot be answered at the width asked for. Rather than\nreturn the oldest 50 000 buckets and stop — which is what a\n`?timeframe=1y&granularity=1m` request used to get: 36 of the\n365 days requested, ending three months early, under a\nresponse that still claimed `1m` — the series is served at the\nfinest width that DOES fit and the response's own\n`granularity` reports it. Today that affects exactly one\ncombination: `timeframe=1y` with `granularity=1m` is served at\n`15m` (525 600 grid points against 35 040). Read the response\n`granularity`, not the request, to label an axis.\n\n`timeframe=all` is never coarsened: it asks for whatever the\ndeployment holds, so its point count is a property of the data\nrather than of the request, and it is routinely well under the\ncap.\n\n**`1m` may be bounded to 90 days.** The minute aggregate is the\none rung a deployment can put a retention window on (migration\n0156, 90 days, shipped disabled); every coarser width holds the\ndeployment's full history. Where the window is enabled, a `1m`\nseries over an older window comes back empty rather than wrong,\nand the raw trades behind it are still reachable through\n`/v1/history`.\n (This can only be one of 1m,15m,1h,4h,1d,1w,1mo)",
+                        "type": "text/plain"
+                      },
+                      "key": "granularity",
+                      "value": "1w"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Series type. `vwap` (default) returns the volume-weighted\nprice series. `twap` returns the time-weighted price series\nfrom the `twap_1h` / `twap_1d` continuous aggregates\n(time-weighted at 1-minute resolution over the minutes that\ntraded — an empty minute is not carried forward; served at 1h or 1d\ngranularity, the requested granularity snapped onto the\nnearer of the two). `market_cap` returns a USD-denominated\nmarket-cap series. For fiat:* base assets it is M2\n(verified-currency catalogue) × daily FX rate (fx_quotes).\nFor on-chain (native / classic / Soroban) base assets it is\nthe daily USD price × daily circulating supply (the\n`supply_1d` continuous aggregate, forward-filled). Off-chain\n`crypto:*` reference assets (BTC/ETH/…) have no on-chain\nsupply we publish, so they return an empty series.\n (This can only be one of vwap,twap,market_cap)",
+                        "type": "text/plain"
+                      },
+                      "key": "price_type",
+                      "value": "vwap"
+                    }
+                  ],
+                  "variable": []
+                },
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/problem+json"
+                  }
+                ],
+                "method": "GET",
+                "body": {}
+              },
+              "status": "Not Found",
+              "code": 404,
               "header": [
                 {
                   "key": "Content-Type",
