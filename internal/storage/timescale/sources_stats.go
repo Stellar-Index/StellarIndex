@@ -170,35 +170,31 @@ func (s *Store) GetSourceVolumeHistory7d(ctx context.Context) ([]SourceVolumeBuc
 // the per-hour inputs: sum_usd_priced (trades already USD-valued) plus
 // sum_xlm_base / sum_xlm_quote (the native/XLM-SAC fallback legs). The
 // CAGG can't cross-reference prices_1m, so the XLM/USD multiply happens
-// here at read time — sum_usd_priced + (xlm legs)/1e7 * current vwap —
-// reproducing GetSourceStats's per-row CASE. The xlm_usd CTE stays at
-// 24h: we want the CURRENT XLM/USD rate regardless of the history window.
-func (s *Store) sourceVolumeHistory(ctx context.Context, window string) ([]SourceVolumeBucket, error) {
-	const q = `
-		WITH xlm_usd AS (
-		  SELECT vwap
-		    FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND vwap IS NOT NULL
-		     AND bucket >= NOW() - INTERVAL '24 hours'
-		   ORDER BY bucket DESC
-		   LIMIT 1
-		)
+// here at read time via dexHourlyValueExpr(false) (bespoke_dex.go) — the
+// SAME formula dexWindowKPIQuery/dexActivitySeriesQuery apply, aggregated,
+// for their own 24h reads of this CAGG. The bucket predicate is likewise
+// dexHourlyBucketWindow (GH-1113): this used to floor its window to
+// date_trunc('hour', NOW() - window), which pulls in one extra bucket
+// versus the other reader's strict `>` and reported a different 24h
+// volume for the same source. The xlm_usd CTE stays at 24h: we want the
+// CURRENT XLM/USD rate regardless of the history window.
+// sourceVolumeHistoryQuery builds sourceVolumeHistory's query, split out
+// so its bucket predicate + value expression can be pinned against
+// dexWindowKPIQuery/dexActivitySeriesQuery's (GH-1113) without a database.
+func sourceVolumeHistoryQuery() string {
+	return dexXLMUSDVwapCTE + `
 		SELECT source,
 		       bucket AS hour,
-		       (COALESCE(sum_usd_priced, 0)
-		         + (COALESCE(sum_xlm_base, 0) + COALESCE(sum_xlm_quote, 0)) / 1e7::numeric
-		           * COALESCE((SELECT vwap FROM xlm_usd), 0))::text AS volume_usd,
+		       (` + dexHourlyValueExpr(false) + `)::text AS volume_usd,
 		       trade_count::bigint AS trade_count
 		  FROM source_volume_1h
-		 WHERE bucket >= date_trunc('hour', NOW() - $1::interval)
+		 WHERE ` + dexHourlyBucketWindow(1) + `
 		 ORDER BY source, hour
 	`
-	rows, err := s.db.QueryContext(ctx, q, window)
+}
+
+func (s *Store) sourceVolumeHistory(ctx context.Context, window string) ([]SourceVolumeBucket, error) {
+	rows, err := s.db.QueryContext(ctx, sourceVolumeHistoryQuery(), window)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: sourceVolumeHistory: %w", err)
 	}
