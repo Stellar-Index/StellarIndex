@@ -82,6 +82,16 @@ const (
 	// mapping — see internal/sources/aquarius/decode_rewards.go's
 	// decodePositionUpdate doc comment). Aquarius gauge.
 	AmountSemanticsSignedDeltaSum = "signed_delta_sum_unconfirmed_unit"
+	// AmountSemanticsSupersededByAuction — a Blend supply/borrow leg a
+	// liquidation or bad-debt auction fill, or a bad_debt write-off, has
+	// moved b/d-tokens into or out of. Those moves carry no underlying
+	// amount, so amount is "" (unknown) unless the leg's b/d-token
+	// balance is exactly zero, when it is "0" and the leg is closed.
+	AmountSemanticsSupersededByAuction = "superseded_by_auction"
+	// AmountSemanticsNotYetPublished — a stateful position the protocol
+	// has published no figure for yet: amount is "" (unknown, not a
+	// verified zero). sorocredit.
+	AmountSemanticsNotYetPublished = "not_yet_published"
 
 	// BasisEventDerived — computed here by summing this fold's own
 	// event log; not read from any single "current state" field.
@@ -99,7 +109,8 @@ const (
 // event-derived positions don't model interest accrual."
 const positionsHonestNote = "Amounts are on-chain quantities only — no USD or other valuation is applied. " +
 	"event_derived positions are a sum of historical per-event amounts and do NOT model interest, fees, " +
-	"or exchange-rate accrual since each event; see each position's amount_semantics for exactly what the " +
+	"or exchange-rate accrual since each event, and a Blend leg a liquidation or bad-debt auction has moved " +
+	"carries no net (superseded_by_auction); see each position's amount_semantics for exactly what the " +
 	"number represents, and basis for whether it was derived here or read from the protocol's own published state."
 
 // PositionLastActivity is the (ledger, time) pair for the most recent
@@ -518,35 +529,47 @@ func (h *Handler) buildBlendPositions(ctx context.Context, address string, resol
 			assets = []string{assetLabel}
 		}
 		if row.HasSupplyLeg {
-			out = append(out, PositionEntry{
-				Protocol:        "blend",
-				PositionKind:    PositionKindLendingSupply,
-				Venue:           row.Pool,
-				VenueLabel:      venueLabel,
-				Assets:          assets,
-				Amount:          row.SupplyNet,
-				AmountSemantics: AmountSemanticsNetUnderlying,
-				LastActivity:    fmtActivity(row.SupplyLastLedger, row.SupplyLastActivity),
-				Basis:           BasisEventDerived,
-				closed:          isZeroDecimal(row.SupplyNet),
-			})
+			out = append(out, blendLegEntry(PositionEntry{
+				Protocol:     "blend",
+				PositionKind: PositionKindLendingSupply,
+				Venue:        row.Pool,
+				VenueLabel:   venueLabel,
+				Assets:       assets,
+				LastActivity: fmtActivity(row.SupplyLastLedger, row.SupplyLastActivity),
+				Basis:        BasisEventDerived,
+			}, row.SupplyNet, row.SupplySuperseded, row.SupplyTokens))
 		}
 		if row.HasBorrowLeg {
-			out = append(out, PositionEntry{
-				Protocol:        "blend",
-				PositionKind:    PositionKindLendingBorrow,
-				Venue:           row.Pool,
-				VenueLabel:      venueLabel,
-				Assets:          assets,
-				Amount:          row.BorrowNet,
-				AmountSemantics: AmountSemanticsNetUnderlying,
-				LastActivity:    fmtActivity(row.BorrowLastLedger, row.BorrowLastActivity),
-				Basis:           BasisEventDerived,
-				closed:          isZeroDecimal(row.BorrowNet),
-			})
+			out = append(out, blendLegEntry(PositionEntry{
+				Protocol:     "blend",
+				PositionKind: PositionKindLendingBorrow,
+				Venue:        row.Pool,
+				VenueLabel:   venueLabel,
+				Assets:       assets,
+				LastActivity: fmtActivity(row.BorrowLastLedger, row.BorrowLastActivity),
+				Basis:        BasisEventDerived,
+			}, row.BorrowNet, row.BorrowSuperseded, row.BorrowTokens))
 		}
 	}
 	return out
+}
+
+// blendLegEntry sets a Blend leg's amount. A superseded leg's underlying
+// net omits the auctioned b/d-tokens, so it serves no amount; only an
+// exactly-zero token balance (fully seized or repaid) is a known zero.
+func blendLegEntry(e PositionEntry, net string, superseded bool, tokens string) PositionEntry {
+	if superseded {
+		e.AmountSemantics = AmountSemanticsSupersededByAuction
+		if tokens == "0" { // strict: an unread balance ("") is not a known zero
+			e.Amount = "0"
+			e.closed = true
+		}
+		return e
+	}
+	e.Amount = net
+	e.AmountSemantics = AmountSemanticsNetUnderlying
+	e.closed = isZeroDecimal(net)
+	return e
 }
 
 // buildBlendBackstopPositions maps BlendBackstopFold rows to
@@ -661,8 +684,9 @@ func (h *Handler) buildDefindexPositions(ctx context.Context, address string, co
 // "Closed" here is Withdrawn (a Withdrawal event observed against this
 // position), NOT a zero-amount check — a freshly opened position with
 // no statement published yet legitimately has no reportable amount
-// (LatestAmount == "") without being closed; reporting "0" for it would
-// misrepresent "unknown yet" as "verified zero".
+// (LatestAmount == "") without being closed; it is served with amount ""
+// and amount_semantics not_yet_published, since "0" would misrepresent
+// "unknown yet" as "verified zero".
 func (h *Handler) buildCreditPositions(ctx context.Context, address string, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.CreditPositionsByOwner(ctx, address)
 	if err != nil {
@@ -672,24 +696,23 @@ func (h *Handler) buildCreditPositions(ctx context.Context, address string, cov 
 	}
 	out := make([]PositionEntry, 0, len(rows))
 	for _, row := range rows {
-		amount := row.LatestAmount
 		activityLedger, activityTime := row.LatestLedger, row.LatestActivity
 		if activityTime.IsZero() {
 			// No statement published yet — fall back to the position-open
-			// event as the last known activity; amount stays "" (unknown,
-			// not a verified zero).
+			// event as the last known activity.
 			activityLedger, activityTime = row.OpenedLedger, row.OpenedAt
 		}
-		if amount == "" {
-			amount = "0"
+		semantics := AmountSemanticsStatefulCurrent
+		if row.LatestAmount == "" {
+			semantics = AmountSemanticsNotYetPublished
 		}
 		out = append(out, PositionEntry{
 			Protocol:        "sorocredit",
 			PositionKind:    PositionKindCredit,
 			Venue:           row.CollateralContract,
 			Assets:          []string{"USDC"},
-			Amount:          amount,
-			AmountSemantics: AmountSemanticsStatefulCurrent,
+			Amount:          row.LatestAmount,
+			AmountSemantics: semantics,
 			LastActivity:    fmtActivity(activityLedger, activityTime),
 			Basis:           BasisStateful,
 			closed:          row.Withdrawn,
