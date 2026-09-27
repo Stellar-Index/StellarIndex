@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -398,6 +399,34 @@ func TestAnsibleFiatPegStanza_ValidAndComplete(t *testing.T) {
 	// r1 sets no substance keys, so it serves on the library floors; a
 	// stanza or Default() change that moves them must fail here.
 	assertDefaultSubstancePolicy(t, "r1 [pricing_guard]", c.PricingGuard)
+}
+
+// TestAnsibleCookieDomain_DefaultsHostOnly pins the r1 template's
+// cookie_domain jinja default against config.go's documented-safe
+// default (RSEC-A3): CookieDomain's doc says empty means a host-only
+// cookie scoped to the API host, but the shipped ansible default used
+// to silently override that with a shared-subdomain value whenever the
+// operator var was unset — every r1 deploy shipped the wide cookie by
+// default, not the documented safe one.
+func TestAnsibleCookieDomain_DefaultsHostOnly(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(wd, "..", "..", "configs", "ansible", "roles",
+		"archival-node", "templates", "stellarindex.toml.j2")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Skipf("ansible template not at %s: %v", path, err)
+	}
+	re := regexp.MustCompile(`cookie_domain\s*=.*default\('([^']*)'\)`)
+	m := re.FindSubmatch(raw)
+	if m == nil {
+		t.Fatalf("cookie_domain line with a jinja default() not found in %s", path)
+	}
+	if got := string(m[1]); got != "" {
+		t.Errorf("ansible cookie_domain default = %q, want \"\" (host-only, matching config.go's documented-safe default)", got)
+	}
 }
 
 func TestLoad_missingFileErrorsNice(t *testing.T) {
