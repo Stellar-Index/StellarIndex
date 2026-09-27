@@ -175,9 +175,18 @@ func oneSideZeroTradeEvent(t *testing.T, ledger, op uint32) soroswap.TradeEvent 
 	return ev
 }
 
+// negativeTradeEvent is invalid for a reason other than one-side-zero: a
+// decoder bug the run must report as failed, never as an expected drop.
+func negativeTradeEvent(t *testing.T, ledger, op uint32) soroswap.TradeEvent {
+	t.Helper()
+	ev := storableTradeEvent(t, ledger, op)
+	ev.Trade.BaseAmount = canonical.NewAmount(big.NewInt(-1))
+	return ev
+}
+
 // TestDrainAndWriteCountsDroppedTradesSeparately pins that a trade the served
 // tier refuses (filterStorableTrades drops it inside a SUCCESSFUL batch call)
-// is reported as dropped, never as written.
+// is reported as dropped, never as written, and any other invalid trade fails.
 func TestDrainAndWriteCountsDroppedTradesSeparately(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctx := context.Background()
@@ -186,6 +195,7 @@ func TestDrainAndWriteCountsDroppedTradesSeparately(t *testing.T) {
 		storableTradeEvent(t, 1, 0),
 		oneSideZeroTradeEvent(t, 1, 1),
 		storableTradeEvent(t, 2, 0),
+		negativeTradeEvent(t, 2, 1),
 	}
 
 	cases := []struct {
@@ -197,7 +207,7 @@ func TestDrainAndWriteCountsDroppedTradesSeparately(t *testing.T) {
 		wantPerRow  int // insertTrade calls
 	}{
 		{name: "batch succeeds", write: true, wantWritten: 2, wantDropped: 1},
-		{name: "batch fails, per-row fallback skips the unstorable row", batchErr: errInsert, write: true, wantWritten: 2, wantDropped: 1, wantPerRow: 2},
+		{name: "batch fails, per-row fallback skips the unstorable row", batchErr: errInsert, write: true, wantWritten: 2, wantDropped: 1, wantPerRow: 3},
 		{name: "dry-run predicts the same split", wantWritten: 2, wantDropped: 1},
 	}
 	for _, tc := range cases {
@@ -210,8 +220,8 @@ func TestDrainAndWriteCountsDroppedTradesSeparately(t *testing.T) {
 				return tr.Validate()
 			}
 			written, failed, dropped := drainAndWrite(ctx, logger, w, buf, tc.write)
-			if written[src] != tc.wantWritten || dropped[src] != tc.wantDropped || failed[src] != 0 {
-				t.Errorf("written=%d dropped=%d failed=%d, want %d/%d/0",
+			if written[src] != tc.wantWritten || dropped[src] != tc.wantDropped || failed[src] != 1 {
+				t.Errorf("written=%d dropped=%d failed=%d, want %d/%d/1",
 					written[src], dropped[src], failed[src], tc.wantWritten, tc.wantDropped)
 			}
 			if perRow != tc.wantPerRow {

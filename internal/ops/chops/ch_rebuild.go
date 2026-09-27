@@ -1210,6 +1210,20 @@ func writeTradeBatch(ctx context.Context, logger *slog.Logger, w eventWriter, ba
 	return nil
 }
 
+// tallyTrade counts a trade the batch writer accepted: the served tier drops
+// the expected one-side-zero SDEX fill, and any other invalid row is a decoder
+// bug that must fail the run, as the store's own filter treats it.
+func tallyTrade(t canonical.Trade, src string, written, failed, dropped map[string]int) {
+	switch {
+	case t.Validate() == nil:
+		written[src]++
+	case timescale.IsOneSideZeroFill(t):
+		dropped[src]++
+	default:
+		failed[src]++
+	}
+}
+
 // drainAndWrite persists the buffered events to Postgres and returns per-source
 // written / failed tallies.
 //
@@ -1225,7 +1239,7 @@ func writeTradeBatch(ctx context.Context, logger *slog.Logger, w eventWriter, ba
 // confirmed. A row whose batch AND per-row insert both fail — or whose
 // HandleEvent returns an error — is tallied in failed[source] and never
 // inflates written[]. A trade the served tier refuses
-// (timescale.ValidateStorableTrade) never lands and is tallied in dropped[].
+// (a one-side-zero fill, timescale.IsOneSideZeroFill) never lands and is tallied in dropped[].
 // In dry-run (write=false) nothing is persisted and the same split is predicted.
 func drainAndWrite(ctx context.Context, logger *slog.Logger, w eventWriter, buf []consumer.Event, write bool) (written, failed, dropped map[string]int) { //nolint:gocognit,gocyclo,funlen // linear: three symmetric batch/flush closures + a per-event dispatch; splitting the flush closures apart hurts clarity.
 	written = map[string]int{}
@@ -1250,7 +1264,7 @@ func drainAndWrite(ctx context.Context, logger *slog.Logger, w eventWriter, buf 
 		if err := writeTradeBatch(ctx, logger, w, batch); err != nil {
 			logger.Warn("batch trade insert failed; per-row fallback", "n", len(batch), "err", err)
 			for i, t := range batch {
-				if timescale.ValidateStorableTrade(t) != nil {
+				if t.Validate() != nil && timescale.IsOneSideZeroFill(t) {
 					dropped[batchSrc[i]]++
 					continue
 				}
@@ -1265,11 +1279,7 @@ func drainAndWrite(ctx context.Context, logger *slog.Logger, w eventWriter, buf 
 			// The writer succeeds while silently dropping rows the served tier
 			// refuses (filterStorableTrades); those never landed.
 			for i, s := range batchSrc {
-				if timescale.ValidateStorableTrade(batch[i]) != nil {
-					dropped[s]++
-				} else {
-					written[s]++
-				}
+				tallyTrade(batch[i], s, written, failed, dropped)
 			}
 		}
 		batch = batch[:0]
@@ -1335,8 +1345,8 @@ func drainAndWrite(ctx context.Context, logger *slog.Logger, w eventWriter, buf 
 			fmt.Fprintf(os.Stderr, "ch-rebuild: drain %dM/%dM in %s\n", i/1_000_000, len(buf)/1_000_000, time.Since(wStart).Round(time.Second))
 		}
 		if !write { // dry-run: count what WOULD be written
-			if t, ok := tradeOf(ev); ok && timescale.ValidateStorableTrade(t) != nil {
-				dropped[ev.Source()]++
+			if t, ok := tradeOf(ev); ok {
+				tallyTrade(t, ev.Source(), written, failed, dropped)
 			} else {
 				written[ev.Source()]++
 			}
@@ -1362,7 +1372,8 @@ func drainAndWrite(ctx context.Context, logger *slog.Logger, w eventWriter, buf 
 			// Cut only on a ledger boundary (a batch may run past tradeBatchN to
 			// finish its last ledger): the bulk writer's emptiness probe spans
 			// the batch's ledger extent, so a ledger split across two batches
-			// makes the second find the first's tail and refuse the COPY.
+			// makes the second find the first's tail and refuse the COPY. This
+			// only buys COPY on a ledger-ordered buffer; -sdex-reconcile's is not.
 			if len(batch) >= tradeBatchN && batch[len(batch)-1].Ledger != t.Ledger {
 				flush()
 			}

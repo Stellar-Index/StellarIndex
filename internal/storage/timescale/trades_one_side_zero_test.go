@@ -57,8 +57,8 @@ func TestIsOneSideZeroFill(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := isOneSideZeroFill(tc.t); got != tc.want {
-				t.Errorf("isOneSideZeroFill(%s) = %v, want %v", tc.name, got, tc.want)
+			if got := IsOneSideZeroFill(tc.t); got != tc.want {
+				t.Errorf("IsOneSideZeroFill(%s) = %v, want %v", tc.name, got, tc.want)
 			}
 		})
 	}

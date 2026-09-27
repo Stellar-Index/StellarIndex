@@ -1593,7 +1593,7 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 func (s *Store) filterStorableTrades(trades []canonical.Trade) []canonical.Trade {
 	firstBad := -1
 	for i := range trades {
-		if ValidateStorableTrade(trades[i]) != nil {
+		if trades[i].Validate() != nil {
 			firstBad = i
 			break
 		}
@@ -1604,12 +1604,12 @@ func (s *Store) filterStorableTrades(trades []canonical.Trade) []canonical.Trade
 	storable := make([]canonical.Trade, firstBad, len(trades))
 	copy(storable, trades[:firstBad])
 	for _, t := range trades[firstBad:] {
-		err := ValidateStorableTrade(t)
+		err := t.Validate()
 		if err == nil {
 			storable = append(storable, t)
 			continue
 		}
-		if isOneSideZeroFill(t) {
+		if IsOneSideZeroFill(t) {
 			slog.Default().Debug("timescale: batch skipped one-side-zero fill (no served price; kept in CH substrate, census-counted — INV-6)",
 				"source", t.Source, "ledger", t.Ledger, "tx_hash", t.TxHash, "op_index", t.OpIndex,
 				"base", t.BaseAmount.String(), "quote", t.QuoteAmount.String())
@@ -1622,17 +1622,13 @@ func (s *Store) filterStorableTrades(trades []canonical.Trade) []canonical.Trade
 	return storable
 }
 
-// ValidateStorableTrade is the gate filterStorableTrades drops rows on: a
-// non-nil error means the served trades tier will not hold t.
-func ValidateStorableTrade(t canonical.Trade) error { return t.Validate() }
-
-// isOneSideZeroFill reports whether t is the SDEX rounding artifact where
+// IsOneSideZeroFill reports whether t is the SDEX rounding artifact where
 // exactly one leg rounded to 0 while the other stayed positive — the single
 // [canonical.Trade.Validate] failure the ingest path expects and treats as a
 // benign no-op (see [Store.filterStorableTrades]). A both-zero atom is
 // already dropped in the decoder, and a negative leg is never a valid Stellar
 // amount, so neither qualifies.
-func isOneSideZeroFill(t canonical.Trade) bool {
+func IsOneSideZeroFill(t canonical.Trade) bool {
 	bs, qs := t.BaseAmount.Sign(), t.QuoteAmount.Sign()
 	return bs >= 0 && qs >= 0 && (bs == 0) != (qs == 0)
 }
