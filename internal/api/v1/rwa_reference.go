@@ -9,6 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // Oracle NAV reference and premium/discount for /v1/rwa/assets.
@@ -125,6 +126,11 @@ const rwaReferenceStaleAfter = 72 * time.Hour
 // otherwise let the carried rows age past the bound this file and
 // docs/methodology/rwa-definition.md both claim is absolute.
 const rwaReferenceMaxAge = 7 * 24 * time.Hour
+
+// rwaReferenceRefreshTimeout bounds one detached oracle-stream read,
+// mirroring oracleFetchBudget: the read must outlive whichever request
+// happened to notice the cache was cold or lapsed.
+const rwaReferenceRefreshTimeout = 30 * time.Second
 
 // ─── wire shape ─────────────────────────────────────────────────────
 
@@ -589,6 +595,51 @@ func (s *Server) cachedRWAReferences(ctx context.Context) rwaReferences {
 	done := make(chan struct{})
 	s.rwaRefFlight = done
 	s.rwaRefMu.Unlock()
+	//nolint:gosec,contextcheck // G118 / contextcheck:
+	// intentional detached fill — the waking caller's own ctx must not
+	// abort a fill every other single-flighted caller depends on; see
+	// fillRWAReferences's doc comment (GH-587).
+	go s.fillRWAReferences(done)
+
+	select {
+	case <-done:
+	case <-ctx.Done():
+		return rwaReferences{}
+	}
+	s.rwaRefMu.Lock()
+	var snap rwaReferences
+	if s.rwaRefCache != nil {
+		snap = *s.rwaRefCache
+	}
+	s.rwaRefMu.Unlock()
+	return snap
+}
+
+// fillRWAReferences runs the oracle-stream read and unconditionally
+// releases the single-flight gate, even on panic, before returning.
+//
+// It used to run inline on the waking caller's ctx with the release at
+// the tail of a straight-line function: a panic out of LatestOracleStreams
+// or rwaReferenceSnapshotFrom (recovered one frame up, by net/http's
+// per-request handler) left rwaRefFlight pointing at a channel nobody
+// would ever close, so every later call queued on it until its own
+// deadline and /v1/rwa/assets never served a real answer again for the
+// life of the process (GH-587). Detached onto its own budget for the same
+// reason oracleFetchBudget is: the fill is shared by every queued caller,
+// so one caller's disconnect must not abort it for the rest.
+func (s *Server) fillRWAReferences(done chan struct{}) {
+	defer close(done)
+	defer func() {
+		if rec := recover(); rec != nil {
+			worker.Report(s.logger, "api-rwa-references-refresh", rec)
+		}
+		s.rwaRefMu.Lock()
+		s.rwaRefFlight = nil
+		s.rwaRefMu.Unlock()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), rwaReferenceRefreshTimeout)
+	defer cancel()
 
 	var built rwaReferences
 	updates, err := s.oracle.LatestOracleStreams(ctx)
@@ -602,13 +653,8 @@ func (s *Server) cachedRWAReferences(ctx context.Context) rwaReferences {
 	if built.available {
 		s.rwaRefCache = &built
 		s.rwaRefAt = time.Now()
-	} else if s.rwaRefCache != nil {
-		built = *s.rwaRefCache
 	}
-	s.rwaRefFlight = nil
 	s.rwaRefMu.Unlock()
-	close(done)
-	return built
 }
 
 // ─── per-row application ────────────────────────────────────────────
