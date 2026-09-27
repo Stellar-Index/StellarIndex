@@ -577,6 +577,7 @@ func (s *Store) ClearIssuerHomeDomain(ctx context.Context, gStrkey string) (bool
 
 func (s *Store) writeIssuerHomeDomain(ctx context.Context, op, gStrkey, homeDomain string) (bool, error) {
 	const newHD = `NULLIF($2, '')`
+	//nolint:gosec // G202: fragments are constant SQL (newHD/sep1ResetOnHomeDomainChange); values bind via $N
 	q := `
         UPDATE issuers
            SET home_domain = ` + newHD + `,` + sep1ResetOnHomeDomainChange(newHD) + `
