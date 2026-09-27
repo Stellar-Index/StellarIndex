@@ -76,8 +76,8 @@ groups:
       # stellarindex_redis_writes_blocked (that alert is bgsave-status,
       # a distinct disk-full mechanism); adding a second rule for each
       # would double-page one event, so this rule absorbs all three.
-      # Deliberately NOT widened to MISCONF/EXECABORT — those already
-      # page via stellarindex_redis_writes_blocked.
+      # Not MISCONF: stellarindex_redis_writes_blocked already pages it. Not
+      # EXECABORT: a client-side MULTI error, not a server refusing writes.
       - alert: stellarindex_redis_write_rejected_oom
         expr: rate(redis_errors_total{err=~"OOM|READONLY|NOREPLICAS"}[5m]) > 0
         for: 2m

@@ -145,10 +145,11 @@ customer-visible shape — writes refused outright, not degraded:
   covers, just seen from the write side instead of the replica-count
   side.
 
-Deliberately NOT widened to `MISCONF`/`EXECABORT` —
-`stellarindex_redis_writes_blocked` (`redis-write-blocked-disk-full.md`)
-already pages on those (a disk-full bgsave failure); a second rule
-would double-page the same event.
+Deliberately NOT widened to `MISCONF`: `stellarindex_redis_writes_blocked`
+(`redis-write-blocked-disk-full.md`) already pages on that disk-full bgsave
+failure, and a second rule would double-page it. Nor to `EXECABORT`: that is
+a client-side MULTI queueing error (bad arity, unknown command, ACL), not a
+server refusing writes.
 
 ## Known false-positive patterns
 
