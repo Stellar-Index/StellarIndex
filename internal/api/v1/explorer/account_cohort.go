@@ -257,7 +257,7 @@ func (h *Handler) accountCohortView(ctx context.Context, c clickhouse.AccountCoh
 		Contracts: []AccountCohortContractV{},
 		Positions: []AccountCohortPositionV{},
 		Flows:     AccountCohortFlowsV{Granularity: "1M", Assets: []string{}, Points: []AccountCohortFlowPointV{}},
-		Valuation: AccountCohortValuationV{Basis: accountCohortValuationBasis},
+		Valuation: AccountCohortValuationV{Basis: accountCohortValuationBasis, PriceCap: cohortPricedHoldingsCap},
 		Note:      accountCohortNote,
 	}
 	if !c.Cycle.ComputedAt.IsZero() {
