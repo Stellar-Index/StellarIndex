@@ -21,6 +21,7 @@ import (
 	"go/token"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -118,20 +119,110 @@ func TestChRebuildProjectedScript_DeletesOnlySourcesTradeOfCanRewrite(t *testing
 	if len(deleted) == 0 {
 		t.Fatal("no trades DELETE source list found in ch-rebuild-projected.sh")
 	}
-	cat, _, err := buildReconciliationCatalogue(config.Config{})
-	if err != nil {
-		t.Fatalf("buildReconciliationCatalogue: %v", err)
-	}
-	known := map[string]bool{}
-	for _, src := range cat {
-		known[src.name] = true
-	}
+	targetsBySource := reconciliationTargetsBySource(t)
 	for _, name := range deleted {
-		if !known[name] {
+		if _, ok := targetsBySource[name]; !ok {
 			t.Errorf("ch-rebuild-projected.sh deletes trades for %q, which is not in the reconciliation catalogue — "+
 				"the repair would delete rows nothing re-derives", name)
 		}
 	}
+}
+
+// TestChRebuildProjectedScript_EveryCaseArmDeleteIsReconcilable is GH-768
+// item 3: the trades DELETE above is only 1 of the 12 DELETE statements
+// window_delete_sql emits — the other 11 clear per-source ancillary
+// tables (aquarius_admin, blend_positions, ...) inside a per-source case
+// arm. A source/table pair deleted there but absent from ch-rebuild's
+// reconciliation catalogue is the same silent-data-loss shape as the
+// trades case, just on a different table.
+func TestChRebuildProjectedScript_EveryCaseArmDeleteIsReconcilable(t *testing.T) {
+	arms := caseArmDeletes(t, "../../../scripts/ops/ch-rebuild-projected.sh")
+	if len(arms) == 0 {
+		t.Fatal("no per-source case-arm DELETEs found in ch-rebuild-projected.sh")
+	}
+	targetsBySource := reconciliationTargetsBySource(t)
+	for source, tables := range arms {
+		known, ok := targetsBySource[source]
+		if !ok {
+			t.Errorf("ch-rebuild-projected.sh's case arm %q deletes %v, but %q is not in the reconciliation catalogue — "+
+				"the repair would delete rows nothing re-derives", source, tables, source)
+			continue
+		}
+		for _, table := range tables {
+			if !known[table] {
+				t.Errorf("ch-rebuild-projected.sh's %q arm deletes table %q, which is not among %q's reconciliation "+
+					"targets (%v) — the repair would delete rows ch-rebuild does not know how to re-derive",
+					source, table, source, sortedKeys(known))
+			}
+		}
+	}
+}
+
+// reconciliationTargetsBySource maps each catalogue source name to the
+// set of table names ch-rebuild can re-derive for it.
+func reconciliationTargetsBySource(t *testing.T) map[string]map[string]bool {
+	t.Helper()
+	cat, _, err := buildReconciliationCatalogue(config.Config{})
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+	out := make(map[string]map[string]bool, len(cat))
+	for _, src := range cat {
+		tables := make(map[string]bool, len(src.targets)+1)
+		tables["trades"] = true // every projected trade source also has an implicit trades target
+		for _, tgt := range src.targets {
+			tables[tgt.table] = true
+		}
+		out[src.name] = tables
+	}
+	return out
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// caseArmDeletes parses window_delete_sql's `case "$s" in ... esac` block
+// and returns, for each case-arm label, the table names of every
+// `DELETE FROM <table>` line nested inside that arm.
+func caseArmDeletes(t *testing.T, path string) map[string][]string {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	text := string(body)
+	start := strings.Index(text, `case "$s" in`)
+	if start < 0 {
+		t.Fatalf("case \"$s\" in ... esac block not found in %s", path)
+	}
+	esacRE := regexp.MustCompile(`\n\s*esac`)
+	loc := esacRE.FindStringIndex(text[start:])
+	if loc == nil {
+		t.Fatalf("closing esac not found after case \"$s\" in %s", path)
+	}
+	block := text[start : start+loc[0]]
+	deleteTable := regexp.MustCompile(`DELETE FROM (\w+)`)
+	out := map[string][]string{}
+	for _, arm := range strings.Split(block, ";;") {
+		paren := strings.Index(arm, ")")
+		if paren < 0 {
+			continue
+		}
+		label := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(arm[:paren]), "\n"))
+		if label == "" || strings.ContainsAny(label, " \t\n") {
+			continue // not a bare case label (e.g. leftover from the previous arm's trailing text)
+		}
+		for _, m := range deleteTable.FindAllStringSubmatch(arm[paren:], -1) {
+			out[label] = append(out[label], m[1])
+		}
+	}
+	return out
 }
 
 // deletedTradeSources reads the source names out of the repair script's
