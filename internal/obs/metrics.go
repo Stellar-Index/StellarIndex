@@ -3279,7 +3279,7 @@ var APIStreamHubTopicsReapedTotal = prometheus.NewCounter(prometheus.CounterOpts
 //
 // Operators alert on:
 //
-//	rate(...{outcome="server_error"}[5m]) > 0.1
+//	rate(...{outcome=~"server_error|network_error"}[5m]) > 0.05
 //	  — one customer's URL is sustained-failing, raise a ticket
 //	rate(...{outcome="exhausted"}[1h]) > 0
 //	  — a delivery permanently failed, drag the deliveries table

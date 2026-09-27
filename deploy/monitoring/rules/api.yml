@@ -231,9 +231,17 @@ groups:
       # Permanent failures (`exhausted`) mean we hit the 15-attempt
       # retry budget — operator should review the deliveries log
       # before the customer notices the gap.
+      #
+      # Threshold vs the worker's ceiling: one endpoint's rows are
+      # delivered serially under a 10s attempt timeout (defaultHTTPTimeout),
+      # so a black-holing endpoint yields at most 1/10s = 0.1 failures/s
+      # and the old `> 0.1` could never fire for the sustained-down
+      # endpoint this alert names. 0.05 fires once that lane is half
+      # saturated with timeouts; customerwebhook's
+      # TestDeliveryFailingAlertBelowSingleLaneCeiling pins the bound.
       - alert: stellarindex_customer_webhook_delivery_failing
         expr: |
-          sum(rate(stellarindex_customer_webhook_delivery_attempts_total{outcome=~"server_error|network_error"}[5m])) > 0.1
+          sum(rate(stellarindex_customer_webhook_delivery_attempts_total{outcome=~"server_error|network_error"}[5m])) > 0.05
         for: 15m
         labels:
           severity: ticket
@@ -241,10 +249,10 @@ groups:
           component: api
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
-          summary: "Customer webhook delivery failing at {{ $value | humanize }}/s"
+          summary: "Customer webhook delivery failing at {{ printf \"%.2f\" $value }}/s"
           description: |
             The customer-webhook delivery worker has been failing
-            (5xx + network errors) at > 0.1 attempts/s for 15+ min.
+            (5xx + network errors) at > 0.05 attempts/s for 15+ min.
             One customer's endpoint is likely sustained-down.
             Query `webhook_deliveries` to find the failing webhook:
             `SELECT webhook_id, COUNT(*) FROM webhook_deliveries
@@ -318,10 +326,10 @@ groups:
       # in the journal.
       #
       # Its own rule rather than an extra arm on
-      # `…_delivery_failing` above: that rule's > 0.1/s threshold
+      # `…_delivery_failing` above: that rule's > 0.05/s threshold
       # describes a customer endpoint failing under load, and one
       # wedged row re-POSTing on its 5-minute claim lease is ~0.003/s —
-      # thirty times below it. Folding them would have produced a rule
+      # fifteen times below it. Folding them would have produced a rule
       # that cannot fire on this fault at all.
       #
       # Range [30m] against `for: 15m` so a single step stays true for

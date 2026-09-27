@@ -433,8 +433,9 @@ const maxClaimPerWebhook = 5
 // genuine backoff back into next_attempt_at. If a worker crashes
 // after claiming but before either update, the lease expires after
 // 5 minutes and another worker can pick the row up — that's
-// idempotent because the receiver-side dedupe (event_id header)
-// catches it; and customer-side metrics treat
+// idempotent because the receiver dedupes on X-StellarIndex-Delivery-Id
+// (the row id, so the re-POST repeats it), authenticated by
+// X-StellarIndex-Signature-V2; and customer-side metrics treat
 // duplicate-post-after-worker-crash as the same class as 5xx-retry.
 //
 // Fair share (GH-663): the claim ranks each endpoint's due rows FIFO and

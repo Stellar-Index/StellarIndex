@@ -502,6 +502,7 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 
 	sigTS := w.opts.Clock().Unix()
 	signature := w.signFn(wh.SecretHash, sigTS, d.Payload)
+	deliverySig := signDeliveryHMACSHA256(wh.SecretHash, sigTS, d.ID.String(), d.EventType, d.Payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, wh.URL, bytes.NewReader(d.Payload))
 	if err != nil {
 		// URL malformed at request-build time. This is
@@ -521,6 +522,7 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 	req.Header.Set("X-StellarIndex-Timestamp", strconv.FormatInt(sigTS, 10))
 	req.Header.Set("X-StellarIndex-Signature", "sha256="+signature)
 	req.Header.Set("X-StellarIndex-Delivery-Id", d.ID.String())
+	req.Header.Set("X-StellarIndex-Signature-V2", "sha256="+deliverySig)
 
 	// Time the HTTP roundtrip + body drain. Recorded against the
 	// outcome label so operators can chart p95/p99 latency
@@ -835,6 +837,24 @@ func jitterDelay(delay time.Duration) time.Duration {
 func signHMACSHA256(secret []byte, ts int64, payload []byte) string {
 	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(strconv.FormatInt(ts, 10)))
+	mac.Write([]byte{'.'})
+	mac.Write(payload)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// signDeliveryHMACSHA256 is the X-StellarIndex-Signature-V2 MAC over
+// `"<unix_ts>.<delivery_id>.<event_type>." + body`. signHMACSHA256 leaves
+// the Delivery-Id and Event headers outside the MAC, so a captured delivery
+// could be re-sent under any id (defeating receiver dedupe) or event type;
+// V2 authenticates both. Every field before the body is dot-free except the
+// closed-enum event type, and the body is JSON, so the encoding is unambiguous.
+func signDeliveryHMACSHA256(secret []byte, ts int64, deliveryID, eventType string, payload []byte) string {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(strconv.FormatInt(ts, 10)))
+	mac.Write([]byte{'.'})
+	mac.Write([]byte(deliveryID))
+	mac.Write([]byte{'.'})
+	mac.Write([]byte(eventType))
 	mac.Write([]byte{'.'})
 	mac.Write(payload)
 	return hex.EncodeToString(mac.Sum(nil))
