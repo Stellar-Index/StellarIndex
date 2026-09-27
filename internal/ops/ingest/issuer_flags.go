@@ -50,7 +50,8 @@ type issuerFlagsCounts struct {
 	chainSeen       int // of those, rows the pass actually examined
 	chainAgreed     int // examined rows the chain still agrees with
 	chainCorrected  int // examined rows the chain has moved past
-	chainUnread     int // examined rows the live reader did not answer for
+	chainUnread     int // examined rows neither reader answered for
+	chainMerged     int // of the agreed+corrected, rows answered by the last-known reader
 }
 
 // issuerFlagsCmd persists issuer AccountEntry auth flags into the
@@ -205,8 +206,8 @@ func runIssuerFlags(ctx context.Context, store issuerFlagsStore, reader issuerFl
 	// worth watching — it is ordered by primary key, so a run that never
 	// reaches the tail leaves the tail unexamined indefinitely.
 	_, _ = fmt.Fprintf(o.out,
-		"issuer-flags: chain re-check processed %d of %d filled row(s) — corrected=%d agreed=%d unread=%d\n",
-		c.chainSeen, c.chainCandidates, c.chainCorrected, c.chainAgreed, c.chainUnread)
+		"issuer-flags: chain re-check processed %d of %d filled row(s) — corrected=%d agreed=%d unread=%d (merged=%d)\n",
+		c.chainSeen, c.chainCandidates, c.chainCorrected, c.chainAgreed, c.chainUnread, c.chainMerged)
 	// `absent` is expected and not a failure: an issuer merged before the
 	// current-state projection's floor has no `removed` row to recover a
 	// pre-image from, and one whose account entry is outside the lake's
@@ -404,10 +405,14 @@ func issuerFlagsChainRecheckPass(
 // affordable every night, and it keeps `written` meaning "rows the chain
 // corrected" rather than "rows we touched".
 //
-// A key the live reader does not answer for changes NOTHING, deliberately:
-// absence from the current-state projection is what a merged account and a
-// lake-coverage gap both look like, so this pass may not conclude "removed"
-// — only the fallback reader, which reads an actual `removed` row, may.
+// A key the live reader does not answer for goes to the last-known reader,
+// exactly as in the primary drain: absence from the current-state projection
+// is what a merged account and a lake-coverage gap both look like, so only
+// the fallback, which reads an actual `removed` row, may conclude "merged".
+// Without it an issuer that merged after its row was filled kept its `live`
+// label and its home_domain for good, and the SEP-1 refresh kept fetching
+// that domain for whoever registers it once it lapses. A key neither reader
+// answers for changes NOTHING.
 func issuerFlagsChainRecheckChunk(
 	ctx context.Context, store issuerFlagsStore, reader issuerFlagsReader,
 	o issuerFlagsOpts, chunk []timescale.IssuerAuthFlagsOnRecord, c *issuerFlagsCounts,
@@ -422,13 +427,22 @@ func issuerFlagsChainRecheckChunk(
 	if err != nil {
 		return err
 	}
+	var lastKnown map[string]clickhouse.AccountAuthFlags
+	if misses := chainRecheckMisses(keys, live); len(misses) > 0 {
+		if lastKnown, err = reader.RemovedAccountsLastKnownAuthFlags(ctx, misses); err != nil {
+			return err
+		}
+	}
 
-	rows := make([]timescale.IssuerAuthFlags, 0, len(live))
+	rows := make([]timescale.IssuerAuthFlags, 0, len(live)+len(lastKnown))
 	for _, rec := range chunk {
 		f, ok := live[rec.GStrkey]
 		if !ok {
-			c.chainUnread++
-			continue
+			if f, ok = lastKnown[rec.GStrkey]; !ok {
+				c.chainUnread++
+				continue
+			}
+			c.chainMerged++
 		}
 		fresh := issuerAuthFlagsRow(rec.GStrkey, f)
 		if issuerAuthFlagsOnRecordAgrees(rec, fresh) {
@@ -449,13 +463,25 @@ func issuerFlagsChainRecheckChunk(
 	return nil
 }
 
+// chainRecheckMisses returns the keys the live reader did not answer for, in
+// input order.
+func chainRecheckMisses(keys []string, live map[string]clickhouse.AccountAuthFlags) []string {
+	misses := make([]string, 0, len(keys)-len(live))
+	for _, g := range keys {
+		if _, ok := live[g]; !ok {
+			misses = append(misses, g)
+		}
+	}
+	return misses
+}
+
 // issuerAuthFlagsOnRecordAgrees reports whether persisting `fresh` would leave
 // the row exactly as it is. It mirrors what PersistIssuerAuthFlags actually
-// WRITES rather than comparing the structs field for field, because the two
-// differ in one place that matters: the statement COALESCEs an empty
-// home_domain away, so an empty reading cannot change the column and must not
-// be counted as a disagreement — the lake's lookup only returns accounts that
-// DECLARE a domain, so empty means "not read", never "declares none".
+// WRITES rather than comparing the structs field for field: for a labelled
+// reading the column becomes exactly fresh.HomeDomain, so an empty one — a
+// live account declaring none, or a merged account whose identity is not
+// kept — disagrees with any stored domain. Only an unlabelled reading's empty
+// value is COALESCEd away.
 func issuerAuthFlagsOnRecordAgrees(rec timescale.IssuerAuthFlagsOnRecord, fresh timescale.IssuerAuthFlags) bool {
 	if !boolPtrIs(rec.Required, fresh.Required) ||
 		!boolPtrIs(rec.Revocable, fresh.Revocable) ||
@@ -463,7 +489,7 @@ func issuerAuthFlagsOnRecordAgrees(rec timescale.IssuerAuthFlagsOnRecord, fresh 
 		!boolPtrIs(rec.Clawback, fresh.Clawback) {
 		return false
 	}
-	if fresh.HomeDomain != "" && rec.HomeDomain != fresh.HomeDomain {
+	if (fresh.Source != "" || fresh.HomeDomain != "") && rec.HomeDomain != fresh.HomeDomain {
 		return false
 	}
 	if rec.Source != fresh.Source {

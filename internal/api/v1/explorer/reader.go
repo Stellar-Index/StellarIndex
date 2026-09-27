@@ -267,7 +267,7 @@ type ExplorerReader interface {
 	// 2026-07-30) — pair stale with flags.stale in the envelope.
 	AccountStateCached(ctx context.Context, account string) (clickhouse.AccountState, bool, error)
 	AssetHolders(ctx context.Context, asset string, limit int) ([]clickhouse.AssetHolder, int64, error)
-	AccountsByWealth(ctx context.Context, assets []string, prices []float64, limit int) ([]clickhouse.AccountWealth, error)
+	AccountsByWealth(ctx context.Context, assets, prices []string, limit int) ([]clickhouse.AccountWealth, error)
 	// AccountsByWealthCached serves the ranking from a background-refreshed
 	// cache and NEVER runs the underlying FINAL scan on the caller's
 	// deadline. The snapshot's AsOf/AsOfLedger are the ranking's vintage — an
@@ -281,7 +281,7 @@ type ExplorerReader interface {
 	// the cached ranking is in, so the handler labels the served numbers
 	// correctly — native XLM where no USD price map was available (the lean
 	// test nets).
-	AccountsByWealthCached(ctx context.Context, assets []string, prices []float64, limit int) (clickhouse.AccountWealthSnapshot, bool)
+	AccountsByWealthCached(ctx context.Context, assets, prices []string, limit int) (clickhouse.AccountWealthSnapshot, bool)
 	SoroswapPairReserves(ctx context.Context, pairs []string) (map[string]clickhouse.SoroswapPairState, error)
 	NativeLiquidityPoolReserves(ctx context.Context, poolIDs []string) (map[string]clickhouse.NativeLiquidityPoolState, error)
 	NativeLiquidityPoolsRanked(ctx context.Context, limit int) ([]clickhouse.NativeLiquidityPoolState, error)

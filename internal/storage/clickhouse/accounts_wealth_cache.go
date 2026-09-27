@@ -179,7 +179,7 @@ func (c *accountsWealthCache) endFlight(ch chan struct{}) {
 // PrewarmAccountsByWealth exists so that in practice nobody ever sees the
 // cold state at all.
 func (r *ExplorerReader) AccountsByWealthCached(
-	ctx context.Context, assets []string, prices []float64, limit int,
+	ctx context.Context, assets, prices []string, limit int,
 ) (AccountWealthSnapshot, bool) {
 	if limit <= 0 || limit > accountsWealthMaxLimit {
 		limit = 100
@@ -217,7 +217,7 @@ func clampWealth(rows []AccountWealth, limit int) []AccountWealth {
 // AccountsWealthRefreshTimeout), which is exactly what a background
 // warmer should do.
 func (r *ExplorerReader) PrewarmAccountsByWealth(
-	ctx context.Context, assets []string, prices []float64,
+	ctx context.Context, assets, prices []string,
 ) error {
 	snap, err := r.computeAccountsWealth(ctx, assets, prices)
 	if err != nil {
@@ -232,7 +232,7 @@ func (r *ExplorerReader) PrewarmAccountsByWealth(
 // than the data the ranking saw; an unreadable watermark leaves it 0
 // (as_of_ledger omitted) rather than failing a ranking that did compute.
 func (r *ExplorerReader) computeAccountsWealth(
-	ctx context.Context, assets []string, prices []float64,
+	ctx context.Context, assets, prices []string,
 ) (AccountWealthSnapshot, error) {
 	var ledger uint32
 	if wm, _, err := r.LakeWatermark(ctx); err == nil {
@@ -273,7 +273,7 @@ func (r *ExplorerReader) withLocked(ctx context.Context, rows []AccountWealth) [
 
 // refreshAccountsWealth runs one detached refresh, collapsing concurrent
 // attempts for the same limit into a single scan.
-func (r *ExplorerReader) refreshAccountsWealth(assets []string, prices []float64) {
+func (r *ExplorerReader) refreshAccountsWealth(assets, prices []string) {
 	ch, owner := r.wealthCache.beginFlight()
 	if !owner {
 		return // someone else is already scanning; don't pile on

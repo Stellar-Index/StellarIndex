@@ -127,11 +127,11 @@ func (downReader) AssetHolders(context.Context, string, int) ([]clickhouse.Asset
 	return nil, 0, errLakeDown
 }
 
-func (downReader) AccountsByWealth(context.Context, []string, []float64, int) ([]clickhouse.AccountWealth, error) {
+func (downReader) AccountsByWealth(context.Context, []string, []string, int) ([]clickhouse.AccountWealth, error) {
 	return nil, errLakeDown
 }
 
-func (downReader) AccountsByWealthCached(context.Context, []string, []float64, int) (clickhouse.AccountWealthSnapshot, bool) {
+func (downReader) AccountsByWealthCached(context.Context, []string, []string, int) (clickhouse.AccountWealthSnapshot, bool) {
 	return clickhouse.AccountWealthSnapshot{}, false
 }
 

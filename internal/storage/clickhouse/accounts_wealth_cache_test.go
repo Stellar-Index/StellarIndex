@@ -1,6 +1,7 @@
 package clickhouse
 
 import (
+	"math/big"
 	"testing"
 	"time"
 )
@@ -19,7 +20,7 @@ func TestWealthCacheServesAnyLimitFromOneEntry(t *testing.T) {
 
 	ranking := make([]AccountWealth, accountsWealthMaxLimit)
 	for i := range ranking {
-		ranking[i] = AccountWealth{AccountID: "acct", USD: float64(accountsWealthMaxLimit - i)}
+		ranking[i] = AccountWealth{AccountID: "acct", Value: big.NewRat(int64(accountsWealthMaxLimit-i), 1)}
 	}
 	c.put(AccountWealthSnapshot{Rows: ranking, Basis: WealthBasisUSD, AsOf: time.Now()})
 
@@ -42,7 +43,7 @@ func TestWealthCacheServesAnyLimitFromOneEntry(t *testing.T) {
 		if len(got) != want {
 			t.Errorf("clampWealth(limit=%d) = %d rows, want %d", limit, len(got), want)
 		}
-		if len(got) > 0 && got[0].USD < got[len(got)-1].USD {
+		if len(got) > 0 && got[0].Value.Cmp(got[len(got)-1].Value) < 0 {
 			t.Errorf("limit=%d: slice not still descending", limit)
 		}
 	}
@@ -56,7 +57,7 @@ func TestWealthCacheStaleServing(t *testing.T) {
 	t.Parallel()
 	c := newAccountsWealthCache()
 	staleAt := time.Now().Add(-2 * AccountsWealthCacheTTL)
-	c.put(AccountWealthSnapshot{Rows: []AccountWealth{{AccountID: "a", USD: 1}}, Basis: WealthBasisUSD, AsOf: staleAt})
+	c.put(AccountWealthSnapshot{Rows: []AccountWealth{{AccountID: "a", Value: big.NewRat(1, 1)}}, Basis: WealthBasisUSD, AsOf: staleAt})
 	snap, ok := c.get()
 	rows, at := snap.Rows, snap.AsOf
 	if !ok {
@@ -78,7 +79,7 @@ func TestWealthCacheNilSafe(t *testing.T) {
 	if _, ok := c.get(); ok {
 		t.Error("nil cache reported a hit")
 	}
-	c.put(AccountWealthSnapshot{Rows: []AccountWealth{{AccountID: "a", USD: 1}}, Basis: WealthBasisUSD, AsOf: time.Now()}) // must not panic
+	c.put(AccountWealthSnapshot{Rows: []AccountWealth{{AccountID: "a", Value: big.NewRat(1, 1)}}, Basis: WealthBasisUSD, AsOf: time.Now()}) // must not panic
 	if _, owner := c.beginFlight(); owner {
 		t.Error("nil cache granted flight ownership")
 	}

@@ -290,7 +290,7 @@ func (s *stubExplorerReader) NativeLiquidityPoolsRanked(_ context.Context, limit
 	return out, nil
 }
 
-func (s *stubExplorerReader) AccountsByWealth(_ context.Context, _ []string, _ []float64, _ int) ([]clickhouse.AccountWealth, error) {
+func (s *stubExplorerReader) AccountsByWealth(_ context.Context, _, _ []string, _ int) ([]clickhouse.AccountWealth, error) {
 	return s.wealth, s.err
 }
 
@@ -298,7 +298,7 @@ func (s *stubExplorerReader) AccountsByWealth(_ context.Context, _ []string, _ [
 // the stub isn't configured to fail, so existing expectations are
 // unchanged. An error case reports cold, which is how the real cache
 // signals "nothing ever computed" (site-audit S3).
-func (s *stubExplorerReader) AccountsByWealthCached(_ context.Context, _ []string, _ []float64, _ int) (clickhouse.AccountWealthSnapshot, bool) {
+func (s *stubExplorerReader) AccountsByWealthCached(_ context.Context, _, _ []string, _ int) (clickhouse.AccountWealthSnapshot, bool) {
 	if s.err != nil {
 		return clickhouse.AccountWealthSnapshot{}, false
 	}

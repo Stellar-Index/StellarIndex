@@ -48,11 +48,16 @@ func TestIssuerHomeDomainTracksTheChain(t *testing.T) {
 		anchor  = "GBFXOHVAS7DXHZPMPZL4HDPPMGSSJBWDGEOXSYHMPTSJKDFHPPFXFZ2K"
 		drained = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 		merged  = "GA2PQOJ26IP24ECRXEZ4BE6BEIB4HNDWSA2E6JVPFIP6KO6BKOEAZ6XW"
+		// Accounts that ran SetOptions(home_domain="") and let the old name lapse.
+		clearedOnChain = "GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55"
+		clearedEnrich  = "GAEVD52W5E4Q2KTVQXC76ZSZYBEXXR3GGQZAIEP6BW3JMBTUBCHRY6UM"
 	)
 	seedIssuers(t, ctx, store, []seedIssuer{
 		{g: anchor, homeDomain: "apay.io"},
 		{g: drained, homeDomain: "lapsed-former.example"},
 		{g: merged, homeDomain: "stellarbrunch.com"},
+		{g: clearedOnChain, homeDomain: "lapsed-cleared.example"},
+		{g: clearedEnrich, homeDomain: "lapsed-cleared.example"},
 	})
 
 	homeDomainOf := func(t *testing.T, g string) string {
@@ -98,8 +103,8 @@ func TestIssuerHomeDomainTracksTheChain(t *testing.T) {
 			t.Error("SyncIssuerHomeDomain reported a change for an empty domain")
 		}
 		if got := homeDomainOf(t, anchor); got != "ultracapital.xyz" {
-			t.Errorf("home_domain = %q, want ultracapital.xyz — the lake only returns accounts that "+
-				"DECLARE a domain, so an empty value means we did not read it", got)
+			t.Errorf("home_domain = %q, want ultracapital.xyz — an empty value here means we did not "+
+				"read it; a declared-none reading goes through ClearIssuerHomeDomain", got)
 		}
 	})
 
@@ -122,11 +127,12 @@ func TestIssuerHomeDomainTracksTheChain(t *testing.T) {
 		}
 	})
 
-	t.Run("a merged account's empty reading leaves the stored domain alone", func(t *testing.T) {
+	t.Run("a merged account's reading clears the stored domain", func(t *testing.T) {
 		asOf := uint32(54564588)
-		// validate() refuses a last_known_before_removal reading that carries
-		// a domain, so an empty HomeDomain here is the only shape this branch
-		// can take — and it must not wipe what the row already holds.
+		// validate() refuses to WRITE a merged account's self-declared
+		// domain because it can no longer be verified; keeping one stored
+		// while the account was live is the same impersonation surface, and
+		// the SEP-1 refresh would keep fetching it once it lapses.
 		n, err := store.PersistIssuerAuthFlags(ctx, []timescale.IssuerAuthFlags{{
 			GStrkey: merged, Revocable: true,
 			Source: timescale.AuthFlagsSourceLastKnownBeforeRemoval, AsOfLedger: &asOf,
@@ -137,8 +143,45 @@ func TestIssuerHomeDomainTracksTheChain(t *testing.T) {
 		if n != 1 {
 			t.Fatalf("changed %d row(s), want 1", n)
 		}
-		if got := homeDomainOf(t, merged); got != "stellarbrunch.com" {
-			t.Errorf("home_domain = %q, want stellarbrunch.com — an absent reading is not a retraction", got)
+		if got := homeDomainOf(t, merged); got != "" {
+			t.Errorf("home_domain = %q, want empty — a merged account's identity is not kept", got)
+		}
+	})
+
+	t.Run("a live reading that declares no domain clears the stored one", func(t *testing.T) {
+		asOf := uint32(64228700)
+		if _, err := store.PersistIssuerAuthFlags(ctx, []timescale.IssuerAuthFlags{{
+			GStrkey: clearedOnChain, Required: true,
+			Source: timescale.AuthFlagsSourceLive, AsOfLedger: &asOf,
+		}}); err != nil {
+			t.Fatalf("PersistIssuerAuthFlags: %v", err)
+		}
+		if got := homeDomainOf(t, clearedOnChain); got != "" {
+			t.Errorf("home_domain = %q, want empty — the live AccountEntry declares none", got)
+		}
+	})
+
+	t.Run("the enrich job clears a domain the account no longer declares", func(t *testing.T) {
+		changed, err := store.ClearIssuerHomeDomain(ctx, clearedEnrich)
+		if err != nil || !changed {
+			t.Fatalf("ClearIssuerHomeDomain = (%v, %v), want (true, nil)", changed, err)
+		}
+		if got := homeDomainOf(t, clearedEnrich); got != "" {
+			t.Errorf("home_domain = %q, want empty", got)
+		}
+		if changed, err := store.ClearIssuerHomeDomain(ctx, clearedEnrich); err != nil || changed {
+			t.Errorf("second ClearIssuerHomeDomain = (%v, %v), want (false, nil) on an agreeing row", changed, err)
+		}
+	})
+
+	t.Run("an unlabelled empty reading still leaves the stored domain alone", func(t *testing.T) {
+		if _, err := store.PersistIssuerAuthFlags(ctx, []timescale.IssuerAuthFlags{{
+			GStrkey: anchor, Required: true,
+		}}); err != nil {
+			t.Fatalf("PersistIssuerAuthFlags: %v", err)
+		}
+		if got := homeDomainOf(t, anchor); got != "ultracapital.xyz" {
+			t.Errorf("home_domain = %q, want ultracapital.xyz — nothing says what produced an unlabelled reading", got)
 		}
 	})
 
@@ -160,6 +203,49 @@ func TestIssuerHomeDomainTracksTheChain(t *testing.T) {
 		}
 		if got[drained] != "current-anchor.example" {
 			t.Errorf("sep1 queue offers %s at %q, want current-anchor.example", drained, got[drained])
+		}
+		for _, g := range []string{merged, clearedOnChain, clearedEnrich} {
+			if d, ok := got[g]; ok {
+				t.Errorf("sep1 queue still offers %s at %q — a cleared or merged identity must stop being fetched", g, d)
+			}
+		}
+	})
+
+	t.Run("the chain re-check queue offers a merged row until its domain is cleared", func(t *testing.T) {
+		const staleMerged = "GA2P3HKTQFBZBWOWPLESMV5AEHJLWJKNAYV5HLXOPBRWUEHFR64FQTKN"
+		seedIssuers(t, ctx, store, []seedIssuer{{g: staleMerged, homeDomain: "xcrypto.exchange"}})
+		// The shape rows written before the persist cleared a merged identity
+		// are left in: labelled last-known, still holding the live domain.
+		if _, err := store.DB().ExecContext(ctx, `
+			UPDATE issuers SET auth_required = false, auth_revocable = true, auth_immutable = false,
+			       auth_clawback = true, auth_flags_source = $2, auth_flags_as_of_ledger = 56082413
+			 WHERE g_strkey = $1`, staleMerged, timescale.AuthFlagsSourceLastKnownBeforeRemoval); err != nil {
+			t.Fatalf("seed stale merged row: %v", err)
+		}
+		offered := func() bool {
+			recs, err := store.IssuersNeedingChainRecheck(ctx, 0)
+			if err != nil {
+				t.Fatalf("IssuersNeedingChainRecheck: %v", err)
+			}
+			for _, r := range recs {
+				if r.GStrkey == staleMerged {
+					return true
+				}
+			}
+			return false
+		}
+		if !offered() {
+			t.Fatalf("%s is not offered — a merged row holding a domain would keep it for good", staleMerged)
+		}
+		asOf := uint32(56082413)
+		if _, err := store.PersistIssuerAuthFlags(ctx, []timescale.IssuerAuthFlags{{
+			GStrkey: staleMerged, Revocable: true, Clawback: true,
+			Source: timescale.AuthFlagsSourceLastKnownBeforeRemoval, AsOfLedger: &asOf,
+		}}); err != nil {
+			t.Fatalf("PersistIssuerAuthFlags: %v", err)
+		}
+		if offered() {
+			t.Errorf("%s is still offered after its domain was cleared — the queues no longer partition", staleMerged)
 		}
 	})
 }
