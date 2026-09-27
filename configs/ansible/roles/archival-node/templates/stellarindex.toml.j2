@@ -402,7 +402,7 @@ resend_api_key_env = "STELLARINDEX_RESEND_API_KEY"
 # hash). Unset env → random per-process secret (codes die on restart).
 code_secret_env    = "STELLARINDEX_DASHBOARD_CODE_SECRET"
 cookie_secure      = true
-cookie_domain      = "{{ stellarindex_dashboard_cookie_domain | default('.stellarindex.io') }}"
+cookie_domain      = "{{ stellarindex_dashboard_cookie_domain | default('') }}"
 
 # Issuers observed for on-chain home_domain; kept out of
 # [supply].sdf_reserve_accounts, which feeds circulating supply.
