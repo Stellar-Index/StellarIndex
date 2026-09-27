@@ -664,3 +664,23 @@ func TestErrorTypesBelowHTTP400(t *testing.T) {
 		}
 	})
 }
+
+// An endpoint net/url rejects fails in request construction, whose
+// *url.Error quotes the whole endpoint; a key in its userinfo must not
+// survive in whole or in part.
+func TestRequestErrorRedactsAnUnparseableEndpoint(t *testing.T) {
+	for _, endpoint := range []string{
+		"https://app:Zq7vK/wP9xR2@rpc.example.invalid/v2",
+		"https://app:Zq7vK%zzwP9xR2@rpc.example.invalid/v2",
+	} {
+		_, err := rpc.New(endpoint).LatestLedger(context.Background())
+		if err == nil {
+			t.Fatalf("%q: expected a request error, got nil", endpoint)
+		}
+		for _, stem := range []string{"Zq7vK", "wP9xR2"} {
+			if strings.Contains(err.Error(), stem) {
+				t.Errorf("error repeats endpoint fragment %q: %v", stem, err)
+			}
+		}
+	}
+}

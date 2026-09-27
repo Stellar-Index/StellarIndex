@@ -99,6 +99,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricealerts"
 	"github.com/Stellar-Index/StellarIndex/internal/pricelesscoverage"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
+	"github.com/Stellar-Index/StellarIndex/internal/redact"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/redisclient"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -142,7 +143,7 @@ func main() {
 	}
 
 	if err := run(*cfgPath, *dryRun); err != nil {
-		fmt.Fprintf(os.Stderr, "stellarindex-aggregator: %v\n", err)
+		fmt.Fprintf(os.Stderr, "stellarindex-aggregator: %s\n", redact.Credentials(err.Error()))
 		os.Exit(1)
 	}
 }
