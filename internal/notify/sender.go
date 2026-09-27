@@ -24,11 +24,6 @@ type Message struct {
 	// per-template metric breakdowns. Resend supports up to 10
 	// key/value tags per send; keep the keys short.
 	Tags map[string]string
-	// IdempotencyKey lets the caller dedupe retries without
-	// double-sending. Resend honours this on its API; for
-	// providers that don't support it the Noop driver falls
-	// back to caller-side caching.
-	IdempotencyKey string
 }
 
 // Sender ships Messages. Concrete impls must be safe for

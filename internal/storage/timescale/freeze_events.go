@@ -41,7 +41,8 @@ type FreezeEventSink struct {
 // FreezeHook is the callback shape for post-insert side-effects.
 // Best-effort: errors are logged and dropped by the sink so a
 // downstream failure (e.g. customerwebhook fan-out) doesn't take
-// the load-bearing INSERT down.
+// the load-bearing INSERT down. frozenValue is empty on a first-tick
+// freeze (no prior bucket), never the column's "0" filler.
 type FreezeHook func(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision)
 
 // LedgerProvider is the seam for reading the most-recently-ingested
@@ -188,7 +189,9 @@ func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonic
 	// the webhook then would spam subscribers.
 	if s.onFreeze != nil {
 		if affected, err := res.RowsAffected(); err == nil && affected > 0 {
-			s.onFreeze(ctx, asset, quote, frozenValueArg, decision)
+			// The original value, not frozenValueArg: "0" is this column's
+			// NOT NULL filler, and the hook's consumers read it as a price.
+			s.onFreeze(ctx, asset, quote, frozenValue, decision)
 		}
 	}
 	return nil

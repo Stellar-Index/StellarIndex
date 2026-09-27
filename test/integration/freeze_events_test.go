@@ -83,6 +83,59 @@ func TestFreezeEventSink_LKGVWAPLandsOnRow(t *testing.T) {
 	}
 }
 
+// TestFreezeEventSink_FirstTickFreezeHookGetsNoSentinel: a first-tick
+// freeze has no prior bucket, so the NUMERIC NOT NULL column is filled with
+// 0 — but the fan-out hook (the customer webhook's frozen_value) must get
+// the empty value, not the filler it would read as a zero price.
+func TestFreezeEventSink_FirstTickFreezeHookGetsNoSentinel(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	var (
+		calls    int
+		hookSeen string
+	)
+	sink := timescale.NewFreezeEventSink(store, timescale.WithFreezeHook(
+		func(_ context.Context, _, _ c.Asset, frozenValue string, _ anomaly.Decision) {
+			calls++
+			hookSeen = frozenValue
+		}))
+
+	asset, _ := c.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	quote, _ := c.NewFiatAsset("USD")
+	decision := anomaly.Decision{Action: anomaly.ActionFreeze, Class: anomaly.ClassStablecoin, DeviationPct: 7.5, Reason: "first tick"}
+	if err := sink.RecordFreeze(ctx, asset, quote, "", decision); err != nil {
+		t.Fatalf("RecordFreeze: %v", err)
+	}
+	if calls != 1 || hookSeen != "" {
+		t.Errorf("hook calls = %d, frozenValue = %q; want one call with the empty value", calls, hookSeen)
+	}
+
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	var stored string
+	if err := db.QueryRowContext(ctx,
+		`SELECT frozen_value::text FROM freeze_events WHERE asset_id = $1 AND quote_id = $2`,
+		asset.String(), quote.String()).Scan(&stored); err != nil {
+		t.Fatalf("read freeze_events row: %v", err)
+	}
+	if stored != "0" {
+		t.Errorf("stored frozen_value = %q, want the column filler 0", stored)
+	}
+}
+
 // TestFreezeEventSink_RecoveryRoundTrip exercises the F-1229 path:
 // ListOpen → MarkRecovered → ListOpen returns one fewer row. Pins
 // the worker's contract against the postgres schema.

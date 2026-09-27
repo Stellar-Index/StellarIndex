@@ -91,6 +91,30 @@ func TestAnomalyFreezeHook_UnflaggedPairStillDelivers(t *testing.T) {
 	}
 }
 
+// TestAnomalyFreezeHook_FirstTickFreezeOmitsFrozenValue: a pair that
+// freezes on its first bucket has no price to pin, so the payload must not
+// assert one (the sink's NUMERIC NOT NULL filler used to arrive as "0").
+func TestAnomalyFreezeHook_FirstTickFreezeOmitsFrozenValue(t *testing.T) {
+	_, native := webhookGatePairs(t)
+	usd, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := &recordingPublisher{}
+	hook := anomalyFreezeHook(discardLogger(), pub, flaggedWithholding())
+	hook(context.Background(), native, usd, "", anomaly.Decision{Reason: "test"})
+	if len(pub.payloads) != 1 {
+		t.Fatalf("got %d deliveries, want one anomaly.freeze", len(pub.payloads))
+	}
+	var body map[string]any
+	if err := json.Unmarshal(pub.payloads[0], &body); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := body["frozen_value"]; ok {
+		t.Errorf("first-tick freeze delivered frozen_value=%v, want the field absent", v)
+	}
+}
+
 func TestDivergenceFiringHook_WithholdsFlaggedIssuer(t *testing.T) {
 	flagged, native := webhookGatePairs(t)
 	for _, tc := range []struct {

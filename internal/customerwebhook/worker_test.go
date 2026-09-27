@@ -211,6 +211,52 @@ func TestWorker_DeliversOn2xx(t *testing.T) {
 	}
 }
 
+// TestWorker_SignatureV2BindsDeliveryIDAndEvent: receivers dedupe on
+// X-StellarIndex-Delivery-Id and route on X-StellarIndex-Event, so both
+// must be inside a MAC, or one captured delivery can be re-sent under any
+// id or event type while its body+timestamp signature still verifies.
+func TestWorker_SignatureV2BindsDeliveryIDAndEvent(t *testing.T) {
+	var hdr http.Header
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hdr = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	store := newFakeStore()
+	webhookID, secret := makeWebhook(t, ts.URL, true)
+	store.addWebhook(platform.CustomerWebhook{ID: webhookID, URL: ts.URL, SecretHash: secret, Enabled: true})
+	deliveryID := uuid.New()
+	payload := []byte(`{"event":"incident.sev1"}`)
+	store.enqueue(platform.WebhookDelivery{
+		ID: deliveryID, WebhookID: webhookID,
+		EventType: string(platform.WebhookEventIncidentSEV1),
+		Payload:   payload, NextAttemptAt: time.Now().Add(-time.Second),
+	})
+
+	runOneTick(t, store, customerwebhook.Options{PollInterval: 30 * time.Millisecond})
+
+	if hdr == nil {
+		t.Fatal("no delivery reached the endpoint")
+	}
+	v2 := func(id, event string) string {
+		mac := hmac.New(sha256.New, secret)
+		mac.Write([]byte(hdr.Get("X-StellarIndex-Timestamp") + "." + id + "." + event + "."))
+		mac.Write(payload)
+		return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	}
+	got := hdr.Get("X-StellarIndex-Signature-V2")
+	if want := v2(deliveryID.String(), string(platform.WebhookEventIncidentSEV1)); got != want {
+		t.Fatalf("X-StellarIndex-Signature-V2 = %q, want %q", got, want)
+	}
+	if got == v2(uuid.New().String(), string(platform.WebhookEventIncidentSEV1)) {
+		t.Error("V2 signature verifies under a different Delivery-Id")
+	}
+	if got == v2(deliveryID.String(), string(platform.WebhookEventAnomalyFreeze)) {
+		t.Error("V2 signature verifies under a different Event")
+	}
+}
+
 // TestWorker_NetworkErrorDoesNotLeakRawErrorText pins RSEC-Y1: a
 // transport-level failure (here, a closed listener — connection refused)
 // must record a fixed, address-free last_error. The raw dial error names

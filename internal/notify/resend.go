@@ -57,8 +57,7 @@ func (r *ResendSender) MailConfigured() bool {
 }
 
 // resendRequest mirrors the JSON body Resend accepts. Tags use
-// their per-tag {name, value} shape; IdempotencyKey rides on
-// the `Idempotency-Key` header (not in the body).
+// their per-tag {name, value} shape.
 type resendRequest struct {
 	From    string            `json:"from"`
 	To      []string          `json:"to"`
@@ -126,9 +125,6 @@ func (r *ResendSender) Send(ctx context.Context, msg Message) error {
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+r.APIKey)
 	httpReq.Header.Set("Content-Type", "application/json")
-	if msg.IdempotencyKey != "" {
-		httpReq.Header.Set("Idempotency-Key", msg.IdempotencyKey)
-	}
 
 	resp, err := r.Client.Do(httpReq)
 	if err != nil {

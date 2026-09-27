@@ -23,7 +23,7 @@ Three alerts:
 - **`_failing`** — the delivery worker's
   `stellarindex_customer_webhook_delivery_attempts_total` counter
   has been recording `outcome="server_error"` or
-  `outcome="network_error"` at > 0.1 attempts/s for 15+ min.
+  `outcome="network_error"` at > 0.05 attempts/s for 15+ min.
   Translation: one customer's endpoint is sustained-down (5xx
   or TCP/TLS errors) and we keep retrying with exponential
   backoff (30s → 1h cap, 15-attempt budget; the last retry lands
@@ -174,6 +174,12 @@ and is retried when the lease expires, with a fresh budget.
 
 ## Changelog
 
+- 2026-09-27 — `_failing` threshold 0.1/s → 0.05/s. One endpoint's
+  lane is serial under the worker's 10s attempt timeout, so a
+  black-holing endpoint tops out at 0.1 failures/s and could never
+  cross `> 0.1`; the 2026-08-29 re-verification missed this. Pinned
+  by `TestDeliveryFailingAlertBelowSingleLaneCeiling` and a
+  promtool case in `rule-tests/api_test.yml`.
 - 2026-08-29 — re-verified against HEAD: all alert exprs, thresholds,
   retry-budget figures, SQL and metric names check out. Detected-by
   reordered r1-primary; dead `stripe-platform-sync-errors.md` link

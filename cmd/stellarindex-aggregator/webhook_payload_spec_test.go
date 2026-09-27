@@ -90,11 +90,41 @@ func assertPropsMatch(t *testing.T, schemaName string, spec, goStruct map[string
 	}
 }
 
+// assertRequiredMatchesOmitEmpty: a spec-required field must never be
+// omitempty (it would vanish on a zero value), and an optional one must be,
+// or a zero-value filler is delivered where the contract promises absence.
+func assertRequiredMatchesOmitEmpty(t *testing.T, doc map[string]any, schemaName string, typ reflect.Type) {
+	t.Helper()
+	components, _ := doc["components"].(map[string]any)
+	schemas, _ := components["schemas"].(map[string]any)
+	schema, _ := schemas[schemaName].(map[string]any)
+	required := map[string]bool{}
+	list, _ := schema["required"].([]any)
+	for _, r := range list {
+		name, _ := r.(string)
+		required[name] = true
+	}
+	for i := 0; i < typ.NumField(); i++ {
+		parts := strings.Split(typ.Field(i).Tag.Get("json"), ",")
+		if parts[0] == "" || parts[0] == "-" {
+			continue
+		}
+		omitEmpty := false
+		for _, opt := range parts[1:] {
+			omitEmpty = omitEmpty || opt == "omitempty"
+		}
+		if required[parts[0]] == omitEmpty {
+			t.Errorf("%s.%s: spec required=%v but Go omitempty=%v", schemaName, parts[0], required[parts[0]], omitEmpty)
+		}
+	}
+}
+
 func TestAnomalyFreezeWebhookPayloadMatchesSpec(t *testing.T) {
 	doc := loadAggregatorSpec(t)
 	spec := specSchemaProps(t, doc, "AnomalyFreezeWebhookPayload")
 	got := structJSONTags(reflect.TypeOf(anomalyFreezeWebhookPayload{}))
 	assertPropsMatch(t, "AnomalyFreezeWebhookPayload", spec, got)
+	assertRequiredMatchesOmitEmpty(t, doc, "AnomalyFreezeWebhookPayload", reflect.TypeOf(anomalyFreezeWebhookPayload{}))
 }
 
 func TestDivergenceFiringWebhookPayloadMatchesSpec(t *testing.T) {
@@ -102,4 +132,5 @@ func TestDivergenceFiringWebhookPayloadMatchesSpec(t *testing.T) {
 	spec := specSchemaProps(t, doc, "DivergenceFiringWebhookPayload")
 	got := structJSONTags(reflect.TypeOf(divergenceFiringWebhookPayload{}))
 	assertPropsMatch(t, "DivergenceFiringWebhookPayload", spec, got)
+	assertRequiredMatchesOmitEmpty(t, doc, "DivergenceFiringWebhookPayload", reflect.TypeOf(divergenceFiringWebhookPayload{}))
 }

@@ -179,7 +179,7 @@ type anomalyFreezeWebhookPayload struct {
 	Event       string `json:"event"`
 	Asset       string `json:"asset"`
 	Quote       string `json:"quote"`
-	FrozenValue string `json:"frozen_value"`
+	FrozenValue string `json:"frozen_value,omitempty"` // absent on a first-tick freeze: no price to pin
 	Reason      string `json:"reason"`
 	At          string `json:"at"`
 }

@@ -3770,7 +3770,9 @@ export interface paths {
          * @description Session-gated. Returns every webhook this account has
          *     registered to receive incident / anomaly / divergence
          *     callbacks, newest first. The signing secret is never
-         *     returned — only the URL, events, and enabled flag. F-1270.
+         *     returned — only the URL, events, and enabled flag. Owner /
+         *     admin / member only; viewer + billing 403, because an
+         *     endpoint URL often embeds the receiver's own credential.
          */
         get: operations["listDashboardWebhooks"];
         put?: never;
@@ -3832,7 +3834,8 @@ export interface paths {
         /**
          * Customer dashboard — list recent delivery attempts.
          * @description Session-gated. Most-recent first; up to 100 attempts.
-         *     Powers the dashboard's delivery-log panel.
+         *     Powers the dashboard's delivery-log panel. Owner / admin /
+         *     member only; viewer + billing 403.
          */
         get: operations["getDashboardWebhookDeliveries"];
         put?: never;
@@ -6514,8 +6517,10 @@ export interface components {
              *     the timestamp is part of the signed message. Every delivery
              *     also carries `X-StellarIndex-Event` (the event type, one of
              *     `events`, for routing before the body is parsed) and
-             *     `X-StellarIndex-Delivery-Id`. `X-StellarIndex-Event` is not
-             *     signed; the body's `event` field is the authenticated copy.
+             *     `X-StellarIndex-Delivery-Id`. Neither is covered by
+             *     `X-StellarIndex-Signature`; `X-StellarIndex-Signature-V2`
+             *     covers both (see `CreateWebhookResponse.secret`). The body's
+             *     `event` field is also an authenticated copy of the event type.
              */
             url: string;
             /**
@@ -6566,9 +6571,24 @@ export interface components {
              *     the timestamp only prevents an attacker altering it; nothing
              *     stops a captured delivery being replayed unless you check it.
              *
+             *     DELIVERY-BOUND SIGNATURE: `X-StellarIndex-Signature` does NOT
+             *     cover `X-StellarIndex-Delivery-Id` or `X-StellarIndex-Event`,
+             *     so a captured delivery can be re-sent with either header
+             *     changed and still verify. `X-StellarIndex-Signature-V2` binds
+             *     both:
+             *
+             *       signed_message_v2 = "<X-StellarIndex-Timestamp>" + "." +
+             *                           "<X-StellarIndex-Delivery-Id>" + "." +
+             *                           "<X-StellarIndex-Event>" + "." + <raw request body>
+             *       expected_v2       = "sha256=" + hex(HMAC_SHA256(secret, signed_message_v2))
+             *
+             *     Verify V2 whenever you dedupe on the Delivery-Id or route on
+             *     the Event header. Both headers are sent on every delivery.
+             *
              *     DEDUPE: `X-StellarIndex-Delivery-Id` is stable across retries
              *     of the same delivery. It is NOT stable across a re-emit of
              *     the same logical event, so it dedupes retries, not re-sends.
+             *     Trust it only after `X-StellarIndex-Signature-V2` verifies.
              */
             secret: string;
         };
@@ -6726,8 +6746,8 @@ export interface components {
             asset: string;
             /** @description Canonical asset_id of the quote asset (e.g. `fiat:USD`). */
             quote: string;
-            /** @description The price value we pinned the pair to during the freeze (decimal as a string to preserve precision). */
-            frozen_value: string;
+            /** @description The price value we pinned the pair to during the freeze (decimal as a string to preserve precision). Absent when the pair froze on its first observed bucket: there was no prior price to pin, and the API serves none for it. */
+            frozen_value?: string;
             /** @description Why the freeze engaged. Values are stable; new reasons may be added in future versions. */
             reason: string;
             /**
@@ -20370,6 +20390,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description Role can't view webhooks (viewer and billing). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     createDashboardWebhook: {
@@ -20644,6 +20673,15 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             /** @description No valid session cookie. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Role can't view webhooks (viewer and billing). */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

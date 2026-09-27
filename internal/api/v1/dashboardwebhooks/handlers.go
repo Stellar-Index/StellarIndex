@@ -184,6 +184,10 @@ func (h *Handlers) HandleList(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusUnauthorized, "authentication required", r.URL.Path)
 		return
 	}
+	if !canManage(sc.User.Role) {
+		writeProblem(w, http.StatusForbidden, "your role can't view webhooks", r.URL.Path)
+		return
+	}
 	hooks, err := h.cfg.Webhooks.ListWebhooksForAccount(r.Context(), sc.Account.ID)
 	if err != nil {
 		h.cfg.Logger.Error("list webhooks", "err", err, "account_id", sc.Account.ID)
@@ -212,6 +216,8 @@ type createResponse struct {
 	// HMAC-SHA-256(secret, X-StellarIndex-Timestamp + "." + rawBody)
 	// against X-StellarIndex-Signature (sha256=…), and rejecting a
 	// timestamp outside a tolerance window to bound replay (CS-055).
+	// X-StellarIndex-Signature-V2 also binds the Delivery-Id and Event
+	// headers; the worker's signDeliveryHMACSHA256 documents it.
 	Secret string `json:"secret"`
 }
 
@@ -423,6 +429,10 @@ func (h *Handlers) HandleListDeliveries(w http.ResponseWriter, r *http.Request) 
 		writeProblem(w, http.StatusUnauthorized, "authentication required", r.URL.Path)
 		return
 	}
+	if !canManage(sc.User.Role) {
+		writeProblem(w, http.StatusForbidden, "your role can't view webhooks", r.URL.Path)
+		return
+	}
 	id, ok := parseAndAuthorise(w, r, h, sc.Account.ID)
 	if !ok {
 		return
@@ -443,6 +453,8 @@ func (h *Handlers) HandleListDeliveries(w http.ResponseWriter, r *http.Request) 
 
 // ─── helpers ────────────────────────────────────────────────────
 
+// canManage gates every route here, reads included: an endpoint URL often
+// embeds the receiver's own credential, so viewer and billing see none.
 func canManage(role platform.Role) bool {
 	switch role {
 	case platform.RoleOwner, platform.RoleAdmin, platform.RoleMember:

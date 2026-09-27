@@ -361,7 +361,7 @@ tests:
   # ── guard: ordinary delivery failures are a different alert ───────
   # server_error/network_error are the customer's endpoint failing,
   # already owned by stellarindex_customer_webhook_delivery_failing.
-  # Folding mark_error into that rule's > 0.1/s threshold would have
+  # Folding mark_error into that rule's > 0.05/s threshold would have
   # been the cheap fix and would never fire: one wedged row is
   # ~0.003/s.
   - interval: 1m
@@ -378,7 +378,7 @@ tests:
 
   # ── firing: a rate too low for the sibling threshold still tickets ─
   # One wedged row re-POSTing every 5 min = 0.0033/s of mark_error,
-  # thirty times below the delivery_failing rule's 0.1/s. This case is
+  # fifteen times below the delivery_failing rule's 0.05/s. This case is
   # the reason the alert exists as its own rule.
   - interval: 1m
     name: a single wedged row tickets despite a sub-threshold rate
@@ -720,3 +720,62 @@ tests:
       - eval_time: 45m
         alertname: stellarindex_ch_schema_probe_absent
         exp_alerts: []
+
+  # ══ stellarindex_customer_webhook_delivery_failing (#1272) ═════════
+  # Every rate this alert can carry is between its threshold and ~1/s,
+  # which `humanize` renders in milli-units ("200m/s" for 0.2/s).
+  - interval: 1m
+    name: customer-webhook delivery_failing summary renders the rate in units, not millis
+    input_series:
+      - series: 'stellarindex_customer_webhook_delivery_attempts_total{job="stellarindex_api",instance="r1:8080",outcome="server_error"}'
+        values: '0+12x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_customer_webhook_delivery_failing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
+              summary: "Customer webhook delivery failing at 0.20/s"
+              description: |
+                The customer-webhook delivery worker has been failing
+                (5xx + network errors) at > 0.05 attempts/s for 15+ min.
+                One customer's endpoint is likely sustained-down.
+                Query `webhook_deliveries` to find the failing webhook:
+                `SELECT webhook_id, COUNT(*) FROM webhook_deliveries
+                 WHERE last_response_status >= 500
+                   AND created_at > now() - interval '15 min'
+                 GROUP BY webhook_id ORDER BY 2 DESC LIMIT 10`.
+
+  # ── firing: ONE black-holed endpoint, the case the alert names (#1268) ─
+  # Its lane is serial under a 10s attempt timeout, so it can never exceed
+  # 0.1 network_errors/s; `> 0.1` was unreachable for it. 4 timeouts/min
+  # (0.067/s, a lane two-thirds saturated) must ticket.
+  - interval: 1m
+    name: a single black-holed endpoint below the one-lane ceiling tickets
+    input_series:
+      - series: 'stellarindex_customer_webhook_delivery_attempts_total{job="stellarindex_api",instance="r1:8080",outcome="network_error"}'
+        values: '0+4x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_customer_webhook_delivery_failing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
+              summary: "Customer webhook delivery failing at 0.07/s"
+              description: |
+                The customer-webhook delivery worker has been failing
+                (5xx + network errors) at > 0.05 attempts/s for 15+ min.
+                One customer's endpoint is likely sustained-down.
+                Query `webhook_deliveries` to find the failing webhook:
+                `SELECT webhook_id, COUNT(*) FROM webhook_deliveries
+                 WHERE last_response_status >= 500
+                   AND created_at > now() - interval '15 min'
+                 GROUP BY webhook_id ORDER BY 2 DESC LIMIT 10`.

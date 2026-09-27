@@ -161,7 +161,8 @@ type EventSink interface {
 	// API wire shape — the orchestrator passes
 	// `formatRatFixed(prev, 12)`). Empty string is allowed when no
 	// prior bucket exists (first-tick freeze) — implementations
-	// stamp NULL or 0 in that case.
+	// stamp NULL or 0 in that case, but must not forward that
+	// storage filler to anything that reads it as a price.
 	//
 	// Implementations must NOT block the Writer's hot path on
 	// network failures — log + continue. The Redis marker write

@@ -457,6 +457,41 @@ func TestHandleList_ScopesToAccount(t *testing.T) {
 	}
 }
 
+// TestReads_RequireManageRole: endpoint URLs commonly embed the receiver's
+// own credential and last_error echoes endpoint behaviour, so the reads
+// carry the same owner/admin/member gate as the three mutations.
+func TestReads_RequireManageRole(t *testing.T) {
+	for _, role := range []platform.Role{platform.RoleViewer, platform.RoleBilling, platform.RoleMember} {
+		t.Run(string(role), func(t *testing.T) {
+			h, store, sc := newTestRig(t)
+			sc.User.Role = role
+			id := uuid.New()
+			store.webhooks[id] = platform.CustomerWebhook{
+				ID: id, AccountID: sc.Account.ID, Name: "mine",
+				URL: "https://x.example/hook?token=t", Events: []string{"incident.sev1"}, Enabled: true,
+			}
+			want := http.StatusForbidden
+			if role == platform.RoleMember {
+				want = http.StatusOK
+			}
+
+			w := httptest.NewRecorder()
+			h.HandleList(w, sessionReq(t, http.MethodGet, "/v1/dashboard/webhooks", nil, sc))
+			if w.Code != want {
+				t.Errorf("list: status = %d, want %d (body %s)", w.Code, want, w.Body.String())
+			}
+
+			req := sessionReq(t, http.MethodGet, "/v1/dashboard/webhooks/"+id.String()+"/deliveries", nil, sc)
+			req.SetPathValue("id", id.String())
+			w = httptest.NewRecorder()
+			h.HandleListDeliveries(w, req)
+			if w.Code != want {
+				t.Errorf("deliveries: status = %d, want %d (body %s)", w.Code, want, w.Body.String())
+			}
+		})
+	}
+}
+
 func TestHandleDelete_RejectsCrossAccount(t *testing.T) {
 	h, store, sc := newTestRig(t)
 	stranger := uuid.New()
