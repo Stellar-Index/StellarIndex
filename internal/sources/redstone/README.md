@@ -47,12 +47,19 @@ identifiers. The decoder reads `feed_ids` from
 the InvokeContract op envelope) and zips one-to-one against
 `updated_feeds`.
 
-**Length must match.** When the adapter's freshness verifier
-rejects a feed, the entry skips in `updated_feeds` without
-skipping in `feed_ids`, breaking the zip. The decoder treats a
-length mismatch as `ErrFeedIDCountMismatch` and skips the whole
-event rather than attributing prices to the wrong assets. Logged +
-counted under
+**A shorter `updated_feeds` is resolved, not skipped.** When the
+adapter's freshness verifier rejects a feed, the entry drops from
+`updated_feeds` without dropping from `feed_ids`, breaking the
+positional zip. `resolveFeedAttribution` (decode.go) resolves the
+accepted subset in preference order: (1) an exact match against the
+operation's changed contract-data write keys (`subsetFromStateWrites`),
+then (2) a payload-median fallback (`attributeSubset`) for events
+whose reader did not plumb state-write keys. `ErrFeedIDCountMismatch`
+fires — and the whole event is skipped — only when BOTH resolution
+layers fail to produce a unique attribution. Equal-arity zips get an
+additional corroboration check against the state writes
+(`ErrStateWriteFeedMismatch`), falling back the same way on a
+mismatch. Logged + counted under
 `stellarindex_source_decode_errors_total{source="redstone"}`.
 
 ### Q2 — Event body is wrapped in `ScVal::Bytes`

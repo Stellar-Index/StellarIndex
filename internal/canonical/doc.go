@@ -14,15 +14,17 @@
 //
 //   - Amount values are ALWAYS *big.Int. They never truncate to
 //     int64. See ADR-0003 and docs/discovery/decisions.md §i128.
-//   - Asset identity is unambiguous, with five canonical shapes:
+//   - Asset identity is unambiguous, with seven canonical shapes:
 //     native (XLM), classic ((code, issuer) tuple), soroban
 //     (single C-address SEP-41 contract), fiat (off-chain ISO-4217
-//     code, wire form fiat:USD — ADR-0010), and crypto (off-chain
-//     global ticker, wire form crypto:BTC — ADR-0014). The crypto
-//     shape is distinct from soroban: soroban requires a real
-//     on-chain C-address, crypto:BTC does not. Two different
-//     representations of the same underlying asset MUST round-trip
-//     through a single canonical form.
+//     code, wire form fiat:USD — ADR-0010), crypto (off-chain
+//     global ticker, wire form crypto:BTC — ADR-0014), rwa (tokenized
+//     real-world assets, wire form rwa:BENJI — ADR-0028), and raw
+//     (a verbatim, unmapped oracle symbol, wire form raw:<symbol>,
+//     record-layer only). The crypto shape is distinct from soroban:
+//     soroban requires a real on-chain C-address, crypto:BTC does
+//     not. Two different representations of the same underlying
+//     asset MUST round-trip through a single canonical form.
 //   - Pair is a unidirectional (base, quote) ordering. Pair
 //     equality is strict; Pair{A,B} != Pair{B,A}.
 //   - Timestamps are UTC; storage is Unix seconds (u64) at ledger

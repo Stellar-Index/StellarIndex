@@ -173,8 +173,8 @@ const (
 // When opts.FeedMap is empty, the reference falls back to a built-in
 // default covering the major crypto and fiat AggregatorV3 contracts
 // on Ethereum mainnet (BTC/USD, ETH/USD, LINK/USD, EUR/USD, GBP/USD,
-// JPY/USD) — same shape as the CoinGecko default-IDMap fallback
-// (#1249). Unlike CoinGecko's, this fallback is currently unreachable
+// JPY/USD) — same shape as the CoinGecko default-IDMap fallback.
+// Unlike CoinGecko's, this fallback is currently unreachable
 // from the aggregator binary: its wiring (cmd/stellarindex-aggregator
 // buildDivergenceReferences) skips constructing the reference at all
 // when Enabled=true but FeedMap is empty, logging a WARN instead. The

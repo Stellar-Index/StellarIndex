@@ -26,10 +26,13 @@
 //
 // Caveat: when the adapter's freshness verifier rejects a feed, it
 // skips that entry in `updated_feeds` without skipping in
-// `feed_ids`. We guard against this with a strict length check and
-// surface ErrFeedIDCountMismatch if they disagree — a rare on-chain
-// state we'd rather skip than attribute prices to the wrong assets.
-// See docs/discovery/oracles/redstone.md for the full analysis.
+// `feed_ids`. decode.go's resolveFeedAttribution resolves the
+// resulting shorter updated_feeds against the accepted subset —
+// first an exact match on the operation's changed contract-data
+// write keys, then a payload-median fallback — and only surfaces
+// ErrFeedIDCountMismatch when both resolution layers fail to produce
+// a unique attribution. See docs/protocols/redstone.md for the full
+// analysis.
 package redstone
 
 import (

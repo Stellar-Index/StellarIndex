@@ -61,20 +61,40 @@ one-to-one against `updated_feeds` when lengths match. When the
 Adapter's freshness verifier rejects a feed, the entry drops from
 `updated_feeds` without dropping from `feed_ids`, breaking the zip —
 a real, ongoing class (1,626 events across [59258375, tip] on the
-2026-07-29 full completeness verify). For those, the decoder recovers
-the mapping from the **signed payload** in `OpArgs[2]`: the Adapter
-stores each accepted feed's signer-value **median**, so each surviving
-price must equal exactly one candidate feed's payload median at its
-`package_timestamp` (`internal/sources/redstone/payload.go`; verified
-byte-exact against the real ledger-59,258,375 event — the surviving
-price equals BTC's median of three signer values, ETH was the dropped
-feed). Attribution demands uniqueness and a bijection; anything
-ambiguous — e.g. two USD-stables with identical medians — refuses the
-whole event (`ErrAmbiguousSubset`, wrapped in
-`ErrFeedIDCountMismatch`, counted on
+2026-07-29 full completeness verify). `resolveFeedAttribution`
+(`internal/sources/redstone/decode.go`) resolves a shorter
+`updated_feeds` in preference order:
+
+1. **Exact** — the operation's changed contract-data write keys
+   (`events.Event.StateWriteKeys`): `write_prices` stores each feed's
+   `PriceData` under `ScString(feed_id)` and rewrites rejected feeds
+   byte-identical, so the changed keys ∩ `feed_ids` IS the accepted
+   subset, with no heuristics.
+2. **Fallback** — the decoder recovers the mapping from the **signed
+   payload** in `OpArgs[2]`: the Adapter stores each accepted feed's
+   signer-value **median**, so each surviving price must equal exactly
+   one candidate feed's payload median at its `package_timestamp`
+   (`internal/sources/redstone/payload.go`; verified byte-exact against
+   the real ledger-59,258,375 event — the surviving price equals BTC's
+   median of three signer values, ETH was the dropped feed). Used when
+   the reader did not plumb state-write keys, or when the changed-key
+   subset's arity disagrees with `updated_feeds`.
+
+Attribution demands uniqueness and a bijection; anything ambiguous —
+e.g. two USD-stables with identical medians — refuses the whole event
+(`ErrAmbiguousSubset`, wrapped in `ErrFeedIDCountMismatch`, counted on
 `stellarindex_source_decode_errors_total{source="redstone"}`) so it
 stays in the completeness verifier's honest-blind class rather than
-misattributing.
+misattributing. `ErrFeedIDCountMismatch` fires only when BOTH layers
+fail to produce a unique attribution.
+
+**Equal arity is also corroborated.** When `feed_ids` and
+`updated_feeds` are the same length, the decoder additionally checks
+the requested `feed_ids` against the state-write keys (when plumbed):
+an accepted feed's stored `PriceData` always changes, so a positional
+zip that disagrees with the changed-key set falls back to the
+payload-median alignment above, refusing (`ErrStateWriteFeedMismatch`)
+only if that also fails.
 
 ### Q2 — Event body is wrapped in `ScVal::Bytes`
 

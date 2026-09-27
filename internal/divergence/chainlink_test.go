@@ -217,7 +217,7 @@ func TestChainlink_Name(t *testing.T) {
 }
 
 // TestChainlink_DefaultFeedMapCoversCommonPairs pins the regression
-// fixed alongside the CoinGecko default-IDMap fix (#1249): an
+// fixed alongside the CoinGecko default-IDMap fix: an
 // operator deploying with a stock config (no
 // `[divergence.chainlink].feed_map` block) must not get
 // asset_unsupported on the major crypto + fiat-anchor pairs the

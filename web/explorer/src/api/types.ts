@@ -6773,7 +6773,7 @@ export interface components {
         AnomalyFreezeWebhookPayload: {
             /** @enum {string} */
             event: "anomaly.freeze";
-            /** @description Canonical asset_id of the base asset (e.g. `native`, `credit:USDC:G…`, `C…` for Soroban). */
+            /** @description Canonical asset_id of the base asset (e.g. `native`, `USDC-G…` for a classic asset, `C…` for Soroban). */
             asset: string;
             /** @description Canonical asset_id of the quote asset (e.g. `fiat:USD`). */
             quote: string;

@@ -186,3 +186,26 @@ func TestRecordOracleUpdate_EveryAgeHasABudget(t *testing.T) {
 		t.Errorf("budget gauge for the overridden asset = %v, want 32400", got)
 	}
 }
+
+// TestOracleStalenessBudget_RedstoneHasNoPerAssetOverrideMechanism
+// documents Q096/T096: a source declaring RedStone's real 24h
+// heartbeat resolution gets a 10x default budget of 10 days before
+// stellarindex_oracle_stale tickets, and [obs.OracleStalenessOverride]
+// only keys on an exact (source, asset) pair — there is no way to
+// tighten the DEFAULT for an entire source (as opposed to widening
+// one named asset, the DAI case above). Fixing this needs a
+// source-level override or a per-source multiplier, which is a
+// config-schema decision owned by internal/config (OracleConfig /
+// validateStalenessOverrides), outside this package's fence. This
+// test pins the current (unfixed) behaviour as reproduction evidence.
+func TestOracleStalenessBudget_RedstoneHasNoPerAssetOverrideMechanism(t *testing.T) {
+	obs.DeclareOracleResolution("redstone", 24*60*60)
+	obs.SetOracleStalenessOverrides(nil)
+	t.Cleanup(func() { obs.SetOracleStalenessOverrides(nil) })
+
+	const tenDaysSeconds = 10 * 24 * 60 * 60
+	if got := obs.OracleStalenessBudget("redstone", "rwa:BENJI"); got != tenDaysSeconds {
+		t.Fatalf("redstone default staleness budget = %v, want %v (10x the declared 24h resolution) "+
+			"— no per-asset override exists for any RedStone feed to tighten this", got, float64(tenDaysSeconds))
+	}
+}

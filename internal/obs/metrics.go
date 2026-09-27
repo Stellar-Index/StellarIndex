@@ -3017,9 +3017,11 @@ var PriceStalenessSeconds = prometheus.NewGaugeVec(
 //
 // Cardinality: Reflector/Band/Redstone each track O(30) assets, so
 // the shipped sources together stay well inside Prometheus's
-// comfort zone. If we ever wire a "passthrough every asset"
-// oracle, revisit — this would need the same allow-list discipline
-// as PriceStalenessSeconds.
+// comfort zone. Capture-totality DOES passthrough every unmapped
+// oracle symbol (canonical.AssetOracleRaw, "raw:<symbol>") to the
+// oracle_updates table, but internal/pipeline/sink.go's persistOracle
+// skips this gauge for any asset that fails Asset.IsMapped(), so an
+// unbounded set of raw symbols never reaches this label set.
 var OracleLastUpdateUnix = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_oracle_last_update_unix",
