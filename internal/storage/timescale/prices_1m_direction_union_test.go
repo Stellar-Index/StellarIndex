@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -235,59 +236,98 @@ func declName(d ast.Decl) string {
 	return "?"
 }
 
+// pairDeclFiles lists every non-test .go file in the package, the same
+// set TestPairReadsNeverFoldDirectionsWithOr and
+// TestBatchPairReadsFoldBothDirections scan (pair_direction_guard_test.go).
+// A subject scan hardcoded to a single file — aggregates.go used to be
+// the only one — goes silently blind the moment a both-directions reader
+// lands anywhere else, which is exactly how change_summary.go's series
+// read shipped uncovered.
+func pairDeclFiles(t *testing.T) []string {
+	t.Helper()
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	out := files[:0]
+	for _, f := range files {
+		if !strings.HasSuffix(f, "_test.go") {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // TestCAGGSeriesReadsFoldDirectionsWithUnion is the list-free half of
 // TestBothDirectionReadersUseUnionNotOr: every bucket-ordered
-// both-directions read in aggregates.go must split the orientations
-// into two index-drivable UNION ALL branches.
+// both-directions read in the package must split the orientations into
+// two index-drivable UNION ALL branches. Subject selection is by SHAPE
+// (a pair-bound predicate present in both operand orders, one for each
+// stored direction), not by one fixed spelling — swapping the operands
+// or breaking the OR disjunction across lines must not turn a reader
+// invisible to this scan.
 func TestCAGGSeriesReadsFoldDirectionsWithUnion(t *testing.T) {
 	subjects := 0
-	for name, q := range declSQL(t, "aggregates.go") {
-		if !strings.Contains(q, pairFoldFwd) || !strings.Contains(q, pairFoldRev) {
-			continue
-		}
-		if !bucketOrderedRe.MatchString(q) {
-			continue
-		}
-		subjects++
-		t.Run(name, func(t *testing.T) {
-			if strings.Contains(q, "OR (base_asset") {
-				t.Errorf("%s folds both directions with an OR disjunction. The "+
-					"planner cannot drive prices_*_pair_bucket_idx from an OR of two "+
-					"(base,quote) pairs, so a bucket-ordered read degrades to a full "+
-					"walk of every chunk — 10683 ms vs 3.6 ms measured on r1 for a "+
-					"pair with no rows. Use a UNION ALL of two single-direction "+
-					"branches.\n\nquery:\n%s", name, q)
+	for _, file := range pairDeclFiles(t) {
+		for name, q := range declSQL(t, file) {
+			m := pairBoundFilter.FindStringSubmatch(q)
+			if m == nil {
+				continue
 			}
-			if !strings.Contains(q, "UNION ALL") {
-				t.Errorf("%s does not use UNION ALL — the two stored orientations "+
-					"must each be their own indexable branch", name)
+			base, quote := m[1], m[2]
+			flipped := regexp.MustCompile(
+				`base_asset\s*=\s*\$` + quote + `\s+AND\s+quote_asset\s*=\s*\$` + base)
+			if !flipped.MatchString(q) {
+				continue
 			}
-		})
+			if !bucketOrderedRe.MatchString(q) {
+				continue
+			}
+			subjects++
+			t.Run(file+"/"+name, func(t *testing.T) {
+				if m := orientationDisjunction.FindString(q); m != "" {
+					t.Errorf("%s folds both directions with an OR disjunction (%q). The "+
+						"planner cannot drive prices_*_pair_bucket_idx from an OR of two "+
+						"(base,quote) pairs, so a bucket-ordered read degrades to a full "+
+						"walk of every chunk — 10683 ms vs 3.6 ms measured on r1 for a "+
+						"pair with no rows. Use a UNION ALL of two single-direction "+
+						"branches.\n\nquery:\n%s", name, m, q)
+				}
+				if !strings.Contains(q, "UNION ALL") {
+					t.Errorf("%s does not use UNION ALL — the two stored orientations "+
+						"must each be their own indexable branch", name)
+				}
+			})
+		}
 	}
-	// Non-vacuity: the scan must not silently cover nothing. Renaming a
-	// column or moving the readers out of aggregates.go would otherwise
-	// turn this guard into a no-op that still reports PASS.
-	if subjects < 6 {
+	// Non-vacuity: the scan must not silently cover nothing, and the
+	// floor must track the real subject count. 13 both-directions
+	// bucket-ordered readers exist across the package today (aggregates.go,
+	// change_summary.go, markets.go); a drop below that is the scan going
+	// blind, not the count settling lower by design.
+	if subjects < 13 {
 		t.Errorf("scan found %d both-directions bucket-ordered readers in "+
-			"aggregates.go, expected at least 6 — the scan is no longer "+
+			"the package, expected at least 13 — the scan is no longer "+
 			"matching the readers it exists to guard", subjects)
 	}
 }
 
 // TestCAGGReadsKeepSargableBucketBound applies the sargable-bound rule
-// to EVERY query in aggregates.go, not to a list. The interval belongs
-// on the right of the comparison; on the left it is a function over the
-// indexed column, which forfeits index access and plan-time chunk
-// pruning.
+// to every query in the package, not to a list or to one file.
+// The interval belongs on the right of the comparison; on the left it is
+// a function over the indexed column, which forfeits index access and
+// plan-time chunk pruning.
 func TestCAGGReadsKeepSargableBucketBound(t *testing.T) {
-	for name, q := range declSQL(t, "aggregates.go") {
-		if !strings.Contains(q, "FROM") {
-			continue
-		}
-		if m := nonSargableBucketRe.FindString(q); m != "" {
-			t.Errorf("%s applies a function to the indexed bucket column (%q). "+
-				"Put the interval on the RHS: `bucket <= now() - INTERVAL …`",
-				name, strings.Join(strings.Fields(m), " "))
+	for _, file := range pairDeclFiles(t) {
+		for name, q := range declSQL(t, file) {
+			if !strings.Contains(q, "FROM") {
+				continue
+			}
+			if m := nonSargableBucketRe.FindString(q); m != "" {
+				t.Errorf("%s/%s applies a function to the indexed bucket column (%q). "+
+					"Put the interval on the RHS: `bucket <= now() - INTERVAL …`",
+					file, name, strings.Join(strings.Fields(m), " "))
+			}
 		}
 	}
 }
