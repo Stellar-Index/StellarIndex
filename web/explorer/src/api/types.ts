@@ -1045,6 +1045,10 @@ export interface paths {
          *     days (migration 0156); coarser widths hold the deployment's
          *     full history. This surface reads oldest-bucket-first, so where
          *     that window is enabled the bound is the first thing it meets.
+         *
+         *     A pair on a directory-flagged scam issuer is a 404 of type
+         *     `price-withheld` (`scam_issuer`), the same gate and vocabulary
+         *     as `/v1/price` and `/v1/chart`, never an empty 200.
          */
         get: operations["getHistorySinceInception"];
         put?: never;
@@ -1146,6 +1150,11 @@ export interface paths {
          *     read through both USD legs — `rate_usd[quote] /
          *     rate_usd[base]` per shared day, same algebra as /v1/price's
          *     cross-rate fallback — and stamp `flags.triangulated=true`.
+         *
+         *     A pair on a directory-flagged scam issuer is a 404 of type
+         *     `price-withheld` (`scam_issuer`), the same gate and vocabulary
+         *     as `/v1/price` and `/v1/history/since-inception`, never an
+         *     empty 200.
          */
         get: operations["getChart"];
         put?: never;
@@ -13774,6 +13783,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];
@@ -13908,6 +13918,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };
