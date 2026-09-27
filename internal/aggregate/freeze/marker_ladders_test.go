@@ -111,14 +111,16 @@ func TestMarkHoldForWindow_KeepsEachWindowsLadderApart(t *testing.T) {
 // signal.
 func TestLoadStateForWindow_LegacyMarkerAnswersPairWide(t *testing.T) {
 	_, rdb := newRedis(t)
-	w, err := freeze.NewWriter(rdb, time.Minute)
+	now := time.Now().UTC()
+	w, err := freeze.NewWriter(rdb, time.Minute, freeze.WithClock(func() time.Time { return now }))
 	if err != nil {
 		t.Fatalf("NewWriter: %v", err)
 	}
 	asset, quote := nativeUSD(t)
 	ctx := context.Background()
 
-	fired := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	// Live, so the carry-forward is actually exercised.
+	fired := now.Add(-5 * time.Minute)
 	legacy := freeze.Marker{
 		AssetID:  asset.String(),
 		QuoteID:  quote.String(),
@@ -145,11 +147,12 @@ func TestLoadStateForWindow_LegacyMarkerAnswersPairWide(t *testing.T) {
 	}
 
 	// The owning window's next lifecycle write upgrades the marker in
-	// place, and from then on the ladders are scoped.
+	// place; once the upgrade tick has passed the ladders are scoped.
 	if err := w.MarkHoldForWindow(ctx, asset, quote, longWindow, "0.124200000000",
 		ladderDecision(), ladderState(fired, 2), time.Hour); err != nil {
 		t.Fatalf("MarkHoldForWindow: %v", err)
 	}
+	now = now.Add(freeze.DefaultLadderGrace + time.Second)
 	upgraded, ok, err := w.LoadStateForWindow(ctx, asset, quote, shortWindow)
 	if err != nil || !ok {
 		t.Fatalf("LoadStateForWindow after upgrade: ok=%v err=%v", ok, err)
@@ -301,5 +304,88 @@ func TestRetireWindowLadder_LeavesTheMarkerAndTheSibling(t *testing.T) {
 	}
 	if gotLong.ExtensionsUsed != 3 {
 		t.Errorf("the still-frozen window's ladder was collateral damage: %+v", gotLong)
+	}
+}
+
+// TestLoadStateForWindow_ColdWindowDoesNotAdoptEscalatedUpgradeLadder pins
+// the adoption bound on an upgraded marker's unowned ladder. The snapshot
+// stays live for its whole hold, and its Escalated bit is one ADR-0019
+// never auto-releases, so a window that reaches the freeze step after the
+// upgrade tick (it had been under the USD-volume floor) and adopted it
+// would be held until a manual unfreeze on a bucket nothing was wrong with.
+func TestLoadStateForWindow_ColdWindowDoesNotAdoptEscalatedUpgradeLadder(t *testing.T) {
+	_, rdb := newRedis(t)
+	now := time.Now().UTC()
+	w, err := freeze.NewWriter(rdb, time.Minute, freeze.WithClock(func() time.Time { return now }))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	asset, quote := nativeUSD(t)
+	ctx := context.Background()
+
+	escalated := freeze.State{
+		FiredAt:        now.Add(-2 * time.Hour),
+		HoldUntil:      now.Add(30 * time.Minute),
+		ExtensionsUsed: 4,
+		Escalated:      true,
+	}
+	legacy := freeze.Marker{
+		AssetID:  asset.String(),
+		QuoteID:  quote.String(),
+		Action:   anomaly.ActionFreeze,
+		FrozenAt: now,
+		State:    escalated,
+	}
+	body, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("marshal legacy marker: %v", err)
+	}
+	if err := rdb.Set(ctx, cachekeys.Freeze(asset, quote).String(), body, time.Hour).Err(); err != nil {
+		t.Fatalf("seed legacy marker: %v", err)
+	}
+
+	// Upgrade tick: the 5m window re-marks, and a sibling that was running
+	// the same pair-level ladder still reads it on this tick.
+	if err := w.MarkHoldForWindow(ctx, asset, quote, shortWindow, "0.124200000000",
+		ladderDecision(), escalated, time.Hour); err != nil {
+		t.Fatalf("MarkHoldForWindow(5m) upgrade: %v", err)
+	}
+	sibling, ok, err := w.LoadStateForWindow(ctx, asset, quote, longWindow)
+	if err != nil || !ok {
+		t.Fatalf("LoadStateForWindow(1h) on the upgrade tick: ok=%v err=%v", ok, err)
+	}
+	if !sibling.Escalated {
+		t.Errorf("on the upgrade tick the 1h window read %+v, want the unowned escalated ladder", sibling)
+	}
+
+	// Later ticks: the 5m window keeps re-marking; the snapshot is still
+	// inside its hold, so it is still carried forward.
+	for i := 0; i < 3; i++ {
+		now = now.Add(freeze.DefaultLadderGrace)
+		escalated.HoldUntil = now.Add(30 * time.Minute)
+		if err := w.MarkHoldForWindow(ctx, asset, quote, shortWindow, "0.124200000000",
+			ladderDecision(), escalated, time.Hour); err != nil {
+			t.Fatalf("MarkHoldForWindow(5m) tick %d: %v", i, err)
+		}
+	}
+
+	cold, ok, err := w.LoadStateForWindow(ctx, asset, quote, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("LoadStateForWindow(24h): %v", err)
+	}
+	if !ok {
+		t.Error("presence is pair-wide: the 5m window's freeze keeps the marker, so the 24h window must read present")
+	}
+	if cold.Active() {
+		t.Errorf("the 24h window, first reaching the freeze step %v after the upgrade, adopted %+v — "+
+			"an escalated ladder it never ran, which only a manual unfreeze ends",
+			3*freeze.DefaultLadderGrace, cold)
+	}
+	owner, _, err := w.LoadStateForWindow(ctx, asset, quote, shortWindow)
+	if err != nil {
+		t.Fatalf("LoadStateForWindow(5m): %v", err)
+	}
+	if !owner.Escalated {
+		t.Errorf("the 5m window's own ladder read back %+v, want it still escalated", owner)
 	}
 }
