@@ -928,11 +928,14 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	flags := Flags{Stale: stale, Triangulated: triangulated}
 	// Surface the router's composite-quality signals (diverged /
 	// rerouted) that the aggregator persists to
-	// cachekeys.VWAPCompositeMeta — a no-op unless the served value is a
-	// triangulated composite. Best-effort. Skipped on a substituted
-	// snapshot — see [Server.attachCompositeFlags] (RNC27).
+	// cachekeys.VWAPCompositeMeta for this pair — a no-op only when
+	// (governing, quote) isn't a configured router target at all (cache
+	// miss). Runs regardless of which arm served (T006): the router
+	// still tracks the chain even when a real closed bucket wins.
+	// Best-effort. Skipped on a substituted snapshot — see
+	// [Server.attachCompositeFlags] (RNC27).
 	if !snapshot.Substituted {
-		s.attachCompositeFlags(r, &flags, governing, quote, triangulationLookupWindow, triangulated)
+		s.attachCompositeFlags(r, &flags, governing, quote, triangulationLookupWindow, false)
 	}
 	flags.Frozen = frozen
 	flags.FrozenChecked = frozenChecked
@@ -2569,21 +2572,33 @@ func (s *Server) lookupDivergenceFlag(ctx context.Context, asset, quote canonica
 // attachCompositeFlags surfaces the aggregator's router-quality
 // signals — flags.diverged (contributing routes disagreed) and
 // flags.rerouted (the composite substituted around a dry configured
-// chain leg, R3) — on a TRIANGULATED /v1/price response. The aggregator
-// persists them to [cachekeys.VWAPCompositeMeta] on every router-priced
-// target; before this reader they were written and never read.
+// chain leg, R3) — that the aggregator persists to
+// [cachekeys.VWAPCompositeMeta] on every router-priced target.
+//
+// requireTriangulated controls whether flags.Triangulated must already
+// be true to even attempt the lookup:
+//   - The ?window= surface (GH-951) reads a single per-(pair,window)
+//     Redis key that either the composite or a direct writer owns for
+//     that exact window; when the direct writer served it, the
+//     composite never ran for that window and its meta (if any exists
+//     from a DIFFERENT window/tick) does not describe the served
+//     value. Pass true there.
+//   - The headline surface reads Postgres prices_1m FIRST, so a
+//     configured router target that also carries a real closed bucket
+//     (e.g. XLM/EUR's CEX print) never sets flags.Triangulated even
+//     though its chain still ran and wrote meta this tick (T006).
+//     Pass false there so the meta — describing the router's health —
+//     surfaces regardless of which arm served the price.
 //
 // Gated on the wired [TriangulatedPriceLooker] also implementing the
 // OPTIONAL [CompositeMetaLooker] capability — when it doesn't, both
 // flags stay unset (the price still serves). Best-effort throughout: a
-// cache miss, a malformed meta blob, or a read error leaves the flags
-// unset and never fails the request. A no-op when triangulated is false:
-// the meta describes the composite, and the aggregator also writes it when
-// the composite was NOT published (frozen target, low-confidence reroute),
-// so on a direct value it would qualify a number the response isn't
-// serving. pair and window must be the ones the served value was read under.
-func (s *Server) attachCompositeFlags(r *http.Request, flags *Flags, asset, quote canonical.Asset, window time.Duration, triangulated bool) {
-	if !triangulated {
+// cache miss (asset/quote/window is not a configured router target),
+// a malformed meta blob, or a read error leaves the flags unset and
+// never fails the request. pair and window must be the ones the
+// served value was read under.
+func (s *Server) attachCompositeFlags(r *http.Request, flags *Flags, asset, quote canonical.Asset, window time.Duration, requireTriangulated bool) {
+	if requireTriangulated && !flags.Triangulated {
 		return
 	}
 	looker, ok := s.triangulated.(CompositeMetaLooker)
@@ -3539,7 +3554,7 @@ func (s *Server) windowedPriceFlags(r *http.Request, a, q canonical.Asset, windo
 	// Unfrozen, this surface has no source list to derive single-source.
 	flags.SingleSource = frozenVal
 	flags.Stale = frozenVal
-	s.attachCompositeFlags(r, &flags, a, q, window, triangulated)
+	s.attachCompositeFlags(r, &flags, a, q, window, true)
 	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), a, q, window)
 	return flags
 }

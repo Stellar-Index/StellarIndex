@@ -448,6 +448,43 @@ func TestPrice_TriangulatedCompositeFlags(t *testing.T) {
 	})
 }
 
+// TestPrice_DirectServeStillSurfacesCompositeFlags pins T006: a
+// configured router target (e.g. XLM/EUR) can also carry a real
+// closed 1m bucket (a genuine CEX print), in which case the direct
+// value wins and flags.triangulated stays false. The aggregator still
+// runs the chain every tick and persists its composite-quality meta
+// regardless of which arm ends up serving — attachCompositeFlags must
+// not drop diverged/rerouted just because the DIRECT value served.
+func TestPrice_DirectServeStillSurfacesCompositeFlags(t *testing.T) {
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"crypto:XLM/fiat:EUR": {Price: "0.0900", PriceType: "last_trade"},
+		},
+	}
+	looker := &stubCompositeMetaLooker{
+		// Not consulted for this pair's price (the direct read served),
+		// but the router still ran its chain and wrote meta this tick.
+		metaRaw:   []byte(`{"diverged":true,"rerouted":true}`),
+		metaFound: true,
+	}
+	srv := v1.New(v1.Options{Prices: reader, Triangulated: looker})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price?asset=crypto:XLM&quote=fiat:EUR")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"triangulated":false`) {
+		t.Errorf("direct serve must keep triangulated=false: %s", body)
+	}
+	for _, s := range []string{`"diverged":true`, `"rerouted":true`} {
+		if !strings.Contains(body, s) {
+			t.Errorf("body missing %q (composite meta must surface regardless of served arm): %s", s, body)
+		}
+	}
+}
+
 // TestPrice_StablecoinFiatProxy_FallsThroughToClassicPeg — the
 // fix for the production regression where /v1/price?asset=native&quote=fiat:USD
 // 404'd even though the aggregator had populated native/USDC-classic
