@@ -145,6 +145,67 @@ func TestPriceAlertReader_ThinHistoryWiderFiniteBand(t *testing.T) {
 	}
 }
 
+// fakeAlertDecimalsLookup is an aggregate.DecimalsLookup with a fixed
+// asset->decimals table, for testing without the real decimals cache.
+type fakeAlertDecimalsLookup map[string]int
+
+func (f fakeAlertDecimalsLookup) Lookup(assetID string) (int, bool) {
+	d, ok := f[assetID]
+	return d, ok
+}
+
+// TestPriceAlertReader_NonstandardDecimalsCorrected proves #748: a
+// confirmed non-7-decimal base leg (the runbook's real CC2RB… incident,
+// decimals()=9 vs USDC's 7, raw ratio 41.32) must be corrected the same
+// way /v1/price's TestPrice_NonstandardDecimals_NormalizesFlaggedBaseLeg
+// corrects it (K = 10^(9-7) = 100 -> 4132), not compared/served raw.
+func TestPriceAlertReader_NonstandardDecimalsCorrected(t *testing.T) {
+	base, quote := alertUSDAssets(t)
+	trailing := make([]timescale.Vwap1mRow, 12)
+	for i := range trailing {
+		trailing[i] = alertRow(i+1, "41.32")
+	}
+	reader := priceAlertVWAPReader{
+		store:    fakeAlertVWAPStore{latest: alertRow(0, "41.32"), trailing: trailing},
+		logger:   discardLogger(),
+		decimals: fakeAlertDecimalsLookup{base.String(): 9},
+	}
+	price, _, ok, err := reader.LatestVWAP(context.Background(), base, quote)
+	if err != nil || !ok {
+		t.Fatalf("expected a served price; got ok=%v err=%v", ok, err)
+	}
+	if price != "4132.0000" {
+		t.Fatalf("served price = %s, want decimals-corrected 4132 (raw 41.32 x 10^(9-7)), matching /v1/price", price)
+	}
+}
+
+// TestPriceAlertReader_SubEpsilonCorrectedPriceStaysNonZero proves the
+// slice-C03 must_fix: a corrected price below 1e-10 must not truncate to
+// "0". Base decimals 7, quote decimals 18 -> divide by 10^11: raw "1.0"
+// corrects to the exact decimal 0.00000000001 (1e-11), which a fixed
+// FloatString(10) render would truncate to "0".
+func TestPriceAlertReader_SubEpsilonCorrectedPriceStaysNonZero(t *testing.T) {
+	base, quote := alertUSDAssets(t)
+	reader := priceAlertVWAPReader{
+		store:  fakeAlertVWAPStore{latest: alertRow(0, "1.0"), trailing: steadyAlertRows(12)},
+		logger: discardLogger(),
+		decimals: fakeAlertDecimalsLookup{
+			base.String():  7,
+			quote.String(): 18,
+		},
+	}
+	price, _, ok, err := reader.LatestVWAP(context.Background(), base, quote)
+	if err != nil || !ok {
+		t.Fatalf("expected a served price; got ok=%v err=%v", ok, err)
+	}
+	if price == "0" {
+		t.Fatalf("served price truncated a positive corrected price to 0")
+	}
+	if price != "0.000000000010" {
+		t.Fatalf("served price = %s, want the exact corrected decimal 0.000000000010 (1e-11)", price)
+	}
+}
+
 func TestPriceAlertReader_NoClosedBucketIsBenignNoOp(t *testing.T) {
 	// sql.ErrNoRows (no closed bucket in scope) stays ok=false, nil — the
 	// evaluator skips the pair. The guard must not run (and does not).

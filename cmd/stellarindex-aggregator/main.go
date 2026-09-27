@@ -78,6 +78,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/assetcharacterrollup"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/assetvolrollup"
@@ -1065,6 +1066,11 @@ func run(cfgPath string, dryRun bool) error {
 				// The binary's shared withholding gate: an alert must not
 				// fire off a pair the API itself would refuse to price.
 				gate: withholding,
+				// Same decimals correction /v1/price applies before serving
+				// — without it a nonstandard-decimals asset's threshold
+				// (set from the corrected price) is compared against a raw
+				// ratio 10^k off (#748).
+				decimals: decimalsLookup,
 			},
 			pricealerts.Options{
 				Interval: time.Duration(cfg.PriceAlerts.IntervalSeconds) * time.Second,
@@ -2708,6 +2714,12 @@ type priceAlertVWAPReader struct {
 	store  priceAlertVWAPStore
 	logger *slog.Logger
 	gate   pricingguard.Gate // zero → withholds nothing
+	// decimals resolves a confirmed non-7dp scale the same way /v1/price
+	// does ([aggregate.ResolveDecimals]) so an alert threshold — set from
+	// the corrected price — is compared against a correspondingly
+	// corrected observation. nil → every leg is StandardDecimals (7),
+	// the overwhelming common case and the zero value existing tests use.
+	decimals aggregate.DecimalsLookup
 }
 
 func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canonical.Asset) (string, time.Time, bool, error) {
@@ -2752,10 +2764,56 @@ func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canoni
 			// is byte-identical on a healthy bucket, and fails open on
 			// thin history.
 			served := pricingguard.GuardServedVWAP1m(ctx, r.store, r.logger, pair, row)
-			return served.VWAP, served.Bucket.Add(time.Minute), true, nil
+			// The guard's VWAP is the raw quote/base CAGG ratio, exactly
+			// as /v1/price's normalizeRawPriceSnapshot reads it before
+			// AdjustPrice. Apply the same correction here: the customer's
+			// threshold was set from the corrected /v1/price value, so an
+			// uncorrected comparison is wrong by the pair's decimals skew.
+			baseDec := aggregate.ResolveDecimals(r.decimals, b)
+			quoteDec := aggregate.ResolveDecimals(r.decimals, q)
+			adjusted, err := adjustDecimalString(served.VWAP, baseDec, quoteDec)
+			if err != nil {
+				return "", time.Time{}, false, err
+			}
+			return adjusted, served.Bucket.Add(time.Minute), true, nil
 		}
 	}
 	return "", time.Time{}, false, nil
+}
+
+// adjustDecimalString scales a raw decimal-string quote/base ratio by the
+// decimals correction factor and renders the result as an exact decimal
+// string. The factor ([aggregate.DecimalsAdjustment]) is always an exact
+// power of ten, so scaling a finite decimal by it only shifts the decimal
+// point — it can never lose or invent a digit, unlike a fixed-width
+// FloatString(10) render, which truncates any corrected price below
+// 1e-10 to "0" (a positive price must never reach the alert comparator,
+// or a customer, as zero).
+func adjustDecimalString(raw string, baseDecimals, quoteDecimals int) (string, error) {
+	if baseDecimals == quoteDecimals {
+		return raw, nil
+	}
+	r, ok := new(big.Rat).SetString(raw)
+	if !ok {
+		return "", fmt.Errorf("price-alert decimals adjust: %q is not a decimal", raw)
+	}
+	adjusted := aggregate.AdjustPrice(r, baseDecimals, quoteDecimals)
+	delta := baseDecimals - quoteDecimals
+	if delta < 0 {
+		delta = -delta
+	}
+	return adjusted.FloatString(decimalFractionDigits(raw) + delta), nil
+}
+
+// decimalFractionDigits counts the fractional digits of a plain decimal
+// string ("1.230" -> 3, "5" -> 0) — the only shape prices_1m.VWAP is ever
+// stored in.
+func decimalFractionDigits(s string) int {
+	i := strings.IndexByte(s, '.')
+	if i < 0 {
+		return 0
+	}
+	return len(s) - i - 1
 }
 
 // buildAggregatorSubstanceGate maps [pricing_guard] onto the shared
