@@ -15,9 +15,8 @@
 -- them at all. Each definition is byte-identical to tier1_schema.sql's;
 -- internal/storage/clickhouse/skip_index_retrofit_test.go fails when a tier1
 -- index has no matching ADD INDEX in some deploy/clickhouse artifact.
--- The four indexes not listed here are retrofitted by their own feature's
--- file (transactions_fee_bump.sql, ledger_entry_changes_key_xdr_index_fp.sql,
--- account_creators_rollup.sql, account_sponsors_rollup.sql).
+-- The three indexes not listed here are retrofitted by their own feature's
+-- file (transactions_fee_bump.sql, account_creators_rollup.sql, account_sponsors_rollup.sql).
 --
 -- Step 1 is metadata-only and idempotent (IF NOT EXISTS): every NEW part is
 -- indexed on insert from then on, and a host that already has an index is
@@ -38,7 +37,8 @@ ALTER TABLE stellar.contract_events
 
 ALTER TABLE stellar.ledger_entry_changes
     ADD INDEX IF NOT EXISTS idx_lec_account_id account_id TYPE bloom_filter(0.01) GRANULARITY 1,
-    ADD INDEX IF NOT EXISTS idx_lec_asset asset TYPE bloom_filter(0.01) GRANULARITY 1;
+    ADD INDEX IF NOT EXISTS idx_lec_asset asset TYPE bloom_filter(0.01) GRANULARITY 1,
+    ADD INDEX IF NOT EXISTS idx_lec_key_xdr key_xdr TYPE bloom_filter(0.01) GRANULARITY 1;
 
 ALTER TABLE stellar.ledger_entries_current
     ADD INDEX IF NOT EXISTS idx_lecur_account_id account_id TYPE bloom_filter(0.01) GRANULARITY 1,
@@ -47,12 +47,12 @@ ALTER TABLE stellar.ledger_entries_current
 ALTER TABLE stellar.account_movements
     ADD INDEX IF NOT EXISTS idx_cb_balance_id JSONExtractString(attributes, 'balance_id') TYPE bloom_filter(0.01) GRANULARITY 4;
 
--- ── Step 2: verify — expect 10 rows ──────────────────────────────────────────
+-- ── Step 2: verify — expect 11 rows ──────────────────────────────────────────
 -- SELECT table, name, type_full, granularity FROM system.data_skipping_indices
 --  WHERE database = 'stellar'
 --    AND name IN ('idx_tx_hash','idx_tx_source','idx_op_source',
 --                 'idx_contract_id','idx_ce_close_time',
---                 'idx_lec_account_id','idx_lec_asset',
+--                 'idx_lec_account_id','idx_lec_asset','idx_lec_key_xdr',
 --                 'idx_lecur_account_id','idx_lecur_asset','idx_cb_balance_id')
 --  ORDER BY table, name;
 
@@ -60,8 +60,7 @@ ALTER TABLE stellar.account_movements
 -- Parts written before Step 1 are not indexed. MATERIALIZE is a heavy
 -- mutation (it reads the column for every part), so run it per partition,
 -- NEWEST first, one at a time, checking `df` against the 500 GiB floor
--- between each and letting each drain before the next — the same procedure
--- as ledger_entry_changes_key_xdr_index_fp.sql Step 3:
+-- between each and letting each drain before the next:
 --
 --   ALTER TABLE stellar.<table>
 --       MATERIALIZE INDEX <index> IN PARTITION '{partition}';
