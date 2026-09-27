@@ -61,6 +61,7 @@ func LoadReader(r io.Reader, origin string) (Config, error) {
 				origin, strings.Join(unknown, ", "))
 		}
 	}
+	c.Obs.MetricsListenSet = meta.IsDefined("obs", "metrics_listen")
 	if err := c.Validate(); err != nil {
 		return Config{}, fmt.Errorf("config: %s: %w", origin, err)
 	}
