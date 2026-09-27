@@ -34,11 +34,11 @@ type SignupVerifier interface {
 //
 // `verifyURL` is the absolute click-through URL the customer
 // sees in the email — `https://api.example.com/v1/signup/verify
-// ?token=<plaintext>`. The handler builds it from the request's
-// scheme + Host so deployments don't have to plumb a separate
-// base URL config; nil-safe in the handler so a Sender-less
-// deployment skips the send and returns the response with
-// `email_sent: false`.
+// ?token=<plaintext>`. The handler builds it from the server's
+// configured SignupVerifyBaseURL (operator config), never from
+// the request's Host header (CA2-A20-harden-5); nil-safe in the
+// handler so a Sender-less deployment skips the send and returns
+// the response with `email_sent: false`.
 type SignupVerifyEmailer interface {
 	SendSignupVerification(ctx context.Context, toEmail, verifyURL string) error
 }

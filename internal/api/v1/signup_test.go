@@ -141,6 +141,82 @@ func TestSignup_HappyPath(t *testing.T) {
 	}
 }
 
+// capturingSignupVerifyEmailer records the verifyURL passed to
+// SendSignupVerification so a test can assert what the customer
+// would actually see in the email.
+type capturingSignupVerifyEmailer struct {
+	mu        sync.Mutex
+	verifyURL string
+}
+
+func (c *capturingSignupVerifyEmailer) SendSignupVerification(_ context.Context, _, verifyURL string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.verifyURL = verifyURL
+	return nil
+}
+
+// TestSignup_VerifyLinkIgnoresForgedHost — CA2-A20-harden-5: a
+// client-controlled `Host` header must never end up in the
+// emailed verification link (a forged Host would land a live,
+// single-use token in an attacker-controlled URL). The link must
+// be built from the server's configured SignupVerifyBaseURL.
+func TestSignup_VerifyLinkIgnoresForgedHost(t *testing.T) {
+	store := &fakeAccountStore{
+		rec: auth.APIKeyRecord{
+			KeyID:      "kid_forged",
+			Identifier: "signup-forgedhost",
+			Tier:       auth.TierAPIKey,
+			CreatedAt:  time.Now().UTC(),
+		},
+		plain: "sip_forged",
+	}
+	emailer := &capturingSignupVerifyEmailer{}
+	srv := v1.New(v1.Options{
+		Auth:                fakeAuthMiddleware(auth.Subject{}),
+		Accounts:            store,
+		Signups:             newFakeSignupTracker(),
+		SignupVerifier:      newFakeSignupVerifier(nil),
+		SignupVerifyEmailer: emailer,
+		SignupVerifyBaseURL: "https://api.stellarindex.io/v1",
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/signup",
+		strings.NewReader(`{"email":"victim@example.com","label":"my-app"}`))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// Forge the Host an attacker fully controls on a directly
+	// reachable listener.
+	req.Host = "attacker.example"
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /v1/signup: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	emailer.mu.Lock()
+	got := emailer.verifyURL
+	emailer.mu.Unlock()
+
+	if got == "" {
+		t.Fatalf("verifyURL never captured — verification email not sent")
+	}
+	if strings.Contains(got, "attacker.example") {
+		t.Errorf("verifyURL = %q, must not contain the forged Host", got)
+	}
+	const wantPrefix = "https://api.stellarindex.io/signup/verify?token="
+	if !strings.HasPrefix(got, wantPrefix) {
+		t.Errorf("verifyURL = %q, want prefix %q (built from SignupVerifyBaseURL)", got, wantPrefix)
+	}
+}
+
 // TestSignup_DuplicateEmail — same email twice returns 409 on
 // second attempt.
 func TestSignup_DuplicateEmail(t *testing.T) {

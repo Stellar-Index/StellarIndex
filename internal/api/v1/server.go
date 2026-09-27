@@ -248,6 +248,7 @@ type Server struct {
 	signupIPThrottle    SignupIPThrottle
 	signupVerifier      SignupVerifier
 	signupVerifyEmailer SignupVerifyEmailer
+	signupVerifyBaseURL string
 	apiKeyEmailVerifier APIKeyEmailVerifier
 	divergence          DivergenceLooker
 	freeze              FrozenLooker
@@ -923,6 +924,17 @@ type Options struct {
 	// verifier endpoint stays a no-op until wave 44 is wired
 	// end-to-end.
 	SignupVerifyEmailer SignupVerifyEmailer
+
+	// SignupVerifyBaseURL is the base URL (e.g.
+	// "https://api.stellarindex.io/v1") the signup-verification
+	// email link is built from — normally cfg.API.ExternalBaseURL.
+	// CA2-A20-harden-5: the client-supplied Host header is
+	// untrustworthy (a forged Host lands a live token in an
+	// attacker-controlled link), so the emailed URL MUST come
+	// from operator config, not the request. Empty falls back to
+	// the request's scheme+Host (local dev only — production
+	// config always sets this).
+	SignupVerifyBaseURL string
 
 	// APIKeyEmailVerifier, when non-nil, lets the
 	// `/v1/signup/verify` handler flip the `EmailVerifiedAt`
@@ -1740,6 +1752,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		signupIPThrottle:        opts.SignupIPThrottle,
 		signupVerifier:          opts.SignupVerifier,
 		signupVerifyEmailer:     opts.SignupVerifyEmailer,
+		signupVerifyBaseURL:     opts.SignupVerifyBaseURL,
 		apiKeyEmailVerifier:     opts.APIKeyEmailVerifier,
 		divergence:              opts.Divergence,
 		freeze:                  opts.Freeze,
