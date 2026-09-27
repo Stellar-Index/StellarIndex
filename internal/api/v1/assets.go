@@ -357,9 +357,9 @@ type AssetDetail struct {
 	// consumers that need cross-region determinism must read /v1/price,
 	// not this field.
 	//
-	// Null only when no USD price can be derived at all (no
+	// Null when no USD price can be derived at all (no
 	// on-chain trades, prices_1m has no row, and stablecoin-fiat
-	// proxy is disabled).
+	// proxy is disabled), or when it is withheld ([PriceWithheldReason]).
 	PriceUSD *string `json:"price_usd,omitempty"`
 
 	// PriceBasis identifies a PriceUSD that is NOT a market
@@ -374,6 +374,11 @@ type AssetDetail struct {
 	// basis, not a market. Additive, omitempty — consumers that don't
 	// know the field see exactly the old shape.
 	PriceBasis string `json:"price_basis,omitempty"`
+
+	// PriceWithheldReason says price_usd is null because the price was
+	// WITHHELD, not because none exists, in the `price-withheld` 404's
+	// reason vocabulary. Never set beside a price_usd.
+	PriceWithheldReason PriceWithheldReason `json:"price_withheld_reason,omitempty"`
 
 	// Change1hPct / Change7dPct round out the trailing-window set
 	// alongside Change24hPct. Same shape — signed percentage with
@@ -1625,7 +1630,9 @@ func (s *Server) applySubstanceGateToListing(ctx context.Context, rows []AssetDe
 		if allowed {
 			continue
 		}
-		if !measured {
+		if measured {
+			row.PriceWithheldReason = PriceWithheldSubstance
+		} else {
 			unmeasured = true
 		}
 		row.PriceUSD = nil
@@ -1747,6 +1754,7 @@ func (s *Server) fillDeclaredPegPrice(ctx context.Context, row *AssetDetail, mem
 	p := *price
 	row.PriceUSD = &p
 	row.PriceBasis = priceBasisDeclaredPeg
+	row.PriceWithheldReason = ""
 }
 
 // declaredPegUSDPrice resolves 1 unit of the declared peg currency in

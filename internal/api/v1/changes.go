@@ -11,6 +11,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -275,24 +276,24 @@ func (s *Server) changeSummaryWithheld(w http.ResponseWriter, r *http.Request, r
 			"The stored change summary does not name a market this deployment can vet.")
 		return true
 	}
-	ctx := r.Context()
+	if row.EntityType != "coin" {
+		// A pair row names one market: both gates, through the package's
+		// one fold.
+		withheld := withheldBy(r.Context(), s.substance, s.scam, base, quote, changeSummaryGateSurface)
+		if withheld == pricingguard.NotWithheld {
+			return false
+		}
+		writePriceWithheldProblem(w, r, base, quote, withheldReasonFor(withheld))
+		return true
+	}
 	if s.writeIfScamWithheld(w, r, base, quote, changeSummaryGateSurface) {
 		return true
 	}
-	if s.substance == nil {
+	if s.substance == nil || s.assetPriceAllowed(r.Context(), base, changeSummaryGateSurface) {
 		return false
 	}
-	var allowed bool
-	if row.EntityType == "coin" {
-		allowed = s.assetPriceAllowed(ctx, base, changeSummaryGateSurface)
-	} else {
-		allowed = s.substance.Allowed(ctx, base, quote, changeSummaryGateSurface)
-	}
-	if !allowed {
-		writePriceWithheldProblem(w, r, base, quote, PriceWithheldSubstance)
-		return true
-	}
-	return false
+	writePriceWithheldProblem(w, r, base, quote, PriceWithheldSubstance)
+	return true
 }
 
 // changeSummaryLegs returns the market a stored row's absolute values are

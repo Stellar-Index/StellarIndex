@@ -179,6 +179,7 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 	if priceAllowed && row.PriceUSD != nil && detail.PriceUSD == nil {
 		if p, ok := s.normalizeCatalogueReadUSD(*row.PriceUSD, asset); ok {
 			detail.PriceUSD = &p
+			detail.PriceWithheldReason = ""
 		} else {
 			// The change pills derive from the price just withheld, and
 			// must not outlive it — same rule as the substance gate above.
@@ -428,5 +429,6 @@ func (s *Server) fillTransitivePrice(ctx context.Context, detail *AssetDetail, a
 	if p, ok := s.transitivePriceFor(ctx, asset, assetID); ok {
 		detail.PriceUSD = &p
 		detail.PriceBasis = priceBasisTransitive
+		detail.PriceWithheldReason = ""
 	}
 }
