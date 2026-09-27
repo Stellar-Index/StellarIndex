@@ -128,7 +128,8 @@ type LendingPoolReservesView struct {
 
 // ReserveView is one reserve's decoded state + derived metrics.
 // Amounts are token-base-unit decimal strings (ADR-0003); USD values
-// are decimal strings or null when the asset has no resolved price.
+// are decimal strings or null when the asset has no resolved price or
+// no established decimals.
 type ReserveView struct {
 	Asset          string  `json:"asset"`
 	Decimals       uint32  `json:"decimals"`
@@ -148,9 +149,9 @@ type ReserveView struct {
 // — REAL current-state TVL / utilization / supply+borrow APY per
 // reserve (ADR-0039), decoded from the pool contract's Soroban storage
 // in the lake. USD values are best-effort: priced when we have a USD
-// price for the reserve's underlying token, else null (the token-unit
-// amounts + util + APY are always exact). Distinct from the
-// /v1/lending/pools window net-flow proxy.
+// price and established decimals for the reserve's underlying token,
+// else null (the token-unit amounts + util + APY are always exact).
+// Distinct from the /v1/lending/pools window net-flow proxy.
 func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Request) {
 	if s.explorer == nil {
 		s.explorerUnavailable(w, r)
@@ -330,11 +331,16 @@ func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserv
 		rv.BorrowAPR = &b
 		rv.SupplyAPR = &sup
 	}
+	dec, decKnown := s.reserveDecimals(ctx, st)
+	if decKnown {
+		rv.Decimals = uint32(dec)
+	}
 	price, ok := s.reservePriceUSD(ctx, st.Asset)
-	if !ok {
+	if !ok || !decKnown {
+		// Without established decimals the USD figures, and the pool TVL,
+		// would be wrong by a power of ten; withhold the valuation instead.
 		return rv, nil
 	}
-	dec := int(st.Decimals)
 	var suppliedContrib *big.Rat
 	if usd, err := usdMarketValue(st.Metrics.SuppliedUnderlying, price, dec); err == nil {
 		rv.SuppliedUSD = &usd
@@ -346,6 +352,24 @@ func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserv
 		rv.BorrowedUSD = &usd
 	}
 	return rv, suppliedContrib
+}
+
+// reserveDecimals returns the reserve token's real decimal exponent: the
+// pool's reserve config when captured, else 7 for a known SAC (fixed by the
+// protocol), else the token contract's own declared decimals() from the lake.
+// ok=false when none of those is available or the lake read failed.
+func (s *Server) reserveDecimals(ctx context.Context, st clickhouse.BlendReserveState) (int, bool) {
+	if st.DecimalsFound {
+		return int(st.Decimals), true
+	}
+	if _, ok := s.resolveSACAsset(st.Asset); ok {
+		return defaultTokenDecimals, true
+	}
+	d, known, err := s.lakeTokenDecimals(ctx, st.Asset)
+	if err != nil || !known {
+		return 0, false
+	}
+	return d, true
 }
 
 // reservePriceUSD resolves a USD price for a Blend reserve's underlying
