@@ -413,6 +413,18 @@ cookie_domain      = "{{ stellarindex_dashboard_cookie_domain | default('') }}"
 [metadata]
 watched_issuer_accounts = {{ stellarindex_metadata_watched_issuer_accounts | default([]) | to_json }}
 
+# ADR-0016 drift detector (internal/hashdb). Off by default everywhere;
+# the per-region opt-in lever the config doc promises ("opt in per
+# region once proven") — set stellarindex_hashdb_enabled: true in a
+# region's inventory once its rollout is clean. Path matches the
+# indexer's existing /var/lib/stellarindex mount (14-stellarindex-
+# services.yml); interval/window keep the library defaults.
+[hashdb]
+enabled                 = {{ 'true' if stellarindex_hashdb_enabled | default(false) | bool else 'false' }}
+path                    = "/var/lib/stellarindex/hashdb.bin"
+verify_interval_minutes = 60
+verify_window_ledgers   = 20000
+
 # ──────────────────────────────────────────────────────────────────
 # [supply] — operator-curated registries.
 # Added 2026-05-07: SAC wrapper resolution map. Sources verified

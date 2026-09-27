@@ -77,6 +77,8 @@ This also lets us safely prune repo1 (local) diffs (the deferred Phase A step) n
 ### 3. Config / vault / secrets → encrypted tarball (high)
 Small, high-value, non-re-derivable. A daily job tars `/etc/stellarindex*`, `/etc/pgbackrest*`, systemd units, the ansible vault, and CH/PG DDL snapshots; `age`/`gpg`-encrypts; uploads to S3. Codify as a systemd timer in the archival-node role.
 
+> **hashdb (`/var/lib/stellarindex/hashdb.bin`, ADR-0016) is deliberately OUT of every stream above and out of `zfs_snapshot_datasets`.** It is a local, disposable append-log the indexer regenerates as it walks ledgers — not source data and not on the serving path. Losing it costs a re-append of the trailing `verify_window_ledgers` window (default 20000, ~1 day at 5s/ledger) on next indexer start, nothing more. It gets no off-site copy and no ZFS snapshot for the same reason `os` (its containing dataset) doesn't: none of it is worth the retention-day cost of a serving-path or archive dataset. The per-region enable lever now exists — `stellarindex_hashdb_enabled` in `stellarindex.toml.j2` — independent of this backup story.
+
 ### 4. ClickHouse lake → S3 (high) — full, incremental, for RTO
 Back up the full lake so recovery is a **restore (~hours)**, not a re-walk (~weeks).
 
