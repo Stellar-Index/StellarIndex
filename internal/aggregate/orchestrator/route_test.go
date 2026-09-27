@@ -39,15 +39,16 @@ func readCompositeMeta(t *testing.T, cache Cache, target canonical.Pair, window 
 	return m, true
 }
 
-// TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze is regression (a):
-// a thin, single-DIRECT-source target that WOULD trip the Phase-2
-// 3-signal freeze (confidence < 0.45 AND z > 5 AND source_count <= 1) does
-// NOT freeze once the graph router has corroborated it with TWO
-// independent, agreeing routes on the prior tick — the pathCount widens
-// the freeze's source_count leg past 1. The single-route counterfactual
-// (pathCount == 1) still freezes, which is what makes the assertion
-// non-vacuous: revert effectiveSourceCount and BOTH runs freeze.
-func TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze(t *testing.T) {
+// TestRouterFreeze_RouteCorroborationDoesNotDisarmSingleSourceFreeze pins
+// ADR-0019 amendment 2026-07-25 §2 (GH-919): a composite is corroboration,
+// not a second venue, so a thin single-DIRECT-source target that trips the
+// Phase-2 3-signal freeze (confidence < 0.45 AND z > 5 AND
+// source_count <= 1) STILL freezes when the graph router has corroborated
+// it with two agreeing, edge-disjoint routes on the prior tick, and the
+// freeze reason reports the venue count (sources=1), not the route count.
+// The corroboration count is pinned to 2 after tick 1 so the assertion does
+// not depend on the router's trust floors.
+func TestRouterFreeze_RouteCorroborationDoesNotDisarmSingleSourceFreeze(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
 	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
@@ -57,8 +58,7 @@ func TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze(t *testing.T) {
 	now := time.Now().UTC()
 
 	// route1 XLM→USD→GBP = 0.10 × 0.80 = 0.08; route2 XLM→EUR→GBP =
-	// 0.10 × 0.80 = 0.08 — the two routes AGREE tightly AND are edge-
-	// disjoint (distinct USD vs EUR hubs), so corroborationCount == 2.
+	// 0.10 × 0.80 = 0.08 — two agreeing, edge-disjoint routes.
 	chainUSD := TriangulationChain{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdGBP}}
 	chainEUR := TriangulationChain{Target: xlmGBP, Legs: []canonical.Pair{xlmEUR, eurGBP}}
 
@@ -67,15 +67,17 @@ func TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze(t *testing.T) {
 	// the composite corroboration; tick 2 is the one that would freeze;
 	// tick 3 repeats the anomalous print (a PERSISTENT single-venue
 	// manipulation) so the caller can check the hold is kept and the
-	// comparator did not ratchet onto the manipulated print.
+	// comparator did not ratchet onto the manipulated print. A positive
+	// corroborate overrides the count recorded on tick 1.
 	type runResult struct {
 		froze         bool     // freeze marker written on tick 2
-		corroboration int      // corroborationCount recorded on tick 1
+		reason        string   // first freeze marker's reason
+		corroboration int      // corroborationCount the tick-2 freeze saw
 		heldOnTick3   bool     // lifecycle still Active after tick 3
 		prevAfter     *big.Rat // prevVWAPs comparator after tick 3
 		servedAfter   string   // VWAP cache key after tick 3
 	}
-	run := func(t *testing.T, chains []TriangulationChain) runResult {
+	run := func(t *testing.T, chains []TriangulationChain, corroborate int) runResult {
 		t.Helper()
 		store := &mockStore{}
 		cache, _ := newTestRedis(t)
@@ -107,6 +109,10 @@ func TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze(t *testing.T) {
 			t.Fatalf("tick 1: %v", err)
 		}
 		sample := o.lastComposites[compositeKey(xlmGBP, window)]
+		if corroborate > 0 {
+			o.recordComposite(xlmGBP, window, big.NewRat(2, 25), corroborate, 0.9, false)
+			sample = o.lastComposites[compositeKey(xlmGBP, window)]
+		}
 
 		// Tick 2: direct jumps to 0.12 — a +50% return, z ≈ 50 against the
 		// MAD=0.01 baseline, single source. This is the bucket the freeze
@@ -119,6 +125,10 @@ func TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze(t *testing.T) {
 			t.Fatalf("tick 2: %v", err)
 		}
 		froze := len(marker.marks) > 0
+		var reason string
+		if froze {
+			reason = marker.marks[0].decision.Reason
+		}
 
 		// Tick 3: the manipulation PERSISTS at 0.12 (same single venue).
 		store.trades = []canonical.Trade{
@@ -133,6 +143,7 @@ func TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze(t *testing.T) {
 			cachekeys.VWAP(xlmGBP.Base, xlmGBP.Quote, window).String()).Result()
 		return runResult{
 			froze:         froze,
+			reason:        reason,
 			corroboration: sample.corroborationCount,
 			heldOnTick3:   o.freezeStates[stateKey].Active(),
 			prevAfter:     o.prevVWAPs[stateKey],
@@ -140,16 +151,22 @@ func TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze(t *testing.T) {
 		}
 	}
 
-	// Two agreeing, edge-disjoint routes → corroborated → freeze suppressed.
-	two := run(t, []TriangulationChain{chainUSD, chainEUR})
+	// Two agreeing, edge-disjoint routes → corroborated → freeze STILL fires.
+	two := run(t, []TriangulationChain{chainUSD, chainEUR}, 2)
 	if two.corroboration != 2 {
-		t.Fatalf("two-route target recorded corroborationCount=%d, want 2 (the router did not "+
-			"find both independent corroborating routes — the rest of the test is meaningless)", two.corroboration)
+		t.Fatalf("tick-2 freeze saw corroborationCount=%d, want 2 — the rest of the test is meaningless",
+			two.corroboration)
 	}
-	if two.froze {
-		t.Error("freeze ENGAGED on a target corroborated by 2 agreeing edge-disjoint routes — " +
-			"corroborationCount=2 must widen the freeze's source_count leg past 1 and suppress " +
-			"the single-source freeze")
+	if !two.froze {
+		t.Error("freeze did NOT engage on a single-venue z≈50 bucket corroborated by 2 router routes — " +
+			"route corroboration must never count as a second source (ADR-0019 amendment 2026-07-25 §2)")
+	}
+	if !strings.Contains(two.reason, " sources=1") {
+		t.Errorf("freeze reason = %q; want sources=1 (the venue count, not the route count)", two.reason)
+	}
+	// GH-1023: the route count is recorded beside the venue count, never in it.
+	if !strings.Contains(two.reason, " route_corroboration=2") {
+		t.Errorf("freeze reason = %q; want route_corroboration=2 beside sources=1", two.reason)
 	}
 
 	// Control: a single hub route (XLM→USD→GBP = 0.08) that AGREES with
@@ -158,7 +175,7 @@ func TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze(t *testing.T) {
 	// shape (design doc §10: a USD-FX-derived hub route must never be
 	// claimed as a second source), so it is the control that must stay red
 	// if anyone widens the freeze leg from a single agreeing route.
-	one := run(t, []TriangulationChain{chainUSD})
+	one := run(t, []TriangulationChain{chainUSD}, 0)
 	if one.corroboration != 1 {
 		t.Fatalf("single-route target recorded corroborationCount=%d, want 1", one.corroboration)
 	}
@@ -420,9 +437,13 @@ func TestRouterFreeze_SharedBottleneckDoesNotSuppress(t *testing.T) {
 		btcEUR: "9000.000000000000",
 		eurGBP: "0.800000000000",
 	})
-	if corroboration != 1 {
-		t.Errorf("corroborationCount=%d, want 1 — both routes share the EUR→GBP edge, so they "+
-			"are one independent confirmation", corroboration)
+	// 0, not 1: the crypto legs here are cache-only, so each route's weakest
+	// link sits at the bootstrap cap and cannot corroborate at all (GH-1026).
+	// The shared-edge collapse itself is pinned in the router package
+	// (TestRouter_CorroborationSharedBottleneck).
+	if corroboration != 0 {
+		t.Errorf("corroborationCount=%d, want 0 — cache-only routes sit at the bootstrap cap and "+
+			"must not corroborate", corroboration)
 	}
 	if !froze {
 		t.Error("freeze did NOT engage on a single-source z≈50 bucket whose two routes share a " +
@@ -497,7 +518,7 @@ func TestRouterTarget_FXDryRerouteGatedAndFlagged(t *testing.T) {
 		if got != directPrice {
 			t.Errorf("target VWAP = %q, want the untouched direct price %q — a thin FX-dry "+
 				"reroute (conf ≈ 0.119 < %.2f) must NOT publish over the direct price (R3a)",
-				got, directPrice, rerouteMinConfidence)
+				got, directPrice, aggregate.RouteTrustFloor)
 		}
 		meta, ok := readCompositeMeta(t, cache, xlmGBP, window)
 		if !ok {
@@ -516,8 +537,11 @@ func TestRouterTarget_FXDryRerouteGatedAndFlagged(t *testing.T) {
 		}
 	})
 
-	// ── above the floor: substitute publishes, still flagged ──
-	t.Run("above_floor_publishes_flagged", func(t *testing.T) {
+	// ── at the bootstrap cap: a cache-only substitute must NOT publish ──
+	// GH-1026: the cached XLM/USD leg enters at the bootstrap cap, which every
+	// unscored edge also carries; the reroute floor is strictly above it, so
+	// the direct price keeps serving and the substitution is flagged.
+	t.Run("at_bootstrap_cap_direct_serves", func(t *testing.T) {
 		o, cache := buildO(t, false)
 		nextBucket(o)
 		if err := o.Tick(context.Background()); err != nil {
@@ -528,21 +552,20 @@ func TestRouterTarget_FXDryRerouteGatedAndFlagged(t *testing.T) {
 		if err != nil {
 			t.Fatalf("target VWAP read: %v", err)
 		}
-		// Reroute composite 0.10 × 0.90 × 0.80 = 0.072 replaced the direct.
-		if got != "0.072000000000" {
-			t.Errorf("target VWAP = %q, want the reroute composite 0.072000000000 — a "+
-				"confident reroute IS the multi-path robustness we keep (R3)", got)
+		if got != directPrice {
+			t.Errorf("target VWAP = %q, want the untouched direct price %q — a reroute whose weakest "+
+				"leg sits at the bootstrap cap must NOT publish over the direct price", got, directPrice)
 		}
 		meta, ok := readCompositeMeta(t, cache, xlmGBP, window)
 		if !ok {
 			t.Fatal("no composite_meta written for the rerouted target")
 		}
-		if !meta.Rerouted {
-			t.Error("composite_meta.rerouted = false, want true — even a published reroute is " +
-				"flagged so the substitution is observable (R3b)")
+		if !meta.Rerouted || !meta.LowConfidence {
+			t.Errorf("composite_meta rerouted=%v low_confidence=%v, want both true", meta.Rerouted, meta.LowConfidence)
 		}
-		if meta.LowConfidence {
-			t.Error("composite_meta.low_confidence = true, want false — the reroute cleared the floor")
+		if meta.CombinedConfidence != cachedLegConfidence {
+			t.Errorf("CombinedConfidence = %v, want the cached-leg cap %v — fixture broken",
+				meta.CombinedConfidence, cachedLegConfidence)
 		}
 	})
 }
@@ -569,6 +592,47 @@ func TestRecordComposite_RetainsMonotonicClock(t *testing.T) {
 		t.Errorf("recordComposite stamped at=%q with NO monotonic reading — a backward wall-clock "+
 			"step would then make time.Since read short and latch a stale freeze-suppressing "+
 			"corroboration count. Store time.Now(), not time.Now().UTC() (M1).", sample.at.String())
+	}
+}
+
+// TestRouteTarget_RerouteAboveBootstrapCapPublishes keeps the positive side
+// of the GH-1026 floor covered: a leg-substitution reroute whose weakest leg
+// scores strictly above the bootstrap cap still publishes over the direct
+// price, flagged Rerouted.
+func TestRouteTarget_RerouteAboveBootstrapCapPublishes(t *testing.T) {
+	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
+	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
+	eurGBP := mkPair(t, "fiat", "EUR", "fiat", "GBP")
+	xlmGBP := mkPair(t, "crypto", "XLM", "fiat", "GBP")
+	window := time.Minute
+	cache, _ := newTestRedis(t)
+	setLegVWAP(t, cache, xlmGBP, window, "0.050000000000")
+	o := New(nil, cache, Config{Windows: []time.Duration{window}})
+	edges, err := aggregate.BuildEdges([]aggregate.Quote{
+		{Pair: xlmEUR, Price: big.NewRat(2, 1), Confidence: aggregate.RouteTrustFloor + 0.01},
+		{Pair: eurGBP, Price: big.NewRat(3, 10), Confidence: 1.0},
+	})
+	if err != nil {
+		t.Fatalf("BuildEdges: %v", err)
+	}
+	chain := TriangulationChain{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdGBP}}
+	st := chainLegStatus{frozen: true, frozenLeg: xlmUSD}
+	if outcome := o.routeTarget(context.Background(), chain, window, edges, st); outcome != "ok" {
+		t.Fatalf("outcome = %q, want ok — a reroute above the bootstrap cap publishes", outcome)
+	}
+	got, err := cache.Get(context.Background(), cachekeys.VWAP(xlmGBP.Base, xlmGBP.Quote, window).String()).Result()
+	if err != nil || got != "0.600000000000" {
+		t.Errorf("target VWAP = %q (err %v), want the reroute composite 0.600000000000", got, err)
+	}
+	meta, ok := readCompositeMeta(t, cache, xlmGBP, window)
+	if !ok || !meta.Rerouted || meta.LowConfidence {
+		t.Errorf("composite_meta = %+v (ok %v), want rerouted and not low_confidence", meta, ok)
+	}
+	// GH-1023: the corroboration count is persisted, not only path_count.
+	if meta.CorroborationCount != 1 || meta.PathCount != 1 {
+		t.Errorf("composite_meta (corroboration_count, path_count) = (%d, %d), want (1, 1)",
+			meta.CorroborationCount, meta.PathCount)
 	}
 }
 

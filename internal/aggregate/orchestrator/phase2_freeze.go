@@ -285,11 +285,15 @@ func (o *Orchestrator) stepPhase2Freeze(
 		sig.Corroborated = corroborated(conf.Score.Factors)
 		sig.ReleaseCorroborated = releaseCorroborated(conf, vwap, compositeRef,
 			o.cfg.CompositeReference.withDefaults().ReleaseBandPct)
-		// `sources=` stays the REAL count whatever the composite says —
-		// the reference changes the verdict, never the independence
-		// claim (composite_reference.go invariants).
+		// `sources=` is the distinct-VENUE count the AND read; neither the
+		// composite reference nor router corroboration ever changes it.
+		// route_corroboration= records the router's count beside it, so the
+		// audit trail can tell "two venues" from "two paths through our graph".
 		decision.Reason = fmt.Sprintf("phase2:3_signal_AND confidence=%.3f z=%.2f z_window=%s sources=%d",
 			input.Confidence, input.ZScore, baselineWindowLabel(conf.ZWindow), input.SourceCount)
+		if n, ok := o.routeCorroborationCount(pair, window); ok {
+			decision.Reason += fmt.Sprintf(" route_corroboration=%d", n)
+		}
 		if compositeRef.verdict != "" {
 			decision.Reason += compositeRef.reasonSuffix()
 			if sig.Fires && compositeRef.verdict == compositeVerdictCorroborated {

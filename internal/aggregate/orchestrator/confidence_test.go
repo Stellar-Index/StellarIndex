@@ -983,3 +983,67 @@ func TestPhase2_FreezeReasonNamesTheAttributingWindow(t *testing.T) {
 		t.Errorf("freeze reason %q does not name the attributing window z_window=30d", reason)
 	}
 }
+
+// TestFreezeHold_ConfidenceSurvivesEveryWindowOfTheHold pins GH-925:
+// ADR-0019 promises a confidence on every published price, frozen
+// included. The score cached with the last-known-good bucket describes the
+// value the hold serves, so it must outlive the window-length TTL it was
+// written with for as long as the held value does — three windows into the
+// hold it is still readable and is still the LKG's score, never the refused
+// bucket's.
+func TestFreezeHold_ConfidenceSurvivesEveryWindowOfTheHold(t *testing.T) {
+	pair := xlmUSDPair(t)
+	window := time.Minute
+	now := time.Now().UTC()
+	store := &mockStore{}
+	cache, mr := newTestRedis(t)
+	o := New(store, cache, Config{
+		Pairs:        []canonical.Pair{pair},
+		Windows:      []time.Duration{window},
+		Interval:     time.Hour,
+		FreezeWriter: &recordingFreezeMarker{},
+		Baselines: stubBaselineSource{
+			multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: maxDay30Returns}},
+			computedAt: now,
+		},
+	})
+	ctx := context.Background()
+	confKey := cachekeys.Confidence(pair.Base, pair.Quote, window).String()
+	vwapKey := cachekeys.VWAP(pair.Base, pair.Quote, window).String()
+	tick := func(quote int64, age time.Duration) {
+		t.Helper()
+		store.trades = []canonical.Trade{makeTradeOn(t, pair, "soroswap", 100_000_000, quote, now.Add(-age))}
+		nextBucket(o)
+		if err := o.Tick(ctx); err != nil {
+			t.Fatalf("tick: %v", err)
+		}
+	}
+
+	// Two calm buckets at 0.08: the second is scored and caches its score.
+	tick(8_000_000, 40*time.Second)
+	tick(8_000_000, 30*time.Second)
+	lkgScore, err := mr.Get(confKey)
+	if err != nil || lkgScore == "" {
+		t.Fatalf("no confidence cached for the published LKG bucket (err %v) — fixture broken", err)
+	}
+	// A +50% single-venue bucket: z≈50, the Phase 2 freeze refuses it.
+	tick(12_000_000, 10*time.Second)
+	if st := o.freezeStates[pair.String()+":"+window.String()]; !st.Active() {
+		t.Fatal("freeze did not engage on the z≈50 bucket — fixture broken")
+	}
+
+	for i := 1; i <= 3; i++ {
+		mr.FastForward(window)
+		if _, err := mr.Get(vwapKey); err != nil {
+			t.Fatalf("%d window(s) into the hold: held value gone (%v) — fixture broken", i, err)
+		}
+		got, err := mr.Get(confKey)
+		if err != nil {
+			t.Fatalf("%d window(s) into the hold: confidence key gone (%v) — /v1/price would serve "+
+				"flags.frozen with no confidence", i, err)
+		}
+		if got != lkgScore {
+			t.Fatalf("%d window(s) into the hold: confidence = %s, want the LKG's own score %s", i, got, lkgScore)
+		}
+	}
+}

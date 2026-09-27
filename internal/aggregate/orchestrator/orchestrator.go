@@ -1534,16 +1534,12 @@ func (o *Orchestrator) decideBucket(
 		o.clearCompositeReference(pair, window)
 	}
 	conf, confOK := o.computeConfidence(ctx, pair, window, vwap, mb.returns(prevForConfidence), trades, now)
-	// The freeze's source_count leg (ADR-0019 3-signal AND) reads the
-	// INDEPENDENCE signal, not just the direct trade sources: a pair
-	// reproduced by ≥2 mutually-agreeing, confidence-gated router routes
-	// is no longer single-source, so a thin FX cross stops false-firing
-	// the freeze (see [Orchestrator.effectiveSourceCount]). The
-	// confidence Inputs.SourceCount stays the raw trade count — only the
-	// freeze leg widens. The composite reference never touches either
-	// count: it can only change the VERDICT (compositeRef).
+	// The freeze's source_count leg counts VENUES only; router routes are
+	// never a second venue (ADR-0019 amendment 2026-07-25 §2, see
+	// triangulate_corroborate.go). The composite reference changes only
+	// the VERDICT (compositeRef), never the count.
 	if o.stepPhase2Freeze(ctx, pair, window, stateKey, now,
-		conf, confOK, o.effectiveSourceCount(pair, window, trades), prevForConfidence, vwap, compositeRef) {
+		conf, confOK, distinctSourceCount(trades), prevForConfidence, vwap, compositeRef) {
 		// Refused: advance the shadow comparator with this bucket's
 		// fresh VWAP so the NEXT frozen bucket scores a per-tick
 		// return (and a post-restart frozen pair becomes scorable
@@ -1872,8 +1868,8 @@ func frozenTickKey(pair canonical.Pair, window time.Duration) string {
 
 // keepFrozenVWAPAlive extends the TTL of the last-known-good VWAP
 // key for (pair, window) and of every qualifier written beside it — the
-// observed-at stamp, the triangulated-provenance marker and the
-// composite quality-flags meta — so all of them survive for at least as
+// observed-at stamp, the triangulated-provenance marker, the
+// composite quality-flags meta and the confidence score — so all of them survive for at least as
 // long as the freeze marker (F-1345, G13-03). The value is not
 // rewritten, so the stamp keeps saying when it was observed; the API
 // serves it as observed_at (RLT-357). A qualifier left on its original
@@ -1909,11 +1905,17 @@ func (o *Orchestrator) keepFrozenVWAPAlive(ctx context.Context, pair canonical.P
 	atKey := cachekeys.VWAPObservedAt(pair.Base, pair.Quote, window)
 	provKey := cachekeys.VWAPProvenance(pair.Base, pair.Quote, window)
 	metaKey := cachekeys.VWAPCompositeMeta(pair.Base, pair.Quote, window)
+	// The score cached at the LKG's publish describes the LKG, so it lives
+	// exactly as long as the held value (ADR-0019: confidence on every
+	// published price, frozen included). The refused bucket's score is
+	// never written.
+	confKey := cachekeys.Confidence(pair.Base, pair.Quote, window)
 	if _, err := o.cache.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		p.Expire(ctx, key.String(), ttl)
 		p.Expire(ctx, atKey.String(), ttl)
 		p.Expire(ctx, provKey.String(), ttl)
 		p.Expire(ctx, metaKey.String(), ttl)
+		p.Expire(ctx, confKey.String(), ttl)
 		return nil
 	}); err != nil {
 		o.logger.Debug("freeze: LKG VWAP TTL refresh failed",
@@ -2003,12 +2005,9 @@ func (o *Orchestrator) evaluateAndMaybeFreeze(
 		Pair:     pair,
 		PrevVWAP: step.prev,
 		CurrVWAP: step.curr,
-		// Same independence widening as the Phase 2 leg: a pair
-		// corroborated by ≥2 agreeing router routes is not single-source,
-		// so Phase 1's `deviation > FreezePct AND source_count <= 1` guard
-		// also stops false-firing on thin corroborated crosses (see
-		// [Orchestrator.effectiveSourceCount]).
-		SourceCount: o.effectiveSourceCount(pair, window, trades),
+		// Venues only, as in the Phase 2 leg: router corroboration is not
+		// a second source (see triangulate_corroborate.go).
+		SourceCount: distinctSourceCount(trades),
 	})
 	if !decision.IsFrozen() {
 		if decision.IsWarn() {

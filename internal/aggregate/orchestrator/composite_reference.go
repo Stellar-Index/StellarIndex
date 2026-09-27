@@ -55,7 +55,7 @@ import (
 //
 // Hard invariants (pinned by composite_reference_test.go):
 //   - the composite NEVER contributes to VWAP and NEVER raises the
-//     served source_count / [Orchestrator.effectiveSourceCount] — the
+//     served or freeze-leg source_count ([distinctSourceCount]) — the
 //     `sources=` field in the freeze reason stays the real venue count;
 //     it only changes the freeze VERDICT and says on what basis;
 //   - the reference is only as strong as its weakest leg: the priced

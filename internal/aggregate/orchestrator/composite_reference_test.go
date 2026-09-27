@@ -255,9 +255,10 @@ func TestCompositeReference_MarketWideMoveDoesNotFreeze(t *testing.T) {
 	if got := res.metaT2.CompositeLegSources; got[res.xlmUSD.String()] != 2 || got[res.usdGBP.String()] != 1 {
 		t.Errorf("composite_meta.composite_leg_sources = %v, want {%s:2 %s:1}", got, res.xlmUSD, res.usdGBP)
 	}
-	// Invariant: the composite never raises the independence count.
-	if n := res.o.effectiveSourceCount(res.xlmGBP, res.window, res.t2Trades); n != 1 {
-		t.Errorf("effectiveSourceCount = %d, want 1 — the composite must never widen source_count", n)
+	// Invariant: the composite never raises the independence count the
+	// freeze leg reads.
+	if n := distinctSourceCount(res.t2Trades); n != 1 {
+		t.Errorf("freeze-leg source count = %d, want 1 — the composite must never widen source_count", n)
 	}
 	if got := testutil.ToFloat64(obs.AggregatorCompositeFreezeSuppressedTotal.WithLabelValues(res.xlmGBP.String(), res.window.String())); got < 1 {
 		t.Errorf("composite_freeze_suppressed_total{pair=%s,window=%s} = %v, want >= 1", res.xlmGBP.String(), res.window.String(), got)
