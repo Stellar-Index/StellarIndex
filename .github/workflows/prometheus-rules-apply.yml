@@ -1,0 +1,115 @@
+name: prometheus-rules-apply
+
+# Closes the gap between "rules merged to main" and "rules loaded on
+# r1": deploy.yml's "Apply Prometheus rules (r1)" step only runs as
+# part of a manual, whole-binary deploy, so a rules.r1/** change sits
+# unapplied on r1 until the next deploy happens to run — the exact gap
+# that let r1 run 232 loaded rules against a 286-rule repo for 9 days
+# after the last deploy. This mirrors that step, scoped to the same
+# narrow, safe-to-automate surface apply-rules.sh already owns (see its
+# own header): pure rule declarations, promtool-validated before
+# install, atomically applied, reloaded via signal (never a restart),
+# and self-reverting on a failed health poll. Every other config
+# surface stays on the ansible/deploy gate.
+#
+# Reuses deploy.yml's own SSH/secrets plumbing — no new secret:
+#   DEPLOY_SSH_PRIVATE_KEY, R1_SSH_KNOWN_HOSTS, R1_HOST, R1_USER
+# and its `r1` environment gate (scripts/ci/assert-deploy-gate.sh),
+# including the pre-production DEPLOY_APPROVAL_RELAXED waiver — a push
+# to main that changes rules.r1/** gets exactly the same review
+# governance a manual deploy does, no more and no less.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'configs/prometheus/rules.r1/**'
+
+concurrency:
+  group: prometheus-rules-apply-r1
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  deployments: read  # read the environment's protection rules (gate preflight)
+  actions: read      # GitHub gates the environments API on Actions read
+
+jobs:
+  apply:
+    name: Apply Prometheus rules → r1
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: r1
+      # Same gate as deploy.yml's `r1` environment — reviewers required
+      # unless DEPLOY_APPROVAL_RELAXED is set and unexpired; main-only
+      # branch policy never relaxed. See deploy.yml's own approval-gate
+      # comment.
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Assert the production approval gate is configured
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_PROTECTION_TOKEN || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          APPROVAL_RELAXED: ${{ vars.DEPLOY_APPROVAL_RELAXED }}
+          APPROVAL_RELAXED_UNTIL: ${{ vars.DEPLOY_APPROVAL_RELAXED_UNTIL }}
+        run: bash scripts/ci/assert-deploy-gate.sh r1
+
+      - name: Set up SSH
+        # Mirrors deploy.yml's / prometheus-rules-drift.yml's "Set up
+        # SSH": key + pinned known_hosts through `env:`, fail fast if
+        # either secret is unset.
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS_B64: ${{ secrets.R1_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SSH_KEY:-}" ]; then
+            echo "::error::DEPLOY_SSH_PRIVATE_KEY is unset." >&2
+            exit 1
+          fi
+          if [ -z "${KNOWN_HOSTS_B64:-}" ]; then
+            echo "::error::R1_SSH_KNOWN_HOSTS is unset." >&2
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          echo "$KNOWN_HOSTS_B64" | base64 -d > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Apply Prometheus rules (r1)
+        # Byte-for-byte deploy.yml's "Apply Prometheus rules (r1)" step:
+        # apply-rules.sh validates with promtool, installs atomically,
+        # removes files the repo no longer has, reloads via signal (the
+        # HTTP lifecycle API is disabled on r1 — systemctl reload sends
+        # SIGHUP, never a restart), then polls /api/v1/rules until every
+        # expected alert is loaded AND healthy, restoring its own backup
+        # if it never is. Unlike deploy.yml's step this is NOT
+        # continue-on-error: there is no later verification step here
+        # for it to avoid blocking, so a failed apply fails this job.
+        env:
+          R1_HOST: ${{ secrets.R1_HOST }}
+          R1_USER: ${{ secrets.R1_USER }}
+        run: |
+          set -euo pipefail
+          if [ -z "${R1_HOST:-}" ]; then
+            echo "::error::R1_HOST is unset." >&2
+            exit 1
+          fi
+          USER="${R1_USER:-root}"
+          TARGET="${USER}@${R1_HOST}"
+          SSH_OPTS=(-i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=20)
+          scp "${SSH_OPTS[@]}" -q configs/prometheus/apply-rules.sh \
+            "${TARGET}:/tmp/apply-rules.sh"
+          ssh "${SSH_OPTS[@]}" "$TARGET" \
+            'rm -rf /tmp/rules.r1.incoming && mkdir -p /tmp/rules.r1.incoming'
+          scp "${SSH_OPTS[@]}" -q configs/prometheus/rules.r1/*.yml \
+            "${TARGET}:/tmp/rules.r1.incoming/"
+          ssh "${SSH_OPTS[@]}" "$TARGET" 'bash /tmp/apply-rules.sh /tmp/rules.r1.incoming'
+          ssh "${SSH_OPTS[@]}" "$TARGET" 'rm -rf /tmp/rules.r1.incoming /tmp/apply-rules.sh' || true

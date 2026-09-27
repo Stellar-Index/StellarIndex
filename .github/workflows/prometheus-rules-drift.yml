@@ -6,28 +6,49 @@ name: prometheus-rules-drift
 # verifies the rules it JUST installed. Neither catches drift that
 # accumulates between deploys: an out-of-band edit on r1, a reload that
 # silently failed to pick up a change, or simply a long gap between
-# releases. This is the scheduled counterpart to ansible-drift.yml, scoped
-# to the one surface that role deliberately excludes (see
-# configs/prometheus/apply-rules.sh's own header): the rule files
-# themselves, read-only, via apply-rules.sh --live-check.
+# releases — r1 ran 9 days on a frozen 232-rule set while the repo had
+# grown to 286 before anyone noticed. This is the scheduled counterpart
+# to ansible-drift.yml, scoped to the one surface that role deliberately
+# excludes (see configs/prometheus/apply-rules.sh's own header): the
+# rule files themselves, read-only, via apply-rules.sh --live-check.
+# prometheus-rules-apply.yml (push-triggered) is the other half — it
+# keeps this check from firing in the first place for anything that
+# reaches main — but an out-of-band host edit or a reload that silently
+# didn't take still needs this daily.
 #
 # Read-only: --live-check never installs, reloads or touches the host's
 # rule files — it only diffs $PROM_URL/api/v1/rules against the repo's
 # declared alert set. Reuses the same SSH secrets deploy.yml and
 # ansible-drift.yml already have (DEPLOY_SSH_PRIVATE_KEY, R1_SSH_KNOWN_HOSTS,
 # R1_HOST, R1_USER); no new secret is required.
+#
+# Never fails the scheduled run red: drift on a host no PR can reach is
+# not a code-review problem, so it pages through ONE tracking issue
+# instead (opened/updated on drift or on a check failure, closed again
+# once clean) — the same idempotent shape as dns-perimeter-check.yml and
+# public-dataset-check.yml.
 
 on:
   schedule:
-    # Thursdays 08:00 UTC — clear of ansible-drift's Monday run and
-    # reconciliation-health's Tuesday one.
-    - cron: '0 8 * * 4'
+    # Daily 08:00 UTC. Was Thursdays-only; a week of undetected drift on
+    # a per-host alerting surface is exactly the gap that let 54 rules
+    # go stale for 9 days between deploys.
+    - cron: '0 8 * * *'
   workflow_dispatch: {}
+
+concurrency:
+  group: prometheus-rules-drift
+  cancel-in-progress: false
 
 permissions:
   contents: read
   deployments: read  # read the environment's protection rules (gate preflight)
   actions: read      # GitHub gates the environments API on Actions read
+  issues: write       # open/update/close the drift tracking issue
+
+env:
+  ISSUE_LABEL: prometheus-rules-drift
+  ISSUE_TITLE: "Prometheus rules drift on r1"
 
 jobs:
   live-check:
@@ -73,32 +94,85 @@ jobs:
           chmod 644 ~/.ssh/known_hosts
 
       - name: Live-check r1 against the repo's rules.r1/
+        id: check
+        # rc is captured, never let the raw command fail the step (`set
+        # -uo pipefail`, no `-e`) — a hard step failure here would skip
+        # the issue-tracking steps below, and a bad R1_HOST/R1_USER is as
+        # much a "notify someone" case as an actual rule mismatch is.
         env:
           R1_HOST: ${{ secrets.R1_HOST }}
           R1_USER: ${{ secrets.R1_USER }}
         run: |
-          set -euo pipefail
-          if [ -z "${R1_HOST:-}" ]; then
-            echo "::error::R1_HOST is unset — this is a missing-credential failure, not a drift signal." >&2
-            exit 1
-          fi
-          USER="${R1_USER:-root}"
-          TARGET="${USER}@${R1_HOST}"
-          SSH_OPTS=(-i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=20)
-
-          scp "${SSH_OPTS[@]}" -q configs/prometheus/apply-rules.sh \
-            "${TARGET}:/tmp/apply-rules.sh"
-          ssh "${SSH_OPTS[@]}" "$TARGET" \
-            'rm -rf /tmp/rules.r1.check && mkdir -p /tmp/rules.r1.check'
-          scp "${SSH_OPTS[@]}" -q configs/prometheus/rules.r1/*.yml \
-            "${TARGET}:/tmp/rules.r1.check/"
-
-          # PROM_URL defaults to localhost:9090 inside apply-rules.sh,
-          # which is correct here — this ssh runs the check ON r1, where
-          # Prometheus's rules API is reachable, rather than tunnelling it
-          # (the lifecycle/query API is not exposed off-host).
+          set -uo pipefail
           rc=0
-          ssh "${SSH_OPTS[@]}" "$TARGET" \
-            'bash /tmp/apply-rules.sh --live-check /tmp/rules.r1.check' || rc=$?
-          ssh "${SSH_OPTS[@]}" "$TARGET" 'rm -rf /tmp/rules.r1.check /tmp/apply-rules.sh' || true
-          exit "$rc"
+          if [ -z "${R1_HOST:-}" ]; then
+            report="R1_HOST is unset — missing-credential failure, not a drift signal."
+            rc=2
+          else
+            USER="${R1_USER:-root}"
+            TARGET="${USER}@${R1_HOST}"
+            SSH_OPTS=(-i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=20)
+
+            {
+              scp "${SSH_OPTS[@]}" -q configs/prometheus/apply-rules.sh \
+                "${TARGET}:/tmp/apply-rules.sh" &&
+              ssh "${SSH_OPTS[@]}" "$TARGET" \
+                'rm -rf /tmp/rules.r1.check && mkdir -p /tmp/rules.r1.check' &&
+              scp "${SSH_OPTS[@]}" -q configs/prometheus/rules.r1/*.yml \
+                "${TARGET}:/tmp/rules.r1.check/" &&
+              # PROM_URL defaults to localhost:9090 inside apply-rules.sh,
+              # which is correct here — this ssh runs the check ON r1,
+              # where Prometheus's rules API is reachable, rather than
+              # tunnelling it (the lifecycle/query API is not exposed
+              # off-host).
+              ssh "${SSH_OPTS[@]}" "$TARGET" \
+                'bash /tmp/apply-rules.sh --live-check /tmp/rules.r1.check'
+            } > /tmp/live-check.txt 2>&1 || rc=$?
+            ssh "${SSH_OPTS[@]}" "$TARGET" 'rm -rf /tmp/rules.r1.check /tmp/apply-rules.sh' || true
+            report="$(cat /tmp/live-check.txt)"
+          fi
+          echo "$report"
+          {
+            echo "verdict_rc=${rc}"
+            echo "report<<REPORT_EOF"
+            echo "$report"
+            echo "REPORT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the tracking issue (drift or check failure)
+        if: steps.check.outputs.verdict_rc != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REPORT: ${{ steps.check.outputs.report }}
+        run: |
+          set -euo pipefail
+          gh label create "$ISSUE_LABEL" --color B60205 \
+            --description "apply-rules.sh --live-check found r1's loaded Prometheus rules no longer match configs/prometheus/rules.r1/" 2>/dev/null || true
+
+          body="$(printf '%s\n\n---\n_Auto-managed by the prometheus-rules-drift workflow (run %s). If this is just a merge that has not reached r1 yet, prometheus-rules-apply.yml should close it on its own shortly. Closes automatically once live-check is clean again._\n' \
+            "$REPORT" "${GITHUB_RUN_ID:-?}")"
+
+          existing="$(gh issue list --label "$ISSUE_LABEL" --state open \
+            --json number --jq '.[0].number' || true)"
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "$body"
+            echo "Updated existing ${ISSUE_LABEL} issue #$existing."
+          else
+            gh issue create --title "$ISSUE_TITLE" --label "$ISSUE_LABEL" --body "$body"
+            echo "Opened new ${ISSUE_LABEL} issue."
+          fi
+          echo "::warning::Prometheus rules drift (or a check failure) on r1 — see the tracking issue. (Scheduled run deliberately not failed.)"
+
+      - name: Close the tracking issue (live-check clean)
+        if: steps.check.outputs.verdict_rc == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for n in $(gh issue list --label "$ISSUE_LABEL" --state open \
+              --json number --jq '.[].number' || true); do
+            gh issue close "$n" --comment "apply-rules.sh --live-check is clean again — prometheus-rules-drift closing automatically."
+            echo "Closed ${ISSUE_LABEL} issue #$n."
+          done
