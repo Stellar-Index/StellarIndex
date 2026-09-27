@@ -41,6 +41,12 @@ func describe(t reflect.Type, prefix string) []SchemaField {
 // single row.
 func describeField(f reflect.StructField, prefix string) []SchemaField {
 	tomlName := f.Tag.Get("toml")
+	if tomlName == "-" {
+		// Not a config key — derived at load time from TOML metadata
+		// (e.g. ObsConfig.MetricsListenSet), never itself decoded or
+		// documented as an operator-facing field.
+		return nil
+	}
 	if tomlName == "" {
 		tomlName = strings.ToLower(f.Name)
 	}

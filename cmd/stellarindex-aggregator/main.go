@@ -2046,23 +2046,21 @@ func defaultPairs() []canonical.Pair {
 // configuration mistake worth flagging.
 //
 // Single-host coexistence: the indexer also reads obs.metrics_listen
-// (default "127.0.0.1:9464"). If the operator hasn't overridden this
-// for the aggregator, we shift to ":9465" automatically so a default
-// single-host deploy doesn't have one binary silently lose its
-// metrics listener to "address already in use." Operators on
-// multi-host deploys override obs.metrics_listen per-host and never
-// hit the shift.
+// (default "127.0.0.1:9464"). If the operator hasn't set this field
+// in their config file at all — config.ObsConfig.MetricsListenSet is
+// false — we shift to ":9465" automatically so a default single-host
+// deploy doesn't have one binary silently lose its metrics listener
+// to "address already in use." An operator who explicitly configures
+// obs.metrics_listen for the aggregator is honoured verbatim, even if
+// they pin it to the same address the indexer defaults to (GH-1130):
+// value-equality against the default previously shifted that
+// deliberate choice too and logged it as "left at indexer default".
 func startMetricsServer(cfg config.ObsConfig, schema v1.SchemaVersionReader, logger *slog.Logger) *http.Server {
 	if cfg.MetricsListen == "" {
 		logger.Warn("obs.metrics_listen is empty — /metrics endpoint disabled; aggregator-silent / outlier-storm / class-drop-spike alerts will not fire")
 		return nil
 	}
-	addr := cfg.MetricsListen
-	if addr == aggregatorMetricsCollidingDefault {
-		addr = aggregatorMetricsShiftedAddr
-		logger.Info("obs.metrics_listen left at indexer default; shifting aggregator to "+aggregatorMetricsShiftedAddr+" to avoid single-host port collision",
-			"original", aggregatorMetricsCollidingDefault, "shifted_to", aggregatorMetricsShiftedAddr)
-	}
+	addr := metricsListenAddr(cfg, logger)
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           newMetricsMux(schema),
@@ -2090,6 +2088,19 @@ func newMetricsMux(schema v1.SchemaVersionReader) *http.ServeMux {
 	})
 	mux.Handle("GET /readyz", v1.ReadyzHandler(v1.NewSchemaVersionChecker(schema)))
 	return mux
+}
+
+// metricsListenAddr decides the actual bind address for startMetricsServer.
+// Split out so the single-host shift decision (GH-1130) is testable without
+// spinning up a real listener.
+func metricsListenAddr(cfg config.ObsConfig, logger *slog.Logger) string {
+	addr := cfg.MetricsListen
+	if !cfg.MetricsListenSet && addr == aggregatorMetricsCollidingDefault {
+		addr = aggregatorMetricsShiftedAddr
+		logger.Info("obs.metrics_listen left at indexer default; shifting aggregator to "+aggregatorMetricsShiftedAddr+" to avoid single-host port collision",
+			"original", aggregatorMetricsCollidingDefault, "shifted_to", aggregatorMetricsShiftedAddr)
+	}
+	return addr
 }
 
 // aggregatorMetricsCollidingDefault is the indexer's default
