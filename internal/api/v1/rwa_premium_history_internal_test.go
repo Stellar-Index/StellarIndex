@@ -9,6 +9,7 @@ package v1
 // either leg.
 
 import (
+	"context"
 	"math/big"
 	"testing"
 	"time"
@@ -23,6 +24,14 @@ import (
 const etherfuseBoundIssuer = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
 
 func premDay(n int) time.Time { return time.Date(2026, 9, n, 0, 0, 0, 0, time.UTC) }
+
+// premDefaultFloor is the pricingguard-default day floor, for tests
+// that exercise rwaPremiumJoin's join logic and don't care about the
+// configured-vs-default distinction (see TestRWAPremiumDayFloorTracksServingDefaults
+// for that).
+func premDefaultFloor() pricingguard.SubstancePolicy {
+	return (&Server{}).rwaPremiumDayFloorFor()
+}
 
 func premRat(s string) *big.Rat {
 	v, ok := new(big.Rat).SetString(s)
@@ -112,31 +121,60 @@ func TestRWAPremiumCandidates_ReadsNoSupply(t *testing.T) {
 // history that published a claim the live surface refuses is the
 // failure this whole gate exists to prevent.
 //
+// This compares against an operator-configured policy that DIFFERS
+// from the pricingguard package defaults — comparing against the
+// defaults themselves would pass unconditionally regardless of whether
+// [Server.rwaPremiumDayFloorFor] ever reads the configured value at
+// all (RLT-041's finding about the prior version of this test).
+//
 // The bucket leg is deliberately NOT the serving default and is pinned
 // separately below, with the reason.
 func TestRWAPremiumDayFloorTracksServingDefaults(t *testing.T) {
-	wantVolume := new(big.Rat).SetInt64(pricingguard.DefaultSubstanceMinVolumeUSD)
-	if rwaPremiumDayFloor.MinVolumeUSD.Cmp(wantVolume) != 0 {
-		t.Errorf("MinVolumeUSD = %s, want the serving default %s",
-			rwaPremiumDayFloor.MinVolumeUSD.FloatString(2), wantVolume.FloatString(2))
+	configured := pricingguard.SubstancePolicy{
+		MinVolumeUSD: new(big.Rat).SetInt64(pricingguard.DefaultSubstanceMinVolumeUSD * 7),
+		MinBuckets:   pricingguard.DefaultSubstanceMinBuckets * 3,
+		MinSpan:      pricingguard.DefaultSubstanceMinSpan * 2,
+		Window:       24 * time.Hour,
 	}
-	if rwaPremiumDayFloor.MinSpan != pricingguard.DefaultSubstanceMinSpan {
-		t.Errorf("MinSpan = %v, want the serving default %v",
-			rwaPremiumDayFloor.MinSpan, pricingguard.DefaultSubstanceMinSpan)
+	s := &Server{rwaPremiumSubstance: configured}
+	got := s.rwaPremiumDayFloorFor()
+
+	if got.MinVolumeUSD.Cmp(configured.MinVolumeUSD) != 0 {
+		t.Errorf("MinVolumeUSD = %s, want the CONFIGURED value %s (not the pricingguard default)",
+			got.MinVolumeUSD.FloatString(2), configured.MinVolumeUSD.FloatString(2))
 	}
-	if rwaPremiumDayFloor.Window != 24*time.Hour {
-		t.Errorf("Window = %v, want 24h — a calendar day", rwaPremiumDayFloor.Window)
+	if got.MinSpan != configured.MinSpan {
+		t.Errorf("MinSpan = %v, want the CONFIGURED value %v (not the pricingguard default)",
+			got.MinSpan, configured.MinSpan)
+	}
+	if got.Window != 24*time.Hour {
+		t.Errorf("Window = %v, want 24h — a calendar day", got.Window)
 	}
 	// The serving gate counts MINUTE buckets, of which a day holds
 	// 1440; this counts HOUR buckets, of which a day holds 24, because
 	// the hour aggregate is the coarsest-reaching grain that still says
 	// when inside a past day the trading happened. Inheriting the
-	// minute number would demand 20 of 24 hours and blank every series.
-	if rwaPremiumDayFloor.MinBuckets != 2 {
-		t.Errorf("MinBuckets = %d, want 2 hour buckets", rwaPremiumDayFloor.MinBuckets)
+	// configured minute count here would demand more hours than a day
+	// has and blank every series, so this leg deliberately stays fixed
+	// regardless of what MinBuckets the operator configured.
+	if got.MinBuckets != 2 {
+		t.Errorf("MinBuckets = %d, want 2 hour buckets", got.MinBuckets)
 	}
-	if rwaPremiumDayFloor.MinBuckets == pricingguard.DefaultSubstanceMinBuckets {
-		t.Error("MinBuckets equals the serving MINUTE-grain default — it counts hours here")
+}
+
+// TestRWAPremiumDayFloorFor_FallsBackToDefaultsWhenUnconfigured pins the
+// zero-value Server behaviour: a deployment that never set
+// RWAPremiumSubstance (or a test double) gets the pricingguard package
+// defaults, not a nil *big.Rat panic.
+func TestRWAPremiumDayFloorFor_FallsBackToDefaultsWhenUnconfigured(t *testing.T) {
+	s := &Server{}
+	got := s.rwaPremiumDayFloorFor()
+	want := new(big.Rat).SetInt64(pricingguard.DefaultSubstanceMinVolumeUSD)
+	if got.MinVolumeUSD.Cmp(want) != 0 {
+		t.Errorf("MinVolumeUSD = %s, want the pricingguard default %s", got.MinVolumeUSD.FloatString(2), want.FloatString(2))
+	}
+	if got.MinSpan != pricingguard.DefaultSubstanceMinSpan {
+		t.Errorf("MinSpan = %v, want the pricingguard default %v", got.MinSpan, pricingguard.DefaultSubstanceMinSpan)
 	}
 }
 
@@ -176,7 +214,7 @@ func TestRWAPremiumJoin_PublishesOnlyDaysBothLegsWereObserved(t *testing.T) {
 	got := rwaPremiumJoin(premCand(), ref, []timescale.MarketDay{
 		premGoodDay(1, "1.08"),
 		premGoodDay(2, "1.08"),
-	})
+	}, premDefaultFloor())
 	if len(got.days) != 1 {
 		t.Fatalf("days = %+v, want exactly the one day both legs answered", got.days)
 	}
@@ -200,7 +238,7 @@ func TestRWAPremiumJoin_AThinDayIsWithheldNotPriced(t *testing.T) {
 	}}
 	thin := premGoodDay(1, "9.99")
 	thin.VolumeUSD, thin.Hours, thin.SpanSeconds = "8.57", 1, 120
-	got := rwaPremiumJoin(premCand(), ref, []timescale.MarketDay{thin})
+	got := rwaPremiumJoin(premCand(), ref, []timescale.MarketDay{thin}, premDefaultFloor())
 	if len(got.days) != 0 {
 		t.Fatalf("days = %+v, want none — a dust day may not carry a price claim", got.days)
 	}
@@ -228,7 +266,7 @@ func TestRWAPremiumJoin_CountsNoUntradedDaysBeforeTheFirstObservedMarket(t *test
 	}}
 	got := rwaPremiumJoin(premCand(), ref, []timescale.MarketDay{
 		premGoodDay(4, "1.08"),
-	})
+	}, premDefaultFloor())
 	if len(got.days) != 1 {
 		t.Fatalf("days = %+v, want 1", got.days)
 	}
@@ -248,7 +286,7 @@ func TestRWAPremiumJoin_NoMarketDaysCountsNothing(t *testing.T) {
 		premDay(1): premRat("107/100"),
 		premDay(2): premRat("107/100"),
 	}}
-	got := rwaPremiumJoin(premCand(), ref, nil)
+	got := rwaPremiumJoin(premCand(), ref, nil, premDefaultFloor())
 	if len(got.days) != 0 || len(got.refOnly) != 0 || len(got.withheld) != 0 {
 		t.Errorf("got days=%v refOnly=%v withheld=%v, want all empty",
 			got.days, got.refOnly, got.withheld)
@@ -269,7 +307,7 @@ func TestRWAPremiumJoin_AWithheldDayIsNotAlsoCountedAsUntraded(t *testing.T) {
 	got := rwaPremiumJoin(premCand(), ref, []timescale.MarketDay{
 		premGoodDay(1, "1.08"),
 		thin,
-	})
+	}, premDefaultFloor())
 	if len(got.days) != 1 {
 		t.Fatalf("days = %+v, want 1", got.days)
 	}
@@ -290,7 +328,7 @@ func TestRWAPremiumJoin_AnUnparseableVolumeFailsClosed(t *testing.T) {
 	}}
 	bad := premGoodDay(1, "1.08")
 	bad.VolumeUSD = "not-a-number"
-	got := rwaPremiumJoin(premCand(), ref, []timescale.MarketDay{bad})
+	got := rwaPremiumJoin(premCand(), ref, []timescale.MarketDay{bad}, premDefaultFloor())
 	if len(got.days) != 0 {
 		t.Fatalf("days = %+v, want none — an unverifiable volume must fail closed", got.days)
 	}
@@ -315,7 +353,7 @@ func TestRWAPremiumJoin_SignAndScale(t *testing.T) {
 			ref := &rwaFeedSeries{source: "redstone", days: map[time.Time]*big.Rat{
 				premDay(1): premRat(tc.ref),
 			}}
-			got := rwaPremiumJoin(premCand(), ref, []timescale.MarketDay{premGoodDay(1, tc.market)})
+			got := rwaPremiumJoin(premCand(), ref, []timescale.MarketDay{premGoodDay(1, tc.market)}, premDefaultFloor())
 			if len(got.days) != 1 {
 				t.Fatalf("days = %+v, want 1", got.days)
 			}
@@ -379,5 +417,51 @@ func TestRWAPremiumSeriesRows_OrdersByAbsoluteDispersion(t *testing.T) {
 		if got[i].AssetID != w {
 			t.Fatalf("order = %v, want %v", []string{got[0].AssetID, got[1].AssetID, got[2].AssetID}, want)
 		}
+	}
+}
+
+// TestCachedRWAPremiumHistory_RecoversFromAPanicInsteadOfWedgingTheFlight.
+//
+// A bound candidate with s.oracleHistory left nil drives buildRWAPremiumHistory
+// straight into a nil-interface panic in rwaPremiumReferenceDays. Before the
+// recover was added, that panic escaped cachedRWAPremiumHistory with
+// s.rwaPremFlight still pointing at a channel nobody would ever close — every
+// later caller queued on it and /v1/rwa/premium never served again for the
+// life of the process (RLT-098, same class as GH-587). This proves the
+// single-flight gate clears and a following call is served rather than
+// hanging.
+func TestCachedRWAPremiumHistory_RecoversFromAPanicInsteadOfWedgingTheFlight(t *testing.T) {
+	s := &Server{
+		rwaCache: &rwaMembership{
+			available: true,
+			members: []rwaMember{{
+				code:   "USTRY",
+				issuer: etherfuseBoundIssuer,
+			}},
+		},
+		rwaAt: time.Now(),
+		// oracleHistory left nil: buildRWAPremiumHistory calls
+		// s.oracleHistory.DailyOraclePrices on it once the bound candidate
+		// clears the membership/scam gates, panicking on the nil interface.
+	}
+
+	first := s.cachedRWAPremiumHistory(context.Background())
+	if first.available {
+		t.Fatalf("first call: available = true on a nil oracleHistory, want unavailable")
+	}
+
+	s.rwaPremMu.Lock()
+	flight := s.rwaPremFlight
+	s.rwaPremMu.Unlock()
+	if flight != nil {
+		t.Fatalf("rwaPremFlight left set after a panicking build — every future caller would block on it forever")
+	}
+
+	done := make(chan rwaPremiumHistory, 1)
+	go func() { done <- s.cachedRWAPremiumHistory(context.Background()) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second call did not return — the single-flight gate is wedged")
 	}
 }

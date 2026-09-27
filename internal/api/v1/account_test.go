@@ -814,3 +814,41 @@ func TestAccountUsage_RollupEmptyFallsBack(t *testing.T) {
 		t.Errorf("rows = %+v, want the single legacy day", rows)
 	}
 }
+
+// TestAccountUser_UnverifiedEmailOmitsTheTimestampRatherThanZeroing —
+// a user who never verified their email or never logged in must render
+// as an ABSENT field on the wire, not the zero instant serialized as a
+// literal string, which the SDK's *time.Time side would happily
+// unmarshal into a non-nil pointer indistinguishable from a real time
+// (T531).
+func TestAccountUser_UnverifiedEmailOmitsTheTimestampRatherThanZeroing(t *testing.T) {
+	u := v1.AccountUser{ID: "usr_1", Email: "new@example.com"}
+	body, err := json.Marshal(u)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if _, present := raw["email_verified_at"]; present {
+		t.Errorf("email_verified_at present in %s, want omitted for a zero instant", body)
+	}
+	if _, present := raw["last_login_at"]; present {
+		t.Errorf("last_login_at present in %s, want omitted for a zero instant", body)
+	}
+
+	verified := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	w := v1.WireTime(verified)
+	u.EmailVerifiedAt = &w
+	body, err = json.Marshal(u)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got := raw["email_verified_at"]; got != "2026-03-01T00:00:00Z" {
+		t.Errorf("email_verified_at = %v, want 2026-03-01T00:00:00Z", got)
+	}
+}

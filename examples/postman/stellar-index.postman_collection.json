@@ -10852,7 +10852,7 @@
               "request": {
                 "name": "Latest oracle reading per source for an asset.",
                 "description": {
-                  "content": "Returns one OracleReading per source (reflector-dex /\nreflector-cex / reflector-fx / redstone / band /\ncoingecko) that has observed the asset. Optional source\nfilter restricts to a single source.\n\nAsset translation: classic Stellar identifiers map to the\nglobal crypto ticker the oracles publish under — so\n`asset=native` returns XLM observations (Reflector keys\nthem as `crypto:XLM`), `asset=USDC-GA5Z…` returns the\nUSDC global-ticker observations, etc. Already-canonical\nforms (`crypto:XLM`, `fiat:USD`, contract addresses) pass\nthrough unchanged.\n",
+                  "content": "Returns one OracleReading per (source, quote) — reflector-dex /\nreflector-cex / reflector-fx / redstone / band /\ncoingecko — that has observed the asset. A single source can\nreturn MORE than one row when it publishes the asset against\nmore than one live quote (e.g. Redstone's EUROC/EUR and\nEUROC/USD are two independent feeds, not the same reading\ntwice). Optional source filter restricts to a single source;\noptional quote filter restricts to a single quote.\n\nAsset translation: classic Stellar identifiers map to the\nglobal crypto ticker the oracles publish under — so\n`asset=native` returns XLM observations (Reflector keys\nthem as `crypto:XLM`), `asset=USDC-GA5Z…` returns the\nUSDC global-ticker observations, etc. Already-canonical\nforms (`crypto:XLM`, `fiat:USD`, contract addresses) pass\nthrough unchanged.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -10880,6 +10880,15 @@
                         "type": "text/plain"
                       },
                       "key": "source",
+                      "value": "<string>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Optional. Restrict to a single quote asset id (e.g. `fiat:USD`, `fiat:EUR`) — disambiguates a source that publishes the same base asset against more than one live quote.",
+                        "type": "text/plain"
+                      },
+                      "key": "quote",
                       "value": "<string>"
                     }
                   ],
@@ -10924,6 +10933,15 @@
                             "type": "text/plain"
                           },
                           "key": "source",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Optional. Restrict to a single quote asset id (e.g. `fiat:USD`, `fiat:EUR`) — disambiguates a source that publishes the same base asset against more than one live quote.",
+                            "type": "text/plain"
+                          },
+                          "key": "quote",
                           "value": "<string>"
                         }
                       ],
@@ -10979,6 +10997,15 @@
                           },
                           "key": "source",
                           "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Optional. Restrict to a single quote asset id (e.g. `fiat:USD`, `fiat:EUR`) — disambiguates a source that publishes the same base asset against more than one live quote.",
+                            "type": "text/plain"
+                          },
+                          "key": "quote",
+                          "value": "<string>"
                         }
                       ],
                       "variable": []
@@ -11032,6 +11059,15 @@
                             "type": "text/plain"
                           },
                           "key": "source",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Optional. Restrict to a single quote asset id (e.g. `fiat:USD`, `fiat:EUR`) — disambiguates a source that publishes the same base asset against more than one live quote.",
+                            "type": "text/plain"
+                          },
+                          "key": "quote",
                           "value": "<string>"
                         }
                       ],
@@ -11123,6 +11159,15 @@
                           },
                           "key": "source",
                           "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Optional. Restrict to a single quote asset id (e.g. `fiat:USD`, `fiat:EUR`) — disambiguates a source that publishes the same base asset against more than one live quote.",
+                            "type": "text/plain"
+                          },
+                          "key": "quote",
+                          "value": "<string>"
                         }
                       ],
                       "variable": []
@@ -11176,6 +11221,15 @@
                             "type": "text/plain"
                           },
                           "key": "source",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Optional. Restrict to a single quote asset id (e.g. `fiat:USD`, `fiat:EUR`) — disambiguates a source that publishes the same base asset against more than one live quote.",
+                            "type": "text/plain"
+                          },
+                          "key": "quote",
                           "value": "<string>"
                         }
                       ],

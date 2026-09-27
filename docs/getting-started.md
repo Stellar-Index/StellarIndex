@@ -47,7 +47,12 @@ Every JSON response carries the same envelope:
 }
 ```
 
-The `flags` block is the operational quality signal:
+The `flags` block is the operational quality signal. The four shown
+above (`stale`, `reduced_redundancy`, `triangulated`,
+`divergence_warning`) are always present; the rest are `omitempty` and
+appear only when true (or, for the paired `*_checked` flags, only when
+that check actually ran) — see [envelope.go](../internal/api/v1/envelope.go)
+for exactly which surfaces set which:
 
 | Flag | Meaning |
 |---|---|

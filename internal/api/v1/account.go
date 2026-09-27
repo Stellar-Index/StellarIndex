@@ -59,13 +59,13 @@ type Account struct {
 
 // AccountUser is the magic-link-session caller's user info.
 type AccountUser struct {
-	ID              string   `json:"id"`
-	Email           string   `json:"email"`
-	DisplayName     string   `json:"display_name,omitempty"`
-	Role            string   `json:"role,omitempty"`
-	IsStaff         bool     `json:"is_staff"`
-	EmailVerifiedAt WireTime `json:"email_verified_at,omitempty"`
-	LastLoginAt     WireTime `json:"last_login_at,omitempty"`
+	ID              string    `json:"id"`
+	Email           string    `json:"email"`
+	DisplayName     string    `json:"display_name,omitempty"`
+	Role            string    `json:"role,omitempty"`
+	IsStaff         bool      `json:"is_staff"`
+	EmailVerifiedAt *WireTime `json:"email_verified_at,omitempty"`
+	LastLoginAt     *WireTime `json:"last_login_at,omitempty"`
 }
 
 // AccountInfo is the magic-link-session caller's parent account.
@@ -261,8 +261,8 @@ func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 					DisplayName:     sess.DisplayName,
 					Role:            sess.Role,
 					IsStaff:         sess.IsStaff,
-					EmailVerifiedAt: WireTime(sess.EmailVerifiedAt),
-					LastLoginAt:     WireTime(sess.LastLoginAt),
+					EmailVerifiedAt: wireTimeOrNil(sess.EmailVerifiedAt),
+					LastLoginAt:     wireTimeOrNil(sess.LastLoginAt),
 				},
 				AccountInfo: &AccountInfo{
 					ID:                  sess.AccountID,

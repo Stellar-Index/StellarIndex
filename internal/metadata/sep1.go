@@ -173,8 +173,11 @@ func NewResolver(opts Options) *Resolver {
 		}).DialContext,
 		TLSHandshakeTimeout:   5 * time.Second,
 		ResponseHeaderTimeout: 5 * time.Second,
-		// Reject responses larger than 1 MiB — stellar.toml files
-		// should be a few KB at most.
+		// Bounds the RESPONSE HEADERS only (net/http's own doc for this
+		// field) — it does not cap the body. stellar.toml files should
+		// be a few KB at most; body size is enforced separately by the
+		// caller reading with io.LimitReader, not by this transport
+		// setting.
 		MaxResponseHeaderBytes: 1 << 20,
 	}
 

@@ -69,7 +69,7 @@ import (
 // routed around by changing the time axis.
 //
 // So each day's market leg is measured and then held to a floor of the
-// same shape ([rwaPremiumDayFloor]), and a day that fails it is
+// same shape ([Server.rwaPremiumDayFloorFor]), and a day that fails it is
 // withheld and COUNTED rather than dropped in silence.
 //
 // The floor is not the live gate and cannot be. The live gate measures
@@ -120,38 +120,48 @@ const rwaPremiumHistoryMaxPoints = 4096
 // spellings only.
 var rwaPremiumHistoryQuote = canonical.Asset{Type: canonical.AssetFiat, Code: "USD"}
 
-// rwaPremiumDayFloor is the per-day market-substance floor.
+// rwaPremiumDayFloorFor derives the per-day market-substance floor from
+// the SAME operator-configured policy /v1/price serves against
+// (s.rwaPremiumSubstance, wired from the live [pricingguard.SubstanceGate]
+// in main.go) rather than the pricingguard package defaults — an
+// operator who moves the live serving floor away from those defaults
+// must move this one with it, or the premium history silently measures
+// against a floor /v1/price no longer enforces (RLT-041).
 //
 // It is [pricingguard.SubstancePolicy] — the same three legs, evaluated
 // by the same pure decision ([pricingguard.SubstanceOK]) — with each
-// number chosen against the serving gate's default and the difference
-// stated:
+// number chosen against the serving policy and the difference stated:
 //
-//   - MinVolumeUSD is the serving default, UNCHANGED. Both windows are
+//   - MinVolumeUSD is the serving value, UNCHANGED. Both windows are
 //     24 hours long, so the number means the same thing.
-//   - MinSpan is the serving default, UNCHANGED. It is the
+//   - MinSpan is the serving value, UNCHANGED. It is the
 //     "a market must have existed at more than one point in time" leg,
 //     and it is grain-independent.
-//   - MinBuckets is NOT the serving default and must not be. The
+//   - MinBuckets is NOT the serving value and must not be. The
 //     serving gate counts distinct MINUTE buckets, of which a day holds
 //     1440; this counts distinct HOUR buckets, of which a day holds 24,
 //     because the hour aggregate is the coarsest-reaching grain that
 //     still says WHEN inside a past day the trading happened (see
-//     [timescale.Store.DailyMarketDays]). Inheriting 20 here would
-//     demand 20 of 24 hours and blank every series. Two hours is the
-//     weakest form of the property the span leg already carries, kept
-//     explicit so the policy has all three legs rather than two and a
-//     silence.
-//
-// TestRWAPremiumDayFloorTracksServingDefaults pins the two shared
-// numbers to the pricingguard constants, so lowering the serving floor
-// without deciding about this one fails the build rather than letting
-// the two drift apart quietly.
-var rwaPremiumDayFloor = pricingguard.SubstancePolicy{
-	MinVolumeUSD: new(big.Rat).SetInt64(pricingguard.DefaultSubstanceMinVolumeUSD),
-	MinBuckets:   2,
-	MinSpan:      pricingguard.DefaultSubstanceMinSpan,
-	Window:       24 * time.Hour,
+//     [timescale.Store.DailyMarketDays]). Inheriting the serving value
+//     here would demand (serving MinBuckets) of 24 hours and, past 24,
+//     blank every series. Two hours is the weakest form of the property
+//     the span leg already carries, kept explicit so the policy has all
+//     three legs rather than two and a silence.
+func (s *Server) rwaPremiumDayFloorFor() pricingguard.SubstancePolicy {
+	minVolumeUSD := s.rwaPremiumSubstance.MinVolumeUSD
+	if minVolumeUSD == nil {
+		minVolumeUSD = new(big.Rat).SetInt64(pricingguard.DefaultSubstanceMinVolumeUSD)
+	}
+	minSpan := s.rwaPremiumSubstance.MinSpan
+	if minSpan == 0 {
+		minSpan = pricingguard.DefaultSubstanceMinSpan
+	}
+	return pricingguard.SubstancePolicy{
+		MinVolumeUSD: minVolumeUSD,
+		MinBuckets:   2,
+		MinSpan:      minSpan,
+		Window:       24 * time.Hour,
+	}
 }
 
 // ─── wire ───────────────────────────────────────────────────────────
@@ -373,6 +383,11 @@ type rwaPremiumHistory struct {
 	excluded   map[string]int
 	sources    []string
 	builtAt    time.Time
+	// stale is true when this assembly is a previously-cached one served
+	// verbatim after a failed rebuild — builtAt then reflects the LAST
+	// successful build, not "now". The handler must surface this so a
+	// caller can't mistake it for a fresh answer.
+	stale bool
 }
 
 // ─── handler ────────────────────────────────────────────────────────
@@ -418,7 +433,7 @@ func (s *Server) handleRWAPremiumHistory(w http.ResponseWriter, r *http.Request)
 	// what keeps the account from having to lie about one of them.
 	view.Members = len(hist.members)
 	view.Coverage = rwaPremiumCoverage(view.Series, hist.setAssets)
-	writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
+	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(hist.builtAt), Flags: Flags{Stale: hist.stale}})
 }
 
 // parseRWAPremiumParams validates `timeframe`. The window vocabulary is
@@ -618,7 +633,7 @@ func (s *Server) cachedRWAPremiumHistory(ctx context.Context) rwaPremiumHistory 
 	s.rwaPremFlight = done
 	s.rwaPremMu.Unlock()
 
-	built := s.buildRWAPremiumHistory(ctx)
+	built := s.rwaPremiumHistoryBuildSafely(ctx)
 
 	s.rwaPremMu.Lock()
 	if built.available {
@@ -626,11 +641,25 @@ func (s *Server) cachedRWAPremiumHistory(ctx context.Context) rwaPremiumHistory 
 		s.rwaPremAt = time.Now()
 	} else if s.rwaPremCache != nil {
 		built = *s.rwaPremCache
+		built.stale = true
 	}
 	s.rwaPremFlight = nil
 	s.rwaPremMu.Unlock()
 	close(done)
 	return built
+}
+
+// rwaPremiumHistoryBuildSafely runs buildRWAPremiumHistory and converts a
+// panic into an unavailable result rather than leaving rwaPremFlight set
+// forever — a panic between "flight registered" and "flight cleared"
+// would otherwise wedge every future caller in the single-flight wait.
+func (s *Server) rwaPremiumHistoryBuildSafely(ctx context.Context) (built rwaPremiumHistory) {
+	defer func() {
+		if r := recover(); r != nil {
+			built = rwaPremiumHistory{}
+		}
+	}()
+	return s.buildRWAPremiumHistory(ctx)
 }
 
 // buildRWAPremiumHistory assembles one series: today's membership, the
@@ -672,6 +701,7 @@ func (s *Server) buildRWAPremiumHistory(ctx context.Context) rwaPremiumHistory {
 	// and holding it to a floor measured over a whole day would report
 	// every morning as a thin market.
 	to := rwaClosedDayCeiling(time.Now())
+	floor := s.rwaPremiumDayFloorFor()
 
 	prices, ok := s.rwaPremiumReferenceDays(ctx, cands, to)
 	if !ok {
@@ -693,7 +723,7 @@ func (s *Server) buildRWAPremiumHistory(ctx context.Context) rwaPremiumHistory {
 			out.excluded[RWAPremiumExcludedNoMarketHistory]++
 			continue
 		}
-		member := rwaPremiumJoin(c, series, days)
+		member := rwaPremiumJoin(c, series, days, floor)
 		if len(member.days) == 0 {
 			// Trades existed. Say which of the two ways it failed:
 			// every day was refused by the floor, or the days that
@@ -849,11 +879,12 @@ func (s *Server) rwaPremiumUSDQuotes() []canonical.Asset {
 // wide margin on this asset class, but the rule is symmetric and stated
 // as such: a day enters the series only if the day is present in BOTH
 // maps. Nothing is carried in either direction. A day whose market did
-// not clear [rwaPremiumDayFloor] is recorded as WITHHELD rather than
+// not clear [Server.rwaPremiumDayFloorFor] is recorded as WITHHELD rather than
 // simply skipped, because "the market was too thin to publish" and
 // "there was no market" are different findings.
 func rwaPremiumJoin(
 	c rwaHistoryCandidate, ref *rwaFeedSeries, market []timescale.MarketDay,
+	floor pricingguard.SubstancePolicy,
 ) rwaPremiumMember {
 	out := rwaPremiumMember{
 		assetID:   c.assetID,
@@ -873,7 +904,7 @@ func rwaPremiumJoin(
 		return out
 	}
 	for _, d := range market {
-		if !rwaPremiumDayClears(d) {
+		if !rwaPremiumDayClears(d, floor) {
 			out.withheld = append(out.withheld, d.Day)
 			continue
 		}
@@ -903,12 +934,12 @@ func rwaPremiumJoin(
 // day fails. That is [pricingguard.SubstanceOK]'s own posture for an
 // unverifiable volume, stated here because the parse happens on this
 // side of the call.
-func rwaPremiumDayClears(d timescale.MarketDay) bool {
+func rwaPremiumDayClears(d timescale.MarketDay, floor pricingguard.SubstancePolicy) bool {
 	volume, ok := new(big.Rat).SetString(d.VolumeUSD)
 	if !ok {
 		volume = new(big.Rat)
 	}
-	return pricingguard.SubstanceOK(volume, d.Hours, d.SpanSeconds, rwaPremiumDayFloor)
+	return pricingguard.SubstanceOK(volume, d.Hours, d.SpanSeconds, floor)
 }
 
 // rwaPremiumDayOf measures one day's premium against that day's

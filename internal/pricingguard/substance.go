@@ -201,6 +201,17 @@ type SubstanceGateOptions struct {
 // NewSubstanceGate builds a gate over the store and logs the floors it
 // enforces, defaults resolved: an unset key runs at a value no config
 // file shows.
+// Policy returns the resolved (defaults-applied) policy this gate
+// serves against, for a caller that needs to derive a RELATED policy
+// from the same operator-configured floor rather than duplicating the
+// [DefaultSubstance*] constants (RLT-041).
+func (g *SubstanceGate) Policy() SubstancePolicy {
+	if g == nil {
+		return SubstancePolicy{}.withDefaults()
+	}
+	return g.policy
+}
+
 func NewSubstanceGate(store SubstanceStore, opts SubstanceGateOptions) *SubstanceGate {
 	g := &SubstanceGate{
 		store:   store,

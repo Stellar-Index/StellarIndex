@@ -227,11 +227,14 @@ type OracleReading struct {
 	Mapped bool `json:"mapped"`
 }
 
-// handleOracleLatest serves GET /v1/oracle/latest?asset=<id>&source=<name>.
+// handleOracleLatest serves GET /v1/oracle/latest?asset=<id>&source=<name>&quote=<id>.
 //
-// With no source filter: returns an array of OracleReading, one per
-// source that has observed the asset. With a source filter: returns
-// an array of at most one element.
+// With no source or quote filter: returns an array of OracleReading,
+// one per (source, quote) that has observed the asset — MORE than one
+// per source when that source publishes the asset against more than
+// one live quote (e.g. Redstone's EUROC/EUR and EUROC/USD). With a
+// source filter and no quote filter: one row per quote that source
+// publishes. With both filters: an array of at most one element.
 //
 // 200 with empty array when no observations exist — callers treat
 // this as "nothing to report," not an error. That matches the
@@ -261,6 +264,23 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 			"Invalid asset identifier", http.StatusBadRequest,
 			err.Error())
 		return
+	}
+
+	var quoteFilter canonical.Asset
+	rawQuote := r.URL.Query().Get("quote") // optional
+	if rawQuote != "" {
+		// Some sources publish the SAME (source, asset) pair against
+		// two distinct live quotes — e.g. Redstone's EUROC/EUR and
+		// EUROC/USD (feeds.go) — so an unfiltered read can return more
+		// than one row per source. ?quote= disambiguates.
+		quoteFilter, err = canonical.ParseAsset(rawQuote)
+		if err != nil {
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/invalid-asset-id",
+				"Invalid quote identifier", http.StatusBadRequest,
+				err.Error())
+			return
+		}
 	}
 
 	source := r.URL.Query().Get("source") // optional
@@ -311,9 +331,12 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows := make([]OracleReading, len(updates))
-	for i, u := range updates {
-		rows[i] = oracleReadingFrom(u)
+	rows := make([]OracleReading, 0, len(updates))
+	for _, u := range updates {
+		if rawQuote != "" && !u.Quote.Equal(quoteFilter) {
+			continue
+		}
+		rows = append(rows, oracleReadingFrom(u))
 	}
 	writeJSON(w, rows, Flags{})
 }

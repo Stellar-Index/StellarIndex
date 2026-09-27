@@ -1349,6 +1349,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// leg. Uncached here for OracleHistory's reason — the handler
 		// caches the assembled series, not the read.
 		MarketHistory:       store,
+		RWAPremiumSubstance: substanceGate.Policy(),
 		Sep1Cache:           store,
 		Accounts:            accountStore,
 		PlatformAccounts:    platformAccountStore,

@@ -72,8 +72,9 @@ func (c *Cache) Resolve(ctx context.Context, domain string) (*SEP1, error) {
 	// The function runs in a DETACHED context (context.Background)
 	// so the first caller's cancellation doesn't kill an in-flight
 	// fetch that would benefit other waiters. The resolver still
-	// has its own 8s timeout built in; detaching just means we
-	// don't truncate it short when one caller gives up early.
+	// has its own timeout built in (NewResolver's Options.Timeout,
+	// 10s default); detaching just means we don't truncate it short
+	// when one caller gives up early.
 	ch := c.sf.DoChan(key, func() (any, error) {
 		// Re-check inside the singleflight slot: if another caller
 		// already populated while we were queued, skip the upstream
