@@ -314,7 +314,10 @@ func (s *Store) AllPools(ctx context.Context, filter PoolsFilter, cursor string,
 // ordering tail. $1 is the recency-window lower bound; every caller
 // binds it first.
 const perSourcePoolsCTE = `
-        WITH xlm_usd AS (
+        WITH alias_map(form, canon) AS (
+          VALUES {{ALIAS_VALUES}}
+        ),
+        xlm_usd AS (
           SELECT vwap
             FROM prices_1m
            WHERE base_asset = 'native'
@@ -329,7 +332,9 @@ const perSourcePoolsCTE = `
         ),
         pools AS (
           SELECT
-            p.source, p.base_asset, p.quote_asset,
+            p.source,
+            COALESCE(bm.canon, p.base_asset)  AS base_asset,
+            COALESCE(qm.canon, p.quote_asset) AS quote_asset,
             MAX(p.bucket_last_ts) AS last_trade_at,
             COALESCE(SUM(p.trade_count)
                      FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0) AS count_24h,
@@ -351,6 +356,8 @@ const perSourcePoolsCTE = `
             )::text AS vol_24h_usd,
             last(p.bucket_last_price, p.bucket_last_ts)::text AS last_price
           FROM pools_per_source_1h p
+          LEFT JOIN alias_map bm ON bm.form = p.base_asset
+          LEFT JOIN alias_map qm ON qm.form = p.quote_asset
          WHERE p.bucket >= $1
     `
 
@@ -412,10 +419,13 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	// × XLM/USD); pure-SEP-41/SEP-41 unpriced trades stay 0 (the
 	// pre-#25 query returned NULL; the handler scan collapses
 	// NULL and "0" identically, so functionally equivalent).
-	cte := perSourcePoolsCTE
+	// $8+ are the alias-fold VALUES params (buildAliasMapValues) — bound
+	// after $7 so the documented $1..$7 layout below never renumbers.
+	aliasValues, aliasArgs := buildAliasMapValues(8)
+	cte := strings.Replace(perSourcePoolsCTE, "{{ALIAS_VALUES}}", aliasValues, 1)
 	canonBase, canonQuote, flipped := canonOrientSQL()
 	cte += poolsFilterSQL(canonBase, canonQuote) + `
-         GROUP BY p.source, p.base_asset, p.quote_asset
+         GROUP BY p.source, COALESCE(bm.canon, p.base_asset), COALESCE(qm.canon, p.quote_asset)
         )
     `
 	// canon collapses flipped orientations of the same market within a
@@ -454,7 +464,7 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 		           (source || '|' || base_asset || '|' || quote_asset) ASC
 		  LIMIT $3
 		`
-		args := append([]any{since, cursor, limit + 1}, poolsFilterArgs(filter)...)
+		args := append(append([]any{since, cursor, limit + 1}, poolsFilterArgs(filter)...), aliasArgs...)
 		return cte + tail, args
 	}
 	// FROM canon, NOT FROM pools. This tail used to read the
@@ -481,7 +491,7 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	// missing pre-fix, causing `pq: got 6 parameters but the
 	// statement requires 7` on every order_by=pair request — caught
 	// 2026-05-14 live on r1.
-	args := append([]any{since, cursor, limit + 1}, poolsFilterArgs(filter)...)
+	args := append(append([]any{since, cursor, limit + 1}, poolsFilterArgs(filter)...), aliasArgs...)
 	return cte + tail, args
 }
 
@@ -568,9 +578,11 @@ func (s *Store) sourceMarketsCommon(ctx context.Context, source, cursor string, 
 // rather than per-venue anyway.
 func buildSourceMarketsQuery(since time.Time, source, cursor string, limit int, order MarketsOrder) (string, []any) {
 	canonBase, canonQuote, flipped := canonOrientSQL()
-	ctes := perSourcePoolsCTE + `
+	// $5+ are the alias-fold VALUES params, bound after $4 (source).
+	aliasValues, aliasArgs := buildAliasMapValues(5)
+	ctes := strings.Replace(perSourcePoolsCTE, "{{ALIAS_VALUES}}", aliasValues, 1) + `
            AND p.source = $4
-         GROUP BY p.source, p.base_asset, p.quote_asset
+         GROUP BY p.source, COALESCE(bm.canon, p.base_asset), COALESCE(qm.canon, p.quote_asset)
         ),
         canon AS (
           SELECT ` + canonBase + ` AS base_asset,
@@ -603,14 +615,14 @@ func buildSourceMarketsQuery(since time.Time, source, cursor string, limit int, 
                   (base_asset || '|' || quote_asset) ASC
          LIMIT $3
         `
-		return ctes + tail, []any{since, cursor, limit + 1, source}
+		return ctes + tail, append([]any{since, cursor, limit + 1, source}, aliasArgs...)
 	default: // MarketsOrderPair
 		const tail = `
          WHERE ($2 = '' OR (base_asset || '|' || quote_asset) > $2)
          ORDER BY (base_asset || '|' || quote_asset) ASC
          LIMIT $3
         `
-		return ctes + tail, []any{since, cursor, limit + 1, source}
+		return ctes + tail, append([]any{since, cursor, limit + 1, source}, aliasArgs...)
 	}
 }
 
@@ -815,19 +827,26 @@ func encodeMarketsCursor(last Market, order MarketsOrder) string {
 // on the canonical-orientation expressions. Why each CTE reads the view
 // it reads is argued at length in buildDistinctPairsQuery.
 const distinctPairsActivityCTEs = `
-        WITH d AS (
-            SELECT p.base_asset, p.quote_asset,
+        WITH alias_map(form, canon) AS (
+          VALUES {{ALIAS_VALUES}}
+        ),
+        d AS (
+            SELECT COALESCE(dbm.canon, p.base_asset)  AS base_asset,
+                   COALESCE(dqm.canon, p.quote_asset) AS quote_asset,
                    MAX(p.bucket) AS bucket_close_at,
                    (array_agg(p.last_price ORDER BY p.bucket DESC)
                       FILTER (WHERE p.last_price IS NOT NULL))[1]::text AS last_price
               FROM prices_1d p
+              LEFT JOIN alias_map dbm ON dbm.form = p.base_asset
+              LEFT JOIN alias_map dqm ON dqm.form = p.quote_asset
              WHERE p.bucket >= $1
                AND ($4 = '' OR $4 = ANY(p.sources))
                AND (cardinality($5::text[]) = 0 OR p.base_asset = ANY($5) OR p.quote_asset = ANY($5))
-             GROUP BY p.base_asset, p.quote_asset
+             GROUP BY COALESCE(dbm.canon, p.base_asset), COALESCE(dqm.canon, p.quote_asset)
         ),
         h AS (
-            SELECT p.base_asset, p.quote_asset,
+            SELECT COALESCE(hbm.canon, p.base_asset)  AS base_asset,
+                   COALESCE(hqm.canon, p.quote_asset) AS quote_asset,
                    MAX(p.bucket)       AS last_bucket_1m,
                    SUM(p.trade_count)  AS count_24h,
                    SUM(p.volume_usd)   AS vol_24h_num,
@@ -843,10 +862,12 @@ const distinctPairsActivityCTEs = `
                    last(p.last_price, p.bucket)
                       FILTER (WHERE p.last_price IS NOT NULL)::text AS last_price
               FROM prices_1m p
+              LEFT JOIN alias_map hbm ON hbm.form = p.base_asset
+              LEFT JOIN alias_map hqm ON hqm.form = p.quote_asset
              WHERE p.bucket > NOW() - INTERVAL '24 hours'
                AND ($4 = '' OR $4 = ANY(p.sources))
                AND (cardinality($5::text[]) = 0 OR p.base_asset = ANY($5) OR p.quote_asset = ANY($5))
-             GROUP BY p.base_asset, p.quote_asset
+             GROUP BY COALESCE(hbm.canon, p.base_asset), COALESCE(hqm.canon, p.quote_asset)
         ),
 `
 
@@ -957,7 +978,9 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	// orientation (inverted for the flipped direction). See
 	// canonOrientSQL / canonical.Orient.
 	canonBase, canonQuote, flipped := canonOrientSQL()
-	ctes := distinctPairsActivityCTEs + `        raw AS (
+	// $6+ are the alias-fold VALUES params, bound after $5 (assets).
+	aliasValues, aliasArgs := buildAliasMapValues(6)
+	ctes := strings.Replace(distinctPairsActivityCTEs, "{{ALIAS_VALUES}}", aliasValues, 1) + `        raw AS (
             SELECT COALESCE(d.base_asset, h.base_asset)   AS base_asset,
                    COALESCE(d.quote_asset, h.quote_asset) AS quote_asset,
                    COALESCE(h.last_bucket_1m, d.bucket_close_at) AS last_trade_at,
@@ -1011,14 +1034,14 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
                   (base_asset || '|' || quote_asset) ASC
          LIMIT $3
         `
-		return ctes + tail, []any{since, cursor, limit + 1, source, assets}
+		return ctes + tail, append([]any{since, cursor, limit + 1, source, assets}, aliasArgs...)
 	default: // MarketsOrderPair
 		const tail = `
          WHERE ($2 = '' OR (base_asset || '|' || quote_asset) > $2)
          ORDER BY (base_asset || '|' || quote_asset) ASC
          LIMIT $3
         `
-		return ctes + tail, []any{since, cursor, limit + 1, source, assets}
+		return ctes + tail, append([]any{since, cursor, limit + 1, source, assets}, aliasArgs...)
 	}
 }
 
