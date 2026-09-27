@@ -672,9 +672,16 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// Serving-side thin-market substance gate ([pricing_guard],
 	// 2026-08-04 valuation incident). One gate instance is shared by
 	// every raw prices_1m serving path in this binary — the /v1/price
-	// reader, the SEP-40 passthrough, the GlobalAssetView headline —
-	// plus the v1 server's tip path, so all surfaces agree (and share
-	// the verdict cache) on which pairs are too thin to price.
+	// reader, the SEP-40 passthrough, the GlobalAssetView headline, the
+	// v1 server's tip path, /v1/anomalies, /v1/divergence and /v1/changes
+	// (via storedMarketGate / changeSummaryWithheld) — plus the
+	// aggregator binary's freeze and divergence webhooks (via
+	// priceWithholding.withheld, c37135af9) — so all of those surfaces
+	// agree on which pairs are too thin to price. This binary's own
+	// Redis-VWAP fallback (tryRedisVWAPFallback, internal/api/v1/price.go)
+	// is NOT routed through this gate and remains the one ungated
+	// surface tracked by #756; unifying pricingguard into one exported
+	// Gate type walked by AST across cmd/* is the still-open follow-up.
 	substanceGate := buildSubstanceGate(cfg.PricingGuard, store, logger)
 	// Scam-pricing gate: withhold the aggregated price for issuers flagged
 	// scam-class in the curated account directory, on EITHER leg of the
