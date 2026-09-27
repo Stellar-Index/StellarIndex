@@ -257,11 +257,12 @@ cutover)
     for f in "$STATE_DIR"/reproject-progress.from-*; do
       [ -f "$f" ] || continue
       MARK=$(cat "$f")
-      case "$MARK" in ''|*[!0-9]*) continue ;; esac
-      if [ "$MARK" -gt "$MVTIP" ]; then COVERED=1; break; fi
+      WFROM=${f##*/reproject-progress.from-}
+      case "$MARK$WFROM" in ''|*[!0-9]*) continue ;; esac
+      if [ "$WFROM" -le "$MVTIP" ] && [ "$MARK" -gt "$MVTIP" ]; then COVERED=1; break; fi
     done
     if [ "$COVERED" -ne 1 ]; then
-      viol "no reproject window's progress mark exceeds mv-created-at-tip=$MVTIP — ledger $MVTIP was inserted before the MV existed and no reproject has covered it yet (reproject <v1-floor> $((MVTIP + 1)) closes the gap)"
+      viol "no reproject window spans mv-created-at-tip=$MVTIP (from <= tip < mark) — ledger $MVTIP was inserted before the MV existed and no reproject has covered it yet (reproject <v1-floor> $((MVTIP + 1)) closes the gap)"
     fi
   fi
   if [ "$NVIOL" -gt 0 ]; then

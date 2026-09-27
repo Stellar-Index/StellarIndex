@@ -312,6 +312,19 @@ else
 fi
 no_ddl mvgap "reproject mark == mv-created-at-tip"
 
+mkdir -p "$TMP/state.mvhigh"
+echo 63683991 > "$TMP/state.mvhigh/mv-created-at-tip"
+echo 63683991 > "$TMP/state.mvhigh/reproject-progress.from-2"
+echo 63700000 > "$TMP/state.mvhigh/reproject-progress.from-63683995"
+d3 mvhigh V1_COV='900000000\t2\t63700000' V2_COV='920000000\t2\t63700000' -- cutover
+if [ "$RC" -ne 0 ] && grep -q 'mv-created-at-tip=63683991' "$OUT"; then
+  ok "a window starting above mv-created-at-tip does not count as covering it"
+else
+  bad "a window starting above mv-created-at-tip was accepted (rc=$RC)"
+  sed 's/^/       /' "$OUT"
+fi
+no_ddl mvhigh "window starting above mv-created-at-tip"
+
 mkdir -p "$TMP/state.mvok"
 echo 63683991 > "$TMP/state.mvok/mv-created-at-tip"
 echo 63683992 > "$TMP/state.mvok/reproject-progress.from-2"
