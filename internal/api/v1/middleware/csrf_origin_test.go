@@ -30,15 +30,21 @@ func sameSiteRig(corsOrigins []string) (http.Handler, *bool) {
 	h = middleware.RequireSameSiteWrite(quietLogger())(h)
 	if corsOrigins != nil {
 		opts := middleware.CORSOptions{
-			AllowedOrigins:   corsOrigins,
-			AllowCredentials: true,
-			AllowedMethods:   []string{"GET", "POST", "DELETE", "OPTIONS"},
+			AllowedOrigins: corsOrigins,
+			// Every rig origin is also credentialed here: these tests
+			// exercise the write guard's origin-matching, not the
+			// RSEC-X1 read/credentialed split (see
+			// TestRequireSameSiteWrite_BlocksOriginThatIsCORSReadableButNotCredentialed).
+			AllowCredentials:    true,
+			CredentialedOrigins: corsOrigins,
+			AllowedMethods:      []string{"GET", "POST", "DELETE", "OPTIONS"},
 		}
 		// CORS panics on wildcard+credentials (no browser honours the
 		// combo), so the wildcard rig has to be the un-credentialed
 		// public-read-API shape a real deployment would use.
 		if len(corsOrigins) == 1 && corsOrigins[0] == "*" {
 			opts.AllowCredentials = false
+			opts.CredentialedOrigins = nil
 		}
 		h = middleware.CORS(opts)(h)
 	}
@@ -86,6 +92,38 @@ func TestRequireSameSiteWrite_AllowsAllowListedOrigin(t *testing.T) {
 
 	if w.Code != http.StatusNoContent || !*reached {
 		t.Fatalf("status = %d reached = %v, want 204/true (the explorer is allow-listed)", w.Code, *reached)
+	}
+}
+
+// TestRequireSameSiteWrite_BlocksOriginThatIsCORSReadableButNotCredentialed
+// is the RSEC-X1 regression: a same-site write guard must not trust an
+// origin just because it's on the public CORS read allow-list. Only
+// origins in CredentialedOrigins may bypass the guard.
+func TestRequireSameSiteWrite_BlocksOriginThatIsCORSReadableButNotCredentialed(t *testing.T) {
+	reached := new(bool)
+	var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		*reached = true
+		w.WriteHeader(http.StatusNoContent)
+	})
+	h = middleware.RequireSameSiteWrite(quietLogger())(h)
+	h = middleware.CORS(middleware.CORSOptions{
+		AllowedOrigins:      []string{"https://dashboard.stellarindex.io", "https://docs.stellarindex.io"},
+		AllowCredentials:    true,
+		CredentialedOrigins: []string{"https://dashboard.stellarindex.io"},
+		AllowedMethods:      []string{"GET", "POST", "DELETE", "OPTIONS"},
+	})(h)
+
+	req := httptest.NewRequest(http.MethodPost, "https://api.stellarindex.io/v1/dashboard/keys", nil)
+	req.Host = "api.stellarindex.io"
+	req.Header.Set("Origin", "https://docs.stellarindex.io")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (docs.stellarindex.io is CORS-readable but not credentialed)", w.Code)
+	}
+	if *reached {
+		t.Fatal("handler ran for a write from a non-credentialed origin")
 	}
 }
 

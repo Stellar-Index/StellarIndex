@@ -297,8 +297,9 @@ func TestCORS_PerRequestObservability(t *testing.T) {
 // cross-origin fetches (magic-link session on /v1/account/me).
 func TestCORS_AllowCredentialsEmittedOnAllowedOrigin(t *testing.T) {
 	h := middleware.CORS(middleware.CORSOptions{
-		AllowedOrigins:   []string{"https://app.stellarindex.io"},
-		AllowCredentials: true,
+		AllowedOrigins:      []string{"https://app.stellarindex.io"},
+		AllowCredentials:    true,
+		CredentialedOrigins: []string{"https://app.stellarindex.io"},
 	})(corsOK())
 
 	r := httptest.NewRequest(http.MethodGet, "/v1/account/me", nil)
@@ -346,6 +347,47 @@ func TestCORS_AllowCredentialsPanicOnWildcard(t *testing.T) {
 	_ = middleware.CORS(middleware.CORSOptions{
 		AllowedOrigins:   []string{"*"},
 		AllowCredentials: true,
+	})
+}
+
+// TestCORS_CredentialsNotEmittedToNonCredentialedOrigin is the RSEC-X1
+// regression: a deployment with several read-allowed origins but only
+// ONE of them trusted for credentials must NOT leak
+// Access-Control-Allow-Credentials to the others, even though they're
+// all CORS-readable and AllowCredentials is globally true.
+func TestCORS_CredentialsNotEmittedToNonCredentialedOrigin(t *testing.T) {
+	h := middleware.CORS(middleware.CORSOptions{
+		AllowedOrigins:      []string{"https://dashboard.stellarindex.io", "https://docs.stellarindex.io"},
+		AllowCredentials:    true,
+		CredentialedOrigins: []string{"https://dashboard.stellarindex.io"},
+	})(corsOK())
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/ledger/tip", nil)
+	r.Header.Set("Origin", "https://docs.stellarindex.io")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://docs.stellarindex.io" {
+		t.Errorf("Allow-Origin = %q, want docs.stellarindex.io (still a valid read origin)", got)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Errorf("Allow-Credentials = %q, want empty — docs.stellarindex.io is not a credentialed origin", got)
+	}
+}
+
+// TestCORS_CredentialedOriginsPanicsWhenNotSubsetOfAllowedOrigins pins
+// the boot-time invariant: a credentialed origin that isn't even
+// CORS-readable is a misconfiguration, not a narrower policy.
+func TestCORS_CredentialedOriginsPanicsWhenNotSubsetOfAllowedOrigins(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic when CredentialedOrigins is not a subset of AllowedOrigins")
+		}
+	}()
+	_ = middleware.CORS(middleware.CORSOptions{
+		AllowedOrigins:      []string{"https://dashboard.stellarindex.io"},
+		AllowCredentials:    true,
+		CredentialedOrigins: []string{"https://docs.stellarindex.io"},
 	})
 }
 
