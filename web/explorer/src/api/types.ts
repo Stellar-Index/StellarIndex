@@ -12903,8 +12903,6 @@ export interface operations {
     getPrice: {
         parameters: {
             query: {
-                /** @description Aggregation window in seconds (board #43; proposal: the current-price window is query-selectable). Default 60 = the closed 1-minute bucket (ADR-0015 semantics, unchanged). 300/3600/86400 serve the aggregator's continuously-published rolling VWAP for that window; a window the aggregator has not published for the pair is a 404, never a silent substitution. Sub-minute rolling windows: /v1/price/tip. On 300/3600/86400, `flags.divergence_checked` / `divergence_warning` are set only when the window is the one the cross-reference verdict was computed over (the aggregator's shortest, 300 by default); any other reports both `false`. */
-                window?: "60" | "300" | "3600" | "86400";
                 /**
                  * @description Canonical asset identifier — matches the `asset_id` on
                  *     response bodies. Query-parameter form is the shorter `asset`
@@ -12944,7 +12942,7 @@ export interface operations {
                      *         "price": "0.159608357106",
                      *         "price_type": "vwap",
                      *         "observed_at": "2026-05-05T14:35:00Z",
-                     *         "window_seconds": 300
+                     *         "window_seconds": 60
                      *       },
                      *       "as_of": "2026-05-05T14:35:42.881Z",
                      *       "flags": {

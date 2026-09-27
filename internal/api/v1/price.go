@@ -758,19 +758,34 @@ func (s *Server) parsePricePairParams(w http.ResponseWriter, r *http.Request) (a
 // in-progress one (ADR-0015) — that is what makes the answer
 // byte-identical across regions that have ingested the same ledgers,
 // and it costs a worst-case ~30–120 s of staleness by construction.
-// `?window=N` serves the aggregator's VWAP for that window instead,
-// ending at the last closed minute (see [Server.handlePriceWindowed]);
-// sub-minute freshness is /v1/price/tip's job, per the URL discipline in
-// ADR-0018. `flags.stale` here means specifically "the closed bucket
-// wasn't available and this degraded to a last-trade fallback" — or
-// that the pair is frozen and the response is the held value, which
-// also sets `flags.frozen` (see [Server.resolveFrozenServe]).
+// `?window=` is rejected outright (ADR-0018 §"URL discipline": a query
+// parameter must not select between consistency surfaces; ADR-0015's
+// amendment ships this route with no client-selectable window). Rolling
+// windows belong on /v1/price/tip, closed-bucket history on /v1/history.
+// `flags.stale` here means specifically "the closed bucket wasn't
+// available and this degraded to a last-trade fallback" — or that the
+// pair is frozen and the response is the held value, which also sets
+// `flags.frozen` (see [Server.resolveFrozenServe]).
 //
 // This surface will read slightly differently from /v1/price/tip and
 // from the price_usd inlined on /v1/assets rows — different windows,
 // deliberately. See the "Current-price surfaces and their windows"
 // section in the package doc before filing a discrepancy.
 func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
+	// ?window= would select between the closed-bucket surface this
+	// route serves and the aggregator's rolling VWAP — the exact
+	// surface-selecting query parameter ADR-0018 prohibits (GH-762).
+	// Rejected before the reader-nil check and parameter parsing below
+	// so a misconfigured deployment 400s the same way a healthy one
+	// does, rather than leaking which failure mode is active.
+	if rawWindow := r.URL.Query().Get("window"); rawWindow != "" && rawWindow != "60" {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/window-not-supported",
+			"window is not a supported parameter", http.StatusBadRequest,
+			"/v1/price always serves the closed 1-minute bucket (ADR-0015); rolling windows are /v1/price/tip's job")
+		return
+	}
+
 	reader := s.prices
 	if reader == nil {
 		writeProblem(w, r,
@@ -782,17 +797,6 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 
 	asset, quote, ok := s.parsePricePairParams(w, r)
 	if !ok {
-		return
-	}
-
-	// Optional aggregation-window selection (board #43; proposal:
-	// "the window length … can be modified through query"). The
-	// default 60 keeps the existing closed-1m-bucket behavior; the
-	// other values serve the aggregator's VWAP for that window, ending
-	// at the last closed minute, from the vwap:<pair>:<window>
-	// cache. Sub-minute rolling windows are /v1/price/tip's job.
-	if rawWindow := r.URL.Query().Get("window"); rawWindow != "" && rawWindow != "60" {
-		s.handlePriceWindowed(w, r, asset, quote, rawWindow)
 		return
 	}
 
@@ -2685,8 +2689,8 @@ type frozenResolution struct {
 }
 
 // frozenHeldWindows are the aggregator windows a freeze can be holding
-// a value for ([orchestrator.DefaultWindows], the same set
-// [priceWindows] serves), smallest first. The freeze lifecycle runs per
+// a value for ([orchestrator.DefaultWindows]), smallest first. The
+// freeze lifecycle runs per
 // (pair, window) while the marker is per pair (ADR-0019, 2026-09-18
 // amendment), so the marker alone does not say which window holds the
 // value; smallest-first keeps the answer closest to the 1-minute bucket
@@ -3441,122 +3445,6 @@ func leftPad(s string, n int, c byte) string {
 	}
 	copy(buf[n:], s)
 	return string(buf)
-}
-
-// priceWindows are the non-default aggregation windows /v1/price
-// accepts via ?window=. Each matches a window the aggregator
-// continuously publishes to the VWAP cache (verified against the
-// live key set); values outside this set 400 with the list.
-var priceWindows = map[string]time.Duration{
-	"300":   5 * time.Minute,
-	"3600":  time.Hour,
-	"86400": 24 * time.Hour,
-}
-
-// handlePriceWindowed serves /v1/price?window=<300|3600|86400> from
-// the per-window VWAP cache. No fallback chain: a missing key is an
-// honest 404 — the caller asked for a SPECIFIC window, and
-// substituting a different one would misrepresent the methodology
-// (price_type/window_seconds are load-bearing per the proposal's
-// explicit-labeling principle).
-func (s *Server) handlePriceWindowed(w http.ResponseWriter, r *http.Request, asset, quote canonical.Asset, rawWindow string) {
-	window, ok := priceWindows[rawWindow]
-	if !ok {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/invalid-window",
-			"Invalid window", http.StatusBadRequest,
-			"window must be one of: 60 (default, closed 1m bucket), 300, 3600, 86400 seconds; for sub-minute rolling windows use /v1/price/tip")
-		return
-	}
-	if s.triangulated == nil {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/price-unavailable",
-			"Windowed price serving not configured", http.StatusServiceUnavailable,
-			"this deployment has no VWAP cache wired")
-		return
-	}
-	// Scam-issuer gate. This route reads the same aggregator VWAP keys
-	// the fallback chain's first layer does, and handlePrice dispatches
-	// to it BEFORE the price reader is consulted — so neither the
-	// reader's withholding chokepoint nor [Server.priceFallback]'s gate
-	// can see it, and `?window=300` alone re-served a directory-flagged
-	// issuer's aggregated price at 200 (RLT-350). Same posture and same
-	// problem type as every other withheld price surface; the substance
-	// half is owed only once the read shows a literal market — see
-	// [Server.windowedWithholding]. Both legs, via
-	// the package's one [scamWithheld] spelling — the alias loop below
-	// reads under alias spellings of the SAME market, so the requested
-	// pair is the right subject for the verdict.
-	if s.writeIfScamWithheld(w, r, asset, quote, "price_read") {
-		return
-	}
-	if v, a, q, found := s.lookupCachedVWAPAliased(r.Context(), assetAliases(asset), assetAliases(quote), window); found {
-		if withheld := s.windowedWithholding(r.Context(), asset, quote, a, q, v.Triangulated); withheld != pricingguard.NotWithheld {
-			writePriceWithheldProblem(w, r, asset, quote, withheldReasonFor(withheld))
-			return
-		}
-		snap := PriceSnapshot{
-			AssetID:       asset.String(),
-			Quote:         quote.String(),
-			Price:         v.Value,
-			PriceType:     "vwap",
-			ObservedAt:    WireTime(v.ObservedAt),
-			WindowSeconds: int(window / time.Second),
-		}
-		writeJSON(w, snap, s.windowedPriceFlags(r, a, q, window, v.Triangulated))
-		return
-	}
-	writeProblem(w, r,
-		"https://api.stellarindex.io/errors/price-not-found",
-		"No price for pair at this window", http.StatusNotFound,
-		"the aggregator has not published a "+rawWindow+"s VWAP for "+asset.String()+" / "+quote.String())
-}
-
-// windowedWithholding is the full withholding verdict for a ?window=
-// value read under (a, q), owed exactly where the default window owes
-// it: a direct VWAP of a literal on-chain market, which window=60 serves
-// only through the gated reader. A triangulated or fiat/crypto-quoted
-// value has no literal market to measure and stays scam-only, as on
-// [Server.priceFallback]. Asked about the requested pair; the floor is
-// measured on the alias union either way.
-func (s *Server) windowedWithholding(ctx context.Context, asset, quote, a, q canonical.Asset, triangulated bool) pricingguard.Withholding {
-	if triangulated || !onChainAsset(a) || !onChainAsset(q) {
-		return pricingguard.NotWithheld
-	}
-	return withheldBy(ctx, s.substance, s.scam, asset, quote, "price_read")
-}
-
-// onChainAsset reports whether a is an asset class with permissionless
-// on-chain markets — the legs a literal prices_1m market is traded in.
-func onChainAsset(a canonical.Asset) bool {
-	switch a.Type {
-	case canonical.AssetNative, canonical.AssetClassic, canonical.AssetSoroban:
-		return true
-	default:
-		return false
-	}
-}
-
-// windowedPriceFlags assembles the envelope flags for a ?window= value
-// read under the alias pair (a, q). Every per-pair marker — freeze,
-// composite meta, and the divergence verdict — is asked for (a, q),
-// never the spelling the client used: each is keyed on the literal
-// pair the aggregator prices, so the requested literal's marker is a
-// verdict on a different venue population (K037 class; same rule as
-// [Server.frozenPairBase]). No value substitution is needed here,
-// unlike the default path: a frozen pair's `vwap:` key IS what the
-// freeze holds.
-func (s *Server) windowedPriceFlags(r *http.Request, a, q canonical.Asset, window time.Duration, triangulated bool) Flags {
-	frozenVal, frozenChecked := s.lookupFrozen(r, a, q)
-	flags := Flags{Triangulated: triangulated, Frozen: frozenVal, FrozenChecked: frozenChecked}
-	// ActionFreeze contract, as on the default path: a held value is
-	// single-sourced and below the window's baseline (ADR-0018 stale).
-	// Unfrozen, this surface has no source list to derive single-source.
-	flags.SingleSource = frozenVal
-	flags.Stale = frozenVal
-	s.attachCompositeFlags(r, &flags, a, q, window, true)
-	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), a, q, window)
-	return flags
 }
 
 // parsePriceQuoteParam parses the optional ?quote= (default

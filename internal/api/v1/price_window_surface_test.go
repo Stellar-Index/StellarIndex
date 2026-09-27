@@ -13,13 +13,10 @@ import (
 // ADR-0018 §"URL discipline": a query parameter must not change a
 // surface's consistency contract, and a request whose intent does not
 // match the URL's contract returns 400. /v1/price is the closed-bucket
-// surface; `?window=300|3600|86400` serves the aggregator's rolling
-// per-tick VWAP under that URL, which is the tip contract. Rolling
-// windows belong on /v1/price/tip. This pins the ADR's end state and is
-// skipped until the OpenAPI operation, its client types and the tests
-// that pin the parameter are retired together (RLT-358).
+// surface; `?window=300|3600|86400` used to serve the aggregator's
+// rolling per-tick VWAP under that URL, which is the tip contract.
+// Rolling windows belong on /v1/price/tip. GH-762 retired the parameter.
 func TestPriceWindow_DoesNotSelectARollingSurface(t *testing.T) {
-	t.Skip("RLT-358: /v1/price?window= is still served; needs the OpenAPI/pkg/client retirement landed with it")
 	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
 	ts := httpTestServer(t, srv)
 	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD&window=300")
