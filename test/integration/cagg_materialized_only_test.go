@@ -19,9 +19,11 @@ import (
 )
 
 // wantRealtimeCAGGs is the exact set of views the migrations leave
-// real-time (0069 / 0076), sorted. Each must also be allowed by
+// real-time (0069), sorted. Each must also be allowed by
 // timescale.RealTimeCAGGAllowed, the list the runtime readiness check uses.
-var wantRealtimeCAGGs = []string{"pools_per_source_1h", "source_volume_1h"}
+// 0187 recreates pools_per_source_1h (real-time since 0076) materialized-only;
+// the operator restores its real-time tail once it has been refreshed.
+var wantRealtimeCAGGs = []string{"source_volume_1h"}
 
 // pinnedCAGGs are the served price / TWAP / oracle / supply / DEX-volume
 // views whose unguarded readers (the catalogue snapshot, /v1/markets, the

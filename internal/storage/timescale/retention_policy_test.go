@@ -178,9 +178,9 @@ func TestRetentionPolicies_AreExactlyTheDeclaredSet(t *testing.T) {
 		// The minute price aggregate, 90 days (0156). 69 GB / 82 M
 		// rows on r1 2026-09-07, 55 % of all price-CAGG storage, and
 		// recomputable from `trades` — which 0156 depends on and the
-		// next test pins. 0166 rebuilds prices_1m and re-attaches the
-		// same policy (TestPrices1mRetention_0166ReattachesTheSamePolicy).
-		"prices_1m": "0166_twap_notional_floor.up.sql",
+		// next test pins. 0166 and 0187 rebuild prices_1m and re-attach
+		// the same policy (TestPrices1mRetention_RebuildsReattachTheSamePolicy).
+		"prices_1m": "0187_price_caggs_priceable_filter.up.sql",
 		// Per-account usage rollups, 12 months (0167) — the same
 		// horizon as api_usage_events. Served for 30 days only.
 		"usage_daily": "0167_usage_daily_retention.up.sql",
@@ -288,13 +288,15 @@ func TestPrices1mRetention_HorizonIsNinetyDaysAndNamesOneRelation(t *testing.T) 
 	}
 }
 
-// 0166 drops and recreates prices_1m, which drops 0156's policy with it.
-// Both directions of 0166 must put back the SAME policy: one relation,
-// 90 days, shipped disarmed and asserted so.
-func TestPrices1mRetention_0166ReattachesTheSamePolicy(t *testing.T) {
+// 0166 and 0187 drop and recreate prices_1m, which drops 0156's policy
+// with it. Both directions of each must put back the SAME policy: one
+// relation, 90 days, shipped disarmed and asserted so.
+func TestPrices1mRetention_RebuildsReattachTheSamePolicy(t *testing.T) {
 	for _, path := range []string{
 		"migrations/0166_twap_notional_floor.up.sql",
 		"migrations/0166_twap_notional_floor.down.sql",
+		"migrations/0187_price_caggs_priceable_filter.up.sql",
+		"migrations/0187_price_caggs_priceable_filter.down.sql",
 	} {
 		sql := stripSQLComments(readRepoFile(t, path))
 		added := retentionRelationsFromCalls(t, addRetentionCallRe, sql, path)
