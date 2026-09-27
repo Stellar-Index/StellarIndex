@@ -27,8 +27,10 @@
 #   rollback-precutover       drop v2 + its MV (v1 never stopped serving)
 #
 # Heavy phases (reproject) run under the wrapper:
-#   run-heavy-job.sh d3-reproject /usr/local/sbin/d3-lecur-v2-rebuild.sh reproject <v1-floor> <tip>
-# where <v1-floor> = SELECT min(ledger_seq) FROM stellar.ledger_entries_current.
+#   run-heavy-job.sh d3-reproject /usr/local/sbin/d3-lecur-v2-rebuild.sh reproject <v1-floor> <mv-created-at-tip + 1>
+# where <v1-floor> = SELECT min(ledger_seq) FROM stellar.ledger_entries_current, and
+# <mv-created-at-tip> = cat $STATE_DIR/mv-created-at-tip. The +1 matters because TO is
+# exclusive: that ledger's rows were inserted before the MV existed, not by the MV.
 set -euo pipefail
 
 # Optional ops-user credentials (STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD,
@@ -149,6 +151,15 @@ reproject)
   if [ "$FROM" -ge "$TO" ]; then
     log "refusing: [$FROM,$TO) is an empty window — from must be below to"; exit 1
   fi
+  # Not a refusal: windows are legitimately chunked, so a lower TO in an
+  # earlier chunk is normal and a later chunk is expected to close the gap.
+  if [ -f "$STATE_DIR/mv-created-at-tip" ]; then
+    MVTIP=$(cat "$STATE_DIR/mv-created-at-tip")
+    num "$MVTIP" "mv-created-at-tip"
+    if [ "$TO" -le "$MVTIP" ]; then
+      log "warning: to-ledger $TO does not exceed mv-created-at-tip=$MVTIP — this window alone will not close the MV-creation gap; a later window must reach at least $((MVTIP + 1))"
+    fi
+  fi
   REQ_FROM=$FROM
   # Progress is keyed by the window's FROM, and a mark means "[FROM,mark) is
   # inserted". One shared, unkeyed file named no window at all, so a run over
@@ -235,6 +246,23 @@ cutover)
   fi
   if [ "$V2MAX" -lt "$V1MAX" ]; then
     viol "v2 lags the tip: v2 max(ledger_seq)=$V2MAX is below v1's $V1MAX — the v2 MV is not capturing live ingest"
+  fi
+  # The MV-creation ledger's rows were inserted before the MV existed, so
+  # only a reproject past it — never the min/max/count gate above — closes
+  # that single-ledger hole (r1 2026-09: 221 contract_data, 221 ttl, 6 stale offers).
+  if [ -f "$STATE_DIR/mv-created-at-tip" ]; then
+    MVTIP=$(cat "$STATE_DIR/mv-created-at-tip")
+    num "$MVTIP" "mv-created-at-tip"
+    COVERED=0
+    for f in "$STATE_DIR"/reproject-progress.from-*; do
+      [ -f "$f" ] || continue
+      MARK=$(cat "$f")
+      case "$MARK" in ''|*[!0-9]*) continue ;; esac
+      if [ "$MARK" -gt "$MVTIP" ]; then COVERED=1; break; fi
+    done
+    if [ "$COVERED" -ne 1 ]; then
+      viol "no reproject window's progress mark exceeds mv-created-at-tip=$MVTIP — ledger $MVTIP was inserted before the MV existed and no reproject has covered it yet (reproject <v1-floor> $((MVTIP + 1)) closes the gap)"
+    fi
   fi
   if [ "$NVIOL" -gt 0 ]; then
     if [ "${D3_FORCE_CUTOVER:-}" != "yes" ]; then

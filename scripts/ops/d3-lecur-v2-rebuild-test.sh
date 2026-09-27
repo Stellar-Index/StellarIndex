@@ -35,6 +35,11 @@
 #   7. a same-window mark IS still honoured (resume must keep working), a
 #      mark below its own window start is refused as corrupt, and an empty
 #      window is refused outright.
+#   8. cutover REFUSES when the MV-creation ledger (mv-created-at-tip) itself
+#      was never reprojected. A progress mark equal to that tip means
+#      "[FROM,tip) done", not tip itself — r1's shape, where the reproject
+#      used TO=mv-created-at-tip and that one ledger never reached v2 (221
+#      contract_data, 221 ttl, 6 stale offers). A mark of tip+1 passes.
 #
 # Run: bash scripts/ops/d3-lecur-v2-rebuild-test.sh
 set -uo pipefail
@@ -287,6 +292,36 @@ else
   sed 's/^/       /' "$OUT"
 fi
 no_ddl nonnum "non-numeric to-ledger"
+
+# ─── 8. cutover requires a reproject mark past the MV-creation ledger ──
+#
+# r1's shape: MV created at tip 63683991, reprojected only up to that same
+# ledger (TO exclusive) — the mark left behind is 63683991, which means
+# "[FROM,63683991) done", not "63683991 itself done". The min/max/count gate
+# above cannot see this: v2's max(ledger_seq) already reaches past it because
+# the live MV keeps inserting after creation.
+mkdir -p "$TMP/state.mvgap"
+echo 63683991 > "$TMP/state.mvgap/mv-created-at-tip"
+echo 63683991 > "$TMP/state.mvgap/reproject-progress.from-2"
+d3 mvgap V1_COV='900000000\t2\t63700000' V2_COV='920000000\t2\t63700000' -- cutover
+if [ "$RC" -ne 0 ] && grep -q 'mv-created-at-tip=63683991' "$OUT"; then
+  ok "reproject mark == mv-created-at-tip ⇒ cutover refuses (that ledger was never reprojected)"
+else
+  bad "reproject mark == mv-created-at-tip did not refuse (rc=$RC)"
+  sed 's/^/       /' "$OUT"
+fi
+no_ddl mvgap "reproject mark == mv-created-at-tip"
+
+mkdir -p "$TMP/state.mvok"
+echo 63683991 > "$TMP/state.mvok/mv-created-at-tip"
+echo 63683992 > "$TMP/state.mvok/reproject-progress.from-2"
+d3 mvok V1_COV='900000000\t2\t63700000' V2_COV='920000000\t2\t63700000' -- cutover
+if [ "$RC" -eq 0 ] && grep -q 'RENAME TABLE' "$TMP/ch.mvok.log"; then
+  ok "reproject mark == mv-created-at-tip + 1 ⇒ that check passes, cutover proceeds"
+else
+  bad "reproject mark == mv-created-at-tip + 1 was refused (rc=$RC)"
+  sed 's/^/       /' "$OUT"
+fi
 
 echo "d3-lecur-v2-rebuild-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
