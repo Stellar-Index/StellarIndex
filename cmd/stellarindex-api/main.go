@@ -65,6 +65,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
+	"github.com/Stellar-Index/StellarIndex/internal/redact"
 	workerpkg "github.com/Stellar-Index/StellarIndex/internal/worker"
 
 	"github.com/redis/go-redis/v9"
@@ -167,7 +168,7 @@ func main() {
 	}
 
 	if err := run(*cfgPath, *dryRun); err != nil {
-		fmt.Fprintf(os.Stderr, "stellarindex-api: %v\n", err)
+		fmt.Fprintf(os.Stderr, "stellarindex-api: %s\n", redact.Credentials(err.Error()))
 		os.Exit(1)
 	}
 }

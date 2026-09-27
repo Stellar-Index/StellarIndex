@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/redact"
 )
 
 // Store is the handle on our TimescaleDB connection pool.
@@ -272,7 +274,7 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 func sessionConnConfig(dsn string) (*pgx.ConnConfig, error) {
 	cfg, err := pgx.ParseConfig(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("timescale: pgx.ParseConfig: %w", err)
+		return nil, dsnParseError(dsn, err)
 	}
 	// GUC names are case-insensitive: drop every spelling so exactly one
 	// timezone reaches the startup packet.
@@ -283,6 +285,61 @@ func sessionConnConfig(dsn string) (*pgx.ConnConfig, error) {
 	}
 	cfg.RuntimeParams["timezone"] = "UTC"
 	return cfg, nil
+}
+
+// dsnParseError renders pgx's rejection of dsn in this package's words.
+// pgx's own text quotes the DSN through a best-effort redactor that
+// stops at the first `/` or `@`, printing the rest of a password holding
+// both; the error is not wrapped so no caller can unwrap to
+// ParseConfigError.ConnString. The branch is pgx's own URL-prefix test:
+// anything else is keyword/value, which net/url also accepts as a bare
+// path, so it is never rendered as a URL and none of pgx's text for it
+// is kept (its syntax errors quote a password's tail as a key). A URL's
+// inner reason is kept only when it parses, since only then is it about
+// an option, not the password's syntax.
+func dsnParseError(dsn string, err error) error {
+	const prefix = "timescale: pgx.ParseConfig: "
+	if !strings.HasPrefix(dsn, "postgres://") && !strings.HasPrefix(dsn, "postgresql://") {
+		return errors.New(prefix + keywordDSNFailure(err))
+	}
+	if _, uerr := url.Parse(dsn); uerr != nil {
+		return errors.New(prefix + redact.ParseFailure(dsn, uerr))
+	}
+	msg := prefix + redact.ParseFailure(dsn, err)
+	if inner := errors.Unwrap(err); inner != nil {
+		msg += " (" + redact.Known(inner.Error(), dsn) + ")"
+	}
+	return errors.New(msg)
+}
+
+// keywordDSNKinds maps a phrase of pgx's rejection to this package's
+// description of it, most specific first. The phrase is matched, never
+// printed, so a password that happens to hold one misnames the failure
+// and leaks nothing.
+var keywordDSNKinds = []struct{ phrase, kind string }{
+	{"failed to parse as keyword/value", `a syntax error (quote a value holding a space or quote as '...', escaping \ and ')`},
+	{"not in ConnStringAllowedKeys", "an unrecognised keyword"},
+	{"failed to read service", "an unreadable service file"},
+	{"invalid connect_timeout", "an invalid connect_timeout"},
+	{"port numbers to", "a port count that does not match the host count"},
+	{"invalid port", "an invalid port"},
+	{"sslmode is invalid", "an invalid sslmode"},
+	{"failed to configure TLS", "an invalid TLS setting (sslmode, sslrootcert, sslcert, sslkey)"},
+	{"target_session_attrs", "an invalid target_session_attrs"},
+	{"protocol_version", "an invalid min_protocol_version or max_protocol_version"},
+	{"channel_binding", "an invalid channel_binding"},
+	{"require_auth", "an invalid require_auth"},
+}
+
+// keywordDSNFailure names what pgx rejected in a keyword/value DSN.
+func keywordDSNFailure(err error) string {
+	msg := err.Error()
+	for _, k := range keywordDSNKinds {
+		if strings.Contains(msg, k.phrase) {
+			return k.kind + " in the keyword/value connection string"
+		}
+	}
+	return "an invalid keyword/value connection string"
 }
 
 // PingContext exercises the underlying *sql.DB pool. Used by the

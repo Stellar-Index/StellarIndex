@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
+	"github.com/Stellar-Index/StellarIndex/internal/redact"
 	externalchainlink "github.com/Stellar-Index/StellarIndex/internal/sources/external/chainlink"
 )
 
@@ -162,6 +164,16 @@ type redactedTransportError struct {
 func (e *redactedTransportError) Error() string { return e.msg }
 func (e *redactedTransportError) Unwrap() error { return e.err }
 
+// endpointFailure describes a request-construction failure without the
+// endpoint's text: net/url's error quotes both the URL and the fragment
+// it choked on, which for a key in the userinfo is part of the key.
+func endpointFailure(endpoint string) string {
+	if _, err := url.Parse(endpoint); err != nil {
+		return "invalid endpoint: " + redact.ParseFailure(endpoint, err)
+	}
+	return "invalid request to " + externalchainlink.RedactEndpoint(endpoint)
+}
+
 // newHTTPStatusError builds the error for a status >= 400. The body is
 // decoded on a best-effort basis only to recover an error envelope; a
 // body that is empty, not JSON, or JSON of another shape still yields
@@ -192,7 +204,10 @@ func (c *Client) call(ctx context.Context, method string, params any, result any
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("stellarrpc: new request %s: %w", method, err)
+		return &redactedTransportError{
+			msg: fmt.Sprintf("stellarrpc: new request %s: %s", method, endpointFailure(c.endpoint)),
+			err: err,
+		}
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")

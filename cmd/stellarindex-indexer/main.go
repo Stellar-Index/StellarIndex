@@ -67,6 +67,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/projector"
+	"github.com/Stellar-Index/StellarIndex/internal/redact"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	externalbinance "github.com/Stellar-Index/StellarIndex/internal/sources/external/binance"
 	externalbitstamp "github.com/Stellar-Index/StellarIndex/internal/sources/external/bitstamp"
@@ -155,14 +156,14 @@ func realMain() int {
 
 	if requested {
 		if err := runVerifyHashDBRange(context.Background(), *cfgPath, from, to); err != nil {
-			fmt.Fprintf(os.Stderr, "stellarindex-indexer: %v\n", err)
+			fmt.Fprintf(os.Stderr, "stellarindex-indexer: %s\n", redact.Credentials(err.Error()))
 			return 1
 		}
 		return 0
 	}
 
 	if err := run(*cfgPath, *dryRun); err != nil {
-		fmt.Fprintf(os.Stderr, "stellarindex-indexer: %v\n", err)
+		fmt.Fprintf(os.Stderr, "stellarindex-indexer: %s\n", redact.Credentials(err.Error()))
 		return 1
 	}
 	return 0
