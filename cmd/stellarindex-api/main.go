@@ -1362,6 +1362,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		SignupIPThrottle:    signupIPThrottle,
 		SignupVerifier:      signupVerifier,
 		SignupVerifyEmailer: signupVerifyEmailerOrNil(dashboardBundle.sender, dashboardBundle.emailFrom, cfg.API.SignupRequireEmailVerification),
+		SignupVerifyBaseURL: cfg.API.ExternalBaseURL,
 		// F-1218 wave 45 (codex audit-2026-05-12): the verify
 		// handler flips the EmailVerifiedAt flag on the
 		// underlying Redis-stored API key record after Consume.

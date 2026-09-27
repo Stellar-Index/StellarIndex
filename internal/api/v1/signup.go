@@ -299,7 +299,7 @@ func (s *Server) issueSignupVerification(r *http.Request, keyID, toEmail string)
 			"err", err, "key_id", keyID)
 		return false
 	}
-	verifyURL := buildSignupVerifyURL(r, token)
+	verifyURL := buildSignupVerifyURL(r, token, s.signupVerifyBaseURL)
 	if err := s.signupVerifyEmailer.SendSignupVerification(r.Context(), toEmail, verifyURL); err != nil {
 		s.logger.Warn("signup verification: send failed",
 			"err", err, "key_id", keyID, "to", maskEmail(toEmail))
@@ -308,18 +308,23 @@ func (s *Server) issueSignupVerification(r *http.Request, keyID, toEmail string)
 	return true
 }
 
-// buildSignupVerifyURL constructs the absolute click-through
-// URL the customer sees in the verification email. Built from
-// the request's scheme + Host so deployments don't have to
-// plumb a separate base URL config — the same scheme the
-// customer used for /v1/signup will work for the verify GET.
+// buildSignupVerifyURL constructs the absolute click-through URL
+// the customer sees in the verification email. Built from
+// baseURL (operator config, normally cfg.API.ExternalBaseURL) —
+// NEVER from the request's Host header, which is client-supplied
+// and unauthenticated: a forged `Host` would otherwise land a
+// live, single-use token in an attacker-controlled link
+// (CA2-A20-harden-5). baseURL's trailing "/v1" (or plain "/") is
+// trimmed so the result doesn't double up on the "/v1" prefix
+// already applied to the mounted route.
 //
-// Defence-in-depth: scheme defaults to `https` when TLS isn't
-// terminated by Caddy upstream (in which case `r.TLS` is nil
-// even though the public traffic is TLS). Production deployments
-// always front through Caddy so this is the typical case;
-// `http://` URLs only surface in `localhost` dev.
-func buildSignupVerifyURL(r *http.Request, plaintextToken string) string {
+// Empty baseURL falls back to the request's scheme+Host — local
+// dev only; production config always sets external_base_url.
+func buildSignupVerifyURL(r *http.Request, plaintextToken, baseURL string) string {
+	baseURL = strings.TrimSuffix(strings.TrimSuffix(baseURL, "/"), "/v1")
+	if baseURL != "" {
+		return baseURL + "/signup/verify?token=" + plaintextToken
+	}
 	scheme := "https"
 	if r.TLS == nil && (r.Host == "localhost" || strings.HasPrefix(r.Host, "127.0.0.1") || strings.HasPrefix(r.Host, "localhost:")) {
 		scheme = "http"
