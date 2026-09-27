@@ -6,13 +6,20 @@ git config --global --add safe.directory /workspace
 git config --global --add safe.directory /history
 export ANSIBLE_LOCAL_TEMP=/tmp/ansible-local
 export ANSIBLE_REMOTE_TEMP=/tmp/ansible-remote
+# ansible.cfg names a vault_password_file that ansible-playbook opens even for
+# --list-hosts; stub it as ci.yml does, never over a real one.
+mkdir -p ~/.ansible
+if [[ ! -e ~/.ansible/r1_vault_pass ]]; then
+  printf '%s\n' 'ci-syntax-only' > ~/.ansible/r1_vault_pass
+  chmod 600 ~/.ansible/r1_vault_pass
+fi
 BASE_SHA="$(git rev-parse HEAD)"
 export BASE_SHA
 export VERIFY_FAIL_ON_SKIP=1
 
 echo "=== Pinned verifier toolchain ==="
 printf 'go=%s node=%s pnpm=%s golangci-lint=%s\n' \
-  "$(go version | awk '{print $3}')" "$(node --version)" "$(pnpm --version)" "$(golangci-lint version --short 2>/dev/null || golangci-lint version | head -1)"
+  "$(go version | awk '{print $3}')" "$(node --version)" "$(pnpm --version)" "$(golangci-lint version --short 2>/dev/null || golangci-lint version | awk 'NR == 1')"
 
 echo "=== Install locked frontend dependencies ==="
 # The store location arrives as npm_config_store_dir from verify-container.sh.
