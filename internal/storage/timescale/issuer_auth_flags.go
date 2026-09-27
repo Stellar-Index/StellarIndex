@@ -173,6 +173,7 @@ const persistHomeDomain = `CASE $7::text
 		        WHEN '` + AuthFlagsSourceLastKnownBeforeRemoval + `' THEN NULL
 		        ELSE COALESCE(NULLIF($6, ''), home_domain) END`
 
+//nolint:gosec // G202: fragments are constant SQL (column names, CASE literals, persistHomeDomain/sep1ResetOnHomeDomainChange); values bind via $N
 var persistIssuerAuthFlagsQuery = `
 		UPDATE issuers SET
 		    auth_required  = $2,
