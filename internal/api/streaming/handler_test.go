@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -233,5 +234,90 @@ func TestStream_ContextCancelEndsStream(t *testing.T) {
 		// handler returned
 	case <-time.After(2 * time.Second):
 		t.Error("Stream did not return after client disconnect")
+	}
+}
+
+// TestStream_KeepsRouteCacheControl — the v1 CacheControl middleware
+// sets each stream's per-route policy before the handler runs; the SSE
+// writer must not overwrite it (it used to force a bare `no-cache`,
+// turning /v1/price/stream's no-store into a storable response and
+// dropping `private` from tip/observations). With no policy set, the
+// writer's own fallback must still forbid storage.
+func TestStream_KeepsRouteCacheControl(t *testing.T) {
+	for _, preset := range []string{"no-store", "private, no-cache, must-revalidate", "private, no-store", ""} {
+		t.Run(preset, func(t *testing.T) {
+			hub := streaming.NewHub(0)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if preset != "" {
+					w.Header().Set("Cache-Control", preset)
+				}
+				streaming.Stream(w, r, hub, []string{"topic"}, streaming.StreamOptions{HeartbeatInterval: 5 * time.Second})
+			}))
+			defer srv.Close()
+			resp, err := srv.Client().Get(srv.URL)
+			if err != nil {
+				t.Fatalf("GET stream: %v", err)
+			}
+			defer resp.Body.Close()
+			want := preset
+			if want == "" {
+				want = "no-store"
+			}
+			if got := resp.Header.Get("Cache-Control"); got != want {
+				t.Errorf("Cache-Control = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestStream_RevalidateFailureEndsStream — credential, key-policy and
+// quota checks are per-request middleware, so a stream admitted before
+// its key was revoked must re-check at each heartbeat and end once the
+// check fails, instead of streaming until the client hangs up.
+func TestStream_RevalidateFailureEndsStream(t *testing.T) {
+	var revoked atomic.Bool
+	var checks atomic.Int32
+	hub := streaming.NewHub(0)
+	done := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(done)
+		streaming.Stream(w, r, hub, []string{"topic"}, streaming.StreamOptions{
+			HeartbeatInterval: 50 * time.Millisecond,
+			Revalidate: func(*http.Request) bool {
+				checks.Add(1)
+				return !revoked.Load()
+			},
+		})
+	}))
+	defer srv.Close()
+
+	resp, err := srv.Client().Get(srv.URL)
+	if err != nil {
+		t.Fatalf("GET stream: %v", err)
+	}
+	defer resp.Body.Close()
+	br := bufio.NewReader(resp.Body)
+	// Two heartbeats pass while the credential is still good.
+	for keepalives := 0; keepalives < 2; {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			t.Fatalf("stream ended while the credential was valid: %v", err)
+		}
+		if line == ":keepalive\n" {
+			keepalives++
+		}
+	}
+	revoked.Store(true)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream kept running after Revalidate reported the credential revoked")
+	}
+	rest, _ := io.ReadAll(br)
+	if !strings.Contains(string(rest), ":revoked\n\n") {
+		t.Errorf("stream did not end with the :revoked comment; tail = %q", rest)
+	}
+	if checks.Load() < 3 {
+		t.Errorf("Revalidate ran %d times, want one per heartbeat (>= 3)", checks.Load())
 	}
 }

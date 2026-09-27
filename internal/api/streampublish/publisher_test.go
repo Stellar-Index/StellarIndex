@@ -22,6 +22,7 @@ type fakeReader struct {
 	mu        sync.Mutex
 	snapshots map[string]v1.PriceSnapshot
 	err       error
+	stale     bool
 }
 
 func (r *fakeReader) LatestPrice(_ context.Context, asset, quote canonical.Asset) (v1.PriceSnapshot, []string, bool, error) {
@@ -35,7 +36,7 @@ func (r *fakeReader) LatestPrice(_ context.Context, asset, quote canonical.Asset
 	if !ok {
 		return v1.PriceSnapshot{}, nil, false, v1.ErrPriceNotFound
 	}
-	return snap, []string{"binance"}, false, nil
+	return snap, []string{"binance"}, r.stale, nil
 }
 
 func (r *fakeReader) SetSnapshot(asset, quote canonical.Asset, snap v1.PriceSnapshot) {

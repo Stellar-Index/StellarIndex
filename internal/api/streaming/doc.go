@@ -23,12 +23,18 @@
 // resume from the buffer. This keeps a single misbehaving consumer
 // from stalling fanout to healthy peers.
 //
-// Last-Event-ID resume is best-effort: if the requested ID is older
-// than the buffered window, replay starts at the buffer's oldest
-// event (so the client knows it lost events because IDs jump
-// forward). Buffer size is configurable per topic; default 256
-// events ≈ 4–5 minutes at the 1m closed-bucket cadence and
-// ≈ 50 minutes at the 5s tip cadence.
+// Last-Event-ID resume is best-effort and newest-first: replay is the
+// buffered events after the requested ID, truncated to the NEWEST ones
+// that fit the subscriber queue (see [Hub.Subscribe]), so a client gone
+// longer than that sees IDs jump forward rather than a stale backlog.
+// An empty Last-Event-ID replays nothing — a fresh connection gets
+// only events published after it subscribes. The window the buffer
+// covers at each cadence is documented on [DefaultBufferSize].
+//
+// Which endpoints resume: /v1/price/stream always, and
+// /v1/price/tip/stream when a Hub is wired (its shared producers
+// publish into it). /v1/observations/stream and /v1/ledger/stream are
+// per-connection producers with no buffer and ignore Last-Event-ID.
 //
 // Topics are reaped, not kept forever. Topic keys come from the
 // request on /v1/price/stream, so an unbounded map is an

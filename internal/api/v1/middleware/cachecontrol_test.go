@@ -62,6 +62,11 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		{"/v1/observations", "private, no-cache, must-revalidate"},
 		{"/v1/observations/stream", "private, no-cache, must-revalidate"},
 
+		// The other two SSE streams. The SSE writer keeps whatever this
+		// sets (stream_cache_control_test.go asserts the wire header).
+		{"/v1/price/stream", "no-store"},
+		{"/v1/ledger/stream", "private, no-store"},
+
 		// Closed-bucket price surfaces — 5s shared cache (#344). The
 		// 150s SLA-probe freshness target leaves no room for the old
 		// s-maxage=60: it can serve a bucket a full bucket behind

@@ -55,6 +55,7 @@ type Publisher struct {
 	interval time.Duration
 	logger   *slog.Logger
 	decimals *v1.NonstandardDecimalsCache
+	frozen   v1.FrozenLooker
 
 	// lastPublished tracks the most recent ObservedAt we've already
 	// fanned out, keyed by topic. Each pair's poller goroutine has
@@ -76,6 +77,15 @@ type Options struct {
 	// pair as standard-decimals — the same fail-open default every other
 	// consumer of the cache gets when it isn't wired.
 	Decimals *v1.NonstandardDecimalsCache
+
+	// Frozen wires the ADR-0019 freeze marker — the same looker
+	// v1.Options.Freeze gives /v1/price. The closed bucket this publisher
+	// reads is raw prices_1m, which the anomaly checker never gates, so
+	// on a frozen pair it is the very bucket the freeze refused. With a
+	// looker wired such a bucket is replaced by a price_frozen event, and
+	// every price_update carries frozen_checked. nil leaves both off:
+	// the stream then makes no freeze claim at all.
+	Frozen v1.FrozenLooker
 }
 
 // New constructs a Publisher. The reader is the same PriceReader
@@ -104,6 +114,7 @@ func New(hub *streaming.Hub, reader PriceReader, interval time.Duration, logger 
 		interval:      interval,
 		logger:        logger,
 		decimals:      opts.Decimals,
+		frozen:        opts.Frozen,
 		lastPublished: map[string]time.Time{},
 	}
 }
@@ -211,6 +222,12 @@ func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic str
 		return
 	}
 
+	frozen, frozenChecked := p.frozenVerdict(pollCtx, pair)
+	if frozen {
+		p.publishFrozen(pair, topic, snap, stale)
+		return
+	}
+
 	// dex-nonstandard-decimals forward normalization (M2). reader.LatestPrice
 	// returns the RAW closed-1m/last-trade ratio (see
 	// v1.Server.normalizeRawPriceSnapshot's doc comment) — the handler-side
@@ -235,12 +252,8 @@ func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic str
 		Data    v1.PriceSnapshot `json:"data"`
 		AsOf    v1.WireTime      `json:"as_of"`
 		Sources []string         `json:"sources,omitempty"`
-		Flags   struct {
-			Stale bool `json:"stale"`
-		} `json:"flags"`
-	}{Data: snap, AsOf: snap.ObservedAt, Sources: sources, Flags: struct {
-		Stale bool `json:"stale"`
-	}{Stale: stale}})
+		Flags   streamFlags      `json:"flags"`
+	}{Data: snap, AsOf: snap.ObservedAt, Sources: sources, Flags: streamFlags{Stale: stale, FrozenChecked: frozenChecked}})
 	if err != nil {
 		// json.Marshal of a fixed shape that already round-trips
 		// through /v1/price — only surfaces on a Go runtime defect.
@@ -250,6 +263,78 @@ func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic str
 	}
 
 	p.hub.Publish(topic, "price_update", payload)
+	obs.StreamPublishTotal.WithLabelValues("price_stream").Inc()
+}
+
+// streamFlags is the subset of v1.Flags this publisher evaluates; a flag
+// it does not evaluate is absent rather than a false it never checked.
+// Frozen is set only on price_frozen: a frozen bucket is never published
+// as a price_update.
+type streamFlags struct {
+	Stale         bool `json:"stale"`
+	Frozen        bool `json:"frozen,omitempty"`
+	FrozenChecked bool `json:"frozen_checked,omitempty"`
+}
+
+// frozenBucket identifies the bucket a price_frozen event stands in for.
+type frozenBucket struct {
+	AssetID       string      `json:"asset_id"`
+	Quote         string      `json:"quote"`
+	ObservedAt    v1.WireTime `json:"observed_at"`
+	WindowSeconds int         `json:"window_seconds"`
+}
+
+// frozenVerdict reads the freeze marker of every spelling of the pair's
+// base, as /v1/price does when it cannot tell which alias its bucket was
+// read from (the reader here does not say). Any frozen spelling governs;
+// checked is true only when every marker read succeeded, so an unknown
+// verdict never travels as "confirmed not frozen". A read error fails
+// open to publishing without frozen_checked — /v1/price's posture for
+// the same error.
+func (p *Publisher) frozenVerdict(ctx context.Context, pair canonical.Pair) (frozen, checked bool) {
+	if p.frozen == nil {
+		return false, false
+	}
+	checked = true
+	for _, alias := range canonical.AssetAliases(pair.Base) {
+		aliasFrozen, err := p.frozen.FrozenForPair(ctx, alias, pair.Quote)
+		if err != nil {
+			if ctx.Err() == nil {
+				p.logger.Warn("streampublish: freeze lookup failed",
+					"err", err, "pair", pair.String(), "alias", alias.String())
+			}
+			checked = false
+			continue
+		}
+		if aliasFrozen {
+			return true, true
+		}
+	}
+	return false, checked
+}
+
+// publishFrozen puts the freeze on the wire in place of the bucket it
+// refused. /v1/price never serves that bucket under the flag (it serves
+// the held VWAP or refuses), and this 60-second series has no held value
+// of its own, so the event carries the bucket's identity and no price.
+// Silence would be indistinguishable from a pair with no trades. stale is
+// the reader's verdict on that bucket, carried as price_update carries it.
+func (p *Publisher) publishFrozen(pair canonical.Pair, topic string, snap v1.PriceSnapshot, stale bool) {
+	payload, err := json.Marshal(struct {
+		Data  frozenBucket `json:"data"`
+		AsOf  v1.WireTime  `json:"as_of"`
+		Flags streamFlags  `json:"flags"`
+	}{
+		Data:  frozenBucket{AssetID: snap.AssetID, Quote: snap.Quote, ObservedAt: snap.ObservedAt, WindowSeconds: snap.WindowSeconds},
+		AsOf:  snap.ObservedAt,
+		Flags: streamFlags{Stale: stale, Frozen: true, FrozenChecked: true},
+	})
+	if err != nil {
+		p.logger.Error("streampublish: marshal failed",
+			"err", err, "pair", pair.String())
+		return
+	}
+	p.hub.Publish(topic, "price_frozen", payload)
 	obs.StreamPublishTotal.WithLabelValues("price_stream").Inc()
 }
 

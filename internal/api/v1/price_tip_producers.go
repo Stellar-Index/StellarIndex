@@ -703,18 +703,21 @@ func (s *Server) acquireTipProducer(
 }
 
 // runSharedTipProducer is the ONE compute loop for a pair: computes the
-// tip every `window` seconds and publishes to the Hub topic. The Hub's
-// ring buffer gives late subscribers the most recent event immediately
-// (resume semantics), so a fresh page paints without waiting a tick.
+// tip every `window` seconds and publishes to the Hub topic. The ring
+// replays only to a subscriber that sends Last-Event-ID; a fresh page
+// paints at once because the handler emits its own synchronous first
+// event, not because of the ring.
 func (s *Server) runSharedTipProducer(ctx context.Context, key tipProducerKey, asset, quote canonical.Asset, window int) {
 	defer s.recoverStreamProducer("price_tip_shared")
 	var gen streaming.Generator
 	emit := func() {
+		// ev.ID is dropped: the id on the wire is the one Publish mints
+		// atomically with the ring insert.
 		if ev, ok := s.tipTickEvent(ctx, &gen, asset, quote, window); ok {
 			s.hub.Publish(key.topic(), ev.Type, ev.Data)
 		}
 	}
-	emit() // immediate first publish — the ring serves it to every joiner
+	emit() // immediate first publish, to the subscribers already attached
 	ticker := time.NewTicker(s.streamCadence(window))
 	defer ticker.Stop()
 	for {

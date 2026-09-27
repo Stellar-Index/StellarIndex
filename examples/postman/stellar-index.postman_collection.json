@@ -4777,7 +4777,7 @@
                   "request": {
                     "name": "SSE stream of tip-price updates (ADR-0018).",
                     "description": {
-                      "content": "Server-Sent Events counterpart of `/v1/price/tip`. Same\ncompute logic; pushed on a per-connection tick (default\nevery `window_seconds` seconds, clamp 1–60 s).\n\n- First event fires synchronously on connect (no waiting a\n  full window).\n- `flags.divergence_warning` / `flags.divergence_checked` are\n  looked up per event — for the requested (base, quote) spelling\n  only — exactly as `/v1/price/tip` does, so a `tip_update`\n  carries the verdict a GET at that instant would.\n- Pre-flight 404 when the pair has no observations: SSE\n  can't change status mid-stream, so emptiness is detected\n  before the response body switches to `text/event-stream`.\n  A pair already withheld at connect gets the same\n  `price-withheld` 404 as `/v1/price/tip`.\n- A pair withheld AFTER the stream opened emits a\n  `price_withheld` event on each tick in place of\n  `tip_update`, with data\n  `{\"asset_id\",\"quote\",\"reason\",\"as_of\"}`; `reason` is the\n  vocabulary of the `price-withheld` 404 (`substance`,\n  `scam_issuer`, …). `tip_update` resumes when the pair is\n  served again. Keepalives alone therefore mean no tick has\n  completed, never that the price is being withheld.\n- Heartbeats every 15 s as comment lines (`:keepalive`) so\n  intermediate proxies don't idle out the connection.\n- Resume after disconnect by setting `Last-Event-ID` on the\n  reconnect (header preferred, `?last_event_id=` fallback).\n- Same URL-discipline rule as `/v1/price/tip`:\n  `?granularity=` returns 400.\n",
+                      "content": "Server-Sent Events counterpart of `/v1/price/tip`. Same\ncompute logic; pushed on a per-connection tick (default\nevery `window_seconds` seconds, clamp 1–60 s).\n\n- First event fires synchronously on connect (no waiting a\n  full window).\n- `flags.divergence_warning` / `flags.divergence_checked` are\n  looked up per event — for the requested (base, quote) spelling\n  only — exactly as `/v1/price/tip` does, so a `tip_update`\n  carries the verdict a GET at that instant would — except\n  that the stream's lookup has a 1 s budget, and a verdict\n  store too slow to answer leaves `divergence_checked: false`\n  on that event rather than delaying it.\n- Pre-flight 404 when the pair has no observations: SSE\n  can't change status mid-stream, so emptiness is detected\n  before the response body switches to `text/event-stream`.\n  A pair already withheld at connect gets the same\n  `price-withheld` 404 as `/v1/price/tip`.\n- A pair withheld AFTER the stream opened emits a\n  `price_withheld` event on each tick in place of\n  `tip_update`, with data\n  `{\"asset_id\",\"quote\",\"reason\",\"as_of\"}`; `reason` is the\n  vocabulary of the `price-withheld` 404 (`substance`,\n  `scam_issuer`, …). `tip_update` resumes when the pair is\n  served again. Keepalives alone therefore mean no tick has\n  completed, never that the price is being withheld.\n- Heartbeats every 15 s as comment lines (`:keepalive`) so\n  intermediate proxies don't idle out the connection.\n- Resume after disconnect by setting `Last-Event-ID` on the\n  reconnect (header preferred, `?last_event_id=` fallback).\n- Same URL-discipline rule as `/v1/price/tip`:\n  `?granularity=` returns 400.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -6079,7 +6079,7 @@
               "request": {
                 "name": "SSE stream of closed-bucket price updates (ADR-0015).",
                 "description": {
-                  "content": "SSE counterpart of `/v1/price` — carries the strict ADR-0015\nclosed-bucket consistency contract. Unlike `/v1/price/tip/stream`\nand `/v1/observations/stream` (per-connection tick), this\nsurface is **Hub-driven**: the aggregator publishes one event\nper closed bucket, and every subscriber on the same\n(asset, quote, window) triple receives byte-identical payloads\n— the same cross-region consistency guarantee `/v1/price`\nexposes.\n\nThe aggregator publishes one bucket series **per window**\n(standard windows: 300 / 3600 / 86400 seconds); a connection\nfollows exactly one series, selected by `?window_seconds=`\n(default 300), so consecutive events on a stream are always\ncomparable. Alias spellings of the same asset (`native`,\n`crypto:XLM`, the XLM SAC) are subscribed together — either\nspelling receives the pair's publishes.\n\n- Heartbeats every 15 s as comment lines.\n- Resume after disconnect via `Last-Event-ID` (header preferred,\n  `?last_event_id=` fallback).\n- Events carry the `/v1/price` envelope shape (`data` +\n  `as_of`); `flags` / `sources` are present only when the\n  publishing path evaluated them — absent flags mean \"not\n  evaluated\", never \"fresh\". The aggregator's 300 / 3600 /\n  86400 series carry neither.\n- `observed_at` and `as_of` are both the END of the closed\n  1-minute bucket the event was computed at, so they are\n  equal on every event. `price` is the VWAP over\n  `[observed_at - window_seconds, observed_at)`. A series\n  advances once per closed minute, so consecutive events on\n  a 3600 or 86400 series are overlapping trailing windows,\n  not disjoint buckets: identify an event by\n  `(window_seconds, observed_at)`, and never sum them.\n- URL discipline: `?granularity=` returns 400 — bucket series\n  are selected by `window_seconds`; use\n  `/v1/history/since-inception` for chart granularities.\n- 503 when the deployment hasn't wired the streaming Hub\n  (typical pre-aggregator state).\n",
+                  "content": "SSE counterpart of `/v1/price` — carries the strict ADR-0015\nclosed-bucket consistency contract. Unlike `/v1/price/tip/stream`\nand `/v1/observations/stream` (per-connection tick), this\nsurface is **Hub-driven**: the aggregator publishes one event\nper closed bucket, and every subscriber on the same\n(asset, quote, window) triple receives byte-identical payloads\n— the same cross-region consistency guarantee `/v1/price`\nexposes.\n\nThe aggregator publishes one bucket series **per window**\n(standard windows: 300 / 3600 / 86400 seconds); a connection\nfollows exactly one series, selected by `?window_seconds=`\n(default 300), so consecutive events on a stream are always\ncomparable. Alias spellings of the same asset (`native`,\n`crypto:XLM`, the XLM SAC) are subscribed together — either\nspelling receives the pair's publishes.\n\n- Heartbeats every 15 s as comment lines.\n- Resume after disconnect via `Last-Event-ID` (header preferred,\n  `?last_event_id=` fallback).\n- Events carry the `/v1/price` envelope shape (`data` +\n  `as_of`); `flags` / `sources` are present only when the\n  publishing path evaluated them — absent flags mean \"not\n  evaluated\", never \"fresh\". The aggregator's 300 / 3600 /\n  86400 series carry neither.\n- The 60-second series (`window_seconds=60`, operator-configured\n  pairs) carries `flags.stale`, and `flags.frozen_checked: true`\n  when the ADR-0019 freeze marker was read for every spelling\n  of the pair. While the pair is frozen, each new bucket is\n  replaced by a `price_frozen` event — `data` holds the\n  bucket's `asset_id`, `quote`, `observed_at` and\n  `window_seconds` but no `price`, and `flags` is\n  `{\"stale\": <bool>, \"frozen\": true, \"frozen_checked\": true}`\n  (`stale` is the same verdict on that bucket a `price_update`\n  would have carried) — because that\n  bucket is the value the freeze refused (`/v1/price` serves\n  the held value or refuses instead).\n- `observed_at` and `as_of` are both the END of the closed\n  1-minute bucket the event was computed at, so they are\n  equal on every event. `price` is the VWAP over\n  `[observed_at - window_seconds, observed_at)`. A series\n  advances once per closed minute, so consecutive events on\n  a 3600 or 86400 series are overlapping trailing windows,\n  not disjoint buckets: identify an event by\n  `(window_seconds, observed_at)`, and never sum them.\n- URL discipline: `?granularity=` returns 400 — bucket series\n  are selected by `window_seconds`; use\n  `/v1/history/since-inception` for chart granularities.\n- 503 when the deployment hasn't wired the streaming Hub\n  (typical pre-aggregator state).\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -6978,15 +6978,6 @@
                 },
                 "header": [
                   {
-                    "disabled": false,
-                    "description": {
-                      "content": "Opaque ID for resuming a previously-broken stream.",
-                      "type": "text/plain"
-                    },
-                    "key": "Last-Event-ID",
-                    "value": "<string>"
-                  },
-                  {
                     "key": "Accept",
                     "value": "text/event-stream"
                   }
@@ -7057,15 +7048,6 @@
                       "variable": []
                     },
                     "header": [
-                      {
-                        "disabled": false,
-                        "description": {
-                          "content": "Opaque ID for resuming a previously-broken stream.",
-                          "type": "text/plain"
-                        },
-                        "key": "Last-Event-ID",
-                        "value": "<string>"
-                      },
                       {
                         "key": "Accept",
                         "value": "text/event-stream"
@@ -7148,15 +7130,6 @@
                     },
                     "header": [
                       {
-                        "disabled": false,
-                        "description": {
-                          "content": "Opaque ID for resuming a previously-broken stream.",
-                          "type": "text/plain"
-                        },
-                        "key": "Last-Event-ID",
-                        "value": "<string>"
-                      },
-                      {
                         "key": "Accept",
                         "value": "application/problem+json"
                       }
@@ -7238,15 +7211,6 @@
                     },
                     "header": [
                       {
-                        "disabled": false,
-                        "description": {
-                          "content": "Opaque ID for resuming a previously-broken stream.",
-                          "type": "text/plain"
-                        },
-                        "key": "Last-Event-ID",
-                        "value": "<string>"
-                      },
-                      {
                         "key": "Accept",
                         "value": "application/problem+json"
                       }
@@ -7327,15 +7291,6 @@
                       "variable": []
                     },
                     "header": [
-                      {
-                        "disabled": false,
-                        "description": {
-                          "content": "Opaque ID for resuming a previously-broken stream.",
-                          "type": "text/plain"
-                        },
-                        "key": "Last-Event-ID",
-                        "value": "<string>"
-                      },
                       {
                         "key": "Accept",
                         "value": "application/problem+json"
@@ -22143,7 +22098,7 @@
               "request": {
                 "name": "SSE stream of the live-ingest frontier.",
                 "description": {
-                  "content": "Streaming counterpart of `/v1/ledger/tip`. Pushes a\n`ledger_update` event each time the indexer commits a new\nledger, so a status page renders blocks arriving in real time\ninstead of polling.\n\n- First event fires synchronously on connect with the current\n  tip.\n- Recurring events fire once per new ledger (poll cadence\n  ~2s), plus a keepalive refresh every ~10s if the ledger has\n  not advanced — so `lag_seconds` stays current even during an\n  ingest stall.\n- Heartbeats every 15 s as comment lines.\n- Each event's `data` payload mirrors the `/v1/ledger/tip`\n  envelope (`data` + `as_of`) so one type decodes both the\n  polled and the streamed response.\n- 503 pre-flight when no cursors reader is wired or the live\n  cursor has not been established yet — once the SSE body\n  starts there is no way to signal a non-200 status.\n",
+                  "content": "Streaming counterpart of `/v1/ledger/tip`. Pushes a\n`ledger_update` event each time the indexer commits a new\nledger, so a status page renders blocks arriving in real time\ninstead of polling.\n\n- First event fires synchronously on connect with the current\n  tip.\n- Recurring events fire once per new ledger (poll cadence\n  500 ms), plus a keepalive refresh every ~10s if the ledger has\n  not advanced — so `lag_seconds` stays current even during an\n  ingest stall.\n- No `Last-Event-ID` resume: every connection starts from the\n  current tip, and a reconnect's first event is that tip.\n- Heartbeats every 15 s as comment lines.\n- Each event's `data` payload mirrors the `/v1/ledger/tip`\n  envelope (`data` + `as_of`) so one type decodes both the\n  polled and the streamed response.\n- 503 pre-flight when no cursors reader is wired or the live\n  cursor has not been established yet — once the SSE body\n  starts there is no way to signal a non-200 status.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -22158,15 +22113,6 @@
                   "variable": []
                 },
                 "header": [
-                  {
-                    "disabled": false,
-                    "description": {
-                      "content": "Opaque ID for resuming a previously-broken stream.",
-                      "type": "text/plain"
-                    },
-                    "key": "Last-Event-ID",
-                    "value": "<string>"
-                  },
                   {
                     "key": "Accept",
                     "value": "text/event-stream"
@@ -22192,15 +22138,6 @@
                       "variable": []
                     },
                     "header": [
-                      {
-                        "disabled": false,
-                        "description": {
-                          "content": "Opaque ID for resuming a previously-broken stream.",
-                          "type": "text/plain"
-                        },
-                        "key": "Last-Event-ID",
-                        "value": "<string>"
-                      },
                       {
                         "key": "Accept",
                         "value": "text/event-stream"
@@ -22237,15 +22174,6 @@
                     },
                     "header": [
                       {
-                        "disabled": false,
-                        "description": {
-                          "content": "Opaque ID for resuming a previously-broken stream.",
-                          "type": "text/plain"
-                        },
-                        "key": "Last-Event-ID",
-                        "value": "<string>"
-                      },
-                      {
                         "key": "Accept",
                         "value": "application/problem+json"
                       }
@@ -22280,15 +22208,6 @@
                       "variable": []
                     },
                     "header": [
-                      {
-                        "disabled": false,
-                        "description": {
-                          "content": "Opaque ID for resuming a previously-broken stream.",
-                          "type": "text/plain"
-                        },
-                        "key": "Last-Event-ID",
-                        "value": "<string>"
-                      },
                       {
                         "key": "Accept",
                         "value": "application/problem+json"
