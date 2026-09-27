@@ -1,6 +1,6 @@
 ---
 title: r1 deployed versions — source of record + snapshot
-last_verified: 2026-08-20
+last_verified: 2026-09-27
 status: reference
 ---
 
@@ -61,11 +61,22 @@ time; a mismatch that persists is the F-1314 / 2026-08-28 drift class the
 | stellarindex-migrate     | v0.28.1          | 2026-08-08            |
 
 Notes:
-- `migrate`, `aggregator` and `sla-probe` each redeploy on their own cadence
-  (`migrate` only when a new migration ships), so a snapshot taken mid-cycle
-  can catch them a release apart from `api`/`indexer`/`ops` — that gap should
-  close on the next deploy of the lagging binary. If it does not, it is
-  drift, and `stellarindex_binary_version_skew` will be paging on it.
+- `migrate` is in `deploy.yml`'s default binary set and its "Reconcile the
+  binary set against the host" step refuses to dispatch a release that would
+  leave `migrate` behind (i.e. omitting it is only accepted when it is
+  already on the version being deployed) — so `migrate` redeploys with every
+  release, on the same cadence as `api`/`indexer`/`ops`, not on its own
+  schedule. `aggregator` and `sla-probe` are the ones that still roll
+  independently; a snapshot taken mid-cycle can catch them a release apart
+  from the rest — that gap should close on their next deploy. Any gap
+  involving `migrate`, or one that does not close on the next deploy of the
+  lagging binary, is drift, and `stellarindex_binary_version_skew` will be
+  paging on it.
+- The config-apply gate (`.github/workflows/deploy.yml`, "config baseline")
+  separately excludes `migrate` from the *config* version-baseline minimum
+  (#427): that exclusion is about `migrate` gating no config surface, not
+  about deploy cadence, and stays regardless of the above — it does not
+  reintroduce a "migrate lags by design" policy.
 - Legacy `ratesengine-*` sidecars may also be present on the host — those predate
   the binary rename and are NOT the current fleet; ignore them.
 
