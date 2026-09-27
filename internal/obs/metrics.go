@@ -382,9 +382,12 @@ func registerFailedAuthMetrics() {
 // failing or write-refusing Redis, so the first failure is a visible
 // increase() rather than the silent first sample of a new child.
 func registerRedisFailureMetrics() {
-	Registry.MustRegister(RateLimitFailClosedTotal)
+	Registry.MustRegister(RateLimitFailClosedTotal, RedisCommandErrorsTotal)
 	for _, limiter := range []string{RateLimiterAPI, RateLimiterFailedAuth, RateLimiterSignupIP} {
 		RateLimitFailClosedTotal.WithLabelValues(limiter)
+	}
+	for _, class := range RedisErrorClasses {
+		RedisCommandErrorsTotal.WithLabelValues(class)
 	}
 }
 
@@ -2023,6 +2026,28 @@ const (
 	RateLimiterFailedAuth = "failed_auth"
 	RateLimiterSignupIP   = "signup_ip"
 )
+
+// RedisCommandErrorsTotal — failed Redis commands from every client built
+// by internal/storage/redisclient, by error class. It is the one signal
+// that covers the best-effort write paths (usage counters, caches,
+// key-state mirrors) that otherwise drop a refused write silently.
+var RedisCommandErrorsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_redis_command_errors_total",
+		Help: "Failed Redis commands by error class (Redis error prefix, or io/timeout/canceled for transport failures).",
+	},
+	[]string{"class"},
+)
+
+// RedisErrorClasses is the complete, bounded `class` vocabulary of
+// [RedisCommandErrorsTotal]: known Redis reply prefixes, then the
+// transport classes, then "other" for any unlisted prefix.
+var RedisErrorClasses = []string{
+	"MISCONF", "OOM", "READONLY", "NOREPLICAS", "EXECABORT", "LOADING",
+	"WRONGTYPE", "BUSY", "MASTERDOWN", "NOAUTH", "WRONGPASS", "NOPERM",
+	"CLUSTERDOWN", "TRYAGAIN", "MOVED", "ASK", "ERR",
+	"io", "timeout", "canceled", "other",
+}
 
 // MonthlyQuotaFailOpenTotal — counter of requests that skipped the
 // per-key monthly-quota ceiling because the month-to-date read errored

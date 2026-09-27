@@ -1623,6 +1623,29 @@ that point the limiter fails **closed** and
   credentials.
 - `signup_ip` — `/v1/signup` and `/v1/register` answer 503.
 
+The usual cause is a Redis that refuses writes (`MISCONF`, `OOM`,
+`READONLY`); `stellarindex_redis_command_errors_total{class}` names it.
+
+### `stellarindex_redis_command_errors_total`
+
+Counter, label `class`. Pre-seeded at zero.
+
+Failed Redis commands from every client built by
+`internal/storage/redisclient.Build` (API, aggregator, ops CLI), counted
+by a go-redis hook after the client's own retries. `class` is the Redis
+reply prefix (`MISCONF`, `OOM`, `READONLY`, `NOREPLICAS`, `EXECABORT`,
+`LOADING`, `WRONGTYPE`, `BUSY`, `MASTERDOWN`, `NOAUTH`, `WRONGPASS`,
+`NOPERM`, `CLUSTERDOWN`, `TRYAGAIN`, `MOVED`, `ASK`, `ERR`), `other` for
+any unlisted prefix, or a transport class: `timeout`, `canceled` (the
+caller's context was cancelled — usually a client abort) or `io`. A
+failed pipeline's transport error counts once; a Redis reply error
+counts once per command. `redis.Nil` (key absent) and the `NOSCRIPT`
+that `Script.Run` answers with an `EVAL` fallback are not counted.
+
+Many Redis writes are best-effort and drop their error (usage
+counters, the SEP-1 and metadata caches, API-key state mirrors), so
+this is the only signal that those writes are being refused.
+
 ### `stellarindex_monthly_quota_fail_open_total`
 
 Counter, no labels.

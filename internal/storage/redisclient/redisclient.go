@@ -13,6 +13,7 @@ package redisclient
 
 import (
 	"github.com/redis/go-redis/v9"
+	"github.com/redis/go-redis/v9/maintnotifications"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
@@ -37,8 +38,10 @@ func Build(cfg config.StorageConfig) redis.UniversalClient {
 	// set to "stellarindex" (or per-component) when the operator
 	// flipped redis_acl_lockdown=true in the redis-sentinel ansible
 	// role. F-1213 (audit-2026-05-12).
-	if len(cfg.RedisSentinelAddrs) > 0 {
-		return redis.NewFailoverClient(&redis.FailoverOptions{
+	var c redis.UniversalClient
+	switch {
+	case len(cfg.RedisSentinelAddrs) > 0:
+		c = redis.NewFailoverClient(&redis.FailoverOptions{
 			MasterName:    cfg.RedisMasterName,
 			SentinelAddrs: cfg.RedisSentinelAddrs,
 			// Same secret authenticates both the data plane and
@@ -48,16 +51,24 @@ func Build(cfg config.StorageConfig) redis.UniversalClient {
 			Username:         cfg.RedisUsername,
 			Password:         cfg.RedisPassword,
 			SentinelPassword: cfg.RedisPassword,
+			DisableIdentity:  true,
 		})
-	}
-	if cfg.RedisAddr == "" {
+	case cfg.RedisAddr != "":
+		c = redis.NewClient(&redis.Options{
+			Addr:     cfg.RedisAddr,
+			Username: cfg.RedisUsername,
+			Password: cfg.RedisPassword,
+			// Redis < 7.2 rejects the CLIENT SETINFO / MAINT_NOTIFICATIONS
+			// handshake; go-redis ignores that, but the error hook would
+			// count it as failed commands on every new connection.
+			DisableIdentity:          true,
+			MaintNotificationsConfig: &maintnotifications.Config{Mode: maintnotifications.ModeDisabled},
+		})
+	default:
 		return nil
 	}
-	return redis.NewClient(&redis.Options{
-		Addr:     cfg.RedisAddr,
-		Username: cfg.RedisUsername,
-		Password: cfg.RedisPassword,
-	})
+	c.AddHook(errorMetricsHook{})
+	return c
 }
 
 // Mode reports which branch [Build] would take. Used by the
