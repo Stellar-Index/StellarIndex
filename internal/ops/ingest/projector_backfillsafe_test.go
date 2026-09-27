@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,7 +33,7 @@ func TestProjectorReplay_RefusesSourceThatIsNotBackfillSafe(t *testing.T) {
 		t.Fatalf("%s is now BackfillSafe — pick a source that is still unaudited for this test", sushiswap_v3.SourceName)
 	}
 	for _, extra := range [][]string{nil, {"-dry-run"}} {
-		err := projectorReplay(replayArgs(t, sushiswap_v3.SourceName, extra...))
+		err := projectorReplay(io.Discard, replayArgs(t, sushiswap_v3.SourceName, extra...))
 		if err == nil {
 			t.Fatalf("args %v: replay of an unaudited source returned nil", extra)
 		}
@@ -49,7 +50,7 @@ func TestProjectorReplay_RefusesSourceThatIsNotBackfillSafe(t *testing.T) {
 func TestProjectorReplay_RefusesUnknownSourceName(t *testing.T) {
 	t.Parallel()
 	// The gap detector's hyphenated per-table name — not a projector source.
-	err := projectorReplay(replayArgs(t, "blend-backstop"))
+	err := projectorReplay(io.Discard, replayArgs(t, "blend-backstop"))
 	if err == nil || !strings.Contains(err.Error(), "not BackfillSafe") {
 		t.Fatalf("unknown source must be refused fail-closed at the gate, got: %v", err)
 	}
@@ -69,7 +70,7 @@ func TestProjectorReplay_AuditedAndRegistrylessSourcesPassTheGate(t *testing.T) 
 		sep41supply.SourceName,
 		sep41transfers.SourceName,
 	} {
-		err := projectorReplay(replayArgs(t, source))
+		err := projectorReplay(io.Discard, replayArgs(t, source))
 		if err == nil {
 			t.Fatalf("%s: expected the absent config to fail the run", source)
 		}

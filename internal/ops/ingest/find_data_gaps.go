@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -154,9 +155,9 @@ func findDataGaps(args []string) error {
 
 	switch *output {
 	case "json":
-		return writeFindDataGapsJSON(multi)
+		return writeFindDataGapsJSON(os.Stdout, multi)
 	default:
-		writeFindDataGapsMultiText(multi)
+		writeFindDataGapsMultiText(os.Stdout, multi)
 		return nil
 	}
 }
@@ -191,8 +192,8 @@ func ResolveFindDataGapsTargets(source string) ([]timescale.GapDetectorTarget, e
 	return out, nil
 }
 
-func writeFindDataGapsJSON(m findDataGapsMultiReport) error {
-	enc := json.NewEncoder(os.Stdout)
+func writeFindDataGapsJSON(w io.Writer, m findDataGapsMultiReport) error {
+	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(m)
 }
@@ -200,31 +201,31 @@ func writeFindDataGapsJSON(m findDataGapsMultiReport) error {
 // writeFindDataGapsMultiText emits one report block per target.
 // Reports with zero gaps are still printed so the operator can
 // confirm every target was scanned.
-func writeFindDataGapsMultiText(m findDataGapsMultiReport) {
-	// fmt.Fprint{,f,ln} errors against os.Stdout are not actionable —
+func writeFindDataGapsMultiText(w io.Writer, m findDataGapsMultiReport) {
+	// fmt.Fprint{,f,ln} errors on operator output are not actionable —
 	// a broken-pipe on operator-CLI output is the operator's terminal,
 	// not a system fault — so we swallow them via _, _ = ... rather
 	// than threading an error all the way up to main.
-	_, _ = fmt.Fprintf(os.Stdout, "find-data-gaps: %d targets scanned at %s\n",
+	_, _ = fmt.Fprintf(w, "find-data-gaps: %d targets scanned at %s\n",
 		len(m.Reports), m.ScannedAt.Format(time.RFC3339))
 	for _, r := range m.Reports {
-		writeFindDataGapsText(r)
+		writeFindDataGapsText(w, r)
 	}
 }
 
-func writeFindDataGapsText(r findDataGapsReport) {
-	_, _ = fmt.Fprintf(os.Stdout,
+func writeFindDataGapsText(w io.Writer, r findDataGapsReport) {
+	_, _ = fmt.Fprintf(w,
 		"\n  source=%s table=%s ledgers=[%d, %d] min_gap_size=%d\n",
 		r.Source, r.Table, r.FromLedger, r.ToLedger, r.MinGapSize)
 	if len(r.Gaps) == 0 {
-		_, _ = fmt.Fprintln(os.Stdout, "    no gaps found — coverage clean above the threshold")
+		_, _ = fmt.Fprintln(w, "    no gaps found — coverage clean above the threshold")
 		return
 	}
-	_, _ = fmt.Fprintf(os.Stdout, "    %d gap(s), totalling %d missing ledgers:\n", len(r.Gaps), r.TotalMissingLedgers)
+	_, _ = fmt.Fprintf(w, "    %d gap(s), totalling %d missing ledgers:\n", len(r.Gaps), r.TotalMissingLedgers)
 	for i, g := range r.Gaps {
-		_, _ = fmt.Fprintf(os.Stdout, "      %2d  [%d, %d]  size=%d ledgers\n", i+1, g.Start, g.End, g.Size)
+		_, _ = fmt.Fprintf(w, "      %2d  [%d, %d]  size=%d ledgers\n", i+1, g.Start, g.End, g.Size)
 	}
-	_, _ = fmt.Fprintln(os.Stdout, "    Targeted backfill plan:")
+	_, _ = fmt.Fprintln(w, "    Targeted backfill plan:")
 	for i, g := range r.Gaps {
 		// soroban-events uses the binary `backfill` subcommand (re-walk
 		// MinIO into the soroban_events raw landing zone). Per-source
@@ -235,11 +236,11 @@ func writeFindDataGapsText(r findDataGapsReport) {
 		// (sdex, external) still use their own backfill paths.
 		switch r.Source {
 		case "soroban-events":
-			_, _ = fmt.Fprintf(os.Stdout,
+			_, _ = fmt.Fprintf(w,
 				"      %2d  stellarindex-ops backfill -write --config /etc/stellarindex.toml --from %d --to %d --source soroban-events\n",
 				i+1, g.Start, g.End)
 		case "sdex":
-			_, _ = fmt.Fprintf(os.Stdout,
+			_, _ = fmt.Fprintf(w,
 				"      %2d  stellarindex-ops backfill -write --config /etc/stellarindex.toml --from %d --to %d --source sdex\n",
 				i+1, g.Start, g.End)
 		default:
@@ -256,12 +257,12 @@ func writeFindDataGapsText(r findDataGapsReport) {
 			// rather than exiting 0 — but a false "not projected" message
 			// is worse, since the operator never tries the real command).
 			if _, ok := projector.KnownProjectorSources[r.ProjectorSource]; ok {
-				_, _ = fmt.Fprintf(os.Stdout,
+				_, _ = fmt.Fprintf(w,
 					"      %2d  stellarindex-ops projector-replay --config /etc/stellarindex.toml --source %s --from %d\n",
 					i+1, r.ProjectorSource, g.Start)
 				continue
 			}
-			_, _ = fmt.Fprintf(os.Stdout,
+			_, _ = fmt.Fprintf(w,
 				"      %2d  # target %q has no direct projector source — see internal/projector/registry.go\n"+
 					"          # for the source that writes this table, then:\n"+
 					"          # stellarindex-ops projector-replay --config /etc/stellarindex.toml --source <SOURCE> --from %d\n",

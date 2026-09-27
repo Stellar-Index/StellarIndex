@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -51,8 +50,8 @@ func TestFindDataGapsReport_TotalMissingLedgers(t *testing.T) {
 // unambiguous so an operator scanning logs doesn't assume the
 // subcommand silently no-op'd.
 func TestWriteFindDataGapsText_NoGaps(t *testing.T) {
-	out := captureStdout(t, func() {
-		writeFindDataGapsText(findDataGapsReport{
+	out := captureOutput(func(w io.Writer) {
+		writeFindDataGapsText(w, findDataGapsReport{
 			ScannedAt:  time.Now().UTC(),
 			Source:     "soroban-events",
 			Table:      "soroban_events",
@@ -87,8 +86,8 @@ func TestWriteFindDataGapsText_WithGaps(t *testing.T) {
 		},
 		TotalMissingLedgers: 103396,
 	}
-	out := captureStdout(t, func() {
-		writeFindDataGapsText(r)
+	out := captureOutput(func(w io.Writer) {
+		writeFindDataGapsText(w, r)
 	})
 	want := []string{
 		"source=soroban-events table=soroban_events",
@@ -129,8 +128,8 @@ func TestWriteFindDataGapsText_IdentitySourceGetsReplayCommand(t *testing.T) {
 		},
 		TotalMissingLedgers: 200000,
 	}
-	out := captureStdout(t, func() {
-		writeFindDataGapsText(r)
+	out := captureOutput(func(w io.Writer) {
+		writeFindDataGapsText(w, r)
 	})
 	if strings.Contains(out, "has no direct projector source") {
 		t.Errorf("cctp is a registered projector source; got a false negative:\n%s", out)
@@ -163,8 +162,8 @@ func TestWriteFindDataGapsJSON_Shape(t *testing.T) {
 			},
 		},
 	}
-	out := captureStdout(t, func() {
-		if err := writeFindDataGapsJSON(multi); err != nil {
+	out := captureOutput(func(w io.Writer) {
+		if err := writeFindDataGapsJSON(w, multi); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -231,29 +230,10 @@ func TestResolveFindDataGapsTargets(t *testing.T) {
 	}
 }
 
-// captureStdout runs f with os.Stdout redirected to a pipe and
-// returns whatever was written. Lets us test the text/json writers
-// without exposing them to take an io.Writer (a future-proofing
-// refactor we can do separately).
-func captureStdout(t *testing.T, f func()) string {
-	t.Helper()
-	saved := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = w
-	done := make(chan struct{})
+// captureOutput returns what f writes to the writer it is handed. Tests pass a
+// buffer rather than swapping os.Stdout, which races with any parallel test that prints.
+func captureOutput(f func(w io.Writer)) string {
 	var buf bytes.Buffer
-	go func() {
-		_, _ = io.Copy(&buf, r)
-		close(done)
-	}()
-	f()
-	if err := w.Close(); err != nil {
-		t.Fatal(err)
-	}
-	<-done
-	os.Stdout = saved
+	f(&buf)
 	return buf.String()
 }

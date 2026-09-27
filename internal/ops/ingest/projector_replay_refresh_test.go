@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -105,7 +106,7 @@ func (f *fakeReplayStore) RefreshContinuousAggregate(_ context.Context, name str
 func TestRematerializeReplayedRange_RefreshesEveryViewOverTheReplayedRange(t *testing.T) {
 	f := &fakeReplayStore{fakeProjectorCursor: fakeProjectorCursor{ledgers: []uint32{63_500_000}}}
 	replayed := chunkRange{from: 62_000_000, to: 63_500_000}
-	err := rematerializeReplayedRange(discardLogger(), f, "cctp", replayed,
+	err := rematerializeReplayedRange(io.Discard, discardLogger(), f, "cctp", replayed,
 		replayFollowUp{refreshCAGGs: true, wait: true, waitTimeout: time.Minute})
 	if err != nil {
 		t.Fatalf("rematerializeReplayedRange: %v", err)
@@ -125,7 +126,7 @@ func TestRematerializeReplayedRange_RefreshesEveryViewOverTheReplayedRange(t *te
 // re-projected succeeds and materializes the short answer.
 func TestRematerializeReplayedRange_NeverRefreshesAheadOfTheProjector(t *testing.T) {
 	f := &fakeReplayStore{fakeProjectorCursor: fakeProjectorCursor{ledgers: []uint32{62_400_000}}}
-	err := rematerializeReplayedRange(discardLogger(), f, "cctp",
+	err := rematerializeReplayedRange(io.Discard, discardLogger(), f, "cctp",
 		chunkRange{from: 62_000_000, to: 63_500_000},
 		replayFollowUp{refreshCAGGs: true, wait: true, waitTimeout: 0})
 	if err == nil {
@@ -148,7 +149,7 @@ func TestRematerializeReplayedRange_OptOutsTouchNothing(t *testing.T) {
 		"-wait=false":          {refreshCAGGs: true, wait: false, waitTimeout: time.Minute},
 	} {
 		f := &fakeReplayStore{fakeProjectorCursor: fakeProjectorCursor{ledgers: []uint32{1}}}
-		if err := rematerializeReplayedRange(discardLogger(), f, "cctp", chunkRange{from: 10, to: 20}, opts); err != nil {
+		if err := rematerializeReplayedRange(io.Discard, discardLogger(), f, "cctp", chunkRange{from: 10, to: 20}, opts); err != nil {
 			t.Errorf("%s: %v", name, err)
 		}
 		if f.calls != 0 || len(f.refreshed) != 0 {

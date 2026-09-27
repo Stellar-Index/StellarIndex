@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -33,12 +34,12 @@ func TestAwaitProjectorCursor_TimeoutAdvisesRefreshOnly_NotPlainRerun(t *testing
 // range that doesn't make sense, before touching config or the store.
 func TestProjectorReplay_RefreshOnlyRequiresRefreshTo(t *testing.T) {
 	t.Parallel()
-	err := projectorReplay(replayArgs(t, "cctp", "-refresh-only"))
+	err := projectorReplay(io.Discard, replayArgs(t, "cctp", "-refresh-only"))
 	if err == nil || !strings.Contains(err.Error(), "-refresh-to") {
 		t.Fatalf("missing -refresh-to must be refused, got: %v", err)
 	}
 
-	err = projectorReplay(replayArgs(t, "cctp", "-refresh-only", "-refresh-to", "1"))
+	err = projectorReplay(io.Discard, replayArgs(t, "cctp", "-refresh-only", "-refresh-to", "1"))
 	if err == nil || !strings.Contains(err.Error(), "-refresh-to") {
 		t.Fatalf("-refresh-to below -from must be refused, got: %v", err)
 	}
@@ -49,8 +50,8 @@ func TestProjectorReplay_RefreshOnlyRequiresRefreshTo(t *testing.T) {
 func TestProjectorReplay_RefreshOnlyDryRun(t *testing.T) {
 	t.Parallel()
 	var err error
-	out := captureStdout(t, func() {
-		err = projectorReplay(replayArgs(t, "cctp", "-refresh-only", "-refresh-to", "52728400", "-dry-run"))
+	out := captureOutput(func(w io.Writer) {
+		err = projectorReplay(w, replayArgs(t, "cctp", "-refresh-only", "-refresh-to", "52728400", "-dry-run"))
 	})
 	if err != nil {
 		t.Fatalf("dry-run refresh-only returned error: %v", err)
