@@ -154,7 +154,7 @@ func TestAccountsWealthRefresh_PanicReleasesFlightAndSurvives(t *testing.T) {
 	r := &ExplorerReader{wealthCache: newAccountsWealthCache()}
 	r.refreshAccountsWealth(
 		[]string{"USD:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
-		[]float64{1})
+		[]string{"1"})
 
 	// endFlight must have run, so a second refresh can own a new flight.
 	deadline := time.Now().Add(5 * time.Second)

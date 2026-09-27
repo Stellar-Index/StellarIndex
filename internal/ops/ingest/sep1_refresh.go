@@ -118,7 +118,7 @@ func sep1RefreshCmd(args []string) error {
 // queue semantics under test are all the real ones either way.
 type sep1Store interface {
 	MarkIssuerSep1Failed(ctx context.Context, gStrkey string) (int, error)
-	SetIssuerSep1Payload(ctx context.Context, gStrkey string, payload []byte) error
+	SetIssuerSep1Payload(ctx context.Context, gStrkey, fetchedFrom string, payload []byte) (bool, error)
 }
 
 // sep1Resolver is the slice of [metadata.Resolver] the refresh loop
@@ -224,9 +224,17 @@ func refreshOneSep1Issuer(
 		return false
 	}
 	if !dryRun {
-		if err := store.SetIssuerSep1Payload(ctx, c.GStrkey, payload); err != nil {
+		stored, err := store.SetIssuerSep1Payload(ctx, c.GStrkey, c.HomeDomain, payload)
+		if err != nil {
 			fmt.Printf("FAIL  %s  write: %v\n", c.GStrkey, err)
 			return false
+		}
+		if !stored {
+			// home_domain changed mid-fetch. Not a failed attempt: the change
+			// already reset this row's ladder, so the systemic unwind must not
+			// take a step back from it.
+			fmt.Printf("MOVED %s  %s  home_domain changed during the fetch; payload discarded\n", c.GStrkey, c.HomeDomain)
+			return true
 		}
 	}
 	fmt.Printf("OK    %s  %s  org=%q verified=%v\n", c.GStrkey, c.HomeDomain, sep.OrgName, orgVerified)

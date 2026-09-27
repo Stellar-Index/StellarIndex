@@ -75,8 +75,8 @@ func TestSep1AttestationAge(t *testing.T) {
 	})
 
 	t.Run("a failed attempt does not renew the payload's age", func(t *testing.T) {
-		if err := store.SetIssuerSep1Payload(ctx, dead, []byte(sep1BondPayload(dead))); err != nil {
-			t.Fatalf("SetIssuerSep1Payload: %v", err)
+		if stored, err := store.SetIssuerSep1Payload(ctx, dead, "coinonstellar.com", []byte(sep1BondPayload(dead))); err != nil || !stored {
+			t.Fatalf("SetIssuerSep1Payload = (%v, %v), want (true, nil)", stored, err)
 		}
 		if got := boundIssuers(t, ctx, store); !got[dead] {
 			t.Fatalf("a payload fetched just now is not admitted: %v", got)
@@ -119,8 +119,8 @@ func TestSep1AttestationAge(t *testing.T) {
 	})
 
 	t.Run("a success restores it", func(t *testing.T) {
-		if err := store.SetIssuerSep1Payload(ctx, dead, []byte(sep1BondPayload(dead))); err != nil {
-			t.Fatalf("SetIssuerSep1Payload: %v", err)
+		if stored, err := store.SetIssuerSep1Payload(ctx, dead, "coinonstellar.com", []byte(sep1BondPayload(dead))); err != nil || !stored {
+			t.Fatalf("SetIssuerSep1Payload = (%v, %v), want (true, nil)", stored, err)
 		}
 		if got := boundIssuers(t, ctx, store); !got[dead] {
 			t.Errorf("a recovered domain is still refused: %v", got)

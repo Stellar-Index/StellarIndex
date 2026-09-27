@@ -113,9 +113,9 @@ func TestSep1RetryBackoff(t *testing.T) {
 			t.Fatalf("a 3x-failed domain is still a candidate; the rest of this case proves nothing")
 		}
 
-		if err := store.SetIssuerSep1Payload(ctx, recovered,
-			[]byte(`{"OrgName":"Litemint","OrgVerified":false}`)); err != nil {
-			t.Fatalf("SetIssuerSep1Payload: %v", err)
+		if stored, err := store.SetIssuerSep1Payload(ctx, recovered, "litemint.store",
+			[]byte(`{"OrgName":"Litemint","OrgVerified":false}`)); err != nil || !stored {
+			t.Fatalf("SetIssuerSep1Payload = (%v, %v), want (true, nil)", stored, err)
 		}
 		failures, next := sep1Ladder(t, ctx, store, recovered)
 		if !failures.Valid || failures.Int64 != 0 {

@@ -532,10 +532,9 @@ func (s *Store) AllSep1Images(ctx context.Context) ([]Sep1Image, error) {
 }
 
 // SyncIssuerHomeDomain writes an issuer's ON-CHAIN home_domain onto its
-// row, reporting whether the row changed. An empty domain is refused:
-// the lake's lookup only returns accounts that declare one, so an empty
-// value here means "we did not read it", not "the account declares
-// none", and must never blank a row.
+// row, reporting whether the row changed. An empty domain is refused as
+// "not read"; an account READ as declaring none goes through
+// [Store.ClearIssuerHomeDomain] instead, so the two can never be confused.
 //
 // # Why this overwrites
 //
@@ -557,26 +556,65 @@ func (s *Store) AllSep1Images(ctx context.Context) ([]Sep1Image, error) {
 // exactly that, and while the column was write-once it was a no-op.
 //
 // The predicate keeps the write off rows that already agree, so a re-run
-// still reports only the rows it actually changed.
+// still reports only the rows it actually changed. A row it does change has
+// its SEP-1 state unbound in the same statement; see
+// [sep1ResetOnHomeDomainChange].
 func (s *Store) SyncIssuerHomeDomain(ctx context.Context, gStrkey, homeDomain string) (bool, error) {
 	if homeDomain == "" {
 		return false, nil
 	}
-	const q = `
+	return s.writeIssuerHomeDomain(ctx, "SyncIssuerHomeDomain", gStrkey, homeDomain)
+}
+
+// ClearIssuerHomeDomain blanks the home_domain of an issuer whose live
+// AccountEntry was read and declares none, reporting whether the row changed.
+// Keeping a domain the account has cleared is the same takeover as keeping
+// one it moved away from: the SEP-1 refresh keeps fetching the lapsed name,
+// and whoever registers it next inherits the issuer's verified identity.
+func (s *Store) ClearIssuerHomeDomain(ctx context.Context, gStrkey string) (bool, error) {
+	return s.writeIssuerHomeDomain(ctx, "ClearIssuerHomeDomain", gStrkey, "")
+}
+
+func (s *Store) writeIssuerHomeDomain(ctx context.Context, op, gStrkey, homeDomain string) (bool, error) {
+	const newHD = `NULLIF($2, '')`
+	q := `
         UPDATE issuers
-           SET home_domain = $2
+           SET home_domain = ` + newHD + `,` + sep1ResetOnHomeDomainChange(newHD) + `
          WHERE g_strkey = $1
-           AND home_domain IS DISTINCT FROM $2
-    `
+           AND home_domain IS DISTINCT FROM ` + newHD
 	res, err := s.db.ExecContext(ctx, q, gStrkey, homeDomain)
 	if err != nil {
-		return false, fmt.Errorf("timescale: SyncIssuerHomeDomain: %w", err)
+		return false, fmt.Errorf("timescale: %s: %w", op, err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return false, fmt.Errorf("timescale: SyncIssuerHomeDomain rows: %w", err)
+		return false, fmt.Errorf("timescale: %s rows: %w", op, err)
 	}
 	return n > 0, nil
+}
+
+// sep1ResetOnHomeDomainChange is the SET list every writer of
+// issuers.home_domain appends, where newHD is the expression the same UPDATE
+// assigns to home_domain. SET expressions read the PRE-update row, so
+// `home_domain` below is the value being replaced.
+//
+// sep1_payload records no source domain, and its readers pair it with the
+// CURRENT column: GetIssuer's org_verified, AllSep1Images' logos and
+// BoundSep1Currencies' RWA attestations. A payload that outlives the domain it
+// was fetched from is therefore served as the new domain's claim, and kept
+// indefinitely if the new domain then fails, because a failed fetch keeps the
+// held payload. Clearing resolved_at and the retry ladder too puts the row at
+// the head of the refresh queue under its new domain instead of behind a
+// deferral the old one earned, and keeps the census from reading it as
+// "domain reached, served nothing".
+func sep1ResetOnHomeDomainChange(newHD string) string {
+	return strings.ReplaceAll(`
+               sep1_payload              = CASE WHEN @changed THEN NULL ELSE sep1_payload END,
+               sep1_resolved_at          = CASE WHEN @changed THEN NULL ELSE sep1_resolved_at END,
+               sep1_payload_fetched_at   = CASE WHEN @changed THEN NULL ELSE sep1_payload_fetched_at END,
+               sep1_consecutive_failures = CASE WHEN @changed THEN 0 ELSE sep1_consecutive_failures END,
+               sep1_next_attempt_after   = CASE WHEN @changed THEN NULL ELSE sep1_next_attempt_after END`,
+		"@changed", "("+newHD+") IS DISTINCT FROM home_domain")
 }
 
 // SetIssuerSep1Payload writes a SEP-1 fetch result back to the
@@ -592,7 +630,13 @@ func (s *Store) SyncIssuerHomeDomain(ctx context.Context, gStrkey, homeDomain st
 // returns to the plain -older-than cadence on its very first success,
 // rather than serving out the 30-day deferral it earned while it was
 // dead. Caller is responsible for serialising the payload.
-func (s *Store) SetIssuerSep1Payload(ctx context.Context, gStrkey string, payload []byte) error {
+//
+// fetchedFrom is the home_domain the candidate was read under, and the write
+// lands only while the row still holds it: a domain change during the fetch
+// unbinds the payload (sep1ResetOnHomeDomainChange), and storing the old
+// domain's toml after that would bind it to the new one. The bool reports
+// whether the payload was stored.
+func (s *Store) SetIssuerSep1Payload(ctx context.Context, gStrkey, fetchedFrom string, payload []byte) (bool, error) {
 	const q = `
         UPDATE issuers
            SET sep1_payload              = $2::jsonb,
@@ -601,12 +645,17 @@ func (s *Store) SetIssuerSep1Payload(ctx context.Context, gStrkey string, payloa
                sep1_consecutive_failures = 0,
                sep1_next_attempt_after   = NULL
          WHERE g_strkey = $1
+           AND home_domain = $3
     `
-	_, err := s.db.ExecContext(ctx, q, gStrkey, string(payload))
+	res, err := s.db.ExecContext(ctx, q, gStrkey, string(payload), fetchedFrom)
 	if err != nil {
-		return fmt.Errorf("timescale: SetIssuerSep1Payload: %w", err)
+		return false, fmt.Errorf("timescale: SetIssuerSep1Payload: %w", err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("timescale: SetIssuerSep1Payload rows: %w", err)
+	}
+	return n > 0, nil
 }
 
 // Sep1 retry-ladder tuning. The base is one DAY on purpose: it is the
@@ -843,7 +892,10 @@ type IssuerAuthFlagsOnRecord struct {
 // removal ledger is fixed, so re-writing one that is still merged is a no-op
 // UPDATE and only a LIVE hit (the account re-created at the same address)
 // changes anything. The two queues therefore PARTITION the filled rows rather
-// than overlapping on ~10k of them every night.
+// than overlapping on ~10k of them every night. The exception is a merged row
+// that still holds a home_domain, stored while it was live: re-writing it is
+// NOT a no-op, because the persist clears a merged account's identity, so it
+// is offered here until that write lands and then drops out.
 func (s *Store) IssuersNeedingChainRecheck(ctx context.Context, limit int) ([]IssuerAuthFlagsOnRecord, error) {
 	q := `
         SELECT g_strkey,
@@ -853,7 +905,7 @@ func (s *Store) IssuersNeedingChainRecheck(ctx context.Context, limit int) ([]Is
                auth_flags_as_of_ledger
           FROM issuers
          WHERE auth_required IS NOT NULL
-           AND auth_flags_source IS DISTINCT FROM $1
+           AND (auth_flags_source IS DISTINCT FROM $1 OR home_domain IS NOT NULL)
          ORDER BY g_strkey
     `
 	args := []any{AuthFlagsSourceLastKnownBeforeRemoval}

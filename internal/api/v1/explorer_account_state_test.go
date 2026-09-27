@@ -2,6 +2,7 @@ package v1_test
 
 import (
 	"context"
+	"math/big"
 	"net/http"
 	"testing"
 	"time"
@@ -196,7 +197,7 @@ func TestExplorer_AssetHolders(t *testing.T) {
 // nothing, so the ranking is served straight from the stub wealth rows.
 func TestExplorer_AccountsList_Watermark(t *testing.T) {
 	reader := &stubExplorerReader{
-		wealth:       []clickhouse.AccountWealth{{AccountID: testG, USD: 123.45}},
+		wealth:       []clickhouse.AccountWealth{{AccountID: testG, Value: big.NewRat(12345, 100)}},
 		wealthLedger: 63_888_888,
 	}
 	srv := v1.New(v1.Options{

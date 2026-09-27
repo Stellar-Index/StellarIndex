@@ -30,7 +30,7 @@ type wealthSnapshotReader struct {
 	ok     bool
 }
 
-func (r *wealthSnapshotReader) AccountsByWealthCached(context.Context, []string, []float64, int) (clickhouse.AccountWealthSnapshot, bool) {
+func (r *wealthSnapshotReader) AccountsByWealthCached(context.Context, []string, []string, int) (clickhouse.AccountWealthSnapshot, bool) {
 	basis := r.basis
 	if basis == "" {
 		basis = clickhouse.WealthBasisUSD
@@ -45,7 +45,7 @@ func TestAccountsList_AsOfLedgerIsSnapshotVintage(t *testing.T) {
 	const snapshotLedger, serveTimeLedger = 63_400_000, 63_400_178
 	h, rec := wealthTestHandler(&wealthSnapshotReader{
 		capReader: &capReader{probe: &deadlineProbe{}},
-		rows:      []clickhouse.AccountWealth{{AccountID: validTestAccount, USD: 12.5}},
+		rows:      []clickhouse.AccountWealth{{AccountID: validTestAccount, Value: big.NewRat(25, 2)}},
 		asOf:      time.Now().Add(-14 * time.Minute), ledger: snapshotLedger, ok: true,
 	})
 	h.LakeWatermark = func(context.Context) (uint32, bool, bool) { return serveTimeLedger, false, true }
@@ -115,7 +115,7 @@ func TestAccountsList_FreshSnapshot_NotDegraded(t *testing.T) {
 	asOf := time.Now().Add(-time.Minute)
 	h, rec := wealthTestHandler(&wealthSnapshotReader{
 		capReader: &capReader{probe: &deadlineProbe{}},
-		rows:      []clickhouse.AccountWealth{{AccountID: validTestAccount, USD: 12.5}},
+		rows:      []clickhouse.AccountWealth{{AccountID: validTestAccount, Value: big.NewRat(25, 2)}},
 		asOf:      asOf, ok: true,
 	})
 	serveAccountsList(t, h)
@@ -130,6 +130,24 @@ func TestAccountsList_FreshSnapshot_NotDegraded(t *testing.T) {
 	}
 }
 
+// The usd basis renders the exact sum with the package's value_usd rule (half
+// away from zero): $0.125 is "0.13", where a float rendering gives "0.12".
+func TestAccountsList_USDBasisRendersTheExactSum(t *testing.T) {
+	h, rec := wealthTestHandler(&wealthSnapshotReader{
+		capReader: &capReader{probe: &deadlineProbe{}},
+		rows:      []clickhouse.AccountWealth{{AccountID: validTestAccount, Value: big.NewRat(1, 8)}},
+		asOf:      time.Now().Add(-time.Minute), ok: true,
+	})
+	serveAccountsList(t, h)
+	view, okAssert := rec.view.(AccountsListView)
+	if !okAssert || len(view.Accounts) != 1 {
+		t.Fatalf("payload was %T with %d rows, want one AccountsListView row", rec.view, len(view.Accounts))
+	}
+	if row := view.Accounts[0]; row.Value != "0.13" || row.USDValue != "0.13" {
+		t.Errorf("value/usd_value = %q/%q, want 0.13/0.13", row.Value, row.USDValue)
+	}
+}
+
 // TestAccountsList_NativeBasis — on the lean networks the cache computes a
 // native-XLM ranking (no USD price map), and the handler must label it: the
 // row carries the XLM quantity in `value` with `usd_value` empty, `ranked_by`
@@ -138,7 +156,7 @@ func TestAccountsList_NativeBasis(t *testing.T) {
 	h, rec := wealthTestHandler(&wealthSnapshotReader{
 		capReader: &capReader{probe: &deadlineProbe{}},
 		rows: []clickhouse.AccountWealth{{
-			AccountID: validTestAccount, USD: 4200.5,
+			AccountID: validTestAccount, Value: big.NewRat(8401, 2),
 			NativeStroops: canonical.NewAmount(big.NewInt(42_005_000_000)),
 		}},
 		basis: clickhouse.WealthBasisNative,
@@ -179,7 +197,7 @@ func TestAccountsList_NativeBasisIsExactPastFloat53(t *testing.T) {
 	h, rec := wealthTestHandler(&wealthSnapshotReader{
 		capReader: &capReader{probe: &deadlineProbe{}},
 		rows: []clickhouse.AccountWealth{{
-			AccountID: validTestAccount, USD: float64(stroops) / 1e7,
+			AccountID: validTestAccount, Value: big.NewRat(stroops, 1e7),
 			NativeStroops: canonical.NewAmount(big.NewInt(stroops)),
 		}},
 		basis: clickhouse.WealthBasisNative,
@@ -199,7 +217,7 @@ func TestAccountsList_StaleSnapshot_Serves200Degraded(t *testing.T) {
 	asOf := time.Now().Add(-3 * clickhouse.AccountsWealthCacheTTL)
 	h, rec := wealthTestHandler(&wealthSnapshotReader{
 		capReader: &capReader{probe: &deadlineProbe{}},
-		rows:      []clickhouse.AccountWealth{{AccountID: validTestAccount, USD: 12.5}},
+		rows:      []clickhouse.AccountWealth{{AccountID: validTestAccount, Value: big.NewRat(25, 2)}},
 		asOf:      asOf, ok: true,
 	})
 	serveAccountsList(t, h)
@@ -231,7 +249,7 @@ func TestAccountsList_ColdSnapshot_503Warming(t *testing.T) {
 func TestAccountsList_NoWriteJSONAtSeam_FallsBack(t *testing.T) {
 	h, rec := wealthTestHandler(&wealthSnapshotReader{
 		capReader: &capReader{probe: &deadlineProbe{}},
-		rows:      []clickhouse.AccountWealth{{AccountID: validTestAccount, USD: 1}},
+		rows:      []clickhouse.AccountWealth{{AccountID: validTestAccount, Value: big.NewRat(1, 1)}},
 		asOf:      time.Now(), ok: true,
 	})
 	h.WriteJSONAt = nil
