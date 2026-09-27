@@ -1,7 +1,14 @@
 'use client';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Plus, Trash2, Webhook as WebhookIcon } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronUp,
+  Loader2,
+  Plus,
+  Trash2,
+  Webhook as WebhookIcon,
+} from 'lucide-react';
 import { useCallback, useState } from 'react';
 
 import {
@@ -9,10 +16,12 @@ import {
   createDashboardWebhook,
   deleteDashboardWebhook,
   listDashboardWebhooks,
+  listWebhookDeliveries,
   updateDashboardWebhook,
   type CreateWebhookResponse,
   type CreateWebhookRequest,
   type DashboardWebhook,
+  type WebhookDelivery,
 } from '@/api/account';
 import {
   Badge,
@@ -55,9 +64,10 @@ const EVENT_TYPES = [
  * the API-keys and price-alerts pages (session-cookie CRUD via
  * @/api/account): a table of registered webhooks, a create form that
  * reveals the HMAC signing secret once, an enable/disable toggle
- * (PATCH), and delete-with-confirm. Every account event (price alerts,
- * incidents, anomaly freezes, divergence firings) delivers ONLY to a
- * webhook registered here.
+ * (PATCH), delete-with-confirm, and a per-webhook delivery log (GET
+ * .../deliveries) so an operator can see why a webhook stopped firing.
+ * Every account event (price alerts, incidents, anomaly freezes,
+ * divergence firings) delivers ONLY to a webhook registered here.
  */
 export default function WebhooksPage() {
   return <AccountGate>{() => <WebhooksBody />}</AccountGate>;
@@ -79,6 +89,7 @@ function WebhooksBody() {
   const [showForm, setShowForm] = useState(false);
   const [creating, setCreating] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [viewingId, setViewingId] = useState<string | null>(null);
 
   const loadError = webhooksQuery.error
     ? webhooksQuery.error instanceof ApiError
@@ -209,8 +220,12 @@ function WebhooksBody() {
           <WebhooksTable
             webhooks={webhooks}
             busyId={busyId}
+            viewingId={viewingId}
             onToggle={handleToggle}
             onDelete={handleDelete}
+            onToggleDeliveries={(id) =>
+              setViewingId((cur) => (cur === id ? null : id))
+            }
           />
         ) : null}
       </Section>
@@ -414,13 +429,17 @@ function CreateWebhookForm({
 function WebhooksTable({
   webhooks,
   busyId,
+  viewingId,
   onToggle,
   onDelete,
+  onToggleDeliveries,
 }: {
   webhooks: DashboardWebhook[];
   busyId: string | null;
+  viewingId: string | null;
   onToggle: (w: DashboardWebhook) => void;
   onDelete: (w: DashboardWebhook) => void;
+  onToggleDeliveries: (id: string) => void;
 }) {
   return (
     <TableWrap>
@@ -438,74 +457,198 @@ function WebhooksTable({
         <TBody>
           {webhooks.map((w) => {
             const busy = busyId === w.id;
+            const viewing = viewingId === w.id;
             return (
-              <TR key={w.id} className={!w.enabled ? 'opacity-60' : undefined}>
-                <Td>
-                  <div className="text-ink font-medium">{w.name}</div>
-                </Td>
-                <Td>
-                  <code className="text-ink-body max-w-64 truncate font-mono text-[13px] break-all">
-                    {w.url}
-                  </code>
-                </Td>
-                <Td>
-                  <div className="flex flex-wrap gap-1">
-                    {w.events.map((e) => (
-                      <span
-                        key={e}
-                        className="bg-surface-subtle text-ink-muted rounded-sm px-1 py-0.5 font-mono text-[11px]"
+              <>
+                <TR
+                  key={w.id}
+                  className={!w.enabled ? 'opacity-60' : undefined}
+                >
+                  <Td>
+                    <div className="text-ink font-medium">{w.name}</div>
+                  </Td>
+                  <Td>
+                    <code className="text-ink-body max-w-64 truncate font-mono text-[13px] break-all">
+                      {w.url}
+                    </code>
+                  </Td>
+                  <Td>
+                    <div className="flex flex-wrap gap-1">
+                      {w.events.map((e) => (
+                        <span
+                          key={e}
+                          className="bg-surface-subtle text-ink-muted rounded-sm px-1 py-0.5 font-mono text-[11px]"
+                        >
+                          {e}
+                        </span>
+                      ))}
+                    </div>
+                  </Td>
+                  <Td>{fmtDate(w.created_at)}</Td>
+                  <Td>
+                    {w.enabled ? (
+                      <Badge tone="ok" dot>
+                        Enabled
+                      </Badge>
+                    ) : (
+                      <Badge tone="warn" dot>
+                        Paused
+                      </Badge>
+                    )}
+                  </Td>
+                  <Td align="right">
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-ink-muted"
+                        onClick={() => onToggleDeliveries(w.id)}
                       >
-                        {e}
-                      </span>
-                    ))}
-                  </div>
-                </Td>
-                <Td>{fmtDate(w.created_at)}</Td>
-                <Td>
-                  {w.enabled ? (
-                    <Badge tone="ok" dot>
-                      Enabled
-                    </Badge>
-                  ) : (
-                    <Badge tone="warn" dot>
-                      Paused
-                    </Badge>
-                  )}
-                </Td>
-                <Td align="right">
-                  <div className="flex justify-end gap-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-ink-muted"
-                      onClick={() => onToggle(w)}
-                      disabled={busy}
-                    >
-                      {busy ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : w.enabled ? (
-                        'Pause'
-                      ) : (
-                        'Enable'
-                      )}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-ink-muted hover:bg-bad-50 hover:text-bad-700"
-                      onClick={() => onDelete(w)}
-                      disabled={busy}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      Delete
-                    </Button>
-                  </div>
-                </Td>
-              </TR>
+                        {viewing ? (
+                          <ChevronUp className="h-3.5 w-3.5" />
+                        ) : (
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        )}
+                        Log
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-ink-muted"
+                        onClick={() => onToggle(w)}
+                        disabled={busy}
+                      >
+                        {busy ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : w.enabled ? (
+                          'Pause'
+                        ) : (
+                          'Enable'
+                        )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-ink-muted hover:bg-bad-50 hover:text-bad-700"
+                        onClick={() => onDelete(w)}
+                        disabled={busy}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Delete
+                      </Button>
+                    </div>
+                  </Td>
+                </TR>
+                {viewing && (
+                  <TR key={`${w.id}-deliveries`}>
+                    <Td colSpan={6} className="bg-surface-subtle/40">
+                      <DeliveryLog webhookId={w.id} />
+                    </Td>
+                  </TR>
+                )}
+              </>
             );
           })}
         </TBody>
       </Table>
     </TableWrap>
+  );
+}
+
+// ─── Delivery log (per-webhook) ────────────────────────────────────
+
+function deliveryStatus(d: WebhookDelivery): {
+  label: string;
+  tone: 'ok' | 'warn' | 'bad';
+} {
+  if (d.delivered_at) return { label: 'Delivered', tone: 'ok' };
+  if (d.next_attempt_at) return { label: 'Retrying', tone: 'warn' };
+  return { label: 'Failed', tone: 'bad' };
+}
+
+function DeliveryLog({ webhookId }: { webhookId: string }) {
+  const query = useQuery<WebhookDelivery[], Error>({
+    queryKey: ['dashboard', 'webhooks', webhookId, 'deliveries'],
+    queryFn: ({ signal }) => listWebhookDeliveries(webhookId, signal),
+  });
+
+  if (query.isLoading) {
+    return <Skeleton className="h-16 w-full" />;
+  }
+  if (query.isError) {
+    return (
+      <p className="text-bad-700 text-xs">
+        {query.error instanceof ApiError
+          ? (query.error.detail ?? query.error.message)
+          : 'Failed to load delivery log'}
+      </p>
+    );
+  }
+  const deliveries = query.data ?? [];
+  if (deliveries.length === 0) {
+    return (
+      <p className="text-ink-muted text-xs">
+        No deliveries yet — nothing has fired to this webhook.
+      </p>
+    );
+  }
+  const delivered = deliveries.filter((d) => d.delivered_at).length;
+  const successRate = Math.round((delivered / deliveries.length) * 100);
+
+  return (
+    <div className="space-y-2">
+      <p className="text-ink-muted text-xs">
+        {successRate}% delivered over the last {deliveries.length} attempt
+        {deliveries.length === 1 ? '' : 's'}.
+      </p>
+      <TableWrap>
+        <Table>
+          <THead>
+            <tr>
+              <Th>Event</Th>
+              <Th>Attempts</Th>
+              <Th>Status</Th>
+              <Th>Next retry</Th>
+              <Th>Delivered</Th>
+              <Th>Last error</Th>
+            </tr>
+          </THead>
+          <TBody>
+            {deliveries.map((d) => {
+              const status = deliveryStatus(d);
+              return (
+                <TR key={d.id}>
+                  <Td>
+                    <code className="font-mono text-[11px]">
+                      {d.event_type}
+                    </code>
+                  </Td>
+                  <Td align="right">{d.attempt_count}</Td>
+                  <Td>
+                    <Badge tone={status.tone} dot>
+                      {status.label}
+                    </Badge>
+                  </Td>
+                  <Td>{fmtDate(d.next_attempt_at)}</Td>
+                  <Td>{fmtDate(d.delivered_at)}</Td>
+                  <Td>
+                    {d.last_error ? (
+                      <span className="text-bad-700 text-xs">
+                        {d.last_error}
+                        {d.last_response_status
+                          ? ` (HTTP ${d.last_response_status})`
+                          : ''}
+                      </span>
+                    ) : (
+                      '—'
+                    )}
+                  </Td>
+                </TR>
+              );
+            })}
+          </TBody>
+        </Table>
+      </TableWrap>
+    </div>
   );
 }

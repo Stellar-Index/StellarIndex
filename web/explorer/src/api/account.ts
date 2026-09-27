@@ -429,6 +429,27 @@ export async function deleteDashboardWebhook(id: string): Promise<void> {
   });
 }
 
+export type WebhookDelivery = components['schemas']['WebhookDeliveryDTO'];
+
+interface WebhookDeliveriesResponse {
+  deliveries: WebhookDelivery[];
+}
+
+/**
+ * GET /v1/dashboard/webhooks/{id}/deliveries — most-recent-first delivery
+ * log (up to 100 attempts) for one webhook.
+ */
+export async function listWebhookDeliveries(
+  id: string,
+  signal?: AbortSignal,
+): Promise<WebhookDelivery[]> {
+  const r = await accountFetch<WebhookDeliveriesResponse>(
+    `/dashboard/webhooks/${encodeURIComponent(id)}/deliveries`,
+    { signal },
+  );
+  return r.deliveries ?? [];
+}
+
 // ─── Staff: customer look-up ───────────────────────────────────────
 
 // Mirrors AdminLookupResponse (internal/api/v1/dashboardauth/handlers_admin.go).

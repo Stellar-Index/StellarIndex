@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { DashboardWebhook } from '@/api/account';
+import type { DashboardWebhook, WebhookDelivery } from '@/api/account';
 
 vi.mock('@/api/hooks', async () => {
   const actual =
@@ -23,12 +23,14 @@ const listDashboardWebhooks = vi.hoisted(() => vi.fn());
 const createDashboardWebhook = vi.hoisted(() => vi.fn());
 const deleteDashboardWebhook = vi.hoisted(() => vi.fn());
 const updateDashboardWebhook = vi.hoisted(() => vi.fn());
+const listWebhookDeliveries = vi.hoisted(() => vi.fn());
 vi.mock('@/api/account', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/account')>()),
   listDashboardWebhooks,
   createDashboardWebhook,
   deleteDashboardWebhook,
   updateDashboardWebhook,
+  listWebhookDeliveries,
 }));
 
 import { useMe } from '@/api/hooks';
@@ -39,6 +41,7 @@ afterEach(() => {
   createDashboardWebhook.mockReset();
   deleteDashboardWebhook.mockReset();
   updateDashboardWebhook.mockReset();
+  listWebhookDeliveries.mockReset();
 });
 
 function webhook(overrides: Partial<DashboardWebhook> = {}): DashboardWebhook {
@@ -142,5 +145,37 @@ describe('/dashboard/webhooks self-service management', () => {
     await waitFor(() =>
       expect(listDashboardWebhooks.mock.calls.length).toBeGreaterThan(1),
     );
+  });
+
+  it('shows the delivery log with attempt status and failure reason', async () => {
+    listDashboardWebhooks.mockResolvedValue([webhook()]);
+    const delivery: WebhookDelivery = {
+      id: 'd1b2c3d4-0000-4000-8000-000000000099',
+      event_type: 'price.alert',
+      attempt_count: 3,
+      next_attempt_at: null,
+      delivered_at: null,
+      last_error: 'connection refused',
+      last_response_status: 502,
+      created_at: '2026-08-01T12:00:00Z',
+    };
+    listWebhookDeliveries.mockResolvedValue([delivery]);
+
+    renderWebhooksPage();
+    fireEvent.click(await screen.findByRole('button', { name: /Log/ }));
+
+    await waitFor(() =>
+      expect(listWebhookDeliveries).toHaveBeenCalledWith(
+        'a1b2c3d4-0000-4000-8000-000000000001',
+        expect.anything(),
+      ),
+    );
+
+    // The pre-fix page has no delivery surface at all: neither the
+    // status ("Failed" — no delivered_at, no next_attempt_at) nor the
+    // failure reason is ever rendered anywhere on the page.
+    expect(await screen.findByText('Failed')).toBeInTheDocument();
+    expect(screen.getByText(/connection refused/)).toBeInTheDocument();
+    expect(screen.getByText(/HTTP 502/)).toBeInTheDocument();
   });
 });
