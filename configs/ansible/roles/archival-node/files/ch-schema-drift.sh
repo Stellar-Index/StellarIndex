@@ -357,6 +357,8 @@ parse_schema() {
           gsub(/`/, "", c)
           name = c; sub(/[ (].*$/, "", name)
           rest = c; sub(/^[A-Za-z0-9_]+ +/, "", rest)
+          # Column alignment in the repo DDL is not a type difference.
+          gsub(/[ \t]+/, " ", rest)
           if (name != "" && name ~ /^[A-Za-z_][A-Za-z0-9_]*$/) {
             cols = (cols == "" ? name : cols "," name)
             printf "%s\ttype\t%s\t%s\n", tbl, name, rest

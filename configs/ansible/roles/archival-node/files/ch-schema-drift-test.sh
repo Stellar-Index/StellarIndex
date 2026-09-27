@@ -395,6 +395,16 @@ expect_msg "type/CODEC re-rendering is still reported as INFO" \
   "INFO account_movements.amount type text differs — repo: 'Int128' | live: 'Int128 CODEC(Delta, ZSTD(3))'" \
   "$tmp/intent.sql" "$tmp/live-codec.sql"
 
+# Aligned repo DDL ("Int128  CODEC") matches ClickHouse's single-space render.
+sed 's/^    amount        Int128,/    amount        Int128  CODEC(Delta, ZSTD(3)),/' "$tmp/intent.sql" > "$tmp/intent-aligned.sql"
+out="$(INTENT="$tmp/intent-aligned.sql" LIVE_SCHEMA="$tmp/live-codec.sql" TEXTFILE_DIR=/dev/null \
+       DEPLOYED_VERSIONS_DIR="$no_sidecars" bash "$drift" 2>&1)"
+if grep -q 'CODEC(Delta, ZSTD(3))' "$tmp/intent-aligned.sql" && ! grep -qF "INFO account_movements.amount" <<<"$out"; then
+  pass=$((pass + 1)); echo "ok   — aligned whitespace in type text is not reported"
+else
+  fail=$((fail + 1)); echo "FAIL — aligned whitespace in type text is reported"; indent "$out"
+fi
+
 # ─── cannot-compare must NOT read as clean ──────────────────────────
 run "unreadable live schema exits 2, not 0" 2 "$tmp/intent.sql" "$tmp/does-not-exist.sql"
 : > "$tmp/empty.sql"
