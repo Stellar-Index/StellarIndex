@@ -1,6 +1,7 @@
 package sdex
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -304,5 +305,26 @@ func TestDecoder_zeroAmountPolicy(t *testing.T) {
 	outs2, _ := NewDecoder().Decode(dispatcher.OpContext{Op: op2, OpResult: result2})
 	if len(outs2) != 0 {
 		t.Errorf("got %d outputs, want 0 (both-zero dropped)", len(outs2))
+	}
+}
+
+// TestDecoder_claimIndexOverflow pins #934: a tradeIndex at or past
+// opIndexFanoutStride must be rejected, not folded into the OpIndex
+// range op_index fanout reserves for the NEXT op. The trades PK
+// upsert has been ON CONFLICT DO UPDATE since migration 0109, so an
+// alias would silently overwrite an unrelated trade rather than
+// collide harmlessly.
+func TestDecoder_claimIndexOverflow(t *testing.T) {
+	xlm := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	usdc := mkAlphanum4Asset(t, "USDC", 0x10)
+	claim := mkOrderBookClaim(t, 0x21, 1, xlm, usdc, 100_000_000, 1_200_000)
+
+	if _, err := decodeClaimAtom(claim, 1, time.Now(), "tx", 0, opIndexFanoutStride-1, "GTAKER"); err != nil {
+		t.Fatalf("decodeClaimAtom at stride-1 (last valid index): %v", err)
+	}
+
+	_, err := decodeClaimAtom(claim, 1, time.Now(), "tx", 0, opIndexFanoutStride, "GTAKER")
+	if !errors.Is(err, ErrClaimIndexOverflow) {
+		t.Fatalf("decodeClaimAtom at stride: err = %v, want ErrClaimIndexOverflow", err)
 	}
 }
