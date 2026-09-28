@@ -763,6 +763,14 @@ func isValidDomainOrHostPort(s string, allowAnyPort bool) bool { //nolint:gocogn
 	if host == "" || len(host) > 253 {
 		return false
 	}
+	// Reserved TLDs (RFC 2606/6761: example/test/invalid/localhost) are
+	// guaranteed to never resolve to a real destination, so an on-chain
+	// home_domain claiming one is malformed input, not a legitimate
+	// issuer — reject it at the syntax gate rather than relying solely
+	// on the dial-layer guard to fail the lookup.
+	if nettools.IsReservedTLD(host) {
+		return false
+	}
 	// Hostname character set per RFC 952 + RFC 1123: letters,
 	// digits, hyphens, and dots. No underscores, spaces, query
 	// chars, slashes, etc.
