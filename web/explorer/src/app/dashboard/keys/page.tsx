@@ -13,6 +13,7 @@ import {
   type CreateKeyResponse,
   type KeyList,
 } from '@/api/account';
+import { isTimeoutError } from '@/api/client';
 import type { MeResponse } from '@/api/hooks';
 import {
   Badge,
@@ -301,7 +302,11 @@ function CreateKeyForm({
       onCreated(resp);
     } catch (err) {
       onError(
-        err instanceof ApiError ? (err.detail ?? err.message) : 'Create failed',
+        err instanceof ApiError
+          ? (err.detail ?? err.message)
+          : isTimeoutError(err)
+            ? 'The request timed out — check your key list before retrying.'
+            : 'Create failed',
       );
     } finally {
       setCreating(false);

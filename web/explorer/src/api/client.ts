@@ -52,6 +52,20 @@ export function timeoutSignal(
   return controller.signal;
 }
 
+/**
+ * isTimeoutError — true for the abort `timeoutSignal` raises itself (the
+ * 15s bound) or for a caller-supplied signal aborting for the same
+ * reason. Lets a caller tell "the request timed out" apart from a
+ * genuine `ApiError`, which `err instanceof ApiError` cannot: an abort
+ * never reaches `accountFetch`'s `!res.ok` branch.
+ */
+export function isTimeoutError(err: unknown): boolean {
+  return (
+    err instanceof DOMException &&
+    (err.name === 'TimeoutError' || err.name === 'AbortError')
+  );
+}
+
 export type RequestExample = {
   method: 'GET' | 'POST';
   url: string;
