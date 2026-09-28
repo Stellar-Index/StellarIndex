@@ -11464,6 +11464,25 @@ export interface components {
                 trade_count: number;
             }[];
         };
+        /** @description One venue as projected onto /v1/methodology (internal/api/v1/methodology.go MethodologySource) — the static registry subset of Source, never the live trade-count/volume/sparkline stats that only /v1/sources?include=stats populates. */
+        MethodologySource: {
+            /** @description Stable connector identifier (matches canonical.Trade.Source). */
+            name: string;
+            /** @enum {string} */
+            class: "exchange" | "aggregator" | "oracle" | "authority_sanity" | "bridge" | "lending" | "router";
+            /**
+             * @description Empty (omitted) for non-exchange classes, except ecb (authority_sanity), which is fx.
+             * @enum {string}
+             */
+            subclass?: "dex" | "cex" | "fx";
+            default_weight: number;
+            include_in_vwap: boolean;
+            paid: boolean;
+            backfill_available: boolean;
+            backfill_safe: boolean;
+            /** @description Whether the source observes the Stellar network directly rather than reading an off-chain vendor API. */
+            on_chain: boolean;
+        };
         Methodology: {
             /** @description On-disk shape version. Bumps on breaking changes. */
             version: string;
@@ -11493,8 +11512,8 @@ export interface components {
                 contributes_to_vwap: boolean;
                 description: string;
             }[];
-            /** @description Same data as `/v1/sources` (without live trade-count stats) — included so a transparency consumer can verify the policy in one round trip. */
-            sources: components["schemas"]["Source"][];
+            /** @description Registry metadata for every venue — the static subset of `/v1/sources` (no live trade-count stats) — included so a transparency consumer can verify the policy in one round trip. */
+            sources: components["schemas"]["MethodologySource"][];
             references: {
                 /** @description ADR identifier (e.g. ADR-0007). */
                 id: string;
@@ -16590,7 +16609,7 @@ export interface operations {
                      *     }
                      */
                     "application/json": components["schemas"]["EnvelopeMeta"] & {
-                        /** @description Operator diagnostics — the documented properties are the stable core; the handler also serves per-source coverage fields (density_pct, gap_free_pct, covered_ledgers, coverage_snapshot_at, entries_24h) and ADR-0033 completeness fields that evolve with the pipeline (board #33; x-stability: experimental per ADR-0042). */
+                        /** @description Operator diagnostics — the documented properties are the stable core; ADR-0033 completeness fields evolve with the pipeline (board #33; x-stability: experimental per ADR-0042). */
                         data: {
                             region: {
                                 /** @example r1 */
@@ -16673,6 +16692,25 @@ export interface operations {
                                 entries: number;
                                 /** @description Fraction of (genesis → tip) range with any data. 1.0 = covered. Doesn't detect internal gaps. */
                                 coverage_pct?: number;
+                                /** @description Fraction of ledgers processed, from the union of backfill cursor intervals. 1.0 = fully backfilled. Omitted when zero. */
+                                density_pct?: number;
+                                /**
+                                 * Format: int64
+                                 * @description Absolute count of ledgers covered by successful backfill ranges. Numerator of density_pct. Omitted when zero.
+                                 */
+                                covered_ledgers?: number;
+                                /**
+                                 * Format: int64
+                                 * @description Denominator of density_pct — tip - genesis + 1, window-scoped when a coverage snapshot exists. Omitted when zero.
+                                 */
+                                expected_ledgers?: number;
+                                /** @description 1 - max_gap_ledgers / expected_ledger. 1.0 when no contiguous gap above the per-target threshold, even for a legitimately sparse source. Omitted when zero. */
+                                gap_free_pct?: number;
+                                /**
+                                 * Format: date-time
+                                 * @description When the gap detector last refreshed this row's data-derived numbers. Absent before its first post-deploy cycle.
+                                 */
+                                coverage_snapshot_at?: string;
                                 /** @description ADR-0033 watermark coverage: (watermark - genesis + 1) / (tip - genesis + 1). No sparsity threshold — a single PROVEN gap pins it. Absent until compute-completeness has run for the source. */
                                 completeness_pct?: number;
                                 /**
@@ -16739,6 +16777,13 @@ export interface operations {
                                 backfill_safe: boolean;
                                 /** Format: int64 */
                                 trade_count_24h: number;
+                                /**
+                                 * Format: int64
+                                 * @description Trailing-24h per-source event count (trades, oracle updates, …), non-zero for every active source unlike trade_count_24h which is trades-table-only.
+                                 */
+                                entries_24h: number;
+                                /** @description Whether the source is switched on for this deployment. false with entries_24h 0 means "off", not "failing". */
+                                enabled: boolean;
                                 volume_24h_usd?: string;
                                 /** Format: int64 */
                                 markets_count_24h: number;

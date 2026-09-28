@@ -4786,7 +4786,7 @@ paths:
                     properties:
                       data:
                         type: object
-                        description: "Operator diagnostics — the documented properties are the stable core; the handler also serves per-source coverage fields (density_pct, gap_free_pct, covered_ledgers, coverage_snapshot_at, entries_24h) and ADR-0033 completeness fields that evolve with the pipeline (board #33; x-stability: experimental per ADR-0042)."
+                        description: "Operator diagnostics — the documented properties are the stable core; ADR-0033 completeness fields evolve with the pipeline (board #33; x-stability: experimental per ADR-0042)."
                         required: [region, version, ledger, backfill, backfill_coverage, fx_backfill, supply, sources]
                         properties:
                           region:
@@ -4850,6 +4850,11 @@ paths:
                                 latest_ledger:   { type: integer, format: int64 }
                                 entries:         { type: integer, format: int64, description: "Always-on per-source ingested-entry tally — trades for exchange/DEX/CEX sources, oracle_updates for oracle sources (source_entry_counts, migration 0035). Exact even mid-backfill; renamed from trade_count 2026-05-15." }
                                 coverage_pct:    { type: number,  description: "Fraction of (genesis → tip) range with any data. 1.0 = covered. Doesn't detect internal gaps." }
+                                density_pct:     { type: number,  description: "Fraction of ledgers processed, from the union of backfill cursor intervals. 1.0 = fully backfilled. Omitted when zero." }
+                                covered_ledgers: { type: integer, format: int64, description: "Absolute count of ledgers covered by successful backfill ranges. Numerator of density_pct. Omitted when zero." }
+                                expected_ledgers: { type: integer, format: int64, description: "Denominator of density_pct — tip - genesis + 1, window-scoped when a coverage snapshot exists. Omitted when zero." }
+                                gap_free_pct:    { type: number,  description: "1 - max_gap_ledgers / expected_ledger. 1.0 when no contiguous gap above the per-target threshold, even for a legitimately sparse source. Omitted when zero." }
+                                coverage_snapshot_at: { type: string, format: date-time, description: "When the gap detector last refreshed this row's data-derived numbers. Absent before its first post-deploy cycle." }
                                 completeness_pct:        { type: number,  description: "ADR-0033 watermark coverage: (watermark - genesis + 1) / (tip - genesis + 1). No sparsity threshold — a single PROVEN gap pins it. Absent until compute-completeness has run for the source." }
                                 completeness_watermark:  { type: integer, format: int64, description: "Highest fully-verified ledger." }
                                 completeness_complete:   { type: boolean, description: "SERVED/combined axis of the ADR-0033/ADR-0034 two-axis verdict: substrate ∧ recognition ∧ the retention-scoped projection reconcile." }
@@ -4893,7 +4898,7 @@ paths:
                             type: array
                             items:
                               type: object
-                              required: [name, class, include_in_vwap, backfill_safe, trade_count_24h, markets_count_24h]
+                              required: [name, class, include_in_vwap, backfill_safe, trade_count_24h, entries_24h, enabled, markets_count_24h]
                               properties:
                                 name:              { type: string, example: "binance" }
                                 class:             { type: string, example: "exchange" }
@@ -4901,6 +4906,8 @@ paths:
                                 include_in_vwap:   { type: boolean }
                                 backfill_safe:     { type: boolean }
                                 trade_count_24h:   { type: integer, format: int64 }
+                                entries_24h:       { type: integer, format: int64, description: "Trailing-24h per-source event count (trades, oracle updates, …), non-zero for every active source unlike trade_count_24h which is trades-table-only." }
+                                enabled:           { type: boolean, description: "Whether the source is switched on for this deployment. false with entries_24h 0 means \"off\", not \"failing\"." }
                                 volume_24h_usd:    { type: string }
                                 markets_count_24h: { type: integer, format: int64 }
                     required: [data]
@@ -19991,6 +19998,21 @@ components:
             required: [hour, volume_usd, trade_count]
       required: [name, class, include_in_vwap, paid, backfill_available, backfill_safe, default_weight, on_chain]
 
+    MethodologySource:
+      type: object
+      description: "One venue as projected onto /v1/methodology (internal/api/v1/methodology.go MethodologySource) — the static registry subset of Source, never the live trade-count/volume/sparkline stats that only /v1/sources?include=stats populates."
+      properties:
+        name:               { type: string, description: "Stable connector identifier (matches canonical.Trade.Source)." }
+        class:              { type: string, enum: [exchange, aggregator, oracle, authority_sanity, bridge, lending, router] }
+        subclass:           { type: string, enum: [dex, cex, fx], description: "Empty (omitted) for non-exchange classes, except ecb (authority_sanity), which is fx." }
+        default_weight:     { type: integer }
+        include_in_vwap:    { type: boolean }
+        paid:               { type: boolean }
+        backfill_available: { type: boolean }
+        backfill_safe:      { type: boolean }
+        on_chain:           { type: boolean, description: "Whether the source observes the Stellar network directly rather than reading an off-chain vendor API." }
+      required: [name, class, default_weight, include_in_vwap, paid, backfill_available, backfill_safe, on_chain]
+
     Methodology:
       type: object
       properties:
@@ -20041,8 +20063,8 @@ components:
             required: [name, contributes_to_vwap, description]
         sources:
           type: array
-          description: Same data as `/v1/sources` (without live trade-count stats) — included so a transparency consumer can verify the policy in one round trip.
-          items: { $ref: "#/components/schemas/Source" }
+          description: Registry metadata for every venue — the static subset of `/v1/sources` (no live trade-count stats) — included so a transparency consumer can verify the policy in one round trip.
+          items: { $ref: "#/components/schemas/MethodologySource" }
         references:
           type: array
           items:
