@@ -2,6 +2,7 @@ package streaming_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -668,6 +669,88 @@ drain:
 	}
 	if lastID != liveID {
 		t.Fatalf("last delivered id = %q, want live event id %q", lastID, liveID)
+	}
+}
+
+// TestHub_MultiTopicReplayIsMergedByID is the regression test for
+// GH-1033's second bullet: ids come from one Hub-wide generator but a
+// multi-topic Subscribe used to queue each topic's whole replay before
+// the next, so the wire `id:` line walked backwards at the topic
+// boundary. Interleaving publishes across two topics and resuming from
+// before all of them must come back in strict id order, not grouped by
+// topic.
+func TestHub_MultiTopicReplayIsMergedByID(t *testing.T) {
+	hub := streaming.NewHub(0)
+	cursor := hub.Publish("seed", "x", []byte("seed"))
+
+	idA1 := hub.Publish("topicA", "x", []byte("a1"))
+	idB1 := hub.Publish("topicB", "x", []byte("b1"))
+	idA2 := hub.Publish("topicA", "x", []byte("a2"))
+	idB2 := hub.Publish("topicB", "x", []byte("b2"))
+
+	sub, cancel := hub.Subscribe([]string{"topicA", "topicB"}, cursor)
+	defer cancel()
+
+	got := drainNonblocking(t, sub, 4, time.Second)
+	if len(got) != 4 {
+		t.Fatalf("replay returned %d events, want 4: %+v", len(got), got)
+	}
+	wantOrder := []string{idA1, idB1, idA2, idB2}
+	for i, ev := range got {
+		if ev.ID != wantOrder[i] {
+			t.Fatalf("event %d: id = %q, want %q (grouped-by-topic order instead of merged-by-id); full sequence: %v",
+				i, ev.ID, wantOrder[i], idsOf(got))
+		}
+	}
+}
+
+func idsOf(evs []streaming.Event) []string {
+	out := make([]string, len(evs))
+	for i, ev := range evs {
+		out[i] = ev.ID
+	}
+	return out
+}
+
+// TestHub_ReplayGapEmitsStreamGapMarker is the regression test for
+// GH-1035: a resume whose cursor names an event the ring has already
+// evicted must be preceded by an [streaming.EventTypeStreamGap] marker
+// naming the requested cursor and the oldest id still available —
+// today nothing on the wire distinguishes a truncated replay from a
+// complete one.
+func TestHub_ReplayGapEmitsStreamGapMarker(t *testing.T) {
+	hub := streaming.NewHub(2) // tiny ring: forces eviction
+	cursor := hub.Publish("seed", "x", []byte("seed"))
+	hub.Publish("topic", "x", []byte("first")) // evicted by "third"
+	idSecond := hub.Publish("topic", "x", []byte("second"))
+	hub.Publish("topic", "x", []byte("third"))
+
+	sub, cancel := hub.Subscribe([]string{"topic"}, cursor)
+	defer cancel()
+
+	got := drainNonblocking(t, sub, 3, time.Second)
+	if len(got) != 3 {
+		t.Fatalf("got %d events, want 3 (1 gap marker + second + third): %+v", len(got), got)
+	}
+	if got[0].Type != streaming.EventTypeStreamGap {
+		t.Fatalf("first event type = %q, want %q", got[0].Type, streaming.EventTypeStreamGap)
+	}
+	if got[0].ID != "" {
+		t.Errorf("gap marker carries an id (%q) — it must not perturb the client's resume cursor", got[0].ID)
+	}
+	var payload struct {
+		Topic          string `json:"topic"`
+		RequestedAfter string `json:"requested_after"`
+		ResumedFrom    string `json:"resumed_from"`
+	}
+	if err := json.Unmarshal(got[0].Data, &payload); err != nil {
+		t.Fatalf("gap marker data not JSON: %v (%s)", err, got[0].Data)
+	}
+	if payload.Topic != "topic" || payload.RequestedAfter != cursor || payload.ResumedFrom != idSecond {
+		t.Errorf("gap payload = %+v, want topic=topic requested_after=%s resumed_from=%s", payload, cursor, idSecond)
+	}
+	if string(got[1].Data) != "second" || string(got[2].Data) != "third" {
+		t.Errorf("replay after gap = %q, %q, want second, third", got[1].Data, got[2].Data)
 	}
 }
 

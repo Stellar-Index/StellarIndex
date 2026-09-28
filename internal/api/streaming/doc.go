@@ -12,10 +12,16 @@
 //     `Last-Event-ID` (RFC 8895 §9), and forwards live events as SSE
 //     frames until the request context cancels.
 //
-// Event ordering is per-topic; consumers MUST treat IDs as opaque
-// time-sortable strings (16 lowercase hex chars in this implementation
-// — but that format is internal). Cross-topic ordering is not
-// guaranteed.
+// Consumers MUST treat IDs as opaque time-sortable strings (16
+// lowercase hex chars in this implementation — but that format is
+// internal). Live-event ordering across topics is not guaranteed — a
+// multi-topic subscriber's channel interleaves topics in publish
+// order, not id order. Buffered REPLAY on [Hub.Subscribe] is merged by
+// id across every subscribed topic before it is queued, so a resuming
+// multi-topic subscriber's replay never walks the `id:` line backwards
+// at a topic boundary (#1033); it may still precede a
+// [EventTypeStreamGap] marker when the replay could not cover the
+// requested cursor (#1035).
 //
 // Slow subscribers are dropped, not blocked. When the per-subscriber
 // channel is full, the offending subscription is closed; the client
