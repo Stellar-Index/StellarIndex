@@ -8254,6 +8254,13 @@ paths:
         unconditionally plus a persisted `audit_log` row (`key.mint`,
         staff actor, carrying the reason) when the deployment wires the
         audit store.
+
+        The identifier is the key's metering subject, so an
+        `acct:<slug>` key draws down that account's monthly quota. Such
+        a mint must confirm the account with `account: <slug>` (400
+        otherwise) and the account must exist (404 otherwise); a
+        deployment that cannot verify platform accounts refuses it with
+        503.
       security:
         - APIKeyAuth: []
       parameters:
@@ -8274,6 +8281,12 @@ paths:
                   description: |
                     Owner reference the minted key authenticates as
                     (e.g. `acct:<slug>`).
+                account:
+                  type: string
+                  description: |
+                    Confirms the platform account an `acct:<slug>`
+                    identifier bills to. Required with, and must equal,
+                    that `<slug>`; rejected with any other identifier.
                 label: { type: string, maxLength: 128 }
                 tier:
                   type: string
@@ -8316,6 +8329,11 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
           description: Caller is not operator-tier.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "404":
+          description: No platform account has the `acct:<slug>` identifier's slug.
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
