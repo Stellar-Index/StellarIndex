@@ -2756,28 +2756,27 @@ func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canoni
 			if r.gate.PriceWithheld(ctx, base, quote, "price_alert") {
 				return "", time.Time{}, false, nil
 			}
-			return r.guardAndAdjust(ctx, b, q, pair, row)
+			// Same serving-sanity guard as the API raw-bucket paths: the
+			// bare closed bucket bypasses the orchestrator's σ-outlier /
+			// min-volume / freeze filters, so a fat-finger print would
+			// fire a SPURIOUS alert. The guard serves last-known-good off
+			// the trailing baseline of the pair actually read and is
+			// byte-identical on a healthy bucket. An unvalidated bucket (no
+			// trailing baseline) is the guard's fail-open case; an alert
+			// has no stale flag to carry that doubt, so it does not fire,
+			// sticky like the withholding gate above.
+			served, lowConfidence, _ := pricingguard.GuardServedVWAP1mConfidence(ctx, r.store, r.logger, pair, row)
+			if lowConfidence {
+				return "", time.Time{}, false, nil
+			}
+			return r.adjustServed(b, q, served)
 		}
 	}
 	return "", time.Time{}, false, nil
 }
 
-// guardAndAdjust serves a closed bucket that already passed the
-// withholding gate: the serving-sanity guard, then the decimals correction.
-func (r priceAlertVWAPReader) guardAndAdjust(ctx context.Context, b, q canonical.Asset, pair canonical.Pair, row timescale.Vwap1mRow) (string, time.Time, bool, error) {
-	// Same serving-sanity guard as the API raw-bucket paths: the
-	// bare closed bucket bypasses the orchestrator's σ-outlier /
-	// min-volume / freeze filters, so a fat-finger print would
-	// fire a SPURIOUS alert. The guard serves last-known-good off
-	// the trailing baseline of the pair actually read and is
-	// byte-identical on a healthy bucket. An unvalidated bucket (no
-	// trailing baseline) is the guard's fail-open case; an alert
-	// has no stale flag to carry that doubt, so it does not fire,
-	// sticky like the withholding gate above.
-	served, lowConfidence, _ := pricingguard.GuardServedVWAP1mConfidence(ctx, r.store, r.logger, pair, row)
-	if lowConfidence {
-		return "", time.Time{}, false, nil
-	}
+// adjustServed applies the /v1/price decimals correction to a guarded bucket.
+func (r priceAlertVWAPReader) adjustServed(b, q canonical.Asset, served timescale.Vwap1mRow) (string, time.Time, bool, error) {
 	// The guard's VWAP is the raw quote/base CAGG ratio, exactly
 	// as /v1/price's normalizeRawPriceSnapshot reads it before
 	// AdjustPrice. Apply the same correction here: the customer's
