@@ -256,19 +256,25 @@ func TestAssetSupply_NoSACShape404(t *testing.T) {
 	}
 }
 
-// TestAssetSupply_ClassicViaSACWrapper pins the override across its wire/
-// config form mismatch: sac_wrappers is configured in supply.AssetKey form
-// ("CODE:ISSUER", colon — config.SupplyConfig.SACWrappers,
-// configs/example.toml), but the request path segment is the wire form
-// ("CODE-ISSUER", dash). Both must resolve to the same overridden contract.
+// TestAssetSupply_ClassicViaSACWrapper pins that a classic asset's supply is
+// read from its derived SAC even when sac_wrappers maps a different contract
+// to it: an override may not redirect a served total to another contract.
 func TestAssetSupply_ClassicViaSACWrapper(t *testing.T) {
 	const (
 		wireAssetID = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 		configValue = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	)
+	parsed, err := canonical.ParseAsset(wireAssetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	derived, err := parsed.SacContractID()
+	if err != nil {
+		t.Fatal(err)
+	}
 	sac := map[string]string{supplyContractID: configValue}
 	f := &fakeTokenSupply{supply: clickhouse.TokenSupply{
-		ContractID: supplyContractID,
+		ContractID: derived,
 		Total:      big.NewInt(500), Mint: big.NewInt(500), Burn: big.NewInt(0), Clawback: big.NewInt(0),
 		FlowCount: 3,
 	}}
@@ -276,11 +282,11 @@ func TestAssetSupply_ClassicViaSACWrapper(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("got %d, want 200 (body=%s)", rec.Code, rec.Body.String())
 	}
-	if f.gotContractID != supplyContractID {
-		t.Errorf("classic asset should resolve to its overridden SAC %q, got %q", supplyContractID, f.gotContractID)
+	if f.gotContractID != derived {
+		t.Errorf("classic asset should resolve to its derived SAC %q, got %q", derived, f.gotContractID)
 	}
 	got := decodeSupply(t, rec.Body.Bytes())
-	if got.ContractID != supplyContractID || got.TotalSupply != "500" {
+	if got.ContractID != derived || got.TotalSupply != "500" {
 		t.Errorf("unexpected body: %+v", got)
 	}
 }
