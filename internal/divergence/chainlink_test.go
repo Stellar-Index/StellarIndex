@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	externalchainlink "github.com/Stellar-Index/StellarIndex/internal/sources/external/chainlink"
 )
 
 // fakeChainlinkRPC returns a server that responds to a latestRoundData()
@@ -254,6 +255,35 @@ func TestChainlink_DefaultFeedMapCoversCommonPairs(t *testing.T) {
 				t.Errorf("LookupQuote(%s) = %g, want positive", pair.String(), price)
 			}
 		})
+	}
+}
+
+// TestChainlink_DefaultFeedMapMatchesSource pins the invariant that
+// this package's default feed map cannot silently drift from the
+// ingest source's: same key set, same address, decimals and invert
+// per key (#1331 — two independently hardcoded copies gave a real
+// divergence between the two proxies no way to surface).
+func TestChainlink_DefaultFeedMapMatchesSource(t *testing.T) {
+	src := externalchainlink.DefaultFeedMap()
+	got := defaultChainlinkFeedMap()
+	if len(got) != len(src) {
+		t.Fatalf("defaultChainlinkFeedMap has %d entries, source has %d", len(got), len(src))
+	}
+	for k, want := range src {
+		g, ok := got[k]
+		if !ok {
+			t.Errorf("defaultChainlinkFeedMap missing key %q present in source", k)
+			continue
+		}
+		if g.Address != want.Address {
+			t.Errorf("%s: Address = %s, source has %s", k, g.Address, want.Address)
+		}
+		if g.Decimals != int(want.Decimals) {
+			t.Errorf("%s: Decimals = %d, source has %d", k, g.Decimals, want.Decimals)
+		}
+		if g.Invert != want.Invert {
+			t.Errorf("%s: Invert = %v, source has %v", k, g.Invert, want.Invert)
+		}
 	}
 }
 

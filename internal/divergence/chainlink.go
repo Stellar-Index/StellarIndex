@@ -251,36 +251,24 @@ func defaultChainlinkMaxAge(key string, builtins map[string]chainlinkFeedSpec) t
 }
 
 // defaultChainlinkFeedMap returns the built-in seed of pair →
-// AggregatorV3 contract addresses. Covers what the aggregator's
-// defaultPairs() computes by default (BTC, ETH, LINK against USD)
-// plus the major fiat-anchor reference rates (EUR, GBP, JPY against
-// USD) used by the FX-cross fallback path.
-//
-// All addresses are Chainlink mainnet (Ethereum) proxies — see
-// https://docs.chain.link/data-feeds/price-feeds/addresses. Decimals
-// is 8 on every entry (Chainlink's standard for crypto/USD and
-// fiat/USD).
-//
-// XLM/USD, USDC/USD, USDT/USD are deliberately absent — Chainlink
-// does not publish these on Ethereum mainnet at audit time
-// (docs/discovery/oracles/chainlink.md). Operators wanting cross-
-// checks on those pairs can configure them via the FeedMap once
-// Chainlink ships them.
+// AggregatorV3 contract addresses, derived from the ingest source's
+// [externalchainlink.DefaultFeedMap] so the two can't drift onto
+// different proxies for the same pair: this package owns only the
+// field it adds, MaxAge, calibrated per feed class (crypto/USD feeds
+// heartbeat at ≤1h, FX feeds at 24h and pause over market closes — a
+// Friday close legitimately ages ~72h by Sunday).
 func defaultChainlinkFeedMap() map[string]chainlinkFeedSpec {
-	const dec = 8
-	return map[string]chainlinkFeedSpec{
-		// Crypto / USD — covers our default top-of-book pairs.
-		"crypto:BTC/fiat:USD":  {Address: "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c", Decimals: dec, MaxAge: defaultChainlinkMaxAgeCrypto},
-		"crypto:ETH/fiat:USD":  {Address: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419", Decimals: dec, MaxAge: defaultChainlinkMaxAgeCrypto},
-		"crypto:LINK/fiat:USD": {Address: "0x2c1d072e956AFFC0D435Cb7AC38EF18d24d9127c", Decimals: dec, MaxAge: defaultChainlinkMaxAgeCrypto},
-		// Fiat / USD — anchors the FX-cross fallback used when the
-		// aggregator triangulates X/fiat:Y via X/fiat:USD +
-		// fiat:USD/fiat:Y. FX feeds pause over market closes, hence
-		// the weekend-tolerant MaxAge.
-		"fiat:EUR/fiat:USD": {Address: "0xb49f677943BC038e9857d61E7d053CaA2C1734C1", Decimals: dec, MaxAge: defaultChainlinkMaxAgeFX},
-		"fiat:GBP/fiat:USD": {Address: "0x5c0Ab2d9b5a7ed9f470386e82BB36A3613cDd4b5", Decimals: dec, MaxAge: defaultChainlinkMaxAgeFX},
-		"fiat:JPY/fiat:USD": {Address: "0xBcE206caE7f0ec07b545EddE332A47C2F75bbeb3", Decimals: dec, MaxAge: defaultChainlinkMaxAgeFX},
+	src := externalchainlink.DefaultFeedMap()
+	out := make(map[string]chainlinkFeedSpec, len(src))
+	for k, v := range src {
+		out[k] = chainlinkFeedSpec{
+			Address:  v.Address,
+			Decimals: int(v.Decimals),
+			Invert:   v.Invert,
+			MaxAge:   defaultChainlinkMaxAge(k, nil),
+		}
 	}
+	return out
 }
 
 // Name implements [Reference].
