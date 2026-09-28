@@ -171,7 +171,6 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 	}{
 		"empty region id":               {func(c *config.Config) { c.Region.ID = "" }, "region.id"},
 		"capitalized region":            {func(c *config.Config) { c.Region.ID = "R1" }, "region.id"},
-		"home domain is URL":            {func(c *config.Config) { c.Region.HomeDomain = "https://stellarindex.io" }, "home_domain"},
 		"unknown network":               {func(c *config.Config) { c.Stellar.Network = "futurenett" }, "network"},
 		"testnet with pubnet archive":   {func(c *config.Config) { c.Stellar.Network = "testnet" }, "history_archive_url"},
 		"futurenet with pubnet archive": {func(c *config.Config) { c.Stellar.Network = "futurenet" }, "history_archive_url"},
@@ -183,13 +182,10 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 		"missing postgres":              {func(c *config.Config) { c.Storage.PostgresDSN = "" }, "postgres_dsn"},
 		"wrong postgres scheme":         {func(c *config.Config) { c.Storage.PostgresDSN = "mysql://x" }, "postgres_dsn"},
 		"bad redis addr":                {func(c *config.Config) { c.Storage.RedisAddr = "127.0.0.1" }, "redis_addr"},
-		"bad cursor store":              {func(c *config.Config) { c.Ingestion.CursorStoreScheme = "kafka" }, "cursor_store_scheme"},
-		"zero batch":                    {func(c *config.Config) { c.Ingestion.BackfillBatchSize = 0 }, "backfill_batch_size"},
 		"duplicate source":              {func(c *config.Config) { c.Ingestion.EnabledSources = []string{"soroswap", "soroswap"} }, "duplicate"},
 		"duplicate case-fold":           {func(c *config.Config) { c.Ingestion.EnabledSources = []string{"soroswap", "Soroswap"} }, "duplicate"},
 		"empty source entry":            {func(c *config.Config) { c.Ingestion.EnabledSources = []string{"soroswap", ""} }, "empty entry"},
 		"bad reflector addr":            {func(c *config.Config) { c.Oracle.Reflector.DEXContract = "not-a-c-key" }, "dex_contract"},
-		"zero vwap window":              {func(c *config.Config) { c.Aggregate.VWAPWindowSeconds = 0 }, "vwap_window_seconds"},
 		"negative sigma":                {func(c *config.Config) { c.Aggregate.OutlierSigmaThreshold = -1 }, "outlier_sigma_threshold"},
 		"no listen":                     {func(c *config.Config) { c.API.ListenAddr = "" }, "listen_addr"},
 		"bad listen":                    {func(c *config.Config) { c.API.ListenAddr = "3000" }, "listen_addr"},
@@ -202,7 +198,6 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 		"otlp not yet wired":            {func(c *config.Config) { c.Obs.TraceExporter = "otlp" }, "trace_exporter"},
 		"trace sample over 1":           {func(c *config.Config) { c.Obs.TraceSample = 1.5 }, "trace_sample"},
 		"trace sample neg":              {func(c *config.Config) { c.Obs.TraceSample = -0.1 }, "trace_sample"},
-		"core http not url":             {func(c *config.Config) { c.Stellar.CoreHTTPEndpoint = "host:11626" }, "core_http_endpoint"},
 		"s3 endpoint not url":           {func(c *config.Config) { c.Storage.S3Endpoint = "minio-host" }, "s3_endpoint"},
 		"s3 bucket archive missing":     {func(c *config.Config) { c.Storage.S3BucketArchive = "" }, "s3_bucket_archive"},
 		"s3 bucket live missing":        {func(c *config.Config) { c.Storage.S3BucketLive = "" }, "s3_bucket_live"},
@@ -622,15 +617,6 @@ func TestValidate_ClickHouseProjectorSourceRequiresLiveSink(t *testing.T) {
 	}
 }
 
-func TestValidate_CoreHTTPEndpointOptional(t *testing.T) {
-	// Empty CoreHTTPEndpoint means "don't probe core" — valid.
-	c := config.Default()
-	c.Stellar.CoreHTTPEndpoint = ""
-	if err := c.Validate(); err != nil {
-		t.Fatalf("empty core_http_endpoint should validate: %v", err)
-	}
-}
-
 // TestValidate_SDFReserveAccountObserverOnlyAccepted — DOM-11 / CFG-01
 // (audit-2026-07-23). SupplyConfig.Validate used to unconditionally
 // require a matching reserve_balances_stroops entry for every
@@ -816,5 +802,68 @@ func TestMaxMarketCapVolumeRatioRejectsANegativeCeiling(t *testing.T) {
 	cfg.Aggregate.MaxMarketCapVolumeRatio = 0
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("0 must be accepted as the documented off switch: %v", err)
+	}
+}
+
+// TestLoadReader_GH1129DeadFieldsRetired — GH-1129: eight TOML fields
+// were parsed, defaulted and in several cases validated with hard
+// requirements while nothing outside internal/config read them. A
+// self-hosted deployment's config that set (or omitted, for
+// region.home_domain) one of these used to gate boot on a field that
+// controlled nothing. They are now on config.RetiredKeys: an old
+// config carrying them boots with a warning instead of failing.
+func TestLoadReader_GH1129DeadFieldsRetired(t *testing.T) {
+	body := `
+[region]
+id = "r1"
+
+[stellar]
+network = "pubnet"
+core_http_endpoint = "not-a-url"
+rpc_endpoints = ["http://127.0.0.1:8000"]
+history_archive_url = "https://history.stellar.org/prd/core-live/core_live_001"
+
+[ingestion]
+cursor_store_scheme = "kafka"
+backfill_batch_size = 0
+
+[aggregate]
+vwap_window_seconds = 0
+twap_window_seconds = 0
+`
+	_, err := config.LoadReader(strings.NewReader(body), "test.toml")
+	if err != nil {
+		t.Fatalf("config carrying only retired GH-1129 keys should boot with a warning, not fail: %v", err)
+	}
+}
+
+// TestLoadReader_GH1131DwellWindowsConfigurable — GH-1131:
+// ratelimit.WithDwellTime and middleware.WithMonthlyQuotaDwellTime were
+// documented as operator-tunable ("Operators with a stricter or looser
+// Redis-availability SLO tune this") but had no TOML key, so the #625
+// alert arithmetic (rule window 10m vs the hardcoded 30s dwell) could
+// not be tuned around without a rebuild. api.rate_limit_dwell /
+// api.monthly_quota_dwell must round-trip through config.
+func TestLoadReader_GH1131DwellWindowsConfigurable(t *testing.T) {
+	body := `
+[region]
+id = "r1"
+
+[stellar]
+network = "pubnet"
+
+[api]
+rate_limit_dwell    = "5m"
+monthly_quota_dwell = "2m"
+`
+	c, err := config.LoadReader(strings.NewReader(body), "test.toml")
+	if err != nil {
+		t.Fatalf("LoadReader: %v", err)
+	}
+	if c.API.RateLimitDwell != 5*time.Minute {
+		t.Errorf("api.rate_limit_dwell = %v, want 5m", c.API.RateLimitDwell)
+	}
+	if c.API.MonthlyQuotaDwell != 2*time.Minute {
+		t.Errorf("api.monthly_quota_dwell = %v, want 2m", c.API.MonthlyQuotaDwell)
 	}
 }
