@@ -154,22 +154,6 @@ func TestRateLimitKey_EscapesSubjectForParityWithBucket(t *testing.T) {
 	}
 }
 
-func TestTOML(t *testing.T) {
-	// Lowercasing is intentional — domain names are case-insensitive.
-	if k := cachekeys.TOML("Circle.com"); k.String() != "toml:circle.com" {
-		t.Errorf("TOML(Circle.com) = %q", k.String())
-	}
-	if k := cachekeys.TOML("lobstr.co"); k.String() != "toml:lobstr.co" {
-		t.Errorf("TOML(lobstr.co) = %q", k.String())
-	}
-	// 24h — stellar.toml is slow-changing issuer reference data; a
-	// short TTL just makes cold /v1/assets/{id} pay a fresh ~500ms
-	// upstream fetch (#63).
-	if cachekeys.TOMLTTL != 24*time.Hour {
-		t.Errorf("TOMLTTL = %v", cachekeys.TOMLTTL)
-	}
-}
-
 func TestMetadata(t *testing.T) {
 	xlm := canonical.NativeAsset()
 	if k := cachekeys.Metadata(xlm); k.String() != "meta:native" {
@@ -383,7 +367,6 @@ func TestAllKeysHaveDistinctPrefixes(t *testing.T) {
 		"confidence": cachekeys.Confidence(xlm, usdc, time.Minute).String(),
 		"ohlc":       cachekeys.OHLC(xlm, usdc, "1m", now).String(),
 		"rl":         cachekeys.RateLimitKey("x", now, time.Minute).String(),
-		"toml":       cachekeys.TOML("example.com").String(),
 		"meta":       cachekeys.Metadata(xlm).String(),
 		"sub":        cachekeys.Subscriber("c", "s").String(),
 		"div":        cachekeys.Divergence(canonical.Pair{Base: xlm, Quote: usdc}).String(),

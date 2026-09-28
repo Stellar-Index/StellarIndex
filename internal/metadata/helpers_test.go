@@ -1,7 +1,6 @@
 package metadata
 
 import (
-	"context"
 	"testing"
 )
 
@@ -26,18 +25,5 @@ func TestNormaliseNumeric(t *testing.T) {
 				t.Errorf("normaliseNumeric(%v) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
-	}
-}
-
-// ─── Cache.Invalidate ─────────────────────────────────────────
-
-func TestCache_Invalidate_nilRedisIsNoop(t *testing.T) {
-	// Production wiring always provides a live redis client, but
-	// Cache.Invalidate must NOT panic when rdb is nil — the call
-	// path is reachable through configurations that bypass the
-	// cache (operator tooling, dry-run modes).
-	c := &Cache{rdb: nil}
-	if err := c.Invalidate(context.Background(), "example.com"); err != nil {
-		t.Errorf("Invalidate with nil rdb returned %v, want nil", err)
 	}
 }

@@ -1646,15 +1646,6 @@ seconds. Updated per request so a popular asset keeps a fresh
 reading; unqueried assets stop updating and the `price-stale` alert
 uses `change()` to distinguish "no-update" from "updated-but-stale".
 
-### `stellarindex_sep1_cache_ops_total`
-
-Counter, label `result` (`hit` / `miss` / `upstream_error`).
-
-SEP-1 resolver cache outcomes. Operators watch `hit / total` for
-cache effectiveness and `upstream_error` rate for issuer-side
-outages. `upstream_error` deliberately doesn't cache — a 404 from
-an issuer is a real signal, typically transient.
-
 ### `stellarindex_ratelimit_fail_open_total`
 
 Counter, no labels.

@@ -9,8 +9,8 @@ import (
 
 // MetadataResolver is the read-side interface the [Overlay]
 // function uses to consult SEP-1 `[[CURRENCIES]].max_supply`
-// declarations. Production implementation: a thin adapter around
-// metadata.Cache wired in the binary.
+// declarations. Production implementation: sep1DeclaredMaxResolver
+// in internal/api/v1, over the persisted `issuers.sep1_payload`.
 //
 // SEP1MaxSupply returns the raw decimal-string from the issuer's
 // stellar.toml when present, ok=false when no declaration exists
