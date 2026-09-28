@@ -207,11 +207,11 @@ func TestLockout_MagicLinkStillWorksWhileLocked(t *testing.T) {
 	}
 
 	// The link from the same email must still sign the owner in.
-	lr.postLogin(t, email)
+	lw := lr.postLogin(t, email)
 	plaintext := lr.extractTokenFromSentEmail(t)
 	req := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token="+url.QueryEscape(plaintext), nil)
 	req.RemoteAddr = "203.0.113.5:55123"
-	attachLoginIntent(req, lr.h, plaintext)
+	attachCookies(req, lw)
 	w := httptest.NewRecorder()
 	lr.h.HandleCallback(w, req)
 	if !sessionCookieSet(w) {

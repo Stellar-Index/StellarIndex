@@ -101,9 +101,8 @@ func TestCredentialCookies_HostOnlyEvenWithHintDomain(t *testing.T) {
 	}
 }
 
-// The login-intent witness must be keyed: a digest anyone can compute
-// from a token they hold would let a cookie planted by a third party
-// satisfy the browser binding.
+// The link's browser binding must be keyed: a tag anyone can compute
+// would let a third party re-bind a link to a browser id of their choice.
 func TestHandleCallback_RefusesUnkeyedLoginIntent(t *testing.T) {
 	r := newTestRig(t)
 	lw := r.postLogin(t, "binding@example.com")
@@ -112,21 +111,22 @@ func TestHandleCallback_RefusesUnkeyedLoginIntent(t *testing.T) {
 	}
 	plaintext := r.extractTokenFromSentEmail(t)
 
+	browser := strings.Repeat("ef", MagicLinkPlaintextLen)
+	nonce := plaintext[:loginIntentBrowserLen/2]
 	sum := sha256.New()
-	sum.Write([]byte("stellarindex/login-intent/v1|"))
-	sum.Write(HashMagicLinkPlaintext(plaintext))
-	unkeyed := hex.EncodeToString(sum.Sum(nil))
+	sum.Write([]byte(loginIntentDomain + nonce + "|" + browser))
+	unkeyed := nonce + hex.EncodeToString(sum.Sum(nil)[:MagicLinkPlaintextLen/2])
 
-	cb := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token="+url.QueryEscape(plaintext), nil)
+	cb := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token="+url.QueryEscape(unkeyed), nil)
 	cb.RemoteAddr = "203.0.113.5:55123"
-	cb.AddCookie(&http.Cookie{Name: LoginIntentCookieName, Value: unkeyed})
+	cb.AddCookie(&http.Cookie{Name: LoginIntentCookieName, Value: browser})
 	w := httptest.NewRecorder()
 	r.h.HandleCallback(w, cb)
 	if w.Code != http.StatusForbidden {
-		t.Fatalf("callback with an unkeyed intent digest: status = %d, want 403", w.Code)
+		t.Fatalf("callback with an unkeyed binding tag: status = %d, want 403", w.Code)
 	}
 	if c := cookieNamed(w, SessionCookieName); c != nil && c.Value != "" {
-		t.Fatal("session minted from an unkeyed intent digest")
+		t.Fatal("session minted from an unkeyed binding tag")
 	}
 
 	// Positive control: the cookie the server itself set still binds.

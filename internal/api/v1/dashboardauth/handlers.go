@@ -462,7 +462,11 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	plaintext, hash, code, err := h.cfg.Generator.NewToken()
+	// Bind the link to THIS browser (C3-030 login CSRF): the token itself
+	// carries a MAC of this browser's login-intent id. See
+	// [LoginIntentCookieName].
+	browser := h.setLoginIntentCookie(w, r)
+	plaintext, hash, code, err := h.cfg.Generator.newBoundToken(browser)
 	if err != nil {
 		h.cfg.Logger.Error("magic link token generation failed", "err", err)
 		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/login")
@@ -480,11 +484,6 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/login")
 		return
 	}
-
-	// Bind the link to THIS browser (C3-030 login CSRF). Set before
-	// the email goes out so a link can never be live without its
-	// witness. See [LoginIntentCookieName].
-	h.setLoginIntentCookie(w, r, hash)
 
 	// Build callback URL: {dashboard}/auth/callback?token=<plaintext>
 	cb, err := url.Parse(h.cfg.DashboardBaseURL)
@@ -562,16 +561,13 @@ func (h *Handlers) loginThrottled(w http.ResponseWriter, r *http.Request, email 
 		return false
 	}
 	h.cfg.Logger.Warn("magic-link login throttled", "ip", clientIP(r).String())
-	// Emit a login-intent cookie here too, of a token that was never
-	// persisted. Without it the throttled response would be the only 200
-	// that carries no `Set-Cookie: stellarindex_login_intent` — a
-	// byte-visible oracle for "a throttle fired for this address", which is
-	// exactly what [LoginThrottle]'s contract forbids leaking. The decoy
-	// digest witnesses a token no store ever saw, so it can never redeem
-	// anything.
-	if _, decoy, _, gerr := h.cfg.Generator.NewToken(); gerr == nil {
-		h.setLoginIntentCookie(w, r, decoy)
-	}
+	// Stamp the login-intent cookie exactly as a real send does. Without
+	// it the throttled response would be the only 200 that carries no
+	// `Set-Cookie: stellarindex_login_intent` — a byte-visible oracle for
+	// "a throttle fired for this address", which is exactly what
+	// [LoginThrottle]'s contract forbids leaking. The cookie carries no
+	// per-link state, so this write is identical to a real one.
+	h.setLoginIntentCookie(w, r)
 	_ = json.NewEncoder(w).Encode(loginResponse{Status: "sent"})
 	return true
 }
@@ -647,7 +643,7 @@ func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tokenHash := HashMagicLinkPlaintext(plaintext)
-	if !h.hasLoginIntent(r, tokenHash) {
+	if !h.hasLoginIntent(r, plaintext) {
 		h.cfg.Logger.Warn("magic-link callback without a matching login-intent cookie",
 			"ip", clientIP(r).String())
 		writeProblem(w, http.StatusForbidden,

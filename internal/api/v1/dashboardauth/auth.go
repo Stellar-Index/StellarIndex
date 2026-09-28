@@ -148,9 +148,9 @@ type Generator struct {
 	// api.dashboard.code_secret_env); when left empty,
 	// Config.validate() fills a random per-process secret so neither
 	// derivation is ever unkeyed — the trade-off being that in-flight
-	// codes AND in-flight passkey ceremonies stop verifying across a
-	// restart (the magic link token itself is unaffected; both live
-	// well under a restart-cycle timescale).
+	// codes, passkey ceremonies, magic links (whose browser-binding tag
+	// it keys) and login-device markers stop verifying across a restart
+	// or another instance.
 	Secret []byte
 }
 
