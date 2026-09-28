@@ -105,8 +105,11 @@ EXCLUDE_SUBSTRINGS = ("-test.sh", "/testdata/")
 # A file is a producer when it both mentions a textfile destination and
 # renders exposition headers.  Both halves are needed: the rule files and
 # runbooks talk about textfiles without writing one, and plenty of code
-# writes files that are not textfiles.
-RE_TEXTFILE = re.compile(r"textfile", re.IGNORECASE)
+# writes files that are not textfiles.  The destination signal is any of
+# `textfile`, `node_exporter` or `.prom`: a producer whose output path
+# arrives via a flag/env value rather than a literal path never mentions
+# "textfile" at all, but still names the collector or its file extension.
+RE_TEXTFILE = re.compile(r"textfile|node_exporter|\.prom", re.IGNORECASE)
 RE_HEADER_ANY = re.compile(r"#\s(?:HELP|TYPE)\s+\S")
 
 # Prefixes that make a bare first token a metric name rather than a shell
