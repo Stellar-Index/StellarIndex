@@ -1,6 +1,7 @@
 package streaming
 
 import (
+	"encoding/json"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -182,6 +183,21 @@ func (t *topicState) bufferEmpty() bool {
 	return t.buffer == nil || t.buffer.empty()
 }
 
+// oldestBufferedID is [ring.oldestID] over a topic whose ring may not
+// exist yet. Caller holds t.mu.
+func (t *topicState) oldestBufferedID() string {
+	if t.buffer == nil {
+		return ""
+	}
+	return t.buffer.oldestID()
+}
+
+// hasEvictedBuffered is [ring.hasEvicted] over a topic whose ring may
+// not exist yet. Caller holds t.mu.
+func (t *topicState) hasEvictedBuffered() bool {
+	return t.buffer != nil && t.buffer.hasEvicted()
+}
+
 // NewHub returns a Hub with [DefaultBufferSize] per topic. Pass 0 to
 // take the default; positive values override per-topic capacity.
 //
@@ -330,18 +346,17 @@ func (h *Hub) Publish(topic, eventType string, data []byte) string {
 }
 
 // Subscribe registers a subscriber across one or more topics, with
-// an optional Last-Event-ID resume cursor. The returned chan
-// receives buffered-replay events first (in ID order), then live
-// events. Unsubscribe by calling cancel().
+// an optional Last-Event-ID resume cursor. The returned chan receives
+// any [EventTypeStreamGap] markers first, then buffered-replay events
+// in ID order ACROSS every subscribed topic (not just within one),
+// then live events. Unsubscribe by calling cancel().
 //
 // If lastEventID is empty, no replay happens — the client gets only
 // events published after Subscribe returns. If lastEventID is older
 // than the subscriber queue can hold, the OLDEST events are dropped and
-// replay starts partway through the buffer, silently. It is not
-// disconnected — see the note in the loop below. Nothing on the wire
-// tells the client events were dropped: IDs are timestamp-packed (see
-// [Generator]), not a sequence count, so the gap is not observable
-// from ID values alone (Refs #1035).
+// replay starts partway through the buffer, silently to the client —
+// see the note in the loop below — but a stream_gap marker precedes it
+// so a consumer that tracks gaps can detect the loss (Refs #1035).
 func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func()) {
 	sub := &subscription{
 		ch:     make(chan Event, subscriberQueueDepth),
@@ -372,6 +387,8 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 	// topic actually carrying traffic, so each topic is instead
 	// offered whatever of the shared budget is still unspent.
 	remaining := subscriberQueueDepth / 2
+	var merged []Event
+	var gaps []Event
 	for i, topic := range topics {
 		share := remaining
 		if len(topics) <= maxSplitReplayTopics {
@@ -379,15 +396,20 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 			share = (remaining + topicsLeft - 1) / topicsLeft // ceil(remaining/topicsLeft)
 		}
 
-		// Replay and live registration happen in ONE topic-locked
-		// critical section. Doing them in two (snapshot, then register)
-		// leaves a gap: Publish takes the same lock to push into the
-		// ring AND to snapshot subscribers, so an event landing in the
-		// gap is in neither this subscriber's replay nor its fanout and
-		// is silently lost. Interleaved this way every event is in
-		// exactly one of the two — no loss, no duplicate — and replay
-		// is queued before any live event can be, so the channel stays
-		// in ID order per topic.
+		// Replay-snapshot and live registration happen in ONE
+		// topic-locked critical section. Doing them in two (snapshot,
+		// then register) leaves a gap: Publish takes the same lock to
+		// push into the ring AND to snapshot subscribers, so an event
+		// landing in the gap is in neither this subscriber's replay nor
+		// its fanout and is silently lost. Interleaved this way every
+		// event is in exactly one of the two — no loss, no duplicate.
+		// The actual send to sub.ch is deferred until every topic has
+		// been processed (below), so replay across topics can be
+		// merge-sorted by ID instead of queued topic-by-topic — ids
+		// come from one Hub-wide generator but are minted per-topic
+		// ring, so queuing a whole topic's replay before the next
+		// walked the wire `id:` line backwards at the topic boundary
+		// (#1033).
 		h.withTopic(topic, func(t *topicState) {
 			// Replay the NEWEST events that fit, then register for live.
 			//
@@ -405,25 +427,62 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 			//
 			// Dropping the oldest instead is the honest trade: the
 			// client lands on the CURRENT price immediately and stays
-			// connected. The dropped span is not surfaced to the client
-			// today — IDs are timestamp-packed, not a sequence count, so
-			// a gap in them is not distinguishable from a quiet period
-			// (cold audit 2026-08-04; Refs #1035).
-			replay := t.replayAfter(lastEventID)
-			if len(replay) > share {
-				replay = replay[len(replay)-share:]
+			// connected.
+			oldestHeld := t.oldestBufferedID()
+			full := t.replayAfter(lastEventID)
+			trimmed := full
+			if len(trimmed) > share {
+				trimmed = trimmed[len(trimmed)-share:]
 			}
-			for _, ev := range replay {
-				if !sub.sendReplay(ev) {
-					break
-				}
+			// A gap is reported only when the ring has genuinely
+			// discarded an event the client's cursor implies it once
+			// held (hasEvictedBuffered + oldestHeld > lastEventID) —
+			// NOT merely because this subscription's replay budget
+			// trimmed a deep backlog. Budget trimming is the ordinary,
+			// documented "newest N" resume behaviour (every reconnect
+			// beyond the queue depth hits it); flagging it as a gap
+			// would fire on nearly every large resume rather than on
+			// genuine, unrecoverable loss.
+			if lastEventID != "" && oldestHeld != "" &&
+				oldestHeld > lastEventID && t.hasEvictedBuffered() {
+				gaps = append(gaps, newStreamGapEvent(topic, lastEventID, oldestHeld))
 			}
-			remaining -= len(replay)
+			merged = append(merged, trimmed...)
+			remaining -= len(trimmed)
 			t.subs[sub] = struct{}{}
 		})
 	}
 
+	sort.SliceStable(merged, func(i, j int) bool { return merged[i].ID < merged[j].ID })
+	for _, ev := range gaps {
+		if !sub.sendReplay(ev) {
+			break
+		}
+	}
+	for _, ev := range merged {
+		if !sub.sendReplay(ev) {
+			break
+		}
+	}
+
 	return sub.ch, cancel
+}
+
+// newStreamGapEvent builds the diagnostic marker Subscribe sends ahead
+// of a replay that could not cover the requested cursor. No ID of its
+// own — it must not perturb the client's Last-Event-ID tracking.
+func newStreamGapEvent(topic, requestedAfter, resumedFrom string) Event {
+	data, err := json.Marshal(struct {
+		Topic          string `json:"topic"`
+		RequestedAfter string `json:"requested_after"`
+		ResumedFrom    string `json:"resumed_from"`
+	}{Topic: topic, RequestedAfter: requestedAfter, ResumedFrom: resumedFrom})
+	if err != nil {
+		// Marshaling a struct of three strings cannot fail; keep the
+		// marker informative rather than panic if it somehow does.
+		data = []byte(`{}`)
+	}
+	return Event{Type: EventTypeStreamGap, Data: data, Timestamp: time.Now()}
 }
 
 // dropSubscriber removes sub from the named topic's subscriber set

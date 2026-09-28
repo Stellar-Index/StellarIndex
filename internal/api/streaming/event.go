@@ -46,6 +46,15 @@ type Event struct {
 	Retry time.Duration
 }
 
+// EventTypeStreamGap is the `event:` value Hub.Subscribe emits when a
+// replay cannot cover the requested Last-Event-ID — either because the
+// ring already evicted older events, or because the per-subscription
+// replay budget trimmed them. IDs are timestamp-packed, not a per-topic
+// sequence, so a gap is otherwise unobservable to the client (Refs
+// #1035). Sent before any replay event, with no ID of its own — it
+// does not advance the client's resume cursor.
+const EventTypeStreamGap = "stream_gap"
+
 // Generator is a goroutine-safe monotonic event-ID source. Each
 // call to [Generator.Next] returns a fresh 16-char lowercase hex
 // ID composed of:

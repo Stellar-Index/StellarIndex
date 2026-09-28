@@ -9,6 +9,12 @@ package streaming
 type ring struct {
 	cap    int
 	events []Event // len(events) ≤ cap
+	// evicted is set the first time push discards an event. len(events)
+	// alone can't tell a ring that has always fit under cap (its oldest
+	// event is simply the topic's first-ever publish — no loss) apart
+	// from one that has wrapped (its oldest event was NOT the first —
+	// something older existed and is gone). See [ring.hasEvicted].
+	evicted bool
 }
 
 func newRing(capacity int) *ring {
@@ -35,9 +41,28 @@ func (r *ring) push(ev Event) {
 	// small (256 default) and pushes happen at the publisher's
 	// rate (~ once per second worst-case for tip), so this is well
 	// inside the per-publish budget.
+	r.evicted = true
 	copy(r.events, r.events[1:])
 	r.events[len(r.events)-1] = ev
 }
+
+// oldestID returns the ID of the oldest event still held, or "" if the
+// ring is empty. The floor a client's replay can be trusted against —
+// anything strictly older was evicted and is gone (Refs #1035).
+func (r *ring) oldestID() string {
+	if len(r.events) == 0 {
+		return ""
+	}
+	return r.events[0].ID
+}
+
+// hasEvicted reports whether this ring has ever discarded an event.
+// A cursor older than [ring.oldestID] only signals a genuine gap when
+// this is true — otherwise the ring simply hasn't filled yet and its
+// oldest event is the topic's first-ever publish, which a stale or
+// synthetic cursor can legitimately predate without anything having
+// been lost.
+func (r *ring) hasEvicted() bool { return r.evicted }
 
 // snapshotAfter returns a copy of every buffered event with ID
 // strictly greater than lastEventID. The returned slice is in
@@ -47,10 +72,12 @@ func (r *ring) push(ev Event) {
 // When lastEventID is older than the buffer's oldest event, returns
 // EVERY buffered event still held. Events strictly between
 // lastEventID and the oldest surviving one were dropped by eviction
-// and are gone; nothing in the returned events or their IDs signals
-// that loss to the client today (IDs are timestamp-packed — see
-// [Generator] — not a per-topic sequence, so a gap in ID values is
-// indistinguishable from a quiet period with no publishes; Refs #1035).
+// and are gone; IDs alone don't signal that loss (they are
+// timestamp-packed — see [Generator] — not a per-topic sequence, so a
+// gap in ID values is indistinguishable from a quiet period with no
+// publishes), which is why [Hub.Subscribe] compares lastEventID
+// against [ring.oldestID] itself and emits an [EventTypeStreamGap]
+// marker when it detects the loss (Refs #1035).
 func (r *ring) snapshotAfter(lastEventID string) []Event {
 	if lastEventID == "" {
 		return nil
