@@ -136,6 +136,8 @@ func registerPricingMetrics() {
 		SEP41SupplyRollupAdvancesTotal,
 		AggregatorConfidenceComputeTotal,
 		AggregatorBaselineAgeSeconds,
+		AggregatorBootstrapCapped,
+		AggregatorBaselineDensityDays,
 
 		ChLiveSinkLedgersTotal, ChLiveSinkReadUndercountTotal,
 
@@ -4532,6 +4534,29 @@ var AggregatorBaselineAgeSeconds = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_aggregator_baseline_age_seconds",
 		Help: "Age in seconds of the volatility baseline row the confidence step last read, per pair.",
+	},
+	[]string{"pair"},
+)
+
+// AggregatorBootstrapCapped — 1 while the pair's last computed confidence
+// was bounded by the ADR-0019 bootstrap ceiling (0.5), 0 once its baseline
+// density clears the gate. Makes the cap's release (or a pair flapping
+// across the gate) observable without reading the cache.
+var AggregatorBootstrapCapped = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_bootstrap_capped",
+		Help: "1 when the pair's last computed confidence was bounded by the ADR-0019 bootstrap cap, else 0.",
+	},
+	[]string{"pair"},
+)
+
+// AggregatorBaselineDensityDays — the 30d baseline density the bootstrap
+// cap gates on, in days-equivalent of 1-minute buckets (at most 30;
+// negative when the 30d window has no baseline). Not calendar age.
+var AggregatorBaselineDensityDays = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_baseline_density_days",
+		Help: "30d baseline density in days-equivalent of 1-minute buckets, per pair; the bootstrap cap releases at 28.5.",
 	},
 	[]string{"pair"},
 )

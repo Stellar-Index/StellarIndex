@@ -546,6 +546,15 @@ type ConfidenceFactors struct {
 	// they did before the factor existed.
 	TriangulationAgreement float64 `json:"triangulation_agreement"`
 	TriangulationChecked   bool    `json:"triangulation_checked"`
+
+	// BaselineAgeDays is the 30d baseline DENSITY the bootstrap cap
+	// gates on, in days-equivalent of 1-minute buckets (at most 30;
+	// negative = no usable baseline) — not calendar age.
+	// BootstrapCapped is true when the ADR-0019 bootstrap ceiling (0.5)
+	// bounded confidence because that density is under 28.5, so a
+	// confidence of 0.5 may be the cap rather than the evidence.
+	BaselineAgeDays float64 `json:"baseline_age_days"`
+	BootstrapCapped bool    `json:"bootstrap_capped"`
 }
 
 // ConfidenceLooker is the read-side interface the v1 server uses

@@ -80,9 +80,9 @@ Note: after #203 (binance XLMEUR + coinbase XLM-EUR) XLM/EUR has 4 direct venues
 | BTC→ETH→GBP | ETH/BTC, ETH/GBP | X | R only after ETH/BTC code change |
 **No real second route by configuration.**
 
-## 6. The confidence floor makes even the real route nominal for 30 days
+## 6. The confidence floor makes even the real route nominal until its baseline is dense
 
-`corroborationMinConfidence` = 0.5 (router.go). `confidence.BootstrapConfidenceCap` = 0.5 for the first `BootstrapDays` = 30 days of an asset's baseline; the unscored fallback is `min(SourceCountFactor(n), 0.5)` = 0.269 at n=2. Route confidence is the minimum over legs, so XLM→BTC→GBP cannot clear 0.5 until XLM/BTC has a 30-day baseline, and afterwards only marginally (the orchestrator's own measurements put a mature sparse pair at 0.477–0.524). Expect `corroborationCount` = 1 for ≥30 days after apply and intermittent 2 afterwards. `path_count` = 2 will appear immediately and must not be read as corroboration (the 2026-08-27 template CORRECTION records exactly that mistake).
+`corroborationMinConfidence` = 0.5 (router.go). `confidence.BootstrapConfidenceCap` = 0.5 until the pair's 30-day baseline DENSITY reaches `BootstrapDensityDays` = 28.5 days-equivalent of 1-minute buckets (correction 2026-09-28: the cap gates on density, not calendar age — at least 28.5 calendar days, and never for a pair that trades in fewer than ~95% of minutes); the unscored fallback is `min(SourceCountFactor(n), 0.5)` = 0.269 at n=2. Route confidence is the minimum over legs, so XLM→BTC→GBP cannot clear 0.5 until XLM/BTC's baseline density clears 28.5, and afterwards only marginally (the orchestrator's own measurements put a mature sparse pair at 0.477–0.524). Expect `corroborationCount` = 1 for at least 28.5 days after apply — indefinitely if XLM/BTC does not trade in ~95% of minutes — and intermittent 2 afterwards; `stellarindex_aggregator_bootstrap_capped{pair="crypto:XLM/crypto:BTC"}` reading 0 is the release signal. `path_count` = 2 will appear immediately and must not be read as corroboration (the 2026-08-27 template CORRECTION records exactly that mistake).
 
 ## 7. Two design gaps
 
@@ -99,8 +99,9 @@ Note: after #203 (binance XLMEUR + coinbase XLM-EUR) XLM/EUR has 4 direct venues
 # (bitstamp xlmbtc + binance XLMBTC) gives the router an EDGE-DISJOINT
 # second route to XLM/GBP and XLM/EUR (XLM→BTC→GBP / XLM→BTC→EUR). It is
 # not min_usd_volume-gated (crypto quote); the corroboration floor (0.5)
-# is its only guard and its 30-day bootstrap cap (0.5) means
-# corroborationCount stays 1 for ~30 days after apply. Never add a
+# is its only guard and its bootstrap cap (0.5) means corroborationCount
+# stays 1 until its baseline density clears 28.5 days-equivalent (at
+# least 28.5 days after apply; never, if it trades too sparsely). Never add a
 # fiat:EUR/fiat:GBP style leg: fx snaps derive it from the same USD rows.
 pairs = [
   \"crypto:XLM/fiat:USD\", \"crypto:XLM/fiat:EUR\", \"crypto:XLM/fiat:GBP\",
@@ -115,7 +116,7 @@ pairs = [
 
 ### 8.2 Venue pairs needed for REAL corroboration
 - XLM/GBP, XLM/EUR: none required. Optional: Kraken XLM/XBT and Coinbase XLM-BTC (code) to lift XLM/BTC to 3–4 venues.
-- ETH/GBP, BTC/GBP: ETH/BTC in kraken/pairs.go, coinbase/pairs.go, bitstamp/pairs.go, binance/pairs.yaml + `aggregate.pairs`; then 30-day maturity. Until then: fallback posture (§10).
+- ETH/GBP, BTC/GBP: ETH/BTC in kraken/pairs.go, coinbase/pairs.go, bitstamp/pairs.go, binance/pairs.yaml + `aggregate.pairs`; then baseline maturity (28.5 days-equivalent density, at least 28.5 days). Until then: fallback posture (§10).
 
 ### 8.3 Code follow-ups (separate small PRs)
 1. Observability: `corroboration_count` in `compositeMeta`; gauge `stellarindex_aggregator_route_corroboration{pair,window}`; Info log `triangulation: composite published` with `path_count`, `corroboration_count`, `combined_confidence`, `diverged`.
@@ -132,7 +133,7 @@ Without it (today's binary): `redis-cli GET vwap:crypto:XLM:crypto:BTC:300` non-
 
 ## 10. Honest fallback — the posture to sign
 
-For ETH/GBP and BTC/GBP (no real disjoint route by configuration) and for XLM/GBP during the ≥30-day XLM/BTC bootstrap: **freeze-and-auto-release**. Phase 2 fires on `confidence<0.45 AND z>5 AND source_count≤1`; hold 30 min (10 min uncorroborated); auto-release after 2 consecutive calm buckets whose fresh candidate agrees within 5 % with the synthetic-usd-cross reference median (verified live 2026-08-25, `success_count=2`); ladder ×4 then operator escalation. This is bounded, real protection with a served-value pin of ≤30–40 min on a genuine move. What it must never do is claim `source_count>1` through a USD-derived FX cross. Pager: page on ladder escalation, not on engage, for the structurally-single-venue list.
+For ETH/GBP and BTC/GBP (no real disjoint route by configuration) and for XLM/GBP during the XLM/BTC bootstrap (at least 28.5 days, density-gated): **freeze-and-auto-release**. Phase 2 fires on `confidence<0.45 AND z>5 AND source_count≤1`; hold 30 min (10 min uncorroborated); auto-release after 2 consecutive calm buckets whose fresh candidate agrees within 5 % with the synthetic-usd-cross reference median (verified live 2026-08-25, `success_count=2`); ladder ×4 then operator escalation. This is bounded, real protection with a served-value pin of ≤30–40 min on a genuine move. What it must never do is claim `source_count>1` through a USD-derived FX cross. Pager: page on ladder escalation, not on engage, for the structurally-single-venue list.
 
 ### 10.1 Amendment (2026-08-29) — a composite reference may CORROBORATE or REFUTE the verdict
 
@@ -163,7 +164,7 @@ NOT EXAMINED: confidence.Compute weighting in full (used the orchestrator's reco
 - REQUIRES-LIVE-VERIFY: is the deployed aggregator binary on r1 built from a commit including dba24a90 (#203, binance XLMEUR + coinbase XLM-EUR)? Operator: `ssh r1 'stellarindex-aggregator --version'` and `psql -c "select source,count(*) from trades where base_asset='crypto:XLM' and quote_asset='fiat:EUR' and ts>now()-interval '1 hour' group by 1"` — expect 4 sources.
 - REQUIRES-LIVE-VERIFY: fx_quotes freshness for EUR and GBP and the massive key being live: `curl -s localhost:9090/api/v1/query?query=stellarindex_external_fx_last_quote_unix` and `psql -c "select ticker,max(bucket) from fx_quotes where ticker in ('EUR','GBP') group by 1"`.
 - REQUIRES-LIVE-VERIFY: current XLM/GBP confidence score distribution (is it ≥0.5 when 2 venues are active?) — `journalctl -u stellarindex-aggregator | grep 'freeze engaged' | grep 'crypto:XLM/fiat:GBP' | tail -50` and read confidence= in reason; this bounds how often the BTC→XLM→GBP nominal route could ever clear the floor.
-- Decision for the maintainer: accept freeze-and-auto-release as the signed posture for ETH/GBP and BTC/GBP (no real disjoint route by config), or fund the ETH/BTC venue-pair code change plus 30-day maturity?
+- Decision for the maintainer: accept freeze-and-auto-release as the signed posture for ETH/GBP and BTC/GBP (no real disjoint route by config), or fund the ETH/BTC venue-pair code change plus baseline maturity (at least 28.5 days, density-gated)?
 - Decision: should crypto:XLM/crypto:BTC be exposed on /v1/price as a served pair (it will be once aggregated), or should there be a served-pair allow-list distinct from the routing pair set?
 - Should the router's edge identity be extended with data-provenance keys (fx_quotes ticker rows) so USD-derived FX crosses are structurally non-disjoint, rather than relying on operators never configuring them?
 
@@ -171,7 +172,7 @@ NOT EXAMINED: confidence.Compute weighting in full (used the orchestrator's reco
 
 - Adding crypto:XLM/crypto:BTC as an aggregated pair publishes a new served VWAP key (vwap:crypto:XLM:crypto:BTC:*) that is NOT min_usd_volume-gated (dropForMinUSDVolume returns false for crypto quotes) — a dust XLM/BTC print can be served on /v1/price for that pair; the router side is protected by the 0.5 corroboration floor and highestConfidencePrice anchoring, the direct-serving side is not.
 - Setting aggregate.pairs replaces the default set: omitting any of the 12 defaults (especially native/fiat:USD, crypto:XLM/fiat:USD) silently stops publishing those keys — the API 404 class from 2026-05-04. The list in the design repeats all 12; verify against defaultPairs() at review.
-- Corroboration will remain 1 for ~30 days after apply (BootstrapConfidenceCap 0.5 == corroborationMinConfidence 0.5; unscored fallback 0.269). Anyone reading path_count=2 as success repeats the 2026-08-27 pathCount/corroborationCount confusion.
+- Corroboration will remain 1 for at least 28.5 days after apply, and indefinitely for a sparsely-traded XLM/BTC (density gate, correction 2026-09-28; BootstrapConfidenceCap 0.5 == corroborationMinConfidence 0.5; unscored fallback 0.269). Anyone reading path_count=2 as success repeats the 2026-08-27 pathCount/corroborationCount confusion.
 - Even mature, a 2-venue XLM/BTC edge scores near the 0.5 floor; corroboration may flap tick to tick, making freeze behaviour on XLM/GBP intermittent rather than clearly better. Consider adding Kraken XLM/XBT + Coinbase XLM-BTC (code) to raise SourceCountFactor.
 - Mid-freeze the widening is dead (F6): the first single-venue anomaly on XLM/GBP still freezes normally if the BTC route sample is stale, and once frozen the route contributes nothing to release; release depends entirely on the synthetic-usd-cross lens being fresh (reflector-cex + reflector-fx/chainlink FX; chainlink FX max_age 76h weekends).
 - Any future chain or pair that introduces a non-USD fiat/fiat edge (EUR/GBP, EUR/CHF via massive rows) will be counted as independent by the router — the trap is latent until a validation rule or provenance-aware edge identity exists.

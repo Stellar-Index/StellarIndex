@@ -1,6 +1,7 @@
 package confidence_test
 
 import (
+	"encoding/json"
 	"math"
 	"testing"
 
@@ -771,5 +772,59 @@ func TestCompute_BootstrapCapReleasesAtDensityThreshold(t *testing.T) {
 	if math.Abs(got.Confidence-want) > 1e-12 {
 		t.Errorf("at the gate confidence = %.17f, want the uncapped geometric mean %.17f",
 			got.Confidence, want)
+	}
+}
+
+// TestApplyBootstrapCap_SetsBootstrapCapped — the served decomposition
+// names the bootstrap ceiling and the density it gated on, so a
+// consumer can tell a capped 0.5 from a scored one. Below the 28.5
+// days-equivalent gate (and on the no-baseline sentinel) the flag is
+// set; at or above it, it is clear.
+func TestApplyBootstrapCap_SetsBootstrapCapped(t *testing.T) {
+	cases := []struct {
+		age        float64
+		wantCapped bool
+	}{
+		{-1, true},
+		{0, true},
+		{5, true},
+		{28.49, true},
+		{28.5, false},
+		{30, false},
+	}
+	for _, c := range cases {
+		in := healthyInputs()
+		in.BaselineAgeDays = c.age
+		got := confidence.Compute(in, confidence.DefaultWeights())
+		if got.Factors.BootstrapCapped != c.wantCapped {
+			t.Errorf("age %.2f: bootstrap_capped = %v, want %v", c.age, got.Factors.BootstrapCapped, c.wantCapped)
+		}
+		if got.Factors.BaselineAgeDays != c.age {
+			t.Errorf("age %.2f: baseline_age_days = %v, want the scored density %v", c.age, got.Factors.BaselineAgeDays, c.age)
+		}
+		if c.wantCapped && got.Confidence != confidence.BootstrapConfidenceCap {
+			t.Errorf("age %.2f: capped confidence = %v, want %v", c.age, got.Confidence, confidence.BootstrapConfidenceCap)
+		}
+		if !c.wantCapped && got.Confidence <= confidence.BootstrapConfidenceCap {
+			t.Errorf("age %.2f: uncapped confidence = %v, want above %v", c.age, got.Confidence, confidence.BootstrapConfidenceCap)
+		}
+	}
+}
+
+// TestCompute_NonFiniteBaselineAgeStillEncodes — the Score is cached as
+// JSON, and encoding/json rejects NaN. An unknown density applies no
+// cap and serves as the negative no-baseline reading.
+func TestCompute_NonFiniteBaselineAgeStillEncodes(t *testing.T) {
+	in := healthyInputs()
+	in.BaselineAgeDays = math.NaN()
+	got := confidence.Compute(in, confidence.DefaultWeights())
+	if got.Factors.BootstrapCapped {
+		t.Error("NaN age: bootstrap_capped = true, but applyBootstrapCap applies no cap on NaN")
+	}
+	if got.Factors.BaselineAgeDays != -1 {
+		t.Errorf("NaN age: baseline_age_days = %v, want -1", got.Factors.BaselineAgeDays)
+	}
+	if _, err := json.Marshal(got); err != nil {
+		t.Fatalf("Score with NaN baseline age does not encode: %v", err)
 	}
 }

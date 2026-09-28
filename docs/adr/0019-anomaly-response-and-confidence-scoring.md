@@ -671,6 +671,14 @@ customers and on-call operators can see WHY confidence dropped):
 > `baseline_age_days` on the wire. The block is preserved as the
 > authoring-time sketch.
 
+> **Amendment (2026-09-28, GH #1109) — `baseline_age_days` and
+> `bootstrap_capped` now ship.** `confidence_factors` additionally
+> carries `baseline_age_days` (baseline DENSITY in days-equivalent,
+> not calendar age — see the 2026-09-28 amendment under "Bootstrap
+> (warmup) policy") and `bootstrap_capped` (true when the 0.5
+> bootstrap ceiling bounded the score). The other raw quantities in
+> the sketch above still do not ship.
+
 ### Freeze policy
 
 Freeze fires only when **all three** of the following hold:
@@ -866,6 +874,29 @@ automatically.
 > pair without a usable baseline publishes no `confidence` at all (the
 > DOC-05 amendment at the top); its absence is the signal a customer
 > can gate on.
+
+> **Amendment (2026-09-28, GH #1107 / #1109 / #1110) — the 30-day rule
+> ships as a 28.5 days-equivalent DENSITY gate.** No calendar age
+> reaches the scorer. `confidence.Inputs.BaselineAgeDays` is the count
+> of 1-minute buckets behind the 30-day baseline divided by 1440, so it
+> is bounded above by 30.0 and reaches it only for a pair that traded
+> in every minute of the window. The cap releases at
+> `BootstrapDensityDays` = 28.5 (95% of the window;
+> `internal/aggregate/confidence/score.go`). Buckets accrue at no more
+> than 1,440 a day, so clearing 28.5 proves at least 28.5 calendar days
+> of observed history: the gate is never looser than the 30-day rule by
+> more than 1.5 days, and a calendar-mature pair that trades sparsely
+> stays capped indefinitely (the W8.8 decision in
+> `internal/aggregate/orchestrator/confidence.go`). What a customer can
+> gate on is `confidence_factors.baseline_age_days` (that density, at
+> most 30, negative when no 30-day baseline exists) and
+> `confidence_factors.bootstrap_capped` (true when the 0.5 ceiling
+> bounded the score). Operators read the per-pair gauges
+> `stellarindex_aggregator_bootstrap_capped` and
+> `stellarindex_aggregator_baseline_density_days`. The release is a
+> step, not a ramp: a pair whose density hovers at 28.5 can move
+> between the capped and the scored value from one refresh to the
+> next, and the gauge shows that. No hysteresis band is applied.
 
 ## Consequences
 

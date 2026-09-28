@@ -3333,6 +3333,24 @@ one whose refresh keeps failing, which the aggregate
 `stellarindex_aggregator_baseline_refresh_total` counter does not show.
 Past 86400 s the pair reads as bootstrap (`baseline_stale` above).
 
+### `stellarindex_aggregator_bootstrap_capped`
+
+Gauge, label `pair`. 1 when the pair's last computed confidence was
+bounded by the ADR-0019 bootstrap ceiling (0.5), 0 when it was served
+uncapped. Mirrors `confidence_factors.bootstrap_capped` on `/v1/price`.
+Set only when a confidence is computed, so a pair on `baseline_missing`
+or `baseline_stale` keeps its last value. A pair alternating between 0
+and 1 is one whose baseline density sits at the gate.
+
+### `stellarindex_aggregator_baseline_density_days`
+
+Gauge, label `pair`. The 30-day baseline density the bootstrap cap
+gates on: 1-minute buckets behind the window divided by 1440, at most
+30, negative when the pair has no 30-day baseline. The cap releases at
+28.5. This is sample density, not calendar age — a pair trading in 200
+minutes a day reads about 4.2 however long it has existed. Mirrors
+`confidence_factors.baseline_age_days`.
+
 ### `stellarindex_anomaly_freeze_engaged_total`
 
 Counter, label `class` (`stablecoin` / `treasury` / `crypto` /
