@@ -388,3 +388,54 @@ func TestParseAPIError_CoverageExtensionMembers(t *testing.T) {
 		}
 	})
 }
+
+// TestParseAPIError_MonthlyQuotaExtensionMembers pins the two
+// extension members middleware.MonthlyQuota attaches to its 429s —
+// `monthly_quota` and `month_to_date` — through parseAPIError and onto
+// APIError. Same drift class as TestParseAPIError_CoverageExtensionMembers:
+// a member landing in the wire body with no SDK field to decode into.
+func TestParseAPIError_MonthlyQuotaExtensionMembers(t *testing.T) {
+	const ct = "application/problem+json"
+
+	t.Run("exceeded carries both members", func(t *testing.T) {
+		body := []byte(`{"type":"https://api.stellarindex.io/errors/monthly-quota-exceeded",` +
+			`"title":"Monthly quota exceeded","status":429,` +
+			`"detail":"The account's monthly request quota has been reached.",` +
+			`"instance":"/v1/assets","monthly_quota":1000000,"month_to_date":1000000}`)
+		e := parseAPIError(429, ct, "", body)
+		if !e.IsRateLimited() {
+			t.Fatalf("status = %d, want 429", e.Status)
+		}
+		if e.MonthlyQuota == nil || *e.MonthlyQuota != 1000000 {
+			t.Errorf("MonthlyQuota = %v, want 1000000", e.MonthlyQuota)
+		}
+		if e.MonthToDate == nil || *e.MonthToDate != 1000000 {
+			t.Errorf("MonthToDate = %v, want 1000000", e.MonthToDate)
+		}
+	})
+
+	t.Run("unavailable omits month_to_date", func(t *testing.T) {
+		body := []byte(`{"type":"https://api.stellarindex.io/errors/monthly-quota-unavailable",` +
+			`"title":"Monthly quota temporarily unavailable","status":429,` +
+			`"instance":"/v1/assets","monthly_quota":1000000}`)
+		e := parseAPIError(429, ct, "", body)
+		if e.MonthlyQuota == nil || *e.MonthlyQuota != 1000000 {
+			t.Errorf("MonthlyQuota = %v, want 1000000", e.MonthlyQuota)
+		}
+		if e.MonthToDate != nil {
+			t.Errorf("MonthToDate = %v, want nil: the counter read failed", e.MonthToDate)
+		}
+	})
+
+	t.Run("plain rate limit carries neither member", func(t *testing.T) {
+		body := []byte(`{"type":"https://api.stellarindex.io/errors/rate-limited",` +
+			`"title":"Rate limit exceeded","status":429,"instance":"/v1/assets"}`)
+		e := parseAPIError(429, ct, "", body)
+		if e.MonthlyQuota != nil {
+			t.Errorf("MonthlyQuota = %v, want nil from a plain rate-limit body", e.MonthlyQuota)
+		}
+		if e.MonthToDate != nil {
+			t.Errorf("MonthToDate = %v, want nil from a plain rate-limit body", e.MonthToDate)
+		}
+	})
+}
