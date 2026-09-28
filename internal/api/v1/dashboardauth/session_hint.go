@@ -43,14 +43,15 @@ const SessionHintCookieName = "stellarindex_session_present"
 const sessionHintValue = "1"
 
 // setSessionHintCookie writes the presence flag alongside a freshly
-// minted session cookie. Every attribute except HttpOnly mirrors the
-// session cookie so the pair shares one scope and one lifetime.
+// minted session cookie, with the same lifetime. Unlike the host-only
+// session cookie it may carry [Config.SessionHintDomain] so the
+// explorer's origin can read it.
 func (h *Handlers) setSessionHintCookie(w http.ResponseWriter, expires time.Time) {
 	http.SetCookie(w, &http.Cookie{
 		Name:    SessionHintCookieName,
 		Value:   sessionHintValue,
 		Path:    "/",
-		Domain:  h.cfg.CookieDomain,
+		Domain:  h.cfg.SessionHintDomain,
 		Expires: expires,
 		// Deliberately readable from JavaScript — that is the whole
 		// point of this cookie. It is safe because the value is a
@@ -70,7 +71,7 @@ func (h *Handlers) clearSessionHintCookie(w http.ResponseWriter) {
 		Name:     SessionHintCookieName,
 		Value:    "",
 		Path:     "/",
-		Domain:   h.cfg.CookieDomain,
+		Domain:   h.cfg.SessionHintDomain,
 		MaxAge:   -1,
 		HttpOnly: false,
 		Secure:   h.cfg.CookieSecure,

@@ -31,13 +31,15 @@ import (
 // digest of the token it just minted; `GET /v1/auth/callback`
 // refuses to mint a session unless the presented token's digest is
 // in the cookie. The attacker cannot set a cookie on the victim's
-// browser for the API's own host, so their link can no longer be
+// browser for the API's own host (the __Host- prefix refuses one
+// planted from a sibling host) and cannot compute a valid slot
+// without the server secret, so their link can no longer be
 // completed anywhere but their own browser.
 //
 // Deliberately distinct from [SessionCookieName] so a browser that
 // holds both can't have one surface's credential read as the
 // other's, matching that constant's own rationale.
-const LoginIntentCookieName = "stellarindex_login_intent"
+const LoginIntentCookieName = "__Host-stellarindex_login_intent"
 
 // maxLoginIntents caps how many concurrently-live magic links one
 // browser may still complete. A user who taps "email me a link"
@@ -48,7 +50,7 @@ const LoginIntentCookieName = "stellarindex_login_intent"
 // separators ≈ 194 bytes).
 const maxLoginIntents = 3
 
-// loginIntentDigestLen is the hex length of one sha256 digest.
+// loginIntentDigestLen is the hex length of one HMAC-SHA256 digest.
 const loginIntentDigestLen = sha256.Size * 2
 
 // loginIntentSeparator joins the digests inside the cookie value.
@@ -57,15 +59,19 @@ const loginIntentDigestLen = sha256.Size * 2
 // never merge two slots.
 const loginIntentSeparator = "."
 
+// loginIntentDomain separates this MAC from the other uses of the
+// server secret (code derivation, passkey ceremony).
+const loginIntentDomain = "stellarindex/login-intent/v2|"
+
 // loginIntentDigest derives the cookie slot for a magic-link token
-// from the token's stored hash. Domain-separated so the value can
-// never be confused with, or replayed as, the token hash itself —
-// the cookie is a binding witness, not a credential.
-func loginIntentDigest(tokenHash []byte) string {
-	h := sha256.New()
-	h.Write([]byte("stellarindex/login-intent/v1|"))
-	h.Write(tokenHash)
-	return hex.EncodeToString(h.Sum(nil))
+// from the token's stored hash, keyed by the server secret so only
+// this server can mint a slot [Handlers.hasLoginIntent] accepts. The
+// cookie is a binding witness, not a credential.
+func loginIntentDigest(secret, tokenHash []byte) string {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(loginIntentDomain))
+	mac.Write(tokenHash)
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // isLoginIntentDigest reports whether s has the exact shape this
@@ -94,7 +100,7 @@ func isLoginIntentDigest(s string) bool {
 // TTL mirrors MagicLinkTTL: the cookie is worthless the moment the
 // token it witnesses expires, so it should not outlive it.
 func (h *Handlers) setLoginIntentCookie(w http.ResponseWriter, r *http.Request, tokenHash []byte) {
-	intents := []string{loginIntentDigest(tokenHash)}
+	intents := []string{loginIntentDigest(h.cfg.Generator.Secret, tokenHash)}
 	if c, err := r.Cookie(LoginIntentCookieName); err == nil {
 		for _, prev := range strings.Split(c.Value, loginIntentSeparator) {
 			if len(intents) >= maxLoginIntents {
@@ -106,16 +112,9 @@ func (h *Handlers) setLoginIntentCookie(w http.ResponseWriter, r *http.Request, 
 			intents = append(intents, prev)
 		}
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     LoginIntentCookieName,
-		Value:    strings.Join(intents, loginIntentSeparator),
-		Path:     "/",
-		Domain:   h.cfg.CookieDomain,
-		MaxAge:   int(h.cfg.MagicLinkTTL / time.Second),
-		HttpOnly: true,
-		Secure:   h.cfg.CookieSecure,
-		SameSite: sessionSameSite(),
-	})
+	c := credentialCookie(LoginIntentCookieName, strings.Join(intents, loginIntentSeparator))
+	c.MaxAge = int(h.cfg.MagicLinkTTL / time.Second)
+	http.SetCookie(w, c)
 }
 
 // clearLoginIntentCookie drops the witness once a link has been
@@ -123,16 +122,9 @@ func (h *Handlers) setLoginIntentCookie(w http.ResponseWriter, r *http.Request, 
 // single-use), just hygiene: a spent binding shouldn't linger in
 // the browser for the rest of the TTL.
 func (h *Handlers) clearLoginIntentCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     LoginIntentCookieName,
-		Value:    "",
-		Path:     "/",
-		Domain:   h.cfg.CookieDomain,
-		MaxAge:   -1,
-		HttpOnly: true,
-		Secure:   h.cfg.CookieSecure,
-		SameSite: sessionSameSite(),
-	})
+	c := credentialCookie(LoginIntentCookieName, "")
+	c.MaxAge = -1
+	http.SetCookie(w, c)
 }
 
 // LoginDeviceCookieName marks a browser that has completed a sign-in for
@@ -166,7 +158,7 @@ func (h *Handlers) setLoginDeviceCookie(w http.ResponseWriter, email string) {
 		Name:     LoginDeviceCookieName,
 		Value:    strconv.FormatInt(expires, 10) + loginIntentSeparator + loginDeviceMAC(h.cfg.Generator.Secret, email, expires),
 		Path:     "/v1/auth/login",
-		Domain:   h.cfg.CookieDomain,
+		Domain:   h.cfg.SessionHintDomain,
 		MaxAge:   int(loginDeviceTTL / time.Second),
 		HttpOnly: true,
 		Secure:   h.cfg.CookieSecure,
@@ -198,12 +190,12 @@ func (h *Handlers) hasLoginDeviceProof(r *http.Request, email string) bool {
 // Constant-time compared per slot: the digest is derived from the
 // token hash, which is derived from the emailed plaintext, so a
 // timing oracle here would leak progress on the token itself.
-func hasLoginIntent(r *http.Request, tokenHash []byte) bool {
+func (h *Handlers) hasLoginIntent(r *http.Request, tokenHash []byte) bool {
 	c, err := r.Cookie(LoginIntentCookieName)
 	if err != nil {
 		return false
 	}
-	want := []byte(loginIntentDigest(tokenHash))
+	want := []byte(loginIntentDigest(h.cfg.Generator.Secret, tokenHash))
 	for _, got := range strings.Split(c.Value, loginIntentSeparator) {
 		if subtle.ConstantTimeCompare([]byte(got), want) == 1 {
 			return true

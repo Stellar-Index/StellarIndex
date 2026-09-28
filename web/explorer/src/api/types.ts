@@ -3970,7 +3970,7 @@ export interface paths {
          *     signed Stellar challenge). This endpoint is the entry point
          *     for the cookie-based in-site dashboard at stellarindex.io/account.
          *
-         *     Sets a short-lived, HttpOnly `stellarindex_login_intent`
+         *     Sets a short-lived, HttpOnly `__Host-stellarindex_login_intent`
          *     cookie that binds the emailed link to THIS browser;
          *     `/auth/callback` refuses to mint a session without it, so a
          *     link mailed on to a third party cannot sign that third party
@@ -3999,7 +3999,7 @@ export interface paths {
          * Customer dashboard — consume a magic-link token + mint a session cookie.
          * @description Reads the `token` query parameter, atomically marks it
          *     consumed in `magic_link_tokens`, and on success sets an
-         *     HttpOnly + Secure session cookie (`stellarindex_session`)
+         *     HttpOnly + Secure session cookie (`__Host-stellarindex_session`)
          *     and redirects (303) into the dashboard.
          *
          *     First-time emails get a free-tier account + owner-role
@@ -4035,7 +4035,7 @@ export interface paths {
          *     `/auth/callback`) and a 6-digit numeric code; this endpoint
          *     consumes the code. The SPA calls it via a credentialed `fetch`
          *     — on success it sets the same HttpOnly + Secure session cookie
-         *     (`stellarindex_session`) the callback does and returns
+         *     (`__Host-stellarindex_session`) the callback does and returns
          *     `{status:"ok"}` (no redirect; the SPA navigates itself).
          *
          *     First-time emails get a free-tier account + owner-role user
@@ -4103,7 +4103,7 @@ export interface paths {
          *     accepted, so a passkey sign-in is never possession-only.
          *
          *     Sets an HMAC-signed, HttpOnly ceremony cookie
-         *     (`stellarindex_passkey_ceremony`) binding the challenge to
+         *     (`__Host-stellarindex_passkey_ceremony`) binding the challenge to
          *     this browser; `/auth/passkey/finish-login` requires it. The
          *     challenge is valid for 5 minutes — enforced server-side, not
          *     merely by the cookie's `Max-Age` — and is single-use.
@@ -4133,7 +4133,7 @@ export interface paths {
          * @description Verifies the authenticator's assertion (the JSON produced by
          *     `navigator.credentials.get()`) against the ceremony cookie's
          *     challenge and the stored credential public key, then sets the
-         *     SAME HttpOnly session cookie (`stellarindex_session`) the
+         *     SAME HttpOnly session cookie (`__Host-stellarindex_session`) the
          *     email-code and magic-link flows mint, and returns
          *     `{status:"ok"}`.
          *
@@ -21219,7 +21219,7 @@ export interface operations {
             303: {
                 headers: {
                     /**
-                     * @description Three cookies. `stellarindex_session` is the HttpOnly +
+                     * @description Three cookies. `__Host-stellarindex_session` is the HttpOnly +
                      *     Secure session credential. `stellarindex_session_present`
                      *     repeats its Domain, Path, Secure, SameSite and expiry
                      *     without HttpOnly, and carries the constant `1` — a
@@ -21242,7 +21242,7 @@ export interface operations {
             /**
              * @description The link was opened in a browser that did not request it.
              *     `POST /auth/login` sets a short-lived, HttpOnly
-             *     `stellarindex_login_intent` cookie binding the link to the
+             *     `__Host-stellarindex_login_intent` cookie binding the link to the
              *     requesting browser; without a matching witness no session
              *     is minted (login-CSRF defence). The token is NOT consumed,
              *     so the originating browser can still complete the sign-in.
@@ -21294,7 +21294,7 @@ export interface operations {
             200: {
                 headers: {
                     /**
-                     * @description Three cookies. `stellarindex_session` is the HttpOnly +
+                     * @description Three cookies. `__Host-stellarindex_session` is the HttpOnly +
                      *     Secure session credential. `stellarindex_session_present`
                      *     repeats its Domain, Path, Secure, SameSite and expiry
                      *     without HttpOnly, and carries the constant `1` — a
@@ -21362,7 +21362,7 @@ export interface operations {
             200: {
                 headers: {
                     /**
-                     * @description Expires `stellarindex_session` and
+                     * @description Expires `__Host-stellarindex_session` and
                      *     `stellarindex_session_present`.
                      */
                     "Set-Cookie"?: string;
@@ -21442,7 +21442,7 @@ export interface operations {
             200: {
                 headers: {
                     /**
-                     * @description Three cookies. `stellarindex_session` is the HttpOnly +
+                     * @description Three cookies. `__Host-stellarindex_session` is the HttpOnly +
                      *     Secure session credential. `stellarindex_session_present`
                      *     repeats its Domain, Path, Secure, SameSite and expiry
                      *     without HttpOnly, and carries the constant `1` — a

@@ -20,7 +20,7 @@ import (
 func prodCookieRig(t *testing.T) *testRig {
 	t.Helper()
 	r := newTestRig(t)
-	r.cfg.CookieDomain = ".stellarindex.io"
+	r.cfg.SessionHintDomain = ".stellarindex.io"
 	r.cfg.CookieSecure = true
 	return r
 }
@@ -63,10 +63,13 @@ func TestMintSession_SetsSessionHintBesideSessionCookie(t *testing.T) {
 		t.Error("hint cookie is HttpOnly — the explorer cannot read it, so the probe can never be skipped")
 	}
 
-	// Same scope and same lifetime as the session cookie, or the pair
-	// can disagree about whether a session exists.
-	if hint.Domain != session.Domain {
-		t.Errorf("hint Domain = %q, session Domain = %q", hint.Domain, session.Domain)
+	// The hint carries the parent domain so the explorer's origin can
+	// read it; the credential it shadows stays host-only.
+	if hint.Domain != "stellarindex.io" {
+		t.Errorf("hint Domain = %q, want the configured parent domain", hint.Domain)
+	}
+	if session.Domain != "" {
+		t.Errorf("session Domain = %q, want host-only", session.Domain)
 	}
 	if hint.Path != session.Path {
 		t.Errorf("hint Path = %q, session Path = %q", hint.Path, session.Path)
@@ -166,19 +169,16 @@ func TestHandleLogout_ClearsSessionHint(t *testing.T) {
 		t.Errorf("cleared hint still carries a value: %q", hint.Value)
 	}
 	// Deleting a cookie requires the SAME Domain and Path it was set
-	// with; a mismatch leaves the original in the browser. Compared
-	// against the session-clearing cookie in this same response rather
-	// than against the configured value, because the Set-Cookie parser
-	// normalises the leading dot away on read-back.
-	cleared := cookieNamed(w, SessionCookieName)
-	if cleared == nil {
+	// with; a mismatch leaves the original in the browser. The
+	// Set-Cookie parser normalises the leading dot away on read-back.
+	if hint.Domain != "stellarindex.io" {
+		t.Errorf("clear Domain = %q, want the hint's configured domain", hint.Domain)
+	}
+	if hint.Path != "/" {
+		t.Errorf("clear Path = %q, want /", hint.Path)
+	}
+	if cookieNamed(w, SessionCookieName) == nil {
 		t.Fatal("logout did not clear the session cookie")
-	}
-	if hint.Domain != cleared.Domain {
-		t.Errorf("clear Domain = %q, session clear Domain = %q", hint.Domain, cleared.Domain)
-	}
-	if hint.Path != cleared.Path {
-		t.Errorf("clear Path = %q, session clear Path = %q", hint.Path, cleared.Path)
 	}
 }
 

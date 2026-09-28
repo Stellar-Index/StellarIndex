@@ -1499,15 +1499,15 @@ type DashboardConfig struct {
 
 	ResendAPIKeyEnv string `toml:"resend_api_key_env" doc:"Environment variable holding the Resend transactional-email API key (re_…). Empty value leaves the dashboard auth flow on a NoopSender — magic-link tokens land in the API logs only, useful for local dev. Production sets this." default:"STELLARINDEX_RESEND_API_KEY"`
 
-	CodeSecretEnv string `toml:"code_secret_env" doc:"Environment variable holding the server secret that keys the 6-digit email-code derivation (HMAC over the stored token hash — without it a Postgres read would reveal every in-flight sign-in code) AND the WebAuthn passkey-ceremony and login-device cookie MACs. Any long random string (32+ bytes). Unset/empty env falls back to a random per-process secret: still keyed, but in-flight codes, passkey ceremonies and browsers' login-device markers stop verifying across a restart." default:"STELLARINDEX_DASHBOARD_CODE_SECRET"`
+	CodeSecretEnv string `toml:"code_secret_env" doc:"Environment variable holding the server secret that keys the 6-digit email-code derivation (HMAC over the stored token hash — without it a Postgres read would reveal every in-flight sign-in code) AND the WebAuthn passkey-ceremony, magic-link login-intent and login-device cookie MACs. Any long random string (32+ bytes). Unset/empty env falls back to a random per-process secret: still keyed, but in-flight codes, passkey ceremonies, magic links and browsers' login-device markers stop verifying across a restart or another instance." default:"STELLARINDEX_DASHBOARD_CODE_SECRET"`
 
 	MagicLinkTTLMinutes int `toml:"magic_link_ttl_minutes" doc:"Magic-link validity in minutes. Default 15 — long enough for an email to arrive + the user to switch contexts; short enough to limit replay-window if a phone is briefly unattended." default:"15"`
 
 	SessionTTLDays int `toml:"session_ttl_days" doc:"Session-cookie lifetime in days. Default 30 — matches typical SaaS dashboards; users sign in monthly without re-authing." default:"30"`
 
-	CookieSecure bool `toml:"cookie_secure" doc:"Set the Secure flag on the session cookie. Production = true; dev (http://localhost) = false." default:"true"`
+	CookieSecure bool `toml:"cookie_secure" doc:"Set the Secure flag on the JS-readable session-presence hint cookie. The credential cookies (session, login intent, passkey ceremony) are __Host- prefixed and always Secure; browsers treat http://localhost as a secure context. Production = true; dev (http://localhost) may set false." default:"true"`
 
-	CookieDomain string `toml:"cookie_domain" doc:"Cookie Domain attribute. Empty (default) means a host-only cookie scoped to the API host. Set to '.stellarindex.io' if a future surface needs the cookie shared across subdomains." default:""`
+	CookieDomain string `toml:"cookie_domain" doc:"Domain attribute of the JS-readable session-presence hint cookie only, so an explorer on a sibling host can see that a session exists; it carries no credential. Empty (default) means host-only. The credential cookies (session, login intent, passkey ceremony) are always host-only __Host- cookies and ignore this setting." default:""`
 }
 
 // StreamingConfig configures the closed-bucket SSE producer

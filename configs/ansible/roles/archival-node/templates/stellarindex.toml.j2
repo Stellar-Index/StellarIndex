@@ -401,8 +401,9 @@ status_services = [{{ '"indexer", "aggregator"' if run_aggregator | default(true
 anon_rate_limit_per_min = 6000
 key_rate_limit_per_min = 6000
 
-# In-site dashboard (magic-link login). base_url / cookie_domain default
-# empty; r1 renders the production explorer origin and parent domain.
+# In-site dashboard (magic-link login). cookie_domain scopes only the
+# JS-readable session-presence hint (r1 renders the parent domain so the
+# explorer can read it); credential cookies are always host-only __Host-.
 [api.dashboard]
 base_url           = "{{ stellarindex_dashboard_base_url | default('https://stellarindex.io') }}"
 email_from         = "{{ stellarindex_dashboard_email_from | default('Stellar Index <hello@stellarindex.io>') }}"

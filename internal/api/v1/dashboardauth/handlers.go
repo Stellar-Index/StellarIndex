@@ -142,15 +142,13 @@ type Config struct {
 	// days, fixed: TouchSession records activity but never extends
 	// expires_at.
 	SessionTTL time.Duration
-	// CookieSecure — set Secure flag on the cookie. Production
-	// = true; local dev = false (the dashboard runs over
-	// http://localhost during dev).
+	// CookieSecure — Secure flag on the session-presence hint.
+	// Credential cookies are always Secure (see [credentialCookie]).
 	CookieSecure bool
-	// CookieDomain — empty = host-only cookie scoped to the API
-	// host. Set to ".stellarindex.io" (as prod does) so the apex
-	// explorer and the api subdomain share the session cookie on
-	// credentialed cross-origin requests.
-	CookieDomain string
+	// SessionHintDomain — Domain attribute of the session-presence
+	// hint only, so an explorer on a sibling host can read it. Empty
+	// = host-only. Credential cookies never carry a Domain.
+	SessionHintDomain string
 
 	// passkeyBeginLimiter caps anonymous begin-login ceremonies per
 	// client IP; installed by validate(), never configurable off.
@@ -176,11 +174,11 @@ func (c *Config) validate() error {
 		// The 6-digit code derivation must NEVER run unkeyed (that is
 		// the vulnerability this secret exists to close — see
 		// [Generator.CodeForHash]). No configured secret → random
-		// per-process one, which also keys the passkey ceremony and
-		// login-device cookies. All stay unforgeable, but none verifies
-		// on another instance or after a restart: in-flight codes,
-		// passkey ceremonies and login-device markers fail (the magic
-		// link keeps working).
+		// per-process one, which also keys the passkey ceremony,
+		// login-device and login-intent cookies. All stay unforgeable,
+		// but none verifies on another instance or after a restart:
+		// in-flight codes, passkey ceremonies, login-device markers and
+		// magic links all fail and must be re-requested.
 		secret := make([]byte, 32)
 		if _, err := c.Generator.Read(secret); err != nil {
 			return fmt.Errorf("dashboardauth: generate code secret: %w", err)
@@ -590,6 +588,21 @@ func sessionSameSite() http.SameSite {
 	return http.SameSiteLaxMode
 }
 
+// credentialCookie is the only constructor for the cookies that carry
+// or bind a credential. It takes no Domain on purpose: each such cookie
+// is named __Host-, which browsers store only when Secure, Path=/ and
+// host-only, so no sibling host can read, overwrite or plant it.
+func credentialCookie(name, value string) *http.Cookie {
+	return &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: sessionSameSite(),
+	}
+}
+
 // HandleCallback consumes a magic-link token, finds-or-creates
 // the user (single-org v1: each email gets one account on first
 // signup), and issues a session cookie.
@@ -607,7 +620,7 @@ func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tokenHash := HashMagicLinkPlaintext(plaintext)
-	if !hasLoginIntent(r, tokenHash) {
+	if !h.hasLoginIntent(r, tokenHash) {
 		h.cfg.Logger.Warn("magic-link callback without a matching login-intent cookie",
 			"ip", clientIP(r).String())
 		writeProblem(w, http.StatusForbidden,
@@ -934,16 +947,9 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 		return fmt.Errorf("create session: %w", err)
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     SessionCookieName,
-		Value:    token,
-		Path:     "/",
-		Domain:   h.cfg.CookieDomain,
-		Expires:  sess.ExpiresAt,
-		HttpOnly: true,
-		Secure:   h.cfg.CookieSecure,
-		SameSite: sessionSameSite(),
-	})
+	sc := credentialCookie(SessionCookieName, token)
+	sc.Expires = sess.ExpiresAt
+	http.SetCookie(w, sc)
 	// The JS-readable shadow of the cookie above, written in the same
 	// response so the two can never disagree about whether a session
 	// was just issued. See [SessionHintCookieName].
@@ -987,16 +993,9 @@ func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	// Clear the cookie regardless — even an invalid one, so
 	// the browser stops sending it.
-	http.SetCookie(w, &http.Cookie{
-		Name:     SessionCookieName,
-		Value:    "",
-		Path:     "/",
-		Domain:   h.cfg.CookieDomain,
-		MaxAge:   -1,
-		HttpOnly: true,
-		Secure:   h.cfg.CookieSecure,
-		SameSite: sessionSameSite(),
-	})
+	cleared := credentialCookie(SessionCookieName, "")
+	cleared.MaxAge = -1
+	http.SetCookie(w, cleared)
 	// Drop the presence flag in the same response. A hint left behind
 	// here would send the explorer back for one more 401 per page load
 	// until it expired on its own.

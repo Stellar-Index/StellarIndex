@@ -640,7 +640,7 @@ code_secret_env        = "STELLARINDEX_DASHBOARD_CODE_SECRET"
 magic_link_ttl_minutes = 15
 session_ttl_days       = 30
 cookie_secure           = true
-# cookie_domain         = ""   # host-only cookie unless set
+# cookie_domain         = ""   # session-presence hint only; credential cookies are always host-only
 
 # ──────────────────────────────────────────────────────────────────
 # Metadata — asset metadata overlay (issuer -> home-domain).

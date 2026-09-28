@@ -2545,7 +2545,9 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 		MagicLinkTTL:     time.Duration(cfg.MagicLinkTTLMinutes) * time.Minute,
 		SessionTTL:       time.Duration(cfg.SessionTTLDays) * 24 * time.Hour,
 		CookieSecure:     cfg.CookieSecure,
-		CookieDomain:     cfg.CookieDomain,
+		// cookie_domain scopes only the presence hint; credential
+		// cookies are always host-only __Host- cookies.
+		SessionHintDomain: cfg.CookieDomain,
 	}
 	wireDashboardAuthThrottles(&authCfg, rdb, logger)
 	authH, err := dashboardauth.NewHandlers(&authCfg)

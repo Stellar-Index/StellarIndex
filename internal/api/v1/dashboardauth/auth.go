@@ -34,8 +34,9 @@ import (
 // SessionCookieName is the HTTP cookie name used for dashboard
 // sessions. Distinct from any future API-side cookies so a
 // browser logged into both can't leak credentials between
-// surfaces.
-const SessionCookieName = "stellarindex_session"
+// surfaces. The __Host- prefix makes browsers accept it only as a
+// host-only, Secure, Path=/ cookie (see [credentialCookie]).
+const SessionCookieName = "__Host-stellarindex_session"
 
 // MagicLinkPlaintextLen — the random-bytes length we use for
 // magic-link tokens. 32 bytes = 256 bits = preimage-safe;

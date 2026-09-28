@@ -68,7 +68,7 @@ import (
 // PasskeyCeremonyCookieName carries the signed WebAuthn ceremony
 // state between begin and finish. Distinct name from the session +
 // login-intent cookies for the same cross-surface-confusion reason.
-const PasskeyCeremonyCookieName = "stellarindex_passkey_ceremony"
+const PasskeyCeremonyCookieName = "__Host-stellarindex_passkey_ceremony"
 
 // passkeyCeremonyTTL bounds how long a begin's challenge stays
 // redeemable. Authenticator prompts resolve in seconds; 5 minutes
@@ -213,16 +213,9 @@ func (h *Handlers) setPasskeyCeremonyCookie(w http.ResponseWriter, c passkeyCere
 	enc := base64.RawURLEncoding
 	value := enc.EncodeToString(payload) + "." +
 		enc.EncodeToString(passkeyCeremonyMAC(h.cfg.Generator.Secret, payload))
-	http.SetCookie(w, &http.Cookie{
-		Name:     PasskeyCeremonyCookieName,
-		Value:    value,
-		Path:     "/",
-		Domain:   h.cfg.CookieDomain,
-		MaxAge:   int(passkeyCeremonyTTL / time.Second),
-		HttpOnly: true,
-		Secure:   h.cfg.CookieSecure,
-		SameSite: sessionSameSite(),
-	})
+	cookie := credentialCookie(PasskeyCeremonyCookieName, value)
+	cookie.MaxAge = int(passkeyCeremonyTTL / time.Second)
+	http.SetCookie(w, cookie)
 	return nil
 }
 
@@ -379,16 +372,9 @@ func (h *Handlers) consumeCeremony(ctx context.Context, c passkeyCeremony) error
 }
 
 func (h *Handlers) clearPasskeyCeremonyCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     PasskeyCeremonyCookieName,
-		Value:    "",
-		Path:     "/",
-		Domain:   h.cfg.CookieDomain,
-		MaxAge:   -1,
-		HttpOnly: true,
-		Secure:   h.cfg.CookieSecure,
-		SameSite: sessionSameSite(),
-	})
+	c := credentialCookie(PasskeyCeremonyCookieName, "")
+	c.MaxAge = -1
+	http.SetCookie(w, c)
 }
 
 // ─── Registration (session-gated) ─────────────────────────────────
