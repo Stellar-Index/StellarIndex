@@ -45,6 +45,17 @@
 #      relaunch of a failed job found it "held" and was skipped.
 #   10. no operator-facing text tells operators to use a UNIQUE job name
 #      per attempt: that is what defeated the per-name lock.
+#   12. "one heavy job at a time" holds ACROSS job names. An operator
+#      launch (HEAVY_JOB_CLASS unset) is refused with exit 75, payload
+#      not run, while any other heavy job holds the host-wide lock; a
+#      scheduled launch is never refused (it warns beside an operator
+#      job); a released lock is free at once; a lock file the caller
+#      cannot write still locks (it is opened read-only, never O_CREAT
+#      on an existing file: fs.protected_regular refuses that across
+#      users in /run/lock); a lock file that cannot be opened at all
+#      refuses an operator job and only warns a scheduled one; and every
+#      timer/cron launcher declares HEAVY_JOB_CLASS=scheduled. These
+#      cases use a real flock(2) shim, not the always-succeeds stub.
 #
 # Runs the wrapper's non-root exec path (no systemd-run / flock needed:
 # flock is stubbed on PATH so this runs on macOS too).
@@ -92,7 +103,9 @@ chmod +x "$TMP/bin/flock"
 cat > "$TMP/bin/sleep" <<'SL'
 #!/usr/bin/env bash
 if [ -n "${FD9_REC:-}" ]; then
-  if [ -e /dev/fd/9 ]; then echo "fd9=open" > "$FD9_REC"; else echo "fd9=closed" > "$FD9_REC"; fi
+  for fd in 9 8; do
+    if [ -e "/dev/fd/$fd" ]; then echo "fd$fd=open"; else echo "fd$fd=closed"; fi
+  done > "$FD9_REC"
 fi
 exit 1
 SL
@@ -271,6 +284,7 @@ units=0
 while IFS= read -r unit; do
   units=$((units + 1))
   if grep -qx 'SuccessExitStatus=75' "$unit"; then ok "$unit declares SuccessExitStatus=75"; else bad "$unit ExecStarts run-heavy-job.sh without SuccessExitStatus=75 — a lock skip would fail the unit"; fi
+  if grep -qx 'Environment=HEAVY_JOB_CLASS=scheduled' "$unit"; then ok "$unit declares HEAVY_JOB_CLASS=scheduled"; else bad "$unit ExecStarts run-heavy-job.sh without Environment=HEAVY_JOB_CLASS=scheduled — the timer would be refused whenever another heavy job runs"; fi
 done < <(grep -rlE '^ExecStart=[^ ]*run-heavy-job\.sh ' configs/ansible/roles/archival-node/templates/systemd deploy/systemd)
 if [ "$units" -gt 0 ]; then ok "$units wrapper unit(s) checked"; else bad "no unit ExecStarts run-heavy-job.sh — the unit check ran over nothing"; fi
 
@@ -278,19 +292,133 @@ if [ "$units" -gt 0 ]; then ok "$units wrapper unit(s) checked"; else bad "no un
 if [ "$branch" != "non-root" ]; then
   rm -f "$TMP/fd9"
   run HEAVY_JOB_OPS_ENV="$OPS_ENV" FD9_REC="$TMP/fd9"
-  if [ "$rc" -eq 0 ] && grep -qx 'fd9=closed' "$TMP/fd9" 2>/dev/null; then
-    ok "the disk watchdog does not inherit the lock fd"
+  if [ "$rc" -eq 0 ] && grep -qx 'fd9=closed' "$TMP/fd9" 2>/dev/null && grep -qx 'fd8=closed' "$TMP/fd9"; then
+    ok "the disk watchdog inherits neither lock fd"
   else
-    bad "the disk watchdog holds the lock fd, so it outlives the job (rc=$rc, $(cat "$TMP/fd9" 2>/dev/null || echo 'no record'))"
+    bad "the disk watchdog holds a lock fd, so it outlives the job (rc=$rc, $(tr '\n' ' ' < "$TMP/fd9" 2>/dev/null || echo 'no record'))"
   fi
 fi
 
 }
+
+# ── 12. the host-wide lock ───────────────────────────────────────────
+# flock(1) over flock(2), so a held lock is really held: the lock lives
+# on the wrapper's open file description, which outlives this shim just
+# as it outlives util-linux flock. macOS has no flock(1).
+mkdir -p "$TMP/lockbin"
+cat > "$TMP/lockbin/flock" <<'FL'
+#!/usr/bin/env python3
+import fcntl, sys
+op, nb = fcntl.LOCK_EX, 0
+for a in sys.argv[1:-1]:
+    if a == "-n": nb = fcntl.LOCK_NB
+    elif a == "-s": op = fcntl.LOCK_SH
+    elif a == "-x": op = fcntl.LOCK_EX
+    else: sys.exit(64)
+try:
+    fcntl.flock(int(sys.argv[-1]), op | nb)
+except BlockingIOError:
+    sys.exit(1)
+FL
+chmod +x "$TMP/lockbin/flock"
+HOLD="$TMP/hold.sh"
+cat > "$HOLD" <<'SH'
+#!/usr/bin/env bash
+: > "$1.started"
+while [ ! -e "$1.release" ]; do /bin/sleep 0.1; done
+SH
+chmod +x "$HOLD"
+GLOBAL_LOCK_FILE="$TMP/lock/stellarindex-heavy.lock"
+REAL_UID="$(id -u)"
+
+HOLDER=""
+hold_start() { # hold_start <tag> <name> <class> — a job that runs until released
+  rm -f "$TMP/$1.started" "$TMP/$1.release"
+  env -u INVOCATION_ID HEAVY_JOB_CLASS="$3" HEAVY_JOB_OPS_ENV="$OPS_ENV" "$WRAP" "$2" "$HOLD" "$TMP/$1" >/dev/null 2>"$TMP/$1.err" &
+  HOLDER=$!
+  local i=0
+  while [ ! -e "$TMP/$1.started" ] && [ "$i" -lt 300 ]; do /bin/sleep 0.1; i=$((i + 1)); done
+  [ -e "$TMP/$1.started" ] || bad "holder $2 ($3) never started ($(cat "$TMP/$1.err"))"
+}
+hold_stop() { : > "$TMP/$1.release"; wait "$HOLDER"; }
+lrun() { # lrun <name> <class> [env...] — one launch while whatever is held stays held
+  local name="$1" class="$2"; shift 2
+  env -u INVOCATION_ID HEAVY_JOB_CLASS="$class" HEAVY_JOB_OPS_ENV="$OPS_ENV" "$@" "$WRAP" "$name" "$PAYLOAD" >"$TMP/out" 2>"$TMP/err"
+  rc=$?
+}
+ran() { out_has "USER=ops_batch"; }
+errs() { tr '\n' ' ' < "$TMP/err"; }
+
+run_lock_cases() {
+printf '  [%s branch, host-wide lock]\n' "$1"
+hold_start h1 op-a exclusive
+lrun op-b ""
+if [ "$rc" -eq 75 ] && ! ran && err_has "refusing to start op-b: another heavy job holds the host-wide lock"; then ok "operator job refused (exit 75, payload not run) while an operator job of ANOTHER name runs"; else bad "second operator job not refused (rc=$rc, out='$(tr '\n' ' ' < "$TMP/out")', err='$(errs)')"; fi
+lrun op-a ""
+if [ "$rc" -eq 75 ] && ! ran && err_has "still alive"; then ok "same-name duplicate still hits its per-job lock first"; else bad "same-name duplicate not refused by the per-job lock (rc=$rc, err='$(errs)')"; fi
+lrun sched-a scheduled
+if [ "$rc" -eq 0 ] && ran && err_has "WARNING sched-a (scheduled) is starting beside an operator heavy job"; then ok "scheduled job runs beside an operator job, with a WARNING"; else bad "scheduled job suppressed or silent beside an operator job (rc=$rc, err='$(errs)')"; fi
+hold_stop h1
+lrun op-c ""
+if [ "$rc" -eq 0 ] && ran; then ok "lock is free the moment the holder exits (the watchdog does not keep it)"; else bad "operator job refused after the holder exited (rc=$rc, err='$(errs)')"; fi
+
+hold_start h2 sched-h scheduled
+lrun op-d ""
+if [ "$rc" -eq 75 ] && ! ran; then ok "operator job refused while a scheduled job runs"; else bad "operator job started beside a scheduled job (rc=$rc)"; fi
+lrun sched-b scheduled
+if [ "$rc" -eq 0 ] && ran && ! err_has "WARNING sched-b"; then ok "scheduled jobs share the lock without a warning"; else bad "scheduled job blocked or warned beside another scheduled job (rc=$rc, err='$(errs)')"; fi
+hold_stop h2
+
+lrun op-e bogus
+if [ "$rc" -eq 2 ] && ! ran && err_has "HEAVY_JOB_CLASS='bogus' is neither"; then ok "unknown HEAVY_JOB_CLASS refused (exit 2, payload not run)"; else bad "unknown HEAVY_JOB_CLASS not refused (rc=$rc)"; fi
+
+# A lock file the caller cannot write (on r1: one root created and the
+# stellarindex user opens, or the reverse) must still lock.
+chmod 0444 "$GLOBAL_LOCK_FILE"
+if [ "$REAL_UID" -eq 0 ]; then
+  echo "  note: running as real root, so mode 0444 does not deny the write open the unwritable-lock cases guard against"
+fi
+lrun op-f ""
+if [ "$rc" -eq 0 ] && ran; then ok "a lock file the caller cannot write still admits a job (opened read-only)"; else bad "unwritable lock file broke the launch (rc=$rc, err='$(errs)')"; fi
+hold_start h3 op-g exclusive
+lrun op-h ""
+if [ "$rc" -eq 75 ] && ! ran && err_has "host-wide lock"; then ok "a lock file the caller cannot write still excludes a second operator job"; else bad "unwritable lock file does not exclude (rc=$rc, err='$(errs)')"; fi
+hold_stop h3
+chmod 0644 "$GLOBAL_LOCK_FILE"
+
+# A host-wide lock that cannot be opened at all (any uid): nothing proves
+# the host is free, so an operator job is refused; a timer warns and runs.
+lrun op-i "" HEAVY_JOB_LOCK_DIR="$TMP/lock-broken"
+if [ "$rc" -eq 2 ] && ! ran && err_has "refusing to start op-i: cannot open the host-wide lock"; then ok "unopenable host-wide lock: operator job refused (exit 2, payload not run)"; else bad "unopenable host-wide lock: operator job not refused (rc=$rc, err='$(errs)')"; fi
+lrun sched-i scheduled HEAVY_JOB_LOCK_DIR="$TMP/lock-broken"
+if [ "$rc" -eq 0 ] && ran && err_has "WARNING sched-i (scheduled) could not open the host-wide lock"; then ok "unopenable host-wide lock: scheduled job warns and runs"; else bad "unopenable host-wide lock: scheduled job not run with a WARNING (rc=$rc, err='$(errs)')"; fi
+}
+mkdir -p "$TMP/lock-broken"
+ln -s "$TMP/nowhere/stellarindex-heavy.lock" "$TMP/lock-broken/stellarindex-heavy.lock"
+
 mkdir -p "$TMP/heldbin"; printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP/heldbin/flock"; chmod +x "$TMP/heldbin/flock"
 mkdir -p "$TMP/userbin"; printf '#!/usr/bin/env bash\necho 1000\n' > "$TMP/userbin/id"; chmod +x "$TMP/userbin/id"
 PATH="$TMP/userbin:$PATH" run_cases "non-root"
+PATH="$TMP/lockbin:$TMP/userbin:$PATH" run_lock_cases "non-root"
 mkdir -p "$TMP/rootbin"; printf '#!/usr/bin/env bash\necho 0\n' > "$TMP/rootbin/id"; chmod +x "$TMP/rootbin/id"
 PATH="$TMP/rootbin:$PATH" run_cases "root (id stubbed)"
+PATH="$TMP/lockbin:$TMP/rootbin:$PATH" run_lock_cases "root (id stubbed)"
+
+# ── 12. every cron launcher of the wrapper declares itself scheduled ──
+echo "  [cron launchers]"
+if python3 - "$TASKS" <<'PY'
+import re, sys, yaml
+found, missing = 0, []
+for t in yaml.safe_load(open(sys.argv[1], encoding="utf-8")) or []:
+    job = ((t or {}).get("ansible.builtin.cron") or {}).get("job") or ""
+    if "run-heavy-job.sh" in job:
+        found += 1
+        if not re.search(r"HEAVY_JOB_CLASS=scheduled\s+\S*run-heavy-job\.sh", job):
+            missing.append(t.get("name"))
+print(f"  cron launchers checked: {found}")
+sys.exit(1 if found == 0 or missing else 0)
+PY
+then ok "every cron launcher of the wrapper declares HEAVY_JOB_CLASS=scheduled"; else bad "a cron launcher of the wrapper is not HEAVY_JOB_CLASS=scheduled (or none was found)"; fi
 
 # ── 11. NAME must be a job label, not the payload's own binary ───────
 # A dropped label ("run-heavy-job.sh stellarindex-ops supply …" instead
