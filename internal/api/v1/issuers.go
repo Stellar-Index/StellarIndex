@@ -248,44 +248,8 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 	iCtx, iCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer iCancel()
 	row, err := s.issuers.GetIssuer(iCtx, gStrkey)
-	if errors.Is(err, sql.ErrNoRows) {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/issuer-not-found",
-			"Issuer not found", http.StatusNotFound,
-			"This G-strkey hasn't been observed as an issuer.")
-		return
-	}
 	if err != nil {
-		if clientAborted(r, err) {
-			// Client went away mid-query — not a server fault.
-			// Same canonical ordering as handleIssuersList.
-			return
-		}
-		if handlerTimedOut(iCtx, err) {
-			s.logger.Warn("GetIssuer deadline exceeded", "g_strkey", gStrkey)
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/issuer-timeout",
-				"Issuer read timed out", http.StatusServiceUnavailable,
-				"the issuer + asset list scan didn't return in 8s; retry shortly.")
-			return
-		}
-		if transientStorageErr(err) {
-			// Postgres-side cancellation/transient network error — a
-			// retry would likely succeed, so surface 503 rather than
-			// booking a permanent availability failure. Same pattern
-			// as handleIssuersList's ListIssuers path.
-			s.logger.Warn("GetIssuer: transient storage error", "g_strkey", gStrkey, "err", err)
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/issuer-transient",
-				"Issuer read temporarily unavailable", http.StatusServiceUnavailable,
-				"the storage layer hit a transient error; retry shortly.")
-			return
-		}
-		s.logger.Warn("issuer read", "g_strkey", gStrkey, "err", err)
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/issuer-error",
-			"Issuer read failed", http.StatusInternalServerError,
-			"Storage layer returned an error.")
+		s.writeIssuerReadProblem(w, r, iCtx, gStrkey, err)
 		return
 	}
 
@@ -361,6 +325,48 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, out, Flags{})
+}
+
+// writeIssuerReadProblem maps a GetIssuer error to the right problem+json
+// response. Split out of handleIssuer to keep it under the funlen ceiling.
+func (s *Server) writeIssuerReadProblem(w http.ResponseWriter, r *http.Request, iCtx context.Context, gStrkey string, err error) {
+	if errors.Is(err, sql.ErrNoRows) {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/issuer-not-found",
+			"Issuer not found", http.StatusNotFound,
+			"This G-strkey hasn't been observed as an issuer.")
+		return
+	}
+	if clientAborted(r, err) {
+		// Client went away mid-query — not a server fault.
+		// Same canonical ordering as handleIssuersList.
+		return
+	}
+	if handlerTimedOut(iCtx, err) {
+		s.logger.Warn("GetIssuer deadline exceeded", "g_strkey", gStrkey)
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/issuer-timeout",
+			"Issuer read timed out", http.StatusServiceUnavailable,
+			"the issuer + asset list scan didn't return in 8s; retry shortly.")
+		return
+	}
+	if transientStorageErr(err) {
+		// Postgres-side cancellation/transient network error — a
+		// retry would likely succeed, so surface 503 rather than
+		// booking a permanent availability failure. Same pattern
+		// as handleIssuersList's ListIssuers path.
+		s.logger.Warn("GetIssuer: transient storage error", "g_strkey", gStrkey, "err", err)
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/issuer-transient",
+			"Issuer read temporarily unavailable", http.StatusServiceUnavailable,
+			"the storage layer hit a transient error; retry shortly.")
+		return
+	}
+	s.logger.Warn("issuer read", "g_strkey", gStrkey, "err", err)
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/issuer-error",
+		"Issuer read failed", http.StatusInternalServerError,
+		"Storage layer returned an error.")
 }
 
 // enrichIssuerFromAccountState fills auth-flags + home_domain from the on-chain
