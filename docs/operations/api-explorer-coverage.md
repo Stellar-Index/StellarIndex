@@ -41,10 +41,10 @@ level 3. The chain to `/` is what matters, not the hop count.
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **131** |
+| Paths in the OpenAPI contract | **133** |
 | Level 3 — reachable | **108** |
 | Level 2 — consumed but unreachable | **0** |
-| Level 1 — not consumed | **19** |
+| Level 1 — not consumed | **21** |
 | Deliberately excluded (operational) | **4** |
 
 Re-derived against the repo on 2026-09-24: the endpoint table, these
@@ -203,6 +203,8 @@ page carries.
 | `/register` | POST | 3 | app/pricing/page.tsx, app/signup/page.tsx | /pricing, /signup |
 | `/signup` | POST | 1 | — | — |
 | `/signup/verify` | GET | 1 | — | — |
+| `/dashboard/account` | DELETE | 1 | — | — |
+| `/dashboard/account/export` | GET | 1 | — | — |
 | `/dashboard/keys` | GET, POST | 3 | account.ts:createKey, account.ts:listKeys | /dashboard, /dashboard/keys, /dashboard/usage |
 | `/dashboard/keys/{id}` | DELETE | 3 | account.ts:revokeKey | /dashboard/keys |
 | `/dashboard/webhooks` | GET, POST | 3 | account.ts:createDashboardWebhook, account.ts:listDashboardWebhooks | /dashboard/webhooks |
