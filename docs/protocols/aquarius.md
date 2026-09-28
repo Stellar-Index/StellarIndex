@@ -279,6 +279,31 @@ evidence in
    dropped rows from the 2026-07-09 P27 SEV window (tiny
    `projector-replay` restores them).
 
+### ✅ `trade`'s sold_amount is gross-of-fee (GH-1309, settled)
+
+`trade`'s body is `(sold_amount, bought_amount, fee)`; we serve
+`sold_amount` unmodified as the trade's base amount. Whether that's
+the taker's gross input or already net of `fee` was open, and it
+matters: if net, every Aquarius base amount would understate the true
+input by the pool's fee fraction versus the gross-base convention we
+read for Comet.
+
+Settled from real captured trades
+(`internal/sources/aquarius/decode_test.go`,
+`TestTradeAmounts_feeIsGrossOfSoldAmount`, over
+`test/fixtures/aquarius/`): every fixture satisfies
+`fee == ceil(sold_amount * pool_fee_bps / 10000)` (15 bps for
+`CAB6MICC…` / `CA6GAFOJ…`, 5 bps for `CDE57N6X…`). That relationship
+only holds if `sold_amount` is the gross input; the net hypothesis
+(gross input = `sold_amount + fee`) does not match a single fixture.
+`sold_amount` needs no fee adjustment.
+
+Note: `aquarius_protocol_fee` (migration 0129) holds only
+`set_protocol_fee` / `claim_protocol_fee` events — the pool's fee-rate
+configuration and treasury sweeps, not a per-trade fee row. The
+per-trade `fee` element is not served anywhere; it isn't needed since
+`sold_amount` is already the correct base amount.
+
 ### Remaining asks for the Aquarius team (ratification, no longer blockers)
 
 1. Confirm the router (`CBQDHNBF…`) is the sole official deployment and

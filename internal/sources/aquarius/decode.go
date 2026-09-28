@@ -159,9 +159,17 @@ func decodeTrade(e *events.Event, closedAt time.Time) (canonical.Trade, error) {
 		// (multi-pool swap), which otherwise collide on the trades PK and
 		// get dropped (ADR-0033 — confirmed via reconciliation: 5 events
 		// → 2 rows at ledger 62848858).
-		OpIndex:     canonical.FanoutOpIndex(e.OperationIndex, e.EventIndex),
-		Timestamp:   closedAt,
-		Pair:        pair,
+		OpIndex:   canonical.FanoutOpIndex(e.OperationIndex, e.EventIndex),
+		Timestamp: closedAt,
+		Pair:      pair,
+		// BaseAmount is sold_amount unmodified: GH-1309 settled this from
+		// real mainnet fixtures (TestTradeAmounts_feeIsGrossOfSoldAmount) —
+		// every captured trade satisfies
+		// fee == ceil(sold_amount * pool_fee_bps / 10000), which only
+		// holds if sold_amount is the taker's gross input. A net
+		// interpretation (gross = sold_amount + fee) does not match any
+		// fixture. So sold_amount needs no fee adjustment here, matching
+		// Comet's gross-input convention.
 		BaseAmount:  amounts.SoldAmount,
 		QuoteAmount: amounts.BoughtAmount,
 		Taker:       userAddr,
