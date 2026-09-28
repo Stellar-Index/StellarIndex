@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/pkg/client"
@@ -314,5 +316,177 @@ func TestContextCancellation(t *testing.T) {
 	_, err := c.Price(ctx, client.PriceQuery{Asset: "native"})
 	if err == nil {
 		t.Fatal("expected cancelled-context error")
+	}
+}
+
+const meEnvelope = `{"data":{},"as_of":"2026-01-01T00:00:00Z","flags":{}}`
+
+// authRecorder is an httptest server that records every Authorization
+// header it receives and answers with a valid /v1/me envelope.
+type authRecorder struct {
+	mu   sync.Mutex
+	seen []string
+	srv  *httptest.Server
+}
+
+func newAuthRecorder(t *testing.T) *authRecorder {
+	t.Helper()
+	rec := &authRecorder{}
+	rec.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec.mu.Lock()
+		rec.seen = append(rec.seen, r.Header.Get("Authorization"))
+		rec.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(meEnvelope))
+	}))
+	t.Cleanup(rec.srv.Close)
+	return rec
+}
+
+func (r *authRecorder) hits() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.seen...)
+}
+
+func redirectTo(target string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target+r.URL.RequestURI(), http.StatusFound)
+	}
+}
+
+// TestRedirect_RefusesSchemeDowngradeWithAPIKey — an https origin that
+// redirects to plain http must not have the Bearer key follow it.
+func TestRedirect_RefusesSchemeDowngradeWithAPIKey(t *testing.T) {
+	plain := newAuthRecorder(t)
+	origin := httptest.NewTLSServer(redirectTo(plain.srv.URL))
+	t.Cleanup(origin.Close)
+
+	c := client.New(client.Options{BaseURL: origin.URL, APIKey: "rek_test_xyz", HTTPClient: origin.Client()})
+	_, err := c.Me(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "refusing redirect") {
+		t.Errorf("err = %v, want a refused-redirect error", err)
+	}
+	if got := plain.hits(); len(got) != 0 {
+		t.Errorf("plain-http target received %d request(s) (Authorization %q); want none", len(got), got)
+	}
+}
+
+// TestRedirect_RefusesPortChangeWithAPIKey — same hostname, different
+// port is a different origin; the key must not follow.
+func TestRedirect_RefusesPortChangeWithAPIKey(t *testing.T) {
+	other := newAuthRecorder(t)
+	origin := httptest.NewServer(redirectTo(other.srv.URL))
+	t.Cleanup(origin.Close)
+
+	c := client.New(client.Options{BaseURL: origin.URL, APIKey: "rek_test_xyz"})
+	_, err := c.Me(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "refusing redirect") {
+		t.Errorf("err = %v, want a refused-redirect error", err)
+	}
+	if got := other.hits(); len(got) != 0 {
+		t.Errorf("other-origin target received %d request(s) (Authorization %q); want none", len(got), got)
+	}
+}
+
+// TestRedirect_SameOriginStillFollowed — the guard must not break an
+// ordinary same-origin redirect, and must still run a caller's own
+// CheckRedirect without mutating the caller's client.
+func TestRedirect_SameOriginStillFollowed(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		finalHit string
+	)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("hop") == "" {
+			http.Redirect(w, r, r.URL.Path+"?hop=1", http.StatusFound)
+			return
+		}
+		mu.Lock()
+		finalHit = r.Header.Get("Authorization")
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(meEnvelope))
+	}))
+	t.Cleanup(ts.Close)
+
+	callerPolicyRan := false
+	callerPolicy := func(*http.Request, []*http.Request) error {
+		callerPolicyRan = true
+		return nil
+	}
+	hc := &http.Client{CheckRedirect: callerPolicy}
+	c := client.New(client.Options{BaseURL: ts.URL, APIKey: "rek_test_xyz", HTTPClient: hc})
+	if _, err := c.Me(context.Background()); err != nil {
+		t.Fatalf("Me: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if finalHit != "Bearer rek_test_xyz" {
+		t.Errorf("Authorization after same-origin redirect = %q, want %q", finalHit, "Bearer rek_test_xyz")
+	}
+	if !callerPolicyRan {
+		t.Error("caller-supplied CheckRedirect was not consulted")
+	}
+	callerPolicyRan = false
+	_ = hc.CheckRedirect(nil, nil)
+	if !callerPolicyRan {
+		t.Error("New replaced the caller's CheckRedirect in place")
+	}
+}
+
+type recordingTransport struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (rt *recordingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	rt.mu.Lock()
+	rt.calls++
+	rt.mu.Unlock()
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(meEnvelope)),
+		Request:    r,
+	}, nil
+}
+
+func (rt *recordingTransport) count() int {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return rt.calls
+}
+
+// TestPlaintextBaseURL_WithAPIKey — a non-loopback http:// BaseURL
+// carrying a key fails before any request leaves the process unless the
+// caller opts in; anonymous plaintext calls are unaffected.
+func TestPlaintextBaseURL_WithAPIKey(t *testing.T) {
+	cases := []struct {
+		name      string
+		opts      client.Options
+		wantErr   bool
+		wantCalls int
+	}{
+		{"keyed plaintext refused", client.Options{APIKey: "rek_test_xyz"}, true, 0},
+		{"keyed plaintext opted in", client.Options{APIKey: "rek_test_xyz", AllowInsecureHTTP: true}, false, 1},
+		{"anonymous plaintext allowed", client.Options{}, false, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := &recordingTransport{}
+			tc.opts.BaseURL = "http://api.example.test"
+			tc.opts.HTTPClient = &http.Client{Transport: rt}
+			_, err := client.New(tc.opts).Me(context.Background())
+			if tc.wantErr && (err == nil || !strings.Contains(err.Error(), "AllowInsecureHTTP")) {
+				t.Errorf("err = %v, want a refusal naming AllowInsecureHTTP", err)
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("unexpected err: %v", err)
+			}
+			if got := rt.count(); got != tc.wantCalls {
+				t.Errorf("transport calls = %d, want %d", got, tc.wantCalls)
+			}
+		})
 	}
 }

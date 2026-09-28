@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -49,19 +50,29 @@ type Options struct {
 
 	// APIKey is sent as `Authorization: Bearer <key>` on every
 	// request when non-empty. Empty = anonymous (rate-limited
-	// at the per-IP tier per the server's APIConfig).
+	// at the per-IP tier per the server's APIConfig). A non-empty key
+	// with a plaintext http:// BaseURL that is not loopback fails every
+	// call unless [Options.AllowInsecureHTTP] is set.
 	APIKey string
 
 	// HTTPClient is the underlying transport. Non-nil callers
 	// supply their own *http.Client to control timeouts, transport
 	// pooling, instrumentation, etc. Nil falls through to a default
-	// client with [DefaultTimeout].
+	// client with [DefaultTimeout]. The SDK uses a shallow copy whose
+	// CheckRedirect first refuses any redirect that would carry APIKey
+	// to another host or port, or from https to http, then defers to
+	// the supplied client's own CheckRedirect.
 	HTTPClient *http.Client
 
 	// UserAgent overrides the SDK's User-Agent header. Empty leaves
 	// the default. Useful for embedding the SDK in a higher-level
 	// product that wants its own identifier surfaced server-side.
 	UserAgent string
+
+	// AllowInsecureHTTP permits sending APIKey to a plaintext http://
+	// BaseURL that is not loopback. Leave false unless the API is only
+	// reachable over a network you trust end to end.
+	AllowInsecureHTTP bool
 }
 
 // Client is the entry point for every API call. Construct via
@@ -71,6 +82,7 @@ type Client struct {
 	apiKey     string
 	httpClient *http.Client
 	userAgent  string
+	configErr  error
 }
 
 // New constructs a [Client] from the supplied [Options]. Returns a
@@ -87,18 +99,92 @@ func New(opts Options) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: DefaultTimeout}
 	}
+	// Shallow copy: the caller's client is not mutated, its Transport
+	// (and connection pool) is shared.
+	guarded := *httpClient
+	guarded.CheckRedirect = guardRedirects(httpClient.CheckRedirect)
 
 	ua := opts.UserAgent
 	if ua == "" {
 		ua = userAgent
 	}
 
-	return &Client{
+	c := &Client{
 		baseURL:    baseURL,
 		apiKey:     opts.APIKey,
-		httpClient: httpClient,
+		httpClient: &guarded,
 		userAgent:  ua,
 	}
+	if opts.APIKey != "" && !opts.AllowInsecureHTTP {
+		c.configErr = checkKeyTransport(baseURL)
+	}
+	return c
+}
+
+// checkKeyTransport rejects a BaseURL that would carry the API key in
+// plaintext off the host. Loopback is exempt: it never leaves the machine.
+func checkKeyTransport(baseURL string) error {
+	u, err := url.Parse(baseURL)
+	if err != nil || !strings.EqualFold(u.Scheme, "http") {
+		return nil // parse errors surface per request; https is fine
+	}
+	host := u.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	return fmt.Errorf("client: refusing to send APIKey over plaintext http to %s; "+
+		"use https, or set Options.AllowInsecureHTTP", u.Host)
+}
+
+// guardRedirects wraps next (nil = net/http's default policy) so that a
+// redirect carrying the Authorization header to another origin, or from
+// https down to http, is refused before next is consulted.
+func guardRedirects(next func(*http.Request, []*http.Request) error) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if err := credentialRedirectPolicy(req, via); err != nil {
+			return err
+		}
+		if next != nil {
+			return next(req, via)
+		}
+		if len(via) >= 10 { // net/http's default policy
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+}
+
+// credentialRedirectPolicy compares each hop against the ORIGINAL request,
+// so a chain cannot walk the key off-origin one step at a time.
+func credentialRedirectPolicy(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 || via[0].Header.Get("Authorization") == "" {
+		return nil
+	}
+	from, to := via[0].URL, req.URL
+	fromTLS := strings.EqualFold(from.Scheme, "https")
+	toTLS := strings.EqualFold(to.Scheme, "https")
+	switch {
+	case fromTLS && !toTLS:
+		return fmt.Errorf("client: refusing redirect from %s to %s: https to http downgrade with API key set", from.Host, to.Host)
+	case !strings.EqualFold(from.Hostname(), to.Hostname()):
+		return fmt.Errorf("client: refusing redirect from %s to %s: different host with API key set", from.Host, to.Host)
+	case fromTLS == toTLS && effectivePort(from) != effectivePort(to):
+		return fmt.Errorf("client: refusing redirect from %s to %s: different port with API key set", from.Host, to.Host)
+	}
+	return nil
+}
+
+func effectivePort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if strings.EqualFold(u.Scheme, "https") {
+		return "443"
+	}
+	return "80"
 }
 
 // doJSON performs an HTTP request against the server, decoding the
@@ -111,6 +197,9 @@ func New(opts Options) *Client {
 // request header the common path doesn't cover (e.g. X-Reason on an
 // admin write) passes exactly one map.
 func (c *Client) doJSON(ctx context.Context, method, path string, query url.Values, body any, out any, extraHeaders ...map[string]string) error {
+	if c.configErr != nil {
+		return c.configErr
+	}
 	u, err := url.Parse(c.baseURL + path)
 	if err != nil {
 		return fmt.Errorf("client: parse url: %w", err)
