@@ -30,6 +30,15 @@
 #     failure mode than "found drift" — the detector going blind
 #     rather than the detector finding something.
 #
+#   - `stellarindex_hashdb_verify_stale` — the "detector went idle"
+#     companion (T132): `verify_failing` above is rate()-based and
+#     reads as green whenever hashDBVerifySweep takes an early return
+#     (tip hasn't cleared the safety margin, or the computed window
+#     is empty) on EVERY tick — no runs_total series ever gets a
+#     sample, so both the numerator and the denominator of the ratio
+#     above are permanently zero and the `and rate(...) > 0` guard
+#     blocks it from firing. absent_over_time catches that directly.
+#
 #   - `stellarindex_hashdb_append_failing` — the write-side companion:
 #     the per-ledger `hashdb.Append` call (recorded by
 #     stellarindex_hashdb_append_total{outcome}) is deliberately
@@ -91,6 +100,36 @@ groups:
             means drift (if any is happening) is going unnoticed. Check the
             indexer's "hashdb verify sweep failed" WARN log lines, then the
             runbook.
+
+      - alert: stellarindex_hashdb_verify_stale
+        expr: |
+          sum(increase(stellarindex_hashdb_append_total[6h])) > 0
+          and
+          absent_over_time(stellarindex_hashdb_verify_runs_total[6h])
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: hashdb
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/hashdb-drift-detected.md
+          summary: "hashdb periodic verify sweep has recorded no outcome in 6h+ (T132)"
+          description: |
+            hashdb.Append has been recording ledgers on this region for
+            the last 6h (so hashdb IS enabled and ingest IS live) but
+            stellarindex_hashdb_verify_runs_total has had zero samples
+            over the same window — the periodic verifier hasn't
+            completed a single pass, clean, drifted or errored.
+            verify_failing above can't catch this: it's a ratio of
+            outcomes recorded BY the sweep, and a sweep that never
+            emits an outcome (every tick took hashDBVerifySweep's early
+            return, or the ticker goroutine died) leaves that ratio's
+            both sides at zero, which its own `rate(...) > 0` guard
+            reads as no signal rather than as failure. Same effect as
+            drift_detected going permanently dark: the detector isn't
+            wrong, it just stopped running. Check the indexer process
+            is alive and its logs for hashdb verifier startup/panic,
+            then the runbook.
 
       - alert: stellarindex_hashdb_append_failing
         expr: |
