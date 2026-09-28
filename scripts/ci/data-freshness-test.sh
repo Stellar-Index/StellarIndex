@@ -474,5 +474,18 @@ else
   bad "no mention of the failed query on stderr: $QERR"
 fi
 
+# ─── 9. sep1 freshness measures a successful fetch, not an attempt ───
+#
+# Every failed SEP-1 attempt stamps sep1_resolved_at, so an age over it
+# stayed green while the refresh failed every domain (GH #840). Only a
+# success stamps sep1_payload_fetched_at. Behaviour is executed against
+# Postgres in test/integration/sep1_identity_history_test.go.
+SEP1_ROW="$(grep -E "^[[:space:]]*SELECT 'sep1'," "$SRC")"
+if [[ "$SEP1_ROW" == *"max(sep1_payload_fetched_at)"* && "$SEP1_ROW" != *"sep1_resolved_at"* ]]; then
+  ok "sep1 age is max(sep1_payload_fetched_at)"
+else
+  bad "sep1 freshness row does not measure sep1_payload_fetched_at: '$SEP1_ROW'"
+fi
+
 printf 'data-freshness-test: %d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

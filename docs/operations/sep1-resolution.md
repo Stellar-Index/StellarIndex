@@ -228,9 +228,16 @@ stellarindex-ops sep1-refresh -config /etc/stellarindex.toml \
 each per-issuer failure and judges its own run: a failure fraction
 high enough to indicate an outage on our side unwinds the ladder step
 it just applied (see the job's doc comment). The data-freshness
-watchdog reads `max(issuers.sep1_resolved_at)`, which a failed attempt
-stamps as well as a success, so it cannot tell a working refresh from
-a failing one. No per-issuer resolver error-rate alert ships today.
+watchdog reads `max(issuers.sep1_payload_fetched_at)`, which only a
+successful fetch stamps, so a refresh that runs but fails every domain
+goes stale. It is an aggregate: one dead domain among many live ones
+does not trip it. No per-issuer resolver error-rate alert ships today.
+
+Every successful write diffs the held payload against the new one and
+appends a row to `issuer_identity_history` (migration 0190) for each
+changed `OrgName`, `ORG_URL`, `ORG_LOGO` or currency `Image` on an issuer
+that already had a payload, so a rewritten identity keeps its previous
+value. Nothing alerts on those rows yet.
 
 ## References
 
