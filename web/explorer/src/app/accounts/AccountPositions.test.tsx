@@ -362,13 +362,20 @@ describe('AccountPositions batch robustness', () => {
     stubStrictBatch([{ asset: USDC, balance: USDC_BALANCE }, ...filler]);
     renderPanel();
 
-    expect(await screen.findAllByText('≥ $69.50')).toHaveLength(2);
+    // 121 rendered rows makes this the heaviest case in the file (measured
+    // ~390ms idle vs 20-200ms for the rest) — the default 1000ms
+    // testing-library poll leaves too thin a margin under a loaded gate
+    // (make prepush runs the Go lane and the web lane concurrently on a
+    // memory-capped Docker VM). Give it real headroom rather than racing.
+    expect(
+      await screen.findAllByText('≥ $69.50', {}, { timeout: 5000 }),
+    ).toHaveLength(2);
     expect(screen.getByText('2 priced')).toBeInTheDocument();
     const calls = batchCalls();
     expect(calls.length).toBe(2);
     for (const ids of calls) expect(ids.length).toBeLessThanOrEqual(100);
     expect(calls.flat()).toHaveLength(121);
-  });
+  }, 10_000);
 
   it('says so when the price lookup itself failed', async () => {
     stubStrictBatch([{ asset: USDC, balance: USDC_BALANCE }], {
