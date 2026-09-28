@@ -118,12 +118,15 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 			// than read off the statusRecorder's 200 zero-value.
 			//
 			// Registered BEFORE the streaming block below so it runs AFTER
-			// that block's close(done) (defers are LIFO): meterOpenStream
-			// must stop before once.fire can newly flip fired()==true on
-			// the panic-before-open path, or a tick landing in the window
-			// between fire and close(done) would read rec's still-default
-			// 200 status and bill it as OK — eating quota on a request
-			// this same defer is about to class as a 5xx (COR-05).
+			// that block's close(done)+<-exited (defers are LIFO): meterOpenStream
+			// must have FULLY RETURNED, not merely been signalled, before
+			// once.fire can newly flip fired()==true on the panic-before-open
+			// path — signalling alone left a window where the goroutine passes
+			// its done re-check, is preempted, sees close(done) then
+			// once.fire(true) both happen, and only then resumes: fired() now
+			// reads true and it bills rec's still-default 200 status as OK,
+			// eating quota on a request this same defer is about to class as
+			// a 5xx (COR-05), and double-billing besides.
 			defer func() {
 				p := recover()
 				once.fire(p != nil)
@@ -143,9 +146,14 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 					if id := UsageKeyForSubject(subject); id != "" {
 						family := endpointFamily(inner)
 						done := make(chan struct{})
-						defer close(done)
+						exited := make(chan struct{})
+						// Wait for meterOpenStream to actually return, not just observe
+						// close(done): bounded by postResponseWriteTimeout, since the
+						// only way this blocks is a tick already in flight finishing
+						// its counter writes under that same timeout.
+						defer func() { close(done); <-exited }()
 						//nolint:gosec,contextcheck // G118/contextcheck: intentional detach, same rationale (and pattern) as usageTrackerRecord's context.Background() below — ticks must outlive a client-aborted request ctx, not inherit it
-						go meterOpenStream(counter, logger, id, family, rec, once, units, deadlineFired, done)
+						go meterOpenStream(counter, logger, id, family, rec, once, units, deadlineFired, done, exited)
 					}
 				}
 			}
@@ -365,8 +373,12 @@ func ChargeUsage(r *http.Request, units int) {
 // pool's own drain-for-test Wait() (sync.WaitGroup forbids a
 // concurrent Add once a Wait could observe zero).
 //
-// Stops when done is closed (the request handler returned).
-func meterOpenStream(counter *usage.Counter, logger *slog.Logger, id, family string, rec *statusRecorder, once *usageRecordOnce, units *usageUnits, deadlineFired *atomic.Bool, done <-chan struct{}) {
+// Stops when done is closed (the request handler returned), and closes
+// exited on its way out so the caller's deferred <-exited can block
+// until this goroutine has genuinely stopped touching rec/once/units —
+// not merely been told to (see UsageTracker's recover defer comment).
+func meterOpenStream(counter *usage.Counter, logger *slog.Logger, id, family string, rec *statusRecorder, once *usageRecordOnce, units *usageUnits, deadlineFired *atomic.Bool, done <-chan struct{}, exited chan<- struct{}) {
+	defer close(exited)
 	ticker := time.NewTicker(time.Duration(streamMeterInterval.Load()))
 	defer ticker.Stop()
 	for {
@@ -374,38 +386,49 @@ func meterOpenStream(counter *usage.Counter, logger *slog.Logger, id, family str
 		case <-done:
 			return
 		case <-ticker.C:
-			// Re-check done, non-blocking: UsageTracker closes it BEFORE
-			// once.fire can newly latch (see its own comment), but this
-			// goroutine and that one still race independently, so a tick
-			// that was already in ticker.C's single-slot buffer the
-			// instant done closed must not slip through and read once
-			// more from rec after the request has finished with it.
-			select {
-			case <-done:
+			if !meterTick(counter, logger, id, family, rec, once, units, deadlineFired, done) {
 				return
-			default:
 			}
-			if !once.fired() {
-				continue
-			}
-			class := outcomeClass(rec.status)
-			billable := billableClass(class, deadlineFired.Load())
-			n := units.get()
-			ctx, cancel := context.WithTimeout(context.Background(), postResponseWriteTimeout)
-			if billable {
-				if err := counter.IncrementBy(ctx, id, n); err != nil {
-					obs.UsageUnitsDroppedTotal.WithLabelValues(obs.UsageCounterBillable).Add(float64(n))
-					logger.Debug("usage: stream tick increment failed", "err", err, "subject", id)
-				}
-			}
-			if err := counter.IncrementDetailBy(ctx, id, family, class, n); err != nil {
-				obs.UsageUnitsDroppedTotal.WithLabelValues(obs.UsageCounterDetail).Add(float64(n))
-				logger.Debug("usage: stream tick detail increment failed",
-					"err", err, "subject", id, "endpoint", family, "class", class)
-			}
-			cancel()
 		}
 	}
+}
+
+// meterTick runs one [meterOpenStream] tick's re-check-and-bill decision,
+// split out so the caller's loop stays simple. Returns false once the
+// stream has closed, telling meterOpenStream to stop.
+func meterTick(counter *usage.Counter, logger *slog.Logger, id, family string, rec *statusRecorder, once *usageRecordOnce, units *usageUnits, deadlineFired *atomic.Bool, done <-chan struct{}) bool {
+	// Re-check done, non-blocking: a tick that was already in
+	// ticker.C's single-slot buffer the instant done closed must
+	// not slip through and read once more from rec after the
+	// request has finished with it.
+	select {
+	case <-done:
+		return false
+	default:
+	}
+	if hook := streamTickHook.Load(); hook != nil {
+		(*hook)()
+	}
+	if !once.fired() {
+		return true
+	}
+	class := outcomeClass(rec.status)
+	billable := billableClass(class, deadlineFired.Load())
+	n := units.get()
+	ctx, cancel := context.WithTimeout(context.Background(), postResponseWriteTimeout)
+	defer cancel()
+	if billable {
+		if err := counter.IncrementBy(ctx, id, n); err != nil {
+			obs.UsageUnitsDroppedTotal.WithLabelValues(obs.UsageCounterBillable).Add(float64(n))
+			logger.Debug("usage: stream tick increment failed", "err", err, "subject", id)
+		}
+	}
+	if err := counter.IncrementDetailBy(ctx, id, family, class, n); err != nil {
+		obs.UsageUnitsDroppedTotal.WithLabelValues(obs.UsageCounterDetail).Add(float64(n))
+		logger.Debug("usage: stream tick detail increment failed",
+			"err", err, "subject", id, "endpoint", family, "class", class)
+	}
+	return true
 }
 
 // SetStreamMeterIntervalForTest overrides [streamMeterInterval] for the
@@ -415,6 +438,19 @@ func SetStreamMeterIntervalForTest(d time.Duration) (restore func()) {
 	orig := streamMeterInterval.Load()
 	streamMeterInterval.Store(int64(d))
 	return func() { streamMeterInterval.Store(orig) }
+}
+
+// streamTickHook, when set, runs inside meterOpenStream on every tick,
+// after its done re-check and before it reads once.fired(). Test-only:
+// lets a test pause a tick at exactly the point the once.fire/exited
+// race lives, instead of relying on scheduling luck to land there.
+var streamTickHook atomic.Pointer[func()]
+
+// SetStreamTickHookForTest installs fn as [streamTickHook] for the life
+// of a test, returning a restore func. Test-only.
+func SetStreamTickHookForTest(fn func()) (restore func()) {
+	streamTickHook.Store(&fn)
+	return func() { streamTickHook.Store(nil) }
 }
 
 // UsageKeyForSubject picks the stable identifier we count under.

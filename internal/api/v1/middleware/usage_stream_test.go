@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -320,5 +321,113 @@ func TestUsageTracker_StreamPanicBeforeOpenBillsNothing(t *testing.T) {
 		t.Fatalf("billable usage total after %d panic-before-open streams = %d, want 0 "+
 			"(a tick landed between once.fire and close(done) and billed rec's still-default "+
 			"200 status — COR-05 violation)", trials, got)
+	}
+}
+
+// TestUsageTracker_StreamPanicDuringTickBillsNothing pins the race left
+// after 037ea6181's defer-reorder fix: close(done) only SIGNALS
+// meterOpenStream to stop, it does not wait for it to have stopped. A
+// tick that already passed its done re-check when the handler panics
+// can be paused right there while close(done) then once.fire(true) both
+// run, then resume and read once.fired()==true — billing rec's
+// still-default 200 status as OK on a request the recover defer just
+// classed as a non-billable 5xx (COR-05), and double-billing besides.
+//
+// A test hook (SetStreamTickHookForTest) pauses the goroutine at
+// exactly that point instead of relying on scheduling luck to land
+// there, making the race deterministic rather than probabilistic. Once
+// paused, the handler is let panic and its defers run as far as they
+// structurally can: close(done), then block on <-exited. once.fire is
+// sequenced strictly after <-exited unblocks in the same goroutine, so
+// it CANNOT have run while the hook holds this goroutine — no matter
+// how long the test waits — only with the exited wait in place. Fails
+// on 037ea6181 (close(done) alone, no wait); passes with it.
+func TestUsageTracker_StreamPanicDuringTickBillsNothing(t *testing.T) {
+	t.Cleanup(middleware.SetStreamMeterIntervalForTest(5 * time.Millisecond))
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	counter := usage.New(rdb)
+	subject := auth.Subject{Tier: auth.TierAPIKey, KeyID: "kid_stream_tick_panic", Identifier: "acct:stream_tick_panic"}
+	id := middleware.UsageKeyForSubject(subject)
+
+	hookReached := make(chan struct{})
+	releaseHook := make(chan struct{})
+	var hookOnce sync.Once
+	t.Cleanup(middleware.SetStreamTickHookForTest(func() {
+		hookOnce.Do(func() { close(hookReached) })
+		<-releaseHook
+	}))
+
+	allowPanic := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/price/tip/stream", func(http.ResponseWriter, *http.Request) {
+		<-allowPanic
+		panic("boom mid-tick")
+	})
+	stamp := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(auth.WithSubject(r.Context(), subject)))
+		})
+	}
+	// Recoverer OUTSIDE UsageTracker, matching server.go's stack order.
+	h := middleware.Chain(mux, stamp, middleware.Recoverer(nil), middleware.UsageTracker(counter, nil))
+
+	reqDone := make(chan struct{})
+	go func() {
+		defer close(reqDone)
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/price/tip/stream", nil))
+	}()
+
+	select {
+	case <-hookReached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stream tick never reached the test hook")
+	}
+
+	// Let the handler panic. Its defers can now run only as far as
+	// close(done) and then block on <-exited, since meterOpenStream is
+	// paused inside the hook. once.fire cannot have run yet — that is
+	// structural, not timing — so this sleep is just giving the
+	// scheduler room to get there, not a wait for a race to resolve.
+	close(allowPanic)
+	time.Sleep(50 * time.Millisecond)
+
+	close(releaseHook)
+
+	select {
+	case <-reqDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stream handler never returned")
+	}
+
+	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+		t.Fatal("after-response pool did not drain in time")
+	}
+
+	// Pre-fix, the handler does not wait for meterOpenStream at all, so
+	// reqDone closing proves nothing about whether the released tick's
+	// own IncrementBy call has landed yet — poll rather than assume it.
+	// This does not reintroduce timing-dependence in the race itself
+	// (that part is already forced deterministically by the hook above):
+	// it only tolerates ordinary write latency before asserting absence.
+	var got int64
+	var err error
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for {
+		got, err = counter.MonthToDate(context.Background(), id)
+		if err != nil {
+			t.Fatalf("MonthToDate: %v", err)
+		}
+		if got != 0 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got != 0 {
+		t.Fatalf("billable usage total after a panic mid-tick = %d, want 0 (the paused tick "+
+			"resumed, read once.fired()==true, and billed rec's still-default 200 status as "+
+			"OK — COR-05 violation)", got)
 	}
 }
