@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { hrefFor } from '@/lib/hrefFor';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
@@ -197,7 +198,7 @@ export function ExchangesView() {
                     </Td>
                     <Td>
                       <Link
-                        href={`/exchanges/${r.name}`}
+                        href={hrefFor.exchange(r.name)}
                         className={`inline-block rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase hover:underline ${tone}`}
                       >
                         {label}
@@ -378,7 +379,7 @@ function AllCEXMarkets() {
                   </Td>
                   <Td>
                     <Link
-                      href={`/exchanges/${m.source}`}
+                      href={hrefFor.exchange(m.source ?? '')}
                       className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase hover:underline ${tone}`}
                     >
                       {LABEL[m.source ?? ''] ?? m.source}

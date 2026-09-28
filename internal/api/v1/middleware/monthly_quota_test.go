@@ -102,6 +102,28 @@ func TestMonthlyQuota_RejectsAtCap(t *testing.T) {
 	}
 }
 
+// TestMonthlyQuota_RejectsAtCap_RetryAfterToMonthBoundary (GH-800):
+// the monthly-quota-exceeded 429 must carry Retry-After so a
+// spec-following client backs off until the counter can actually
+// satisfy the cap, rather than retrying tightly for the rest of the
+// month. Value = seconds from the injected clock to the 1st of the
+// next UTC month, not the rate-limiter's window.
+func TestMonthlyQuota_RejectsAtCap_RetryAfterToMonthBoundary(t *testing.T) {
+	clock := newManualClock()
+	clock.set(time.Date(2026, 9, 28, 23, 0, 0, 0, time.UTC))
+	reader := &fakeMTDReader{counts: map[string]int64{"key:K1": 100}}
+	mw := middleware.MonthlyQuota(reader, nil, middleware.WithMonthlyQuotaClock(clock.now))
+	sub := auth.Subject{Tier: auth.TierAPIKey, KeyID: "K1", MonthlyQuota: 100}
+	status, headers, _ := runWithSubject(t, mw, sub)
+	if status != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", status)
+	}
+	// 2026-09-28T23:00:00Z -> 2026-10-01T00:00:00Z = 49h = 176400s.
+	if got := headers.Get("Retry-After"); got != "176400" {
+		t.Errorf("Retry-After = %q, want 176400 (seconds to 1st UTC of next month)", got)
+	}
+}
+
 // TestMonthlyQuota_RejectsAboveCap — used > quota also rejects
 // (a delayed counter increment after a previous tick at-cap can
 // land here).
@@ -239,6 +261,12 @@ func (c *manualClock) advance(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.t = c.t.Add(d)
+}
+
+func (c *manualClock) set(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = t
 }
 
 // TestMonthlyQuota_TransientBlipFailsOpen (W1-flow-register-4, scenario

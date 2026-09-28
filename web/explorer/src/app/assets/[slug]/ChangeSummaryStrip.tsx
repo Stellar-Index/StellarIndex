@@ -3,6 +3,7 @@
 import { useChangeSummary, type ChangeSummary } from '@/api/hooks';
 import {
   AccelerationArrow,
+  FreshnessMarker,
   MultiWindowDelta,
   StreakIndicator,
   type DeltaWindow,
@@ -76,6 +77,7 @@ export function ChangeSummaryStrip({
       className={`border-line-subtle flex flex-wrap items-center gap-x-3 gap-y-2 border-t pt-3 ${className ?? ''}`}
       data-testid="change-summary-strip"
     >
+      <FreshnessMarker flags={q.data?.flags} />
       {hasAny && <MultiWindowDelta windows={windows} compact wrap />}
       {streakOk && (
         <StreakIndicator

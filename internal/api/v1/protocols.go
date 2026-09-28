@@ -1603,19 +1603,30 @@ func (s *Server) fastActivity(ctx context.Context) protocolFastActivityReader {
 		return nil
 	}
 	s.protocolFastMu.Lock()
-	defer s.protocolFastMu.Unlock()
-	if !s.protocolFastSettled {
-		avail, definitive := fast.DailyActivityAvailable(ctx)
-		if definitive {
-			s.protocolFastSettled = true
-			s.protocolFastOK = avail
-		}
-		if !avail {
+	settled, settledOK := s.protocolFastSettled, s.protocolFastOK
+	s.protocolFastMu.Unlock()
+	if settled {
+		if !settledOK {
 			return nil
 		}
 		return fast
 	}
-	if !s.protocolFastOK {
+
+	// Unsettled: probe WITHOUT holding protocolFastMu (GH-587). A
+	// non-definitive answer never settles, so a wedged ClickHouse used
+	// to re-probe under the lock on every call, serialising every
+	// concurrent detail build's fast-vs-raw decision behind one stuck
+	// probe. Concurrent unsettled probes may race here; only a
+	// definitive answer is ever recorded, so the race costs at most a
+	// few redundant DailyActivityAvailable calls, never a wrong verdict.
+	avail, definitive := fast.DailyActivityAvailable(ctx)
+	if definitive {
+		s.protocolFastMu.Lock()
+		s.protocolFastSettled = true
+		s.protocolFastOK = avail
+		s.protocolFastMu.Unlock()
+	}
+	if !avail {
 		return nil
 	}
 	return fast

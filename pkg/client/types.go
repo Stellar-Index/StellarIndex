@@ -791,6 +791,20 @@ type MarketVolumeBucket struct {
 	VolumeUSD string    `json:"volume_usd"`
 }
 
+// MethodologySource is one venue on [Methodology]: the static registry
+// subset of [Source], without the live stats that only /v1/sources serves.
+type MethodologySource struct {
+	Name              string `json:"name"`
+	Class             string `json:"class"`
+	Subclass          string `json:"subclass,omitempty"`
+	DefaultWeight     int    `json:"default_weight"`
+	IncludeInVWAP     bool   `json:"include_in_vwap"`
+	Paid              bool   `json:"paid"`
+	BackfillAvailable bool   `json:"backfill_available"`
+	BackfillSafe      bool   `json:"backfill_safe"`
+	OnChain           bool   `json:"on_chain"`
+}
+
 // Methodology is the data shape returned by [Client.Methodology].
 // Machine-readable summary of the active aggregation policy:
 // VWAP method, outlier filters, stablecoin → fiat-USD proxy
@@ -804,7 +818,7 @@ type Methodology struct {
 	Version       string                   `json:"version"`
 	Aggregation   MethodologyAggregation   `json:"aggregation"`
 	SourceClasses []MethodologySourceClass `json:"source_classes"`
-	Sources       []Source                 `json:"sources"`
+	Sources       []MethodologySource      `json:"sources"`
 	References    []MethodologyReference   `json:"references"`
 }
 
@@ -2091,7 +2105,11 @@ type RWAReference struct {
 	// own decimal scale.
 	PriceUSD string `json:"price_usd"`
 	Source   string `json:"source"`
-	// Feed is the canonical `rwa:<CODE>` id, ready for /oracle/latest.
+	// Feed is the key PriceUSD is published under; its meaning follows
+	// Provenance. Only under "oracle_instrument_nav" is it the canonical
+	// `rwa:<CODE>` id, ready for /oracle/latest — under any other
+	// provenance it is that source's own identifier (e.g. a listing
+	// platform's asset id) and is NOT an ADR-0028 feed id.
 	Feed string `json:"feed"`
 	// Quote is the denominator, always "fiat:USD" on a served row: a
 	// NAV feed denominated in a reserve asset is a ratio, and the

@@ -208,6 +208,72 @@ func TestFastActivity_DefinitiveAbsenceIsCached(t *testing.T) {
 	}
 }
 
+// blockingFastStub is a lake reader whose FIRST availability probe blocks
+// until released, and never settles (definitive=false) — the "wedged
+// ClickHouse" shape.
+type blockingFastStub struct {
+	prewarmActivityStub
+
+	mu      sync.Mutex
+	calls   int
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingFastStub) DailyActivityAvailable(context.Context) (bool, bool) {
+	s.mu.Lock()
+	s.calls++
+	first := s.calls == 1
+	s.mu.Unlock()
+	if first {
+		close(s.started)
+		<-s.release
+	}
+	return false, false
+}
+
+func (*blockingFastStub) ProtocolDailyActivityFast(context.Context, []string, time.Time) ([]clickhouse.ProtocolDailyPoint, error) {
+	return nil, nil
+}
+
+func (*blockingFastStub) ProtocolEventBreakdownFast(context.Context, []string, time.Time) ([]clickhouse.ProtocolEventTypeCount, error) {
+	return nil, nil
+}
+
+func (*blockingFastStub) ProtocolContractActivityFast(context.Context, []string, time.Time) ([]clickhouse.ProtocolContractActivity, error) {
+	return nil, nil
+}
+
+// TestFastActivity_UnsettledProbeDoesNotSerializeConcurrentCalls is the
+// regression test for GH-587(b): fastActivity used to hold
+// protocolFastMu across DailyActivityAvailable, so a wedged ClickHouse —
+// which never definitively settles — serialised every concurrent detail
+// build's fast-vs-raw decision behind the one stuck probe. A second call
+// must return promptly while the first is still blocked inside the probe.
+func TestFastActivity_UnsettledProbeDoesNotSerializeConcurrentCalls(t *testing.T) {
+	stub := &blockingFastStub{started: make(chan struct{}), release: make(chan struct{})}
+	srv := New(Options{ProtocolActivity: stub})
+	t.Cleanup(func() { close(stub.release) })
+
+	go func() { srv.fastActivity(context.Background()) }()
+	select {
+	case <-stub.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first probe never started")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		srv.fastActivity(context.Background())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("fastActivity serialized behind the in-flight probe — protocolFastMu held across IO (GH-587)")
+	}
+}
+
 // erroringCountReader is a contracts reader whose roster reads always
 // succeed (empty) but whose count-without-enumeration path always fails —
 // isolates detailContractCount's error from the roster build.

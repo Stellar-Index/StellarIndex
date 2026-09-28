@@ -126,4 +126,20 @@ describe('list and detail hooks carry the envelope flags', () => {
     expect(result.current.data?.data.asset_id).toBe('native');
     expect(result.current.data?.flags?.unverified_ticker_collision).toBe(true);
   });
+
+  // #660: useChangeSummary flattened the row but dropped `flags` entirely,
+  // so ChangeSummaryStrip could never show `stale`/`triangulated`.
+  it('useChangeSummary', async () => {
+    stubFetch(() => ({
+      data: { entity_type: 'coin', entity_id: 'native', h24_delta_pct: 1.5 },
+      as_of: '2026-09-25T10:00:00Z',
+      flags,
+    }));
+    const { result } = renderHook(() => useChangeSummary('coin', 'native'), {
+      wrapper: wrapper(),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.flags?.stale).toBe(true);
+    expect(result.current.data?.h24_delta_pct).toBe(1.5);
+  });
 });

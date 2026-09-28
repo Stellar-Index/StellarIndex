@@ -153,8 +153,6 @@ describe('/dashboard/webhooks self-service management', () => {
       id: 'd1b2c3d4-0000-4000-8000-000000000099',
       event_type: 'price.alert',
       attempt_count: 3,
-      next_attempt_at: null,
-      delivered_at: null,
       last_error: 'connection refused',
       last_response_status: 502,
       created_at: '2026-08-01T12:00:00Z',

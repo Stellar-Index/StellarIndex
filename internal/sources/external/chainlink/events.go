@@ -125,6 +125,13 @@ type FeedSpec struct {
 	// (e.g. operator wants USD/EUR but the feed publishes EUR/USD).
 	// Same semantic as divergence/chainlink.go's Invert.
 	Invert bool
+
+	// MaxAge is the live-poll staleness budget: a latestRoundData round
+	// whose updatedAt is older than this is refused, never emitted as a
+	// new observation. Calibrated to the feed's heartbeat (see
+	// [DefaultFeedMap]); zero resolves via [DefaultMaxAge]. Backfill of
+	// historical AnswerUpdated logs is not subject to it.
+	MaxAge time.Duration
 }
 
 // Round is the decoded shape of one latestRoundData() / getRoundData()
@@ -142,6 +149,12 @@ type Round struct {
 	// of an unchanged feed must not produce duplicate OracleUpdate
 	// rows. Never nil after decode; treat a nil RoundID as zero.
 	RoundID *big.Int
+
+	// AnsweredInRound is the round that computed Answer, in the same
+	// phase-encoded uint80 space as RoundID. Less than RoundID means the
+	// answer was carried forward from an earlier round. Nil for rounds
+	// decoded from AnswerUpdated logs, which only fire on a fresh answer.
+	AnsweredInRound *big.Int
 
 	// Answer is the raw int256 price at the feed's native decimals.
 	// Preserved as-is (no scaling) — canonical.OracleUpdate.Price
@@ -181,6 +194,16 @@ var (
 	// poller's clock (beyond a small skew allowance). Refused so a
 	// future-dated row can never pin itself as the pair's latest.
 	ErrFutureUpdatedAt = errors.New("chainlink: updatedAt ahead of poller clock")
+
+	// ErrStaleRound — the feed's latest round is older than the feed's
+	// MaxAge. Refused so a frozen or retired feed is never re-emitted
+	// as a current observation.
+	ErrStaleRound = errors.New("chainlink: round older than the feed's max age")
+
+	// ErrCarriedForwardRound — answeredInRound < roundId: the answer
+	// was computed in an earlier round, so this round is not a new
+	// publication.
+	ErrCarriedForwardRound = errors.New("chainlink: answer carried forward from an earlier round")
 )
 
 // roundCache is the per-feed dedup memory: last roundId we emitted

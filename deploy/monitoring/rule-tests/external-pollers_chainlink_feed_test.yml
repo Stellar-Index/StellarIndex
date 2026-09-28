@@ -1,0 +1,66 @@
+# stellarindex_chainlink_feed_stale — one dark Chainlink feed among
+# healthy siblings. The poller's own last-success keeps advancing while
+# any feed succeeds, so the per-feed gauge must fire for exactly the
+# dark pair and stay silent for the healthy one.
+#
+#   promtool test rules deploy/monitoring/rule-tests/external-pollers_chainlink_feed_test.yml
+
+rule_files:
+  - ../rules/external-pollers.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: one stale feed fires beside a healthy sibling, a never-succeeded feed fires too
+    input_series:
+      # Healthy: last success tracks wall time (promtool time() starts at 0).
+      - series: 'stellarindex_chainlink_feed_last_success_unix{job="stellarindex_indexer",instance="r1:9101",pair="crypto:ETH/fiat:USD"}'
+        values: '0+60x60'
+      # Went stale at 5m: age passes 1800s at 35m, fires after the 5m `for`.
+      - series: 'stellarindex_chainlink_feed_last_success_unix{job="stellarindex_indexer",instance="r1:9101",pair="crypto:BTC/fiat:USD"}'
+        values: '0+60x5 300+0x55'
+      # Seeded 0 at startup and never succeeded (e.g. a retired feed after restart).
+      - series: 'stellarindex_chainlink_feed_last_success_unix{job="stellarindex_indexer",instance="r1:9101",pair="fiat:JPY/fiat:USD"}'
+        values: '0+0x60'
+    alert_rule_test:
+      - eval_time: 33m
+        alertname: stellarindex_chainlink_feed_stale
+        exp_alerts: []
+      - eval_time: 41m
+        alertname: stellarindex_chainlink_feed_stale
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9101
+              pair: crypto:BTC/fiat:USD
+              severity: ticket
+              team: stellarindex
+              component: external-poller
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/chainlink-feed-stale.md
+              summary: "Chainlink feed crypto:BTC/fiat:USD has returned no current round in 30+ min"
+              description: |
+                The Chainlink ingest poller has written no current round
+                for crypto:BTC/fiat:USD for 30+ min, while other feeds may
+                still be succeeding. Check
+                stellarindex_chainlink_feed_polls_total{pair="crypto:BTC/fiat:USD"}
+                by outcome: stale (feed older than its max_age_hours, e.g.
+                paused or retired), carried_forward, or error.
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9101
+              pair: fiat:JPY/fiat:USD
+              severity: ticket
+              team: stellarindex
+              component: external-poller
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/chainlink-feed-stale.md
+              summary: "Chainlink feed fiat:JPY/fiat:USD has returned no current round in 30+ min"
+              description: |
+                The Chainlink ingest poller has written no current round
+                for fiat:JPY/fiat:USD for 30+ min, while other feeds may
+                still be succeeding. Check
+                stellarindex_chainlink_feed_polls_total{pair="fiat:JPY/fiat:USD"}
+                by outcome: stale (feed older than its max_age_hours, e.g.
+                paused or retired), carried_forward, or error.

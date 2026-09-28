@@ -3,6 +3,7 @@
 import { useMemo } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
+import { hrefFor } from '@/lib/hrefFor';
 
 import { useMarkets } from '@/api/hooks';
 import { useLedgerFollow } from '@/lib/live/hooks';
@@ -178,7 +179,7 @@ export function HomeRecentTrades() {
                     </Td>
                     <Td className="text-ink-body tracking-wider uppercase">
                       <Link
-                        href={`/sources/${t.source}`}
+                        href={hrefFor.source(t.source)}
                         className="hover:text-brand-600"
                       >
                         {t.source}

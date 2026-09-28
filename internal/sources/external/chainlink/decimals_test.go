@@ -116,7 +116,8 @@ func (c *fakeClock) Advance(d time.Duration) {
 // logger.
 func newDecimalsTestPoller(f *fakeRPC, pair canonical.Pair, address string, configured uint8) (*Poller, *fakeClock, *bytes.Buffer) {
 	var logBuf bytes.Buffer
-	clock := &fakeClock{now: time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)}
+	// Just after the fixtures' updatedAt (1767225600), inside every MaxAge.
+	clock := &fakeClock{now: time.Date(2026, 1, 1, 0, 5, 0, 0, time.UTC)}
 	p := NewPoller(f.srv.URL, map[string]FeedSpec{
 		pair.String(): {Address: address, Decimals: configured},
 	})

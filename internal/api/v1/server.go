@@ -492,16 +492,22 @@ type Server struct {
 	volumeCharacter VolumeCharacterReader
 
 	// readyz single-flight cache (inventory #26) — see handleReadyz.
-	readyzMu   sync.Mutex
-	readyzAt   time.Time
-	readyzCode int
-	readyzBody []byte
+	// readyzFlight is non-nil while a round is being computed; waiters
+	// select on it (or their own ctx) instead of blocking on readyzMu,
+	// so the mutex is never held across the probe IO (GH-587).
+	readyzMu     sync.Mutex
+	readyzAt     time.Time
+	readyzCode   int
+	readyzBody   []byte
+	readyzFlight chan struct{}
 
 	// livez/lake single-flight cache (#310) — see handleLivezLake.
+	// livezLakeFlight mirrors readyzFlight (GH-587).
 	livezLakeMu          sync.Mutex
 	livezLakeAt          time.Time
 	livezLakeCode        int
 	livezLakeBody        []byte
+	livezLakeFlight      chan struct{}
 	fxHistory            FXHistoryReader
 	sessionPeeker        SessionPeeker
 	incidents            []incidents.Incident
@@ -2836,25 +2842,72 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	// be throttled — but every call fanned Pings across all checkers,
 	// each holding DB pool slots up to 2s, so unauthenticated spam could
 	// exhaust the shared pool, r1-confirmed). Concurrent callers now
-	// share ONE check round per second: the first computes while holding
-	// the lock, the rest queue briefly and serve the fresh cache. A
-	// readiness answer up to 1s old is at least as truthful as a
-	// point-in-time probe.
+	// share ONE check round per second. A readiness answer up to 1s old
+	// is at least as truthful as a point-in-time probe.
+	//
+	// readyzMu is held only to read/write the cache and flight fields,
+	// never across the check round itself (GH-587): the round used to
+	// run under the lock, so every queued caller — on an unauthenticated,
+	// rate-limit-exempt route — blocked on it for up to the 2s check
+	// budget. The round now runs detached in fillReadyz; callers that
+	// arrive while one is in flight wait on its done channel and can
+	// abandon it via their own request context instead of the mutex.
 	s.readyzMu.Lock()
 	if time.Since(s.readyzAt) < time.Second && s.readyzBody != nil {
 		code, body := s.readyzCode, s.readyzBody
 		s.readyzMu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(code)
-		_, _ = w.Write(body)
+		writeReadyz(w, code, body)
 		return
 	}
-	code, body := s.computeReadyz() //nolint:contextcheck // deliberately detached: the round is SHARED by every queued caller (single-flight), so one caller's cancellation must not abort it — see computeReadyz's doc.
-	s.readyzCode, s.readyzBody, s.readyzAt = code, body, time.Now()
+	if ch := s.readyzFlight; ch != nil {
+		s.readyzMu.Unlock()
+		select {
+		case <-ch:
+		case <-r.Context().Done():
+			return
+		}
+	} else {
+		done := make(chan struct{})
+		s.readyzFlight = done
+		s.readyzMu.Unlock()
+		go s.fillReadyz(done) //nolint:contextcheck // deliberately detached: the round is SHARED by every queued caller (single-flight), so one caller's cancellation must not abort it — see fillReadyz's doc.
+		select {
+		case <-done:
+		case <-r.Context().Done():
+			return
+		}
+	}
+	s.readyzMu.Lock()
+	code, body := s.readyzCode, s.readyzBody
 	s.readyzMu.Unlock()
+	writeReadyz(w, code, body)
+}
+
+// writeReadyz emits an already-rendered readyz result.
+func writeReadyz(w http.ResponseWriter, code int, body []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_, _ = w.Write(body)
+}
+
+// fillReadyz runs one readyz check round and publishes the result,
+// releasing the single-flight gate on every exit including a panic —
+// a flight left set would wedge every later /v1/readyz behind a
+// channel nobody closes (the GH-587 class).
+func (s *Server) fillReadyz(done chan struct{}) {
+	defer close(done)
+	defer func() {
+		if rec := recover(); rec != nil {
+			worker.Report(s.logger, "api-readyz-fill", rec)
+		}
+		s.readyzMu.Lock()
+		s.readyzFlight = nil
+		s.readyzMu.Unlock()
+	}()
+	code, body := s.computeReadyz()
+	s.readyzMu.Lock()
+	s.readyzCode, s.readyzBody, s.readyzAt = code, body, time.Now()
+	s.readyzMu.Unlock()
 }
 
 // computeReadyz runs one full check round and renders the response.
@@ -3018,7 +3071,15 @@ type lakeHealth struct {
 // already struggling. Concurrent callers now share ONE ping round per
 // second, exactly like handleReadyz; a liveness answer up to 1s old is
 // at least as truthful as a point-in-time probe.
-func (s *Server) handleLivezLake(w http.ResponseWriter, _ *http.Request) {
+//
+// livezLakeMu is held only to read/write the cache and flight fields,
+// never across the ping round (GH-587): the round used to run under the
+// lock, so every queued caller on this unauthenticated, rate-limit-exempt
+// route blocked on it for up to the 5s ping budget against a 1s TTL —
+// during exactly the lake outage the route exists to surface. The round
+// now runs detached in fillLivezLake; queued callers wait on its done
+// channel and can abandon it via their own request context.
+func (s *Server) handleLivezLake(w http.ResponseWriter, r *http.Request) {
 	s.livezLakeMu.Lock()
 	if time.Since(s.livezLakeAt) < livezLakeTTL && s.livezLakeBody != nil {
 		code, body := s.livezLakeCode, s.livezLakeBody
@@ -3026,10 +3087,47 @@ func (s *Server) handleLivezLake(w http.ResponseWriter, _ *http.Request) {
 		writeLivezLake(w, code, body)
 		return
 	}
-	code, body := s.computeLivezLake() //nolint:contextcheck // deliberately detached: the ping round is SHARED by every queued caller (single-flight), so one caller's cancellation must not abort it — see computeLivezLake's doc.
-	s.livezLakeCode, s.livezLakeBody, s.livezLakeAt = code, body, time.Now()
+	if ch := s.livezLakeFlight; ch != nil {
+		s.livezLakeMu.Unlock()
+		select {
+		case <-ch:
+		case <-r.Context().Done():
+			return
+		}
+	} else {
+		done := make(chan struct{})
+		s.livezLakeFlight = done
+		s.livezLakeMu.Unlock()
+		go s.fillLivezLake(done) //nolint:contextcheck // deliberately detached: the round is SHARED by every queued caller (single-flight), so one caller's cancellation must not abort it — see fillLivezLake's doc.
+		select {
+		case <-done:
+		case <-r.Context().Done():
+			return
+		}
+	}
+	s.livezLakeMu.Lock()
+	code, body := s.livezLakeCode, s.livezLakeBody
 	s.livezLakeMu.Unlock()
 	writeLivezLake(w, code, body)
+}
+
+// fillLivezLake runs one lake-ping round and publishes the result,
+// releasing the single-flight gate on every exit including a panic —
+// mirrors fillReadyz (GH-587).
+func (s *Server) fillLivezLake(done chan struct{}) {
+	defer close(done)
+	defer func() {
+		if rec := recover(); rec != nil {
+			worker.Report(s.logger, "api-livezlake-fill", rec)
+		}
+		s.livezLakeMu.Lock()
+		s.livezLakeFlight = nil
+		s.livezLakeMu.Unlock()
+	}()
+	code, body := s.computeLivezLake()
+	s.livezLakeMu.Lock()
+	s.livezLakeCode, s.livezLakeBody, s.livezLakeAt = code, body, time.Now()
+	s.livezLakeMu.Unlock()
 }
 
 // writeLivezLake emits an already-rendered probe result. no-store keeps

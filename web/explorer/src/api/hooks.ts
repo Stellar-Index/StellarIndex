@@ -385,24 +385,29 @@ export type ChangeEntityType =
  * entity. Returns 404 errors gracefully (the worker may not have
  * computed a row yet); components consuming this hook should treat
  * `error` as "no data yet" rather than a hard failure.
+ *
+ * Returns the row flattened (not `{data: row}}`) for callers that only
+ * want the numbers, plus a sibling `flags` so `ChangeSummaryStrip` can
+ * still surface `stale`/`triangulated` — dropping the envelope used to
+ * mean the worker's own freshness caveats never reached the page.
  */
 export function useChangeSummary(
   entityType: ChangeEntityType,
   entityID: string,
 ) {
-  return useQuery<ChangeSummary>({
+  return useQuery<ChangeSummary & { flags?: EnvelopeFlags }>({
     queryKey: ['/v1/changes', entityType, entityID],
-    queryFn: async () =>
+    queryFn: async () => {
       // A `pair` id is the literal `base/quote` form (per the OpenAPI
       // `id` parameter doc) and must occupy one path segment — an
       // unencoded `/` splits the request across two segments and
       // matches no route. `coin` ids never contain `/`, so this is a
       // no-op for every existing caller.
-      (
-        await apiGet<Envelope<ChangeSummary>>(
-          `/v1/changes/${entityType}/${encodeURIComponent(entityID)}`,
-        )
-      ).data,
+      const env = await apiGet<Envelope<ChangeSummary>>(
+        `/v1/changes/${entityType}/${encodeURIComponent(entityID)}`,
+      );
+      return { ...env.data, flags: env.flags };
+    },
     enabled: !!entityID,
     staleTime: 60_000,
   });

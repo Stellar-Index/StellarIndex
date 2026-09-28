@@ -287,6 +287,8 @@ func registerAppMetricsTail() {
 		// [registerAppMetrics] for the same funlen reason as
 		// SourceUnrepresentableSymbolsTotal above.
 		ChainlinkFeedDecimalsVerifyFailedTotal,
+		ChainlinkFeedPollsTotal,
+		ChainlinkFeedLastSuccessUnix,
 
 		// Dispatcher-level counters (RLT-135), registered here rather than
 		// beside their SourceDecodeErrorsTotal neighbour in
@@ -1717,6 +1719,33 @@ var ChainlinkFeedDecimalsVerifyFailedTotal = prometheus.NewCounterVec(
 		Help: "Chainlink decimals() RPC calls that failed and fell back to the last known decimals value, by consumer (divergence|ingest) and pair.",
 	},
 	[]string{"consumer", "pair"},
+)
+
+// ChainlinkFeedPollsTotal — per-feed outcome of each Chainlink ingest
+// poll. The framework's per-source outcome only turns "error" when EVERY
+// feed fails, so one dark feed among healthy siblings is visible here
+// and nowhere else. Outcomes: emitted (new round written), unchanged
+// (fresh round already emitted), stale (older than the feed's MaxAge),
+// carried_forward (answeredInRound < roundId), error (RPC, decode,
+// decimals or projection failure). Pair is bounded by the feed map.
+var ChainlinkFeedPollsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_chainlink_feed_polls_total",
+		Help: "Chainlink ingest feed polls by pair and outcome (emitted|unchanged|stale|carried_forward|error).",
+	},
+	[]string{"pair", "outcome"},
+)
+
+// ChainlinkFeedLastSuccessUnix — UNIX seconds of the last poll whose
+// round was within the feed's MaxAge (outcome emitted or unchanged).
+// Seeded to 0 per configured feed so a feed that never succeeds after a
+// restart still has a series for stellarindex_chainlink_feed_stale.
+var ChainlinkFeedLastSuccessUnix = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_chainlink_feed_last_success_unix",
+		Help: "UNIX seconds of the last Chainlink ingest poll that returned a round within the feed's max age, per pair. Zero = none since startup.",
+	},
+	[]string{"pair"},
 )
 
 // ExternalFXLastQuoteUnix — per-source UNIX-seconds timestamp of the

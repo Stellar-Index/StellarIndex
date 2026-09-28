@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { hrefFor } from '@/lib/hrefFor';
 
 import { Panel } from '@/components/reveal';
 import { asExample, API_BASE_URL } from '@/api/client';
@@ -122,7 +123,7 @@ export async function LiquidityTabPanel({
                   >
                     <td className="px-4 py-2">
                       <Link
-                        href={`/sources/${p.source}`}
+                        href={hrefFor.source(p.source)}
                         className="text-ink-body hover:text-brand-600 font-mono text-xs tracking-wider uppercase"
                       >
                         {p.source}
