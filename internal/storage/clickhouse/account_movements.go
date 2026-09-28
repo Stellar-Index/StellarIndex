@@ -219,13 +219,15 @@ const accountMovementsInsertChunk = 20_000
 // duplicate re-send of an already-written window (the same idempotent
 // re-derivation guarantee as every other ADR-0034 lake/serving
 // writer) — a caller that fails partway through a multi-chunk send
-// can simply retry the whole batch. A caller that does NOT retry —
-// one cancelled mid-batch, then restarted from
-// MaxAccountMovementLedger — is covered too: rows are sent in ledger
-// order (sortAccountMovementRowsForInsert), so whatever survives a
-// partial send is COMPLETE for every ledger below the highest one
-// written, which is exactly what makes max(ledger) a sound resume
-// checkpoint (RLT-296). Returns the number of ROWS sent
+// can simply retry the whole batch. classic-movements-backfill, which
+// does NOT retry and instead restarts from MaxAccountMovementLedger,
+// is covered too: rows are sent in ledger order
+// (sortAccountMovementRowsForInsert), so whatever survives a partial
+// send is COMPLETE for every ledger below the highest one written,
+// which is exactly what makes max(ledger) a sound resume checkpoint
+// for that caller (RLT-296). ch-cap67-movements, this table's other
+// writer, does not use this checkpoint at all — it resumes off its
+// own stellar.cap67_movements_watermark. Returns the number of ROWS sent
 // (not deduped — unlike Postgres's ON CONFLICT ... RETURNING, a
 // ClickHouse INSERT doesn't observe how many rows survive merge-time
 // dedup; "landed" isn't directly measurable here the way
@@ -243,8 +245,8 @@ func InsertAccountMovements(ctx context.Context, addr string, movements []Accoun
 	}
 	// Deterministic, LEDGER-ORDERED — see
 	// sortAccountMovementRowsForInsert: the order decides what a
-	// partially-sent multi-chunk batch leaves behind, and every caller
-	// checkpoints on max(ledger).
+	// partially-sent multi-chunk batch leaves behind, and
+	// classic-movements-backfill checkpoints on max(ledger).
 	sortAccountMovementRowsForInsert(rows)
 
 	conn, err := openAccountMovementsWrite(ctx, addr)
@@ -319,9 +321,12 @@ func marshalAccountMovementAttributes(attrs map[string]any) (string, error) {
 // (RLT-296). A batch larger than accountMovementsInsertChunk is sent as
 // several INSERTs, and ClickHouse has no transaction spanning them: a
 // send that fails partway leaves the earlier chunks durably written.
-// Every caller checkpoints on MaxAccountMovementLedger — "the data IS
-// the checkpoint" (ADR-0048 D2) — so what the survivors look like
-// decides whether that checkpoint is sound:
+// classic-movements-backfill checkpoints on MaxAccountMovementLedger —
+// "the data IS the checkpoint" (ADR-0048 D2) — so what the survivors
+// look like decides whether that checkpoint is sound.
+// (ch-cap67-movements, this table's other writer, checkpoints on its
+// own stellar.cap67_movements_watermark instead — MaxAccountMovementLedger
+// plays no part in its resume.)
 //
 //   - ADDRESS-first (the previous order) made each chunk an address
 //     PREFIX spanning the window's entire ledger range. max(ledger) then
