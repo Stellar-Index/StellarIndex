@@ -669,7 +669,7 @@ func TestWorker_Run_SequentialSecondCallReturnsErrAlreadyRunning(t *testing.T) {
 	// once, then the ctx.Done() case returns immediately.
 	firstCtx, firstCancel := context.WithCancel(context.Background())
 	firstCancel()
-	if err := w.Run(firstCtx); err != context.Canceled {
+	if err := w.Run(firstCtx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("first Run() = %v, want context.Canceled", err)
 	}
 
