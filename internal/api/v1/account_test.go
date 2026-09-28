@@ -11,9 +11,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -369,6 +372,8 @@ func TestAccountKeysCreate_ScopedCallerEmptyRequestInherits(t *testing.T) {
 // ["account"] key requesting ["admin"] is rejected 403 and the store
 // is never touched.
 func TestAccountKeysCreate_ScopedCallerCannotExceed(t *testing.T) {
+	before := testutil.ToFloat64(obs.MintScopeClampRefusedTotal.WithLabelValues("/v1/account/keys"))
+
 	store := &fakeAccountStore{
 		rec:   auth.APIKeyRecord{KeyID: "kid_x", Label: "x"},
 		plain: "sip_x",
@@ -388,6 +393,12 @@ func TestAccountKeysCreate_ScopedCallerCannotExceed(t *testing.T) {
 	}
 	if store.calls != 0 {
 		t.Errorf("Create called %d times, want 0 (escalation must be rejected before mint)", store.calls)
+	}
+	// GH-1146: the self-service mint funnels through the same
+	// clampMintToCaller chokepoint as the operator path, and must be
+	// countable there too.
+	if got, want := testutil.ToFloat64(obs.MintScopeClampRefusedTotal.WithLabelValues("/v1/account/keys")), before+1; got != want {
+		t.Errorf("mint_scope_clamp_refused_total{route=\"/v1/account/keys\"} = %v, want %v", got, want)
 	}
 }
 

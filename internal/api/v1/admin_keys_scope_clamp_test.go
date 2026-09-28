@@ -7,7 +7,10 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -42,6 +45,8 @@ func narrowedOperatorSubject() auth.Subject {
 // inherits the parent's own scopes rather than defaulting to full
 // access.
 func TestAdminKeysCreate_NarrowedOperatorCannotMintUnscopedKey(t *testing.T) {
+	before := testutil.ToFloat64(obs.MintScopeClampRefusedTotal.WithLabelValues("/v1/admin/keys"))
+
 	store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid_minted01"}, plain: "sip_x"}
 	sink := &recordingAuditSink{}
 	ts := newAdminTestServer(t, narrowedOperatorSubject(), store, sink)
@@ -59,11 +64,19 @@ func TestAdminKeysCreate_NarrowedOperatorCannotMintUnscopedKey(t *testing.T) {
 		t.Fatalf("minted Scopes = %v, want [%q] inherited from the caller — an empty list is FULL ACCESS, "+
 			"so a narrowed operator key just escalated itself", got, platform.KeyScopeAdmin)
 	}
+	// A narrowed request is not a refusal: the clamp silently narrows it
+	// instead of rejecting, so the refusal counter must stay flat or the
+	// alert built on it fires on every routine narrowing.
+	if got := testutil.ToFloat64(obs.MintScopeClampRefusedTotal.WithLabelValues("/v1/admin/keys")); got != before {
+		t.Errorf("mint_scope_clamp_refused_total{route=\"/v1/admin/keys\"} moved on a narrowed (not refused) mint: %v -> %v", before, got)
+	}
 }
 
 // A scoped caller asking for a scope it does not hold is rejected
 // outright — not silently narrowed, and never minted.
 func TestAdminKeysCreate_NarrowedOperatorCannotMintScopeItLacks(t *testing.T) {
+	before := testutil.ToFloat64(obs.MintScopeClampRefusedTotal.WithLabelValues("/v1/admin/keys"))
+
 	store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid_minted02"}, plain: "sip_x"}
 	sink := &recordingAuditSink{}
 	ts := newAdminTestServer(t, narrowedOperatorSubject(), store, sink)
@@ -78,6 +91,12 @@ func TestAdminKeysCreate_NarrowedOperatorCannotMintScopeItLacks(t *testing.T) {
 	}
 	if len(sink.entries) != 0 {
 		t.Fatalf("audit entries = %d, want 0 — nothing was minted", len(sink.entries))
+	}
+	// GH-1146: a refused escalation must be countable, not just logged —
+	// a scope-narrowed key repeatedly probing for escalation otherwise
+	// generates zero telemetry an alert could fire on.
+	if got, want := testutil.ToFloat64(obs.MintScopeClampRefusedTotal.WithLabelValues("/v1/admin/keys")), before+1; got != want {
+		t.Errorf("mint_scope_clamp_refused_total{route=\"/v1/admin/keys\"} = %v, want %v", got, want)
 	}
 }
 
