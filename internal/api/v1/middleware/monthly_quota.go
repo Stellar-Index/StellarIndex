@@ -35,7 +35,8 @@ type MonthToDateReader interface {
 // Redis blip (MISCONF, brief partition, fail-over) does not 429 paying
 // customers; short enough that a sustained counter outage cannot become
 // an indefinite unmetered billing window for a key already at its cap.
-// Tune via [WithMonthlyQuotaDwellTime].
+// Tune via api.monthly_quota_dwell (config.APIConfig.MonthlyQuotaDwell,
+// wired at cmd/stellarindex-api/main.go) / [WithMonthlyQuotaDwellTime].
 const DefaultMonthlyQuotaDwellTime = 30 * time.Second
 
 // MonthlyQuotaOption tunes the [MonthlyQuota] middleware. Variadic so
@@ -58,7 +59,8 @@ func WithMonthlyQuotaClock(now func() time.Time) MonthlyQuotaOption {
 // (default [DefaultMonthlyQuotaDwellTime], 30s). A negative value
 // disables the inversion (legacy fail-open-always) — operators should
 // NOT reach for this without understanding the billing-overage vector
-// W1-flow-register-4. Mirrors [ratelimit.WithDwellTime].
+// W1-flow-register-4. Wired from api.monthly_quota_dwell
+// (config.APIConfig.MonthlyQuotaDwell). Mirrors [ratelimit.WithDwellTime].
 func WithMonthlyQuotaDwellTime(d time.Duration) MonthlyQuotaOption {
 	return func(g *monthlyQuotaGate) { g.dwellTime = d }
 }

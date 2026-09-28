@@ -423,10 +423,12 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	if cfg.API.AnonRateLimitPerMin > 0 || cfg.API.KeyRateLimitPerMin > 0 {
 		var anonBucket, authBucket *ratelimit.Bucket
 		if cfg.API.AnonRateLimitPerMin > 0 {
-			anonBucket = ratelimit.New(rdb, cfg.API.AnonRateLimitPerMin, time.Minute)
+			anonBucket = ratelimit.New(rdb, cfg.API.AnonRateLimitPerMin, time.Minute,
+				ratelimit.WithDwellTime(cfg.API.RateLimitDwell))
 		}
 		if cfg.API.KeyRateLimitPerMin > 0 {
-			authBucket = ratelimit.New(rdb, cfg.API.KeyRateLimitPerMin, time.Minute)
+			authBucket = ratelimit.New(rdb, cfg.API.KeyRateLimitPerMin, time.Minute,
+				ratelimit.WithDwellTime(cfg.API.RateLimitDwell))
 		}
 		rateLimit = middleware.RateLimitBySubject(
 			anonBucket,
@@ -471,7 +473,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// when an auth mode is active (mode=none never fails auth).
 	var failedAuthLimiter *ratelimit.Bucket
 	if cfg.API.FailedAuthRateLimitPerMin > 0 {
-		failedAuthLimiter = ratelimit.New(rdb, cfg.API.FailedAuthRateLimitPerMin, time.Minute)
+		failedAuthLimiter = ratelimit.New(rdb, cfg.API.FailedAuthRateLimitPerMin, time.Minute,
+			ratelimit.WithDwellTime(cfg.API.RateLimitDwell))
 		// CON-06 (audit-2026-07-23): same per-process-state caveat as
 		// the rate-limit tiers above — a multi-instance deployment
 		// without Redis multiplies the failed-auth (credential-
@@ -1495,7 +1498,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// persists it), so metered keys are enforced on the default
 		// redis backend too. A validator that leaves it 0 makes the
 		// middleware short-circuit per request.
-		MonthlyQuota: middleware.MonthlyQuota(usageCounter, logger.With("component", "monthly-quota")),
+		MonthlyQuota: middleware.MonthlyQuota(usageCounter, logger.With("component", "monthly-quota"),
+			middleware.WithMonthlyQuotaDwellTime(cfg.API.MonthlyQuotaDwell)),
 		RateLimit:    rateLimit,
 		UsageTracker: middleware.UsageTracker(usageCounter, logger.With("component", "usage")),
 		// F-1226 (codex audit-2026-05-12) wave 39 — TouchUsage half:

@@ -104,8 +104,9 @@ func WithKeyPrefix(prefix string) Option {
 
 // WithDwellTime overrides the F-0050 / F-0150 fail-open dwell-time
 // window. Operators with a stricter or looser Redis-availability
-// SLO tune this; a negative value disables the dwell-time
-// inversion (legacy fail-open-always). Default
+// SLO tune this via api.rate_limit_dwell (config.APIConfig.RateLimitDwell,
+// wired at cmd/stellarindex-api/main.go); a negative value disables the
+// dwell-time inversion (legacy fail-open-always). Default
 // [DefaultDwellTime] (30s).
 func WithDwellTime(d time.Duration) Option {
 	return func(b *Bucket) { b.dwellTime = d }

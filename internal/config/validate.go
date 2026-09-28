@@ -185,13 +185,6 @@ func (r RegionConfig) validate() error {
 		return fmt.Errorf("%w: region.id %q must be lowercase alphanumeric (e.g. r1, r2, r3)",
 			ErrInvalidConfig, r.ID)
 	}
-	if r.HomeDomain == "" {
-		return fmt.Errorf("%w: region.home_domain required", ErrInvalidConfig)
-	}
-	if strings.Contains(r.HomeDomain, "/") || strings.Contains(r.HomeDomain, "://") {
-		return fmt.Errorf("%w: region.home_domain %q must be a bare DNS name, not a URL",
-			ErrInvalidConfig, r.HomeDomain)
-	}
 	return nil
 }
 
@@ -225,14 +218,6 @@ func (s StellarConfig) validate() error {
 				ErrInvalidConfig, i, first)
 		}
 		seen[key] = i
-	}
-	// CoreHTTPEndpoint is optional — empty means "don't probe core".
-	// When set it must parse as an absolute URL.
-	if s.CoreHTTPEndpoint != "" {
-		if _, err := url.Parse(s.CoreHTTPEndpoint); err != nil || !strings.Contains(s.CoreHTTPEndpoint, "://") {
-			return fmt.Errorf("%w: stellar.core_http_endpoint %q must be a full URL",
-				ErrInvalidConfig, s.CoreHTTPEndpoint)
-		}
 	}
 	// CFG-05 (audit-2026-07-23): history_archive_url backs the
 	// backfill-catchup archive read path and has a mandatory
@@ -467,17 +452,6 @@ func addrErrReason(err error) string {
 }
 
 func (i IngestionConfig) validate() error {
-	switch i.CursorStoreScheme {
-	case "postgres", "redis":
-		// ok
-	default:
-		return fmt.Errorf("%w: ingestion.cursor_store_scheme %q must be postgres/redis",
-			ErrInvalidConfig, i.CursorStoreScheme)
-	}
-	if i.BackfillBatchSize == 0 {
-		return fmt.Errorf("%w: ingestion.backfill_batch_size must be > 0",
-			ErrInvalidConfig)
-	}
 	// Duplicate source names would spawn multiple consumers on the
 	// same event stream — double-counting metrics and doubling orphan
 	// buffer memory. Case-fold so ["soroswap", "Soroswap"] is caught
@@ -617,14 +591,6 @@ func (o OracleConfig) validateStalenessOverrides() error {
 }
 
 func (a AggregateConfig) validate() error {
-	if a.VWAPWindowSeconds <= 0 {
-		return fmt.Errorf("%w: aggregate.vwap_window_seconds must be > 0",
-			ErrInvalidConfig)
-	}
-	if a.TWAPWindowSeconds <= 0 {
-		return fmt.Errorf("%w: aggregate.twap_window_seconds must be > 0",
-			ErrInvalidConfig)
-	}
 	if a.MinUSDVolume < 0 {
 		return fmt.Errorf("%w: aggregate.min_usd_volume must be >= 0",
 			ErrInvalidConfig)
