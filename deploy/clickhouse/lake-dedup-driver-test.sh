@@ -33,6 +33,14 @@
 #   6. the <table> argument is spliced into SQL and the log path, so any
 #      name outside the lake tables the driver is for is refused before
 #      a single statement is issued.
+#   7. the run's progress reaches monitoring as textfile-collector gauges
+#      (stellarindex_lake_dedup_*), and the terminal state is written.
+#   8. a run that ABORTs on the enumeration query, before the candidate
+#      count is known, still overwrites the previous run's
+#      last_exit_ok=1 with 0, so a failed run never reads as healthy.
+#   9. a run stopped by SIGTERM mid-OPTIMIZE exits non-zero promptly,
+#      takes its in-flight clickhouse-client with it, and records
+#      last_exit_ok=0 / running=0 rather than a clean exit.
 #
 # Run: bash deploy/clickhouse/lake-dedup-driver-test.sh
 set -uo pipefail
@@ -93,6 +101,12 @@ case "$sql" in
       echo "Code: 159. DB::Exception: Timeout exceeded while receiving data." >&2
       exit 1
     fi
+    if [ -n "${OPT_BLOCK:-}" ]; then
+      # A long merge: announce this client's pid, then block in place
+      # (exec keeps the pid) so a test can signal the driver mid-OPTIMIZE.
+      echo "$$" > "$OPT_STARTED"
+      exec sleep "$OPT_BLOCK"
+    fi
     ;;
   *"SELECT sum(rows) FROM system.parts"*)
     if [ -n "${AFTER_FAIL:-}" ]; then
@@ -135,7 +149,7 @@ run() {
   LOG="$TMP/log.$name"; : > "$LOG"
   env -u ENUM_FAIL -u STATS_FAIL -u OPT_FAIL -u AFTER_FAIL -u DF_GARBAGE -u SORTKEY_FAIL \
       PATH="$TMP/bin:$PATH" CH="$TMP/bin/fake-ch" CH_LOG="$LOG_STMT" \
-      OUT="$LOG" STOP="$TMP/stop.$name" \
+      OUT="$LOG" STOP="$TMP/stop.$name" TEXTFILE_DIR=/dev/null \
       STATS_BEFORE="$STATS_BEFORE_DEFAULT" ROWS_AFTER=50 DF_AVAIL=1000000000000 \
       ENUM_PARTS='' SORTKEY_ANSWER='ledger_seq' \
       ${envs[@]+"${envs[@]}"} bash "$DRIVER" "$@" >> "$LOG" 2>&1
@@ -296,6 +310,131 @@ for bad_table in 'transactions GROUP BY 1; DROP TABLE stellar.ledgers --' '../..
     sed 's/^/       /' "$LOG_STMT"
   fi
 done
+
+# ── 7. textfile-collector metrics reach monitoring (F127) ────────────
+# A multi-day dedup run used to be observable only by tailing $OUT.
+# Point TEXTFILE_DIR at a real directory and assert the terminal .prom
+# state reflects the run: running=0 (exited), partitions_processed=2
+# (both candidates finished), last_exit_ok=1 (clean exit).
+PROMDIR="$TMP/textfile-collector"
+mkdir -p "$PROMDIR"
+run metrics_happy ENUM_PARTS=$'0000000001\n0000000002\n' STATS_BEFORE="$(printf '100\t1000')" \
+    ROWS_AFTER=40 TEXTFILE_DIR="$PROMDIR" -- operations
+PROM_FILE="$PROMDIR/lake_dedup_operations.prom"
+if [ "$RC" -eq 0 ]; then
+  ok "metrics run: exits 0"
+else
+  bad "metrics run: exited $RC"
+  sed 's/^/       /' "$LOG"
+fi
+if [ -f "$PROM_FILE" ]; then
+  ok "metrics run: textfile-collector .prom was written"
+else
+  bad "metrics run: no .prom file at $PROM_FILE"
+fi
+if grep -qE '^stellarindex_lake_dedup_running\{table="operations"\} 0$' "$PROM_FILE" 2>/dev/null; then
+  ok "metrics run: terminal state reports running=0"
+else
+  bad "metrics run: running gauge missing or not 0 at exit"
+  sed 's/^/       /' "$PROM_FILE" 2>/dev/null
+fi
+if grep -qE '^stellarindex_lake_dedup_partitions_processed\{table="operations"\} 2$' "$PROM_FILE" 2>/dev/null; then
+  ok "metrics run: partitions_processed reflects both completed partitions"
+else
+  bad "metrics run: partitions_processed did not report 2"
+  sed 's/^/       /' "$PROM_FILE" 2>/dev/null
+fi
+if grep -qE '^stellarindex_lake_dedup_last_exit_ok\{table="operations"\} 1$' "$PROM_FILE" 2>/dev/null; then
+  ok "metrics run: last_exit_ok=1 on a clean run"
+else
+  bad "metrics run: last_exit_ok missing or not 1"
+  sed 's/^/       /' "$PROM_FILE" 2>/dev/null
+fi
+
+# ── 8. an enumeration ABORT overwrites a previous clean run's state ───
+# The prior run's .prom (from case 7) says last_exit_ok=1, running=0.
+# A later run that aborts before the candidate count is known must
+# replace that with last_exit_ok=0, otherwise the failure is invisible.
+run metrics_enum_fail ENUM_FAIL=1 TEXTFILE_DIR="$PROMDIR" -- operations
+if [ "$RC" -ne 0 ] && grep -q 'ABORT: partition-enumeration query FAILED' "$LOG"; then
+  ok "metrics enum-fail run: aborts non-zero"
+else
+  bad "metrics enum-fail run: expected an enumeration ABORT, exit $RC"
+  sed 's/^/       /' "$LOG"
+fi
+if grep -qE '^stellarindex_lake_dedup_last_exit_ok\{table="operations"\} 0$' "$PROM_FILE" 2>/dev/null; then
+  ok "metrics enum-fail run: last_exit_ok=0 replaces the previous run's 1"
+else
+  bad "metrics enum-fail run: last_exit_ok not 0 after an aborted run"
+  sed 's/^/       /' "$PROM_FILE" 2>/dev/null
+fi
+if grep -qE '^stellarindex_lake_dedup_running\{table="operations"\} 0$' "$PROM_FILE" 2>/dev/null; then
+  ok "metrics enum-fail run: running=0 after the abort"
+else
+  bad "metrics enum-fail run: running gauge missing or not 0 after the abort"
+  sed 's/^/       /' "$PROM_FILE" 2>/dev/null
+fi
+if grep -qE '^stellarindex_lake_dedup_partitions_processed\{table="operations"\} 0$' "$PROM_FILE" 2>/dev/null; then
+  ok "metrics enum-fail run: partitions_processed=0, not the previous run's count"
+else
+  bad "metrics enum-fail run: partitions_processed not reset to 0"
+  sed 's/^/       /' "$PROM_FILE" 2>/dev/null
+fi
+if [ -e "$PROM_FILE.progress" ]; then
+  bad "metrics enum-fail run: progress state file left behind"
+else
+  ok "metrics enum-fail run: progress state file removed"
+fi
+
+# ── 9. SIGTERM mid-OPTIMIZE is a failed run, not a clean one ─────────
+# The EXIT trap alone sees the last command's status on a signal, so a
+# SIGTERM'd run recorded last_exit_ok=1. The fake OPTIMIZE blocks for
+# 30s; the driver must exit within 10s of SIGTERM, non-zero, with the
+# client killed and the terminal gauges reporting the failure.
+LOG="$TMP/log.metrics_sigterm"; : > "$LOG"
+OPT_STARTED="$TMP/opt-started"; rm -f "$OPT_STARTED"
+env -u ENUM_FAIL -u STATS_FAIL -u OPT_FAIL -u AFTER_FAIL -u DF_GARBAGE -u SORTKEY_FAIL \
+    PATH="$TMP/bin:$PATH" CH="$TMP/bin/fake-ch" CH_LOG="$TMP/stmt.metrics_sigterm.log" \
+    OUT="$LOG" STOP="$TMP/stop.metrics_sigterm" TEXTFILE_DIR="$PROMDIR" \
+    STATS_BEFORE="$STATS_BEFORE_DEFAULT" ROWS_AFTER=50 DF_AVAIL=1000000000000 \
+    ENUM_PARTS=$'0000000001\n' SORTKEY_ANSWER='ledger_seq' \
+    OPT_BLOCK=30 OPT_STARTED="$OPT_STARTED" \
+    bash "$DRIVER" operations >> "$LOG" 2>&1 &
+driver_pid=$!
+for _ in $(seq 100); do [ -s "$OPT_STARTED" ] && break; sleep 0.1; done
+opt_pid="$(cat "$OPT_STARTED" 2>/dev/null)"
+kill -TERM "$driver_pid"
+exited=0
+for _ in $(seq 100); do kill -0 "$driver_pid" 2>/dev/null || { exited=1; break; }; sleep 0.1; done
+if [ "$exited" -eq 1 ]; then
+  wait "$driver_pid"; RC=$?
+else
+  kill -KILL "$driver_pid" 2>/dev/null; wait "$driver_pid" 2>/dev/null; RC=137
+fi
+if [ -n "$opt_pid" ] && [ "$exited" -eq 1 ] && [ "$RC" -eq 143 ]; then
+  ok "metrics sigterm run: exits 143 within 10s of SIGTERM"
+else
+  bad "metrics sigterm run: OPTIMIZE started=${opt_pid:-no} exited_promptly=$exited rc=$RC (want 143)"
+  sed 's/^/       /' "$LOG"
+fi
+if [ -n "$opt_pid" ] && ! kill -0 "$opt_pid" 2>/dev/null; then
+  ok "metrics sigterm run: in-flight clickhouse-client was stopped"
+else
+  bad "metrics sigterm run: clickhouse-client pid ${opt_pid:-?} outlived the driver"
+  [ -n "$opt_pid" ] && kill -KILL "$opt_pid" 2>/dev/null
+fi
+if grep -qE '^stellarindex_lake_dedup_last_exit_ok\{table="operations"\} 0$' "$PROM_FILE" 2>/dev/null; then
+  ok "metrics sigterm run: last_exit_ok=0"
+else
+  bad "metrics sigterm run: last_exit_ok not 0 after SIGTERM"
+  sed 's/^/       /' "$PROM_FILE" 2>/dev/null
+fi
+if grep -qE '^stellarindex_lake_dedup_running\{table="operations"\} 0$' "$PROM_FILE" 2>/dev/null; then
+  ok "metrics sigterm run: running=0"
+else
+  bad "metrics sigterm run: running gauge missing or not 0 after SIGTERM"
+  sed 's/^/       /' "$PROM_FILE" 2>/dev/null
+fi
 
 echo "----"
 echo "lake-dedup-driver-test: $pass passed, $fail failed"
