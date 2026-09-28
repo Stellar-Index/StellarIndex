@@ -573,6 +573,38 @@ func (s *Store) BackfillCoverageStats(_ context.Context) ([]BackfillCoverage, er
 	return nil, nil
 }
 
+// supplyCoverageStatsQuery backs [Store.SupplyCoverageStats]. The `newest`
+// CTE orders by `time` alone: close time is monotonic in ledger sequence
+// (no two ledgers share a close time), so the newest row already carries
+// the highest ledger and a ledger_sequence tie-break can never fire — it
+// would only cost the plan an extra sort key over the index/compress-orderby,
+// defeating the single ordered-append seek.
+const supplyCoverageStatsQuery = `
+	WITH RECURSIVE assets AS (
+	    (SELECT asset_key FROM asset_supply_history ORDER BY asset_key LIMIT 1)
+	    UNION ALL
+	    SELECT (SELECT h.asset_key
+	              FROM asset_supply_history h
+	             WHERE h.asset_key > a.asset_key
+	             ORDER BY h.asset_key
+	             LIMIT 1)
+	      FROM assets a
+	     WHERE a.asset_key IS NOT NULL
+	), newest AS (
+	    SELECT time, ledger_sequence
+	      FROM asset_supply_history
+	     ORDER BY time DESC
+	     LIMIT 1
+	)
+	SELECT
+	    COUNT(*) FILTER (WHERE asset_key LIKE 'C%' AND LENGTH(asset_key) = 56) AS sep41,
+	    COUNT(*) FILTER (WHERE NOT (asset_key LIKE 'C%' AND LENGTH(asset_key) = 56)) AS classic,
+	    (SELECT time FROM newest)            AS last_at,
+	    (SELECT ledger_sequence FROM newest) AS last_ledger
+	FROM assets
+	WHERE asset_key IS NOT NULL
+`
+
 // SupplyCoverageStats returns the current coverage state of the
 // asset_supply_history hypertable: how many assets have ever been given a
 // supply (SEP-41 vs classic) and the newest snapshot's time and ledger.
@@ -581,40 +613,13 @@ func (s *Store) BackfillCoverageStats(_ context.Context) ([]BackfillCoverage, er
 // a supply, so a floor would under-count. The asset set is walked as a loose
 // index scan over asset_supply_history_asset_time_idx, one seek per distinct
 // asset_key per chunk, instead of reading and sorting every history row.
-// The newest snapshot is one ordered-append seek; time is the ledger close
-// time, so the newest row also carries the highest ledger.
 func (s *Store) SupplyCoverageStats(ctx context.Context) (SupplyCoverage, error) {
-	const q = `
-		WITH RECURSIVE assets AS (
-		    (SELECT asset_key FROM asset_supply_history ORDER BY asset_key LIMIT 1)
-		    UNION ALL
-		    SELECT (SELECT h.asset_key
-		              FROM asset_supply_history h
-		             WHERE h.asset_key > a.asset_key
-		             ORDER BY h.asset_key
-		             LIMIT 1)
-		      FROM assets a
-		     WHERE a.asset_key IS NOT NULL
-		), newest AS (
-		    SELECT time, ledger_sequence
-		      FROM asset_supply_history
-		     ORDER BY time DESC, ledger_sequence DESC
-		     LIMIT 1
-		)
-		SELECT
-		    COUNT(*) FILTER (WHERE asset_key LIKE 'C%' AND LENGTH(asset_key) = 56) AS sep41,
-		    COUNT(*) FILTER (WHERE NOT (asset_key LIKE 'C%' AND LENGTH(asset_key) = 56)) AS classic,
-		    (SELECT time FROM newest)            AS last_at,
-		    (SELECT ledger_sequence FROM newest) AS last_ledger
-		FROM assets
-		WHERE asset_key IS NOT NULL
-	`
 	var (
 		sep41, classic int
 		lastAt         sql.NullTime
 		lastLedger     sql.NullInt64
 	)
-	if err := s.db.QueryRowContext(ctx, q).Scan(&sep41, &classic, &lastAt, &lastLedger); err != nil {
+	if err := s.db.QueryRowContext(ctx, supplyCoverageStatsQuery).Scan(&sep41, &classic, &lastAt, &lastLedger); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return SupplyCoverage{}, nil
 		}
