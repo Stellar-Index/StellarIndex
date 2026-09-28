@@ -30,6 +30,7 @@ func chainlinkFeedSetFromConfig(in map[string]config.ChainlinkFeedSetting) (map[
 			Address:  v.Address,
 			Decimals: v.Decimals,
 			Invert:   v.Invert,
+			MaxAge:   time.Duration(v.MaxAgeHours) * time.Hour,
 		}
 	}
 	return chainlink.BuildFeedSet(adapted)
