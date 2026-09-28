@@ -116,3 +116,20 @@ func TestNotionalFloor_SubBarPairFallsBackToPerMinuteFreeze(t *testing.T) {
 	}
 	probeFreezes(t, series, baseline.OutcomeOKPerMinuteFallback)
 }
+
+// The fallback must not bring back #1108's cap lift: $0.0004 of dust every
+// minute for 30 days ($17.28, two bars) trains the per-minute freeze stats,
+// but the density stays that of the bars, so the cap holds.
+func TestNotionalFloor_DustFallbackKeepsCap(t *testing.T) {
+	now := time.Now().UTC()
+	start := now.Add(-baseline.Window30d)
+	series := make([]baseline.TimedVWAP, 0, 30*1440)
+	for i := 0; i < 30*1440; i++ {
+		series = append(series, baseline.TimedVWAP{
+			VWAP:      1 + float64(i%11)*0.0001,
+			BucketEnd: start.Add(time.Duration(i+1) * time.Minute),
+			USDVolume: big.NewRat(4, 10_000),
+		})
+	}
+	probeFreezes(t, series, baseline.OutcomeOKPerMinuteFallback)
+}

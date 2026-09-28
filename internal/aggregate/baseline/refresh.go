@@ -121,9 +121,10 @@ const (
 	OutcomeReadError
 	OutcomeWriteError
 	// OutcomeOKPerMinuteFallback: the window carried too little USD flow
-	// for MinSamples+1 volume bars, so the baseline was built one point per
-	// minute, as before volume bars, rather than leaving a publishable pair
-	// with no z-score freeze. Its density is print-count and dust-buyable.
+	// for MinSamples+1 volume bars, so the median/MAD were built one point
+	// per minute, as before volume bars, rather than leaving a publishable
+	// pair with no z-score freeze. Day30.N is clamped so the density stays
+	// that of the bars; see [Refresher.RefreshPair].
 	OutcomeOKPerMinuteFallback
 	// OutcomeOKUnvalued: no minute in the window carried a USD valuation,
 	// so notional is unmeasurable and the baseline was built from every
@@ -201,6 +202,13 @@ func (r *Refresher) RefreshPair(ctx context.Context, pair canonical.Pair) (Refre
 	if multi.Day30 == nil && valued {
 		multi = NewMultiBaseline(SplitByLookback(timed, now))
 		okOutcome = OutcomeOKPerMinuteFallback
+		// Day30.N is also the bootstrap cap's density. Under three bars that
+		// density is ~0, but per-minute N is print count and dust can buy it
+		// past the gate (#1108). Clamping at MinZScoreSamples keeps the 30d
+		// window's freeze vote and drops the density to under an hour.
+		if multi.Day30 != nil && multi.Day30.N > MinZScoreSamples {
+			multi.Day30.N = MinZScoreSamples
+		}
 	}
 	if multi.Day30 == nil {
 		// Even the long window is in bootstrap; persist nothing.

@@ -3287,9 +3287,10 @@ window's minutes ($10,000 / 1,440 ≈ $6.94 on defaults), and each bar is
 one point priced at the USD-weighted mean of its minutes' VWAPs. Dust
 contributes its USD share of a point, not a point per print.
 `ok_per_minute_fallback` counts pairs whose window carried too little
-USD flow for three bars (under about $20.8 in 30 days): their baseline is
-built one point per minute so the Phase 2 freeze stays live, and its
-density can be bought with dust prints. `ok_unvalued` counts
+USD flow for three bars (under about $20.8 in 30 days): their median/MAD
+are built one point per minute so the Phase 2 freeze stays live, while the
+30d sample count is clamped to 60 so dust prints cannot lift the bootstrap
+cap. `ok_unvalued` counts
 pairs with no USD-valued minute in the window (non-USD fiat quotes, a
 quote the USD resolver cannot price); their baseline is built from every
 minute. Sustained `read_error` or `write_error` rates indicate the storage layer needs investigation

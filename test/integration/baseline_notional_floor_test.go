@@ -111,8 +111,9 @@ func TestTimedVWAPsForPair1m_NotionalFloor(t *testing.T) {
 	// The production refresher, floor as wired on defaults, over the same
 	// rows: THIN's three real minutes are three points (N=2) and its sixty
 	// pennies ($0.60) never make a point; a pair of nothing but pennies has
-	// too little flow for bars and keeps main's per-minute baseline; the
-	// all-unpriced pair keeps one under ok_unvalued.
+	// too little flow for bars and keeps main's per-minute stats (59 returns,
+	// under the density clamp); the all-unpriced pair keeps one under
+	// ok_unvalued.
 	sink := &captureBaselineSink{}
 	r := baseline.NewRefresher(store, sink, baseline.DefaultWindow, nil).
 		WithMinuteNotionalFloor(baseline.MinuteNotionalFloor(10_000, 24*time.Hour))

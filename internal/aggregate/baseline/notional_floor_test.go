@@ -174,8 +174,8 @@ func TestRefresher_NotionalOutcomesAreDistinct(t *testing.T) {
 	if outcome, err := r.RefreshPair(context.Background(), dust); err != nil || outcome != baseline.OutcomeOKPerMinuteFallback {
 		t.Errorf("dust = (%v, %v), want ok_per_minute_fallback ($0.10 of flow is under one bar)", outcome, err)
 	}
-	if d30 := sink.byPair[dust.String()].Day30; d30 == nil || d30.N != 99 {
-		t.Errorf("dust Day30 = %+v, want the per-minute N=99", d30)
+	if d30 := sink.byPair[dust.String()].Day30; d30 == nil || d30.N != baseline.MinZScoreSamples {
+		t.Errorf("dust Day30 = %+v, want per-minute stats with N clamped to %d", d30, baseline.MinZScoreSamples)
 	}
 	sum := r.RefreshAll(context.Background(), []canonical.Pair{mixed, thin, dust}, 2)
 	if sum.OK != 1 || sum.NotEnoughSamples != 1 || sum.OKPerMinuteFallback != 1 || sum.OKUnvalued != 0 {

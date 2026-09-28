@@ -4398,8 +4398,8 @@ var AggregatorFXSnapFallbackTotal = prometheus.NewCounterVec(
 // Steady state is mostly `ok`; sustained `not_enough_samples` indicates
 // pairs in bootstrap (ADR-0019 §"Bootstrap policy");
 // `ok_per_minute_fallback` counts pairs with too little USD flow for
-// volume bars, whose baseline is one point per minute (dust-buyable
-// density); `ok_unvalued` counts pairs with no USD-valued minute, whose
+// volume bars, whose median/MAD are one point per minute with the 30d
+// density clamped so dust cannot lift the cap; `ok_unvalued` counts pairs with no USD-valued minute, whose
 // baseline is built from every minute; sustained `read_error` / `write_error`
 // indicate the storage layer needs investigation.
 var AggregatorBaselineRefreshTotal = prometheus.NewCounterVec(
