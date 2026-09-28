@@ -401,7 +401,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                    "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                     "type": "text/plain"
                   },
                   "key": "Retry-After",
@@ -1112,7 +1112,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                    "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                     "type": "text/plain"
                   },
                   "key": "Retry-After",
@@ -2542,7 +2542,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -2915,7 +2915,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                            "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                             "type": "text/plain"
                           },
                           "key": "Retry-After",
@@ -3339,7 +3339,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                    "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                     "type": "text/plain"
                   },
                   "key": "Retry-After",
@@ -4159,7 +4159,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -4643,7 +4643,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -5193,7 +5193,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                            "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                             "type": "text/plain"
                           },
                           "key": "Retry-After",
@@ -5654,7 +5654,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -6027,7 +6027,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -6544,7 +6544,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -7809,7 +7809,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                    "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                     "type": "text/plain"
                   },
                   "key": "Retry-After",
@@ -8361,7 +8361,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -9545,7 +9545,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                    "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                     "type": "text/plain"
                   },
                   "key": "Retry-After",
@@ -10282,7 +10282,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                    "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                     "type": "text/plain"
                   },
                   "key": "Retry-After",
@@ -10983,7 +10983,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                    "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                     "type": "text/plain"
                   },
                   "key": "Retry-After",
@@ -11460,7 +11460,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -11782,7 +11782,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -12158,7 +12158,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -12525,7 +12525,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -12964,7 +12964,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -13527,7 +13527,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                    "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                     "type": "text/plain"
                   },
                   "key": "Retry-After",
@@ -14052,7 +14052,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -14488,7 +14488,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                    "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                     "type": "text/plain"
                   },
                   "key": "Retry-After",
@@ -14799,7 +14799,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -16348,7 +16348,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                    "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                     "type": "text/plain"
                   },
                   "key": "Retry-After",
@@ -16819,7 +16819,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -17184,7 +17184,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                    "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                     "type": "text/plain"
                   },
                   "key": "Retry-After",
@@ -17561,7 +17561,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -18024,7 +18024,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                            "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                             "type": "text/plain"
                           },
                           "key": "Retry-After",
@@ -19714,7 +19714,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                            "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                             "type": "text/plain"
                           },
                           "key": "Retry-After",
@@ -20245,7 +20245,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -20591,7 +20591,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -20827,7 +20827,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -21063,7 +21063,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -21407,7 +21407,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                    "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                     "type": "text/plain"
                   },
                   "key": "Retry-After",
@@ -21713,7 +21713,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                    "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                     "type": "text/plain"
                   },
                   "key": "Retry-After",
@@ -22167,7 +22167,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                            "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                             "type": "text/plain"
                           },
                           "key": "Retry-After",
@@ -22582,7 +22582,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -23687,7 +23687,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                    "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                     "type": "text/plain"
                   },
                   "key": "Retry-After",
@@ -23991,7 +23991,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                            "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                             "type": "text/plain"
                           },
                           "key": "Retry-After",
@@ -24205,7 +24205,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                    "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                     "type": "text/plain"
                   },
                   "key": "Retry-After",
@@ -25282,7 +25282,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                    "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                     "type": "text/plain"
                   },
                   "key": "Retry-After",
@@ -25625,7 +25625,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -25977,7 +25977,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -26717,7 +26717,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -28145,7 +28145,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                         "type": "text/plain"
                       },
                       "key": "Retry-After",
@@ -38110,7 +38110,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it.",
+                            "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
                             "type": "text/plain"
                           },
                           "key": "Retry-After",

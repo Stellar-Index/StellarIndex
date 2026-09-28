@@ -11910,7 +11910,7 @@ export interface components {
         /** @description 429 from either of the two independent gates that share this status on a metered route: the per-tier rate limiter (see `Retry-After` + `X-RateLimit-*` below) or, on Postgres-backed keys with a monthly cap, the MonthlyQuota middleware — which runs BEFORE the rate limiter in the same chain (see `middleware/doc.go`) and can 429 first. The two are distinguished by `type`/`title` in the body: see the `monthlyQuotaExceeded` and `monthlyQuotaUnavailable` examples below (or `#/components/responses/MonthlyQuotaExceeded` and `#/components/responses/MonthlyQuotaUnavailable`, documented standalone for the same shapes). */
         RateLimited: {
             headers: {
-                /** @description Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it. */
+                /** @description Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it. */
                 "Retry-After"?: number;
                 /** @description Request budget for the caller's tier in the current fixed window (per-key override applied when one is set). Rate-limit 429s only. */
                 "X-RateLimit-Limit"?: number;
@@ -11931,6 +11931,8 @@ export interface components {
         /** @description The account's monthly request quota (shared by every API key on the account) has been reached. Standalone form of the `monthlyQuotaExceeded` example on `RateLimited` — every path that references `RateLimited` can return this shape instead, since the MonthlyQuota middleware runs before the rate limiter on the same routes. */
         MonthlyQuotaExceeded: {
             headers: {
+                /** @description Seconds until the 1st UTC of next month, when the month-to-date counter resets. */
+                "Retry-After"?: number;
                 /** @description The account's monthly request cap. */
                 "X-StellarIndex-Monthly-Quota"?: number;
                 /** @description Month-to-date request count that triggered the cap. */
