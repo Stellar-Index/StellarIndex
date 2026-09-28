@@ -18325,9 +18325,12 @@ components:
             of almost every asset on this network, and not an accusation.
             `no_listing_price`: named, but unpriced, or priced past the
             24h bound the directory enforces on the platform's own
-            publication clock. `listing_price_expired`: the publication
-            time is past the absolute 7-day bound. `no_supply`: no supply
-            reading to multiply, refused rather than published as zero.
+            publication clock. `listing_price_not_positive`: the
+            published price is zero, negative or unparseable, so no
+            valuation can be taken from it. `listing_price_expired`: the
+            publication time is past the absolute 7-day bound.
+            `no_supply`: no supply reading to multiply, refused rather
+            than published as zero.
         value_usd:           { type: [string, "null"], description: "circulating_supply / 10^decimals x listing_reference.price_usd, two fractional digits. Exact rational arithmetic throughout, rounded once at the end, so a consumer can add the served strings by hand and reach the same total. Present if and only if status is `published`." }
         circulating_supply:  { type: [string, "null"], description: "The multiplicand: the raw integer supply, in the asset's smallest unit, that value_usd was computed from. Published here rather than inferred from the row's own `circulating_supply`, because the two can legitimately differ — this arm takes the LARGER of the row's reading and the lake's mint-burn total over the asset's SAC, and on the detail surface the row often has no reading at all. Scale it by the row's `decimals`." }
         supply_basis:
@@ -18844,9 +18847,11 @@ components:
         publishes a stellar.toml whose [[CURRENCIES]] entry
         matches the asset's `(code, issuer)` — `sep1_status`
         then reads "verified". `not_applicable` (native, fiat,
-        SAC-only), `not_fetched` (operator hasn't configured the
-        home-domain map for this issuer), `unreachable` (fetch
-        or parse failed), and `no_match` (TOML loaded but no
+        SAC-only), `not_fetched` (OURS — no fetch has been
+        attempted for this issuer yet), `unreachable` (THEIRS —
+        a fetch was attempted and produced nothing storable: a
+        404, a dead name, a TLS failure, or a document that
+        would not parse), and `no_match` (TOML loaded but no
         matching currency block) leave the overlay fields null.
       properties:
         asset_id:        { type: string }
