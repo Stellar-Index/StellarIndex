@@ -1802,33 +1802,32 @@ func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from,
 	// feeds statistical baseline math whose float contract is documented
 	// on [Store.VWAPsForPair1m].
 	//
-	// A minute counts only when one of its trades cleared the $0.01 notional
-	// floor (notional_trade_count, migrations 0115/0166): this series is both
-	// the baseline sample and the bootstrap cap's density, so without the
-	// floor dust prints buy a thin pair past the 28.5-day gate. An unpriced
-	// minute (usd_volume NULL) proves no notional and does not count either.
+	// Each minute carries its USD notional (volume_usd, NULL when unpriced)
+	// and notional_trade_count so the refresher can apply its per-minute
+	// notional floor (#1108); the policy lives there, not in this read.
 	const q = `
         SELECT (SUM(CASE WHEN base_asset = $1 THEN vwap * COALESCE(volume_priced, 0)
                          ELSE COALESCE(volume_priced, 0) END)
                   / NULLIF(SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume_priced, 0)
                                     ELSE vwap * COALESCE(volume_priced, 0) END), 0))::float8 AS vwap,
-               bucket + INTERVAL '1 minute'
+               bucket + INTERVAL '1 minute',
+               NULLIF(SUM(COALESCE(volume_usd, 0)), 0)::text,
+               SUM(COALESCE(notional_trade_count, 0))::bigint
           FROM (
-            (SELECT bucket, base_asset, vwap, volume_priced, notional_trade_count
+            (SELECT bucket, base_asset, vwap, volume_priced, volume_usd, notional_trade_count
                FROM prices_1m
               WHERE base_asset = $1 AND quote_asset = $2
                 AND bucket >= $3::timestamptz
                 AND bucket <  $4::timestamptz)
             UNION ALL
-            (SELECT bucket, base_asset, vwap, volume_priced, notional_trade_count
+            (SELECT bucket, base_asset, vwap, volume_priced, volume_usd, notional_trade_count
                FROM prices_1m
               WHERE base_asset = $2 AND quote_asset = $1
                 AND bucket >= $3::timestamptz
                 AND bucket <  $4::timestamptz)
           ) AS both_directions
          GROUP BY bucket
-        HAVING SUM(notional_trade_count) > 0
-           AND SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume_priced, 0)
+        HAVING SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume_priced, 0)
                         ELSE vwap * COALESCE(volume_priced, 0) END) > 0
          ORDER BY bucket ASC
     `
@@ -1843,9 +1842,19 @@ func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from,
 
 	out := make([]domain.BaselineTimedVWAP, 0, 256)
 	for rows.Next() {
-		var t domain.BaselineTimedVWAP
-		if err := rows.Scan(&t.VWAP, &t.BucketEnd); err != nil {
+		var (
+			t   domain.BaselineTimedVWAP
+			usd sql.NullString
+		)
+		if err := rows.Scan(&t.VWAP, &t.BucketEnd, &usd, &t.NotionalTrades); err != nil {
 			return nil, fmt.Errorf("timescale: TimedVWAPsForPair1m scan: %w", err)
+		}
+		if usd.Valid {
+			v, ok := new(big.Rat).SetString(usd.String)
+			if !ok {
+				return nil, fmt.Errorf("timescale: TimedVWAPsForPair1m: volume_usd %q is not a decimal", usd.String)
+			}
+			t.USDVolume = v
 		}
 		out = append(out, t)
 	}

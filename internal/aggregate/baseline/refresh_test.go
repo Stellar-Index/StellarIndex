@@ -3,6 +3,7 @@ package baseline_test
 import (
 	"context"
 	"errors"
+	"math/big"
 	"sync"
 	"testing"
 	"time"
@@ -82,7 +83,7 @@ func mustPair(t *testing.T, base, quote string) canonical.Pair {
 
 // stableTimedSeries builds `n` evenly-spaced timed VWAPs with bp
 // jitter, ending at `now`. Bucket spacing is 1 minute (matching the
-// 1m CAGG cadence).
+// 1m CAGG cadence). Every minute is a priced $100 fill.
 func stableTimedSeries(now time.Time, n int) []baseline.TimedVWAP {
 	out := make([]baseline.TimedVWAP, n)
 	price := 1.0
@@ -94,8 +95,10 @@ func stableTimedSeries(now time.Time, n int) []baseline.TimedVWAP {
 		}
 		price += shift
 		out[i] = baseline.TimedVWAP{
-			VWAP:      price,
-			BucketEnd: now.Add(-time.Duration(n-1-i) * time.Minute),
+			VWAP:           price,
+			BucketEnd:      now.Add(-time.Duration(n-1-i) * time.Minute),
+			USDVolume:      big.NewRat(100, 1),
+			NotionalTrades: 1,
 		}
 	}
 	return out
@@ -172,10 +175,11 @@ func TestRefresher_PartialBootstrap_OnlyDay30Valid(t *testing.T) {
 	//   7d  → most-recent two (1 return → still < MinSamples=2 → bootstrap)
 	//   30d → all three (2 returns → MinSamples=2 → valid)
 	src := newStubSource()
+	usd := big.NewRat(100, 1)
 	src.set(pair, []baseline.TimedVWAP{
-		{VWAP: 1.0, BucketEnd: now.Add(-8 * 24 * time.Hour)},
-		{VWAP: 1.01, BucketEnd: now.Add(-2 * 24 * time.Hour)},
-		{VWAP: 1.02, BucketEnd: now.Add(-30 * time.Minute)},
+		{VWAP: 1.0, BucketEnd: now.Add(-8 * 24 * time.Hour), USDVolume: usd, NotionalTrades: 1},
+		{VWAP: 1.01, BucketEnd: now.Add(-2 * 24 * time.Hour), USDVolume: usd, NotionalTrades: 1},
+		{VWAP: 1.02, BucketEnd: now.Add(-30 * time.Minute), USDVolume: usd, NotionalTrades: 1},
 	})
 	sink := newStubSink()
 

@@ -4393,15 +4393,19 @@ var AggregatorFXSnapFallbackTotal = prometheus.NewCounterVec(
 
 // AggregatorBaselineRefreshTotal — counter of baseline refresh
 // outcomes per pair, per refresh cycle (ADR-0019 Phase 2). One
-// increment per pair per cycle; outcome ∈ {ok, not_enough_samples,
-// read_error, write_error}. Steady state is mostly `ok`; sustained
-// `not_enough_samples` indicates pairs in bootstrap (ADR-0019
-// §"Bootstrap policy"); sustained `read_error` / `write_error`
+// increment per pair per cycle; outcome ∈ {ok, ok_unvalued,
+// not_enough_samples, below_notional_floor, read_error, write_error}.
+// Steady state is mostly `ok`; sustained `not_enough_samples` indicates
+// pairs in bootstrap (ADR-0019 §"Bootstrap policy"); `below_notional_floor`
+// counts pairs that trade but whose minutes carry too little USD notional
+// to train a baseline (no Phase 2 z-score freeze; Phase 1 still applies);
+// `ok_unvalued` counts pairs with no USD-valued minute whose baseline was
+// built from every minute; sustained `read_error` / `write_error`
 // indicate the storage layer needs investigation.
 var AggregatorBaselineRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_baseline_refresh_total",
-		Help: "Baseline refresh outcomes per pair × refresh cycle. Outcome ∈ {ok, not_enough_samples, read_error, write_error}.",
+		Help: "Baseline refresh outcomes per pair × refresh cycle. Outcome ∈ {ok, ok_unvalued, not_enough_samples, below_notional_floor, read_error, write_error}.",
 	},
 	[]string{"outcome"},
 )

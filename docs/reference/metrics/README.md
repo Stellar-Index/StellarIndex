@@ -3268,8 +3268,8 @@ an hour fires `stellarindex_divergence_pair_below_quorum`.
 
 ### `stellarindex_aggregator_baseline_refresh_total`
 
-Counter, label `outcome` (`ok` / `not_enough_samples` / `read_error` /
-`write_error`).
+Counter, label `outcome` (`ok` / `ok_unvalued` / `not_enough_samples` /
+`below_notional_floor` / `read_error` / `write_error`).
 
 Baseline refresh outcomes per pair × refresh cycle (ADR-0019 Phase 2).
 The aggregator's baseline-refresh worker recomputes Median + MAD over
@@ -3279,7 +3279,16 @@ result into `volatility_baseline_1m`. One increment per pair per cycle.
 Steady state is mostly `ok`. Sustained `not_enough_samples` indicates
 pairs in bootstrap (ADR-0019 §"Bootstrap policy") — the API's
 confidence score for those pairs will fall back to the bootstrap
-factor instead of using a per-asset baseline. Sustained `read_error`
+factor instead of using a per-asset baseline.
+
+A minute trains the baseline only when it carries a trade of at least
+$0.01 and a summed USD notional of at least `min_usd_volume` divided by
+the longest window's minutes ($10,000 / 1,440 ≈ $6.94 on defaults).
+`below_notional_floor` counts pairs that trade but have too few such
+minutes: nothing is persisted, so they get no Phase 2 z-score freeze
+(Phase 1 still applies). `ok_unvalued` counts pairs with no USD-valued
+minute in the window (non-USD fiat quotes, a quote the USD resolver
+cannot price); their baseline is built from every minute. Sustained `read_error`
 or `write_error` rates indicate the storage layer needs investigation
 (prices_1m read failing or volatility_baseline_1m write conflict).
 

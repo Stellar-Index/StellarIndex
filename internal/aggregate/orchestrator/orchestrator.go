@@ -716,6 +716,12 @@ func effectiveWindows(ws []time.Duration) []time.Duration {
 	return DefaultWindows
 }
 
+// LongestWindow is the longest window an orchestrator built from ws runs.
+func LongestWindow(ws []time.Duration) time.Duration {
+	eff := effectiveWindows(ws)
+	return eff[len(eff)-1]
+}
+
 // ShortestWindow is the window whose VWAP the divergence refresh compares
 // for a configured window set: Windows[0] of an orchestrator built from ws.
 // The divergence service stamps it on every verdict it caches.

@@ -53,11 +53,6 @@ func TestOrientStragglers_CombineBothDirections(t *testing.T) {
 			t.Fatalf("InsertTrade: %v", err)
 		}
 	}
-	// No resolver is wired here, so usd_volume is NULL; TimedVWAPsForPair1m
-	// counts only minutes that clear the $0.01 notional floor.
-	if _, err := store.DB().ExecContext(ctx, `UPDATE trades SET usd_volume = 1`); err != nil {
-		t.Fatalf("stamp usd_volume: %v", err)
-	}
 	if _, err := store.DB().ExecContext(ctx,
 		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
 		t.Fatalf("refresh prices_1m: %v", err)

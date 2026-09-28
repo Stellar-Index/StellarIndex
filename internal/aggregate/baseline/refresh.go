@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"sync"
 	"time"
 
@@ -61,10 +62,11 @@ type Sink interface {
 // atomically — one read of the hypertable produces all three
 // windows.
 type Refresher struct {
-	src    TimedVWAPSource
-	sink   Sink
-	window time.Duration
-	logger *slog.Logger
+	src         TimedVWAPSource
+	sink        Sink
+	window      time.Duration
+	logger      *slog.Logger
+	minuteFloor *big.Rat
 }
 
 // NewRefresher constructs a Refresher. Pass `window <= 0` to use
@@ -77,7 +79,35 @@ func NewRefresher(src TimedVWAPSource, sink Sink, window time.Duration, logger *
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Refresher{src: src, sink: sink, window: window, logger: logger}
+	return &Refresher{src: src, sink: sink, window: window, logger: logger, minuteFloor: new(big.Rat)}
+}
+
+// WithMinuteNotionalFloor sets the USD notional a priced minute must carry
+// to enter the baseline; see [MinuteNotionalFloor]. nil or negative means 0.
+func (r *Refresher) WithMinuteNotionalFloor(floor *big.Rat) *Refresher {
+	if floor == nil || floor.Sign() < 0 {
+		floor = new(big.Rat)
+	}
+	r.minuteFloor = new(big.Rat).Set(floor)
+	return r
+}
+
+// MinuteNotionalFloor pro-rates the publish floor (min_usd_volume per
+// window) to one minute of the LONGEST published window. Any window that
+// clears the publish floor therefore holds at least one minute at or above
+// it, so a pair that can publish can train a baseline, and buying the
+// bootstrap cap with self-trades costs the same sustained volume as clearing
+// the publish floor. minUSDVolume <= 0 (floor disabled) yields 0.
+func MinuteNotionalFloor(minUSDVolume float64, longestWindow time.Duration) *big.Rat {
+	minutes := int64(longestWindow / time.Minute)
+	if minUSDVolume <= 0 || minutes <= 0 {
+		return new(big.Rat)
+	}
+	f := new(big.Rat).SetFloat64(minUSDVolume)
+	if f == nil {
+		return new(big.Rat)
+	}
+	return f.Quo(f, new(big.Rat).SetInt64(minutes))
 }
 
 // RefreshOutcome describes the per-pair outcome of one refresh
@@ -90,6 +120,15 @@ const (
 	OutcomeNotEnoughSamples
 	OutcomeReadError
 	OutcomeWriteError
+	// OutcomeBelowNotionalFloor: the pair traded enough minutes for a
+	// baseline, but too few cleared the per-minute notional floor. Nothing
+	// is persisted: a baseline authored by sub-floor prints is the one a
+	// self-trader can buy (#1108).
+	OutcomeBelowNotionalFloor
+	// OutcomeOKUnvalued: no minute in the window carried a USD valuation,
+	// so notional is unmeasurable and the baseline was built from every
+	// minute to keep the z-score freeze live. Persisted, like OutcomeOK.
+	OutcomeOKUnvalued
 )
 
 func (o RefreshOutcome) String() string {
@@ -102,6 +141,10 @@ func (o RefreshOutcome) String() string {
 		return "read_error"
 	case OutcomeWriteError:
 		return "write_error"
+	case OutcomeBelowNotionalFloor:
+		return "below_notional_floor"
+	case OutcomeOKUnvalued:
+		return "ok_unvalued"
 	default:
 		return "unknown"
 	}
@@ -111,11 +154,16 @@ func (o RefreshOutcome) String() string {
 // run. Counts per outcome let the caller emit metrics in one place
 // without scanning per-pair errors.
 type RefreshSummary struct {
-	OK               int
-	NotEnoughSamples int
-	ReadErrors       int
-	WriteErrors      int
+	OK                 int
+	NotEnoughSamples   int
+	ReadErrors         int
+	WriteErrors        int
+	BelowNotionalFloor int
+	OKUnvalued         int
 }
+
+// ErrBelowNotionalFloor accompanies [OutcomeBelowNotionalFloor].
+var ErrBelowNotionalFloor = errors.New("baseline: too few minutes clear the notional floor")
 
 // RefreshPair recomputes the baseline for one pair and writes it.
 // Reads the pair's full 30-day timed VWAP series, splits into 1d /
@@ -130,6 +178,10 @@ type RefreshSummary struct {
 //   - (OutcomeNotEnoughSamples, [ErrNotEnoughSamples]) when even
 //     the 30d window has fewer than [MinSamples] returns — the
 //     pair is in full bootstrap and nothing is persisted
+//   - (OutcomeBelowNotionalFloor, [ErrBelowNotionalFloor]) when it has
+//     enough minutes but too few clear the notional floor; nothing persisted
+//   - (OutcomeOKUnvalued, nil) on a successful upsert for a pair with no
+//     USD-valued minute in the window
 //   - (OutcomeReadError, err) on a [TimedVWAPSource] failure
 //   - (OutcomeWriteError, err) on a [Sink] failure
 func (r *Refresher) RefreshPair(ctx context.Context, pair canonical.Pair) (RefreshOutcome, error) {
@@ -141,20 +193,55 @@ func (r *Refresher) RefreshPair(ctx context.Context, pair canonical.Pair) (Refre
 		return OutcomeReadError, fmt.Errorf("baseline: TimedVWAPsForPair1m %s: %w", pair.String(), err)
 	}
 
-	d1, d7, d30 := SplitByLookback(timed, now)
+	sample, valued := r.notionalSample(timed)
+	okOutcome := OutcomeOK
+	if !valued {
+		sample = timed
+		okOutcome = OutcomeOKUnvalued
+	}
+
+	d1, d7, d30 := SplitByLookback(sample, now)
 	multi := NewMultiBaseline(d1, d7, d30)
 
 	if multi.Day30 == nil {
-		// Even the long window is in bootstrap; persist nothing.
-		// Caller's confidence-score loop applies ADR-0019 bootstrap
-		// policy.
+		// Persist nothing; the confidence loop applies ADR-0019 bootstrap
+		// policy. Report whether the floor, not thin trading, caused it.
+		if valued {
+			_, _, all30 := SplitByLookback(timed, now)
+			if len(ReturnsFromVWAPs(all30)) >= MinSamples {
+				return OutcomeBelowNotionalFloor, ErrBelowNotionalFloor
+			}
+		}
 		return OutcomeNotEnoughSamples, ErrNotEnoughSamples
 	}
 
 	if err := r.sink.UpsertBaseline(ctx, pair, now, windowStart, now, multi); err != nil {
 		return OutcomeWriteError, fmt.Errorf("baseline: UpsertBaseline %s: %w", pair.String(), err)
 	}
-	return OutcomeOK, nil
+	return okOutcome, nil
+}
+
+// notionalSample keeps the minutes that carry at least one trade over the
+// $0.01 per-trade floor AND a summed USD notional at or above the refresher's
+// minute floor. These minutes are both the median/MAD sample and the
+// bootstrap cap's density (Day30.N), so a minute counts toward trust only
+// when it cost real notional to print. valued is false when no minute in
+// the series carried any USD valuation; such a pair cannot be measured and
+// the caller falls back to every minute. A valued pair's unpriced minutes
+// are dropped: they prove no notional.
+func (r *Refresher) notionalSample(timed []TimedVWAP) (sample []TimedVWAP, valued bool) {
+	sample = make([]TimedVWAP, 0, len(timed))
+	for i := range timed {
+		t := timed[i]
+		if t.USDVolume == nil || t.USDVolume.Sign() <= 0 {
+			continue
+		}
+		valued = true
+		if t.NotionalTrades > 0 && t.USDVolume.Cmp(r.minuteFloor) >= 0 {
+			sample = append(sample, t)
+		}
+	}
+	return sample, valued
 }
 
 // RefreshAll runs [Refresher.RefreshPair] for every pair in
@@ -195,7 +282,8 @@ loop:
 			defer func() { <-sem }()
 
 			outcome, err := r.RefreshPair(ctx, pair)
-			if err != nil && !errors.Is(err, ErrNotEnoughSamples) && ctx.Err() == nil {
+			if err != nil && !errors.Is(err, ErrNotEnoughSamples) &&
+				!errors.Is(err, ErrBelowNotionalFloor) && ctx.Err() == nil {
 				r.logger.Warn("baseline refresh failed",
 					"pair", pair.String(), "outcome", outcome.String(), "err", err)
 			}
@@ -216,6 +304,10 @@ loop:
 			sum.ReadErrors++
 		case OutcomeWriteError:
 			sum.WriteErrors++
+		case OutcomeBelowNotionalFloor:
+			sum.BelowNotionalFloor++
+		case OutcomeOKUnvalued:
+			sum.OKUnvalued++
 		}
 	}
 	return sum
