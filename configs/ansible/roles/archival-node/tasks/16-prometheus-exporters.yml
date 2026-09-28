@@ -51,14 +51,13 @@
     update_cache: true
     cache_valid_time: 3600
 
-# r1's redis-server has no AUTH set today (single-node, internal
-# bind only). REDIS_ADDR points the exporter at the local
-# loopback; the `prometheus-redis-exporter` Debian unit reads
-# /etc/default/prometheus-redis-exporter via EnvironmentFile.
-# Same 0640 root:prometheus posture as the postgres env-file
-# below for consistency, even though this file holds no secret
-# today — keeps the role hardened against a future op that adds
-# REDIS_PASSWORD without remembering to tighten the mode.
+# T641: redis-server now requires auth (08-redis.yml sets
+# requirepass from redis_password and flushes that restart before
+# this task runs). REDIS_PASSWORD is read directly by the exporter
+# binary (same env var oliver006/redis_exporter uses, per
+# redis-sentinel/tasks/07-monitoring.yml's precedent) — without it
+# every scrape gets NOAUTH and cache.yml's alerts go dark. Same
+# 0640 root:prometheus posture as the postgres env-file below.
 - name: Template /etc/default/prometheus-redis-exporter
   ansible.builtin.copy:
     dest: /etc/default/prometheus-redis-exporter
@@ -69,6 +68,7 @@
       # Managed by ansible (archival-node role / 16-prometheus-exporters.yml).
       # Sourced via the Debian-shipped systemd unit's `EnvironmentFile=`.
       REDIS_ADDR=redis://localhost:6379
+      REDIS_PASSWORD={{ redis_password }}
       # The Debian unit's ExecStart is `prometheus-redis-exporter $ARGS` —
       # it does not read WEB_LISTEN_ADDRESS, so the listen address must be
       # passed as a CLI flag via ARGS (same pattern as node_exporter and
@@ -76,6 +76,9 @@
       # on all interfaces. Listen on loopback only — nftables blocks
       # external 9121 access regardless, but defence-in-depth.
       ARGS="--web.listen-address=127.0.0.1:9121"
+  no_log: true
+  notify:
+    - Restart prometheus-redis-exporter
 
 - name: Enable + start prometheus-redis-exporter
   ansible.builtin.systemd:

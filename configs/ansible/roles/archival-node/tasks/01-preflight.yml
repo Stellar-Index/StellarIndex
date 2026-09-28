@@ -151,6 +151,7 @@
       postgres_user_stellarindex: "{{ postgres_user_stellarindex | default('') }}"
       postgres_pass_stellarindex: "{{ postgres_pass_stellarindex | default('') }}"
       postgres_db_stellarindex: "{{ postgres_db_stellarindex | default('') }}"
+      redis_password: "{{ redis_password | default('') }}"
       stellarindex_reader_access_key: "{{ stellarindex_reader_access_key | default('') }}"
       vault_stellarindex_reader_secret_key: "{{ vault_stellarindex_reader_secret_key | default('') }}"
       vault_massive_api_key: "{{ vault_massive_api_key | default('') }}"
