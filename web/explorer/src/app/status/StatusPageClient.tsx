@@ -484,6 +484,10 @@ export interface IncidentHistoryEntry {
   resolved: string;
   summary: string;
   severity: 'major' | 'minor' | 'maintenance';
+  // Reference to the published postmortem (URL or repo path), when one
+  // exists. null/absent means no postmortem has been written yet — the
+  // "Read full postmortem" link must not claim one exists (GH-837).
+  postmortem?: string | null;
 }
 
 interface IncidentsAPIShape {
@@ -496,6 +500,7 @@ interface IncidentsAPIShape {
       started_at: string;
       resolved_at?: string | null;
       affected_components?: string[];
+      postmortem?: string | null;
       body_markdown: string;
     }>;
     count: number;
@@ -1646,6 +1651,7 @@ function normaliseIncident(
     resolved,
     severity,
     summary: summary || raw.title || raw.slug,
+    postmortem: raw.postmortem ?? null,
   };
 }
 
@@ -1733,7 +1739,7 @@ function IncidentHistory({
                 <p className="text-ink-faint mt-1 text-xs">
                   Resolved: {e.resolved}
                 </p>
-                {e.slug && (
+                {e.slug && e.postmortem && (
                   <a
                     href={`/status/incident/${e.slug}/`}
                     className="text-brand-600 mt-2 inline-block text-xs font-medium hover:underline"

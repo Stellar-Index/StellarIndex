@@ -34,6 +34,7 @@ export type Incident = {
   started_at: string;
   resolved_at: string | null;
   affected_components: string[];
+  postmortem: string | null;
   body: string;
   source_path: string;
 };
@@ -167,6 +168,12 @@ export function parseIncidentFile(
     resolvedAt = resolvedRaw;
   }
 
+  const postmortemRaw = parsed.fm['postmortem'];
+  const postmortem =
+    typeof postmortemRaw === 'string' && postmortemRaw !== ''
+      ? postmortemRaw
+      : null;
+
   const slug = filename.replace(/\.md$/, '');
   return {
     slug,
@@ -179,6 +186,7 @@ export function parseIncidentFile(
     affected_components: Array.isArray(parsed.fm['affected_components'])
       ? (parsed.fm['affected_components'] as string[])
       : [],
+    postmortem,
     body: parsed.body.trim(),
     source_path: `internal/incidents/data/${filename}`,
   };
