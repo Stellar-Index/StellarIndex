@@ -154,3 +154,50 @@ func TestUsageTracker_StreamRefusedAtOpenNotBilled(t *testing.T) {
 		t.Errorf("throttled detail count = %d, want 1 (rows %+v)", throttled, rows)
 	}
 }
+
+// TestUsageTracker_StreamReMeteredPeriodically pins the rest of GH-1279:
+// counting an SSE stream once at open (TestUsageTracker_StreamCountedAtOpen)
+// still lets it buy unbounded duration for that one unit. A stream held
+// open across several meter intervals must accrue additional billable
+// units for each one it survives — never zero (the open bill still fires)
+// and never twice for the same interval (each tick is a fresh IncrementBy,
+// gated on the once-record having already fired).
+func TestUsageTracker_StreamReMeteredPeriodically(t *testing.T) {
+	t.Cleanup(middleware.SetStreamMeterIntervalForTest(5 * time.Millisecond))
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	counter := usage.New(rdb)
+	subject := auth.Subject{Tier: auth.TierAPIKey, KeyID: "kid_stream_tick", Identifier: "acct:stream_tick"}
+	id := middleware.UsageKeyForSubject(subject)
+
+	_, wait := runOpenStream(t, counter, subject, http.StatusOK)
+
+	// Poll MonthToDate directly rather than streamUsageTotal: a tick
+	// writes synchronously on its own goroutine (see meterOpenStream),
+	// so it needs no after-response drain, and draining here — while
+	// the stream is still open and its ticker may still be mid-write —
+	// would itself race the shared pool's WaitGroup. This also rules
+	// out the single open-time bill alone accounting for the total,
+	// since it polls WHILE the stream is still held open.
+	deadline := time.Now().Add(2 * time.Second)
+	var got int64
+	for time.Now().Before(deadline) {
+		var err error
+		got, err = counter.MonthToDate(context.Background(), id)
+		if err != nil {
+			t.Fatalf("MonthToDate: %v", err)
+		}
+		if got >= 3 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	wait()
+
+	if got < 3 {
+		t.Fatalf("usage total for a stream held open across multiple meter intervals = %d, want >= 3 "+
+			"(1 at open + at least 2 periodic re-bills — periodic re-metering never advanced it)", got)
+	}
+}
