@@ -117,6 +117,25 @@ func TestClosedBucketGuardSpelling(t *testing.T) {
 	}
 }
 
+// assertLiteralCount fails t unless literal appears in q exactly want
+// times — catching a slot silently dropped from one UNION branch while
+// the others still carry it, which a plain strings.Contains cannot
+// (#1214: a two-slot template's lower bound checked with one Contains
+// stayed green after one slot was deleted).
+//
+// want MUST be a hardcoded expectation, never derived from
+// strings.Count(tmpl, placeholder) on the same template being rendered:
+// deleting a "%[1]s" occurrence from the template shrinks that count in
+// lockstep with the rendered query's, so the two would always agree —
+// the exact tautology that let the original bug hide.
+func assertLiteralCount(t *testing.T, q, literal string, want int) {
+	t.Helper()
+	got := strings.Count(q, literal)
+	if got != want {
+		t.Errorf("literal %q appears %d time(s) in the rendered query, want %d", literal, got, want)
+	}
+}
+
 func TestClosedVWAPAtOrBeforeQueryShape(t *testing.T) {
 	q := fmt.Sprintf(closedVWAPAtOrBeforeQueryTemplate,
 		"prices_1m", "2024-01-01 00:00:00+00", "2023-12-01 00:00:00+00")
@@ -129,6 +148,13 @@ func TestClosedVWAPAtOrBeforeQueryShape(t *testing.T) {
 	if strings.Contains(q, "bucket + INTERVAL") {
 		t.Error("query uses non-sargable `bucket + INTERVAL` form (function on indexed column)")
 	}
+	// The upper bound (%[2]s) is injected into both branches of the
+	// `latest` max(bucket) UNION ALL (2 occurrences); the lower bound
+	// (%[3]s) is injected into those SAME two branches AND both branches
+	// of the `r` point-read UNION ALL (4 occurrences) — every branch
+	// prunes chunks on its own bound independently.
+	assertLiteralCount(t, q, "2024-01-01 00:00:00+00", 2)
+	assertLiteralCount(t, q, "2023-12-01 00:00:00+00", 4)
 	// Both stored directions of the market are read.
 	if !strings.Contains(q, "base_asset = $1 AND quote_asset = $2") ||
 		!strings.Contains(q, "base_asset = $2 AND quote_asset = $1") {
@@ -176,10 +202,9 @@ func TestRecentClosedVWAP1mExistsQueryShape(t *testing.T) {
 	}
 	// Literal lower bound → PLAN-time chunk pruning: the whole point of the
 	// gate is that a truly-empty pair proves emptiness over recent chunks
-	// only, not the value walk's ~400-day span.
-	if !strings.Contains(q, "bucket >= TIMESTAMPTZ") {
-		t.Error("gate missing literal `bucket >= TIMESTAMPTZ` lower bound for plan-time pruning")
-	}
+	// only, not the value walk's ~400-day span. Both UNION ALL branches
+	// (one per stored direction) must carry it independently.
+	assertLiteralCount(t, q, "bucket >= TIMESTAMPTZ '2026-06-01 00:00:00+00'", 2)
 	// Both stored directions — else a flipped-only live pair (USDC/XLM with
 	// no XLM/USDC rows) would be wrongly gated to ErrNoRows.
 	if !strings.Contains(q, "base_asset = $1 AND quote_asset = $2") ||
@@ -216,9 +241,10 @@ func TestRecentClosedVWAP1mCombinedQueryShape(t *testing.T) {
 	if strings.Contains(q, "bucket + INTERVAL") {
 		t.Error("combined query uses non-sargable `bucket + INTERVAL` form")
 	}
-	if !strings.Contains(q, "bucket >= TIMESTAMPTZ") {
-		t.Error("combined query missing literal lower bound for plan-time pruning")
-	}
+	// %[1]s is injected into BOTH UNION ALL branches independently — a
+	// slot dropped from one branch still renders valid SQL and a plain
+	// strings.Contains here stayed green through that regression (#1214).
+	assertLiteralCount(t, q, "bucket >= TIMESTAMPTZ '2026-06-01 00:00:00+00'", 2)
 	if !strings.Contains(q, "base_asset = $1 AND quote_asset = $2") ||
 		!strings.Contains(q, "base_asset = $2 AND quote_asset = $1") {
 		t.Error("combined query does not read both stored directions")
@@ -246,6 +272,44 @@ func TestRecentClosedVWAP1mCombinedQueryShape(t *testing.T) {
 	if !strings.Contains(q, "ORDER BY bucket DESC") {
 		t.Error("combined query must return newest-first")
 	}
+}
+
+// TestLatestClosedVWAP1mQueryShape guards latestClosedVWAP1mTemplate —
+// LatestClosedVWAP1mForPair's value-walk query — which had NO shape
+// test at all before this change (#1214). Its four %[1]s slots (both
+// UNION ALL branches of the `latest` max(bucket) CTE, plus both UNION
+// ALL branches of the `r` point-read CTE) each carry the literal lower
+// bound independently; a slot silently dropped from any one of them
+// still renders valid SQL.
+func TestLatestClosedVWAP1mQueryShape(t *testing.T) {
+	lower := "AND bucket >= TIMESTAMPTZ '2026-06-01 00:00:00+00'\n"
+	q := fmt.Sprintf(latestClosedVWAP1mTemplate, lower)
+
+	if !strings.Contains(q, "bucket <= now() - INTERVAL '1 minute'") {
+		t.Error("query missing sargable closed-bucket guard `bucket <= now() - INTERVAL '1 minute'`")
+	}
+	if strings.Contains(q, "bucket + INTERVAL") {
+		t.Error("query uses non-sargable `bucket + INTERVAL` form (function on indexed column)")
+	}
+	if !strings.Contains(q, "base_asset = $1 AND quote_asset = $2") ||
+		!strings.Contains(q, "base_asset = $2 AND quote_asset = $1") {
+		t.Error("query does not read both stored directions of the pair")
+	}
+	// Raw per-direction rows for Go's [combineDirVWAP] — same discipline
+	// as recentClosedVWAP1mCombinedTemplate.
+	if !strings.Contains(q, "COALESCE(volume_priced, 0)::text AS volume_priced") {
+		t.Error("query does not select each direction's volume (needed for the volume-weighted union)")
+	}
+	if strings.Contains(q, "1.0 / NULLIF(vwap, 0)") {
+		t.Error("query still inverts the flipped leg in SQL; the exact combine belongs to combineDirVWAP")
+	}
+	if strings.Contains(q, "* tc") || strings.Contains(q, "SUM(tc)") {
+		t.Error("query still weights the two directions by trade count (not a VWAP)")
+	}
+	// The literal lower bound must prune chunks on EVERY %[1]s slot
+	// independently: both branches of the `latest` max(bucket) UNION ALL
+	// AND both branches of the `r` point-read UNION ALL (4 total).
+	assertLiteralCount(t, q, "bucket >= TIMESTAMPTZ '2026-06-01 00:00:00+00'", 4)
 }
 
 // TestRecentClosedVWAP1mForPairQueryShape extends the sargability guard
