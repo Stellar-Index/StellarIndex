@@ -55,6 +55,11 @@ type VWAPResult struct {
 	TradeCount          int  `json:"trade_count"`
 	OutliersFiltered    int  `json:"outliers_filtered"`
 	Truncated           bool `json:"truncated"`
+	// Clamped is true when the requested `to` was inside the
+	// still-filling bucket (or in the future) and was pulled back to
+	// the last closed boundary per ADR-0015 — the served window is
+	// narrower than the one asked for.
+	Clamped bool `json:"clamped"`
 }
 
 // handleVWAP serves GET /v1/vwap?base=...&quote=...&from=...&to=...&outlier_sigma=...
@@ -127,9 +132,10 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	// instead of declined. See docs/operations/runbooks/
 	// dex-nonstandard-decimals.md "Root cause analysis".
 
-	// Clamped to a closed-bucket boundary when `to` defaults to "now"
-	// per ADR-0015 — guarantees cross-region answer agreement.
-	from, to, _, ok := parseFromToClamped(w, r)
+	// Clamped to a closed-bucket boundary per ADR-0015 — guarantees
+	// cross-region answer agreement — whether `to` was defaulted or
+	// explicit.
+	from, to, clamped, ok := parseFromToClamped(w, r)
 	if !ok {
 		return
 	}
@@ -223,6 +229,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		TradeCount:          len(trades),
 		OutliersFiltered:    outliersFiltered,
 		Truncated:           pre == maxTrades,
+		Clamped:             clamped,
 	}, Flags{Triangulated: triangulated})
 }
 

@@ -190,6 +190,14 @@ func (r *ExplorerReader) refreshAccountState(account string) (fl *stateFlightEnt
 		defer worker.Recover(nil, "explorer-account-state-refresh")
 		rctx, cancel := context.WithTimeout(context.Background(), accountStateRefreshTimeout)
 		defer cancel()
+		// Watermark read BEFORE the scan (mirrors computeAccountsWealth):
+		// AsOfLedger must never name a ledger later than the state it is
+		// stamped on. An unreadable watermark leaves it 0 rather than
+		// failing a scan that did complete.
+		var ledger uint32
+		if wm, _, err := r.LakeWatermark(rctx); err == nil {
+			ledger = wm
+		}
 		st, err := r.AccountState(rctx, account)
 		if err != nil {
 			if r.wealthRefreshErr != nil {
@@ -197,6 +205,7 @@ func (r *ExplorerReader) refreshAccountState(account string) (fl *stateFlightEnt
 			}
 			return
 		}
+		st.AsOfLedger = ledger
 		r.stateCache.put(account, st, time.Now())
 	}()
 	return fl, false

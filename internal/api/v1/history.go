@@ -644,6 +644,16 @@ type HistorySeries struct {
 	Discontinuous bool               `json:"discontinuous"`           // true when points skip at least one whole bucket
 	GapStartsAt   *WireTime          `json:"gap_starts_at,omitempty"` // last bucket before the WIDEST interior gap
 	GapEndsAt     *WireTime          `json:"gap_ends_at,omitempty"`   // first bucket after it
+
+	// RowCapTruncated is true when the read hit historyMaxPoints, so
+	// Points holds the OLDEST slice of the pair's history and stops
+	// short of the present — the opposite direction from ChartSeries'
+	// Truncated (which flags the window starting before retention).
+	// DataEndsAt carries the last served bucket so a client can tell
+	// "the series ends here" (this field) from "the data ends here"
+	// (an interior gap or genuine end of history).
+	RowCapTruncated bool      `json:"row_cap_truncated"`
+	DataEndsAt      *WireTime `json:"data_ends_at,omitempty"` // last returned bucket; only set when RowCapTruncated
 }
 
 // markDiscontinuity stamps the interior-gap signal, delegating to
@@ -690,18 +700,17 @@ const (
 	// one that fits, reported as the response's own `granularity`
 	// ([chartFitGranularity]).
 	//
-	// This surface is NOT the same shape and is deliberately left
-	// alone: /v1/history/since-inception has no window parameter at
-	// all, so how many buckets its grid holds is a property of the
-	// DATA, not of the request, and there is nothing to compare against
-	// the cap without reading first. Measured on production 2026-09-09,
-	// `?granularity=1m` on the flagship pair returns exactly 50,000
-	// points ending 2018-02-21 while `?granularity=1d` returns 3,341
-	// spanning 2017-01-17 to yesterday — the same silent truncation, reachable
-	// only by a signal computed AFTER a read, which is a different
-	// change to a different budget. Plain /v1/history is not this shape
-	// either: it pages raw trades through `limit`/`cursor` and takes no
-	// `granularity`.
+	// This surface is NOT the same shape: /v1/history/since-inception
+	// has no window parameter at all, so how many buckets its grid
+	// holds is a property of the DATA, not of the request, and there is
+	// nothing to compare against the cap without reading first — unlike
+	// /v1/chart, it cannot coarsen the grain up front. Instead the
+	// handler checks the read's own row count (`len(points) ==
+	// historyMaxPoints`) and stamps `row_cap_truncated` + `data_ends_at`
+	// on the response, so `?granularity=1m` on the flagship pair still
+	// returns exactly 50,000 points ending 2018-02-21, but now says so.
+	// Plain /v1/history is not this shape either: it pages raw trades
+	// through `limit`/`cursor` and takes no `granularity`.
 	historyMaxPoints = 50_000
 
 	// sinceInceptionPricingSpan is the history depth the since-inception
@@ -878,6 +887,11 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 		PriceType:   "vwap",
 		Granularity: gran,
 		Points:      wire,
+	}
+	if len(points) == historyMaxPoints {
+		series.RowCapTruncated = true
+		last := wire[len(wire)-1].T
+		series.DataEndsAt = &last
 	}
 	series.markDiscontinuity()
 	writeJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded})

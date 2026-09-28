@@ -41,6 +41,13 @@ type AccountState struct {
 	Signers            []AccountSigner
 	Trustlines         []TrustlineState
 	Offers             []OfferState
+	// AsOfLedger is the lake watermark read immediately BEFORE this state
+	// was scanned (mirrors AccountWealthSnapshot.AsOfLedger), so it never
+	// names a ledger later than the data it describes. Stamped by the
+	// cache fill in [ExplorerReader.refreshAccountState], not by this
+	// method itself — a caller reading the account live (bypassing the
+	// cache) gets 0. 0 also when the watermark was unreadable.
+	AsOfLedger uint32
 }
 
 type AccountSigner struct {

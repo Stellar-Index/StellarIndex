@@ -4961,9 +4961,11 @@ export interface paths {
          *     or its create predates live capture (resolves once the Phase-C backfill
          *     lands). Balances are strings (ADR-0003).
          *
-         *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the read
-         *     is fresh to (NOT the account's `last_modified_ledger`); `flags.stale`
-         *     fires when the watermark's close time trails now by more than 300s.
+         *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the served
+         *     state was fresh to WHEN IT WAS CACHED (up to 30s old), not a serve-time
+         *     read and not the account's `last_modified_ledger`; `flags.stale` fires
+         *     when the cache entry is stale (served while a refresh runs) or the
+         *     watermark's close time trails now by more than 300s.
          */
         get: operations["getAccount"];
         put?: never;
@@ -10808,6 +10810,22 @@ export interface components {
                  *     present when `discontinuous=true`.
                  */
                 gap_ends_at?: string;
+                /**
+                 * @description True when the read hit the 50 000-bucket response
+                 *     cap, so `points` holds the OLDEST slice of this
+                 *     pair's history and stops short of the present.
+                 *     Opposite direction from `ChartEnvelope.data.truncated`
+                 *     (which flags the window starting before retention).
+                 */
+                row_cap_truncated: boolean;
+                /**
+                 * Format: date-time
+                 * @description Last bucket in `points`. Only present when
+                 *     `row_cap_truncated=true`; tells a consumer "the
+                 *     series ends here" as distinct from "the data ends
+                 *     here".
+                 */
+                data_ends_at?: string;
             };
         };
         ChartEnvelope: components["schemas"]["EnvelopeMeta"] & {
@@ -11031,8 +11049,10 @@ export interface components {
             from: string;
             /**
              * Format: date-time
-             * @description Exclusive upper bound of the bar window. Clamped to a 30 s
-             *     boundary when the request omitted `to`.
+             * @description Exclusive upper bound of the bar window. Clamped to the
+             *     last closed 30 s boundary per ADR-0015 whenever the
+             *     requested (or defaulted) `to` fell inside the still-filling
+             *     bucket — see `clamped`.
              */
             to: string;
             /** @description Decimal string, 10 digits. */
@@ -11076,6 +11096,13 @@ export interface components {
             trade_count: number;
             /** @description True when the window hit the per-request trade cap; the bar reflects only the chronologically LAST N trades (the reader drops the oldest rows under the limit), so open/high/low may not be the true window values. */
             truncated: boolean;
+            /**
+             * @description True when the requested `to` fell inside the still-filling
+             *     bucket (or in the future) and was pulled back to the last
+             *     closed boundary per ADR-0015 — the served `to` is earlier
+             *     than the one requested.
+             */
+            clamped: boolean;
         };
         OHLCEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["OHLCBar"];
@@ -11182,12 +11209,11 @@ export interface components {
             from: string;
             /**
              * Format: date-time
-             * @description Exclusive upper bound of the window. When the request
-             *     omitted `to`, this is clamped down to a 30-second
-             *     boundary so two parallel requests in the same window
-             *     return identical responses across regions. When the
-             *     request supplied `to` explicitly, this echoes the
-             *     request value.
+             * @description Exclusive upper bound of the window. Clamped down to the
+             *     last closed 30-second boundary per ADR-0015 whenever the
+             *     requested (or defaulted) `to` fell inside the still-filling
+             *     bucket, so two parallel requests in the same window return
+             *     identical responses across regions — see `clamped`.
              */
             to: string;
             /** @description VWAP decimal, 10 digits. */
@@ -11228,6 +11254,12 @@ export interface components {
             trade_count: number;
             outliers_filtered: number;
             truncated: boolean;
+            /**
+             * @description True when the requested `to` fell inside the still-filling
+             *     bucket (or in the future) and was pulled back to the last
+             *     closed boundary per ADR-0015.
+             */
+            clamped: boolean;
         };
         VWAPEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["VWAPResult"];
@@ -11241,8 +11273,8 @@ export interface components {
             from: string;
             /**
              * Format: date-time
-             * @description Exclusive upper bound of the window. Clamped to a 30 s
-             *     boundary when the request omitted `to`. See VWAPResult.to.
+             * @description Exclusive upper bound of the window. See VWAPResult.to for
+             *     the closed-bucket clamp semantics.
              */
             to: string;
             /** @description TWAP decimal, 10 digits. */
@@ -11256,6 +11288,8 @@ export interface components {
             /** @description Trades the `outlier_sigma` filter removed. */
             outliers_filtered: number;
             truncated: boolean;
+            /** @description See VWAPResult.clamped. */
+            clamped: boolean;
         };
         TWAPEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["TWAPResult"];
@@ -23800,7 +23834,7 @@ export interface operations {
                             last_modified_ledger?: number;
                             /**
                              * Format: int64
-                             * @description Lake watermark this read is fresh to (ADR-0041) — the highest captured ledger at serve time, NOT the account's last_modified_ledger. Omitted when no watermark reader is wired. Pairs with flags.stale.
+                             * @description Lake watermark the served state was fresh to WHEN IT WAS CACHED (ADR-0041) — not a serve-time read and not the account's last_modified_ledger; the cache holds this state for up to 30s. Omitted when the watermark was unreadable at fill time. Pairs with flags.stale.
                              */
                             as_of_ledger?: number;
                             directory?: components["schemas"]["DirectoryInfo"];

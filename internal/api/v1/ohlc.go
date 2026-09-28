@@ -84,6 +84,10 @@ type OHLCBar struct {
 	QuoteVolumeDecimals *int `json:"quote_volume_decimals"`
 	TradeCount          int  `json:"trade_count"`
 	Truncated           bool `json:"truncated"`
+	// Clamped is true when the requested `to` was inside the
+	// still-filling bucket (or in the future) and was pulled back to
+	// the last closed boundary per ADR-0015.
+	Clamped bool `json:"clamped"`
 }
 
 // ohlcPriceDigits is how many fractional digits the wire OHLC
@@ -190,9 +194,9 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clamped to a closed-bucket boundary when `to` defaults to "now"
-	// per ADR-0015.
-	from, to, _, ok := parseFromToClamped(w, r)
+	// Clamped to a closed-bucket boundary per ADR-0015, whether `to`
+	// was defaulted or explicit.
+	from, to, clamped, ok := parseFromToClamped(w, r)
 	if !ok {
 		return
 	}
@@ -282,6 +286,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		QuoteVolumeDecimals: wireScaleDecimals(volumeDecimals),
 		TradeCount:          bar.TradeCount,
 		Truncated:           preFilter == maxTradesForOHLC,
+		Clamped:             clamped,
 	}, Flags{Triangulated: triangulated})
 }
 
@@ -537,39 +542,47 @@ func parseWindowDuration(s string) (time.Duration, error) {
 const closedBucketWindow = 30 * time.Second
 
 // parseFromToClamped is the rate-endpoint flavour of [parseFromTo]:
-// when the client did NOT specify `to`, clamp the default-now value
-// to the previous [closedBucketWindow] boundary. When the client
-// DID specify `to`, use it verbatim — they're explicitly asking
-// about a specific historical range, not "now", and snapping their
-// timestamp would be surprising.
+// the effective right edge is always min(to, now.Truncate
+// ([closedBucketWindow])), whether `to` came from the client or from
+// parseFromTo's default — ADR-0015 says the served window's right
+// edge is always closed, not just the defaulted one. A `to` that
+// already precedes the boundary (a genuinely historical range) is
+// left verbatim and is not reported as clamped.
 //
 // Sets the *clamped flag so callers can surface "this response
-// reflects a closed-bucket window" in their wire output if they
-// want to (today the rate handlers don't expose it explicitly,
-// but the From/To fields they return already carry the snapped
-// values).
+// reflects a closed-bucket window, not the range you asked for" in
+// their wire output — see VWAPResult.Clamped / TWAPResult.Clamped /
+// OHLCBar.Clamped.
 func parseFromToClamped(w http.ResponseWriter, r *http.Request) (from, to time.Time, clamped, ok bool) {
 	toExplicit := r.URL.Query().Get("to") != ""
 	from, to, ok = parseFromTo(w, r)
 	if !ok {
 		return time.Time{}, time.Time{}, false, false
 	}
-	if !toExplicit {
-		// Snap to the previous boundary. time.Truncate rounds down to
-		// a multiple of the duration since the zero time (for UTC
-		// instants this is the Unix epoch's whole-second alignment),
-		// which is exactly the alignment we want for ADR-0015's "all
-		// regions agree" property.
-		clampedTo := to.Truncate(closedBucketWindow)
+	// ADR-0015: the most-recent row served for any window is always
+	// closed — the rule is about the right edge of the DATA, not about
+	// what a defaulted `to` means. Clamping only the implicit-`to` case
+	// let `?to=<now>` (or any `to` inside the still-filling bucket) walk
+	// out of the closed-bucket contract by asking explicitly instead of
+	// omitting the param. `nowRef` is `to` itself in the implicit case
+	// (already the instant parseFromTo defaulted to) so behaviour there
+	// is unchanged; an explicit `to` is compared against a fresh reading
+	// of wall-clock now.
+	nowRef := to
+	if toExplicit {
+		nowRef = time.Now().UTC()
+	}
+	closedTo := nowRef.Truncate(closedBucketWindow)
+	if to.After(closedTo) {
 		// If `from` was also defaulted (= to - 1h), shift it by the
 		// same delta so the window length stays 1h. If `from` was
 		// explicit, leave it alone — the client's range is preserved
 		// up to the new (closed) right edge.
 		fromExplicit := r.URL.Query().Get("from") != ""
-		if !fromExplicit {
-			from = from.Add(clampedTo.Sub(to))
+		if !toExplicit && !fromExplicit {
+			from = from.Add(closedTo.Sub(to))
 		}
-		to = clampedTo
+		to = closedTo
 		clamped = true
 	}
 	if !from.Before(to) {
