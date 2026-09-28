@@ -89,7 +89,16 @@ EOF
 ## [v0.0.1] — 2026-01-01
 - initial cut
 EOF
-  git -C "$REPO" add CHANGELOG.md
+  # A fresh, non-FAIL SLA proof report so this fixture clears the
+  # SLA-proof gate (added by C04) and actually reaches `make prepush`,
+  # which is what this test exercises.
+  mkdir -p "$REPO/docs/operations"
+  {
+    echo "# SLA proof report — $(date -u +%Y-%m-%d)"
+    echo ""
+    echo "**Verdict: NOT PROVEN.**"
+  } > "$REPO/docs/operations/sla-proof-$(date -u +%Y-%m-%d).md"
+  git -C "$REPO" add CHANGELOG.md docs/operations
   git -C "$REPO" commit --quiet -m "seed"
   git -C "$REPO" push --quiet origin main
 
@@ -173,7 +182,192 @@ EOF
   return 1
 }
 
+# _sla_fixture_setup <tmp> — build a bare origin + working repo with a
+# non-empty CHANGELOG section for v0.0.1 and faked gh/make binaries under
+# <tmp>/bin (gh always fails to force the fallback paths used elsewhere
+# in this script; make succeeds unconditionally on `prepush`, because
+# these tests pin the SLA-proof gate that runs BEFORE the prepush gate,
+# not the prepush gate itself). Populates <tmp>/repo and <tmp>/origin.git.
+_sla_fixture_setup() {
+  local tmp="$1" fakebin repo origin
+
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+        GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR
+
+  fakebin="$tmp/bin"
+  repo="$tmp/repo"
+  origin="$tmp/origin.git"
+  mkdir -p "$fakebin"
+
+  cat > "$fakebin/gh" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+  chmod +x "$fakebin/gh"
+
+  cat > "$fakebin/make" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "prepush" ]]; then
+  echo "ALL REQUIRED CHECKS PASSED"
+  exit 0
+fi
+echo "unexpected make target: $*" >&2
+exit 1
+EOF
+  chmod +x "$fakebin/make"
+
+  git init --quiet --bare "$origin"
+  git init --quiet -b main "$repo"
+  git -C "$repo" config user.email test@example.com
+  git -C "$repo" config user.name test
+  git -C "$repo" remote add origin "$origin"
+
+  cat > "$repo/CHANGELOG.md" <<'EOF'
+# Changelog
+
+## [Unreleased]
+
+## [v0.0.1] — 2026-01-01
+- initial cut
+EOF
+  mkdir -p "$repo/docs/operations"
+  git -C "$repo" add CHANGELOG.md
+  git -C "$repo" commit --quiet -m "seed"
+  git -C "$repo" push --quiet origin main
+}
+
+# _sla_days_ago <n> — YYYY-MM-DD n days before today, portable across GNU
+# and BSD/macOS date (same fallback idiom as the script's sla_to_epoch).
+_sla_days_ago() {
+  date -u -d "-$1 days" +%Y-%m-%d 2>/dev/null || date -u -v-"$1"d +%Y-%m-%d
+}
+
+# test_sla_proof_missing_blocks_cut pins the C04 must_fix: no
+# docs/operations/sla-proof-<date>.md report at all refuses the cut.
+test_sla_proof_missing_blocks_cut() {
+  local TMP out status
+  TMP="$(mktemp -d)"
+  TMP="$(cd "$TMP" && pwd -P)"
+  trap 'rm -rf "$TMP"' RETURN
+  _sla_fixture_setup "$TMP"
+
+  out="$(cd "$TMP/repo" && PATH="$TMP/bin:$PATH" GIT_TERMINAL_PROMPT=0 \
+    bash "$SCRIPT" v0.0.1 --dry-run </dev/null 2>&1)"
+  status=$?
+
+  if [[ "$status" -eq 0 ]] || ! grep -q 'no docs/operations/sla-proof-<YYYY-MM-DD>.md report found' <<<"$out"; then
+    echo "FAIL: missing SLA proof did not refuse the cut (status=$status)" >&2
+    echo "--- output ---" >&2
+    echo "$out" >&2
+    return 1
+  fi
+  echo "PASS: cut-release.sh refuses with no SLA proof report"
+}
+
+# test_sla_proof_stale_blocks_cut pins the C04 must_fix: a proof older
+# than SLA_PROOF_MAX_AGE_DAYS (default 45) refuses the cut even though a
+# report exists and its verdict is not FAIL.
+test_sla_proof_stale_blocks_cut() {
+  local TMP out status stale_date
+  TMP="$(mktemp -d)"
+  TMP="$(cd "$TMP" && pwd -P)"
+  trap 'rm -rf "$TMP"' RETURN
+  _sla_fixture_setup "$TMP"
+
+  stale_date="$(_sla_days_ago 100)"
+  {
+    echo "# SLA proof report — ${stale_date}"
+    echo ""
+    echo "**Verdict: NOT PROVEN.**"
+  } > "$TMP/repo/docs/operations/sla-proof-${stale_date}.md"
+  git -C "$TMP/repo" add docs/operations
+  git -C "$TMP/repo" commit --quiet -m "stale proof"
+  git -C "$TMP/repo" push --quiet origin main
+
+  out="$(cd "$TMP/repo" && PATH="$TMP/bin:$PATH" GIT_TERMINAL_PROMPT=0 \
+    bash "$SCRIPT" v0.0.1 --dry-run </dev/null 2>&1)"
+  status=$?
+
+  if [[ "$status" -eq 0 ]] || ! grep -q 'is [0-9]\+ day(s) old (max' <<<"$out"; then
+    echo "FAIL: a ${stale_date} (100-day-old) SLA proof did not refuse the cut (status=$status)" >&2
+    echo "--- output ---" >&2
+    echo "$out" >&2
+    return 1
+  fi
+  echo "PASS: cut-release.sh refuses with a stale SLA proof report"
+}
+
+# test_sla_proof_fail_verdict_blocks_cut pins the C04 must_fix: a fresh
+# report recording Verdict: FAIL refuses the cut — a release must not
+# ship on a known, measured SLA breach.
+test_sla_proof_fail_verdict_blocks_cut() {
+  local TMP out status today
+  TMP="$(mktemp -d)"
+  TMP="$(cd "$TMP" && pwd -P)"
+  trap 'rm -rf "$TMP"' RETURN
+  _sla_fixture_setup "$TMP"
+
+  today="$(date -u +%Y-%m-%d)"
+  {
+    echo "# SLA proof report — ${today}"
+    echo ""
+    echo "**Verdict: FAIL.**"
+  } > "$TMP/repo/docs/operations/sla-proof-${today}.md"
+  git -C "$TMP/repo" add docs/operations
+  git -C "$TMP/repo" commit --quiet -m "fail proof"
+  git -C "$TMP/repo" push --quiet origin main
+
+  out="$(cd "$TMP/repo" && PATH="$TMP/bin:$PATH" GIT_TERMINAL_PROMPT=0 \
+    bash "$SCRIPT" v0.0.1 --dry-run </dev/null 2>&1)"
+  status=$?
+
+  if [[ "$status" -eq 0 ]] || ! grep -q 'records Verdict: FAIL' <<<"$out"; then
+    echo "FAIL: a fresh Verdict: FAIL SLA proof did not refuse the cut (status=$status)" >&2
+    echo "--- output ---" >&2
+    echo "$out" >&2
+    return 1
+  fi
+  echo "PASS: cut-release.sh refuses on a fresh Verdict: FAIL SLA proof"
+}
+
+# test_sla_proof_not_proven_fresh_passes pins the C04 must_fix's other
+# half: NOT PROVEN is a real report about a real measurement gap, not a
+# breach, and a fresh one must let the cut proceed to the prepush gate.
+test_sla_proof_not_proven_fresh_passes() {
+  local TMP out status today
+  TMP="$(mktemp -d)"
+  TMP="$(cd "$TMP" && pwd -P)"
+  trap 'rm -rf "$TMP"' RETURN
+  _sla_fixture_setup "$TMP"
+
+  today="$(date -u +%Y-%m-%d)"
+  {
+    echo "# SLA proof report — ${today}"
+    echo ""
+    echo "**Verdict: NOT PROVEN.**"
+  } > "$TMP/repo/docs/operations/sla-proof-${today}.md"
+  git -C "$TMP/repo" add docs/operations
+  git -C "$TMP/repo" commit --quiet -m "not proven proof"
+  git -C "$TMP/repo" push --quiet origin main
+
+  out="$(cd "$TMP/repo" && PATH="$TMP/bin:$PATH" GIT_TERMINAL_PROMPT=0 \
+    bash "$SCRIPT" v0.0.1 --dry-run </dev/null 2>&1)"
+  status=$?
+
+  if [[ "$status" -ne 0 ]] || ! grep -q '\[--dry-run\] would run:' <<<"$out"; then
+    echo "FAIL: a fresh Verdict: NOT PROVEN SLA proof wrongly refused the cut (status=$status)" >&2
+    echo "--- output ---" >&2
+    echo "$out" >&2
+    return 1
+  fi
+  echo "PASS: cut-release.sh proceeds past a fresh Verdict: NOT PROVEN SLA proof"
+}
+
 overall_fail=0
 test_tags_verified_commit || overall_fail=1
+test_sla_proof_missing_blocks_cut || overall_fail=1
+test_sla_proof_stale_blocks_cut || overall_fail=1
+test_sla_proof_fail_verdict_blocks_cut || overall_fail=1
+test_sla_proof_not_proven_fresh_passes || overall_fail=1
 test_mktemp_template_is_portable || overall_fail=1
 exit "$overall_fail"

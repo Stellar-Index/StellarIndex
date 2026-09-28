@@ -13,7 +13,11 @@
 
 services:
   k6:
-    image: grafana/k6:1.0.0
+    # Pinned to match k6-weekly.yml's grafana/setup-k6-action k6-version
+    # (0.50.0) plus its resolved digest, so local runs use the same k6
+    # the CI proof does and a tag move on the registry can't drift them
+    # apart silently.
+    image: grafana/k6:0.50.0@sha256:0a1289901ecf46819c50a7dd00e1be3e85d2b26dea175dc72f3cd730317cd584
     environment:
       - K6_TARGET
       - STELLARINDEX_LOAD_API_KEY

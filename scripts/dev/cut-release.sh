@@ -29,6 +29,9 @@
 #   5. Verify CHANGELOG.md has a `## [vX.Y.Z] — YYYY-MM-DD` section
 #      that is non-empty (release.yml's auto-notes extraction reads
 #      this; an empty section produces an empty release page)
+#   5b. Verify the newest docs/operations/sla-proof-YYYY-MM-DD.md report
+#      exists, is within SLA_PROOF_MAX_AGE_DAYS (default 45), and did not
+#      record `Verdict: FAIL` (`NOT PROVEN` is allowed through)
 #   6. Run `make prepush` (the same clearance a push needs; container
 #      profile where Docker is available, native otherwise)
 #   7. Echo what would happen — then either bail (--dry-run), confirm
@@ -183,6 +186,60 @@ if [[ -z "$(printf '%s' "$changelog_section" | tr -d '[:space:]')" ]]; then
   echo "See docs/operations/release-process.md §Cut step 2." >&2
   exit 1
 fi
+
+# Step 5b — SLA-proof freshness and verdict.
+#
+# Refuses the cut if the newest docs/operations/sla-proof-<YYYY-MM-DD>.md
+# report — the procedure's dated evidence, NOT sla-proof-procedure.md or
+# sla-proof-template.md, which are the recipe and the blank form — is
+# missing, older than the procedure's window, or recorded a breach.
+# `NOT PROVEN` is a real report about a real measurement gap and is
+# allowed to pass; `FAIL` means the SLA was measured and breached, and a
+# release built on a known breach must not ship silently. Same glob and
+# portable-date idiom as scripts/ci/check-sla-evidence.sh, which this
+# script deliberately does not shell out to: that script also gates on
+# K6_TARGET/STELLARINDEX_LOAD_API_KEY/SLA_PROBE_PROM_URL readiness, which
+# is a CI-scheduling question, not a "is it safe to cut" question.
+sla_proof_max_age_days="${SLA_PROOF_MAX_AGE_DAYS:-45}"
+newest_sla_proof=""
+newest_sla_date=""
+for f in docs/operations/sla-proof-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md; do
+  [[ -e "$f" ]] || continue
+  d="$(basename "$f")"
+  d="${d#sla-proof-}"
+  d="${d%.md}"
+  # ISO-8601 dates sort lexicographically, so > is a date comparison here.
+  if [[ -z "$newest_sla_date" || "$d" > "$newest_sla_date" ]]; then
+    newest_sla_date="$d"
+    newest_sla_proof="$f"
+  fi
+done
+
+if [[ -z "$newest_sla_proof" ]]; then
+  echo "ERR: no docs/operations/sla-proof-<YYYY-MM-DD>.md report found — cut one first (docs/operations/sla-proof-procedure.md)." >&2
+  exit 1
+fi
+
+# Portable ISO date -> epoch (GNU date and BSD/macOS date differ) — same
+# idiom as scripts/ci/check-sla-evidence.sh.
+sla_to_epoch() {
+  date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%d" "$1" +%s 2>/dev/null || echo 0
+}
+sla_proof_epoch="$(sla_to_epoch "$newest_sla_date")"
+if [[ "$sla_proof_epoch" -eq 0 ]]; then
+  echo "ERR: ${newest_sla_proof} has an unparseable date '${newest_sla_date}'." >&2
+  exit 1
+fi
+sla_proof_age_days=$(( ($(date -u +%s) - sla_proof_epoch) / 86400 ))
+if (( sla_proof_age_days > sla_proof_max_age_days )); then
+  echo "ERR: newest SLA proof ${newest_sla_proof} is ${sla_proof_age_days} day(s) old (max ${sla_proof_max_age_days}) — cut a fresh one first." >&2
+  exit 1
+fi
+if grep -q '^\*\*Verdict: FAIL\.\*\*' "$newest_sla_proof"; then
+  echo "ERR: newest SLA proof ${newest_sla_proof} records Verdict: FAIL — the SLA was measured and breached; do not cut a release on a known breach." >&2
+  exit 1
+fi
+echo "  OK (${newest_sla_proof}, ${sla_proof_age_days}d old)"
 
 # Step 6 — verify gate
 #
