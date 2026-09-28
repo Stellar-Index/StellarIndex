@@ -7,25 +7,114 @@
 # hasn't supplied the MinIO release SHA256. Pre-fix the get_url
 # had no `checksum:` — root-owned executable installed without
 # provenance. Same fail-fast pattern as F-1280/F-1285.
-- name: assert minio_release_sha256 is set
+#
+# INV-0706 (2026-09-28): dl.min.io 410s on every binary path now,
+# Docker Hub denies `minio/minio` and `minio/mc` outright, and
+# quay.io/minio no longer resolves — MinIO Inc went source-only
+# distribution on 2025-10-15 (its own GitHub releases ship no binary
+# assets) and closed free-tier registry pulls. The one channel still
+# serving a pullable, anonymously-accessible minio + mc pair is the
+# community `chainguard-forks/minio` build published to cgr.dev — both
+# binaries live in the same image, so one pinned pull now replaces both
+# prior HTTPS downloads. There is no separate `mc` release to pin
+# anymore, so `mc_version` is gone.
+- name: assert minio_image is digest-pinned
+  ansible.builtin.assert:
+    that:
+      - minio_image is defined
+      - "'@sha256:' in minio_image"
+      - minio_image.split('@sha256:')[1] | length == 64
+    fail_msg: >-
+      minio_image must be a digest-pinned reference, e.g.
+      "cgr.dev/chainguard/minio:latest@sha256:<64 hex>" — a bare tag is
+      mutable and defeats the pin.
+
+- name: assert minio_release_sha256 / mc_release_sha256 are set
   ansible.builtin.assert:
     that:
       - minio_release_sha256 is defined
       - minio_release_sha256 | length == 64
+      - mc_release_sha256 is defined
+      - mc_release_sha256 | length == 64
     fail_msg: >-
-      minio_release_sha256 must be set in inventory (SHA-256 of
-      the MinIO server binary for `minio_version`). MinIO
-      publishes a `.sha256sum` next to every release artefact at
-      https://dl.min.io/server/minio/release/linux-amd64/archive/minio.{{ minio_version }}.sha256sum
+      minio_release_sha256 + mc_release_sha256 must be set in inventory
+      — the SHA-256 of the linux-amd64 `minio` and `mc` binaries as they
+      exist inside minio_image. Both are architecture-specific (not
+      defaulted here, same as before); compute them once with
+      `podman create --platform=linux/amd64 <minio_image>`, then
+      `podman cp <cid>:/usr/bin/minio ./minio && sha256sum ./minio`
+      (same for /usr/bin/mc), then `podman rm <cid>`.
 
-- name: Download MinIO server binary (pinned version)
-  ansible.builtin.get_url:
-    url: "https://dl.min.io/server/minio/release/linux-amd64/archive/minio.{{ minio_version }}"
-    dest: /usr/local/bin/minio
-    mode: "0755"
+- name: Check installed MinIO server + mc binaries
+  ansible.builtin.stat:
+    path: "/usr/local/bin/{{ item }}"
+    checksum_algorithm: sha256
+  register: minio_bin_stat
+  loop:
+    - minio
+    - mc
+
+- name: Install podman (extracts the pinned binaries from minio_image; no daemon, nothing else on the box needs it)
+  ansible.builtin.apt:
+    name: podman
+    state: present
+    update_cache: true
+  when: >-
+    not minio_bin_stat.results[0].stat.exists or minio_bin_stat.results[0].stat.checksum != minio_release_sha256
+    or not minio_bin_stat.results[1].stat.exists or minio_bin_stat.results[1].stat.checksum != mc_release_sha256
+
+- name: Extract minio + mc from the pinned image
+  # Runs the image's own `cp` as root against a bind-mounted host dir —
+  # avoids `podman create`/`cp`/`rm` bookkeeping for a one-shot copy.
+  # The image's default user is a non-root UID (chainguard convention);
+  # `--user=0:0` is required to write into /usr/local/bin.
+  ansible.builtin.command:
+    argv:
+      - podman
+      - run
+      - --rm
+      - --platform=linux/amd64
+      - --user=0:0
+      - --entrypoint=cp
+      - -v
+      - /usr/local/bin:/out
+      - "{{ minio_image }}"
+      - /usr/bin/minio
+      - /usr/bin/mc
+      - /out/
+  when: >-
+    not minio_bin_stat.results[0].stat.exists or minio_bin_stat.results[0].stat.checksum != minio_release_sha256
+    or not minio_bin_stat.results[1].stat.exists or minio_bin_stat.results[1].stat.checksum != mc_release_sha256
+
+- name: Set ownership + mode on the extracted binaries
+  ansible.builtin.file:
+    path: "/usr/local/bin/{{ item }}"
     owner: root
     group: root
-    checksum: "sha256:{{ minio_release_sha256 }}"
+    mode: "0755"
+  loop:
+    - minio
+    - mc
+
+- name: Verify extracted binaries against the pinned checksums
+  ansible.builtin.stat:
+    path: "/usr/local/bin/{{ item }}"
+    checksum_algorithm: sha256
+  register: minio_bin_verify
+  loop:
+    - minio
+    - mc
+
+- name: assert extracted binaries match minio_release_sha256 / mc_release_sha256
+  ansible.builtin.assert:
+    that:
+      - minio_bin_verify.results[0].stat.checksum == minio_release_sha256
+      - minio_bin_verify.results[1].stat.checksum == mc_release_sha256
+    fail_msg: >-
+      A binary extracted from minio_image does not match the pinned
+      checksum — refusing to keep a root-owned executable without
+      verified provenance (same invariant F-1291 established for the
+      old get_url path).
 
 - name: Template MinIO environment file
   ansible.builtin.template:
@@ -58,38 +147,10 @@
 
 # ──── Bucket creation ─────────────────────────────────────────────
 # Bootstrap the buckets galexie + pgBackRest + ad-hoc backups need.
-# `mc` is MinIO's CLI; we install the standalone binary (not the
-# apt package — there isn't one in stable at time of writing).
-# Both `mc alias set` and `mc mb -p` are idempotent so this re-runs
-# safely.
-
-# F-1291 (codex audit-2026-05-13): pre-fix mc was downloaded
-# from the MUTABLE `linux-amd64/mc` URL (no version pin) with no
-# checksum. That's strictly worse than the server-binary case —
-# the URL itself rolls to whatever upstream's "latest" is. Pin
-# both `mc_version` AND the SHA via the
-# `linux-amd64/archive/mc.RELEASE.<date>` archive form.
-- name: assert mc_release_sha256 is set
-  ansible.builtin.assert:
-    that:
-      - mc_release_sha256 is defined
-      - mc_release_sha256 | length == 64
-      - mc_version is defined
-      - mc_version != ''
-    fail_msg: >-
-      mc_version + mc_release_sha256 must be set in inventory.
-      Pick a release from https://github.com/minio/mc/releases —
-      `mc_version` is the `RELEASE.<date>T<time>Z` slug, and
-      mc_release_sha256 is alongside the release tarball.
-
-- name: Install mc (MinIO CLI) for bucket bootstrap + operator use
-  ansible.builtin.get_url:
-    url: "https://dl.min.io/client/mc/release/linux-amd64/archive/mc.{{ mc_version }}"
-    dest: /usr/local/bin/mc
-    mode: "0755"
-    owner: root
-    group: root
-    checksum: "sha256:{{ mc_release_sha256 }}"
+# `mc` is MinIO's CLI, extracted from minio_image above alongside the
+# server binary (not the apt package — there isn't one in stable at
+# time of writing). Both `mc alias set` and `mc mb -p` are idempotent
+# so this re-runs safely.
 
 - name: Wait for MinIO API to be reachable on :9000
   ansible.builtin.uri:
