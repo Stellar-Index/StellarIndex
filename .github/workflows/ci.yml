@@ -301,12 +301,16 @@ jobs:
             # Guarded by test/controlwiring/
             # integration_pkgs_trigger_evidence_test.go and mirrored in
             # scripts/ci/check-change-class.sh (cross-checked below).
+            # internal/** as a whole, not an enumerated subset: `go list
+            # -deps -test -tags integration ./test/integration/...
+            # ./test/harness/...` pulls in 44 of the 54 top-level internal/
+            # directories, most with no obvious "integration" flavour
+            # (internal/canonical, internal/config, internal/obs). An
+            # enumerated subset drifts — internal/projector and
+            # internal/dispatcher were both missing here while
+            # test/integration/projector_*_test.go imports them directly.
             integration:
-              - 'internal/storage/**'
-              - 'internal/pipeline/**'
-              - 'internal/sources/**'
-              - 'internal/api/**'
-              - 'internal/ops/archive/**'
+              - 'internal/**'
               - 'cmd/stellarindex-ops/**'
               - 'migrations/**'
               - 'scripts/ops/**'
@@ -644,7 +648,7 @@ jobs:
       - name: no in-scope change (path filter) — nothing to run
         if: needs.preflight.outputs.integration != 'true'
         run: |
-          echo "integration-test-shard: this diff touches none of the preflight integration class (internal/storage, internal/pipeline, internal/sources, internal/api, internal/ops/archive, cmd/stellarindex-ops, migrations/, scripts/ops/, test/integration/, test/harness/, go.mod) -- shard skipped its Docker suite, reporting success."
+          echo "integration-test-shard: this diff touches none of the preflight integration class (internal/**, cmd/stellarindex-ops, migrations/, scripts/ops/, test/integration/, test/harness/, go.mod) -- shard skipped its Docker suite, reporting success."
 
   integration-test:
     # Aggregate of the shard matrix. This is the job whose NAME branch
