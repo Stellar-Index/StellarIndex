@@ -49,6 +49,11 @@ Prometheus review found, none a dead producer:
   threshold. Now carries its own threshold instead:
   `stellarindex_restore_drill_textfile_stale` (35d, same file below).
 
+**2026-09-28: `ops_job_usd_volume_restamp.prom` added** — same class as
+`ops_job_backfill.prom` above: `usd-volume-restamp` is a manual one-off
+`stellarindex-ops` job with no timer/cron, so a long gap between runs
+is expected, not a dead cron.
+
 ## Diagnosis
 
 ```sh
@@ -83,3 +88,6 @@ API, ClickHouse, S3/MinIO) it queries being unreachable.
   Prometheus review found all three false-firing; added the
   companion `stellarindex_restore_drill_textfile_stale` (35d) for the
   last one.
+- **2026-09-28** — excluded `ops_job_usd_volume_restamp.prom`, another
+  one-off `stellarindex-ops` job with no timer/cron, same class as
+  `ops_job_backfill.prom`.
