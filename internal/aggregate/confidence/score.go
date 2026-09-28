@@ -234,6 +234,20 @@ type Factors struct {
 	// corroboration signal that silently re-scored every pair without a
 	// chain would be a worse defect than the gap it fills.
 	TriangulationChecked bool `json:"triangulation_checked"`
+
+	// BaselineAgeDays is [Inputs.BaselineAgeDays] as scored: baseline
+	// DENSITY in days-equivalent of 1-minute buckets (at most
+	// [BootstrapDays]), not calendar age. Negative means no usable 30d
+	// baseline density was available.
+	BaselineAgeDays float64 `json:"baseline_age_days"`
+
+	// BootstrapCapped disambiguates a served confidence at or below
+	// [BootstrapConfidenceCap] on the CS-087 discipline: true means the
+	// bootstrap ceiling bounded this score because BaselineAgeDays is
+	// under [BootstrapDensityDays], so the value may be the cap rather
+	// than the evidence. false means the multi-factor score was served
+	// unbounded.
+	BootstrapCapped bool `json:"bootstrap_capped"`
 }
 
 // Weights are the per-factor exponents in the weighted geometric
@@ -316,6 +330,8 @@ func Compute(in Inputs, w Weights) Score {
 		CrossOracle:            CrossOracleFactor(in.CrossOracleDivergencePct),
 		TriangulationAgreement: TriangulationAgreementFactor(triangulationInput(in)),
 		BaselineQuality:        BaselineQualityFactor(in.BaselineAgeDays),
+		BaselineAgeDays:        servedBaselineAgeDays(in.BaselineAgeDays),
+		BootstrapCapped:        bootstrapCapInForce(in.BaselineAgeDays),
 	}
 	// Mirrors the CrossOracleChecked branch below: a negative
 	// LiquidityUSD is the "could not value this pair in USD" sentinel,
@@ -391,16 +407,30 @@ func triangulationInput(in Inputs) float64 {
 // factor already returns 0.5 for NaN, dragging the combiner down
 // without a hard ceiling).
 func applyBootstrapCap(c, ageDays float64) float64 {
-	if math.IsNaN(ageDays) {
-		return c
-	}
-	if ageDays >= BootstrapDensityDays {
+	if !bootstrapCapInForce(ageDays) {
 		return c
 	}
 	if c > BootstrapConfidenceCap {
 		return BootstrapConfidenceCap
 	}
 	return c
+}
+
+// bootstrapCapInForce is the one predicate behind both the ceiling in
+// [applyBootstrapCap] and [Factors.BootstrapCapped], so the served flag
+// can never disagree with the cap that was applied.
+func bootstrapCapInForce(ageDays float64) bool {
+	return !math.IsNaN(ageDays) && ageDays < BootstrapDensityDays
+}
+
+// servedBaselineAgeDays maps a non-finite density onto the negative
+// no-baseline reading: the Score is JSON-encoded into the cache, and
+// encoding/json rejects NaN and ±Inf.
+func servedBaselineAgeDays(ageDays float64) float64 {
+	if math.IsNaN(ageDays) || math.IsInf(ageDays, 0) {
+		return -1
+	}
+	return ageDays
 }
 
 // safeLog returns log(x) with log(0) → -Inf clamped through Exp;

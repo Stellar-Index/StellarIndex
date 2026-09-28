@@ -228,9 +228,13 @@ For the postmortem, capture:
   many pairs simultaneously. Symptom: counter climbs on many pairs
   at once, often with `writer_wired=false`. Tune or wait; see
   Mitigation Step 3.
-- **Asset just listed (bootstrap window).** Confidence is capped at
-  0.5 for the first 30 days (`baseline_age_days < 30` in
-  `confidence_factors`); combined with single-source coverage it can
+- **Thin baseline (bootstrap cap).** Confidence is capped at 0.5 while
+  the pair's 30-day baseline density is under 28.5 days-equivalent of
+  1-minute buckets: `confidence_factors.bootstrap_capped` is `true` and
+  `confidence_factors.baseline_age_days` is below 28.5 on `/v1/price`,
+  and `stellarindex_aggregator_bootstrap_capped{pair}` reads 1. This is
+  density, not calendar age: a newly listed pair and a sparsely traded
+  old one both stay capped. Combined with single-source coverage it can
   cross the freeze corner on modest moves. Expected; confirm via the
   decomposition and leave frozen or reclassify.
 - **Source feed restarting.** A connector restart can briefly drop a

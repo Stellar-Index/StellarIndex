@@ -3,8 +3,11 @@ package confidence_test
 import (
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
 )
 
 // R-003 (audit-2026-07-23, COR-14) parity guard.
@@ -120,6 +123,23 @@ func TestADR0019PinsTheShippedFactorSet(t *testing.T) {
 		!strings.Contains(adr, "does **not** feed `source_count`") {
 		t.Error("ADR-0019 does not state that a composite is excluded from " +
 			"source_count — the freeze AND's independence leg depends on it")
+	}
+}
+
+// TestADR0019PinsTheBootstrapDensityGate — the ADR's warmup rule says
+// "< 30 days of history", but the cap gates on bucket density at
+// [confidence.BootstrapDensityDays]. The 2026-09-28 amendment records
+// that; this fails if it is dropped or the constant moves away from it.
+func TestADR0019PinsTheBootstrapDensityGate(t *testing.T) {
+	adr := readSquashed(t, adr0019Path)
+	gate := strconv.FormatFloat(confidence.BootstrapDensityDays, 'f', -1, 64)
+	if !strings.Contains(adr, "`BootstrapDensityDays` = "+gate) {
+		t.Errorf("ADR-0019 does not state the shipped bootstrap density gate (%s days-equivalent)", gate)
+	}
+	unquoted := strings.ReplaceAll(adr, " > ", " ")
+	if !strings.Contains(unquoted, "`baseline_age_days` and `bootstrap_capped` now ship") {
+		t.Error("ADR-0019 does not record that baseline_age_days and bootstrap_capped are served; " +
+			"its 2026-09-27 amendment still says baseline_age_days does not exist")
 	}
 }
 

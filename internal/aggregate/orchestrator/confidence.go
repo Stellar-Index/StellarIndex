@@ -192,6 +192,7 @@ func (o *Orchestrator) computeConfidence(
 		TriangulationDivergencePct: triPct,
 		BaselineAgeDays:            baselineAgeDays(multi),
 	}, confidence.DefaultWeights())
+	exportBootstrapState(pair, score.Factors)
 
 	// ZScore carries the OBSERVATION-based score to the Phase 2
 	// freeze. Widening it to scoringZ would let drift alone freeze a
@@ -515,6 +516,17 @@ func baselineFresh(pair canonical.Pair, computedAt, now time.Time) bool {
 	age := now.Sub(computedAt)
 	obs.AggregatorBaselineAgeSeconds.WithLabelValues(pair.String()).Set(age.Seconds())
 	return age <= maxBaselineAge
+}
+
+// exportBootstrapState publishes the pair's bootstrap-cap state and the
+// baseline density it gated on, so the cap's release is observable.
+func exportBootstrapState(pair canonical.Pair, f confidence.Factors) {
+	capped := 0.0
+	if f.BootstrapCapped {
+		capped = 1
+	}
+	obs.AggregatorBootstrapCapped.WithLabelValues(pair.String()).Set(capped)
+	obs.AggregatorBaselineDensityDays.WithLabelValues(pair.String()).Set(f.BaselineAgeDays)
 }
 
 // baselineWindowLabel renders a [baseline.MultiBaseline] lookback as the

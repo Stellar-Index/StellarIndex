@@ -175,6 +175,12 @@ type ConfidenceFactors struct {
 	// zero weight in the score when unchecked.
 	TriangulationAgreement float64 `json:"triangulation_agreement"`
 	TriangulationChecked   bool    `json:"triangulation_checked"`
+	// BaselineAgeDays is the 30d baseline density in days-equivalent of
+	// 1-minute buckets (at most 30; negative = no usable baseline), not
+	// calendar age. BootstrapCapped true means the 0.5 bootstrap ceiling
+	// bounded Confidence — a 0.5 may be the cap, not the evidence.
+	BaselineAgeDays float64 `json:"baseline_age_days"`
+	BootstrapCapped bool    `json:"bootstrap_capped"`
 }
 
 // PriceChangeHorizon is one trailing-window delta on

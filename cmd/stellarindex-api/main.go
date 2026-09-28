@@ -3463,6 +3463,8 @@ func (r redisConfidenceLooker) LookupConfidence(ctx context.Context, asset, quot
 
 			TriangulationAgreement: score.Factors.TriangulationAgreement,
 			TriangulationChecked:   score.Factors.TriangulationChecked,
+			BaselineAgeDays:        score.Factors.BaselineAgeDays,
+			BootstrapCapped:        score.Factors.BootstrapCapped,
 		},
 	}, true, nil
 }
