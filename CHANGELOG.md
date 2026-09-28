@@ -20,6 +20,125 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.92.1] — 2026-09-28
+
+One day, 20 commits since v0.92.0 — a deploy-safety release.
+**v0.92.0 must not be deployed.**
+
+### Fixed
+
+- **migrations — 0174 neutralised before any environment applied it:**
+  the 0174 shipped in v0.92.0 ran `decompress_chunk` over every
+  `sep41_transfers` chunk before adding `sep41_transfers_amount_check`,
+  in one implicit transaction — on r1, 32 chunks, 55 GB compressed /
+  780 GB decompressed. Deployed under the 5-minute `statement_timeout`
+  migrate runs under, it fails partway with 0164 and 0166 already
+  committed (cctp/rozo emptied, `prices_1m`/`twap_1h`/`twap_1d`
+  recreated `WITH NO DATA` under the v0.91.0 binaries), version dirty
+  at 174; out of band it is hours of chunk locks and ~725 GB of writes
+  through a `pg_wal` that, until this release's ZFS move lands, still
+  sits on a 15 GB root filesystem. golang-migrate runs 0174 before any
+  later number, so a corrective migration can't help: the UP body is
+  now `SELECT 1;`, under `migrations/README.md`'s narrow "neutralising
+  an unapplied migration" exception — nobody we operate had applied it
+  (measured 2026-09-28: `schema_migrations` = 162, dirty = false on r1,
+  testnet and futurenet, and v0.92.0's release assets show 0
+  downloads). The amount rule — any amount present is `>= 0`,
+  `transfer`/`approve` rows must carry one — is now enforced solely by
+  `validateSEP41TransferRows`, shared by both write paths (the COPY
+  writer validated nothing before; the per-row writer checked the sign
+  only on `transfer`/`approve`, missing a negative `set_admin`/
+  `set_authorized` amount). The database `CHECK` becomes a later,
+  offline step, tested against `pg_constraint` first. Anyone who built
+  from source since 2026-09-24 (`d65ddaae3`) and applied the old 0174
+  keeps the `CHECK` — a superset of the Go row contract, so it stays
+  satisfied, not violated — and the down migration (`DROP CONSTRAINT IF
+  EXISTS`) reverses either state.
+- **migrations — 0164's header corrected, its replay needs `-write`:**
+  the header claimed neither `cctp_events` nor `rozo_events` runs a
+  compression policy. Both do on r1 (measured 2026-09-28: `cctp_events`
+  148,660 rows across 21/23 compressed chunks, `rozo_events` 407 rows
+  across 31/32) — 148,660 is above
+  `max_tuples_decompressed_per_dml_transaction` (100,000), so a
+  decompressing DELETE would fail the cap. It doesn't: the unqualified
+  DELETE takes the direct compressed-batch path and never decompresses.
+  Body unchanged; the header now says so, and its replay commands gain
+  `-write` (they were dry runs as written) and `-refresh-caggs=false`
+  (cctp/rozo write neither trades nor oracle rows, so the default
+  refresh would burn a full-range price-cagg pass for nothing on top
+  of 0187's own re-materialisation walk). A new test seeds chunks past
+  the cap, compresses them, and proves the direct batch delete clears
+  both tables without hitting it.
+- **migrations — 0187 operator steps: archive `pools_per_source_1h`
+  first, refresh 14 days:** header-only. 0187 drops and recreates
+  `pools_per_source_1h` `WITH NO DATA` from `trades`, but the dropped
+  view was materialized when `trades` held history it no longer holds
+  (r1, 2026-09-28: the view's 2023-06 buckets sum 76,392,293 SDEX
+  trades against 35,624 `trades` rows now live for that month) — the
+  rebuild can't re-derive it. The header now tells an operator on such
+  a deployment to copy the materialization hypertable into a plain
+  archive table first (refresh job paused, one transaction per year,
+  exact count/sum check before migrating) and to keep reading the
+  archive for that lost history. It also corrects the
+  re-materialisation window itself: the recipe refreshed 7 days, but
+  `/v1/pools` and `/v1/markets?source=` read the view over
+  `MarketsRecencyWindow` (14 days), so a pool whose last trade was
+  7–14 days old would vanish from both until the walk reached it.
+- **ops — ZFS snapshots of `data/postgres` are recursive; ansible
+  codifies `data/postgres/wal` and tunes it for WAL:** r1's `pg_wal`
+  has been a symlink to `/pgwal` on the 49 GB root filesystem since the
+  2026-05-17 pool-full emergency; measured 2026-09-28, root had 15 GB
+  free against ~210 GiB/day of WAL, so an archive stall of ~1.7 h fills
+  it — the 2026-09-16 P1 shape, recurring. Ansible now codifies a
+  `data/postgres/wal` ZFS dataset (128K recordsize, lz4,
+  `logbias=latency`, `refreservation=256GiB` so no sibling dataset can
+  starve it) and renders `wal_init_zero`/`wal_recycle = off` only when
+  `pg_wal` sits on ZFS; `postgres_max_wal_size` moves to 16 GB (2 GB
+  forced 84% of checkpoints, and the guard previously refused 16 GB
+  while `pg_wal` was still on root, so it couldn't land before this
+  move). The symlink move itself stays a manual operator step inside a
+  Postgres stop window. `zfs-snapshot.sh` and `zfs-snapshot-now.sh` now
+  snapshot and destroy `-r`ecursively for every managed dataset, so the
+  new WAL child is captured atomically with its parent instead of
+  silently missed — a non-recursive snapshot of `data/postgres` alone
+  would lack the WAL of the same instant, unable to start without
+  `pg_resetwal`. The Postgres ZFS runbook is corrected to say `pg_wal`
+  has not shared a dataset with the cluster data since the 2026-05-17
+  move (so every snapshot since then needs pgBackRest for WAL, not the
+  ZFS snapshot alone), and gains rollback and clone procedures — the
+  rollback step now checks `pgbackrest info`'s next available timeline
+  before promoting, so a rehearsal or the offsite restore-drill can't
+  collide with a timeline number already taken. The root-disk alert now
+  tells a responder how to check whether `pg_wal` has moved yet.
+- **ops/clickhouse — the d3 MV-tip gate, the wasm code-history
+  instance-miss fix, and a dependabot Go-minor hold also landed since
+  v0.92.0:** `d3` cutover now refuses unless a reproject-progress mark
+  is strictly past the ledger the target MV was created at — the gap
+  it closes is real: production's v2 MV was created at tip 63683991
+  while the reproject that fed it used an exclusive `TO=63683991`, so
+  that ledger's 221 `contract_data` rows, 221 TTLs and 6 offers were
+  never reprojected, and the crossed SDEX order books that followed
+  traced back to it. `ContractCodeHistory` now trusts a
+  `contract_instance_changes` miss as authoritative instead of falling
+  back to a full `ledger_entry_changes` bloom-index scan (44 GiB,
+  30.6 s measured, past the API's 8 s deadline) — `/v1/contracts/{id}
+  /code-history` no longer 503s for a contract with no wasm instance
+  write; it serves `versions: []`. Dependabot now holds a Go minor bump
+  in a Dockerfile pin until the matching `go.mod` toolchain change
+  lands beside it (patch bumps still flow).
+
+Also since v0.92.0: `warnOpenCORS` now catches a wildcard origin mixed
+into a longer `allowed_origins` list instead of only a bare `["*"]`;
+`BlendPoolReserves` stops inventing `decimals=7` for a reserve outside
+the served config tier — a non-SAC token at a different exponent was
+mispriced by a power of ten — and instead resolves decimals from the
+reserve config, the SAC default, or the lake, withholding the USD
+valuation rather than mis-scaling it; the explorer's asset table sorts
+by the verified currency class instead of a constant field and gains a
+market-cap-mismatch verdict cell; and `idx_lec_key_xdr` is declared at
+the live `bloom_filter(0.01)` (the 0.0001 retune was reviewed and
+rejected — its only reader no longer probes it).
+
 ## [v0.92.0] — 2026-09-27
 
 Nine days, ~1,600 commits since v0.91.0 — the longest gap between two
@@ -702,29 +821,3 @@ pass and is called out first.
   protocol roster does not claim — a Stellar Asset Contract by its
   classic asset's code, a SEP-41 token by its symbol — as `label`
   (`token USDC`) instead of leaving every such row unlabelled.
-
-## [v0.89.2] — 2026-09-17 (tag only — the release workflow's asset upload failed; shipped as v0.89.3)
-
-### Added
-
-- **rwa:** an issuer account the curated directory never listed is now
-  recognised when the SAME issuer-bound SEP-1, on the same domain, also
-  binds an account the directory does list and does not flag — served as
-  `recognition: curated_account_directory_via_domain_sibling`, apart
-  from the direct arm. A scam flag on the account itself still refuses
-  it, and the arm supplies no instrument claim: the class, oracle-code
-  or ISIN arms still have to admit the asset. The case is Franklin
-  Templeton's Luxembourg and Singapore share classes (gBENJI, grBENJI,
-  sgBENJI — 82.2M tokens, ISIN-declared beside the listed BENJI issuer),
-  which were refused for recognition while being named by the recognised
-  entity itself.
-- **rwa:** a share class whose fund rules fix its NAV — a CNAV money
-  market fund — takes that NAV as its reference price when neither an
-  oracle binding nor a listing price exists, served as
-  `reference.provenance: prospectus_constant_nav` with the ISIN, the
-  regime and the issuer's NAV page it was read from. Bound on the exact
-  (code, issuer) in `rwa.ConstantNAV`: Franklin's Luxembourg gBENJI and
-  grBENJI (EU MMFR public-debt CNAV, NAV $1.00, page read 2026-09-16);
-  the accumulating Singapore class stays unpriced by design. This is the
-  first reference price on this surface that is independent of both the
-  oracle set and any curator.
