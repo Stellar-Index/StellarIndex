@@ -493,7 +493,7 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.cfg.Keys.Revoke(r.Context(), id, sc.User.ID, "revoked from dashboard"); err != nil {
+	if err := h.cfg.Keys.Revoke(r.Context(), sc.Account.ID, id, sc.User.ID, "revoked from dashboard"); err != nil {
 		h.cfg.Logger.Error("revoke key in postgres", "err", err, "key_id", id)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return

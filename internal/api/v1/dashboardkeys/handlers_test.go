@@ -685,21 +685,21 @@ func (f *fakeKeyStore) ListForAccount(ctx context.Context, accountID uuid.UUID, 
 	return out, more, nil
 }
 
-func (f *fakeKeyStore) Update(_ context.Context, k platform.APIKey) error {
+func (f *fakeKeyStore) Update(_ context.Context, accountID uuid.UUID, k platform.APIKey) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if _, ok := f.byID[k.ID]; !ok {
+	if cur, ok := f.byID[k.ID]; !ok || cur.AccountID != accountID {
 		return platform.ErrNotFound
 	}
 	f.byID[k.ID] = k
 	return nil
 }
 
-func (f *fakeKeyStore) Revoke(_ context.Context, id string, by uuid.UUID, reason string) error {
+func (f *fakeKeyStore) Revoke(_ context.Context, accountID uuid.UUID, id string, by uuid.UUID, reason string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	k, ok := f.byID[id]
-	if !ok {
+	if !ok || k.AccountID != accountID {
 		return platform.ErrNotFound
 	}
 	if k.RevokedAt.IsZero() {

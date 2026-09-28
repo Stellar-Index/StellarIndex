@@ -164,18 +164,21 @@ func (f *fakeRegisterKeyStore) ListForAccount(_ context.Context, _ uuid.UUID, _ 
 	panic("unused")
 }
 
-func (f *fakeRegisterKeyStore) Update(_ context.Context, k platform.APIKey) error {
+func (f *fakeRegisterKeyStore) Update(_ context.Context, accountID uuid.UUID, k platform.APIKey) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if cur, ok := f.byID[k.ID]; !ok || cur.AccountID != accountID {
+		return platform.ErrNotFound
+	}
 	f.byID[k.ID] = k
 	return nil
 }
 
-func (f *fakeRegisterKeyStore) Revoke(_ context.Context, id string, _ uuid.UUID, _ string) error {
+func (f *fakeRegisterKeyStore) Revoke(_ context.Context, accountID uuid.UUID, id string, _ uuid.UUID, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	k, ok := f.byID[id]
-	if !ok {
+	if !ok || k.AccountID != accountID {
 		return platform.ErrNotFound
 	}
 	k.RevokedAt = time.Now().UTC()

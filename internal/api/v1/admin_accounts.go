@@ -341,7 +341,7 @@ func (s *Server) revokeKeysOnClosure(
 	}
 	for i := range keys {
 		k := keys[i]
-		if err := st.Platform.Revoke(ctx, k.ID, uuid.Nil, accountClosedRevokeReason); err != nil {
+		if err := st.Platform.Revoke(ctx, acct.ID, k.ID, uuid.Nil, accountClosedRevokeReason); err != nil {
 			st.note("key_revoke")
 			s.logger.Error("account closure: key revoke failed; re-PATCH status=closed to retry",
 				"cause", cause, "account_id", acct.ID, "key_id", k.ID, "err", err)

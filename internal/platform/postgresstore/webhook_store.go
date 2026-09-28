@@ -54,7 +54,7 @@ func webhookURLConflict(err error) error {
 // account to 9+N.
 //
 // Closure shape: the create runs inside a transaction guarded by
-// `pg_advisory_xact_lock(hashtext('webhook:'||account_id))`. The
+// a per-account advisory lock ([lockAccount]). The
 // advisory lock serialises every concurrent caller for the same
 // account through one critical section, so the count + insert
 // observes a stable view: at most ONE statement appends a row at
@@ -87,14 +87,8 @@ func (c *WebhookStore) CreateWebhook(ctx context.Context, w platform.CustomerWeb
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// F-1248 (codex audit-2026-05-12): per-account advisory lock
-	// inside the transaction. `hashtext` deterministically maps
-	// 'webhook:'||account_id::text → int4 which pg_advisory_xact_lock
-	// accepts as int8 via Postgres's implicit widening.
-	if _, err := tx.ExecContext(ctx,
-		`SELECT pg_advisory_xact_lock(hashtext('webhook:' || $1::text))`,
-		w.AccountID); err != nil {
-		return platform.CustomerWebhook{}, fmt.Errorf("postgresstore: CreateWebhook: advisory lock: %w", err)
+	if err := lockAccount(ctx, tx, lockNamespaceWebhook, w.AccountID); err != nil {
+		return platform.CustomerWebhook{}, fmt.Errorf("postgresstore: CreateWebhook: %w", err)
 	}
 
 	const q = `
