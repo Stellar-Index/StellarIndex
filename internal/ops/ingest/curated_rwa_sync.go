@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -188,10 +189,7 @@ func newCuratedRWAClient(baseURL, key string) *curatedRWAClient {
 	return &curatedRWAClient{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		key:     key,
-		http: &http.Client{
-			Timeout:       curatedRWAFetchTimeout,
-			CheckRedirect: keyedSameOriginRedirect("curated-rwa-sync"),
-		},
+		http:    httpx.NewKeyedClient("curated-rwa-sync", curatedRWAFetchTimeout),
 	}
 }
 

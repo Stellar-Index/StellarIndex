@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 )
 
 // sendTimeout bounds one provider POST independently of the caller's
@@ -45,7 +47,7 @@ func NewResendSender(apiKey string) (*ResendSender, error) {
 	}
 	return &ResendSender{
 		APIKey:  apiKey,
-		Client:  &http.Client{Timeout: sendTimeout},
+		Client:  httpx.NewKeyedClient("resend", sendTimeout),
 		BaseURL: "https://api.resend.com",
 	}, nil
 }

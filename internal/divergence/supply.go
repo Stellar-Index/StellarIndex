@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 )
 
 // This file adds a SUPPLY-divergence cross-check that mirrors the
@@ -643,7 +644,8 @@ type CoinGeckoSupplyReference struct {
 
 // CoinGeckoSupplyOptions configures [NewCoinGeckoSupplyReference].
 type CoinGeckoSupplyOptions struct {
-	// HTTPClient — nil falls back to a 10s-timeout client.
+	// HTTPClient — nil falls back to a 10s-timeout client. One without a
+	// CheckRedirect is used with [httpx.KeyedSameOriginRedirect] added.
 	HTTPClient *http.Client
 	// BaseURL overrides the API base. Empty defaults to
 	// coinGeckoDefaultBaseURL, UNLESS APIKey is also set, in which
@@ -668,10 +670,6 @@ type CoinGeckoSupplyOptions struct {
 // NewCoinGeckoSupplyReference constructs the CoinGecko-backed supply
 // reference.
 func NewCoinGeckoSupplyReference(opts CoinGeckoSupplyOptions) *CoinGeckoSupplyReference {
-	httpClient := opts.HTTPClient
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 10 * time.Second}
-	}
 	baseURL := opts.BaseURL
 	if baseURL == "" {
 		// A Pro key 404s against the public host — auto-switch to the
@@ -701,13 +699,29 @@ func NewCoinGeckoSupplyReference(opts CoinGeckoSupplyOptions) *CoinGeckoSupplyRe
 		nowFn = time.Now
 	}
 	return &CoinGeckoSupplyReference{
-		httpClient: httpClient,
+		httpClient: keyedSupplyClient(opts.HTTPClient),
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		apiKey:     opts.APIKey,
 		idMap:      idMap,
 		maxAge:     maxAge,
 		nowFn:      nowFn,
 	}
+}
+
+// keyedSupplyClient gives the CoinGecko reference a client whose redirect
+// policy keeps the key on the origin; an injected client without its own
+// CheckRedirect is copied rather than trusted to follow any Location.
+func keyedSupplyClient(injected *http.Client) (keyed *http.Client) {
+	const tag = "coingecko-supply"
+	if injected == nil {
+		return httpx.NewKeyedClient(tag, 10*time.Second)
+	}
+	if injected.CheckRedirect != nil {
+		return injected
+	}
+	cp := *injected
+	cp.CheckRedirect = httpx.KeyedSameOriginRedirect(tag)
+	return &cp
 }
 
 // Name implements [SupplyReference].

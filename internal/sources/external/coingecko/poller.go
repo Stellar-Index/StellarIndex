@@ -45,6 +45,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
@@ -303,7 +304,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		req.Header.Set("x-cg-demo-api-key", p.DemoAPIKey)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := httpx.NewKeyedClient("coingecko", 30*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("http: %w", err)
