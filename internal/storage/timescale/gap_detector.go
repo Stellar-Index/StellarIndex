@@ -584,7 +584,8 @@ func scanOneGapDetectorTarget(ctx context.Context, store *Store, logger *slog.Lo
 	}
 	markGapDetectorScanSuccess(target, start, time.Now())
 
-	if totalMissing > 0 {
+	switch {
+	case totalMissing > 0:
 		logger.Warn("gap-detector: data-coverage gaps detected",
 			"source", target.Source,
 			"table", target.Table,
@@ -593,10 +594,33 @@ func scanOneGapDetectorTarget(ctx context.Context, store *Store, logger *slog.Lo
 			"gap_count", len(gaps),
 			"max_gap_size", largest,
 		)
-	} else {
+	case !gapVerdictTrustworthy(target.DistinctLedgerCountSQL != "", distinctErr, distinct):
+		// A zero-gap result from a table whose own census also saw nothing is
+		// NOT evidence of completeness — it's the shape a TRUNCATE of the
+		// underlying table produces (FindPerSourceLedgerGaps has no present
+		// row left to bracket a gap with, so it reports none) for a target
+		// whose density comes from a separate log (ledger_ingest_log for
+		// soroban-events, see sorobanEventsDistinctLedgerCountSQL). Loud, not
+		// Debug, so it isn't read as healthy (#803).
+		logger.Warn("gap-detector: zero-gap verdict has no positive census corroboration — not trusted as clean",
+			"source", target.Source, "table", target.Table, "tip", tip, "from", from, "distinct", distinct)
+	default:
 		logger.Debug("gap-detector: clean coverage",
 			"source", target.Source, "table", target.Table, "tip", tip)
 	}
+}
+
+// gapVerdictTrustworthy reports whether a zero-missing-ledger verdict from
+// FindPerSourceLedgerGaps is backed by positive evidence for a target whose
+// density is computed by a [GapDetectorTarget.DistinctLedgerCountSQL]
+// override rather than the table FindPerSourceLedgerGaps itself scanned.
+// Targets with no override are always trustworthy — their own zero-gap
+// result and their density come from the same table. See #803.
+func gapVerdictTrustworthy(hasCensusOverride bool, distinctErr error, distinct int64) bool {
+	if !hasCensusOverride {
+		return true
+	}
+	return distinctErr == nil && distinct > 0
 }
 
 // markGapDetectorScanSuccess records a clean per-target scan: the ok
