@@ -1881,6 +1881,7 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 // completeness comes from the absence of a window; changing either
 // breaks the other. [TestLatestTradeReadsTakeNoRecencyBound] pins the
 // window's absence, on both the SQL and the bound-argument channel.
+// unbounded-latest-ok: see point 3 above; TestLatestTradeReadsTakeNoRecencyBound pins it.
 func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sourceFilter string) ([]canonical.Trade, error) {
 	const q = `
         (SELECT DISTINCT ON (source)

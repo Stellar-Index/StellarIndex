@@ -94,6 +94,7 @@ func (s *Store) InsertTrustlineObservation(ctx context.Context, o TrustlineObser
 //
 // Returns a non-nil *big.Int (zero is a valid answer when the
 // asset has no trustline observations yet) on success.
+// unbounded-latest-ok: a holder whose last row predates any floor still holds that balance at asOfLedger.
 func (s *Store) SumTrustlineBalancesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error) {
 	const q = `
         SELECT COALESCE(sum(balance_stroops), 0)::text
@@ -290,6 +291,7 @@ type LiveClaimable struct {
 // whose latest served observation is live, picked exactly as
 // SumClaimableBalancesAtOrBefore picks at the tip. `supply
 // seed-claimable-balances` retracts each one the lake shows removed.
+// unbounded-latest-ok: a balance created before any floor and never claimed is still live.
 func (s *Store) LiveClaimableObservations(ctx context.Context) (map[string]LiveClaimable, error) {
 	const q = `
         SELECT claimable_id, asset_key, ledger
@@ -330,6 +332,7 @@ func (s *Store) LiveClaimableObservations(ctx context.Context) (map[string]LiveC
 
 // SumClaimableBalancesAtOrBefore — same shape as
 // SumTrustlineBalancesAtOrBefore, keyed on claimable_id.
+// unbounded-latest-ok: a balance created before any floor and never claimed is still live.
 func (s *Store) SumClaimableBalancesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error) {
 	const q = `
         SELECT COALESCE(sum(balance_stroops), 0)::text
@@ -399,6 +402,7 @@ func (s *Store) InsertLPReserveObservation(ctx context.Context, o LPReserveObser
 
 // SumLPReservesAtOrBefore — most-recent (pool_id, asset_key)
 // observation, summed across pools.
+// unbounded-latest-ok: a pool whose last row predates any floor still holds those reserves.
 func (s *Store) SumLPReservesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error) {
 	const q = `
         SELECT COALESCE(sum(balance_stroops), 0)::text
@@ -480,6 +484,7 @@ func (s *Store) InsertSACBalanceObservation(ctx context.Context, o SACBalanceObs
 // observation, summed across holders. Keyed by asset_key so the
 // reader can include the SAC component for the watched classic
 // asset directly.
+// unbounded-latest-ok: a holder whose last row predates any floor still holds that balance at asOfLedger.
 func (s *Store) SumSACBalancesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error) {
 	const q = `
         SELECT COALESCE(sum(balance_stroops), 0)::text
