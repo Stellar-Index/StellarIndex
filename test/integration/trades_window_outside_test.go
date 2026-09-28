@@ -15,10 +15,13 @@ import (
 
 func candleRows(t *testing.T, source string, pair c.Pair, hourStart time.Time, g time.Duration) []c.Trade {
 	t.Helper()
+	// Pair-specific: a shared symbol gives two pairs the same PK at one
+	// (source, closeTs), so the second seed upserts over the first.
+	symbol := pair.Base.Code + pair.Quote.Code
 	var out []c.Trade
 	for open := hourStart; open.Before(hourStart.Add(time.Hour)); open = open.Add(g) {
 		closeTs := open.Add(g - time.Second)
-		h, err := scale.CandleTxHash("XLMUSD", closeTs.Unix(), g)
+		h, err := scale.CandleTxHash(symbol, closeTs.Unix(), g)
 		if err != nil {
 			t.Fatalf("CandleTxHash: %v", err)
 		}
