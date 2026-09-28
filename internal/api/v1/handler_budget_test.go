@@ -446,6 +446,8 @@ func funcDecls(t *testing.T, fset *token.FileSet, fn func(src apiSource, fd *ast
 var inlineDetachments = map[string]string{
 	"register.go#mintRegisterKey": "error path only: rolls back a mirror write the failed " +
 		"request left behind, which must not fail on that request's dead context; 5s",
+	"dashboardkeys/handlers.go#rollbackMirror": "error path only: removes the mirrored key a " +
+		"failed management-row create left behind, which must not fail on that request's dead context; 5s",
 	"register.go#suspendRegisterOrphan": "error path only: quarantines an orphaned account " +
 		"before the 500; 5s",
 	"rwa_curated.go#rwaCuratedSnapshotWithin": "the curated snapshot refresh on /v1/rwa/assets, " +
