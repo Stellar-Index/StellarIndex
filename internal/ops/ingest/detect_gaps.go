@@ -7,10 +7,12 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"text/tabwriter"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/projector"
 	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -30,11 +32,25 @@ import (
 // one per registered decoder), the MINIMUM last-ledger across the
 // source's rows is used — we care about the slowest position, not
 // the fastest.
+//
+// Two more failure modes are checked, both GH-1095:
+//
+//   - A source catalogued in ingestion.enabled_sources (and, for a
+//     projected domain, actually registered by [projector.BuildRegistry])
+//     but with no matching ingestion_cursors row — reaped, or never
+//     started — used to vanish from the verdict silently, because the
+//     lag table only ever looks at rows that exist. See
+//     [catalogueMissingProjectorSources].
+//   - The RPC tip itself is asserted fresh against wall-clock (its own
+//     closeTime), not just used as ground truth. A stuck or disconnected
+//     RPC node made every source read "ok" against a frozen tip.
 func detectGaps(args []string) error {
 	fs := flag.NewFlagSet("detect-gaps", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	threshold := fs.Uint("threshold", 100, "Ledgers of lag that count as a gap")
 	rpcOverride := fs.String("rpc", "", "stellar-rpc endpoint URL for the network tip (overrides stellar.rpc_endpoints[0])")
+	rpcMaxStaleness := fs.Duration("rpc-max-staleness", 5*time.Minute,
+		"Max age of the RPC tip's own closeTime before the tip is treated as stale (catches a stuck/disconnected RPC node, not normal ~5s ledger-close jitter)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -43,6 +59,13 @@ func detectGaps(args []string) error {
 	}
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
+	if err != nil {
+		return err
+	}
+
+	// Derived from config alone — cheap, and fails fast on a broken
+	// projector config before we ever touch the network or storage.
+	expectedProjected, err := expectedProjectorSources(cfg)
 	if err != nil {
 		return err
 	}
@@ -62,6 +85,15 @@ func detectGaps(args []string) error {
 	tip, err := rpc.LatestLedger(ctx)
 	if err != nil {
 		return fmt.Errorf("rpc: %w", err)
+	}
+
+	closeTime, err := parseRPCCloseTime(tip.CloseTime)
+	if err != nil {
+		return fmt.Errorf("rpc tip closeTime: %w — cannot assert freshness, failing closed", err)
+	}
+	if staleness := time.Since(closeTime); staleness > *rpcMaxStaleness {
+		return fmt.Errorf("rpc tip stale: sequence %d closed %s ago (closeTime %s UTC) — exceeds -rpc-max-staleness %s; the RPC node itself may be stuck or disconnected, which would otherwise make every source cursor read \"ok\" against a frozen tip",
+			tip.Sequence, staleness.Round(time.Second), closeTime.UTC().Format(time.RFC3339), *rpcMaxStaleness)
 	}
 
 	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
@@ -88,11 +120,84 @@ func detectGaps(args []string) error {
 	}
 
 	lagging := writeGapReport(os.Stdout, minBySource, tip.Sequence, uint32(*threshold))
-	if len(lagging) > 0 {
+
+	missing := catalogueMissingProjectorSources(cursors, expectedProjected)
+	if len(missing) > 0 {
+		fmt.Fprintf(os.Stdout, "MISSING (catalogued in ingestion.enabled_sources, no ingestion_cursors row — reaped or never started): %v\n", missing)
+	}
+
+	switch {
+	case len(lagging) > 0 && len(missing) > 0:
+		return fmt.Errorf("%d source(s) lagging past threshold %d (%v); %d catalogued source(s) missing a cursor (%v)",
+			len(lagging), *threshold, lagging, len(missing), missing)
+	case len(lagging) > 0:
 		return fmt.Errorf("%d source(s) lagging past threshold %d: %v",
 			len(lagging), *threshold, lagging)
+	case len(missing) > 0:
+		return fmt.Errorf("%d catalogued source(s) missing a cursor: %v — reaped or never started",
+			len(missing), missing)
 	}
 	return nil
+}
+
+// expectedProjectorSources returns the ("projector", <name>) cursor
+// names this deployment's config commits it to running, or nil when
+// the projector isn't enabled at all (no "projector" cursor is
+// expected in that case). Building the real registry — rather than
+// re-deriving the enabled/projected split by hand — is what keeps
+// this in sync with buildSource's dispatch table and the sep41
+// unconditional-registration special case (F-1316); the gated
+// contract-set argument is nil because only Source.Name is read here,
+// never the decoders themselves.
+func expectedProjectorSources(cfg config.Config) ([]string, error) {
+	if !cfg.Ingestion.Projector.Enabled {
+		return nil, nil
+	}
+	registry, err := projector.BuildRegistry(cfg.Ingestion.EnabledSources, cfg.Oracle, cfg.Supply.WatchedSEP41Contracts, nil)
+	if err != nil {
+		return nil, fmt.Errorf("projector registry: %w", err)
+	}
+	names := make([]string, len(registry.Sources))
+	for i, s := range registry.Sources {
+		names[i] = s.Name
+	}
+	return names, nil
+}
+
+// catalogueMissingProjectorSources returns the names in `expected`
+// with no ("projector", <name>) row in cursors. GH-1095: a source
+// enabled in ingestion.enabled_sources whose cursor was reaped or
+// never created otherwise vanished from the verdict, because
+// minLedgerBySource only ever looks at rows that exist — there was no
+// catalogue to notice one was missing.
+func catalogueMissingProjectorSources(cursors []timescale.Cursor, expected []string) []string {
+	have := make(map[string]bool, len(cursors))
+	for _, c := range cursors {
+		if c.Source == "projector" {
+			have[c.Sub] = true
+		}
+	}
+	var missing []string
+	for _, name := range expected {
+		if !have[name] {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+// parseRPCCloseTime parses stellar-rpc's getLatestLedger closeTime — a
+// decimal Unix-seconds string — into a time.Time. GH-1095: a missing
+// or malformed value fails closed rather than being read as "no
+// signal, assume fresh", which is what let a stuck RPC node's tip
+// pass every source as ok.
+func parseRPCCloseTime(raw string) (time.Time, error) {
+	secs, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%q: %w", raw, err)
+	}
+	return time.Unix(secs, 0), nil
 }
 
 // minLedgerBySource reduces cursors to the minimum LastLedger per source,
