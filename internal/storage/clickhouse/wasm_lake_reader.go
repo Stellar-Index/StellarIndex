@@ -326,18 +326,28 @@ func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID str
 	var cidHash xdr.Hash
 	copy(cidHash[:], dec)
 
-	// A present, non-empty index is authoritative, misses included: it is
-	// backfilled from Soroban genesis and its MV captures every row the legacy
-	// predicate can decode, so the legacy scan (a full read of the key_xdr
-	// bloom, ~30 s) could only return nothing on a miss.
+	// Index-first, same posture as contractWasmHash (audit REC-04, #716):
+	// instanceChangesIndexAvailable is a table-global LIMIT-1 emptiness
+	// probe, so it flips true within minutes of the DDL — long before a
+	// multi-hour/day genesis backfill has reached any given contract. An
+	// EMPTY per-contract result from the index is therefore NOT
+	// distinguishable from "backfill hasn't gotten here yet" and must NOT
+	// be served as an authoritative "never upgraded"; only a NON-EMPTY
+	// result is trusted, exactly like contractWasmHashIndexed's ok=false
+	// miss falling through to the legacy read.
 	if r.instanceChangesIndexAvailable(ctx) {
-		return r.contractCodeHistoryIndexed(ctx, cidHash)
+		out, err := r.contractCodeHistoryIndexed(ctx, cidHash)
+		if err != nil || len(out) > 0 {
+			return out, err
+		}
 	}
 	return r.contractCodeHistoryLegacy(ctx, cidHash)
 }
 
 // contractCodeHistoryLegacy is ContractCodeHistory's scan over the changes
-// log, for a deployment whose contract_instance_changes is absent or empty.
+// log: for a deployment whose contract_instance_changes is absent or
+// globally empty, or whose per-contract backfill hasn't reached this
+// contract yet (an unproven index miss).
 func (r *ExplorerReader) contractCodeHistoryLegacy(ctx context.Context, cidHash xdr.Hash) ([]ContractCodeVersion, error) {
 	keys, err := instanceKeyXDR(cidHash)
 	if err != nil {

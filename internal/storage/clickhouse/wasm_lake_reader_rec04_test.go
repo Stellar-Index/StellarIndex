@@ -2,8 +2,10 @@ package clickhouse
 
 import (
 	"context"
+	"encoding/hex"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
@@ -78,5 +80,61 @@ func TestContractWasmHash_PartialIndexMissFallsBackToLegacy(t *testing.T) {
 	if !legacyRead {
 		t.Fatal("the legacy ledger_entries_current read was never issued: the index miss " +
 			"was not treated as 'unknown, fall back'")
+	}
+}
+
+// TestContractCodeHistory_PartialIndexMissFallsBackToLegacy is REC-04's
+// sibling gap (#716): ContractCodeHistory trusted an EMPTY per-contract
+// result from contract_instance_changes as an authoritative "never
+// upgraded", even though instanceChangesIndexAvailable is the same
+// table-global LIMIT-1 emptiness probe that cannot see partial per-contract
+// backfill coverage. Only contractWasmHash guarded against this; this read
+// did not.
+//
+// Pre-fix, an applied-but-still-backfilling index made ContractCodeHistory
+// return an empty timeline for any contract the backfill hadn't reached
+// yet, even though the changes log holds its real upgrade history. The
+// fix mirrors contractWasmHash: only a NON-EMPTY indexed result is
+// trusted; an empty one falls through to the legacy changes-log scan.
+func TestContractCodeHistory_PartialIndexMissFallsBackToLegacy(t *testing.T) {
+	wantHash := wasmHashN(0xEF)
+
+	var legacyRead bool
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(q, "SELECT tx_hash, intra_ledger_seq FROM stellar.contract_instance_changes"):
+			// Key-shape probe: the tx-keyed table.
+			return &stubRows{}, nil
+		case strings.Contains(q, "contract_instance_changes") && strings.Contains(q, "SELECT ledger_seq FROM"):
+			// Availability probe: the index EXISTS and is non-empty
+			// (some other contract has been backfilled) -> "usable".
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		case strings.Contains(q, "SELECT ledger_seq, close_time, wasm_hash FROM ("):
+			// Per-contract lookup: THIS contract's instance history has not
+			// been backfilled yet -> zero rows (a PARTIAL-coverage miss,
+			// invisible to the probe).
+			return &stubRows{}, nil
+		case strings.Contains(q, "FROM stellar.ledger_entry_changes"):
+			// Legacy changes-log scan resolves the real upgrade history.
+			legacyRead = true
+			return &stubRows{data: [][]any{{uint32(1), time.Unix(0, 0).UTC(), instanceEntryB64(t, wantHash)}}}, nil
+		default:
+			t.Fatalf("unexpected query: %s", q)
+			return nil, nil
+		}
+	}
+	r := &ExplorerReader{conn: conn}
+
+	got, err := r.ContractCodeHistory(context.Background(), testContractID)
+	if err != nil {
+		t.Fatalf("ContractCodeHistory returned error: %v", err)
+	}
+	if !legacyRead {
+		t.Fatal("the legacy ledger_entry_changes read was never issued: the empty indexed " +
+			"result was served as an authoritative 'never upgraded' instead of falling back")
+	}
+	if len(got) != 1 || got[0].WasmHash != hex.EncodeToString(wantHash[:]) {
+		t.Fatalf("history = %+v, want one version with hash %x from the legacy scan", got, wantHash)
 	}
 }
