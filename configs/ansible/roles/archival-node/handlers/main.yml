@@ -200,6 +200,11 @@
     name: prometheus-postgres-exporter
     state: restarted
 
+- name: Restart prometheus-redis-exporter
+  ansible.builtin.systemd:
+    name: prometheus-redis-exporter
+    state: restarted
+
 # 23-local-prometheus — restart rather than reload. A SIGHUP reload
 # would be gentler, but it depends on the packaged unit declaring
 # ExecReload, and `state: reloaded` fails outright on a unit that does

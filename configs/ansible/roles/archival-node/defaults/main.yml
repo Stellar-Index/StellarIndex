@@ -81,6 +81,16 @@ run_promtail:        true
 run_redis:               true
 run_clickhouse:          false
 
+# T641: redis-server on the archival node was unauthenticated and
+# reachable from any local process (no requirepass, no bind
+# hardening) even though it holds the SEP-10 replay guard, the
+# rate-limit counters and the VWAP cache. Set from vault
+# (inventory/<region>.secrets.yml via ansible-vault) — same
+# posture as the redis-sentinel role's `redis_password`. Empty by
+# default so a fresh checkout fails the 08-redis.yml preflight
+# assert instead of silently shipping an open cache.
+redis_password: ""
+
 # ch-live-catchup: the Tier-1 lake's only self-healer. Defaults TRUE
 # because a lake without it degrades into a permanently stalled
 # projector (resolveTip clamps to the ContiguousWatermark), and the job

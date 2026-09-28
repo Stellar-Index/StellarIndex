@@ -17,3 +17,42 @@
     name: redis-server
     state: started
     enabled: true
+
+# T641: this instance holds the SEP-10 replay guard, the rate-limit
+# counters and the VWAP cache — an unauthenticated redis reachable
+# from any local process is a replay/limit-bypass vector, not just a
+# cache-poisoning one. Fail fast rather than ship an open port.
+- name: Assert redis_password is set
+  ansible.builtin.assert:
+    that:
+      - redis_password is defined
+      - redis_password | length > 0
+    fail_msg: >-
+      redis_password must be set (from inventory/<region>.secrets.yml
+      via ansible-vault) before redis-server is hardened — see
+      redis-sentinel/defaults/main.yml for the sibling pattern.
+
+- name: Require a password to talk to redis-server
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: '^#?\s*requirepass\s+\S*'
+    line: "requirepass {{ redis_password }}"
+  notify:
+    - Restart redis
+  no_log: true
+
+- name: Bind redis-server to loopback only
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: '^#?\s*bind\s+.*'
+    line: "bind 127.0.0.1 -::1"
+  notify:
+    - Restart redis
+
+# Flush now, before 14-stellarindex-services.yml templates
+# STELLARINDEX_REDIS_PASSWORD and restarts api/indexer/aggregator —
+# otherwise those units start authenticating against a redis-server
+# that hasn't picked up requirepass yet (AUTH-mismatch outage on
+# first apply). Same pattern as 05-postgres.yml's TimescaleDB flush.
+- name: Flush handlers (redis must require auth before the app units restart)
+  ansible.builtin.meta: flush_handlers
