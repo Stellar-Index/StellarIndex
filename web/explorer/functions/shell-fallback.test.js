@@ -69,6 +69,63 @@ if (cases.length === 0) {
   );
 }
 
+// GH-916: every response this handler returns must carry the security
+// headers `public/_headers` declares for its route family — `/embed/*`
+// gets ALLOWALL + `frame-ancestors *`, everything else gets the `/*`
+// block's DENY + no frame-ancestors. Parse both blocks out of the real
+// `public/_headers` file (not a hand-copied second vocabulary) so this
+// test fails the moment the static rules and the Function's mirrored
+// copy in shellFallback.js drift apart.
+const headersFilePath = path.resolve(functionsDir, '../public/_headers');
+const headersFileText = fs.readFileSync(headersFilePath, 'utf8');
+
+function parseHeadersBlock(selector) {
+  const lines = headersFileText.split('\n');
+  const startIndex = lines.findIndex((line) => line.trim() === selector);
+  if (startIndex === -1) {
+    throw new Error(`public/_headers has no ${selector} block`);
+  }
+  const headers = {};
+  for (const line of lines.slice(startIndex + 1)) {
+    if (line.trim() === '' || line.startsWith('#')) continue;
+    if (!line.startsWith('  ')) break; // dedented — next selector/comment
+    const trimmed = line.trim();
+    if (trimmed.startsWith('#')) continue;
+    const separatorIndex = trimmed.indexOf(':');
+    if (separatorIndex === -1) continue;
+    const name = trimmed.slice(0, separatorIndex).trim();
+    const value = trimmed.slice(separatorIndex + 1).trim();
+    headers[name] = value;
+  }
+  return headers;
+}
+
+// Cache-Control is a separate concern (#893) and isn't part of this
+// handler's security-header mirror — drop it so this test only asserts
+// what shellFallback.js actually sets.
+function withoutCacheControl(headers) {
+  const { 'Cache-Control': _unused, ...rest } = headers;
+  return rest;
+}
+
+const DEFAULT_HEADERS = withoutCacheControl(parseHeadersBlock('/*'));
+const EMBED_HEADERS = withoutCacheControl(parseHeadersBlock('/embed/*'));
+
+// Sanity: the two blocks must actually differ on framing, or this test
+// would pass vacuously regardless of which one a handler used.
+if (DEFAULT_HEADERS['X-Frame-Options'] === EMBED_HEADERS['X-Frame-Options']) {
+  throw new Error(
+    'public/_headers /* and /embed/* blocks have the same X-Frame-Options — parse bug or the fixture no longer distinguishes them',
+  );
+}
+
+const casesWithVariant = cases.map(([name, onRequest, shellPath]) => [
+  name,
+  onRequest,
+  shellPath,
+  name.startsWith('embed/') ? EMBED_HEADERS : DEFAULT_HEADERS,
+]);
+
 function makeContext({ shellStatus }) {
   const request = new Request('https://stellarindex.io/whatever/long-tail-id');
   return {
@@ -196,6 +253,25 @@ describe.each(cases)(
       const seen = {};
       const res = await onRequest(contextRecordingShellHeaders(seen, 304));
       expect(res.status).toBe(304);
+    });
+  },
+);
+
+describe.each(casesWithVariant)(
+  '%s/[[path]].js security headers',
+  (_name, onRequest, _shellPath, expectedHeaders) => {
+    it("applies its route family's public/_headers block to a successful shell response", async () => {
+      const res = await onRequest(makeContext({ shellStatus: 200 }));
+      for (const [name, value] of Object.entries(expectedHeaders)) {
+        expect(res.headers.get(name)).toBe(value);
+      }
+    });
+
+    it('applies the same headers to a 503 (failed shell fetch)', async () => {
+      const res = await onRequest(makeContext({ shellStatus: 500 }));
+      for (const [name, value] of Object.entries(expectedHeaders)) {
+        expect(res.headers.get(name)).toBe(value);
+      }
     });
   },
 );

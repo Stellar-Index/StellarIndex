@@ -222,8 +222,13 @@ and `/account` shows the signed-out shell. To turn login on:
   a stale deploy stuck past the 20,000-file ceiling).
 - **A route is missing its security headers (CSP, HSTS, X-Frame-Options)**
   — Pages applies `web/explorer/public/_headers` to static assets only,
-  never to a Pages Function response (`/og/*`, `/client-errors`, the
-  shell-fallback routes). See
+  never to a Pages Function response. The shell-fallback routes
+  (`accounts`, `assets`, `contracts`, `issuers`, `ledgers`, `markets`,
+  `transactions`, `insights/*`, `embed/*`, …) set them explicitly —
+  `shellFallback()` mirrors both `_headers` blocks and
+  `shell-fallback.test.js` fails if the mirror drifts from the file
+  (GH-916). `/og/*` and `/client-errors` still rely on `_headers` alone
+  and remain uncovered (#893). See
   [explorer-deployment.md § What `_headers` does not cover](explorer-deployment.md#what-_headers-does-not-cover).
 
 ## Dashboard retirement (`app.stellarindex.io`) — DONE 2026-06-17

@@ -6,6 +6,12 @@
 # operator runbook is docs/operations/explorer-deployment.md
 # ("Security headers + CSP").
 #
+# GH-916: the shell-fallback routes (functions/_shared/shellFallback.js)
+# mirror the `/*` and `/embed/*` blocks below in their own responses,
+# since this file never reaches them. shell-fallback.test.js parses this
+# file and fails if the mirror drifts. `/og/*` and `/client-errors` are
+# NOT covered by that mirror (#893).
+#
 # Security philosophy: defence-in-depth on a static site that loads
 # nothing from third parties at runtime. Every request the explorer
 # makes goes to its network's API origin (api.stellarindex.io or
