@@ -2,6 +2,7 @@ package dashboardauth
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -28,60 +29,51 @@ import (
 // is happy to spend a fresh token per victim.
 //
 // The binding: `POST /v1/auth/login` stamps this cookie with a
-// digest of the token it just minted; `GET /v1/auth/callback`
-// refuses to mint a session unless the presented token's digest is
-// in the cookie. The attacker cannot set a cookie on the victim's
-// browser for the API's own host (the __Host- prefix refuses one
-// planted from a sibling host) and cannot compute a valid slot
-// without the server secret, so their link can no longer be
-// completed anywhere but their own browser.
+// random per-browser id and mints a token whose second half is a
+// MAC of its first half and that id ([Generator.newBoundToken]);
+// `GET /v1/auth/callback` refuses to mint a session unless the MAC
+// verifies against the presenting browser's id. The attacker cannot
+// set a cookie on the victim's browser for the API's own host (the
+// __Host- prefix refuses one planted from a sibling host) and cannot
+// compute a tag without the server secret, so their link can no
+// longer be completed anywhere but their own browser.
 //
 // Deliberately distinct from [SessionCookieName] so a browser that
 // holds both can't have one surface's credential read as the
 // other's, matching that constant's own rationale.
 const LoginIntentCookieName = "__Host-stellarindex_login_intent"
 
-// maxLoginIntents caps how many concurrently-live magic links one
-// browser may still complete. A user who taps "email me a link"
-// twice (impatient, or the first mail was slow) legitimately holds
-// two live tokens and may click either, so a single-slot cookie
-// would break the older-link click. Three slots covers that
-// without letting the cookie grow unbounded (3 × 64 hex chars +
-// separators ≈ 194 bytes).
-const maxLoginIntents = 3
+// loginIntentBrowserLen is the hex length of a browser id and of a
+// full magic-link plaintext.
+const loginIntentBrowserLen = MagicLinkPlaintextLen * 2
 
-// loginIntentDigestLen is the hex length of one HMAC-SHA256 digest.
-const loginIntentDigestLen = sha256.Size * 2
-
-// loginIntentSeparator joins the digests inside the cookie value.
-// '.' is unambiguously safe in a cookie value (RFC 6265 cookie-
-// octet) and cannot appear inside a hex digest, so a split can
-// never merge two slots.
+// loginIntentSeparator joins the fields of the login-device cookie
+// value. '.' is a valid RFC 6265 cookie-octet and never appears in
+// hex or a decimal expiry.
 const loginIntentSeparator = "."
 
 // loginIntentDomain separates this MAC from the other uses of the
 // server secret (code derivation, passkey ceremony).
-const loginIntentDomain = "stellarindex/login-intent/v2|"
+const loginIntentDomain = "stellarindex/login-intent/v3|"
 
-// loginIntentDigest derives the cookie slot for a magic-link token
-// from the token's stored hash, keyed by the server secret so only
-// this server can mint a slot [Handlers.hasLoginIntent] accepts. The
-// cookie is a binding witness, not a credential.
-func loginIntentDigest(secret, tokenHash []byte) string {
+// loginIntentTag is the second half of a bound magic-link plaintext:
+// a MAC, under the server secret, of the random first half and the
+// requesting browser's id. Only this server can compute it, and it
+// binds the link to exactly one browser.
+func loginIntentTag(secret []byte, nonceHex, browser string) string {
 	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(loginIntentDomain))
-	mac.Write(tokenHash)
-	return hex.EncodeToString(mac.Sum(nil))
+	mac.Write([]byte(nonceHex))
+	mac.Write([]byte("|"))
+	mac.Write([]byte(browser))
+	return hex.EncodeToString(mac.Sum(nil)[:MagicLinkPlaintextLen/2])
 }
 
-// isLoginIntentDigest reports whether s has the exact shape this
-// package writes. Client-supplied cookie content is echoed back
-// into a Set-Cookie header on the next login, so it is validated
-// rather than trusted — net/http would sanitise a malformed value,
-// but dropping it outright keeps the cookie's contents provably
-// self-generated.
-func isLoginIntentDigest(s string) bool {
-	if len(s) != loginIntentDigestLen {
+// isLoginIntentHex reports whether s is exactly loginIntentBrowserLen
+// lowercase hex characters. Client-supplied cookie content is echoed back
+// in Set-Cookie, so it is validated rather than trusted.
+func isLoginIntentHex(s string) bool {
+	if len(s) != loginIntentBrowserLen {
 		return false
 	}
 	for i := 0; i < len(s); i++ {
@@ -93,28 +85,43 @@ func isLoginIntentDigest(s string) bool {
 	return true
 }
 
-// setLoginIntentCookie records that THIS browser minted the token
-// identified by tokenHash, keeping up to [maxLoginIntents]-1 of the
-// browser's still-live prior intents ahead of the eviction edge.
-//
-// TTL mirrors MagicLinkTTL: the cookie is worthless the moment the
-// token it witnesses expires, so it should not outlive it.
-func (h *Handlers) setLoginIntentCookie(w http.ResponseWriter, r *http.Request, tokenHash []byte) {
-	intents := []string{loginIntentDigest(h.cfg.Generator.Secret, tokenHash)}
-	if c, err := r.Cookie(LoginIntentCookieName); err == nil {
-		for _, prev := range strings.Split(c.Value, loginIntentSeparator) {
-			if len(intents) >= maxLoginIntents {
-				break
-			}
-			if prev == intents[0] || !isLoginIntentDigest(prev) {
-				continue
-			}
-			intents = append(intents, prev)
-		}
+// newBoundToken mints a magic-link token whose plaintext is
+// `random half || loginIntentTag(random half, browser)`: same length and
+// alphabet as an unbound one, with the browser binding carried in the
+// link itself so the cookie holds no per-link state.
+func (g *Generator) newBoundToken(browser string) (plaintext string, hash []byte, code string, err error) {
+	raw, _, _, err := g.NewToken()
+	if err != nil {
+		return "", nil, "", err
 	}
-	c := credentialCookie(LoginIntentCookieName, strings.Join(intents, loginIntentSeparator))
+	nonce := raw[:loginIntentBrowserLen/2]
+	plaintext = nonce + loginIntentTag(g.Secret, nonce, browser)
+	hash = HashMagicLinkPlaintext(plaintext)
+	return plaintext, hash, g.CodeForHash(hash), nil
+}
+
+// setLoginIntentCookie stamps this browser's login-intent id and returns
+// it: the id the request already carries, else a fresh random one. It
+// depends on nothing but the request's own cookie, so a throttled login
+// and a real send emit the same value and leave the same state behind —
+// no sequence of requests can tell them apart — and any number of links
+// requested from one browser stay redeemable there.
+//
+// TTL mirrors MagicLinkTTL, refreshed on every request: the id is
+// worthless once the newest link it binds has expired.
+func (h *Handlers) setLoginIntentCookie(w http.ResponseWriter, r *http.Request) string {
+	var browser string
+	if c, err := r.Cookie(LoginIntentCookieName); err == nil && isLoginIntentHex(c.Value) {
+		browser = c.Value
+	} else {
+		id := make([]byte, MagicLinkPlaintextLen)
+		_, _ = rand.Read(id) // never errors since Go 1.24; it crashes the program instead
+		browser = hex.EncodeToString(id)
+	}
+	c := credentialCookie(LoginIntentCookieName, browser)
 	c.MaxAge = int(h.cfg.MagicLinkTTL / time.Second)
 	http.SetCookie(w, c)
+	return browser
 }
 
 // clearLoginIntentCookie drops the witness once a link has been
@@ -185,21 +192,16 @@ func (h *Handlers) hasLoginDeviceProof(r *http.Request, email string) bool {
 }
 
 // hasLoginIntent reports whether this browser is the one that asked
-// for the magic link identified by tokenHash.
+// for the magic link whose plaintext is given.
 //
-// Constant-time compared per slot: the digest is derived from the
-// token hash, which is derived from the emailed plaintext, so a
+// Constant-time compared: the tag is half of the emailed plaintext, so a
 // timing oracle here would leak progress on the token itself.
-func (h *Handlers) hasLoginIntent(r *http.Request, tokenHash []byte) bool {
+func (h *Handlers) hasLoginIntent(r *http.Request, plaintext string) bool {
 	c, err := r.Cookie(LoginIntentCookieName)
-	if err != nil {
+	if err != nil || !isLoginIntentHex(c.Value) || !isLoginIntentHex(plaintext) {
 		return false
 	}
-	want := []byte(loginIntentDigest(h.cfg.Generator.Secret, tokenHash))
-	for _, got := range strings.Split(c.Value, loginIntentSeparator) {
-		if subtle.ConstantTimeCompare([]byte(got), want) == 1 {
-			return true
-		}
-	}
-	return false
+	half := loginIntentBrowserLen / 2
+	want := loginIntentTag(h.cfg.Generator.Secret, plaintext[:half], c.Value)
+	return subtle.ConstantTimeCompare([]byte(plaintext[half:]), []byte(want)) == 1
 }

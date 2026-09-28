@@ -86,15 +86,16 @@ func attachCookies(req *http.Request, w *httptest.ResponseRecorder) {
 	}
 }
 
-// attachLoginIntent stamps the witness a browser would hold for
-// `plaintext` without going through /login — for the cases that need a
-// token the store has never seen (or has since dropped), where the
+// boundUnknownCallback builds a callback for a link correctly bound to
+// the browser it carries the cookie of, but minted without /login — for
+// the cases that need a token the store has never seen, where the
 // binding must not be what decides the outcome.
-func attachLoginIntent(req *http.Request, h *Handlers, plaintext string) {
-	req.AddCookie(&http.Cookie{
-		Name:  LoginIntentCookieName,
-		Value: loginIntentDigest(h.cfg.Generator.Secret, HashMagicLinkPlaintext(plaintext)),
-	})
+func boundUnknownCallback(h *Handlers) *http.Request {
+	browser := strings.Repeat("ab", MagicLinkPlaintextLen)
+	nonce := strings.Repeat("cd", MagicLinkPlaintextLen/2)
+	req := callbackFor(nonce + loginIntentTag(h.cfg.Generator.Secret, nonce, browser))
+	req.AddCookie(&http.Cookie{Name: LoginIntentCookieName, Value: browser})
+	return req
 }
 
 // extractTokenFromSentEmail pulls the magic-link plaintext out of
@@ -300,11 +301,9 @@ func TestHandleCallback_ExpiredTokenReturns410(t *testing.T) {
 
 func TestHandleCallback_InvalidTokenReturns400(t *testing.T) {
 	r := newTestRig(t)
-	cb := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token=deadbeef", nil)
-	cb.RemoteAddr = "203.0.113.5:55123"
-	// Intent witness present, token unknown to the store: the 400 must
-	// come from the token lookup, not from the C3-030 binding.
-	attachLoginIntent(cb, r.h, "deadbeef")
+	// Binding valid, token unknown to the store: the 400 must come from
+	// the token lookup, not from the C3-030 binding.
+	cb := boundUnknownCallback(r.h)
 	w := httptest.NewRecorder()
 	r.h.HandleCallback(w, cb)
 	if w.Code != http.StatusBadRequest {
@@ -335,7 +334,7 @@ func TestHandleCallback_TokenSingleUse(t *testing.T) {
 	// from the token's single-use consumption, not the binding.
 	cb2 := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token="+url.QueryEscape(plaintext), nil)
 	cb2.RemoteAddr = "203.0.113.5:55123"
-	attachLoginIntent(cb2, r.h, plaintext)
+	attachCookies(cb2, lw)
 	w2 := httptest.NewRecorder()
 	r.h.HandleCallback(w2, cb2)
 	if w2.Code != http.StatusBadRequest {

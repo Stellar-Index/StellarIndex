@@ -3,9 +3,11 @@ package dashboardauth
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -114,7 +116,7 @@ func TestHandleCallback_LoginIntentIsPerToken(t *testing.T) {
 }
 
 // TestHandleLogin_SetsLoginIntentCookieForTheMintedToken pins the
-// witness's shape: it must be the digest of the token just minted,
+// witness's shape: the token just minted must be bound to its id,
 // HttpOnly, and expire with the link it witnesses.
 func TestHandleLogin_SetsLoginIntentCookieForTheMintedToken(t *testing.T) {
 	r := newTestRig(t)
@@ -128,9 +130,10 @@ func TestHandleLogin_SetsLoginIntentCookieForTheMintedToken(t *testing.T) {
 	if c == nil {
 		t.Fatal("no login-intent cookie set by /v1/auth/login")
 	}
-	want := loginIntentDigest(r.h.cfg.Generator.Secret, HashMagicLinkPlaintext(plaintext))
-	if c.Value != want {
-		t.Errorf("cookie value = %q, want the emailed token's digest %q", c.Value, want)
+	half := loginIntentBrowserLen / 2
+	if !isLoginIntentHex(c.Value) ||
+		plaintext[half:] != loginIntentTag(r.h.cfg.Generator.Secret, plaintext[:half], c.Value) {
+		t.Errorf("emailed token %q is not bound to the cookie's browser id %q", plaintext, c.Value)
 	}
 	if !c.HttpOnly {
 		t.Error("login-intent cookie is not HttpOnly")
@@ -233,8 +236,8 @@ func TestHandleLogin_ThrottledResponseStillCarriesAnIntentCookie(t *testing.T) {
 		t.Fatal("throttled login set no login-intent cookie — the header's absence " +
 			"tells an attacker a throttle fired for this address")
 	}
-	if !isLoginIntentDigest(throttledCookie.Value) {
-		t.Errorf("throttled cookie value = %q, want a digest of the same shape as the real one (%q)",
+	if !isLoginIntentHex(throttledCookie.Value) {
+		t.Errorf("throttled cookie value = %q, want an id of the same shape as the real one (%q)",
 			throttledCookie.Value, sentCookie.Value)
 	}
 	if throttledCookie.MaxAge != sentCookie.MaxAge ||
@@ -249,32 +252,145 @@ func TestHandleLogin_ThrottledResponseStillCarriesAnIntentCookie(t *testing.T) {
 	}
 }
 
-// TestLoginIntentDigest_DomainSeparated — the witness must not be the
-// token hash itself, or a leaked cookie would hand over a credential-
-// equivalent value.
-func TestLoginIntentDigest_DomainSeparated(t *testing.T) {
+// TestLoginIntentTag_KeyedAndBound — the link's binding half must depend
+// on the server secret (or anyone could forge a link for a browser whose
+// id they learn), on the browser (or it binds nothing), and on the link's
+// random half (or one tag would fit every link).
+func TestLoginIntentTag_KeyedAndBound(t *testing.T) {
 	secret := []byte("test-secret-one")
-	hash := HashMagicLinkPlaintext("abc123")
-	d := loginIntentDigest(secret, hash)
-	if d == string(hash) || d == hexOf(hash) {
-		t.Fatalf("digest equals the token hash: %q", d)
+	nonce := strings.Repeat("0a", MagicLinkPlaintextLen/2)
+	browser := strings.Repeat("1b", MagicLinkPlaintextLen)
+	tag := loginIntentTag(secret, nonce, browser)
+	if !isLoginIntentHex(nonce + tag) {
+		t.Fatalf("bound plaintext %q is not the unbound token's shape", nonce+tag)
 	}
-	if !isLoginIntentDigest(d) {
-		t.Fatalf("digest %q is not the shape the cookie parser accepts", d)
+	if loginIntentTag([]byte("test-secret-two"), nonce, browser) == tag {
+		t.Fatal("tag does not depend on the server secret")
 	}
-	if loginIntentDigest(secret, HashMagicLinkPlaintext("abc124")) == d {
-		t.Fatal("digest collides across distinct tokens")
+	if loginIntentTag(secret, nonce, strings.Repeat("2c", MagicLinkPlaintextLen)) == tag {
+		t.Fatal("tag does not depend on the browser")
 	}
-	if loginIntentDigest([]byte("test-secret-two"), hash) == d {
-		t.Fatal("digest does not depend on the server secret")
+	if loginIntentTag(secret, strings.Repeat("3d", MagicLinkPlaintextLen/2), browser) == tag {
+		t.Fatal("tag does not depend on the link's random half")
 	}
 }
 
-func hexOf(b []byte) string {
-	const hexdigits = "0123456789abcdef"
-	out := make([]byte, 0, len(b)*2)
-	for _, c := range b {
-		out = append(out, hexdigits[c>>4], hexdigits[c&0x0f])
+// loginFrom posts a login from the browser that received prev, replaying
+// its cookies; prev == nil is a fresh browser.
+func (r *testRig) loginFrom(t *testing.T, email string, prev *httptest.ResponseRecorder) *httptest.ResponseRecorder {
+	t.Helper()
+	body, _ := json.Marshal(loginRequest{Email: email})
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", bytes.NewReader(body))
+	req.RemoteAddr = "203.0.113.5:55123"
+	if prev != nil {
+		attachCookies(req, prev)
 	}
-	return string(out)
+	w := httptest.NewRecorder()
+	r.h.HandleLogin(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("login: %d", w.Code)
+	}
+	return w
+}
+
+func intentValue(t *testing.T, w *httptest.ResponseRecorder) string {
+	t.Helper()
+	c := cookieNamed(w, LoginIntentCookieName)
+	if c == nil {
+		t.Fatal("no login-intent cookie set")
+	}
+	return c.Value
+}
+
+// redeems reports whether plaintext signs in from the browser holding
+// w's cookies.
+func (r *testRig) redeems(t *testing.T, plaintext string, w *httptest.ResponseRecorder) bool {
+	t.Helper()
+	cb := callbackFor(plaintext)
+	attachCookies(cb, w)
+	out := httptest.NewRecorder()
+	r.h.HandleCallback(out, cb)
+	return out.Code == http.StatusSeeOther
+}
+
+// TestHandleLogin_ThrottledTapsKeepEveryMailedLinkRedeemable (#1301) — a
+// user who taps "email me a link" past the send throttle must still be
+// able to open every link that WAS mailed, in the browser that asked for
+// it. Before the fix each throttled tap wrote a decoy into a 3-slot
+// cookie, so three taps left every mailed link 403ing.
+func TestHandleLogin_ThrottledTapsKeepEveryMailedLinkRedeemable(t *testing.T) {
+	r := newTestRig(t)
+	throttle := &stubLoginThrottle{allow: true}
+	r.cfg.LoginThrottle = throttle
+
+	const sends = 5
+	var prev *httptest.ResponseRecorder
+	var tokens []string
+	for range sends {
+		prev = r.loginFrom(t, "alice@example.com", prev)
+		tokens = append(tokens, r.extractTokenFromSentEmail(t))
+	}
+	throttle.allow = false
+	for range 3 {
+		prev = r.loginFrom(t, "alice@example.com", prev)
+	}
+	if got := r.sender.SentCount(); got != sends {
+		t.Fatalf("sent %d mails, want %d; throttle not exercised", got, sends)
+	}
+	for i, tok := range tokens {
+		if !r.redeems(t, tok, prev) {
+			t.Errorf("mailed link %d refused after throttled taps", i)
+		}
+	}
+}
+
+// TestHandleLogin_ThrottleUnobservableAcrossFollowUps — [LoginThrottle]'s
+// contract across a request SEQUENCE, not one response: whether a probe
+// was throttled must change neither the probe's cookie, nor the cookie a
+// follow-up request (real or throttled) gets back, nor which earlier
+// links still redeem. Every observable is compared against a reference
+// fixed before the probe, so the two branches are pinned to each other.
+func TestHandleLogin_ThrottleUnobservableAcrossFollowUps(t *testing.T) {
+	for _, priorSends := range []int{0, 1, 2, 3} {
+		for _, priorThrottled := range []bool{false, true} {
+			for _, probeThrottled := range []bool{false, true} {
+				for _, followThrottled := range []bool{false, true} {
+					r := newTestRig(t)
+					throttle := &stubLoginThrottle{allow: true}
+					r.cfg.LoginThrottle = throttle
+
+					var prev *httptest.ResponseRecorder
+					var links []string
+					for range priorSends {
+						prev = r.loginFrom(t, "attacker@evil.example", prev)
+						links = append(links, r.extractTokenFromSentEmail(t))
+					}
+					if priorThrottled {
+						throttle.allow = false
+						prev = r.loginFrom(t, "attacker@evil.example", prev)
+					}
+
+					throttle.allow = !probeThrottled
+					probe := r.loginFrom(t, "victim@example.com", prev)
+					throttle.allow = !followThrottled
+					follow := r.loginFrom(t, "attacker@evil.example", probe)
+
+					name := fmt.Sprintf("prior=%d priorThrottled=%v probeThrottled=%v followThrottled=%v",
+						priorSends, priorThrottled, probeThrottled, followThrottled)
+					want := intentValue(t, probe)
+					if prev != nil && want != intentValue(t, prev) {
+						t.Errorf("%s: probe changed the browser's intent cookie", name)
+					}
+					if got := intentValue(t, follow); got != want || !isLoginIntentHex(got) {
+						t.Errorf("%s: follow-up cookie %q, want the probe's %q", name, got, want)
+					}
+					for i, l := range links {
+						if !r.redeems(t, l, follow) {
+							t.Errorf("%s: earlier link %d no longer redeems", name, i)
+						}
+					}
+				}
+			}
+		}
+	}
 }

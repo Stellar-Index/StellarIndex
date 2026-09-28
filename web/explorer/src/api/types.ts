@@ -4052,8 +4052,8 @@ export interface paths {
          *     cookie that binds the emailed link to THIS browser;
          *     `/auth/callback` refuses to mint a session without it, so a
          *     link mailed on to a third party cannot sign that third party
-         *     into this account. Up to three concurrently-live links per
-         *     browser are remembered, so re-requesting doesn't invalidate
+         *     into this account. Every live link requested from a browser
+         *     stays redeemable there, so re-requesting doesn't invalidate
          *     the first mail. The cookie is cleared on a successful sign-in.
          *
          *     Returns 503 when the deployment hasn't configured the
