@@ -86,19 +86,32 @@ for dir in scripts/ops/fx-history-backfill cmd/stellarindex-ops internal/ops/arc
   prev="$head"
 done
 
-# Precision, in the direction that actually costs: widening must NOT have
-# swallowed the neighbouring trees. scripts/ci and internal/ops outside
-# archive/ are edited constantly and get nothing from a Docker round-trip —
-# and a classifier that requires integration for everything is indistinguishable
-# from no classifier at all.
-mkdir -p "$tmp/scripts/ci" "$tmp/internal/ops"
+# Precision, in the direction that actually costs: scripts/ci (not
+# scripts/ops) is edited constantly and gets nothing from a Docker
+# round-trip — and a classifier that requires integration for everything is
+# indistinguishable from no classifier at all.
+mkdir -p "$tmp/scripts/ci"
 printf 'ci\n' > "$tmp/scripts/ci/helper.sh"
+git -C "$tmp" add scripts/ci/helper.sh
+git -C "$tmp" commit -q -m scriptsci
+scriptsci="$(git -C "$tmp" rev-parse HEAD)"
+if (cd "$tmp" && "$root/scripts/ci/prepush-integration-required.sh" "$prev" "$scriptsci"); then
+  echo "prepush integration policy: scripts/ci (not scripts/ops) incorrectly required integration" >&2
+  exit 1
+fi
+
+# internal/ops OUTSIDE archive/ is still internal/ (CA2-A38): internal/* is
+# matched as a whole, since the integration suite's transitive dependency
+# closure covers 40+ of the ~53 top-level internal/ packages and an
+# enumerated subset is exactly what let internal/projector and
+# internal/dispatcher drift.
+mkdir -p "$tmp/internal/ops"
 printf 'runbook\n' > "$tmp/internal/ops/runbook.go"
-git -C "$tmp" add scripts/ci/helper.sh internal/ops/runbook.go
-git -C "$tmp" commit -q -m neighbours
-neighbours="$(git -C "$tmp" rev-parse HEAD)"
-if (cd "$tmp" && "$root/scripts/ci/prepush-integration-required.sh" "$prev" "$neighbours"); then
-  echo "prepush integration policy: scripts/ci + internal/ops (outside archive/) incorrectly required integration" >&2
+git -C "$tmp" add internal/ops/runbook.go
+git -C "$tmp" commit -q -m runbook
+runbook="$(git -C "$tmp" rev-parse HEAD)"
+if ! (cd "$tmp" && "$root/scripts/ci/prepush-integration-required.sh" "$scriptsci" "$runbook"); then
+  echo "prepush integration policy: internal/ops (outside archive/) did not require integration under internal/*" >&2
   exit 1
 fi
 
@@ -108,7 +121,7 @@ printf 'more docs\n' > "$tmp/docs/second.md"
 git -C "$tmp" add docs/second.md
 git -C "$tmp" commit -q -m docs2
 docs2="$(git -C "$tmp" rev-parse HEAD)"
-if (cd "$tmp" && "$root/scripts/ci/prepush-integration-required.sh" "$neighbours" "$docs2"); then
+if (cd "$tmp" && "$root/scripts/ci/prepush-integration-required.sh" "$runbook" "$docs2"); then
   echo "prepush integration policy: docs-only range incorrectly required integration after widening" >&2
   exit 1
 fi

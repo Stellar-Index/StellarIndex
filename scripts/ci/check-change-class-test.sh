@@ -94,22 +94,25 @@ expect "internal/ops/archive/** triggers integration (INT_TEST_PKGS member)" 0
 run integration "test/harness/timescale.go"
 expect "test/harness/** triggers integration (INT_TEST_PKGS member)" 0
 
-# Precision on the widened prefixes: internal/ops OUTSIDE archive/, and
-# scripts/ OUTSIDE ops/, must stay out of the class — widening to the parent
-# would pay the Docker round-trip for every CI-script edit.
+# Precision on the widened prefixes: scripts/ OUTSIDE ops/ must stay out of
+# the class — widening to the parent would pay the Docker round-trip for
+# every CI-script edit. internal/ is matched as a whole (CA2-A38): the
+# integration suite's transitive dependency closure covers 40+ of the ~53
+# top-level internal/ packages, and enumerating a hand-picked subset is what
+# let internal/projector and internal/dispatcher drift out of this
+# classifier while prepush's kept them.
 
 run integration "internal/ops/runbook.go"
-expect "internal/ops outside archive/ does NOT trigger integration" 1
+expect "internal/ops outside archive/ DOES trigger integration (internal/** is matched as a whole)" 0
 
 run integration "scripts/ci/check-change-class.sh"
 expect "scripts/ci (not scripts/ops) does NOT trigger integration" 1
 
-# ── Precision: a .go file OUTSIDE the named integration subtrees must
-# still run the go class but must NOT trip the integration class — a
-# too-broad rule pays the Docker round-trip for changes the shard
-# matrix was never built to cover.
+# ── Precision: a .go file inside internal/ but outside the historically
+# enumerated subtrees must trigger BOTH classes — internal/** is matched as
+# a whole for `integration`, not just storage/pipeline/sources/api.
 run integration "internal/platform/logging.go"
-expect "internal/platform (not storage/pipeline/sources/api) does NOT trigger integration" 1
+expect "internal/platform DOES trigger integration (internal/** is matched as a whole)" 0
 
 run go "internal/platform/logging.go"
 expect "internal/platform DOES trigger the go class" 0

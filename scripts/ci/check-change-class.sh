@@ -23,7 +23,7 @@
 # round-trip for zero additional signal — the problem this filter exists
 # to remove per the plan's measured numbers.
 #
-# WHY THE integration CLASS IS A SUPERSET OF INT_TEST_PKGS. The Makefile's
+# WHY THE integration CLASS COVERS ALL OF internal/. The Makefile's
 # INT_TEST_PKGS is the list of packages the Docker suite BUILDS AND RUNS;
 # this class decides whether that suite runs AT ALL for a given diff. If a
 # package is in the first list but its directory is in neither classifier,
@@ -32,19 +32,23 @@
 # which is how scripts/ops/fx-history-backfill's INV-3 money-invariant
 # regression (operator fx_quotes corrections must carry a positive derive
 # generation) sat in no executing gate (T424/T449), and cmd/stellarindex-ops
-# (F-1334) and internal/ops/archive (W6-tst-1) the same. So every
-# INT_TEST_PKGS directory belongs here, and
-# test/controlwiring/integration_pkgs_trigger_evidence_test.go fails if one
-# is missing from this regex, from ci.yml's filter, or from
-# prepush-integration-required.sh.
+# (F-1334) and internal/ops/archive (W6-tst-1) the same. `go list -tags
+# integration -test -deps ./test/integration/... ./test/harness/...` shows
+# the suite transitively imports 40+ of the repo's ~53 top-level internal/
+# packages (internal/projector and internal/dispatcher among them — CA2-A38
+# — neither previously listed); enumerating each one by hand is exactly the
+# pattern that produced that drift and will produce the next one the moment
+# a new internal/ package is added and imported. internal/** is therefore
+# matched as a whole, kept a strict superset of INT_TEST_PKGS, and
+# test/controlwiring/integration_pkgs_trigger_evidence_test.go fails if any
+# INT_TEST_PKGS directory or go.mod is missing from this regex, from
+# ci.yml's filter, or from prepush-integration-required.sh.
 #
 # Classes (must stay identical in substance to the `filters:` block in
 # .github/workflows/ci.yml's preflight job):
-#   integration  — internal/storage/**, internal/pipeline/**,
-#                  internal/sources/**, internal/api/**,
-#                  internal/ops/archive/**, cmd/stellarindex-ops/**,
-#                  migrations/**, scripts/ops/**, test/integration/**,
-#                  test/harness/**, go.mod
+#   integration  — internal/**, cmd/stellarindex-ops/**, migrations/**,
+#                  scripts/ops/**, test/integration/**, test/harness/**,
+#                  go.mod
 #   go           — any *.go file, go.mod, go.sum, openapi/** (Go spec-parity
 #                  tests read the spec directly), and the go:embed inputs
 #                  (internal/sources/external/binance/pairs.yaml,
@@ -71,7 +75,7 @@
 set -euo pipefail
 
 class_integration() {
-  grep -E '^(internal/(storage|pipeline|sources|api|ops/archive)/|cmd/stellarindex-ops/|migrations/|scripts/ops/|test/(integration|harness)/)|^go\.mod$'
+  grep -E '^(internal/|cmd/stellarindex-ops/|migrations/|scripts/ops/|test/(integration|harness)/)|^go\.mod$'
 }
 
 class_go() {

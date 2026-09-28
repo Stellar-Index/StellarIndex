@@ -2,6 +2,7 @@ package controlwiring
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -94,7 +95,7 @@ func prepushIntegrationGlobs(t *testing.T, root string) []string {
 	return strings.Split(m[1], "|")
 }
 
-var checkClassIntegrationBody = regexp.MustCompile(`class_integration\(\)\s*\{\s*\n\s*grep -E '([^']+)'`)
+var checkClassIntegrationBody = regexp.MustCompile(`(?s)class_integration\(\)\s*\{\s*\n(?:\s*#[^\n]*\n)*\s*grep -E '([^']+)'`)
 
 // checkChangeClassIntegrationRE returns the extended regular expression that
 // scripts/ci/check-change-class.sh's `integration` class matches changed
@@ -200,6 +201,103 @@ func TestT424TriggerCoversEveryIntTestPkg(t *testing.T) {
 	}
 }
 
+// integrationSuiteDeps returns the module-internal package directories the
+// integration suite actually imports: `go list -deps -test -tags
+// integration` over the INT_TEST_PKGS entry points that carry the suite's
+// own tests (test/integration, test/harness). This is the single source of
+// truth CA2-A38 asks for — the enumerated internal/(storage|pipeline|...)
+// subset in all three classifiers drifted from it and from each other
+// (internal/projector and internal/dispatcher were in prepush's list and
+// absent from ci.yml's and check-change-class.sh's).
+func integrationSuiteDeps(t *testing.T, root string) []string {
+	t.Helper()
+	cmd := exec.Command("go", "list", "-deps", "-test", "-tags", "integration",
+		"./test/integration/...", "./test/harness/...")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("go list -deps ./test/integration/... ./test/harness/...: %v", err)
+	}
+	const modulePrefix = "github.com/Stellar-Index/StellarIndex/"
+	seen := map[string]bool{}
+	var dirs []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		rel, ok := strings.CutPrefix(line, modulePrefix)
+		if !ok || !strings.HasPrefix(rel, "internal/") {
+			continue
+		}
+		// Reduce to the top-level internal/<name> directory: that is the
+		// granularity every classifier globs at (internal/<name>/** or
+		// internal/<name>/*).
+		parts := strings.SplitN(rel, "/", 3)
+		dir := parts[0] + "/" + parts[1]
+		if seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		dirs = append(dirs, dir)
+	}
+	if len(dirs) == 0 {
+		t.Fatal("go list -deps returned no internal/ package for the integration suite")
+	}
+	return dirs
+}
+
+// TestT424TriggerCoversTransitiveIntegrationDeps is the closure-derived
+// counterpart to TestT424TriggerCoversEveryIntTestPkg: it does not trust the
+// classifiers' own enumeration to be complete, it asks the Go tool what the
+// integration suite actually imports and requires every one of those
+// internal/ directories, plus go.mod itself, to fire all three classifiers.
+func TestT424TriggerCoversTransitiveIntegrationDeps(t *testing.T) {
+	root := repoRoot(t)
+	dirs := integrationSuiteDeps(t, root)
+
+	ciGlobs := ciIntegrationFilterGlobs(t, root)
+	prepushGlobs := prepushIntegrationGlobs(t, root)
+	classRE := checkChangeClassIntegrationRE(t, root)
+
+	classifiers := []struct {
+		name  string
+		rule  string
+		fires func(path string) bool
+	}{
+		{
+			"ci.yml preflight `integration` filter",
+			strings.Join(ciGlobs, " "),
+			func(p string) bool { return globsFire(ciGlobs, p) },
+		},
+		{
+			"scripts/ci/check-change-class.sh class_integration",
+			classRE.String(),
+			classRE.MatchString,
+		},
+		{
+			"scripts/ci/prepush-integration-required.sh",
+			strings.Join(prepushGlobs, " "),
+			func(p string) bool { return globsFire(prepushGlobs, p) },
+		},
+	}
+
+	probes := append([]string{"go.mod"}, dirs...)
+	for _, c := range classifiers {
+		t.Run(c.name, func(t *testing.T) {
+			for _, dir := range probes {
+				probe := dir
+				if dir != "go.mod" {
+					probe = dir + "/probe.go"
+				}
+				if c.fires(probe) {
+					continue
+				}
+				t.Errorf("a change to %s does not trigger the integration suite (%s matches: %s) — "+
+					"go list -deps -test -tags integration shows the suite imports it, so it can "+
+					"change what the suite observes and no gate would run it",
+					probe, c.name, c.rule)
+			}
+		})
+	}
+}
+
 // TestT424TriggerIsNotUniversal keeps the guard above honest in the other
 // direction: a classifier that fires for everything would satisfy it while
 // making every docs-only PR pay a 20-minute Docker round-trip, the cost the
@@ -215,7 +313,12 @@ func TestT424TriggerIsNotUniversal(t *testing.T) {
 		"CHANGELOG.md",
 		"web/explorer/src/app/page.tsx",
 		"scripts/ci/check-change-class.sh",
-		"internal/platform/logging.go",
+		// pkg/ is the public SemVer surface (ADR-0005), not internal/, and
+		// is not in test/integration's dependency closure — unlike
+		// internal/platform (which IS, and is deliberately covered by the
+		// internal/** class below; see
+		// TestT424TriggerCoversTransitiveIntegrationDeps).
+		"pkg/client/types.go",
 	} {
 		if globsFire(ciGlobs, path) {
 			t.Errorf("ci.yml preflight `integration` filter fires for %s — the filter has been widened past its purpose", path)

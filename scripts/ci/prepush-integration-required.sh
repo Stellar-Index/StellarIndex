@@ -36,7 +36,13 @@ git cat-file -e "$2^{commit}" 2>/dev/null || { echo "integration-policy: unknown
 
 while IFS= read -r changed; do
   case "$changed" in
-    migrations/*|test/fixtures/*|test/integration/*|test/harness/*|internal/storage/*|internal/pipeline/*|internal/projector/*|internal/dispatcher/*|internal/sources/*|internal/api/*|internal/ops/archive/*|cmd/stellarindex-ops/*|scripts/ops/*)
+    # internal/* as a whole, not an enumerated subset: `go list -deps -test
+    # -tags integration ./test/integration/... ./test/harness/...` pulls in
+    # 44 of the 54 top-level internal/ directories, most with no obvious
+    # "integration" flavour. Mirrored in ci.yml and check-change-class.sh;
+    # test/controlwiring/integration_pkgs_trigger_evidence_test.go checks
+    # all three against the same derived closure.
+    migrations/*|test/fixtures/*|test/integration/*|test/harness/*|internal/*|cmd/stellarindex-ops/*|scripts/ops/*|go.mod)
       echo "integration-policy: required by $changed"
       exit 0
       ;;
