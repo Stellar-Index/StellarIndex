@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-import { createKey, createPriceAlert, logout } from './account';
+import { ApiError, createKey, createPriceAlert, logout } from './account';
 import { SESSION_HINT_COOKIE, sessionHintPresent } from './sessionHint';
 
 beforeEach(() => {
@@ -37,6 +37,40 @@ describe('logout', () => {
 
     await expect(logout()).rejects.toThrow();
     expect(sessionHintPresent()).toBe(false);
+  });
+});
+
+describe('a 401 response', () => {
+  it('drops the session hint (GH-1076), unlike other error statuses', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: async () => ({ detail: 'session expired' }),
+      } as Response),
+    );
+
+    await expect(createKey({ name: 'prod' })).rejects.toThrow(ApiError);
+
+    expect(sessionHintPresent()).toBe(false);
+  });
+
+  it('leaves the session hint alone on a non-401 error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+        json: async () => ({ detail: 'boom' }),
+      } as Response),
+    );
+
+    await expect(createKey({ name: 'prod' })).rejects.toThrow(ApiError);
+
+    expect(sessionHintPresent()).toBe(true);
   });
 });
 

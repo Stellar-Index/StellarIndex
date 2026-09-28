@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/api/hooks', async () => {
@@ -18,9 +18,11 @@ vi.mock('next/navigation', async () => {
 });
 
 const listKeysWithLimit = vi.hoisted(() => vi.fn());
+const createKey = vi.hoisted(() => vi.fn());
 vi.mock('@/api/account', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/account')>()),
   listKeysWithLimit,
+  createKey,
 }));
 
 import { useMe } from '@/api/hooks';
@@ -28,6 +30,7 @@ import KeysPage from './page';
 
 afterEach(() => {
   listKeysWithLimit.mockReset();
+  createKey.mockReset();
 });
 
 function renderKeysPage() {
@@ -83,5 +86,38 @@ describe('/dashboard/keys scope display', () => {
 
     expect(screen.getByText('Scopes: read')).toBeInTheDocument();
     expect(screen.getByText('Full access')).toBeInTheDocument();
+  });
+});
+
+// GH-1076: a mint that times out client-side may still have committed
+// server-side, so the bare "Create failed" fallback is misleading — it
+// must name the timeout and point the customer at the key list.
+describe('/dashboard/keys create-key timeout', () => {
+  it('shows a timeout-specific message, not the generic "Create failed"', async () => {
+    listKeysWithLimit.mockResolvedValue({ keys: [], maxActiveKeys: 10 });
+    createKey.mockRejectedValue(
+      new DOMException('Request timed out', 'TimeoutError'),
+    );
+
+    renderKeysPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('New key')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText('New key'));
+
+    fireEvent.change(screen.getByLabelText(/^Name/), {
+      target: { value: 'prod' },
+    });
+    fireEvent.click(screen.getByText('Create key'));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          'The request timed out — check your key list before retrying.',
+        ),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Create failed')).not.toBeInTheDocument();
   });
 });

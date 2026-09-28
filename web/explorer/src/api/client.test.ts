@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
-import { apiGet, asExample, timeoutSignal } from './client';
+import { apiGet, asExample, isTimeoutError, timeoutSignal } from './client';
 
 // [absence: timeouts] every runtime fetch used to have no upper bound at
 // all. timeoutSignal is the shared primitive that closes that gap while
@@ -68,6 +68,27 @@ describe('asExample', () => {
     });
     expect(example.url).toContain('/v1/accounts/GABC123/graph?');
     expect(example.url).toContain('depth=2');
+  });
+});
+
+// GH-1076: a mutation abort (timeoutSignal's own DOMException, or the
+// browser's native AbortError) must read as "timed out", not fall through
+// to a generic ApiError check that a bare abort never satisfies.
+describe('isTimeoutError', () => {
+  it('is true for the DOMException timeoutSignal raises on its own timeout', () => {
+    expect(isTimeoutError(new DOMException('Request timed out', 'TimeoutError'))).toBe(
+      true,
+    );
+  });
+
+  it('is true for a native AbortError', () => {
+    expect(isTimeoutError(new DOMException('The user aborted', 'AbortError'))).toBe(
+      true,
+    );
+  });
+
+  it('is false for a plain Error', () => {
+    expect(isTimeoutError(new Error('offline'))).toBe(false);
   });
 });
 
