@@ -64,6 +64,7 @@ func (s *Store) PoolTokens(ctx context.Context, source string) (map[string][]str
 
 // phoenixPoolTokens returns pool → [token_a, token_b] from the most recent
 // provide_liquidity row per pool (withdraw rows carry no token addresses).
+// unbounded-latest-ok: a pool with no recent provide_liquidity row still has tokens; the result is cached.
 func (s *Store) phoenixPoolTokens(ctx context.Context) (map[string][]string, error) {
 	q := fmt.Sprintf(`
 		SELECT DISTINCT ON (pool) pool, token_a, token_b
@@ -104,6 +105,7 @@ func (s *Store) phoenixPoolTokens(ctx context.Context) (map[string][]string, err
 // aquariusPoolTokens returns pool → tokens ordered by the pool's canonical
 // token_index (2/3/4-token stableswaps included), from the most recent
 // deposit/withdraw row per (pool, token_index).
+// unbounded-latest-ok: a pool with no recent row still has tokens; the result is cached.
 func (s *Store) aquariusPoolTokens(ctx context.Context) (map[string][]string, error) {
 	q := fmt.Sprintf(`
 		SELECT DISTINCT ON (contract_id, token_index) contract_id, token_index, token

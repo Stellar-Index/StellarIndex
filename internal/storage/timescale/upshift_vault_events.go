@@ -211,6 +211,7 @@ type UpshiftVaultShareSupply struct {
 // vault with at least one recorded flow, ordered by contract id.
 //
 // Empty-safe: returns (nil, nil) when nothing has been indexed yet.
+// unbounded-latest-ok: a vault whose last deployed_assets_changed predates any floor still has that deployment.
 func (s *Store) UpshiftVaultShareSupplies(ctx context.Context) ([]UpshiftVaultShareSupply, error) {
 	const q = `
 		WITH flows AS (

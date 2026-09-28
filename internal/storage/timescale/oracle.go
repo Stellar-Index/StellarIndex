@@ -280,6 +280,7 @@ func (s *Store) LatestOracleUpdatesForAssets(ctx context.Context, assets []canon
 // ledger DESC), so each source contributes its single most-recent
 // observation in the (base, quote) pair. Unbounded in age — see the
 // freshness convention note above InsertOracleUpdate.
+// unbounded-latest-ok: the latest observation per source is served with its age; a floor would drop quiet sources.
 func (s *Store) LatestAggregatorPricesForPair(ctx context.Context, base, quote canonical.Asset, sources []string) ([]canonical.OracleUpdate, error) {
 	if len(sources) == 0 {
 		return nil, nil

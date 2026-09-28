@@ -28,7 +28,8 @@
 #   *.go                     gofumpt -l, goimports -l (0.1 s/file); then
 #                            lint-lexicon, lint-i128, lint-imports (whole
 #                            tree, ~1 s each — they take no file list),
-#                            lint-go-typographic-quotes (whole tree, 0.55 s)
+#                            lint-go-typographic-quotes (whole tree, 0.55 s),
+#                            lint-unbounded-latest-row (whole tree, 0.8 s)
 #                            and lint-http-timeouts scoped to the package
 #                            dirs; then go vet + go build on the touched
 #                            packages. The quote scan runs HERE and not only
@@ -434,6 +435,8 @@ if [ "${#go_files[@]}" -gt 0 ]; then
     # Whole-tree costs 0.55 s over 2,058 files, measured 2026-09-10.
     add_step "lint-go-typographic-quotes" "whole tree (0.55 s; scoping it could go vacuous on a generated-only diff)" \
         python3 "$ci_dir/lint-go-typographic-quotes.py"
+    add_step "lint-unbounded-latest-row" "whole tree (takes no file list)" \
+        python3 "$ci_dir/lint-unbounded-latest-row.py"
     # http-timeouts exempts _test.go and refuses a vacuous root, so scope it
     # to the package dirs that hold at least one non-test Go file.
     timeout_dirs=()

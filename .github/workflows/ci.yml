@@ -1254,6 +1254,18 @@ jobs:
         # DefaultClient, exempts _test.go, and FAILS on a root with no Go
         # files rather than passing.
         run: ./scripts/ci/lint-http-timeouts-test.sh
+      - name: lint-unbounded-latest-row
+        # #594: a DISTINCT ON over a hypertable with no time or ledger floor
+        # reads every row of every chunk. It is fast on a fresh database and
+        # degrades with history, so no test sees it: SupplyCoverageStats
+        # outgrew its 5 s diagnostics budget this way. A deliberately
+        # unbounded read carries `// unbounded-latest-ok: <reason>`.
+        run: python3 ./scripts/ci/lint-unbounded-latest-row.py
+      - name: lint-unbounded-latest-row self-test
+        # Pins the gate non-vacuous: catches the shipped SupplyCoverageStats
+        # shape, accepts a time or ledger floor and a reasoned marker, and
+        # FAILS on an empty root or a migrations dir with no hypertable.
+        run: ./scripts/ci/lint-unbounded-latest-row-test.sh
       - name: deploy-baseline self-test
         # #427: the config-apply gate's baseline is the version live on the
         # host. A FAILED read used to warn and fall back to the previous

@@ -573,32 +573,53 @@ func (s *Store) BackfillCoverageStats(_ context.Context) ([]BackfillCoverage, er
 	return nil, nil
 }
 
+// supplyCoverageStatsQuery backs [Store.SupplyCoverageStats]. The `newest`
+// CTE orders by `time` alone: close time is monotonic in ledger sequence
+// (no two ledgers share a close time), so the newest row already carries
+// the highest ledger and a ledger_sequence tie-break can never fire — it
+// would only cost the plan an extra sort key over the index/compress-orderby,
+// defeating the single ordered-append seek.
+const supplyCoverageStatsQuery = `
+	WITH RECURSIVE assets AS (
+	    (SELECT asset_key FROM asset_supply_history ORDER BY asset_key LIMIT 1)
+	    UNION ALL
+	    SELECT (SELECT h.asset_key
+	              FROM asset_supply_history h
+	             WHERE h.asset_key > a.asset_key
+	             ORDER BY h.asset_key
+	             LIMIT 1)
+	      FROM assets a
+	     WHERE a.asset_key IS NOT NULL
+	), newest AS (
+	    SELECT time, ledger_sequence
+	      FROM asset_supply_history
+	     ORDER BY time DESC
+	     LIMIT 1
+	)
+	SELECT
+	    COUNT(*) FILTER (WHERE asset_key LIKE 'C%' AND LENGTH(asset_key) = 56) AS sep41,
+	    COUNT(*) FILTER (WHERE NOT (asset_key LIKE 'C%' AND LENGTH(asset_key) = 56)) AS classic,
+	    (SELECT time FROM newest)            AS last_at,
+	    (SELECT ledger_sequence FROM newest) AS last_ledger
+	FROM assets
+	WHERE asset_key IS NOT NULL
+`
+
 // SupplyCoverageStats returns the current coverage state of the
-// asset_supply_history hypertable. One window-function query that
-// reads the latest row per asset_key and partitions by SEP-41 vs
-// classic. The btree index on (asset_key, ledger_sequence, time)
-// makes the DISTINCT ON cheap.
+// asset_supply_history hypertable: how many assets have ever been given a
+// supply (SEP-41 vs classic) and the newest snapshot's time and ledger.
+//
+// No time floor: an asset whose last snapshot predates any window still has
+// a supply, so a floor would under-count. The asset set is walked as a loose
+// index scan over asset_supply_history_asset_time_idx, one seek per distinct
+// asset_key per chunk, instead of reading and sorting every history row.
 func (s *Store) SupplyCoverageStats(ctx context.Context) (SupplyCoverage, error) {
-	const q = `
-		WITH latest AS (
-		    SELECT DISTINCT ON (asset_key)
-		        asset_key, time, ledger_sequence
-		    FROM asset_supply_history
-		    ORDER BY asset_key, ledger_sequence DESC, time DESC
-		)
-		SELECT
-		    COUNT(*) FILTER (WHERE asset_key LIKE 'C%' AND LENGTH(asset_key) = 56) AS sep41,
-		    COUNT(*) FILTER (WHERE NOT (asset_key LIKE 'C%' AND LENGTH(asset_key) = 56)) AS classic,
-		    MAX(time)         AS last_at,
-		    MAX(ledger_sequence) AS last_ledger
-		FROM latest
-	`
 	var (
 		sep41, classic int
 		lastAt         sql.NullTime
 		lastLedger     sql.NullInt64
 	)
-	if err := s.db.QueryRowContext(ctx, q).Scan(&sep41, &classic, &lastAt, &lastLedger); err != nil {
+	if err := s.db.QueryRowContext(ctx, supplyCoverageStatsQuery).Scan(&sep41, &classic, &lastAt, &lastLedger); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return SupplyCoverage{}, nil
 		}
