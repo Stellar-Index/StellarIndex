@@ -1389,6 +1389,39 @@ the per-tick delta.
   outcome had no alert of any kind. Runbook:
   [ch-live-sink-errors](../../operations/runbooks/ch-live-sink-errors.md).
 
+### `stellarindex_ch_live_sink_read_undercount_total`
+
+Counter, label `kind` (`tx_read_errors` | `tx_event_read_errors` |
+`entry_meta_unsupported` | `tx_read_errors_census` |
+`tx_event_read_errors_census`). Every kind is seeded at zero.
+
+Transactions the indexer's two per-ledger read paths could not fully
+decode. Each increment is the number of affected transactions in one
+ledger, not a ledger count.
+
+- `tx_read_errors`, `tx_event_read_errors`, `entry_meta_unsupported` —
+  `clickhouse.ExtractLedger` for the lake's live edge
+  (`LedgerExtract.TxReadErrors` / `TxEventReadErrors` /
+  `EntryMetaUnsupported`). The ledger is still written, so its
+  `stellar.ledgers` row claims a ledger whose contract events or entry
+  changes are short, and `ch-live-catchup` never revisits it.
+- `tx_read_errors_census`, `tx_event_read_errors_census` —
+  `dispatcher.CensusLedger` for the `ledger_ingest_log` substrate row,
+  which the indexer skips on any non-zero count: a substrate gap.
+
+**When to look at this:** any increase. It sits at zero on a healthy
+archive. A climb tracking
+`stellarindex_ch_live_sink_ledgers_total{outcome="written"}` is a
+`TransactionMeta` version break; the lake
+would otherwise read as a run of ledgers with no Soroban events. An
+isolated step names a specific ledger in the indexer journal. Alerted
+by `stellarindex_ingestion_ch_live_sink_read_undercount` (ticket).
+Runbook:
+[ch-live-sink-read-undercount](../../operations/runbooks/ch-live-sink-read-undercount.md).
+The offline `census-backfill` writer does not emit this metric: it is a
+one-shot command with no scrape endpoint, and it already fails its run
+(non-zero exit, frozen resume checkpoint) on the same undercount.
+
 ### `stellarindex_sink_undrained_rows_total`
 
 Counter, labels `sink` (`persist_events`) and `kind` (`trade` |
@@ -4420,6 +4453,13 @@ them absent; this is the only series that can see that.
 
 ## Changelog
 
+- 2026-09-27 — added `stellarindex_ch_live_sink_read_undercount_total`
+  (counter, label `kind`), emitted by `cmd/stellarindex-indexer` from
+  both per-ledger read paths. The undercounts it carries were WARN-only
+  before. New `stellarindex_ingestion_ch_live_sink_read_undercount`
+  alert in `deploy/monitoring/rules/ingestion.yml` +
+  `configs/prometheus/rules.r1/ingestion.yml`, its runbook and an
+  alerts-catalog row land with it.
 - 2026-09-24 — `stellarindex_decimals_guard_sweep_last_success_unix` is
   seeded with the aggregator's start time before the first `Sweep`, and
   `stellarindex_decimals_guard_sweep_stale` gains a `> 0` arm, so a cold

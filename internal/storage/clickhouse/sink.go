@@ -217,10 +217,10 @@ type LedgerExtract struct {
 	// columns): the ledger is still written so the lake stays contiguous
 	// (contiguity is the substrate-continuity coverage proof — dropping
 	// the ledger would be worse), but a non-zero value means this
-	// ledger's Events/SorobanEventCount undercount. Callers surface a
-	// climb (a meta-version break drops EVERY tx's events in lock-step,
-	// which would otherwise look like a run of clean empty ledgers —
-	// G15-06).
+	// ledger's Events/SorobanEventCount undercount. The indexer meters
+	// all three on stellarindex_ch_live_sink_read_undercount_total (a
+	// meta-version break drops EVERY tx's events in lock-step, which
+	// would otherwise look like a run of clean empty ledgers — G15-06).
 	TxReadErrors      int
 	TxEventReadErrors int
 

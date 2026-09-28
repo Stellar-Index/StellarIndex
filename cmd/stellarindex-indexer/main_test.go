@@ -23,6 +23,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/hashdb"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/obstest"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 func TestProcessAndPersistCursor_ReturnsDispatcherErrorBeforeCursorWrite(t *testing.T) {
@@ -78,6 +79,86 @@ func TestEmitDiscoveryDropMetricDelta_AddsOnlyNewDrops(t *testing.T) {
 	after := testutil.ToFloat64(obs.DiscoveryDroppedHitsTotal)
 	if got := after - mid; got != 0 {
 		t.Fatalf("counter delta after second emit = %v, want 0", got)
+	}
+}
+
+// TestRecordCHLiveSinkUndercount_AddsErrorCountsToMetric: a
+// non-zero LedgerExtract undercount field used to be visible only as a
+// WARN log line. It must now also add its exact count (not just a
+// per-ledger flag) to obs.ChLiveSinkReadUndercountTotal.
+func TestRecordCHLiveSinkUndercount_AddsErrorCountsToMetric(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	before := map[string]float64{
+		"tx_read_errors":         testutil.ToFloat64(obs.ChLiveSinkReadUndercountTotal.WithLabelValues("tx_read_errors")),
+		"tx_event_read_errors":   testutil.ToFloat64(obs.ChLiveSinkReadUndercountTotal.WithLabelValues("tx_event_read_errors")),
+		"entry_meta_unsupported": testutil.ToFloat64(obs.ChLiveSinkReadUndercountTotal.WithLabelValues("entry_meta_unsupported")),
+	}
+
+	ext := clickhouse.LedgerExtract{
+		Ledger:               clickhouse.LedgerRow{LedgerSeq: 999},
+		TxReadErrors:         2,
+		TxEventReadErrors:    3,
+		EntryMetaUnsupported: 1,
+	}
+	recordCHLiveSinkUndercount(ext, logger)
+
+	want := map[string]float64{
+		"tx_read_errors":         before["tx_read_errors"] + 2,
+		"tx_event_read_errors":   before["tx_event_read_errors"] + 3,
+		"entry_meta_unsupported": before["entry_meta_unsupported"] + 1,
+	}
+	for kind, w := range want {
+		if got := testutil.ToFloat64(obs.ChLiveSinkReadUndercountTotal.WithLabelValues(kind)); got != w {
+			t.Fatalf("kind %s: counter = %v, want %v", kind, got, w)
+		}
+	}
+}
+
+// TestRecordLedgerIngestCensusSkip_AddsErrorCountsToMetric pins the
+// second consumer: the ledger_ingest_log substrate-gap path was also
+// log-only before this fix.
+func TestRecordLedgerIngestCensusSkip_AddsErrorCountsToMetric(t *testing.T) {
+	before := map[string]float64{
+		"tx_read_errors_census":       testutil.ToFloat64(obs.ChLiveSinkReadUndercountTotal.WithLabelValues("tx_read_errors_census")),
+		"tx_event_read_errors_census": testutil.ToFloat64(obs.ChLiveSinkReadUndercountTotal.WithLabelValues("tx_event_read_errors_census")),
+	}
+
+	recordLedgerIngestCensusSkip(dispatcher.Census{TxReadErrors: 4, TxEventReadErrors: 5})
+
+	if got, want := testutil.ToFloat64(obs.ChLiveSinkReadUndercountTotal.WithLabelValues("tx_read_errors_census")), before["tx_read_errors_census"]+4; got != want {
+		t.Fatalf("tx_read_errors_census = %v, want %v", got, want)
+	}
+	if got, want := testutil.ToFloat64(obs.ChLiveSinkReadUndercountTotal.WithLabelValues("tx_event_read_errors_census")), before["tx_event_read_errors_census"]+5; got != want {
+		t.Fatalf("tx_event_read_errors_census = %v, want %v", got, want)
+	}
+}
+
+// TestRecordLedgerIngest_CensusReadErrorsMeterUndercount drives the live
+// ledger_ingest_log path end to end: two TxProcessing entries whose hashes
+// match no envelope in the (empty) tx set are two reader errors, so the row
+// is skipped (nil store is never touched) and the counter must move by 2.
+func TestRecordLedgerIngest_CensusReadErrorsMeterUndercount(t *testing.T) {
+	counter := obs.ChLiveSinkReadUndercountTotal.WithLabelValues("tx_read_errors_census")
+	before := testutil.ToFloat64(counter)
+
+	lcm := sdkxdr.LedgerCloseMeta{
+		V: 1,
+		V1: &sdkxdr.LedgerCloseMetaV1{
+			LedgerHeader: sdkxdr.LedgerHeaderHistoryEntry{
+				Header: sdkxdr.LedgerHeader{LedgerSeq: 777},
+			},
+			TxSet: sdkxdr.GeneralizedTransactionSet{
+				V:       1,
+				V1TxSet: &sdkxdr.TransactionSetV1{},
+			},
+			TxProcessing: make([]sdkxdr.TransactionResultMeta, 2),
+		},
+	}
+	recordLedgerIngest(context.Background(), nil, slog.New(slog.NewTextHandler(io.Discard, nil)), lcm, "Test SDF Network ; September 2015")
+
+	if got := testutil.ToFloat64(counter); got != before+2 {
+		t.Fatalf("tx_read_errors_census = %v, want %v", got, before+2)
 	}
 }
 

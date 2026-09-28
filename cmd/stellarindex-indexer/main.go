@@ -905,19 +905,13 @@ func run(cfgPath string, dryRun bool) error {
 						obs.ChLiveSinkLedgersTotal.WithLabelValues("errored").Inc()
 						logCHExtractErrSampled(logger, lcm.LedgerSequence(), eerr)
 					} else {
-						// G20-06: surface a tx-read undercount. A non-zero value
-						// means this ledger's contract_events are incomplete (a bad
-						// tx, or a future TransactionMeta version breaking
+						// G20-06: surface a tx-read undercount. A non-zero
+						// value means this ledger's contract_events are incomplete
+						// (a bad tx, or a future TransactionMeta version breaking
 						// GetTransactionEvents for every tx in lock-step) — a climb
-						// would otherwise masquerade as clean empty ledgers.
-						if ext.TxReadErrors > 0 || ext.TxEventReadErrors > 0 ||
-							ext.EntryMetaUnsupported > 0 {
-							logger.Warn("ch live-sink: ledger extracted with read undercount",
-								"ledger", ext.Ledger.LedgerSeq,
-								"tx_read_errors", ext.TxReadErrors,
-								"tx_event_read_errors", ext.TxEventReadErrors,
-								"entry_meta_unsupported", ext.EntryMetaUnsupported)
-						}
+						// would otherwise masquerade as clean empty ledgers and be
+						// visible only by grepping logs.
+						recordCHLiveSinkUndercount(ext, logger)
 						sink.PushLedger(ext)
 					}
 				}
@@ -1768,6 +1762,29 @@ func logCHExtractErrSampled(logger *slog.Logger, ledger uint32, err error) {
 		"ledger", ledger, "err", err, "errors_so_far", chExtractErrLog.Load())
 }
 
+// recordCHLiveSinkUndercount meters and logs a LedgerExtract's in-memory
+// read-undercount counts. The ledger is still written, so this counter is
+// the only alertable trace of its short events/changes.
+func recordCHLiveSinkUndercount(ext clickhouse.LedgerExtract, logger *slog.Logger) {
+	if ext.TxReadErrors == 0 && ext.TxEventReadErrors == 0 && ext.EntryMetaUnsupported == 0 {
+		return
+	}
+	if ext.TxReadErrors > 0 {
+		obs.ChLiveSinkReadUndercountTotal.WithLabelValues("tx_read_errors").Add(float64(ext.TxReadErrors))
+	}
+	if ext.TxEventReadErrors > 0 {
+		obs.ChLiveSinkReadUndercountTotal.WithLabelValues("tx_event_read_errors").Add(float64(ext.TxEventReadErrors))
+	}
+	if ext.EntryMetaUnsupported > 0 {
+		obs.ChLiveSinkReadUndercountTotal.WithLabelValues("entry_meta_unsupported").Add(float64(ext.EntryMetaUnsupported))
+	}
+	logger.Warn("ch live-sink: ledger extracted with read undercount",
+		"ledger", ext.Ledger.LedgerSeq,
+		"tx_read_errors", ext.TxReadErrors,
+		"tx_event_read_errors", ext.TxEventReadErrors,
+		"entry_meta_unsupported", ext.EntryMetaUnsupported)
+}
+
 // watchCHLiveSink samples the ClickHouse dual-sink's monotonic counters every
 // 15 s and emits the per-tick delta on stellarindex_ch_live_sink_ledgers_total
 // (G12-02). Follows the [watchDiscoveryDrops] (cancel, done) shape so main's
@@ -2210,6 +2227,7 @@ func recordLedgerIngest(
 		// census-backfill path (internal/ops/ingest/census_backfill.go),
 		// which honored the TxEventReadErrors half of this contract while
 		// the live path silently wrote the ledger complete (audit 2026-08-03).
+		recordLedgerIngestCensusSkip(census)
 		logger.Warn("ledger census read errors; skipping substrate record",
 			"ledger", census.LedgerSeq,
 			"tx_read_errors", census.TxReadErrors,
@@ -2226,6 +2244,17 @@ func recordLedgerIngest(
 	}
 	if err := store.UpsertLedgerIngestLog(ctx, row); err != nil {
 		logger.Warn("ledger ingest log upsert", "ledger", census.LedgerSeq, "err", err)
+	}
+}
+
+// recordLedgerIngestCensusSkip is recordCHLiveSinkUndercount's twin for the
+// ledger_ingest_log path, where a non-zero census skips the substrate row.
+func recordLedgerIngestCensusSkip(census dispatcher.Census) {
+	if census.TxReadErrors > 0 {
+		obs.ChLiveSinkReadUndercountTotal.WithLabelValues("tx_read_errors_census").Add(float64(census.TxReadErrors))
+	}
+	if census.TxEventReadErrors > 0 {
+		obs.ChLiveSinkReadUndercountTotal.WithLabelValues("tx_event_read_errors_census").Add(float64(census.TxEventReadErrors))
 	}
 }
 

@@ -137,7 +137,7 @@ func registerPricingMetrics() {
 		AggregatorConfidenceComputeTotal,
 		AggregatorBaselineAgeSeconds,
 
-		ChLiveSinkLedgersTotal,
+		ChLiveSinkLedgersTotal, ChLiveSinkReadUndercountTotal,
 
 		MarketsSkippedRowsTotal,
 	)
@@ -698,6 +698,14 @@ func seedBoundedLabelSeriesTail() {
 	}
 	for _, reason := range []string{"outlier", "unvalidated"} {
 		PricingGuardDegradedTotal.WithLabelValues("series", reason)
+	}
+	// Zero on a healthy archive; seeded so "never happened" is
+	// distinguishable from "never wired".
+	for _, kind := range []string{
+		"tx_read_errors", "tx_event_read_errors", "entry_meta_unsupported",
+		"tx_read_errors_census", "tx_event_read_errors_census",
+	} {
+		ChLiveSinkReadUndercountTotal.WithLabelValues(kind)
 	}
 }
 
@@ -4767,6 +4775,19 @@ var ChLiveSinkLedgersTotal = prometheus.NewCounterVec(
 		Help: "Ledgers processed by the ClickHouse real-time dual-sink, labelled by outcome (written|buffered|dropped|errored).",
 	},
 	[]string{"outcome"},
+)
+
+// ChLiveSinkReadUndercountTotal counts transactions the indexer's per-ledger
+// read paths could not fully decode, by kind: the lake extract
+// (tx_read_errors, tx_event_read_errors, entry_meta_unsupported) and the
+// ledger_ingest_log census (the *_census kinds). Each add is the per-ledger
+// transaction count, not a per-ledger flag.
+var ChLiveSinkReadUndercountTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_ch_live_sink_read_undercount_total",
+		Help: "Transactions/ledgers a read path could not fully decode, labelled by kind (tx_read_errors|tx_event_read_errors|entry_meta_unsupported|tx_read_errors_census|tx_event_read_errors_census).",
+	},
+	[]string{"kind"},
 )
 
 // SinkPersistEvents is the `sink` label value of the Postgres served-tier

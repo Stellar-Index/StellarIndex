@@ -1621,3 +1621,65 @@ tests:
       - eval_time: 45m
         alertname: stellarindex_ingestion_ch_live_sink_errors
         exp_alerts: []
+
+  # ══ stellarindex_ingestion_ch_live_sink_read_undercount ═══════════
+  # A read undercount is not an error: the ledger IS written, short of
+  # the txs/events/changes that could not be decoded, so neither
+  # ch_live_sink rule above can see it.
+  #
+  # ── firing: one undercount ledger tickets, labelled by kind ───────
+  - interval: 1m
+    name: one ch live-sink read-undercount ledger tickets
+    input_series:
+      - series: 'stellarindex_ch_live_sink_read_undercount_total{job="stellarindex_indexer",instance="r1:9100",kind="tx_event_read_errors"}'
+        values: '0 0 3+0x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ingestion_ch_live_sink_read_undercount
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              kind: tx_event_read_errors
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink-read-undercount.md
+              summary: "Indexer read path could not fully decode ledgers (tx_event_read_errors)"
+              description: |
+                stellarindex_ch_live_sink_read_undercount_total{kind="tx_event_read_errors"}
+                advanced in the last 30 minutes. A transaction envelope,
+                its events, or a ledger-entry meta could not be read, so
+                the ledger was written to the ClickHouse lake with an
+                undercount (tx_read_errors / tx_event_read_errors /
+                entry_meta_unsupported) or its ledger_ingest_log substrate
+                row was skipped (*_census kinds). ch-live-catchup does not
+                heal the lake case: the ledgers row exists. A climb on
+                every ledger is a TransactionMeta version break.
+
+  # ── guard: the pre-seeded zero series raises nothing ──────────────
+  # Every kind is seeded at 0 on a healthy indexer; that must stay
+  # silent or the alert fires on every deploy.
+  - interval: 1m
+    name: a seeded-at-zero read-undercount counter raises nothing
+    input_series:
+      - series: 'stellarindex_ch_live_sink_read_undercount_total{job="stellarindex_indexer",instance="r1:9100",kind="tx_read_errors"}'
+        values: '0+0x60'
+      - series: 'stellarindex_ch_live_sink_read_undercount_total{job="stellarindex_indexer",instance="r1:9100",kind="tx_read_errors_census"}'
+        values: '0+0x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ingestion_ch_live_sink_read_undercount
+        exp_alerts: []
+
+  # ── resolution: a one-off undercount leaves the window ────────────
+  - interval: 1m
+    name: a single ch live-sink read undercount resolves
+    input_series:
+      - series: 'stellarindex_ch_live_sink_read_undercount_total{job="stellarindex_indexer",instance="r1:9100",kind="entry_meta_unsupported"}'
+        values: '0 0 1+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_ingestion_ch_live_sink_read_undercount
+        exp_alerts: []
