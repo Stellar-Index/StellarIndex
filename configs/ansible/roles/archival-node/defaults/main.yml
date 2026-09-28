@@ -1250,7 +1250,7 @@ galexie_backfill_admin_port: 6062          # archive-backfill galexie: distinct 
 #   r3: local MinIO with galexie-live ONLY; galexie-archive on Vultr
 #       Object Storage. Same minio_buckets override as r2.
 # ]
-minio_version:           "RELEASE.2024-11-07T00-52-20Z"
+minio_image:              "cgr.dev/chainguard/minio:latest@sha256:6a1d0b45c8669726bba580ced0bfa4cb9fdeed1ed636dfabd81d1577beb6937b"  # RELEASE.2026-09-22T19-25-18Z — INV-0706: dl.min.io/Docker Hub/quay.io all stopped serving minio+mc binaries; this is the one registry still pullable anonymously, and it bundles both.
 # Listener interface. Loopback-only by default: galexie, the indexer,
 # and the 09-minio.yml health probe all reach MinIO via 127.0.0.1:9000
 # (galexie_s3_endpoint above). The MINIO_OPTS template previously bound
@@ -1263,15 +1263,13 @@ minio_port:              9000
 minio_console_port:      9001
 minio_data_path:         "/var/lib/minio"
 # F-1291 (codex audit-2026-05-13): supply-chain checksums for the
-# MinIO server + `mc` client. NOT defaulted here because:
+# MinIO server + `mc` client, both extracted from minio_image above
+# (INV-0706). NOT defaulted here because:
 #   - Both are per-architecture (amd64 vs arm64 differ).
-#   - Both change with every release bump.
+#   - Both change whenever minio_image's digest is bumped.
 # 09-minio.yml asserts at role-start that these are set + 64 chars.
-# Pull from the matching release's hashes-of-binaries page:
-#   https://dl.min.io/server/minio/release/linux-amd64/sha256sum
-#   https://dl.min.io/client/mc/release/linux-amd64/archive/sha256sum
+# Compute per minio_release_sha256's assert fail_msg above.
 # minio_release_sha256: <required; set in inventory>
-# mc_version:           <required; e.g. "RELEASE.2024-11-21T17-21-54Z">
 # mc_release_sha256:    <required; set in inventory>
 # minio_root_user ← vault
 # minio_root_password ← vault
@@ -1605,10 +1603,6 @@ stellarindex_reader_secret_key: "{{ vault_stellarindex_reader_secret_key }}"
 
 # Same alias pattern for the trimmer identity (CA2-A37-harden-6).
 stellarindex_archive_trimmer_secret_key: "{{ vault_stellarindex_archive_trimmer_secret_key }}"
-
-# mc (MinIO client) pinned version — was a bare "<required>" comment;
-# pinned 2026-07-03 to the version already on r1.
-mc_version: "RELEASE.2025-08-13T08-35-41Z"
 
 # SEP-41 watched-contract set (BACKLOG #9): the curated SAC-wrapper
 # roster — the same trust surface as /v1/sac-wrappers. Drives the

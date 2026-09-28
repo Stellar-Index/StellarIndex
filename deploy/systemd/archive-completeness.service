@@ -70,6 +70,7 @@ Environment=WORKERS=8
 
 ExecStartPre=/usr/local/sbin/compute-archive-to.sh
 ExecStart=/usr/local/bin/stellarindex-ops archive-completeness verify \
+  -write \
   -from ${ARCHIVE_FROM} \
   -to ${ARCHIVE_TO} \
   -workers ${WORKERS} \

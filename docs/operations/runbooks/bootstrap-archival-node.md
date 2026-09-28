@@ -79,10 +79,10 @@ Fill in:
   (+ `zfs_os_drives_needing_data_partition` / `zfs_data_pool_type`
   per §1).
 - `admin_ssh_keys`: contents of `~/.ssh/id_ed25519.pub`.
-- `minio_release_sha256` + `mc_version` / `mc_release_sha256`:
-  pinned SHAs for the MinIO server + client downloads —
-  `tasks/09-minio.yml` asserts these are set and refuses to run
-  without them.
+- `minio_release_sha256` + `mc_release_sha256`: pinned SHAs for the
+  MinIO server + client binaries extracted from `minio_image` —
+  `tasks/09-minio.yml` asserts these (and that `minio_image` is
+  digest-pinned) and refuses to run without them.
 
 Then create the vault-encrypted secrets:
 

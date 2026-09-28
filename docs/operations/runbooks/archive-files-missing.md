@@ -103,13 +103,15 @@ restored; the next daily run refills on its own.
   real head. Take `-from` from the unit rather than typing `2`: on a host that
   has been trimmed per ADR-0027 the pre-hot-floor range is deliberately empty
   and a hand-typed `-from 2` reports the trimmed cold range as "missing".
+  **`-write` is REQUIRED too** — without it this is a fail-closed dry run
+  that reports what would be fetched and writes nothing.
 
   ```sh
   ssh r1 'systemctl show -p Environment archive-completeness.service; cat /run/archive-completeness.env'
   # → ARCHIVE_FROM=<hot floor>  ARCHIVE_TO=<cursor-derived head>
 
   ssh r1 'stellarindex-ops archive-completeness fix \
-    -from <ARCHIVE_FROM> -to <ARCHIVE_TO> -workers 16 \
+    -write -from <ARCHIVE_FROM> -to <ARCHIVE_TO> -workers 16 \
     -output-file /var/lib/galexie/last-completeness-report.json'
   ```
 
