@@ -2796,6 +2796,29 @@ enforcing for real traffic; correlate with the timescale readyz probe,
 as `stellarindex_ratelimit_fail_open_total` correlates with redis.
 Dashboard-only, no alert rule.
 
+### `stellarindex_pricingguard_degraded_total`
+
+Counter, labels `path` (`latest` | `at` | `series`) and `reason`
+(`outlier` | `unvalidated`).
+
+Fires once per serving-sanity guard decision that did not serve the
+current prices_1m bucket as a validated price. `outlier`: the candidate
+failed the robust band. `unvalidated`: it had no trailing baseline
+within 24 h. What was served depends on the path: `latest`
+(`GuardServedVWAP1mConfidence` — `/v1/price`, the `/v1/assets/{slug}`
+headline, price alerts) serves the last-known-good bucket for an
+outlier; for an unvalidated bucket `/v1/price` serves it flagged stale
+while the headline and price alerts treat it as no data. `at`
+(`/v1/price/at`, `/v1/price/changes`) withholds unless a last-known-good
+bucket meets the caller's staleness bound; `series` (SEP-40 `prices()`)
+drops the bucket.
+
+When to look at it: this is the counter that tells "the guard is holding
+a pair" apart from "the market is quiet". A sustained `outlier` rate on
+`latest` means a pair's newest prints keep failing the band — a
+manipulation attempt or a real re-pricing the band is refusing.
+Dashboard-only, no alert rule.
+
 ### `stellarindex_price_serve_scam_withheld_total`
 
 Counter, label `surface` (the shared table under

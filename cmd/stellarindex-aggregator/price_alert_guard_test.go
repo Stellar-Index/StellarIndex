@@ -219,3 +219,23 @@ func TestPriceAlertReader_NoClosedBucketIsBenignNoOp(t *testing.T) {
 		t.Fatalf("no closed bucket must be ok=false,nil; got ok=%v err=%v", ok, err)
 	}
 }
+
+// A bucket the guard could not validate (no trailing baseline — a pair's
+// first minute, or its first after a day dormant) is the fail-open case
+// the guard serves only as low-confidence. An alert has no stale flag to
+// carry that doubt, so it must not fire off it (#677): a single
+// manipulated first print would otherwise deliver a customer webhook.
+func TestPriceAlertReader_UnvalidatedBucketDoesNotFire(t *testing.T) {
+	base, quote := alertUSDAssets(t)
+	reader := priceAlertVWAPReader{
+		store:  fakeAlertVWAPStore{latest: alertRow(0, "100.0")},
+		logger: discardLogger(),
+	}
+	price, _, ok, err := reader.LatestVWAP(context.Background(), base, quote)
+	if err != nil {
+		t.Fatalf("LatestVWAP: %v", err)
+	}
+	if ok {
+		t.Fatalf("served %q for an alert off a bucket with no trailing baseline; want ok=false", price)
+	}
+}

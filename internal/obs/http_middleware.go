@@ -223,14 +223,17 @@ func isLoopbackRemoteAddr(remoteAddr string) bool {
 // No-op when the request context doesn't carry a routeCapture —
 // the route still ends up in r.Pattern; HTTPMetrics's fallback
 // path picks it up.
+//
+// The capture is deferred so a handler panic, recovered further out by
+// the Recoverer, still labels its 500 with the route rather than
+// "unmatched".
 func CaptureRoute(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r)
 		rc, ok := r.Context().Value(routeCaptureKey{}).(*routeCapture)
-		if !ok {
-			return
+		if ok {
+			defer func() { rc.route = routeFromPattern(r.Pattern) }()
 		}
-		rc.route = routeFromPattern(r.Pattern)
+		next.ServeHTTP(w, r)
 	})
 }
 

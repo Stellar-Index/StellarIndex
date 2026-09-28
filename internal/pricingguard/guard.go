@@ -84,9 +84,9 @@ type TrailingAtReader interface {
 	ClosedVWAP1mCombinedBefore(ctx context.Context, p canonical.Pair, before time.Time, limit int) ([]timescale.Vwap1mRow, error)
 }
 
-// GuardServedVWAP1m is the serving-sanity guard shared by every raw
-// prices_1m serving path (see the package doc). Given the latest CLOSED
-// bucket (`candidate`) it returns the row to actually serve:
+// GuardServedVWAP1mConfidence is the serving-sanity guard shared by every
+// raw latest-bucket prices_1m serving path (see the package doc). Given the
+// latest CLOSED bucket (`candidate`) it returns the row to actually serve:
 //   - the candidate unchanged, when it is robust-sane against the pair's
 //     recent trailing closed buckets, or when there is no baseline / the
 //     trailing fetch failed (fail-open — favour serving a real price);
@@ -99,20 +99,9 @@ type TrailingAtReader interface {
 // doubt it serves the candidate rather than 404 a pair that has data. A
 // nil logger disables the guard's warn logging (the decision is
 // unaffected).
-func GuardServedVWAP1m(
-	ctx context.Context,
-	store TrailingReader,
-	logger *slog.Logger,
-	pair canonical.Pair,
-	candidate timescale.Vwap1mRow,
-) timescale.Vwap1mRow {
-	served, _, _ := GuardServedVWAP1mConfidence(ctx, store, logger, pair, candidate)
-	return served
-}
-
-// GuardServedVWAP1mConfidence is [GuardServedVWAP1m] plus the
-// low-confidence signal a serving path needs for its stale flag, and the
-// substituted signal a serving path needs to withhold enrichment that
+//
+// It also returns the low-confidence signal a serving path needs for its
+// stale flag, and the substituted signal a serving path needs to withhold enrichment that
 // isn't ABOUT the served bucket. lowConfidence is true when the served
 // bucket had NO usable trailing baseline to validate against (a pair's
 // first-ever served minute, or its first after more than [BaselineMaxAge]
@@ -127,8 +116,7 @@ func GuardServedVWAP1m(
 // usable baseline; a transient fetch error still fails open with
 // lowConfidence=false (unchanged posture — a DB blip must not flag every
 // price stale). On a validated bucket (populated OR thin baseline)
-// lowConfidence is false and the row is byte-identical to
-// [GuardServedVWAP1m].
+// lowConfidence is false.
 //
 // substituted is true when the candidate was rejected as an outlier and
 // `served` is the older last-known-good bucket instead (RNC27). A caller
@@ -138,6 +126,11 @@ func GuardServedVWAP1m(
 // substituted=true as "that enrichment answers for the CURRENT tick, not
 // for the older bucket actually served" and withhold it rather than
 // mis-attribute a live read to a stale value.
+//
+// There is deliberately no form that returns only the row: every caller
+// must decide what an unvalidated or substituted bucket means on its
+// surface, and a caller with no flag to carry it withholds (as
+// [GuardServedVWAP1mAt] does).
 func GuardServedVWAP1mConfidence(
 	ctx context.Context,
 	store TrailingReader,
@@ -155,6 +148,7 @@ func GuardServedVWAP1mConfidence(
 		return candidate, false, false // fail-open (transient) — not low-confidence
 	}
 	served, rejected, lowConfidence := selectGuardedVWAP1m(candidate, rows)
+	countDegraded("latest", rejected, lowConfidence)
 	if rejected && logger != nil {
 		logger.Warn("served-vwap guard: candidate bucket rejected as outlier — serving last-known-good",
 			"pair", pair.String(),
@@ -172,7 +166,7 @@ func GuardServedVWAP1mConfidence(
 	return served, lowConfidence, rejected
 }
 
-// GuardServedVWAP1mAt is [GuardServedVWAP1m] for the POINT-IN-TIME
+// GuardServedVWAP1mAt is [GuardServedVWAP1mConfidence] for the POINT-IN-TIME
 // serving path (/v1/price/at and, through it, every /v1/price/changes
 // horizon — MSP-01/MSP-02's reader seam). Those routes resolve an
 // instant through a CAGG ladder whose FIRST rung is the same raw
@@ -183,7 +177,7 @@ func GuardServedVWAP1mConfidence(
 // (diluted) exposure the trailing 1-minute baseline cannot judge.
 //
 // `ts` and `maxStaleness` are the caller's at-or-before contract, and
-// they are what make this distinct from [GuardServedVWAP1m]: a rejected
+// they are what make this distinct from [GuardServedVWAP1mConfidence]: a rejected
 // candidate is replaced by the newest clean trailing bucket only while
 // that bucket still CLOSES within maxStaleness of ts — the same test
 // [timescale.Store.ClosedVWAPAtOrBefore] applied to the candidate. When
@@ -198,7 +192,7 @@ func GuardServedVWAP1mConfidence(
 // instant outside the last few dozen minutes would pass unjudged.
 //
 // An empty baseline (nothing traded within [BaselineMaxAge] before the
-// candidate — the pair's first-ever bucket, or a relisting) is ok=false here, where [GuardServedVWAP1m] serves it
+// candidate — the pair's first-ever bucket, or a relisting) is ok=false here, where [GuardServedVWAP1mConfidence] serves it
 // flagged low-confidence: a point-in-time answer has no stale flag to
 // carry that doubt. A trailing-fetch error still fails open.
 func GuardServedVWAP1mAt(
@@ -219,7 +213,8 @@ func GuardServedVWAP1mAt(
 		}
 		return candidate, true // fail-open (transient), as on the /v1/price path
 	}
-	served, ok = SelectGuardedVWAP1mAt(candidate, rows, ts, maxStaleness)
+	served, ok, rejected, lowConfidence := selectGuardedVWAP1mAt(candidate, rows, ts, maxStaleness)
+	countDegraded("at", rejected, lowConfidence)
 	if logger != nil && (!ok || !served.Bucket.Equal(candidate.Bucket)) {
 		logger.Warn("served-vwap guard (point-in-time): candidate bucket rejected or unvalidated",
 			"pair", pair.String(),
@@ -246,21 +241,44 @@ func SelectGuardedVWAP1mAt(
 	ts time.Time,
 	maxStaleness time.Duration,
 ) (served timescale.Vwap1mRow, ok bool) {
-	served, rejected, lowConfidence := selectGuardedVWAP1m(candidate, rows)
+	served, ok, _, _ = selectGuardedVWAP1mAt(candidate, rows, ts, maxStaleness)
+	return served, ok
+}
+
+// selectGuardedVWAP1mAt is [SelectGuardedVWAP1mAt] plus the band's
+// rejected / lowConfidence verdict on the candidate.
+func selectGuardedVWAP1mAt(
+	candidate timescale.Vwap1mRow,
+	rows []timescale.Vwap1mRow,
+	ts time.Time,
+	maxStaleness time.Duration,
+) (served timescale.Vwap1mRow, ok, rejected, lowConfidence bool) {
+	served, rejected, lowConfidence = selectGuardedVWAP1m(candidate, rows)
 	if lowConfidence {
-		return timescale.Vwap1mRow{}, false
+		return timescale.Vwap1mRow{}, false, false, true
 	}
 	if !rejected {
-		return served, true
+		return served, true, false, false
 	}
 	// The last-known-good bucket is by construction OLDER than the
 	// rejected candidate, so it has to re-clear the caller's own
 	// at-or-before staleness bound (bucket close within maxStaleness of
 	// ts) before it can stand in for it.
 	if ts.Sub(served.Bucket.Add(time.Minute)) > maxStaleness {
-		return timescale.Vwap1mRow{}, false
+		return timescale.Vwap1mRow{}, false, true, false
 	}
-	return served, true
+	return served, true, true, false
+}
+
+// countDegraded records a guard decision that did not serve the current
+// bucket as a validated price on [obs.PricingGuardDegradedTotal].
+func countDegraded(path string, rejected, lowConfidence bool) {
+	switch {
+	case rejected:
+		obs.PricingGuardDegradedTotal.WithLabelValues(path, "outlier").Inc()
+	case lowConfidence:
+		obs.PricingGuardDegradedTotal.WithLabelValues(path, "unvalidated").Inc()
+	}
 }
 
 // GuardServedVWAP1mSeries is the guard for a raw prices_1m SERIES (the
@@ -280,6 +298,7 @@ func GuardServedVWAP1mSeries(logger *slog.Logger, pair canonical.Pair, rows []ti
 	for i := 0; i < n; i++ {
 		trailing := rows[i+1 : min(i+1+SampleFetch, len(rows))]
 		_, rejected, lowConfidence := selectGuardedVWAP1m(rows[i], trailing)
+		countDegraded("series", rejected, lowConfidence)
 		if rejected || lowConfidence {
 			if logger != nil {
 				logger.Warn("served-vwap guard (series): bucket dropped as outlier or unvalidated",
@@ -295,7 +314,7 @@ func GuardServedVWAP1mSeries(logger *slog.Logger, pair canonical.Pair, rows []ti
 	return out
 }
 
-// SelectGuardedVWAP1m is the pure decision half of [GuardServedVWAP1m]:
+// SelectGuardedVWAP1m is the pure decision half of [GuardServedVWAP1mConfidence]:
 // given the candidate bucket and the recent combined-direction closed
 // buckets (`rows`, newest-first, as returned by
 // [timescale.Store.RecentClosedVWAP1mCombined]), it returns the row to

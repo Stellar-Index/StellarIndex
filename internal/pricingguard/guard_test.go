@@ -226,7 +226,7 @@ func TestSelectGuardedVWAP1m_HeadlineThinHistoryPassesThrough(t *testing.T) {
 	}
 }
 
-// ─── GuardServedVWAP1m: the store-backed wiring ──────────────────
+// ─── GuardServedVWAP1mConfidence: the store-backed wiring ──────────────────
 
 // fakeTrailing is a TrailingReader that returns a canned trailing set (or
 // error), so the wiring wrapper is testable without a database.
@@ -262,7 +262,7 @@ func testPair(t *testing.T) canonical.Pair {
 func TestGuardServedVWAP1m_NormalBucketUnchanged(t *testing.T) {
 	candidate := mkRow(0, "1.01")
 	store := fakeTrailing{rows: steadyRows(12)}
-	served := GuardServedVWAP1m(context.Background(), store, nil, testPair(t), candidate)
+	served, _, _ := GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), candidate)
 	if served.VWAP != candidate.VWAP || !served.Bucket.Equal(candidate.Bucket) {
 		t.Fatalf("healthy bucket must pass through byte-identical; got %+v", served)
 	}
@@ -272,7 +272,7 @@ func TestGuardServedVWAP1m_FatFingerServesLKG(t *testing.T) {
 	candidate := mkRow(0, "100.0")
 	rows := steadyRows(12)
 	store := fakeTrailing{rows: rows}
-	served := GuardServedVWAP1m(context.Background(), store, nil, testPair(t), candidate)
+	served, _, _ := GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), candidate)
 	if served.VWAP != "1.0" {
 		t.Fatalf("fat-finger must serve last-known-good 1.0; got %s", served.VWAP)
 	}
@@ -286,12 +286,12 @@ func TestGuardServedVWAP1m_ThinHistoryWiderFiniteBand(t *testing.T) {
 	// print is caught (served LKG); a within-band value passes through.
 	gross := mkRow(0, "999.0")
 	store := fakeTrailing{rows: steadyRows(3)}
-	served := GuardServedVWAP1m(context.Background(), store, nil, testPair(t), gross)
+	served, _, _ := GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), gross)
 	if served.VWAP != "1.0" {
 		t.Fatalf("thin-history gross manipulation must serve last-known-good 1.0; got %s", served.VWAP)
 	}
 	moderate := mkRow(0, "5.0")
-	served = GuardServedVWAP1m(context.Background(), store, nil, testPair(t), moderate)
+	served, _, _ = GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), moderate)
 	if served.VWAP != "5.0" {
 		t.Fatalf("within-band thin-history candidate must pass through; got %s", served.VWAP)
 	}
@@ -386,7 +386,7 @@ func TestGuardServedVWAP1m_TrailingFetchErrorFailsOpen(t *testing.T) {
 	// candidate unguarded even if it would otherwise look extreme.
 	candidate := mkRow(0, "100.0")
 	store := fakeTrailing{err: errors.New("boom")}
-	served := GuardServedVWAP1m(context.Background(), store, nil, testPair(t), candidate)
+	served, _, _ := GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), candidate)
 	if served.VWAP != candidate.VWAP || !served.Bucket.Equal(candidate.Bucket) {
 		t.Fatalf("fetch error must fail open (serve candidate); got %+v", served)
 	}
@@ -466,5 +466,56 @@ func TestSelectGuardedVWAP1m_BaselineHorizonIsInclusiveAndPerBucket(t *testing.T
 	stale := []timescale.Vwap1mRow{mkRow(horizonMinutes+1, "0.001")}
 	if _, rejected, lowConfidence := selectGuardedVWAP1m(mkRow(0, "0.01"), stale); rejected || !lowConfidence {
 		t.Fatalf("rejected=%v lowConfidence=%v, want an out-of-horizon bucket ignored", rejected, lowConfidence)
+	}
+}
+
+// A guard decision that does not serve the current bucket as a validated
+// price must be countable (#677): without it an operator cannot tell "the
+// guard is holding a manipulated pair" from "the market is quiet". Each
+// path counts the candidate's reason exactly once, and a healthy bucket
+// counts nothing.
+func TestGuardDegradedDecisionsIncrementMetric(t *testing.T) {
+	pair := testPair(t)
+	ctx := context.Background()
+	outlier, healthy := mkRow(0, "100.0"), mkRow(0, "1.01")
+	at := outlier.Bucket.Add(time.Minute)
+	withTrailing := append([]timescale.Vwap1mRow{outlier}, steadyRows(12)...)
+	cases := []struct {
+		path, reason string
+		run          func()
+	}{
+		{"latest", "outlier", func() {
+			GuardServedVWAP1mConfidence(ctx, fakeTrailing{rows: steadyRows(12)}, nil, pair, outlier)
+		}},
+		{"latest", "unvalidated", func() { GuardServedVWAP1mConfidence(ctx, fakeTrailing{}, nil, pair, outlier) }},
+		{"at", "outlier", func() {
+			GuardServedVWAP1mAt(ctx, fakeTrailing{rows: steadyRows(12)}, nil, pair, outlier, at, time.Hour)
+		}},
+		{"at", "unvalidated", func() { GuardServedVWAP1mAt(ctx, fakeTrailing{}, nil, pair, outlier, at, time.Hour) }},
+		{"series", "outlier", func() { GuardServedVWAP1mSeries(nil, pair, withTrailing, 1) }},
+		{"series", "unvalidated", func() { GuardServedVWAP1mSeries(nil, pair, []timescale.Vwap1mRow{outlier}, 1) }},
+	}
+	for _, tc := range cases {
+		counter := obs.PricingGuardDegradedTotal.WithLabelValues(tc.path, tc.reason)
+		before := testutil.ToFloat64(counter)
+		tc.run()
+		if got := testutil.ToFloat64(counter) - before; got != 1 {
+			t.Errorf("PricingGuardDegradedTotal{path=%s,reason=%s} moved by %v, want 1", tc.path, tc.reason, got)
+		}
+	}
+
+	total := func() float64 {
+		sum := 0.0
+		for _, tc := range cases {
+			sum += testutil.ToFloat64(obs.PricingGuardDegradedTotal.WithLabelValues(tc.path, tc.reason))
+		}
+		return sum
+	}
+	before := total()
+	GuardServedVWAP1mConfidence(ctx, fakeTrailing{rows: steadyRows(12)}, nil, pair, healthy)
+	GuardServedVWAP1mAt(ctx, fakeTrailing{rows: steadyRows(12)}, nil, pair, healthy, at, time.Hour)
+	GuardServedVWAP1mSeries(nil, pair, append([]timescale.Vwap1mRow{healthy}, steadyRows(12)...), 1)
+	if got := total() - before; got != 0 {
+		t.Errorf("healthy buckets moved PricingGuardDegradedTotal by %v, want 0", got)
 	}
 }

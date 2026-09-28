@@ -339,6 +339,46 @@ func TestHTTPMetrics_RouteSurvivesWithContextChain(t *testing.T) {
 	}
 }
 
+// A panicking handler unwinds past CaptureRoute to a recoverer wired
+// OUTSIDE it (production: Recoverer sits between Logger and CaptureRoute),
+// so a route capture written after next.ServeHTTP never runs and the 500
+// was labelled route="unmatched" — every handler panic merged into the
+// 404 bucket. The capture must survive the unwind.
+func TestHTTPMetrics_RouteSurvivesHandlerPanic(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/probe", func(http.ResponseWriter, *http.Request) {
+		panic("handler bug")
+	})
+	withContextMW := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := context.WithValue(r.Context(), struct{ k string }{"req_id"}, "abc")
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+	recoverMW := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if recover() != nil {
+					w.WriteHeader(http.StatusInternalServerError)
+				}
+			}()
+			next.ServeHTTP(w, r)
+		})
+	}
+	h := obs.HTTPMetrics(withContextMW(recoverMW(obs.CaptureRoute(mux))))
+
+	before := httpRequestsBaseline("GET", "/v1/probe", "500")
+	unmatchedBefore := httpRequestsBaseline("GET", "unmatched", "500")
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/probe", nil))
+
+	if got := httpRequestsBaseline("GET", "/v1/probe", "500") - before; got != 1 {
+		t.Errorf("http_requests_total{route=/v1/probe,status=500} moved by %v, want 1", got)
+	}
+	if got := httpRequestsBaseline("GET", "unmatched", "500") - unmatchedBefore; got != 0 {
+		t.Errorf("http_requests_total{route=unmatched,status=500} moved by %v, want 0", got)
+	}
+}
+
 // TestHTTPMetrics_SyntheticUASkipsHistogram pins the SLO-noise
 // fix: requests with `User-Agent: stellarindex-smoke/N` (the smoke
 // timer) MUST NOT contribute to the http_requests_total counter

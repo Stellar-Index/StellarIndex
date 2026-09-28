@@ -133,6 +133,7 @@ type Marker struct {
 // surface.
 type RedisCache interface {
 	Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd
+	SetArgs(ctx context.Context, key string, value any, a redis.SetArgs) *redis.StatusCmd
 	Get(ctx context.Context, key string) *redis.StringCmd
 	Del(ctx context.Context, keys ...string) *redis.IntCmd
 }
@@ -666,7 +667,11 @@ func (w *Writer) RetireWindowLadder(ctx context.Context, asset, quote canonical.
 		// diagnostic completeness.
 		return fmt.Errorf("freeze: marshal marker: %w", err)
 	}
-	if err := w.cache.Set(ctx, key.String(), body, redis.KeepTTL).Err(); err != nil {
+	// XX: a marker cleared since the read (freeze-unfreeze, or its TTL
+	// lapsing) stays cleared. KEEPTTL on an absent key would recreate it
+	// with no expiry.
+	err = w.cache.SetArgs(ctx, key.String(), body, redis.SetArgs{Mode: "XX", KeepTTL: true}).Err()
+	if err != nil && !errors.Is(err, redis.Nil) {
 		return fmt.Errorf("freeze: cache set %s: %w", key, err)
 	}
 	return nil
