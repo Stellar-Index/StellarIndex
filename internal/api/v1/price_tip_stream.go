@@ -406,7 +406,7 @@ func (s *Server) runTipStreamProducer(
 func (s *Server) tipTickEvent(ctx context.Context, gen *streaming.Generator, asset, quote canonical.Asset, window int) (streaming.Event, bool) {
 	tickCtx, cancel := context.WithTimeout(ctx, tipStreamTickTimeout)
 	defer cancel()
-	snap, sources, err := s.computeTip(tickCtx, asset, quote, window)
+	snap, sources, err := s.computeTipGated(tickCtx, asset, quote, window)
 	if errors.Is(err, ErrPriceWithheld) {
 		return tipWithheldEvent(gen, asset, quote, priceWithheldReason(err))
 	}
