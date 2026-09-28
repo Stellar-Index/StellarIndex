@@ -67,6 +67,12 @@ all:
     # invariant and live in the role defaults.
     stellarindex_backfill_from_ledger: 62403000
 
+    # ADR-0027 trimmed r1's local galexie-archive to this boundary. Role
+    # default is 2 (no floor), which would make the fill, archive-
+    # completeness and the verify-archive cold start treat the trimmed
+    # range as missing. Raise it in the same change as any further trim.
+    stellarindex_archive_hot_floor: 49984000
+
     # Where ch-live-catchup starts its gap scan: one past the ceiling
     # of the certified ClickHouse bulk backfill. Below this the lake is
     # contiguous by construction; at or above it the in-dispatcher

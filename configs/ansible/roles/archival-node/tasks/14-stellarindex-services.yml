@@ -442,6 +442,12 @@
   #      it. The one payload whose cleanup runs for hours — a
   #      usd-volume-restamp -chunks re-compress — sets the longer value
   #      on its own launch line.
+  #   4. Stops the scope WITH the wrapper: the scope is a sibling of the
+  #      calling unit, so a TERM/INT/HUP to the wrapper (unit stop,
+  #      TimeoutStartSec) is forwarded as `systemctl stop <unit>.scope`
+  #      instead of orphaning a payload that keeps the lock.
+  #      HEAVY_JOB_MEMORY_MAX narrows the scope's 20G cap for a unit
+  #      whose own MemoryMax= could never reach the payload.
   # Usage: run-heavy-job.sh <name> <command...>
   ansible.builtin.copy:
     dest: /usr/local/sbin/run-heavy-job.sh
@@ -455,7 +461,7 @@
       # singleton lock so a new run can't start while the prior run of
       # the same job is still going (C4-14 / INF-11), then the host-wide
       # heavy-job lock (one operator heavy job at a time). Then, for root
-      # callers, hard-caps memory at 20G (kill, not swap: MemorySwapMax=0
+      # callers, hard-caps memory at 20G or HEAVY_JOB_MEMORY_MAX (kill, not swap: MemorySwapMax=0
       # keeps the job away from swap entirely) and deprioritises CPU/IO
       # below the service units; non-root callers exec directly under
       # the lock (see the id -u branch below).
@@ -507,10 +513,28 @@
       # overlapping fire ($INVOCATION_ID, systemd.exec(5)) gets a plain
       # skip message; any other caller gets a diagnostic on where to
       # look.
+      #
+      # HEAVY_JOB_LOCK_WAIT=<seconds> QUEUES instead of skipping. It is for
+      # two DIFFERENT units that share a NAME on purpose (verify-archive
+      # tiers A and B share one state file): a skip there means one of
+      # them silently does not run while the other is long, and for a
+      # Type=notify unit an exit before READY=1 is a protocol failure
+      # whatever SuccessExitStatus says. A wait that runs out fails loud.
       LOCK="${HEAVY_JOB_LOCK_DIR:-/run/lock}/stellarindex-heavy-${NAME}.lock"
       lock_file_prep "$LOCK"
       exec 9<"$LOCK" || { echo "run-heavy-job: refusing to start ${NAME}: cannot open its lock ${LOCK}" >&2; exit 2; }
-      if ! flock -n 9; then
+      LOCK_WAIT="${HEAVY_JOB_LOCK_WAIT:-}"
+      if [ -n "$LOCK_WAIT" ]; then
+        case "$LOCK_WAIT" in
+          *[!0-9]*|0*)
+            echo "run-heavy-job: refusing to start ${NAME}: HEAVY_JOB_LOCK_WAIT='${LOCK_WAIT}' is not a positive whole number of seconds" >&2
+            exit 2 ;;
+        esac
+        if ! flock -w "$LOCK_WAIT" 9; then
+          echo "run-heavy-job: ${NAME} FAILED to start: lock ${LOCK} was still held after waiting ${LOCK_WAIT}s — another unit or manual run using the job name ${NAME} held it all that time (find it: fuser -v ${LOCK})" >&2
+          exit 1
+        fi
+      elif ! flock -n 9; then
         if [ -n "${INVOCATION_ID:-}" ]; then
           echo "run-heavy-job: ${NAME} already running (lock ${LOCK} held) — skipping this fire, exit 75" >&2
           exit 75
@@ -771,12 +795,54 @@
         echo "run-heavy-job: ${NAME} stop bound: TimeoutStopSec=infinity — a systemctl stop will NEVER escalate to SIGKILL, including the disk watchdog's" >&2
       fi
 
-      rc=0
+      # ── Memory budget ─────────────────────────────────────────────
+      # The scope is not a child of the calling unit, so a MemoryMax= on
+      # that unit binds only this shell and the watchdog, never the
+      # payload. A unit that wants a tighter cap than 20G passes it here
+      # (HEAVY_JOB_MEMORY_MAX=2G). A size needs a K/M/G/T suffix: a bare
+      # integer is BYTES to systemd, so '2' would OOM-kill at once.
+      MEMORY_MAX="${HEAVY_JOB_MEMORY_MAX:-20G}"
+      MEM_NUM=""
+      case "$MEMORY_MAX" in
+        *[KMGT]) MEM_NUM="${MEMORY_MAX%?}" ;;
+      esac
+      case "$MEM_NUM" in
+        ''|*[!0-9]*) MEM_NUM=0 ;;
+      esac
+      if [ "$((10#$MEM_NUM))" -eq 0 ]; then
+        echo "run-heavy-job: refusing to start ${NAME}: HEAVY_JOB_MEMORY_MAX='${MEMORY_MAX}' is not a positive integer with one K/M/G/T suffix (e.g. 2G). A bare integer is BYTES to systemd." >&2
+        exit 2
+      fi
+      echo "run-heavy-job: ${NAME} memory cap: MemoryMax=${MEMORY_MAX} (swap denied)" >&2
+
+      # ── Stop the scope with the wrapper (GH-1228) ─────────────────
+      # The scope is a SIBLING of the calling unit in system.slice: when
+      # that unit is stopped or hits TimeoutStartSec, systemd signals this
+      # shell and the watchdog and never reaches the payload, which would
+      # run on holding fd 9 so every later fire of NAME is skipped as
+      # "already running". So the payload runs in the background (a
+      # trapped signal interrupts `wait`, not a foreground child) and a
+      # TERM/INT/HUP stops its scope before the wrapper exits. `<&0` keeps
+      # the caller's stdin, which an async command would lose to /dev/null.
+      # The payload keeps fd 9: the lock frees only when it is really gone.
+      INTERRUPTED=0
+      trap 'INTERRUPTED=1
+        echo "run-heavy-job: ${NAME} got a stop signal — stopping ${UNIT}.scope so the payload does not outlive the wrapper and keep the lock" >&2
+        systemctl stop "${UNIT}.scope" || systemctl kill --signal=SIGKILL "${UNIT}.scope" || true' TERM INT HUP
       systemd-run --scope --unit "$UNIT" \
-        -p MemoryMax=20G -p MemorySwapMax=0 \
+        -p "MemoryMax=${MEMORY_MAX}" -p MemorySwapMax=0 \
         -p CPUWeight=50 -p IOWeight=50 \
         -p "TimeoutStopSec=${STOP_TIMEOUT}" \
-        "$@" || rc=$?
+        "$@" <&0 &
+      CHILD=$!
+      # A wait cut short by the trap is repeated, so the exit status is
+      # the payload's own, never the 128+N of the interrupted wait.
+      while :; do
+        INTERRUPTED=0
+        rc=0
+        wait "$CHILD" || rc=$?
+        [ "$INTERRUPTED" -eq 1 ] || break
+      done
       exit "$rc"
   # Own tag (merged with the import's stellarindex/indexer tags) so the
   # ops-batch identity import above can be re-rendered on a host alone:
@@ -1412,7 +1478,7 @@
       -config /etc/stellarindex.toml
       -tier peers
       -peer-samples 50
-      -from {{ stellarindex_archive_hot_floor | default(2) }}
+      -from {{ stellarindex_archive_hot_floor }}
       {{ ('-to ' ~ (stellarindex_live_seam_ledger | default(0) | int - 1)) if (stellarindex_live_seam_ledger | default(0) | int) > 0 else '' }}
       -textfile-output /var/lib/node_exporter/textfile_collector/verify_archive_tier_d.prom
       2>&1 | logger -t stellarindex-tier-d'

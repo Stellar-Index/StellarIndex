@@ -105,7 +105,7 @@ Gather for the postmortem:
 
 ## Known false-positive patterns
 
-- **Manual run started during scheduled run** — both runs race; one fails on a lock or duplicate work. Fix: don't start manual runs while the timer is active.
+- **Manual run holding the `verify-archive` lock** — a manual run is refused (exit 75) while a timer run holds the lock; a timer fire queues behind a manual run for up to 20h (`HEAVY_JOB_LOCK_WAIT`) and fails only if the wait runs out ("still held after waiting" in the journal). Fix: don't start manual runs while the timer is active.
 - **MinIO restart mid-run** — connection-reset surfaces as a chain-walk failure. The next scheduled run completes cleanly. Don't escalate unless the failure repeats two nights in a row.
 
 ## Related

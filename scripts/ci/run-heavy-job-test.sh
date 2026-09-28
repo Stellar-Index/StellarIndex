@@ -56,6 +56,10 @@
 #      refuses an operator job and only warns a scheduled one; and every
 #      timer/cron launcher declares HEAVY_JOB_CLASS=scheduled. These
 #      cases use a real flock(2) shim, not the always-succeeds stub.
+#   12. a TERM to the root-branch wrapper stops its sibling scope, so no
+#      payload outlives a stopped/timed-out unit holding the lock.
+#   13. HEAVY_JOB_MEMORY_MAX reaches the scope (validated), and no root
+#      wrapper unit sets a MemoryMax= that could only cap the wrapper.
 #
 # Runs the wrapper's non-root exec path (no systemd-run / flock needed:
 # flock is stubbed on PATH so this runs on macOS too).
@@ -90,9 +94,11 @@ chmod +x "$TMP/run-heavy-job.sh"
 WRAP="$TMP/run-heavy-job.sh"
 
 mkdir -p "$TMP/bin" "$TMP/lock"
-# macOS has no flock; FLOCK_HELD answers "held" (case 7).
+# macOS has no flock; FLOCK_HELD answers "held" (case 7); FLOCK_REC
+# records the arguments, i.e. skip (-n) or queue (-w N) (case 7b).
 cat > "$TMP/bin/flock" <<'FL'
 #!/usr/bin/env bash
+[ -n "${FLOCK_REC:-}" ] && printf '%s\n' "$*" >> "$FLOCK_REC"
 [ -n "${FLOCK_HELD:-}" ] && exit 1
 exit 0
 FL
@@ -278,6 +284,26 @@ else
   bad "held lock, systemd unit fire not a clean exit-75 skip (rc=$rc, err='$(tr '\n' ' ' < "$TMP/err")')"
 fi
 
+# ── 7b. HEAVY_JOB_LOCK_WAIT queues instead of skipping (GH-1229) ─────
+run HEAVY_JOB_OPS_ENV="$OPS_ENV" FLOCK_REC="$TMP/flockrec" INVOCATION_ID=0123456789abcdef
+if grep -qx -- '-n 9' "$TMP/flockrec"; then ok "no HEAVY_JOB_LOCK_WAIT: the lock is tried once (-n), as before"; else bad "default lock mode changed ($(cat "$TMP/flockrec"))"; fi
+run HEAVY_JOB_OPS_ENV="$OPS_ENV" FLOCK_REC="$TMP/flockrec" HEAVY_JOB_LOCK_WAIT=5 INVOCATION_ID=0123456789abcdef
+if [ "$rc" -eq 0 ] && grep -qx -- '-w 5 9' "$TMP/flockrec" && out_has "USER=ops_batch"; then
+  ok "HEAVY_JOB_LOCK_WAIT=5: the fire waits on the lock (-w 5) and then runs"
+else
+  bad "HEAVY_JOB_LOCK_WAIT=5 did not queue on the lock (rc=$rc, flock '$(cat "$TMP/flockrec")')"
+fi
+run HEAVY_JOB_OPS_ENV="$OPS_ENV" FLOCK_HELD=1 HEAVY_JOB_LOCK_WAIT=5 INVOCATION_ID=0123456789abcdef
+if [ "$rc" -ne 0 ] && [ "$rc" -ne 75 ] && [ ! -s "$TMP/out" ] && err_has "still held after waiting 5s"; then
+  ok "a lock wait that runs out FAILS (rc=$rc), never a success or a skip"
+else
+  bad "a lock wait that ran out was not a loud failure (rc=$rc, err='$(tr '\n' ' ' < "$TMP/err")')"
+fi
+for v in abc 0 5s -1; do
+  run HEAVY_JOB_OPS_ENV="$OPS_ENV" "HEAVY_JOB_LOCK_WAIT=$v"
+  if [ "$rc" -eq 2 ] && [ ! -s "$TMP/out" ]; then ok "HEAVY_JOB_LOCK_WAIT='$v' refused before the payload runs"; else bad "HEAVY_JOB_LOCK_WAIT='$v' not refused (rc=$rc)"; fi
+done
+
 # ── 8. every wrapper unit tolerates the skip code ─────────────────────
 echo "  [systemd units]"
 units=0
@@ -419,6 +445,116 @@ print(f"  cron launchers checked: {found}")
 sys.exit(1 if found == 0 or missing else 0)
 PY
 then ok "every cron launcher of the wrapper declares HEAVY_JOB_CLASS=scheduled"; else bad "a cron launcher of the wrapper is not HEAVY_JOB_CLASS=scheduled (or none was found)"; fi
+
+# ── 14. units that SHARE a job name queue, never skip (GH-1229) ──────
+# Two units on one lock name are mutually exclusive on purpose, so a skip
+# means one of them silently does not run while the other is long (Tier
+# B skipped Tier A's whole bootstrap pass). Each must set
+# HEAVY_JOB_LOCK_WAIT, and its TimeoutStartSec (whole seconds) must
+# outlast the wait, or systemd kills the queued fire first.
+echo "  [units sharing a job name]"
+shared=0
+# deploy/systemd/X.service mirrors templates/systemd/X.service.j2: the
+# same unit, so units are counted by basename, not by file.
+names="$(grep -rE '^ExecStart=[^ ]*run-heavy-job\.sh ' configs/ansible/roles/archival-node/templates/systemd deploy/systemd |
+  sed -E 's|^([^:]*/)?([^/:]+\.service)(\.j2)?:ExecStart=[^ ]+ ([^ ]+).*|\4 \2|' | sort -u | awk '{print $1}' | uniq -d)"
+for name in $names; do
+  while IFS= read -r unit; do
+    shared=$((shared + 1))
+    wait_s="$(sed -n 's/^Environment=HEAVY_JOB_LOCK_WAIT=//p' "$unit")"
+    tss="$(sed -n 's/^TimeoutStartSec=//p' "$unit")"
+    case "$wait_s" in ''|*[!0-9]*) wait_s=0 ;; esac
+    case "$tss" in ''|*[!0-9]*) tss=0 ;; esac
+    if [ "$wait_s" -gt 0 ] && [ "$tss" -gt "$wait_s" ]; then
+      ok "$unit shares '$name': queues ${wait_s}s, TimeoutStartSec=${tss}s outlasts it"
+    else
+      bad "$unit shares job name '$name' with another unit but would SKIP on a held lock (HEAVY_JOB_LOCK_WAIT='${wait_s}', TimeoutStartSec='${tss}')"
+    fi
+  done < <(grep -rlE "^ExecStart=[^ ]*run-heavy-job\.sh ${name}( |\$)" configs/ansible/roles/archival-node/templates/systemd deploy/systemd)
+done
+if [ "$shared" -gt 0 ]; then ok "$shared unit(s) on a shared job name checked"; else bad "no two units share a job name — the check ran over nothing (verify-archive tiers A and B should)"; fi
+
+# ── 12. a stopped wrapper stops its scope (GH-1228) ──────────────────
+# The scope is a SIBLING of the calling unit, so a unit stop or its
+# TimeoutStartSec signals only the wrapper. Unforwarded, the payload ran
+# on holding the lock and every later fire skipped as "already running".
+# The systemd-run stub execs the payload as the wrapper's child, so
+# killing the wrapper orphans it exactly as a real scope does; the
+# systemctl stub stands in for `systemctl stop <unit>.scope`.
+echo "  [stop forwarding, root branch]"
+mkdir -p "$TMP/stopbin"
+cat > "$TMP/stopbin/systemctl" <<'SC'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$SYSTEMCTL_REC"
+if [ "$1" = stop ] && [ -s "$PAYLOAD_PIDFILE" ]; then kill -TERM "$(cat "$PAYLOAD_PIDFILE")"; fi
+exit 0
+SC
+chmod +x "$TMP/stopbin/systemctl"
+cat > "$TMP/long.sh" <<'SH'
+#!/usr/bin/env bash
+echo "$$" > "$PAYLOAD_PIDFILE"
+exec /bin/sleep 30
+SH
+chmod +x "$TMP/long.sh"
+: > "$TMP/sysctl"; rm -f "$TMP/payload.pid"
+PATH="$TMP/stopbin:$TMP/rootbin:$PATH" SYSTEMCTL_REC="$TMP/sysctl" PAYLOAD_PIDFILE="$TMP/payload.pid" \
+  HEAVY_JOB_OPS_ENV="$OPS_ENV" env -u INVOCATION_ID "$WRAP" sig-job "$TMP/long.sh" >"$TMP/out" 2>"$TMP/err" &
+wpid=$!
+for _ in $(seq 50); do [ -s "$TMP/payload.pid" ] && break; /bin/sleep 0.1; done
+payload_pid="$(cat "$TMP/payload.pid" 2>/dev/null)"
+kill -TERM "$wpid"
+wait "$wpid"; rc=$?
+if grep -qxF "stop heavy-sig-job-${wpid}.scope" "$TMP/sysctl"; then
+  ok "TERM to the wrapper runs systemctl stop on its own scope"
+else
+  bad "TERM to the wrapper did not stop heavy-sig-job-${wpid}.scope (systemctl calls: '$(tr '\n' ' ' < "$TMP/sysctl")')"
+fi
+if [ -n "$payload_pid" ] && ! kill -0 "$payload_pid" 2>/dev/null; then
+  ok "no payload outlives the stopped wrapper (the lock goes with it)"
+else
+  bad "payload pid '${payload_pid}' outlived the stopped wrapper, holding the lock"
+  [ -n "$payload_pid" ] && kill "$payload_pid" 2>/dev/null
+fi
+if [ "$rc" -ne 0 ] && [ "$rc" -ne 75 ]; then ok "a stopped run exits non-zero ($rc), never as success or skip"; else bad "a stopped run exited $rc"; fi
+
+cat > "$TMP/rc3.sh" <<'SH'
+#!/usr/bin/env bash
+read -r line; echo "stdin=$line"; exit 3
+SH
+chmod +x "$TMP/rc3.sh"
+printf 'hello\n' | PATH="$TMP/rootbin:$PATH" HEAVY_JOB_OPS_ENV="$OPS_ENV" env -u INVOCATION_ID "$WRAP" rc-job "$TMP/rc3.sh" >"$TMP/out" 2>"$TMP/err"
+rc=$?
+if [ "$rc" -eq 3 ]; then ok "the payload's own exit status is the wrapper's"; else bad "payload exit 3 came back as $rc"; fi
+if out_has "stdin=hello"; then ok "the backgrounded payload still reads the caller's stdin"; else bad "payload lost stdin ($(cat "$TMP/out"))"; fi
+
+# ── 13. the memory cap reaches the payload's scope (GH-1228) ─────────
+echo "  [memory cap, root branch]"
+: > "$PROPS"
+PATH="$TMP/rootbin:$PATH" run HEAVY_JOB_OPS_ENV="$OPS_ENV" SYSTEMD_RUN_PROPS="$PROPS" HEAVY_JOB_MEMORY_MAX=2G
+if [ "$rc" -eq 0 ] && grep -qx 'MemoryMax=2G' "$PROPS" && ! grep -qx 'MemoryMax=20G' "$PROPS"; then
+  ok "HEAVY_JOB_MEMORY_MAX=2G becomes the scope's MemoryMax"
+else
+  bad "HEAVY_JOB_MEMORY_MAX=2G not applied to the scope (rc=$rc, props: $(tr '\n' ' ' < "$PROPS"))"
+fi
+for v in 2 0G 2GB -1G abc G; do
+  : > "$PROPS"
+  PATH="$TMP/rootbin:$PATH" run HEAVY_JOB_OPS_ENV="$OPS_ENV" SYSTEMD_RUN_PROPS="$PROPS" "HEAVY_JOB_MEMORY_MAX=$v"
+  if [ "$rc" -eq 2 ] && [ ! -s "$TMP/out" ] && [ ! -s "$PROPS" ]; then
+    ok "HEAVY_JOB_MEMORY_MAX='$v' refused before the payload runs"
+  else
+    bad "HEAVY_JOB_MEMORY_MAX='$v' not refused (rc=$rc)"
+  fi
+done
+# A root unit's own MemoryMax= binds the wrapper shell, not the payload in
+# the sibling scope — it must be expressed as HEAVY_JOB_MEMORY_MAX.
+while IFS= read -r unit; do
+  grep -qx 'User=root' "$unit" || continue
+  if grep -qE '^MemoryMax=' "$unit"; then
+    bad "$unit sets MemoryMax= on a root wrapper unit — it caps the wrapper, not the payload; use Environment=HEAVY_JOB_MEMORY_MAX"
+  else
+    ok "$unit: no unit-level MemoryMax= pretending to cap the payload"
+  fi
+done < <(grep -rlE '^ExecStart=[^ ]*run-heavy-job\.sh ' configs/ansible/roles/archival-node/templates/systemd deploy/systemd)
 
 # ── 11. NAME must be a job label, not the payload's own binary ───────
 # A dropped label ("run-heavy-job.sh stellarindex-ops supply …" instead

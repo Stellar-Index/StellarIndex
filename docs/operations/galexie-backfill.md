@@ -19,8 +19,9 @@ afterwards to prove the bytes are canonical.
 
 > ⚠️ **"Genesis → live bucket" is the GREENFIELD shape, not r1's shape
 > today.** ADR-0027 trimmed `galexie-archive` on r1 to a **hot floor**
-> (`stellarindex_archive_hot_floor`, 49,984,000 as of 2026-09-02 —
-> `/etc/default/galexie-archive-fill` on the host). Once the monthly
+> (`stellarindex_archive_hot_floor` in the region's inventory; the
+> 2026-09-02 trim boundary was 49,984,000 — read the rendered value from
+> `/etc/default/galexie-archive-fill` on the host, not from this page). Once the monthly
 > trim timer runs, the fill's floor is the higher of that value and the
 > cutoff the last trim used, which `compute-trim-cutoff.sh` persists to
 > `/var/lib/galexie-archive/hot-floor` before deleting. Everything below

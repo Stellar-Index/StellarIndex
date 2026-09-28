@@ -56,8 +56,9 @@ severity: P1
 >   --tags ops-jobs
 >
 > # 2. Prime BOTH producers once, one at a time — they share
-> #    run-heavy-job.sh's "verify-archive" singleton lock, so a
-> #    concurrent start just fails on the lock (Tier D's cron
+> #    run-heavy-job.sh's "verify-archive" singleton lock, so the
+> #    second start queues until the first run ends (HEAVY_JOB_LOCK_WAIT,
+> #    up to 20h; `systemctl start` blocks that long) (Tier D's cron
 > #    takes its own "verify-archive-tier-d" lock instead). This is also what
 > #    puts the zero baseline on disk BEFORE the first nightly run
 > #    (blind spot 2 below), so do not skip it. A non-zero exit here

@@ -48,7 +48,7 @@ WatchdogSec=1h
 # high-water (63.6M+, far above any floor). If the state file is ever
 # lost, restarting from the hot floor instead of ledger 2 avoids a
 # from-genesis walk over a range the local archive no longer holds.
-Environment=VERIFY_ARCHIVE_FROM={{ stellarindex_archive_hot_floor | default(2) }}
+Environment=VERIFY_ARCHIVE_FROM={{ stellarindex_archive_hot_floor }}
 Environment=VERIFY_ARCHIVE_WORKERS=12
 Environment=VERIFY_ARCHIVE_MAX_RUNTIME=0
 Environment=VERIFY_ARCHIVE_STATE_FILE=/var/lib/stellarindex/verify-archive-state.json
@@ -92,8 +92,16 @@ EnvironmentFile=-/etc/default/stellarindex-ops
 # runs as User=stellarindex (non-root) so it takes the lock then `exec`s the
 # binary in place — the payload stays the unit's MAIN pid, keeping Type=notify
 # + NotifyAccess=main + WatchdogSec intact (a systemd-run scope would break it).
-# 75 = run-heavy-job.sh skipped this fire (per-job lock held): not a
-# failure, but ExecMainStatus=75 keeps it distinct from a run.
+#
+# Tier B uses the SAME job name: both tiers rewrite the one state file,
+# so they must never overlap. A held lock therefore QUEUES this fire
+# (HEAVY_JOB_LOCK_WAIT, 20h) rather than skipping it — a skip here
+# would drop the chain tier for a night while Tier B ran long, and in a
+# Type=notify unit an exit before READY=1 is a protocol failure whatever
+# SuccessExitStatus says. TimeoutStartSec below covers the wait.
+Environment=HEAVY_JOB_LOCK_WAIT=72000
+# 75 only reaches this unit from a caller that unsets the wait; kept for
+# the wrapper-wide SuccessExitStatus=75 contract.
 SuccessExitStatus=75
 # Timer-fired: shares run-heavy-job.sh's host-wide lock, never refused by it.
 Environment=HEAVY_JOB_CLASS=scheduled
@@ -131,11 +139,13 @@ ProtectControlGroups=true
 # unit needs is stated rather than inferred.
 ReadWritePaths=/var/lib/node_exporter/textfile_collector
 
-# With Type=notify + WatchdogSec=1h above, TimeoutStartSec only
-# governs the time the binary has to signal READY=1 — essentially
-# "did the process start cleanly". The walk's actual run-time is
-# bounded by WatchdogSec (liveness, not wall-clock).
-TimeoutStartSec=10m
+# With Type=notify + WatchdogSec=1h above, TimeoutStartSec governs
+# the time until READY=1: the lock wait (HEAVY_JOB_LOCK_WAIT=72000)
+# plus the 10 minutes the binary has to start cleanly. Whole seconds so
+# scripts/ci/run-heavy-job-test.sh can prove it exceeds the wait. The
+# walk's actual run-time is bounded by WatchdogSec (liveness, not
+# wall-clock).
+TimeoutStartSec=72600
 
 # The first-ever verify run is a full ~13.8h pass. Deprioritize so
 # it yields CPU/IO to the API + postgres during daytime hours

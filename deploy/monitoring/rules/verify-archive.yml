@@ -52,6 +52,11 @@ groups:
                 archive-completeness daily run should also be alerting on.
               - 8h max-runtime cap exceeded — investigate the per-chunk
                 progress in journald (`journalctl -u verify-archive-tier-a`).
+              - Lock wait expired — Tier B (or a manual `verify-archive`
+                run) held the shared `verify-archive` lock for the whole
+                HEAVY_JOB_LOCK_WAIT (20h); the journal says "still held
+                after waiting". Find the holder with
+                `fuser -v /run/lock/stellarindex-heavy-verify-archive.lock`.
             Customer impact: zero immediate; the API serves from existing
             data. Cross-region trust model degrades after 48h without a
             clean run (see stellarindex_verify_archive_run_stale).
@@ -154,6 +159,11 @@ groups:
                 as inconclusive-and-fatal (DAT-09).
               - max-runtime / watchdog — investigate journald
                 (`journalctl -u verify-archive-tier-b`).
+              - Lock wait expired — Tier A (or a manual `verify-archive`
+                run) held the shared `verify-archive` lock for the whole
+                HEAVY_JOB_LOCK_WAIT (20h); the journal says "still held
+                after waiting". Find the holder with
+                `fuser -v /run/lock/stellarindex-heavy-verify-archive.lock`.
             Customer impact: zero immediate; the API serves from existing data.
 
             Runbook: docs/operations/runbooks/verify-archive-tier-b.md

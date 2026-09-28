@@ -42,6 +42,7 @@ ROLE_TASKS="${ROLE_TASKS:-$PWD/configs/ansible/roles/archival-node/tasks}"
 OPS_ARCHIVE_SRC="${OPS_ARCHIVE_SRC:-$PWD/internal/ops/archive/verify_archive.go}"
 TASK_FILE="$ROLE_TASKS/14-stellarindex-services.yml"
 ROLE_SYSTEMD="${ROLE_SYSTEMD:-$PWD/configs/ansible/roles/archival-node/templates/systemd}"
+ROLE_DEFAULTS="${ROLE_DEFAULTS:-$PWD/configs/ansible/roles/archival-node/defaults/main.yml}"
 
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  ok   — $1"; }
@@ -70,7 +71,7 @@ fi
 
 # ── 1-3. render the real task under real Jinja and inspect the flags ──────
 render_ok=0
-"$PY" - "$TASK_FILE" <<'PY_RENDER_EOF' || render_ok=1
+"$PY" - "$TASK_FILE" "$ROLE_DEFAULTS" <<'PY_RENDER_EOF' || render_ok=1
 import re
 import sys
 
@@ -81,6 +82,10 @@ TASK_NAME = "Install Tier D verify-archive weekly cron"
 
 with open(sys.argv[1], encoding="utf-8") as fh:
     tasks = yaml.safe_load(fh)
+# Role defaults are the lowest-precedence layer of every real render; a
+# host shape's vars override them, exactly as the inventory does.
+with open(sys.argv[2], encoding="utf-8") as fh:
+    role_defaults = yaml.safe_load(fh) or {}
 
 job = None
 for task in tasks or []:
@@ -102,13 +107,15 @@ CASES = [
      63049999),
 ]
 
-env = jinja2.Environment()
+# StrictUndefined: a var with no role default must fail here, not render
+# as an empty flag value on the host.
+env = jinja2.Environment(undefined=jinja2.StrictUndefined)
 template = env.from_string(job)
 failures = 0
 
 for label, ctx, want_to in CASES:
     try:
-        rendered = " ".join(template.render(**ctx).split())
+        rendered = " ".join(template.render(**{**role_defaults, **ctx}).split())
     except jinja2.UndefinedError as exc:  # a var the role does not default
         print(f"  FAIL — {label}: template raised UndefinedError: {exc}")
         failures += 1
