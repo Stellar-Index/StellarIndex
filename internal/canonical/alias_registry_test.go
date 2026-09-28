@@ -187,11 +187,69 @@ func TestNewAliasRegistry_RejectsDuplicateClassic(t *testing.T) {
 	}
 }
 
-// TestNewAliasRegistry_AcceptsConfiguredWrappers: every pair in the
-// archival-node template's [supply.sac_wrappers] derives correctly (so the
-// deployed config still boots), and a verified XLM SAC → native entry is
-// accepted as the baseline family.
+// TestNewAliasRegistry_AcceptsConfiguredWrappers: the archival-node
+// template's [supply.sac_wrappers], as rendered for each network the
+// inventories deploy, builds a registry on that network's passphrase, so the
+// deployed config boots everywhere. Pubnet loads every pair; a test net must
+// render none of the pubnet contract ids, which cannot derive there.
 func TestNewAliasRegistry_AcceptsConfiguredWrappers(t *testing.T) {
+	for _, tc := range []struct {
+		network, passphrase string
+	}{
+		{"pubnet", PubnetPassphrase},
+		{"testnet", TestnetPassphrase},
+		{"futurenet", FuturenetPassphrase},
+	} {
+		t.Run(tc.network, func(t *testing.T) {
+			wrappers, total := templateSACWrappers(t, tc.network)
+			if total < 3 {
+				t.Fatalf("template carries %d sac_wrappers entries, want several", total)
+			}
+			if tc.network != "pubnet" {
+				if len(wrappers) != 0 {
+					t.Errorf("%s renders %d sac_wrappers entries, want none", tc.network, len(wrappers))
+				}
+				if _, err := NewAliasRegistry(tc.passphrase, wrappers); err != nil {
+					t.Fatalf("NewAliasRegistry(%s): %v", tc.network, err)
+				}
+				return
+			}
+
+			if len(wrappers) != total || wrappers[usdcSACAddr] != "USDC:"+usdcIssuer {
+				t.Fatalf("pubnet renders %d of %d sac_wrappers entries, want all incl. USDC", len(wrappers), total)
+			}
+			wrappers[XLMSacContractID] = "native"
+			reg, err := NewAliasRegistry(tc.passphrase, wrappers)
+			if err != nil {
+				t.Fatalf("NewAliasRegistry(pubnet): %v", err)
+			}
+			for sac, key := range wrappers {
+				if key == "native" {
+					continue
+				}
+				code, issuer, _ := strings.Cut(key, ":")
+				classic, err := NewClassicAsset(code, issuer)
+				if err != nil {
+					t.Fatalf("classic %q: %v", key, err)
+				}
+				if got := forms(reg.Aliases(classic)); len(got) != 2 || got[1] != sac {
+					t.Errorf("Aliases(%s) = %v, want [%s, %s]", key, got, key, sac)
+				}
+			}
+			if got := reg.Aliases(NativeAsset()); len(got) != len(xlmAliasFamily) {
+				t.Errorf("Aliases(native) = %v, want the XLM baseline family", forms(got))
+			}
+		})
+	}
+}
+
+// templateSACWrappers evaluates the template's [supply.sac_wrappers] table
+// for one stellar_network, returning the rendered pairs and the count of
+// entries in the table regardless of guard. Only the `{% if stellar_network
+// == "..." %}` / `{% endif %}` guard is understood; any other jinja tag in
+// the table fails the test rather than being evaluated wrongly.
+func templateSACWrappers(t *testing.T, network string) (map[string]string, int) {
+	t.Helper()
 	const tmpl = "../../configs/ansible/roles/archival-node/templates/stellarindex.toml.j2"
 	raw, err := os.ReadFile(tmpl)
 	if err != nil {
@@ -202,32 +260,40 @@ func TestNewAliasRegistry_AcceptsConfiguredWrappers(t *testing.T) {
 		t.Fatalf("%s: no [supply.sac_wrappers] table", tmpl)
 	}
 	entry := regexp.MustCompile(`^"(C[A-Z2-7]{55})"\s*=\s*"([^"]+)"$`)
-	wrappers := map[string]string{XLMSacContractID: "native"}
+	guard := regexp.MustCompile(`^\{%-?\s*if\s+stellar_network\s*==\s*["']([a-z]+)["']\s*-?%\}$`)
+	endif := regexp.MustCompile(`^\{%-?\s*endif\s*-?%\}$`)
+	wrappers := map[string]string{}
+	total, active, inGuard := 0, true, false
 	for _, line := range strings.Split(section, "\n") {
-		m := entry.FindStringSubmatch(strings.TrimSpace(line))
-		if m == nil {
-			break
+		line = strings.TrimSpace(line)
+		switch {
+		case line == "":
+			if inGuard {
+				t.Fatalf("%s: blank line inside a sac_wrappers guard", tmpl)
+			}
+			return wrappers, total
+		case guard.MatchString(line):
+			if inGuard {
+				t.Fatalf("%s: nested sac_wrappers guard", tmpl)
+			}
+			inGuard, active = true, guard.FindStringSubmatch(line)[1] == network
+		case endif.MatchString(line):
+			inGuard, active = false, true
+		case strings.Contains(line, "{%") || strings.Contains(line, "{{"):
+			t.Fatalf("%s: unsupported jinja in sac_wrappers: %q", tmpl, line)
+		default:
+			m := entry.FindStringSubmatch(line)
+			if m == nil {
+				t.Fatalf("%s: unparsed sac_wrappers line %q", tmpl, line)
+			}
+			total++
+			if active {
+				wrappers[m[1]] = m[2]
+			}
 		}
-		wrappers[m[1]] = m[2]
 	}
-	if len(wrappers) < 3 || wrappers[usdcSACAddr] != "USDC:"+usdcIssuer {
-		t.Fatalf("parsed %d wrappers from %s, want the USDC pair among several", len(wrappers)-1, tmpl)
-	}
-
-	reg, err := NewAliasRegistry(PubnetPassphrase, wrappers)
-	if err != nil {
-		t.Fatalf("NewAliasRegistry(configured wrappers): %v", err)
-	}
-	usdc, err := NewClassicAsset("USDC", usdcIssuer)
-	if err != nil {
-		t.Fatalf("classic: %v", err)
-	}
-	if got := forms(reg.Aliases(usdc)); len(got) != 2 || got[1] != usdcSACAddr {
-		t.Errorf("Aliases(USDC) = %v, want [USDC, %s]", got, usdcSACAddr)
-	}
-	if got := reg.Aliases(NativeAsset()); len(got) != len(xlmAliasFamily) {
-		t.Errorf("Aliases(native) = %v, want the XLM baseline family", forms(got))
-	}
+	t.Fatalf("%s: sac_wrappers table runs to EOF", tmpl)
+	return nil, 0
 }
 
 func forms(as []Asset) []string {
