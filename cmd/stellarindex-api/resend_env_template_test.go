@@ -26,19 +26,26 @@ const resendEnvTemplate = "../../configs/ansible/roles/archival-node/templates/s
 // line it guards, and nothing that needs the role's other variables.
 func resendTemplateBlock(t *testing.T) string {
 	t.Helper()
+	return envTemplateBlock(t, "# Resend transactional email", "STELLARINDEX_RESEND_API_KEY")
+}
+
+// envTemplateBlock returns the shipped template text from header through
+// the single `key=` line that follows it.
+func envTemplateBlock(t *testing.T, header, key string) string {
+	t.Helper()
 	raw, err := os.ReadFile(resendEnvTemplate)
 	if err != nil {
 		t.Fatalf("read template: %v", err)
 	}
 	body := string(raw)
-	start := strings.Index(body, "# Resend transactional email")
+	start := strings.Index(body, header)
 	if start < 0 {
-		t.Fatal("template has no '# Resend transactional email' block — this test is asserting nothing")
+		t.Fatalf("template has no %q block — this test is asserting nothing", header)
 	}
-	const keyLine = "\nSTELLARINDEX_RESEND_API_KEY="
+	keyLine := "\n" + key + "="
 	rel := strings.Index(body[start:], keyLine)
 	if rel < 0 {
-		t.Fatal("template has no STELLARINDEX_RESEND_API_KEY line after the Resend header")
+		t.Fatalf("template has no %s line after %q", key, header)
 	}
 	end := start + rel + len(keyLine)
 	if nl := strings.IndexByte(body[end:], '\n'); nl >= 0 {
@@ -46,8 +53,8 @@ func resendTemplateBlock(t *testing.T) string {
 	} else {
 		end = len(body)
 	}
-	if n := strings.Count(body, "STELLARINDEX_RESEND_API_KEY="); n != 1 {
-		t.Fatalf("template assigns STELLARINDEX_RESEND_API_KEY %d times, want exactly 1", n)
+	if n := strings.Count(body, "\n"+key+"="); n != 1 {
+		t.Fatalf("template assigns %s %d times, want exactly 1", key, n)
 	}
 	return body[start:end]
 }
@@ -125,57 +132,113 @@ func TestResendEnvTemplate_RendersUnderEveryDeploymentShape(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dest := filepath.Join(t.TempDir(), "out.env")
-			vars, err := json.Marshal(tc.vars)
-			if err != nil {
-				t.Fatalf("marshal vars: %v", err)
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			cmd := exec.CommandContext(ctx, ansible, "localhost", "-c", "local",
-				"-m", "ansible.builtin.template",
-				"-a", "src="+src+" dest="+dest,
-				"-e", string(vars))
-			scratch := t.TempDir()
-			cmd.Env = append(os.Environ(),
-				"ANSIBLE_LOCAL_TEMP="+scratch,
-				"ANSIBLE_REMOTE_TEMP="+scratch,
-				"ANSIBLE_LOCALHOST_WARNING=False",
-				"ANSIBLE_NOCOLOR=1",
-			)
-			out, runErr := cmd.CombinedOutput()
+			assertEnvBlockRender(t, ansible, src, tc.vars, tc.wantFail, "vault_resend_api_key is empty", tc.wantLine)
+		})
+	}
+}
 
-			if tc.wantFail {
-				if runErr == nil {
-					t.Fatalf("render succeeded, want a refusal:\n%s", out)
-				}
-				if !strings.Contains(string(out), "vault_resend_api_key is empty") {
-					t.Errorf("render failed, but not with the guard's hint:\n%s", out)
-				}
-				if _, statErr := os.Stat(dest); statErr == nil {
-					t.Errorf("a refused render still wrote the env file")
-				}
-				return
-			}
-			if runErr != nil {
-				t.Fatalf("render failed: %v\n%s", runErr, out)
-			}
-			rendered, err := os.ReadFile(dest)
-			if err != nil {
-				t.Fatalf("read rendered file: %v", err)
-			}
-			lines := strings.Split(strings.TrimRight(string(rendered), "\n"), "\n")
-			if got := lines[len(lines)-1]; got != tc.wantLine {
-				t.Errorf("last rendered line = %q, want %q", got, tc.wantLine)
-			}
-			for _, l := range lines {
-				// Everything but the assignment is a comment: the guard's
-				// {% %} tags must leave no residue in the systemd
-				// EnvironmentFile.
-				if l != tc.wantLine && !strings.HasPrefix(l, "#") {
-					t.Errorf("unexpected non-comment line in the rendered block: %q", l)
-				}
-			}
+// assertEnvBlockRender renders src through ansible's template module with
+// vars and checks it is refused with hint, or renders only comments plus
+// wantLine as its last line.
+func assertEnvBlockRender(t *testing.T, ansible, src string, vars map[string]any, wantFail bool, hint, wantLine string) {
+	t.Helper()
+	dest := filepath.Join(t.TempDir(), "out.env")
+	varsJSON, err := json.Marshal(vars)
+	if err != nil {
+		t.Fatalf("marshal vars: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, ansible, "localhost", "-c", "local",
+		"-m", "ansible.builtin.template",
+		"-a", "src="+src+" dest="+dest,
+		"-e", string(varsJSON))
+	scratch := t.TempDir()
+	cmd.Env = append(os.Environ(),
+		"ANSIBLE_LOCAL_TEMP="+scratch,
+		"ANSIBLE_REMOTE_TEMP="+scratch,
+		"ANSIBLE_LOCALHOST_WARNING=False",
+		"ANSIBLE_NOCOLOR=1",
+	)
+	out, runErr := cmd.CombinedOutput()
+
+	if wantFail {
+		if runErr == nil {
+			t.Fatalf("render succeeded, want a refusal:\n%s", out)
+		}
+		if !strings.Contains(string(out), hint) {
+			t.Errorf("render failed, but not with the guard's hint:\n%s", out)
+		}
+		if _, statErr := os.Stat(dest); statErr == nil {
+			t.Errorf("a refused render still wrote the env file")
+		}
+		return
+	}
+	if runErr != nil {
+		t.Fatalf("render failed: %v\n%s", runErr, out)
+	}
+	rendered, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("read rendered file: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(rendered), "\n"), "\n")
+	if got := lines[len(lines)-1]; got != wantLine {
+		t.Errorf("last rendered line = %q, want %q", got, wantLine)
+	}
+	for _, l := range lines {
+		// Everything but the assignment is a comment: the guard's
+		// {% %} tags must leave no residue in the systemd
+		// EnvironmentFile.
+		if l != wantLine && !strings.HasPrefix(l, "#") {
+			t.Errorf("unexpected non-comment line in the rendered block: %q", l)
+		}
+	}
+}
+
+// The dashboard code secret is required wherever the dashboard is mounted —
+// test nets included — because passkeys are wired there and the API refuses
+// to boot without it; the render must refuse first.
+func TestDashboardCodeSecretEnvTemplate_RendersUnderEveryDeploymentShape(t *testing.T) {
+	block := envTemplateBlock(t, "# Root server secret for dashboard auth", "STELLARINDEX_DASHBOARD_CODE_SECRET")
+	guard := strings.Index(block, "undef(hint=")
+	assign := strings.Index(block, "\nSTELLARINDEX_DASHBOARD_CODE_SECRET=")
+	if guard < 0 || assign < guard || !strings.Contains(block, "stellarindex_dashboard_base_url") {
+		t.Fatalf("code-secret block must refuse an empty secret where the dashboard is mounted, before the assignment:\n%s", block)
+	}
+
+	ansible, err := exec.LookPath("ansible")
+	if err != nil {
+		t.Skip("ansible not on PATH — render leg skipped; static leg covers the guard's presence")
+	}
+	src := filepath.Join(t.TempDir(), "code-secret-block.j2")
+	if err := os.WriteFile(src, []byte(block), 0o600); err != nil {
+		t.Fatalf("write block: %v", err)
+	}
+	const fixtureValue = "code-secret-fixture-not-a-real-credential" // gitleaks:allow
+	const hint = "vault_dashboard_code_secret is empty"
+	for _, tc := range []struct {
+		name     string
+		vars     map[string]any
+		wantFail bool
+		wantLine string
+	}{
+		{name: "production, secret absent: render refused", vars: map[string]any{}, wantFail: true},
+		{name: "production, secret blank-only: render refused", vars: map[string]any{"vault_dashboard_code_secret": "  "}, wantFail: true},
+		{name: "testnet, secret absent: render refused", vars: map[string]any{"region_deployment": "testnet"}, wantFail: true},
+		{name: "futurenet, secret absent: render refused", vars: map[string]any{"region_deployment": "futurenet"}, wantFail: true},
+		{
+			name:     "secret present: rendered verbatim",
+			vars:     map[string]any{"vault_dashboard_code_secret": fixtureValue},
+			wantLine: "STELLARINDEX_DASHBOARD_CODE_SECRET=" + fixtureValue,
+		},
+		{
+			name:     "dashboard unmounted, secret absent: renders empty",
+			vars:     map[string]any{"stellarindex_dashboard_base_url": ""},
+			wantLine: "STELLARINDEX_DASHBOARD_CODE_SECRET=",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertEnvBlockRender(t, ansible, src, tc.vars, tc.wantFail, hint, tc.wantLine)
 		})
 	}
 }
