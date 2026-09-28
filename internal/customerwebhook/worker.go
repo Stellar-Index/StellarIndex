@@ -316,7 +316,16 @@ func guardedClient(c *http.Client) *http.Client {
 		panic("customerwebhook: New: Options.HTTPClient.Transport must be nil (a caller transport bypasses the SSRF dial guard)")
 	}
 	guarded := *c
-	guarded.Transport = &http.Transport{DialContext: ssrfGuardedDialContext}
+	guarded.Transport = &http.Transport{
+		DialContext: ssrfGuardedDialContext,
+		// Bound the idle-connection pool explicitly rather than inherit
+		// http.DefaultTransport's: an unbounded pool leaks one idle conn
+		// per distinct customer endpoint host for the worker's lifetime,
+		// and each is a live outbound socket to a customer-controlled
+		// address.
+		IdleConnTimeout:     90 * time.Second,
+		MaxIdleConnsPerHost: 1,
+	}
 	guarded.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
@@ -354,13 +363,18 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 // Stop signals Run to exit cleanly. Returns after the in-flight
-// tick (if any) completes.
+// tick (if any) completes. Safe to call before Run: doneCh is only
+// closed by Run's own defer, so a Worker that was never Run has
+// nothing to wait for.
 func (w *Worker) Stop() {
 	select {
 	case <-w.stopCh:
 		// already stopped
 	default:
 		close(w.stopCh)
+	}
+	if !w.running.Load() {
+		return
 	}
 	<-w.doneCh
 }
@@ -782,7 +796,7 @@ func (w *Worker) handleFailure(ctx context.Context, d platform.WebhookDelivery, 
 
 // scheduleRetry returns the next attempt time given a 1-based attempt
 // number. Exponential backoff — 30s, 1m, 2m, 4m, 8m, … capped at 1h —
-// with bounded full-jitter so deliveries that fail in the same tick
+// with bounded equal-jitter so deliveries that fail in the same tick
 // don't retry in synchronized waves. Caller decides whether to use this
 // or to mark the delivery terminally failed.
 func (w *Worker) scheduleRetry(nextAttempt int) time.Time {
@@ -824,7 +838,7 @@ func backoffCeiling(nextAttempt int) time.Duration {
 	return delay
 }
 
-// jitterDelay applies full-jitter to a backoff delay, returning a random
+// jitterDelay applies equal-jitter to a backoff delay, returning a random
 // duration in [delay/2, delay]. Spreading N simultaneous failures across
 // the back half of the window stops them re-hammering a recovering
 // endpoint in lockstep (thundering herd). Never returns a negative or

@@ -681,3 +681,37 @@ func TestWorker_Run_SequentialSecondCallReturnsErrAlreadyRunning(t *testing.T) {
 		t.Fatalf("second sequential Run() = %v, want ErrAlreadyRunning", err)
 	}
 }
+
+func TestNew_TransportBoundsIdlePool(t *testing.T) {
+	transport := customerwebhook.GuardedTransportForTest(nil)
+
+	if transport.Proxy != nil {
+		t.Errorf("Transport.Proxy = non-nil, want nil (guardedClient must not route via an env/system proxy)")
+	}
+	if transport.IdleConnTimeout <= 0 {
+		t.Errorf("Transport.IdleConnTimeout = %v, want > 0 (an unbounded idle timeout leaks a socket per customer host forever)", transport.IdleConnTimeout)
+	}
+	if transport.MaxIdleConnsPerHost != 1 {
+		t.Errorf("Transport.MaxIdleConnsPerHost = %d, want 1", transport.MaxIdleConnsPerHost)
+	}
+}
+
+func TestStop_BeforeRunReturns(t *testing.T) {
+	store := newFakeStore()
+	w := customerwebhook.NewUnguardedForTest(store, customerwebhook.Options{
+		PollInterval: 5 * time.Millisecond,
+		HTTPClient:   &http.Client{Timeout: 10 * time.Second},
+	})
+
+	done := make(chan struct{})
+	go func() {
+		w.Stop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Stop() blocked for 1s on a Worker whose Run was never called")
+	}
+}
