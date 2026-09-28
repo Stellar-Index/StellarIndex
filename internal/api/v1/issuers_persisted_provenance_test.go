@@ -5,9 +5,7 @@ package v1_test
 // issuers_provenance_test.go pins what the read path CONCLUDES from a live
 // AccountEntry. These pin what it does with what the drain already wrote —
 // the half that was latent until handleIssuer carried IssuerRow's provenance
-// into the response. Until it did, `AuthFlagsSource` was always "" at the
-// point enrichIssuerFromAccountState reads it, so the skip-gate that exists
-// to keep a historical reading from freezing in place could never fire.
+// into the response.
 
 import (
 	"net/http"
@@ -72,17 +70,11 @@ func TestHandleIssuer_ServesThePersistedProvenance(t *testing.T) {
 	}
 }
 
-// TestHandleIssuer_PersistedLastKnownIsReofferedToTheLiveReader — the
-// skip-gate. handleIssuer skips the lake read when a row already has flags
-// AND a home_domain; a `last_known_before_removal` row must be EXEMPT from
-// that skip, because it is the one reading nothing else can ever correct:
-// the drain's primary queue is `auth_required IS NULL`, so it never revisits
-// a row it has filled.
-//
-// The row here is shaped to trip the skip-gate — flags set, home_domain
-// non-empty (from the SEP-1 resolver, which is a separate and better-sourced
-// path than the AccountEntry). Only the provenance label distinguishes it,
-// so this fails outright unless handleIssuer carries that label in.
+// TestHandleIssuer_PersistedLastKnownIsReofferedToTheLiveReader — a
+// `last_known_before_removal` row stops being true the moment the account is
+// re-created at the same address, and the drain's primary queue
+// (`auth_required IS NULL`) never revisits a filled row, so the read path
+// must re-offer it to the live reader.
 func TestHandleIssuer_PersistedLastKnownIsReofferedToTheLiveReader(t *testing.T) {
 	reader := &stubIssuersReader{row: timescale.IssuerRow{
 		GStrkey:             mergedIssuerG,
@@ -134,12 +126,12 @@ func TestHandleIssuer_PersistedLastKnownIsReofferedToTheLiveReader(t *testing.T)
 	}
 }
 
-// TestHandleIssuer_PersistedLiveReadingStillSkipsTheLakeRead — the exemption
-// above must stay narrow. `live` rows with a home_domain keep their cheap
-// early return; on r1 that is 44,247 of the 49,002 resolved rows, including
-// USDC's, and each avoided AccountStateCached call fans out to entry +
-// trustlines + offers reads on the hottest issuer pages in the set.
-func TestHandleIssuer_PersistedLiveReadingStillSkipsTheLakeRead(t *testing.T) {
+// TestHandleIssuer_PersistedLiveReadingIsReReadThroughThePointLookup — a
+// filled `live` row is re-read too (it can hold a domain the account has since
+// moved away from), and it is re-read through the narrow key_xdr point lookup
+// rather than AccountStateCached, whose fan-out to trustlines and offers would
+// put a cold lake read on every issuer page.
+func TestHandleIssuer_PersistedLiveReadingIsReReadThroughThePointLookup(t *testing.T) {
 	reader := &stubIssuersReader{row: timescale.IssuerRow{
 		GStrkey:             mergedIssuerG,
 		HomeDomain:          "centre.io",
@@ -147,29 +139,25 @@ func TestHandleIssuer_PersistedLiveReadingStillSkipsTheLakeRead(t *testing.T) {
 		AuthFlagsSource:     string(clickhouse.AuthFlagsSourceLive),
 		AuthFlagsAsOfLedger: u32(64100000),
 	}}
-	// If the handler consults this, it would overwrite the persisted values.
+	flags := &stubIssuerAuthFlags{live: map[string]clickhouse.AccountAuthFlags{
+		mergedIssuerG: {Required: false, HomeDomain: "centre.io", Source: clickhouse.AuthFlagsSourceLive, AsOfLedger: 64228661},
+	}}
+	// A different answer than the point lookup's, so the response shows which
+	// reader it came from.
 	explorer := &stubExplorerReader{accountState: clickhouse.AccountState{
 		Exists:             true,
-		Flags:              0,
-		LastModifiedLedger: 64228661,
+		Flags:              0x1,
+		LastModifiedLedger: 64999999,
 	}}
-	srv := v1.New(v1.Options{Issuers: reader, Explorer: explorer})
-	ts := startHTTPTest(t, srv.Handler())
+	got := getIssuer(t, v1.Options{Issuers: reader, Explorer: explorer, IssuerAuthFlags: flags}, mergedIssuerG)
 
-	var env struct {
-		Data v1.Issuer `json:"data"`
+	if len(flags.calls) != 1 || flags.calls[0] != mergedIssuerG {
+		t.Fatalf("point lookup calls = %v, want exactly [%s]", flags.calls, mergedIssuerG)
 	}
-	resp := mustGet(t, ts.URL+"/v1/issuers/"+mergedIssuerG)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	if got.AuthFlagsAsOfLedger == nil || *got.AuthFlagsAsOfLedger != 64228661 {
+		t.Errorf("auth_flags_as_of_ledger = %v, want the point lookup's 64228661", got.AuthFlagsAsOfLedger)
 	}
-	mustDecode(t, resp, &env)
-
-	if env.Data.AuthFlagsAsOfLedger == nil || *env.Data.AuthFlagsAsOfLedger != 64100000 {
-		t.Errorf("auth_flags_as_of_ledger = %v, want the persisted 64100000 — a live row must keep its early return",
-			env.Data.AuthFlagsAsOfLedger)
-	}
-	if env.Data.AuthRequired == nil || !*env.Data.AuthRequired {
-		t.Errorf("auth_required = %v, want the persisted true", env.Data.AuthRequired)
+	if got.AuthRequired == nil || *got.AuthRequired {
+		t.Errorf("auth_required = %v, want the point lookup's false", got.AuthRequired)
 	}
 }

@@ -22,6 +22,7 @@ var sloLakeBackedFields = map[string]bool{
 	"storageSupply":   true,
 	"tokenDecimals":   true,
 	"tokenSymbol":     true,
+	"issuerAuthFlags": true,
 	// The readiness checks include the ClickHouse ping (clickhouseReadyChecks).
 	"checks":              true,
 	"lakeWatermarkReader": true,

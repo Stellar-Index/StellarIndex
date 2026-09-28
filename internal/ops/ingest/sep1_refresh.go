@@ -11,6 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/metadata"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -62,6 +63,8 @@ var sep1DomainOverrides = map[string]string{
 func sep1RefreshCmd(args []string) error {
 	fs := flag.NewFlagSet("sep1-refresh", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
+	chAddr := fs.String("ch-addr", "127.0.0.1:9300",
+		"ClickHouse native address; each issuer's on-chain home_domain is re-read here before its fetch")
 	limit := fs.Int("limit", 100,
 		fmt.Sprintf("Max issuers to refresh per run (1-%d)", timescale.Sep1RefreshMaxLimit))
 	olderThan := fs.Duration("older-than", 24*time.Hour, "Skip issuers refreshed more recently than this")
@@ -99,8 +102,14 @@ func sep1RefreshCmd(args []string) error {
 		return err
 	}
 
+	chain, err := clickhouse.NewExplorerReader(ctx, *chAddr)
+	if err != nil {
+		return fmt.Errorf("sep1-refresh: clickhouse: %w", err)
+	}
+	defer func() { _ = chain.Close() }()
+
 	resolver := metadata.NewResolver(metadata.Options{Timeout: 10 * time.Second})
-	ok, failedKeys := sep1RefreshLoop(ctx, store, resolver, candidates, dryRun)
+	ok, failedKeys := sep1RefreshLoop(ctx, store, chain, resolver, candidates, dryRun)
 	failed := len(failedKeys)
 	fmt.Printf("\n%d succeeded, %d failed\n", ok, failed)
 	if dryRun {
@@ -119,6 +128,14 @@ func sep1RefreshCmd(args []string) error {
 type sep1Store interface {
 	MarkIssuerSep1Failed(ctx context.Context, gStrkey string) (int, error)
 	SetIssuerSep1Payload(ctx context.Context, gStrkey, fetchedFrom string, payload []byte) (bool, error)
+	SyncIssuerHomeDomain(ctx context.Context, gStrkey, homeDomain string) (bool, error)
+	ClearIssuerHomeDomain(ctx context.Context, gStrkey string) (bool, error)
+}
+
+// sep1ChainReader is the lake seam each issuer's on-chain home_domain is
+// re-read through before its fetch — clickhouse.ExplorerReader satisfies it.
+type sep1ChainReader interface {
+	BulkAccountAuthFlags(ctx context.Context, gStrkeys []string) (map[string]clickhouse.AccountAuthFlags, error)
 }
 
 // sep1Resolver is the slice of [metadata.Resolver] the refresh loop
@@ -147,7 +164,7 @@ const sep1PerIssuerBudget = 30 * time.Second
 // cost is superlinear on attacker-authored input and the unit runs under
 // a 2G ceiling.
 func sep1RefreshLoop(
-	ctx context.Context, store sep1Store, resolver sep1Resolver,
+	ctx context.Context, store sep1Store, chain sep1ChainReader, resolver sep1Resolver,
 	candidates []timescale.IssuerSep1Candidate, dryRun bool,
 ) (int, []string) {
 	var ok int
@@ -157,7 +174,7 @@ func sep1RefreshLoop(
 			fmt.Printf("\nAborted at %d/%d (deadline): %v\n", ok+len(failedKeys), len(candidates), err)
 			break
 		}
-		if refreshOneSep1Issuer(ctx, store, resolver, c, dryRun) {
+		if refreshOneSep1Issuer(ctx, store, chain, resolver, c, dryRun) {
 			ok++
 			continue
 		}
@@ -192,10 +209,17 @@ func sep1RefreshLoop(
 // exactly once per issuer per run, so the systemic-outage unwind — which
 // takes back exactly one ladder step per failed key — still balances.
 func refreshOneSep1Issuer(
-	ctx context.Context, store sep1Store, resolver sep1Resolver,
+	ctx context.Context, store sep1Store, chain sep1ChainReader, resolver sep1Resolver,
 	c timescale.IssuerSep1Candidate, dryRun bool,
 ) bool {
+	c, binding := confirmSep1Domain(ctx, store, chain, c, dryRun)
+	if binding == sep1DomainCleared {
+		return true
+	}
 	markSep1Attempted(ctx, store, c.GStrkey, dryRun)
+	if binding == sep1DomainUnconfirmed {
+		return false
+	}
 
 	// The fetch+parse runs on its own budget so a single domain cannot
 	// consume the whole run's deadline; the write below deliberately uses
@@ -239,6 +263,61 @@ func refreshOneSep1Issuer(
 	}
 	fmt.Printf("OK    %s  %s  org=%q verified=%v\n", c.GStrkey, c.HomeDomain, sep.OrgName, orgVerified)
 	return true
+}
+
+// sep1DomainBinding is what the chain says about a candidate's stored
+// home_domain immediately before its fetch.
+type sep1DomainBinding int
+
+const (
+	// sep1DomainConfirmed: the chain declares the (possibly re-bound) domain.
+	sep1DomainConfirmed sep1DomainBinding = iota
+	// sep1DomainCleared: the chain declares no domain; the row was cleared and
+	// there is nothing to fetch.
+	sep1DomainCleared
+	// sep1DomainUnconfirmed: no live entry answered, or the re-bind failed.
+	sep1DomainUnconfirmed
+)
+
+// confirmSep1Domain re-reads the issuer's live home_domain and re-binds the
+// row when the chain has moved. The stored column is a copy of an older
+// reading, and fetching a domain the account no longer declares would verify
+// whoever holds that name now; an account with no live entry (merged, or
+// outside the lake) cannot be confirmed and is not fetched.
+func confirmSep1Domain(
+	ctx context.Context, store sep1Store, chain sep1ChainReader,
+	c timescale.IssuerSep1Candidate, dryRun bool,
+) (timescale.IssuerSep1Candidate, sep1DomainBinding) {
+	live, err := chain.BulkAccountAuthFlags(ctx, []string{c.GStrkey})
+	if err != nil {
+		fmt.Printf("FAIL  %s  %s  chain read: %v\n", c.GStrkey, c.HomeDomain, err)
+		return c, sep1DomainUnconfirmed
+	}
+	f, ok := live[c.GStrkey]
+	if !ok || f.Source != clickhouse.AuthFlagsSourceLive {
+		fmt.Printf("FAIL  %s  %s  no live account entry to confirm the domain against\n", c.GStrkey, c.HomeDomain)
+		return c, sep1DomainUnconfirmed
+	}
+	if f.HomeDomain == c.HomeDomain {
+		return c, sep1DomainConfirmed
+	}
+	if !dryRun {
+		if f.HomeDomain == "" {
+			_, err = store.ClearIssuerHomeDomain(ctx, c.GStrkey)
+		} else {
+			_, err = store.SyncIssuerHomeDomain(ctx, c.GStrkey, f.HomeDomain)
+		}
+		if err != nil {
+			fmt.Printf("FAIL  %s  %s  re-bind to %q: %v\n", c.GStrkey, c.HomeDomain, f.HomeDomain, err)
+			return c, sep1DomainUnconfirmed
+		}
+	}
+	fmt.Printf("MOVED %s  %s -> %q  re-bound to the on-chain home_domain\n", c.GStrkey, c.HomeDomain, f.HomeDomain)
+	if f.HomeDomain == "" {
+		return c, sep1DomainCleared
+	}
+	c.HomeDomain = f.HomeDomain
+	return c, sep1DomainConfirmed
 }
 
 // sep1Candidates picks the run's work: one named issuer, or the head of

@@ -115,7 +115,8 @@ func issuerFlagsCmd(args []string) error {
 	limit := fs.Int("limit", 5000, "Max issuers per pass this run — bounds the unresolved queue AND the last-known re-check queue independently (<=0 = every candidate)")
 	chainRecheckLimit := fs.Int("chain-recheck-limit", 0,
 		"Max FILLED live-sourced rows re-read against the chain this run (<=0 = every one, the intended setting). "+
-			"A positive value caps the pass, but the queue is ordered by primary key, so a cap means only its head is ever re-read")
+			"A positive value caps the pass, but the queue is ordered by primary key, so a cap means only its head is ever re-read; "+
+			"uncapped, the walk starts at a different batch each day and wraps, so a run cut short by -timeout does not always miss the same tail")
 	batch := fs.Int("batch", 500, "Issuers per ClickHouse query")
 	timeout := fs.Duration("timeout", 30*time.Minute, "Wall-clock timeout for the whole run")
 	gate := opsutil.RegisterWriteGate(fs)
@@ -153,6 +154,7 @@ func issuerFlagsCmd(args []string) error {
 		limit:             *limit,
 		chainRecheckLimit: *chainRecheckLimit,
 		batch:             *batch,
+		day:               int(time.Now().Unix() / 86400),
 		dryRun:            dryRun,
 		out:               os.Stderr,
 	})
@@ -162,8 +164,11 @@ type issuerFlagsOpts struct {
 	limit             int
 	chainRecheckLimit int
 	batch             int
-	dryRun            bool
-	out               io.Writer
+	// day is the run's day number; it picks the batch the chain re-check
+	// starts from (see rotateChainRecheck). 0 starts at the head.
+	day    int
+	dryRun bool
+	out    io.Writer
 }
 
 // runIssuerFlags is the drain proper, split from the flag/config wiring so
@@ -202,9 +207,8 @@ func runIssuerFlags(ctx context.Context, store issuerFlagsStore, reader issuerFl
 		c.recheckSeen, c.recheckCandidates, c.revived, c.recheckSeen-c.revived)
 	// The chain re-check accounts the same way: every examined row is
 	// corrected, agreed-with, or unread. A short fall against `candidates`
-	// means the run stopped on its timeout, which for THIS pass is the one
-	// worth watching — it is ordered by primary key, so a run that never
-	// reaches the tail leaves the tail unexamined indefinitely.
+	// means the run stopped on its timeout; the next day's run starts one
+	// batch further on, so the rows it missed are not missed every night.
 	_, _ = fmt.Fprintf(o.out,
 		"issuer-flags: chain re-check processed %d of %d filled row(s) — corrected=%d agreed=%d unread=%d (merged=%d)\n",
 		c.chainSeen, c.chainCandidates, c.chainCorrected, c.chainAgreed, c.chainUnread, c.chainMerged)
@@ -383,6 +387,7 @@ func issuerFlagsChainRecheckPass(
 	if len(onRecord) == 0 {
 		return nil
 	}
+	onRecord = rotateChainRecheck(onRecord, o.batch, o.day)
 	_, _ = fmt.Fprintf(o.out, "issuer-flags: re-reading %d filled row(s) against the chain\n", len(onRecord))
 
 	for start := 0; start < len(onRecord); start += o.batch {
@@ -396,6 +401,22 @@ func issuerFlagsChainRecheckPass(
 		}
 	}
 	return nil
+}
+
+// rotateChainRecheck returns recs starting at batch (day mod batches) and
+// wrapping to the head. The queue is ordered by primary key and a run can stop
+// on its timeout; walking it from the head every night would leave the same
+// tail unexamined indefinitely, whereas this puts every batch at the head of
+// the walk once per `batches` days without persisting a cursor.
+func rotateChainRecheck(recs []timescale.IssuerAuthFlagsOnRecord, batch, day int) []timescale.IssuerAuthFlagsOnRecord {
+	batches := (len(recs) + batch - 1) / batch
+	if batches <= 1 || day <= 0 {
+		return recs
+	}
+	start := (day % batches) * batch
+	out := make([]timescale.IssuerAuthFlagsOnRecord, 0, len(recs))
+	out = append(out, recs[start:]...)
+	return append(out, recs[:start]...)
 }
 
 // issuerFlagsChainRecheckChunk re-reads one batch and persists only the

@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
@@ -316,5 +317,50 @@ func TestRunIssuerFlags_ChainRecheckDryRunWritesNothing(t *testing.T) {
 	}
 	if len(store.persisted) != 0 {
 		t.Errorf("dry run persisted %d batch(es), want 0", len(store.persisted))
+	}
+}
+
+// TestRunIssuerFlags_ChainRecheckStartsAtTheDaysBatch — the queue is ordered
+// by primary key and a run can stop on its timeout, so a walk that always
+// starts at the head leaves the same tail unexamined every night. Each day's
+// run must start one batch further on and wrap, putting every batch at the
+// head of the walk once per cycle.
+func TestRunIssuerFlags_ChainRecheckStartsAtTheDaysBatch(t *testing.T) {
+	keys := []string{"GA", "GB", "GC", "GD", "GE"}
+	recs := make([]timescale.IssuerAuthFlagsOnRecord, 0, len(keys))
+	for _, g := range keys {
+		recs = append(recs, onRecord(g, 0x1, "same.example", timescale.AuthFlagsSourceLive, 100))
+	}
+	// batch 2 over 5 rows = 3 batches; day d starts at row 2*(d mod 3) and wraps.
+	for day, wantFirst := range map[int][]string{
+		0: {"GA", "GB"},
+		1: {"GC", "GD"},
+		2: {"GE", "GA"},
+		3: {"GA", "GB"},
+	} {
+		store := &stubIssuerFlagsStore{needChainRead: recs}
+		reader := &stubIssuerFlagsReader{}
+		o := runOpts()
+		o.batch, o.day = 2, day
+		if err := runIssuerFlags(context.Background(), store, reader, o); err != nil {
+			t.Fatalf("day %d: runIssuerFlags: %v", day, err)
+		}
+		if len(reader.liveCalls) != 3 {
+			t.Fatalf("day %d: %d live reads, want 3 (one per batch): %v", day, len(reader.liveCalls), reader.liveCalls)
+		}
+		if got := fmt.Sprint(reader.liveCalls[0]); got != fmt.Sprint(wantFirst) {
+			t.Errorf("day %d: first batch read = %s, want %s", day, got, fmt.Sprint(wantFirst))
+		}
+		seen := map[string]int{}
+		for _, call := range reader.liveCalls {
+			for _, g := range call {
+				seen[g]++
+			}
+		}
+		for _, g := range keys {
+			if seen[g] != 1 {
+				t.Errorf("day %d: %s read %d time(s), want exactly 1 — the rotation must still cover every row", day, g, seen[g])
+			}
+		}
 	}
 }
