@@ -254,9 +254,9 @@ finish. Check, in order:
    exact repair (the `compress_chunk` and the `alter_job(…, scheduled =>
    true)`) to stderr **before** each statement that can outlive it — run
    what the job log shows.
-4. **The singleton lock** `/run/lock/stellarindex-heavy-<name>.lock` is
-   released with the cgroup, so a relaunch is not blocked by the dead
-   run.
+4. **The singleton lock** `/run/lock/stellarindex-heavy-<name>.lock`, and
+   the host-wide `/run/lock/stellarindex-heavy.lock`, are released with
+   the cgroup, so a relaunch is not blocked by the dead run.
 5. **Whether the bound was wrong for that job.** A job launched without
    `HEAVY_JOB_STOP_TIMEOUT` took the `5min` default; one whose measured
    cleanup exceeds what it was launched with needs a larger value on the

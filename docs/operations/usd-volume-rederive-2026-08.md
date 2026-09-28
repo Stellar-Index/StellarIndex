@@ -125,8 +125,8 @@ doesn't rediscover them):
 Operational discipline (ALL are prior-incident lessons):
 
 ```sh
-# per window, on r1 — ONE job name for every window and attempt (the
-# lock is per name; exit 75 = the previous window is still running):
+# per window, on r1 — ONE job name for every window and attempt (exit
+# 75 = the previous window, or another heavy job, is still running):
 /usr/local/sbin/run-heavy-job.sh ch-rebuild-sdex \
   /usr/local/bin/stellarindex-ops ch-rebuild \
     -config /etc/stellarindex.toml -ch-addr 127.0.0.1:9300 \
@@ -624,9 +624,10 @@ re-enable after the last chunk, on failure, and on a cancelled
 context), and the integration test pins that the real job is paused
 while the run is in flight and scheduled again after it.
 
-**Two attempts at once.** `run-heavy-job.sh`'s lock is per job NAME,
-so the wrapper does nothing to stop a second `-chunks -write` launched
-under a different name from starting while the first is alive. Without a guard the second would read the
+**Two attempts at once.** `run-heavy-job.sh`'s per-job lock is per
+NAME; its host-wide lock refuses a second operator heavy job of any name
+(exit 75), but a caller that sets `HEAVY_JOB_CLASS=scheduled` shares that
+lock, so the tool does not rely on it. Without a guard the second would read the
 policy as already unscheduled, walk beside the first, and re-enable the
 policy at ITS exit while the first was still inside a chunk: the first
 run's open chunk goes to the policy's next fire, its next batch crawls at

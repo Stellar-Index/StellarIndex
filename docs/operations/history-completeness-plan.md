@@ -290,10 +290,11 @@ Two hard constraints from the record:
 - **Windows of ≤50,000 ledgers.** The SDEX op read OOMs the 10 GiB client
   pin above that (`docs/operations/usd-volume-rederive-2026-08.md:135-136`).
   61,609,955 ledgers is **1,233 windows**.
-- **One job name for every window and attempt.** `run-heavy-job.sh`'s lock
-  is per NAME, so a per-attempt name lets two runs overlap. A manual run
-  that finds the lock held is refused with exit 75: a previous run is
-  still alive (`fuser -v` on the lock file names it).
+- **One job name for every window and attempt.** `run-heavy-job.sh`'s
+  per-job lock is per NAME, and its host-wide lock admits one operator
+  heavy job at a time. A manual run that finds either held is refused
+  with exit 75: a previous run, or another heavy job, is still alive
+  (the message names the lock; `fuser -v` on it names the holder).
 
 `ch-rebuild` stamps `derive_generation` from the wall clock
 (`ch_rebuild.go:283`) so the rebuild wins the upsert, and mandates

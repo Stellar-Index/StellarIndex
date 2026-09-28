@@ -397,6 +397,27 @@
       IOWeight=500
   notify: Reload systemd
 
+- name: heavy-job host-wide lock file (tmpfiles.d)
+  # /run/lock is tmpfs, so the wrapper's host-wide lock is recreated at
+  # every boot. root:root 0644 because the wrapper opens it read-only:
+  # neither root nor stellarindex needs write, and a root-owned file in
+  # root-owned sticky /run/lock is one nobody else can delete or replace.
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/stellarindex-heavy-job.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      f /run/lock/stellarindex-heavy.lock 0644 root root -
+  tags: [heavy-job-wrapper]
+
+- name: create the heavy-job host-wide lock file now
+  # tmpfiles.d otherwise acts only at the next boot.
+  ansible.builtin.command:
+    argv: [systemd-tmpfiles, --create, /etc/tmpfiles.d/stellarindex-heavy-job.conf]
+  changed_when: false
+  tags: [heavy-job-wrapper]
+
 - name: heavy-job wrapper (mandatory for ops one-shots on this host)
   # Serialises + host-protects heavy ops one-shots. Two jobs:
   #   1. Singleton lock (C4-14 / INF-11): a per-job flock so overlapping
@@ -405,6 +426,11 @@
   #      going, a unit's second fire and any other caller are both
   #      skipped with exit 75, never 0. The lock is per NAME: give a
   #      job the same name on every attempt, never a per-attempt one.
+  #      Then a HOST-WIDE lock enforces "one heavy job at a time" across
+  #      names: an operator launch (HEAVY_JOB_CLASS unset) is refused
+  #      with exit 75 while any other heavy job holds it; timer/cron
+  #      launchers set HEAVY_JOB_CLASS=scheduled, share it and are never
+  #      refused.
   #   2. For root callers, wraps the command in a systemd transient
   #      scope with a hard memory budget + batch-class CPU/IO so a
   #      ballooning job gets killed before it can starve galexie/CH/PG
@@ -427,7 +453,8 @@
       # Mandatory wrapper for heavy one-shot jobs (ops re-derives,
       # backfills, bulk SQL, archive walks). First takes a per-job
       # singleton lock so a new run can't start while the prior run of
-      # the same job is still going (C4-14 / INF-11). Then, for root
+      # the same job is still going (C4-14 / INF-11), then the host-wide
+      # heavy-job lock (one operator heavy job at a time). Then, for root
       # callers, hard-caps memory at 20G (kill, not swap: MemorySwapMax=0
       # keeps the job away from swap entirely) and deprioritises CPU/IO
       # below the service units; non-root callers exec directly under
@@ -463,6 +490,13 @@
       # exits; in the exec path fd 9 is inherited across exec (flock
       # survives exec) and the payload holds it until it exits.
       #
+      # Lock files are opened READ-ONLY (flock(2) needs no write access)
+      # and created only when absent: root and the stellarindex user both
+      # run this wrapper, and an O_CREAT open (`>`, `<>`) of a lock file
+      # another user owns in sticky /run/lock is EACCES under
+      # fs.protected_regular.
+      lock_file_prep() { [ -e "$1" ] || (umask 022; : >>"$1") 2>/dev/null || true; }
+      #
       # A held lock means a run of this NAME is alive. A skip always
       # exits 75 (EX_TEMPFAIL), never 0: a caller must be able to tell
       # "declined to run" from "ran and succeeded" — the trap that
@@ -474,13 +508,58 @@
       # skip message; any other caller gets a diagnostic on where to
       # look.
       LOCK="${HEAVY_JOB_LOCK_DIR:-/run/lock}/stellarindex-heavy-${NAME}.lock"
-      exec 9>"$LOCK"
+      lock_file_prep "$LOCK"
+      exec 9<"$LOCK" || { echo "run-heavy-job: refusing to start ${NAME}: cannot open its lock ${LOCK}" >&2; exit 2; }
       if ! flock -n 9; then
         if [ -n "${INVOCATION_ID:-}" ]; then
           echo "run-heavy-job: ${NAME} already running (lock ${LOCK} held) — skipping this fire, exit 75" >&2
           exit 75
         fi
-        echo "run-heavy-job: refusing to start ${NAME}: lock ${LOCK} is held, so a previous run of ${NAME} is still alive (find it: fuser -v ${LOCK}). Wait for it or stop it, then re-run under the SAME name — a different name bypasses this lock and runs the two at once." >&2
+        echo "run-heavy-job: refusing to start ${NAME}: lock ${LOCK} is held, so a previous run of ${NAME} is still alive (find it: fuser -v ${LOCK}). Wait for it or stop it, then re-run under the SAME name." >&2
+        exit 75
+      fi
+
+      # ── Host-wide lock: one heavy job at a time ──────────────────
+      # The per-job lock never excludes a DIFFERENT name, so two
+      # operator jobs (or one started into a timer's run) would each get
+      # a 20G scope on the one host. HEAVY_JOB_CLASS picks the mode:
+      #   exclusive (default: every operator/runbook launch) takes it
+      #     exclusive. While ANY other heavy job holds it the launch is
+      #     refused with exit 75, payload not run, so a runbook loop
+      #     reads the window as not done.
+      #   scheduled (every timer/cron launcher, pinned by
+      #     scripts/ci/run-heavy-job-test.sh) takes it shared: timers
+      #     overlap one another as scheduled and are never skipped (a
+      #     multi-day operator job must not stall the lake fill or the
+      #     integrity walks), but an operator job cannot start beside
+      #     one. Beside an operator job a scheduled one warns and runs.
+      # The file is pre-created root:root 0644 by tmpfiles.d (task
+      # below). If it cannot be opened the wrapper cannot prove the host
+      # is free: a scheduled job warns and runs, an operator job is
+      # refused.
+      GLOBAL_LOCK="${HEAVY_JOB_LOCK_DIR:-/run/lock}/stellarindex-heavy.lock"
+      CLASS="${HEAVY_JOB_CLASS:-exclusive}"
+      case "$CLASS" in
+        exclusive|scheduled) ;;
+        *)
+          echo "run-heavy-job: refusing to start ${NAME}: HEAVY_JOB_CLASS='${CLASS}' is neither 'exclusive' nor 'scheduled'" >&2
+          exit 2
+          ;;
+      esac
+      lock_file_prep "$GLOBAL_LOCK"
+      if ! exec 8<"$GLOBAL_LOCK"; then
+        if [ "$CLASS" = scheduled ]; then
+          echo "run-heavy-job: WARNING ${NAME} (scheduled) could not open the host-wide lock ${GLOBAL_LOCK} — running WITHOUT cross-job exclusion. Recreate it: systemd-tmpfiles --create /etc/tmpfiles.d/stellarindex-heavy-job.conf" >&2
+        else
+          echo "run-heavy-job: refusing to start ${NAME}: cannot open the host-wide lock ${GLOBAL_LOCK}, so nothing proves no other heavy job is running. Nothing ran (exit 2). Recreate it: sudo systemd-tmpfiles --create /etc/tmpfiles.d/stellarindex-heavy-job.conf" >&2
+          exit 2
+        fi
+      elif [ "$CLASS" = scheduled ]; then
+        if ! flock -n -s 8; then
+          echo "run-heavy-job: WARNING ${NAME} (scheduled) is starting beside an operator heavy job that holds ${GLOBAL_LOCK} — scheduled jobs are not skipped for it" >&2
+        fi
+      elif ! flock -n -x 8; then
+        echo "run-heavy-job: refusing to start ${NAME}: another heavy job holds the host-wide lock ${GLOBAL_LOCK} — one heavy job at a time. Nothing ran (exit 75). See what holds it: fuser -v ${GLOBAL_LOCK}" >&2
         exit 75
       fi
 
@@ -571,9 +650,9 @@
       if ! df --output=avail -k "$POOL_PATH" >/dev/null 2>&1; then
         echo "run-heavy-job: WARNING POOL_PATH '${POOL_PATH}' is not statable — the DATA-POOL watchdog is INACTIVE for this job (root-FS guard still active). Set HEAVY_JOB_POOL_PATH to a path on the data pool." >&2
       fi
-      # 9>&-: the watchdog (and its `sleep`, which a kill of the subshell
-      # orphans) must not hold the lock past the job, or a prompt
-      # relaunch finds it held.
+      # 8>&- 9>&-: the watchdog (and its `sleep`, which a kill of the
+      # subshell orphans) must not hold either lock past the job, or a
+      # prompt relaunch, or the next window of a runbook loop, finds it held.
       (
         # This subshell MUST NOT inherit errexit/pipefail: a single
         # transient `df` failure (EBUSY/EIO under the very I/O pressure a
@@ -601,7 +680,7 @@
             *) [ "$pool_kb" -lt "$POOL_MIN_KB" ] && stop_job "data pool ${POOL_PATH} below $((POOL_MIN_KB / 1048576)) GiB (${pool_kb} KiB avail)" ;;
           esac
         done
-      ) 9>&- &
+      ) 8>&- 9>&- &
       WATCHDOG=$!
       trap 'kill "$WATCHDOG" 2>/dev/null || true' EXIT
 
@@ -1328,7 +1407,7 @@
     # deploy-ansible-secrets-5). No `%` here: cron turns it into a newline.
     job: >-
       bash -c 'while IFS= read -r l || [ -n "$l" ]; do case "$l" in [A-Za-z_]*=*) export "$l";; esac; done < /etc/default/stellarindex-ops;
-      /usr/local/sbin/run-heavy-job.sh verify-archive-tier-d
+      HEAVY_JOB_CLASS=scheduled /usr/local/sbin/run-heavy-job.sh verify-archive-tier-d
       /usr/local/bin/stellarindex-ops verify-archive
       -config /etc/stellarindex.toml
       -tier peers
@@ -1363,7 +1442,7 @@
     state: "{{ 'present' if (verify_archive_tier_b_enabled | bool) else 'absent' }}"
     job: >-
       bash -c 'while IFS= read -r l || [ -n "$l" ]; do case "$l" in [A-Za-z_]*=*) export "$l";; esac; done < /etc/default/stellarindex-ops;
-      /usr/local/sbin/run-heavy-job.sh verify-archive-tier-e
+      HEAVY_JOB_CLASS=scheduled /usr/local/sbin/run-heavy-job.sh verify-archive-tier-e
       /usr/local/bin/stellarindex-ops verify-archive
       -config /etc/stellarindex.toml
       -tier archivist

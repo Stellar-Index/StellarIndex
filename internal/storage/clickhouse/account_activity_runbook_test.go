@@ -111,15 +111,18 @@ func shippedHeavyJobWrapper(t *testing.T) string {
 	return ""
 }
 
-// Stubs for the binaries the wrapper and the runbook call. flock fails on
-// its AA_FLOCK_FAIL_ON-th call (the wrapper's "lock held" branch); id
+// Stubs for the binaries the wrapper and the runbook call. flock counts
+// calls per lock fd (its last argument: 9 is the wrapper's per-job lock, 8
+// its host-wide lock) and fails the one AA_FLOCK_FAIL_ON names as
+// "<fd>:<nth call on it>", so each lock-held branch is hit on purpose; id
 // answers AA_UID so both wrapper branches run on any machine; systemd-run
 // drops its own options and execs the command, as a scope does.
 const (
 	stubFlock = `#!/bin/bash
-n=$(( $(cat "$AA_FLOCK_COUNT" 2>/dev/null || echo 0) + 1 ))
-echo "$n" > "$AA_FLOCK_COUNT"
-[ "$n" = "${AA_FLOCK_FAIL_ON:-}" ] && exit 1
+fd="${!#}"
+n=$(( $(cat "$AA_FLOCK_COUNT.$fd" 2>/dev/null || echo 0) + 1 ))
+echo "$n" > "$AA_FLOCK_COUNT.$fd"
+[ "$fd:$n" = "${AA_FLOCK_FAIL_ON:-}" ] && exit 1
 exit 0
 `
 	stubID = `#!/bin/bash
@@ -314,12 +317,20 @@ func TestAccountActivityRunbook_Step2FailsClosed(t *testing.T) {
 		{name: "TIP below the first window", env: []string{"AA_TIP_OUT=1"}, want: []string{"0 of 0 jobs"}},
 		// The shipped wrapper exits 75 here in both branches, without running the payload.
 		{
-			name: "per-job lock held", env: []string{tip, "AA_FLOCK_FAIL_ON=2"}, inserts: 1,
+			name: "per-job lock held", env: []string{tip, "AA_FLOCK_FAIL_ON=9:2"}, inserts: 1,
 			want: []string{"refusing to start acct-activity-tx-2", "tx window 2 DID NOT RUN (the wrapper exited 75"},
 		},
 		{
-			name: "per-job lock held, systemd-launched", env: []string{tip, "AA_FLOCK_FAIL_ON=2", "INVOCATION_ID=0123456789abcdef"},
+			name: "per-job lock held, systemd-launched", env: []string{tip, "AA_FLOCK_FAIL_ON=9:2", "INVOCATION_ID=0123456789abcdef"},
 			inserts: 1, want: []string{"skipping this fire", "tx window 2 DID NOT RUN (the wrapper exited 75"},
+		},
+		// Another heavy job holds the host-wide lock: refused with 75, payload not run.
+		{
+			name: "host-wide lock held", env: []string{tip, "AA_FLOCK_FAIL_ON=8:2"}, inserts: 1,
+			want: []string{
+				"refusing to start acct-activity-tx-2: another heavy job holds the host-wide lock",
+				"tx window 2 DID NOT RUN (the wrapper exited 75",
+			},
 		},
 		{
 			name: "job fails, pasted into a nested shell", nested: true,
@@ -355,12 +366,19 @@ func TestAccountActivityRunbook_Step3FailsClosed(t *testing.T) {
 			want: []string{"window 2 FAILED to run"},
 		},
 		{
-			name: "per-job lock held", env: []string{tip, "AA_FLOCK_FAIL_ON=2"}, checks: 1,
+			name: "per-job lock held", env: []string{tip, "AA_FLOCK_FAIL_ON=9:2"}, checks: 1,
 			want: []string{"refusing to start acct-activity-verify-2000002", "window 2000002 DID NOT RUN (the wrapper exited 75"},
 		},
 		{
-			name: "per-job lock held, systemd-launched", env: []string{tip, "AA_FLOCK_FAIL_ON=2", "INVOCATION_ID=0123456789abcdef"},
+			name: "per-job lock held, systemd-launched", env: []string{tip, "AA_FLOCK_FAIL_ON=9:2", "INVOCATION_ID=0123456789abcdef"},
 			checks: 1, want: []string{"skipping this fire", "window 2000002 DID NOT RUN (the wrapper exited 75"},
+		},
+		{
+			name: "host-wide lock held", env: []string{tip, "AA_FLOCK_FAIL_ON=8:2"}, checks: 1,
+			want: []string{
+				"refusing to start acct-activity-verify-2000002: another heavy job holds the host-wide lock",
+				"window 2000002 DID NOT RUN (the wrapper exited 75",
+			},
 		},
 		{name: "sample modulus 0", env: []string{tip, "AA_MOD=0"}, want: []string{"is not a positive integer"}},
 		{

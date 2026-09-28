@@ -39,6 +39,8 @@ ExecStartPre=/usr/local/sbin/compute-archive-to.sh
 # 75 = run-heavy-job.sh skipped this fire (per-job lock held): not a
 # failure, but ExecMainStatus=75 keeps it distinct from a run.
 SuccessExitStatus=75
+# Timer-fired: shares run-heavy-job.sh's host-wide lock, never refused by it.
+Environment=HEAVY_JOB_CLASS=scheduled
 ExecStart=/usr/local/sbin/run-heavy-job.sh archive-completeness \
   /usr/local/bin/stellarindex-ops archive-completeness verify \
   -from ${ARCHIVE_FROM} \
