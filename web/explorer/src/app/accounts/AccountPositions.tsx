@@ -301,6 +301,9 @@ export function AccountPositions({ id }: { id: string }) {
         id: h.asset,
         label: shortAssetText(h.asset),
         value: h.valueUSD as number,
+        // Exact cents (not the re-floated `value`) drive the donut's
+        // legend %, same invariant as the table's `sharePct` below.
+        decimal: h.valueCents != null ? String(h.valueCents) : undefined,
         cents: h.valueCents,
         ...(slug ? { href: assetHref(slug) } : {}),
       };

@@ -64,6 +64,7 @@ export function SourceBreakdown({
     .map((s) => ({
       label: s.source,
       value: Number(s.volume_24h_usd),
+      decimal: s.volume_24h_usd,
       href: `/sources/${encodeURIComponent(s.source)}`,
     }));
   const total =

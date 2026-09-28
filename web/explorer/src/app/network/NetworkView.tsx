@@ -841,11 +841,11 @@ function NetworkComposition() {
     .map((s) => ({
       label: s.name,
       value: Number(s.volume_24h_usd ?? 0),
-      raw: s.volume_24h_usd,
+      decimal: s.volume_24h_usd,
     }))
     .filter((x) => Number.isFinite(x.value) && x.value > 0)
     .sort((a, b) => b.value - a.value);
-  const total = sumDecimalStrings(slices.map((s) => s.raw)) ?? '0';
+  const total = sumDecimalStrings(slices.map((s) => s.decimal)) ?? '0';
 
   return (
     <Panel

@@ -107,6 +107,7 @@ export function PoolReserves({ pool }: { pool: string }) {
             id: rv.asset,
             label: shortAssetText(rv.asset),
             value: Number(rv.supplied_usd),
+            decimal: rv.supplied_usd,
           }))}
           centerLabel={`$${formatCompactUnits(totalUsd)}`}
           centerSub="TVL"

@@ -159,13 +159,18 @@ export function perChainLines(
     });
 }
 
-// donutSlices — breakdown rows → top-6 slices + an "Others" fold (values
-// via Number() for geometry only).
+// donutSlices — breakdown rows → top-6 slices + an "Others" fold. `value`
+// (via toChartNumber) drives arc geometry only; `decimal` (via
+// toDecimalString) carries the exact wire string so DonutChart computes the
+// legend/tooltip percentage from sumDecimalStrings/ratioPct, not floats.
 export function donutSlices(b: BespokeBreakdown): DonutSlice[] {
   const rows = b.rows
     .flatMap((r) => {
       const value = toChartNumber(r.value);
-      return value == null || value <= 0 ? [] : [{ label: r.label, value }];
+      const decimal = toDecimalString(r.value);
+      return value == null || value <= 0
+        ? []
+        : [{ label: r.label, value, decimal }];
     })
     .sort((a, x) => x.value - a.value);
   const top = rows
@@ -176,6 +181,7 @@ export function donutSlices(b: BespokeBreakdown): DonutSlice[] {
     top.push({
       label: `Others (${rest.length})`,
       value: rest.reduce((sum, r) => sum + r.value, 0),
+      decimal: sumDecimalStrings(rest.map((r) => r.decimal)),
       color: CATEGORICAL_PALETTE[CATEGORICAL_PALETTE.length - 1],
     });
   }

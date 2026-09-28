@@ -250,6 +250,27 @@ describe('donutSlices', () => {
     // 300 + 200 + 100 folded together.
     expect(slices[6].value).toBe(600);
   });
+
+  it('sums the Others fold exactly, above 2^53 where float addition drifts', () => {
+    const big = ['9007199254740993', '9007199254740995', '9007199254740997'];
+    const b: BespokeBreakdown = {
+      title: 'Inflows by source chain',
+      unit: 'USDC',
+      rows: [
+        ...Array.from({ length: 6 }, (_, i) => ({
+          label: `Chain${i}`,
+          value: String(9_000_000_000_000_000_000 - i * 1_000_000_000_000_000_000),
+          count: 1,
+        })),
+        ...big.map((value, i) => ({ label: `Rest${i}`, value, count: 1 })),
+      ],
+    };
+    const slices = donutSlices(b);
+    expect(slices[6].label).toBe('Others (3)');
+    // Exact BigInt sum, matching sumDecimalStrings/ratioPct's table math —
+    // not the float reduce over already-rounded `value`s (27021597764222984).
+    expect(slices[6].decimal).toBe('27021597764222985');
+  });
 });
 
 describe('BridgeShowcase', () => {
