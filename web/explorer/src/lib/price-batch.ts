@@ -23,6 +23,14 @@ export interface ChunkedPriceBatch {
   stale: boolean;
   /** Ids whose chunk was rejected — unanswered, not "no price". */
   failedIds: string[];
+  /**
+   * Ids a serving gate refused (thin market, flagged issuer, withheld
+   * upstream leg) — the API SAW the pair and declined to price it,
+   * distinct from an id absent from both `rows` and here, which the API
+   * never observed at all (GH-786: a portfolio must not report the two
+   * alike as "unpriced").
+   */
+  withheld: string[];
 }
 
 /**
@@ -47,13 +55,19 @@ export async function fetchPriceBatchChunked(
       }),
     ),
   );
-  const out: ChunkedPriceBatch = { rows: [], stale: false, failedIds: [] };
+  const out: ChunkedPriceBatch = {
+    rows: [],
+    stale: false,
+    failedIds: [],
+    withheld: [],
+  };
   settled.forEach((res, i) => {
     if (res.status === 'rejected') {
       out.failedIds.push(...chunks[i]);
       return;
     }
     out.rows.push(...(res.value.data ?? []));
+    out.withheld.push(...(res.value.withheld ?? []));
     if (res.value.flags?.stale) out.stale = true;
   });
   return out;
