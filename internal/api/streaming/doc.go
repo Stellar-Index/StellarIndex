@@ -41,10 +41,13 @@
 // unauthenticated memory-exhaustion lever (REL-05). A topic with no
 // subscribers is dropped once it has nothing left to offer — right
 // away if it was never published to, or after [DefaultTopicIdleTTL]
-// if it still holds a replay buffer — and [DefaultMaxTopics] caps the
-// map regardless. A topic with a live subscriber is never reaped.
+// if it still holds a replay buffer. [DefaultMaxTopics] is a reap
+// threshold, not a hard ceiling: over it the reaper evicts
+// subscriber-less topics oldest-first, but a topic with a live
+// subscriber is never reaped, so the topic count is bounded by
+// max(DefaultMaxTopics, concurrent subscribers × their topics).
 // Connections are admitted against the concurrency caps BEFORE they
 // can allocate a topic (see [Stream]), so a refused client never
-// leaves one behind. [Hub.TopicCount], [Hub.TopicsReaped], and
-// [StreamsRejected] expose the bounds.
+// leaves one behind. [Hub.TopicCount], [Hub.BufferedTopicCount],
+// [Hub.TopicsReaped], and [StreamsRejected] expose the bounds.
 package streaming

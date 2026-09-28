@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -667,5 +668,30 @@ drain:
 	}
 	if lastID != liveID {
 		t.Fatalf("last delivered id = %q, want live event id %q", lastID, liveID)
+	}
+}
+
+// TestDoc_MaxTopicsIsNotAHardCeiling pins doc.go's package overview to
+// the reap-threshold behaviour hub.go's DefaultMaxTopics documents
+// (GH-1106): a stale "caps the map regardless" claim would send an
+// operator sizing memory against a bound that does not exist. The
+// comment markers are stripped and the text re-joined on whitespace
+// before matching, so a phrase that got re-wrapped across lines can't
+// hide from the check.
+func TestDoc_MaxTopicsIsNotAHardCeiling(t *testing.T) {
+	src, err := os.ReadFile("doc.go")
+	if err != nil {
+		t.Fatalf("read doc.go: %v", err)
+	}
+	var stripped []string
+	for _, line := range strings.Split(string(src), "\n") {
+		stripped = append(stripped, strings.TrimPrefix(strings.TrimSpace(line), "//"))
+	}
+	text := strings.Join(strings.Fields(strings.Join(stripped, " ")), " ")
+	if strings.Contains(text, "caps the map regardless") {
+		t.Fatalf("doc.go still claims DefaultMaxTopics caps the map regardless; hub.go documents it as a reap threshold, not a hard ceiling")
+	}
+	if !strings.Contains(text, "BufferedTopicCount") {
+		t.Fatalf("doc.go accessor list omits Hub.BufferedTopicCount, the accessor that now tracks memory since rings allocate lazily")
 	}
 }
