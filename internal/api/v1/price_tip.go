@@ -215,6 +215,36 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	if snap, sources, ok := s.tipWindowEscalating(ctx, asset, quote, windowSeconds, merge); ok {
 		return snap, sources, nil
 	}
+	snap, sources, ok, err := s.tipFallback(ctx, asset, quote)
+	if err != nil {
+		return PriceSnapshot{}, nil, err
+	}
+	if ok {
+		// window_seconds on this surface names the caller's rolling window
+		// ([1,60]); a fallback carries its source's resolution instead (60s
+		// bucket, 300s cache), so it reports none.
+		snap.WindowSeconds = 0
+		return snap, sources, nil
+	}
+	// Last of all: the SAC-form combinations the caller did not name —
+	// for a wrapped classic, its Soroban SAC/SAC pool. Every established
+	// read above has missed (the window at the caller's bound and at
+	// 30s, the closed bucket, the caches, the proxies), so the
+	// alternative is no price at all; this is the alias family's
+	// SAC-last shape (canonical.AssetAliases) applied to the one walk
+	// that merges. A Soroban-only wrapped classic serves from its pool
+	// here; a classic with any established answer never reaches it.
+	if snap, sources, ok = s.tipWindowEscalating(ctx, asset, quote, windowSeconds, last); ok {
+		return snap, sources, nil
+	}
+	return PriceSnapshot{}, nil, ErrPriceNotFound
+}
+
+// tipFallback is every non-window read of [Server.computeTip], in
+// precedence order: the closed bucket, the Redis VWAP cache, the
+// stablecoin-fiat proxy, the fiat cross-rate and the USD-anchored fiat
+// cross. (_, _, false, nil) is a miss; an error is a verdict to surface.
+func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, error) {
 	// Fallback: most-recent known observation for the pair. PriceReader
 	// returns price_type="last_trade" today (MVP) and "vwap" once the
 	// aggregator wires the closed-bucket cache; both are in-contract
@@ -235,10 +265,10 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 		// Byte-identical no-op at 7dp. (The Redis/proxy/fiat branches below
 		// self-normalize at their own source — see tryStablecoinFiatProxy.)
 		s.normalizeRawPriceSnapshot(&snap, asset, quote)
-		return snap, sources, nil
+		return snap, sources, true, nil
 	}
 	if !errors.Is(err, ErrPriceNotFound) {
-		return PriceSnapshot{}, nil, err
+		return PriceSnapshot{}, nil, false, err
 	}
 	// Final fallback: Redis VWAP cache. For aggregator-rewritten pairs
 	// (XLM/fiat:USD synthesised from XLM/USDC-GA5Z…) the literal pair
@@ -250,7 +280,7 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// flag — operators reading the marker for forensics use /v1/price
 	// instead.
 	if cacheSnap, cacheSources, _, _, ok := s.tryRedisVWAPFallback(ctx, asset, quote); ok {
-		return cacheSnap, cacheSources, nil
+		return cacheSnap, cacheSources, true, nil
 	}
 	// Read-time stablecoin-fiat proxy: rewrites X/fiat:USD to X/<peg>
 	// at request time using the operator's
@@ -261,14 +291,14 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// fiat:USD — same exact failure mode as /v1/price had.
 	proxySnap, proxySources, proxyOK, proxyWithheld := s.tryStablecoinFiatProxy(ctx, asset, quote)
 	if proxyOK {
-		return proxySnap, proxySources, nil
+		return proxySnap, proxySources, true, nil
 	}
 	// Last-resort fiat-vs-fiat cross-rate via the forex snapshot.
 	// Same machinery /v1/price uses (see tryFiatCrossRate). Without
 	// this branch /v1/price/tip?asset=fiat:EUR&quote=fiat:USD 404s
 	// because no on-chain pair carries fiat-vs-fiat trades.
 	if fxSnap, fxSources, ok := s.tryFiatCrossRate(asset, quote); ok {
-		return fxSnap, fxSources, nil
+		return fxSnap, fxSources, true, nil
 	}
 	// USD-anchored cross for a non-fiat asset in a fiat we have no
 	// market for (ADR-0051) — the local-currency path. Present here for
@@ -277,27 +307,16 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// /v1/price gives it, not a 404 that only this surface returns.
 	// Last, so an observed market still wins.
 	if fxSnap, fxSources, ok, withheld := s.tryUSDAnchoredFiatCross(ctx, asset, quote); ok {
-		return fxSnap, fxSources, nil
+		return fxSnap, fxSources, true, nil
 	} else if withheld || proxyWithheld {
 		// The USD leg (either the stablecoin-fiat proxy's peg walk above,
 		// or this cross's own leg) is withheld, so the derived price is
 		// too. This surface already distinguishes the two verdicts (see
 		// the ErrPriceWithheld arm above), so report it honestly rather
 		// than letting it fall through as "no data".
-		return PriceSnapshot{}, nil, newPriceWithheld(PriceWithheldUpstreamLeg)
+		return PriceSnapshot{}, nil, false, newPriceWithheld(PriceWithheldUpstreamLeg)
 	}
-	// Last of all: the SAC-form combinations the caller did not name —
-	// for a wrapped classic, its Soroban SAC/SAC pool. Every established
-	// read above has missed (the window at the caller's bound and at
-	// 30s, the closed bucket, the caches, the proxies), so the
-	// alternative is no price at all; this is the alias family's
-	// SAC-last shape (canonical.AssetAliases) applied to the one walk
-	// that merges. A Soroban-only wrapped classic serves from its pool
-	// here; a classic with any established answer never reaches it.
-	if snap, sources, ok := s.tipWindowEscalating(ctx, asset, quote, windowSeconds, last); ok {
-		return snap, sources, nil
-	}
-	return PriceSnapshot{}, nil, ErrPriceNotFound
+	return PriceSnapshot{}, nil, false, nil
 }
 
 // parseTipAssetQuote pulls asset (required) + quote (defaulted to

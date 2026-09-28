@@ -3,6 +3,7 @@ package v1
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -114,6 +115,20 @@ const defaultMaxTipTicksPerMinute = defaultMaxTipProducers * (60 / defaultTipWin
 // window gets four producers, and saturating the global budget still
 // takes over 20 addresses.
 const defaultMaxTipTicksPerMinutePerCaller = defaultMaxTipProducersPerCaller * (60 / defaultTipWindowSeconds)
+
+// defaultTipTickConcurrency caps how many producer ticks may be inside
+// computeTip at once, across every producer and both producer shapes.
+//
+// The tick budgets above bound the AVERAGE rate over a minute, not the
+// instantaneous load: every producer runs its own ticker, so hundreds of
+// them can fire in the same instant (a restart re-minting them together,
+// a Postgres stall releasing a backlog) and each tick holds a pool
+// connection for its whole compute. Detached producers must not be able
+// to take the API's request connections, so ticks queue for one of these
+// slots, and a tick that cannot get one within its own budget is skipped.
+// 4 leaves 21 of the reference deployment's 25-connection pool to request
+// traffic while comfortably draining the ~102 ticks/s rate budget.
+const defaultTipTickConcurrency = 4
 
 // tipTicksPerMinute is the compute rate of a producer on a window-second
 // ticker, rounded UP so a budget is never undercharged.
@@ -263,6 +278,43 @@ type tipProducerRegistry struct {
 	refusedPerCaller uint64
 	// idleSeq is the last [tipProducer.idleSeq] handed out.
 	idleSeq uint64
+	// tickConcurrency overrides defaultTipTickConcurrency when > 0 (tests).
+	tickConcurrency int
+	// tickSlots is the tick-compute semaphore, sized on first use.
+	tickSlots chan struct{}
+}
+
+// acquireTickSlot blocks until a tick-compute slot is free, or returns
+// ctx's error when the tick's budget runs out first.
+func (r *tipProducerRegistry) acquireTickSlot(ctx context.Context) (release func(), err error) {
+	r.mu.Lock()
+	if r.tickSlots == nil {
+		n := defaultTipTickConcurrency
+		if r.tickConcurrency > 0 {
+			n = r.tickConcurrency
+		}
+		r.tickSlots = make(chan struct{}, n)
+	}
+	slots := r.tickSlots
+	r.mu.Unlock()
+	select {
+	case slots <- struct{}{}:
+		return func() { <-slots }, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("tip tick slot: %w", ctx.Err())
+	}
+}
+
+// computeTipGated is computeTip for a producer tick: it holds a tick slot
+// (see [defaultTipTickConcurrency]) for exactly the compute, released on
+// every exit including a panic the producer's recover absorbs.
+func (s *Server) computeTipGated(ctx context.Context, asset, quote canonical.Asset, window int) (PriceSnapshot, []string, error) {
+	release, err := s.tipProducers.acquireTickSlot(ctx)
+	if err != nil {
+		return PriceSnapshot{}, nil, err
+	}
+	defer release()
+	return s.computeTip(ctx, asset, quote, window)
 }
 
 // limit is the effective producer ceiling; <= 0 from the operator means
