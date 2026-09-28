@@ -91,6 +91,10 @@ func TestAPIKeysQueriesAreBounded(t *testing.T) {
 			if !ok || lit.Kind != token.STRING || !strings.Contains(lit.Value, "FROM api_keys") {
 				return true
 			}
+			// A DELETE reads nothing back; the lint is about result sets.
+			if strings.HasPrefix(strings.TrimLeft(strings.Trim(lit.Value, "`\""), " \t\n"), "DELETE FROM api_keys") {
+				return true
+			}
 			checked++
 			for _, m := range apiKeysBoundedMarkers {
 				if strings.Contains(lit.Value, m) {
