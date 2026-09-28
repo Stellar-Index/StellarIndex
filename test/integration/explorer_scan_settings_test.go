@@ -283,10 +283,13 @@ func TestExplorerScanQueries_ExecuteAgainstServer(t *testing.T) {
 // returned VALUES on a real server, down both of its paths: first served by
 // the keyed contract_instance_changes index (populated by the shipped MV),
 // then — with this contract's index rows deleted while the table stays
-// non-empty — as an authoritative miss: the changes log still holds the
-// instance writes, but the reader must not scan it. The seeded timeline carries an instance-storage rewrite that
-// keeps the executable (must collapse onto the FIRST ledger that installed
-// it) and is inserted out of order (the read must sort by ledger).
+// non-empty — as an unproven per-contract miss (#716/REC-04): the index's
+// emptiness for this contract is not proof it never upgraded, so the reader
+// falls back to the changes-log scan, which still holds the instance writes
+// and returns the same real timeline. The seeded timeline carries an
+// instance-storage rewrite that keeps the executable (must collapse onto the
+// FIRST ledger that installed it) and is inserted out of order (the read
+// must sort by ledger).
 func TestContractCodeHistory_ServesTheSeededTimeline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -342,8 +345,10 @@ func TestContractCodeHistory_ServesTheSeededTimeline(t *testing.T) {
 	assertCodeHistory(t, ctx, addr, contract, "index-served", want)
 
 	// Index miss for this contract on a non-empty (so "available") index is
-	// authoritative: the index covers Soroban activation to tip, so the
-	// ~30 s key_xdr scan of the changes log must not run.
+	// NOT authoritative: instanceChangesIndexAvailable only proves the table
+	// isn't globally empty, not that this contract's backfill has landed, so
+	// the reader must fall back to the ~30 s key_xdr scan of the changes log
+	// and return its real (non-empty) answer.
 	syncCtx := clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{"mutations_sync": "2"}))
 	if err := conn.Exec(syncCtx,
 		`ALTER TABLE stellar.contract_instance_changes DELETE WHERE contract_hash = ?`, cidHex); err != nil {
@@ -355,7 +360,7 @@ func TestContractCodeHistory_ServesTheSeededTimeline(t *testing.T) {
 	if n := countInstanceIndexRows(t, ctx, conn, keeperHex); n != 1 {
 		t.Fatalf("keeper contract has %d index rows, want 1 (the index must stay non-empty)", n)
 	}
-	assertCodeHistory(t, ctx, addr, contract, "authoritative index miss", nil)
+	assertCodeHistory(t, ctx, addr, contract, "index miss falls back to legacy scan", want)
 }
 
 func countInstanceIndexRows(t *testing.T, ctx context.Context, conn driver.Conn, contractHash string) uint64 {
