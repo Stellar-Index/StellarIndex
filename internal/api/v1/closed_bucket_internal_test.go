@@ -68,6 +68,34 @@ func TestParseFromToClamped_ExplicitToPreserved(t *testing.T) {
 	}
 }
 
+// TestParseFromToClamped_ExplicitToInOpenBucketClamps pins #924:
+// ADR-0015 says the most-recent row served is ALWAYS closed, not
+// "closed unless the client asked for a specific `to`". An explicit
+// `to` landing inside the still-filling bucket (here, wall-clock now)
+// used to be honoured verbatim, serving a partial, unflagged window —
+// indistinguishable on the wire from a real closed-bucket answer.
+func TestParseFromToClamped_ExplicitToInOpenBucketClamps(t *testing.T) {
+	now := time.Now().UTC()
+	req := httptest.NewRequest(http.MethodGet,
+		"/v1/vwap?base=native&quote=fiat:USD&to="+now.Format(time.RFC3339Nano), nil)
+	rec := httptest.NewRecorder()
+
+	_, to, clamped, ok := parseFromToClamped(rec, req)
+	if !ok {
+		t.Fatalf("parse failed: %s", rec.Body.String())
+	}
+	if !clamped {
+		t.Error("clamped flag = false, want true (explicit `to` inside the open bucket must clamp)")
+	}
+	if !to.Before(now) {
+		t.Errorf("to = %s, want before requested `to` = %s (open bucket not served)",
+			to.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+	}
+	if to.UnixNano()%closedBucketWindow.Nanoseconds() != 0 {
+		t.Errorf("to = %s, not aligned to %s boundary", to.Format(time.RFC3339Nano), closedBucketWindow)
+	}
+}
+
 // TestParseFromToClamped_TwoCallsSameWindowAgree is the cross-region
 // consistency property in test form. Two requests that land at
 // different sub-second moments within the same 30 s window must

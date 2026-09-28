@@ -27,6 +27,10 @@ type TWAPResult struct {
 	TradeCount       int      `json:"trade_count"`
 	OutliersFiltered int      `json:"outliers_filtered"`
 	Truncated        bool     `json:"truncated"`
+	// Clamped is true when the requested `to` was inside the
+	// still-filling bucket (or in the future) and was pulled back to
+	// the last closed boundary per ADR-0015.
+	Clamped bool `json:"clamped"`
 }
 
 // handleTWAP serves GET /v1/twap?base=...&quote=...&from=...&to=...
@@ -101,9 +105,9 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 	// from raw trades at query time (no CAGG involved), so the price is
 	// normalized below via aggregate.AdjustPrice instead of declined.
 
-	// Clamped to a closed-bucket boundary when `to` defaults to "now"
-	// per ADR-0015.
-	from, to, _, ok := parseFromToClamped(w, r)
+	// Clamped to a closed-bucket boundary per ADR-0015, whether `to`
+	// was defaulted or explicit.
+	from, to, clamped, ok := parseFromToClamped(w, r)
 	if !ok {
 		return
 	}
@@ -136,6 +140,7 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res.Truncated = len(trades) == maxTrades
+	res.Clamped = clamped
 	writeJSON(w, res, Flags{Triangulated: triangulated})
 }
 

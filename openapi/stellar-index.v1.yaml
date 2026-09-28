@@ -19508,8 +19508,10 @@ components:
           type: string
           format: date-time
           description: |
-            Exclusive upper bound of the bar window. Clamped to a 30 s
-            boundary when the request omitted `to`.
+            Exclusive upper bound of the bar window. Clamped to the
+            last closed 30 s boundary per ADR-0015 whenever the
+            requested (or defaulted) `to` fell inside the still-filling
+            bucket — see `clamped`.
         open:         { type: string, description: "Decimal string, 10 digits." }
         high:         { type: string }
         low:          { type: string }
@@ -19549,7 +19551,14 @@ components:
             a scale belongs to an amount, not to a pair.
         trade_count:  { type: integer }
         truncated:    { type: boolean, description: "True when the window hit the per-request trade cap; the bar reflects only the chronologically LAST N trades (the reader drops the oldest rows under the limit), so open/high/low may not be the true window values." }
-      required: [from, to, open, high, low, close, base_volume, quote_volume, base_volume_decimals, quote_volume_decimals, trade_count, truncated]
+        clamped:
+          type: boolean
+          description: |
+            True when the requested `to` fell inside the still-filling
+            bucket (or in the future) and was pulled back to the last
+            closed boundary per ADR-0015 — the served `to` is earlier
+            than the one requested.
+      required: [from, to, open, high, low, close, base_volume, quote_volume, base_volume_decimals, quote_volume_decimals, trade_count, truncated, clamped]
 
     OHLCEnvelope:
       allOf:
@@ -19687,12 +19696,11 @@ components:
           type: string
           format: date-time
           description: |
-            Exclusive upper bound of the window. When the request
-            omitted `to`, this is clamped down to a 30-second
-            boundary so two parallel requests in the same window
-            return identical responses across regions. When the
-            request supplied `to` explicitly, this echoes the
-            request value.
+            Exclusive upper bound of the window. Clamped down to the
+            last closed 30-second boundary per ADR-0015 whenever the
+            requested (or defaulted) `to` fell inside the still-filling
+            bucket, so two parallel requests in the same window return
+            identical responses across regions — see `clamped`.
         price:             { type: string, description: "VWAP decimal, 10 digits." }
         base_volume:
           type: string
@@ -19730,7 +19738,13 @@ components:
         trade_count:       { type: integer }
         outliers_filtered: { type: integer }
         truncated:         { type: boolean }
-      required: [from, to, price, base_volume, quote_volume, base_volume_decimals, quote_volume_decimals, trade_count, outliers_filtered, truncated]
+        clamped:
+          type: boolean
+          description: |
+            True when the requested `to` fell inside the still-filling
+            bucket (or in the future) and was pulled back to the last
+            closed boundary per ADR-0015.
+      required: [from, to, price, base_volume, quote_volume, base_volume_decimals, quote_volume_decimals, trade_count, outliers_filtered, truncated, clamped]
 
     VWAPEnvelope:
       allOf:
@@ -19753,8 +19767,8 @@ components:
           type: string
           format: date-time
           description: |
-            Exclusive upper bound of the window. Clamped to a 30 s
-            boundary when the request omitted `to`. See VWAPResult.to.
+            Exclusive upper bound of the window. See VWAPResult.to for
+            the closed-bucket clamp semantics.
         price:       { type: string, description: "TWAP decimal, 10 digits." }
         trade_count:
           type: integer
@@ -19766,7 +19780,10 @@ components:
           type: integer
           description: Trades the `outlier_sigma` filter removed.
         truncated:   { type: boolean }
-      required: [from, to, price, trade_count, outliers_filtered, truncated]
+        clamped:
+          type: boolean
+          description: See VWAPResult.clamped.
+      required: [from, to, price, trade_count, outliers_filtered, truncated, clamped]
 
     TWAPEnvelope:
       allOf:
