@@ -187,3 +187,29 @@ func TestTouchUsage_ToucherErrorSwallowed(t *testing.T) {
 		t.Errorf("status = %d, want 200", w.Code)
 	}
 }
+
+// TestTouchUsage_PanickingHandlerStillTouched — GH-1276. Recoverer
+// sits OUTSIDE TouchUsage in the real stack (server.go), so a
+// panicking handler unwinds past the touch bookkeeping. Straight-line
+// code after next.ServeHTTP never runs on that unwind; the fix
+// defers it so it does.
+func TestTouchUsage_PanickingHandlerStillTouched(t *testing.T) {
+	toucher := &fakeToucher{}
+	debouncer := &fakeDebouncer{allows: 1}
+	mw := middleware.Chain(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { panic("boom") }),
+		middleware.Recoverer(nil),
+		middleware.TouchUsage(toucher, debouncer, nil),
+	)
+	req := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+	req = req.WithContext(auth.WithSubject(req.Context(), auth.Subject{Tier: auth.TierAPIKey, KeyID: "K1"}))
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 (Recoverer)", w.Code)
+	}
+	if got := len(toucher.calls); got != 1 {
+		t.Errorf("TouchUsage calls = %d, want 1 — a panicking request must still be touched", got)
+	}
+}

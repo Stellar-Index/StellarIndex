@@ -13,7 +13,7 @@ import { formatRelative, formatSubunitPrice } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { isSafePublicImageUrl } from '@/lib/safe-domain';
 import { useDialog } from '@/lib/useDialog';
-import { fetchPriceBatchChunked } from '@/lib/price-batch';
+import { fetchPriceBatchChunked, isPriceableAssetId } from '@/lib/price-batch';
 
 /**
  * AssetSwap — the asset page's swap/convert widget. Two stacked amount
@@ -292,18 +292,21 @@ export function AssetSwap({
     setPickerEverOpened(true);
   }
 
-  // The leg that still IS the page asset always reflects the live prop price;
-  // any other leg uses its captured price. Deriving this at render keeps the
-  // live price flowing without an effect that syncs state (which triggers
-  // cascading renders — react-hooks/set-state-in-effect).
-  const livePrice = (t: SwapToken): number | null =>
-    t.key === pageToken.key ? priceUSD : t.usdPrice;
-  const pFrom = livePrice(fromToken);
-  const pTo = livePrice(toToken);
+  // The leg that still IS the page asset always reflects the live prop
+  // price; any other leg re-fetches its own price on the same cadence
+  // (GH-786: a picked leg used to freeze at its pick-time snapshot
+  // forever, with no way to tell the amount on screen was stale).
+  const fromRate = useLegRate(fromToken, pageToken.key, priceUSD);
+  const toRate = useLegRate(toToken, pageToken.key, priceUSD);
+  const pFrom = fromRate.price;
+  const pTo = toRate.price;
   const priceable = pFrom != null && pFrom > 0 && pTo != null && pTo > 0;
   // What the legs' USD prices actually are, for the legs whose price
   // came with a declared basis and an observation time (RLT-384).
-  const basisNote = swapBasisNote([fromToken, toToken]);
+  const basisNote = swapBasisNote([
+    { ...fromToken, usdPrice: pFrom, basis: fromRate.basis, observedAt: fromRate.observedAt },
+    { ...toToken, usdPrice: pTo, basis: toRate.basis, observedAt: toRate.observedAt },
+  ]);
 
   const numeric = Number(amount.replace(/,/g, ''));
   const validInput = Number.isFinite(numeric) && numeric >= 0;
@@ -723,6 +726,62 @@ function TokenPicker({
 }
 
 // ── Data ─────────────────────────────────────────────────────────────────
+
+/**
+ * useLegRate — the live USD price for one converter leg. The page-asset
+ * leg is priced off the live `priceUSD` prop (already refreshing with the
+ * page); every other leg used to freeze at its pick-time snapshot from
+ * the picker's `topCoins`/`searchedCoins` read forever, with no
+ * refetch and no way to tell the number on screen had gone stale
+ * (GH-786). Re-fetches that leg's own price on the same 60s cadence as
+ * the rest of the site's live reads, carrying `price_type`/`observed_at`
+ * so a stale or declared-peg rate is visible (RLT-384) rather than
+ * assumed live.
+ */
+function useLegRate(
+  token: SwapToken,
+  pageKey: string,
+  pagePriceUSD: number | null,
+): { price: number | null; basis: PriceType | null; observedAt: string | null } {
+  const isPageLeg = token.key === pageKey;
+  const isUsd = token.key === USD_TOKEN.key;
+  const fetchable = !isPageLeg && !isUsd && isPriceableAssetId(token.key);
+  const q = useQuery<{
+    price: number | null;
+    basis: PriceType | null;
+    observedAt: string | null;
+  }>({
+    queryKey: ['/v1/price/batch', 'swapLeg', token.key],
+    enabled: fetchable && CURRENT_NETWORK.pricing,
+    queryFn: async () => {
+      const { rows } = await fetchPriceBatchChunked([token.key], 'fiat:USD');
+      const row = rows.find((r) => r.asset_id === token.key);
+      const price = row?.price != null ? Number(row.price) : null;
+      return {
+        price: price != null && price > 0 ? price : null,
+        basis: row?.price_type ?? null,
+        observedAt: row?.observed_at ?? null,
+      };
+    },
+    // Seed with the picker's snapshot so the leg has a number the instant
+    // it's picked, rather than blanking until the first live fetch lands —
+    // but back-dated to epoch so `staleTime` treats it as stale immediately
+    // and still fires the live fetch on mount instead of sitting on the
+    // snapshot for a full `staleTime` window.
+    initialData:
+      token.usdPrice != null
+        ? { price: token.usdPrice, basis: token.basis ?? null, observedAt: null }
+        : undefined,
+    initialDataUpdatedAt: 0,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+
+  if (isPageLeg) return { price: pagePriceUSD, basis: null, observedAt: null };
+  if (isUsd) return { price: 1, basis: null, observedAt: null };
+  return q.data ?? { price: null, basis: null, observedAt: null };
+}
+
 // The forex batch → fiat SwapTokens (USD per unit is exactly what the batch
 // returns: 1 fiat:EUR = X USD). USD is prepended with price 1.
 function useFiatTokens(enabled: boolean): SwapToken[] {

@@ -421,3 +421,40 @@ func TestUsageTracker_AnonymousSkipped(t *testing.T) {
 		t.Errorf("anonymous request produced detail rows: %+v", rows)
 	}
 }
+
+// TestUsageTracker_PanickingHandlerStillCounted — GH-1276. Recoverer
+// sits OUTSIDE UsageTracker in the real stack (server.go), so a
+// panicking handler unwinds past the tracker's post-dispatch
+// bookkeeping. Straight-line code after next.ServeHTTP never runs on
+// that unwind; the fix defers it so it does.
+func TestUsageTracker_PanickingHandlerStillCounted(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	counter := usage.New(rdb)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/price", func(w http.ResponseWriter, _ *http.Request) {
+		panic("boom")
+	})
+	stamp := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			sub := auth.Subject{Tier: auth.TierAPIKey, KeyID: "kid_panic"}
+			next.ServeHTTP(w, r.WithContext(auth.WithSubject(r.Context(), sub)))
+		})
+	}
+	// Recoverer OUTSIDE UsageTracker, matching server.go's stack order.
+	h := middleware.Chain(mux, stamp, middleware.Recoverer(nil), middleware.UsageTracker(counter, nil))
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/price", nil))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 (Recoverer)", w.Code)
+	}
+
+	subjectKey := middleware.UsageKeyForSubject(auth.Subject{Tier: auth.TierAPIKey, KeyID: "kid_panic"})
+	got := detailCounts(t, counter, subjectKey)
+	if got[[2]string{"/v1/price", usage.ClassServerError}] != 1 {
+		t.Errorf("detail counts = %+v, want one 5xx row for /v1/price — a panicking request must still be counted", got)
+	}
+}

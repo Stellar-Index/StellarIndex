@@ -91,6 +91,13 @@ interface PriceBatch {
   observedAt: string | null;
   /** Holdings whose batch chunk the API rejected — unanswered, not unpriced. */
   failedCount: number;
+  /**
+   * Asset ids the pricing API's serving gate refused (thin market,
+   * flagged issuer) — GH-786: the API SAW these and declined to price
+   * them, which is a different fact from a holding it never observed at
+   * all, and a portfolio must not report the two alike as "unpriced".
+   */
+  withheldIds: Set<string>;
 }
 
 interface Holding {
@@ -103,6 +110,9 @@ interface Holding {
    * the re-floated `valueUSD` (RLT-069: float re-sum reintroduces the
    * per-cent rounding error the BigInt multiply just removed). */
   valueCents: bigint | null;
+  /** True when the pricing API withheld this asset's price rather than
+   * never having observed it (GH-786). */
+  withheld: boolean;
 }
 
 const usdFmt = new Intl.NumberFormat('en-US', {
@@ -194,6 +204,7 @@ export function AccountPositions({ id }: { id: string }) {
         stale: batch.stale,
         observedAt,
         failedCount: batch.failedIds.length,
+        withheldIds: new Set(batch.withheld),
       };
     },
   });
@@ -212,6 +223,7 @@ export function AccountPositions({ id }: { id: string }) {
   }
 
   const priceMap = pricesQ.data?.byAsset ?? {};
+  const withheldIds = pricesQ.data?.withheldIds ?? new Set<string>();
   const holdings: Holding[] = assetIds.map((asset) => {
     const raw =
       asset === 'native'
@@ -235,6 +247,7 @@ export function AccountPositions({ id }: { id: string }) {
       priceType: priced?.priceType ?? null,
       valueUSD,
       valueCents: cents,
+      withheld: withheldIds.has(asset),
     };
   });
   holdings.sort((a, b) => (b.valueUSD ?? -1) - (a.valueUSD ?? -1));
@@ -254,9 +267,20 @@ export function AccountPositions({ id }: { id: string }) {
     pricesQ.isError && !pricesQ.data
       ? priceableIds.length
       : (pricesQ.data?.failedCount ?? 0);
+  // GH-786: a holding the pricing API SAW and refused (thin market,
+  // flagged issuer) is a different fact from one it never observed —
+  // carve it out of the generic "unpriced" bucket rather than reporting
+  // both alike.
+  const withheldCount = holdings.filter(
+    (h) => h.valueUSD == null && h.withheld,
+  ).length;
+  const neverObservedCount = unpricedCount - withheldCount;
   const lowerBound = unpricedCount > 0;
   const totalText = `${lowerBound ? '≥ ' : ''}${usdFmt.format(total)}`;
-  const excludedText = `excludes ${unpricedCount} unpriced`;
+  const excludedParts: string[] = [];
+  if (neverObservedCount > 0) excludedParts.push(`${neverObservedCount} unpriced`);
+  if (withheldCount > 0) excludedParts.push(`${withheldCount} withheld`);
+  const excludedText = `excludes ${excludedParts.join(', ')}`;
   const shareOf = lowerBound ? 'of priced value' : 'of value';
   const slices = holdings
     .filter((h) => h.valueUSD != null && h.valueUSD > 0)
@@ -285,7 +309,7 @@ export function AccountPositions({ id }: { id: string }) {
   return (
     <Panel
       title="Positions"
-      hint="Native XLM + trustline balances, valued at the USD price the pricing API serves for each one. A price it declares as something other than an observed market rate is labelled in the Price column. Holdings it won't price are listed without a USD value."
+      hint="Native XLM + trustline balances, valued at the USD price the pricing API serves for each one. A price it declares as something other than an observed market rate is labelled in the Price column. Holdings it won't price are listed without a USD value — labelled 'withheld' when the API saw the market and refused it, plain '—' when it has never observed one at all."
       source={asExample(`/v1/accounts/${id}`)}
       bodyClassName="space-y-4"
     >
@@ -366,9 +390,18 @@ export function AccountPositions({ id }: { id: string }) {
                   {formatCompact(h.amount)}
                 </Td>
                 <Td align="right" className="font-mono">
-                  {h.priceUSD != null
-                    ? `$${formatPriceSmall(h.priceUSD)}`
-                    : '—'}
+                  {h.priceUSD != null ? (
+                    `$${formatPriceSmall(h.priceUSD)}`
+                  ) : h.withheld ? (
+                    <span
+                      className="text-ink-muted text-[10px] tracking-wider uppercase"
+                      title="Price withheld by the pricing API's serving gate (thin market or flagged issuer) — observed, not merely unpriced"
+                    >
+                      withheld
+                    </span>
+                  ) : (
+                    '—'
+                  )}
                   {h.priceType === 'peg' && (
                     <span
                       className="text-ink-muted ml-1.5 text-[10px] tracking-wider uppercase"

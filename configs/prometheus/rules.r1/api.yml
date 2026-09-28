@@ -500,6 +500,41 @@ groups:
             store. If this fires ALONE, suspect the usage-counter key
             namespace or an eviction policy rather than Redis availability.
 
+      # GH-1277: the write side of the usage meter had no observability
+      # at all — a failed Increment/IncrementDetailBy logged at Debug
+      # and was otherwise invisible. stellarindex_usage_units_dropped_total
+      # now counts every dropped request unit by counter (billable|detail);
+      # this is its consumer, the write-side twin of
+      # stellarindex_monthly_quota_fail_open above: that alert fires when
+      # the READ of the counter fails and the quota is bypassed; this one
+      # fires when the WRITE fails, so MonthToDate reads a real zero
+      # instead of an unreadable value and the quota gate never sees a
+      # problem at all. A wedged Redis pipeline, an ACL change or a key-
+      # namespace typo on the write path uncaps every metered key with
+      # no other signal.
+      - alert: stellarindex_usage_write_failing
+        expr: sum(rate(stellarindex_usage_units_dropped_total{counter="billable"}[5m])) > 0
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/usage-write-failing.md
+          summary: "Usage-counter writes are failing ({{ $value | humanize }} billable units/s dropped)"
+          description: |
+            The API served requests it could not meter: writes to the
+            billable usage counter have been failing continuously for the
+            last 10 minutes. Every dropped unit is unmetered — MonthToDate
+            reads a real Redis zero, not an error, so MonthlyQuota sees a
+            healthy read and never fails open; there is no other signal
+            that the ceiling has gone uncapped.
+
+            Does NOT move with stellarindex_monthly_quota_fail_open — that
+            fires on a failed READ, this fires on a failed WRITE, and they
+            are mutually exclusive per request. Check Redis health and the
+            usage-counter key namespace first.
+
       # The scam-pricing gate fails OPEN on an account_directory lookup
       # error — correct, because failing closed would blank every price
       # on a DB blip — but while it is open every directory-flagged

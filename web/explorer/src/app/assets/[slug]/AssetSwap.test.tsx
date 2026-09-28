@@ -110,6 +110,37 @@ describe('AssetSwap fiat leg basis', () => {
     // 1 XLM × 0.195 USD ÷ 1.148765077541643 USD/EUR = 0.169745… EUR
     expect(await screen.findByDisplayValue(/^0\.1697/)).toBeInTheDocument();
   });
+
+  // GH-786: once picked, the leg used to freeze at its pick-time snapshot
+  // forever — no refetch, ever, regardless of how long the tab stayed
+  // open. It must poll its own price live, the same as the page asset.
+  it("re-fetches the picked leg's own price on a live interval instead of freezing at pick time", async () => {
+    stubApi();
+    renderSwap();
+    await pickEURAsReceiveLeg();
+
+    const legCallCount = () =>
+      vi
+        .mocked(apiGet)
+        .mock.calls.filter(
+          ([path, params]) =>
+            path === '/v1/price/batch' &&
+            (params as { asset_ids?: string } | undefined)?.asset_ids ===
+              'fiat:EUR',
+        ).length;
+
+    await vi.waitFor(() => expect(legCallCount()).toBeGreaterThan(0));
+    const before = legCallCount();
+
+    vi.useFakeTimers();
+    try {
+      await vi.advanceTimersByTimeAsync(60_000);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    await vi.waitFor(() => expect(legCallCount()).toBeGreaterThan(before));
+  });
 });
 
 // T267. TokenPicker hand-rolled an Escape listener instead of the shared

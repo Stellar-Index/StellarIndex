@@ -244,6 +244,49 @@ describe('AccountPositions price envelope', () => {
     expect(screen.getByText('Allocation (priced)')).toBeInTheDocument();
   });
 
+  // GH-786: a holding the pricing API SAW and refused (thin market /
+  // flagged issuer — envelope.withheld) is a different fact from one it
+  // never observed at all. Both used to render identically as "—" /
+  // "unpriced".
+  it('labels a withheld holding distinctly from a never-observed one', async () => {
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path.startsWith('/v1/accounts/')) {
+        return {
+          data: {
+            account_id: ACCOUNT,
+            exists: true,
+            balance: XLM_BALANCE,
+            trustlines: [{ asset: USDC, balance: USDC_BALANCE }],
+          },
+        };
+      }
+      if (path === '/v1/price/batch') {
+        return {
+          data: [
+            {
+              asset_id: 'crypto:XLM',
+              quote: 'fiat:USD',
+              price: '0.19498671210062048170',
+              price_type: 'vwap',
+              observed_at: hoursAgo(1),
+            },
+            // USDC is omitted from `data` AND named in `withheld`: the
+            // API saw it and refused to price it.
+          ],
+          withheld: [USDC],
+          as_of: new Date().toISOString(),
+          flags: { stale: false },
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    renderPanel();
+
+    expect(await screen.findByText('withheld')).toBeInTheDocument();
+    expect(screen.getByText('excludes 1 withheld')).toBeInTheDocument();
+    expect(screen.queryByText(/unpriced/)).not.toBeInTheDocument();
+  });
+
   it('keeps a fully priced total unqualified', async () => {
     stubApi();
     renderPanel();
