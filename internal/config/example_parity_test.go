@@ -51,7 +51,7 @@ func TestExampleTOMLDocumentsSchemaFields(t *testing.T) {
 		"issuer_home_domains", "standard_reference_contract", "adapter_contract",
 		"factory_contract", "seed_rpc_endpoint",
 		"divergence_min_interval_seconds", "triangulations",
-		"background_statement_timeout", "clickhouse_serving_password_env",
+		"background_statement_timeout", "clickhouse_serving_password",
 		"max_supply_overrides", "stale_component_ledgers_by_asset",
 		"max_concurrent_streams", "max_streams_per_ip", "max_tip_producers",
 		"max_tip_producers_per_caller", "feed_map", "demo_api_key",

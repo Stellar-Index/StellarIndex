@@ -299,6 +299,34 @@ func TestHandleCallback_ExpiredTokenReturns410(t *testing.T) {
 	}
 }
 
+// The callback URL carries the magic-link plaintext, so no response on
+// it — the 303 into the dashboard or any refusal — may leak a Referer.
+func TestHandleCallback_SetsNoReferrerOnEveryExit(t *testing.T) {
+	r := newTestRig(t)
+	lw := r.postLogin(t, "referrer@example.com")
+	if lw.Code != http.StatusOK {
+		t.Fatalf("login: %d", lw.Code)
+	}
+	plaintext := r.extractTokenFromSentEmail(t)
+
+	ok := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token="+url.QueryEscape(plaintext), nil)
+	ok.RemoteAddr = "203.0.113.5:55123"
+	attachCookies(ok, lw)
+	noIntent := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token=deadbeef", nil)
+	missing := httptest.NewRequest(http.MethodGet, "/v1/auth/callback", nil)
+
+	for name, req := range map[string]*http.Request{"success": ok, "no-intent": noIntent, "missing-token": missing} {
+		w := httptest.NewRecorder()
+		r.h.HandleCallback(w, req)
+		if name == "success" && w.Code != http.StatusSeeOther {
+			t.Fatalf("success: status = %d, want 303", w.Code)
+		}
+		if got := w.Header().Get("Referrer-Policy"); got != "no-referrer" {
+			t.Errorf("%s (status %d): Referrer-Policy = %q, want no-referrer", name, w.Code, got)
+		}
+	}
+}
+
 func TestHandleCallback_InvalidTokenReturns400(t *testing.T) {
 	r := newTestRig(t)
 	// Binding valid, token unknown to the store: the 400 must come from
@@ -553,8 +581,7 @@ func TestHandleLogin_RejectsNonSingleMailbox(t *testing.T) {
 }
 
 func TestRequireSession_AnonRequest401(t *testing.T) {
-	r := newTestRig(t)
-	guarded := RequireSession(r.cfg)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	guarded := RequireSession()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 

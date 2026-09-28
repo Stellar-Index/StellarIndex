@@ -46,6 +46,10 @@ const krakenMaxResponse = 720
 // 30 s. Nothing in production reassigns it.
 var krakenRESTTimeout = 30 * time.Second
 
+// maxRESTBodyBytes caps every Kraken REST body read so a wedged upstream
+// streaming inside the timeout cannot OOM the ingester.
+const maxRESTBodyBytes = 20 << 20
+
 // ErrDepthExceeded marks a Backfill call whose requested `from` is older
 // than Kraken will actually serve. Kraken's /OHLC ignores `since` once it
 // is older than the venue's ~720-candle horizon and returns its most
@@ -230,7 +234,7 @@ func fetchKrakenOHLC(ctx context.Context, endpoint string, q url.Values) ([]krak
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 20*1024*1024))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRESTBodyBytes))
 	if err != nil {
 		return nil, 0, fmt.Errorf("read body: %w", err)
 	}

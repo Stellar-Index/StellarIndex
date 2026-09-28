@@ -109,7 +109,16 @@ api.stellarindex.io {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
-		Referrer-Policy "strict-origin-when-cross-origin"
+		# `?` sets only if the upstream response didn't already set this
+		# field. The API sets `Referrer-Policy: no-referrer` itself
+		# (internal/api/v1/middleware/security_headers.go) because some
+		# API URLs are top-level navigations whose query carries a
+		# credential; a bare `Referrer-Policy` here would win at
+		# write-time (the `-Server` delete below defers the whole
+		# block) and silently downgrade that to
+		# strict-origin-when-cross-origin. This value is only the
+		# fallback for a response the API didn't set the header on.
+		?Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "accelerometer=(), camera=(), geolocation=(), microphone=(), payment=(), usb=()"
 		# Allow CORS at this layer too; the API also CORS-handles per
 		# cfg.API.AllowedOrigins.

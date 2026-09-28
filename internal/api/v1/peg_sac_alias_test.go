@@ -40,7 +40,7 @@ const (
 // process-global (see canonical.InstallAliasRegistry).
 func installPegAliasRegistry(t *testing.T) canonical.Asset {
 	t.Helper()
-	reg, err := canonical.NewAliasRegistry(map[string]string{
+	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{
 		pegAliasUSDCSAC: "USDC:" + pegAliasUSDCIssuer,
 		pegAliasAquaSAC: "AQUA:" + pegAliasAquaIssuer,
 	})

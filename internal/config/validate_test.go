@@ -268,13 +268,13 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 		// conventions (value-vs-name) getting swapped.
 		"redis password looks like env var name": {
 			func(c *config.Config) { c.Storage.RedisPassword = "STELLARINDEX_REDIS_PASSWORD" },
-			"redis_password_env",
+			"storage.redis_password looks like",
 		},
 		"clickhouse password looks like env var name": {
 			func(c *config.Config) {
 				c.Storage.ClickHouseServingPassword = "STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD"
 			},
-			"clickhouse_serving_password_env",
+			"storage.clickhouse_serving_password looks like",
 		},
 		"s3 access key env holds a literal secret value": {
 			// A realistic AWS SECRET key shape (lowercase + digits + '/')
@@ -865,5 +865,46 @@ monthly_quota_dwell = "2m"
 	}
 	if c.API.MonthlyQuotaDwell != 2*time.Minute {
 		t.Errorf("api.monthly_quota_dwell = %v, want 2m", c.API.MonthlyQuotaDwell)
+	}
+}
+
+// Config URLs that feed outbound fetches must be absolute http(s) URLs
+// with a host, checked at boot; empty keeps the built-in default. The
+// value is never echoed: an RPC URL can carry an API key in its path.
+func TestValidate_OutboundURLFieldsNeedSchemeAndHost(t *testing.T) {
+	fields := map[string]func(*config.Config, string){
+		"api.prometheus_url":                   func(c *config.Config, v string) { c.API.PrometheusURL = v },
+		"divergence.coingecko.base_url":        func(c *config.Config, v string) { c.Divergence.CoinGecko.BaseURL = v },
+		"divergence.supply.dashboard.base_url": func(c *config.Config, v string) { c.Divergence.Supply.Dashboard.BaseURL = v },
+		"divergence.supply.coingecko.base_url": func(c *config.Config, v string) { c.Divergence.Supply.CoinGecko.BaseURL = v },
+		"divergence.chainlink.rpc_url":         func(c *config.Config, v string) { c.Divergence.Chainlink.RPCURL = v },
+	}
+	const marker = "fixture-path-key"
+	for field, set := range fields {
+		for _, bad := range []string{
+			"localhost:9090/" + marker,    // scheme-less: parses with scheme "localhost"
+			"ftp://example.com/" + marker, // wrong scheme
+			"https:///" + marker,          // no host
+			"/relative/" + marker,         // relative
+		} {
+			t.Run(field+"/"+bad, func(t *testing.T) {
+				c := config.Default()
+				set(&c, bad)
+				err := c.Validate()
+				if err == nil || !strings.Contains(err.Error(), field) {
+					t.Fatalf("err = %v, want a rejection naming %s", err, field)
+				}
+				if strings.Contains(err.Error(), marker) {
+					t.Errorf("error echoes the URL: %v", err)
+				}
+			})
+		}
+		for _, ok := range []string{"", "https://example.com/api", "http://127.0.0.1:9090"} {
+			c := config.Default()
+			set(&c, ok)
+			if err := c.Validate(); err != nil {
+				t.Errorf("%s = %q: unexpected error %v", field, ok, err)
+			}
+		}
 	}
 }

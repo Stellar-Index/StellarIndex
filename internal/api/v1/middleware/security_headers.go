@@ -16,6 +16,11 @@ import "net/http"
 //     JavaScript. Prevents MIME-sniffing attacks where a hostile
 //     value inside a response is sniffed into an executable
 //     context by an overly helpful browser.
+//   - Referrer-Policy: no-referrer — some API URLs ARE top-level
+//     navigations whose query carries a credential
+//     (`GET /v1/auth/callback?token=<magic-link>` 303s into the
+//     dashboard; the signup verify link). No API response has a use
+//     for sending a Referer onward.
 //
 // Not set (deliberate):
 //
@@ -27,13 +32,19 @@ import "net/http"
 //     restrict.
 //   - X-Frame-Options — prevents clickjacking of HTML pages;
 //     a JSON response can't be framed.
-//   - Referrer-Policy — the API doesn't emit navigation links.
 //
-// Operators behind a reverse proxy that ALSO sets nosniff get
-// the same value twice — idempotent.
+// The edge Caddyfile must set Referrer-Policy conditionally
+// (`?Referrer-Policy`, Caddy's set-if-absent operator) rather than
+// unconditionally: an unconditional edge value in the same header
+// block as a delete op is deferred to write-time (Caddy defers the
+// whole block once any field is deleted) and would overwrite this
+// no-referrer with the edge's looser default. Operators behind a
+// reverse proxy that respects that ordering get the same value
+// twice — idempotent.
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
 		next.ServeHTTP(w, r)
 	})
 }

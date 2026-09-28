@@ -341,7 +341,7 @@ func (a *armFilteringAssets) GetAssetsATHBatch(
 const (
 	spineIssuer  = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"
 	spineClassic = "TESTX-" + spineIssuer
-	spineSAC     = "CA22XCXSINOJTOQGKTLTEUXNKE7Z4IEBO5XNHPX7MRAEPOD3OAJMHY5R"
+	spineSAC     = "CAZZVRSFVAMZSCO3SQ3JSJQGEJEGGUOIOHJRKPJHTXPRUWBJEA2BSKPB"
 )
 
 // installSpineFoldRegistry installs a process AliasRegistry carrying the
@@ -349,7 +349,7 @@ const (
 // process-global (see canonical.InstallAliasRegistry).
 func installSpineFoldRegistry(t *testing.T) {
 	t.Helper()
-	reg, err := canonical.NewAliasRegistry(map[string]string{spineSAC: "TESTX:" + spineIssuer})
+	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{spineSAC: "TESTX:" + spineIssuer})
 	if err != nil {
 		t.Fatalf("NewAliasRegistry: %v", err)
 	}

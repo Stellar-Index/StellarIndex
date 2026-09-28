@@ -47,6 +47,12 @@ const (
 // Returns an error only for asset shapes with no SAC (a Soroban
 // token IS its own contract; use Asset.ContractID directly).
 func (a Asset) SacContractID() (string, error) {
+	return a.sacContractIDOn(NetworkPassphrase())
+}
+
+// sacContractIDOn is [Asset.SacContractID] against an explicit network
+// passphrase, for callers that hold the configured network directly.
+func (a Asset) sacContractIDOn(passphrase string) (string, error) {
 	var x xdr.Asset
 	switch a.Type {
 	case AssetNative:
@@ -60,7 +66,7 @@ func (a Asset) SacContractID() (string, error) {
 	default:
 		return "", fmt.Errorf("canonical: SacContractID: asset type %q has no SAC (use ContractID)", a.Type)
 	}
-	raw, err := x.ContractID(NetworkPassphrase())
+	raw, err := x.ContractID(passphrase)
 	if err != nil {
 		return "", fmt.Errorf("canonical: SacContractID: derive: %w", err)
 	}

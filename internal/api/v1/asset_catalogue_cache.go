@@ -8,7 +8,6 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
-	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // CachedAssetsReader wraps a [AssetsReader] with a small per-key TTL
@@ -352,17 +351,17 @@ type swrEntry struct {
 }
 
 // swr is the generic single-value stale-while-revalidate fetch: the
-// proven, race-clean assetsReader fetchRows/refreshRows logic (#22), made
+// proven, race-clean assetsReader fetchRows logic (#22), made
 // type-parametric so every per-asset single-value asset-catalogue method
 // shares ONE implementation. Free function — Go methods can't have
 // type parameters.
 //
 //	(A)  fresh hit → return cached
 //	(A') expired with a prior success → serve stale IMMEDIATELY +
-//	     one single-flighted background refresh (refreshSWR); never
+//	     one single-flighted background refresh (runDetachedFill); never
 //	     blocks a request on the slow upstream
-//	(B)  cold fetch already in flight → join it
-//	(C)  cold leader → block inline; delete-on-error with the
+//	(B)/(C) cold → join the running fill or start one, then
+//	     wait on it OR the caller's ctx; delete-on-error with the
 //	     waiter-err-pointer panic-safety
 func swr[T any](ctx context.Context, c *CachedAssetsReader, op, key string, upstream func(context.Context) (T, error)) (T, error) {
 	var zero T
@@ -385,104 +384,91 @@ func swr[T any](ctx context.Context, c *CachedAssetsReader, op, key string, upst
 			obs.APICacheOpsTotal.WithLabelValues("coins", op, "stale").Inc()
 			//nolint:gosec,contextcheck // G118 / contextcheck:
 			// intentional. The SWR background refresh MUST use a
-			// fresh context (refreshSWR -> context.Background), NOT
+			// fresh context (runDetachedFill), NOT
 			// the request ctx, which is cancelled the instant the
 			// stale response is written; reusing it would abort
 			// every refresh — defeating the entire point of SWR.
-			go refreshSWR(c, op, entry, done, upstream)
+			go runDetachedFill(c.logger, "api-assets-catalogue-swr-refresh", assetsRefreshBudget, done, upstream, settleSWR[T](c, op, key, entry))
 			return v.(T), nil
 		}
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("coins", op, "stale").Inc()
 		return v.(T), nil
 	}
-	if ok && e.flight != nil {
-		entry := e
-		ch := e.flight
+	entry, leader := e, false
+	if !ok || e.flight == nil {
+		entry, leader = &swrEntry{flight: make(chan struct{})}, true
+		evictOldestSWREntry(c.swrEntries)
+		c.swrEntries[key] = entry
+		//nolint:gosec,contextcheck // G118 / contextcheck: intentional
+		// detached fill — see runDetachedFill.
+		go runDetachedFill(c.logger, "api-assets-catalogue-swr-refresh", assetsRefreshBudget, entry.flight, upstream, settleSWR[T](c, op, key, entry))
+	}
+	ch := entry.flight
+	c.mu.Unlock()
+	if leader {
+		obs.APICacheOpsTotal.WithLabelValues("coins", op, "miss").Inc()
+	}
+	select {
+	case <-ch:
+		c.mu.Lock()
+		v, err := entry.val, entry.err
 		c.mu.Unlock()
-		select {
-		case <-ch:
-			if entry.err != nil {
+		if err != nil {
+			if !leader {
 				obs.APICacheOpsTotal.WithLabelValues("coins", op, "miss").Inc()
-				return zero, entry.err
 			}
+			return zero, err
+		}
+		if !leader {
 			obs.APICacheOpsTotal.WithLabelValues("coins", op, "hit").Inc()
-			return entry.val.(T), nil
-		case <-ctx.Done():
-			return zero, ctx.Err()
+		}
+		return v.(T), nil
+	case <-ctx.Done():
+		return zero, ctx.Err()
+	}
+}
+
+// settleSWR applies an swr fill, cold or (A'). On failure a stale value is
+// kept (retry next request); a cold entry hands err to its waiters and is
+// dropped so errors are never cached.
+func settleSWR[T any](c *CachedAssetsReader, op, key string, entry *swrEntry) func(T, error) {
+	return func(v T, err error) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		entry.flight = nil
+		switch {
+		case err == nil:
+			entry.at = time.Now()
+			entry.val = v
+		case !entry.at.IsZero():
+			obs.APICacheOpsTotal.WithLabelValues("coins", op, "refresh_error").Inc()
+		default:
+			entry.err = err
+			if c.swrEntries[key] == entry {
+				delete(c.swrEntries, key)
+			}
 		}
 	}
-
-	done := make(chan struct{})
-	entry := &swrEntry{flight: done}
-	evictOldestSWREntry(c.swrEntries)
-	c.swrEntries[key] = entry
-	c.mu.Unlock()
-	obs.APICacheOpsTotal.WithLabelValues("coins", op, "miss").Inc()
-
-	v, err := upstream(ctx)
-
-	c.mu.Lock()
-	if err == nil {
-		entry.at = time.Now()
-		entry.val = v
-		entry.flight = nil
-	} else {
-		entry.err = err
-		delete(c.swrEntries, key) // don't cache the error
-	}
-	c.mu.Unlock()
-	close(done)
-	return v, err
 }
 
-// refreshSWR runs the upstream call OFF the request path for swr's
-// (A') branch — fresh background context (the request ctx dies when
-// the stale response is written); on success swaps val+at under the
-// lock; on failure keeps the stale value and only clears the
-// in-flight marker (retry next request); single-flighted via
-// done/entry.flight. Mirrors asset_catalogue_cache.go refreshRows.
-func refreshSWR[T any](c *CachedAssetsReader, op string, entry *swrEntry, done chan struct{}, upstream func(context.Context) (T, error)) {
-	defer close(done)
-	// Clearing the in-flight marker is what makes the NEXT request retry.
-	// Registered before the guard below so it runs after it: a panic that
-	// left entry.flight set would wedge this key on its stale value for
-	// the life of the process, because (A') only kicks a refresh when
-	// e.flight == nil. Un-wedging beats a silent permanent freeze.
-	defer c.clearSWRFlight(entry)
-	defer worker.Recover(c.logger, "api-assets-catalogue-swr-refresh")
-	ctx, cancel := context.WithTimeout(context.Background(), assetsRefreshBudget)
-	defer cancel()
-
-	v, err := upstream(ctx)
-
-	c.mu.Lock()
-	if err == nil {
+// settleRowsFillLocked applies a finished fill to an assetsCacheEntry:
+// apply the value on success; on failure keep a stale value, or for a
+// cold entry hand err to its waiters and drop it. Caller holds c.mu.
+func (c *CachedAssetsReader) settleRowsFillLocked(op, key string, entry *assetsCacheEntry, err error, apply func()) {
+	entry.flight = nil
+	switch {
+	case err == nil:
 		entry.at = time.Now()
-		entry.val = v
-	}
-	c.mu.Unlock()
-
-	if err != nil {
+		apply()
+	case !entry.at.IsZero():
 		obs.APICacheOpsTotal.WithLabelValues("coins", op, "refresh_error").Inc()
+	default:
+		entry.err = err
+		if c.entries[key] == entry {
+			delete(c.entries, key)
+		}
 	}
-}
-
-// clearSWRFlight releases the single-flight marker on a generic SWR
-// entry. Deferred by refreshSWR so it runs on EVERY exit including a
-// panic — an entry left in flight is never refreshed again.
-func (c *CachedAssetsReader) clearSWRFlight(entry *swrEntry) {
-	c.mu.Lock()
-	entry.flight = nil
-	c.mu.Unlock()
-}
-
-// clearRowsFlight is [CachedAssetsReader.clearSWRFlight] for the
-// assetsCacheEntry refreshers (refreshRows / refreshHistoryMap).
-func (c *CachedAssetsReader) clearRowsFlight(entry *assetsCacheEntry) {
-	c.mu.Lock()
-	entry.flight = nil
-	c.mu.Unlock()
 }
 
 // assetsRefreshBudget bounds a stale-while-revalidate background
@@ -554,12 +540,12 @@ func (c *CachedAssetsReader) fetchRowsAt(
 			obs.APICacheOpsTotal.WithLabelValues("coins", op, "stale").Inc()
 			//nolint:gosec,contextcheck // G118 / contextcheck:
 			// intentional. The SWR background refresh MUST use a
-			// fresh context (refreshRows -> context.Background), NOT
+			// fresh context (runDetachedFill), NOT
 			// the request ctx: the request ctx is cancelled the
 			// instant the stale response is written, so reusing it
 			// would abort every refresh — defeating the entire point
 			// of serving stale while revalidating.
-			go c.refreshRows(op, entry, done, upstream)
+			go runDetachedFill(c.logger, "api-assets-catalogue-rows-refresh", assetsRefreshBudget, done, upstream, c.settleRows(op, key, entry))
 			return stale, staleAt, nil
 		}
 		c.mu.Unlock()
@@ -567,93 +553,62 @@ func (c *CachedAssetsReader) fetchRowsAt(
 		return stale, staleAt, nil
 	}
 
-	// (B) Cold fetch already in flight (no prior success to serve) —
-	// join it rather than stampede upstream.
-	if ok && e.flight != nil {
-		entry := e
-		ch := e.flight
+	// (B)/(C) Cold: no prior success to serve. Join the running fill or
+	// start one, then wait on it OR this caller's ctx. The fill runs
+	// detached (runDetachedFill), so one caller's abort cannot fail the others.
+	entry, leader := c.joinOrStartColdLocked(e, ok, key)
+	if leader {
+		//nolint:gosec,contextcheck // G118 / contextcheck: intentional
+		// detached fill — see runDetachedFill.
+		go runDetachedFill(c.logger, "api-assets-catalogue-rows-refresh", assetsRefreshBudget, entry.flight, upstream, c.settleRows(op, key, entry))
+	}
+	ch := entry.flight
+	c.mu.Unlock()
+	if leader {
+		obs.APICacheOpsTotal.WithLabelValues("coins", op, "miss").Inc()
+	}
+	select {
+	case <-ch:
+		c.mu.Lock()
+		rows, at, err := entry.rows, entry.at, entry.err
 		c.mu.Unlock()
-		select {
-		case <-ch:
-			if entry.err != nil {
+		if err != nil {
+			if !leader {
 				obs.APICacheOpsTotal.WithLabelValues("coins", op, "miss").Inc()
-				return nil, time.Time{}, entry.err
 			}
-			obs.APICacheOpsTotal.WithLabelValues("coins", op, "hit").Inc()
-			return entry.rows, entry.at, nil
-		case <-ctx.Done():
-			return nil, time.Time{}, ctx.Err()
+			return nil, time.Time{}, err
 		}
+		if !leader {
+			obs.APICacheOpsTotal.WithLabelValues("coins", op, "hit").Inc()
+		}
+		return rows, at, nil
+	case <-ctx.Done():
+		return nil, time.Time{}, ctx.Err()
 	}
-
-	// (C) Cold leader: no entry (or a prior failed cold fetch left
-	// none). Block inline — there is nothing stale to serve.
-	done := make(chan struct{})
-	entry := &assetsCacheEntry{flight: done}
-	evictOldestAssetsEntry(c.entries)
-	c.entries[key] = entry
-	c.mu.Unlock()
-	obs.APICacheOpsTotal.WithLabelValues("coins", op, "miss").Inc()
-
-	rows, err := upstream(ctx)
-
-	c.mu.Lock()
-	var filledAt time.Time
-	if err == nil {
-		filledAt = time.Now()
-		entry.at = filledAt
-		entry.rows = rows
-		entry.flight = nil
-	} else {
-		entry.err = err
-		delete(c.entries, key) // don't cache the error for new callers
-	}
-	c.mu.Unlock()
-	close(done)
-	return rows, filledAt, err
 }
 
-// refreshRows runs the upstream call OFF the request path for the
-// stale-while-revalidate (A') branch of fetchRows.
-//
-//   - It uses a fresh background context, NOT the triggering
-//     request's ctx: that ctx is cancelled the instant the stale
-//     response is written, which would abort every refresh.
-//   - On success it swaps the entry's rows + timestamp under the
-//     lock → subsequent callers get a fresh hit.
-//   - On failure it KEEPS the existing stale value (does not delete,
-//     does not touch e.at) so we keep serving stale and simply
-//     retry on the next request; only the in-flight marker clears.
-//   - Single-flighted via `done`/`entry.flight`: while it runs,
-//     fetchRows' (A') sees e.flight != nil and serves stale without
-//     spawning a second refresh. Nothing waits on `done` (the SWR
-//     path never blocks), but closing it is harmless and keeps the
-//     channel lifecycle symmetric with the cold path.
-func (c *CachedAssetsReader) refreshRows(
-	op string,
-	entry *assetsCacheEntry,
-	done chan struct{},
-	upstream func(context.Context) ([]timescale.AssetRow, error),
-) {
-	defer close(done)
-	// See clearSWRFlight: deferred so a panic cannot leave this key
-	// permanently in flight and therefore permanently un-refreshed.
-	defer c.clearRowsFlight(entry)
-	defer worker.Recover(c.logger, "api-assets-catalogue-rows-refresh")
-	ctx, cancel := context.WithTimeout(context.Background(), assetsRefreshBudget)
-	defer cancel()
-
-	rows, err := upstream(ctx)
-
-	c.mu.Lock()
-	if err == nil {
-		entry.at = time.Now()
-		entry.rows = rows
+// joinOrStartColdLocked returns the in-flight cold entry for key, or
+// installs a fresh one (leader=true) whose fill the caller must start.
+// Caller holds c.mu.
+func (c *CachedAssetsReader) joinOrStartColdLocked(e *assetsCacheEntry, ok bool, key string) (*assetsCacheEntry, bool) {
+	if ok && e.flight != nil {
+		return e, false
 	}
-	c.mu.Unlock()
+	entry := &assetsCacheEntry{flight: make(chan struct{})}
+	evictOldestAssetsEntry(c.entries)
+	c.entries[key] = entry
+	return entry, true
+}
 
-	if err != nil {
-		obs.APICacheOpsTotal.WithLabelValues("coins", op, "refresh_error").Inc()
+// settleRows applies a fetchRowsAt fill, cold or stale-while-revalidate
+// (A'). The upstream call ran through runDetachedFill, never a request ctx:
+// for (A') that ctx dies the instant the stale response is written, and for
+// a cold fill one waiter's abort must not fail the rest.
+func (c *CachedAssetsReader) settleRows(op, key string, entry *assetsCacheEntry) func([]timescale.AssetRow, error) {
+	return func(rows []timescale.AssetRow, err error) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.settleRowsFillLocked(op, key, entry, err, func() { entry.rows = rows })
 	}
 }
 
@@ -696,10 +651,10 @@ func (c *CachedAssetsReader) fetchHistoryMap(
 			obs.APICacheOpsTotal.WithLabelValues("coins", op, "stale").Inc()
 			//nolint:gosec,contextcheck // G118 / contextcheck:
 			// intentional, same as fetchRows — the SWR refresh MUST
-			// use a fresh context (refreshHistoryMap ->
-			// context.Background), NOT the request ctx, which is
+			// use a fresh context (runDetachedFill), NOT
+			// the request ctx, which is
 			// cancelled the instant the stale response is written.
-			go c.refreshHistoryMap(op, entry, done, upstream)
+			go runDetachedFill(c.logger, "api-assets-catalogue-history-refresh", assetsRefreshBudget, done, upstream, c.settleHistoryMap(op, key, entry))
 			return stale, nil
 		}
 		c.mu.Unlock()
@@ -707,77 +662,44 @@ func (c *CachedAssetsReader) fetchHistoryMap(
 		return stale, nil
 	}
 
-	// (B) Cold fetch already in flight (no prior success to serve) —
-	// join it rather than stampede upstream.
-	if ok && e.flight != nil {
-		entry := e
-		ch := e.flight
+	// (B)/(C) Cold: join or start a detached fill — see fetchRowsAt.
+	entry, leader := c.joinOrStartColdLocked(e, ok, key)
+	if leader {
+		//nolint:gosec,contextcheck // G118 / contextcheck: intentional
+		// detached fill — see runDetachedFill.
+		go runDetachedFill(c.logger, "api-assets-catalogue-history-refresh", assetsRefreshBudget, entry.flight, upstream, c.settleHistoryMap(op, key, entry))
+	}
+	ch := entry.flight
+	c.mu.Unlock()
+	if leader {
+		obs.APICacheOpsTotal.WithLabelValues("coins", op, "miss").Inc()
+	}
+	select {
+	case <-ch:
+		c.mu.Lock()
+		hist, err := entry.historyByAsset, entry.err
 		c.mu.Unlock()
-		select {
-		case <-ch:
-			if entry.err != nil {
+		if err != nil {
+			if !leader {
 				obs.APICacheOpsTotal.WithLabelValues("coins", op, "miss").Inc()
-				return nil, entry.err
 			}
-			obs.APICacheOpsTotal.WithLabelValues("coins", op, "hit").Inc()
-			return entry.historyByAsset, nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, err
 		}
+		if !leader {
+			obs.APICacheOpsTotal.WithLabelValues("coins", op, "hit").Inc()
+		}
+		return hist, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-
-	// (C) Cold leader: nothing stale to serve, so block inline.
-	done := make(chan struct{})
-	entry := &assetsCacheEntry{flight: done}
-	evictOldestAssetsEntry(c.entries)
-	c.entries[key] = entry
-	c.mu.Unlock()
-	obs.APICacheOpsTotal.WithLabelValues("coins", op, "miss").Inc()
-
-	hist, err := upstream(ctx)
-
-	c.mu.Lock()
-	if err == nil {
-		entry.at = time.Now()
-		entry.historyByAsset = hist
-		entry.flight = nil
-	} else {
-		entry.err = err
-		delete(c.entries, key)
-	}
-	c.mu.Unlock()
-	close(done)
-	return hist, err
 }
 
-// refreshHistoryMap is [CachedAssetsReader.refreshRows] for the
-// history-map entries: fresh background context, swap on success, KEEP
-// the existing stale value on failure (retry next request), clear the
-// in-flight marker either way.
-func (c *CachedAssetsReader) refreshHistoryMap(
-	op string,
-	entry *assetsCacheEntry,
-	done chan struct{},
-	upstream func(context.Context) (map[string][]timescale.AssetPricePoint, error),
-) {
-	defer close(done)
-	// See clearSWRFlight: deferred so a panic cannot leave this key
-	// permanently in flight and therefore permanently un-refreshed.
-	defer c.clearRowsFlight(entry)
-	defer worker.Recover(c.logger, "api-assets-catalogue-history-refresh")
-	ctx, cancel := context.WithTimeout(context.Background(), assetsRefreshBudget)
-	defer cancel()
-
-	hist, err := upstream(ctx)
-
-	c.mu.Lock()
-	if err == nil {
-		entry.at = time.Now()
-		entry.historyByAsset = hist
-	}
-	c.mu.Unlock()
-
-	if err != nil {
-		obs.APICacheOpsTotal.WithLabelValues("coins", op, "refresh_error").Inc()
+// settleHistoryMap is [CachedAssetsReader.settleRows] for the history-map
+// entries.
+func (c *CachedAssetsReader) settleHistoryMap(op, key string, entry *assetsCacheEntry) func(map[string][]timescale.AssetPricePoint, error) {
+	return func(hist map[string][]timescale.AssetPricePoint, err error) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.settleRowsFillLocked(op, key, entry, err, func() { entry.historyByAsset = hist })
 	}
 }

@@ -25,21 +25,18 @@ type CachedSourcesStatsReader struct {
 	upstream SourcesStatsReader
 	ttl      time.Duration
 
-	mu          sync.Mutex
-	stats       []timescale.SourceStats
-	statsAt     time.Time
-	statsErr    error
-	statsFlight chan struct{}
+	mu     sync.Mutex
+	stats  sourcesStatsSlot[timescale.SourceStats]
+	hist   sourcesStatsSlot[timescale.SourceVolumeBucket]
+	hist7d sourcesStatsSlot[timescale.SourceVolumeBucket]
+}
 
-	hist       []timescale.SourceVolumeBucket
-	histAt     time.Time
-	histErr    error
-	histFlight chan struct{}
-
-	hist7d       []timescale.SourceVolumeBucket
-	hist7dAt     time.Time
-	hist7dErr    error
-	hist7dFlight chan struct{}
+// sourcesStatsSlot is one cached method's value, guarded by the reader's mu.
+type sourcesStatsSlot[T any] struct {
+	rows   []T
+	at     time.Time
+	err    error
+	flight chan struct{}
 }
 
 // NewCachedSourcesStatsReader wraps `upstream` with a TTL cache.
@@ -56,54 +53,7 @@ func (c *CachedSourcesStatsReader) GetSourceStats(ctx context.Context) ([]timesc
 	if c.ttl <= 0 {
 		return c.upstream.GetSourceStats(ctx)
 	}
-
-	c.mu.Lock()
-	if time.Since(c.statsAt) < c.ttl && c.stats != nil {
-		out := c.stats
-		c.mu.Unlock()
-		obs.APICacheOpsTotal.WithLabelValues("sources_stats", "source_stats", "hit").Inc()
-		return out, nil
-	}
-
-	// Stale OR empty. If a refresh is already in flight, wait for it
-	// and read the freshly-cached result.
-	if c.statsFlight != nil {
-		ch := c.statsFlight
-		c.mu.Unlock()
-		select {
-		case <-ch:
-			c.mu.Lock()
-			out, refetchErr := c.stats, c.statsErr
-			c.mu.Unlock()
-			if refetchErr != nil {
-				obs.APICacheOpsTotal.WithLabelValues("sources_stats", "source_stats", "error").Inc()
-				return nil, refetchErr
-			}
-			obs.APICacheOpsTotal.WithLabelValues("sources_stats", "source_stats", "hit").Inc()
-			return out, nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
-
-	// We're the leader for this refresh.
-	done := make(chan struct{})
-	c.statsFlight = done
-	c.mu.Unlock()
-	obs.APICacheOpsTotal.WithLabelValues("sources_stats", "source_stats", "miss").Inc()
-
-	rows, err := c.upstream.GetSourceStats(ctx)
-
-	c.mu.Lock()
-	c.statsErr = err
-	if err == nil {
-		c.stats = rows
-		c.statsAt = time.Now()
-	}
-	c.statsFlight = nil
-	c.mu.Unlock()
-	close(done)
-	return rows, err
+	return fetchSourcesSlot(ctx, c, &c.stats, "source_stats", c.upstream.GetSourceStats)
 }
 
 // GetSourceVolumeHistory24h: same shape as GetSourceStats.
@@ -111,51 +61,7 @@ func (c *CachedSourcesStatsReader) GetSourceVolumeHistory24h(ctx context.Context
 	if c.ttl <= 0 {
 		return c.upstream.GetSourceVolumeHistory24h(ctx)
 	}
-
-	c.mu.Lock()
-	if time.Since(c.histAt) < c.ttl && c.hist != nil {
-		out := c.hist
-		c.mu.Unlock()
-		obs.APICacheOpsTotal.WithLabelValues("sources_stats", "volume_history_24h", "hit").Inc()
-		return out, nil
-	}
-
-	if c.histFlight != nil {
-		ch := c.histFlight
-		c.mu.Unlock()
-		select {
-		case <-ch:
-			c.mu.Lock()
-			out, refetchErr := c.hist, c.histErr
-			c.mu.Unlock()
-			if refetchErr != nil {
-				obs.APICacheOpsTotal.WithLabelValues("sources_stats", "volume_history_24h", "error").Inc()
-				return nil, refetchErr
-			}
-			obs.APICacheOpsTotal.WithLabelValues("sources_stats", "volume_history_24h", "hit").Inc()
-			return out, nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
-
-	done := make(chan struct{})
-	c.histFlight = done
-	c.mu.Unlock()
-	obs.APICacheOpsTotal.WithLabelValues("sources_stats", "volume_history_24h", "miss").Inc()
-
-	rows, err := c.upstream.GetSourceVolumeHistory24h(ctx)
-
-	c.mu.Lock()
-	c.histErr = err
-	if err == nil {
-		c.hist = rows
-		c.histAt = time.Now()
-	}
-	c.histFlight = nil
-	c.mu.Unlock()
-	close(done)
-	return rows, err
+	return fetchSourcesSlot(ctx, c, &c.hist, "volume_history_24h", c.upstream.GetSourceVolumeHistory24h)
 }
 
 // GetSourceVolumeHistory7d: same single-flight TTL pattern as the 24h
@@ -164,49 +70,73 @@ func (c *CachedSourcesStatsReader) GetSourceVolumeHistory7d(ctx context.Context)
 	if c.ttl <= 0 {
 		return c.upstream.GetSourceVolumeHistory7d(ctx)
 	}
+	return fetchSourcesSlot(ctx, c, &c.hist7d, "volume_history_7d", c.upstream.GetSourceVolumeHistory7d)
+}
 
+// fetchSourcesSlot is the TTL + single-flight loop shared by the three
+// methods. A stale or empty slot joins the running fill or starts one,
+// then waits on it OR this caller's ctx. The fill runs detached
+// (runDetachedFill), so one caller's abort cannot fail the others. The
+// waiter reads the fill's error, never the slot contents alone, so a
+// failed fill is not served as a successful empty result.
+func fetchSourcesSlot[T any](
+	ctx context.Context,
+	c *CachedSourcesStatsReader,
+	slot *sourcesStatsSlot[T],
+	op string,
+	upstream func(context.Context) ([]T, error),
+) ([]T, error) {
 	c.mu.Lock()
-	if time.Since(c.hist7dAt) < c.ttl && c.hist7d != nil {
-		out := c.hist7d
+	if time.Since(slot.at) < c.ttl && slot.rows != nil {
+		out := slot.rows
 		c.mu.Unlock()
-		obs.APICacheOpsTotal.WithLabelValues("sources_stats", "volume_history_7d", "hit").Inc()
+		obs.APICacheOpsTotal.WithLabelValues("sources_stats", op, "hit").Inc()
 		return out, nil
 	}
 
-	if c.hist7dFlight != nil {
-		ch := c.hist7dFlight
+	ch, leader := slot.flight, slot.flight == nil
+	if leader {
+		ch = make(chan struct{})
+		slot.flight = ch
+		//nolint:gosec,contextcheck // G118 / contextcheck: intentional
+		// detached fill — see runDetachedFill.
+		go runDetachedFill(nil, "api-sources-stats-fill", cacheFillBudget, ch, upstream, settleSourcesSlot(c, slot))
+	}
+	c.mu.Unlock()
+	if leader {
+		obs.APICacheOpsTotal.WithLabelValues("sources_stats", op, "miss").Inc()
+	}
+
+	select {
+	case <-ch:
+		c.mu.Lock()
+		out, refetchErr := slot.rows, slot.err
 		c.mu.Unlock()
-		select {
-		case <-ch:
-			c.mu.Lock()
-			out, refetchErr := c.hist7d, c.hist7dErr
-			c.mu.Unlock()
-			if refetchErr != nil {
-				obs.APICacheOpsTotal.WithLabelValues("sources_stats", "volume_history_7d", "error").Inc()
-				return nil, refetchErr
+		if refetchErr != nil {
+			if !leader {
+				obs.APICacheOpsTotal.WithLabelValues("sources_stats", op, "error").Inc()
 			}
-			obs.APICacheOpsTotal.WithLabelValues("sources_stats", "volume_history_7d", "hit").Inc()
-			return out, nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, refetchErr
 		}
+		if !leader {
+			obs.APICacheOpsTotal.WithLabelValues("sources_stats", op, "hit").Inc()
+		}
+		return out, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
+}
 
-	done := make(chan struct{})
-	c.hist7dFlight = done
-	c.mu.Unlock()
-	obs.APICacheOpsTotal.WithLabelValues("sources_stats", "volume_history_7d", "miss").Inc()
-
-	rows, err := c.upstream.GetSourceVolumeHistory7d(ctx)
-
-	c.mu.Lock()
-	c.hist7dErr = err
-	if err == nil {
-		c.hist7d = rows
-		c.hist7dAt = time.Now()
+// settleSourcesSlot applies a fill's outcome to slot.
+func settleSourcesSlot[T any](c *CachedSourcesStatsReader, slot *sourcesStatsSlot[T]) func([]T, error) {
+	return func(rows []T, err error) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		slot.err = err
+		if err == nil {
+			slot.rows = rows
+			slot.at = time.Now()
+		}
+		slot.flight = nil
 	}
-	c.hist7dFlight = nil
-	c.mu.Unlock()
-	close(done)
-	return rows, err
 }

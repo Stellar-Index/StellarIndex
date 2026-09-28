@@ -1141,42 +1141,6 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	return nil
 }
 
-// BatchInsertTrades writes up to a few hundred trades in a single
-// SQL roundtrip. Live-r1 incident 2026-06-01: per-INSERT roundtrip
-// latency capped indexer throughput at ~5 inserts/sec despite
-// postgres-side capacity > 9000/sec (verified by raw psql loop).
-// Batching collapses N roundtrips into 1, lifting throughput by
-// roughly the batch factor.
-//
-// Same conflict semantics as [Store.InsertTrade] (INT-01): ON
-// CONFLICT ... DO UPDATE on the trade PK, guarded by
-// `trades.derive_generation <= EXCLUDED.derive_generation` — an
-// equal-or-higher generation OVERWRITES the stored value columns
-// including `usd_volume`, a lower one is refused. Re-running a batch
-// over already-stored ledgers is therefore idempotent in ROW COUNT
-// but not inert in VALUE. The `source_entry_counts` UPSERT bumps the
-// per-source tally only by the number of rows actually written, so
-// re-runs don't inflate the count.
-//
-// Storability pre-filter: this is ONE all-or-nothing multi-row INSERT, so
-// a single row that violates a DB constraint aborts the whole statement —
-// which is exactly what an SDEX one-side-zero fill does (the decoder KEEPS
-// those rounding-artifact fills for the ADR-0033 census, but the served
-// tier's `base_amount > 0 AND quote_amount > 0` CHECK — INV-6, migration
-// 0001 — cannot hold a zero leg). [Store.filterStorableTrades] drops the
-// rows that would fail so they can never sink a batch of otherwise-good
-// trades. This mirrors the single-row [Store.InsertTrade] Validate gate and
-// the authoritative completeness reconcile's own Validate gate
-// (reDeriveSDEXCensusViaDecoder), so census/served/reconcile stay
-// consistent. USD-volume is computed per row from the store's USD-volume
-// resolver, same as the single row path.
-//
-// Returns nil on success; on any DB error the whole batch fails and
-// the caller's outcome metric should reflect that. The error is
-// best-effort wrapped with `timescale: BatchInsertTrades: %w`. There
-// is no partial-success semantic — either every storable row is attempted
-// (and individual rows may be duplicate-absorbed), or the whole batch
-// fails.
 // tradeBatchValues builds the multi-row INSERT VALUES placeholder fragments and
 // the flat positional-arg slice for BatchInsertTrades. Each row contributes 13
 // params (source, ledger, tx_hash, op_index, ts, base_asset, quote_asset,
@@ -1304,11 +1268,6 @@ func scanBatchTradeRows(ctx context.Context, tx *sql.Tx, query string, args []an
 	perSourceNew = make(map[string]int, 4)
 	perSourceUnitRatio = make(map[string]int, 4)
 	seenAssets = make(map[string]registryObservation, 8)
-	noteAsset := func(asset string, ledger uint32, ts time.Time) {
-		if prev, ok := seenAssets[asset]; !ok || ledger > prev.ledger {
-			seenAssets[asset] = registryObservation{ledger: ledger, ts: ts}
-		}
-	}
 	for rows.Next() {
 		var source, baseAsset, quoteAsset string
 		var ledger uint32
@@ -1321,8 +1280,8 @@ func scanBatchTradeRows(ctx context.Context, tx *sql.Tx, query string, args []an
 		if isUnitRatio {
 			perSourceUnitRatio[source]++
 		}
-		noteAsset(baseAsset, ledger, ts)
-		noteAsset(quoteAsset, ledger, ts)
+		noteRegistryObservation(seenAssets, baseAsset, registryObservation{ledger: ledger, ts: ts})
+		noteRegistryObservation(seenAssets, quoteAsset, registryObservation{ledger: ledger, ts: ts})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, nil, fmt.Errorf("timescale: BatchInsertTrades rows.Err: %w", err)
@@ -1444,15 +1403,57 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
 	return s.scanBatchTradeOutcome(ctx, query, args)
 }
 
+// BatchInsertTrades writes trades with one multi-row upsert per
+// parameter-safe sub-batch of at most [tradeInsertMaxRows] rows. Live-r1
+// incident 2026-06-01: per-INSERT roundtrip latency capped indexer
+// throughput at ~5 inserts/sec despite postgres-side capacity > 9000/sec
+// (verified by raw psql loop). Batching collapses N roundtrips into one
+// per sub-batch, lifting throughput by roughly the batch factor.
+//
+// Same conflict semantics as [Store.InsertTrade] (INT-01): ON
+// CONFLICT ... DO UPDATE on the trade PK, guarded by
+// `trades.derive_generation <= EXCLUDED.derive_generation` — an
+// equal-or-higher generation OVERWRITES the stored value columns
+// including `usd_volume`, a lower one is refused. Re-running a batch
+// over already-stored ledgers is therefore idempotent in ROW COUNT
+// but not inert in VALUE. The `source_entry_counts` UPSERT bumps the
+// per-source tally only by the number of rows actually written, so
+// re-runs don't inflate the count.
+//
+// Storability pre-filter: each sub-batch is ONE all-or-nothing multi-row
+// INSERT, so a single row that violates a DB constraint aborts that whole
+// sub-batch — which is exactly what an SDEX one-side-zero fill does (the
+// decoder KEEPS those rounding-artifact fills for the ADR-0033 census, but the served
+// tier's `base_amount > 0 AND quote_amount > 0` CHECK — INV-6, migration
+// 0001 — cannot hold a zero leg). [Store.filterStorableTrades] drops the
+// rows that would fail so they can never sink a batch of otherwise-good
+// trades. This mirrors the single-row [Store.InsertTrade] Validate gate and
+// the authoritative completeness reconcile's own Validate gate
+// (reDeriveSDEXCensusViaDecoder), so census/served/reconcile stay
+// consistent. USD-volume is computed per row from the store's USD-volume
+// resolver, same as the single row path.
+//
+// Partial success is explicit. Each sub-batch commits in its own
+// transaction (one transaction across them would hold every row lock and
+// the per-source source_entry_counts lock between statements, a lock
+// interleaving a single statement never had). Sub-batches run in
+// conflict-key order and stop at the first failure, so on error the rows
+// before it are committed and the rest are not written; the outcome
+// metrics and the registry hook still run for the committed rows, because
+// a replay sees them as updates (xmax <> 0) and can never count them. The
+// error is a [*TradeSubBatchError] naming the failed range and wrapping
+// the cause, so errors.Is/As classification (IsInfraError, ctx) is
+// unchanged. Callers replay the whole batch; that is row-idempotent under
+// the ON CONFLICT guard above.
 func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade) error {
 	if len(trades) == 0 {
 		return nil
 	}
 
 	// Drop rows the served tier cannot hold BEFORE building the
-	// all-or-nothing multi-row INSERT (see the godoc). A one-side-zero SDEX
+	// all-or-nothing sub-batch INSERTs (see the godoc). A one-side-zero SDEX
 	// fill would otherwise trip the base/quote > 0 CHECK and roll back every
-	// good trade in the batch. When the whole batch is unstorable this
+	// good trade in its sub-batch. When the whole batch is unstorable this
 	// returns early — there is nothing to insert, and the skips are already
 	// accounted for inside the filter.
 	storable := s.filterStorableTrades(trades)
@@ -1511,31 +1512,87 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 	// protocol limited to 65535 parameters" — and dropped to one INSERT per
 	// row, which is why a 40k-ledger SDEX re-derive chunk took five hours on
 	// 2026-09-13. The batch is sent in parameter-safe sub-batches and the
-	// outcome tallied once across them, so the metrics and the registry
-	// hook see the whole batch exactly as before.
-	perSourceNew := map[string]int{}
-	perSourceUnitRatio := map[string]int{}
-	seenAssets := map[string]registryObservation{}
+	// outcome of every COMMITTED sub-batch is tallied, so the metrics and the
+	// registry hook cover exactly the rows that landed, even when a later
+	// sub-batch fails (see the godoc).
+	out, insErr := s.insertTradeSubBatches(ctx, insertRows)
+	sent := storable
+	if insErr != nil {
+		sent = insertRows[:out.committedRows]
+	}
+	emitBatchTradeOutcomeMetrics(sent, out.perSourceNew, out.perSourceUnitRatio)
+	s.registerBatchLandedAssets(ctx, out.seenAssets)
+	return insErr
+}
+
+// batchTradeOutcome is the landed-row outcome of the committed sub-batches
+// of one BatchInsertTrades call.
+type batchTradeOutcome struct {
+	perSourceNew, perSourceUnitRatio map[string]int
+	seenAssets                       map[string]registryObservation
+	committedRows                    int
+}
+
+// TradeSubBatchError is a BatchInsertTrades failure: rows [0, Start) of the
+// Total conflict-key-sorted, deduplicated rows committed, sub-batch
+// [Start, End) failed with Err, and nothing from Start on was written.
+type TradeSubBatchError struct {
+	Start, End, Total       int
+	FirstLedger, LastLedger uint32
+	Err                     error
+}
+
+func (e *TradeSubBatchError) Error() string {
+	return fmt.Sprintf("timescale: BatchInsertTrades sub-batch rows [%d,%d) of %d (ledgers %d-%d; %d rows before it committed): %v",
+		e.Start, e.End, e.Total, e.FirstLedger, e.LastLedger, e.Start, e.Err)
+}
+
+func (e *TradeSubBatchError) Unwrap() error { return e.Err }
+
+// insertTradeSubBatches sends insertRows in parameter-safe sub-batches, in
+// order, stopping at the first failure. The outcome covers every sub-batch
+// that committed, including when the error is non-nil.
+func (s *Store) insertTradeSubBatches(ctx context.Context, insertRows []canonical.Trade) (batchTradeOutcome, error) {
+	out := batchTradeOutcome{
+		perSourceNew:       map[string]int{},
+		perSourceUnitRatio: map[string]int{},
+		seenAssets:         map[string]registryObservation{},
+	}
 	for _, b := range tradeInsertChunkBounds(len(insertRows)) {
-		n, u, seen, err := s.insertTradeRows(ctx, insertRows[b[0]:b[1]])
+		chunk := insertRows[b[0]:b[1]]
+		n, u, seen, err := s.insertTradeRows(ctx, chunk)
 		if err != nil {
-			return err
-		}
-		for k, v := range n {
-			perSourceNew[k] += v
-		}
-		for k, v := range u {
-			perSourceUnitRatio[k] += v
-		}
-		for k, v := range seen {
-			if _, dup := seenAssets[k]; !dup {
-				seenAssets[k] = v
+			return out, &TradeSubBatchError{
+				Start: b[0], End: b[1], Total: len(insertRows),
+				FirstLedger: chunk[0].Ledger, LastLedger: chunk[len(chunk)-1].Ledger,
+				Err: err,
 			}
 		}
+		for k, v := range n {
+			out.perSourceNew[k] += v
+		}
+		for k, v := range u {
+			out.perSourceUnitRatio[k] += v
+		}
+		for k, v := range seen {
+			noteRegistryObservation(out.seenAssets, k, v)
+		}
+		out.committedRows = b[1]
 	}
+	return out, nil
+}
 
-	emitBatchTradeOutcomeMetrics(storable, perSourceNew, perSourceUnitRatio)
+// noteRegistryObservation keeps asset's highest-ledger observation — the
+// one rule for folding landed rows and merging sub-batches alike.
+func noteRegistryObservation(seen map[string]registryObservation, asset string, o registryObservation) {
+	if prev, ok := seen[asset]; !ok || o.ledger > prev.ledger {
+		seen[asset] = o
+	}
+}
 
+// registerBatchLandedAssets runs the classic-asset registry hook for the
+// distinct assets of a batch's landed rows.
+func (s *Store) registerBatchLandedAssets(ctx context.Context, seenAssets map[string]registryObservation) {
 	// C2-13b: auto-register the classic-asset / issuer registry from the
 	// LANDED trades — the same Phase-4 hook InsertTrade runs. The batch path
 	// used to skip this, reasoning a later single-row InsertTrade would pick
@@ -1563,16 +1620,15 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 				"asset", assetID, "ledger", obsv.ledger, "err", regErr)
 		}
 	}
-	return nil
 }
 
 // filterStorableTrades returns the subset of a batch the served `trades`
 // tier can actually hold — the rows for which [canonical.Trade.Validate]
 // passes (in particular base_amount > 0 AND quote_amount > 0, the INV-6
-// CHECK from migration 0001). It exists because [Store.BatchInsertTrades]
-// issues ONE all-or-nothing multi-row INSERT: a single row that fails that
-// CHECK aborts the entire statement, rolling back every good trade in the
-// batch and forcing a slow per-row fallback that also counts the offending
+// CHECK from migration 0001). It exists because each [Store.BatchInsertTrades]
+// sub-batch is ONE all-or-nothing multi-row INSERT: a single row that fails
+// that CHECK aborts the entire statement, rolling back every good trade in
+// its sub-batch, failing the batch from there on, and forcing a slow per-row fallback that also counts the offending
 // row as an insert error (tripping stellarindex_source_insert_errors_total).
 //
 // The dominant — and only EXPECTED — unstorable row is the SDEX one-side-

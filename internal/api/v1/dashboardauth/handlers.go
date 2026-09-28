@@ -303,7 +303,7 @@ func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 	// other session-cookie POSTs here, which costs nothing and keeps a
 	// cross-site page from driving a staff session's PII reads.
 	mux.Handle("POST /v1/account/admin/lookup",
-		RequireSession(h.cfg)(sameSite(http.HandlerFunc(h.HandleAdminLookup))))
+		RequireSession()(sameSite(http.HandlerFunc(h.HandleAdminLookup))))
 
 	// Passkey (WebAuthn) routes — only when a credential store is
 	// wired. Registration + management are session-gated (adding a
@@ -313,7 +313,7 @@ func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 	// auth POSTs carry — finish-login MINTS a session, so it is a
 	// login-CSRF primitive exactly as verify-code is (C3-031/C3-057).
 	if h.cfg.Passkeys != nil {
-		requireSession := RequireSession(h.cfg)
+		requireSession := RequireSession()
 		public.Handle(mux, "POST /v1/auth/passkey/begin-login",
 			sameSite(http.HandlerFunc(h.HandlePasskeyBeginLogin)))
 		public.Handle(mux, "POST /v1/auth/passkey/finish-login",
@@ -333,10 +333,10 @@ func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 	if h.cfg.AccountEraser != nil {
 		idem := middleware.Idempotency(h.cfg.accountIdempotency, SessionAccountSubject)
 		mux.Handle("DELETE /v1/dashboard/account",
-			RequireSession(h.cfg)(sameSite(idem(http.HandlerFunc(h.HandleAccountDelete)))))
+			RequireSession()(sameSite(idem(http.HandlerFunc(h.HandleAccountDelete)))))
 	}
 	if h.cfg.AccountExporter != nil {
-		mux.Handle("GET /v1/dashboard/account/export", RequireSession(h.cfg)(http.HandlerFunc(h.HandleAccountExport)))
+		mux.Handle("GET /v1/dashboard/account/export", RequireSession()(http.HandlerFunc(h.HandleAccountExport)))
 	}
 }
 
@@ -637,6 +637,9 @@ func credentialCookie(name, value string) *http.Cookie {
 // opened their own link on a second device doesn't burn the token
 // — they can still click it on the device that asked for it.
 func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
+	// The request URL carries the magic-link plaintext; set here too so
+	// the guarantee does not depend on the outer middleware stack.
+	w.Header().Set("Referrer-Policy", "no-referrer")
 	plaintext := r.URL.Query().Get("token")
 	if plaintext == "" {
 		writeProblem(w, http.StatusBadRequest, "missing token", "/v1/auth/callback")

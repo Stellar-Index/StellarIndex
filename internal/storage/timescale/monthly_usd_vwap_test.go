@@ -40,7 +40,7 @@ func TestMonthlyUSDVWAPAsset_RegisteredSACFoldsOntoTheMovementsSpelling(t *testi
 		usdcSAC      = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
 		usdcMovement = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	)
-	reg, err := canonical.NewAliasRegistry(map[string]string{usdcSAC: "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"})
+	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{usdcSAC: "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"})
 	if err != nil {
 		t.Fatal(err)
 	}

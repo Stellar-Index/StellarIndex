@@ -1107,7 +1107,7 @@ func TestHistory_ReverseStoredMarketCarriesTheFloor(t *testing.T) {
 // is process-global.
 func installUSDCSACRegistry(t *testing.T) canonical.Asset {
 	t.Helper()
-	reg, err := canonical.NewAliasRegistry(map[string]string{
+	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{
 		pegAliasUSDCSAC: "USDC:" + pegAliasUSDCIssuer,
 	})
 	if err != nil {

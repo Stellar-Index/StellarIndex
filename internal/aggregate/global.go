@@ -411,9 +411,10 @@ var aggregatorMADFactor = big.NewRat(5, 1)
 // publishing a decimal-shifted or stale-to-zero quote then halved the
 // plain-mean headline that this filter exists to protect. The
 // ratio-symmetric band [centre²/(centre + K·scale), centre + K·scale] is
-// identical above the centre and never below the old edge underneath
-// it, so no source that used to survive is newly dropped for being
-// merely low.
+// identical above the centre; below it the new edge is never lower than
+// the old one (1/(1+r) ≥ 1−r), so nothing that used to be rejected is
+// newly accepted — the downward side is strictly tightened, and a
+// source sitting between the old and new lower edge is now dropped.
 //
 // It NEVER fails closed: with fewer than [aggregatorMinForOutlierReject]
 // usable sources (no majority to define consensus) it returns the input

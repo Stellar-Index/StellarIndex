@@ -254,22 +254,19 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 	if s.PostgresDSN == "" {
 		return fmt.Errorf("%w: storage.postgres_dsn required", ErrInvalidConfig)
 	}
-	// CFG-03 (audit-2026-07-23): two conflicting `_env`-suffixed
-	// conventions share the identical toml suffix with nothing
-	// stopping an operator from swapping them — redis_password_env /
-	// clickhouse_serving_password_env hold the secret VALUE (C3-15
-	// legacy misnomer; see field docs), while s3_access_key_env /
-	// s3_secret_key_env hold the NAME of an env var to dereference.
-	// Catch the swap heuristically: a "holds the value" field that
-	// itself looks like one of this project's own env-var names is
-	// almost certainly a copy-paste of the wrong convention.
+	// redis_password / clickhouse_serving_password hold the secret VALUE
+	// (their deprecated aliases carry an `_env` suffix), while
+	// s3_access_key_env / s3_secret_key_env hold the NAME of an env var
+	// to dereference. A "holds the value" field that looks like one of
+	// this project's own env-var names is almost certainly the wrong
+	// convention pasted in.
 	if envVarNameLikePattern.MatchString(s.RedisPassword) {
-		return fmt.Errorf("%w: storage.redis_password_env looks like an env-var NAME (%q), not a secret value — "+
+		return fmt.Errorf("%w: storage.redis_password looks like an env-var NAME (%q), not a secret value — "+
 			"this field holds the password itself (see field doc); did you mean to export that variable "+
 			"instead of pasting its name?", ErrInvalidConfig, s.RedisPassword)
 	}
 	if envVarNameLikePattern.MatchString(s.ClickHouseServingPassword) {
-		return fmt.Errorf("%w: storage.clickhouse_serving_password_env looks like an env-var NAME (%q), not a secret "+
+		return fmt.Errorf("%w: storage.clickhouse_serving_password looks like an env-var NAME (%q), not a secret "+
 			"value — this field holds the password itself (see field doc)", ErrInvalidConfig, s.ClickHouseServingPassword)
 	}
 	if s.S3AccessKeyEnv != "" && !envVarNameShapePattern.MatchString(s.S3AccessKeyEnv) {
@@ -401,7 +398,7 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 //
 // So the rule for every branch below is: echo the offending VALUE only
 // when the branch can ONLY fire on a non-secret. The two
-// redis_password_env / clickhouse_serving_password_env branches above
+// redis_password / clickhouse_serving_password branches above
 // satisfy that and deliberately keep their %q — they fire only when the
 // value matched envVarNameLikePattern, i.e. it is provably one of this
 // project's own env-var NAMES and not a password, and naming it is the
@@ -419,6 +416,26 @@ func errEnvNameShape(field string) error {
 	return fmt.Errorf("%w: storage.%s doesn't look like an env-var NAME (expected UPPER_SNAKE_CASE) — "+
 		"this field holds the NAME to dereference, not the credential itself (value withheld: if you "+
 		"pasted the credential here, echoing it would leak it into the boot log)", ErrInvalidConfig, field)
+}
+
+// validateOptionalHTTPURL requires a non-empty value to be an absolute
+// http(s) URL with a host; empty means the feature's built-in default.
+// The value is withheld: an RPC URL can carry an API key in its path.
+func validateOptionalHTTPURL(field, v string) error {
+	if v == "" {
+		return nil
+	}
+	u, err := url.Parse(v)
+	if err != nil {
+		return fmt.Errorf("%w: %s is not a parseable URL", ErrInvalidConfig, field)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("%w: %s must use the http or https scheme", ErrInvalidConfig, field)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("%w: %s must include a host", ErrInvalidConfig, field)
+	}
+	return nil
 }
 
 // setOrEmpty describes whether a credential-adjacent field was populated
@@ -785,6 +802,16 @@ func (p Phase2FreezeConfig) validateLifecycle() error {
 // — the identical NewTicker(0) failure mode G19-02 already fixed for
 // SupplyConfig.AggregatorRefreshCadence.
 func (d DivergenceConfig) validate() error {
+	for _, u := range []struct{ field, value string }{
+		{"divergence.coingecko.base_url", d.CoinGecko.BaseURL},
+		{"divergence.supply.dashboard.base_url", d.Supply.Dashboard.BaseURL},
+		{"divergence.supply.coingecko.base_url", d.Supply.CoinGecko.BaseURL},
+		{"divergence.chainlink.rpc_url", d.Chainlink.RPCURL},
+	} {
+		if err := validateOptionalHTTPURL(u.field, u.value); err != nil {
+			return err
+		}
+	}
 	if d.Supply.Enabled && d.Supply.RefreshIntervalSeconds <= 0 {
 		return fmt.Errorf("%w: divergence.supply.refresh_interval_seconds must be > 0 when "+
 			"divergence.supply.enabled is true (got %d)", ErrInvalidConfig, d.Supply.RefreshIntervalSeconds)
@@ -986,6 +1013,9 @@ func (a APIConfig) validate() error {
 	if a.ListenAddr == "" {
 		return fmt.Errorf("%w: api.listen_addr required", ErrInvalidConfig)
 	}
+	if err := validateOptionalHTTPURL("api.prometheus_url", a.PrometheusURL); err != nil {
+		return err
+	}
 	if _, _, err := net.SplitHostPort(a.ListenAddr); err != nil {
 		return fmt.Errorf("%w: api.listen_addr %q must be host:port: %w",
 			ErrInvalidConfig, a.ListenAddr, err)
@@ -1124,10 +1154,8 @@ var (
 
 	// envVarNameLikePattern matches this project's own STELLARINDEX_*
 	// env-var naming convention. Used to catch the "holds the VALUE"
-	// `_env`-suffixed fields (redis_password_env,
-	// clickhouse_serving_password_env — see their field docs, C3-15)
-	// being populated with an env-var NAME by mistake instead of the
-	// secret itself (CFG-03, audit-2026-07-23).
+	// fields (redis_password, clickhouse_serving_password) being
+	// populated with an env-var NAME instead of the secret itself.
 	envVarNameLikePattern = regexp.MustCompile(`^STELLARINDEX_[A-Z0-9_]+$`)
 
 	// envVarNameShapePattern matches the general shape of an
