@@ -120,6 +120,7 @@ var subcommands = map[string]func(args []string) error{
 	"emit-incident":         leaf(emitIncident),
 	"usage-rollup-backfill": leaf(usageRollupBackfill),
 	"freeze-unfreeze":       leaf(freezeUnfreeze),
+	"account-erase":         leaf(accountErase),
 
 	"rpc-probe":             diagnostics.Run,
 	"verify-decoders":       diagnostics.Run,
@@ -1720,6 +1721,17 @@ Subcommands:
                             stellarindex-ops usage-rollup-backfill \
                               -config /etc/stellarindex.toml \
                               -from 2026-07-19 -to 2026-07-21 -write
+  account-erase -config PATH (-account-id UUID | -finish-slug SLUG) [-write] [-timeout DUR]
+                          Erase a platform account (GH #809) through
+                          the same code as DELETE
+                          /v1/dashboard/account, for a request
+                          received outside the dashboard;
+                          -finish-slug re-runs only the post-commit
+                          Redis cleanup of an erased account and
+                          refuses a slug that was never erased.
+                          Dry-run unless -write. Prints counts and
+                          ids only. Runbook:
+                          docs/operations/runbooks/account-erasure.md.
   freeze-unfreeze -config PATH [-list] [-asset A -quote Q -reason "..." [-actor NAME]] [-write]
                           Manually lift an ADR-0019 price freeze. An
                           ESCALATED freeze (the 4x30m extension
