@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // buildDirectoryTarball assembles a gzip tarball mimicking the GitHub
@@ -68,7 +72,7 @@ func TestFetchDirectoryTarball_ParsesAccountsAndSkipsNoise(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	entries, skipped, err := fetchDirectoryTarball(context.Background(), srv.URL)
+	entries, skipped, err := fetchDirectoryTarball(context.Background(), srv.URL, "")
 	if err != nil {
 		t.Fatalf("fetchDirectoryTarball: %v", err)
 	}
@@ -105,7 +109,7 @@ func TestFetchDirectoryTarball_RefusesEmptyParse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, _, err := fetchDirectoryTarball(context.Background(), srv.URL)
+	_, _, err := fetchDirectoryTarball(context.Background(), srv.URL, "")
 	if err == nil || !strings.Contains(err.Error(), "refusing") {
 		t.Fatalf("err = %v, want a refusal on 0 parsed entries", err)
 	}
@@ -117,7 +121,7 @@ func TestFetchDirectoryTarball_HTTPErrorIsFatal(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, _, err := fetchDirectoryTarball(context.Background(), srv.URL); err == nil {
+	if _, _, err := fetchDirectoryTarball(context.Background(), srv.URL, ""); err == nil {
 		t.Fatal("non-200 fetch returned nil error")
 	}
 }
@@ -301,5 +305,86 @@ func TestParseDirectoryTarball_AcceptsIntactArchiveWithinTheBound(t *testing.T) 
 	}
 	if len(entries) != 3 || skipped != 0 {
 		t.Errorf("entries=%d skipped=%d, want 3/0", len(entries), skipped)
+	}
+}
+
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// TestParsePinnedDirectoryTarball_RefusesAnyOtherTarball — with a pin,
+// only the byte-identical tarball is parsed: a well-formed archive of
+// different content is refused with no entries, not synced.
+func TestParsePinnedDirectoryTarball_RefusesAnyOtherTarball(t *testing.T) {
+	pinned := buildDirectoryTarballN(t, 3)
+	other := buildDirectoryTarballN(t, 2)
+	pin := sha256Hex(pinned)
+
+	entries, _, err := parsePinnedDirectoryTarball(bytes.NewReader(other), directoryMaxTarballBytes, pin)
+	if err == nil || !strings.Contains(err.Error(), "does not match the pinned -sha256") {
+		t.Fatalf("unpinned tarball: err = %v, want the digest refusal", err)
+	}
+	if entries != nil {
+		t.Errorf("entries = %v, want none from a refused tarball", entries)
+	}
+
+	entries, _, err = parsePinnedDirectoryTarball(bytes.NewReader(pinned), directoryMaxTarballBytes, strings.ToUpper(pin))
+	if err != nil || len(entries) != 3 {
+		t.Fatalf("pinned tarball: entries=%d err=%v, want 3/nil", len(entries), err)
+	}
+}
+
+// TestDirectorySync_PinnedDigestMismatchFailsBeforeTheDB — the pin is
+// wired through the command: a mismatching tarball fails the run at the
+// fetch, not at the (unreachable) Postgres ping after it.
+func TestDirectorySync_PinnedDigestMismatchFailsBeforeTheDB(t *testing.T) {
+	tarball := buildDirectoryTarballN(t, 1)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(tarball)
+	}))
+	defer srv.Close()
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = srv.Client().Transport
+	defer func() { http.DefaultTransport = origTransport }()
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "stellarindex.toml")
+	cfgBody := "[region]\nid = \"r2\"\nname = \"Ashburn\"\n\n[stellar]\nnetwork = \"pubnet\"\n\n[storage]\npostgres_dsn = \"postgres://u:p@127.0.0.1:1/db?sslmode=disable\"\n"
+	if err := os.WriteFile(cfgPath, []byte(cfgBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"-config", cfgPath, "-url", srv.URL, "-write", "-heartbeat", filepath.Join(dir, "hb.prom")}
+
+	err := directorySync(append(args, "-sha256", strings.Repeat("0", 64)))
+	if err == nil || !strings.Contains(err.Error(), "does not match the pinned -sha256") {
+		t.Fatalf("mismatching pin: err = %v, want the digest refusal", err)
+	}
+	if err := directorySync(append(args, "-sha256", "abc")); err == nil || !strings.Contains(err.Error(), "64 hex") {
+		t.Fatalf("malformed pin: err = %v, want the -sha256 format refusal", err)
+	}
+}
+
+// TestRenderDirectorySyncTextfile_ExportsUnflagged — the counts a
+// committed sync printed only to stdout are exported per kind, un-flags
+// included, for the directory-sync un-flag alert.
+func TestRenderDirectorySyncTextfile_ExportsUnflagged(t *testing.T) {
+	got := renderDirectorySyncTextfile("stellar-expert", timescale.DirectorySyncResult{Upserted: 18500, Pruned: 4, NewlyFlagged: 2, Unflagged: 7})
+	for _, want := range []string{
+		"# TYPE stellarindex_directory_sync_rows_changed gauge\n",
+		`stellarindex_directory_sync_rows_changed{source="stellar-expert",kind="pruned"} 4` + "\n",
+		`stellarindex_directory_sync_rows_changed{source="stellar-expert",kind="newly_flagged"} 2` + "\n",
+		`stellarindex_directory_sync_rows_changed{source="stellar-expert",kind="unflagged"} 7` + "\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("textfile missing %q; got:\n%s", want, got)
+		}
+	}
+
+	path := filepath.Join(t.TempDir(), directoryTextfileName)
+	stampDirectorySyncTextfile(path, timescale.DirectorySyncResult{Unflagged: 3})
+	body, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(body), `kind="unflagged"} 3`) {
+		t.Fatalf("stamped textfile = %q (err %v), want unflagged 3", body, err)
 	}
 }

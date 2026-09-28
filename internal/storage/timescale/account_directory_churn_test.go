@@ -1,6 +1,10 @@
 package timescale
 
-import "testing"
+import (
+	"errors"
+	"fmt"
+	"testing"
+)
 
 // TestDirectoryChurnLimit_Ceiling pins the arithmetic behind the sync
 // refusal: 5 % of the held rows, never below the floor, unbounded
@@ -29,6 +33,55 @@ func TestDirectoryChurnLimit_Ceiling(t *testing.T) {
 				t.Fatalf("ceiling(%d) = (%d, %v), want (%d, %v)", tc.existing, got, bounded, tc.want, tc.bounded)
 			}
 		})
+	}
+}
+
+// TestDirectoryChurn_UnflagCeilingIsSizedOnTheFlaggedSet: the un-flag
+// cap is a fraction of the addresses flagged before the sync, not of
+// every row the source holds. Flagged rows are a minority, so a
+// row-sized cap (925 on the live table) admitted clearing almost the
+// whole flagged set in one run.
+func TestDirectoryChurn_UnflagCeilingIsSizedOnTheFlaggedSet(t *testing.T) {
+	cases := []struct {
+		name      string
+		rows      int64
+		flagged   int
+		unflagged int64
+		refused   bool
+	}{
+		{"row-sized cap no longer admits clearing the set", 18500, 1000, 925, true},
+		{"one over 5 % of the flagged set", 18500, 1000, 51, true},
+		{"5 % of the flagged set", 18500, 1000, 50, false},
+		{"floor holds a small flagged set open", 18500, 40, 10, false},
+		{"floor is the minimum, not an offset", 18500, 40, 11, true},
+		{"whole small flagged set", 18500, 40, 40, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			before := &directoryChurn{rows: tc.rows, flagged: map[string]struct{}{}}
+			for i := range tc.flagged {
+				before.flagged[fmt.Sprintf("G%055d", i)] = struct{}{}
+			}
+			err := before.check(DefaultDirectoryChurnLimit, DirectorySyncResult{Unflagged: tc.unflagged})
+			if got := errors.Is(err, ErrDirectoryChurnExceeded); got != tc.refused {
+				t.Fatalf("%d of %d flagged un-flagged: err = %v, refused = %v, want %v", tc.unflagged, tc.flagged, err, got, tc.refused)
+			}
+			if err := before.check(DirectoryChurnUnbounded, DirectorySyncResult{Unflagged: tc.unflagged}); err != nil {
+				t.Fatalf("-accept-churn refused %d un-flags: %v", tc.unflagged, err)
+			}
+		})
+	}
+}
+
+func TestDirectoryChurnLimit_UnflagCeiling(t *testing.T) {
+	if got, ok := DefaultDirectoryChurnLimit.unflagCeiling(1001); !ok || got != 51 {
+		t.Fatalf("unflagCeiling(1001) = (%d, %v), want (51, true): rounds up", got, ok)
+	}
+	if _, ok := DefaultDirectoryChurnLimit.unflagCeiling(0); ok {
+		t.Fatal("unflagCeiling(0) bounded, want unbounded: nothing flagged, nothing to clear")
+	}
+	if _, ok := DirectoryChurnUnbounded.unflagCeiling(1000); ok {
+		t.Fatal("DirectoryChurnUnbounded.unflagCeiling bounded, want unbounded")
 	}
 }
 

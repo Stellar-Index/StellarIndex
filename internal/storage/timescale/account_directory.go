@@ -157,30 +157,36 @@ func CanonicalDirectoryTags(tags []string) []string {
 }
 
 // DirectoryChurnLimit bounds how far ONE sync may move a source's
-// snapshot: the rows it prunes, the addresses it newly scam-flags and
-// the addresses it un-flags (pruned or tag cleared) are each capped at max(Floor, ceil(Fraction × rows the source held
-// before the sync)). A snapshot past either cap is refused whole with
+// snapshot. The rows it prunes and the addresses it newly scam-flags
+// are each capped at max(Floor, ceil(Fraction × rows the source held
+// before the sync)); the addresses it un-flags (pruned or tag cleared)
+// at max(UnflagFloor, ceil(Fraction × addresses flagged before the
+// sync)). A snapshot past any cap is refused whole with
 // [ErrDirectoryChurnExceeded] and the table is left as it was.
 //
-// The upstream is an unpinned branch of a third-party repo, and a
-// scam tag is not a label: it withholds the issuer's price and market
-// cap (pricingguard.ScamGate). A hijacked, truncated or mis-generated
+// A scam tag is not a label: it withholds the issuer's price and market
+// cap (pricingguard.ScamGate). A truncated or mis-generated upstream
 // snapshot could therefore prune or clear the flags the gate withholds
 // on, or flag thousands of issuers and withhold their prices, in one
-// transaction with nothing failing. Real churn is a handful of rows a
-// day; a legitimate mass change ships with `directory-sync
-// -accept-churn`. The first sync of a source (nothing held yet) is
-// unbounded by construction. Both fractions/floors are placeholders
-// chosen conservatively, not measured upstream churn.
+// transaction with nothing failing. The un-flag cap is sized on the
+// flagged set, not the whole table: flagged rows are a minority, so a
+// row-sized cap admitted clearing most or all of them in one run.
+// Real churn is a handful of rows a day; a legitimate mass change ships
+// with `directory-sync -accept-churn`. The first sync of a source
+// (nothing held yet) is unbounded by construction. The fractions and
+// floors are placeholders chosen conservatively, not measured upstream
+// churn.
 type DirectoryChurnLimit struct {
-	Fraction float64
-	Floor    int64
+	Fraction    float64
+	Floor       int64
+	UnflagFloor int64
 }
 
 // DefaultDirectoryChurnLimit is what [Store.ReplaceDirectory] applies:
 // 5 % of the held rows, never below 100 (so a small table is not
-// jammed by its own arithmetic).
-var DefaultDirectoryChurnLimit = DirectoryChurnLimit{Fraction: 0.05, Floor: 100}
+// jammed by its own arithmetic), and 5 % of the flagged addresses,
+// never below 10, for un-flags.
+var DefaultDirectoryChurnLimit = DirectoryChurnLimit{Fraction: 0.05, Floor: 100, UnflagFloor: 10}
 
 // DirectoryChurnUnbounded accepts any snapshot — the operator's
 // explicit opt-in for a known upstream mass change.
@@ -194,10 +200,24 @@ var ErrDirectoryChurnExceeded = errors.New("directory: snapshot exceeds the chur
 // ceiling is the row cap for a source that held `existing` rows, or
 // ok=false when the sync is unbounded (no limit, or nothing held yet).
 func (l DirectoryChurnLimit) ceiling(existing int64) (maxRows int64, ok bool) {
-	if existing == 0 || (l.Fraction <= 0 && l.Floor <= 0) {
+	if existing == 0 || l.unbounded() {
 		return 0, false
 	}
 	return max(int64(math.Ceil(float64(existing)*l.Fraction)), l.Floor), true
+}
+
+// unflagCeiling is the un-flag cap for a source that held `flagged`
+// scam-flagged addresses, or ok=false when nothing can be un-flagged or
+// the sync is unbounded.
+func (l DirectoryChurnLimit) unflagCeiling(flagged int64) (maxRows int64, ok bool) {
+	if flagged == 0 || l.unbounded() {
+		return 0, false
+	}
+	return max(int64(math.Ceil(float64(flagged)*l.Fraction)), l.UnflagFloor), true
+}
+
+func (l DirectoryChurnLimit) unbounded() bool {
+	return l.Fraction <= 0 && l.Floor <= 0 && l.UnflagFloor <= 0
 }
 
 // DirectorySyncResult is what one ReplaceDirectory run did.
@@ -357,6 +377,10 @@ func (c *directoryChurn) tally(after []string) (newly, cleared int64) {
 }
 
 func (c *directoryChurn) check(limit DirectoryChurnLimit, res DirectorySyncResult) error {
+	flagged := int64(len(c.flagged))
+	if maxUnflag, bounded := limit.unflagCeiling(flagged); bounded && res.Unflagged > maxUnflag {
+		return fmt.Errorf("%w: un-flags %d of %d scam-flagged addresses (ceiling %d)", ErrDirectoryChurnExceeded, res.Unflagged, flagged, maxUnflag)
+	}
 	maxRows, bounded := limit.ceiling(c.rows)
 	if !bounded {
 		return nil
@@ -366,9 +390,6 @@ func (c *directoryChurn) check(limit DirectoryChurnLimit, res DirectorySyncResul
 	}
 	if res.NewlyFlagged > maxRows {
 		return fmt.Errorf("%w: newly scam-flags %d addresses of %d rows (ceiling %d)", ErrDirectoryChurnExceeded, res.NewlyFlagged, c.rows, maxRows)
-	}
-	if res.Unflagged > maxRows {
-		return fmt.Errorf("%w: un-flags %d scam-flagged addresses of %d rows (ceiling %d)", ErrDirectoryChurnExceeded, res.Unflagged, c.rows, maxRows)
 	}
 	return nil
 }

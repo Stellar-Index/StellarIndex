@@ -208,11 +208,21 @@ func TestDirectorySync_ChurnCountsPaddedAndClearedFlags(t *testing.T) {
 	if rows, flagged := dirSourceCounts(t, ctx, store, dirUpstreamSource); rows != 4000 || flagged != 1000 {
 		t.Fatalf("after refused un-flag: rows=%d flagged=%d, want 4000/1000 (the refusal must be a rollback)", rows, flagged)
 	}
-	res, err = store.ReplaceDirectoryWithin(ctx, dirUpstreamSource, dirPaddedEntries("PADS", 4000, 850), timescale.DefaultDirectoryChurnLimit)
+	// The un-flag cap is 5 % of the 1000 FLAGGED addresses (50), not of
+	// the 4000 rows (200): 51 is refused even though it is far under the
+	// row cap, and 50 lands.
+	_, _, err = store.ReplaceDirectory(ctx, dirUpstreamSource, dirPaddedEntries("PADS", 4000, 949))
+	if !errors.Is(err, timescale.ErrDirectoryChurnExceeded) {
+		t.Fatalf("51 of 1000 flagged un-flagged: err = %v, want ErrDirectoryChurnExceeded", err)
+	}
+	if _, flagged := dirSourceCounts(t, ctx, store, dirUpstreamSource); flagged != 1000 {
+		t.Fatalf("after refused 51 un-flags: flagged=%d, want 1000", flagged)
+	}
+	res, err = store.ReplaceDirectoryWithin(ctx, dirUpstreamSource, dirPaddedEntries("PADS", 4000, 950), timescale.DefaultDirectoryChurnLimit)
 	if err != nil {
 		t.Fatalf("ordinary un-flag churn: %v", err)
 	}
-	if res.Unflagged != 150 || res.NewlyFlagged != 0 {
-		t.Fatalf("ordinary un-flag churn: %+v, want unflagged=150 newlyFlagged=0", res)
+	if res.Unflagged != 50 || res.NewlyFlagged != 0 {
+		t.Fatalf("ordinary un-flag churn: %+v, want unflagged=50 newlyFlagged=0", res)
 	}
 }
