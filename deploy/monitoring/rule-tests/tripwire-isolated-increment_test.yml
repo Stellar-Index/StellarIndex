@@ -245,6 +245,68 @@ tests:
         alertname: stellarindex_ingestion_trade_buffer_drop
         exp_alerts: []
 
+  # ══ stellarindex_ingestion_trustline_observation_drop (INV-0786) ══
+  - interval: 1m
+    name: trustline_observation_drop — one isolated drop tickets
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="trustlines",kind="trustline_observation"}'
+        values: '0x3 1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_ingestion_trustline_observation_drop
+        exp_alerts: &trustline_observation_drop_alert
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              source: trustlines
+              kind: trustline_observation
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md"
+              summary: "trustline_observation persist errors on trustlines (any rate)"
+              description: |
+                A trustline_observation insert failed for trustlines
+                in the last 15 minutes. Unlike trade writes there is no
+                ADR-0041 retry/backpressure path here: the row is genuinely
+                lost — a classic-supply trustline delta that never reached
+                trustline_observations. The coarse
+                stellarindex_ingestion_insert_errors alert only trips above
+                0.1/s fleet-wide and misses this class's low, sustained rate
+                (INV-0786). Check Timescale health and the poison-row logs.
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
+      - eval_time: 15m
+        alertname: stellarindex_ingestion_trustline_observation_drop
+        exp_alerts: *trustline_observation_drop_alert
+      - eval_time: 25m
+        alertname: stellarindex_ingestion_trustline_observation_drop
+        exp_alerts: []
+
+  - interval: 1m
+    name: trustline_observation_drop — a child BORN at 1 tickets
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="trustlines",kind="trustline_observation"}'
+        values: '_x3 1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_ingestion_trustline_observation_drop
+        exp_alerts: *trustline_observation_drop_alert
+      - eval_time: 25m
+        alertname: stellarindex_ingestion_trustline_observation_drop
+        exp_alerts: []
+
+  - interval: 1m
+    name: trustline_observation_drop — an old flat count stays silent
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="trustlines",kind="trustline_observation"}'
+        values: '9x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_ingestion_trustline_observation_drop
+        exp_alerts: []
+
   # ══ stellarindex_projector_row_quarantined ════════════════════════
   - interval: 1m
     name: row_quarantined — one isolated quarantine tickets
