@@ -40,7 +40,7 @@ func TestCustomerWebhooksURLUnique(t *testing.T) {
 	store := postgresstore.New(db)
 	accounts := postgresstore.NewAccountStore(store)
 	webhooks := postgresstore.NewWebhookStore(store)
-	acct := uniqueURLAccount(t, ctx, accounts, "a")
+	acct := insertRawAccount(t, ctx, db, "a")
 
 	t.Run("MigrationRefusesExistingDuplicates", func(t *testing.T) {
 		first := insertRawWebhook(t, ctx, db, acct, dupWebhookURL)
@@ -125,6 +125,22 @@ func uniqueURLHook(accountID uuid.UUID, url string) platform.CustomerWebhook {
 		Events:     []string{string(platform.WebhookEventIncidentSEV1)},
 		Enabled:    true,
 	}
+}
+
+// insertRawAccount bypasses AccountStore.Create, which (since migration
+// 0188) refuses a slug erased_account_slugs records — a table this test's
+// pre-0180 schema doesn't have yet.
+func insertRawAccount(t *testing.T, ctx context.Context, db *sql.DB, tag string) uuid.UUID {
+	t.Helper()
+	suffix := tag + "-" + strings.ToLower(uuid.New().String()[:8])
+	var id uuid.UUID
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO accounts (name, slug, billing_email)
+		VALUES ($1, $2, $3) RETURNING id`,
+		"Account "+suffix, suffix, suffix+"@k.example").Scan(&id); err != nil {
+		t.Fatalf("insert raw account: %v", err)
+	}
+	return id
 }
 
 // insertRawWebhook bypasses the store: the pre-0180 schema is the only

@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
-	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
 // TestPriceAlertsCooldownFloorBackfill pins migration 0181 (GH #810): a
@@ -29,7 +28,7 @@ func TestPriceAlertsCooldownFloorBackfill(t *testing.T) {
 		t.Fatalf("sql.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	acct := uniqueURLAccount(t, ctx, postgresstore.NewAccountStore(postgresstore.New(db)), "cooldown")
+	acct := insertRawAccount(t, ctx, db, "cooldown")
 
 	stale := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	floor := platform.MinAlertCooldownSeconds
