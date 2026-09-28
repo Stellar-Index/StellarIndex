@@ -1314,6 +1314,73 @@ describe('RWAView — contract arm', () => {
         ),
       ).toBeInTheDocument();
     });
+
+    // ─── #1047: the headline over-claimed a single provenance ────
+    //
+    // The total can mix oracle NAVs, listing-platform prices and
+    // prospectus constant-NAV declarations (RWAReferenceSummary.
+    // provenances), but the headline and the "Where the reference
+    // comes from" line both asserted "an independent oracle" and
+    // "each row names its own feed" unconditionally — true for a
+    // pure-oracle total, false the moment a listing price or a CNAV
+    // row contributes.
+    it('says "the published reference valuation" instead of naming an oracle when the total mixes provenances', async () => {
+      apiGetData.mockResolvedValue(
+        liveView({
+          reference_valuation: {
+            value_usd: '992488360.69',
+            assets_valued: 7,
+            assets_unvalued: 4,
+            lower_bound: true,
+            sources: ['redstone', 'issuer-nav-page'],
+            provenances: ['oracle_instrument_nav', 'listing_platform_price'],
+            basis: LIVE_BASIS,
+          },
+        }),
+      );
+      renderView();
+
+      expect(
+        await screen.findByText(
+          /Circulating supply × the published reference valuation/,
+        ),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText(/Circulating supply × an independent oracle/),
+      ).not.toBeInTheDocument();
+      // "Where the reference comes from" names the mixture instead of
+      // calling a listing-platform or prospectus row a "feed".
+      expect(
+        screen.getByText(/2 different kinds of claim, not/),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText(/each row names its own feed/),
+      ).not.toBeInTheDocument();
+    });
+
+    it('keeps "an independent oracle" and "feed" when every contributing row is oracle-priced', async () => {
+      apiGetData.mockResolvedValue(
+        liveView({
+          reference_valuation: {
+            value_usd: '992488360.69',
+            assets_valued: 7,
+            assets_unvalued: 4,
+            lower_bound: true,
+            sources: ['redstone'],
+            provenances: ['oracle_instrument_nav'],
+            basis: LIVE_BASIS,
+          },
+        }),
+      );
+      renderView();
+
+      expect(
+        await screen.findByText(/Circulating supply × an independent oracle/),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/each row names its own feed/),
+      ).toBeInTheDocument();
+    });
   });
 });
 
