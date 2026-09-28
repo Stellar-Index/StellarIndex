@@ -2960,13 +2960,27 @@ Algorithm 2 ≈ 86.4B, Algorithm 3 ≈ 0 — a monitoring category error,
 not indexer corruption).
 
 - `wrap_class="partial_wrap"` (the default for every configured
-  `sac_wrappers` pair): value = `max(0, sac_total − classic_total)`.
-  Zero whenever `sac_total ≤ classic_total` — the expected, benign
-  state for a partially-wrapped asset (SACWrapped is one of
-  Algorithm 2's own non-negative addends, so it can never legitimately
-  exceed the classic total). Positive only when the SAC reports MORE
-  than the classic side could possibly back — impossible under
-  correct accounting, a genuine "escrow != minted" violation.
+  `sac_wrappers` pair): value = `escrow_excess_stroops`, i.e.
+  `max(0, classic.SACWrappedStroops − sac_total)`. Zero whenever
+  `SACWrapped ≤ sac_total` — the expected, benign state (SACWrapped
+  got there by mints, so it can never legitimately exceed the SAC's
+  own cumulative net mint). Positive only when more is escrowed
+  inside the SAC than it ever minted — impossible under correct
+  accounting, a genuine "escrow != minted" violation: the SEP-41
+  event capture for that SAC missed a mint or double-counted a burn.
+  **Since 2026-08-05** the other direction, `sac_total >
+  classic_total` (over-mint, "leg 1"), is diagnostic-only and does
+  NOT feed this gauge — its premise conflates the SAC's cumulative
+  net mint with the classic side's current outstanding stock, and two
+  live assets (BLND, PHO) falsified it via a legitimate classic-side
+  retirement / one-time SAC-then-classic distribution. Leg 1 is still
+  computed and reported as `over_mint_stroops` on the aggregator's
+  WARN line, for triage only. Also zero when the leg is UNCHECKED — a
+  classic snapshot carrying no `sac_wrapped_stroops` never evaluated
+  it. See
+  [ADR-0011's 2026-08-05 amendment](../../adr/0011-supply-algorithm.md)
+  and the
+  [runbook](../../operations/runbooks/supply-cross-check-divergence.md).
 - `wrap_class="full_wrap"` (operator-attested via
   `[supply].fully_wrapped_sacs`; none configured as of 2026-07-08):
   value = `|classic_total − sac_total|` — the ORIGINAL ADR-0011
