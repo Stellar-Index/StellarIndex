@@ -1629,6 +1629,28 @@ func (o *Orchestrator) publishDirect(
 	return nil
 }
 
+// vwapMaxAge returns this orchestrator's silence grace: 10 missed ticks
+// at its OWN configured cadence, floored at [cachekeys.VWAPMaxAge]
+// (#1294). cachekeys.VWAPMaxAge's "10 missed ticks" relationship to the
+// tick interval previously existed only in prose — an operator raising
+// cfg.Interval silently got fewer missed ticks of grace, and any tick
+// cycle exceeding cachekeys.VWAPMaxAge (a large pair set, a slow
+// Timescale, a retry storm) flapped the long windows between 200 and
+// 404 with no signal explaining it. The floor keeps a FASTER-than-
+// default interval from tightening the documented grace.
+func (o *Orchestrator) vwapMaxAge() time.Duration {
+	if derived := 10 * o.cfg.Interval; derived > cachekeys.VWAPMaxAge {
+		return derived
+	}
+	return cachekeys.VWAPMaxAge
+}
+
+// vwapTTL is [cachekeys.VWAPTTL] derived from this orchestrator's own
+// tick cadence (#1294) rather than the package-default cadence.
+func (o *Orchestrator) vwapTTL(window time.Duration) time.Duration {
+	return cachekeys.VWAPTTLWithMaxAge(window, o.vwapMaxAge())
+}
+
 // serveDirect writes a direct VWAP to the pair's served key, stamped
 // with the closed bucket its window ends at, and clears any
 // "triangulated" provenance a prior composite left there, in one
@@ -1646,7 +1668,7 @@ func (o *Orchestrator) serveDirect(
 	key := cachekeys.VWAP(pair.Base, pair.Quote, window)
 	provKey := cachekeys.VWAPProvenance(pair.Base, pair.Quote, window)
 	atKey := cachekeys.VWAPObservedAt(pair.Base, pair.Quote, window)
-	ttl := cachekeys.VWAPTTL(window)
+	ttl := o.vwapTTL(window)
 	if _, err := o.cache.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		p.Del(ctx, provKey.String())
 		p.Set(ctx, atKey.String(), cachekeys.FormatVWAPObservedAt(bucketEnd), ttl)
