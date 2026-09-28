@@ -179,7 +179,7 @@ type ScamGate struct {
 	now    func() time.Time // nil → time.Now
 
 	mu    sync.Mutex
-	cache map[string]scamVerdict // keyed by issuer G-address
+	cache map[string]scamVerdict // keyed by issuer G-address or contract C-address
 
 	flaggedAssets scamFlaggedAssetLister // nil → no SAC index
 	sacMu         sync.Mutex
@@ -339,8 +339,10 @@ func (g *ScamGate) Withheld(ctx context.Context, base canonical.Asset, surface s
 // over: it answers "is THIS asset's issuer directory-scam-flagged?".
 // Nil-receiver safe. Fail-open on directory error.
 //
-// Only CLASSIC assets have a directory-flaggable issuer G-address;
-// native / fiat / crypto-CEX / bare-Soroban assets return false.
+// A CLASSIC asset is judged on its issuer G-address and a contract token
+// on its own C-address, which the directory labels too (the RWA contract
+// arm suppresses on the same entry). Native / fiat / crypto-CEX assets
+// have no address to flag and return false.
 //
 // The asset is resolved to its CANONICAL family form before that check
 // (canonical.CanonicalAsset), because a Stellar Asset Contract wrapper
@@ -376,12 +378,22 @@ func (g *ScamGate) withheldLeg(ctx context.Context, asset canonical.Asset, surfa
 	}
 	asset = canonical.CanonicalAsset(asset)
 	if asset.Type == canonical.AssetSoroban {
-		return g.flaggedSAC(ctx, asset.ContractID, surface)
+		if asset.ContractID == "" {
+			return false
+		}
+		return g.flaggedSAC(ctx, asset.ContractID, surface) ||
+			g.directoryFlagged(ctx, asset.ContractID, surface)
 	}
 	if asset.Type != canonical.AssetClassic || asset.Issuer == "" {
 		return false
 	}
-	key := asset.Issuer
+	return g.directoryFlagged(ctx, asset.Issuer, surface)
+}
+
+// directoryFlagged reports whether the directory entry for key (an issuer
+// G-address or a contract C-address) carries a scam-class tag. Cached per
+// address; fail-open on a directory error, counted and not cached.
+func (g *ScamGate) directoryFlagged(ctx context.Context, key, surface string) bool {
 	now := g.clock()
 
 	g.mu.Lock()
@@ -403,7 +415,7 @@ func (g *ScamGate) withheldLeg(ctx context.Context, asset canonical.Asset, surfa
 			obs.ScamGateLookupFailuresTotal.WithLabelValues(surface).Inc()
 			if g.logger != nil {
 				g.logger.Warn("scam pricing gate: directory lookup failed — serving unguarded",
-					"issuer", key, "surface", surface, "err", err)
+					"address", key, "surface", surface, "err", err)
 			}
 		}
 		return false

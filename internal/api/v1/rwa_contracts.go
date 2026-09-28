@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
@@ -650,6 +652,10 @@ func (s *Server) fillContractMarketCaps(
 			row.MarketCapLowLiquidity = true
 			continue
 		}
+		if s.contractPriceScaleDisagrees(row) {
+			row.MarketCapDecimalsMismatch = true
+			continue
+		}
 		mc := computeMarketCapUSD(circ, *row.PriceUSD, row.Decimals)
 		if mc == "" {
 			continue
@@ -661,6 +667,33 @@ func (s *Server) fillContractMarketCaps(
 		row.MarketCapUSD = &mc
 	}
 	return false
+}
+
+// contractPriceScaleDisagrees reports that a contract row's DEX price and
+// its lake decimals are on different scales, so their product is no cap.
+//
+// row.PriceUSD comes from asset_price_snapshot, whose writer normalises
+// the raw ratio through the nonstandard_decimals_assets projection — the
+// confirmed value, else [aggregate.StandardDecimals]. row.Decimals is the
+// lake's decimals() reading. They are one scale only when they agree, so
+// this is the lockstep [Server.applyTokenDecimals] runs on /v1/assets/{id},
+// with the same refusal: a 6-decimal token the guard has not seeded yet
+// carries a raw price, and dividing its supply by 10^6 would publish ten
+// times its capitalisation. The reference valuation is untouched — an
+// oracle quotes a whole-token price, which the lake scale is right for.
+func (s *Server) contractPriceScaleDisagrees(row *AssetDetail) bool {
+	confirmed, hasConfirmed := s.nonstandardDecimals.Lookup(row.AssetID)
+	if (hasConfirmed && confirmed == row.Decimals) ||
+		(!hasConfirmed && row.Decimals == aggregate.StandardDecimals) {
+		return false
+	}
+	obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("rwa_contract", "").Inc()
+	if s.logger != nil {
+		s.logger.Warn("rwa contract decimals resolvers disagree; refusing market cap",
+			"contract_id", row.AssetID, "lake_decimals", row.Decimals,
+			"projection_decimals", confirmed, "projection_row", hasConfirmed)
+	}
+	return true
 }
 
 // refuseUnscaledContractCaps drops the cap from every row whose scale was

@@ -132,6 +132,12 @@ Two things hold it:
   mismatched scales (pre-fix the same request served a cap off by
   10^|difference|). When the lake is unreadable for the request, it falls
   back to the projection's value so supply and price stay on one scale.
+- `site="asset_listing"`, `site="rwa_contract"`, `site="lending_reserve"` —
+  the same request-time disagreement on `GET /v1/assets`, a contract row's
+  DEX-priced cap on `GET /v1/rwa/assets` (valuation status
+  `decimals_unavailable`), and a reserve's USD figures on
+  `GET /v1/lending/pools/{pool}/reserves` (withheld, left out of
+  `tvl_usd`). Same cause and action as `asset_detail`.
 
 Action: read the ERROR line (`decimals-guard: nonstandard_decimals_assets
 row DISAGREES with the lake`) for `persisted_decimals` vs `lake_decimals`.

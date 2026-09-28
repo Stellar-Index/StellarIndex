@@ -100,16 +100,19 @@ func TestLendingPoolReserves_NoConfigNeverInventsDecimals(t *testing.T) {
 		reserveState(pool, unknown, 7, false, big.NewInt(50_000_000), big.NewInt(10_000_000)),
 		reserveState(pool, xlmSAC, 7, false, big.NewInt(30_000_000), big.NewInt(10_000_000)),
 	}
+	// The stored price is the RAW smallest-unit ratio; the confirmed 18
+	// normalises eighteen's by 10^11 to $2 per whole token.
 	prices := &stubPriceReader{snapshots: map[string]v1.PriceSnapshot{
-		usdKey(t, eighteen): {Price: "2"},
+		usdKey(t, eighteen): {Price: "0.00000000002"},
 		usdKey(t, unknown):  {Price: "2"},
 		"native/fiat:USD":   {Price: "2"},
 	}}
 	srv := v1.New(v1.Options{
-		Explorer:      &stubExplorerReader{reserves: states},
-		Lending:       &stubLendingReader{assets: []string{eighteen, unknown, xlmSAC}},
-		Prices:        prices,
-		TokenDecimals: newPerContractDecimals(map[string]uint32{eighteen: 18}),
+		Explorer:            &stubExplorerReader{reserves: states},
+		Lending:             &stubLendingReader{assets: []string{eighteen, unknown, xlmSAC}},
+		Prices:              prices,
+		TokenDecimals:       newPerContractDecimals(map[string]uint32{eighteen: 18}),
+		NonstandardDecimals: nonstandardDecimalsCacheWith(t, eighteen, 18),
 	})
 	got := getReserves(t, srv, pool)
 	if len(got.Reserves) != 3 {
@@ -152,9 +155,11 @@ func TestLendingPoolReserves_ConfigDecimalsAreAuthoritative(t *testing.T) {
 		Explorer: &stubExplorerReader{reserves: []clickhouse.BlendReserveState{
 			reserveState(pool, asset, 6, true, big.NewInt(3_000_000), big.NewInt(1_000_000)),
 		}},
-		Lending:       &stubLendingReader{assets: []string{asset}},
-		Prices:        &stubPriceReader{snapshots: map[string]v1.PriceSnapshot{usdKey(t, asset): {Price: "2"}}},
-		TokenDecimals: dec,
+		Lending: &stubLendingReader{assets: []string{asset}},
+		// Raw ratio 20, normalised by the confirmed 6 to $2 per whole token.
+		Prices:              &stubPriceReader{snapshots: map[string]v1.PriceSnapshot{usdKey(t, asset): {Price: "20"}}},
+		TokenDecimals:       dec,
+		NonstandardDecimals: nonstandardDecimalsCacheWith(t, asset, 6),
 	})
 	got := getReserves(t, srv, pool)
 	if len(got.Reserves) != 1 {
@@ -193,5 +198,46 @@ func TestLendingPoolReserves_UnpricedReserveReportsDeclaredDecimals(t *testing.T
 	if rv.Decimals != 18 || rv.SuppliedUSD != nil || got.TVLUSD != nil {
 		t.Errorf("unpriced reserve: decimals=%d supplied_usd=%s tvl_usd=%s, want 18 / <nil> / <nil>",
 			rv.Decimals, strOrNil(rv.SuppliedUSD), strOrNil(got.TVLUSD))
+	}
+}
+
+// TestLendingPoolReserves_PriceScaleMustMatchReserveDecimals: the USD price
+// is normalised through the nonstandard-decimals projection (else 7), so a
+// 6-decimal reserve with no projection row carries the RAW ratio. Dividing
+// its amounts by 10^6 would publish ten times the value (30.00 for 3 tokens
+// at a raw 1, where the truth is 3.00) — the reserve's USD figures are
+// withheld instead and it leaves tvl_usd. With the row, it is valued.
+func TestLendingPoolReserves_PriceScaleMustMatchReserveDecimals(t *testing.T) {
+	pool := mkCStrkey(t, 7)
+	asset := mkCStrkey(t, 44)
+	newSrv := func(nd *v1.NonstandardDecimalsCache) *v1.Server {
+		return v1.New(v1.Options{
+			Explorer: &stubExplorerReader{reserves: []clickhouse.BlendReserveState{
+				reserveState(pool, asset, 6, true, big.NewInt(30_000_000), big.NewInt(10_000_000)),
+			}},
+			Lending:             &stubLendingReader{assets: []string{asset}},
+			Prices:              &stubPriceReader{snapshots: map[string]v1.PriceSnapshot{usdKey(t, asset): {Price: "1"}}},
+			NonstandardDecimals: nd,
+		})
+	}
+
+	got := getReserves(t, newSrv(nil), pool)
+	if len(got.Reserves) != 1 {
+		t.Fatalf("len(reserves) = %d, want 1", len(got.Reserves))
+	}
+	rv := got.Reserves[0]
+	if rv.SuppliedUSD != nil || rv.BorrowedUSD != nil || got.TVLUSD != nil {
+		t.Errorf("no projection row: supplied_usd=%s borrowed_usd=%s tvl_usd=%s, want all null",
+			strOrNil(rv.SuppliedUSD), strOrNil(rv.BorrowedUSD), strOrNil(got.TVLUSD))
+	}
+	if rv.Decimals != 6 || rv.Supplied != "30000000" {
+		t.Errorf("decimals=%d supplied=%s, want 6 / 30000000 served either way", rv.Decimals, rv.Supplied)
+	}
+
+	got = getReserves(t, newSrv(nonstandardDecimalsCacheWith(t, asset, 6)), pool)
+	rv = got.Reserves[0]
+	if strOrNil(rv.SuppliedUSD) != "3.00" || strOrNil(rv.BorrowedUSD) != "1.00" {
+		t.Errorf("confirmed 6: supplied_usd=%s borrowed_usd=%s, want 3.00 / 1.00",
+			strOrNil(rv.SuppliedUSD), strOrNil(rv.BorrowedUSD))
 	}
 }

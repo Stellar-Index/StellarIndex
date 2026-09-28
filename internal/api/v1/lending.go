@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -335,10 +337,16 @@ func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserv
 	if decKnown {
 		rv.Decimals = uint32(dec)
 	}
-	price, ok := s.reservePriceUSD(ctx, st.Asset)
+	price, priceScale, ok := s.reservePriceUSD(ctx, st.Asset)
 	if !ok || !decKnown {
 		// Without established decimals the USD figures, and the pool TVL,
 		// would be wrong by a power of ten; withhold the valuation instead.
+		return rv, nil
+	}
+	if priceScale != dec {
+		// The price was normalised on a different scale than the amounts
+		// are divided by; their product is off by 10^|difference|.
+		obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("lending_reserve", "").Inc()
 		return rv, nil
 	}
 	var suppliedContrib *big.Rat
@@ -379,19 +387,24 @@ func (s *Server) reserveDecimals(ctx context.Context, st clickhouse.BlendReserve
 // the classic asset (USDC-G…), not the SAC C-id. Falls back to pricing
 // the Soroban asset directly for a non-SAC reserve token. Best-effort:
 // ok=false → TVL is reported in token units only.
-func (s *Server) reservePriceUSD(ctx context.Context, assetC string) (string, bool) {
+//
+// scale is the decimals the price was normalised with (the
+// nonstandard-decimals projection, else 7): only an amount divided by that
+// same exponent can be multiplied by it.
+func (s *Server) reservePriceUSD(ctx context.Context, assetC string) (price string, scale int, ok bool) {
 	if canonicalID, ok := s.resolveSACAsset(assetC); ok {
 		if a, err := canonical.ParseAsset(canonicalID); err == nil {
 			if p, ok := s.lookupUSDPrice(ctx, a); ok {
-				return p, true
+				return p, aggregate.ResolveDecimals(s.nonstandardDecimals, a), true
 			}
 		}
 	}
 	asset, err := canonical.ParseAsset(assetC)
 	if err != nil {
-		return "", false
+		return "", 0, false
 	}
-	return s.lookupUSDPrice(ctx, asset)
+	price, ok = s.lookupUSDPrice(ctx, asset)
+	return price, aggregate.ResolveDecimals(s.nonstandardDecimals, asset), ok
 }
 
 // pubnetPassphrase is the Stellar mainnet network passphrase — the

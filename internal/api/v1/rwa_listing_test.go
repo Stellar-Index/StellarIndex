@@ -123,6 +123,7 @@ func rwaListingServer(
 		TokenSymbol:           &stubTokenSymbols{byID: map[string]string{}},
 		TokenSupply:           &stubTokenSupplies{byID: supplies},
 		TokenDecimals:         &stubTokenDecimalsRdr{byID: decimals},
+		NonstandardDecimals:   confirmedNonstandardDecimals(t, decimals),
 		MinMarketCapVolumeUSD: 1000,
 	})
 }

@@ -585,11 +585,12 @@ func (s *Server) PrewarmClassicLakeSupply(ctx context.Context, opts []timescale.
 // rwaClassicPrewarmSet asks the RWA surface which classic assets it serves, so
 // a member that never appears on a ranked listing page is warmed anyway.
 //
-// It reads the membership CACHE and never forces a rebuild. Before the first
-// build completes it returns nothing and the sweep covers the listing alone —
-// correct, because a membership that does not exist yet has no members to
-// warm, and a prewarm that could trigger the RWA rebuild would put an
-// expensive attestation scan on a timer that exists to avoid expensive work.
+// It goes through [Server.cachedRWAMembership], so it behaves like a request:
+// a stale set is served as-is while a detached, single-flighted rebuild is
+// kicked behind it, and a cache that has NEVER been built waits for the
+// in-flight first build (bounded by ctx) rather than returning nothing. Only
+// a never-built cache whose build attempt is gapped out, or a ctx that ends
+// first, yields no members — and then the sweep covers the listing alone.
 //
 // The reduction is the REQUEST PATH's own ([classicLakeSupplyCandidates]), the
 // same one the listing side uses, so this cannot warm an asset the read path

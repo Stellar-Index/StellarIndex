@@ -8319,8 +8319,11 @@ export interface components {
              *     multiplying by it would publish a figure wrong by a factor of
              *     ten to the something — one hundredth for a 5-decimal fund,
              *     eleven orders of magnitude the other way for an 18-decimal
-             *     token. `circulating_supply` is still served beside it: that
-             *     is a chain fact and needs no scale to be true.
+             *     token. Also reported when the scale was read but disagrees
+             *     with the one the DEX price was normalised with, so supply and
+             *     price are on different scales. `circulating_supply` is still
+             *     served beside it: that is a chain fact and needs no scale to
+             *     be true.
              * @enum {string}
              */
             status: "published" | "withheld_issuer_flagged" | "unpriced" | "withheld_low_liquidity" | "supply_unavailable" | "decimals_unavailable";

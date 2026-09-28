@@ -209,7 +209,9 @@ func priceChangePctExpr(lookback string) string {
 // corrected price moved the divisor's requirement with it. The shared
 // listing fill takes it from this same table
 // (v1.Server.applyConfirmedListingDecimals); the RWA contract arm's own
-// fill divides by the lake's decimals() reading.
+// fill divides by the lake's decimals() reading and refuses the cap
+// wherever that disagrees with this table's value, else 7
+// (v1.Server.contractPriceScaleDisagrees).
 //
 // The CASE (rather than a COALESCE'd factor of 1) keeps the stored value
 // for every asset with no confirmed row the exact NUMERIC it always was,
