@@ -307,25 +307,79 @@ export function formatBaseUnits(
 export function sumDecimalStrings(
   values: readonly (string | null | undefined)[],
 ): string | null {
-  const parsed: { units: bigint; frac: number }[] = [];
+  const parsed: Decimal[] = [];
   for (const v of values) {
     if (v == null || v === '') continue;
-    const m = /^(-?)(\d+)(?:\.(\d+))?$/.exec(v.trim());
-    if (!m) return null;
-    const [, sign, whole, frac = ''] = m;
-    parsed.push({ units: BigInt(`${sign}${whole}${frac}`), frac: frac.length });
+    const d = parseDecimal(v);
+    if (!d) return null;
+    parsed.push(d);
   }
   if (parsed.length === 0) return null;
   const scale = Math.max(...parsed.map((p) => p.frac));
-  const total = parsed.reduce(
-    (acc, p) => acc + p.units * 10n ** BigInt(scale - p.frac),
-    0n,
-  );
+  const total = parsed.reduce((acc, p) => acc + rescale(p, scale), 0n);
   const neg = total < 0n;
   const digits = (neg ? -total : total).toString().padStart(scale + 1, '0');
   const whole = digits.slice(0, digits.length - scale);
   const frac = scale > 0 ? `.${digits.slice(digits.length - scale)}` : '';
   return `${neg ? '-' : ''}${whole}${frac}`;
+}
+
+/**
+ * ratioPct — `part / whole × 100` over two decimal strings, divided and
+ * rounded (half away from zero, to `places`) in BigInt before the result
+ * becomes a number. Null for a non-decimal input or a zero whole.
+ */
+export function ratioPct(
+  part: string | null | undefined,
+  whole: string | null | undefined,
+  places = 2,
+): number | null {
+  const a = part == null ? null : parseDecimal(part);
+  const b = whole == null ? null : parseDecimal(whole);
+  if (!a || !b) return null;
+  const scale = Math.max(a.frac, b.frac);
+  return pctOf(rescale(a, scale), rescale(b, scale), places);
+}
+
+/**
+ * changePct — `(to − from) / from × 100` over two decimal strings, exact
+ * as {@link ratioPct}. Null for a non-decimal input or a zero `from`.
+ */
+export function changePct(
+  from: string | null | undefined,
+  to: string | null | undefined,
+  places = 2,
+): number | null {
+  const f = from == null ? null : parseDecimal(from);
+  const t = to == null ? null : parseDecimal(to);
+  if (!f || !t) return null;
+  const scale = Math.max(f.frac, t.frac);
+  const base = rescale(f, scale);
+  return pctOf(rescale(t, scale) - base, base, places);
+}
+
+interface Decimal {
+  units: bigint;
+  frac: number;
+}
+
+function parseDecimal(v: string): Decimal | null {
+  const m = /^(-?)(\d+)(?:\.(\d+))?$/.exec(v.trim());
+  if (!m) return null;
+  const [, sign, whole, frac = ''] = m;
+  return { units: BigInt(`${sign}${whole}${frac}`), frac: frac.length };
+}
+
+function rescale(d: Decimal, scale: number): bigint {
+  return d.units * 10n ** BigInt(scale - d.frac);
+}
+
+function pctOf(num: bigint, den: bigint, places: number): number | null {
+  if (den === 0n) return null;
+  const sign = num < 0n !== den < 0n ? -1n : 1n;
+  const n = (num < 0n ? -num : num) * 100n * 10n ** BigInt(places);
+  const d = den < 0n ? -den : den;
+  return Number(sign * ((n + d / 2n) / d)) / 10 ** places;
 }
 
 /**

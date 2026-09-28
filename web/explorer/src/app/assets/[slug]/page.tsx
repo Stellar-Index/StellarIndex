@@ -11,6 +11,7 @@ import {
   failBuild,
 } from '@/lib/buildFetch';
 import {
+  changePct,
   formatCompact,
   formatPriceSmall,
   formatSubunitPrice,
@@ -1460,11 +1461,9 @@ function athDrawdown(
   priceRaw: string | null | undefined,
   athRaw: string | null | undefined,
 ): { label: string; tone: 'emerald' | 'amber' | 'rose' | 'slate' } | null {
-  if (!priceRaw || !athRaw) return null;
-  const p = Number(priceRaw);
-  const a = Number(athRaw);
-  if (!Number.isFinite(p) || !Number.isFinite(a) || a <= 0) return null;
-  const pct = ((p - a) / a) * 100;
+  if (!(Number(athRaw) > 0)) return null;
+  const pct = changePct(athRaw, priceRaw, 1);
+  if (pct == null) return null;
   const label = pct > 0 ? '0.0%' : `${pct.toFixed(1)}%`;
   const tone =
     pct > -1 ? 'emerald' : pct > -25 ? 'slate' : pct > -75 ? 'amber' : 'rose';

@@ -11,7 +11,11 @@ import {
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { Stat } from '@/components/ui';
 import { cn } from '@/lib/cn';
-import { formatCompact } from '@/lib/format';
+import {
+  formatCompact,
+  formatCompactUnits,
+  sumDecimalStrings,
+} from '@/lib/format';
 import {
   isFrameStale,
   useLiveClock,
@@ -51,13 +55,13 @@ export function HomeNetworkStrip() {
   // the Soroban DEXes). /v1/network/stats.volume_24h_usd is the
   // ALL-source total — dominated by the CEX feeds (Binance et al.),
   // which don't trade on Stellar — so it isn't "Stellar volume".
-  const stellarVolume = (sources.data ?? [])
-    .filter((s) => s.subclass === 'dex')
-    .reduce(
-      (sum, s) => sum + (s.volume_24h_usd ? Number(s.volume_24h_usd) : 0),
-      0,
-    );
-  const volume = stellarVolume > 0 ? stellarVolume : null;
+  const stellarVolume = sumDecimalStrings(
+    (sources.data ?? [])
+      .filter((s) => s.subclass === 'dex')
+      .map((s) => s.volume_24h_usd),
+  );
+  const volume =
+    stellarVolume != null && Number(stellarVolume) > 0 ? stellarVolume : null;
   const activeMarkets = stats.data?.markets_count_24h ?? null;
   const assetsIndexed = stats.data?.assets_indexed ?? null;
   const exchangeSources = stats.data?.exchange_sources ?? null;
@@ -104,11 +108,7 @@ export function HomeNetworkStrip() {
       {pricing && (
         <Cell
           label="24h volume"
-          value={
-            volume != null && Number.isFinite(volume) && volume > 0
-              ? `$${formatCompact(volume)}`
-              : '—'
-          }
+          value={volume != null ? `$${formatCompactUnits(volume)}` : '—'}
           sub="Stellar on-chain (SDEX + DEXes)"
           href="/markets"
         />

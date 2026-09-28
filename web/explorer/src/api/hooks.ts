@@ -467,8 +467,8 @@ export function useSources(
 
 /**
  * useNativeUsdPrice — the canonical XLM/USD price from
- * /v1/price?asset=native (VWAP), plus a 24h % change derived from the
- * /v1/chart 24h series. CRITICAL: native XLM has NO row in
+ * /v1/price?asset=native (VWAP), plus the served 24h % change from
+ * /v1/price/batch. CRITICAL: native XLM has NO row in
  * classic_assets, so it never appears in /v1/assets (useCoins) — code
  * that pulled "the first coin" or searched `q=XLM` resolved to USDC
  * (top by observation) and showed ~$1.00 mislabelled as XLM. Always
@@ -505,25 +505,20 @@ export function useNativeUsdPrice() {
     },
   });
   const change = useQuery<number | null>({
-    queryKey: ['/v1/chart', 'native', 'fiat:USD', '24h-change'],
+    queryKey: ['/v1/price/batch', 'native', 'fiat:USD', '24h-change'],
     retry: false,
-    enabled: PRICING_ENABLED, // no aggregator on test nets → /v1/chart fiat empty
+    enabled: PRICING_ENABLED, // no aggregator on test nets → empty batch
     staleTime: 60_000,
+    // The server's change_24h_pct is the figure the coin list shows; a
+    // client re-derivation from chart points disagreed with it.
     queryFn: async () => {
-      const env = await apiGet<{ data: { points?: { p?: string | null }[] } }>(
-        '/v1/chart',
-        {
-          asset: 'native',
-          quote: 'fiat:USD',
-          timeframe: '24h',
-          granularity: '1h',
-        },
+      const env = await apiGet<Schemas['PriceBatchEnvelope']>(
+        '/v1/price/batch',
+        { asset_ids: 'native', quote: 'fiat:USD' },
       );
-      const pts = (env.data?.points ?? [])
-        .map((x) => (x.p != null ? Number(x.p) : NaN))
-        .filter((n) => Number.isFinite(n) && n > 0);
-      if (pts.length < 2 || pts[0] <= 0) return null;
-      return ((pts[pts.length - 1] - pts[0]) / pts[0]) * 100;
+      const raw = env.data?.[0]?.change_24h_pct;
+      const n = raw != null ? Number(raw) : NaN;
+      return Number.isFinite(n) ? n : null;
     },
   });
   return {

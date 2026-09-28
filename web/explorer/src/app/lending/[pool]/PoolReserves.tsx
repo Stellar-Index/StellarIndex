@@ -11,6 +11,7 @@ import { apiGet, asExample } from '@/api/client';
 import {
   decimalOrNull,
   formatCompact,
+  formatCompactUnits,
   sumDecimalStrings,
 } from '@/lib/format';
 import { scaledUnits } from '../../explorer-shared';
@@ -76,10 +77,10 @@ export function PoolReserves({ pool }: { pool: string }) {
   const priced = reserves
     .filter((rv) => rv.supplied_usd != null && Number(rv.supplied_usd) > 0)
     .sort((a, b) => Number(b.supplied_usd) - Number(a.supplied_usd));
-  // Summed exactly; converted once, for the chart label only.
-  const totalUsd = Number(
-    sumDecimalStrings(priced.map((rv) => rv.supplied_usd)) ?? 0,
-  );
+  // The served tvl_usd is this same Σ supplied_usd; the exact client sum
+  // only stands in when the pool response omits it.
+  const totalUsd =
+    q.data?.tvl_usd ?? sumDecimalStrings(priced.map((rv) => rv.supplied_usd));
 
   return (
     <Panel
@@ -100,14 +101,15 @@ export function PoolReserves({ pool }: { pool: string }) {
           </span>
         </div>
       )}
-      {priced.length > 0 && totalUsd > 0 && (
+      {priced.length > 0 && totalUsd != null && Number(totalUsd) > 0 && (
         <DonutChart
           data={priced.map((rv) => ({
             id: rv.asset,
             label: shortAssetText(rv.asset),
             value: Number(rv.supplied_usd),
+            decimal: rv.supplied_usd,
           }))}
-          centerLabel={`$${formatCompact(totalUsd)}`}
+          centerLabel={`$${formatCompactUnits(totalUsd)}`}
           centerSub="TVL"
           formatValue={(n) => usdFmt.format(n)}
         />
