@@ -88,12 +88,10 @@ Override defaults via `/etc/default/stellarindex-healthchecks`:
 
 ```sh
 SLA_PROBE_BASE_URL=http://localhost:3000/v1  # default (see the note below)
-DURATION=30s                                 # default
-CONCURRENCY=4                                # default
-PAIRS="-pair native,fiat:USD -pair USDC-G…,fiat:USD"
-REPORT_FORMAT=json                           # default; text also valid
+SLA_PROBE_DURATION=30s                       # default
+SLA_PROBE_CONCURRENCY=1                      # default
+SLA_PROBE_PAIR=native,fiat:USD               # default; one pair per run
 STELLARINDEX_PROBE_API_KEY=sip_…              # vault-minted key; required (see below)
-EXTRA_FLAGS=""                               # default
 ```
 
 > **What the default target means.** `SLA_PROBE_BASE_URL` defaults to
@@ -126,10 +124,12 @@ in `/etc/default/stellarindex-healthchecks` before enabling the timer. The probe
 sends it as `Authorization: Bearer <key>` on every request — the
 key never appears on the systemd unit's command line.
 
-The defaults exercise XLM/USD as the smoke-test pair. Add `-pair`
-entries to track additional asset/quote combinations the operator
-cares about — each repeats the per-endpoint probe across the
-chart, price, and oracle-latest surfaces for that pair.
+The defaults exercise XLM/USD as the smoke-test pair. The systemd
+wrapper only forwards one `-pair` (`SLA_PROBE_PAIR`); to track
+additional asset/quote combinations, run the binary directly with
+repeated `-pair` flags (the binary itself is repeatable) — each
+repeats the per-endpoint probe across the chart, price, and
+oracle-latest surfaces for that pair.
 
 ## Which number is the latency SLO
 
