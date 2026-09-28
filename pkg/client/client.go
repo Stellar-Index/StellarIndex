@@ -126,7 +126,7 @@ func New(opts Options) *Client {
 func checkKeyTransport(baseURL string) error {
 	u, err := url.Parse(baseURL)
 	if err != nil || !strings.EqualFold(u.Scheme, "http") {
-		return nil // parse errors surface per request; https is fine
+		return nil //nolint:nilerr // parse errors surface per request; https is fine
 	}
 	host := u.Hostname()
 	if strings.EqualFold(host, "localhost") {
