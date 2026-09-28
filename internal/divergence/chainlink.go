@@ -406,7 +406,7 @@ func (r *ChainlinkReference) ethCall(ctx context.Context, to, data string) (stri
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := r.httpClient.Do(req)
+	resp, err := externalchainlink.DoWithoutRedirects(r.httpClient, req)
 	if err != nil {
 		return "", fmt.Errorf("chainlink: rpc transport: %s", externalchainlink.RedactURLError(err, r.rpcURL))
 	}

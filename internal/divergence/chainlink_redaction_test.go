@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
+	externalchainlink "github.com/Stellar-Index/StellarIndex/internal/sources/external/chainlink"
 )
 
 // chainlinkSecretPath is the key-bearing part of a keyed RPC endpoint.
@@ -76,6 +78,39 @@ func TestChainlink_TransportError_RedactsKeyedEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(msg, "chainlink: rpc transport: ") {
 		t.Errorf("transport error = %q, want the rpc-transport prefix preserved", msg)
+	}
+}
+
+// TestChainlink_RPCRedirectNotFollowed: the keyed endpoint URL would be
+// re-sent as the next hop's Referer, so a 307 must end the call there,
+// for the default client and an injected one alike.
+func TestChainlink_RPCRedirectNotFollowed(t *testing.T) {
+	var hops atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hops.Add(1)
+		http.Error(w, "unexpected", http.StatusTeapot)
+	}))
+	t.Cleanup(target.Close)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/rpc", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(origin.Close)
+
+	for name, hc := range map[string]*http.Client{"default client": nil, "injected client": origin.Client()} {
+		t.Run(name, func(t *testing.T) {
+			hops.Store(0)
+			ref := NewChainlinkReference(ChainlinkOptions{HTTPClient: hc, RPCURL: origin.URL + chainlinkSecretPath})
+			_, err := priceOf(ref.LookupQuote(context.Background(), mustPair(t, "crypto:BTC", "fiat:USD"), time.Now()))
+			if n := hops.Load(); n != 0 {
+				t.Fatalf("redirect target received %d request(s); want 0", n)
+			}
+			if err == nil || !strings.Contains(err.Error(), externalchainlink.ErrRedirectRefused.Error()) {
+				t.Fatalf("LookupQuote err = %v; want %q", err, externalchainlink.ErrRedirectRefused)
+			}
+			if strings.Contains(err.Error(), chainlinkSecretPath) {
+				t.Errorf("refusal error leaks the keyed endpoint path: %s", err)
+			}
+		})
 	}
 }
 
