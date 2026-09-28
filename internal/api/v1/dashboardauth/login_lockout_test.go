@@ -477,3 +477,58 @@ func TestLockout_ConcurrentBurstBoundedByDurableCap(t *testing.T) {
 			compared, maxDurableCodeFailures-seeded)
 	}
 }
+
+// durableFailures reads the fake's stored per-email failure count.
+func (lr *lockoutRig) durableFailures(email string) int {
+	lr.tokens.mu.Lock()
+	defer lr.tokens.mu.Unlock()
+	return lr.tokens.lockouts[email].FailedCount
+}
+
+// TestLockout_NoLiveCodeChargesNothing — a request for an address with
+// no live code is compared against nothing, so it must not spend the
+// address's durable budget. After twice the cap of such requests the
+// owner's next real code still signs them in.
+func TestLockout_NoLiveCodeChargesNothing(t *testing.T) {
+	const email = "no-live-code@example.com"
+	lr := newLockoutRig(t)
+
+	for i := 0; i < 2*maxDurableCodeFailures; i++ {
+		if w := lr.postVerifyCode(t, email, fmt.Sprintf("%06d", i)); w.Code != http.StatusBadRequest {
+			t.Fatalf("request %d: status = %d, want 400", i+1, w.Code)
+		}
+	}
+	if got := lr.durableFailures(email); got != 0 {
+		t.Fatalf("durable failures = %d after requests with no live code, want 0", got)
+	}
+
+	w := lr.postVerifyCode(t, email, lr.loginAndCode(t, email))
+	if w.Code != http.StatusOK || !sessionCookieSet(w) {
+		t.Fatalf("status = %d, session = %v: the owner's real code must still sign in",
+			w.Code, sessionCookieSet(w))
+	}
+}
+
+// TestLockout_SpentTokenChargesNothingFurther — once the newest token has
+// burned maxCodeAttempts it is no longer a candidate, so further requests
+// are compared against nothing and must not keep charging the address.
+func TestLockout_SpentTokenChargesNothingFurther(t *testing.T) {
+	const email = "spent-token@example.com"
+	lr := newLockoutRig(t)
+
+	code := lr.loginAndCode(t, email)
+	for i := 0; i < maxCodeAttempts+2*maxDurableCodeFailures; i++ {
+		if w := lr.postVerifyCode(t, email, wrongCode(code)); w.Code != http.StatusBadRequest {
+			t.Fatalf("guess %d: status = %d, want 400", i+1, w.Code)
+		}
+	}
+	if got := lr.durableFailures(email); got != maxCodeAttempts {
+		t.Fatalf("durable failures = %d, want %d (only guesses that had a candidate)", got, maxCodeAttempts)
+	}
+
+	w := lr.postVerifyCode(t, email, lr.loginAndCode(t, email))
+	if w.Code != http.StatusOK || !sessionCookieSet(w) {
+		t.Fatalf("status = %d, session = %v: a fresh code below the durable cap must sign in",
+			w.Code, sessionCookieSet(w))
+	}
+}
