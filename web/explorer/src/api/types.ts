@@ -5507,46 +5507,46 @@ export interface components {
         };
         /** @description A ledger header from the certified lake. */
         Ledger: {
-            sequence?: number;
+            sequence: number;
             /** Format: date-time */
-            close_time?: string;
+            close_time: string;
             /** @description Hex-encoded ledger hash. */
-            hash?: string;
-            prev_hash?: string;
-            protocol_version?: number;
+            hash: string;
+            prev_hash: string;
+            protocol_version: number;
             /** @description Transactions in the ledger's tx set, INCLUDING failed ones (fee-charged but not applied). Each transaction's `successful` flag (GET /v1/ledgers/{seq}/transactions) distinguishes applied from failed. */
-            tx_count?: number;
+            tx_count: number;
             /** @description Operations across every transaction in the tx set, INCLUDING those in failed transactions (Horizon's tx_set_operation_count, not its applied operation_count). */
-            op_count?: number;
+            op_count: number;
             /** @description Contract events emitted by SUCCESSFUL transactions only: a failed transaction's events are rolled back by the protocol, so this count has a different basis from tx_count/op_count. */
-            soroban_event_count?: number;
+            soroban_event_count: number;
             /** @description XLM stroops as a string (exceeds 2^53). */
-            total_coins?: string;
-            fee_pool?: string;
+            total_coins: string;
+            fee_pool: string;
             /** @description Base fee per operation in stroops, as a decimal string. */
-            base_fee?: string;
+            base_fee: string;
             /** @description Base reserve in stroops, as a decimal string. */
-            base_reserve?: string;
+            base_reserve: string;
         };
         /** @description Transaction summary (in ledger + tx listings). */
         TxSummary: {
-            hash?: string;
-            ledger?: number;
+            hash: string;
+            ledger: number;
             /** Format: date-time */
-            close_time?: string;
-            index?: number;
-            source_account?: string;
+            close_time: string;
+            index: number;
+            source_account: string;
             /** @description Fee charged in stroops, as a decimal string. */
-            fee_charged?: string;
+            fee_charged: string;
             /** @description The fee bid that bounds fee_charged, as a decimal string: on a fee bump, the fee payer's bid (the inner transaction's is fee_bump.inner_max_fee). */
-            max_fee?: string;
-            operation_count?: number;
+            max_fee: string;
+            operation_count: number;
             /** @description Whether the transaction applied. Failed transactions ARE indexed and served (an on-chain, fee-charged record). */
-            successful?: boolean;
+            successful: boolean;
             /** @description Raw XDR TransactionResultCode (0 = success; negatives are failure reasons). */
-            result_code?: number;
+            result_code: number;
             /** @description Human-readable slug for result_code (e.g. tx_success, tx_failed, tx_insufficient_fee). Always present. */
-            result?: string;
+            result: string;
             /** @description Normalised: none|text|id|hash|return. */
             memo_type?: string;
             /** @description Best-effort display value. For memo_type=text, bytes that are not valid UTF-8 are replaced with U+FFFD; use memo_base64 for the exact bytes. */
@@ -5582,14 +5582,14 @@ export interface components {
         };
         /** @description An operation decoded from XDR into clean JSON. */
         Operation: {
-            ledger?: number;
+            ledger: number;
             /** Format: date-time */
-            close_time?: string;
-            tx_hash?: string;
-            tx_index?: number;
-            op_index?: number;
+            close_time: string;
+            tx_hash: string;
+            tx_index: number;
+            op_index: number;
             /** @description snake_case op type (e.g. payment, manage_sell_offer). */
-            type?: string;
+            type: string;
             source_account?: string;
             /** @description Decoded operation fields (amounts are strings, ADR-0003). */
             fields?: {
@@ -5622,7 +5622,7 @@ export interface components {
             inner_result?: string;
         };
         TxDetail: components["schemas"]["TxSummary"] & {
-            operations?: components["schemas"]["Operation"][];
+            operations: components["schemas"]["Operation"][];
             events?: components["schemas"]["ContractEvent"][];
             /**
              * @description Honest-degrade signal (mirrors the AccountMovements
@@ -5643,11 +5643,11 @@ export interface components {
         };
         /** @description A contract event on a transaction's tx-detail view (internal/api/v1/explorer/tx.go TxEventView). */
         ContractEvent: {
-            op_index?: number;
-            event_index?: number;
+            op_index: number;
+            event_index: number;
             /** @description Emitting contract (C-strkey). */
-            contract_id?: string;
-            event_type?: string;
+            contract_id: string;
+            event_type: string;
             topic_0?: string;
         };
         /** @description A contract event on the contract-activity view (internal/api/v1/explorer/contracts.go ContractEventView). */
@@ -5673,15 +5673,15 @@ export interface components {
          */
         AccountTransactions: {
             /** @description The G-strkey this listing is for. */
-            account?: string;
-            transactions?: components["schemas"]["TxSummary"][];
+            account: string;
+            transactions: components["schemas"]["TxSummary"][];
             /** @description Opaque composite cursor (ledger.tx_index) for the next older page; absent on the last page. */
             next_cursor?: string;
             /**
              * @description Activity scope. "all" = the account sourced the tx OR is a non-source participant in one of its operations.
              * @enum {string}
              */
-            scope?: "all";
+            scope: "all";
         };
         /**
          * @description Operations involving an account, decoded (newest first), with an opaque
@@ -5690,15 +5690,15 @@ export interface components {
          */
         AccountOperations: {
             /** @description The G-strkey this listing is for. */
-            account?: string;
-            operations?: components["schemas"]["Operation"][];
+            account: string;
+            operations: components["schemas"]["Operation"][];
             /** @description Opaque composite cursor (ledger.tx_index.op_index) for the next older page; absent on the last page. */
             next_cursor?: string;
             /**
              * @description Activity scope. "all" = the account sourced the op OR is a non-source participant in it.
              * @enum {string}
              */
-            scope?: "all";
+            scope: "all";
             /**
              * @description Honest-degrade signal, present ONLY when the parent-transaction
              *     outcome read failed while assembling this page: operations without
@@ -6953,14 +6953,14 @@ export interface components {
             attempt_count: number;
             /**
              * Format: date-time
-             * @description When the worker will retry. Null/zero when terminal (delivered OR retry budget exhausted).
+             * @description When the worker will retry. Omitted (never null) when terminal (delivered OR retry budget exhausted).
              */
-            next_attempt_at?: string | null;
+            next_attempt_at?: string;
             /** Format: date-time */
-            delivered_at?: string | null;
-            last_error?: string | null;
+            delivered_at?: string;
+            last_error?: string;
             /** @description HTTP status of the most-recent attempt. */
-            last_response_status?: number | null;
+            last_response_status?: number;
             /** Format: date-time */
             created_at: string;
         };
@@ -7061,7 +7061,7 @@ export interface components {
             /** @description One or more impacted surfaces — names match the status-page component set (api / indexer / aggregator / storage). */
             affected_components: string[];
             /** @description URL or path of the public postmortem, when published. */
-            postmortem?: string | null;
+            postmortem?: string;
             /**
              * Format: date-time
              * @description When this delivery was generated (server time, RFC 3339 nanosecond).
@@ -7293,7 +7293,7 @@ export interface components {
              *     MUST pass this value verbatim — do not decode or
              *     manipulate.
              */
-            next?: string | null;
+            next?: string;
         };
         /** @description Every 2xx response carries these. */
         EnvelopeMeta: {
@@ -10028,9 +10028,9 @@ export interface components {
              */
             status: "published" | "market_cap_published" | "market_price_observed" | "listing_unavailable" | "not_listed" | "no_listing_price" | "listing_price_not_positive" | "listing_price_expired" | "no_supply";
             /** @description circulating_supply / 10^decimals x listing_reference.price_usd, two fractional digits. Exact rational arithmetic throughout, rounded once at the end, so a consumer can add the served strings by hand and reach the same total. Present if and only if status is `published`. */
-            value_usd?: string | null;
+            value_usd?: string;
             /** @description The multiplicand: the raw integer supply, in the asset's smallest unit, that value_usd was computed from. Published here rather than inferred from the row's own `circulating_supply`, because the two can legitimately differ — this arm takes the LARGER of the row's reading and the lake's mint-burn total over the asset's SAC, and on the detail surface the row often has no reading at all. Scale it by the row's `decimals`. */
-            circulating_supply?: string | null;
+            circulating_supply?: string;
             /**
              * @description Where that number came from. `lake_flows`: Sum(mint) - Sum(burn) - Sum(clawback) over the asset's Stellar Asset Contract, the only reading of the three that is not keyed on where the tokens are HELD and therefore the only one that can see claimable balances, liquidity-pool reserves and SAC-held balances. `served`: the row's own circulating_supply, used when it is the larger of the two or when the lake could not answer. The difference is material rather than cosmetic: USDT0's trustline-visible supply is 6,469 tokens against 2,581,052 by mint-burn.
              * @enum {string}
@@ -10405,7 +10405,7 @@ export interface components {
             /** @description Human-readable currency name (e.g. "USD Coin"). */
             verified_name: string;
             /** @description Short attribution (e.g. "Circle (centre.io)"). Empty when the catalogue entry didn't include a verified_issuer_label. */
-            verified_issuer?: string | null;
+            verified_issuer?: string;
             /** @description One-sentence warning rendered verbatim by clients. */
             note: string;
         };
@@ -10508,7 +10508,7 @@ export interface components {
             /** @description Short attribution string (e.g. "Circle (centre.io)"). Empty when the catalogue entry didn't include a verified_issuer_label. */
             verified_issuer?: string;
             /** @description Asset logo URL from the issuer's SEP-1 TOML (https-only, sanitized). Wallets bulk-load logos from this listing. */
-            image?: string | null;
+            image?: string;
             /** @description CoinGecko slug for this currency (when known). */
             coingecko_id?: string;
             /** @description CoinMarketCap integer ID for this currency (when known). */
@@ -10658,7 +10658,7 @@ export interface components {
              */
             observed_at: string;
             /** @description Window size for vwap/twap; omitted for last_trade. */
-            window_seconds?: number | null;
+            window_seconds?: number;
             /** @description Trailing-24h percentage change vs the asset's USD price ~24h ago (signed, two fractional digits — "+1.27"). Present on /v1/price/batch rows when the quote is fiat:USD and a closed comparison bucket exists; omitted otherwise. Pairs current price with 24h change in ONE bulk call for wallet portfolio screens. */
             change_24h_pct?: string | null;
             /**
@@ -11627,7 +11627,7 @@ export interface components {
         };
         UsageRow: {
             /** Format: date */
-            date?: string;
+            date: string;
             /**
              * @description Endpoint family — the route PATTERN the requests
              *     matched (e.g. `/v1/assets/{asset_id}`), never a raw
@@ -11645,7 +11645,7 @@ export interface components {
              *     equals `billable` and excludes 5xx. Use `billable`, not
              *     this column, to reconcile against the monthly quota.
              */
-            requests?: number;
+            requests: number;
             /**
              * @description Request units the monthly quota counts: 2xx/3xx and
              *     4xx-except-429 responses. 429s and platform-caused 5xx
@@ -11658,11 +11658,11 @@ export interface components {
              *     summed over the current UTC month it is the
              *     `month_to_date` a monthly-quota 429 reports.
              */
-            billable?: number;
+            billable: number;
             /** @description 4xx (excluding 429) + 5xx responses. */
-            errors?: number;
+            errors: number;
             /** @description 429 rejections (rate-limit and monthly-quota). Reported under the `unmatched` endpoint, not the caller's target route — the rejection happens before the router resolves a pattern. */
-            throttled?: number;
+            throttled: number;
         };
         UsageEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["UsageRow"][];
