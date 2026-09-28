@@ -149,7 +149,7 @@ visible before the rotation reaches it, refresh that issuer alone;
 `-issuer` bypasses the staleness queue:
 
 ```sh
-stellarindex-ops sep1-refresh -config /etc/stellarindex/api.toml \
+stellarindex-ops sep1-refresh -config /etc/stellarindex.toml \
   -issuer <G-strkey>
 ```
 
@@ -218,7 +218,7 @@ psql -d stellarindex -c "SELECT sep1_resolved_at, sep1_payload
 curl -sfL "https://<home_domain>/.well-known/stellar.toml"
 
 # 4. If 2 and 3 disagree, re-fetch (see §"Forcing a re-fetch"):
-stellarindex-ops sep1-refresh -config /etc/stellarindex/api.toml \
+stellarindex-ops sep1-refresh -config /etc/stellarindex.toml \
   -issuer <G-strkey>
 ```
 
