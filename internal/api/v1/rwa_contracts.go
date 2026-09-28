@@ -622,51 +622,63 @@ func (s *Server) fillContractMarketCaps(
 		if !ok {
 			continue
 		}
-		// This reading owns the cap from here: a figure the generic fill
-		// derived from a different supply must not survive a refusal below.
-		row.MarketCapUSD = nil
-		b := basis.String()
-		row.SupplyBasis = &b
-		// The supply is a raw chain fact and is served either way. The
-		// CAP is not: it divides by 10^decimals, and an unread scale
-		// means that exponent is a convention rather than a reading.
-		// Multiplying by it would publish a figure off by a factor of
-		// ten to the something.
-		if _, ok := scaled[row.AssetID]; !ok {
-			row.CirculatingSupply = &circ
-			row.DecimalsUnresolved = true
-			continue
-		}
-		// Circulating supply is a raw chain fact, not a valuation, so it
-		// is served even when no cap can be. Same split the listing and
-		// the detail page both make.
-		row.CirculatingSupply = &circ
-		if row.PriceUSD == nil {
-			continue
-		}
+		_, isScaled := scaled[row.AssetID]
 		var sources int
 		if sc := src[row.AssetID].SourceCount; sc != nil {
 			sources = *sc
 		}
-		if dustLiquiditySuppressed(sources, row.VolumeUSD24h, s.minMarketCapVolumeUSD) {
-			row.MarketCapLowLiquidity = true
-			continue
-		}
-		if s.contractPriceScaleDisagrees(row) {
-			row.MarketCapDecimalsMismatch = true
-			continue
-		}
-		mc := computeMarketCapUSD(circ, *row.PriceUSD, row.Decimals)
-		if mc == "" {
-			continue
-		}
-		if capExceedsObservedTurnover(mc, row.VolumeUSD24h, s.maxMarketCapVolumeRatio) {
-			row.MarketCapLowLiquidity = true
-			continue
-		}
-		row.MarketCapUSD = &mc
+		s.applyContractMarketCap(row, circ, basis, isScaled, sources)
 	}
 	return false
+}
+
+// applyContractMarketCap fills one contract row's supply/cap members from
+// an already-successful supply reading (circ, basis) — the per-row body
+// split out of fillContractMarketCaps to keep the branching in one
+// function readable. See that function's doc for the refusal rules this
+// encodes (unscaled decimals, dust liquidity, scale disagreement, turnover).
+func (s *Server) applyContractMarketCap(
+	row *AssetDetail, circ string, basis supply.Basis, isScaled bool, sources int,
+) {
+	// This reading owns the cap from here: a figure the generic fill
+	// derived from a different supply must not survive a refusal below.
+	row.MarketCapUSD = nil
+	b := basis.String()
+	row.SupplyBasis = &b
+	// The supply is a raw chain fact and is served either way. The
+	// CAP is not: it divides by 10^decimals, and an unread scale
+	// means that exponent is a convention rather than a reading.
+	// Multiplying by it would publish a figure off by a factor of
+	// ten to the something.
+	if !isScaled {
+		row.CirculatingSupply = &circ
+		row.DecimalsUnresolved = true
+		return
+	}
+	// Circulating supply is a raw chain fact, not a valuation, so it
+	// is served even when no cap can be. Same split the listing and
+	// the detail page both make.
+	row.CirculatingSupply = &circ
+	if row.PriceUSD == nil {
+		return
+	}
+	if dustLiquiditySuppressed(sources, row.VolumeUSD24h, s.minMarketCapVolumeUSD) {
+		row.MarketCapLowLiquidity = true
+		return
+	}
+	if s.contractPriceScaleDisagrees(row) {
+		row.MarketCapDecimalsMismatch = true
+		return
+	}
+	mc := computeMarketCapUSD(circ, *row.PriceUSD, row.Decimals)
+	if mc == "" {
+		return
+	}
+	if capExceedsObservedTurnover(mc, row.VolumeUSD24h, s.maxMarketCapVolumeRatio) {
+		row.MarketCapLowLiquidity = true
+		return
+	}
+	row.MarketCapUSD = &mc
 }
 
 // contractPriceScaleDisagrees reports that a contract row's DEX price and

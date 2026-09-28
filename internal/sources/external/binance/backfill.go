@@ -62,19 +62,9 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 	if err != nil {
 		return nil, err
 	}
-	// Resolve pair → Binance symbol via the inverse of PairMap.
-	inverse := make(map[string]string, len(s.PairMap))
-	for sym, p := range s.PairMap {
-		inverse[p.String()] = sym
-	}
-	symbol, ok := inverse[pair.String()]
-	if !ok {
-		return nil, fmt.Errorf("binance.Backfill: pair %s not in configured PairMap", pair.String())
-	}
-	// Refuse up front: klineToTrade's per-candle skip would otherwise
-	// turn an unrepresentable symbol into a silently empty backfill.
-	if _, err := backfillTxHash(symbol, 0, granularity); err != nil {
-		return nil, fmt.Errorf("binance.Backfill: %w", err)
+	symbol, err := s.resolveBackfillSymbol(pair, granularity)
+	if err != nil {
+		return nil, err
 	}
 
 	endpoint := s.restBase() + klinesPath
@@ -98,31 +88,14 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 			break
 		}
 
-		for _, c := range candles {
-			trade, err := klineToTrade(c, symbol, pair, granularity)
-			if err != nil {
-				// Per-candle skip — the surrounding range still
-				// produces useful output. Caller sees the gap
-				// via trade count vs expected range; backfill
-				// is a best-effort op tool anyway.
-				continue
-			}
-			out = append(out, trade)
-		}
+		out = append(out, klinesToTrades(candles, symbol, pair, granularity)...)
 
-		// Advance to 1ms past the last candle's open time. Binance
-		// returns candles with openTime < endTime so we won't
-		// double-emit; the +1 is belt-and-braces in case of tick
-		// repetition.
-		lastOpen, ok := candles[len(candles)-1].openTimeMs()
-		if !ok {
-			break
+		next, done, err := advanceBackfillCursor(candles, startMs, granularity)
+		if err != nil {
+			return nil, err
 		}
-		// A page that does not move the cursor (a caching proxy, a
-		// venue ignoring startTime) would otherwise repeat forever.
-		next := lastOpen + int64(granularity/time.Millisecond)
-		if next <= startMs {
-			return nil, fmt.Errorf("binance.Backfill: page did not advance past startTime %d (last open %d)", startMs, lastOpen)
+		if done {
+			break
 		}
 		startMs = next
 		// If the venue returned fewer than limit candles, we're done
@@ -132,6 +105,63 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 		}
 	}
 	return out, nil
+}
+
+// resolveBackfillSymbol maps pair to its configured Binance symbol
+// (the inverse of PairMap) and refuses up front if the symbol can't
+// be represented in a backfill tx hash — klineToTrade's per-candle
+// skip would otherwise turn an unrepresentable symbol into a silently
+// empty backfill.
+func (s *Streamer) resolveBackfillSymbol(pair canonical.Pair, granularity time.Duration) (string, error) {
+	inverse := make(map[string]string, len(s.PairMap))
+	for sym, p := range s.PairMap {
+		inverse[p.String()] = sym
+	}
+	symbol, ok := inverse[pair.String()]
+	if !ok {
+		return "", fmt.Errorf("binance.Backfill: pair %s not in configured PairMap", pair.String())
+	}
+	if _, err := backfillTxHash(symbol, 0, granularity); err != nil {
+		return "", fmt.Errorf("binance.Backfill: %w", err)
+	}
+	return symbol, nil
+}
+
+// klinesToTrades converts one page of candles into trades, skipping
+// (not failing) any candle klineToTrade can't represent — the
+// surrounding range still produces useful output, and the caller sees
+// the gap via trade count vs expected range; backfill is a
+// best-effort op tool anyway.
+func klinesToTrades(candles []kline, symbol string, pair canonical.Pair, granularity time.Duration) []canonical.Trade {
+	out := make([]canonical.Trade, 0, len(candles))
+	for _, c := range candles {
+		trade, err := klineToTrade(c, symbol, pair, granularity)
+		if err != nil {
+			continue
+		}
+		out = append(out, trade)
+	}
+	return out
+}
+
+// advanceBackfillCursor computes the next page's startTime: 1ms past
+// the last candle's open time. Binance returns candles with openTime <
+// endTime so we won't double-emit; the +1 is belt-and-braces in case
+// of tick repetition. done=true means the page carried no parseable
+// open time and the caller should stop paginating (not an error — the
+// data collected so far is still returned). An error means the cursor
+// did not advance (a caching proxy, a venue ignoring startTime), which
+// would otherwise repeat forever.
+func advanceBackfillCursor(candles []kline, startMs int64, granularity time.Duration) (next int64, done bool, err error) {
+	lastOpen, ok := candles[len(candles)-1].openTimeMs()
+	if !ok {
+		return 0, true, nil
+	}
+	next = lastOpen + int64(granularity/time.Millisecond)
+	if next <= startMs {
+		return 0, false, fmt.Errorf("binance.Backfill: page did not advance past startTime %d (last open %d)", startMs, lastOpen)
+	}
+	return next, false, nil
 }
 
 // restBase returns the REST endpoint, allowing tests to override via
