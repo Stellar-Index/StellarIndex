@@ -45,29 +45,46 @@ func TestMount_EveryDashboardWriteIsSameSiteGuarded(t *testing.T) {
 	if len(writes) == 0 {
 		t.Fatal("found no state-changing dashboard routes — the source scan is not looking at the right shape")
 	}
+	// Behind the real CORS policy, as v1.Server mounts it: docs. may READ
+	// cross-origin but is not credentialed, so it must be refused a write
+	// exactly like an unrelated site.
+	h := middleware.CORS(middleware.CORSOptions{
+		AllowedOrigins:      []string{"https://stellarindex.io", "https://docs.stellarindex.io"},
+		AllowCredentials:    true,
+		CredentialedOrigins: []string{"https://stellarindex.io"},
+		AllowedMethods:      []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
+	})(mux)
 	idPath := regexp.MustCompile(`\{[^}]+\}`)
 	for _, route := range writes {
 		method, path, _ := strings.Cut(route, " ")
 		target := idPath.ReplaceAllString(path, "8f14e45f-ceea-467a-9575-1c1d1f6e0e5b")
-		t.Run(route, func(t *testing.T) {
-			req := sessionRequest(t, method, target, nil, sc)
-			req.Host = "api.stellarindex.io"
-			req.Header.Set("Origin", "https://evil.example")
-			w := httptest.NewRecorder()
-			defer func() {
-				// The nil-backed stores panic once a handler runs.
-				if r := recover(); r != nil {
-					t.Fatalf("cross-site %s reached its handler (%v): route not same-site guarded", route, r)
-				}
-			}()
-			mux.ServeHTTP(w, req)
-			var body map[string]any
-			_ = json.Unmarshal(w.Body.Bytes(), &body)
-			if w.Code != http.StatusForbidden || body["type"] != crossSiteProblemType {
-				t.Fatalf("cross-site %s answered %d type=%v, want 403 %s (route not same-site guarded)",
-					route, w.Code, body["type"], crossSiteProblemType)
-			}
-		})
+		for _, origin := range []string{"https://evil.example", "https://docs.stellarindex.io"} {
+			t.Run(route+" from "+origin, func(t *testing.T) {
+				assertWriteBlocked(t, h, sessionRequest(t, method, target, nil, sc), origin)
+			})
+		}
+	}
+}
+
+// assertWriteBlocked sends req from origin and requires the CSRF problem
+// before any handler runs.
+func assertWriteBlocked(t *testing.T, h http.Handler, req *http.Request, origin string) {
+	t.Helper()
+	req.Host = "api.stellarindex.io"
+	req.Header.Set("Origin", origin)
+	w := httptest.NewRecorder()
+	defer func() {
+		// The nil-backed stores panic once a handler runs.
+		if r := recover(); r != nil {
+			t.Fatalf("write from %s reached its handler (%v): route not same-site guarded", origin, r)
+		}
+	}()
+	h.ServeHTTP(w, req)
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if w.Code != http.StatusForbidden || body["type"] != crossSiteProblemType {
+		t.Fatalf("write from %s answered %d type=%v, want 403 %s (route not same-site guarded)",
+			origin, w.Code, body["type"], crossSiteProblemType)
 	}
 }
 

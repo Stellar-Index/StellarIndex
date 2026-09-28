@@ -365,7 +365,7 @@ external_base_url = "{{ stellarindex_api_external_base_url | default('https://ap
 # The test-net explorer origins are included on every network so the nav
 # network-switcher can read each network's public /v1/ledger/tip cross-origin
 # (e.g. the mainnet explorer showing testnet's live ledger, and vice-versa).
-allowed_origins = ["https://stellarindex.io", "https://api.stellarindex.io", "https://status.stellarindex.io", "https://docs.stellarindex.io", "https://dashboard.stellarindex.io", "https://www.stellarindex.io", "https://testnet.stellarindex.io", "https://futurenet.stellarindex.io"]
+allowed_origins = ["https://stellarindex.io", "https://api.stellarindex.io", "https://status.stellarindex.io", "https://docs.stellarindex.io", "https://www.stellarindex.io", "https://testnet.stellarindex.io", "https://futurenet.stellarindex.io"]
 # Default false. The dashboard's magic-link session cookie rides
 # cross-origin requests to /v1/account/*; valid only beside the explicit
 # allowed_origins list above (the API panics at boot beside ["*"]).
@@ -375,8 +375,10 @@ allow_credentials = true
 # futurenet. are the cross-network tip-switcher). None of those need a
 # cookie riding cross-origin, and none should be trusted to bypass the
 # same-site write guard. Only the surfaces that actually serve the
-# dashboard/account UI carry the session cookie cross-origin.
-credentialed_origins = ["https://stellarindex.io", "https://www.stellarindex.io", "https://dashboard.stellarindex.io"]
+# dashboard/account UI carry the session cookie cross-origin: the dashboard
+# is in-site ([api.dashboard] base_url), so that is the site origin and its
+# www twin. List only hosts this deployment serves.
+credentialed_origins = ["https://stellarindex.io", "https://www.stellarindex.io"]
 # AC7 onboarding fix (2026-06-13): verification-gated signup stays OFF
 # until a verified-sender domain is set up end-to-end.
 signup_require_email_verification = false
