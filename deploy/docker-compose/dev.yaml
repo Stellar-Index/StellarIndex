@@ -85,8 +85,14 @@ services:
       retries:  10
 
   # ─── MinIO ────────────────────────────────────────────────────────
+  # minio/minio and minio/mc are gone from Docker Hub and quay.io (MinIO
+  # Inc went source-only distribution 2025-10-15; INV-0706/INV-0265).
+  # cgr.dev/chainguard/minio is the one still-pullable, anonymously
+  # accessible source, and it bundles the `mc` CLI in the same image
+  # (used below by minio-init), so one pinned image now covers both
+  # services that used to be minio/minio + minio/mc.
   minio:
-    image: minio/minio:${MINIO_IMAGE_TAG:-RELEASE.2024-11-07T00-52-20Z}
+    image: cgr.dev/chainguard/minio:${MINIO_IMAGE_TAG:-latest}@sha256:${MINIO_IMAGE_DIGEST:-6a1d0b45c8669726bba580ced0bfa4cb9fdeed1ed636dfabd81d1577beb6937b}  # RELEASE.2026-09-22T19-25-18Z
     container_name: stellarindex-minio
     restart: unless-stopped
     environment:
@@ -110,8 +116,10 @@ services:
 
   # ─── Bucket initialiser ──────────────────────────────────────────
   # One-shot: wait for MinIO, create the default buckets, exit.
+  # `mc` is bundled in the same chainguard/minio image the `minio`
+  # service above uses — minio/mc no longer exists as a separate pull.
   minio-init:
-    image: minio/mc:${MC_IMAGE_TAG:-RELEASE.2024-11-05T11-29-45Z}
+    image: cgr.dev/chainguard/minio:${MINIO_IMAGE_TAG:-latest}@sha256:${MINIO_IMAGE_DIGEST:-6a1d0b45c8669726bba580ced0bfa4cb9fdeed1ed636dfabd81d1577beb6937b}  # RELEASE.2026-09-22T19-25-18Z
     depends_on:
       minio:
         condition: service_healthy
