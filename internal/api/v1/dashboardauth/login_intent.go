@@ -56,12 +56,15 @@ const loginIntentSeparator = "."
 // server secret (code derivation, passkey ceremony).
 const loginIntentDomain = "stellarindex/login-intent/v3|"
 
+// loginDeviceDomain labels the login-device marker's MAC key and input.
+const loginDeviceDomain = "stellarindex/login-device/v1|"
+
 // loginIntentTag is the second half of a bound magic-link plaintext:
 // a MAC, under the server secret, of the random first half and the
 // requesting browser's id. Only this server can compute it, and it
 // binds the link to exactly one browser.
 func loginIntentTag(secret []byte, nonceHex, browser string) string {
-	mac := hmac.New(sha256.New, secret)
+	mac := hmac.New(sha256.New, mustPurposeKey(secret, loginIntentDomain))
 	mac.Write([]byte(loginIntentDomain))
 	mac.Write([]byte(nonceHex))
 	mac.Write([]byte("|"))
@@ -149,8 +152,8 @@ const loginDeviceTTL = 400 * 24 * time.Hour
 // loginDeviceMAC binds an address and an expiry under the server secret,
 // so the cookie can be neither forged nor moved to another address.
 func loginDeviceMAC(secret []byte, email string, expires int64) string {
-	m := hmac.New(sha256.New, secret)
-	m.Write([]byte("stellarindex/login-device/v1|"))
+	m := hmac.New(sha256.New, mustPurposeKey(secret, loginDeviceDomain))
+	m.Write([]byte(loginDeviceDomain))
 	m.Write([]byte(strconv.FormatInt(expires, 10)))
 	m.Write([]byte("|"))
 	m.Write([]byte(email))

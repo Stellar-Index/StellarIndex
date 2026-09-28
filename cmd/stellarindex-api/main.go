@@ -2463,12 +2463,9 @@ func wireDashboardAuthThrottles(authCfg *dashboardauth.Config, rdb redis.Univers
 }
 
 // buildDashboardGenerator wires the token generator with the server
-// secret keying the 6-digit-code derivation + the passkey
-// ceremony-cookie MAC. Without the env, dashboardauth's validate()
-// falls back to a random per-process secret — still keyed (a DB read
-// alone can never reveal a code, a ceremony cookie cannot be forged),
-// but codes and passkey ceremonies stop verifying across a restart or
-// on another instance, so production sets the env.
+// secret every dashboard-auth MAC key is derived from. Without the env,
+// dashboardauth's validate() refuses to start while passkeys are wired
+// (always, here); the warning names what an unset secret breaks.
 func buildDashboardGenerator(cfg config.DashboardConfig, logger *slog.Logger) *dashboardauth.Generator {
 	generator := dashboardauth.NewGenerator()
 	if secret := os.Getenv(cfg.CodeSecretEnv); secret != "" {
