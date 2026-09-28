@@ -255,7 +255,14 @@ func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (proble
 		return 0, false, "", oerr
 	}
 	defer func() { _ = conn.Close() }()
+	return substrateProblemOn(ctx, conn, addr, from, to)
+}
 
+// substrateProblemOn is SubstrateProblem's connection-taking core, split out
+// (mirroring lakeMinLedgerOn/LakeMinLedger) so the head-truncation/walk
+// interaction is unit-testable against a fake driver.Conn. addr is only used
+// for the CA2-A14 seam-hole fallback, which reopens its own connection.
+func substrateProblemOn(ctx context.Context, conn driver.Conn, addr string, from, to uint32) (problem uint32, hasProblem bool, detail string, err error) {
 	const gapQ = `
 		SELECT toUInt64(ifNull((SELECT min(gap_start) FROM (
 			SELECT ledger_seq + 1 AS gap_start
@@ -291,11 +298,25 @@ func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (proble
 	if qerr := conn.QueryRow(ctx, endpointsQ, from, to).Scan(&haveMin, &haveMax, &present); qerr != nil {
 		return 0, false, "", fmt.Errorf("clickhouse: substrate endpoint presence [%d,%d]: %w", from, to, qerr)
 	}
-	if p, has, d := substrateHeadProblem(from, to, present > 0, uint32(haveMin)); has {
-		return p, true, d, nil
+	headProblem, headHasProblem, headDetail := substrateHeadProblem(from, to, present > 0, uint32(haveMin))
+	if present == 0 {
+		// Nothing to walk: an empty range has no interior to certify.
+		return headProblem, true, headDetail, nil
 	}
 
-	for wlo := uint64(from); wlo <= uint64(to); wlo += substrateWindow {
+	// A truncated head does NOT excuse the walks below: [haveMin, to] is still
+	// real, present data, and a source with genesis >= haveMin can only be
+	// certified clean by actually walking it — returning on the head problem
+	// alone (as this used to) meant every Soroban-era source published
+	// "hash-chained from genesis" over an interior that was never scanned
+	// (CODE-M #606). [from, haveMin) is provably missing already, so the walk
+	// starts at haveMin instead of wasting a query on it.
+	walkFrom := uint64(from)
+	if headHasProblem {
+		walkFrom = haveMin
+	}
+
+	for wlo := walkFrom; wlo <= uint64(to); wlo += substrateWindow {
 		whi := wlo + substrateWindow
 		if whi > uint64(to) {
 			whi = uint64(to)
@@ -305,7 +326,7 @@ func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (proble
 		// carried/fresh -from junction — so the seam pair is hash-checked and a
 		// gap at the seam is caught by contiguity over [qlo, whi]. See
 		// substrateQueryLo.
-		qlo := substrateQueryLo(wlo, uint64(from))
+		qlo := substrateQueryLo(wlo, walkFrom)
 
 		var firstGap uint64
 		if qerr := conn.QueryRow(ctx, gapQ, qlo, whi).Scan(&firstGap); qerr != nil {
@@ -324,6 +345,14 @@ func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (proble
 		default:
 			return uint32(firstBreak), true, fmt.Sprintf("substrate: hash-chain break at %d", firstBreak), nil
 		}
+	}
+	if headHasProblem {
+		// The walked interior [haveMin, to] is now proven clean, but the walk
+		// never covered [from, haveMin) — report the head problem (the FIRST
+		// problem in [from, to]) so a source whose genesis lies there still
+		// fails; sourceSubstrateOK's `problem < genesis` still passes any
+		// source whose genesis is >= haveMin, which the walk above just verified.
+		return headProblem, true, headDetail, nil
 	}
 	// Tail-presence guard (F1): the interior scan is clean, but if the last
 	// present ledger is below `to`, the tail of the range is missing — every
