@@ -1538,20 +1538,23 @@ tests:
         alertname: stellarindex_timescale_job_failures_climbing
         exp_alerts: []
 
-  # ── 14d-review (2026-09-27): the textfile_producer_stale catch-all
-  # false-fires on three producer shapes with no dedicated staleness
-  # alert: ops_job's pid-orphan siblings, the one-off backfill job, and
-  # the monthly restore-drill files. This pins the exclusion — and
-  # that it does NOT over-exclude other ops_job primaries, which
-  # should still trip the catch-all like any other producer.
+  # ── 14d-review (2026-09-27, extended 2026-09-28): the
+  # textfile_producer_stale catch-all false-fires on producer shapes with
+  # no dedicated staleness alert: ops_job's pid-orphan siblings, the
+  # one-off backfill and usd-volume-restamp jobs, and the monthly
+  # restore-drill files. This pins the exclusion — and that it does NOT
+  # over-exclude other ops_job primaries, which should still trip the
+  # catch-all like any other producer.
   - interval: 1m
-    name: textfile_producer_stale excludes pid-orphans, backfill and restore-drill only
+    name: textfile_producer_stale excludes pid-orphans, one-off ops jobs and restore-drill only
     input_series:
       - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/some_other_producer.prom",instance="r1:9100",job="node_exporter"}'
         values: '0x50600'
       - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_ch_rebuild.pid4242.prom",instance="r1:9100",job="node_exporter"}'
         values: '0x50600'
       - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_backfill.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x50600'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_usd_volume_restamp.prom",instance="r1:9100",job="node_exporter"}'
         values: '0x50600'
       - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/ops_job_projector_replay.prom",instance="r1:9100",job="node_exporter"}'
         values: '0x50600'
@@ -1561,9 +1564,8 @@ tests:
         values: '0x50600'
     alert_rule_test:
       # Past the 24h + 30m threshold: an unrelated producer and a
-      # non-backfill, non-pid ops_job primary both fire — proving the
-      # exclusion is scoped to the three named shapes, not to every
-      # ops_job_* file.
+      # non-excluded ops_job primary both fire — proving the exclusion
+      # is scoped to the named shapes, not to every ops_job_* file.
       - eval_time: 26h
         alertname: stellarindex_textfile_producer_stale
         exp_alerts:
@@ -1603,7 +1605,7 @@ tests:
                 before this one does.
       # Still past 35d: the restore-drill files stay excluded from the
       # catch-all forever (no double-alerting with the dedicated rule
-      # below), the other two exclusions likewise.
+      # below), the other exclusions likewise.
       - eval_time: 841h
         alertname: stellarindex_textfile_producer_stale
         exp_alerts:
