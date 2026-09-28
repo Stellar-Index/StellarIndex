@@ -23,7 +23,7 @@ func TestMonthlyQuotaHeaders_FormatEveryInt64(t *testing.T) {
 	}
 	for _, tc := range cases {
 		rec := httptest.NewRecorder()
-		writeMonthlyQuotaDenied(rec, httptest.NewRequest(http.MethodGet, "/v1/assets", nil), tc.quota, tc.used)
+		writeMonthlyQuotaDenied(rec, httptest.NewRequest(http.MethodGet, "/v1/assets", nil), tc.quota, tc.used, 1)
 		if got := rec.Header().Get("X-StellarIndex-Monthly-Quota"); got != tc.wantQ {
 			t.Errorf("quota %d: X-StellarIndex-Monthly-Quota = %q, want %q", tc.quota, got, tc.wantQ)
 		}

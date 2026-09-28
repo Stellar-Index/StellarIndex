@@ -245,7 +245,7 @@ func MonthlyQuota(reader MonthToDateReader, logger *slog.Logger, opts ...Monthly
 			}
 			gate.observeReadSuccess()
 			if used >= subject.MonthlyQuota {
-				writeMonthlyQuotaDenied(w, r, subject.MonthlyQuota, used)
+				writeMonthlyQuotaDenied(w, r, subject.MonthlyQuota, used, retryAfterForMonthBoundary(gate.nowFn()))
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -266,6 +266,23 @@ func retryAfterForDwell(d time.Duration) int {
 	return secs
 }
 
+// retryAfterForMonthBoundary derives the fail-CLOSED Retry-After
+// (seconds) for a monthly-quota-exceeded 429: the gap to the 1st of
+// the next UTC calendar month, when [usage.Counter.MonthToDate] rolls
+// over and the cap becomes satisfiable again. Floored at 1s (mirrors
+// retryAfterForDwell) so a request landing exactly on the boundary
+// still gets a positive, spec-honest value.
+func retryAfterForMonthBoundary(now time.Time) int {
+	now = now.UTC()
+	year, month, _ := now.Date()
+	next := time.Date(year, month+1, 1, 0, 0, 0, 0, time.UTC)
+	secs := int(next.Sub(now).Seconds())
+	if secs < 1 {
+		secs = 1
+	}
+	return secs
+}
+
 // writeMonthlyQuotaDenied emits a Problem+JSON 429 with enough
 // detail for the customer's client to surface "you hit your
 // monthly cap" plus the actual cap + observed counter. Kept
@@ -278,7 +295,7 @@ func retryAfterForDwell(d time.Duration) int {
 // caller-controlled `r.URL.Path` is properly escaped (any quote
 // / control char in a maliciously-crafted path can't break out
 // of the JSON string).
-func writeMonthlyQuotaDenied(w http.ResponseWriter, r *http.Request, quota, used int64) {
+func writeMonthlyQuotaDenied(w http.ResponseWriter, r *http.Request, quota, used int64, retryAfter int) {
 	payload := map[string]any{
 		"type":          "https://api.stellarindex.io/errors/monthly-quota-exceeded",
 		"title":         "Monthly quota exceeded",
@@ -302,6 +319,11 @@ func writeMonthlyQuotaDenied(w http.ResponseWriter, r *http.Request, quota, used
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-StellarIndex-Monthly-Quota", strconv.FormatInt(quota, 10))
 	w.Header().Set("X-StellarIndex-Monthly-Used", strconv.FormatInt(used, 10))
+	// Retry-After BEFORE WriteHeader — net/http drops headers added
+	// after the status line is committed. A generated SDK following
+	// the spec's 429 contract otherwise retries tightly against a key
+	// that cannot recover until the month rolls over (GH-800).
+	w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 	w.WriteHeader(http.StatusTooManyRequests)
 	_, _ = w.Write(body)
 }

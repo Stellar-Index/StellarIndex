@@ -2080,7 +2080,11 @@ type RWAReference struct {
 	// own decimal scale.
 	PriceUSD string `json:"price_usd"`
 	Source   string `json:"source"`
-	// Feed is the canonical `rwa:<CODE>` id, ready for /oracle/latest.
+	// Feed is the key PriceUSD is published under; its meaning follows
+	// Provenance. Only under "oracle_instrument_nav" is it the canonical
+	// `rwa:<CODE>` id, ready for /oracle/latest — under any other
+	// provenance it is that source's own identifier (e.g. a listing
+	// platform's asset id) and is NOT an ADR-0028 feed id.
 	Feed string `json:"feed"`
 	// Quote is the denominator, always "fiat:USD" on a served row: a
 	// NAV feed denominated in a reserve asset is a ratio, and the

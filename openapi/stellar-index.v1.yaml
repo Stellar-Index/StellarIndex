@@ -13109,8 +13109,10 @@ components:
         Retry-After:
           schema: { type: integer, minimum: 1 }
           description: >-
-            Seconds until the caller can retry. Always present on a
-            MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429;
+            Seconds until the caller can retry. Always present on both
+            MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to
+            the 1st UTC of next month, when the counter resets) and
+            `monthly-quota-unavailable` (the fail-open dwell window);
             absent from a rate-limit 429 unless the limiter sets it.
         X-RateLimit-Limit:
           schema: { type: integer }
@@ -13194,6 +13196,11 @@ components:
         since the MonthlyQuota middleware runs before the rate limiter
         on the same routes.
       headers:
+        Retry-After:
+          schema: { type: integer, minimum: 1 }
+          description: >-
+            Seconds until the 1st UTC of next month, when the
+            month-to-date counter resets.
         X-StellarIndex-Monthly-Quota:
           schema: { type: integer, format: int64 }
           description: The account's monthly request cap.
