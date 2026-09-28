@@ -1,6 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { MAX_UNAVAILABLE_WAITS, throttleDelayMs } from './buildFetch';
+import {
+  buildFetchData,
+  MAX_UNAVAILABLE_WAITS,
+  throttleDelayMs,
+} from './buildFetch';
+
+function fakeResponse(status: number, body: unknown = {}) {
+  return {
+    status,
+    ok: status >= 200 && status < 300,
+    headers: { get: () => null },
+    json: async () => body,
+  };
+}
 
 // A 429 is the server asking us to slow down, not a transport failure. These
 // pin the wait policy: one launch-rehearsal export died on HTTP 429 from our
@@ -89,5 +102,41 @@ describe('502/503/504 unavailable-wait budget', () => {
     // Patience, not infinity: a genuinely dead API must fail the build
     // promptly (keeping the last good deploy live), not hang CI for minutes.
     expect(total).toBeLessThan(180_000);
+  });
+});
+
+// CA2-A35-harden-4: the API is unauthenticated (AGENTS.md — "public REST +
+// SSE API"), so a 401/403 can only be an intermediary (edge/WAF) response,
+// never the origin API's own "not found". Collapsing it into the same
+// null bucket as a real 404 bakes a not-found page over a transport
+// failure. A softFail caller (build-time live-price enrichment) still
+// degrades to null; a fail-hard caller must see the failure instead.
+describe('non-authoritative 4xx (e.g. 403) handling', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('resolves null for a softFail caller', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(fakeResponse(403, { title: 'blocked' })),
+    );
+    const result = await buildFetchData('/v1/price/ca2-a35-softfail', {
+      softFail: true,
+      attempts: 1,
+    });
+    expect(result).toBeNull();
+  });
+
+  it('throws for a fail-hard (non-softFail) caller, carrying the problem title', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(fakeResponse(403, { title: 'blocked by WAF' })),
+    );
+    await expect(
+      buildFetchData('/v1/entity/ca2-a35-hardfail', { attempts: 1 }),
+    ).rejects.toThrow(/blocked by WAF/);
   });
 });

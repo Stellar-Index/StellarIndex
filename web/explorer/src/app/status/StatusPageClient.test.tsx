@@ -774,3 +774,60 @@ describe('StatusPageClient header copy', () => {
     expect(screen.queryByText(/full public-endpoint matrix/i)).toBeNull();
   });
 });
+
+// GH-837 claim 2: the runbook says setting an incident's frontmatter
+// `postmortem:` field drives the "Read full postmortem" link — but the
+// link used to render unconditionally off `slug`, so every incident got
+// a "full postmortem" link even when none was ever written. Gate on the
+// field the runbook claims controls it.
+describe('StatusPageClient incident history postmortem link', () => {
+  beforeAll(() => {
+    (globalThis as { EventSource?: unknown }).EventSource = FakeEventSource;
+  });
+  afterAll(() => {
+    delete (globalThis as { EventSource?: unknown }).EventSource;
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function renderWithSeed(
+    entry: Partial<import('./StatusPageClient').IncidentHistoryEntry>,
+  ) {
+    mockFeeds({
+      status: async () =>
+        json({ data: statusPayload({}), as_of: new Date().toISOString() }),
+    });
+    const client = new QueryClient();
+    return render(
+      <QueryClientProvider client={client}>
+        <StatusPageClient
+          seedIncidents={[
+            {
+              slug: 'x',
+              date: '2026-09-19',
+              title: 'partial pricing outage',
+              resolved: '2026-09-19 12:00 UTC',
+              summary: 'summary',
+              severity: 'major',
+              ...entry,
+            },
+          ]}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('hides the link when no postmortem has been written', async () => {
+    renderWithSeed({ postmortem: null });
+    await screen.findByText('partial pricing outage');
+    expect(screen.queryByText(/Read full postmortem/i)).toBeNull();
+  });
+
+  it('shows the link once a postmortem reference is set', async () => {
+    renderWithSeed({
+      postmortem: 'docs/operations/postmortems/2026-09-19-x.md',
+    });
+    await screen.findByText(/Read full postmortem/i);
+  });
+});

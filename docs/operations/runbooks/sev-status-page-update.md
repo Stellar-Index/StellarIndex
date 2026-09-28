@@ -243,8 +243,10 @@ When the SEV is closed:
 6. Postmortem follow-up: when the postmortem lands at
    `docs/operations/postmortems/${DATE}-${SLUG}.md`, update
    the incident's frontmatter `postmortem:` field to point at
-   it (the status page renders a "Read the full postmortem"
-   link from that field).
+   it. The status page's "Read full postmortem" link on the
+   incident-history row is gated on this field being non-empty
+   (`web/explorer/src/app/status/StatusPageClient.tsx`) — leaving
+   it blank keeps the link hidden even after the incident resolves.
 
 ## Workstation-down fallback
 

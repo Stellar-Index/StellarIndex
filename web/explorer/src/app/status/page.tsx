@@ -53,6 +53,7 @@ function seedIncidentHistory(): IncidentHistoryEntry[] {
       resolved,
       severity,
       summary: summary || inc.title || inc.slug,
+      postmortem: inc.postmortem,
     };
   });
 }

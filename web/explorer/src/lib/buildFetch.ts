@@ -36,11 +36,16 @@
  *    treated like a 429: a patient, Retry-After-aware wait that does NOT
  *    spend a transport attempt, bounded (MAX_UNAVAILABLE_WAITS) so a
  *    sustained outage still fails-hard rather than hanging the export.
- * 2. `null` is returned ONLY when the API answered authoritatively
- *    that the resource doesn't exist (4xx other than 429). Callers may
- *    treat that as a legitimate empty state — but for an entity that
- *    generateStaticParams promised, they must call failBuild() instead
- *    of rendering fallback HTML.
+ * 2. `null` is returned when the API answered authoritatively that the
+ *    resource doesn't exist (404/410), or when a softFail caller hit a
+ *    non-authoritative 4xx (400/401/403/405/…, e.g. an edge/WAF response —
+ *    the API is unauthenticated, so it never issues those itself). Callers
+ *    may treat that as a legitimate empty state — but for an entity that
+ *    generateStaticParams promised, they must call failBuild() instead of
+ *    rendering fallback HTML. A non-authoritative 4xx from a fail-hard
+ *    (non-softFail) caller throws instead of collapsing to null — see (2b).
+ * 2b. 408 is treated like a 502/503/504: a transient signal, retried with
+ *    the same wait budget, never collapsed straight to null.
  * 3. The per-build memo (keyed by URL) dedupes repeated fetches across
  *    pages — including rejections, so one dead endpoint fails the
  *    build once, fast, instead of retrying per page.
@@ -118,8 +123,12 @@ const MAX_THROTTLE_WAITS = 8;
 // outage still exhausts the budget and fails-hard (keeping the last good
 // deploy live). 500/501 are NOT here: a hard server error is more likely a real
 // bug that should fail fast than a restart to wait out.
+// 408 (Request Timeout) joins this set: it is a proxy/edge signal that the
+// request didn't complete in time, not an authoritative "not found" — it
+// gets the same wait-then-retry discipline as a gateway blip rather than
+// being collapsed into the 404/410 null bucket (CA2-A35-harden-4).
 const MAX_UNAVAILABLE_WAITS = 6;
-const UNAVAILABLE_STATUSES = new Set([502, 503, 504]);
+const UNAVAILABLE_STATUSES = new Set([408, 502, 503, 504]);
 export { MAX_UNAVAILABLE_WAITS };
 
 // Exponential, capped. 1s,2s,4s,8s,16s,30s,30s,30s ≈ 2min of patience —
@@ -173,9 +182,11 @@ const BUILD_NONCE = Date.now().toString(36);
  * `{data: T}` envelope, and memoises the result by URL for the whole
  * build.
  *
- * Returns `null` only for CI-stub builds or an authoritative 4xx
- * ("this resource does not exist"). THROWS BuildFetchError on
- * persistent transport failure — see the fail-hard contract above.
+ * Returns `null` for CI-stub builds, an authoritative 404/410 ("this
+ * resource does not exist"), or a softFail caller hitting a
+ * non-authoritative 4xx. THROWS BuildFetchError on persistent transport
+ * failure, or on a non-authoritative 4xx from a non-softFail caller —
+ * see the fail-hard contract above.
  *
  * Options:
  * - `timeoutMs` — per-attempt fetch timeout (default 8s).
@@ -254,9 +265,10 @@ async function fetchWithRetry<T>(
         }
         continue;
       }
-      if (res.status >= 400 && res.status < 500) {
+      if (res.status === 404 || res.status === 410) {
         // Authoritative "does not exist" — the ONLY null-returning path
-        // besides the CI stub. No retry.
+        // besides the CI stub (and a softFail non-authoritative 4xx below).
+        // No retry.
         return { data: null };
       }
       if (UNAVAILABLE_STATUSES.has(res.status)) {
@@ -273,6 +285,26 @@ async function fetchWithRetry<T>(
           attempt--; // this round was unavailable, not a spent attempt
         }
         continue;
+      }
+      if (res.status >= 400 && res.status < 500) {
+        // A non-authoritative 4xx (400/401/403/405/…). The API is
+        // unauthenticated, so a 401/403 here can only come from an
+        // intermediary (edge/WAF bot-challenge) — treating it as "does not
+        // exist" would bake a not-found page over a transport failure. A
+        // softFail caller degrades gracefully (see the module header);
+        // everything else fails the build so the contract break is visible
+        // instead of silently baked in.
+        if (softFail) return { data: null };
+        let extra = '';
+        try {
+          const body = (await res.json()) as { title?: string };
+          if (body?.title) extra = ` — ${body.title}`;
+        } catch {
+          /* non-JSON body — keep the bare status line */
+        }
+        throw new BuildFetchError(
+          `GET ${url} got HTTP ${res.status}${extra} — not an authoritative "not found"; refusing to bake a not-found page for a possible edge/WAF response.`,
+        );
       }
       if (!res.ok) {
         lastErr = new Error(`HTTP ${res.status}`);

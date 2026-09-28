@@ -44,6 +44,35 @@ describe('parseIncidentFile', () => {
     // The bullet list under affected_components must still be picked
     // up even though its key line carries a trailing comment.
     expect(inc!.affected_components).toEqual(['api', 'indexer']);
+    // Same dangling-comment shape as resolved_at (GH-837): a template
+    // copy with `postmortem:` left blank must parse to null, not the
+    // comment text — a truthy postmortem gates a "Read full postmortem"
+    // link that would otherwise point nowhere real.
+    expect(inc!.postmortem).toBeNull();
+  });
+
+  it('parses a filled-in postmortem reference (GH-837)', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const raw = `---
+title: "[SEV-1] partial pricing outage — 2026-09-19"
+date: 2026-09-19
+severity: SEV-1
+status: resolved
+started_at: 2026-09-19T10:00:00Z
+resolved_at: 2026-09-19T12:00:00Z
+postmortem: docs/operations/postmortems/2026-09-19-partial-pricing-outage.md
+---
+
+Body.
+`;
+    const inc = parseIncidentFile(
+      raw,
+      '2026-09-19-partial-pricing-outage.md',
+    );
+    expect(inc).not.toBeNull();
+    expect(inc!.postmortem).toBe(
+      'docs/operations/postmortems/2026-09-19-partial-pricing-outage.md',
+    );
   });
 
   it('strips a trailing comment from a plain scalar value', () => {
