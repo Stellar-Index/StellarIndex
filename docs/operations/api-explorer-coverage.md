@@ -251,7 +251,7 @@ page carries.
 | `/accounts/{g_strkey}/graph/cohort` | GET | 3 | app/insights/AccountRelationCohort.tsx | /insights/creators/[address], /insights/sponsors/[address] |
 | `/search` | GET | 3 | components/nav/SearchModal.tsx | global nav chrome; /, /accounts, /accounts/[g] |
 
-## Level 1 — the 19 stranded endpoints
+## Level 1 — the 21 stranded endpoints
 
 Every one of these was probed live on 2026-09-09. **All 19 exist and
 answer** — none 404s at the route level. This is served data with no
@@ -309,7 +309,7 @@ vendors", "canonical fiat rates" — so an exhaustive-list gate would be
 noise. Nothing *named* can be wrong; something registered can be
 unmentioned.
 
-### Account/admin surfaces with no UI (10)
+### Account/admin surfaces with no UI (12)
 
 Consistent gaps, all behind auth, all returning a correct `401` when
 probed unauthenticated:
@@ -324,6 +324,9 @@ probed unauthenticated:
   UI uses). Probably wants deprecating rather than building.
 - **Signup (2)** — `POST /signup`, `/signup/verify`. The UI uses the
   `/auth/login` magic-link flow instead. Dead path, or an unshipped one.
+- **Account erasure (2)** — `DELETE /dashboard/account`,
+  `/dashboard/account/export` (#809). API shipped; the dashboard
+  settings page that calls them is the follow-up.
 - **SEP-10 (1)** — `POST /auth/sep10/token`. See the disagreement note
   below: SEP-10 is not wired on this deployment.
 
