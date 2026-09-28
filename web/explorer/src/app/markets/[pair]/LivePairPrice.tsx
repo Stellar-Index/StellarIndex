@@ -40,10 +40,10 @@ export function LivePairPrice({
   /** Short label appended for non-USD quotes (e.g. "XLM"). */
   quoteSuffix: string;
   /**
-   * 24h % change baked at build time from the page's own chart
-   * points (last vs 24h-ago). Rendered as the change badge until the
-   * live change-summary worker (GET /v1/changes/pair/{base}/{quote})
-   * reports a fresher figure — mirrors the asset-sidebar fix (F090):
+   * 24h % change baked at build time from a one-asset /v1/price/batch
+   * call (the only price surface that carries change_24h_pct). Rendered
+   * as the change badge until the live change-summary worker
+   * (GET /v1/changes/pair/{base}/{quote}) reports a fresher figure — mirrors the asset-sidebar fix (F090):
    * this page is a static export with no client refresh, so a badge
    * built once at deploy and never touched again can point the wrong
    * direction for as long as the tab stays open while the price
@@ -58,7 +58,8 @@ export function LivePairPrice({
     initialPrice,
     initialObservedAt,
   });
-  const { price, observedAt, polled, stale, withheldTitle, withheldDetail } = poll;
+  const { price, observedAt, polled, stale, withheldTitle, withheldDetail } =
+    poll;
 
   const tip = useTipStream(base, quote);
   const clock = useLiveClock();
