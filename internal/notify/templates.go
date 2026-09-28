@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
+	"strings"
 	textTemplate "text/template"
 )
 
@@ -23,11 +24,74 @@ type MagicLinkInput struct {
 	// "this link expires in N minutes" sentence stays accurate
 	// across configurations.
 	ExpiresInMinutes int
-	// IPAddress and UserAgent are redacted display strings the
-	// template uses in the "this request came from..." line.
-	// Empty values render as "an unknown source".
+	// IPAddress is the display string the template uses in the
+	// "this request came from..." line; empty renders as "an unknown source".
 	IPAddress string
-	UserAgent string
+	// UserAgent describes the requesting client; build it with ClientFromUserAgent.
+	UserAgent ClientDescription
+}
+
+// ClientDescription names a client only in terms from a fixed browser/OS
+// vocabulary. The unexported field means no caller can place raw header
+// text in a signed email through it; ClientFromUserAgent is the only producer.
+type ClientDescription struct{ label string }
+
+// String returns the description, or "" when no User-Agent was sent.
+func (c ClientDescription) String() string { return c.label }
+
+// Order matters: Chromium derivatives also carry "Chrome/", Chrome
+// carries "Safari/", and iOS/Android carry "Mac OS X"/"Linux".
+var (
+	uaBrowserFamilies = []struct{ marker, name string }{
+		{"Edg/", "Edge"},
+		{"EdgiOS/", "Edge"},
+		{"EdgA/", "Edge"},
+		{"OPR/", "Opera"},
+		{"SamsungBrowser/", "Samsung Internet"},
+		{"Firefox/", "Firefox"},
+		{"FxiOS/", "Firefox"},
+		{"Chrome/", "Chrome"},
+		{"CriOS/", "Chrome"},
+		{"Safari/", "Safari"},
+	}
+	uaOSFamilies = []struct{ marker, name string }{
+		{"Windows", "Windows"},
+		{"iPhone", "iOS"},
+		{"iPad", "iPadOS"},
+		{"Android", "Android"},
+		{"CrOS", "ChromeOS"},
+		{"Macintosh", "macOS"},
+		{"Linux", "Linux"},
+	}
+)
+
+// ClientFromUserAgent maps a raw User-Agent header onto the closed
+// vocabulary above; nothing from ua other than the match is kept.
+func ClientFromUserAgent(ua string) ClientDescription {
+	if strings.TrimSpace(ua) == "" {
+		return ClientDescription{}
+	}
+	browser := firstUAMatch(ua, uaBrowserFamilies)
+	osName := firstUAMatch(ua, uaOSFamilies)
+	switch {
+	case browser != "" && osName != "":
+		return ClientDescription{browser + " on " + osName}
+	case browser != "":
+		return ClientDescription{browser}
+	case osName != "":
+		return ClientDescription{"an unrecognised browser on " + osName}
+	default:
+		return ClientDescription{"an unrecognised browser"}
+	}
+}
+
+func firstUAMatch(ua string, families []struct{ marker, name string }) string {
+	for _, f := range families {
+		if strings.Contains(ua, f.marker) {
+			return f.name
+		}
+	}
+	return ""
 }
 
 const magicLinkSubject = "Sign in to Stellar Index"
@@ -98,7 +162,7 @@ const magicLinkHTMLTemplate = `<!DOCTYPE html>
       </p>
       <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0;">
       <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.5;">
-        Request came from {{if .IPAddress}}{{.IPAddress}}{{else}}an unknown source{{end}}{{if .UserAgent}} ({{.UserAgent}}){{end}}.<br>
+        Request came from {{if .IPAddress}}{{.IPAddress}}{{else}}an unknown source{{end}}{{with .UserAgent.String}} ({{.}}){{end}}.<br>
         If you didn't request this, you can safely ignore this email — without the link the request can't proceed.
       </p>
     </td></tr>
@@ -117,7 +181,7 @@ you requested this email; on any other device, enter the code instead.
 
   {{.LinkURL}}
 
-Request came from {{if .IPAddress}}{{.IPAddress}}{{else}}an unknown source{{end}}{{if .UserAgent}} ({{.UserAgent}}){{end}}.
+Request came from {{if .IPAddress}}{{.IPAddress}}{{else}}an unknown source{{end}}{{with .UserAgent.String}} ({{.}}){{end}}.
 
 If you didn't request this, you can safely ignore this email — neither the code nor the link works without this email.
 `

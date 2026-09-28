@@ -108,7 +108,7 @@ func TestMagicLinkMessage_Renders(t *testing.T) {
 			Code:             "123456",
 			ExpiresInMinutes: 15,
 			IPAddress:        "203.0.113.1",
-			UserAgent:        "Firefox/123",
+			UserAgent:        notify.ClientFromUserAgent("Mozilla/5.0 (Macintosh) Firefox/123"),
 		},
 	)
 	if err != nil {
@@ -120,7 +120,7 @@ func TestMagicLinkMessage_Renders(t *testing.T) {
 	// Spot-check that the dynamic fields landed in the rendered
 	// bodies — guards against a refactor that drops a field
 	// from the template.
-	for _, want := range []string{"https://app.stellarindex.io/auth/callback?token=abc", "123456", "15 minutes", "203.0.113.1"} {
+	for _, want := range []string{"https://app.stellarindex.io/auth/callback?token=abc", "123456", "15 minutes", "203.0.113.1", "(Firefox on macOS)"} {
 		if !strings.Contains(msg.HTML, want) {
 			t.Errorf("HTML missing %q", want)
 		}
@@ -130,6 +130,25 @@ func TestMagicLinkMessage_Renders(t *testing.T) {
 	}
 	if tag, ok := msg.Tags["template"]; !ok || tag != "magic-link" {
 		t.Errorf("tag template not set: %v", msg.Tags)
+	}
+}
+
+func TestClientFromUserAgent(t *testing.T) {
+	cases := []struct{ ua, want string }{
+		{"", ""},
+		{"   ", ""},
+		{"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Edg/129.0.0.0", "Edge on Windows"},
+		{"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15", "Safari on macOS"},
+		{"Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/129.0 Mobile/15E148 Safari/604.1", "Chrome on iOS"},
+		{"Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36", "Chrome on Android"},
+		{"Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0", "Firefox on Linux"},
+		{"curl/8.7.1", "an unrecognised browser"},
+		{"Windows support: call +1-555-0100 now", "an unrecognised browser on Windows"},
+	}
+	for _, tc := range cases {
+		if got := notify.ClientFromUserAgent(tc.ua).String(); got != tc.want {
+			t.Errorf("ClientFromUserAgent(%q) = %q, want %q", tc.ua, got, tc.want)
+		}
 	}
 }
 
