@@ -158,9 +158,9 @@ func (r *AccountStore) PlanErasure(ctx context.Context, id uuid.UUID) (ErasurePl
 // half-erased state for the session middleware to lock the owner out of.
 // platform.ErrNotFound means the account is already gone.
 //
-// Order matters: the audit scrub runs while the account is closed but
-// its users and keys still exist (the 0188 trigger checks linkage), the
-// explicit deletes run child-first so the RESTRICT foreign keys stay a
+// Order matters: the slug lock is taken first, as Create takes it; the
+// audit scrub runs while the account is closed but its users and keys
+// still exist (the 0188 trigger checks linkage), the explicit deletes run child-first so the RESTRICT foreign keys stay a
 // guard against a missed table, and the slug tombstone and the
 // account.erase row land in the same commit.
 func (r *AccountStore) EraseAccount(ctx context.Context, req ErasureRequest) (ErasureCounts, error) {
@@ -172,6 +172,9 @@ func (r *AccountStore) EraseAccount(ctx context.Context, req ErasureRequest) (Er
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	if _, err := tx.ExecContext(ctx, slugLockSQL, p.Slug); err != nil {
+		return c, fmt.Errorf("erase account: slug lock: %w", err)
+	}
 	var slug string
 	err = tx.QueryRowContext(ctx, `SELECT slug FROM accounts WHERE id = $1 FOR UPDATE`, p.AccountID).Scan(&slug)
 	if errors.Is(err, sql.ErrNoRows) {

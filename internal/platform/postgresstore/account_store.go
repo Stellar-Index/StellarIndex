@@ -103,7 +103,17 @@ func (r *AccountStore) Create(ctx context.Context, a platform.Account) (platform
 		        WHERE slug_sha256 = sha256(convert_to($2::text, 'UTF8')))
 		RETURNING ` + accountColumns
 
-	row := r.s.db.QueryRowContext(ctx, q,
+	tx, err := r.s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return platform.Account{}, fmt.Errorf("create account: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	// A separate statement, so the INSERT's snapshot is taken after an
+	// in-flight erasure of this slug has committed its tombstone.
+	if _, err := tx.ExecContext(ctx, slugLockSQL, a.Slug); err != nil {
+		return platform.Account{}, fmt.Errorf("create account: slug lock: %w", err)
+	}
+	row := tx.QueryRowContext(ctx, q,
 		a.Name, a.Slug, a.BillingEmail,
 		a.Tier.StorageValue(), string(a.Status),
 		a.RateLimitPerMinOverride, a.MonthlyRequestQuotaOverride,
@@ -117,8 +127,17 @@ func (r *AccountStore) Create(ctx context.Context, a platform.Account) (platform
 		}
 		return platform.Account{}, fmt.Errorf("create account: %w", err)
 	}
+	if err := tx.Commit(); err != nil {
+		return platform.Account{}, fmt.Errorf("create account: commit: %w", err)
+	}
 	return out, nil
 }
+
+// slugLockSQL serialises Create against EraseAccount on one slug. Without
+// it a Create whose INSERT started before the erasure committed waits on
+// the old row's unique-index entry, then inserts once the row is deleted,
+// never having seen the tombstone.
+const slugLockSQL = `SELECT pg_advisory_xact_lock(hashtextextended('slug:' || $1::text, 0))`
 
 // Get returns the account by ID; ErrNotFound if absent.
 func (r *AccountStore) Get(ctx context.Context, id uuid.UUID) (platform.Account, error) {

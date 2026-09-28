@@ -541,4 +541,79 @@ func TestAccountErasureBoundaries(t *testing.T) {
 			t.Errorf("the erased member's lockout survived (%d)", memberLockouts)
 		}
 	})
+
+	// Create and EraseAccount serialise on one per-slug advisory lock, so a
+	// Create racing an erasure of its slug sees the tombstone. holdSlugLock
+	// takes that lock on its own connection, standing in for the other side.
+	holdSlugLock := func(t *testing.T, slug string) *sql.Tx {
+		t.Helper()
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('slug:' || $1::text, 0))`, slug); err != nil {
+			t.Fatal(err)
+		}
+		return tx
+	}
+	blocked := func(done <-chan error) bool {
+		select {
+		case <-done:
+			return false
+		case <-time.After(500 * time.Millisecond):
+			return true
+		}
+	}
+
+	t.Run("CreateRacingAnErasureSeesTheTombstone", func(t *testing.T) {
+		eraseTx := holdSlugLock(t, "racer")
+		done := make(chan error, 1)
+		go func() {
+			_, err := accounts.Create(ctx, platform.Account{
+				Name: "racer", Slug: "racer", BillingEmail: "racer@f.example",
+				Tier: platform.TierFree, Status: platform.AccountActive,
+			})
+			done <- err
+		}()
+		if !blocked(done) {
+			_ = eraseTx.Rollback()
+			t.Fatal("Create did not wait for the in-flight erasure's slug lock")
+		}
+		if _, err := eraseTx.ExecContext(ctx, `INSERT INTO erased_account_slugs (slug_sha256)
+			VALUES (sha256(convert_to('racer', 'UTF8')))`); err != nil {
+			t.Fatal(err)
+		}
+		if err := eraseTx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-done; !errors.Is(err, platform.ErrConflict) {
+			t.Errorf("Create after the erasure committed = %v, want ErrConflict from the tombstone", err)
+		}
+	})
+
+	t.Run("EraseWaitsForAnInFlightCreate", func(t *testing.T) {
+		a, err := accounts.Create(ctx, platform.Account{
+			Name: "waiter", Slug: "waiter", BillingEmail: "waiter@f.example",
+			Tier: platform.TierFree, Status: platform.AccountActive,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		createTx := holdSlugLock(t, "waiter")
+		done := make(chan error, 1)
+		go func() {
+			_, err := eraser.Erase(ctx, a.ID, platform.ActorUser)
+			done <- err
+		}()
+		if !blocked(done) {
+			_ = createTx.Rollback()
+			t.Fatal("EraseAccount did not take the slug lock")
+		}
+		if err := createTx.Rollback(); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-done; err != nil {
+			t.Errorf("Erase after the lock released: %v", err)
+		}
+	})
 }
