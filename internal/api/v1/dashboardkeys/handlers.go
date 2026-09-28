@@ -148,13 +148,16 @@ func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 // subsequent reads. KeyHash is omitted entirely so the API can't
 // be mis-used to seed an offline brute-force.
 type keyDTO struct {
-	ID                     string   `json:"id"`
-	Name                   string   `json:"name"`
-	Description            string   `json:"description,omitempty"`
-	KeyPrefix              string   `json:"key_prefix"`
-	Tier                   string   `json:"tier"`
-	RateLimitPerMin        int      `json:"rate_limit_per_min"`
-	MonthlyQuota           int64    `json:"monthly_quota,omitempty"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Description     string `json:"description,omitempty"`
+	KeyPrefix       string `json:"key_prefix"`
+	Tier            string `json:"tier"`
+	RateLimitPerMin int    `json:"rate_limit_per_min"`
+	MonthlyQuota    int64  `json:"monthly_quota,omitempty"`
+	// EffectiveMonthlyQuota is what auth enforces (0 = unmetered): the
+	// stored MonthlyQuota resolved through the account override cascade.
+	EffectiveMonthlyQuota  int64    `json:"effective_monthly_quota"`
 	UsageAlertThresholdPct int      `json:"usage_alert_threshold_pct,omitempty"`
 	Scopes                 []string `json:"scopes,omitempty"`
 	IPAllowlist            []string `json:"ip_allowlist,omitempty"`
@@ -170,7 +173,7 @@ type keyDTO struct {
 	CreatedAt     wiretime.Time  `json:"created_at"`
 }
 
-func toDTO(k platform.APIKey) keyDTO {
+func toDTO(k platform.APIKey, acct platform.Account) keyDTO {
 	dto := keyDTO{
 		ID:                     k.ID,
 		Name:                   k.Name,
@@ -179,6 +182,7 @@ func toDTO(k platform.APIKey) keyDTO {
 		Tier:                   string(k.Tier),
 		RateLimitPerMin:        k.RateLimitPerMin,
 		MonthlyQuota:           k.MonthlyQuota,
+		EffectiveMonthlyQuota:  acct.ResolveKeyMonthlyQuota(k.MonthlyQuota),
 		UsageAlertThresholdPct: k.UsageAlertThresholdPct,
 		Scopes:                 k.Scopes,
 		RefererAllowlist:       k.RefererAllowlist,
@@ -231,7 +235,7 @@ func (h *Handlers) HandleList(w http.ResponseWriter, r *http.Request) {
 		MaxActiveKeys:    h.maxKeysFor(sc.Account.Tier),
 	}
 	for _, k := range keys {
-		out.Keys = append(out.Keys, toDTO(k))
+		out.Keys = append(out.Keys, toDTO(k, sc.Account))
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
@@ -366,7 +370,7 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 
 	httpx.WriteJSON(w, http.StatusCreated, createResponse{
 		Plaintext: plaintext,
-		Key:       toDTO(out),
+		Key:       toDTO(out, sc.Account),
 	})
 }
 

@@ -6568,8 +6568,20 @@ export interface components {
             /** @enum {string} */
             tier: "apikey" | "partner" | "operator";
             rate_limit_per_min: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description The stored per-key value (absent = inherit). Not what is
+             *     enforced; render `effective_monthly_quota`.
+             */
             monthly_quota?: number;
+            /**
+             * Format: int64
+             * @description The monthly request-unit quota auth enforces on this key
+             *     (0 = unmetered): `monthly_quota` resolved through the
+             *     account override, which a key at 0 inherits and which caps
+             *     any higher key value.
+             */
+            effective_monthly_quota: number;
             usage_alert_threshold_pct?: number;
             /**
              * @description Capability scopes (read / account / dashboard / admin).

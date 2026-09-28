@@ -14328,7 +14328,20 @@ components:
           type: string
           enum: [apikey, partner, operator]
         rate_limit_per_min: { type: integer }
-        monthly_quota: { type: integer, format: int64 }
+        monthly_quota:
+          type: integer
+          format: int64
+          description: |
+            The stored per-key value (absent = inherit). Not what is
+            enforced; render `effective_monthly_quota`.
+        effective_monthly_quota:
+          type: integer
+          format: int64
+          description: |
+            The monthly request-unit quota auth enforces on this key
+            (0 = unmetered): `monthly_quota` resolved through the
+            account override, which a key at 0 inherits and which caps
+            any higher key value.
         usage_alert_threshold_pct: { type: integer }
         scopes:
           type: array
@@ -14347,7 +14360,7 @@ components:
         revoked_reason: { type: string }
         last_used_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
-      required: [id, name, key_prefix, tier, rate_limit_per_min, created_at]
+      required: [id, name, key_prefix, tier, rate_limit_per_min, effective_monthly_quota, created_at]
 
     CreateKeyRequest:
       type: object

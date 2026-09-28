@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/api/account';
@@ -142,5 +142,37 @@ describe('/dashboard/usage request history', () => {
     expect(await screen.findByText('100')).toBeInTheDocument();
     expect(screen.getByText('Monthly quota')).toBeInTheDocument();
     expect(screen.queryByText(/daily window/)).not.toBeInTheDocument();
+  });
+
+  // The per-key quota column must show what auth enforces, not the stored
+  // column: a key at 0 inherits the account override, and the override
+  // caps any higher stored value.
+  it('renders each key at its enforced monthly quota, not the stored value', async () => {
+    const key = {
+      key_prefix: 'sip_0000',
+      tier: 'apikey' as const,
+      rate_limit_per_min: 60,
+      created_at: '2026-09-01T00:00:00Z',
+    };
+    listKeys.mockResolvedValue([
+      { ...key, id: 'k1', name: 'inherits', effective_monthly_quota: 250000 },
+      {
+        ...key,
+        id: 'k2',
+        name: 'capped',
+        monthly_quota: 5000000,
+        effective_monthly_quota: 100000,
+      },
+    ]);
+    fetchUsage.mockResolvedValue([]);
+
+    renderUsagePage();
+
+    const inherits = (await screen.findByText('inherits')).closest('tr')!;
+    expect(within(inherits).getByText('250,000')).toBeInTheDocument();
+    expect(within(inherits).queryByText('Unlimited')).not.toBeInTheDocument();
+    const capped = screen.getByText('capped').closest('tr')!;
+    expect(within(capped).getByText('100,000')).toBeInTheDocument();
+    expect(within(capped).queryByText('5,000,000')).not.toBeInTheDocument();
   });
 });
