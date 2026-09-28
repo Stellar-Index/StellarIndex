@@ -1,0 +1,74 @@
+# verify-archive Tier D (multi-peer fork-detection) staleness.
+#
+# Separate file, not appended to verify-archive_test.yml, for the same
+# reason as verify-archive-tier-e_test.yml: Tier D's window is 8 DAYS
+# (weekly cron) against Tier A/B's 36 HOURS (nightly systemd timers), and
+# promtool's unit-test replay evaluates every rule at this file's
+# top-level `evaluation_interval`, not a per-test `interval:` override —
+# mixing an 8d window into the 1m-global tier-a/b file would either time
+# out loading the range vector at 1-minute resolution or silently never
+# fire. `evaluation_interval: 1h` here mirrors
+# verify-archive-tier-e_test.yml's own reasoning.
+#
+# No unit_failed pair is possible for Tier D: it is installed as an
+# ansible.builtin.cron entry (14-stellarindex-services.yml), not a
+# systemd unit, so there is no node_systemd_unit_state series to alert
+# off of. absent_over_time is the only signal that covers both "every
+# run failed" and "cron entry never installed".
+#
+# PROVEN-RED: delete the `or absent_over_time(...[8d])` arm from
+# stellarindex_verify_archive_tier_d_run_stale in verify-archive.yml and
+# re-run — the "never written" case below reports 0 firing alerts (FAIL)
+# because with the series absent nothing selects it.
+
+rule_files:
+- ../rules/verify-archive.yml
+evaluation_interval: 1h
+tests:
+- interval: 1h
+  name: peers tier failing every week no longer looks fresh
+  input_series:
+  - series: stellarindex_verify_archive_last_success_unix{job="node",instance="r1:9100",tier="peers"}
+    values: '60x200'
+  alert_rule_test:
+  - eval_time: 200h
+    alertname: stellarindex_verify_archive_tier_d_run_stale
+    exp_alerts:
+    - exp_labels:
+        job: node
+        instance: r1:9100
+        tier: peers
+        severity: ticket
+        team: stellarindex
+        component: archive
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-tier-d.md
+        summary: "verify-archive Tier D (multi-peer fork-detection) has recorded no success in >8d (weekly cron, Sunday)"
+        description: "The weekly multi-peer fork-detection sweep (`-tier peers`,\nstellarindex-verify-archive-tier-d cron, Sunday 10:23 UTC) has\nnot recorded a clean exit in over 8 days — one missed weekly\ncycle plus slack — or has never recorded one. Either the cron\nentry isn't installed (check verify_archive_tier_d_enabled in\ninventory — pubnet only) or every recent run failed. While\nthis is stale, a genuine divergence against a peer archive\nwould surface only in journald, not here.\nDiagnosis:\n  - `crontab -l -u root | grep verify-archive-tier-d` — is\n    the entry present?\n  - `grep stellarindex-tier-d /var/log/syslog` (or journald,\n    depending on syslog routing) — what did the last run log?\n  - re-run by hand: `stellarindex-ops verify-archive -tier\n    peers -peer-samples 50 -from <hot floor>`.\n\nRunbook: docs/operations/runbooks/verify-archive-tier-d.md\n"
+- interval: 1h
+  name: peers tier verified within the window is quiet
+  input_series:
+  - series: stellarindex_verify_archive_last_success_unix{job="node",instance="r1:9100",tier="peers"}
+    values: '0+3600x200'
+  alert_rule_test:
+  - eval_time: 200h
+    alertname: stellarindex_verify_archive_tier_d_run_stale
+    exp_alerts: []
+- interval: 1h
+  name: peers tier never written tickets off the absent_over_time branch
+  input_series:
+  - series: 'up{job="node_exporter",instance="localhost:9100"}'
+    values: '1x210'
+  alert_rule_test:
+  - eval_time: 200h
+    alertname: stellarindex_verify_archive_tier_d_run_stale
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        team: stellarindex
+        component: archive
+        tier: peers
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-tier-d.md
+        summary: "verify-archive Tier D (multi-peer fork-detection) has recorded no success in >8d (weekly cron, Sunday)"
+        description: "The weekly multi-peer fork-detection sweep (`-tier peers`,\nstellarindex-verify-archive-tier-d cron, Sunday 10:23 UTC) has\nnot recorded a clean exit in over 8 days — one missed weekly\ncycle plus slack — or has never recorded one. Either the cron\nentry isn't installed (check verify_archive_tier_d_enabled in\ninventory — pubnet only) or every recent run failed. While\nthis is stale, a genuine divergence against a peer archive\nwould surface only in journald, not here.\nDiagnosis:\n  - `crontab -l -u root | grep verify-archive-tier-d` — is\n    the entry present?\n  - `grep stellarindex-tier-d /var/log/syslog` (or journald,\n    depending on syslog routing) — what did the last run log?\n  - re-run by hand: `stellarindex-ops verify-archive -tier\n    peers -peer-samples 50 -from <hot floor>`.\n\nRunbook: docs/operations/runbooks/verify-archive-tier-d.md\n"
