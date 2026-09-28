@@ -169,14 +169,8 @@ type Config struct {
 	signedInBrowserSends *ratelimit.LocalFixedWindowCounter
 }
 
-// validate fills in defaults and rejects unworkable configs.
-func (c *Config) validate() error {
-	if c.Accounts == nil || c.Users == nil || c.Tokens == nil {
-		return errors.New("dashboardauth: stores are required")
-	}
-	if c.Sender == nil {
-		return errors.New("dashboardauth: sender is required")
-	}
+// ensureCodeSecret installs the Generator and guarantees it is keyed.
+func (c *Config) ensureCodeSecret() error {
 	if c.Generator == nil {
 		c.Generator = NewGenerator()
 	}
@@ -202,6 +196,20 @@ func (c *Config) validate() error {
 		if _, err := purposeKey(c.Generator.Secret, label); err != nil {
 			return fmt.Errorf("dashboardauth: derive %s key: %w", label, err)
 		}
+	}
+	return nil
+}
+
+// validate fills in defaults and rejects unworkable configs.
+func (c *Config) validate() error {
+	if c.Accounts == nil || c.Users == nil || c.Tokens == nil {
+		return errors.New("dashboardauth: stores are required")
+	}
+	if c.Sender == nil {
+		return errors.New("dashboardauth: sender is required")
+	}
+	if err := c.ensureCodeSecret(); err != nil {
+		return err
 	}
 	if c.Logger == nil {
 		c.Logger = slog.Default()
