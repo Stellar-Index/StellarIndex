@@ -1801,6 +1801,12 @@ func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from,
 	// NUMERIC and only the final value casts to float8 — this series
 	// feeds statistical baseline math whose float contract is documented
 	// on [Store.VWAPsForPair1m].
+	//
+	// A minute counts only when one of its trades cleared the $0.01 notional
+	// floor (notional_trade_count, migrations 0115/0166): this series is both
+	// the baseline sample and the bootstrap cap's density, so without the
+	// floor dust prints buy a thin pair past the 28.5-day gate. An unpriced
+	// minute (usd_volume NULL) proves no notional and does not count either.
 	const q = `
         SELECT (SUM(CASE WHEN base_asset = $1 THEN vwap * COALESCE(volume_priced, 0)
                          ELSE COALESCE(volume_priced, 0) END)
@@ -1808,20 +1814,21 @@ func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from,
                                     ELSE vwap * COALESCE(volume_priced, 0) END), 0))::float8 AS vwap,
                bucket + INTERVAL '1 minute'
           FROM (
-            (SELECT bucket, base_asset, vwap, volume_priced
+            (SELECT bucket, base_asset, vwap, volume_priced, notional_trade_count
                FROM prices_1m
               WHERE base_asset = $1 AND quote_asset = $2
-                AND bucket >= $3
-                AND bucket <  $4)
+                AND bucket >= $3::timestamptz
+                AND bucket <  $4::timestamptz)
             UNION ALL
-            (SELECT bucket, base_asset, vwap, volume_priced
+            (SELECT bucket, base_asset, vwap, volume_priced, notional_trade_count
                FROM prices_1m
               WHERE base_asset = $2 AND quote_asset = $1
-                AND bucket >= $3
-                AND bucket <  $4)
+                AND bucket >= $3::timestamptz
+                AND bucket <  $4::timestamptz)
           ) AS both_directions
          GROUP BY bucket
-        HAVING SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume_priced, 0)
+        HAVING SUM(notional_trade_count) > 0
+           AND SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume_priced, 0)
                         ELSE vwap * COALESCE(volume_priced, 0) END) > 0
          ORDER BY bucket ASC
     `
