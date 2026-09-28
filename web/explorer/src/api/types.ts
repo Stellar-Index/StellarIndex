@@ -15707,6 +15707,16 @@ export interface operations {
                                 /** Format: int64 */
                                 observation_count?: number;
                             }[];
+                            /**
+                             * @description Honest-degrade signal (mirrors the `coverage_note`
+                             *     on `/protocols`): present ONLY when the asset-list
+                             *     read failed (including a timeout on the shared 8s
+                             *     deadline), so `assets` is OMITTED rather than
+                             *     published as a fabricated empty list. Absent means
+                             *     `assets` is complete, or the issuer genuinely has
+                             *     never issued an observed asset.
+                             */
+                            coverage_note?: string;
                         };
                     };
                 };
