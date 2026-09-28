@@ -418,7 +418,7 @@ func (o *Orchestrator) publishComposite(
 	}
 
 	key := cachekeys.VWAP(chain.Target.Base, chain.Target.Quote, window)
-	ttl := cachekeys.VWAPTTL(window)
+	ttl := o.vwapTTL(window) // #1294: derive from this orchestrator's own cadence
 	metaKey := cachekeys.VWAPCompositeMeta(chain.Target.Base, chain.Target.Quote, window)
 	metaBody, err := json.Marshal(o.withPivotComposition(chain, window, o.withCorroborationBasis(chain.Target, window, compositeMeta{
 		ServedRouteCount:   servedRouteCount,
@@ -718,7 +718,7 @@ func (o *Orchestrator) setCompositeMeta(
 		return err
 	}
 	key := cachekeys.VWAPCompositeMeta(target.Base, target.Quote, window)
-	return o.cache.Set(ctx, key.String(), body, cachekeys.VWAPTTL(window)).Err()
+	return o.cache.Set(ctx, key.String(), body, o.vwapTTL(window)).Err() // #1294
 }
 
 // isFXLeg reports whether a leg should use the X2.5 forex-snap rule.
