@@ -184,6 +184,61 @@ func TestRefreshPair_FiresWarning(t *testing.T) {
 	}
 }
 
+// TestRefreshPair_MedianLegVetoedByMajorityAgreement pins #1041: at the
+// quorum floor (SuccessCount==2) the median is an arithmetic mean, so
+// one reference off by more than 2×threshold used to fire the warning
+// even when the other reference agreed exactly. threshold=5%,
+// ourPrice=50000, Sources={50000 (agrees), 56000 (+12%, disagrees)}:
+// Median=53000, DivergencePct≈5.66%>5, but 1 of the 2 (a majority)
+// corroborates us, so the median leg must be vetoed.
+func TestRefreshPair_MedianLegVetoedByMajorityAgreement(t *testing.T) {
+	refs := []divergence.Reference{
+		&stubReference{name: "agrees", price: 50000},
+		&stubReference{name: "stale-fx-cross", price: 56000},
+	}
+	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 2,
+		WarningPersistence:   -1, // isolate the veto from the W3-guards-2 debounce
+	})
+
+	cached := refreshQuiet(t, svc, rdb, xlmUSD(t), 50000, time.Now())
+	if cached.AgreementCount != 1 {
+		t.Fatalf("AgreementCount = %d, want 1 (sanity: exactly one reference should agree)", cached.AgreementCount)
+	}
+	if cached.DivergencePct <= 5.0 {
+		t.Fatalf("DivergencePct = %g, want > 5 (sanity: the median itself must exceed threshold)", cached.DivergencePct)
+	}
+}
+
+// TestRefreshPair_ZeroAgreementLegStillFires guards the leg the fix
+// above must NOT touch: MNY-22's symmetric-disagreement case, where
+// two references straddle ourPrice (median ≈ ourPrice, DivergencePct
+// small) but neither individually agrees. AgreementCount==0 must still
+// fire regardless of the majority-veto added for #1041.
+func TestRefreshPair_ZeroAgreementLegStillFires(t *testing.T) {
+	refs := []divergence.Reference{
+		&stubReference{name: "high", price: 1.08},
+		&stubReference{name: "low", price: 0.92},
+	}
+	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 2,
+		WarningPersistence:   -1,
+	})
+
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now()); err != nil {
+		t.Fatalf("RefreshPair: %v", err)
+	}
+	cached := readDivergence(t, rdb, xlmUSD(t))
+	if cached.AgreementCount != 0 {
+		t.Fatalf("AgreementCount = %d, want 0 (sanity: neither reference should individually agree)", cached.AgreementCount)
+	}
+	if !cached.WarningFired {
+		t.Errorf("WarningFired = false with AgreementCount=0, want true (MNY-22 leg must survive the #1041 median-leg veto)")
+	}
+}
+
 // TestRefreshPair_BelowMinSourcesNoWarning — even when divergence
 // is huge, fewer than MinSourcesForWarning successful references
 // suppresses the warning. Single-source disagreement shouldn't fire.

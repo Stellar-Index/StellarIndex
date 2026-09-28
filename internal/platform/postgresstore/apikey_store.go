@@ -143,15 +143,10 @@ func parseCIDRArray(in []string) []netip.Prefix {
 
 // Create inserts a new key. Caller has already hashed the
 // plaintext + computed the prefix. Enforces the per-account
-// `maxActiveKeysPerAccount` cap atomically. F-1257 (codex audit-
-// 2026-05-12): the prior unlocked count-CTE could let two concurrent
-// callers at the cap-1 boundary each see the same snapshot (n=24)
-// and both insert under MVCC, ending at 26. Now the Create runs
-// inside a transaction guarded by
-// `pg_advisory_xact_lock(hashtext('apikey:'||account_id::text))`,
-// so concurrent calls for the same account serialise through one
-// critical section. The lock keyspace is disjoint from F-1248's
-// `'webhook:'`-prefixed keys so the two quotas don't interfere.
+// `maxActiveKeysPerAccount` cap atomically: an unlocked count-CTE
+// lets two callers at cap-1 each see n=cap-1 under MVCC and both
+// insert, so the capped path runs under the account's apikey
+// advisory lock ([lockAccount]).
 // Returns [platform.ErrAPIKeyQuotaExceeded] when the cap is met.
 //
 // `maxActiveKeysPerAccount` is passed by the handler
@@ -180,10 +175,8 @@ func (r *APIKeyStore) Create(ctx context.Context, k platform.APIKey, maxActiveKe
 		return platform.APIKey{}, fmt.Errorf("postgresstore: APIKeyStore.Create: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx,
-		`SELECT pg_advisory_xact_lock(hashtext('apikey:' || $1::text))`,
-		k.AccountID); err != nil {
-		return platform.APIKey{}, fmt.Errorf("postgresstore: APIKeyStore.Create: advisory lock: %w", err)
+	if err := lockAccount(ctx, tx, lockNamespaceAPIKey, k.AccountID); err != nil {
+		return platform.APIKey{}, fmt.Errorf("postgresstore: APIKeyStore.Create: %w", err)
 	}
 	row := tx.QueryRowContext(ctx, q, args...)
 	out, err := finalizeAPIKeyCreate(scanAPIKey(row))
@@ -397,11 +390,10 @@ func (r *APIKeyStore) queryKeys(ctx context.Context, op, q string, args ...any) 
 	return out, rows.Err()
 }
 
-// Update writes the editable fields. The schema's CHECK
-// constraints catch malformed tiers / quotas; we surface those
-// generically rather than mapping to platform.ErrConflict
-// (a Postgres CHECK violation isn't a uniqueness conflict).
-func (r *APIKeyStore) Update(ctx context.Context, k platform.APIKey) error {
+// Update writes the editable fields of k.ID, only when accountID owns
+// it. A CHECK violation (quota, rate limit) surfaces as a generic error,
+// not platform.ErrConflict: it is not a uniqueness conflict.
+func (r *APIKeyStore) Update(ctx context.Context, accountID uuid.UUID, k platform.APIKey) error {
 	permissionsJSON, err := encodePermissions(k.Permissions)
 	if err != nil {
 		return fmt.Errorf("encode permissions: %w", err)
@@ -418,7 +410,7 @@ func (r *APIKeyStore) Update(ctx context.Context, k platform.APIKey) error {
 			referer_allowlist = $9::text[],
 			expires_at = $10,
 			usage_alert_threshold_pct = NULLIF($11, 0)
-		WHERE id = $1
+		WHERE id = $1 AND account_id = $12
 	`
 	res, err := r.s.db.ExecContext(ctx, q,
 		k.ID, k.Name, k.Description,
@@ -429,6 +421,7 @@ func (r *APIKeyStore) Update(ctx context.Context, k platform.APIKey) error {
 		nonNilStringArray(k.RefererAllowlist),
 		nullTime(k.ExpiresAt),
 		k.UsageAlertThresholdPct,
+		accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("update api key: %w", err)
@@ -440,18 +433,17 @@ func (r *APIKeyStore) Update(ctx context.Context, k platform.APIKey) error {
 	return nil
 }
 
-// Revoke soft-deletes by setting revoked_at + reason. Idempotent
-// — calling on an already-revoked key just rewrites the reason
-// and re-stamps the timestamp.
-func (r *APIKeyStore) Revoke(ctx context.Context, id string, byUserID uuid.UUID, reason string) error {
+// Revoke soft-deletes id, only when accountID owns it. Idempotent:
+// an already-revoked key keeps its revoked_at and gets the new reason.
+func (r *APIKeyStore) Revoke(ctx context.Context, accountID uuid.UUID, id string, byUserID uuid.UUID, reason string) error {
 	const q = `
 		UPDATE api_keys SET
 			revoked_at = COALESCE(revoked_at, now()),
 			revoked_by_user_id = NULLIF($2::text, '')::uuid,
 			revoked_reason = NULLIF($3, '')
-		WHERE id = $1
+		WHERE id = $1 AND account_id = $4
 	`
-	res, err := r.s.db.ExecContext(ctx, q, id, uuidOrEmpty(byUserID), reason)
+	res, err := r.s.db.ExecContext(ctx, q, id, uuidOrEmpty(byUserID), reason, accountID)
 	if err != nil {
 		return fmt.Errorf("revoke api key: %w", err)
 	}
@@ -462,9 +454,9 @@ func (r *APIKeyStore) Revoke(ctx context.Context, id string, byUserID uuid.UUID,
 	return nil
 }
 
-// TouchUsage updates the last-seen fields. Caller debounces to
-// once-per-minute to avoid hot-row contention; this method itself
-// is unconditional.
+// TouchUsage updates the last-seen fields. id is the authenticated
+// key's own ID (see [platform.APIKeyStore]); the caller debounces
+// against hot-row contention and this method is unconditional.
 func (r *APIKeyStore) TouchUsage(ctx context.Context, id string, ip net.IP, userAgent string) error {
 	const q = `
 		UPDATE api_keys SET

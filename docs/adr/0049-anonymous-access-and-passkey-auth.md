@@ -45,6 +45,11 @@ account/auth surface was pivoted to a self-service, no-payments model:
   (`internal/auth/passkey_ceremony_guard.go`) back dashboard sign-in, plus
   passwordless magic-link login (`dashboardauth/handlers.go`).
 
+  > **Amendment (2026-09-28, GH-767).** The ceremony guard cited above
+  > is only its Redis adapter. The `PasskeyCeremonyGuard` interface and
+  > the in-process guard live in
+  > `internal/api/v1/dashboardauth/passkey_ceremony_guard.go`.
+
 Recording this now matters because, absent a decision record, a future
 contributor cannot tell whether open registration and the removed payment
 coupling are intentional invariants or accidents — and might re-introduce

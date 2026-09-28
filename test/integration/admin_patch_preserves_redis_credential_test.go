@@ -258,7 +258,7 @@ func TestAdminAccountPatch_PreservesRegisterCredential_RedisBackend(t *testing.T
 			t.Fatalf("load management row: %v", err)
 		}
 		row.RateLimitPerMin = 50000
-		if err := env.keys.Update(ctx, row); err != nil {
+		if err := env.keys.Update(ctx, row.AccountID, row); err != nil {
 			t.Fatalf("lift management row budget: %v", err)
 		}
 		env.patch(t, k.accountID, `{"tier":"free"}`)

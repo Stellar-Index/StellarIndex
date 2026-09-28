@@ -314,3 +314,68 @@ func TestFlushAt_ObsCounters_SurviveWriteFailure_NoLatch(t *testing.T) {
 		t.Errorf("WARN logged %d times across write-failure + flat-count ticks, want 1", got)
 	}
 }
+
+// TestFlushAt_UncorroboratedCalls_EmitsWarnAndMetric proves
+// UncorroboratedCalls now has a consumer: a rejected oracle price-forgery
+// attempt (or a routing-shape change) reaches both a Prometheus counter and
+// a WARN on a fresh delta, instead of vanishing silently.
+func TestFlushAt_UncorroboratedCalls_EmitsWarnAndMetric(t *testing.T) {
+	before := testutil.ToFloat64(obs.SourceUncorroboratedCallsTotal.WithLabelValues("band"))
+
+	src := &stubStatsSource{stats: dispatcher.Stats{
+		UncorroboratedCalls: map[string]int{"band": 2},
+	}}
+	w := &fakeStatsWriter{}
+	var buf bytes.Buffer
+	f := New(src, w, slog.New(slog.NewTextHandler(&buf, nil)), Options{Interval: 5 * time.Minute})
+
+	f.flushAt(context.Background(), time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC))
+
+	if got := testutil.ToFloat64(obs.SourceUncorroboratedCallsTotal.WithLabelValues("band")) - before; got != 2 {
+		t.Errorf("SourceUncorroboratedCallsTotal{source=band} delta = %v, want 2", got)
+	}
+	if got := strings.Count(buf.String(), "uncorroborated oracle calls during this flush window"); got != 1 {
+		t.Errorf("WARN logged %d times, want 1", got)
+	}
+	if !strings.Contains(buf.String(), "source=band") {
+		t.Errorf("WARN missing source label, got: %s", buf.String())
+	}
+}
+
+// TestFlushAt_UncorroboratedCalls_SurviveWriteFailure_NoLatch proves the
+// obsLast baseline for this counter is independent of f.last: a failed
+// InsertDecoderStats must not make the NEXT, flat-count tick recompute a
+// stale positive delta against a held-back baseline.
+func TestFlushAt_UncorroboratedCalls_SurviveWriteFailure_NoLatch(t *testing.T) {
+	before := testutil.ToFloat64(obs.SourceUncorroboratedCallsTotal.WithLabelValues("band"))
+
+	src := &stubStatsSource{stats: dispatcher.Stats{
+		EventsSeen:          map[string]int{"band": 10},
+		UncorroboratedCalls: map[string]int{"band": 5},
+	}}
+	w := &fakeStatsWriter{fail: true}
+	var buf bytes.Buffer
+	f := New(src, w, slog.New(slog.NewTextHandler(&buf, nil)), Options{Interval: 5 * time.Minute})
+
+	base := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+
+	// Tick 1: fresh delta of 5. InsertDecoderStats fails, so f.last (the
+	// DB-row baseline) is retained — but the obs-counter baseline must
+	// still advance.
+	f.flushAt(context.Background(), base)
+	if got := f.obsLast.UncorroboratedCalls["band"]; got != 5 {
+		t.Fatalf("after flush 1, f.obsLast.UncorroboratedCalls[band] = %d, want 5 (must advance even on write failure)", got)
+	}
+
+	// Tick 2: store recovers, but the count hasn't moved (still 5). Must
+	// NOT recompute a stale positive delta against a held-back baseline.
+	w.fail = false
+	f.flushAt(context.Background(), base.Add(5*time.Minute))
+
+	if got := testutil.ToFloat64(obs.SourceUncorroboratedCallsTotal.WithLabelValues("band")) - before; got != 5 {
+		t.Errorf("SourceUncorroboratedCallsTotal{source=band} delta across both ticks = %v, want 5 (must not re-add on the second, flat-count tick)", got)
+	}
+	if got := strings.Count(buf.String(), "uncorroborated oracle calls during this flush window"); got != 1 {
+		t.Errorf("WARN logged %d times across write-failure + flat-count ticks, want 1", got)
+	}
+}

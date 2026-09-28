@@ -124,7 +124,7 @@ func explorerHandlerFor(s *Server, opts Options, logger *slog.Logger) *explorerp
 		Positions:          opts.Positions,
 		Trades:             opts.AccountTrades,
 		Activity:           opts.AccountActivity,
-		PoolTokens:         opts.ProtocolPoolTokens,
+		PoolTokens:         s.protocolPoolTokens,
 		Directory:          opts.Directory,
 		ContractProtocol:   s.contractProtocol,
 		TokenDecimals:      s.resolveTokenDecimals,

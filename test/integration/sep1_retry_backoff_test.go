@@ -132,6 +132,33 @@ func TestSep1RetryBackoff(t *testing.T) {
 		}
 	})
 
+	t.Run("candidates report whether the domain has served a payload", func(t *testing.T) {
+		// The systemic verdict counts only reached domains; a never-reached
+		// one reading as reached would re-arm the testnet false alarm.
+		ageSep1ResolvedAt(t, ctx, store, healthy, 40*24*time.Hour)
+		ageSep1ResolvedAt(t, ctx, store, recovered, 40*24*time.Hour)
+		got, err := store.IssuersNeedingSep1Refresh(ctx, 24*time.Hour, 100)
+		if err != nil {
+			t.Fatalf("IssuersNeedingSep1Refresh: %v", err)
+		}
+		reached := map[string]bool{}
+		for _, c := range got {
+			reached[c.GStrkey] = c.Reached
+		}
+		if r, ok := reached[recovered]; !ok || !r {
+			t.Errorf("queue: recovered (holds a payload) Reached = %v (present %v), want true", r, ok)
+		}
+		if r, ok := reached[healthy]; !ok || r {
+			t.Errorf("queue: healthy (no payload yet) Reached = %v (present %v), want false", r, ok)
+		}
+		for g, want := range map[string]bool{recovered: true, dead: false} {
+			c, cerr := store.IssuerSep1CandidateByStrkey(ctx, g)
+			if cerr != nil || c.Reached != want {
+				t.Errorf("IssuerSep1CandidateByStrkey(%s) = (Reached %v, %v), want Reached %v", g, c.Reached, cerr, want)
+			}
+		}
+	})
+
 	t.Run("unwinding a run takes back exactly one step", func(t *testing.T) {
 		// The systemic-outage escape hatch. Everything the run failed gets
 		// its ladder step back and its deferral lifted, so a night when our

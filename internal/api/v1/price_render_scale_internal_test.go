@@ -60,8 +60,8 @@ func TestPriceRatioDecimal_extendsScaleForSubDigitPrices(t *testing.T) {
 // The derived fiat-cross chart leg: a tiny cross rate must survive.
 func TestCrossFiatChartPoints_tinyCrossRateSurvives(t *testing.T) {
 	d := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
-	base := []FXQuotePoint{{Bucket: d, RateUSD: 4e12, InverseUSD: 2.5e-13}}
-	quote := []FXQuotePoint{{Bucket: d, RateUSD: 2, InverseUSD: 0.5}}
+	base := []FXQuotePoint{{Bucket: d, RateUSDText: "4000000000000", InverseUSDText: "0.00000000000025"}}
+	quote := []FXQuotePoint{{Bucket: d, RateUSDText: "2", InverseUSDText: "0.5"}}
 	got := crossFiatChartPoints(base, quote)
 	if len(got) != 1 {
 		t.Fatalf("got %d points, want 1", len(got))
@@ -75,8 +75,8 @@ func TestCrossFiatChartPoints_tinyCrossRateSurvives(t *testing.T) {
 // the float's binary expansion: 0.3/0.1 is exactly 3, not 2.9999….
 func TestCrossFiatChartPoints_recoversDecimalRates(t *testing.T) {
 	d := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
-	base := []FXQuotePoint{{Bucket: d, RateUSD: 0.1, InverseUSD: 10}}
-	quote := []FXQuotePoint{{Bucket: d, RateUSD: 0.3, InverseUSD: 1 / 0.3}}
+	base := []FXQuotePoint{{Bucket: d, RateUSDText: "0.1", InverseUSDText: "10"}}
+	quote := []FXQuotePoint{{Bucket: d, RateUSDText: "0.3", InverseUSDText: "3.33333333333333333333"}}
 	got := crossFiatChartPoints(base, quote)
 	if len(got) != 1 {
 		t.Fatalf("got %d points, want 1", len(got))

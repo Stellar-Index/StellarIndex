@@ -201,16 +201,25 @@ func TestPollInterval_Default(t *testing.T) {
 	}
 }
 
+// TestInversionMath_MatchesExpected pins the poller's full rate->price
+// pipeline: scale the venue rate, then INVERT it (ECB publishes
+// EUR-per-unit; the poller emits unit-per-EUR). #947: this test's name
+// promised the inversion step but its first block only asserted the
+// scaling step — scaled.Int64() == 1082500 is 1.0825 itself, not its
+// reciprocal — so a broken InvertScaled would have passed unnoticed.
 func TestInversionMath_MatchesExpected(t *testing.T) {
-	// Direct check of the inversion pipeline: ECB's rate=1.0825 →
-	// emitted price should be 1/1.0825 = 0.92378... at 10^6 scale
-	// ≈ 923787.
+	// ECB's rate=1.0825 -> emitted price = 1/1.0825 = 0.923787... at
+	// 10^6 scale, round-half-up = 923788.
 	scaled, err := scale.FloatToScaledInt(1.0825, int(DefaultDecimals))
 	if err != nil {
 		t.Fatalf("floatToScaledInt: %v", err)
 	}
 	if scaled.Int64() != 1_082_500 {
 		t.Errorf("1.0825 at 10^6 = %d want 1082500", scaled.Int64())
+	}
+	inverted := scale.InvertScaled(scaled, int(DefaultDecimals))
+	if want := int64(923_788); inverted.Int64() != want {
+		t.Errorf("InvertScaled(1.0825 at 10^6) = %d want %d (round_half_up(1e12/1082500))", inverted.Int64(), want)
 	}
 
 	// GH-945: inverting a weak-currency rate at the SAME scale as the

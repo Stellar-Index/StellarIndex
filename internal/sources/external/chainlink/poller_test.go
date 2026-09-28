@@ -428,10 +428,11 @@ func TestProject_invert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("project: %v", err)
 	}
-	// Inverted: 10^16 / 110000000 ≈ 90909090 → 0.909... USD/EUR at 8-dec.
+	// Inverted: 10^16 / 110000000 = 90909090.909… rounds half-up to
+	// 90909091, matching scale.InvertScaled; truncation would give …090.
 	got := u.Price.String()
-	if got != "90909090" {
-		t.Errorf("inverted price = %q, want ~90909090", got)
+	if got != "90909091" {
+		t.Errorf("inverted price = %q, want 90909091", got)
 	}
 }
 

@@ -14328,7 +14328,20 @@ components:
           type: string
           enum: [apikey, partner, operator]
         rate_limit_per_min: { type: integer }
-        monthly_quota: { type: integer, format: int64 }
+        monthly_quota:
+          type: integer
+          format: int64
+          description: |
+            The stored per-key value (absent = inherit). Not what is
+            enforced; render `effective_monthly_quota`.
+        effective_monthly_quota:
+          type: integer
+          format: int64
+          description: |
+            The monthly request-unit quota auth enforces on this key
+            (0 = unmetered): `monthly_quota` resolved through the
+            account override, which a key at 0 inherits and which caps
+            any higher key value.
         usage_alert_threshold_pct: { type: integer }
         scopes:
           type: array
@@ -14347,7 +14360,7 @@ components:
         revoked_reason: { type: string }
         last_used_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
-      required: [id, name, key_prefix, tier, rate_limit_per_min, created_at]
+      required: [id, name, key_prefix, tier, rate_limit_per_min, effective_monthly_quota, created_at]
 
     CreateKeyRequest:
       type: object
@@ -18325,9 +18338,12 @@ components:
             of almost every asset on this network, and not an accusation.
             `no_listing_price`: named, but unpriced, or priced past the
             24h bound the directory enforces on the platform's own
-            publication clock. `listing_price_expired`: the publication
-            time is past the absolute 7-day bound. `no_supply`: no supply
-            reading to multiply, refused rather than published as zero.
+            publication clock. `listing_price_not_positive`: the
+            published price is zero, negative or unparseable, so no
+            valuation can be taken from it. `listing_price_expired`: the
+            publication time is past the absolute 7-day bound.
+            `no_supply`: no supply reading to multiply, refused rather
+            than published as zero.
         value_usd:           { type: [string, "null"], description: "circulating_supply / 10^decimals x listing_reference.price_usd, two fractional digits. Exact rational arithmetic throughout, rounded once at the end, so a consumer can add the served strings by hand and reach the same total. Present if and only if status is `published`." }
         circulating_supply:  { type: [string, "null"], description: "The multiplicand: the raw integer supply, in the asset's smallest unit, that value_usd was computed from. Published here rather than inferred from the row's own `circulating_supply`, because the two can legitimately differ — this arm takes the LARGER of the row's reading and the lake's mint-burn total over the asset's SAC, and on the detail surface the row often has no reading at all. Scale it by the row's `decimals`." }
         supply_basis:
@@ -18844,9 +18860,11 @@ components:
         publishes a stellar.toml whose [[CURRENCIES]] entry
         matches the asset's `(code, issuer)` — `sep1_status`
         then reads "verified". `not_applicable` (native, fiat,
-        SAC-only), `not_fetched` (operator hasn't configured the
-        home-domain map for this issuer), `unreachable` (fetch
-        or parse failed), and `no_match` (TOML loaded but no
+        SAC-only), `not_fetched` (OURS — no fetch has been
+        attempted for this issuer yet), `unreachable` (THEIRS —
+        a fetch was attempted and produced nothing storable: a
+        404, a dead name, a TLS failure, or a document that
+        would not parse), and `no_match` (TOML loaded but no
         matching currency block) leave the overlay fields null.
       properties:
         asset_id:        { type: string }
@@ -19934,7 +19952,7 @@ components:
       properties:
         name:               { type: string, description: "Stable connector identifier (matches canonical.Trade.Source)." }
         class:              { type: string, enum: [exchange, aggregator, oracle, authority_sanity, bridge, lending, router], description: "Top-level taxonomy. Drives the aggregator's class filter — only `exchange` contributes to VWAP by default." }
-        subclass:           { type: string, enum: [dex, cex, fx], description: "Refines `class=exchange` for UIs that group venues. Empty (omitted) for non-exchange classes." }
+        subclass:           { type: string, enum: [dex, cex, fx], description: "Refines `class=exchange` for UIs that group venues. Empty (omitted) for non-exchange classes, except `ecb` (`authority_sanity`), which is `fx` because the forex worker's ECB standby writes fiat FX rates under that name." }
         include_in_vwap:    { type: boolean, description: "Whether this source's trades contribute to VWAP." }
         paid:               { type: boolean, description: "Whether this connector requires a paid licence / API key." }
         backfill_available: { type: boolean, description: "Whether the source supports historical backfill via its native API." }

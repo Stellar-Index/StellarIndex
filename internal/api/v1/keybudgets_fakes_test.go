@@ -92,19 +92,19 @@ func (*fakePlatformAPIKeysForBridge) ListForAccount(_ context.Context, _ uuid.UU
 	panic("unused")
 }
 
-func (f *fakePlatformAPIKeysForBridge) Update(_ context.Context, k platform.APIKey) error {
+func (f *fakePlatformAPIKeysForBridge) Update(_ context.Context, accountID uuid.UUID, k platform.APIKey) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.updates = append(f.updates, k)
 	// Reflect the update back into the source-of-truth slice
 	// so a subsequent ListForAccount returns the new value.
-	for i := range f.byAcct[k.AccountID] {
-		if f.byAcct[k.AccountID][i].ID == k.ID {
-			f.byAcct[k.AccountID][i] = k
+	for i := range f.byAcct[accountID] {
+		if f.byAcct[accountID][i].ID == k.ID {
+			f.byAcct[accountID][i] = k
 			return nil
 		}
 	}
-	return nil
+	return platform.ErrNotFound
 }
 
 func (*fakePlatformAPIKeysForBridge) Create(_ context.Context, _ platform.APIKey, _ int) (platform.APIKey, error) {
@@ -119,12 +119,12 @@ func (*fakePlatformAPIKeysForBridge) GetByHash(_ context.Context, _ []byte) (pla
 	panic("unused")
 }
 
-func (f *fakePlatformAPIKeysForBridge) Revoke(_ context.Context, id string, _ uuid.UUID, reason string) error {
+func (f *fakePlatformAPIKeysForBridge) Revoke(_ context.Context, accountID uuid.UUID, id string, _ uuid.UUID, reason string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for acct, keys := range f.byAcct {
 		for i := range keys {
-			if keys[i].ID == id {
+			if keys[i].ID == id && acct == accountID {
 				f.byAcct[acct][i].RevokedAt = time.Now().UTC()
 				f.byAcct[acct][i].RevokedReason = reason
 				return nil

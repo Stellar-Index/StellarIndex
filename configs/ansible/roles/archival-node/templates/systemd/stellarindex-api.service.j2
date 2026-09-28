@@ -12,7 +12,9 @@
 
 [Unit]
 Description=Stellar Index — REST + SSE API server
-After=network-online.target postgresql@{{ postgres_version }}-main.service redis-server.service
+# After= only, no Wants=: it orders against a co-located ClickHouse and is a
+# no-op where the lake is remote; the API's boot dial retry covers the rest.
+After=network-online.target postgresql@{{ postgres_version }}-main.service redis-server.service clickhouse-server.service
 Wants=network-online.target
 
 # Restart-storm limit — [Unit] directives per systemd.unit(5); systemd
