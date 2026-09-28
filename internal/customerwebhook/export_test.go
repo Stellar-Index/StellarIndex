@@ -16,3 +16,10 @@ func unguardedClient(c *http.Client) *http.Client {
 func NewUnguardedForTest(store DeliveryStore, opts Options) *Worker {
 	return newWorker(store, opts, unguardedClient)
 }
+
+// GuardedTransportForTest exposes the *http.Transport production New()
+// builds, so a test can assert its pool-bounding fields without a live
+// network call.
+func GuardedTransportForTest(c *http.Client) *http.Transport {
+	return guardedClient(c).Transport.(*http.Transport)
+}
