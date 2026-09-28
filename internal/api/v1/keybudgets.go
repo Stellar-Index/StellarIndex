@@ -195,7 +195,7 @@ func (s *Server) downgradePlatformAPIKeys(
 			continue
 		}
 		k.RateLimitPerMin = ceiling
-		if err := st.Platform.Update(ctx, k); err != nil {
+		if err := st.Platform.Update(ctx, account.ID, k); err != nil {
 			st.note("key_update")
 			s.logger.Error("tier clamp: platform-key downgrade Update failed",
 				"cause", cause, "account_id", account.ID,

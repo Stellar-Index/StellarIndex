@@ -169,14 +169,18 @@ type APIKeyStore interface {
 	// Update writes the editable fields: name, description,
 	// rate_limit_per_min, monthly_quota, permissions,
 	// ip_allowlist, referer_allowlist, expires_at,
-	// usage_alert_threshold_pct.
-	Update(ctx context.Context, k APIKey) error
+	// usage_alert_threshold_pct. Only a key owned by accountID is
+	// written; any other key, like an absent one, is ErrNotFound.
+	Update(ctx context.Context, accountID uuid.UUID, k APIKey) error
 
-	// Revoke soft-deletes by setting revoked_at + reason.
+	// Revoke soft-deletes by setting revoked_at + reason. Only a key
+	// owned by accountID is revoked; any other key is ErrNotFound.
 	// Idempotent: revoking an already-revoked key is a no-op.
-	Revoke(ctx context.Context, id string, byUserID uuid.UUID, reason string) error
+	Revoke(ctx context.Context, accountID uuid.UUID, id string, byUserID uuid.UUID, reason string) error
 
 	// TouchUsage updates LastUsedAt + LastUsedIP + LastUsedUserAgent.
-	// Debounced caller-side to once-per-minute.
+	// id must be the authenticated credential's own key ID, never a
+	// request-supplied one: a key only ever touches itself. Debounced
+	// caller-side, by default to once per auth.DefaultTouchDebounceTTL.
 	TouchUsage(ctx context.Context, id string, ip net.IP, userAgent string) error
 }

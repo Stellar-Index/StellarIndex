@@ -156,8 +156,10 @@ func TestFXQuoteAtOrBefore(t *testing.T) {
 		// registry as a SubclassFX source (P0-7). The exact list is the
 		// contract: the registry carries one identity per FX upstream; a
 		// second entry for the same upstream with IncludeInVWAP:true would
-		// double-count its rates.
-		want := []string{"exchangeratesapi", "massive"}
+		// double-count its rates. ecb is the forex worker's standby, a
+		// separate upstream with IncludeInVWAP:false: its fx_quotes rows
+		// must pass the FX-snap class check but never enter VWAP.
+		want := []string{"ecb", "exchangeratesapi", "massive"}
 		if len(got) != len(want) {
 			t.Fatalf("FXSources len=%d, want %d (%v)", len(got), len(want), got)
 		}

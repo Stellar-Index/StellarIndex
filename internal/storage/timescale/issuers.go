@@ -201,6 +201,9 @@ type IssuerAsset struct {
 type IssuerSep1Candidate struct {
 	GStrkey    string
 	HomeDomain string
+	// Reached: the row holds a payload, so this home_domain has served a
+	// stellar.toml before (a domain change clears the payload).
+	Reached bool
 }
 
 // IssuerSep1CandidateByStrkey returns the (g_strkey, home_domain) pair for one
@@ -210,9 +213,9 @@ type IssuerSep1Candidate struct {
 // through the staleness queue. Returns sql.ErrNoRows if the issuer is unknown,
 // or an error with no home_domain if the account has none (nothing to fetch).
 func (s *Store) IssuerSep1CandidateByStrkey(ctx context.Context, gStrkey string) (IssuerSep1Candidate, error) {
-	const q = `SELECT g_strkey, COALESCE(home_domain, '') FROM issuers WHERE g_strkey = $1`
+	const q = `SELECT g_strkey, COALESCE(home_domain, ''), sep1_payload IS NOT NULL FROM issuers WHERE g_strkey = $1`
 	var c IssuerSep1Candidate
-	if err := s.db.QueryRowContext(ctx, q, gStrkey).Scan(&c.GStrkey, &c.HomeDomain); err != nil {
+	if err := s.db.QueryRowContext(ctx, q, gStrkey).Scan(&c.GStrkey, &c.HomeDomain, &c.Reached); err != nil {
 		return IssuerSep1Candidate{}, fmt.Errorf("timescale: IssuerSep1CandidateByStrkey: %w", err)
 	}
 	if c.HomeDomain == "" {
@@ -257,7 +260,7 @@ func (s *Store) IssuersNeedingSep1Refresh(ctx context.Context, staleness time.Du
 	// plain column predicate the planner can answer from
 	// issuers_sep1_refresh_queue_idx's INCLUDE payload.
 	const q = `
-        SELECT g_strkey, home_domain
+        SELECT g_strkey, home_domain, sep1_payload IS NOT NULL
           FROM issuers
          WHERE home_domain IS NOT NULL
            AND home_domain != ''
@@ -276,7 +279,7 @@ func (s *Store) IssuersNeedingSep1Refresh(ctx context.Context, staleness time.Du
 	out := make([]IssuerSep1Candidate, 0, limit)
 	for rows.Next() {
 		var c IssuerSep1Candidate
-		if err := rows.Scan(&c.GStrkey, &c.HomeDomain); err != nil {
+		if err := rows.Scan(&c.GStrkey, &c.HomeDomain, &c.Reached); err != nil {
 			return nil, fmt.Errorf("timescale: IssuersNeedingSep1Refresh scan: %w", err)
 		}
 		out = append(out, c)
@@ -390,7 +393,7 @@ type Sep1Image struct {
 // when its declared Issuer names gStrkey — the account whose
 // stellar.toml actually carried it. Kept in Go, on the row, rather than
 // pushed into the SQL alongside the projection, so the rule itself is
-// [sep1EntryBindsTo] — shared with the bound-currency scan rather than
+// [Sep1EntryBindsTo] — shared with the bound-currency scan rather than
 // restated. Two copies of a provenance check are two chances to drift,
 // and a drift between them would mean an entry good enough to overlay a
 // logo but not good enough to attest an asset, or the reverse. A SQL
@@ -401,7 +404,7 @@ func sep1ImageFrom(gStrkey, code, declaredIssuer, image string) (Sep1Image, bool
 	if image == "" || code == "" {
 		return Sep1Image{}, false
 	}
-	if !sep1EntryBindsTo(declaredIssuer, gStrkey) {
+	if !Sep1EntryBindsTo(declaredIssuer, gStrkey) {
 		return Sep1Image{}, false
 	}
 	return Sep1Image{Code: code, Issuer: gStrkey, Image: image}, true

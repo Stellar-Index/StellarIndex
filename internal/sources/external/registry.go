@@ -171,7 +171,9 @@ var Registry = map[string]Metadata{
 
 	// ─── Sovereign daily anchors (sanity check only) ─────────────
 	// ECB publishes once per TARGET business day, hence a 24 h resolution.
-	"ecb": {Class: ClassAuthoritySanity, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
+	// SubclassFX because the forex worker's ECB standby writes fx_quotes
+	// as "ecb"; without it the FX-snap class check refuses every standby row.
+	"ecb": {Class: ClassAuthoritySanity, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 
 	// ─── Off-chain oracles (Chainlink via EVM RPC) ───────────────
 	// Chainlink is on Ethereum mainnet, not Stellar; we read it via

@@ -58,12 +58,8 @@ func (c *PriceAlertStore) CreatePriceAlert(ctx context.Context, a platform.Price
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Per-account advisory lock (namespaced 'pricealert:' so it does
-	// not collide with the webhook lock) inside the transaction.
-	if _, err := tx.ExecContext(ctx,
-		`SELECT pg_advisory_xact_lock(hashtext('pricealert:' || $1::text))`,
-		a.AccountID); err != nil {
-		return platform.PriceAlert{}, fmt.Errorf("postgresstore: CreatePriceAlert: advisory lock: %w", err)
+	if err := lockAccount(ctx, tx, lockNamespacePriceAlert, a.AccountID); err != nil {
+		return platform.PriceAlert{}, fmt.Errorf("postgresstore: CreatePriceAlert: %w", err)
 	}
 
 	const q = `

@@ -43,7 +43,7 @@ func TestSources_ReturnsRegistry(t *testing.T) {
 		"soroswap":      {class: "exchange", subclass: "dex", inVWAP: true, backfillSafe: true},
 		"coingecko":     {class: "aggregator", subclass: "", inVWAP: false, backfillSafe: true},
 		"reflector-dex": {class: "oracle", subclass: "", inVWAP: false, backfillSafe: true},
-		"ecb":           {class: "authority_sanity", subclass: "", inVWAP: false, backfillSafe: true},
+		"ecb":           {class: "authority_sanity", subclass: "fx", inVWAP: false, backfillSafe: true},
 	}
 	got := map[string]v1.Source{}
 	for _, s := range env.Data {

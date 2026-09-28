@@ -79,8 +79,8 @@ func (cancelTestKeyStore) ListActiveForAccount(_ context.Context, _ uuid.UUID) (
 func (cancelTestKeyStore) ListForAccount(_ context.Context, _ uuid.UUID, _ int) ([]platform.APIKey, bool, error) {
 	return nil, false, nil
 }
-func (cancelTestKeyStore) Update(_ context.Context, _ platform.APIKey) error { return nil }
-func (cancelTestKeyStore) Revoke(_ context.Context, _ string, _ uuid.UUID, _ string) error {
+func (cancelTestKeyStore) Update(_ context.Context, _ uuid.UUID, _ platform.APIKey) error { return nil }
+func (cancelTestKeyStore) Revoke(_ context.Context, _ uuid.UUID, _ string, _ uuid.UUID, _ string) error {
 	return nil
 }
 

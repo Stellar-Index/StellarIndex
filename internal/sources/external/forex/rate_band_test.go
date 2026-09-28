@@ -107,7 +107,7 @@ func TestPersistSnapshot_ConfirmedDevaluationIsAccepted(t *testing.T) {
 }
 
 // TestPersistSnapshot_RejectsNonFiniteAndNonPositive keeps the arithmetic
-// guard honest: 1/rate feeds InverseUSD, so a zero, negative, NaN or Inf
+// guard honest: 1/rate feeds inverse_usd, so a zero, negative, NaN or Inf
 // rate would poison the stored row in both directions.
 func TestPersistSnapshot_RejectsNonFiniteAndNonPositive(t *testing.T) {
 	w, cw := bandTestWorker(io.Discard)

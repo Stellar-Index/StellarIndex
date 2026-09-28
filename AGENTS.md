@@ -21,20 +21,16 @@ make prepush           # THE pre-push gate: clean HEAD, strict checks, selected 
 make verify            # underlying sequential gate used by prepush
 ```
 
-- **ALWAYS pick the gate by what the diff touches and state the tier first.** Go under `internal/`
-  or `cmd/`, and `migrations/` -> `make prepush`, requiring its literal `ALL REQUIRED CHECKS PASSED`.
-  `scripts/`, `.github/`, `configs/`, `docs/`, `web/` tests and `*_test.go`-only diffs -> `make verify`,
-  no container. Markdown only -> `make lint-changed`. NEVER substitute `make lint && make test`.
-  Table and measurements: [docs/contributing/local-verification.md](docs/contributing/local-verification.md).
+- **CI on the pull request is the landing gate.** Every change lands as a PR that merges only when
+  CI is green. Locally, run `make lint-changed` and `make check` before pushing; that is the whole
+  local requirement. Don't hold a push for `make prepush` or `make verify`: CI runs the same checks
+  and the integration lanes in parallel, and local gates were the landing bottleneck.
 - ALWAYS run `make lint-changed` before committing; `make hooks` makes it a pre-commit hook.
-- Run gates in the BACKGROUND and keep working; NEVER two at once, or one alongside heavy agent
-  work. One gate per logical change — amend a follow-up one-liner into the patch under gate.
-- `make prepush` can exceed a 10-minute foreground timeout. Run it backgrounded and inspect both
-  its status and final marker; never infer success from a job-completion notification.
-- `make prepush` automatically runs integration tests for storage, migration, fixture and ingest
-  changes. Set `VERIFY_INTEGRATION=always` when a change needs them but falls outside those paths.
-- Use [docs/contributing/local-verification.md](docs/contributing/local-verification.md) for native,
-  container, macOS and limited-machine profiles. A portable check is useful but is not clearance.
+- Run `make prepush` only when CI cannot answer the question: CI is down or billing-capped, or you
+  need a local repro of a CI failure. It needs its literal `ALL REQUIRED CHECKS PASSED`, runs in the
+  BACKGROUND (it can exceed 10 minutes), and never runs two at once or beside heavy agent work.
+  Profiles: [docs/contributing/local-verification.md](docs/contributing/local-verification.md).
+- A red check on `main` blocks every PR's CI. Fix `main` first rather than working around it.
 - ALWAYS re-run all three generators together after editing `openapi/stellar-index.v1.yaml`:
   `make docs-api && make docs-postman && make web-generate-api`. Two of them have silently
   drifted onto main before.

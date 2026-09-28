@@ -1881,7 +1881,9 @@ func applyProtocolOptions(s *Server, opts Options) {
 	s.protocolStats = opts.ProtocolStats
 	s.protocolActivity = opts.ProtocolActivity
 	s.protocolBespoke = opts.ProtocolBespoke
-	s.protocolPoolTokens = opts.ProtocolPoolTokens
+	if opts.ProtocolPoolTokens != nil {
+		s.protocolPoolTokens = newPoolTokensCache(opts.ProtocolPoolTokens)
+	}
 	s.dexTVL = opts.DEXTVL
 	s.sdexOrderBook = opts.SDEXOrderBook
 	s.soroswapPairs = opts.SoroswapPairs

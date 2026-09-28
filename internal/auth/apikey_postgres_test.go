@@ -549,8 +549,8 @@ func (s *stubKeyStore) ListActiveForAccount(_ context.Context, _ uuid.UUID) ([]p
 func (s *stubKeyStore) ListForAccount(_ context.Context, _ uuid.UUID, _ int) ([]platform.APIKey, bool, error) {
 	return nil, false, nil
 }
-func (s *stubKeyStore) Update(_ context.Context, _ platform.APIKey) error { return nil }
-func (s *stubKeyStore) Revoke(_ context.Context, _ string, _ uuid.UUID, _ string) error {
+func (s *stubKeyStore) Update(_ context.Context, _ uuid.UUID, _ platform.APIKey) error { return nil }
+func (s *stubKeyStore) Revoke(_ context.Context, _ uuid.UUID, _ string, _ uuid.UUID, _ string) error {
 	return nil
 }
 

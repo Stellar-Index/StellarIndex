@@ -7,9 +7,10 @@ import (
 )
 
 // DefaultFeedMap returns the built-in operator-facing default seed —
-// the same 6 majors `internal/divergence/chainlink.go` ships, kept
-// in sync intentionally so the ingest source and divergence
-// cross-check cover the same baseline pairs out of the box.
+// the sole source of these 6 addresses. `internal/divergence/chainlink.go`
+// derives its own default map from this one (adding only its MaxAge
+// field) so the ingest source and the divergence cross-check cannot
+// drift onto different proxies for the same pair.
 //
 // Operators add more feeds via TOML; this function only fires when
 // the operator left [external.chainlink].feed_map empty.
