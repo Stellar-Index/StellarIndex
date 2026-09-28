@@ -47,7 +47,7 @@ func TestAdminKeysCreate_NarrowedOperatorCannotMintUnscopedKey(t *testing.T) {
 	ts := newAdminTestServer(t, narrowedOperatorSubject(), store, sink)
 
 	resp := postJSON(t, ts.URL+"/v1/admin/keys",
-		`{"identifier":"acct:self","label":"escalation","tier":"operator","scopes":[]}`)
+		`{"identifier":"acct:self","account":"self","label":"escalation","tier":"operator","scopes":[]}`)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 (the clamp narrows, it does not reject an empty request)", resp.StatusCode)
 	}
@@ -69,7 +69,7 @@ func TestAdminKeysCreate_NarrowedOperatorCannotMintScopeItLacks(t *testing.T) {
 	ts := newAdminTestServer(t, narrowedOperatorSubject(), store, sink)
 
 	resp := postJSON(t, ts.URL+"/v1/admin/keys",
-		`{"identifier":"acct:partner-co","label":"data-reader","scopes":["read"]}`)
+		`{"identifier":"acct:partner-co","account":"partner-co","label":"data-reader","scopes":["read"]}`)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403 — %q is outside the caller's own scopes", resp.StatusCode, platform.KeyScopeRead)
 	}
@@ -90,7 +90,7 @@ func TestAdminKeysCreate_FullAccessOperatorStillDelegatesFreely(t *testing.T) {
 	ts := newAdminTestServer(t, operatorSubject(), store, sink)
 
 	resp := postJSON(t, ts.URL+"/v1/admin/keys",
-		`{"identifier":"acct:partner-co","label":"full","scopes":[]}`)
+		`{"identifier":"acct:partner-co","account":"partner-co","label":"full","scopes":[]}`)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status = %d, want 201", resp.StatusCode)
 	}

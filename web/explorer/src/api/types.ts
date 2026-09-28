@@ -3464,6 +3464,13 @@ export interface paths {
          *     unconditionally plus a persisted `audit_log` row (`key.mint`,
          *     staff actor, carrying the reason) when the deployment wires the
          *     audit store.
+         *
+         *     The identifier is the key's metering subject, so an
+         *     `acct:<slug>` key draws down that account's monthly quota. Such
+         *     a mint must confirm the account with `account: <slug>` (400
+         *     otherwise) and the account must exist (404 otherwise); a
+         *     deployment that cannot verify platform accounts refuses it with
+         *     503.
          */
         post: operations["createAdminKey"];
         delete?: never;
@@ -19815,6 +19822,12 @@ export interface operations {
                      *     (e.g. `acct:<slug>`).
                      */
                     identifier: string;
+                    /**
+                     * @description Confirms the platform account an `acct:<slug>`
+                     *     identifier bills to. Required with, and must equal,
+                     *     that `<slug>`; rejected with any other identifier.
+                     */
+                    account?: string;
                     label: string;
                     /**
                      * @default apikey
@@ -19863,6 +19876,15 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             /** @description Caller is not operator-tier. */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description No platform account has the `acct:<slug>` identifier's slug. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

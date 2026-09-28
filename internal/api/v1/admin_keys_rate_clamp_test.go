@@ -19,7 +19,7 @@ func TestAdminKeysCreate_NarrowedOperatorCannotMintAboveItsRateLimit(t *testing.
 	ts := newAdminTestServer(t, narrowed, store, nil)
 
 	resp := postJSON(t, ts.URL+"/v1/admin/keys",
-		`{"identifier":"acct:target","label":"comp","rate_limit_per_min":100000}`)
+		`{"identifier":"acct:target","account":"target","label":"comp","rate_limit_per_min":100000}`)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403 — a scoped operator on the default rate limit must not mint a 100000/min key", resp.StatusCode)
 	}

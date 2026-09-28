@@ -767,13 +767,15 @@ func (req CreateKeyRequest) headers() map[string]string {
 // AdminCreateKeyRequest is the body for [Client.AdminCreateKey].
 // Identifier + Label + Reason are required. Tier is "apikey"
 // (default) or "operator". RateLimitPerMin zero inherits the
-// deployment default. Scopes as in [CreateKeyRequest].
+// deployment default. Scopes as in [CreateKeyRequest]. Account must
+// equal <slug> when Identifier is "acct:<slug>" and be empty otherwise.
 //
 // Reason is sent as the `X-Reason` header, not in the JSON body —
 // the server captures it into the audit log for every admin write
 // (platform-spec §7.2) and 400s the request without it.
 type AdminCreateKeyRequest struct {
 	Identifier      string   `json:"identifier"`
+	Account         string   `json:"account,omitempty"`
 	Label           string   `json:"label"`
 	Tier            string   `json:"tier,omitempty"`
 	RateLimitPerMin int      `json:"rate_limit_per_min,omitempty"`

@@ -35,11 +35,16 @@ func TestAdminCreateKey_SendsReasonHeader(t *testing.T) {
 	c := client.New(client.Options{BaseURL: ts.URL, APIKey: "rek_operator"})
 	env, err := c.AdminCreateKey(context.Background(), client.AdminCreateKeyRequest{
 		Identifier: "acct:some-customer",
+		Account:    "some-customer",
 		Label:      "staff-rotation",
 		Reason:     "customer opened ticket #4821, rotating a leaked key",
 	})
 	if err != nil {
 		t.Fatalf("AdminCreateKey: %v", err)
+	}
+	// The server refuses an acct:<slug> mint unless `account` confirms the slug.
+	if gotBody["account"] != "some-customer" {
+		t.Errorf("body account = %v, want the confirmed slug", gotBody["account"])
 	}
 	if env.Data.Plaintext != "rek_freshly_minted" {
 		t.Errorf("Plaintext = %q", env.Data.Plaintext)

@@ -54,6 +54,11 @@ type adminCreateKeyRequest struct {
 	// Scopes optionally confines the key to route families
 	// (platform.KnownKeyScopes). Empty mints full access.
 	Scopes []string `json:"scopes,omitempty"`
+	// Account confirms a mint onto a platform account: required iff
+	// Identifier is "acct:<slug>", and must equal <slug>. The identifier
+	// is the metering subject, so such a key draws down that account's
+	// monthly quota.
+	Account string `json:"account,omitempty"`
 }
 
 // handleAdminKeysCreate serves POST /v1/admin/keys — the operator
@@ -101,6 +106,9 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 
 	req, ok := parseAdminCreateKeyRequest(w, r)
 	if !ok {
+		return
+	}
+	if !s.requireMintAccountExists(w, r, req.Account) {
 		return
 	}
 
@@ -167,6 +175,7 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 		"actor_key_id", subject.KeyID,
 		"actor_identifier", subject.Identifier,
 		"target_identifier", req.Identifier,
+		"target_account", req.Account,
 		"minted_key_id", rec.KeyID,
 		"tier", req.Tier,
 		"scopes", req.Scopes,
@@ -466,7 +475,57 @@ func parseAdminCreateKeyRequest(w http.ResponseWriter, r *http.Request) (adminCr
 		return req, false
 	}
 	req.Scopes = scopes
+	slug, isAccount := strings.CutPrefix(req.Identifier, auth.AccountIdentifierPrefix)
+	switch {
+	case isAccount && (slug == "" || req.Account != slug):
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/account-binding-unconfirmed",
+			"Account binding unconfirmed", http.StatusBadRequest,
+			"an acct:<slug> identifier bills the key's traffic to that account's monthly quota; "+
+				"set \"account\" to the same <slug> to confirm")
+		return req, false
+	case !isAccount && req.Account != "":
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/account-binding-unconfirmed",
+			"Account binding mismatch", http.StatusBadRequest,
+			"\"account\" is only valid with an acct:<slug> identifier naming the same account")
+		return req, false
+	}
 	return req, true
+}
+
+// requireMintAccountExists refuses an acct:<slug> mint whose account is
+// not in the platform store, so a key cannot be pre-planted on a slug a
+// later registration would inherit. An empty slug (non-account identifier) passes.
+func (s *Server) requireMintAccountExists(w http.ResponseWriter, r *http.Request, slug string) bool {
+	if slug == "" {
+		return true
+	}
+	if s.platformAccounts == nil {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/account-store-unavailable",
+			"Account store not configured", http.StatusServiceUnavailable,
+			"this deployment cannot verify platform accounts, so it cannot mint acct:<slug> keys")
+		return false
+	}
+	_, err := s.platformAccounts.GetBySlug(r.Context(), slug)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, platform.ErrNotFound):
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/account-not-found",
+			"Account not found", http.StatusNotFound,
+			"no platform account has slug "+slug)
+	case clientAborted(r, err):
+	default:
+		s.logger.Error("admin key mint: account lookup failed", "err", err, "account", slug)
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/account-store-unavailable",
+			"Account lookup failed", http.StatusServiceUnavailable,
+			"see X-Request-ID in server logs")
+	}
+	return false
 }
 
 // recordAdminKeyMintAudit persists the "key.mint" audit row.
@@ -486,6 +545,7 @@ func (s *Server) recordAdminKeyMintAudit(
 		"actor_key_id":       actor.KeyID,
 		"actor_identifier":   actor.Identifier,
 		"target_identifier":  req.Identifier,
+		"target_account":     req.Account,
 		"tier":               req.Tier,
 		"label":              req.Label,
 		"scopes":             req.Scopes,
