@@ -229,8 +229,10 @@ func TestAdminLookup_WritesDurableAuditRow(t *testing.T) {
 	if meta["query_kind"] != "email" {
 		t.Errorf("metadata.query_kind = %v, want email", meta["query_kind"])
 	}
-	if meta["account_slug"] != "acme" {
-		t.Errorf("metadata.account_slug = %v, want acme", meta["account_slug"])
+	// The slug is the customer's email local part: target_id already
+	// names the account, and audit rows outlive an erasure (#809).
+	if _, ok := meta["account_slug"]; ok {
+		t.Errorf("metadata carries account_slug %v", meta["account_slug"])
 	}
 	// The count of user records disclosed — the size of the PII read.
 	if got, want := meta["users_returned"], float64(2); got != want {

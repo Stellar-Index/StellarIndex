@@ -64,7 +64,6 @@ func (h *Handlers) recordPasskeyRegistered(r *http.Request, sc SessionContext, r
 		TargetKind: auditTargetPasskey,
 		TargetID:   row.ID.String(),
 		Metadata: map[string]any{
-			"name":            row.Name,
 			"transports":      row.Transports,
 			"backup_eligible": row.BackupEligible,
 		},

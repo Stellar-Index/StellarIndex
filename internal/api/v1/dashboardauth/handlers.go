@@ -1094,7 +1094,10 @@ func (h *Handlers) signupNewUser(ctx context.Context, email string) (platform.Us
 			// "signup-race:". Best-effort — Suspend errors log
 			// and drop because the load-bearing operation (login
 			// for `winner`) has already succeeded.
-			if suspErr := h.cfg.Accounts.Suspend(ctx, acct.ID, "signup-race: orphan speculative account "+email); suspErr != nil {
+			// No address in the reason: it is copied into audit metadata
+			// (account.override.set before/after) and the row already
+			// carries it in billing_email.
+			if suspErr := h.cfg.Accounts.Suspend(ctx, acct.ID, "signup-race: orphan speculative account"); suspErr != nil {
 				h.cfg.Logger.Warn("signup race: failed to mark orphan account",
 					"err", suspErr, "speculative_account_id", acct.ID)
 			}

@@ -486,6 +486,9 @@ func TestAdminAccountGet_AppendsReadAudit(t *testing.T) {
 	if meta["actor_key_id"] != operatorSubject().KeyID {
 		t.Errorf("metadata actor_key_id = %v, want %q", meta["actor_key_id"], operatorSubject().KeyID)
 	}
+	if _, ok := meta["account_slug"]; ok {
+		t.Errorf("metadata carries account_slug; target_id already names the account")
+	}
 
 	missing, err := http.Get(ts.URL + "/v1/admin/accounts/" + uuid.New().String())
 	if err != nil {

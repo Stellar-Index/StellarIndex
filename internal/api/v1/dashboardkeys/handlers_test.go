@@ -877,8 +877,11 @@ func TestHandleCreate_WritesKeyMintAuditRow(t *testing.T) {
 	if err := json.Unmarshal(e.Metadata, &meta); err != nil {
 		t.Fatalf("metadata: %v", err)
 	}
-	if meta["session_id"] != sc.Session.ID.String() || meta["name"] != "production" || meta["route"] != "/v1/dashboard/keys" {
+	if meta["session_id"] != sc.Session.ID.String() || meta["route"] != "/v1/dashboard/keys" {
 		t.Fatalf("audit metadata = %v", meta)
+	}
+	if _, ok := meta["name"]; ok {
+		t.Errorf("audit metadata carries the user-chosen key name: %v", meta)
 	}
 }
 

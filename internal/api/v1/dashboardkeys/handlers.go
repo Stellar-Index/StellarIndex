@@ -450,7 +450,6 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) recordKeyAudit(r *http.Request, sc dashboardauth.SessionContext, action string, key platform.APIKey) {
 	meta := map[string]any{
 		"route":  "/v1/dashboard/keys",
-		"name":   key.Name,
 		"tier":   string(key.Tier),
 		"scopes": key.Scopes,
 	}

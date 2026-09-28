@@ -156,8 +156,11 @@ func TestPasskeyFinishRegister_WritesAuditRow(t *testing.T) {
 		t.Fatalf("audit row ip=%v ua=%q ts=%v, want request-derived provenance", e.IP, e.UserAgent, e.Timestamp)
 	}
 	meta := auditMeta(t, e)
-	if meta["session_id"] != sessionID.String() || meta["name"] != "Laptop" {
-		t.Fatalf("audit metadata = %v, want session_id and name", meta)
+	if meta["session_id"] != sessionID.String() {
+		t.Fatalf("audit metadata = %v, want session_id", meta)
+	}
+	if _, ok := meta["name"]; ok {
+		t.Errorf("audit metadata carries the user-chosen passkey name: %v", meta)
 	}
 }
 

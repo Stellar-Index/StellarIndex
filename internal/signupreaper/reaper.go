@@ -32,7 +32,7 @@ import (
 
 // SignupRaceReasonPrefix is the `suspended_reason` prefix the F-1255
 // recovery path stamps on the losing account
-// ("signup-race: orphan speculative account <email>"). The reaper
+// ("signup-race: orphan speculative account"). The reaper
 // matches only rows whose reason starts with this exact literal.
 const SignupRaceReasonPrefix = "signup-race:"
 

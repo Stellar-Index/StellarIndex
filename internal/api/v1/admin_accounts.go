@@ -713,7 +713,6 @@ func (s *Server) recordAdminAccountReadAudit(r *http.Request, actor auth.Subject
 	meta, err := json.Marshal(map[string]any{
 		"actor_key_id":     actor.KeyID,
 		"actor_identifier": actor.Identifier,
-		"account_slug":     acct.Slug,
 	})
 	if err != nil {
 		obs.AdminAuditWriteFailuresTotal.WithLabelValues(auditSurfaceAdminAccountRead).Inc()

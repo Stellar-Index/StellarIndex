@@ -177,7 +177,6 @@ func (h *Handlers) recordAdminLookupAudit(
 		"actor_user_id":   sc.User.ID.String(),
 		"actor_email":     sc.User.Email,
 		"query_kind":      queryKind,
-		"account_slug":    acct.Slug,
 		"users_returned":  usersReturned,
 		"account_tier":    string(acct.Tier),
 		"account_status":  string(acct.Status),
