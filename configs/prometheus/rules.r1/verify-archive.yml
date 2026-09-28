@@ -200,6 +200,54 @@ groups:
 
             Runbook: docs/operations/runbooks/verify-archive-tier-b.md
 
+      # Tier D (multi-peer fork-detection, weekly). Mirror of the rule in
+      # deploy/monitoring/rules/verify-archive.yml. `-tier peers` samples
+      # peer archives' checkpoint hashes against ours — the failure mode
+      # Tier A/B cannot see. It is a weekly CRON entry (Sunday 10:23 UTC),
+      # not a systemd unit, so staleness on
+      # stellarindex_verify_archive_last_success_unix{tier="peers"} is the
+      # only signal available. 8d = the weekly cadence plus one day of
+      # slack, same idiom as backup-offsite.yml. Ticket: a stale Tier D
+      # means the weekly cross-check hasn't run, not that the network has
+      # forked — Tier A's nightly chain-link carries the page-level signal.
+      - alert: stellarindex_verify_archive_tier_d_run_stale
+        expr: |
+          (
+            time()
+            -
+            (stellarindex_verify_archive_last_success_unix{
+              tier="peers"
+            } > 0)
+          ) > (8 * 24 * 3600)
+          or
+          absent_over_time(stellarindex_verify_archive_last_success_unix{tier="peers"}[8d])
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: archive
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-tier-d.md
+          summary: "verify-archive Tier D (multi-peer fork-detection) has recorded no success in >8d (weekly cron, Sunday)"
+          description: |
+            The weekly multi-peer fork-detection sweep (`-tier peers`,
+            stellarindex-verify-archive-tier-d cron, Sunday 10:23 UTC) has
+            not recorded a clean exit in over 8 days — one missed weekly
+            cycle plus slack — or has never recorded one. Either the cron
+            entry isn't installed (check verify_archive_tier_d_enabled in
+            inventory — pubnet only) or every recent run failed. While
+            this is stale, a genuine divergence against a peer archive
+            would surface only in journald, not here.
+            Diagnosis:
+              - `crontab -l -u root | grep verify-archive-tier-d` — is
+                the entry present?
+              - `grep stellarindex-tier-d /var/log/syslog` (or journald,
+                depending on syslog routing) — what did the last run log?
+              - re-run by hand: `stellarindex-ops verify-archive -tier
+                peers -peer-samples 50 -from <hot floor>`.
+
+            Runbook: docs/operations/runbooks/verify-archive-tier-d.md
+
       # Tier E (archivist scan, GH-726). Mirror of the rule in
       # deploy/monitoring/rules/verify-archive.yml. `-tier archivist` runs
       # `stellar-archivist scan --verify` over the local /srv/history-archive

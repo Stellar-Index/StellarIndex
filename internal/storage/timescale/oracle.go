@@ -13,6 +13,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
+// Freshness convention for this file's Latest* readers: each is a
+// bare "most recent row per key" pick (DISTINCT ON or ORDER BY ...
+// LIMIT 1) with no age bound — the caller owns checking a returned
+// row's Timestamp against its own staleness threshold. The one
+// exception is LatestOracleStreams, which filters `ts` in SQL itself.
+
 // InsertOracleUpdate writes one oracle observation. Idempotent on
 // (source, ledger, tx_hash, op_index, ts).
 func (s *Store) InsertOracleUpdate(ctx context.Context, u canonical.OracleUpdate) error {
@@ -82,7 +88,8 @@ func (s *Store) InsertOracleUpdate(ctx context.Context, u canonical.OracleUpdate
 
 // LatestOracleUpdateForAsset returns the most recent observation
 // for an asset from the given source. Returns (nil, ErrNotFound) if
-// no row matches.
+// no row matches. Unbounded in age — see the freshness convention
+// note above InsertOracleUpdate.
 func (s *Store) LatestOracleUpdateForAsset(ctx context.Context, source string, asset canonical.Asset) (*canonical.OracleUpdate, error) {
 	const q = `
         SELECT source, COALESCE(contract_id, ''),
@@ -147,6 +154,9 @@ func (s *Store) LatestOracleUpdateForAsset(ctx context.Context, source string, a
 // Single-key wrapper around [LatestOracleUpdatesForAssets] —
 // preserved for callers that haven't switched to the multi-key
 // shape yet.
+//
+// Unbounded in age — see the freshness convention note above
+// InsertOracleUpdate.
 func (s *Store) LatestOracleUpdatesForAsset(ctx context.Context, asset canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, error) {
 	return s.LatestOracleUpdatesForAssets(ctx, []canonical.Asset{asset}, sourceFilter)
 }
@@ -172,8 +182,8 @@ func (s *Store) LatestOracleUpdatesForAsset(ctx context.Context, asset canonical
 // because Reflector publishes XLM under the global crypto ticker
 // rather than the per-network "native" form.
 //
-// No time floor on purpose: /v1/oracle/latest reports a dormant feed's
-// last reading, which a recency window would silently drop.
+// Unbounded in age — see the freshness convention note above
+// InsertOracleUpdate.
 func (s *Store) LatestOracleUpdatesForAssets(ctx context.Context, assets []canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, error) {
 	if len(assets) == 0 {
 		return nil, nil
@@ -252,9 +262,8 @@ func (s *Store) LatestOracleUpdatesForAssets(ctx context.Context, assets []canon
 //
 // The query uses DISTINCT ON (source) over (source, ts DESC,
 // ledger DESC), so each source contributes its single most-recent
-// observation in the (base, quote) pair. No retention or freshness
-// filter is applied here — callers that need "within the last N
-// minutes" check `Timestamp` on each row.
+// observation in the (base, quote) pair. Unbounded in age — see the
+// freshness convention note above InsertOracleUpdate.
 func (s *Store) LatestAggregatorPricesForPair(ctx context.Context, base, quote canonical.Asset, sources []string) ([]canonical.OracleUpdate, error) {
 	if len(sources) == 0 {
 		return nil, nil
@@ -328,6 +337,9 @@ func (s *Store) LatestAggregatorPricesForPair(ctx context.Context, base, quote c
 // contract maps "no observation" to ErrAssetUnsupported without
 // importing this package's sentinel. Empty inputs are treated as
 // "no match" for the same reason.
+//
+// Unbounded in age — see the freshness convention note above
+// InsertOracleUpdate.
 func (s *Store) LatestOracleObservation(ctx context.Context, source string, baseKeys, quoteKeys []string) (*canonical.OracleUpdate, error) {
 	if source == "" || len(baseKeys) == 0 || len(quoteKeys) == 0 {
 		return nil, nil

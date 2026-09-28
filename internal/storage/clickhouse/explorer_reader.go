@@ -451,7 +451,7 @@ func NewExplorerReader(ctx context.Context, addr string) (*ExplorerReader, error
 // NewExplorerReaderAuth is [NewExplorerReader] with an explicit CH
 // username/password — ADR-0048 D4's serving-isolation profile. The API
 // binary calls this with `storage.clickhouse_serving_user` /
-// `clickhouse_serving_password_env` (internal/config's StorageConfig) so
+// `clickhouse_serving_password` (internal/config's StorageConfig) so
 // its per-request explorer reads (including GET /v1/accounts/{g}/movements,
 // ADR-0048 D5) run under the dedicated `api_serving` CH settings profile
 // (bounded threads/memory/execution-time, priority above merges and

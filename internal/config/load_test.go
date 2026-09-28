@@ -643,7 +643,7 @@ func TestApplyEnvOverrides_ReturnsOverriddenFieldPaths(t *testing.T) {
 	c := cfg.Default()
 	got := c.ApplyEnvOverrides()
 
-	want := []string{"storage.postgres_dsn", "storage.redis_password_env"}
+	want := []string{"storage.postgres_dsn", "storage.redis_password"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ApplyEnvOverrides() = %v, want %v", got, want)
 	}
@@ -709,5 +709,45 @@ postgres_dsn = "postgres://valid@host/db"
 	}
 	if strings.Contains(out, secretValue) {
 		t.Errorf("secret value leaked into the log output: %s", out)
+	}
+}
+
+// The two password keys hold the secret VALUE, so they are named without
+// the `_env` suffix every other name-holding field carries; the old keys
+// still load, onto the same fields, and setting both is refused.
+func TestLoadReader_PasswordKeysAndDeprecatedAliases(t *testing.T) {
+	const base = "[region]\nid = \"r1\"\n\n[storage]\npostgres_dsn = \"postgres://u:p@h/db\"\n"
+	for name, tc := range map[string]struct {
+		keys          string
+		redis, chServ string
+	}{
+		"current keys": {
+			keys:  "redis_password = \"fixture-redis\"\nclickhouse_serving_password = \"fixture-ch\"\n", // gitleaks:allow
+			redis: "fixture-redis", chServ: "fixture-ch",
+		},
+		"deprecated aliases": {
+			keys:  "redis_password_env = \"fixture-redis\"\nclickhouse_serving_password_env = \"fixture-ch\"\n", // gitleaks:allow
+			redis: "fixture-redis", chServ: "fixture-ch",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, err := cfg.LoadReader(strings.NewReader(base+tc.keys), "test.toml")
+			if err != nil {
+				t.Fatalf("LoadReader: %v", err)
+			}
+			if c.Storage.RedisPassword != tc.redis || c.Storage.ClickHouseServingPassword != tc.chServ {
+				t.Errorf("passwords = (%q, %q), want (%q, %q)",
+					c.Storage.RedisPassword, c.Storage.ClickHouseServingPassword, tc.redis, tc.chServ)
+			}
+		})
+	}
+
+	both := base + "redis_password = \"fixture-a\"\nredis_password_env = \"fixture-b\"\n" // gitleaks:allow
+	_, err := cfg.LoadReader(strings.NewReader(both), "test.toml")
+	if !errors.Is(err, cfg.ErrInvalidConfig) || !strings.Contains(err.Error(), "redis_password_env") {
+		t.Fatalf("both keys set: err = %v, want ErrInvalidConfig naming the deprecated key", err)
+	}
+	if strings.Contains(err.Error(), "fixture-") {
+		t.Errorf("error echoes a password value: %v", err)
 	}
 }

@@ -124,11 +124,10 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 //	POST   /v1/dashboard/keys           — mint a new key
 //	DELETE /v1/dashboard/keys/{id}      — revoke
 //
-// Each handler reads the SessionContext from the request context
-// (planted by dashboardauth.Middleware). Anonymous requests
-// short-circuit to 401 here rather than depending on a separate
-// RequireSession wrapper — the dashboard surface always requires
-// auth, so embedding the check keeps the route table tight.
+// Every route is wrapped in [dashboardauth.RequireSession], so an
+// anonymous request is refused before any other layer runs; each
+// handler still reads the SessionContext (planted by
+// dashboardauth.Middleware) for its account.
 //
 // Every mutation is wrapped in [middleware.RequireSameSiteWrite]
 // (C3-031 / C3-057): these routes authenticate with the session
@@ -136,11 +135,12 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 // logged-in customer's API keys. Reads stay unwrapped — safe
 // methods change nothing.
 func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
+	session := dashboardauth.RequireSession()
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
 	idem := middleware.Idempotency(h.cfg.idempotency, dashboardauth.SessionAccountSubject)
-	mux.HandleFunc("GET /v1/dashboard/keys", h.HandleList)
-	mux.Handle("POST /v1/dashboard/keys", sameSite(idem(http.HandlerFunc(h.HandleCreate))))
-	mux.Handle("DELETE /v1/dashboard/keys/{id}", sameSite(http.HandlerFunc(h.HandleRevoke)))
+	mux.Handle("GET /v1/dashboard/keys", session(http.HandlerFunc(h.HandleList)))
+	mux.Handle("POST /v1/dashboard/keys", session(sameSite(idem(http.HandlerFunc(h.HandleCreate)))))
+	mux.Handle("DELETE /v1/dashboard/keys/{id}", session(sameSite(http.HandlerFunc(h.HandleRevoke))))
 }
 
 // keyDTO is the wire shape the dashboard reads. The plaintext is

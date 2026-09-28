@@ -209,7 +209,7 @@ func TestScamGate_WithheldThroughSACSpelling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("soroban asset: %v", err)
 	}
-	reg, err := canonical.NewAliasRegistry(map[string]string{sacID: code + ":" + issuer})
+	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{sacID: code + ":" + issuer})
 	if err != nil {
 		t.Fatalf("alias registry: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestScamGate_BareSorobanIsJudgedOnItsOwnAddress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("derive SAC: %v", err)
 	}
-	reg, err := canonical.NewAliasRegistry(map[string]string{
+	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{
 		otherSAC: "AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
 	})
 	if err != nil {

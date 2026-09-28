@@ -14,7 +14,7 @@ import (
 const (
 	aliasUSDCIssuer  = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	aliasUSDCClassic = "USDC-" + aliasUSDCIssuer
-	aliasUSDCSAC     = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+	aliasUSDCSAC     = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
 )
 
 // TestAssetDetail_SACFormResolvesCanonical is Part A's detail-page half:
@@ -28,7 +28,7 @@ const (
 // resolveSACToClassic, the SAC C-address echoes back as its own asset_id.
 func TestAssetDetail_SACFormResolvesCanonical(t *testing.T) {
 	// Process-global registry — must not run parallel; reset on cleanup.
-	reg, err := canonical.NewAliasRegistry(map[string]string{aliasUSDCSAC: "USDC:" + aliasUSDCIssuer})
+	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{aliasUSDCSAC: "USDC:" + aliasUSDCIssuer})
 	if err != nil {
 		t.Fatalf("NewAliasRegistry: %v", err)
 	}

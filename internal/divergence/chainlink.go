@@ -379,18 +379,22 @@ func (r *ChainlinkReference) ethCall(ctx context.Context, to, data string) (stri
 	// Error() quotes that URL verbatim, and every error out of this
 	// function lands in Result.Failures, which the worker JSON-marshals
 	// into the divergence cache in Redis (a no-AUTH internal bind).
-	// So neither may wrap the raw error with %w: they render it through
-	// the shared redactor, the same one the sibling ingest client uses.
+	// So neither may render the raw error's text (which quotes the URL)
+	// anywhere — both route through externalchainlink's
+	// RedactedTransportError, the same redactor the sibling ingest
+	// client uses, which keeps the text secret-free while still
+	// unwrapping to the original error so errors.Is/As (e.g. the
+	// caller classifying a timeout) can still reach it.
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.rpcURL, bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("chainlink: new request: %s", externalchainlink.RedactURLError(err, r.rpcURL))
+		return "", fmt.Errorf("chainlink: new request: %w", externalchainlink.NewRedactedTransportError(err, r.rpcURL))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := externalchainlink.DoWithoutRedirects(r.httpClient, req)
 	if err != nil {
-		return "", fmt.Errorf("chainlink: rpc transport: %s", externalchainlink.RedactURLError(err, r.rpcURL))
+		return "", fmt.Errorf("chainlink: rpc transport: %w", externalchainlink.NewRedactedTransportError(err, r.rpcURL))
 	}
 	defer func() { _ = resp.Body.Close() }()
 

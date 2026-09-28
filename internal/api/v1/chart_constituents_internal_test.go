@@ -30,7 +30,7 @@ const (
 // two passes differ from a per-family interleave.
 func chartConstServer(t *testing.T) *Server {
 	t.Helper()
-	reg, err := canonical.NewAliasRegistry(map[string]string{
+	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{
 		chartConstUSDCSAC: "USDC:" + chartConstUSDCIssuer,
 	})
 	if err != nil {

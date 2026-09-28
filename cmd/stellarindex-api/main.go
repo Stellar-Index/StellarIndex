@@ -185,7 +185,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// volume, with the SAC form ordered LAST so a thin Soroban pool
 	// never outranks classic depth. Fail-closed — a malformed wrapper is
 	// silently under-counted volume, so surface it at boot.
-	aliasRegistry, err := canonical.NewAliasRegistry(cfg.Supply.SACWrappers)
+	aliasRegistry, err := canonical.NewAliasRegistry(cfg.Stellar.Passphrase(), cfg.Supply.SACWrappers)
 	if err != nil {
 		return fmt.Errorf("alias registry: %w", err)
 	}

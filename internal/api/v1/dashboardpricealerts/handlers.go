@@ -72,18 +72,23 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 
 // Mount installs the dashboard price-alert-management routes.
 //
+// Every route is wrapped in [dashboardauth.RequireSession], so an
+// anonymous request is refused before any other layer runs; the
+// handlers still read the session for its account.
+//
 // Every mutation is wrapped in [middleware.RequireSameSiteWrite]
 // (C3-031 / C3-057): these routes authenticate with the session
 // COOKIE, so a cross-site page could otherwise drive them on a
 // logged-in customer's behalf. Reads stay unwrapped — safe methods
 // change nothing.
 func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
+	session := dashboardauth.RequireSession()
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
 	idem := middleware.Idempotency(h.cfg.idempotency, dashboardauth.SessionAccountSubject)
-	mux.HandleFunc("GET /v1/dashboard/price-alerts", h.HandleList)
-	mux.Handle("POST /v1/dashboard/price-alerts", sameSite(idem(http.HandlerFunc(h.HandleCreate))))
-	mux.Handle("PATCH /v1/dashboard/price-alerts/{id}", sameSite(http.HandlerFunc(h.HandleUpdate)))
-	mux.Handle("DELETE /v1/dashboard/price-alerts/{id}", sameSite(http.HandlerFunc(h.HandleDelete)))
+	mux.Handle("GET /v1/dashboard/price-alerts", session(http.HandlerFunc(h.HandleList)))
+	mux.Handle("POST /v1/dashboard/price-alerts", session(sameSite(idem(http.HandlerFunc(h.HandleCreate)))))
+	mux.Handle("PATCH /v1/dashboard/price-alerts/{id}", session(sameSite(http.HandlerFunc(h.HandleUpdate))))
+	mux.Handle("DELETE /v1/dashboard/price-alerts/{id}", session(sameSite(http.HandlerFunc(h.HandleDelete))))
 }
 
 // priceAlertDTO is the wire shape the dashboard reads.

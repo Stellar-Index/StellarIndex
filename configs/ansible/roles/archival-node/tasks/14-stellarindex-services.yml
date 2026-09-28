@@ -1471,8 +1471,11 @@
     # The -ops file is read VERBATIM (systemd EnvironmentFile syntax is not
     # shell — `source` would expand `$` / split on `;` inside a secret;
     # deploy-ansible-secrets-5). No `%` here: cron turns it into a newline.
+    # set -o pipefail: without it, `cmd | logger` exits with LOGGER's
+    # status (always 0), so a peer-mismatch or archive-error exit from
+    # verify-archive is silently discarded and the job reads as clean.
     job: >-
-      bash -c 'while IFS= read -r l || [ -n "$l" ]; do case "$l" in [A-Za-z_]*=*) export "$l";; esac; done < /etc/default/stellarindex-ops;
+      bash -c 'set -o pipefail; while IFS= read -r l || [ -n "$l" ]; do case "$l" in [A-Za-z_]*=*) export "$l";; esac; done < /etc/default/stellarindex-ops;
       HEAVY_JOB_CLASS=scheduled /usr/local/sbin/run-heavy-job.sh verify-archive-tier-d
       /usr/local/bin/stellarindex-ops verify-archive
       -config /etc/stellarindex.toml

@@ -109,9 +109,9 @@ func TestStoreDailyMarketDays_FoldsSACSpellingOfBase(t *testing.T) {
 
 	const (
 		issuerAccount   = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-		sorobanContract = "CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK"
+		sorobanContract = "CAAVZKRT2BJ5A5Y5SAGQNA3IC5EDAODEWBHO5CYR5ASLFDZYOQN6NEO3"
 	)
-	reg, err := c.NewAliasRegistry(map[string]string{sorobanContract: "USTRY:" + issuerAccount})
+	reg, err := c.NewAliasRegistry(c.PubnetPassphrase, map[string]string{sorobanContract: "USTRY:" + issuerAccount})
 	if err != nil {
 		t.Fatalf("NewAliasRegistry: %v", err)
 	}

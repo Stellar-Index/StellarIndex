@@ -170,11 +170,11 @@ func TestVerifyArchiveUnits_ReachableUnderOpsJobsTag(t *testing.T) {
 	}
 
 	// Every top-level task or block that installs, enables or removes
-	// a verify-archive tier-a/tier-b unit must be selected by
-	// `--tags ops-jobs`. The trailing dot keeps the weekly Tier D
-	// cron (`stellarindex-verify-archive-tier-d`, a root cron with no
-	// unit file and no textfile export) out of scope.
-	needles := []string{"verify-archive-tier-a.", "verify-archive-tier-b."}
+	// a verify-archive tier-a/tier-b unit, or the Tier D cron, must be
+	// selected by `--tags ops-jobs`. Tier D has no unit file (it is a
+	// root cron, not a systemd unit) so it needs its own needle rather
+	// than the tier-a/tier-b trailing-dot pattern.
+	needles := []string{"verify-archive-tier-a.", "verify-archive-tier-b.", "stellarindex-verify-archive-tier-d"}
 
 	seen := 0
 	for _, task := range tasks {

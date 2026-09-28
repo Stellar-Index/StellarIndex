@@ -211,7 +211,7 @@ func NewSupplyReader(ctx context.Context, addr string) (*SupplyReader, error) {
 // rationale as clickhouse.NewExplorerReaderAuth (see that function's doc
 // comment). The API binary wires GET /v1/assets/{id}/supply's reader through
 // this constructor with `storage.clickhouse_serving_user` /
-// `clickhouse_serving_password_env`.
+// `clickhouse_serving_password`.
 func NewSupplyReaderAuth(ctx context.Context, addr, username, password string) (*SupplyReader, error) {
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr:            []string{addr},

@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -133,8 +134,15 @@ func fetchKrakenTrades(ctx context.Context, endpoint string, q url.Values) ([]kr
 		Error  []string                   `json:"error"`
 		Result map[string]json.RawMessage `json:"result"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return nil, "", err
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxRESTBodyBytes+1))
+	if err != nil {
+		return nil, "", fmt.Errorf("kraken trades: read body: %w", err)
+	}
+	if int64(len(raw)) > maxRESTBodyBytes {
+		return nil, "", fmt.Errorf("kraken trades: body exceeds %d bytes", maxRESTBodyBytes)
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, "", fmt.Errorf("kraken trades: decode: %w", err)
 	}
 	if len(body.Error) > 0 {
 		return nil, "", fmt.Errorf("kraken trades: venue error %v", body.Error)

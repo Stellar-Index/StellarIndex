@@ -29,7 +29,7 @@ enforces it); any per-alert detail page follows it.
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 65 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 225 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 226 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -516,6 +516,7 @@ and
 | `stellarindex_verify_archive_run_stale` | `time() - node_systemd_timer_last_trigger_seconds{name="verify-archive-tier-a.timer"}` | > 36 h for > 10 min | page | [verify-archive-run-stale](runbooks/verify-archive-run-stale.md) |
 | `stellarindex_verify_archive_tier_b_unit_failed` | `node_systemd_unit_state{name="verify-archive-tier-b.service",state="failed"}` | == 1 for > 5 min | ticket | [verify-archive-tier-b](runbooks/verify-archive-tier-b.md) |
 | `stellarindex_verify_archive_tier_b_run_stale` | `time() - node_systemd_timer_last_trigger_seconds{name="verify-archive-tier-b.timer"}` | > 36 h for > 10 min | ticket | [verify-archive-tier-b](runbooks/verify-archive-tier-b.md) |
+| `stellarindex_verify_archive_tier_d_run_stale` | `time() - stellarindex_verify_archive_last_success_unix{tier="peers"}` (+ `absent_over_time(...[8d])`) | > 8 d for > 30 min | ticket | [verify-archive-tier-d](runbooks/verify-archive-tier-d.md) |
 | `stellarindex_verify_archive_tier_e_run_stale` | `time() - stellarindex_verify_archive_last_success_unix{tier="archivist"}` (+ `absent_over_time(...[35d])`) | > 35 d for > 30 min | ticket | [verify-archive-tier-e](runbooks/verify-archive-tier-e.md) |
 
 Tier E (`stellar-archivist scan --verify`, re-hashing the local

@@ -11,12 +11,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The realistic USDC classic + a valid, distinct C-strkey standing in for
-// its SAC wrapper (same fixtures the canonical alias-registry tests use).
+// The realistic USDC classic and its pubnet SAC wrapper
+// (same fixtures the canonical alias-registry tests use).
 const (
 	foldUSDCIssuer  = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	foldUSDCClassic = "USDC-" + foldUSDCIssuer
-	foldUSDCSAC     = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+	foldUSDCSAC     = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
 )
 
 // installFoldRegistry installs a process AliasRegistry carrying the USDC↔SAC
@@ -24,7 +24,7 @@ const (
 // registry is process-global (see canonical.InstallAliasRegistry).
 func installFoldRegistry(t *testing.T) {
 	t.Helper()
-	reg, err := canonical.NewAliasRegistry(map[string]string{foldUSDCSAC: "USDC:" + foldUSDCIssuer})
+	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{foldUSDCSAC: "USDC:" + foldUSDCIssuer})
 	if err != nil {
 		t.Fatalf("NewAliasRegistry: %v", err)
 	}

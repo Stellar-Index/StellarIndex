@@ -5,10 +5,16 @@
 // The limits are per-minute ceilings per client, set per tier by
 // `api.anon_rate_limit_per_min` and `api.key_rate_limit_per_min` (the
 // spec asks for at least 1000 req/min per client; the deployed values
-// live in config, not here). A minute-granular ceiling is not a
-// smooth-rate budget, so a fixed 1-minute window keyed on
-// `rl:<key>:<min>` matches it exactly and costs one Redis round-trip
-// per request.
+// live in config, not here). A fixed 1-minute window keyed on
+// `rl:<key>:<min>` enforces that ceiling per calendar minute at one
+// Redis round-trip per request.
+//
+// It does NOT enforce it per rolling minute: a client that spends its
+// whole limit in the last second of one window and again in the first
+// second of the next gets 2× the limit inside ~2 s. That boundary burst
+// is inherent to the design (see [FixedWindowCounter]), and
+// X-RateLimit-Reset publishes the boundary it can be timed against.
+// Size a tier's limit so that 2× it for a moment is survivable.
 //
 // Sliding windows need two counters and weighted maths; token
 // buckets need INCRBYFLOAT + drift correction + more state per

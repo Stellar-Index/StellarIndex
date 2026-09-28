@@ -180,6 +180,8 @@ elif grep -q '%' <<<"$cron"; then
   bad "tier-D cron job contains '%' — cron turns it into a newline"
 else
   inner="${cron#bash -c \'}"; inner="${inner%%; /usr/local/*}"; inner="${inner%%; HEAVY_JOB_CLASS=*}"
+  # pipefail guards the job's pipe under the bash -c wrapper; only the loader loop must be POSIX.
+  inner="${inner#set -o pipefail; }"
   inner="${inner//\/etc\/default\/stellarindex-ops/$TMP/env}"
   posix_check "tier-D cron" "$inner"
 fi

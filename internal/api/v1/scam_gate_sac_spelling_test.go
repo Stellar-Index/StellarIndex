@@ -83,7 +83,7 @@ func newSACSpellingFixture(t *testing.T, flagged bool) sacSpellingFixture {
 	if err != nil {
 		t.Fatalf("soroban asset: %v", err)
 	}
-	reg, err := canonical.NewAliasRegistry(map[string]string{
+	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{
 		sacID: sacSpellingFlaggedCode + ":" + sacSpellingFlaggedIssuer,
 	})
 	if err != nil {
