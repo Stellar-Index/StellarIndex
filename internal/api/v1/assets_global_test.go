@@ -400,7 +400,7 @@ func TestAssetGet_StellarExternalGate(t *testing.T) {
 func TestAssetGet_FiatPriceAuthorityAndExactRate(t *testing.T) {
 	const exact = "1.1700000000000000000123"
 	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{
-		{Bucket: time.Now().UTC().Add(-24 * time.Hour), RateUSD: 1 / 1.17, InverseUSD: 1.17, InverseUSDText: exact},
+		{Bucket: time.Now().UTC().Add(-24 * time.Hour), InverseUSDText: exact},
 	}}
 	srv := v1.New(v1.Options{
 		VerifiedCurrencies: newTestCatalogue(t),

@@ -27,22 +27,27 @@ type FXHistoryReader interface {
 	ListFXHistory(ctx context.Context, ticker string, from, to time.Time) ([]FXQuotePoint, error)
 }
 
-// FXQuotePoint is the storage-layer-projected history datum.
-// Mirrors timescale.FXQuote field-for-field with the date axis as
-// `Bucket`.
+// FXQuotePoint is the storage-layer-projected history datum. Both
+// rates are the fx_quotes NUMERIC columns' exact text; they are parsed
+// to *big.Rat, never through a float (ADR-0003).
 type FXQuotePoint struct {
-	Bucket     time.Time
-	RateUSD    float64
-	InverseUSD float64
-	// InverseUSDText is inverse_usd's exact NUMERIC text: the value to
-	// serve as a price. InverseUSD is its float for chart arithmetic.
+	Bucket time.Time
+	// RateUSDText is rate_usd: units of the ticker per 1 USD.
+	RateUSDText string
+	// InverseUSDText is inverse_usd: USD per 1 unit of the ticker.
 	InverseUSDText string
 }
 
-// inverseUSDRat is the point's exact fiat→USD rate, parsed from the
-// stored NUMERIC text; ok is false when there is no text or it is not > 0.
-func (p FXQuotePoint) inverseUSDRat() (*big.Rat, bool) {
-	r, ok := new(big.Rat).SetString(p.InverseUSDText)
+// rateUSDRat is the point's exact USD→fiat rate; ok is false when there
+// is no text or it is not > 0.
+func (p FXQuotePoint) rateUSDRat() (*big.Rat, bool) { return positiveRat(p.RateUSDText) }
+
+// inverseUSDRat is the point's exact fiat→USD rate; ok is false when
+// there is no text or it is not > 0.
+func (p FXQuotePoint) inverseUSDRat() (*big.Rat, bool) { return positiveRat(p.InverseUSDText) }
+
+func positiveRat(s string) (*big.Rat, bool) {
+	r, ok := new(big.Rat).SetString(s)
 	if !ok || r.Sign() <= 0 {
 		return nil, false
 	}
