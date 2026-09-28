@@ -252,7 +252,7 @@ func (r *Refresher) volumeBars(timed []TimedVWAP) (bars []TimedVWAP, valued bool
 		if usd.Cmp(r.minuteFloor) < 0 {
 			continue
 		}
-		mean, _ := px.Quo(px, usd).Float64()
+		mean, _ := px.Quo(px, usd).Float64() // i128:ok volatility-baseline input (returns/MAD), never a served price
 		bars = append(bars, TimedVWAP{VWAP: mean, BucketEnd: t.BucketEnd, USDVolume: new(big.Rat).Set(usd)})
 		usd, px = new(big.Rat), new(big.Rat)
 	}
