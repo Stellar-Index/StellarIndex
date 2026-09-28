@@ -169,6 +169,37 @@ type Config struct {
 	signedInBrowserSends *ratelimit.LocalFixedWindowCounter
 }
 
+// ensureCodeSecret installs the Generator and guarantees it is keyed.
+func (c *Config) ensureCodeSecret() error {
+	if c.Generator == nil {
+		c.Generator = NewGenerator()
+	}
+	if len(c.Generator.Secret) == 0 {
+		// A ceremony begun on one instance must finish on another and
+		// survive a restart; a per-process key fails that with a 400
+		// indistinguishable from tampering, so passkeys require the secret.
+		if c.Passkeys != nil {
+			return errors.New("dashboardauth: passkeys are wired but the server secret is empty — set the api.dashboard.code_secret_env variable")
+		}
+		// The 6-digit code derivation must NEVER run unkeyed (see
+		// [Generator.CodeForHash]). Without passkeys, fall back to a random
+		// per-process secret: still unforgeable, but in-flight codes, magic
+		// links and login-device markers stop verifying on another
+		// instance or after a restart.
+		secret := make([]byte, 32)
+		if _, err := c.Generator.Read(secret); err != nil {
+			return fmt.Errorf("dashboardauth: generate code secret: %w", err)
+		}
+		c.Generator.Secret = secret
+	}
+	for _, label := range []string{loginCodeDomain, passkeyCeremonyDomain, loginIntentDomain, loginDeviceDomain} {
+		if _, err := purposeKey(c.Generator.Secret, label); err != nil {
+			return fmt.Errorf("dashboardauth: derive %s key: %w", label, err)
+		}
+	}
+	return nil
+}
+
 // validate fills in defaults and rejects unworkable configs.
 func (c *Config) validate() error {
 	if c.Accounts == nil || c.Users == nil || c.Tokens == nil {
@@ -177,23 +208,8 @@ func (c *Config) validate() error {
 	if c.Sender == nil {
 		return errors.New("dashboardauth: sender is required")
 	}
-	if c.Generator == nil {
-		c.Generator = NewGenerator()
-	}
-	if len(c.Generator.Secret) == 0 {
-		// The 6-digit code derivation must NEVER run unkeyed (that is
-		// the vulnerability this secret exists to close — see
-		// [Generator.CodeForHash]). No configured secret → random
-		// per-process one, which also keys the passkey ceremony,
-		// login-device and login-intent cookies. All stay unforgeable,
-		// but none verifies on another instance or after a restart:
-		// in-flight codes, passkey ceremonies, login-device markers and
-		// magic links all fail and must be re-requested.
-		secret := make([]byte, 32)
-		if _, err := c.Generator.Read(secret); err != nil {
-			return fmt.Errorf("dashboardauth: generate code secret: %w", err)
-		}
-		c.Generator.Secret = secret
+	if err := c.ensureCodeSecret(); err != nil {
+		return err
 	}
 	if c.Logger == nil {
 		c.Logger = slog.Default()

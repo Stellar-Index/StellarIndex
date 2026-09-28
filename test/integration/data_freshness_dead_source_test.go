@@ -95,7 +95,7 @@ func TestDataFreshnessSurvivesADeadFeed(t *testing.T) {
 		key := `stellarindex_data_freshness_stale{domain="sep1",source="issuers"}`
 		v, ok := samples[key]
 		if !ok {
-			t.Errorf("%s is ABSENT — a sep1 refresh that has never run leaves max(sep1_resolved_at) NULL, and an unknown age must not read as no alarm", key)
+			t.Errorf("%s is ABSENT — a sep1 refresh that has never succeeded leaves max(sep1_payload_fetched_at) NULL, and an unknown age must not read as no alarm", key)
 		} else if v != "1" {
 			t.Errorf("%s = %s, want 1 — nothing was ever resolved, which is the most stale this domain can be", key, v)
 		}

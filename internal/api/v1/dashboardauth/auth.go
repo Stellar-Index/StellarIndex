@@ -19,6 +19,7 @@ package dashboardauth
 
 import (
 	"context"
+	"crypto/hkdf"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -119,11 +120,29 @@ func codeFromHashKeyed(secret, hash []byte) string {
 		// guessable constant-derived code.
 		return ""
 	}
-	mac := hmac.New(sha256.New, secret)
+	mac := hmac.New(sha256.New, mustPurposeKey(secret, loginCodeDomain))
 	mac.Write([]byte(loginCodeDomain))
 	mac.Write(hash)
 	sum := mac.Sum(nil)
 	return fmt.Sprintf("%06d", binary.BigEndian.Uint32(sum[:4])%1_000_000)
+}
+
+// purposeKey derives the independent HMAC key one consumer of the server
+// secret uses (HKDF-SHA256, the consumer's domain string as info), so no
+// two purposes — codes, ceremony cookies, login intents, device markers —
+// share key material.
+func purposeKey(root []byte, label string) ([]byte, error) {
+	return hkdf.Key(sha256.New, root, nil, label, sha256.Size)
+}
+
+// mustPurposeKey is [purposeKey] for the MAC helpers; Config.validate()
+// derives once at boot, so an error cannot first surface on a request.
+func mustPurposeKey(root []byte, label string) []byte {
+	k, err := purposeKey(root, label)
+	if err != nil {
+		panic(fmt.Sprintf("dashboardauth: derive %s key: %v", label, err))
+	}
+	return k
 }
 
 // HashMagicLinkPlaintext returns the sha256 hash of a
@@ -139,18 +158,16 @@ func HashMagicLinkPlaintext(plaintext string) []byte {
 // deterministic plaintexts.
 type Generator struct {
 	Read func([]byte) (int, error)
-	// Secret keys the 6-digit code derivation (see
-	// [Generator.CodeForHash]) AND, despite the env var's name, also
-	// keys the WebAuthn passkey-ceremony cookie MAC
-	// (passkeyCeremonyMAC in passkey.go) and the login-device marker
-	// (loginDeviceMAC in login_intent.go) — one server secret backs all. Production wires it from the
-	// STELLARINDEX_DASHBOARD_CODE_SECRET env (config
-	// api.dashboard.code_secret_env); when left empty,
-	// Config.validate() fills a random per-process secret so neither
-	// derivation is ever unkeyed — the trade-off being that in-flight
-	// codes, passkey ceremonies, magic links (whose browser-binding tag
-	// it keys) and login-device markers stop verifying across a restart
-	// or another instance.
+	// Secret is the root server secret. It is never used as a MAC key
+	// itself: each consumer derives its own key with [purposeKey] — the
+	// 6-digit code ([Generator.CodeForHash]), the passkey-ceremony cookie
+	// (passkeyCeremonyMAC), the magic-link login-intent tag
+	// (loginIntentTag) and the login-device marker (loginDeviceMAC).
+	// Production wires it from the STELLARINDEX_DASHBOARD_CODE_SECRET env
+	// (config api.dashboard.code_secret_env). When empty,
+	// Config.validate() refuses to start if Passkeys is wired (a
+	// per-process key breaks every ceremony that crosses instances or a
+	// restart) and otherwise fills a random per-process secret.
 	Secret []byte
 }
 

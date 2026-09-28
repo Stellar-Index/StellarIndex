@@ -43,7 +43,7 @@ source as anomalous:
 | `trades` (everything else) | `source_volume_1h.bucket` | 4 h | |
 | `supply` | `asset_supply_history.time` | 30 h | whole-table max — see the false-positive note below |
 | `verdict` | `completeness_snapshots.computed_at` | 36 h | the ADR-0033 verdict's own liveness |
-| `sep1` | `issuers.sep1_resolved_at` | 48 h | issuer-metadata refresh cron |
+| `sep1` | `issuers.sep1_payload_fetched_at` | 48 h | issuer-metadata refresh cron |
 | `sep41_supply` (`supply_flows`) | ClickHouse `stellar.supply_flows.ingested_at` | 1 h | the only non-Postgres probe; it backs `/v1/assets` SEP-41 supply, which sums `supply_flows` FINAL on demand, so its freshness IS the served supply's freshness |
 
 ## Quick diagnosis (≤ 5 min)
@@ -63,16 +63,14 @@ journalctl -u stellarindex-indexer -u stellarindex-api --since '2 hours ago' | g
   (CoinGecko Pro purchase is tracked as launch-todo P0-3.)
 - **`domain="verdict"` stale:** the `compute-completeness.timer` isn't running —
   see `systemctl status compute-completeness.service`.
-- **`domain="sep1"` stale:** the `sep1-refresh.timer` isn't running.
-  **This probe cannot see a refresh that is running and failing.** It reads
-  `max(sep1_resolved_at)`, and every terminating path of the job stamps that
-  column — a failed fetch as much as a success — so a night where our DNS or
-  egress is broken leaves the gauge perfectly green. The signal for that case
-  is a *failed unit*, not a stale domain: the job judges its own failure rate
-  over domains that have served a stellar.toml before (never-reached domains
-  do not count) and exits non-zero when it crosses 90% over 50+ of them, which trips
-  `stellarindex_systemd_unit_failed`. See
-  `journalctl -u sep1-refresh --since -24h | grep SYSTEMIC`.
+- **`domain="sep1"` stale:** no issuer's stellar.toml has been fetched
+  successfully for 48 h. The probe reads `max(sep1_payload_fetched_at)`,
+  which only a success stamps, so it fires both when the `sep1-refresh.timer`
+  isn't running and when the refresh runs but every fetch fails (our DNS or
+  egress broken). Check `systemctl status sep1-refresh.service` and
+  `journalctl -u sep1-refresh --since -24h | grep -E 'SYSTEMIC|FAIL'`; the job
+  also exits non-zero when its failure rate over previously-served domains
+  crosses 90% over 50+ of them, tripping `stellarindex_systemd_unit_failed`.
 - **`domain="trades"` (CEX/DEX) stale:** the venue connector/dispatcher stopped;
   check the indexer. For `phoenix`/`comet` confirm it is not just a quiet market
   (query the lake for swap events on any known pool) before chasing a decoder.

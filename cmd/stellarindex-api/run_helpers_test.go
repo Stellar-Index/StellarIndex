@@ -361,7 +361,9 @@ func TestBuildDashboardBundle_ConfiguredWithoutPostgresFailsClosed(t *testing.T)
 // nil, so a configured dashboard that dropped it would keep every
 // session's IP / user-agent / geo PII forever with nothing failing.
 func TestBuildDashboardBundle_ExposesUserStoreForSessionRetention(t *testing.T) {
-	t.Parallel()
+	// The bundle wires passkeys, which refuse to start without the secret.
+	const secretEnv = "STELLARINDEX_TEST_BUNDLE_CODE_SECRET"
+	t.Setenv(secretEnv, "bundle-test-secret")
 
 	// sql.Open is lazy: no connection is attempted at construction.
 	db, err := sql.Open("pgx", "postgres://unused.invalid/none")
@@ -372,6 +374,7 @@ func TestBuildDashboardBundle_ExposesUserStoreForSessionRetention(t *testing.T) 
 
 	cfg := config.Default().API.Dashboard
 	cfg.BaseURL = "https://dashboard.example.test"
+	cfg.CodeSecretEnv = secretEnv
 	bundle, err := buildDashboardBundle(cfg, db, nil, discardLogger())
 	if err != nil {
 		t.Fatalf("buildDashboardBundle: %v", err)

@@ -151,6 +151,7 @@ func mountAllDashboardPackages(t *testing.T, mux *http.ServeMux) map[string]bool
 		AccountEraser:    struct{ dashboardauth.AccountEraser }{},
 		AccountExporter:  struct{ dashboardauth.AccountExporter }{},
 		Sender:           &notify.NoopSender{},
+		Generator:        &dashboardauth.Generator{Read: dashboardauth.NewGenerator().Read, Secret: []byte("csrf-mount-test-secret")},
 		DashboardBaseURL: "https://stellarindex.example",
 		EmailFrom:        "noreply@stellarindex.example",
 		Logger:           logger,

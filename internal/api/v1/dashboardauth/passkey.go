@@ -198,7 +198,7 @@ func toLibCredential(c platform.WebAuthnCredential) webauthn.Credential {
 // ─── Ceremony cookie (HMAC-signed, short TTL) ─────────────────────
 
 func passkeyCeremonyMAC(secret, payload []byte) []byte {
-	mac := hmac.New(sha256.New, secret)
+	mac := hmac.New(sha256.New, mustPurposeKey(secret, passkeyCeremonyDomain))
 	mac.Write([]byte(passkeyCeremonyDomain))
 	mac.Write(payload)
 	return mac.Sum(nil)

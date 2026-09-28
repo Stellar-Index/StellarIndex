@@ -168,8 +168,11 @@ WITH f AS (
   SELECT 'verdict', source, extract(epoch FROM now()-max(computed_at)), 129600
     FROM completeness_snapshots GROUP BY source
   UNION ALL
-  SELECT 'sep1', 'issuers', extract(epoch FROM now()-max(sep1_resolved_at)), 172800
-    FROM issuers WHERE sep1_resolved_at IS NOT NULL
+  -- Newest SUCCESSFUL fetch, not sep1_resolved_at: every failed attempt
+  -- stamps that one, so it stayed green through a refresh failing every
+  -- domain (GH #840). sep1_payload_fetched_at is stamped only on success.
+  SELECT 'sep1', 'issuers', extract(epoch FROM now()-max(sep1_payload_fetched_at)), 172800
+    FROM issuers WHERE sep1_payload_fetched_at IS NOT NULL
 )
 -- The age sample is emitted only when an age EXISTS; the verdict is emitted
 -- always. A domain whose table holds no rows at all (the sep1 refresh that

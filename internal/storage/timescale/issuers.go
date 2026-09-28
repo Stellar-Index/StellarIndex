@@ -623,7 +623,10 @@ func sep1ResetOnHomeDomainChange(newHD string) string {
 
 // SetIssuerSep1Payload writes a SEP-1 fetch result back to the
 // issuers row — sep1_payload (jsonb) + sep1_resolved_at = now() — and
-// clears the retry ladder (migration 0159).
+// clears the retry ladder (migration 0159). In the same transaction it
+// appends one issuer_identity_history row (migration 0190) per identity
+// field the new payload changes on an established issuer
+// ([sep1IdentityChanges]), so an overwrite is never blind.
 //
 // It is the only writer of sep1_payload_fetched_at (migration 0178):
 // sep1_resolved_at is stamped by every attempt, so only this column
@@ -640,7 +643,34 @@ func sep1ResetOnHomeDomainChange(newHD string) string {
 // unbinds the payload (sep1ResetOnHomeDomainChange), and storing the old
 // domain's toml after that would bind it to the new one. The bool reports
 // whether the payload was stored.
-func (s *Store) SetIssuerSep1Payload(ctx context.Context, gStrkey, fetchedFrom string, payload []byte) (bool, error) {
+func (s *Store) SetIssuerSep1Payload(ctx context.Context, gStrkey, fetchedFrom string, payload []byte) (stored bool, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("timescale: SetIssuerSep1Payload begin: %w", err)
+	}
+	defer func() {
+		if err != nil || !stored {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// Locks the row so the diff and the overwrite see the same held payload.
+	var held []byte
+	err = tx.QueryRowContext(ctx, `
+        SELECT sep1_payload FROM issuers
+         WHERE g_strkey = $1 AND home_domain = $2
+           FOR UPDATE`, gStrkey, fetchedFrom).Scan(&held)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("timescale: SetIssuerSep1Payload read held: %w", err)
+	}
+	changes, err := sep1IdentityChanges(held, payload)
+	if err != nil {
+		return false, fmt.Errorf("timescale: SetIssuerSep1Payload: %w", err)
+	}
+
 	const q = `
         UPDATE issuers
            SET sep1_payload              = $2::jsonb,
@@ -651,15 +681,22 @@ func (s *Store) SetIssuerSep1Payload(ctx context.Context, gStrkey, fetchedFrom s
          WHERE g_strkey = $1
            AND home_domain = $3
     `
-	res, err := s.db.ExecContext(ctx, q, gStrkey, string(payload), fetchedFrom)
-	if err != nil {
+	if _, err = tx.ExecContext(ctx, q, gStrkey, string(payload), fetchedFrom); err != nil {
 		return false, fmt.Errorf("timescale: SetIssuerSep1Payload: %w", err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("timescale: SetIssuerSep1Payload rows: %w", err)
+	for _, c := range changes {
+		if _, err = tx.ExecContext(ctx, `
+            INSERT INTO issuer_identity_history
+                   (g_strkey, home_domain, field, currency, old_value, new_value)
+            VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''))`,
+			gStrkey, fetchedFrom, c.Field, c.Currency, c.Old, c.New); err != nil {
+			return false, fmt.Errorf("timescale: SetIssuerSep1Payload history: %w", err)
+		}
 	}
-	return n > 0, nil
+	if err = tx.Commit(); err != nil {
+		return false, fmt.Errorf("timescale: SetIssuerSep1Payload commit: %w", err)
+	}
+	return true, nil
 }
 
 // Sep1 retry-ladder tuning. The base is one DAY on purpose: it is the
