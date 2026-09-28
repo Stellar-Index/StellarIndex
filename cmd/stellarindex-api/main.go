@@ -6058,11 +6058,10 @@ func (w *forexQuoteWriter) InsertFXQuoteBatch(ctx context.Context, quotes []fore
 	out := make([]timescale.FXQuote, len(quotes))
 	for i, q := range quotes {
 		out[i] = timescale.FXQuote{
-			Bucket:     q.Bucket,
-			Ticker:     q.Ticker,
-			RateUSD:    q.RateUSD,
-			InverseUSD: q.InverseUSD,
-			Source:     q.Source,
+			Bucket:  q.Bucket,
+			Ticker:  q.Ticker,
+			RateUSD: q.RateUSD,
+			Source:  q.Source,
 		}
 	}
 	return w.store.InsertFXQuoteBatch(ctx, out)

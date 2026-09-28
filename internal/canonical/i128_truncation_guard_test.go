@@ -32,6 +32,9 @@ package canonical
 //     that sees it: `new(big.Float).SetInt(total).Float64()` has no
 //     parts word or Must* call left in the expression. Every such site
 //     is judged, so each deliberate one carries its reason.
+//   - a (*big.Int).Quo / Div whose dividend is a power of ten: the
+//     truncating reciprocal of a scaled price. Invert through
+//     scale.InvertScaled, which rounds half-up.
 //
 // Escape hatch: a `//i128:ok <reason>` comment on the same line (or
 // the line above) exempts a site. Reasons are mandatory; stale
@@ -369,6 +372,72 @@ func checkBigNarrowing(info *types.Info, call *ast.CallExpr) string {
 	return fmt.Sprintf("%s.%s() narrows an arbitrary-precision value to a machine number — keep amounts in canonical.Amount / *big.Int / *big.Rat end to end and render with FloatString", s.Recv(), sel.Sel.Name)
 }
 
+// isPow10Expr reports whether expr is 10^n: a call to a Pow10/pow10
+// helper, `<x>.Exp(big.NewInt(10), …)`, a Mul of two powers of ten, or a
+// local bound to any of these.
+func isPow10Expr(info *types.Info, pow10 map[types.Object]bool, expr ast.Expr) bool {
+	switch e := ast.Unparen(expr).(type) {
+	case *ast.Ident:
+		return pow10[info.ObjectOf(e)]
+	case *ast.CallExpr:
+		switch fn := ast.Unparen(e.Fun).(type) {
+		case *ast.Ident:
+			return strings.EqualFold(fn.Name, "pow10")
+		case *ast.SelectorExpr:
+			if strings.EqualFold(fn.Sel.Name, "pow10") {
+				return true
+			}
+			if fn.Sel.Name == "Mul" && len(e.Args) == 2 {
+				return isPow10Expr(info, pow10, e.Args[0]) && isPow10Expr(info, pow10, e.Args[1])
+			}
+			return fn.Sel.Name == "Exp" && len(e.Args) == 3 && types.ExprString(e.Args[0]) == "big.NewInt(10)"
+		}
+	}
+	return false
+}
+
+// collectPow10Locals records every object bound to a power of ten,
+// iterating to a fixpoint like [collectWordTaint].
+func collectPow10Locals(info *types.Info, files []*ast.File) map[types.Object]bool {
+	pow10 := map[types.Object]bool{}
+	for changed := true; changed; {
+		changed = false
+		for _, f := range files {
+			ast.Inspect(f, func(n ast.Node) bool {
+				eachBinding(n, func(lhs, rhs ast.Expr) {
+					id, ok := ast.Unparen(lhs).(*ast.Ident)
+					if !ok {
+						return
+					}
+					if obj := info.ObjectOf(id); obj != nil && !pow10[obj] && isPow10Expr(info, pow10, rhs) {
+						pow10[obj] = true
+						changed = true
+					}
+				})
+				return true
+			})
+		}
+	}
+	return pow10
+}
+
+// checkTruncatingReciprocal returns a violation message when call is a
+// big.Int Quo/Div of a power of ten, else "".
+func checkTruncatingReciprocal(info *types.Info, pow10 map[types.Object]bool, call *ast.CallExpr) string {
+	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	if !ok || (sel.Sel.Name != "Quo" && sel.Sel.Name != "Div") || len(call.Args) != 2 {
+		return ""
+	}
+	s, ok := info.Selections[sel]
+	if !ok || s.Kind() != types.MethodVal || types.TypeString(s.Recv(), nil) != "*math/big.Int" {
+		return ""
+	}
+	if !isPow10Expr(info, pow10, call.Args[0]) {
+		return ""
+	}
+	return fmt.Sprintf("big.Int.%s(10^n, x) truncates a reciprocal toward zero, biasing every inverted price low — use scale.InvertScaled / InvertScaledToDecimals (round half-up)", sel.Sel.Name)
+}
+
 // TestI128TruncationGuard — ADR-0003. Repo-wide go/types walk
 // rejecting int64/float/narrowing conversions of i128/u128/i256/u256
 // words. Every finding must be fixed or carry an //i128:ok marker
@@ -386,6 +455,7 @@ func TestI128TruncationGuard(t *testing.T) {
 
 	for _, pkg := range pkgs {
 		tainted := collectWordTaint(pkg.TypesInfo, pkg.Syntax)
+		pow10 := collectPow10Locals(pkg.TypesInfo, pkg.Syntax)
 		for _, f := range pkg.Syntax {
 			markers := markerLines(pkg.Fset, f)
 			for line := range markers {
@@ -400,6 +470,9 @@ func TestI128TruncationGuard(t *testing.T) {
 				msg := checkConversion(pkg.TypesInfo, tainted, call)
 				if msg == "" {
 					msg = checkBigNarrowing(pkg.TypesInfo, call)
+				}
+				if msg == "" {
+					msg = checkTruncatingReciprocal(pkg.TypesInfo, pow10, call)
 				}
 				if msg == "" {
 					return true
@@ -598,6 +671,79 @@ func sink(total, part *big.Int, r big.Rat) {
 			t.Fatalf("control expr %s never inspected — synthetic source drifted", k)
 		} else if seen {
 			t.Errorf("checkBigNarrowing FALSE-fired on %s", k)
+		}
+	}
+}
+
+// TestTruncatingReciprocalGuard_PositiveControl proves the reciprocal
+// check fires on the inline, through-a-local and Mul(scale, scale)
+// spellings and stays quiet on a divisor-side power of ten, a doubled
+// (round-half-up) numerator and exact big.Rat division.
+func TestTruncatingReciprocalGuard_PositiveControl(t *testing.T) {
+	const src = `package sink
+
+import "math/big"
+
+func Pow10(n int) *big.Int { return new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil) }
+
+func sink(answer *big.Int, r *big.Rat) {
+	exp := new(big.Int).Exp(big.NewInt(10), big.NewInt(16), nil)
+	_ = new(big.Int).Quo(exp, answer)
+	_ = new(big.Int).Div(Pow10(16), answer)
+	sq := new(big.Int).Mul(exp, exp)
+	_ = new(big.Int).Quo(sq, answer)
+	_ = new(big.Int).Quo(new(big.Int).Lsh(sq, 1), answer)
+	_ = new(big.Int).Quo(answer, Pow10(8))
+	_ = new(big.Rat).Quo(new(big.Rat).SetInt(exp), r)
+}
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "sink.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse synthetic source: %v", err)
+	}
+	info := &types.Info{
+		Types:      map[ast.Expr]types.TypeAndValue{},
+		Defs:       map[*ast.Ident]types.Object{},
+		Uses:       map[*ast.Ident]types.Object{},
+		Selections: map[*ast.SelectorExpr]*types.Selection{},
+	}
+	if _, err := (&types.Config{Importer: importer.Default()}).Check("example.test/sink", fset, []*ast.File{f}, info); err != nil {
+		t.Fatalf("type-check synthetic source: %v", err)
+	}
+	pow10 := collectPow10Locals(info, []*ast.File{f})
+
+	fired := map[string]bool{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		var b strings.Builder
+		if err := printer.Fprint(&b, fset, call); err != nil {
+			t.Fatalf("render call: %v", err)
+		}
+		fired[b.String()] = checkTruncatingReciprocal(info, pow10, call) != ""
+		return true
+	})
+
+	mustFire := []string{"new(big.Int).Quo(exp, answer)", "new(big.Int).Div(Pow10(16), answer)", "new(big.Int).Quo(sq, answer)"}
+	mustPass := []string{
+		"new(big.Int).Quo(answer, Pow10(8))", "new(big.Rat).Quo(new(big.Rat).SetInt(exp), r)",
+		"new(big.Int).Quo(new(big.Int).Lsh(sq, 1), answer)",
+	}
+	for _, k := range mustFire {
+		if seen, ok := fired[k]; !ok {
+			t.Fatalf("positive-control expr %s never inspected — synthetic source drifted", k)
+		} else if !seen {
+			t.Errorf("checkTruncatingReciprocal did NOT fire on %s", k)
+		}
+	}
+	for _, k := range mustPass {
+		if seen, ok := fired[k]; !ok {
+			t.Fatalf("control expr %s never inspected — synthetic source drifted", k)
+		} else if seen {
+			t.Errorf("checkTruncatingReciprocal FALSE-fired on %s", k)
 		}
 	}
 }

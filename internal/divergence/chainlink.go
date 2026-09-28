@@ -340,15 +340,9 @@ func (r *ChainlinkReference) LookupQuote(ctx context.Context, pair canonical.Pai
 			ErrPriceUnavailable, pair.String(), age.Truncate(time.Second), spec.MaxAge)
 	}
 
-	priceFloat, err := scaleChainlinkAnswer(answer, decimals)
+	priceFloat, err := scaleChainlinkAnswer(answer, decimals, spec.Invert)
 	if err != nil {
 		return Quote{}, fmt.Errorf("chainlink: scale answer for %s: %w", pair.String(), err)
-	}
-	if spec.Invert {
-		if priceFloat == 0 {
-			return Quote{}, fmt.Errorf("chainlink: cannot invert zero answer for %s", pair.String())
-		}
-		priceFloat = 1.0 / priceFloat
 	}
 	return Quote{Price: priceFloat, AsOf: updatedAt}, nil
 }
@@ -462,16 +456,21 @@ func decodeChainlinkRoundData(hexStr string) (*big.Int, time.Time, error) {
 	return answer, time.Unix(updatedRaw.Int64(), 0).UTC(), nil // i128:ok updatedAt unix seconds, IsInt64 range-checked above
 }
 
-// scaleChainlinkAnswer divides answer by 10^decimals and returns
-// the result as a float64. Loses precision above ~10^15 — fine
-// for cross-check purposes; the divergence threshold is
-// percentage-based.
-func scaleChainlinkAnswer(answer *big.Int, decimals int) (float64, error) {
+// scaleChainlinkAnswer returns answer/10^decimals (or its reciprocal
+// when invert) as a float64 for the percentage cross-check. The
+// inversion happens in big.Rat so the float carries one rounding, not two.
+func scaleChainlinkAnswer(answer *big.Int, decimals int, invert bool) (float64, error) {
 	if decimals < 0 || decimals > 38 {
 		return 0, fmt.Errorf("decimals %d out of range [0, 38]", decimals)
 	}
 	div := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
 	q := new(big.Rat).SetFrac(answer, div)
+	if invert {
+		if q.Sign() == 0 {
+			return 0, fmt.Errorf("cannot invert zero answer")
+		}
+		q.Inv(q)
+	}
 	f, _ := q.Float64() // i128:ok reference price for a percentage cross-check; one correctly-rounded conversion of the exact ratio
 	return f, nil
 }

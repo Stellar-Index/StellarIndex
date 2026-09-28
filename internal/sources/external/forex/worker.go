@@ -24,11 +24,10 @@ type FXQuoteWriter interface {
 // imports forex types via the v1 API package; the dependency would
 // cycle).
 type FXQuote struct {
-	Bucket     time.Time
-	Ticker     string
-	RateUSD    float64
-	InverseUSD float64
-	Source     string
+	Bucket  time.Time
+	Ticker  string
+	RateUSD float64
+	Source  string
 }
 
 // maxRateDeviation is the per-refresh sanity band on an upstream FX rate:
@@ -613,11 +612,10 @@ func (w *Worker) guardSnapshot(snap *Snapshot) guardResult {
 		}
 		currentRowIx[c.Ticker] = len(batch)
 		batch = append(batch, FXQuote{
-			Bucket:     today,
-			Ticker:     c.Ticker,
-			RateUSD:    c.RateUSD,
-			InverseUSD: 1.0 / c.RateUSD,
-			Source:     w.sourceLabel(),
+			Bucket:  today,
+			Ticker:  c.Ticker,
+			RateUSD: c.RateUSD,
+			Source:  w.sourceLabel(),
 		})
 	}
 	for ticker, points := range snap.History7d {
@@ -635,11 +633,10 @@ func (w *Worker) guardSnapshot(snap *Snapshot) guardResult {
 				continue
 			}
 			batch = append(batch, FXQuote{
-				Bucket:     bucket,
-				Ticker:     ticker,
-				RateUSD:    p.RateUSD,
-				InverseUSD: 1.0 / p.RateUSD,
-				Source:     w.sourceLabel(),
+				Bucket:  bucket,
+				Ticker:  ticker,
+				RateUSD: p.RateUSD,
+				Source:  w.sourceLabel(),
 			})
 		}
 		var healed bool
@@ -793,11 +790,10 @@ func (w *Worker) healFromHistoryMajority(
 	}
 	for _, p := range rejected {
 		batch = append(batch, FXQuote{
-			Bucket:     p.Date.UTC().Truncate(24 * time.Hour),
-			Ticker:     ticker,
-			RateUSD:    p.RateUSD,
-			InverseUSD: 1.0 / p.RateUSD,
-			Source:     w.sourceLabel(),
+			Bucket:  p.Date.UTC().Truncate(24 * time.Hour),
+			Ticker:  ticker,
+			RateUSD: p.RateUSD,
+			Source:  w.sourceLabel(),
 		})
 	}
 	return batch, true
@@ -809,7 +805,7 @@ func (w *Worker) healFromHistoryMajority(
 //
 // Accept / reject rules, in order:
 //   - non-finite or non-positive → reject (a broken upstream field can
-//     never be a rate; 1/rate would poison InverseUSD too).
+//     never be a rate, nor have a 1/rate inverse_usd).
 //   - no baseline yet (first sighting since process start) → accept and
 //     establish the baseline. There is nothing to compare against, and
 //     refusing to bootstrap would leave the feed permanently empty.
@@ -937,7 +933,7 @@ func (w *Worker) vetoConfirmByHistory(ticker string, g *rateGuard, rate float64)
 //
 // Rules, in order:
 //   - non-finite or non-positive → reject (as [acceptRate]; a broken field
-//     can never be a rate and 1/rate would poison InverseUSD).
+//     can never be a rate, nor have a 1/rate inverse_usd).
 //   - no baseline yet for the ticker → accept: there is nothing to band
 //     against and refusing would drop legitimate history (mirrors the
 //     acceptRate bootstrap arm). The current-rate loop runs first, so a

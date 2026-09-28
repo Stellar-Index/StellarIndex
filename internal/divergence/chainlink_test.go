@@ -139,6 +139,32 @@ func TestChainlink_LookupQuote_Inverted(t *testing.T) {
 	}
 }
 
+// TestChainlink_LookupQuote_InvertedIsCorrectlyRounded pins the inverse
+// to the nearest float64 of the exact 10^8/answer. Inverting the already
+// rounded float instead lands one ulp off for this answer.
+func TestChainlink_LookupQuote_InvertedIsCorrectlyRounded(t *testing.T) {
+	answer := big.NewInt(100_000_001)
+	srv := fakeChainlinkRPC(t, roundDataHex(answer, time.Now().Add(-time.Minute)))
+	ref := NewChainlinkReference(ChainlinkOptions{
+		RPCURL: srv.URL,
+		FeedMap: map[string]ChainlinkFeed{
+			"fiat:USD/fiat:EUR": {
+				Address:  "0xb49f677943BC038e9857d61E7d053CaA2C1734C1",
+				Decimals: 8,
+				Invert:   true,
+			},
+		},
+	})
+	got, err := priceOf(ref.LookupQuote(context.Background(), mustPair(t, "fiat:USD", "fiat:EUR"), time.Now()))
+	if err != nil {
+		t.Fatalf("LookupQuote: %v", err)
+	}
+	want, _ := big.NewRat(100_000_000, 100_000_001).Float64()
+	if got != want {
+		t.Errorf("inverted = %v, want %v (correctly rounded 10^8/100000001)", got, want)
+	}
+}
+
 func TestChainlink_LookupQuote_UnsupportedAsset(t *testing.T) {
 	srv := fakeChainlinkRPC(t, "0x"+strings.Repeat("0", 64))
 	ref := NewChainlinkReference(ChainlinkOptions{
@@ -179,7 +205,7 @@ func TestChainlink_LookupQuote_RPCError(t *testing.T) {
 
 func TestChainlink_ScaleAnswer(t *testing.T) {
 	// 12_345_678 * 10^8 should scale to 0.12345678
-	got, err := scaleChainlinkAnswer(big.NewInt(12_345_678), 8)
+	got, err := scaleChainlinkAnswer(big.NewInt(12_345_678), 8, false)
 	if err != nil {
 		t.Fatalf("scale: %v", err)
 	}
@@ -194,19 +220,19 @@ func TestChainlink_ScaleAnswer(t *testing.T) {
 // answer beyond int64 must not wrap through big.Int.Int64().
 func TestChainlink_ScaleAnswerZeroDecimalsAboveInt64(t *testing.T) {
 	answer := new(big.Int).Lsh(big.NewInt(1), 70)
-	got, err := scaleChainlinkAnswer(answer, 0)
+	got, err := scaleChainlinkAnswer(answer, 0, false)
 	if err != nil {
 		t.Fatalf("scale: %v", err)
 	}
 	if want := 1180591620717411303424.0; got != want {
-		t.Errorf("scaleChainlinkAnswer(2^70, 0) = %v, want %v", got, want)
+		t.Errorf("scaleChainlinkAnswer(2^70, 0, false) = %v, want %v", got, want)
 	}
-	neg, err := scaleChainlinkAnswer(new(big.Int).Neg(answer), 0)
+	neg, err := scaleChainlinkAnswer(new(big.Int).Neg(answer), 0, false)
 	if err != nil {
 		t.Fatalf("scale negative: %v", err)
 	}
 	if want := -1180591620717411303424.0; neg != want {
-		t.Errorf("scaleChainlinkAnswer(-2^70, 0) = %v, want %v", neg, want)
+		t.Errorf("scaleChainlinkAnswer(-2^70, 0, false) = %v, want %v", neg, want)
 	}
 }
 
