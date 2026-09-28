@@ -3623,6 +3623,11 @@ func (g globalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical
 }
 
 func (g globalPriceReader) LatestAggregatorPrices(ctx context.Context, base, quote canonical.Asset, sources []string) ([]canonical.OracleUpdate, error) {
+	// Scam gate: without it a flagged issuer's headline, withheld by tier
+	// 1, resurfaces from tier 2. Substance is not asked, as on tier 3.
+	if priceWithheld(ctx, nil, g.scam, base, quote, "asset_headline") != pricingguard.NotWithheld {
+		return nil, nil
+	}
 	return g.s.LatestAggregatorPricesForPair(ctx, base, quote, sources)
 }
 
