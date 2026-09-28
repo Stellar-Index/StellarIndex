@@ -567,7 +567,9 @@ export interface paths {
          *     serve the raw market) to apply your own judgement; a
          *     directory-flagged issuer's market is withheld on every price
          *     surface and its trades are not a price signal. The same gate protects `/v1/price/tip`,
-         *     `/v1/price/batch` (withheld rows are omitted, like misses),
+         *     `/v1/price/batch` (withheld rows are omitted from `data` but
+         *     named in the envelope's `withheld` list, distinct from a
+         *     genuine miss — see that route's description),
          *     the SEP-40 oracle endpoints, and the `price_usd` enrichment on
          *     asset surfaces.
          */
