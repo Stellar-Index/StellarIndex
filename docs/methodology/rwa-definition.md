@@ -1,6 +1,6 @@
 ---
 title: What counts as a tokenized real-world asset
-last_verified: 2026-09-18
+last_verified: 2026-09-28
 status: current
 ---
 
@@ -286,10 +286,13 @@ in `classic_assets`: Franklin Templeton (both G-addresses), Spiko,
 Mercado Bitcoin, Cometum and fourteen of WisdomTree's eighteen addresses
 all return zero rows. Their Stellar presence is contract-issued.
 
-The exclusion ran deeper than R1. The `issuers` table is written from
-exactly one call site — `registerIssuerSeen`, on classic-asset
-registration — so an entity issuing only contract tokens never gets a
-row, never gets a SEP-1 fetch, and never becomes a candidate. It was not
+The exclusion ran deeper than R1. The `issuers` table is written only by
+the classic-asset registry — `registerIssuerSeen` when a trade registers
+an asset, and `insertIssuersBatch` when the holdings backfill (migration
+0158, see the note under [The definition](#the-definition)) registers one that is held but
+never traded. Both key on a classic asset's issuer, so an entity issuing
+only contract tokens never gets a row, never gets a SEP-1 fetch, and
+never becomes a candidate. It was not
 refused by R1 so much as never collected. Widening that table is not the
 fix either: its key is a G-account, a contract address is not one, and a
 SEP-1 fetch for a bare contract has nothing to bind to.
@@ -525,12 +528,16 @@ inferred from a dashboard is a fabricated identity for a financial
 instrument. It shipped **empty** until the first such source was in
 hand, which was correct for a set with no verified members.
 
-It now holds nine funds from one issuer. Five are tokenized T-Bill
-money-market funds — EUTBL, USTBL, UKTBL and the two EUR share classes —
-classed `bond`. Four are the share classes of a tokenized overnight swap
-fund — eurSAFO, SAFO, gbpSAFO, chfSAFO — classed `fund`. All nine are
-bound to their exact mainnet contract addresses. The addresses come from
-the issuer's own deployment manifest, reached only through `spiko.io`:
+It now holds ten bindings from two issuers, in three classes. Nine are
+Spiko funds. Five are tokenized T-Bill money-market funds — EUTBL,
+USTBL, UKTBL and the two EUR share classes — classed `bond`. Four are the
+share classes of a tokenized overnight swap fund — eurSAFO, SAFO,
+gbpSAFO, chfSAFO — classed `fund`. The tenth is Matrixdock Gold (XAUm),
+one token per troy ounce of vaulted gold, classed `commodity`. All ten
+are bound to their exact mainnet contract addresses.
+
+The Spiko addresses come from the issuer's own deployment manifest,
+reached only through `spiko.io`:
 the firm's own engineering subdomain publishes its Soroban source, that
 repository names one mainnet address per token, and a companion file
 names the fund each address carries. The ledger corroborates but does
@@ -541,10 +548,17 @@ cannot reproduce this: the chain is rooted at a domain the curator
 picked, and the five accounts already issuing classic assets coded
 `EUTBL`/`USTBL` from lookalike domains cannot publish at `spiko.io`.
 
+The XAUm address comes from the issuer's own product page at
+`matrixdock.com`, which names this exact contract as its Stellar
+deployment. Its deployed code is additionally source-verified — the
+on-chain WASM hash reproduces from the issuer's published contract
+repository — which says more than a metadata match does: the code
+executing at the address is built from published source.
+
 #### The class follows the instrument, not the issuer
 
-The two families share an issuer and are not the same instrument, and
-the class says so.
+The two Spiko families share an issuer and are not the same instrument,
+and the class says so.
 
 The T-Bill funds are invested in short-dated sovereign debt, which is
 what makes `bond` defensible for them — the same reading the classic arm
@@ -580,6 +594,14 @@ and C3 are untouched, and a contract's class is never read until its
 address has already been named by two independent parties or by the
 curated directory.
 
+XAUm is `commodity`, and the reasoning runs the other way. It is not a
+claim on a portfolio anybody manages; it is a bearer claim on a specific
+quantity of a specific metal, redeemable for the metal — the same word
+the classic arm already accepts from an issuer declaring
+`anchor_asset_type = "commodity"`. It is the first commodity row on this
+surface for which an independent price exists; the two classic commodity
+rows carry supply and no feed.
+
 Spiko's cash-and-carry fund is still deliberately **not** bound, and the
 reason is different in kind: a digital-asset basis-trade fund holds
 crypto and futures, which the definition excludes from the real-world
@@ -589,11 +611,13 @@ A binding is **not** an admission. C2 runs first, and a binding is only
 ever the *second* of the two sources
 [arm 2](#two-ways-to-satisfy-it-and-why-they-are-not-the-same-shape)
 requires — the curated directory names none of these addresses, so each
-one waits on an independent listing naming it too. Two of the five clear
-that bar today; the rest are refused as
-`contract_curated_binding_without_independent_listing` and published on
-`definition.bound_contract_instruments` as verified identities the
-surface is still declining to value. That distinguishes an issuer we
+one waits on an independent listing naming it too. XAUm clears that bar
+(the listing directory names its address); bindings that do not are
+refused as
+`contract_curated_binding_without_independent_listing`. Every binding,
+admitted or not, is published on `definition.bound_contract_instruments`,
+so a refused one is visible as a verified identity the surface is still
+declining to value. That distinguishes an issuer we
 cannot identify from one we have identified and cannot yet vouch for.
 
 **`contract_oracle_rwa_feed`** — the token's on-chain SEP-41 `symbol` is
@@ -645,9 +669,11 @@ Decimals come from the token's own on-chain metadata, not the hardcoded
 market cap divides supply by 10^decimals, so a 6-decimal token valued at
 7 publishes a tenth of its real capitalisation.
 
-The scale is read from the contract instance's `METADATA` map under
-**either** spelling the network uses. The soroban-token-sdk names the
-field `decimal`; hand-written tokens name it `decimals`. Measured over
+The scale is read from the contract instance's storage on two axes.
+The map is `METADATA` (the soroban-token-sdk convention) or `Config`
+(where some hand-written tokens keep it, under a Rust enum-variant key
+encoding); the field inside it is named `decimal` by the soroban-token-sdk
+and `decimals` by hand-written tokens. Every combination is read. Measured over
 the 17 Soroban addresses the listing platform names on Stellar, seven
 use the first and **ten** use the second — so reading only the SDK
 spelling returned "no usable metadata" for the majority and left every
@@ -655,9 +681,11 @@ one of them on the caller's default of 7. For a fund declaring 5 that is
 one **hundredth** of its capitalisation; for the 18-decimal token in the
 same sample it is eleven orders of magnitude the other way. A contract
 declaring both keys with different values is refused rather than
-resolved by preference: it has not stated its scale, and choosing
-between two contradictory self-declarations would be inventing an
-exponent for a money figure.
+resolved by preference, and so is one whose two maps disagree: it has
+not stated its scale, and choosing between two contradictory
+self-declarations would be inventing an exponent for a money figure.
+[Contract-storage supply §6](contract-storage-supply.md#6-decimals-are-read-never-assumed)
+records how the `Config` axis was found.
 
 Everything else is the `/v1/assets` pipeline unchanged, including the
 substance gate — which explicitly covers Soroban assets — and the
@@ -837,6 +865,7 @@ money:
 | `unpriced` | No USD price — the market produced none, or the substance gate withheld it as too thin to aggregate. |
 | `withheld_low_liquidity` | A price exists but the dust-liquidity guard refused to turn it into a market cap. |
 | `supply_unavailable` | A price exists but no circulating-supply reading does. |
+| `decimals_unavailable` | Contract rows only. A price and a supply both exist but the token's own declared scale could not be read, so there is no exponent to divide the supply by. Refused rather than defaulted to 7, which would be wrong by a power of ten. |
 
 When a price is served but is not a direct market observation — an
 operator-declared fiat peg, or a value derived through one substance-gated
@@ -952,7 +981,7 @@ of one event. They differ only where the reasons genuinely do:
 
 `supply_unavailable` is the valuation's own: a premium compares two
 prices and needs no supply. Everything else is documented under
-[the other four rules](#the-other-four-rules) and in the section below.
+[the other five rules](#the-other-five-rules) and in the section below.
 
 ### Contract-issued members are refused by name
 
@@ -1008,6 +1037,8 @@ Each served reference carries a `provenance`:
 |---|---|---|
 | `oracle_instrument_nav` | the **instrument** | an oracle's published valuation, plus the issuer's own domain-bound declaration that one token is one unit of it |
 | `listing_platform_price` | the **token** | a listing platform's aggregate of what the token changes hands at on the venues it tracks |
+| `prospectus_constant_nav` | the **share class** | the issuer's published NAV for a share class whose fund rules fix it (a constant-NAV money-market fund), bound on the exact `(code, issuer)`; taken only when neither an oracle binding nor a usable listing price exists for the row |
+| `curator_uploaded_price` | the **token** | a curator's own uploaded price per token. Curated rows are served apart, in `curated_assets`, and never enter `summary.reference_valuation` |
 
 The second is weaker in one way — nobody independent has said what
 stands behind the token — and narrower in another: it carries no
@@ -1122,7 +1153,7 @@ and an entry needs all three of:
 Entries carrying only the weaker form are the ones to challenge first in
 review.
 
-### The other four rules
+### The other five rules
 
 Each removes a way of publishing a number that means something other than
 what it says. A row failing any of them carries no figure and states
@@ -1134,6 +1165,7 @@ which rule refused it in `premium.status`.
 | The feed must price **one token**. `rwa:XAU` is spot gold per troy ounce and `rwa:SPXU` is one share of an exchange-traded fund. Neither is one token of anything, so no binding may target one — a test enforces it — and a token of such a code is refused with that as the stated reason. | `reference_not_instrument_scoped` |
 | The publisher must be an **oracle**. Aggregators write into the same table for divergence comparison; a premium against an aggregator's read of the market compares the market with itself. Their rows are dropped when the snapshot is built, so a bound pair with no oracle row left is reported as having no feed. | `no_reference_feed` |
 | The market price must be **observed**. A price carried on `price_basis` is a declared peg or a transitive derivation, and a premium against either reports the issuer's own claim back as a market finding. | `market_price_not_observed` |
+| The reference must be **positive**. A zero or negative value — from an oracle, a listing or a constant-NAV binding — is bad data, not a valuation of zero: nothing is divided by it for the premium or multiplied by it for the reference valuation, and both carry this status. | `reference_not_positive` |
 
 A scam-flagged issuer gets no valuation of any kind, including a third
 party's (`withheld_issuer_flagged`). Handing an impersonator the real
@@ -1274,10 +1306,11 @@ which is a finding a failed read has not earned.
   outage there freezes the served set indefinitely rather than shrinking
   it. Arm 2's recognition may not be *carried forward within a rebuild*,
   and is not; a rebuild that never happens is a different mechanism and
-  this one still has it. The response carries no build timestamp, so a
-  reader cannot currently tell a frozen set from a fresh one. Closing it
-  properly means an `as_of` on the view and an absolute bound on cache
-  reuse, which is a separate change.
+  this one still has it. A reader can see it happening —
+  [`membership.built_at`, `stale` and `rebuild_failed_at`](#dating-the-set)
+  date the served set — but nothing yet refuses a set past an absolute
+  age. Closing it means an absolute bound on cache reuse, which is a
+  separate change.
 
 ## References
 

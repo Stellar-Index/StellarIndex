@@ -1,6 +1,6 @@
 ---
 title: Contract-storage supply
-last_verified: 2026-09-15
+last_verified: 2026-09-28
 status: current
 ---
 
@@ -165,9 +165,14 @@ single-element vector (`Vec[Symbol("Config")]`, Rust's derived encoding for a
 fieldless enum variant) rather than a bare symbol. Reading only the token-sdk
 spelling found nothing and reported "no metadata".
 
-Both spellings are now read, at both encodings, and blended never: a contract
-declaring two different scales for itself has not told us its scale, and the
-reader refuses rather than picking one.
+So the scale is read on two axes. The **map** is `METADATA` or `Config`, each
+under either key encoding. The **field** inside it is `decimal` — the
+soroban-token-sdk spelling — or `decimals`, which hand-written tokens use.
+Every combination is read, and blended never: a contract declaring two different
+scales for itself — two fields in one map, or two maps — has not told us its
+scale, and the reader refuses rather than picking one. The field axis is
+measured in
+[the RWA definition](rwa-definition.md#valuing-a-contract-asset).
 
 The distinction matters because it is the difference between a published money
 figure resting on our own measurement and one resting on someone else's

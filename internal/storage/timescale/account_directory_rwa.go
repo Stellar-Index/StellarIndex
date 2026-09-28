@@ -12,8 +12,8 @@ import (
 // definition.
 //
 // WHY THE DIRECTORY IS THE POPULATION. The classic arm walks issuers,
-// which is populated from ONE site — registerIssuerSeen, called when a
-// classic asset is registered. An entity whose Stellar presence is
+// which only the classic-asset registry writes (registerIssuerSeen,
+// insertIssuersBatch). An entity whose Stellar presence is
 // contract-issued therefore has no row there, gets no SEP-1 fetch, and
 // never becomes a candidate. It is not refused by a requirement; it is
 // absent before any requirement runs, which is the silent-discard shape

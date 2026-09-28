@@ -27,9 +27,9 @@ import (
 // return zero rows. Their Stellar presence is contract-issued.
 //
 // The exclusion also ran deeper than the requirement. The issuers table
-// is populated by registerIssuerSeen, called from ONE site: the
-// classic-asset registration path. An entity that issues only contract
-// tokens therefore never gets an issuers row, never gets a SEP-1 fetch,
+// is written only by the classic-asset registry (registerIssuerSeen on a
+// trade, insertIssuersBatch on the holdings backfill). An entity that
+// issues only contract tokens therefore never gets an issuers row, never gets a SEP-1 fetch,
 // and never becomes a candidate — so it was not refused by R1 so much as
 // never collected. Widening that table is not the fix either: its key is
 // a G-account, a C-address is not one, and a SEP-1 fetch for a bare
@@ -704,7 +704,7 @@ type contractInstrument struct {
 //
 // Spiko's production set also holds SPKCC and eurSPKCC
 // ("Spiko Digital Assets Cash and Carry Fund"), deployed and verified on
-// the same evidence as the five below. They are deliberately NOT bound:
+// the same evidence as the nine below. They are deliberately NOT bound:
 // a digital-asset basis-trade fund holds crypto and futures, which
 // [anchorClasses] excludes on purpose, and no class in that closed
 // vocabulary describes it. Forcing one would publish a classification
@@ -786,10 +786,11 @@ const matrixdockXAUM = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO
 // issuer, a different instrument, and the vocabulary now has a word for
 // the difference rather than rounding it to the nearest wrong one.
 //
-// Supply read on 2026-09-15, at the 5 decimals every one of these
-// contracts declares — decoded from each contract's own METADATA map,
-// not assumed. It is recorded because it is the figure a reader should
-// be able to falsify, and because three of the nine hold none:
+// Spiko supply read on 2026-09-15, at the 5 decimals each of the nine
+// Spiko contracts declares — decoded from each contract's own METADATA
+// map, not assumed (XAUm declares 9; see above). It is recorded because
+// it is the figure a reader should be able to falsify, and because three
+// of the nine hold none:
 //
 //	eurSAFO   918,684,368.85782 tokens
 //	EUTBL     283,278,671.09034
@@ -808,7 +809,7 @@ const matrixdockXAUM = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO
 // decimals exponent could not survive all of them.
 //
 // The two empty ones are bound anyway. The evidence is per ADDRESS and
-// is identical for all five; an unminted token is an empty token, not an
+// is identical for all nine; an unminted token is an empty token, not an
 // unidentified one, and binding it now means the day it mints it is
 // already named rather than guessed at. This differs from the rule
 // [instrumentBindings] applies one file over — bind a CODE only once

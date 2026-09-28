@@ -110,20 +110,18 @@ func (r *ExplorerReader) TokenDecimals(ctx context.Context, contractID string) (
 }
 
 // decimalsFromInstanceEntry decodes one contract-instance LedgerEntry and
-// returns the METADATA map's declared scale, under either spelling in
-// [tokenDecimalsKeys].
+// returns the instance's declared scale, read on both axes by
+// [decimalsFromInstance].
 //
-// ok=false when the entry isn't an instance, carries no METADATA map, the map
-// declares no u32 scale under either key, the declared value exceeds
-// maxSaneTokenDecimals, or the contract declares BOTH keys with DIFFERENT
-// values.
+// ok=false when the entry isn't an instance or [decimalsFromInstance] finds
+// no usable scale: none declared, one out of bounds, or two that DISAGREE.
 //
 // The last case is refused rather than resolved by preference. A contract
 // claiming two different scales for itself has not told us its scale, and the
 // caller's documented response to ok=false — keep the default — is at least a
 // stated convention. Picking one of two contradictory self-declarations would
 // be this layer inventing an exponent for a money figure, which is the one
-// thing the bound above exists to prevent.
+// thing maxSaneTokenDecimals exists to prevent.
 func decimalsFromInstanceEntry(b64 string) (uint32, bool) {
 	var entry xdr.LedgerEntry
 	if xdr.SafeUnmarshalBase64(b64, &entry) != nil {
