@@ -147,9 +147,16 @@ func fetchKrakenTrades(ctx context.Context, endpoint string, q url.Values) ([]kr
 	if len(body.Error) > 0 {
 		return nil, "", fmt.Errorf("kraken trades: venue error %v", body.Error)
 	}
+	return parseTradesResult(body.Result)
+}
+
+// parseTradesResult decodes one /Trades page's result map into fills
+// plus the `last` pagination cursor. Split out of fetchKrakenTrades so
+// the HTTP transport and the per-pair row decoding aren't one function.
+func parseTradesResult(result map[string]json.RawMessage) ([]krakenFill, string, error) {
 	var last string
 	var fills []krakenFill
-	for key, raw := range body.Result {
+	for key, raw := range result {
 		if key == "last" {
 			// `last` is a quoted nanosecond string on /Trades (unlike
 			// /OHLC's unquoted integer). A type flip left unchecked
@@ -161,26 +168,38 @@ func fetchKrakenTrades(ctx context.Context, endpoint string, q url.Values) ([]kr
 			}
 			continue
 		}
-		// UseNumber keeps the time and trade_id digits exact; a float64
-		// time is off by up to a few hundred ns, enough to cross a stored µs.
-		var rows [][]any
-		dec := json.NewDecoder(bytes.NewReader(raw))
-		dec.UseNumber()
-		if err := dec.Decode(&rows); err != nil {
-			return nil, "", fmt.Errorf("kraken trades: pair rows: %w", err)
+		pageFills, err := decodeKrakenFillRows(raw)
+		if err != nil {
+			return nil, "", err
 		}
-		for _, r := range rows {
-			if len(r) < 3 {
-				continue
-			}
-			f, err := decodeKrakenFill(r)
-			if err != nil {
-				return nil, "", fmt.Errorf("kraken trades: %w", err)
-			}
-			fills = append(fills, f)
-		}
+		fills = append(fills, pageFills...)
 	}
 	return fills, last, nil
+}
+
+// decodeKrakenFillRows decodes one pair's raw row array from a
+// /Trades result (positional rows, see decodeKrakenFill).
+func decodeKrakenFillRows(raw json.RawMessage) ([]krakenFill, error) {
+	// UseNumber keeps the time and trade_id digits exact; a float64
+	// time is off by up to a few hundred ns, enough to cross a stored µs.
+	var rows [][]any
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&rows); err != nil {
+		return nil, fmt.Errorf("kraken trades: pair rows: %w", err)
+	}
+	fills := make([]krakenFill, 0, len(rows))
+	for _, r := range rows {
+		if len(r) < 3 {
+			continue
+		}
+		f, err := decodeKrakenFill(r)
+		if err != nil {
+			return nil, fmt.Errorf("kraken trades: %w", err)
+		}
+		fills = append(fills, f)
+	}
+	return fills, nil
 }
 
 // decodeKrakenFill converts one positional row
