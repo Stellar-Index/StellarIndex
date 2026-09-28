@@ -75,37 +75,48 @@ func TouchUsage(toucher KeyToucher, debouncer TouchDebouncer, logger *slog.Logge
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Deferred so a panicking handler still gets its touch
+			// attempted: Recoverer sits OUTSIDE this middleware, so a
+			// panic unwinds through here on its way up, and straight-line
+			// bookkeeping after next.ServeHTTP would never run (GH-1276).
+			defer touchUsageRecord(toucher, debouncer, logger, r)
 			next.ServeHTTP(w, r)
-			if toucher == nil || debouncer == nil {
-				return
-			}
-			subject, ok := auth.SubjectFrom(r.Context())
-			if !ok || subject.Tier == auth.TierAnonymous || subject.KeyID == "" {
-				return
-			}
-			// Post-response bookkeeping: detached from the request's
-			// cancellation (an aborted client or an exhausted RequestTimeout
-			// budget must not silently drop the touch) but independently
-			// bounded so a wedged Redis/Postgres can't pin the request
-			// goroutine (C3-102, audit-2026-07-23).
-			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), postResponseWriteTimeout)
-			defer cancel()
-			ok, err := debouncer.ShouldTouch(ctx, subject.KeyID)
-			if err != nil {
-				logger.Debug("touch-usage: debounce check failed; skipping",
-					"err", err, "key_id", subject.KeyID)
-				return
-			}
-			if !ok {
-				return
-			}
-			ip := net.ParseIP(RemoteIPFrom(r))
-			ua := truncateUserAgentForTouch(r.UserAgent())
-			if err := toucher.TouchUsage(ctx, subject.KeyID, ip, ua); err != nil {
-				logger.Debug("touch-usage: TouchUsage failed; bookkeeping lost for this tick",
-					"err", err, "key_id", subject.KeyID)
-			}
 		})
+	}
+}
+
+// touchUsageRecord is [TouchUsage]'s post-dispatch bookkeeping, pulled
+// into its own deferred call so it still runs when the handler panics
+// (GH-1276).
+func touchUsageRecord(toucher KeyToucher, debouncer TouchDebouncer, logger *slog.Logger, r *http.Request) {
+	if toucher == nil || debouncer == nil {
+		return
+	}
+	subject, ok := auth.SubjectFrom(r.Context())
+	if !ok || subject.Tier == auth.TierAnonymous || subject.KeyID == "" {
+		return
+	}
+	// Post-response bookkeeping: detached from the request's
+	// cancellation (an aborted client or an exhausted RequestTimeout
+	// budget must not silently drop the touch) but independently
+	// bounded so a wedged Redis/Postgres can't pin the request
+	// goroutine (C3-102, audit-2026-07-23).
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), postResponseWriteTimeout)
+	defer cancel()
+	shouldTouch, err := debouncer.ShouldTouch(ctx, subject.KeyID)
+	if err != nil {
+		logger.Debug("touch-usage: debounce check failed; skipping",
+			"err", err, "key_id", subject.KeyID)
+		return
+	}
+	if !shouldTouch {
+		return
+	}
+	ip := net.ParseIP(RemoteIPFrom(r))
+	ua := truncateUserAgentForTouch(r.UserAgent())
+	if err := toucher.TouchUsage(ctx, subject.KeyID, ip, ua); err != nil {
+		logger.Debug("touch-usage: TouchUsage failed; bookkeeping lost for this tick",
+			"err", err, "key_id", subject.KeyID)
 	}
 }
 

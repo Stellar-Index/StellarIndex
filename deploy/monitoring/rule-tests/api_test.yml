@@ -4,6 +4,7 @@
 #
 #   stellarindex_monthly_quota_fail_open      (C3-082)
 #   stellarindex_admin_audit_write_failing    (C3-067)
+#   stellarindex_usage_write_failing          (GH-1277)
 #
 #   promtool test rules deploy/monitoring/rule-tests/api_test.yml
 #
@@ -825,4 +826,65 @@ tests:
     alert_rule_test:
       - eval_time: 10m
         alertname: stellarindex_directory_sync_unflagged
+        exp_alerts: []
+
+  # ── GH-1277: sustained usage-counter write failures ticket ───────
+  # The write side of the usage meter had no observability at all — a
+  # failed Increment logged at Debug and was otherwise invisible. This
+  # proves the new consumer of stellarindex_usage_units_dropped_total
+  # actually fires on the failure it exists to catch.
+  - interval: 1m
+    name: sustained billable usage-write failures ticket
+    input_series:
+      - series: 'stellarindex_usage_units_dropped_total{job="stellarindex_api",instance="r1:8080",counter="billable"}'
+        values: '0+1x60'
+
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_usage_write_failing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/usage-write-failing.md
+              summary: "Usage-counter writes are failing (16.67m billable units/s dropped)"
+              description: |
+                The API served requests it could not meter: writes to the
+                billable usage counter have been failing continuously for the
+                last 10 minutes. Every dropped unit is unmetered — MonthToDate
+                reads a real Redis zero, not an error, so MonthlyQuota sees a
+                healthy read and never fails open; there is no other signal
+                that the ceiling has gone uncapped.
+
+                Does NOT move with stellarindex_monthly_quota_fail_open — that
+                fires on a failed READ, this fires on a failed WRITE, and they
+                are mutually exclusive per request. Check Redis health and the
+                usage-counter key namespace first.
+
+  # ── GH-1277: the zero-seeded healthy state is SILENT ─────────────
+  # obs.registerRedisFailureMetrics pre-seeds both label values at
+  # zero; a flat zero must not ticket.
+  - interval: 1m
+    name: a healthy usage-write path raises nothing
+    input_series:
+      - series: 'stellarindex_usage_units_dropped_total{job="stellarindex_api",instance="r1:8080",counter="billable"}'
+        values: '0+0x60'
+
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_usage_write_failing
+        exp_alerts: []
+
+  # ── GH-1277: a single blip is absorbed ────────────────────────────
+  - interval: 1m
+    name: a single usage-write blip does not ticket
+    input_series:
+      - series: 'stellarindex_usage_units_dropped_total{job="stellarindex_api",instance="r1:8080",counter="billable"}'
+        values: '0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
+
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: stellarindex_usage_write_failing
         exp_alerts: []
