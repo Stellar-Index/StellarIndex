@@ -17,6 +17,11 @@ import (
 type LedgerWindowCoverage struct {
 	From, To          uint32
 	Expected, Present uint64
+
+	// Rows is count() over the same range: stellar.ledgers is
+	// ReplacingMergeTree, so an un-merged re-ingest leaves Rows > Present.
+	// Only QueryLedgerRangeCoverage fills it; zero elsewhere.
+	Rows uint64
 }
 
 // Missing is Expected-Present — the count of ledger_seq values in [From,To]
@@ -25,8 +30,17 @@ func (c LedgerWindowCoverage) Missing() uint64 {
 	return c.Expected - c.Present
 }
 
-// QueryLedgerRangeCoverage is Check 1's headline: a single uniqExact() over
-// the WHOLE [from,to] range. uniqExact on one narrow UInt32 column is cheap
+// DuplicateRows is Rows-Present: rows beyond the first for a ledger_seq,
+// which uniqExact alone cannot see. Saturates at zero when Rows is unset.
+func (c LedgerWindowCoverage) DuplicateRows() uint64 {
+	if c.Rows <= c.Present {
+		return 0
+	}
+	return c.Rows - c.Present
+}
+
+// QueryLedgerRangeCoverage is Check 1's headline: a single uniqExact() plus
+// count() over the WHOLE [from,to] range. uniqExact on one narrow UInt32 column is cheap
 // even across full history — unlike the wide argMax/multi-column reads that
 // have driven CH memory ceilings elsewhere in this package (see gate.go,
 // recognition.go's doc comments) — so this deliberately does NOT window,
@@ -39,12 +53,12 @@ func QueryLedgerRangeCoverage(ctx context.Context, addr string, from, to uint32)
 	}
 	defer func() { _ = conn.Close() }()
 
-	var present uint64
-	const q = `SELECT uniqExact(ledger_seq) FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?`
-	if err := conn.QueryRow(ctx, q, from, to).Scan(&present); err != nil {
+	var present, rows uint64
+	const q = `SELECT uniqExact(ledger_seq), count() FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?`
+	if err := conn.QueryRow(ctx, q, from, to).Scan(&present, &rows); err != nil {
 		return LedgerWindowCoverage{}, fmt.Errorf("clickhouse: query ledger range coverage [%d,%d]: %w", from, to, err)
 	}
-	return LedgerWindowCoverage{From: from, To: to, Expected: uint64(to-from) + 1, Present: present}, nil
+	return LedgerWindowCoverage{From: from, To: to, Expected: uint64(to-from) + 1, Present: present, Rows: rows}, nil
 }
 
 // QueryLedgerWindowCoverage runs the Check-1 gap-localization scan over
@@ -218,10 +232,8 @@ func ecWindowCoverageQuery() string {
 // QueryECWindowCoverage runs the Check-2 coverage scan over [from,to], one
 // query per stride-wide window (see forEachLedgerWindow): the tx-bearing
 // ledger count from stellar.ledgers alongside how many of those same ledgers
-// stellar.ledger_entry_changes covers. Adapted from the ad hoc query run by
-// hand to first find the ledger 63,050,000 live-ingest floor (see AGENTS.md);
-// windowing bounds per-query cost to one lake partition regardless of the
-// overall range's size.
+// stellar.ledger_entry_changes covers. Windowing bounds per-query cost to one
+// lake partition regardless of the overall range's size.
 func QueryECWindowCoverage(ctx context.Context, addr string, from, to, stride uint32) ([]ECWindowCoverage, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -248,4 +260,44 @@ func QueryECWindowCoverage(ctx context.Context, addr string, from, to, stride ui
 		return nil, err
 	}
 	return out, nil
+}
+
+// QueryECLowerEdge returns the lowest ledger in [from,to] holding a
+// transaction-scoped stellar.ledger_entry_changes row (non-empty tx_hash):
+// the lower edge of ledger-by-ledger entry-change coverage, which
+// verify-contiguity's Check 2 gates everything at/above. Snapshot seed rows
+// (entry_backfill.go SnapshotEntryRow) carry an empty tx_hash and are stamped
+// at each entry's LastModifiedLedgerSeq across all history, so counting them
+// would drag the edge to genesis. found=false when the range has no such row.
+//
+// ORDER BY the sort-key prefix + LIMIT 1 lets ClickHouse read in order and
+// stop at the first match instead of aggregating the whole table.
+func QueryECLowerEdge(ctx context.Context, addr string, from, to uint32) (edge uint32, found bool, err error) {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return 0, false, err
+	}
+	defer func() { _ = conn.Close() }()
+
+	const q = `
+		SELECT ledger_seq
+		FROM stellar.ledger_entry_changes
+		WHERE ledger_seq BETWEEN ? AND ? AND tx_hash != ''
+		ORDER BY ledger_seq
+		LIMIT 1`
+	rows, err := conn.Query(ctx, q, from, to)
+	if err != nil {
+		return 0, false, fmt.Errorf("clickhouse: query entry-change lower edge [%d,%d]: %w", from, to, err)
+	}
+	defer func() { _ = rows.Close() }()
+	if rows.Next() {
+		if err := rows.Scan(&edge); err != nil {
+			return 0, false, fmt.Errorf("clickhouse: scan entry-change lower edge: %w", err)
+		}
+		found = true
+	}
+	if err := rows.Err(); err != nil {
+		return 0, false, fmt.Errorf("clickhouse: entry-change lower edge rows [%d,%d]: %w", from, to, err)
+	}
+	return edge, found, nil
 }

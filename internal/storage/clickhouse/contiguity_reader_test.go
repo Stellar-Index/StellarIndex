@@ -28,6 +28,27 @@ func TestLedgerWindowCoverage_Missing(t *testing.T) {
 	}
 }
 
+func TestLedgerWindowCoverage_DuplicateRows(t *testing.T) {
+	cases := []struct {
+		name          string
+		present, rows uint64
+		want          uint64
+	}{
+		{"merged", 10, 10, 0},
+		{"one-unmerged-reingest", 10, 11, 1},
+		{"fully-doubled", 10, 20, 10},
+		{"rows-unset-saturates", 10, 0, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := LedgerWindowCoverage{Expected: 10, Present: tc.present, Rows: tc.rows}
+			if got := c.DuplicateRows(); got != tc.want {
+				t.Fatalf("DuplicateRows() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestECWindowCoverage_Missing(t *testing.T) {
 	cases := []struct {
 		name                 string

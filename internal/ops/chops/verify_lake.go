@@ -23,8 +23,9 @@ import (
 //
 //  1. Ledger substrate contiguity (verify-contiguity's Check 1).
 //  2. stellar.ledger_entry_changes coverage, floor-gated at -ec-floor
-//     (verify-contiguity's Check 2) — below the floor is
-//     backfill-pending and informational only, same as verify-contiguity.
+//     (verify-contiguity's Check 2; 0 = auto-derived from the lake) —
+//     below the floor is backfill-pending and informational only, and the
+//     exempted range is printed, same as verify-contiguity.
 //  3. Hash-chain integrity, in-window + boundary links (verify-hashchain's
 //     one check).
 //
@@ -57,7 +58,7 @@ func verifyLake(args []string) error {
 	chAddr := fs.String("ch-addr", "", "ClickHouse native address (default: cfg.storage.clickhouse_addr from -config, falling back to "+defaultCHAddr+" if -config can't be loaded)")
 	from := fs.Uint64("from", 2, "first ledger sequence to verify (inclusive); 2 is genesis")
 	to := fs.Uint64("to", 0, "last ledger sequence to verify (inclusive); 0 = auto (max ledger_seq in stellar.ledgers)")
-	ecFloor := fs.Uint64("ec-floor", defaultECFloor, "ledger at/above which missing stellar.ledger_entry_changes coverage is a hard failure (counts toward the exit code); below it, missing coverage is backfill-pending, informational only — see verify-contiguity")
+	ecFloor := fs.Uint64("ec-floor", 0, ecFloorUsage)
 	checksFlag := fs.String("checks", "contiguity,entrychanges,hashchain", "comma-separated subset of checks to run: contiguity | entrychanges | hashchain")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -90,8 +91,8 @@ func verifyLake(args []string) error {
 		return fmt.Errorf("verify-lake: resolved range [%d,%d] is empty (-to < -from)", fromSeq, toSeq)
 	}
 
-	fmt.Fprintf(os.Stderr, "verify-lake: range=[%d,%d] ch-addr=%s ec-floor=%d checks=%s\n",
-		fromSeq, toSeq, addr, ecFloorSeq, *checksFlag)
+	fmt.Fprintf(os.Stderr, "verify-lake: range=[%d,%d] ch-addr=%s ec-floor=%s checks=%s\n",
+		fromSeq, toSeq, addr, ecFloorFlagLabel(ecFloorSeq), *checksFlag)
 
 	var ledgerGaps, ecDeficiency, ecPending, hcInWindow, hcBoundary uint64
 
