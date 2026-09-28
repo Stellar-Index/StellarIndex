@@ -45,8 +45,12 @@ func (r *ring) push(ev Event) {
 //
 // When lastEventID is empty, no replay is wanted — returns nil.
 // When lastEventID is older than the buffer's oldest event, returns
-// EVERY buffered event (the client sees an ID jump and can detect
-// the gap).
+// EVERY buffered event still held. Events strictly between
+// lastEventID and the oldest surviving one were dropped by eviction
+// and are gone; nothing in the returned events or their IDs signals
+// that loss to the client today (IDs are timestamp-packed — see
+// [Generator] — not a per-topic sequence, so a gap in ID values is
+// indistinguishable from a quiet period with no publishes; Refs #1035).
 func (r *ring) snapshotAfter(lastEventID string) []Event {
 	if lastEventID == "" {
 		return nil

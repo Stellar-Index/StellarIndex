@@ -216,10 +216,20 @@ func openTestStream(t *testing.T, url string) <-chan error {
 		t.Fatalf("GET %s: status = %d, want 200", url, resp.StatusCode)
 	}
 
+	// writeStream sends the retry: reconnection hint (and its
+	// terminating blank line) ahead of :connected; skip past both to
+	// find the connection marker itself.
 	br := bufio.NewReader(resp.Body)
-	line, err := br.ReadString('\n')
-	if err != nil {
-		t.Fatalf("read preamble: %v", err)
+	var line string
+	for i := 0; i < 3; i++ {
+		line, err = br.ReadString('\n')
+		if err != nil {
+			t.Fatalf("read preamble: %v", err)
+		}
+		if line == "\n" || strings.HasPrefix(line, "retry:") {
+			continue
+		}
+		break
 	}
 	if !strings.HasPrefix(line, ":connected") {
 		t.Fatalf("preamble = %q, want :connected", line)

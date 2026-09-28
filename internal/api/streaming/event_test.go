@@ -1,9 +1,38 @@
 package streaming
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 )
+
+// TestWriteStream_EmitsRetryInPrelude pins the SSE reconnection-delay
+// hint: writeStream must emit `retry: 5000` before the `:connected`
+// prelude comment and before the first real event, so a client that
+// disconnects immediately after connecting still learned the
+// server's requested reconnect backoff (Refs #1035).
+func TestWriteStream_EmitsRetryInPrelude(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	ch := make(chan Event, 1)
+	ch <- Event{ID: "1", Type: "test", Data: []byte(`{}`)}
+	close(ch)
+
+	writeStream(rec, req, ch, StreamOptions{HeartbeatInterval: time.Hour})
+
+	body := rec.Body.String()
+	const wantPrelude = "retry: 5000\n\n:connected\n\n"
+	if !strings.HasPrefix(body, wantPrelude) {
+		t.Fatalf("writeStream body = %q, want prefix %q", body, wantPrelude)
+	}
+	if idx := strings.Index(body, "id: 1\n"); idx < len(wantPrelude) {
+		t.Fatalf("first event frame did not follow the retry prelude: body = %q", body)
+	}
+}
 
 // TestGenerator_NeverDuplicates pins the docstring contract:
 // "never returns the same ID twice." Earlier code masked the

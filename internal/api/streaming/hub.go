@@ -337,9 +337,11 @@ func (h *Hub) Publish(topic, eventType string, data []byte) string {
 // If lastEventID is empty, no replay happens — the client gets only
 // events published after Subscribe returns. If lastEventID is older
 // than the subscriber queue can hold, the OLDEST events are dropped and
-// replay starts partway through the buffer (the client sees an ID jump,
-// which is the documented signal that some events were lost). It is not
-// disconnected — see the note in the loop below.
+// replay starts partway through the buffer, silently. It is not
+// disconnected — see the note in the loop below. Nothing on the wire
+// tells the client events were dropped: IDs are timestamp-packed (see
+// [Generator]), not a sequence count, so the gap is not observable
+// from ID values alone (Refs #1035).
 func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func()) {
 	sub := &subscription{
 		ch:     make(chan Event, subscriberQueueDepth),
@@ -403,8 +405,10 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 			//
 			// Dropping the oldest instead is the honest trade: the
 			// client lands on the CURRENT price immediately and stays
-			// connected. The lost span is exactly the gap the ID jump is
-			// documented to signal (cold audit 2026-08-04).
+			// connected. The dropped span is not surfaced to the client
+			// today — IDs are timestamp-packed, not a sequence count, so
+			// a gap in them is not distinguishable from a quiet period
+			// (cold audit 2026-08-04; Refs #1035).
 			replay := t.replayAfter(lastEventID)
 			if len(replay) > share {
 				replay = replay[len(replay)-share:]

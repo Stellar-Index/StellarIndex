@@ -108,10 +108,21 @@ func openStream(t *testing.T, ts *sseTestServer) (*http.Response, *bufio.Reader)
 	}
 	t.Cleanup(func() { _ = resp.Body.Close() })
 
+	// writeStream sends the retry: reconnection hint (and its
+	// terminating blank line) ahead of :connected; skip past both to
+	// find the connection marker itself.
 	br := bufio.NewReader(resp.Body)
-	line, err := br.ReadString('\n')
-	if err != nil {
-		t.Fatalf("read preamble: %v", err)
+	var line string
+	for i := 0; i < 3; i++ {
+		var err error
+		line, err = br.ReadString('\n')
+		if err != nil {
+			t.Fatalf("read preamble: %v", err)
+		}
+		if line == "\n" || strings.HasPrefix(line, "retry:") {
+			continue
+		}
+		break
 	}
 	if !strings.HasPrefix(line, ":connected") {
 		t.Fatalf("preamble = %q, want :connected", line)
