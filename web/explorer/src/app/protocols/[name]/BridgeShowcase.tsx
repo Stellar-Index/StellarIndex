@@ -178,10 +178,18 @@ export function donutSlices(b: BespokeBreakdown): DonutSlice[] {
     .map((r) => ({ ...r, color: chainColor(r.label) }));
   const rest = rows.slice(6);
   if (rest.length > 0) {
+    const restDecimals = rest.map((r) => r.decimal);
     top.push({
       label: `Others (${rest.length})`,
       value: rest.reduce((sum, r) => sum + r.value, 0),
-      decimal: sumDecimalStrings(rest.map((r) => r.decimal)),
+      // sumDecimalStrings SKIPS a null entry rather than aborting (it
+      // treats null as "field absent", not "unparseable") — here a null
+      // means toDecimalString rejected a present-but-malformed value
+      // (e.g. "50."), so it must void the whole fold's exact total
+      // instead of silently omitting that row from the sum.
+      decimal: restDecimals.every((d) => d != null)
+        ? sumDecimalStrings(restDecimals)
+        : null,
       color: CATEGORICAL_PALETTE[CATEGORICAL_PALETTE.length - 1],
     });
   }

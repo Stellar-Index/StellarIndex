@@ -20,7 +20,7 @@ import {
 import { DonutChart, type DonutSlice } from '@/components/charts/DonutChart';
 import type { LinePoint } from '@/components/charts/LineChart';
 import { apiGet, asExample } from '@/api/client';
-import { formatCompact } from '@/lib/format';
+import { formatCompact, sumDecimalStrings } from '@/lib/format';
 import type { components } from '@/api/types';
 import {
   type Envelope,
@@ -43,13 +43,17 @@ const PAGE_SIZE = 25;
  * USD-volume series and (b) a per-venue USD composition, both over
  * PRICED trades only (usd_volume present — an unpriced trade is
  * "unknown", never $0). Same-second trades are folded into one point
- * (lightweight-charts requires strictly ascending times). Numbers are
- * chart geometry only. Exported for its test.
+ * (lightweight-charts requires strictly ascending times). The plotted
+ * `cumulative`/per-trade `usd` numbers are chart geometry only; `totalUsd`
+ * and each venue's `decimal` are exact sums of the served `usd_volume`
+ * strings (ADR-0003) for the figures actually displayed as $. Exported for
+ * its test.
  */
 export function buildTradeViz(trades: AccountTrade[]): {
   cumulative: LinePoint[];
   venues: DonutSlice[];
   pricedCount: number;
+  totalUsd: string | null;
 } {
   const priced = trades
     .filter(
@@ -58,16 +62,19 @@ export function buildTradeViz(trades: AccountTrade[]): {
     .map((t) => ({
       sec: Math.floor(Date.parse(t.ts) / 1000),
       usd: Number(t.usd_volume),
+      raw: t.usd_volume as string,
       source: t.source,
     }))
     .filter((t) => Number.isFinite(t.sec))
     .sort((x, y) => x.sec - y.sec);
 
   const bySec = new Map<number, number>();
-  const bySource = new Map<string, number>();
+  const bySource = new Map<string, string[]>();
   for (const t of priced) {
     bySec.set(t.sec, (bySec.get(t.sec) ?? 0) + t.usd);
-    bySource.set(t.source, (bySource.get(t.source) ?? 0) + t.usd);
+    const raws = bySource.get(t.source);
+    if (raws) raws.push(t.raw);
+    else bySource.set(t.source, [t.raw]);
   }
 
   let running = 0;
@@ -79,13 +86,18 @@ export function buildTradeViz(trades: AccountTrade[]): {
   );
 
   const venues: DonutSlice[] = Array.from(bySource.entries()).map(
-    ([label, value]) => ({
-      label,
-      value,
-    }),
+    ([label, raws]) => {
+      const decimal = sumDecimalStrings(raws);
+      return { label, value: decimal != null ? Number(decimal) : 0, decimal };
+    },
   );
 
-  return { cumulative, venues, pricedCount: priced.length };
+  return {
+    cumulative,
+    venues,
+    pricedCount: priced.length,
+    totalUsd: sumDecimalStrings(priced.map((t) => t.raw)),
+  };
 }
 
 /**
@@ -169,7 +181,7 @@ export function AccountTradesPanel({ id }: { id: string }) {
               data={viz.cumulative}
               height={176}
               timeVisible
-              ariaLabel={`Cumulative USD volume across ${viz.pricedCount} priced loaded trades, ending at $${formatCompact(viz.cumulative[viz.cumulative.length - 1]?.value ?? 0)}.`}
+              ariaLabel={`Cumulative USD volume across ${viz.pricedCount} priced loaded trades, ending at $${formatCompact(viz.totalUsd ?? 0)}.`}
               legend={{
                 valueLabel: 'cumulative USD',
                 formatValue: (n) => `$${formatCompact(n)}`,
