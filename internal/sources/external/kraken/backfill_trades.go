@@ -151,7 +151,14 @@ func fetchKrakenTrades(ctx context.Context, endpoint string, q url.Values) ([]kr
 	var fills []krakenFill
 	for key, raw := range body.Result {
 		if key == "last" {
-			_ = json.Unmarshal(raw, &last)
+			// `last` is a quoted nanosecond string on /Trades (unlike
+			// /OHLC's unquoted integer). A type flip left unchecked
+			// keeps `last` at its zero value, and BackfillTrades' loop
+			// treats last=="" as "no more pages" — a three-year walk
+			// would silently return exactly one page with err == nil.
+			if err := json.Unmarshal(raw, &last); err != nil {
+				return nil, "", fmt.Errorf("kraken trades: decode last cursor %s: %w", raw, err)
+			}
 			continue
 		}
 		// UseNumber keeps the time and trade_id digits exact; a float64
