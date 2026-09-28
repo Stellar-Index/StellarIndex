@@ -16,6 +16,57 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
+// seedFlags holds the parsed and validated inputs for one
+// `supply seed-observations` pass.
+type seedFlags struct {
+	chAddr  string
+	dryRun  bool
+	cfg     config.Config
+	watched []string
+}
+
+// parseSeedFlags parses flags, loads and validates config, and resolves the
+// watchlist. Factored out of supplySeedObservations to keep flag/config
+// validation out of the pass-level function (gocognit).
+func parseSeedFlags(args []string) (seedFlags, error) {
+	fs := flag.NewFlagSet("supply seed-observations", flag.ContinueOnError)
+	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
+	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
+	gate := opsutil.RegisterWriteGate(fs)
+	if err := fs.Parse(args); err != nil {
+		return seedFlags{}, err
+	}
+	if *cfgPath == "" {
+		return seedFlags{}, errors.New("-config is required")
+	}
+	cfg, err := config.LoadWithEnv(*cfgPath)
+	if err != nil {
+		return seedFlags{}, err
+	}
+	if err := cfg.Supply.Validate(); err != nil {
+		return seedFlags{}, fmt.Errorf("config: %w", err)
+	}
+	watched := cfg.Supply.SDFReserveAccounts
+	if len(watched) == 0 {
+		return seedFlags{}, errors.New("supply seed-observations: no [supply] sdf_reserve_accounts configured — nothing to seed")
+	}
+	return seedFlags{
+		chAddr:  *chAddr,
+		dryRun:  !gate.Banner(), // Banner prints the mode + returns Enabled()
+		cfg:     cfg,
+		watched: watched,
+	}, nil
+}
+
+// openSeedStore opens the Postgres store for a write pass, or returns nil
+// unopened for a dry run.
+func openSeedStore(ctx context.Context, dryRun bool, dsn string) (*timescale.Store, error) {
+	if dryRun {
+		return nil, nil
+	}
+	return timescale.Open(ctx, dsn)
+}
+
 // supplySeedObservations seeds account_observations from the ClickHouse
 // lake for every `[supply] sdf_reserve_accounts` entry (ADR-0021).
 //
@@ -51,94 +102,55 @@ import (
 //	-write         Apply. Without it the pass is a dry run: read + print,
 //	               nothing written (-dry-run is a no-op alias).
 func supplySeedObservations(args []string) error {
-	fs := flag.NewFlagSet("supply seed-observations", flag.ContinueOnError)
-	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
-	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
-	gate := opsutil.RegisterWriteGate(fs)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *cfgPath == "" {
-		return errors.New("-config is required")
-	}
-	cfg, err := config.LoadWithEnv(*cfgPath)
+	flags, err := parseSeedFlags(args)
 	if err != nil {
 		return err
 	}
-	if err := cfg.Supply.Validate(); err != nil {
-		return fmt.Errorf("config: %w", err)
-	}
-	watched := cfg.Supply.SDFReserveAccounts
-	if len(watched) == 0 {
-		return errors.New("supply seed-observations: no [supply] sdf_reserve_accounts configured — nothing to seed")
-	}
-	dryRun := !gate.Banner() // Banner prints the mode + returns Enabled()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	reader, err := clickhouse.NewExplorerReader(ctx, *chAddr)
+	reader, err := clickhouse.NewExplorerReader(ctx, flags.chAddr)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = reader.Close() }()
 
-	var store *timescale.Store
-	if !dryRun {
-		store, err = timescale.Open(ctx, cfg.Storage.PostgresDSN)
-		if err != nil {
-			return err
-		}
+	store, err := openSeedStore(ctx, flags.dryRun, flags.cfg.Storage.PostgresDSN)
+	if err != nil {
+		return err
+	}
+	if store != nil {
 		defer func() { _ = store.Close() }()
 	}
+	watched := flags.watched
+	dryRun := flags.dryRun
 
 	var seeded, missing, removed int
 	var minLedger, maxLedger uint32
 	haveLedgerBounds := false
 	for _, acc := range watched {
-		seed, err := reader.LatestAccountEntrySeed(ctx, acc)
+		outcome, ledger, err := seedOneAccount(ctx, reader, store, dryRun, acc)
 		if err != nil {
 			return err
 		}
-		switch {
-		case !seed.Found:
+		switch outcome {
+		case seedOutcomeMissing:
 			missing++
-			fmt.Printf("MISSING  %s — no AccountEntry in the lake's capture window; run `stellarindex-ops state-snapshot` (account-state scope) first\n", acc)
 			continue
-		case seed.Removed:
+		case seedOutcomeRemoved:
 			removed++
-			fmt.Printf("REMOVED  %s — latest change merged the account away (ledger %d); not seeding\n", acc, seed.LedgerSeq)
 			continue
+		case seedOutcomeSeeded:
+			// ledger bounds tracked below
 		}
-		fmt.Printf("SEED     %s ledger=%d balance=%d stroops home_domain=%q\n",
-			seed.AccountID, seed.LedgerSeq, seed.Balance, seed.HomeDomain)
-		if !haveLedgerBounds || seed.LedgerSeq < minLedger {
-			minLedger = seed.LedgerSeq
+		if !haveLedgerBounds || ledger < minLedger {
+			minLedger = ledger
 		}
-		if !haveLedgerBounds || seed.LedgerSeq > maxLedger {
-			maxLedger = seed.LedgerSeq
+		if !haveLedgerBounds || ledger > maxLedger {
+			maxLedger = ledger
 		}
 		haveLedgerBounds = true
-		if dryRun {
-			seeded++
-			continue
-		}
-		obs := accounts.Observation{
-			AccountID:  seed.AccountID,
-			Ledger:     seed.LedgerSeq,
-			ObservedAt: seed.CloseTime,
-			Balance:    big.NewInt(seed.Balance),
-			HomeDomain: seed.HomeDomain,
-			Flags:      seed.Flags,
-			SeqNum:     seed.SeqNum,
-			// Authoritative reconstructed FINAL state for the ledger — sits at
-			// the top of the intra-ledger order so a live per-ledger change
-			// can't overwrite it and a re-seed stays corrective (C2-6).
-			IntraLedgerSeq: timescale.SeedIntraLedgerSeq,
-		}
-		if err := store.InsertAccountObservation(ctx, domain.AccountObservation(obs)); err != nil {
-			return fmt.Errorf("insert observation for %s: %w", seed.AccountID, err)
-		}
 		seeded++
 	}
 
@@ -155,6 +167,56 @@ func supplySeedObservations(args []string) error {
 		return nil
 	}
 	return store.UpsertAccountObservationSeedProvenance(ctx, accountObservationSeedProvenance(len(watched), seeded, missing, removed, minLedger, maxLedger, haveLedgerBounds))
+}
+
+// seedAccountOutcome classifies one watched account's seed-observations result.
+type seedAccountOutcome int
+
+const (
+	seedOutcomeMissing seedAccountOutcome = iota
+	seedOutcomeRemoved
+	seedOutcomeSeeded
+)
+
+// seedOneAccount fetches one watched account's latest AccountEntry seed from
+// the lake and either reports it MISSING/REMOVED or inserts the observation
+// (skipped on dry-run). Factored out of supplySeedObservations to keep the
+// per-account branching out of the pass-level loop (gocognit).
+func seedOneAccount(ctx context.Context, reader *clickhouse.ExplorerReader, store *timescale.Store, dryRun bool, acc string) (seedAccountOutcome, uint32, error) {
+	seed, err := reader.LatestAccountEntrySeed(ctx, acc)
+	if err != nil {
+		return 0, 0, err
+	}
+	switch {
+	case !seed.Found:
+		fmt.Printf("MISSING  %s — no AccountEntry in the lake's capture window; run `stellarindex-ops state-snapshot` (account-state scope) first\n", acc)
+		return seedOutcomeMissing, 0, nil
+	case seed.Removed:
+		fmt.Printf("REMOVED  %s — latest change merged the account away (ledger %d); not seeding\n", acc, seed.LedgerSeq)
+		return seedOutcomeRemoved, 0, nil
+	}
+	fmt.Printf("SEED     %s ledger=%d balance=%d stroops home_domain=%q\n",
+		seed.AccountID, seed.LedgerSeq, seed.Balance, seed.HomeDomain)
+	if dryRun {
+		return seedOutcomeSeeded, seed.LedgerSeq, nil
+	}
+	obs := accounts.Observation{
+		AccountID:  seed.AccountID,
+		Ledger:     seed.LedgerSeq,
+		ObservedAt: seed.CloseTime,
+		Balance:    big.NewInt(seed.Balance),
+		HomeDomain: seed.HomeDomain,
+		Flags:      seed.Flags,
+		SeqNum:     seed.SeqNum,
+		// Authoritative reconstructed FINAL state for the ledger — sits at
+		// the top of the intra-ledger order so a live per-ledger change
+		// can't overwrite it and a re-seed stays corrective (C2-6).
+		IntraLedgerSeq: timescale.SeedIntraLedgerSeq,
+	}
+	if err := store.InsertAccountObservation(ctx, domain.AccountObservation(obs)); err != nil {
+		return 0, 0, fmt.Errorf("insert observation for %s: %w", seed.AccountID, err)
+	}
+	return seedOutcomeSeeded, seed.LedgerSeq, nil
 }
 
 // accountObservationSeedProvenance builds the audit record for one COMPLETE
