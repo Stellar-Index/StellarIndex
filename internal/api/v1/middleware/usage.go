@@ -109,6 +109,28 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 			once := &usageRecordOnce{record: func(panicked bool) {
 				usageTrackerRecord(counter, logger, reqCtx, inner, rec, units, deadlineFired, panicked)
 			}}
+			// Deferred so a panicking handler still gets counted: Recoverer
+			// sits OUTSIDE this middleware, so a panic unwinds through here
+			// on its way up, and straight-line bookkeeping after
+			// next.ServeHTTP would never run (GH-1276). recover()+re-panic
+			// so the outer Recoverer still sees and logs it; a panic never
+			// wrote rec.status, so it's classed as 5xx explicitly rather
+			// than read off the statusRecorder's 200 zero-value.
+			//
+			// Registered BEFORE the streaming block below so it runs AFTER
+			// that block's close(done) (defers are LIFO): meterOpenStream
+			// must stop before once.fire can newly flip fired()==true on
+			// the panic-before-open path, or a tick landing in the window
+			// between fire and close(done) would read rec's still-default
+			// 200 status and bill it as OK — eating quota on a request
+			// this same defer is about to class as a 5xx (COR-05).
+			defer func() {
+				p := recover()
+				once.fire(p != nil)
+				if p != nil {
+					panic(p)
+				}
+			}()
 			var out http.ResponseWriter = rec
 			if isStreamingPath(r.URL.EscapedPath()) {
 				out = &streamOpenMeter{statusRecorder: rec, once: once}
@@ -122,24 +144,11 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 						family := endpointFamily(inner)
 						done := make(chan struct{})
 						defer close(done)
+						//nolint:gosec,contextcheck // G118/contextcheck: intentional detach, same rationale (and pattern) as usageTrackerRecord's context.Background() below — ticks must outlive a client-aborted request ctx, not inherit it
 						go meterOpenStream(counter, logger, id, family, rec, once, units, deadlineFired, done)
 					}
 				}
 			}
-			// Deferred so a panicking handler still gets counted: Recoverer
-			// sits OUTSIDE this middleware, so a panic unwinds through here
-			// on its way up, and straight-line bookkeeping after
-			// next.ServeHTTP would never run (GH-1276). recover()+re-panic
-			// so the outer Recoverer still sees and logs it; a panic never
-			// wrote rec.status, so it's classed as 5xx explicitly rather
-			// than read off the statusRecorder's 200 zero-value.
-			defer func() {
-				p := recover()
-				once.fire(p != nil)
-				if p != nil {
-					panic(p)
-				}
-			}()
 			next.ServeHTTP(out, inner)
 		})
 	}
@@ -319,6 +328,17 @@ func ChargeUsage(r *http.Request, units int) {
 // exactly once: unbounded duration for one quota unit, invisible to
 // the DETAIL family for its whole lifetime.
 //
+// The ticker starts at DISPATCH — this goroutine is spawned just
+// before next.ServeHTTP, not at [streamOpenMeter]'s header commit —
+// so the billed total for a connection open from commit to close for
+// duration d is 1 (the open bill) + floor(d/streamMeterInterval) only
+// when dispatch and commit coincide, which they do for a handler that
+// writes its preamble immediately. A handler that does setup work
+// before its first write shifts every tick earlier relative to d by
+// that gap, since the ticker's own clock never restarts at commit;
+// gated ticks before commit are simply skipped (see once.fired()
+// below), not deferred to after it.
+//
 // Ticks are gated on once.fired(): [streamOpenMeter] fires it the
 // moment the handler commits headers/first write/flush, and an SSE
 // response can't change status after that (HTTP forbids it), so a
@@ -354,6 +374,17 @@ func meterOpenStream(counter *usage.Counter, logger *slog.Logger, id, family str
 		case <-done:
 			return
 		case <-ticker.C:
+			// Re-check done, non-blocking: UsageTracker closes it BEFORE
+			// once.fire can newly latch (see its own comment), but this
+			// goroutine and that one still race independently, so a tick
+			// that was already in ticker.C's single-slot buffer the
+			// instant done closed must not slip through and read once
+			// more from rec after the request has finished with it.
+			select {
+			case <-done:
+				return
+			default:
+			}
 			if !once.fired() {
 				continue
 			}

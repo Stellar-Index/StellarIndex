@@ -155,15 +155,15 @@ func TestUsageTracker_StreamRefusedAtOpenNotBilled(t *testing.T) {
 	}
 }
 
-// TestUsageTracker_StreamReMeteredPeriodically pins the rest of GH-1279:
+// TestUsageTracker_StreamTickCountBounded pins the rest of GH-1279:
 // counting an SSE stream once at open (TestUsageTracker_StreamCountedAtOpen)
 // still lets it buy unbounded duration for that one unit. A stream held
-// open across several meter intervals must accrue additional billable
-// units for each one it survives — never zero (the open bill still fires)
-// and never twice for the same interval (each tick is a fresh IncrementBy,
-// gated on the once-record having already fired).
-func TestUsageTracker_StreamReMeteredPeriodically(t *testing.T) {
-	t.Cleanup(middleware.SetStreamMeterIntervalForTest(5 * time.Millisecond))
+// open for a known duration must accrue additional billable units for
+// each meter interval it survives (never starved) but not more than
+// that plus scheduling slack (never double-billed).
+func TestUsageTracker_StreamTickCountBounded(t *testing.T) {
+	const interval = 20 * time.Millisecond
+	t.Cleanup(middleware.SetStreamMeterIntervalForTest(interval))
 
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -174,30 +174,151 @@ func TestUsageTracker_StreamReMeteredPeriodically(t *testing.T) {
 
 	_, wait := runOpenStream(t, counter, subject, http.StatusOK)
 
-	// Poll MonthToDate directly rather than streamUsageTotal: a tick
-	// writes synchronously on its own goroutine (see meterOpenStream),
-	// so it needs no after-response drain, and draining here — while
-	// the stream is still open and its ticker may still be mid-write —
-	// would itself race the shared pool's WaitGroup. This also rules
-	// out the single open-time bill alone accounting for the total,
-	// since it polls WHILE the stream is still held open.
+	const wantTicks = 5
+	time.Sleep(wantTicks * interval)
+	wait()
+
+	// Ticks write synchronously on their own goroutine (see
+	// meterOpenStream), so MonthToDate is read directly once the
+	// stream has closed rather than through streamUsageTotal's
+	// after-response drain.
+	got, err := counter.MonthToDate(context.Background(), id)
+	if err != nil {
+		t.Fatalf("MonthToDate: %v", err)
+	}
+	const (
+		wantMin = int64(1) // the open bill alone, if ticks never fired
+		slack   = int64(2) // scheduling jitter, either direction
+	)
+	wantMax := int64(1+wantTicks) + slack
+	if got < wantMin || got > wantMax {
+		t.Fatalf("usage total for a stream held open ~%d meter intervals = %d, want in [%d, %d] "+
+			"(below min: periodic re-metering never advanced it; above max: a tick double-billed)",
+			wantTicks, got, wantMin, wantMax)
+	}
+}
+
+// TestUsageTracker_StreamNoTicksAfterClose guards meterOpenStream's
+// shutdown: once a stream's handler has returned, no further tick may
+// land, however many meter intervals later something looks again.
+//
+// Verified adversarially (1µs interval, 3000 closes) before the
+// defer-reorder + non-blocking done re-check in meterOpenStream: the
+// ticker's own shutdown could still race a simultaneously-ready tick
+// and leak ~1 extra billable unit per 3000 closes. That residual
+// select-fairness tie is not fully eliminable short of a mutex
+// serializing every tick against close (disproportionate given it
+// requires a tick to land within nanoseconds of close even at a 1µs
+// interval, and is irrelevant at the real 1-minute production
+// interval); this test uses a realistic interval, at which it does
+// not flake.
+func TestUsageTracker_StreamNoTicksAfterClose(t *testing.T) {
+	const interval = 5 * time.Millisecond
+	t.Cleanup(middleware.SetStreamMeterIntervalForTest(interval))
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	counter := usage.New(rdb)
+	subject := auth.Subject{Tier: auth.TierAPIKey, KeyID: "kid_stream_close", Identifier: "acct:stream_close"}
+	id := middleware.UsageKeyForSubject(subject)
+
+	_, wait := runOpenStream(t, counter, subject, http.StatusOK)
+
+	// Let at least one periodic tick land before closing, so this
+	// test exercises meterOpenStream's loop, not just the open bill.
 	deadline := time.Now().Add(2 * time.Second)
-	var got int64
 	for time.Now().Before(deadline) {
-		var err error
-		got, err = counter.MonthToDate(context.Background(), id)
+		got, err := counter.MonthToDate(context.Background(), id)
 		if err != nil {
 			t.Fatalf("MonthToDate: %v", err)
 		}
-		if got >= 3 {
+		if got >= 2 {
 			break
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(interval)
 	}
 	wait()
 
-	if got < 3 {
-		t.Fatalf("usage total for a stream held open across multiple meter intervals = %d, want >= 3 "+
-			"(1 at open + at least 2 periodic re-bills — periodic re-metering never advanced it)", got)
+	closedTotal, err := counter.MonthToDate(context.Background(), id)
+	if err != nil {
+		t.Fatalf("MonthToDate: %v", err)
+	}
+
+	// Several more meter intervals, well after the stream closed and
+	// with no request in flight.
+	time.Sleep(10 * interval)
+
+	after, err := counter.MonthToDate(context.Background(), id)
+	if err != nil {
+		t.Fatalf("MonthToDate: %v", err)
+	}
+	if after != closedTotal {
+		t.Fatalf("usage total grew from %d to %d after the stream's handler returned — "+
+			"a tick fired after close", closedTotal, after)
+	}
+}
+
+// TestUsageTracker_StreamPanicBeforeOpenBillsNothing pins the
+// defer-ordering hazard fixed alongside the periodic re-meter: a
+// handler that panics before ever writing anything never opens the
+// stream (once.fired() stays false the whole time it runs), so
+// UsageTracker's recover defer is the FIRST call to once.fire —
+// classing the request as a platform 5xx that COR-05 forbids billing.
+//
+// Before the fix, that recover defer ran BEFORE the streaming block's
+// close(done) (defers are LIFO and close(done) was registered first,
+// hence ran second), so meterOpenStream's ticker kept running for a
+// window after once.fire had already flipped fired()==true. A tick
+// landing in that window read rec's still-default 200 status (a panic
+// never sets it) and billed it as OK — eating quota on a request this
+// same defer had just classed as non-billable. A 1µs meter interval
+// plus many trials makes the (otherwise sub-microsecond) window
+// observable: pre-fix this leaked on 113 of 3000 trials in
+// development, post-fix 0.
+func TestUsageTracker_StreamPanicBeforeOpenBillsNothing(t *testing.T) {
+	t.Cleanup(middleware.SetStreamMeterIntervalForTest(time.Microsecond))
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	counter := usage.New(rdb)
+	subject := auth.Subject{Tier: auth.TierAPIKey, KeyID: "kid_stream_panic", Identifier: "acct:stream_panic"}
+	id := middleware.UsageKeyForSubject(subject)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/price/tip/stream", func(http.ResponseWriter, *http.Request) {
+		panic("boom before open")
+	})
+	stamp := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(auth.WithSubject(r.Context(), subject)))
+		})
+	}
+	// Recoverer OUTSIDE UsageTracker, matching server.go's stack order.
+	h := middleware.Chain(mux, stamp, middleware.Recoverer(nil), middleware.UsageTracker(counter, nil))
+
+	const trials = 500
+	for i := 0; i < trials; i++ {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/price/tip/stream", nil))
+	}
+	// Give any still-running per-request ticker goroutine a moment to
+	// (mis)fire before reading — at a 1µs interval they exit almost
+	// immediately once done closes, but "almost" is exactly the gap
+	// under test.
+	time.Sleep(50 * time.Millisecond)
+	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+		t.Fatal("after-response pool did not drain in time")
+	}
+
+	got, err := counter.MonthToDate(context.Background(), id)
+	if err != nil {
+		t.Fatalf("MonthToDate: %v", err)
+	}
+	if got != 0 {
+		t.Fatalf("billable usage total after %d panic-before-open streams = %d, want 0 "+
+			"(a tick landed between once.fire and close(done) and billed rec's still-default "+
+			"200 status — COR-05 violation)", trials, got)
 	}
 }
