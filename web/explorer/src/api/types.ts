@@ -4955,9 +4955,11 @@ export interface paths {
          *     or its create predates live capture (resolves once the Phase-C backfill
          *     lands). Balances are strings (ADR-0003).
          *
-         *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the read
-         *     is fresh to (NOT the account's `last_modified_ledger`); `flags.stale`
-         *     fires when the watermark's close time trails now by more than 300s.
+         *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the served
+         *     state was fresh to WHEN IT WAS CACHED (up to 30s old), not a serve-time
+         *     read and not the account's `last_modified_ledger`; `flags.stale` fires
+         *     when the cache entry is stale (served while a refresh runs) or the
+         *     watermark's close time trails now by more than 300s.
          */
         get: operations["getAccount"];
         put?: never;
@@ -23779,7 +23781,7 @@ export interface operations {
                             last_modified_ledger?: number;
                             /**
                              * Format: int64
-                             * @description Lake watermark this read is fresh to (ADR-0041) — the highest captured ledger at serve time, NOT the account's last_modified_ledger. Omitted when no watermark reader is wired. Pairs with flags.stale.
+                             * @description Lake watermark the served state was fresh to WHEN IT WAS CACHED (ADR-0041) — not a serve-time read and not the account's last_modified_ledger; the cache holds this state for up to 30s. Omitted when the watermark was unreadable at fill time. Pairs with flags.stale.
                              */
                             as_of_ledger?: number;
                             directory?: components["schemas"]["DirectoryInfo"];

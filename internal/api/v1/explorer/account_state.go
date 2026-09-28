@@ -280,10 +280,12 @@ type AccountStateView struct {
 	Trustlines         []TrustlineV       `json:"trustlines,omitempty"`
 	Offers             []OfferV           `json:"offers,omitempty"`
 	LastLedger         uint32             `json:"last_modified_ledger,omitempty"`
-	// AsOfLedger is the lake watermark this state read is fresh to
-	// (ADR-0041 Decision 4) — the highest ledger the ClickHouse lake had
-	// captured at serve time, NOT the account's last-modified ledger.
-	// Omitted when no watermark reader is wired. Pairs with `flags.stale`.
+	// AsOfLedger is the lake watermark the served state was fresh to WHEN
+	// IT WAS SCANNED (its cache vintage), not a serve-time read and not
+	// the account's last-modified ledger — the state can be up to
+	// AccountStateCacheTTL old, so a serve-time watermark could name a
+	// ledger the cached rows never saw (GH-621). Omitted when the
+	// watermark was unreadable at fill time.
 	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 	// Directory is the curated third-party label for this address
 	// (directory.go) — display attribution, not verification. Omitted
@@ -389,8 +391,14 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wmLedger, stale, _ := h.LakeWatermark(ctx)
-	out := AccountStateView{AccountID: g, Exists: st.Exists, AsOfLedger: wmLedger}
+	// as_of_ledger is the CACHED state's own vintage (stamped at fill time,
+	// before its scan — clickhouse.AccountState.AsOfLedger), not a
+	// serve-time watermark read: the state can be up to AccountStateCacheTTL
+	// old, and a fresh watermark here would torn-read a ledger the cache's
+	// rows never saw (GH-621). The serve-time watermark still feeds
+	// flags.stale, which is about lake health, not the cache's vintage.
+	_, stale, _ := h.LakeWatermark(ctx)
+	out := AccountStateView{AccountID: g, Exists: st.Exists, AsOfLedger: st.AsOfLedger}
 	// Directory labels apply regardless of Exists — a listed address
 	// whose AccountEntry predates the captured window (or was merged
 	// away) is exactly where a label helps most.

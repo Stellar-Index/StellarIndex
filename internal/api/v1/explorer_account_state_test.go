@@ -28,12 +28,18 @@ func (s *wmStub) LakeWatermark(context.Context) (uint32, time.Time, error) {
 // watermark and `flags.stale` fires when its close time trails now beyond
 // the threshold (10min here, comfortably past the 300s threshold).
 func TestExplorer_AccountStateAndHolders_Watermark(t *testing.T) {
+	// cachedLedger is the account state's OWN vintage (stamped at cache
+	// fill time), deliberately different from serveTimeLedger to prove
+	// the two are decoupled — before GH-621's fix, the handler stamped
+	// as_of_ledger from a fresh serve-time watermark read regardless of
+	// how old the cached state actually was.
+	const cachedLedger, serveTimeLedger = 63_888_888, 63_999_999
 	reader := &stubExplorerReader{
-		accountState: clickhouse.AccountState{Exists: true, Balance: 1},
+		accountState: clickhouse.AccountState{Exists: true, Balance: 1, AsOfLedger: cachedLedger},
 		holders:      []clickhouse.AssetHolder{{AccountID: testG, Balance: 5}},
 		holderCount:  1,
 	}
-	srv := v1.New(v1.Options{Explorer: reader, LakeWatermark: &wmStub{ledger: 63999999, closedAt: time.Now().Add(-10 * time.Minute)}})
+	srv := v1.New(v1.Options{Explorer: reader, LakeWatermark: &wmStub{ledger: serveTimeLedger, closedAt: time.Now().Add(-10 * time.Minute)}})
 	base := httpTestServer(t, srv).URL
 
 	resp := mustGet(t, base+"/v1/accounts/"+testG)
@@ -44,8 +50,9 @@ func TestExplorer_AccountStateAndHolders_Watermark(t *testing.T) {
 		} `json:"flags"`
 	}
 	mustDecode(t, resp, &acct)
-	if acct.Data.AsOfLedger != 63999999 {
-		t.Errorf("account as_of_ledger = %d, want 63999999", acct.Data.AsOfLedger)
+	if acct.Data.AsOfLedger != cachedLedger {
+		t.Errorf("account as_of_ledger = %d, want the cached state's own vintage %d (not the serve-time watermark %d)",
+			acct.Data.AsOfLedger, cachedLedger, serveTimeLedger)
 	}
 	if !acct.Flags.Stale {
 		t.Error("account flags.stale should fire for a 10-minute-old watermark")
