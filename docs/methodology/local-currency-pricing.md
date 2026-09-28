@@ -1,6 +1,6 @@
 ---
 title: Local-currency pricing
-last_verified: 2026-09-27
+last_verified: 2026-09-28
 status: current
 ---
 
@@ -25,9 +25,11 @@ result is a derived value, and we label it as one.
 
 ## When you get an observed price instead
 
-Three currencies have real markets in our data: **USD**, **EUR** and
-**GBP**. Binance and Kraken quote XLM directly in EUR and GBP, and
-USD coverage is broad across every venue.
+Six currencies have real markets in our data: **USD**, **EUR**,
+**GBP**, **AUD**, **CAD** and **CHF** — Kraken quotes XLM directly in
+all six. USD and EUR also trade on Binance, Bitstamp and Coinbase;
+GBP trades on Bitstamp too (Binance has no XLM/GBP product). AUD,
+CAD and CHF are Kraken-only.
 
 Where a market exists, **you get the market** — the derivation never
 overrides an observed print. So `XLM/EUR` is a real volume-weighted
@@ -89,17 +91,26 @@ have to defend. For those, use an execution venue's own quote.
 - **A price for an asset we cannot value in USD.** The USD leg is the
   anchor; without it there is nothing to convert.
 
+## The XLM cross
+
+This XLM cross is not limited to the series surfaces. When a declared
+USD-pegged classic asset has no USD-quoted market under any spelling,
+`/v1/price` derives it through XLM too — inside the same USD-leg
+resolution a non-USD price for that asset depends on — so a BRL price
+for such an asset can carry an XLM leg the formula above doesn't show.
+It is flagged `triangulated` either way.
+
 The series surfaces (`/v1/chart`, `/v1/history/since-inception`) carry
-one exception to the USD anchor: when no USD-quoted market exists under
-any spelling or declared-peg proxy, a series is derived through XLM —
-the asset's XLM series multiplied bucket by bucket by XLM's series in
-the requested fiat — and flagged `triangulated`. The USD peg's own USD
-series can only come from there.
+the same exception: when no USD-quoted market exists under any
+spelling or declared-peg proxy, a series is derived through XLM — the
+asset's XLM series multiplied bucket by bucket by XLM's series in the
+requested fiat. The USD peg's own USD series can only come from
+there.
 
 ## Currency coverage
 
 133 currency codes are accepted (the ADR-0010 allow-list); roughly
-130 carry live FX rates. A code that parses but has no rate returns
+109 carry live FX rates. A code that parses but has no rate returns
 404 rather than a fabricated number.
 
 ## Design record
