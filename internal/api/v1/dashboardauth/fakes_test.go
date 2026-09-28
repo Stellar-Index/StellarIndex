@@ -430,6 +430,28 @@ func (f *fakeTokenStore) ReserveLoginCode(_ context.Context, email string, maxAt
 // IncrementLoginCodeAttempts and ConsumableLoginCandidates are the
 // read-then-write pair the handler used before attempts were reserved;
 // kept so the burst tests can be run against that shape.
+func (f *fakeTokenStore) HasLiveLoginCode(_ context.Context, email string, maxAttempts int) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := f.now()
+	var (
+		found  bool
+		newest platform.MagicLinkToken
+	)
+	for _, t := range f.tokens {
+		if t.Email != email || t.Purpose != platform.TokenPurposeLogin {
+			continue
+		}
+		if !t.ConsumedAt.IsZero() || !t.ExpiresAt.After(now) {
+			continue
+		}
+		if !found || t.CreatedAt.After(newest.CreatedAt) {
+			found, newest = true, t
+		}
+	}
+	return found && newest.Attempts < maxAttempts, nil
+}
+
 func (f *fakeTokenStore) IncrementLoginCodeAttempts(_ context.Context, email string) error {
 	f.enterWrite()
 	f.mu.Lock()

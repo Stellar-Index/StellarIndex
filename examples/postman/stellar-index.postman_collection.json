@@ -36469,7 +36469,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Two cookies. `stellarindex_session` is the HttpOnly +\nSecure session credential. `stellarindex_session_present`\nrepeats its Domain, Path, Secure, SameSite and expiry\nwithout HttpOnly, and carries the constant `1` — a\npresence flag a browser client reads to decide whether a\ncall to `/v1/account/me` can succeed. It carries no\nidentity and no token, no endpoint reads it, and it\nauthorizes nothing.\n",
+                        "content": "Three cookies. `stellarindex_session` is the HttpOnly +\nSecure session credential. `stellarindex_session_present`\nrepeats its Domain, Path, Secure, SameSite and expiry\nwithout HttpOnly, and carries the constant `1` — a\npresence flag a browser client reads to decide whether a\ncall to `/v1/account/me` can succeed. It carries no\nidentity and no token, no endpoint reads it, and it\nauthorizes nothing. `stellarindex_login_device` is an\nHttpOnly, 400-day, server-signed marker scoped to\n`Path=/v1/auth/login`: it records that this browser has\nsigned in to this address, so a later `POST /auth/login`\nfrom it still receives a link when the per-address send\nlimit is full. It authenticates nothing.\n",
                         "type": "text/plain"
                       },
                       "key": "Set-Cookie",
@@ -36796,7 +36796,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Two cookies. `stellarindex_session` is the HttpOnly +\nSecure session credential. `stellarindex_session_present`\nrepeats its Domain, Path, Secure, SameSite and expiry\nwithout HttpOnly, and carries the constant `1` — a\npresence flag a browser client reads to decide whether a\ncall to `/v1/account/me` can succeed. It carries no\nidentity and no token, no endpoint reads it, and it\nauthorizes nothing.\n",
+                        "content": "Three cookies. `stellarindex_session` is the HttpOnly +\nSecure session credential. `stellarindex_session_present`\nrepeats its Domain, Path, Secure, SameSite and expiry\nwithout HttpOnly, and carries the constant `1` — a\npresence flag a browser client reads to decide whether a\ncall to `/v1/account/me` can succeed. It carries no\nidentity and no token, no endpoint reads it, and it\nauthorizes nothing. `stellarindex_login_device` is an\nHttpOnly, 400-day, server-signed marker scoped to\n`Path=/v1/auth/login`: it records that this browser has\nsigned in to this address, so a later `POST /auth/login`\nfrom it still receives a link when the per-address send\nlimit is full. It authenticates nothing.\n",
                         "type": "text/plain"
                       },
                       "key": "Set-Cookie",
@@ -37453,7 +37453,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Two cookies. `stellarindex_session` is the HttpOnly +\nSecure session credential. `stellarindex_session_present`\nrepeats its Domain, Path, Secure, SameSite and expiry\nwithout HttpOnly, and carries the constant `1` — a\npresence flag a browser client reads to decide whether a\ncall to `/v1/account/me` can succeed. It carries no\nidentity and no token, no endpoint reads it, and it\nauthorizes nothing.\n",
+                            "content": "Three cookies. `stellarindex_session` is the HttpOnly +\nSecure session credential. `stellarindex_session_present`\nrepeats its Domain, Path, Secure, SameSite and expiry\nwithout HttpOnly, and carries the constant `1` — a\npresence flag a browser client reads to decide whether a\ncall to `/v1/account/me` can succeed. It carries no\nidentity and no token, no endpoint reads it, and it\nauthorizes nothing. `stellarindex_login_device` is an\nHttpOnly, 400-day, server-signed marker scoped to\n`Path=/v1/auth/login`: it records that this browser has\nsigned in to this address, so a later `POST /auth/login`\nfrom it still receives a link when the per-address send\nlimit is full. It authenticates nothing.\n",
                             "type": "text/plain"
                           },
                           "key": "Set-Cookie",

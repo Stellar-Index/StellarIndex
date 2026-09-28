@@ -134,6 +134,50 @@ func TestLoginCodeReservation(t *testing.T) {
 		}
 	})
 
+	// HasLiveLoginCode must answer exactly what ReserveLoginCode would do,
+	// without charging: the handler skips the durable charge on "false".
+	t.Run("HasLiveLoginCodeMirrorsReserveWithoutCharging", func(t *testing.T) {
+		const email = "has-live@example.com"
+		hasLive := func(t *testing.T, email string) bool {
+			t.Helper()
+			live, err := tokens.HasLiveLoginCode(ctx, email, maxAttempts)
+			if err != nil {
+				t.Fatalf("HasLiveLoginCode: %v", err)
+			}
+			return live
+		}
+		if hasLive(t, email) {
+			t.Fatal("no token minted: HasLiveLoginCode = true, want false")
+		}
+		mint(t, email, 1, platform.TokenPurposeLogin, -time.Minute)
+		consumed := mint(t, email, 1, platform.TokenPurposeLogin, 2*time.Hour)[0]
+		if _, err := tokens.ConsumeMagicLinkToken(ctx, consumed); err != nil {
+			t.Fatalf("consume: %v", err)
+		}
+		if hasLive(t, email) {
+			t.Fatal("only expired and consumed tokens: HasLiveLoginCode = true, want false")
+		}
+
+		hashes := mint(t, email, 2, platform.TokenPurposeLogin, time.Hour)
+		newest := hashes[len(hashes)-1]
+		for i := 0; i < 3; i++ {
+			if !hasLive(t, email) {
+				t.Fatalf("call %d: live newest token: HasLiveLoginCode = false, want true", i)
+			}
+		}
+		if n := attemptsOf(t, newest); n != 0 {
+			t.Fatalf("HasLiveLoginCode charged the token: attempts = %d, want 0", n)
+		}
+		for i := 0; i < maxAttempts; i++ {
+			if _, err := tokens.ReserveLoginCode(ctx, email, maxAttempts); err != nil {
+				t.Fatalf("reserve %d: %v", i, err)
+			}
+		}
+		if hasLive(t, email) {
+			t.Fatal("newest token at the cap: HasLiveLoginCode = true, want false (no older token may step in)")
+		}
+	})
+
 	// Several live tokens per address is the normal case (a user who asks
 	// twice). Only the newest is ever a code candidate: one guess compared
 	// against N codes would have N-in-1e6 odds while the per-email budget

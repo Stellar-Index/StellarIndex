@@ -198,6 +198,29 @@ func (r *TokenStore) ReserveLoginCode(ctx context.Context, email string, maxAtte
 	return t, nil
 }
 
+// HasLiveLoginCode is ReserveLoginCode's selection without the charge:
+// the same newest-token predicate, answered true only when that token
+// is still under maxAttempts.
+func (r *TokenStore) HasLiveLoginCode(ctx context.Context, email string, maxAttempts int) (bool, error) {
+	const q = `
+		SELECT COALESCE((
+		    SELECT attempts < $3
+		      FROM magic_link_tokens
+		     WHERE email = $1
+		       AND purpose = 'login'
+		       AND consumed_at IS NULL
+		       AND expires_at > $2
+		     ORDER BY created_at DESC, token_hash DESC
+		     LIMIT 1
+		), false)
+	`
+	var live bool
+	if err := r.s.db.QueryRowContext(ctx, q, email, r.now(), maxAttempts).Scan(&live); err != nil {
+		return false, fmt.Errorf("has live login code: %w", err)
+	}
+	return live, nil
+}
+
 // RegisterFailedLoginCode records one failed 6-digit-code attempt
 // against the EMAIL (migration 0122, C3-032) and returns the resulting
 // lockout state.

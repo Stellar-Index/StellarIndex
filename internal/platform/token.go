@@ -104,6 +104,13 @@ type TokenStore interface {
 	// newest active token is absent or already at the cap.
 	ReserveLoginCode(ctx context.Context, email string, maxAttempts int) (MagicLinkToken, error)
 
+	// HasLiveLoginCode reports, without charging anything, whether
+	// ReserveLoginCode would currently hand out a candidate: the email's
+	// newest active login token exists and is below maxAttempts. The
+	// verify-code path asks first so that a request with nothing to
+	// compare against spends no durable failure budget.
+	HasLiveLoginCode(ctx context.Context, email string, maxAttempts int) (bool, error)
+
 	// RegisterFailedLoginCode records ONE failed code attempt against
 	// the email itself — the durable dimension a token re-mint cannot
 	// reset (C3-032). `attempts` on magic_link_tokens is per-mint, and
