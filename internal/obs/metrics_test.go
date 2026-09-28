@@ -638,6 +638,10 @@ func TestZeroSeed_F0033(t *testing.T) {
 		`stellarindex_notify_sends_total{result="failed",template="magic-link"} 0`,
 		`stellarindex_notify_sends_total{result="sent",template="signup-verify"} 0`,
 		`stellarindex_notify_sends_total{result="failed",template="signup-verify"} 0`,
+		`stellarindex_notify_sends_total{result="sent",template="passkey-changed"} 0`,
+		`stellarindex_notify_sends_total{result="failed",template="passkey-changed"} 0`,
+		`stellarindex_passkey_credential_changes_total{change="added"} 0`,
+		`stellarindex_passkey_credential_changes_total{change="removed"} 0`,
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(s, want) {

@@ -121,3 +121,111 @@ Request came from {{if .IPAddress}}{{.IPAddress}}{{else}}an unknown source{{end}
 
 If you didn't request this, you can safely ignore this email — neither the code nor the link works without this email.
 `
+
+// PasskeyChange is what happened to the passkey a [PasskeyChangedInput]
+// reports.
+type PasskeyChange string
+
+// PasskeyChange values.
+const (
+	PasskeyAdded   PasskeyChange = "added"
+	PasskeyRemoved PasskeyChange = "removed"
+)
+
+// PasskeyChangedInput is the data the passkey-changed notice expects. The
+// passkey's label is deliberately absent: whoever made the change chose it,
+// so it is not echoed into mail the account owner is meant to trust.
+type PasskeyChangedInput struct {
+	Change PasskeyChange
+	// When is pre-formatted by the caller (UTC).
+	When string
+	// IPAddress and UserAgent describe the session that made the change.
+	// Empty values render as "an unknown source".
+	IPAddress string
+	UserAgent string
+	// ManageURL is the absolute URL of the dashboard page listing the
+	// account's passkeys.
+	ManageURL string
+}
+
+// PasskeyChangedMessage renders the notice sent to a user whenever a
+// passkey is added to or removed from their sign-in methods, so a change
+// they did not make is visible to them outside the dashboard.
+func PasskeyChangedMessage(from, recipient string, in PasskeyChangedInput) (Message, error) {
+	if in.Change != PasskeyAdded && in.Change != PasskeyRemoved {
+		return Message{}, fmt.Errorf("passkey-changed: unknown change %q", in.Change)
+	}
+	htmlBody, err := renderHTML("passkey_changed.html", passkeyChangedHTMLTemplate, in)
+	if err != nil {
+		return Message{}, err
+	}
+	textBody, err := renderText("passkey_changed.txt", passkeyChangedTextTemplate, in)
+	if err != nil {
+		return Message{}, err
+	}
+	return Message{
+		From:    from,
+		To:      []string{recipient},
+		Subject: "A passkey was " + string(in.Change) + " on your Stellar Index account",
+		HTML:    htmlBody,
+		Text:    textBody,
+		Tags:    map[string]string{"template": "passkey-changed"},
+	}, nil
+}
+
+func renderHTML(name, src string, data any) (string, error) {
+	t, err := template.New(name).Parse(src)
+	if err != nil {
+		return "", fmt.Errorf("parse html template: %w", err)
+	}
+	var b bytes.Buffer
+	if err := t.Execute(&b, data); err != nil {
+		return "", fmt.Errorf("render html template: %w", err)
+	}
+	return b.String(), nil
+}
+
+func renderText(name, src string, data any) (string, error) {
+	t, err := textTemplate.New(name).Parse(src)
+	if err != nil {
+		return "", fmt.Errorf("parse text template: %w", err)
+	}
+	var b bytes.Buffer
+	if err := t.Execute(&b, data); err != nil {
+		return "", fmt.Errorf("render text template: %w", err)
+	}
+	return b.String(), nil
+}
+
+const passkeyChangedHTMLTemplate = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:32px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0f172a;background:#f8fafc;">
+  <table style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:8px;padding:32px;border:1px solid #e2e8f0;" cellpadding="0" cellspacing="0" border="0" role="presentation">
+    <tr><td>
+      <h1 style="margin:0 0 12px;font-size:20px;font-weight:600;letter-spacing:-0.01em;">A passkey was {{.Change}}</h1>
+      <p style="margin:0 0 16px;color:#475569;line-height:1.5;">A passkey was {{.Change}} {{if eq .Change "added"}}to{{else}}from{{end}} the sign-in methods of your Stellar Index account on {{.When}}.</p>
+      <p style="margin:0 0 24px;color:#475569;line-height:1.5;">Change made from {{if .IPAddress}}{{.IPAddress}}{{else}}an unknown source{{end}}{{if .UserAgent}} ({{.UserAgent}}){{end}}.</p>
+      <p style="margin:0 0 24px;color:#0f172a;line-height:1.5;">If this wasn't you, review your passkeys now and remove any you don't recognise.</p>
+      <p style="margin:0 0 24px;">
+        <a href="{{.ManageURL}}" style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;font-weight:500;">Review passkeys</a>
+      </p>
+      <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0;">
+      <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.5;">We send this notice for every passkey change on your account. If you made this change, no action is needed.</p>
+    </td></tr>
+  </table>
+</body>
+</html>`
+
+const passkeyChangedTextTemplate = `A passkey was {{.Change}}
+
+A passkey was {{.Change}} {{if eq .Change "added"}}to{{else}}from{{end}} the sign-in methods of your Stellar Index account on {{.When}}.
+
+Change made from {{if .IPAddress}}{{.IPAddress}}{{else}}an unknown source{{end}}{{if .UserAgent}} ({{.UserAgent}}){{end}}.
+
+If this wasn't you, review your passkeys now and remove any you don't recognise:
+
+  {{.ManageURL}}
+
+We send this notice for every passkey change on your account. If you made this change, no action is needed.
+`
