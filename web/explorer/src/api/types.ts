@@ -5558,10 +5558,17 @@ export interface components {
              */
             coverage_note?: string;
         };
-        /** @description A contract event (tx-detail + contract-activity views). */
+        /** @description A contract event on a transaction's tx-detail view (internal/api/v1/explorer/tx.go TxEventView). */
         ContractEvent: {
-            /** @description Emitting contract (C-strkey). Present on per-tx event rows (explorer_tx.go TxEventView). */
+            op_index?: number;
+            event_index?: number;
+            /** @description Emitting contract (C-strkey). */
             contract_id?: string;
+            event_type?: string;
+            topic_0?: string;
+        };
+        /** @description A contract event on the contract-activity view (internal/api/v1/explorer/contracts.go ContractEventView). */
+        ContractActivityEvent: {
             ledger?: number;
             /** Format: date-time */
             close_time?: string;
@@ -17964,6 +17971,8 @@ export interface operations {
                             trade_count_24h: number;
                             /** Format: int64 */
                             entries_24h: number;
+                            /** @description Whether the source is switched on for this deployment. false with entries_24h 0 means "off", not "failing". */
+                            enabled: boolean;
                             volume_24h_usd?: string;
                             /** Format: int64 */
                             markets_count_24h: number;
@@ -22250,7 +22259,7 @@ export interface operations {
                             contract_id?: string;
                             /** @description Registry protocol this contract belongs to (blend, soroswap, …) when attribution is known; absent otherwise. */
                             protocol?: string;
-                            events?: components["schemas"]["ContractEvent"][];
+                            events?: components["schemas"]["ContractActivityEvent"][];
                             /** @description Opaque cursor for the next (older) page; absent on the last page. */
                             next_cursor?: string;
                             directory?: components["schemas"]["DirectoryInfo"];

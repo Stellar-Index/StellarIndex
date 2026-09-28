@@ -6614,7 +6614,7 @@ paths:
                         type: object
                         required:
                           [name, class, include_in_vwap, backfill_safe,
-                           trade_count_24h, entries_24h, markets_count_24h]
+                           trade_count_24h, entries_24h, markets_count_24h, enabled]
                         properties:
                           name: { type: string, example: kraken }
                           class: { type: string, example: exchange }
@@ -6623,6 +6623,7 @@ paths:
                           backfill_safe: { type: boolean }
                           trade_count_24h: { type: integer, format: int64 }
                           entries_24h: { type: integer, format: int64 }
+                          enabled: { type: boolean, description: "Whether the source is switched on for this deployment. false with entries_24h 0 means \"off\", not \"failing\"." }
                           volume_24h_usd: { type: string }
                           markets_count_24h: { type: integer, format: int64 }
         "404":
@@ -10796,7 +10797,7 @@ paths:
                     properties:
                       contract_id: { type: string }
                       protocol: { type: string, description: "Registry protocol this contract belongs to (blend, soroswap, …) when attribution is known; absent otherwise." }
-                      events: { type: array, items: { $ref: "#/components/schemas/ContractEvent" } }
+                      events: { type: array, items: { $ref: "#/components/schemas/ContractActivityEvent" } }
                       next_cursor: { type: string, description: Opaque cursor for the next (older) page; absent on the last page. }
                       directory: { $ref: "#/components/schemas/DirectoryInfo" }
                       directory_unavailable: { type: boolean, description: "True when the directory read failed, so an absent `directory` means the contract was NOT checked (a malicious/unsafe label may exist), not that it is unlisted. Omitted on a successful read." }
@@ -13161,9 +13162,17 @@ components:
                 absent codes are real.
     ContractEvent:
       type: object
-      description: A contract event (tx-detail + contract-activity views).
+      description: A contract event on a transaction's tx-detail view (internal/api/v1/explorer/tx.go TxEventView).
       properties:
-        contract_id: { type: string, description: "Emitting contract (C-strkey). Present on per-tx event rows (explorer_tx.go TxEventView)." }
+        op_index: { type: integer }
+        event_index: { type: integer }
+        contract_id: { type: string, description: Emitting contract (C-strkey). }
+        event_type: { type: string }
+        topic_0: { type: string }
+    ContractActivityEvent:
+      type: object
+      description: A contract event on the contract-activity view (internal/api/v1/explorer/contracts.go ContractEventView).
+      properties:
         ledger: { type: integer }
         close_time: { type: string, format: date-time }
         tx_hash: { type: string }
