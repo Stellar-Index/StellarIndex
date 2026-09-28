@@ -36,6 +36,13 @@ import (
 // `stellarindex-ops state-snapshot` with the account-state scope
 // first to fill the dormant tail from a history-archive checkpoint.
 //
+// A pass that reaches the end of its watchlist upserts
+// account_observation_seed_provenance (migration 0189): accounts seeded,
+// missing and removed against the configured watchlist, plus the seeded
+// accounts' ledger range. Unlike seed-claimable-balances there is no
+// -assets-style scope, so the table holds a single row. -dry-run never
+// writes it, and an error mid-pass returns before it is reached.
+//
 // Flags:
 //
 //	-config PATH   Required. Operator TOML config (provides
@@ -86,6 +93,8 @@ func supplySeedObservations(args []string) error {
 	}
 
 	var seeded, missing, removed int
+	var minLedger, maxLedger uint32
+	haveLedgerBounds := false
 	for _, acc := range watched {
 		seed, err := reader.LatestAccountEntrySeed(ctx, acc)
 		if err != nil {
@@ -103,6 +112,13 @@ func supplySeedObservations(args []string) error {
 		}
 		fmt.Printf("SEED     %s ledger=%d balance=%d stroops home_domain=%q\n",
 			seed.AccountID, seed.LedgerSeq, seed.Balance, seed.HomeDomain)
+		if !haveLedgerBounds || seed.LedgerSeq < minLedger {
+			minLedger = seed.LedgerSeq
+		}
+		if !haveLedgerBounds || seed.LedgerSeq > maxLedger {
+			maxLedger = seed.LedgerSeq
+		}
+		haveLedgerBounds = true
 		if dryRun {
 			seeded++
 			continue
@@ -135,5 +151,26 @@ func supplySeedObservations(args []string) error {
 	if missing > 0 {
 		fmt.Println("NOTE: missing accounts keep using the operator-static [supply] reserve_balances_stroops fallback until seeded.")
 	}
-	return nil
+	if dryRun {
+		return nil
+	}
+	return store.UpsertAccountObservationSeedProvenance(ctx, accountObservationSeedProvenance(len(watched), seeded, missing, removed, minLedger, maxLedger, haveLedgerBounds))
+}
+
+// accountObservationSeedProvenance builds the audit record for one COMPLETE
+// `supply seed-observations` pass (migration 0189). Factored out of
+// supplySeedObservations so the record shape — nil ledger bounds when
+// nothing was seeded — is testable without a live store.
+func accountObservationSeedProvenance(watched, seeded, missing, removed int, minLedger, maxLedger uint32, haveLedgerBounds bool) timescale.AccountObservationSeedProvenance {
+	p := timescale.AccountObservationSeedProvenance{
+		AccountsWatched: watched,
+		AccountsSeeded:  seeded,
+		AccountsMissing: missing,
+		AccountsRemoved: removed,
+	}
+	if haveLedgerBounds {
+		minL, maxL := minLedger, maxLedger
+		p.MinLedgerSeen, p.MaxLedgerSeen = &minL, &maxL
+	}
+	return p
 }
