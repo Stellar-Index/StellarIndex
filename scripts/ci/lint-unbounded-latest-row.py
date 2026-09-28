@@ -14,6 +14,12 @@ column (read from its create_hypertable call in migrations/) or `ledger` /
 ESCAPE HATCH: `unbounded-latest-ok: <reason>` in the comment block directly
 above the line holding the string, or in the enclosing func's doc comment.
 The usual reason is that a floor would drop keys whose last row predates it.
+A package-level const/var query has no enclosing func, so only its own
+comment block waives it — it never inherits a neighboring func's marker.
+
+NOT DETECTED: a latest-row read shaped as a CTE + window function (a
+`ROW_NUMBER() OVER (PARTITION BY ...)` filtered to rn = 1) instead of
+`DISTINCT ON` — the same unbounded-scan risk, different SQL shape.
 
 Scans non-test .go files under the given roots (default: internal cmd pkg).
 Exit 1 on a finding, 2 when nothing was scanned (a vacuous pass).
@@ -86,7 +92,19 @@ def waived(lines, idx):
     if MARKER.search(lines[idx]) or MARKER.search(comment_block_above(lines, idx)):
         return True
     for j in range(idx, -1, -1):
-        if lines[j].startswith("func "):
+        line = lines[j]
+        if line == "}":
+            # A column-0 closing brace closes a preceding top-level
+            # declaration idx is not inside (gofmt never indents at
+            # column 0 inside a func body). idx is itself a
+            # package-level decl (e.g. a const query) — stop, or a
+            # sibling func's marker would wrongly waive it.
+            return False
+        if line.startswith("func ") and line.count("{") > line.count("}"):
+            # Only an *unclosed* func line (no matching "}" on the same
+            # line) can be idx's enclosing func; a fully self-contained
+            # "func g() {}" above idx is a closed sibling, not a scope
+            # idx is inside.
             return bool(MARKER.search(comment_block_above(lines, j)))
     return False
 

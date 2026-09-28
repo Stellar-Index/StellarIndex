@@ -5,7 +5,8 @@
 #
 # Pinned: the SupplyCoverageStats shape that shipped is caught; a time or
 # ledger floor passes; a marker above the query or on the func doc passes,
-# a bare marker with no reason does not; non-hypertables, comments outside
+# a bare marker with no reason does not, and a package-level const does not
+# inherit a neighboring func's marker; non-hypertables, comments outside
 # raw strings (even with a stray backtick) and _test.go files are ignored; an empty root or a migrations
 # dir with no hypertable FAILS rather than passing vacuously.
 #
@@ -112,6 +113,17 @@ func f() {
 	const q = `SELECT DISTINCT ON (source) source FROM trades ORDER BY source, ts DESC`
 }'
 check "a marker on a different func does not waive" 1 "$TMP/waiveother"
+
+mk waiveconst t.go 'package ts
+// f reads the latest trade per source.
+// unbounded-latest-ok: belongs to f, not the const below.
+func f() {
+	x := 1
+	_ = x
+}
+
+const q = `SELECT DISTINCT ON (source) source FROM trades ORDER BY source, ts DESC`'
+check "a package-level const does not inherit the preceding func's marker" 1 "$TMP/waiveconst"
 
 echo "lint-unbounded-latest-row-test: scope"
 
