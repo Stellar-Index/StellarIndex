@@ -713,6 +713,20 @@ Aquarius / Reflector don't emit orphans — they're 1-event-per-
 observation. Emitted from decoder-maintained orphan counters via the
 live dispatcher path.
 
+### `stellarindex_source_uncorroborated_calls_total`
+
+Counter, label `source`.
+
+Oracle-class `ContractCall` invocations refused before `Decode`
+because they were only DECLARED in the auth tree, never executed
+(W8.4a). Non-zero on an oracle source means either a rejected
+price-forgery attempt or a routing-shape change that started refusing
+legitimate calls — either warrants review. `statsflush` adds each
+flush window's per-source delta alongside a WARN log, same treatment
+as the dispatcher-level counters above. → alert
+`stellarindex_ingestion_uncorroborated_calls`, runbook
+[uncorroborated-calls](../../operations/runbooks/uncorroborated-calls.md).
+
 ### `stellarindex_external_poller_polls_total`
 
 Counter, labels `source`, `outcome` ∈ {success, error, skipped}.

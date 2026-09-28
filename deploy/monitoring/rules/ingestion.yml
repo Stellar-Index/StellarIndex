@@ -1249,3 +1249,31 @@ groups:
             updates, skipped) rose. Downstream this reads as an empty
             ledger, not a failure, so any nonzero increase needs eyes.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dispatcher-tx-skips.md
+
+      # W8.4a: stellarindex_source_uncorroborated_calls_total (an
+      # oracle-class ContractCall declared in the auth tree but never
+      # executed, so the dispatcher refused it before Decode) had a WARN
+      # log but no alert, so a rejected price-forgery attempt — or a
+      # routing-shape change that starts refusing legitimate calls — was
+      # invisible to on-call. Sensitive (any nonzero increase), same
+      # `for: 0m` reasoning as the tripwire above — see
+      # lint-tripwire-window.py.
+      - alert: stellarindex_ingestion_uncorroborated_calls
+        expr: sum by (source) (increase(stellarindex_source_uncorroborated_calls_total[15m])) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/uncorroborated-calls.md
+          summary: "Source {{ $labels.source }} rejected an uncorroborated oracle call"
+          description: |
+            stellarindex_source_uncorroborated_calls_total rose for source
+            {{ $labels.source }}: an oracle-class ContractCall invocation
+            was declared in the auth tree but never executed, so the
+            dispatcher refused it before Decode. Either a price-forgery
+            attempt was rejected, or the legitimate routing shape changed
+            and started refusing calls that should decode — both need
+            review.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/uncorroborated-calls.md
