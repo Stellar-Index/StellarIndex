@@ -3,6 +3,7 @@ package timescale
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -129,15 +130,16 @@ const accountTradesOuterCols = `source, ledger, tx_hash, op_index, ts,
 // Both arms reuse the same numbered placeholders, so the caller passes
 // each value once regardless of arm count.
 func accountTradesQuery(hasCursor bool) string {
-	// $2 is always the compression-horizon ts floor (site audit
-	// 2026-08-08): the per-account partial indexes exist only on
-	// UNCOMPRESSED chunks — compressed chunks (248/250 on r1, segmented
-	// by pair for the price workload) have no btree, so an arm that
-	// descends into them decompress-scans each one (~46k buffers/chunk;
-	// 16.4M buffers ≈ 8s measured proving a ZERO-trade account empty).
-	// The ts floor lets ChunkAppend exclude compressed chunks outright;
-	// the caller surfaces the floor as an explicit coverage note rather
-	// than serving a silently-partial "all time" answer.
+	// $2 is always the compression-horizon ts floor computed by
+	// tradesUncompressedHorizon (#1157): the per-account partial indexes
+	// exist only on UNCOMPRESSED chunks — a compressed chunk has no
+	// btree, so an arm that descends into one decompress-scans it (~46k
+	// buffers/chunk; 16.4M buffers ≈ 8s measured proving a ZERO-trade
+	// account empty). The floor is the END of the newest COMPRESSED
+	// chunk, so ts >= floor can never resolve to a compressed chunk and
+	// ChunkAppend excludes them outright. The caller surfaces the floor
+	// as an explicit coverage note rather than serving a silently-partial
+	// "all time" answer.
 	cursorClause := ""
 	limitPh := "$3"
 	if hasCursor {
@@ -154,24 +156,74 @@ func accountTradesQuery(hasCursor bool) string {
 	) u` + orderBy
 }
 
-// tradesUncompressedHorizon returns the start of the oldest UNCOMPRESSED
-// trades chunk — the boundary below which per-account reads have no
-// index (see accountTradesQuery). Cached for 10 minutes; the horizon
-// only moves when the compression policy compresses another chunk.
-// Fail-open to epoch (no floor, legacy behavior) on lookup errors so a
-// catalog hiccup can't blank the endpoint.
+// tradesHorizonFailClosedWindow is the fail-CLOSED floor served on a
+// catalog lookup error: short enough that it is always inside the
+// compression policy's compress_after window (7 days on `trades`, see
+// TradesCompressionPolicy) with margin, so it can never claim a chunk
+// that might already be compressed as index-safe.
+const tradesHorizonFailClosedWindow = 24 * time.Hour
+
+// tradesUncompressedHorizon returns the floor below which per-account
+// trades reads have no usable index (see accountTradesQuery): the END
+// of the NEWEST COMPRESSED chunk — not the start of the oldest
+// uncompressed one.
+//
+// The two are not interchangeable (#1157): compression is not a time
+// prefix. An old chunk can sit uncompressed (a stuck compression job, a
+// late-arriving backfill) while everything after it has already
+// compressed, and min(range_start) over uncompressed chunks then picks
+// that ancient straggler as the "floor" — observed on r1 publishing
+// 2021 as trades_total_since while 313 of 472 trades chunks were
+// already compressed, i.e. not a floor at all. max(range_end) over
+// COMPRESSED chunks is monotone-safe instead: by definition of max, no
+// compressed chunk's range extends past it, so ts >= floor can never
+// need a compressed-chunk scan regardless of what an out-of-order
+// straggler below it is doing.
+//
+// A stranded uncompressed chunk (one whose range starts before that
+// floor) doesn't make the floor unsafe — it's excluded either way — but
+// it is an anomaly worth an operator's attention (genuinely-indexed
+// history is being excluded from the fast path), so it's logged.
+//
+// Cached for 10 minutes; the horizon only moves when the compression
+// policy compresses another chunk. Fails CLOSED — a short recent window
+// (tradesHorizonFailClosedWindow), NOT epoch — on a catalog lookup
+// error: epoch means "no floor", which sends the read straight into the
+// unindexed full-history scan that caused the original 8s-timeout/503
+// incident (site audit 2026-08-08). AccountTrades and
+// computeAccountActivity already render any non-zero, post-1971 horizon
+// as an honest "showing trades since <date>" / trades_total_since
+// coverage note, so failing closed degrades into that same channel
+// instead of silently serving as if all history were indexed.
 func (s *Store) tradesUncompressedHorizon(ctx context.Context) time.Time {
 	tradesHorizonMu.Lock()
 	defer tradesHorizonMu.Unlock()
 	if time.Since(tradesHorizonAt) < 10*time.Minute && !tradesHorizon.IsZero() {
 		return tradesHorizon
 	}
-	const q = `SELECT coalesce(min(range_start), 'epoch'::timestamptz)
-	             FROM timescaledb_information.chunks
-	            WHERE hypertable_name = 'trades' AND NOT is_compressed`
-	var t time.Time
-	if err := s.db.QueryRowContext(ctx, q).Scan(&t); err != nil {
-		return time.Time{} // epoch — no floor
+	const q = `WITH compressed_floor AS (
+	             SELECT coalesce(max(range_end), 'epoch'::timestamptz) AS floor
+	               FROM timescaledb_information.chunks
+	              WHERE hypertable_name = 'trades' AND is_compressed
+	           )
+	           SELECT compressed_floor.floor,
+	                  EXISTS (
+	                      SELECT 1 FROM timescaledb_information.chunks c, compressed_floor
+	                       WHERE c.hypertable_name = 'trades' AND NOT c.is_compressed
+	                         AND c.range_start < compressed_floor.floor
+	                  ) AS stranded_uncompressed_chunk
+	             FROM compressed_floor`
+	var (
+		t        time.Time
+		stranded bool
+	)
+	if err := s.db.QueryRowContext(ctx, q).Scan(&t, &stranded); err != nil {
+		// Fail CLOSED: a short recent window, not epoch — see doc comment.
+		return time.Now().Add(-tradesHorizonFailClosedWindow)
+	}
+	if stranded {
+		slog.Warn("timescale: tradesUncompressedHorizon: an uncompressed trades chunk predates the newest compressed chunk",
+			"floor", t)
 	}
 	tradesHorizon, tradesHorizonAt = t, time.Now()
 	return t

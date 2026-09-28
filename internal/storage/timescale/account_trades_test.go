@@ -1,8 +1,12 @@
 package timescale
 
 import (
+	"context"
+	"database/sql/driver"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestAccountTradesQuery_Shape pins the per-address trades read to the
@@ -121,5 +125,106 @@ func TestAccountTradesQuery_OuterColumnsExistInSubquery(t *testing.T) {
 				"the statement will fail at plan time with 42703.\narm outputs: %v",
 				want, produced)
 		}
+	}
+}
+
+// resetTradesHorizonCache clears the package-level horizon cache
+// (tradesUncompressedHorizon caches across every *Store instance) so a
+// test controls whether the function issues a query, and restores the
+// prior value afterward. Callers must not run in parallel with each
+// other or with anything else touching the cache.
+func resetTradesHorizonCache(t *testing.T) {
+	t.Helper()
+	tradesHorizonMu.Lock()
+	origHorizon, origAt := tradesHorizon, tradesHorizonAt
+	tradesHorizon, tradesHorizonAt = time.Time{}, time.Time{}
+	tradesHorizonMu.Unlock()
+	t.Cleanup(func() {
+		tradesHorizonMu.Lock()
+		tradesHorizon, tradesHorizonAt = origHorizon, origAt
+		tradesHorizonMu.Unlock()
+	})
+}
+
+// TestTradesUncompressedHorizon_QueryShape pins #1157's root-cause fix:
+// the floor must come from max(range_end) over COMPRESSED chunks, never
+// from min(range_start) over uncompressed ones. The pre-fix expression
+// let an old uncompressed straggler chunk (a stuck compression job, a
+// late-arriving backfill) drag the floor to that chunk's start — 2021
+// was observed on r1 while 313 of 472 trades chunks were already
+// compressed — because it is NOT a time prefix: a chunk newer than the
+// straggler can be compressed while the straggler itself is not. The
+// new floor's source set is compressed chunks only, so a straggler
+// (uncompressed, by definition excluded from that set) cannot reach it
+// at all, regardless of how old it is.
+func TestTradesUncompressedHorizon_QueryShape(t *testing.T) {
+	resetTradesHorizonCache(t)
+	newestCompressedEnd := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+	store, conn := newScriptedStore(t, scriptedResult{
+		cols: []string{"floor", "stranded_uncompressed_chunk"},
+		rows: [][]driver.Value{{newestCompressedEnd, false}},
+	})
+
+	got := store.tradesUncompressedHorizon(context.Background())
+	if !got.Equal(newestCompressedEnd) {
+		t.Fatalf("horizon = %s, want %s (the newest COMPRESSED chunk's end)", got, newestCompressedEnd)
+	}
+
+	stmt := conn.only(t)
+	if !strings.Contains(stmt.sql, "max(range_end)") {
+		t.Errorf("floor must be computed from max(range_end):\n%s", stmt.sql)
+	}
+	if !strings.Contains(stmt.sql, "WHERE hypertable_name = 'trades' AND is_compressed") {
+		t.Errorf("floor's source set must be compressed chunks only:\n%s", stmt.sql)
+	}
+	if strings.Contains(stmt.sql, "min(range_start)") {
+		t.Errorf("must not resurrect the pre-#1157 min(range_start) expression:\n%s", stmt.sql)
+	}
+	if !strings.Contains(stmt.sql, "EXISTS") || !strings.Contains(stmt.sql, "NOT c.is_compressed") {
+		t.Errorf("must carry the stranded-uncompressed-chunk consistency check:\n%s", stmt.sql)
+	}
+}
+
+// TestTradesUncompressedHorizon_StrandedChunkDoesNotWidenFloor: a
+// straggler uncompressed chunk predating the newest compressed chunk is
+// an anomaly worth logging, but it must NOT alter the served floor —
+// widening it back down toward the straggler would reintroduce the
+// exact compressed-chunk scan #1157 exists to avoid.
+func TestTradesUncompressedHorizon_StrandedChunkDoesNotWidenFloor(t *testing.T) {
+	resetTradesHorizonCache(t)
+	newestCompressedEnd := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+	store, _ := newScriptedStore(t, scriptedResult{
+		cols: []string{"floor", "stranded_uncompressed_chunk"},
+		rows: [][]driver.Value{{newestCompressedEnd, true}},
+	})
+
+	got := store.tradesUncompressedHorizon(context.Background())
+	if !got.Equal(newestCompressedEnd) {
+		t.Errorf("a stranded uncompressed chunk changed the floor: got %s, want %s", got, newestCompressedEnd)
+	}
+}
+
+// TestTradesUncompressedHorizon_FailsClosedOnLookupError: a catalog
+// lookup error must degrade to a short, recent floor — NOT epoch/zero.
+// Epoch means "no floor", which sends the read straight into the
+// unindexed full-history scan that caused the original 8s-timeout/503
+// incident; a short recent floor instead surfaces through the same
+// "showing trades since <date>" / trades_total_since coverage note a
+// legitimate horizon does.
+func TestTradesUncompressedHorizon_FailsClosedOnLookupError(t *testing.T) {
+	resetTradesHorizonCache(t)
+	store, _ := newScriptedStore(t, scriptedResult{err: errors.New("catalog unavailable")})
+
+	before := time.Now()
+	got := store.tradesUncompressedHorizon(context.Background())
+	after := time.Now()
+
+	if got.IsZero() || got.Year() < 1971 {
+		t.Fatalf("must fail CLOSED to a recent floor, not epoch/zero: got %s", got)
+	}
+	earliest := before.Add(-tradesHorizonFailClosedWindow)
+	latest := after.Add(-tradesHorizonFailClosedWindow)
+	if got.Before(earliest) || got.After(latest) {
+		t.Errorf("fail-closed floor = %s, want within [%s, %s]", got, earliest, latest)
 	}
 }
