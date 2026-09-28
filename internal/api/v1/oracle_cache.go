@@ -15,17 +15,9 @@ import (
 
 // CachedOracleReader wraps an [OracleReader] with a per-process TTL
 // cache + single-flight refetch on the high-traffic
-// LatestOracleUpdatesForAssets path. F-0013 audit (2026-05-26)
-// measured `/v1/oracle/latest` at p95 ~271 ms — over the 200 ms SLO.
-//
-// The underlying SQL is a DISTINCT ON (source) scan across
-// oracle_updates with `asset = ANY($1)`. The only indexes that help
-// the asset filter are (asset, ts DESC) and (asset, quote, ts DESC);
-// neither covers the DISTINCT ON (source) keyset so a Sort step is
-// unavoidable. Adding a (source, asset, ts DESC) index would help
-// but migrations are operator-manual (feedback_migrations_not_auto_deployed)
-// and oracle freshness updates on a 10–60 s cadence anyway — a short
-// TTL cache captures the same wins without touching the schema.
+// LatestOracleUpdatesForAssets path. The cache absorbs bursts on one
+// key set; the SQL itself must meet the 200 ms SLO on a miss, since the
+// endpoint takes any asset (see Store.LatestOracleUpdatesForAssets).
 //
 // TTL of 3 s is well below the freshest oracle's publish cadence
 // (Redstone ~10 s, Reflector ~30 s, Band ~60 s) so customers never
