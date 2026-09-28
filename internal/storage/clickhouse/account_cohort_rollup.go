@@ -408,7 +408,8 @@ type AccountCohortPosition struct {
 	Venue        string
 	Asset        string
 	Holders      uint64
-	Amount       float64
+	//floatmoney:ok known debt (#600) — summed on-chain position magnitude, served via strconv.FormatFloat in account_cohort.go; needs threading through big.Rat end to end, not a same-PR conversion
+	Amount float64
 }
 
 // Read caps. A root's holdings and flows are bounded by the assets its

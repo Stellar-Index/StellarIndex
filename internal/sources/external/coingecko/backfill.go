@@ -192,6 +192,7 @@ func (p *Poller) fetchMarketChartRange(ctx context.Context, id, currency string,
 		return nil, fmt.Errorf("coingecko: http %d: %s", resp.StatusCode, strings.TrimSpace(string(body[:minInt(len(body), 200)])))
 	}
 	var payload struct {
+		//floatmoney:ok known debt (#600) — raw CoinGecko JSON decode boundary ([ts_ms, price] pairs); BackfillRange converts pt[1] via scale.FloatToScaledInt into canonical.Amount a few lines after the call site, never stored or compared as float
 		Prices [][2]float64 `json:"prices"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {

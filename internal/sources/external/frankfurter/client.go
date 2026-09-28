@@ -68,7 +68,8 @@ func (c *Client) WithBase(base string) *Client {
 // DayRates is one day's snapshot of USD-base rates: ticker (upper-case
 // ISO-4217) → rate (1 USD = N target currency).
 type DayRates struct {
-	Date  time.Time
+	Date time.Time
+	//floatmoney:ok known debt (#600) — same float-chain class as timescale.FXQuote.RateUSD (fx_quotes.go): fetchAndPersist (scripts/ops/fx-history-backfill/main.go) ranges this map straight into FXQuote.RateUSD without converting
 	Rates map[string]float64
 }
 
@@ -89,9 +90,10 @@ func (c *Client) RangeUSDRates(ctx context.Context, from, to time.Time) ([]DayRa
 		return nil, fmt.Errorf("frankfurter %s..%s: %w", fromStr, toStr, err)
 	}
 	var raw struct {
-		Base  string                        `json:"base"`
-		Start string                        `json:"start_date"`
-		End   string                        `json:"end_date"`
+		Base  string `json:"base"`
+		Start string `json:"start_date"`
+		End   string `json:"end_date"`
+		//floatmoney:ok known debt (#600) — raw Frankfurter JSON decode boundary (date -> ticker -> rate document); reshaped into DayRates.Rates a few lines below, same chain as that field's marker, not stored as-is
 		Rates map[string]map[string]float64 `json:"rates"`
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {

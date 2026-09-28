@@ -170,6 +170,7 @@ type cmcCoin struct {
 }
 
 type cmcQuote struct {
+	//floatmoney:ok known debt (#600) — CoinMarketCap wire decode (JSON numbers are float64 upstream); converts onward at the aggregator boundary
 	Price       float64 `json:"price"`
 	LastUpdated string  `json:"last_updated"`
 }

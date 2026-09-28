@@ -21,6 +21,7 @@ type Result struct {
 	Pair canonical.Pair
 
 	// OurPrice is what our aggregator computed.
+	//floatmoney:ok comparator-only diagnostic result (doc comment above), never stored or served directly — RecordObservation formats to decimal strings at the sink boundary
 	OurPrice float64
 
 	// Median is the median of references that returned a price.
@@ -258,7 +259,8 @@ func Compare(
 
 // fetchOutcome is one reference's reply on [Compare]'s fan-in channel.
 type fetchOutcome struct {
-	name  string
+	name string
+	//floatmoney:ok one reference's fan-in reply price, comparator-internal only (same class as Quote.Price / Result.OurPrice above)
 	price float64
 	asOf  time.Time
 	err   error

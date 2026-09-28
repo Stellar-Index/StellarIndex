@@ -19,8 +19,9 @@ import (
 // path returns both columns as exact NUMERIC text so no served price
 // passes through a float (ADR-0003).
 type FXQuote struct {
-	Bucket  time.Time
-	Ticker  string
+	Bucket time.Time
+	Ticker string
+	//floatmoney:ok known debt (#600) — write-input boundary from the forex ingest pipeline (worker.go/cache.go RateUSD), which is float end to end today; the read side already returns NUMERIC text (RateUSDText) per the doc comment above
 	RateUSD float64
 	// InverseUSD is IGNORED on write: [Store.InsertFXQuoteBatch] derives
 	// inverse_usd from rate_usd in NUMERIC so the column never carries a

@@ -456,17 +456,19 @@ type Server struct {
 
 	// contractIndex caches contract → protocol for the cohort view's
 	// contract labels; see contract_protocol_index.go.
-	contractIndex           contractProtocolIndex
-	networkStats            NetworkStatsReader
-	aggregators             AggregatorsReader
-	marketSources           MarketSourceReader
-	sourcesStats            SourcesStatsReader
-	lending                 LendingReader
-	mev                     MEVReader
-	anomalies               AnomalyReader
-	divergences             DivergenceReader
-	divergenceThresholdPct  float64
-	minMarketCapVolumeUSD   float64
+	contractIndex          contractProtocolIndex
+	networkStats           NetworkStatsReader
+	aggregators            AggregatorsReader
+	marketSources          MarketSourceReader
+	sourcesStats           SourcesStatsReader
+	lending                LendingReader
+	mev                    MEVReader
+	anomalies              AnomalyReader
+	divergences            DivergenceReader
+	divergenceThresholdPct float64
+	//floatmoney:ok same non-money config-threshold class as Options.MinMarketCapVolumeUSD below — copied from there in New, compared via big.NewFloat, never a stored/served amount
+	minMarketCapVolumeUSD float64
+	//floatmoney:ok same non-money config-threshold class as Options.MaxMarketCapVolumeRatio below
 	maxMarketCapVolumeRatio float64
 	currencies              CurrenciesReader
 	// fxCrossMaxAge bounds how old the forex snapshot's matched rate may
@@ -1278,6 +1280,7 @@ type Options struct {
 	// [dustLiquiditySuppressed]). Zero (the default here when a caller doesn't
 	// set it) disables the guard; the production binary wires the config value
 	// whose own default is 1000.
+	//floatmoney:ok operator config constant, not a stored/served amount — see capExceedsObservedTurnover/dustLiquiditySuppressed (assets.go), which compare it via big.NewFloat against ADR-0003 decimal-string money
 	MinMarketCapVolumeUSD float64
 
 	// MaxMarketCapVolumeRatio is the valuation-integrity CEILING (config
@@ -1287,6 +1290,7 @@ type Options struct {
 	// MinMarketCapVolumeUSD and not a substitute for it — one asks
 	// whether trading is small, the other whether the claim is large
 	// against the trading there is. See [capExceedsObservedTurnover].
+	//floatmoney:ok dimensionless turnover-ratio ceiling (days-to-turn-over multiple), same non-money class as MinMarketCapVolumeUSD above despite the "cap" substring
 	MaxMarketCapVolumeRatio float64
 
 	// Currencies, when non-nil, supplies the world fiat-currency

@@ -98,6 +98,7 @@ type priceMultiFullResponse struct {
 
 // rawQuote is one RAW entry; LastUpdate is unix seconds.
 type rawQuote struct {
+	//floatmoney:ok known debt (#600) — CryptoCompare wire decode (JSON numbers are float64 upstream); converts onward at the aggregator boundary
 	Price      float64 `json:"PRICE"`
 	LastUpdate int64   `json:"LASTUPDATE"`
 }
