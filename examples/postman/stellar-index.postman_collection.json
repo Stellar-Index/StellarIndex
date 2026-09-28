@@ -32359,7 +32359,7 @@
                   "apikey": [
                     {
                       "key": "key",
-                      "value": "stellarindex_session"
+                      "value": "__Host-stellarindex_session"
                     },
                     {
                       "key": "value",
@@ -32406,7 +32406,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -32465,7 +32465,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -32530,7 +32530,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -32595,7 +32595,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -32660,7 +32660,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -32725,7 +32725,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -32799,7 +32799,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -32870,7 +32870,7 @@
                       "apikey": [
                         {
                           "key": "key",
-                          "value": "stellarindex_session"
+                          "value": "__Host-stellarindex_session"
                         },
                         {
                           "key": "value",
@@ -32909,7 +32909,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -32962,7 +32962,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -33006,7 +33006,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -33050,7 +33050,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
