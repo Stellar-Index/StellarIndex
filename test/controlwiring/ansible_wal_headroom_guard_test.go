@@ -36,9 +36,10 @@ import (
 //     the tuple leg 1 produced — asserting a dangling symlink is
 //     REFUSED, and that a healthy host is still admitted.
 //
-// df is stubbed because the probe uses GNU `df -BM` (the hosts are
-// Ubuntu) and the developer machines are macOS; readlink, du and the
-// directory shapes are real, and they are where the defect lives.
+// df and stat are stubbed because the probe uses GNU `df -BM` and
+// `stat -f -c %T` (the hosts are Ubuntu) and the developer machines are
+// macOS; readlink, du and the directory shapes are real, and they are
+// where the defect lives.
 
 const walPostgresTasks = "configs/ansible/roles/archival-node/tasks/05-postgres.yml"
 
@@ -186,18 +187,23 @@ func writeMB(t *testing.T, path string, mb int) {
 	}
 }
 
-// walStubDF writes a df stub that answers both invocations the probe
-// makes (`df -P -BM <path>` and `df -P <path>`) with a fixed volume.
-func walStubDF(t *testing.T) string {
+// walStubTools writes a df stub that answers both invocations the probe
+// makes (`df -P -BM <path>` and `df -P <path>`) with a fixed volume, and
+// a stat stub that answers `stat -f -c %T <path>` with GNU's ext4 name.
+func walStubTools(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	script := fmt.Sprintf(`#!/bin/sh
+	stubs := map[string]string{
+		"df": fmt.Sprintf(`#!/bin/sh
 echo "Filesystem 1024-blocks Used Available Capacity Mounted on"
 echo "/dev/stub-wal-volume 200000 100000 %d 50%% /"
-`, walStubAvailMB)
-	path := filepath.Join(dir, "df")
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
-		t.Fatalf("write df stub: %v", err)
+`, walStubAvailMB),
+		"stat": "#!/bin/sh\necho ext2/ext3\n",
+	}
+	for name, script := range stubs {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o700); err != nil {
+			t.Fatalf("write %s stub: %v", name, err)
+		}
 	}
 	return dir
 }
@@ -213,7 +219,7 @@ func walRunProbe(t *testing.T, walPath string) []string {
 	script := strings.ReplaceAll(body, walProdWalPath, walPath)
 
 	cmd := exec.Command("/bin/sh", "-c", script)
-	cmd.Env = append(os.Environ(), "PATH="+walStubDF(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cmd.Env = append(os.Environ(), "PATH="+walStubTools(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("probe failed: %v\noutput: %s\nscript:\n%s", err, out, script)
