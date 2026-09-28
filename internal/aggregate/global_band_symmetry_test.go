@@ -103,3 +103,28 @@ func TestRejectAggregatorOutliers_HonestlyDispersedSetFullyKept(t *testing.T) {
 			len(kept), len(rows), sourceSet(kept))
 	}
 }
+
+// TestRejectAggregatorOutliers_BetweenOldAndNewEdgeIsDropped pins the
+// boundary the other two tests straddle but never land on: a source
+// sitting strictly between the old additive lower edge and the new
+// ratio-symmetric one.
+//
+// 66.00/100.00/106.745: median 100.00, MAD 6.745, scale = 1.4826·MAD ≈
+// 10.0002, so K·scale ≈ 50.0008. The old additive edge, centre −
+// K·scale ≈ 49.9992, would have kept 66.00. The ratio-symmetric edge,
+// centre²/(centre + K·scale) ≈ 66.6663, does not: 66.00 sits inside the
+// newly-tightened gap and must be dropped, not kept.
+func TestRejectAggregatorOutliers_BetweenOldAndNewEdgeIsDropped(t *testing.T) {
+	rows := []canonical.OracleUpdate{
+		mkAggRow("lo", 66000, 3), mkAggRow("mid", 100000, 3), mkAggRow("hi", 106745, 3),
+	}
+	kept := rejectAggregatorOutliers(rows)
+	for _, s := range kept {
+		if s.Source == "lo" {
+			t.Fatalf("lo survived: sources = %v — the tightened lower edge must drop a source between the old and new edge", sourceSet(kept))
+		}
+	}
+	if len(kept) != 2 {
+		t.Fatalf("kept %d, want 2 (mid, hi): %v", len(kept), sourceSet(kept))
+	}
+}
