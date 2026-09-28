@@ -1,7 +1,7 @@
 ---
 title: Off-site (S3) backup plan
-last_verified: 2026-08-29
-status: §2 (Postgres → pgBackRest repo2/S3) LIVE on r1 2026-08-29; §4 (ClickHouse lake) mechanism committed 2026-09-23, awaiting its off-site target; §1/§3 proposed
+last_verified: 2026-09-28
+status: §2 (Postgres → pgBackRest repo2/S3) LIVE on r1 2026-08-29; §4 (ClickHouse lake) mechanism committed 2026-09-23, awaiting its off-site target; §1 mechanism committed 2026-09-28, awaiting its off-site target; §3 proposed
 severity: P1
 ---
 
@@ -35,7 +35,7 @@ Recommend **Cloudflare R2** (S3-compatible, **zero egress fees** → cheap resto
 
 ### 1. Galexie archive → S3 (critical) — continuous mirror
 
-> **Status (2026-09-19, NS03): still PROPOSED — no off-host copy of the archive exists.** The only off-site credential on r1 is pgBackRest's (scoped to its own repo2 bucket), so §2 covers Postgres and nothing else. What landed instead is the *local* half: `data/minio` is now the third dataset in the role's `zfs_snapshot_datasets` (7-day retention), after it was measured on r1 at 2.64 TB holding **zero** snapshots while the ClickHouse and Postgres datasets *derived from it* held 4 and 8. That turns a mis-aimed `mc rm --recursive` into a `zfs clone`; it does nothing for a pool or box loss, which is what this section is for. When costing that spend, note the honest blast radius: the archive is **reconstructible** by re-ingesting the public Stellar history archives, so losing it is a days-to-weeks recovery with no third-party SLA — expensive and reputationally bad, not permanent. The irreplaceable-forever framing in the table above overstates it.
+> **Status (2026-09-28, NS03): mechanism COMMITTED, not yet running on r1.** The local half already landed (2026-09-19): `data/minio` is the third dataset in the role's `zfs_snapshot_datasets` (7-day retention), after it was measured on r1 at 2.64 TB holding **zero** snapshots while the ClickHouse and Postgres datasets *derived from it* held 4 and 8. That turns a mis-aimed `mc rm --recursive` into a `zfs clone`; it does nothing for a pool or box loss, which is what this section is for — the only off-site credential on r1 was pgBackRest's (scoped to its own repo2 bucket), so §2 covered Postgres and nothing else. What shipped now: `scripts/ops/galexie-archive-mirror.sh` + `galexie-archive-mirror.timer`, installed by `18-pgbackrest-backup.yml` behind `galexie_archive_mirror_enabled`, mirroring the local `galexie-archive` bucket to an off-site `mc` alias (default tool: `mc mirror`, verified each run with a post-mirror `mc mirror --dry-run`); restore in [`runbooks/galexie-archive-mirror.md`](runbooks/galexie-archive-mirror.md). It backs nothing up until `galexie_archive_mirror_s3_endpoint` and the vault key pair are set; until then `stellarindex_galexie_archive_mirror_stale` tickets the host. When costing that spend, note the honest blast radius: the archive is **reconstructible** by re-ingesting the public Stellar history archives, so losing it is a days-to-weeks recovery with no third-party SLA — expensive and reputationally bad, not permanent. The irreplaceable-forever framing in the table above overstates it.
 
 The archive is **append-only** (historical LCM never changes), so an incremental mirror is cheap after the first sync.
 - Tool: `mc mirror --watch` (MinIO's native, already installed) or `rclone sync` (crypt-wrapped). Bucket→bucket, server-side where possible.

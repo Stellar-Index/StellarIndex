@@ -1,0 +1,19 @@
+# systemd timer: Galexie archive off-site mirror (off-site-backup-plan.md §1).
+#
+# Rendered by Ansible. Hourly: the archive is append-only, so most runs
+# find nothing new and finish in seconds; `mc mirror` is idempotent, so an
+# overlapping run (a slow first sync still in progress) is harmless — the
+# elapsed trigger finds the service active and starts nothing.
+
+[Unit]
+Description=Hourly Galexie archive off-site mirror (off-site-backup-plan.md §1)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/off-site-backup-plan.md
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=300
+Persistent=true
+Unit=galexie-archive-mirror.service
+
+[Install]
+WantedBy=timers.target

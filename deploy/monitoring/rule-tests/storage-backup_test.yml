@@ -723,3 +723,81 @@ tests:
       - eval_time: 150h
         alertname: stellarindex_ch_lake_backup_stale
         exp_alerts: []
+
+  # ═══ stellarindex_galexie_archive_mirror_stale (off-site-backup-plan.md §1, NS03) ═══
+
+  # (RED) never configured: the script writes only configured=0, so the
+  # success-timestamp stamp is ABSENT. `configured` itself anchors the host.
+  - interval: 1h
+    name: archive mirror never configured — stale ticket fires
+    input_series:
+      - series: 'stellarindex_galexie_archive_mirror_configured{job="node_exporter", instance="r1:9100"}'
+        values: '0x100'
+    alert_rule_test:
+      - eval_time: 50h
+        alertname: stellarindex_galexie_archive_mirror_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-mirror.md
+              summary: "Galexie archive has no verified off-site mirror younger than 48 h on r1:9100"
+              description: |
+                No galexie-archive-mirror run has completed and verified clean
+                on this host in 48 h, or none ever has. Without one the
+                archive has no off-site copy at all — a pool or box loss
+                recovers only via re-ingest of the public Stellar history
+                archives (days-weeks). `stellarindex_galexie_archive_mirror_configured`
+                splits the cases: 0 = no off-site target configured (set
+                galexie_archive_mirror_s3_endpoint + the vault key pair and
+                re-apply the role), 1 = configured but failing —
+                `journalctl -u galexie-archive-mirror.service -n 100`.
+
+  # (RED) configured but the last verified success is > 48 h old.
+  - interval: 1h
+    name: archive mirror stamp older than 48 h — stale ticket fires
+    input_series:
+      - series: 'stellarindex_galexie_archive_mirror_configured{job="node_exporter", instance="r1:9100"}'
+        values: '1x100'
+      - series: 'stellarindex_galexie_archive_mirror_last_success_timestamp{job="node_exporter", instance="r1:9100"}'
+        values: '0x100'
+    alert_rule_test:
+      - eval_time: 50h
+        alertname: stellarindex_galexie_archive_mirror_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-mirror.md
+              summary: "Galexie archive has no verified off-site mirror younger than 48 h on r1:9100"
+              description: |
+                No galexie-archive-mirror run has completed and verified clean
+                on this host in 48 h, or none ever has. Without one the
+                archive has no off-site copy at all — a pool or box loss
+                recovers only via re-ingest of the public Stellar history
+                archives (days-weeks). `stellarindex_galexie_archive_mirror_configured`
+                splits the cases: 0 = no off-site target configured (set
+                galexie_archive_mirror_s3_endpoint + the vault key pair and
+                re-apply the role), 1 = configured but failing —
+                `journalctl -u galexie-archive-mirror.service -n 100`.
+
+  # Healthy: the stamp refreshes every hour and never ages past 48 h.
+  - interval: 1h
+    name: archive mirror healthy — silent
+    input_series:
+      - series: 'stellarindex_galexie_archive_mirror_configured{job="node_exporter", instance="r1:9100"}'
+        values: '1x100'
+      - series: 'stellarindex_galexie_archive_mirror_last_success_timestamp{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x100'
+    alert_rule_test:
+      - eval_time: 90h
+        alertname: stellarindex_galexie_archive_mirror_stale
+        exp_alerts: []
