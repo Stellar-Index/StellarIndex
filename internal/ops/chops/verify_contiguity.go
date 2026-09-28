@@ -22,21 +22,21 @@ import (
 // Two checks:
 //
 //  1. Ledger substrate contiguity: every ledger_seq in [-from,-to] must be
-//     present in stellar.ledgers exactly once (ADR-0034's "100% coverage"
-//     claim is provable only if the substrate is gap-free).
+//     present in stellar.ledgers (ADR-0034's "100% coverage" claim is
+//     provable only if the substrate is gap-free). Un-merged duplicate rows
+//     are reported alongside, informational.
 //  2. stellar.ledger_entry_changes coverage vs. tx-bearing ledgers: every
-//     ledger with tx_count>0 should have at least one entry_changes row,
-//     ABOVE the live-ingest floor (-ec-floor, default 63,050,000 — coverage
-//     below the floor is backfill-in-progress and expected to be partial;
-//     see AGENTS.md's "entry_changes coverage seam" note).
+//     ledger with tx_count>0 should have at least one entry_changes row
+//     at/above -ec-floor. The default (0) derives the floor from the lake:
+//     the lowest ledger in range holding a transaction-scoped entry-change
+//     row (see resolveECFloor), so every hole above that edge is a failure.
 //
 // Exit code = (ledger gaps) + (entry-change deficiencies at/above
 // -ec-floor), capped at 255, mirroring reconcile-balances' and
 // scripts/dev/r1-smoke.sh's "exit code = number of failed checks"
 // convention so cron/Healthchecks.io can consume it directly. Backfill-
 // pending entries below -ec-floor are reported but never counted toward
-// the exit code — the whole point of the floor is to keep the exit code
-// meaningful (fails only on real regressions in the live-covered zone).
+// the exit code; the exempted range is always printed.
 //
 // Usage: verify-contiguity [-config PATH] [-ch-addr H:P] [-from N] [-to N]
 // [-ec-floor N] [-check ledgers|entrychanges|all]. Read-only; touches
@@ -47,7 +47,7 @@ func verifyContiguity(args []string) error {
 	chAddr := fs.String("ch-addr", "", "ClickHouse native address (default: cfg.storage.clickhouse_addr from -config, falling back to "+defaultCHAddr+" if -config can't be loaded)")
 	from := fs.Uint64("from", 2, "first ledger sequence to verify (inclusive); 2 is genesis")
 	to := fs.Uint64("to", 0, "last ledger sequence to verify (inclusive); 0 = auto (max ledger_seq in stellar.ledgers)")
-	ecFloor := fs.Uint64("ec-floor", defaultECFloor, "ledger at/above which missing stellar.ledger_entry_changes coverage is a hard failure (counts toward the exit code); below it, missing coverage is reported as backfill-pending, informational only")
+	ecFloor := fs.Uint64("ec-floor", 0, ecFloorUsage)
 	checkFlag := fs.String("check", "all", "which check(s) to run: ledgers | entrychanges | all")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -78,8 +78,8 @@ func verifyContiguity(args []string) error {
 		return fmt.Errorf("verify-contiguity: resolved range [%d,%d] is empty (-to < -from)", fromSeq, toSeq)
 	}
 
-	fmt.Fprintf(os.Stderr, "verify-contiguity: range=[%d,%d] ch-addr=%s ec-floor=%d check=%s\n",
-		fromSeq, toSeq, addr, ecFloorSeq, *checkFlag)
+	fmt.Fprintf(os.Stderr, "verify-contiguity: range=[%d,%d] ch-addr=%s ec-floor=%s check=%s\n",
+		fromSeq, toSeq, addr, ecFloorFlagLabel(ecFloorSeq), *checkFlag)
 
 	var ledgerGaps, ecDeficiency, ecPending uint64
 	runLedgers := *checkFlag == "ledgers" || *checkFlag == "all"
@@ -119,14 +119,62 @@ func verifyContiguity(args []string) error {
 	return &opsutil.ExitCodeError{Code: int(code)} //nolint:gosec // capped above; always in [1,255].
 }
 
-// defaultCHAddr / defaultECFloor are verify-contiguity's flag defaults.
-// defaultECFloor is the known live-ingest floor documented in AGENTS.md's
-// "entry_changes coverage seam" note (2026-07-16): coverage is 100% from
-// this ledger to tip and partial below it (backfill in progress).
-const (
-	defaultCHAddr  = "127.0.0.1:9300"
-	defaultECFloor = 63_050_000
-)
+// defaultCHAddr is the verify-* tools' -ch-addr fallback.
+const defaultCHAddr = "127.0.0.1:9300"
+
+// ecFloorUsage is the -ec-floor help text shared by verify-contiguity and
+// verify-lake.
+const ecFloorUsage = "ledger at/above which missing stellar.ledger_entry_changes coverage is a hard failure (counts toward the exit code); below it, missing coverage is reported as backfill-pending, informational only. 0 = auto: the lowest ledger in range holding a transaction-scoped entry-change row (the whole range is gated if there is none). The exempted range is always printed"
+
+// ecFloorFlagLabel renders the -ec-floor flag value for a tool's header line.
+func ecFloorFlagLabel(v uint32) string {
+	if v == 0 {
+		return "auto"
+	}
+	return fmt.Sprintf("%d", v)
+}
+
+// resolveECFloor turns the -ec-floor flag into Check 2's effective floor and
+// prints the range it exempts from the hard gate. A non-zero flag is the
+// operator's explicit choice; zero derives the floor from the lake itself
+// (clickhouse.QueryECLowerEdge) rather than a constant that goes stale as
+// ch-backfill extends coverage downward.
+func resolveECFloor(ctx context.Context, addr string, flagFloor, from, to uint32) (uint32, error) {
+	if flagFloor != 0 {
+		fmt.Println(ecFloorExemptionLine(flagFloor, from, "operator-supplied -ec-floor"))
+		return flagFloor, nil
+	}
+	edge, found, err := clickhouse.QueryECLowerEdge(ctx, addr, from, to)
+	if err != nil {
+		return 0, fmt.Errorf("verify-contiguity: check 2 resolve -ec-floor: %w", err)
+	}
+	floor := autoECFloor(edge, found, from)
+	source := "auto: lowest ledger with a transaction-scoped ledger_entry_changes row"
+	if !found {
+		source = "auto: no transaction-scoped ledger_entry_changes row in range, gating all of it"
+	}
+	fmt.Println(ecFloorExemptionLine(floor, from, source))
+	return floor, nil
+}
+
+// autoECFloor is the auto -ec-floor: the lower edge of entry-change coverage,
+// clamped to -from. With no edge in range the floor is -from, so the whole
+// range is hard-gated (fail closed). Pure — unit-testable without a lake.
+func autoECFloor(edge uint32, found bool, from uint32) uint32 {
+	if !found || edge < from {
+		return from
+	}
+	return edge
+}
+
+// ecFloorExemptionLine names the range an -ec-floor exempts from the hard
+// gate, so a report never hides what it did not hold to account. Pure.
+func ecFloorExemptionLine(floor, from uint32, source string) string {
+	if floor <= from {
+		return fmt.Sprintf("ec-floor=%d (%s): nothing exempted, every ledger from %d is hard-gated", floor, source, from)
+	}
+	return fmt.Sprintf("ec-floor=%d (%s): EXEMPTING [%d,%d] from the hard gate (reported as backfill-pending, not counted)", floor, source, from, floor-1)
+}
 
 // resolveCHAddr implements "-ch-addr overrides; unset falls back to
 // -config's clickhouse_addr; -config itself is best-effort" — mirrors
@@ -277,9 +325,10 @@ func runLedgerContiguityCheck(ctx context.Context, addr string, from, to uint32)
 		return 0, fmt.Errorf("verify-contiguity: check 1: %w", err)
 	}
 	missingTotal := overall.Missing()
-	fmt.Printf("expected=%d present=%d missing=%d\n", overall.Expected, overall.Present, missingTotal)
+	fmt.Printf("expected=%d present=%d missing=%d rows=%d duplicate_rows=%d\n",
+		overall.Expected, overall.Present, missingTotal, overall.Rows, overall.DuplicateRows())
 	if missingTotal == 0 {
-		fmt.Println("check 1: OK — every ledger present exactly once")
+		fmt.Println(ledgerCheckOKLine(overall.DuplicateRows()))
 		return 0, nil
 	}
 
@@ -325,6 +374,17 @@ func runLedgerContiguityCheck(ctx context.Context, addr string, from, to uint32)
 	return missingTotal, nil
 }
 
+// ledgerCheckOKLine is Check 1's no-gap verdict. It claims "exactly once"
+// only when count() agrees with uniqExact; otherwise it names the un-merged
+// duplicate rows (ReplacingMergeTree collapses them on merge and readers
+// dedupe with FINAL), which are informational, not a gap. Pure.
+func ledgerCheckOKLine(duplicateRows uint64) string {
+	if duplicateRows == 0 {
+		return "check 1: OK — every ledger present exactly once"
+	}
+	return fmt.Sprintf("check 1: OK — every ledger present; %d un-merged duplicate row(s) pending ReplacingMergeTree merge (informational, not counted toward the exit code)", duplicateRows)
+}
+
 // gapRange is one contiguous run of missing ledger_seq values, as located by
 // groupMissingIntoRanges.
 type gapRange struct {
@@ -362,15 +422,19 @@ func groupMissingIntoRanges(missing []uint32, capRanges int) (ranges []gapRange,
 }
 
 // runEntryChangesCheck is Check 2: stellar.ledger_entry_changes coverage vs.
-// tx-bearing ledgers, split at -ec-floor into a below-floor
-// (backfill-pending, informational) and at/above-floor (live-covered,
-// hard-gated) sub-range via ecFloorSegments BEFORE windowing — so every
-// window handed to QueryECWindowCoverage sits entirely on one side of the
-// floor and its Missing() count is never ambiguous about which zone it
-// belongs to.
-func runEntryChangesCheck(ctx context.Context, addr string, from, to, ecFloor uint32) (deficiency, pending uint64, err error) {
-	fmt.Printf("\n=== verify-contiguity: check 2 — ledger_entry_changes coverage [%d,%d] (ec-floor=%d) ===\n",
-		from, to, ecFloor)
+// tx-bearing ledgers, split at the effective -ec-floor (resolveECFloor;
+// flagFloor 0 = auto) into a below-floor (backfill-pending, informational)
+// and at/above-floor (hard-gated) sub-range via ecFloorSegments BEFORE
+// windowing — so every window handed to QueryECWindowCoverage sits entirely
+// on one side of the floor and its Missing() count is never ambiguous about
+// which zone it belongs to.
+func runEntryChangesCheck(ctx context.Context, addr string, from, to, flagFloor uint32) (deficiency, pending uint64, err error) {
+	fmt.Printf("\n=== verify-contiguity: check 2 — ledger_entry_changes coverage [%d,%d] (ec-floor=%s) ===\n",
+		from, to, ecFloorFlagLabel(flagFloor))
+	ecFloor, err := resolveECFloor(ctx, addr, flagFloor, from, to)
+	if err != nil {
+		return 0, 0, err
+	}
 
 	pendingFrom, pendingTo, hasPending, gatedFrom, gatedTo, hasGated := ecFloorSegments(from, to, ecFloor)
 

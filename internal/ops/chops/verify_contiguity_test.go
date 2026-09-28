@@ -4,6 +4,7 @@
 package chops
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -256,5 +257,62 @@ func TestToLedgerSeq(t *testing.T) {
 
 	if _, err := toLedgerSeq("-to", uint64(1)<<40); err == nil {
 		t.Fatalf("toLedgerSeq(2^40) should have errored on overflow")
+	}
+}
+
+// ─── auto -ec-floor + exemption reporting (GH-1092) ───────────────────────
+
+func TestAutoECFloor(t *testing.T) {
+	cases := []struct {
+		name       string
+		edge       uint32
+		found      bool
+		from, want uint32
+	}{
+		{"edge-inside-range-is-the-floor", 38_000_001, true, 2, 38_000_001},
+		{"edge-at-from-gates-everything", 2, true, 2, 2},
+		{"edge-below-from-clamps", 5, true, 10, 10},
+		{"no-coverage-in-range-fails-closed", 0, false, 1_000, 1_000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := autoECFloor(tc.edge, tc.found, tc.from); got != tc.want {
+				t.Fatalf("autoECFloor(%d,%v,%d) = %d, want %d", tc.edge, tc.found, tc.from, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestECFloorExemptionLine(t *testing.T) {
+	got := ecFloorExemptionLine(63_050_000, 2, "operator-supplied -ec-floor")
+	want := "ec-floor=63050000 (operator-supplied -ec-floor): EXEMPTING [2,63049999] from the hard gate (reported as backfill-pending, not counted)"
+	if got != want {
+		t.Fatalf("ecFloorExemptionLine = %q, want %q", got, want)
+	}
+	got = ecFloorExemptionLine(2, 2, "auto")
+	want = "ec-floor=2 (auto): nothing exempted, every ledger from 2 is hard-gated"
+	if got != want {
+		t.Fatalf("ecFloorExemptionLine = %q, want %q", got, want)
+	}
+}
+
+func TestECFloorFlagLabel(t *testing.T) {
+	if got := ecFloorFlagLabel(0); got != "auto" {
+		t.Fatalf("ecFloorFlagLabel(0) = %q, want auto", got)
+	}
+	if got := ecFloorFlagLabel(7); got != "7" {
+		t.Fatalf("ecFloorFlagLabel(7) = %q, want 7", got)
+	}
+}
+
+// ─── Check 1 verdict must not claim "exactly once" over duplicates (GH-1091) ─
+
+func TestLedgerCheckOKLine(t *testing.T) {
+	if got := ledgerCheckOKLine(0); got != "check 1: OK — every ledger present exactly once" {
+		t.Fatalf("ledgerCheckOKLine(0) = %q", got)
+	}
+	got := ledgerCheckOKLine(3)
+	if strings.Contains(got, "exactly once") || !strings.Contains(got, "3 un-merged duplicate row(s)") {
+		t.Fatalf("ledgerCheckOKLine(3) = %q, must name 3 duplicate rows and not claim exactly once", got)
 	}
 }
