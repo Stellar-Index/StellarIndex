@@ -20,12 +20,13 @@ import (
 // fakeStore records the Postgres half's calls; the account exists until
 // EraseAccount succeeds.
 type fakeStore struct {
-	plan     postgresstore.ErasurePlan
-	gone     bool
-	eraseErr error
-	erased   bool
-	requests []postgresstore.ErasureRequest
-	renames  []string
+	plan      postgresstore.ErasurePlan
+	gone      bool
+	eraseErr  error
+	erased    bool
+	requests  []postgresstore.ErasureRequest
+	renames   []string
+	renameErr error
 }
 
 func (f *fakeStore) PlanErasure(context.Context, uuid.UUID) (postgresstore.ErasurePlan, error) {
@@ -46,7 +47,7 @@ func (f *fakeStore) EraseAccount(_ context.Context, req postgresstore.ErasureReq
 
 func (f *fakeStore) RenameUsageSubjects(_ context.Context, _ []string, erased string) (int64, error) {
 	f.renames = append(f.renames, erased)
-	return 0, nil
+	return 0, f.renameErr
 }
 
 func (f *fakeStore) SlugErased(context.Context, string) (bool, error) { return f.erased, nil }
@@ -171,5 +172,31 @@ func TestFinishBySlug_RefusesALiveSlug(t *testing.T) {
 	}
 	if !authenticates(rdb, plaintext) {
 		t.Error("refused FinishBySlug still deleted keys")
+	}
+}
+
+// TestErase_PostCommitFailureIsMarkedCommitted — a cleanup failure after
+// the commit must be distinguishable from a pre-commit failure, so no
+// caller tells the user to retry an erasure that already happened.
+func TestErase_PostCommitFailureIsMarkedCommitted(t *testing.T) {
+	e, st, _, _ := newRig(t)
+	st.plan.OwnerEmails = []string{"owner@b.example"}
+	st.renameErr = errors.New("pg gone")
+	rep, err := e.Erase(context.Background(), st.plan.AccountID, platform.ActorUser)
+	if !errors.Is(err, ErrCleanupIncomplete) {
+		t.Fatalf("err = %v, want ErrCleanupIncomplete", err)
+	}
+	if !strings.Contains(err.Error(), "-finish-slug john") {
+		t.Errorf("err = %q, want the finish command", err)
+	}
+	if !st.erased || len(rep.Plan.OwnerEmails) != 1 {
+		t.Errorf("report = %+v, want the committed plan", rep)
+	}
+
+	e, st, _, _ = newRig(t)
+	st.eraseErr = errors.New("tx failed")
+	if _, err := e.Erase(context.Background(), st.plan.AccountID, platform.ActorUser); err == nil ||
+		errors.Is(err, ErrCleanupIncomplete) {
+		t.Errorf("pre-commit failure = %v, want a plain error", err)
 	}
 }

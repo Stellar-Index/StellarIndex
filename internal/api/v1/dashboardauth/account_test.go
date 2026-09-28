@@ -27,10 +27,16 @@ type fakeEraser struct {
 
 func (f *fakeEraser) Erase(_ context.Context, id uuid.UUID, actor platform.ActorKind) (accounterasure.Report, error) {
 	f.calls, f.actor = append(f.calls, id), actor
+	rep := accounterasure.Report{Plan: postgresstore.ErasurePlan{
+		AccountID: id, Slug: "acme", OwnerEmails: []string{"owner@acme.example"},
+	}}
+	if errors.Is(f.err, accounterasure.ErrCleanupIncomplete) {
+		return rep, f.err
+	}
 	if f.err != nil {
 		return accounterasure.Report{}, f.err
 	}
-	return accounterasure.Report{Plan: postgresstore.ErasurePlan{AccountID: id, OwnerEmails: []string{"owner@acme.example"}}}, nil
+	return rep, nil
 }
 
 type fakeExporter struct{ requester uuid.UUID }
@@ -182,6 +188,28 @@ func TestAccountDelete_BlockedIs409AndFailureIs500(t *testing.T) {
 	}
 	if _, sent := ar.sender.Last(); sent {
 		t.Error("a failed erasure sent the confirmation mail")
+	}
+}
+
+// TestAccountDelete_CommittedWithCleanupFailureIs204 — the erasure has
+// committed, so the user gets success and the confirmation mail, never an
+// instruction to retry an account that no longer exists.
+func TestAccountDelete_CommittedWithCleanupFailureIs204(t *testing.T) {
+	ar := newAccountRig(t)
+	ar.eraser.err = fmt.Errorf("%w: redis pass 1: dial tcp: refused", accounterasure.ErrCleanupIncomplete)
+	w := ar.erase(`{"confirm":"acme"}`, &ar.sc)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d %s, want 204", w.Code, w.Body)
+	}
+	if msg, ok := ar.sender.Last(); !ok || msg.To[0] != "owner@acme.example" {
+		t.Errorf("confirmation mail = %+v (sent=%v), want one to the owner", msg, ok)
+	}
+	cleared := false
+	for _, c := range w.Result().Cookies() {
+		cleared = cleared || (c.Name == SessionCookieName && c.MaxAge < 0)
+	}
+	if !cleared {
+		t.Error("session cookie not cleared")
 	}
 }
 

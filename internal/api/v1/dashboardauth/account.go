@@ -72,6 +72,11 @@ func (h *Handlers) HandleAccountDelete(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteProblem(w, "https://api.stellarindex.io/errors/account-erasure-blocked",
 			http.StatusConflict, "this account cannot be deleted from the dashboard; contact support", accountRoute)
 		return
+	case errors.Is(err, accounterasure.ErrCleanupIncomplete):
+		// Committed: the account is gone, so the user is told so; an
+		// operator finishes the Redis cleanup.
+		h.cfg.Logger.Error("account erased but cleanup incomplete; run stellarindex-ops account-erase -finish-slug",
+			"err", err, "account_id", sc.Account.ID, "finish_slug", rep.Plan.Slug)
 	case err != nil:
 		h.cfg.Logger.Error("account erasure failed", "err", err, "account_id", sc.Account.ID)
 		writeProblem(w, http.StatusInternalServerError, "account deletion failed; retry", accountRoute)

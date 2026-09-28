@@ -16,8 +16,10 @@
 //     the same uuid. The second pass catches a key mint or a rollup sweep
 //     that was in flight across the commit.
 //
-// A record that slips past both passes cannot authenticate: its account
-// is gone, and the tombstone keeps any new account off the slug.
+// A record that slips past both passes can still authenticate until the
+// validator's cached account status expires (auth.DefaultAccountStatusCacheTTL,
+// 30 s) and GetBySlug returns not-found; after that it cannot, and the
+// tombstone keeps any new account off the slug.
 package accounterasure
 
 import (
@@ -43,6 +45,12 @@ const afterCommitTimeout = 30 * time.Second
 
 // ErrBlocked wraps [postgresstore.ErrErasureBlocked].
 var ErrBlocked = postgresstore.ErrErasureBlocked
+
+// ErrCleanupIncomplete marks an Erase error returned after the Postgres
+// commit: the account is erased, but Redis state or late usage rows remain
+// until FinishBySlug runs. The erasure must not be retried or reported as
+// failed.
+var ErrCleanupIncomplete = errors.New("account erased; post-commit cleanup incomplete")
 
 // Store is the Postgres half; *postgresstore.AccountStore satisfies it.
 type Store interface {
@@ -83,7 +91,8 @@ type Report struct {
 
 // Erase erases the account. A second call for the same account reports
 // AlreadyErased. An error before the commit leaves the account untouched;
-// an error after it leaves Redis state that FinishBySlug removes.
+// an error after it wraps ErrCleanupIncomplete, carries the full Report,
+// and leaves Redis state that FinishBySlug removes.
 func (e *Eraser) Erase(ctx context.Context, id uuid.UUID, actor platform.ActorKind) (Report, error) {
 	plan, err := e.Store.PlanErasure(ctx, id)
 	if errors.Is(err, platform.ErrNotFound) {
@@ -123,7 +132,8 @@ func (e *Eraser) Erase(ctx context.Context, id uuid.UUID, actor platform.ActorKi
 	postCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), afterCommitTimeout)
 	defer cancel()
 	if err := e.afterCommit(postCtx, plan.Slug, keyIDs, plan.KeyHashes, erased, &rep); err != nil {
-		return rep, err
+		return rep, fmt.Errorf("%w (finish with: stellarindex-ops account-erase -finish-slug %s): %w",
+			ErrCleanupIncomplete, plan.Slug, err)
 	}
 	e.logger().Info("account erased",
 		"account_id", plan.AccountID, "actor", actor,
