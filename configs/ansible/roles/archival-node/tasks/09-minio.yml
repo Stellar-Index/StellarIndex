@@ -54,14 +54,36 @@
     - minio
     - mc
 
+# An existing host keeps the binary it runs: a pin bump must not silently
+# swap the server under a live lake on the next apply. Replacing one is a
+# planned upgrade, opted into per run with -e minio_allow_binary_upgrade=true.
+- name: Decide whether to install the pinned MinIO binaries
+  ansible.builtin.set_fact:
+    minio_bin_missing: >-
+      {{ not minio_bin_stat.results[0].stat.exists or not minio_bin_stat.results[1].stat.exists }}
+    minio_bin_differs: >-
+      {{ minio_bin_stat.results[0].stat.checksum | default('') != minio_release_sha256
+         or minio_bin_stat.results[1].stat.checksum | default('') != mc_release_sha256 }}
+
+- name: Set minio_bin_install
+  ansible.builtin.set_fact:
+    minio_bin_install: >-
+      {{ minio_bin_missing | bool
+         or (minio_bin_differs | bool and minio_allow_binary_upgrade | default(false) | bool) }}
+
+- name: Warn that the installed MinIO binaries differ from the pin and are kept
+  ansible.builtin.debug:
+    msg: >-
+      /usr/local/bin/minio or mc differs from the pinned checksum; keeping the
+      installed binaries. Upgrade deliberately with -e minio_allow_binary_upgrade=true.
+  when: minio_bin_differs | bool and not minio_bin_install | bool
+
 - name: Install podman (extracts the pinned binaries from minio_image; no daemon, nothing else on the box needs it)
   ansible.builtin.apt:
     name: podman
     state: present
     update_cache: true
-  when: >-
-    not minio_bin_stat.results[0].stat.exists or minio_bin_stat.results[0].stat.checksum != minio_release_sha256
-    or not minio_bin_stat.results[1].stat.exists or minio_bin_stat.results[1].stat.checksum != mc_release_sha256
+  when: minio_bin_install | bool
 
 - name: Extract minio + mc from the pinned image
   # Runs the image's own `cp` as root against a bind-mounted host dir —
@@ -82,9 +104,7 @@
       - /usr/bin/minio
       - /usr/bin/mc
       - /out/
-  when: >-
-    not minio_bin_stat.results[0].stat.exists or minio_bin_stat.results[0].stat.checksum != minio_release_sha256
-    or not minio_bin_stat.results[1].stat.exists or minio_bin_stat.results[1].stat.checksum != mc_release_sha256
+  when: minio_bin_install | bool
 
 - name: Set ownership + mode on the extracted binaries
   ansible.builtin.file:
@@ -95,6 +115,7 @@
   loop:
     - minio
     - mc
+  when: minio_bin_install | bool
 
 - name: Verify extracted binaries against the pinned checksums
   ansible.builtin.stat:
@@ -104,6 +125,7 @@
   loop:
     - minio
     - mc
+  when: minio_bin_install | bool
 
 - name: assert extracted binaries match minio_release_sha256 / mc_release_sha256
   ansible.builtin.assert:
@@ -115,6 +137,7 @@
       checksum — refusing to keep a root-owned executable without
       verified provenance (same invariant F-1291 established for the
       old get_url path).
+  when: minio_bin_install | bool
 
 - name: Template MinIO environment file
   ansible.builtin.template:
