@@ -12,10 +12,17 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
+
+// afterResponseTestTimeout bounds how long a test waits for the shared
+// after-response pool to drain (GH-627: TouchUsage/UsageTracker run
+// there, not inline). Generous relative to the fake stores' in-memory
+// latency so it never flakes on a loaded CI box.
+const afterResponseTestTimeout = 2 * time.Second
 
 // fakeToucher records every TouchUsage call so the test can
 // assert which key/IP/UA the middleware passed through.
@@ -67,6 +74,9 @@ func runTouch(t *testing.T, mw middleware.Middleware, sub auth.Subject, ua strin
 	req = req.WithContext(auth.WithSubject(req.Context(), sub))
 	w := httptest.NewRecorder()
 	mw(next).ServeHTTP(w, req)
+	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+		t.Fatal("after-response pool did not drain in time")
+	}
 }
 
 // TestTouchUsage_FiresOnAuthenticatedRequest — Subject with a
@@ -180,6 +190,9 @@ func TestTouchUsage_ToucherErrorSwallowed(t *testing.T) {
 	req = req.WithContext(auth.WithSubject(req.Context(), auth.Subject{Tier: auth.TierAPIKey, KeyID: "K1"}))
 	w := httptest.NewRecorder()
 	mw(next).ServeHTTP(w, req)
+	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+		t.Fatal("after-response pool did not drain in time")
+	}
 	if !called {
 		t.Error("next handler did not run despite toucher error")
 	}
@@ -205,6 +218,9 @@ func TestTouchUsage_PanickingHandlerStillTouched(t *testing.T) {
 	req = req.WithContext(auth.WithSubject(req.Context(), auth.Subject{Tier: auth.TierAPIKey, KeyID: "K1"}))
 	w := httptest.NewRecorder()
 	mw.ServeHTTP(w, req)
+	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+		t.Fatal("after-response pool did not drain in time")
+	}
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500 (Recoverer)", w.Code)

@@ -15,10 +15,12 @@ import (
 )
 
 // postResponseWriteTimeout bounds the bookkeeping writes that run AFTER
-// the response has been flushed (usage counters, last-used touch). They
-// deliberately do not inherit the request's cancellation — see the call
-// sites — so they need a bound of their own or a wedged Redis would pin
-// the request goroutine forever. Generous relative to go-redis's 3 s
+// the response has been flushed (usage counters, last-used touch), on
+// the shared [AfterResponse] worker pool rather than the request
+// goroutine (GH-627). They run under a fresh context.Background(), never
+// the request's — a wedged store must not pin a pool worker forever, and
+// the tasks must survive a client abort or an exhausted RequestTimeout
+// budget exactly as they did before. Generous relative to go-redis's 3 s
 // default so it is a backstop, not the usual limiter.
 const postResponseWriteTimeout = 5 * time.Second
 
@@ -111,7 +113,12 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 
 // usageTrackerRecord is [UsageTracker]'s post-dispatch bookkeeping,
 // pulled into its own deferred call so it still runs when the handler
-// panics (GH-1276).
+// panics (GH-1276). On the non-panic path the counter writes go through
+// [AfterResponse], which flushes rec for the client immediately and runs
+// them on the shared post-response pool (GH-627) instead of the request
+// goroutine. On a panic, rec is NOT known-complete (the outer Recoverer
+// still has to write its 500), so the writes are enqueued directly,
+// without flushing.
 func usageTrackerRecord(counter *usage.Counter, logger *slog.Logger, reqCtx context.Context, inner *http.Request, rec *statusRecorder, units *usageUnits, deadlineFired *atomic.Bool, panicked bool) {
 	subject, ok := auth.SubjectFrom(reqCtx)
 	if !ok {
@@ -129,12 +136,16 @@ func usageTrackerRecord(counter *usage.Counter, logger *slog.Logger, reqCtx cont
 	if panicked {
 		class = usage.ClassServerError
 	}
+	billable := billableClass(class, deadlineFired.Load())
+	n := units.get()
 	// The response is already written, so these counters MUST NOT
 	// inherit the request's cancellation: a client that aborted, or
 	// a handler that consumed the whole RequestTimeout budget, would
 	// otherwise silently lose its usage row — and the legacy total is
-	// the monthly-quota input. Still bounded, so a wedged Redis can't
-	// pin the request goroutine (C3-102, audit-2026-07-23).
+	// the monthly-quota input. They run under context.Background(), on
+	// the shared after-response pool rather than the request goroutine
+	// (GH-627), so a wedged store bounds only a pool worker, never the
+	// request (C3-102, audit-2026-07-23).
 	//
 	// DELIBERATE BEHAVIOUR CHANGE, recorded rather than discovered:
 	// an ABORTED request now consumes monthly quota where before it
@@ -149,25 +160,31 @@ func usageTrackerRecord(counter *usage.Counter, logger *slog.Logger, reqCtx cont
 	// The 5 s bound is only as hard as the store's context honouring.
 	// go-redis and database/sql both respect ctx cancellation on the
 	// wire, so it holds for every store wired here today; a driver
-	// that ignored ctx would block the request goroutine for its own
-	// timeout instead.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(reqCtx), postResponseWriteTimeout)
-	defer cancel()
-	n := units.get()
-	if billableClass(class, deadlineFired.Load()) {
-		// Legacy total: billable traffic only (quota input).
-		// The counter is the alertable signal; a per-request log
-		// line would flood during an outage.
-		if err := counter.IncrementBy(ctx, id, n); err != nil {
-			obs.UsageUnitsDroppedTotal.WithLabelValues(obs.UsageCounterBillable).Add(float64(n))
-			logger.Debug("usage: increment failed", "err", err, "subject", id)
+	// that ignored ctx would block a pool worker for its own timeout
+	// instead.
+	fn := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), postResponseWriteTimeout)
+		defer cancel()
+		if billable {
+			// Legacy total: billable traffic only (quota input).
+			// The counter is the alertable signal; a per-request log
+			// line would flood during an outage.
+			if err := counter.IncrementBy(ctx, id, n); err != nil {
+				obs.UsageUnitsDroppedTotal.WithLabelValues(obs.UsageCounterBillable).Add(float64(n))
+				logger.Debug("usage: increment failed", "err", err, "subject", id)
+			}
+		}
+		if err := counter.IncrementDetailBy(ctx, id, family, class, n); err != nil {
+			obs.UsageUnitsDroppedTotal.WithLabelValues(obs.UsageCounterDetail).Add(float64(n))
+			logger.Debug("usage: detail increment failed",
+				"err", err, "subject", id, "endpoint", family, "class", class)
 		}
 	}
-	if err := counter.IncrementDetailBy(ctx, id, family, class, n); err != nil {
-		obs.UsageUnitsDroppedTotal.WithLabelValues(obs.UsageCounterDetail).Add(float64(n))
-		logger.Debug("usage: detail increment failed",
-			"err", err, "subject", id, "endpoint", family, "class", class)
+	if panicked {
+		submitAfterResponseTask(fn)
+		return
 	}
+	AfterResponse(rec, fn)
 }
 
 // usageRecordOnce runs a request's usage bookkeeping at most once, from

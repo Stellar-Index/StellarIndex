@@ -2179,15 +2179,21 @@ func (s *Server) middlewareStack() []stackEntry {
 	// It stays INSIDE CORS/TrailingSlashRedirect (both allocation-free and
 	// I/O-free) so a preflight still short-circuits without a timer. The
 	// tighter per-handler 8s WithTimeout wrappers layer under it and fire
-	// first. Five seams detach from the request's CANCELLATION
-	// (context.WithoutCancel), each for a stated reason. Post-RESPONSE
-	// bookkeeping in UsageTracker/TouchUsage also drops this deadline, with
-	// its own bound, so moving the timeout out cannot drop a usage row. The
-	// PRE-handler MonthlyQuota read and RateLimit take (and Auth's
-	// failed-auth throttle) detach so a client abort cannot arm their
-	// dwell clocks, but middleware.throttleContext re-applies this deadline
-	// to them. They are bounded by min(5s, time left), so they cannot push
-	// a request past it.
+	// first. Three PRE-handler seams detach from the request's
+	// CANCELLATION (context.WithoutCancel), each for a stated reason: the
+	// MonthlyQuota read and RateLimit take (and Auth's failed-auth
+	// throttle) detach so a client abort cannot arm their dwell clocks,
+	// but middleware.throttleContext re-applies this deadline to them.
+	// They are bounded by min(5s, time left), so they cannot push a
+	// request past it.
+	//
+	// Post-RESPONSE bookkeeping in UsageTracker/TouchUsage does NOT use
+	// context.WithoutCancel at all (GH-627): [middleware.AfterResponse]
+	// flushes the response to the client first, then runs the counter/
+	// touch write on the shared after-response worker pool under its own
+	// context.Background()-derived bound, off the request goroutine
+	// entirely — so moving this timeout cannot drop a usage row, and a
+	// wedged store cannot pin a request goroutine either.
 	// SSE endpoints are exempt inside the middleware. Skipped entirely
 	// when requestTimeout <= 0 (the middleware also self-guards on that).
 	if s.requestTimeout > 0 {

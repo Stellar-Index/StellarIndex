@@ -535,6 +535,29 @@ groups:
             are mutually exclusive per request. Check Redis health and the
             usage-counter key namespace first.
 
+      # GH-627: UsageTracker/TouchUsage post-response bookkeeping runs on
+      # the shared middleware.AfterResponse worker pool, off the request
+      # goroutine, so a wedged store can no longer add client-visible
+      # latency. A saturated pool now drops the task instead — silent
+      # unless watched.
+      - alert: stellarindex_after_response_tasks_dropping
+        expr: sum(rate(stellarindex_after_response_tasks_dropped_total[5m])) > 0
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/after-response-tasks-dropping.md
+          summary: "After-response bookkeeping tasks are being dropped ({{ $value | humanize }}/s)"
+          description: |
+            The shared after-response worker pool (usage-counter writes,
+            TouchUsage last-seen updates) has been dropping tasks for the
+            last 10 minutes because its queue was full. Each drop silently
+            loses one usage row or one last-seen touch; the client response
+            itself is unaffected. Sustained saturation usually means a slow
+            downstream store (Redis/Postgres) or a genuine traffic spike.
+
       # The scam-pricing gate fails OPEN on an account_directory lookup
       # error — correct, because failing closed would blank every price
       # on a DB blip — but while it is open every directory-flagged

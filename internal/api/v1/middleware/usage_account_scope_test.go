@@ -18,6 +18,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/usage"
 )
 
+// drainAfterResponse blocks until the shared after-response pool has
+// finished every task submitted so far. UsageTracker's counter writes
+// run there (GH-627), so a test that immediately fires the NEXT request
+// — expecting MonthlyQuota to observe the PREVIOUS one's increment —
+// must synchronize on this first; otherwise it is racing the async
+// write against the following request's read.
+func drainAfterResponse(t *testing.T) {
+	t.Helper()
+	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+		t.Fatal("after-response pool did not drain in time")
+	}
+}
+
 // RLT-404 — the monthly ceiling is a PLAN budget, so the counter it is
 // enforced against must be keyed on the owner ACCOUNT. Keying it on the
 // credential let a customer multiply the plan allowance by the number
@@ -85,6 +98,10 @@ func apiKeySubject(slug, keyID string, quota int64) auth.Subject {
 	}
 }
 
+// getPrice issues one request and drains the after-response pool before
+// returning, so callers issuing several requests in sequence can rely on
+// each one's usage-counter write having landed before the next fires —
+// exactly the ordering MonthlyQuota's enforcement depends on.
 func getPrice(t *testing.T, ts *httptest.Server) *http.Response {
 	t.Helper()
 	resp, err := http.Get(ts.URL + "/v1/price")
@@ -92,6 +109,7 @@ func getPrice(t *testing.T, ts *httptest.Server) *http.Response {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = resp.Body.Close() })
+	drainAfterResponse(t)
 	return resp
 }
 

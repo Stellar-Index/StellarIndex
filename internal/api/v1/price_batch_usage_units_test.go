@@ -58,6 +58,12 @@ func TestPriceBatch_MetersOneUsageUnitPerID(t *testing.T) {
 	if get.StatusCode != http.StatusOK {
 		t.Fatalf("GET batch status = %d, want 200", get.StatusCode)
 	}
+	// UsageTracker's counter writes run on the shared after-response pool,
+	// not inline (GH-627), so a read right after the requests return must
+	// wait for them to land first.
+	if !middleware.AfterResponseDrainForTest(2 * time.Second) {
+		t.Fatal("after-response pool did not drain in time")
+	}
 
 	key := middleware.UsageKeyForSubject(subject)
 	got, err := counter.MonthToDate(context.Background(), key)

@@ -183,6 +183,7 @@ func registerAPIServingMetrics() {
 		APISSEStreamsRejectedTotal,
 		APIStreamHubTopics,
 		APIStreamHubTopicsReapedTotal,
+		AfterResponseTasksDroppedTotal,
 	)
 	for _, reason := range []string{"caller_quota", "global_ceiling"} {
 		APITipProducersRefusedTotal.WithLabelValues(reason)
@@ -3371,6 +3372,17 @@ var APITipProducersRefusedTotal = prometheus.NewCounterVec(
 var APIStreamSubscriberDropsTotal = prometheus.NewCounter(prometheus.CounterOpts{
 	Name: "stellarindex_api_stream_subscriber_drops_total",
 	Help: "SSE subscribers disconnected by the streaming Hub because their queue was full (slow consumer).",
+})
+
+// AfterResponseTasksDroppedTotal — post-response bookkeeping tasks
+// (UsageTracker counters, TouchUsage last-seen updates) dropped because
+// the shared after-response worker pool's queue was full (GH-627). A
+// dropped task silently loses a usage row or a last-seen touch, so a
+// sustained nonzero rate here means the pool is undersized for load or a
+// downstream store (Redis/Postgres) has slowed enough that tasks pile up.
+var AfterResponseTasksDroppedTotal = prometheus.NewCounter(prometheus.CounterOpts{
+	Name: "stellarindex_after_response_tasks_dropped_total",
+	Help: "Post-response bookkeeping tasks dropped because the shared after-response worker pool queue was full.",
 })
 
 // APISSEStreamsActive — SSE connections currently holding a slot

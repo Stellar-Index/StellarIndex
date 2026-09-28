@@ -18,6 +18,12 @@ import (
 
 func streamUsageTotal(t *testing.T, counter *usage.Counter, subject auth.Subject) int64 {
 	t.Helper()
+	// The stream-open counter write runs on the shared after-response
+	// pool, not inline (GH-627), so a read right after the headers commit
+	// must wait for it to land first.
+	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+		t.Fatal("after-response pool did not drain in time")
+	}
 	days, err := counter.Read(context.Background(), middleware.UsageKeyForSubject(subject), 3)
 	if err != nil {
 		t.Fatalf("counter.Read: %v", err)

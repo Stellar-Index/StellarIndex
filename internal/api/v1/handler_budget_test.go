@@ -466,9 +466,6 @@ var inlineDetachments = map[string]string{
 		"after the erasure committed, which a client disconnect must not drop; bounded by sendTimeout per owner",
 	"middleware/ratelimit.go#throttleContext": "the rate-limit take runs before the handler " +
 		"and must count an aborted request; bounded by throttleTakeTimeout",
-	"middleware/usage.go#usageTrackerRecord": "post-response usage metering, which must count an " +
-		"aborted request; bounded by postResponseWriteTimeout",
-	"middleware/touch_usage.go#touchUsageRecord": "post-response key touch; bounded by postResponseWriteTimeout",
 	"explorer/operations.go#stampTxOutcomes": "the tx-outcome stitch keeps request values " +
 		"without the request's cancellation; bounded by txOutcomeStitchBudget (1s)",
 }

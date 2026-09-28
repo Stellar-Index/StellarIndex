@@ -48,11 +48,10 @@ type TouchDebouncer interface {
 // Behaviour:
 //
 //   - Wraps `next.ServeHTTP` so the touch fires post-handler
-//     (touch is bookkeeping, not load-bearing). The work is
-//     INLINE on the request goroutine — no detached goroutine
-//     because the response has already been flushed and
-//     spawning per-request goroutines for bookkeeping creates
-//     unbounded fan-out under load.
+//     (touch is bookkeeping, not load-bearing). [AfterResponse]
+//     flushes the response to the client immediately and hands the
+//     actual touch to the shared bounded worker pool (GH-627) — not a
+//     per-request goroutine, so fan-out stays capped under load.
 //   - Skips anonymous Subjects, Subjects without a KeyID, and
 //     deployments where toucher OR debouncer is nil — Redis-less
 //     deployments fall in here and get the legacy "no last_used
@@ -79,7 +78,17 @@ func TouchUsage(toucher KeyToucher, debouncer TouchDebouncer, logger *slog.Logge
 			// attempted: Recoverer sits OUTSIDE this middleware, so a
 			// panic unwinds through here on its way up, and straight-line
 			// bookkeeping after next.ServeHTTP would never run (GH-1276).
-			defer touchUsageRecord(toucher, debouncer, logger, r)
+			// recover()+re-panic so the outer Recoverer still sees and
+			// logs it; on a panic the response is NOT known-complete
+			// (Recoverer hasn't written its 500 yet), so the recorder
+			// must not flush it out from under that write (GH-627).
+			defer func() {
+				p := recover()
+				touchUsageRecord(w, toucher, debouncer, logger, r, p != nil)
+				if p != nil {
+					panic(p)
+				}
+			}()
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -87,8 +96,13 @@ func TouchUsage(toucher KeyToucher, debouncer TouchDebouncer, logger *slog.Logge
 
 // touchUsageRecord is [TouchUsage]'s post-dispatch bookkeeping, pulled
 // into its own deferred call so it still runs when the handler panics
-// (GH-1276).
-func touchUsageRecord(toucher KeyToucher, debouncer TouchDebouncer, logger *slog.Logger, r *http.Request) {
+// (GH-1276). On the non-panic path it hands the actual touch to
+// [AfterResponse], which flushes w for the client immediately and runs
+// the debounce check + touch on the shared post-response pool (GH-627)
+// instead of blocking the request goroutine. On a panic, the work is
+// still enqueued (the touch is still worth attempting) but w is left
+// unflushed so the outer Recoverer can still write its 500.
+func touchUsageRecord(w http.ResponseWriter, toucher KeyToucher, debouncer TouchDebouncer, logger *slog.Logger, r *http.Request, panicked bool) {
 	if toucher == nil || debouncer == nil {
 		return
 	}
@@ -96,28 +110,36 @@ func touchUsageRecord(toucher KeyToucher, debouncer TouchDebouncer, logger *slog
 	if !ok || subject.Tier == auth.TierAnonymous || subject.KeyID == "" {
 		return
 	}
-	// Post-response bookkeeping: detached from the request's
-	// cancellation (an aborted client or an exhausted RequestTimeout
-	// budget must not silently drop the touch) but independently
-	// bounded so a wedged Redis/Postgres can't pin the request
-	// goroutine (C3-102, audit-2026-07-23).
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), postResponseWriteTimeout)
-	defer cancel()
-	shouldTouch, err := debouncer.ShouldTouch(ctx, subject.KeyID)
-	if err != nil {
-		logger.Debug("touch-usage: debounce check failed; skipping",
-			"err", err, "key_id", subject.KeyID)
-		return
-	}
-	if !shouldTouch {
-		return
-	}
+	keyID := subject.KeyID
 	ip := net.ParseIP(RemoteIPFrom(r))
 	ua := truncateUserAgentForTouch(r.UserAgent())
-	if err := toucher.TouchUsage(ctx, subject.KeyID, ip, ua); err != nil {
-		logger.Debug("touch-usage: TouchUsage failed; bookkeeping lost for this tick",
-			"err", err, "key_id", subject.KeyID)
+	fn := func() {
+		// Post-response bookkeeping: detached from the request's
+		// cancellation (an aborted client or an exhausted RequestTimeout
+		// budget must not silently drop the touch) but independently
+		// bounded so a wedged Redis/Postgres can't pin the pool worker
+		// (C3-102, audit-2026-07-23; GH-627).
+		ctx, cancel := context.WithTimeout(context.Background(), postResponseWriteTimeout)
+		defer cancel()
+		shouldTouch, err := debouncer.ShouldTouch(ctx, keyID)
+		if err != nil {
+			logger.Debug("touch-usage: debounce check failed; skipping",
+				"err", err, "key_id", keyID)
+			return
+		}
+		if !shouldTouch {
+			return
+		}
+		if err := toucher.TouchUsage(ctx, keyID, ip, ua); err != nil {
+			logger.Debug("touch-usage: TouchUsage failed; bookkeeping lost for this tick",
+				"err", err, "key_id", keyID)
+		}
 	}
+	if panicked {
+		submitAfterResponseTask(fn)
+		return
+	}
+	AfterResponse(w, fn)
 }
 
 // truncateUserAgentForTouch caps the User-Agent at 512 bytes so

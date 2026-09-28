@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -14,6 +15,30 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/usage"
 )
+
+// slowRedisHook delays every command by delay, simulating a wedged Redis
+// (GH-627) without needing a real network stall. Cooperates with ctx
+// cancellation so it never masks the fact that the request's own
+// deadline still applies to anything that DOES stay on the request's
+// context.
+type slowRedisHook struct{ delay time.Duration }
+
+func (slowRedisHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h slowRedisHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		select {
+		case <-time.After(h.delay):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (slowRedisHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
 
 // TestUsageTracker_RecordsAfterClientAbort pins the post-response half of
 // C3-102 (audit-2026-07-23).
@@ -57,6 +82,9 @@ func TestUsageTracker_RecordsAfterClientAbort(t *testing.T) {
 	cancel = c
 	req := httptest.NewRequest(http.MethodGet, "/v1/ohlc", nil).WithContext(ctx)
 	h.ServeHTTP(httptest.NewRecorder(), req)
+	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+		t.Fatal("after-response pool did not drain in time")
+	}
 
 	days, err := counter.Read(context.Background(), middleware.UsageKeyForSubject(subject), 3)
 	if err != nil {
@@ -99,6 +127,9 @@ func TestTouchUsage_TouchesAfterClientAbort(t *testing.T) {
 	cancel = c
 	h.ServeHTTP(httptest.NewRecorder(),
 		httptest.NewRequest(http.MethodGet, "/v1/ohlc", nil).WithContext(ctx))
+	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+		t.Fatal("after-response pool did not drain in time")
+	}
 
 	if toucher.calls != 1 {
 		t.Errorf("TouchUsage called %d times, want 1 — post-response bookkeeping must not "+
@@ -163,6 +194,9 @@ func TestUsageTracker_AbortedRequestConsumesQuota(t *testing.T) {
 		h.ServeHTTP(httptest.NewRecorder(),
 			httptest.NewRequest(http.MethodGet, "/v1/ohlc", nil).WithContext(ctx))
 	}
+	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+		t.Fatal("after-response pool did not drain in time")
+	}
 
 	mtd, err := counter.MonthToDate(context.Background(), middleware.UsageKeyForSubject(subject))
 	if err != nil {
@@ -171,5 +205,68 @@ func TestUsageTracker_AbortedRequestConsumesQuota(t *testing.T) {
 	if mtd != attempts {
 		t.Errorf("month-to-date = %d after %d aborted requests, want %d — aborting before "+
 			"the body completes must NOT buy unmetered traffic", mtd, attempts, attempts)
+	}
+}
+
+// TestUsageTracker_DoesNotBlockRequestGoroutineOnWedgedStore is the core
+// GH-627 regression: UsageTracker used to run its counter writes INLINE
+// on the request goroutine, under context.WithoutCancel(r.Context()) +
+// postResponseWriteTimeout, entirely OUTSIDE api.request_timeout. A slow
+// store (here, a Redis with every command delayed 300ms) added a
+// multiple of that delay directly to the request's wall-clock latency —
+// two writes (legacy total + detail) meant ~600ms tacked onto a request
+// net/http had already buffered and could have flushed in microseconds.
+//
+// The fix hands both writes to the shared after-response pool
+// (middleware.AfterResponse), so ServeHTTP returns as soon as the
+// handler and the flush are done, regardless of how slow the store is.
+func TestUsageTracker_DoesNotBlockRequestGoroutineOnWedgedStore(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	rdb.AddHook(slowRedisHook{delay: 300 * time.Millisecond})
+	counter := usage.New(rdb)
+
+	subject := auth.Subject{Tier: auth.TierAPIKey, KeyID: "kid_slow", Identifier: "acct:slow"}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/price", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	stamp := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(auth.WithSubject(r.Context(), subject)))
+		})
+	}
+	h := middleware.Chain(mux, stamp, middleware.UsageTracker(counter, nil))
+
+	start := time.Now()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/price", nil))
+	elapsed := time.Since(start)
+
+	const budget = 100 * time.Millisecond // well under one 300ms store round trip
+	if elapsed > budget {
+		t.Fatalf("ServeHTTP took %v against a store that delays every command 300ms — "+
+			"UsageTracker must not run its post-response counter writes on the request "+
+			"goroutine (GH-627)", elapsed)
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+
+	if !middleware.AfterResponseDrainForTest(2 * time.Second) {
+		t.Fatal("after-response pool did not drain in time")
+	}
+	days, err := counter.Read(context.Background(), middleware.UsageKeyForSubject(subject), 3)
+	if err != nil {
+		t.Fatalf("counter.Read: %v", err)
+	}
+	var total int64
+	for _, d := range days {
+		total += d.Requests
+	}
+	if total != 1 {
+		t.Errorf("legacy usage total = %d, want 1 — the deferred write must still land "+
+			"once the pool catches up", total)
 	}
 }

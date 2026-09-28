@@ -2120,6 +2120,25 @@ unmetered quota and cannot be reconstructed. `detail` is the
 per-endpoint hash behind `/v1/account/usage`. The Redis error class is
 on `stellarindex_redis_command_errors_total`.
 
+### `stellarindex_after_response_tasks_dropped_total`
+
+Counter. Pre-seeded at zero.
+
+Post-response bookkeeping tasks (usage-counter writes, `TouchUsage`
+last-seen updates) dropped because the shared after-response worker
+pool's queue was full (`internal/api/v1/middleware/after_response.go`,
+GH-627). `UsageTracker` and `TouchUsage` used to run this bookkeeping
+inline on the request goroutine under `context.WithoutCancel` plus a
+flat timeout — entirely outside `api.request_timeout` and, because
+nothing ever flushed the response, on the client's critical path. The
+fix ([`AfterResponse`](../../../internal/api/v1/middleware/after_response.go))
+flushes the response immediately and hands the write to a bounded
+shared pool instead; a saturated pool drops the task rather than ever
+blocking the request, and this counter is that drop's only signal.
+
+Alert: `stellarindex_after_response_tasks_dropping` →
+[after-response-tasks-dropping](../../operations/runbooks/after-response-tasks-dropping.md).
+
 ### `stellarindex_usage_rollup_sweeps_total`
 
 Counter, label `outcome` (`ok` / `scan_error` / `sink_error`).
