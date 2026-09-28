@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -35,6 +36,12 @@ func meteredBillable(t *testing.T, handler http.HandlerFunc) (int, int64) {
 	srv := middleware.Chain(mux, stamp, middleware.UsageTracker(counter, nil))
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/markets", nil))
+	// UsageTracker's counter write runs on the shared after-response pool,
+	// not inline (GH-627), so a read right after ServeHTTP returns must
+	// wait for it to land first.
+	if !middleware.AfterResponseDrainForTest(2 * time.Second) {
+		t.Fatal("after-response pool did not drain in time")
+	}
 
 	billable, err := counter.MonthToDate(context.Background(), "key:kid_timeout")
 	if err != nil {

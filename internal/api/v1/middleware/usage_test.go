@@ -92,6 +92,9 @@ func TestUsageTracker_FamilyAndOutcome(t *testing.T) {
 		}
 		resp.Body.Close()
 	}
+	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+		t.Fatal("after-response pool did not drain in time")
+	}
 
 	got := detailCounts(t, counter, "key:kid_1")
 	if n := got[[2]string{"/v1/assets/{asset_id}", usage.ClassOK}]; n != 2 {
@@ -142,6 +145,9 @@ func TestUsageTracker_OutcomeClasses(t *testing.T) {
 			t.Fatal(err)
 		}
 		resp.Body.Close()
+		if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+			t.Fatal("after-response pool did not drain in time")
+		}
 
 		got := detailCounts(t, counter, "key:kid_c")
 		if n := got[[2]string{"/v1/thing", tc.class}]; n != 1 {
@@ -195,6 +201,9 @@ func TestUsageTracker_ServerErrorExcludedFromLegacyTotal(t *testing.T) {
 			t.Fatal(err)
 		}
 		resp.Body.Close()
+		if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+			t.Fatal("after-response pool did not drain in time")
+		}
 
 		got := detailCounts(t, counter, "key:kid_5")
 		if n := got[[2]string{"/v1/price", usage.ClassServerError}]; n != 1 {
@@ -230,6 +239,9 @@ func TestUsageTracker_ThrottledExcludedFromLegacyTotal(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
+	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+		t.Fatal("after-response pool did not drain in time")
+	}
 
 	got := detailCounts(t, counter, "key:kid_t")
 	if n := got[[2]string{"/v1/price", usage.ClassThrottled}]; n != 1 {
@@ -274,6 +286,9 @@ func TestUsageTracker_ReadDeadlineMark(t *testing.T) {
 		}
 		h := middleware.Chain(mux, stamp, middleware.UsageTracker(counter, nil))
 		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/price", nil))
+		if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+			t.Fatal("after-response pool did not drain in time")
+		}
 
 		got, err := counter.MonthToDate(context.Background(), "key:kid_rd")
 		if err != nil {
@@ -303,6 +318,9 @@ func TestUsageTracker_UnmatchedRouteBuckets(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
+	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+		t.Fatal("after-response pool did not drain in time")
+	}
 
 	got := detailCounts(t, counter, "key:kid_u")
 	if n := got[[2]string{"unmatched", usage.ClassClientError}]; n != 1 {
@@ -355,6 +373,9 @@ func TestUsageTracker_ResolveRoute_ThrottledBeforeDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
+	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+		t.Fatal("after-response pool did not drain in time")
+	}
 
 	got := detailCounts(t, counter, "key:kid_gate")
 	if n := got[[2]string{"/v1/price", usage.ClassThrottled}]; n != 1 {
@@ -394,6 +415,9 @@ func TestUsageTracker_RefusedWriteCountsDroppedUnits(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/price", nil))
+	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+		t.Fatal("after-response pool did not drain in time")
+	}
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 — metering must stay best-effort", w.Code)
 	}
@@ -448,6 +472,9 @@ func TestUsageTracker_PanickingHandlerStillCounted(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/price", nil))
+	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+		t.Fatal("after-response pool did not drain in time")
+	}
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500 (Recoverer)", w.Code)
 	}

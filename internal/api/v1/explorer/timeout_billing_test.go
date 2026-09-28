@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -45,6 +46,12 @@ func billedAccountOperations(t *testing.T, h *Handler) (int, int64) {
 
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/accounts/"+validTestAccount+"/operations", nil))
+	// UsageTracker's counter write runs on the shared after-response pool,
+	// not inline (GH-627), so a read right after ServeHTTP returns must
+	// wait for it to land first.
+	if !middleware.AfterResponseDrainForTest(2 * time.Second) {
+		t.Fatal("after-response pool did not drain in time")
+	}
 
 	billable, err := counter.MonthToDate(context.Background(), "key:kid_billing")
 	if err != nil {
