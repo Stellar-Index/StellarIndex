@@ -3,6 +3,7 @@ package timescale
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"sort"
@@ -233,7 +234,19 @@ func (s *Store) RefreshAssetVolumeCharacter(ctx context.Context) error {
 
 // rollAssetVolumeCharacter runs the all-asset single-pass roll and returns
 // one row per canonical asset with priced volume in the window.
-func (s *Store) rollAssetVolumeCharacter(ctx context.Context) ([]assetVolumeCharacterRow, error) {
+//
+// Connection hygiene mirrors [Store.refreshCAGGBounded]: the pinned
+// connection's statement_timeout is read with current_setting before this
+// call overrides it, and restored (via set_config, on a context detached
+// from the caller's so a caller deadline that already fired doesn't also
+// fail the restore) before the connection goes back to the pool — so an
+// [OpenBackground] connector's session backstop (REC-08) isn't silently
+// replaced by this call's 25min bound for whichever later query lands on
+// the same pooled connection. A restore that fails marks the connection
+// bad via conn.Raw(driver.ErrBadConn) rather than returning it to the pool
+// with the override still live. max_parallel_workers_per_gather has no
+// pool-level default to protect, so it keeps a bare RESET.
+func (s *Store) rollAssetVolumeCharacter(ctx context.Context) (out []assetVolumeCharacterRow, err error) {
 	window := fmt.Sprintf("%d hours", int(volumeCharacterWindow.Hours()))
 	aliasValues, aliasArgs := buildAliasMapValues(2)
 	query := strings.Replace(assetVolumeCharacterRollupSQLTemplate, "{{ALIAS_VALUES}}", aliasValues, 1)
@@ -248,17 +261,35 @@ func (s *Store) rollAssetVolumeCharacter(ctx context.Context) ([]assetVolumeChar
 	//     aborts and the last good rollup stands (the worker retries next
 	//     cycle). Session settings, not SET LOCAL, so they cover the read
 	//     that runs outside any transaction.
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("timescale: rollAssetVolumeCharacter conn: %w", err)
+	conn, connErr := s.db.Conn(ctx)
+	if connErr != nil {
+		return nil, fmt.Errorf("timescale: rollAssetVolumeCharacter conn: %w", connErr)
 	}
 	defer func() { _ = conn.Close() }()
 	if _, err := conn.ExecContext(ctx, "SET max_parallel_workers_per_gather = 2"); err != nil {
 		return nil, fmt.Errorf("timescale: rollAssetVolumeCharacter cap parallelism: %w", err)
 	}
+	defer func() { _, _ = conn.ExecContext(ctx, "RESET max_parallel_workers_per_gather") }()
+
+	var prevTimeout string
+	if err := conn.QueryRowContext(ctx, `SELECT current_setting('statement_timeout')`).Scan(&prevTimeout); err != nil {
+		return nil, fmt.Errorf("timescale: rollAssetVolumeCharacter read statement_timeout: %w", err)
+	}
 	if _, err := conn.ExecContext(ctx, "SET statement_timeout = '25min'"); err != nil {
 		return nil, fmt.Errorf("timescale: rollAssetVolumeCharacter set timeout: %w", err)
 	}
+	defer func() {
+		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), caggRefreshRestoreTimeout)
+		defer rcancel()
+		if _, rerr := conn.ExecContext(rctx, `SELECT set_config('statement_timeout', $1, false)`, prevTimeout); rerr != nil {
+			// Never hand a connection back with this call's bound still on
+			// it. Discard it; the pool dials a fresh one.
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+			if err == nil {
+				err = fmt.Errorf("timescale: rollAssetVolumeCharacter restore statement_timeout: %w", rerr)
+			}
+		}
+	}()
 
 	rows, err := conn.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -266,7 +297,6 @@ func (s *Store) rollAssetVolumeCharacter(ctx context.Context) ([]assetVolumeChar
 	}
 	defer func() { _ = rows.Close() }()
 
-	var out []assetVolumeCharacterRow
 	for rows.Next() {
 		var r assetVolumeCharacterRow
 		if err := rows.Scan(

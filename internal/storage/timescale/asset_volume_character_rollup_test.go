@@ -3,6 +3,7 @@ package timescale
 import (
 	"context"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -118,25 +119,100 @@ func TestRefreshAssetVolumeCharacter_zeroRowPassKeepsLastGood(t *testing.T) {
 
 	store, script := newScriptedStore(t,
 		scriptedResult{}, // SET max_parallel_workers_per_gather
+		scriptedResult{cols: []string{"current_setting"}, rows: [][]driver.Value{{"30000ms"}}}, // captured prior statement_timeout
 		scriptedResult{}, // SET statement_timeout
 		scriptedResult{cols: []string{
 			"asset_id", "total", "total_numeric", "makers", "takers",
 			"top_pair", "self_cross", "issuer_side", "market_styled",
 		}}, // the roll: zero rows
+		scriptedResult{}, // restore statement_timeout (set_config)
+		scriptedResult{}, // RESET max_parallel_workers_per_gather
 		scriptedResult{}, // prune
 	)
 	if err := store.RefreshAssetVolumeCharacter(context.Background()); err != nil {
 		t.Fatalf("RefreshAssetVolumeCharacter: %v", err)
 	}
 	got := script.statements()
-	if len(got) != 4 {
-		t.Fatalf("expected 4 statements (no upsert batch for zero rows), got %d: %v", len(got), got)
+	if len(got) != 7 {
+		t.Fatalf("expected 7 statements (no upsert batch for zero rows), got %d: %v", len(got), got)
 	}
-	if got[3] != refreshAssetVolumeCharacterPruneExpired {
-		t.Errorf("zero-row pass prune = %q, want %q", got[3], refreshAssetVolumeCharacterPruneExpired)
+	if got[4] != `SELECT set_config('statement_timeout', $1, false)` {
+		t.Errorf("statement_timeout restore = %q, want the captured-value set_config restore", got[4])
+	}
+	if got[6] != refreshAssetVolumeCharacterPruneExpired {
+		t.Errorf("zero-row pass prune = %q, want %q", got[6], refreshAssetVolumeCharacterPruneExpired)
 	}
 	if !script.committed() {
 		t.Error("zero-row pass must commit its expiry prune")
+	}
+}
+
+// TestRollAssetVolumeCharacter_RestoresCapturedStatementTimeout proves the
+// pinned connection's PRIOR statement_timeout (whatever an [OpenBackground]
+// connector's session backstop set it to — REC-08) is captured before this
+// call's own 25min override and restored — via set_config with the
+// captured value, not a bare RESET — before the connection goes back to
+// the pool. Without the capture/restore, a later query landing on the
+// same pooled connection would silently inherit this call's 25min bound
+// (or the server default) instead of the operator's configured backstop.
+func TestRollAssetVolumeCharacter_RestoresCapturedStatementTimeout(t *testing.T) {
+	t.Parallel()
+
+	const priorBackstop = "2m" // distinct from both the server default and this call's own 25min
+	store, script := newScriptedStore(t,
+		scriptedResult{}, // SET max_parallel_workers_per_gather
+		scriptedResult{cols: []string{"current_setting"}, rows: [][]driver.Value{{priorBackstop}}}, // captured
+		scriptedResult{}, // SET statement_timeout = 25min
+		scriptedResult{cols: []string{
+			"asset_id", "total", "total_numeric", "makers", "takers",
+			"top_pair", "self_cross", "issuer_side", "market_styled",
+		}}, // the roll: zero rows
+		scriptedResult{}, // restore
+		scriptedResult{}, // RESET max_parallel_workers_per_gather
+	)
+
+	if _, err := store.rollAssetVolumeCharacter(context.Background()); err != nil {
+		t.Fatalf("rollAssetVolumeCharacter: %v", err)
+	}
+
+	got := script.statements()
+	if len(got) != 6 {
+		t.Fatalf("expected 6 statements, got %d: %v", len(got), got)
+	}
+	if got[4] != `SELECT set_config('statement_timeout', $1, false)` {
+		t.Fatalf("restore statement = %q, want the captured-value set_config restore", got[4])
+	}
+	restoreArg := script.stmts[4].arg(t, 1)
+	if restoreArg != priorBackstop {
+		t.Errorf("restore arg = %v, want the captured prior value %q (not a bare RESET to the server default)", restoreArg, priorBackstop)
+	}
+}
+
+// TestRollAssetVolumeCharacter_FailedRestoreFailsTheCall proves a restore
+// that fails is never silently swallowed while the connection is handed
+// back to the pool: the pooled connection must never carry this call's
+// statement_timeout override forward, so a failed restore fails the call.
+func TestRollAssetVolumeCharacter_FailedRestoreFailsTheCall(t *testing.T) {
+	t.Parallel()
+
+	restoreErr := errors.New("connection reset by peer")
+	store, _ := newScriptedStore(t,
+		scriptedResult{}, // SET max_parallel_workers_per_gather
+		scriptedResult{cols: []string{"current_setting"}, rows: [][]driver.Value{{"2m"}}},
+		scriptedResult{}, // SET statement_timeout = 25min
+		scriptedResult{cols: []string{
+			"asset_id", "total", "total_numeric", "makers", "takers",
+			"top_pair", "self_cross", "issuer_side", "market_styled",
+		}},
+		scriptedResult{err: restoreErr}, // restore fails
+	)
+
+	_, err := store.rollAssetVolumeCharacter(context.Background())
+	if err == nil {
+		t.Fatal("rollAssetVolumeCharacter: want error when the statement_timeout restore fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "restore statement_timeout") {
+		t.Errorf("error = %q, want it to name the failed restore", err.Error())
 	}
 }
 
