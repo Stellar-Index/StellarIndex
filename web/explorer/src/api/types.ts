@@ -11396,7 +11396,7 @@ export interface components {
              */
             class: "exchange" | "aggregator" | "oracle" | "authority_sanity" | "bridge" | "lending" | "router";
             /**
-             * @description Refines `class=exchange` for UIs that group venues. Empty (omitted) for non-exchange classes.
+             * @description Refines `class=exchange` for UIs that group venues. Empty (omitted) for non-exchange classes, except `ecb` (`authority_sanity`), which is `fx` because the forex worker's ECB standby writes fiat FX rates under that name.
              * @enum {string}
              */
             subclass?: "dex" | "cex" | "fx";
