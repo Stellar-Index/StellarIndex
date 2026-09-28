@@ -36,7 +36,7 @@ func TestChParticipantBackfillDecodeErrorsFailTheRun(t *testing.T) {
 func TestChCap67MovementsDecodeErrorsFailTheOneShotRun(t *testing.T) {
 	orig := cap67CatchUpOnce
 	t.Cleanup(func() { cap67CatchUpOnce = orig })
-	cap67CatchUpOnce = func(context.Context, string, uint32, uint32, uint32, bool, uint32) (cap67CatchUp, error) {
+	cap67CatchUpOnce = func(context.Context, string, uint32, uint32, uint32, bool, uint32, func(int64, uint32)) (cap67CatchUp, error) {
 		return cap67CatchUp{start: 100, last: 200, rows: 5, skipped: 2}, nil
 	}
 	base := []string{"-from", "100", "-to", "200"}

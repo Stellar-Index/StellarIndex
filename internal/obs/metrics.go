@@ -5325,8 +5325,12 @@ var DEXTVLReconcileTotal = prometheus.NewCounterVec(
 //   - `load_ok` / `load_error`       — the initial (or retried)
 //     full-slice FINAL load. Runs once per process start; minutes of
 //     streaming IO.
-//   - `advance_ok` / `advance_error` — the 60s incremental
-//     partition-pruned change apply.
+//   - `advance_ok` / `advance_error` / `advance_held` — the 60s
+//     incremental partition-pruned change apply. `advance_held` is a
+//     clean (no-error) tick that made ZERO cursor progress — an
+//     unhealed lake hole or a full ingest halt, not a legitimate
+//     advance that applied zero CHANGES while the tip still moved
+//     (INV-0780; see SDEXOrderBookCache.Advance).
 //   - `verify_ok` / `verify_error`   — the per-tick quarantine drain:
 //     batched (ledger, key) removal probes that graduate version-tie
 //     suspect offers into the served book or discard them as
@@ -5338,11 +5342,13 @@ var DEXTVLReconcileTotal = prometheus.NewCounterVec(
 // means the endpoint is stuck on its 503 warming problem — that is
 // the louder, user-visible failure. Repeated `verify_error` means the
 // served book stays thinner than the real chain state (quarantined
-// offers can't graduate).
+// offers can't graduate). Sustained `advance_held` means the same
+// staleness as `advance_error` but WITHOUT ever erroring, so it needs
+// its own alert (stellarindex_sdex_orderbook_advance_held).
 var SDEXOrderBookMaintainTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_sdex_orderbook_maintain_total",
-		Help: "SDEX live order-book maintenance outcomes (load_ok|load_error|advance_ok|advance_error|verify_ok|verify_error).",
+		Help: "SDEX live order-book maintenance outcomes (load_ok|load_error|advance_ok|advance_error|advance_held|verify_ok|verify_error).",
 	},
 	[]string{"outcome"},
 )
@@ -5358,7 +5364,7 @@ var SDEXOrderBookMaintainTotal = prometheus.NewCounterVec(
 var SDEXOrderBookMaintainDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_sdex_orderbook_maintain_duration_seconds",
-		Help:    "SDEX order-book maintenance latency, labelled by outcome (load_ok|load_error|advance_ok|advance_error|verify_ok|verify_error).",
+		Help:    "SDEX order-book maintenance latency, labelled by outcome (load_ok|load_error|advance_ok|advance_error|advance_held|verify_ok|verify_error).",
 		Buckets: []float64{0.05, 0.25, 1, 5, 15, 60, 300, 900, 1800},
 	},
 	[]string{"outcome"},

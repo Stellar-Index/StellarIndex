@@ -241,6 +241,67 @@ tests:
         alertname: stellarindex_sdex_orderbook_maintain_failing
         exp_alerts: []
 
+  # ── INV-0780: a held cursor tickets without ever erroring ────────
+  # advance_held increments every tick for an hour; no error outcome
+  # increments at all. maintain_failing must stay silent (it only
+  # selects error outcomes) while advance_held fires — proving the two
+  # alerts are covering genuinely different states, not overlapping.
+  - interval: 1m
+    name: sustained sdex order-book advance_held tickets, maintain_failing stays silent
+    input_series:
+      - series: 'stellarindex_sdex_orderbook_maintain_total{job="stellarindex_api",instance="r1:8080",outcome="advance_held"}'
+        values: '0+1x120'
+
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_sdex_orderbook_advance_held
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sdex-orderbook-maintain-failing.md
+              summary: "SDEX order-book cursor held below a lake hole for 30+ min (no errors, still stale)"
+              description: |
+                The order book's 60s Advance tick has made ZERO cursor progress
+                for 30+ minutes without ever erroring — an unhealed
+                ledger_entry_changes hole (or a broader ingest halt) is holding
+                it, per the "advance held below a lake hole" log line.
+                /v1/sdex/orderbook keeps answering with an honest but frozen
+                as_of_ledger; maintain_failing stays silent throughout because
+                nothing here is an error. Check ch-live-catchup and the lake's
+                contiguity around the held cursor first.
+      - eval_time: 60m
+        alertname: stellarindex_sdex_orderbook_maintain_failing
+        exp_alerts: []
+
+  # ── a healthy order book (real progress every tick) never holds ──
+  - interval: 1m
+    name: healthy sdex order-book advance never trips advance_held
+    input_series:
+      - series: 'stellarindex_sdex_orderbook_maintain_total{job="stellarindex_api",instance="r1:8080",outcome="advance_ok"}'
+        values: '0+1x120'
+
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_sdex_orderbook_advance_held
+        exp_alerts: []
+
+  # ── occasional held ticks between real advances are not a hold ──
+  - interval: 1m
+    name: interleaved advance_held with advance_ok never trips advance_held
+    input_series:
+      - series: 'stellarindex_sdex_orderbook_maintain_total{job="stellarindex_api",instance="r1:8080",outcome="advance_held"}'
+        values: '0+1x120'
+      - series: 'stellarindex_sdex_orderbook_maintain_total{job="stellarindex_api",instance="r1:8080",outcome="advance_ok"}'
+        values: '0+1x120'
+
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_sdex_orderbook_advance_held
+        exp_alerts: []
+
   # ── the quarantine removal probe failing every tick tickets ──────
   # Advance is healthy but VerifyPending errors: the pending set never
   # drains and its offers stay withheld from every served book.

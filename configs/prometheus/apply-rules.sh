@@ -163,15 +163,25 @@ expected_count="$(printf '%s\n' "$expected_alerts" | grep -c . || true)"
 [ "$expected_count" -gt 0 ] || die "the incoming rule set declares no alerts — refusing (an empty set would look like a successful apply while disabling everything)"
 echo "apply-rules: expecting $expected_count alert(s) to load"
 
+# Recording rule names the incoming set declares. /api/v1/rules reports
+# these under the same "name" field as alerts, so a --live-check that
+# only knows about expected_alerts reads every codified recording rule
+# as permanent host drift (F-1219 recurrence: stellarindex:api_error_ratio:*
+# and :api_slow_request_*/_count:* were already committed and correctly
+# deployed, and still showed up as "loaded but NOT in the repo").
+expected_records="$(grep -hoE '^[[:space:]]*-[[:space:]]*record:[[:space:]]*[^[:space:]]+' "${src_files[@]}" \
+  | sed -E 's/^[[:space:]]*-[[:space:]]*record:[[:space:]]*//' | sort -u)"
+
 if [ "$CHECK_ONLY" = "1" ]; then
   echo "apply-rules: --check-only, stopping before install"
   exit 0
 fi
 
 if [ "$LIVE_CHECK" = "1" ]; then
+  expected_names="$(printf '%s\n%s\n' "$expected_alerts" "$expected_records" | grep -v '^$' | sort -u)"
   loaded="$(curl -sf --max-time 10 "$PROM_URL/api/v1/rules" 2>/dev/null | parse_loaded_rule_names || true)"
-  missing="$(comm -23 <(printf '%s\n' "$expected_alerts") <(printf '%s\n' "$loaded") || true)"
-  extra="$(comm -13 <(printf '%s\n' "$expected_alerts") <(printf '%s\n' "$loaded") || true)"
+  missing="$(comm -23 <(printf '%s\n' "$expected_names") <(printf '%s\n' "$loaded") || true)"
+  extra="$(comm -13 <(printf '%s\n' "$expected_names") <(printf '%s\n' "$loaded") || true)"
   status=0
   if [ -n "$missing" ]; then
     echo "apply-rules: live-check: in the repo but NOT loaded on $PROM_URL:" >&2
@@ -183,7 +193,8 @@ if [ "$LIVE_CHECK" = "1" ]; then
     printf '  %s\n' "$extra" >&2
     status=1
   fi
-  [ "$status" = 0 ] && echo "apply-rules: live-check OK — $PROM_URL matches the repo ($expected_count alert(s))"
+  expected_record_count="$(printf '%s\n' "$expected_records" | grep -c . || true)"
+  [ "$status" = 0 ] && echo "apply-rules: live-check OK — $PROM_URL matches the repo ($expected_count alert(s), $expected_record_count recording rule(s))"
   exit "$status"
 fi
 

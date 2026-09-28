@@ -190,6 +190,14 @@ func observeMaintain(op string, start time.Time, err error) {
 	if err != nil {
 		outcome = op + "_error"
 	}
+	observeMaintainOutcome(outcome, start)
+}
+
+// observeMaintainOutcome records against an explicit outcome label,
+// for the one case observeMaintain's op+error inference can't express:
+// Advance's "advance_held" (zero cursor progress, no error — see
+// [SDEXOrderBookCache.Advance]).
+func observeMaintainOutcome(outcome string, start time.Time) {
 	obs.SDEXOrderBookMaintainTotal.WithLabelValues(outcome).Inc()
 	obs.SDEXOrderBookMaintainDurationSeconds.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
 }
@@ -334,7 +342,10 @@ func (c *SDEXOrderBookCache) VerifyPending(ctx context.Context, limit int) (err 
 // Advance applies offer changes since the cursor. Changes are applied
 // by version (>= wins), so overlapping or duplicated change rows are
 // idempotent. No-op (nil) before Load has succeeded.
-func (c *SDEXOrderBookCache) Advance(ctx context.Context) (err error) {
+//
+// A tick that makes zero cursor progress (next == cursor) records
+// "advance_held" instead of "advance_ok" — see [observeMaintainOutcome].
+func (c *SDEXOrderBookCache) Advance(ctx context.Context) error {
 	c.mu.RLock()
 	ready, cursor := c.loadedOK, c.cursor
 	c.mu.RUnlock()
@@ -345,9 +356,9 @@ func (c *SDEXOrderBookCache) Advance(ctx context.Context) (err error) {
 		return nil
 	}
 	start := time.Now()
-	defer func() { observeMaintain("advance", start, err) }()
 	changes, next, err := c.reader.OfferChangesSince(ctx, cursor)
 	if err != nil {
+		observeMaintain("advance", start, err)
 		if c.logger != nil {
 			c.logger.Warn("sdex order book advance", "err", err)
 		}
@@ -373,6 +384,21 @@ func (c *SDEXOrderBookCache) Advance(ctx context.Context) (err error) {
 	c.updated = time.Now().UTC()
 	c.updateHealthGaugesLocked()
 	c.mu.Unlock()
+	if next == cursor {
+		// The lake's contiguous tip has not moved past the cursor at all —
+		// an unhealed hole (OfferChangesSince logs "advance held below a
+		// lake hole") or a full ingest halt, as opposed to a legitimate
+		// advance that just applied zero CHANGES because nothing on the
+		// pair moved while the tip itself advanced. advance_ok would mask
+		// this exactly the way pre-Load ticks are deliberately unobserved
+		// above: no error is ever raised, so the served book can go stale
+		// for as long as the hold lasts with maintain_failing silent the
+		// whole time (INV-0780). Mirrors the projector's watermark_held
+		// outcome for the identical guard (sdex_offer_book_reader.go).
+		observeMaintainOutcome("advance_held", start)
+		return nil
+	}
+	observeMaintain("advance", start, nil)
 	return nil
 }
 
