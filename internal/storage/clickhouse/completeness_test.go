@@ -1,6 +1,104 @@
 package clickhouse
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+)
+
+// substrateProblemFakeRow implements driver.Row over a fixed uint64 slice.
+type substrateProblemFakeRow struct{ vals []uint64 }
+
+func (r substrateProblemFakeRow) Err() error { return nil }
+func (r substrateProblemFakeRow) Scan(dest ...any) error {
+	for i, d := range dest {
+		*d.(*uint64) = r.vals[i]
+	}
+	return nil
+}
+func (r substrateProblemFakeRow) ScanStruct(any) error { return nil }
+
+// substrateProblemFakeConn simulates a lake whose head is truncated at haveMin
+// (everything below is absent) and whose present portion has exactly the
+// ledgers listed in missing removed — enough to answer SubstrateProblem's
+// three queries (endpoint presence, gap, hash-chain) truthfully without a
+// live ClickHouse.
+type substrateProblemFakeConn struct {
+	driver.Conn
+	to      uint32
+	haveMin uint64
+	missing map[uint64]bool
+}
+
+func (c substrateProblemFakeConn) present(seq uint64) bool {
+	return seq >= c.haveMin && seq <= uint64(c.to) && !c.missing[seq]
+}
+
+func (c substrateProblemFakeConn) presentIn(lo, hi uint64) []uint64 {
+	var out []uint64
+	for s := lo; s <= hi; s++ {
+		if c.present(s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func (c substrateProblemFakeConn) QueryRow(_ context.Context, query string, args ...any) driver.Row {
+	switch {
+	case strings.Contains(query, "uniqExact"):
+		rows := c.presentIn(0, uint64(c.to))
+		var hi uint64
+		if len(rows) > 0 {
+			hi = rows[len(rows)-1]
+		}
+		return substrateProblemFakeRow{vals: []uint64{c.haveMin, hi, uint64(len(rows))}}
+	case strings.Contains(query, "gap_start"):
+		lo, hi := args[0].(uint64), args[1].(uint64)
+		rows := c.presentIn(lo, hi)
+		var gap uint64
+		for i := 1; i < len(rows); i++ {
+			if rows[i] > rows[i-1]+1 {
+				gap = rows[i-1] + 1
+				break
+			}
+		}
+		return substrateProblemFakeRow{vals: []uint64{gap}}
+	case strings.Contains(query, "prior_hash"):
+		return substrateProblemFakeRow{vals: []uint64{0}} // no hash-chain break in this fixture
+	default:
+		panic("substrateProblemFakeConn: unexpected query: " + query)
+	}
+}
+
+// TestSubstrateProblem_WalksInteriorDespiteHeadTruncation pins CODE-M #606:
+// substrateHeadProblem used to short-circuit SubstrateProblem before the
+// contiguity/hash-chain walks ran, so a head-truncated lake with a REAL
+// interior gap reported only the (harmless, expected) head problem and never
+// found the gap. Fixture: ledgers [2,1000), head truncated at 500 (haveMin),
+// plus an interior gap at 700 within the present portion. Pre-fix this must
+// return the head problem (499) without ever inspecting 700; post-fix it must
+// walk [500,1000] and surface the interior gap at 700.
+func TestSubstrateProblem_WalksInteriorDespiteHeadTruncation(t *testing.T) {
+	const from, to = uint32(2), uint32(1000)
+	conn := substrateProblemFakeConn{to: to, haveMin: 500, missing: map[uint64]bool{700: true}}
+
+	problem, hasProblem, detail, err := substrateProblemOn(context.Background(), conn, "", from, to)
+	if err != nil {
+		t.Fatalf("substrateProblemOn: %v", err)
+	}
+	if !hasProblem {
+		t.Fatalf("hasProblem = false, want true (both the head truncation and the interior gap are real problems)")
+	}
+	if problem != 700 {
+		t.Fatalf("problem = %d, want 700 — the interior walk over the present portion [500,1000] must have run and found the real gap; a returned 499 means the walk was skipped (the pre-fix bug)", problem)
+	}
+	if !strings.Contains(detail, "700") {
+		t.Fatalf("detail = %q, want it to name the interior gap at 700", detail)
+	}
+}
 
 // TestSubstrateQueryLo pins FINDING 2: the per-window substrate query must start
 // one ledger BELOW the window so the seam hash-link is checked — including at
