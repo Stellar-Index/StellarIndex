@@ -12,6 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/usage"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // postResponseWriteTimeout bounds the bookkeeping writes that run AFTER
@@ -377,7 +378,11 @@ func ChargeUsage(r *http.Request, units int) {
 // exited on its way out so the caller's deferred <-exited can block
 // until this goroutine has genuinely stopped touching rec/once/units —
 // not merely been told to (see UsageTracker's recover defer comment).
+//
+// A panic here would otherwise kill the whole API process; close(exited)
+// still runs on unwind, so the caller's <-exited never wedges.
 func meterOpenStream(counter *usage.Counter, logger *slog.Logger, id, family string, rec *statusRecorder, once *usageRecordOnce, units *usageUnits, deadlineFired *atomic.Bool, done <-chan struct{}, exited chan<- struct{}) {
+	defer worker.Recover(logger, "api-usage-stream-meter")
 	defer close(exited)
 	ticker := time.NewTicker(time.Duration(streamMeterInterval.Load()))
 	defer ticker.Stop()
