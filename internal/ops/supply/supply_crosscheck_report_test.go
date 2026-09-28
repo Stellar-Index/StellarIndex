@@ -26,6 +26,7 @@ func TestReportCrossCheck(t *testing.T) {
 		wantStatus   string
 		wantFail     bool
 		wantIs       error
+		wantLegs     []string
 	}{
 		"partial, escrow leg unevaluated": {
 			classic:    snap("classic", 1_000, nil),
@@ -34,12 +35,22 @@ func TestReportCrossCheck(t *testing.T) {
 			wantStatus: "UNCHECKED",
 			wantFail:   true,
 			wantIs:     errCrossCheckUnchecked,
+			wantLegs: []string{
+				"subset_bound_checked: false",
+				"over_mint_stroops:    0",
+				"escrow_excess_stroops: n/a (not evaluated)",
+			},
 		},
 		"partial, escrow leg passes": {
 			classic:    snap("classic", 1_000, big.NewInt(400)),
 			sac:        snap("sac", 400, nil),
 			class:      supply.WrapClassPartial,
 			wantStatus: "WITHIN TOLERANCE",
+			wantLegs: []string{
+				"subset_bound_checked: true",
+				"over_mint_stroops:    0",
+				"escrow_excess_stroops: 0",
+			},
 		},
 		"partial, escrow leg breached": {
 			classic:    snap("classic", 1_000, big.NewInt(500)),
@@ -47,12 +58,31 @@ func TestReportCrossCheck(t *testing.T) {
 			class:      supply.WrapClassPartial,
 			wantStatus: "OVER TOLERANCE",
 			wantFail:   true,
+			wantLegs: []string{
+				"subset_bound_checked: true",
+				"escrow_excess_stroops: 100",
+			},
+		},
+		"partial, SAC over-mints classic": {
+			classic:    snap("classic", 1_000, big.NewInt(1_200)),
+			sac:        snap("sac", 1_250, nil),
+			class:      supply.WrapClassPartial,
+			wantStatus: "WITHIN TOLERANCE",
+			wantLegs: []string{
+				"subset_bound_checked: true",
+				"over_mint_stroops:    250",
+				"escrow_excess_stroops: 0",
+			},
 		},
 		"full wrap agrees without an escrow component": {
 			classic:    snap("classic", 400, nil),
 			sac:        snap("sac", 400, nil),
 			class:      supply.WrapClassFull,
 			wantStatus: "WITHIN TOLERANCE",
+			wantLegs: []string{
+				"subset_bound_checked: false",
+				"over_mint_stroops:    n/a (not evaluated)",
+			},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -73,6 +103,11 @@ func TestReportCrossCheck(t *testing.T) {
 			}
 			if tc.wantIs != nil && !errors.Is(err, tc.wantIs) {
 				t.Errorf("err = %v, want %v", err, tc.wantIs)
+			}
+			for _, leg := range tc.wantLegs {
+				if !strings.Contains(out.String(), "  "+leg+"\n") {
+					t.Errorf("output lacks line %q:\n%s", leg, out.String())
+				}
 			}
 		})
 	}
