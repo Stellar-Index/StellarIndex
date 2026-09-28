@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"slices"
 	"strings"
 	"sync"
@@ -807,6 +808,43 @@ func TestParseCreateRequest_AcceptsValidAllowlistForms(t *testing.T) {
 	_, status, problem := parseCreateRequest(r)
 	if problem != "" || status != 0 {
 		t.Fatalf("valid body rejected: status=%d problem=%q", status, problem)
+	}
+}
+
+// An IPv4-mapped entry must be stored as the IPv4 prefix it names. Left
+// 16-byte, "::ffff:1.2.3.4" became a /32 over the IPv6 space (::/32, host
+// bits set, which Postgres cidr rejects) that never contains the plain
+// IPv4 client (CA2-A02-harden-4).
+func TestParsePrefixes_4in6Unmapped(t *testing.T) {
+	for raw, want := range map[string]string{
+		"::ffff:1.2.3.4":          "1.2.3.4/32",
+		"::ffff:1.2.3.4/128":      "1.2.3.4/32",
+		"::ffff:198.51.100.0/120": "198.51.100.0/24",
+		"1.2.3.4":                 "1.2.3.4/32",
+		"2001:db8::1":             "2001:db8::1/128",
+		"2001:db8::/32":           "2001:db8::/32",
+		" 203.0.113.0/24 ":        "203.0.113.0/24",
+	} {
+		got, err := parsePrefixes([]string{raw})
+		if err != nil || len(got) != 1 {
+			t.Fatalf("parsePrefixes(%q) = %v, %v", raw, got, err)
+		}
+		if got[0].String() != want {
+			t.Errorf("parsePrefixes(%q) = %s, want %s", raw, got[0], want)
+		}
+		if got[0] != got[0].Masked() {
+			t.Errorf("parsePrefixes(%q) = %s has host bits set; Postgres cidr rejects it", raw, got[0])
+		}
+	}
+	got, err := parsePrefixes([]string{"::ffff:1.2.3.4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client := netip.MustParseAddr("1.2.3.4"); !got[0].Contains(client) {
+		t.Errorf("%s does not contain its own IPv4 client %s", got[0], client)
+	}
+	if other := netip.MustParseAddr("::ffff:9.9.9.9"); got[0].Contains(other) {
+		t.Errorf("%s contains unrelated client %s: the entry widened", got[0], other)
 	}
 }
 

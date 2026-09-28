@@ -22,6 +22,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardauth"
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/api/wiretime"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
@@ -35,18 +36,15 @@ import (
 // Config wires the handlers' dependencies. Constructed once in
 // cmd/stellarindex-api/main.go alongside the dashboardauth
 // handlers.
-//
-// The runtime auth validator still reads keys from Redis during
-// Phase 1; keys minted from this dashboard surface land in
-// Postgres only and DO NOT authenticate against the runtime
-// API until the Phase 1 Week 4 cutover ships. The dashboard
-// surfaces a notice on new keys to make this explicit. Once the
-// cutover lands the Postgres store becomes canonical and the
-// notice disappears.
 type Config struct {
 	// Keys is the Postgres-backed APIKeyStore — the new source
 	// of truth for the dashboard's key management surface.
 	Keys platform.APIKeyStore
+	// Mirror, when non-nil, receives every minted key before its
+	// Postgres row is written and loses it on revoke. The redis
+	// validator reads only its own records, so production wires the
+	// Redis key store here whenever Redis exists, as POST /v1/register does.
+	Mirror KeyMirror
 	// CacheInvalidator, when non-nil, is called by HandleRevoke
 	// after a successful Postgres revoke so the runtime auth
 	// validator's Redis cache stops authenticating the just-
@@ -79,10 +77,17 @@ type Config struct {
 
 // CacheInvalidator is the subset of
 // auth.PostgresAPIKeyValidator the dashboard needs for cache
-// eviction on revoke. Defined here as an interface so
-// dashboardkeys doesn't import internal/auth.
+// eviction on revoke.
 type CacheInvalidator interface {
 	InvalidateCachedKey(ctx context.Context, hexHash string) error
+}
+
+// KeyMirror writes a dashboard-minted credential into the redis
+// validator's store and removes it again. Implemented by
+// [auth.RedisAPIKeyStore].
+type KeyMirror interface {
+	CreateWithSecret(ctx context.Context, k auth.MirroredKey) error
+	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
 }
 
 func (c *Config) validate() error {
@@ -352,20 +357,9 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		rec.IPAllowlist = prefixes
 	}
 
-	out, err := h.cfg.Keys.Create(r.Context(), rec, maxKeys)
-	if err != nil {
-		// F-1257 race-window loser: another concurrent create
-		// pushed this account over its tier's key cap between the
-		// precheck and the INSERT. Surface the same 409 the
-		// precheck would have.
-		if errors.Is(err, platform.ErrAPIKeyQuotaExceeded) {
-			writeProblem(w, http.StatusConflict,
-				keyQuotaProblem(maxKeys, maxKeys),
-				r.URL.Path)
-			return
-		}
-		h.cfg.Logger.Error("create key in postgres", "err", err, "account_id", sc.Account.ID)
-		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
+	out, status, problem := h.persistKey(r.Context(), sc.Account, rec, plaintext, maxKeys)
+	if problem != "" {
+		writeProblem(w, status, problem, r.URL.Path)
 		return
 	}
 	h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyMint, out)
@@ -374,6 +368,77 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		Plaintext: plaintext,
 		Key:       toDTO(out),
 	})
+}
+
+// persistKey writes rec to the validator mirror first and its Postgres
+// management row second, rolling the mirror back when the row fails, so
+// the plaintext handed back authenticates and no credential outlives its
+// management record (the order register.go uses).
+func (h *Handlers) persistKey(ctx context.Context, acct platform.Account, rec platform.APIKey, plaintext string, maxKeys int) (platform.APIKey, int, string) {
+	mirrored, err := h.mirrorKey(ctx, acct, rec, plaintext)
+	if err != nil {
+		h.cfg.Logger.Error("mirror key to validator store", "err", err, "account_id", acct.ID)
+		return platform.APIKey{}, http.StatusInternalServerError, "internal error"
+	}
+	out, err := h.cfg.Keys.Create(ctx, rec, maxKeys)
+	if err == nil {
+		return out, 0, ""
+	}
+	if mirrored {
+		h.rollbackMirror(ctx, acct, rec.ID)
+	}
+	// F-1257 race-window loser: another concurrent create pushed this
+	// account over its tier's key cap between the precheck and the
+	// INSERT. Surface the same 409 the precheck would have.
+	if errors.Is(err, platform.ErrAPIKeyQuotaExceeded) {
+		return platform.APIKey{}, http.StatusConflict, keyQuotaProblem(maxKeys, maxKeys)
+	}
+	h.cfg.Logger.Error("create key in postgres", "err", err, "account_id", acct.ID)
+	return platform.APIKey{}, http.StatusInternalServerError, "internal error"
+}
+
+// mirrorKey writes the credential into the validator store when a mirror
+// is wired, reporting whether it did.
+func (h *Handlers) mirrorKey(ctx context.Context, acct platform.Account, rec platform.APIKey, plaintext string) (bool, error) {
+	if h.cfg.Mirror == nil {
+		return false, nil
+	}
+	// The row stores 0 to inherit the account override at auth time, but
+	// the mirror record reads 0 as unmetered, so it carries the resolved cap.
+	rec.MonthlyQuota = acct.ResolveKeyMonthlyQuota(rec.MonthlyQuota)
+	record, err := auth.APIKeyRecordFromPlatform(rec, auth.AccountIdentifier(acct.Slug))
+	if err != nil {
+		return false, err
+	}
+	if err := h.cfg.Mirror.CreateWithSecret(ctx, auth.MirroredKey{Plaintext: plaintext, Record: record}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// rollbackMirror removes a mirrored credential whose management row
+// failed. Detached from ctx: a dead request context is the usual reason
+// the row failed, and would fail the rollback too.
+func (h *Handlers) rollbackMirror(ctx context.Context, acct platform.Account, keyID string) {
+	rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := h.revokeMirror(rbCtx, acct, keyID); err != nil {
+		h.cfg.Logger.Error("mirror rollback after postgres create failed",
+			"err", err, "account_id", acct.ID, "key_id", keyID)
+	}
+}
+
+// revokeMirror removes keyID from the validator mirror. Not-found is a
+// key minted before the mirror was wired, or one already removed.
+func (h *Handlers) revokeMirror(ctx context.Context, acct platform.Account, keyID string) error {
+	if h.cfg.Mirror == nil {
+		return nil
+	}
+	err := h.cfg.Mirror.RevokeKeyByID(ctx, auth.AccountIdentifier(acct.Slug), keyID)
+	if errors.Is(err, auth.ErrKeyNotFound) {
+		return nil
+	}
+	return err
 }
 
 // HandleRevoke soft-deletes a key. Idempotent — revoking an
@@ -430,6 +495,10 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyRevoke, existing)
+	// The mirror is the working credential under auth_backend=redis and
+	// slides its TTL on use, so failing to remove it is a 500 the caller
+	// retries (the Postgres revoke is idempotent), never a 204.
+	mirrorErr := h.revokeMirror(r.Context(), sc.Account, id)
 	// Best-effort cache invalidation. A failure here means the
 	// runtime auth cache keeps authenticating the revoked key
 	// until the TTL rolls it off; we log + 204 anyway so the
@@ -440,6 +509,12 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 			h.cfg.Logger.Warn("invalidate auth cache after revoke",
 				"err", err, "key_id", id)
 		}
+	}
+	if mirrorErr != nil {
+		h.cfg.Logger.Error("revoke mirrored key after postgres revoke", "err", mirrorErr, "key_id", id)
+		writeProblem(w, http.StatusInternalServerError,
+			"key revoked, but its live credential could not be removed; retry", r.URL.Path)
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -735,7 +810,7 @@ func parsePrefixes(raws []string) ([]netip.Prefix, error) {
 			continue
 		}
 		if p, err := netip.ParsePrefix(raw); err == nil {
-			out = append(out, p)
+			out = append(out, unmapPrefix(p))
 			continue
 		}
 		// Try as a bare IP.
@@ -743,13 +818,25 @@ func parsePrefixes(raws []string) ([]netip.Prefix, error) {
 		if err != nil {
 			return nil, fmt.Errorf("ip_allowlist[%q]: not a valid IP or CIDR", raw)
 		}
+		// The allowlist check sees an IPv4 client as plain IPv4, which no
+		// 16-byte ::ffff:a.b.c.d prefix contains.
+		addr = addr.Unmap()
 		bits := 32
-		if addr.Is6() && !addr.Is4In6() {
+		if addr.Is6() {
 			bits = 128
 		}
 		out = append(out, netip.PrefixFrom(addr, bits))
 	}
 	return out, nil
+}
+
+// unmapPrefix rewrites an IPv4-mapped prefix (::ffff:a.b.c.d/n, n >= 96)
+// as the IPv4 prefix it denotes.
+func unmapPrefix(p netip.Prefix) netip.Prefix {
+	if !p.Addr().Is4In6() || p.Bits() < 96 {
+		return p
+	}
+	return netip.PrefixFrom(p.Addr().Unmap(), p.Bits()-96)
 }
 
 // writeProblem delegates to the shared httpx helper with the

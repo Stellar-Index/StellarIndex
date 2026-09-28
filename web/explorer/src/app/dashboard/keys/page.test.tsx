@@ -121,3 +121,88 @@ describe('/dashboard/keys create-key timeout', () => {
     expect(screen.queryByText('Create failed')).not.toBeInTheDocument();
   });
 });
+
+// GH-1073: the server accepts and enforces expires_at, but the dashboard
+// offered no way to set it and no way to see it.
+describe('/dashboard/keys expiry', () => {
+  it('sends the chosen expiry as an RFC 3339 expires_at', async () => {
+    listKeysWithLimit.mockResolvedValue({ keys: [], maxActiveKeys: 10 });
+    createKey.mockReturnValue(new Promise(() => {}));
+
+    renderKeysPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('New key')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText('New key'));
+    fireEvent.change(screen.getByLabelText(/^Name/), {
+      target: { value: 'ci' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Expires/), {
+      target: { value: '2099-06-15T09:30' },
+    });
+    fireEvent.click(screen.getByText('Create key'));
+
+    await waitFor(() => expect(createKey).toHaveBeenCalledTimes(1));
+    const sent = createKey.mock.calls[0][0].expires_at;
+    expect(sent).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+    expect(new Date(sent).getTime()).toBe(
+      new Date(2099, 5, 15, 9, 30).getTime(),
+    );
+  });
+
+  it('omits expires_at when no expiry is chosen', async () => {
+    listKeysWithLimit.mockResolvedValue({ keys: [], maxActiveKeys: 10 });
+    createKey.mockReturnValue(new Promise(() => {}));
+
+    renderKeysPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('New key')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText('New key'));
+    fireEvent.change(screen.getByLabelText(/^Name/), {
+      target: { value: 'forever' },
+    });
+    fireEvent.click(screen.getByText('Create key'));
+
+    await waitFor(() => expect(createKey).toHaveBeenCalledTimes(1));
+    expect(createKey.mock.calls[0][0].expires_at).toBeUndefined();
+  });
+
+  it('renders an Expires column: the expiry when set, "Never" when not', async () => {
+    listKeysWithLimit.mockResolvedValue({
+      keys: [
+        {
+          id: 'key_1',
+          name: 'Expiring key',
+          key_prefix: 'sip_aaaaaaaa',
+          tier: 'apikey',
+          rate_limit_per_min: 1000,
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: '2099-06-15T09:30:00Z',
+        },
+        {
+          id: 'key_2',
+          name: 'Forever key',
+          key_prefix: 'sip_bbbbbbbb',
+          tier: 'apikey',
+          rate_limit_per_min: 1000,
+          created_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+      maxActiveKeys: 10,
+    });
+
+    renderKeysPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Expiring key')).toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole('columnheader', { name: 'Expires' }),
+    ).toBeInTheDocument();
+    expect(screen.getByTitle('2099-06-15T09:30:00Z')).toHaveTextContent(/2099/);
+    expect(screen.getByText('Never')).toBeInTheDocument();
+  });
+});
