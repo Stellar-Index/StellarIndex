@@ -88,11 +88,13 @@ func openSeedStore(ctx context.Context, dryRun bool, dsn string) (*timescale.Sto
 // first to fill the dormant tail from a history-archive checkpoint.
 //
 // A pass that reaches the end of its watchlist upserts
-// account_observation_seed_provenance (migration 0189): accounts seeded,
-// missing and removed against the configured watchlist, plus the seeded
-// accounts' ledger range. Unlike seed-claimable-balances there is no
-// -assets-style scope, so the table holds a single row. -dry-run never
-// writes it, and an error mid-pass returns before it is reached.
+// account_observation_seed_provenance (migration 0189): which accounts were
+// watched and missing (so a `missing` count traces to a specific G-strkey,
+// even after the configured watchlist later changes), counts seeded/missing/
+// removed, plus the seeded accounts' ledger range. Unlike seed-claimable-
+// balances there is no -assets-style scope, so the table holds a single
+// row, overwritten by each complete pass. -dry-run never writes it, and an
+// error mid-pass returns before it is reached.
 //
 // Flags:
 //
@@ -127,6 +129,7 @@ func supplySeedObservations(args []string) error {
 	dryRun := flags.dryRun
 
 	var seeded, missing, removed int
+	var missingAccounts []string
 	var minLedger, maxLedger uint32
 	haveLedgerBounds := false
 	for _, acc := range watched {
@@ -137,6 +140,7 @@ func supplySeedObservations(args []string) error {
 		switch outcome {
 		case seedOutcomeMissing:
 			missing++
+			missingAccounts = append(missingAccounts, acc)
 			continue
 		case seedOutcomeRemoved:
 			removed++
@@ -166,7 +170,7 @@ func supplySeedObservations(args []string) error {
 	if dryRun {
 		return nil
 	}
-	return store.UpsertAccountObservationSeedProvenance(ctx, accountObservationSeedProvenance(len(watched), seeded, missing, removed, minLedger, maxLedger, haveLedgerBounds))
+	return store.UpsertAccountObservationSeedProvenance(ctx, accountObservationSeedProvenance(watched, seeded, missing, removed, minLedger, maxLedger, haveLedgerBounds, missingAccounts))
 }
 
 // seedAccountOutcome classifies one watched account's seed-observations result.
@@ -222,12 +226,17 @@ func seedOneAccount(ctx context.Context, reader *clickhouse.ExplorerReader, stor
 // accountObservationSeedProvenance builds the audit record for one COMPLETE
 // `supply seed-observations` pass (migration 0189). Factored out of
 // supplySeedObservations so the record shape — nil ledger bounds when
-// nothing was seeded — is testable without a live store.
-func accountObservationSeedProvenance(watched, seeded, missing, removed int, minLedger, maxLedger uint32, haveLedgerBounds bool) timescale.AccountObservationSeedProvenance {
+// nothing was seeded — is testable without a live store. watched and
+// missingAccounts are the actual G-strkeys (the store sorts them
+// deterministically before writing); accounts_watched/accounts_missing are
+// their lengths.
+func accountObservationSeedProvenance(watched []string, seeded, missing, removed int, minLedger, maxLedger uint32, haveLedgerBounds bool, missingAccounts []string) timescale.AccountObservationSeedProvenance {
 	p := timescale.AccountObservationSeedProvenance{
-		AccountsWatched: watched,
+		AccountsWatched: len(watched),
+		WatchedAccounts: watched,
 		AccountsSeeded:  seeded,
 		AccountsMissing: missing,
+		MissingAccounts: missingAccounts,
 		AccountsRemoved: removed,
 	}
 	if haveLedgerBounds {

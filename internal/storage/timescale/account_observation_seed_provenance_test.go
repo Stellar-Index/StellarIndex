@@ -44,3 +44,32 @@ func TestUpsertAccountObservationSeedProvenance_RejectsPartialCoverage(t *testin
 		t.Errorf("err=%v should refuse counts that don't sum to AccountsWatched", err)
 	}
 }
+
+func TestUpsertAccountObservationSeedProvenance_RejectsWatchedAccountsCardinalityMismatch(t *testing.T) {
+	s := &Store{}
+	// AccountsWatched says 3, but only 2 G-strkeys are given: a count
+	// unsupported by an actual account list is not traceable.
+	err := s.UpsertAccountObservationSeedProvenance(context.Background(), AccountObservationSeedProvenance{
+		AccountsWatched: 3,
+		WatchedAccounts: []string{"GA", "GB"},
+		AccountsSeeded:  3,
+	})
+	if err == nil || !strings.Contains(err.Error(), "WatchedAccounts") {
+		t.Errorf("err=%v should refuse a WatchedAccounts/AccountsWatched cardinality mismatch", err)
+	}
+}
+
+func TestUpsertAccountObservationSeedProvenance_RejectsMissingAccountsCardinalityMismatch(t *testing.T) {
+	s := &Store{}
+	// AccountsMissing says 1, but 2 G-strkeys are given.
+	err := s.UpsertAccountObservationSeedProvenance(context.Background(), AccountObservationSeedProvenance{
+		AccountsWatched: 3,
+		WatchedAccounts: []string{"GA", "GB", "GC"},
+		AccountsSeeded:  2,
+		AccountsMissing: 1,
+		MissingAccounts: []string{"GA", "GB"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "MissingAccounts") {
+		t.Errorf("err=%v should refuse a MissingAccounts/AccountsMissing cardinality mismatch", err)
+	}
+}

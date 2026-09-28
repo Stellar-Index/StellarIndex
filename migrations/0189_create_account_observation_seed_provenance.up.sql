@@ -15,6 +15,14 @@
 -- check); a partial or failed pass stamps nothing, and a -dry-run pass
 -- never calls the upsert at all.
 --
+-- Counts alone can't be traced back to a specific account, and the
+-- watchlist itself changes over time: an account added to [supply]
+-- sdf_reserve_accounts after the last pass and never seeded is
+-- indistinguishable from a seeded one if only accounts_watched shifts.
+-- watched_accounts and missing_accounts carry the actual G-strkeys (sorted
+-- for a deterministic diff), so a missing count is always traceable to
+-- which accounts.
+--
 -- New table only: nothing reads it, so the previous binary is unaffected
 -- (rule 9).
 
@@ -26,10 +34,15 @@ CREATE TABLE IF NOT EXISTS account_observation_seed_provenance (
     scope             text        PRIMARY KEY,
     -- Size of the [supply] sdf_reserve_accounts watchlist this pass covered.
     accounts_watched  integer     NOT NULL CHECK (accounts_watched > 0),
+    -- The watchlist itself (G-strkeys, sorted): which accounts this pass
+    -- covered, so a later config change is traceable.
+    watched_accounts  text[]      NOT NULL CHECK (cardinality(watched_accounts) = accounts_watched),
     -- Accounts written to account_observations by this pass.
     accounts_seeded   integer     NOT NULL CHECK (accounts_seeded >= 0),
     -- Watched accounts with no AccountEntry in the lake's capture window.
     accounts_missing  integer     NOT NULL CHECK (accounts_missing >= 0),
+    -- Which watched accounts were missing (G-strkeys, sorted).
+    missing_accounts  text[]      NOT NULL CHECK (cardinality(missing_accounts) = accounts_missing),
     -- Watched accounts whose latest change merged them away.
     accounts_removed  integer     NOT NULL CHECK (accounts_removed >= 0),
     -- Range of the seeded accounts' own last-modified ledgers; NULL when
@@ -42,8 +55,11 @@ CREATE TABLE IF NOT EXISTS account_observation_seed_provenance (
 
 COMMENT ON TABLE account_observation_seed_provenance IS
     'Singleton row recording the most recent complete `supply '
-    'seed-observations` pass: accounts seeded/missing/removed against the '
-    '[supply] sdf_reserve_accounts watchlist, and the seeded ledger range. '
-    'Audit trail only — not read by the supply computation.';
+    'seed-observations` pass: watched_accounts/missing_accounts (the actual '
+    'G-strkeys, sorted) plus accounts_seeded/missing/removed counts against '
+    'the [supply] sdf_reserve_accounts watchlist, and the seeded ledger '
+    'range. Last-pass-wins, like claimable_seed_provenance (0184): each '
+    'complete pass overwrites this row in place rather than accumulating '
+    'history. Audit trail only — not read by the supply computation.';
 
 COMMIT;
