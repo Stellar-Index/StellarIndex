@@ -785,7 +785,11 @@ audit-2026-07-23); the audit row carries `keys_clamped` /
 
 ### 8.2 Audit retention
 
-- `audit_log`: 12 months online, 7 years archived to S3
+- `audit_log`: 12 months online, 7 years archived to S3 — **NOT BUILT.**
+  No archiver exists and nothing deletes a row: migrations 0179/0188 make
+  the table append-only apart from an erasure's scrub, and
+  `internal/retentionreaper` deliberately does not reap it. Rows are kept
+  indefinitely until a retention period is decided (#346 F1).
 - `api_usage_events`: 12 months hot, then dropped (customers can
   export their own data anytime)
 
