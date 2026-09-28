@@ -2026,8 +2026,15 @@ jobs:
     needs: [preflight]
     # §B: gated on the `web` class with STEP-level `if:` on every
     # substantive step below (see the REQUIRED-CHECK NOTE on
-    # `preflight`) — checkout/pnpm/node setup stay unconditional since
-    # they are cheap and harmless as a no-op prefix.
+    # `preflight`) — checkout stays unconditional since it's cheap and
+    # harmless as a no-op prefix. pnpm/action-setup and setup-node are
+    # gated too: setup-node's `cache: "pnpm"` Post step saves whatever
+    # path `pnpm store path` resolved to at Main time, and hard-fails
+    # ("Path Validation Error: Path(s) ... do(es) not exist") when that
+    # store was never populated because `pnpm install` below it was
+    # skipped — run 36427729006 (PR #1545) red on every non-web PR.
+    # Main only registers a Post hook when it runs, so gating these two
+    # steps the same way as the work below suppresses it cleanly.
     defaults:
       run:
         working-directory: web/explorer
@@ -2039,9 +2046,11 @@ jobs:
       # `packageManager` pin — package_json_file lets action-setup read the
       # pin itself instead of a second, driftable copy.
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
+        if: needs.preflight.outputs.web == 'true'
         with:
           package_json_file: web/explorer/package.json
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        if: needs.preflight.outputs.web == 'true'
         with:
           node-version: "22"
           cache: "pnpm"
@@ -2142,7 +2151,10 @@ jobs:
     timeout-minutes: 10
     needs: [preflight]
     # §B: gated on the `web` class, same STEP-level shape as web-explorer
-    # above (see the REQUIRED-CHECK NOTE on `preflight`).
+    # above (see the REQUIRED-CHECK NOTE on `preflight`, and that job's
+    # comment on why pnpm/action-setup and setup-node are gated too —
+    # setup-node's cache-save Post step fails hard when `pnpm install`
+    # never ran to populate the store it tries to save).
     defaults:
       run:
         working-directory: web/status
@@ -2153,9 +2165,11 @@ jobs:
       # T547: package_json_file reads web/status/package.json's
       # `packageManager` pin instead of a second, driftable copy.
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
+        if: needs.preflight.outputs.web == 'true'
         with:
           package_json_file: web/status/package.json
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        if: needs.preflight.outputs.web == 'true'
         with:
           node-version: "22"
           cache: "pnpm"
