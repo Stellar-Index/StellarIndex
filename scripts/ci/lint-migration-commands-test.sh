@@ -292,6 +292,193 @@ DELETE FROM trades;
 MD
 check "a DO NOT RUN docs/ block is exempt" 0 "$docs_do_not_run"
 
+# ── the operator corpus: NULL-start refresh of a view over a retained source
+# The historical defect: both alert-rule trees and the twap-history-missing
+# runbook told the on-call to run the NULL-start TWAP refresh that 0156
+# marks DO NOT RUN, and no gate read either file.
+echo "lint-migration-commands-test: operator-corpus verdicts"
+
+# twap <name> — a tree whose migrations attach retention to prices_1m and
+# build twap_1h on it, next to prices_1d built on trades (no retention).
+twap() {
+  local r
+  r="$(mk "$1")"
+  cat > "$r/migrations/0150_example_twap.up.sql" <<'SQL'
+-- 0150 up — an example TWAP view over a retained aggregate.
+--
+-- Prose only.
+
+BEGIN;
+
+SELECT add_retention_policy(
+         'prices_1m',
+         drop_after => INTERVAL '90 days');
+
+CREATE MATERIALIZED VIEW twap_1h
+WITH (timescaledb.continuous) AS
+SELECT time_bucket('1 hour', bucket) AS bucket, avg(twap) AS twap
+FROM prices_1m
+GROUP BY 1
+WITH NO DATA;
+
+CREATE MATERIALIZED VIEW prices_1d
+WITH (timescaledb.continuous) AS
+SELECT time_bucket('1 day', ts) AS bucket, count(*) AS n
+FROM trades
+GROUP BY 1
+WITH NO DATA;
+
+COMMIT;
+SQL
+  mkdir -p "$r/docs/operations/runbooks" "$r/deploy/monitoring/rules"
+  echo "$r"
+}
+
+out="$(bash "$LINT" "$PWD" 2>&1)"
+if grep -qF "NULL-start refreshes of: twap_1d twap_1h;" <<<"$out"; then
+  echo "  ok   the repo's hazard set is derived as exactly twap_1d twap_1h"
+  pass=$((pass + 1))
+else
+  echo "  FAIL the repo's hazard set is not twap_1d twap_1h: ${out##*NULL-start}"
+  fail=$((fail + 1))
+fi
+
+rb="$(twap runbook_null)"
+cat > "$rb/docs/operations/runbooks/twap.md" <<'MD'
+2. Re-materialize:
+
+   ```sql
+   CALL refresh_continuous_aggregate('twap_1h', NULL, now());
+   ```
+MD
+catches "a runbook's NULL-start TWAP refresh is caught" \
+  "$rb" "docs/operations/runbooks/twap.md:4"
+
+rule="$(twap rule_templated)"
+cat > "$rule/deploy/monitoring/rules/f.yml" <<'YML'
+          description: |
+            Fix: `CALL refresh_continuous_aggregate('{{ $labels.view }}', NULL, now());`
+YML
+catches "an alert annotation's templated NULL-start refresh is caught" \
+  "$rule" "deploy/monitoring/rules/f.yml:2"
+
+multi="$(twap multiline)"
+cat > "$multi/docs/operations/runbooks/twap.md" <<'MD'
+CALL refresh_continuous_aggregate(
+       'twap_1h'::regclass,
+       NULL, now());
+MD
+catches "a NULL start split across lines is caught" \
+  "$multi" "docs/operations/runbooks/twap.md:1"
+
+named="$(twap named_arg)"
+cat > "$named/docs/operations/runbooks/twap.md" <<'MD'
+CALL refresh_continuous_aggregate('twap_1h', window_start => NULL, window_end => now());
+MD
+catches "a named window_start => NULL is caught" \
+  "$named" "docs/operations/runbooks/twap.md:1"
+
+warned="$(twap warned)"
+cat > "$warned/docs/operations/runbooks/twap.md" <<'MD'
+-- DO NOT RUN: CALL refresh_continuous_aggregate('twap_1h', NULL, now());
+MD
+check "a NULL-start TWAP refresh under DO NOT RUN passes" 0 "$warned"
+
+windowed="$(twap windowed)"
+cat > "$windowed/docs/operations/runbooks/twap.md" <<'MD'
+CALL refresh_continuous_aggregate(
+       'twap_1h',
+       '2026-01-01'::timestamptz, '2026-02-01'::timestamptz,
+       force => true);
+MD
+check "a windowed TWAP refresh passes" 0 "$windowed"
+
+unretained="$(twap unretained)"
+cat > "$unretained/docs/operations/runbooks/p.md" <<'MD'
+CALL refresh_continuous_aggregate('prices_1d', NULL, NULL);
+MD
+check "a NULL-start refresh of a view over an unretained source passes" 0 "$unretained"
+
+removed="$(twap removed)"
+cat > "$removed/migrations/0151_example_unretain.up.sql" <<'SQL'
+-- 0151 up — remove the example retention.
+
+BEGIN;
+SELECT remove_retention_policy('prices_1m', if_exists => true);
+COMMIT;
+SQL
+cp "$rb/docs/operations/runbooks/twap.md" "$removed/docs/operations/runbooks/twap.md"
+check "once a later migration removes the retention the view is no hazard" 0 "$removed"
+
+newmig="$(twap new_migration)"
+cat >> "$newmig/migrations/$MIG" <<'SQL'
+
+-- Recreated WITH NO DATA; re-materialize with
+-- CALL refresh_continuous_aggregate('twap_1h', NULL, now());
+SQL
+catches "a migration from 0156 on is held to the rule too" \
+  "$newmig" "migrations/$MIG:12  (view: twap_1h)"
+
+# ── the operator corpus: unbounded DML on a compressed hypertable ─────
+# The historical defect: scripts/ops/recompute-usd-volume-soroban.sql ran
+# this UPDATE, with no `ts` predicate, in one transaction with the
+# decompression cap lifted — every trades chunk a result relation.
+echo "lint-migration-commands-test: unbounded-DML verdicts"
+
+# comp <name> <ops-sql> — a tree whose migrations make trades a compressed
+# hypertable on ts, plus one ops script holding <ops-sql>.
+comp() {
+  local r
+  r="$(mk "$1")"
+  cat > "$r/migrations/0149_example_trades.up.sql" <<'SQL'
+-- 0149 up — an example compressed hypertable.
+
+BEGIN;
+CREATE TABLE trades (ts timestamptz NOT NULL, source text, usd_volume numeric,
+                     quote_asset text, quote_amount numeric, ledger bigint);
+SELECT create_hypertable(
+    'trades',
+    'ts',
+    chunk_time_interval => INTERVAL '1 day');
+CREATE TABLE plain (id bigint, v numeric);
+ALTER TABLE trades SET (timescaledb.compress);
+SELECT add_compression_policy('trades', INTERVAL '7 days');
+COMMIT;
+SQL
+  mkdir -p "$r/scripts/ops"
+  printf '%s\n' "$2" > "$r/scripts/ops/fix.sql"
+  echo "$r"
+}
+
+unbounded="$(comp unbounded "BEGIN;
+UPDATE trades
+   SET usd_volume = (quote_amount::numeric / 10000000::numeric)
+ WHERE usd_volume IS NULL
+   AND quote_asset IN (
+     'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75'
+   )
+   AND quote_amount > 0;
+COMMIT;")"
+catches "the deleted script's UPDATE with no ts predicate is caught" \
+  "$unbounded" "scripts/ops/fix.sql:2  (trades: needs a WHERE on ts)"
+
+ledger="$(comp ledger_only "DELETE FROM trades WHERE source = 'x' AND ledger BETWEEN 1 AND 2;")"
+catches "a DELETE bounded by ledger, not the time column, is caught" \
+  "$ledger" "scripts/ops/fix.sql:1  (trades: needs a WHERE on ts)"
+
+setonly="$(comp set_only "UPDATE trades SET ts = ts WHERE source = 'x';")"
+catches "the time column in SET but not WHERE is caught" \
+  "$setonly" "scripts/ops/fix.sql:1  (trades: needs a WHERE on ts)"
+
+bounded="$(comp bounded "UPDATE trades t
+   SET usd_volume = t.quote_amount / 10000000
+ WHERE t.usd_volume IS NULL
+   AND t.ts >= '2026-05-01' AND t.ts < '2026-05-01 01:00';")"
+check "the same UPDATE bounded by ts passes" 0 "$bounded"
+
+plain="$(comp plain_table "UPDATE plain SET v = 0 WHERE id = 1;")"
+check "DML on a table that is not a compressed hypertable passes" 0 "$plain"
+
 # ── non-vacuity ──────────────────────────────────────────────────────
 empty="$TMP/empty"
 mkdir -p "$empty/migrations"

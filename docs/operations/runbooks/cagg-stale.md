@@ -64,9 +64,15 @@ SQL
 runuser -u postgres -- psql -d stellarindex -c \
   "SELECT * FROM pg_stat_activity WHERE application_name LIKE '%timescale%';"
 
-# Try a manual refresh — does it succeed?
+# Try a manual refresh of the trailing window — does it succeed? Never a
+# NULL start: on twap_1h/twap_1d that deletes history once prices_1m's
+# retention is armed (twap-history-missing.md). <min_window> is the view's
+# MinWindow in internal/storage/timescale/diagnostics.go (TradesCAGGs,
+# OracleCAGGs, SupplyCAGG) — e.g. '3 hours' for *_1h, '3 days' for *_1d,
+# '21 days' for *_1w, '93 days' for *_1mo; narrower fails 22023 "refresh
+# window too small".
 runuser -u postgres -- psql -d stellarindex -c \
-  "CALL refresh_continuous_aggregate('<cagg_name>', NULL, NULL);"
+  "CALL refresh_continuous_aggregate('<cagg_name>', now() - interval '<min_window>', now());"
 ```
 
 **`job_errors` empty while the job is failing.** `total_failures` is a
@@ -157,7 +163,9 @@ job's `application_name`, using the commands in
   retention-pruned and can miss crashed runs while `total_failures`
   climbs, so every step that reads it now falls back to the Postgres
   server log.
-
+- 2026-09-23 — the diagnostic manual refresh is windowed to the view's
+  minimum refresh width; its NULL start deleted TWAP history once 0156's
+  `prices_1m` retention is armed.
 - 2026-09-05 — producer health: the probe now publishes
   `stellarindex_timescale_probe_query_ok`, `_probe_rows` and
   `_probe_last_run_unix`, and `stellarindex_timescale_probe_degraded`

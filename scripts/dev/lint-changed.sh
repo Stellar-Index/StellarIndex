@@ -179,7 +179,7 @@ fi
 # ── Classification ──────────────────────────────────────────────────────────
 sh_files=(); test_scripts=(); go_files=(); go_dirs=(); wf_files=()
 mig_files=(); md_files=(); baseline_files=(); lake_files=(); parity=0; other=()
-rules_files=(); ansible_files=(); ch_files=()
+rules_files=(); ansible_files=(); ch_files=(); op_corpus=0
 
 add_unique() { # add_unique <value> — appends to go_dirs if absent
     local v="$1" d
@@ -202,6 +202,8 @@ for f in "${changed[@]}"; do
             case "$d" in .) add_unique "." ;; *) add_unique "./${d#./}" ;; esac ;;
         *.md) md_files+=("$f"); hit=1 ;;
     esac
+    # lint-migration-commands also reads these for a NULL-start refresh.
+    case "$f" in docs/*|deploy/*|configs/*|scripts/ops/*|scripts/dev/*) op_corpus=1 ;; esac
     case "$f" in
         .github/workflows/*.yml|.github/workflows/*.yaml|*/.github/workflows/*.yml|*/.github/workflows/*.yaml)
             wf_files+=("$f"); hit=1 ;;
@@ -399,6 +401,8 @@ if [ "${#mig_files[@]}" -gt 0 ]; then
     else
         add_step "lint-migration-compat" "" "$ci_dir/lint-migration-compat.sh"
     fi
+elif [ "$op_corpus" -eq 1 ]; then
+    add_step "lint-migration-commands" "" "$ci_dir/lint-migration-commands.sh"
 fi
 
 # 5. verify.sh ↔ CI parity, when either side of it changed.

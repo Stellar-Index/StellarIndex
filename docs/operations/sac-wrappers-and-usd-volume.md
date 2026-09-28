@@ -82,24 +82,43 @@ After a SAC entry that maps to a USD-pegged classic lands, NEW
 trades will populate `trades.usd_volume` correctly. Trades that
 landed BEFORE that config addition stay NULL.
 
-To retroactively price them:
+To retroactively price them, use `stellarindex-ops usd-volume-restamp`
+with `-tier exact -fill-null`. A SAC-quoted trade whose wrapper resolves to
+a USD-pegged classic is exact-tier (`quote_amount / 10^7`), and the tool
+classifies it from the same `[trades].usd_pegged_classic_assets` and
+`[supply.sac_wrappers]` the insert path reads, so there is no hand-kept
+`IN (…)` list to extend:
 
 ```sh
-scp scripts/ops/recompute-usd-volume-soroban.sql root@136.243.90.96:/tmp/
-
-ssh root@136.243.90.96 \
-  'PGPASSWORD=$(cat /etc/stellarindex/postgres-password.txt) \
-   psql -h 127.0.0.1 -U stellarindex -d stellarindex \
-        -v ON_ERROR_STOP=1 \
-        -c "SET timescaledb.max_tuples_decompressed_per_dml_transaction = 0;" \
-        -f /tmp/recompute-usd-volume-soroban.sql'
+# dry run: per-day candidate counts, nothing written
+stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
+  -tier exact -fill-null -sources aquarius,soroswap,phoenix,comet \
+  -from <first-day> -to <last-day>
+# apply on r1 under the heavy wrapper; add -chunks for any window older
+# than the trades compression policy's 7 days
+set -a; . /etc/default/stellarindex; set +a
+/usr/local/sbin/run-heavy-job.sh usd-sac-fill-try1 \
+  /usr/local/bin/stellarindex-ops usd-volume-restamp \
+    -config /etc/stellarindex.toml -tier exact -fill-null -chunks \
+    -sources aquarius,soroswap,phoenix,comet \
+    -from <first-day> -to <last-day> -write
 ```
 
-The GUC is necessary because the trades hypertable uses chunk
-compression and the default `max_tuples_decompressed_per_dml_transaction`
-(100k) is below the typical scope of a backfill (~120k+ rows).
+Then run the windowed CAGG refreshes the tool prints: it refreshes nothing
+itself, and every served volume surface reads a continuous aggregate.
+Full procedure and flags: [usd-volume-rederive-2026-08.md, Step
+5](usd-volume-rederive-2026-08.md).
 
-Idempotent — re-running is safe (filters on `usd_volume IS NULL`).
+Do NOT backfill with a hand-written `UPDATE trades … WHERE usd_volume IS
+NULL`. `trades` is a compressed hypertable, and an UPDATE with no `ts`
+predicate makes every chunk a result relation in one transaction: the
+restamp path measured 260 result relations and ~270 GB of WAL for that
+shape, on a host whose `pg_wal` sits on a 49 GB root filesystem. It also
+leaves `derive_generation` at 0, so a later live re-write reverts it. The
+tool slices the window by `ts`, lifts the decompression cap with
+`SET LOCAL` per slice, and stamps the run's generation.
+`scripts/ci/lint-migration-commands.sh` fails an ops SQL script that runs
+DML on a compressed hypertable without a time-column predicate.
 
 ## Adding a new USD-pegged classic
 
@@ -116,9 +135,9 @@ usd_pegged_classic_assets = [
 ```
 
 Then both new and historical trades quoted in USDx (or its SAC
-wrapper) will be priced via `usd_volume = quote_amount / 10^7`.
-Update `scripts/ops/recompute-usd-volume-soroban.sql`'s WHERE
-clause to include the new SAC.
+wrapper) will be priced via `usd_volume = quote_amount / 10^7`:
+new trades at insert, historical ones by the `usd-volume-restamp`
+run above, which reads the same config.
 
 ## Pure-Soroban SEP-41 tokens (no USD-pegged quote at all)
 
@@ -182,8 +201,9 @@ done
 
 ## Related
 
-- `scripts/ops/recompute-usd-volume-soroban.sql` — the backfill.
+- `internal/ops/chops/usd_volume_restamp.go` — the backfill
+  (`stellarindex-ops usd-volume-restamp -tier exact -fill-null`).
 - `internal/storage/timescale/usd_volume_quote_spec.go` — the live
-  USD-volume path (mirrors what the SQL backfill does).
+  USD-volume path; the restamp classifies through the same spec.
 - `internal/api/v1/known_issuers.go` — curated org-name fallback;
   add an entry alongside the SAC for explorer label parity.
