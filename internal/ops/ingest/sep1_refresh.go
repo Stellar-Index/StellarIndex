@@ -421,9 +421,6 @@ func reportSep1Systemic(store *timescale.Store, attempts int, failedKeys []strin
 		len(failedKeys), attempts, len(failedKeys))
 }
 
-// tomlListsIssuer reports whether the fetched SEP-1 toml's [[CURRENCIES]] lists
-// the given issuer back — the bidirectional half of org verification. Without
-// this match, ORG_NAME from a self-declared home_domain is spoofable.
 // markSep1Attempted bumps sep1_resolved_at so an issuer under attempt
 // moves to the BACK of the refresh queue, and advances its retry ladder
 // so a domain that serves nothing stops costing an attempt a day.
@@ -453,9 +450,17 @@ func markSep1Attempted(ctx context.Context, store sep1Store, gStrkey string, dry
 	}
 }
 
+// tomlListsIssuer reports whether the fetched SEP-1 toml's [[CURRENCIES]] lists
+// the given issuer back — the bidirectional half of org verification. Without
+// this match, ORG_NAME from a self-declared home_domain is spoofable.
+//
+// Binds via [timescale.Sep1EntryBindsTo], the same canonicalisation
+// AllSep1Images/BoundSep1Currencies use — a byte-exact compare here would
+// verify:false (and warn "unverified") an issuer that those paths already
+// treat as bound, e.g. one that types its own key lowercase.
 func tomlListsIssuer(currencies []metadata.Currency, issuer string) bool {
 	for _, cur := range currencies {
-		if cur.Issuer == issuer {
+		if timescale.Sep1EntryBindsTo(cur.Issuer, issuer) {
 			return true
 		}
 	}
@@ -466,7 +471,7 @@ func tomlListsIssuer(currencies []metadata.Currency, issuer string) bool {
 // issuers row: OrgName/OrgVerified/Documentation for /v1/issuers, plus the
 // per-currency overlay /v1/assets/{id} reads (that handler used to live-fetch
 // per request; this cron is now the source of truth so it's a DB lookup). Raw
-// + NetworkPassphrase are excluded — nothing reads them.
+// is excluded — nothing reads it.
 func marshalSep1Payload(sep *metadata.SEP1, orgVerified bool) ([]byte, error) {
 	currencies := make([]map[string]any, 0, len(sep.Currencies))
 	for _, c := range sep.Currencies {

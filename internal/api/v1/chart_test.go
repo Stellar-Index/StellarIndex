@@ -29,8 +29,8 @@ func TestChart_Fiat_USDtoCNY_ReturnsInverseSeries(t *testing.T) {
 	d1 := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
 	d2 := time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC)
 	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{
-		{Bucket: d1, RateUSD: 7.18, InverseUSD: 1 / 7.18},
-		{Bucket: d2, RateUSD: 7.20, InverseUSD: 1 / 7.20},
+		{Bucket: d1, RateUSDText: "7.18", InverseUSDText: "0.13927576601671309192"},
+		{Bucket: d2, RateUSDText: "7.20", InverseUSDText: "0.13888888888888888889"},
 	}}
 	srv := v1.New(v1.Options{History: &stubHistoryReader{}, FXHistory: fx})
 	ts := httpTestServer(t, srv)
@@ -56,7 +56,7 @@ func TestChart_Fiat_USDtoCNY_ReturnsInverseSeries(t *testing.T) {
 func TestChart_Fiat_CNYtoUSD_UsesInverse(t *testing.T) {
 	d1 := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
 	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{
-		{Bucket: d1, RateUSD: 7.18, InverseUSD: 1.0 / 7.18},
+		{Bucket: d1, RateUSDText: "7.18", InverseUSDText: "0.13927576601671309192"},
 	}}
 	srv := v1.New(v1.Options{History: &stubHistoryReader{}, FXHistory: fx})
 	ts := httpTestServer(t, srv)
@@ -89,8 +89,8 @@ func TestChart_Fiat_GranularitySnappedToDaily(t *testing.T) {
 	d1 := from.Add(2 * time.Hour) // 2h after `from`: > 15m grace, < 24h grace
 	d2 := d1.Add(24 * time.Hour)  // contiguous daily bucket
 	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{
-		{Bucket: d1, RateUSD: 1.08, InverseUSD: 1 / 1.08},
-		{Bucket: d2, RateUSD: 1.09, InverseUSD: 1 / 1.09},
+		{Bucket: d1, RateUSDText: "1.08", InverseUSDText: "0.92592592592592592593"},
+		{Bucket: d2, RateUSDText: "1.09", InverseUSDText: "0.91743119266055045872"},
 	}}
 	srv := v1.New(v1.Options{History: &stubHistoryReader{}, FXHistory: fx})
 	ts := httpTestServer(t, srv)
@@ -135,13 +135,13 @@ func TestChart_Fiat_CrossPair_TriangulatesViaUSD(t *testing.T) {
 	d3 := time.Date(2024, 1, 4, 0, 0, 0, 0, time.UTC)
 	fx := &tickerFXHistoryReader{byTicker: map[string][]v1.FXQuotePoint{
 		"EUR": {
-			{Bucket: d1, RateUSD: 0.925, InverseUSD: 1 / 0.925},
-			{Bucket: d2, RateUSD: 0.930, InverseUSD: 1 / 0.930},
-			{Bucket: d3, RateUSD: 0.920, InverseUSD: 1 / 0.920}, // JPY leg absent — must be skipped
+			{Bucket: d1, RateUSDText: "0.925", InverseUSDText: "1.08108108108108108108"},
+			{Bucket: d2, RateUSDText: "0.930", InverseUSDText: "1.07526881720430107527"},
+			{Bucket: d3, RateUSDText: "0.920", InverseUSDText: "1.08695652173913043478"}, // JPY leg absent — must be skipped
 		},
 		"JPY": {
-			{Bucket: d1, RateUSD: 155.00, InverseUSD: 1 / 155.00},
-			{Bucket: d2, RateUSD: 156.00, InverseUSD: 1 / 156.00},
+			{Bucket: d1, RateUSDText: "155.00", InverseUSDText: "0.00645161290322580645"},
+			{Bucket: d2, RateUSDText: "156.00", InverseUSDText: "0.00641025641025641026"},
 		},
 	}}
 	srv := v1.New(v1.Options{History: &stubHistoryReader{}, FXHistory: fx})
@@ -177,8 +177,8 @@ func TestChart_Fiat_CrossPair_NoSharedDays_EmptySeries(t *testing.T) {
 	d1 := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
 	d2 := time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC)
 	fx := &tickerFXHistoryReader{byTicker: map[string][]v1.FXQuotePoint{
-		"EUR": {{Bucket: d1, RateUSD: 0.925, InverseUSD: 1 / 0.925}},
-		"JPY": {{Bucket: d2, RateUSD: 155.00, InverseUSD: 1 / 155.00}},
+		"EUR": {{Bucket: d1, RateUSDText: "0.925", InverseUSDText: "1.08108108108108108108"}},
+		"JPY": {{Bucket: d2, RateUSDText: "155.00", InverseUSDText: "0.00645161290322580645"}},
 	}}
 	srv := v1.New(v1.Options{History: &stubHistoryReader{}, FXHistory: fx})
 	ts := httpTestServer(t, srv)
@@ -837,8 +837,8 @@ func TestChart_MarketCap_FiatCNY_ComputesFromM2(t *testing.T) {
 	d1 := time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC)
 	d2 := time.Date(2025, 1, 3, 0, 0, 0, 0, time.UTC)
 	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{
-		{Bucket: d1, RateUSD: 7.18, InverseUSD: 1.0 / 7.18, InverseUSDText: "0.13927576601671309192"},
-		{Bucket: d2, RateUSD: 7.20, InverseUSD: 1.0 / 7.20, InverseUSDText: "0.13888888888888888889"},
+		{Bucket: d1, RateUSDText: "7.18", InverseUSDText: "0.13927576601671309192"},
+		{Bucket: d2, RateUSDText: "7.20", InverseUSDText: "0.13888888888888888889"},
 	}}
 	srv := v1.New(v1.Options{
 		History:            &stubHistoryReader{},

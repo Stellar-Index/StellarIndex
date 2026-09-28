@@ -249,6 +249,9 @@ func TestIsFXSource_RegistryDriven(t *testing.T) {
 	if !IsFXSource("massive") {
 		t.Error("IsFXSource(massive) = false, want true — it is the live fiat-FX feed")
 	}
+	if !IsFXSource("ecb") {
+		t.Error("IsFXSource(ecb) = false, want true — the forex worker's ECB standby writes fx_quotes as ecb")
+	}
 	if IsFXSource("polygon-forex") {
 		t.Error("IsFXSource(polygon-forex) = true, want false — the name is retired (see TestRegistry_RetiredFXIdentityStaysUnregistered)")
 	}

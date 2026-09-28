@@ -117,8 +117,10 @@ func (stubKeysForBuild) ListActiveForAccount(context.Context, uuid.UUID) ([]plat
 func (stubKeysForBuild) ListForAccount(context.Context, uuid.UUID, int) ([]platform.APIKey, bool, error) {
 	panic("unused")
 }
-func (stubKeysForBuild) Update(context.Context, platform.APIKey) error            { panic("unused") }
-func (stubKeysForBuild) Revoke(context.Context, string, uuid.UUID, string) error  { panic("unused") }
+func (stubKeysForBuild) Update(context.Context, uuid.UUID, platform.APIKey) error { panic("unused") }
+func (stubKeysForBuild) Revoke(context.Context, uuid.UUID, string, uuid.UUID, string) error {
+	panic("unused")
+}
 func (stubKeysForBuild) TouchUsage(context.Context, string, net.IP, string) error { panic("unused") }
 
 type stubAccountsForBuild struct{}

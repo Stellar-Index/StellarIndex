@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
+	"strconv"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/ecb"
@@ -76,14 +78,15 @@ func (p ECBProvider) LatestUSDRates(ctx context.Context) (map[string]float64, ti
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("forex: ecb fallback: %w", err)
 	}
-	usdPerEUR, ok := eurRates["USD"]
-	if !ok || usdPerEUR <= 0 {
+	usdPerEUR, ok := publishedDecimal(eurRates["USD"])
+	if !ok {
 		return nil, time.Time{}, ErrNoUSDAnchor
 	}
 
 	out := make(map[string]float64, len(eurRates)+1)
 	for code, eurRate := range eurRates {
-		if eurRate <= 0 {
+		r, ok := publishedDecimal(eurRate)
+		if !ok {
 			continue
 		}
 		if code == "USD" {
@@ -92,8 +95,26 @@ func (p ECBProvider) LatestUSDRates(ctx context.Context) (map[string]float64, ti
 			out["USD"] = 1
 			continue
 		}
-		out[code] = eurRate / usdPerEUR
+		out[code] = ratFloat(new(big.Rat).Quo(r, usdPerEUR))
 	}
-	out["EUR"] = 1 / usdPerEUR
+	out["EUR"] = ratFloat(new(big.Rat).Inv(usdPerEUR))
 	return out, publishedAt, nil
+}
+
+// publishedDecimal recovers ECB's published decimal exactly: its rates
+// carry at most six significant digits, which a float64's shortest
+// representation round-trips, so the rebase divides the published values
+// rather than their binary approximations. ok is false for a missing,
+// non-positive or non-finite rate (ECB's parser admits "NaN" and "Inf").
+func publishedDecimal(f float64) (*big.Rat, bool) {
+	if !isFiniteFloat(f) || f <= 0 {
+		return nil, false
+	}
+	r, ok := new(big.Rat).SetString(strconv.FormatFloat(f, 'f', -1, 64))
+	return r, ok
+}
+
+func ratFloat(r *big.Rat) float64 {
+	f, _ := r.Float64() // i128:ok the RateProvider contract is float64; one correctly rounded conversion of the exact rebased rate
+	return f
 }

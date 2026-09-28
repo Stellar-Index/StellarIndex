@@ -60,8 +60,8 @@ func TestFXQuotes_InverseUSDIsTheExactNumericReciprocal(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ListFXHistory %s: %v", q.Ticker, err)
 		}
-		if len(hist) != 1 || hist[0].InverseUSDText != inverse {
-			t.Errorf("%s: ListFXHistory = %+v, want one row with InverseUSDText %q", q.Ticker, hist, inverse)
+		if len(hist) != 1 || hist[0].InverseUSDText != inverse || hist[0].RateUSDText != rate {
+			t.Errorf("%s: ListFXHistory = %+v, want one row with InverseUSDText %q, RateUSDText %q", q.Ticker, hist, inverse, rate)
 		}
 	}
 }

@@ -253,8 +253,8 @@ func (s *Server) revokeKeyEverywhere(ctx context.Context, identifier, keyID, rea
 
 // revokeOwnedPlatformKey revokes keyID's Postgres api_keys row only
 // when that row's account is the one identifier names. The store's
-// Revoke is keyed by id alone, so the owner check has to happen here —
-// the same posture as RedisAPIKeyStore.RevokeKeyByID. A missing row, a
+// Revoke is scoped by account UUID, but the operator names the owner by
+// identifier, so resolving one to the other has to happen here. A missing row, a
 // row owned by another account, an already-revoked row, or no store to
 // prove ownership all return [platform.ErrNotFound] without revoking
 // (fail closed, no enumeration oracle); nil means a row was revoked.
@@ -279,7 +279,7 @@ func (s *Server) revokeOwnedPlatformKey(ctx context.Context, identifier, keyID, 
 	if auth.AccountIdentifier(owner.Slug) != identifier {
 		return platform.ErrNotFound
 	}
-	return keys.Revoke(ctx, keyID, uuid.Nil, reason)
+	return keys.Revoke(ctx, k.AccountID, keyID, uuid.Nil, reason)
 }
 
 // handleAdminKeysRevoke serves DELETE

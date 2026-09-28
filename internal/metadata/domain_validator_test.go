@@ -16,7 +16,6 @@ func TestIsValidDomainOrHostPort_validInputs(t *testing.T) {
 		"sub.example.com",
 		"a.b.c.example.com",
 		"127.0.0.1",
-		"localhost",
 		"example.com:443",
 	} {
 		if !isValidDomainOrHostPort(in, false) {
@@ -46,6 +45,12 @@ func TestIsValidDomainOrHostPort_invalidInputs(t *testing.T) {
 		{"empty label (double dot)", "ex..ample.com"},
 		{"label too long (>63)", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com"}, // 65 a's
 		{"host too long (>253)", longHost(t, 254)},
+		// Reserved TLDs (RFC 2606/6761) never resolve to a real
+		// destination; an on-chain home_domain claiming one is rejected
+		// at the syntax gate, not just by the dial-layer SSRF guard.
+		{"reserved TLD: localhost", "localhost"},
+		{"reserved TLD: bare example", "example"},
+		{"reserved TLD: subdomain of test", "foo.test"},
 		// Finding 2: a non-443 port on an issuer home_domain must be
 		// REJECTED — otherwise the sep1-refresh cron would open a blind
 		// TLS+GET to an arbitrary port on a public host. These three

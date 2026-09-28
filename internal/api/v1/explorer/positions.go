@@ -458,13 +458,8 @@ func truncPositionsContract(c string) string {
 
 // poolTokensFor best-effort loads source's pool -> token-contract map
 // (empty map on a nil reader / read error — every caller already
-// treats a missing key as "no label available"). Not memoized across
-// the six buildX* calls in AccountPositions: each protocol calls this
-// AT MOST ONCE per request (once for "blend" from two different
-// builders — money-market + backstop legitimately share the same
-// lending-pool reserve set — memoizing that one cross-builder case
-// isn't worth a request-scoped cache for an endpoint bounded by a
-// single address's small fold result).
+// treats a missing key as "no label available"). Production wiring is
+// TTL-cached per source in package v1, so repeat calls are map reads.
 func (h *Handler) poolTokensFor(ctx context.Context, source string) map[string][]string {
 	if h.PoolTokens == nil {
 		return nil

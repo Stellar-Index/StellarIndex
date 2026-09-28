@@ -140,6 +140,32 @@ func TestDialContext_EmptyResolutionErrorsNotPanics(t *testing.T) {
 	}
 }
 
+// TestDialContext_BlocksResolvedLoopback pins the DIAL-LAYER SSRF guard:
+// the guard blocks whatever IP the resolver hands it, regardless of the
+// hostname's syntax. It replaces the former TestResolver_SSRFBlocksLoopback
+// (metadata_test), which proved the same guarantee by resolving the
+// literal "localhost" through the real resolver — a guarantee that broke
+// once "localhost" became syntactically invalid (reserved TLD, rejected
+// before ever reaching the dialer). Injecting lookupIP for a plain,
+// non-reserved hostname keeps the dial-layer guarantee mutation-tested
+// independently of the syntax gate: delete the isBlocked check below and
+// this goes red with a live connection instead of ErrSSRFBlocked.
+func TestDialContext_BlocksResolvedLoopback(t *testing.T) {
+	d := &ssrfDialer{
+		inner: &net.Dialer{},
+		lookupIP: func(_ context.Context, _, _ string) ([]net.IP, error) {
+			return []net.IP{net.ParseIP("127.0.0.1")}, nil
+		},
+	}
+	conn, err := d.DialContext(context.Background(), "tcp", "attacker.example.org:443")
+	if conn != nil {
+		_ = conn.Close()
+	}
+	if !errors.Is(err, ErrSSRFBlocked) {
+		t.Errorf("DialContext(attacker.example.org → 127.0.0.1) = %v, want ErrSSRFBlocked", err)
+	}
+}
+
 // TestResolverTransportUsesSSRFGuardedDialer pins the WIRING, not just
 // the predicate.
 //

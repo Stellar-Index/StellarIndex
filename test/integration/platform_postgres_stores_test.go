@@ -787,10 +787,24 @@ func TestPlatformPostgresStores(t *testing.T) {
 			t.Errorf("list len = %d, want 1", len(list))
 		}
 
+		// Another account can neither update nor revoke this key.
+		foreign := uuid.New()
+		hijack := byID
+		hijack.RateLimitPerMin = 1
+		if err := keys.Update(ctx, foreign, hijack); !errors.Is(err, platform.ErrNotFound) {
+			t.Fatalf("cross-account update err = %v, want ErrNotFound", err)
+		}
+		if err := keys.Revoke(ctx, foreign, byID.ID, owner.ID, "hijack"); !errors.Is(err, platform.ErrNotFound) {
+			t.Fatalf("cross-account revoke err = %v, want ErrNotFound", err)
+		}
+		if got, err := keys.Get(ctx, byID.ID); err != nil || !got.RevokedAt.IsZero() || got.RateLimitPerMin != byID.RateLimitPerMin {
+			t.Fatalf("cross-account writes reached the row: %+v, %v", got, err)
+		}
+
 		// Update: bump rate limit + add description.
 		byID.RateLimitPerMin = 5000
 		byID.Description = "production traffic — bumped"
-		if err := keys.Update(ctx, byID); err != nil {
+		if err := keys.Update(ctx, byID.AccountID, byID); err != nil {
 			t.Fatalf("update: %v", err)
 		}
 		got, err := keys.Get(ctx, byID.ID)
@@ -821,7 +835,7 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 
 		// Revoke + idempotency.
-		if err := keys.Revoke(ctx, byID.ID, owner.ID, "rotated"); err != nil {
+		if err := keys.Revoke(ctx, byID.AccountID, byID.ID, owner.ID, "rotated"); err != nil {
 			t.Fatalf("revoke: %v", err)
 		}
 		got, err = keys.Get(ctx, byID.ID)
@@ -834,7 +848,7 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if got.IsActive(time.Now()) {
 			t.Errorf("IsActive returned true on revoked key")
 		}
-		if err := keys.Revoke(ctx, byID.ID, owner.ID, "still rotated"); err != nil {
+		if err := keys.Revoke(ctx, byID.AccountID, byID.ID, owner.ID, "still rotated"); err != nil {
 			t.Errorf("re-revoke: %v", err)
 		}
 
@@ -1207,7 +1221,7 @@ func TestPlatformPostgresStores(t *testing.T) {
 		var newestRevoked []string
 		for i := 1; i <= revokedRows; i++ {
 			k := mint(i)
-			if err := keys.Revoke(ctx, k.ID, uuid.Nil, "churn"); err != nil {
+			if err := keys.Revoke(ctx, acct.ID, k.ID, uuid.Nil, "churn"); err != nil {
 				t.Fatalf("revoke %d: %v", i, err)
 			}
 			if i > revokedRows-limit {

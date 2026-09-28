@@ -92,6 +92,10 @@ type dispatcherObsCounters struct {
 	TxReadErrors         int
 	TxEventReadErrors    int
 	EntryMetaUnsupported int
+	// UncorroboratedCalls is per-source (W8.4a oracle-forgery rejections
+	// can hit any oracle-class ContractCallDecoder), unlike its scalar
+	// siblings above. Same obsLast-not-f.last reasoning applies.
+	UncorroboratedCalls map[string]int
 }
 
 // Options tunes a Flusher at construction time.
@@ -253,6 +257,28 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 		obs.DispatcherEntryMetaUnsupportedTotal.Add(float64(delta))
 	}
 	f.obsLast.EntryMetaUnsupported = current.EntryMetaUnsupported
+
+	// UncorroboratedCalls (W8.4a): a call an oracle decoder refused to
+	// corroborate is a security signal (rejected forgery, or a
+	// routing-shape change), not routine noise — same immediate-WARN
+	// treatment as the tx-level counters above, but per-source since a
+	// forgery attempt targets one oracle's routing shape at a time. Never
+	// touches f.last, so INT-05's hold-back-on-write-failure can't make
+	// this replay a stale delta once a later tick moves current past it.
+	for source, n := range current.UncorroboratedCalls {
+		delta := n - f.obsLast.UncorroboratedCalls[source]
+		if delta <= 0 {
+			continue
+		}
+		f.logger.Warn("dispatcher: uncorroborated oracle calls during this flush window — rejected forged call or a routing-shape change",
+			"source", source,
+			"delta", delta,
+			"total", n,
+			"window", f.interval.String(),
+		)
+		obs.SourceUncorroboratedCallsTotal.WithLabelValues(source).Add(float64(delta))
+	}
+	f.obsLast.UncorroboratedCalls = copyIntMap(current.UncorroboratedCalls)
 
 	if len(rows) > 0 {
 		if err := f.store.InsertDecoderStats(ctx, rows); err != nil {

@@ -390,7 +390,7 @@ type Sep1Image struct {
 // when its declared Issuer names gStrkey — the account whose
 // stellar.toml actually carried it. Kept in Go, on the row, rather than
 // pushed into the SQL alongside the projection, so the rule itself is
-// [sep1EntryBindsTo] — shared with the bound-currency scan rather than
+// [Sep1EntryBindsTo] — shared with the bound-currency scan rather than
 // restated. Two copies of a provenance check are two chances to drift,
 // and a drift between them would mean an entry good enough to overlay a
 // logo but not good enough to attest an asset, or the reverse. A SQL
@@ -401,7 +401,7 @@ func sep1ImageFrom(gStrkey, code, declaredIssuer, image string) (Sep1Image, bool
 	if image == "" || code == "" {
 		return Sep1Image{}, false
 	}
-	if !sep1EntryBindsTo(declaredIssuer, gStrkey) {
+	if !Sep1EntryBindsTo(declaredIssuer, gStrkey) {
 		return Sep1Image{}, false
 	}
 	return Sep1Image{Code: code, Issuer: gStrkey, Image: image}, true

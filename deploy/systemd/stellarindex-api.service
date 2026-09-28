@@ -21,6 +21,9 @@
 #   - postgresql.service — fallback path when Redis is empty
 #   - redis-server.service — primary read path for VWAP +
 #     confidence
+#   - clickhouse-server.service — ordering only (After=, not
+#     Requires=): a no-op when the lake is remote or absent. The
+#     binary retries its lake dials for a bounded window at boot.
 #
 # Notes:
 #   - The api binary listens on cfg.API.ListenAddr (default
@@ -35,7 +38,7 @@
 [Unit]
 Description=Stellar Index — public API (REST + SSE)
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/reference/api/index.html
-After=network-online.target postgresql.service redis-server.service
+After=network-online.target postgresql.service redis-server.service clickhouse-server.service
 Wants=network-online.target
 Requires=postgresql.service redis-server.service
 

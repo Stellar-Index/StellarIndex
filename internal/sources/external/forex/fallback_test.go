@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -83,6 +84,70 @@ func TestECBProvider_RebasesEURQuotesOntoUSD(t *testing.T) {
 	}
 	if publishedAt.Format("2006-01-02") != "2026-08-27" {
 		t.Errorf("publishedAt = %v, want the cube's date", publishedAt)
+	}
+}
+
+// The rebase divides the published decimals, so each rate is the nearest
+// float64 of the exact quotient. Dividing the two floats instead rounds
+// three times and lands one ulp off for JPY here.
+func TestECBProvider_RebaseIsCorrectlyRounded(t *testing.T) {
+	const doc = `<?xml version="1.0" encoding="UTF-8"?>
+<gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref">
+  <Cube><Cube time="2026-08-27">
+    <Cube currency="USD" rate="1.0834"/>
+    <Cube currency="JPY" rate="100.04"/>
+  </Cube></Cube>
+</gesmes:Envelope>`
+	rates, _, err := ECBProvider{Endpoint: ecbServer(t, doc, http.StatusOK).URL}.LatestUSDRates(context.Background())
+	if err != nil {
+		t.Fatalf("LatestUSDRates: %v", err)
+	}
+	want, _ := big.NewRat(1000400, 10834).Float64()
+	if rates["JPY"] != want {
+		t.Errorf("JPY = %v, want %v (nearest float64 of 100.04/1.0834)", rates["JPY"], want)
+	}
+	wantEUR, _ := big.NewRat(10000, 10834).Float64()
+	if rates["EUR"] != wantEUR {
+		t.Errorf("EUR = %v, want %v (nearest float64 of 1/1.0834)", rates["EUR"], wantEUR)
+	}
+}
+
+// ECB's parser admits rate="NaN"/"Inf". A non-finite ticker is dropped
+// and a non-finite anchor is no anchor; neither may panic the rebase.
+func TestECBProvider_NonFiniteRatesAreSkipped(t *testing.T) {
+	for _, bad := range []string{"NaN", "Inf"} {
+		t.Run("ticker="+bad, func(t *testing.T) {
+			doc := `<?xml version="1.0" encoding="UTF-8"?>
+<gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref">
+  <Cube><Cube time="2026-08-27">
+    <Cube currency="USD" rate="1.25"/>
+    <Cube currency="GBP" rate="0.85"/>
+    <Cube currency="JPY" rate="` + bad + `"/>
+  </Cube></Cube>
+</gesmes:Envelope>`
+			rates, _, err := ECBProvider{Endpoint: ecbServer(t, doc, http.StatusOK).URL}.LatestUSDRates(context.Background())
+			if err != nil {
+				t.Fatalf("LatestUSDRates: %v", err)
+			}
+			if _, ok := rates["JPY"]; ok {
+				t.Errorf("JPY = %v, want it dropped", rates["JPY"])
+			}
+			if !closeTo(rates["GBP"], 0.68) {
+				t.Errorf("GBP = %v, want 0.68", rates["GBP"])
+			}
+		})
+		t.Run("anchor="+bad, func(t *testing.T) {
+			doc := `<?xml version="1.0" encoding="UTF-8"?>
+<gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref">
+  <Cube><Cube time="2026-08-27">
+    <Cube currency="USD" rate="` + bad + `"/>
+    <Cube currency="GBP" rate="0.85"/>
+  </Cube></Cube>
+</gesmes:Envelope>`
+			if _, _, err := (ECBProvider{Endpoint: ecbServer(t, doc, http.StatusOK).URL}).LatestUSDRates(context.Background()); !errors.Is(err, ErrNoUSDAnchor) {
+				t.Errorf("err = %v, want ErrNoUSDAnchor", err)
+			}
+		})
 	}
 }
 

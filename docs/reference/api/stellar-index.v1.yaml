@@ -14328,7 +14328,20 @@ components:
           type: string
           enum: [apikey, partner, operator]
         rate_limit_per_min: { type: integer }
-        monthly_quota: { type: integer, format: int64 }
+        monthly_quota:
+          type: integer
+          format: int64
+          description: |
+            The stored per-key value (absent = inherit). Not what is
+            enforced; render `effective_monthly_quota`.
+        effective_monthly_quota:
+          type: integer
+          format: int64
+          description: |
+            The monthly request-unit quota auth enforces on this key
+            (0 = unmetered): `monthly_quota` resolved through the
+            account override, which a key at 0 inherits and which caps
+            any higher key value.
         usage_alert_threshold_pct: { type: integer }
         scopes:
           type: array
@@ -14347,7 +14360,7 @@ components:
         revoked_reason: { type: string }
         last_used_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
-      required: [id, name, key_prefix, tier, rate_limit_per_min, created_at]
+      required: [id, name, key_prefix, tier, rate_limit_per_min, effective_monthly_quota, created_at]
 
     CreateKeyRequest:
       type: object
@@ -19939,7 +19952,7 @@ components:
       properties:
         name:               { type: string, description: "Stable connector identifier (matches canonical.Trade.Source)." }
         class:              { type: string, enum: [exchange, aggregator, oracle, authority_sanity, bridge, lending, router], description: "Top-level taxonomy. Drives the aggregator's class filter — only `exchange` contributes to VWAP by default." }
-        subclass:           { type: string, enum: [dex, cex, fx], description: "Refines `class=exchange` for UIs that group venues. Empty (omitted) for non-exchange classes." }
+        subclass:           { type: string, enum: [dex, cex, fx], description: "Refines `class=exchange` for UIs that group venues. Empty (omitted) for non-exchange classes, except `ecb` (`authority_sanity`), which is `fx` because the forex worker's ECB standby writes fiat FX rates under that name." }
         include_in_vwap:    { type: boolean, description: "Whether this source's trades contribute to VWAP." }
         paid:               { type: boolean, description: "Whether this connector requires a paid licence / API key." }
         backfill_available: { type: boolean, description: "Whether the source supports historical backfill via its native API." }

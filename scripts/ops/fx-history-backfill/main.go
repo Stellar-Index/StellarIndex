@@ -303,11 +303,10 @@ func fetchAndPersist(
 				}
 			}
 			rows = append(rows, timescale.FXQuote{
-				Bucket:     bucket,
-				Ticker:     ticker,
-				RateUSD:    rate,
-				InverseUSD: 1.0 / rate,
-				Source:     "frankfurter-historical",
+				Bucket:  bucket,
+				Ticker:  ticker,
+				RateUSD: rate,
+				Source:  "frankfurter-historical",
 			})
 		}
 	}

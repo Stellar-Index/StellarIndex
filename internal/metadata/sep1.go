@@ -31,11 +31,6 @@ type SEP1 struct {
 	// Version is the TOML's declared SEP-1 version.
 	Version string
 
-	// NetworkPassphrase is the passphrase the operator claims
-	// their assets trade on. Should match our configured
-	// [StellarConfig.Network] — mismatch is a red flag.
-	NetworkPassphrase string
-
 	// Currencies is the [[CURRENCIES]] array — asset-specific
 	// metadata per SEP-1 §Currencies. Limited to the fields we
 	// surface via /v1/assets today; more land as needed.
@@ -543,9 +538,6 @@ func parseSEP1(body []byte) (*SEP1, error) {
 	if v, ok := raw["VERSION"].(string); ok {
 		sep.Version = truncateRunes(v, maxShortFieldRunes)
 	}
-	if v, ok := raw["NETWORK_PASSPHRASE"].(string); ok {
-		sep.NetworkPassphrase = truncateRunes(v, maxShortFieldRunes)
-	}
 
 	applySEP1Documentation(sep, raw)
 	appendSEP1Currencies(sep, raw)
@@ -769,6 +761,14 @@ func isValidDomainOrHostPort(s string, allowAnyPort bool) bool { //nolint:gocogn
 		}
 	}
 	if host == "" || len(host) > 253 {
+		return false
+	}
+	// Reserved TLDs (RFC 2606/6761: example/test/invalid/localhost) are
+	// guaranteed to never resolve to a real destination, so an on-chain
+	// home_domain claiming one is malformed input, not a legitimate
+	// issuer — reject it at the syntax gate rather than relying solely
+	// on the dial-layer guard to fail the lookup.
+	if nettools.IsReservedTLD(host) {
 		return false
 	}
 	// Hostname character set per RFC 952 + RFC 1123: letters,
