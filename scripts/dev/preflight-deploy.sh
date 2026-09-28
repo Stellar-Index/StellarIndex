@@ -153,7 +153,11 @@ if command -v gh >/dev/null 2>&1; then
     fi
 else
     echo "  gh is not installed — release existence unverified"
-    note "gh is not installed; the release for ${VERSION} was not checked"
+    # A note here left this whole script exit 0 with the release
+    # unverified: nothing else checks that a release exists before
+    # dispatch, so "unverified" must read as a decision outstanding, not
+    # a soft warning (GH-556b).
+    block "gh is not installed"
 fi
 
 # ── 2. Region binary manifest ────────────────────────────────────────────
@@ -499,6 +503,7 @@ changed="$(git diff --name-only "$BASELINE" "$VERSION" -- "${SURFACES[@]}")"
 substantive=0
 comment_only=0
 applied_verified=0
+rules_r1_auto=0
 # Paths proven applied on the host — handed to the gate below as its
 # "[applied]" argument, exactly as deploy.yml hands it the surfaces its own
 # steps applied and verified.
@@ -508,6 +513,26 @@ if [ -z "$changed" ]; then
 else
     while IFS= read -r f; do
         [ -n "$f" ] || continue
+        # deploy.yml's "Apply Prometheus rules (r1)" step is region-gated
+        # (`if: inputs.region == 'r1'`), continue-on-error, and applies
+        # AND polls this surface on every r1 dispatch regardless of what
+        # changed. Everywhere else that step never runs, so the surface
+        # must stay SUBSTANTIVE there — treating it as applied on a
+        # region where nothing applies it is the false green GH-556(d)
+        # reported. This is a scheduling fact about deploy.yml, not a
+        # host-verified object check, so it does not count toward
+        # applied_verified (that counter's message names ClickHouse
+        # objects proven present in system.tables).
+        if [ "$REGION" = r1 ]; then
+            case "$f" in
+                configs/prometheus/rules.r1/*)
+                    printf '  %-12s %s\n' "auto-applied" "$f  (r1 applies and polls this surface on every dispatch)"
+                    rules_r1_auto=$((rules_r1_auto + 1))
+                    VERIFIED_PATHS="${VERIFIED_PATHS}${f} "
+                    continue
+                    ;;
+            esac
+        fi
         payload="$(bash "$GATE" --payload "$BASELINE" "$VERSION" "$f")"
         if [ -z "$payload" ]; then
             printf '  %-12s %s\n' "comment-only" "$f"
@@ -568,6 +593,9 @@ if [ "$comment_only" -gt 0 ]; then
 fi
 if [ "$applied_verified" -gt 0 ]; then
     echo "  ${applied_verified} substantive surface(s) are already applied on ${HOST} — every object their diff creates is present in system.tables."
+fi
+if [ "$rules_r1_auto" -gt 0 ]; then
+    echo "  ${rules_r1_auto} configs/prometheus/rules.r1/ surface(s) are applied automatically by r1's dispatch — no operator action."
 fi
 if [ "$gate_rc" -ne 0 ]; then
     echo "  ${substantive} surface(s) carry real changes nothing has proven applied: apply them per"
