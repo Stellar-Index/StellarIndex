@@ -32,6 +32,14 @@ import (
 // contract already serves.
 const SDEXOrderBookAdvanceInterval = 60 * time.Second
 
+// SDEXOrderBookStaleAfter gates `flags.stale`: 2x the advance cadence,
+// the same missed-refresh-cycles convention changeSummaryStaleAfter
+// uses (one missed tick can be a slow ClickHouse read, not yet a
+// wedged Advance; two cannot). GH-987: Advance returns early on a
+// read error without moving `c.updated`, so an in-memory book that has
+// stopped advancing otherwise keeps serving `stale: false` forever.
+const SDEXOrderBookStaleAfter = 2 * SDEXOrderBookAdvanceInterval
+
 // sdexOrderBookDefaultDepth / MaxDepth bound the served price levels
 // per side.
 const (
@@ -611,7 +619,11 @@ func (s *Server) handleSDEXOrderbook(w http.ResponseWriter, r *http.Request) {
 		BidOffersWithheld: snap.withheldBids,
 		Depth:             depth,
 	}
-	writeJSON(w, view, Flags{})
+	// GH-987: snap.at is the last SUCCESSFUL Advance (a failed one
+	// leaves it untouched — see Advance's early return), so this is the
+	// only honest staleness signal a wedged book has.
+	stale := time.Since(snap.at) > SDEXOrderBookStaleAfter
+	writeJSON(w, view, Flags{Stale: stale})
 }
 
 // parseOrderBookParams validates selling/buying (canonical classic
