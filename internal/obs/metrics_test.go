@@ -63,7 +63,6 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 	obs.SourceOrphanEventsTotal.WithLabelValues("_warmup").Inc()
 	obs.SourceInsertErrorsTotal.WithLabelValues("_warmup", "trade").Inc()
 	obs.RateLimitFailOpenTotal.Inc()
-	obs.Sep1CacheOpsTotal.WithLabelValues("hit").Inc()
 	obs.CursorLastLedger.WithLabelValues("_warmup").Set(0)
 	obs.PriceStalenessSeconds.WithLabelValues("_warmup").Set(0)
 	// Through RecordOracleUpdate, not the vec directly: it is the only
@@ -116,7 +115,6 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 		"stellarindex_redis_command_errors_total",
 		"stellarindex_usage_units_dropped_total",
 		"stellarindex_failed_auth_total",
-		"stellarindex_sep1_cache_ops_total",
 		"stellarindex_cursor_last_ledger",
 		"stellarindex_price_staleness_seconds",
 		"stellarindex_oracle_last_update_unix",

@@ -98,8 +98,7 @@ type Currency struct {
 }
 
 // Resolver fetches + parses stellar.toml for a home-domain. Safe
-// for concurrent use. Stateless across calls (no in-memory cache;
-// callers layer a cache via [cachekeys.TOML] if they want one).
+// for concurrent use. Stateless across calls (no cache).
 type Resolver struct {
 	client *http.Client
 

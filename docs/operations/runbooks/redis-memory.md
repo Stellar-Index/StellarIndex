@@ -21,9 +21,7 @@ severity: P2
 
 - `redis_memory_used_bytes / redis_memory_max_bytes > 0.90` for ≥ 5 min, **or**
 - `rate(redis_evicted_keys_total[5m]) > 100` for ≥ 5 min.
-- API panel: `stellarindex_sep1_cache_ops_total{result="miss"}`
-  rate climbs; hit-rate drops.
-- Latency alert may follow if the miss storm hits a popular asset.
+- Latency alert may follow if evictions hit a popular asset's keys.
 
 ## Quick diagnosis (≤ 5 min)
 

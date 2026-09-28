@@ -75,7 +75,6 @@ func registerAppMetrics() {
 		MonthlyQuotaFailClosedTotal,
 		AdminAuditWriteFailuresTotal,
 		AdminKeyBudgetClampsTotal,
-		Sep1CacheOpsTotal,
 		CursorLastLedger,
 		DivergenceRefreshTotal,
 		DivergenceRefresherWired,
@@ -2022,25 +2021,6 @@ var LedgerstreamLiveStartRetriesTotal = prometheus.NewCounter(
 		Name: "stellarindex_ledgerstream_live_start_retries_total",
 		Help: "Re-attempts of a live-tail stream that failed before delivering any ledger (datastore unreachable / schema unreadable at start). Climbs only while the indexer is up but cannot open the lake.",
 	},
-)
-
-// Sep1CacheOpsTotal — per-outcome counter for SEP-1 cache
-// operations. Label `result` is one of:
-//
-//	hit         — served from cache.
-//	miss        — fetched upstream + cached.
-//	upstream_error — upstream fetch failed; not cached (see ADR).
-//
-// A rising `upstream_error` rate usually means an issuer's
-// stellar.toml is down; a very low hit rate means the TTL is too
-// short or the caller distribution is too dispersed for caching
-// to help.
-var Sep1CacheOpsTotal = prometheus.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "stellarindex_sep1_cache_ops_total",
-		Help: "SEP-1 resolver cache operations by outcome.",
-	},
-	[]string{"result"},
 )
 
 // RateLimitFailOpenTotal — counter of requests that skipped the

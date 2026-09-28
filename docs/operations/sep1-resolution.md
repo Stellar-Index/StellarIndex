@@ -10,7 +10,7 @@ This doc covers the **runtime** + **on-call** concerns of SEP-1
 resolution:
 
 - HTTP failure-mode handling per home-domain
-- Cache invalidation policy
+- Refresh cadence and forcing a re-fetch
 - SSRF guard playbook
 - Operator-facing instructions
 
@@ -20,27 +20,32 @@ in-code overview.
 
 ## Resolution flow
 
+Nothing fetches a stellar.toml on the API request path. The
+`sep1-refresh.timer` resolves issuers in the background and the API
+serves what it persisted:
+
 ```
+sep1-refresh.timer →
+  stellarindex-ops sep1-refresh (internal/ops/ingest/sep1_refresh.go)
+    for each due issuer, sequentially:
+      metadata.Resolver.Resolve(home_domain)
+        ↓ HTTP GET https://<home_domain>/.well-known/stellar.toml
+            ↓ DNS resolve → SSRF guard (private/loopback/link-local rejected)
+            ↓ TLS handshake (5s timeout)
+            ↓ HTTP read (10s total budget)
+            ↓ TOML parse
+        ↓ on success: write issuers.sep1_payload, stamp sep1_resolved_at,
+          clear the retry ladder
+        ↓ on failure: stamp the attempt, advance the retry ladder
+
 asset request →
   v1/assets/{id} handler →
-    metadata.Cache.Get(home_domain)
-      ↓ Redis HIT (24 h TTL — `cachekeys.TOMLTTL`)
-        return cached SEP1 struct
-      ↓ Redis MISS
-        singleflight gate (one fetch per home_domain at a time)
-        metadata.Resolver.Resolve(home_domain)
-          ↓ HTTP GET https://<home_domain>/.well-known/stellar.toml
-              ↓ DNS resolve → SSRF guard (private/loopback/link-local rejected)
-              ↓ TLS handshake (5s timeout)
-              ↓ HTTP read (10s total budget)
-              ↓ TOML parse
-          ↓ on success: write to Redis with a 24 h TTL, return SEP1
-          ↓ on failure: return error to caller; DO NOT cache the error
+    issuers.sep1_payload for the asset's issuer (Postgres)
 ```
 
-Every parameter — TTL, timeouts, SSRF allow-list — is documented
-in `cachekeys.TOMLTTL` / `metadata.ResolverConfig` and bound by the
-ADR-0007 Redis cache schema (`toml:<domain>` namespace).
+The resolver's timeouts and SSRF deny-list live in
+`internal/metadata/sep1.go`; the rotation size and cadence live in
+`sep1-refresh.service.j2` / `sep1-refresh.timer`.
 
 ## Failure modes
 
@@ -54,13 +59,13 @@ Common causes:
 - Issuer rotated the file path (very rare; SEP-1 mandates the
   `.well-known` location).
 
-**Resolver behaviour:** returns `ErrSEP1NotFound`. **Cache
-behaviour:** the error is NOT cached (per design — a transient
-404 during a deployment shouldn't poison the cache for a day).
+**Resolver behaviour:** returns `ErrSEP1NotFound`. **Refresh
+behaviour:** nothing is persisted and the issuer's retry ladder
+advances (see §"Refresh cadence").
 **Handler behaviour:** asset overlay degrades cleanly — fields
 that come from SEP-1 are reported as `null`, the `home_domain`
 field on the asset response stays populated from the `AccountEntry`,
-the `sep1_status` field is set to `"not_found"`.
+the `sep1_status` field is set to `"unreachable"`.
 
 **On-call action:** none if a single asset is affected; investigate
 if many home-domains report `not_found` simultaneously (suggests a
@@ -89,7 +94,7 @@ infrastructure.
 read budget. Slow issuers can blow this; we don't tune it per
 host because that defeats the bound.
 
-**Resolver behaviour:** `ErrSEP1Timeout`. **Cache:** not cached.
+**Resolver behaviour:** `ErrSEP1Timeout`. **Refresh:** retry ladder advances.
 **Alert:** `stellarindex_metadata_resolver_timeout_total` increases
 beyond baseline (P3 alert, designed but not yet shipping at v1).
 
@@ -126,61 +131,30 @@ the chain (issuer set it via `SetOptionsOp`); the offender is the
 issuer, not us. Report to the security mailing list per
 [security.md](../../SECURITY.md).
 
-## Cache invalidation
+## Refresh cadence
 
-The 24 h TTL handles routine staleness — a `stellar.toml` is
-issuer-controlled reference data that changes on the order of
-weeks-to-never, and a short TTL only makes every cold
-`/v1/assets/{id}` pay a ~500 ms upstream HTTPS fetch on the request
-path (`cachekeys.TOMLTTL`'s own doc comment). The
-`sep1-refresh.timer` re-resolves the watched set on a rotation —
+The `sep1-refresh.timer` re-resolves the watched set on a rotation —
 **hourly at :12 UTC**, 750 issuers a run, so a domain that answers is
 re-fetched roughly every two days. (It was 500 once a day, which over
 76,658 domains was a 153-day cycle; the arithmetic is in
 `sep1-refresh.service.j2`.) A domain that fails climbs a retry ladder —
 1d, 2d, 4d, 8d, 16d, then a 30-day cap — and returns to the fast
 cadence on its first success, so the budget goes to domains that
-answer. Three cases need explicit invalidation:
+answer.
 
-### 1. Issuer publishes a corrected stellar.toml
+### Forcing a re-fetch for one issuer
 
-After a fix the issuer wants visible immediately. Invalidate the
-single key:
-
-```sh
-redis-cli -h <redis-master> DEL "toml:<home_domain>"
-```
-
-The next request triggers a fresh fetch. Singleflight ensures
-only one fetch even if many requests pile up at once.
-
-### 2. Asset's `home_domain` changes on chain
-
-Issuer sets a new `home_domain` via `SetOptionsOp`. The trades
-hypertable + asset metadata table observe this in the
-LedgerEntryChange stream. The OLD home-domain's cache entry is
-still valid (it's the toml content that hasn't changed); the
-asset's link to it is what flipped.
-
-The asset-overlay handler reads the asset's CURRENT home_domain
-and looks up the cache by that key. So a domain change is
-self-resolving — no operator action needed unless the operator
-specifically wants to evict the OLD domain's cache entry.
-
-### 3. Bulk eviction (post-incident)
-
-If a CDN or DNS provider issue caused many issuers to look broken
-simultaneously, we may have cached degraded responses. Evict the
-whole namespace:
+When an issuer publishes a corrected stellar.toml and wants it
+visible before the rotation reaches it, refresh that issuer alone;
+`-issuer` bypasses the staleness queue:
 
 ```sh
-redis-cli -h <redis-master> --scan --pattern "toml:*" | \
-  xargs -n 100 redis-cli -h <redis-master> DEL
+stellarindex-ops sep1-refresh -config /etc/stellarindex/api.toml \
+  -issuer <G-strkey>
 ```
 
-Sub-second on a few hundred entries. Won't melt Redis. Subsequent
-asset requests trigger fresh fetches; singleflight gates the
-thundering herd.
+A `home_domain` change on chain needs no action: the next refresh of
+that issuer resolves the new domain.
 
 ## Operator-facing tasks
 
@@ -236,40 +210,32 @@ playbook is:
 # 1. Confirm what the API sees
 curl -sf https://api.stellarindex.io/v1/assets/<asset_id> | jq .
 
-# 2. Confirm what the cache holds
-redis-cli -h <redis-master> GET "toml:<home_domain>"
+# 2. Confirm what the last refresh persisted
+psql -d stellarindex -c "SELECT sep1_resolved_at, sep1_payload
+  FROM issuers WHERE g_strkey = '<G-strkey>'"
 
-# 3. Bypass the cache, hit the issuer directly
+# 3. Hit the issuer directly
 curl -sfL "https://<home_domain>/.well-known/stellar.toml"
 
-# 4. If 1 and 3 disagree but 2 looks stale, force-refresh:
-redis-cli -h <redis-master> DEL "toml:<home_domain>"
+# 4. If 2 and 3 disagree, re-fetch (see §"Forcing a re-fetch"):
+stellarindex-ops sep1-refresh -config /etc/stellarindex/api.toml \
+  -issuer <G-strkey>
 ```
 
 ## Metrics + alerts
 
-The `internal/metadata` package emits these counters / gauges via
-`internal/obs`:
-
-- `stellarindex_metadata_resolver_requests_total{status}` —
-  status ∈ {ok, not_found, http_error, timeout, parse_error,
-  private_ip_blocked}.
-- `stellarindex_metadata_cache_hits_total` /
-  `stellarindex_metadata_cache_misses_total`.
-- `stellarindex_metadata_resolver_duration_seconds` histogram.
-
-Alert: `stellarindex_metadata_resolver_error_rate_high` is
-designed but not yet shipping — no rule in
-`deploy/monitoring/rules/` produces it today. The metadata
-overlay IS wired into `/v1/assets/{id}` already (see §"Resolution
-flow" above) — what's missing is the per-rate Prometheus rule
-that turns the existing counters into a paged signal. Tracked
-as a future hardening item.
+`internal/metadata` emits no Prometheus metrics. `sep1-refresh` logs
+each per-issuer failure and judges its own run: a failure fraction
+high enough to indicate an outage on our side unwinds the ladder step
+it just applied (see the job's doc comment). The data-freshness
+watchdog reads `max(issuers.sep1_resolved_at)`, which a failed attempt
+stamps as well as a success, so it cannot tell a working refresh from
+a failing one. No per-issuer resolver error-rate alert ships today.
 
 ## References
 
-- Cache schema: [ADR-0007](../adr/0007-redis-cache-schema.md)
-  (`toml:<domain>` namespace, 24 h TTL)
+- Refresh job: `internal/ops/ingest/sep1_refresh.go`; persisted
+  columns `issuers.sep1_payload` / `issuers.sep1_resolved_at`
 - Supply policy: [ADR-0011](../adr/0011-supply-algorithm.md) (uses
   SEP-1 `[[CURRENCIES]].max_supply` as the off-chain max-supply
   source)

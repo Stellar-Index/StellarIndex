@@ -22,12 +22,10 @@
 //
 // # Caching
 //
-// [Resolver] itself is stateless. [Cache] wraps it with a
-// Redis-backed read-through layer keyed by [cachekeys.TOML] with
-// TTL [cachekeys.TOMLTTL]. Errors are NOT cached — a 404 is a real
-// signal callers should see, and typically transient. In-process
-// [singleflight] coalesces concurrent misses so a popular home-domain
-// doesn't get hammered on cache expiry.
+// [Resolver] itself is stateless and uncached. Production resolves
+// on the `stellarindex-ops sep1-refresh` rotation and persists the
+// parse to `issuers.sep1_payload`; the API reads that column and
+// never fetches a stellar.toml on the request path.
 //
 // # What this package deliberately doesn't do
 //

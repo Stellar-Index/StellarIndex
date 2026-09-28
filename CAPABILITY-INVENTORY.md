@@ -43,7 +43,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - Human names → `OpTypeName`, `MemoTypeName`, `AssetID`, `TrustLineAssetID`
 
 ## SEP-1 / stellar.toml + verified currency
-- Fetch+parse toml (SSRF-guarded, Redis-cached, coalesced) → `metadata.NewResolver(opts)` + `metadata.NewCache(resolver, rdb).Resolve(ctx, domain)`
+- Fetch+parse toml (SSRF-guarded, uncached) → `metadata.NewResolver(opts).Resolve(ctx, domain)`; the API reads the `sep1-refresh` result from `issuers.sep1_payload`, never a live fetch
 - Issuer home_domain, latest observed (watched issuers only) → `metadata.NewLCMHomeDomainResolver`, `ChainedHomeDomainLookup`
 - Verified currency → `currency.LoadEmbedded().LookupBySlug/LookupByTicker/LookupByStellarAssetID`, `.Browseable`, `.ByClass`, `.CoinGeckoIDs` (never auto-populate seed.yaml)
 

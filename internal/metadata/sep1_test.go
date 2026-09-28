@@ -431,8 +431,8 @@ func TestResolver_DomainIsLowercased(t *testing.T) {
 	if !strings.EqualFold(receivedHost, host) {
 		t.Errorf("host mismatch: %q vs %q", receivedHost, host)
 	}
-	// Lowercasing is the key invariant — toml:<domain> cache keys
-	// depend on it per cachekeys.TOML.
+	// Lowercasing is the invariant: a home_domain is
+	// case-insensitive, so the wire host must be canonical.
 	if receivedHost != strings.ToLower(receivedHost) {
 		t.Errorf("host not lowercased on the wire: %q", receivedHost)
 	}

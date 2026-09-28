@@ -61,8 +61,7 @@ ssh root@136.243.90.96 "curl -s http://localhost:9090/api/v1/query --data-urlenc
 ssh root@136.243.90.96 'redis-cli --latency-history'  # in another pane
 # The API serves /metrics on its public listener (:3000) — :9464 is
 # the INDEXER's metrics port. The relevant cache metric is the
-# in-memory API cache counter, NOT sep1_cache_ops_total (that one is
-# the SEP-1 stellar.toml resolver cache, unrelated to price keys):
+# in-memory API cache counter:
 ssh root@136.243.90.96 "curl -s http://localhost:3000/metrics | grep 'stellarindex_api_cache_ops_total.*miss'"
 
 # Is Timescale the bottleneck?
@@ -82,8 +81,6 @@ ssh root@136.243.90.96 'runuser -u postgres -- psql -d stellarindex -c "
      jumps (per `(cache, op)` — see
      [cache-miss-rate-high.md](cache-miss-rate-high.md)), plus Redis
      `keyspace_misses` / `evicted_keys` climbing in `INFO stats`.
-     (`sep1_cache_ops_total` is the SEP-1 stellar.toml resolver
-     cache — unrelated to price keys; don't chase it here.)
    - Mitigation: warm the cache or scale Redis memory; see
      `redis-memory.md`.
 
@@ -189,9 +186,8 @@ ssh root@136.243.90.96 'runuser -u postgres -- psql -d stellarindex -c "
   dual-tree with the r1 overlay primary; diagnosis commands moved
   to r1 shapes (Prometheus via ssh + localhost:9090, local
   redis-cli, `runuser -u postgres`); the `:9464` metrics URL fixed
-  to the API's `:3000` listener and the miss signal corrected from
-  `sep1_cache_ops_total` (SEP-1 stellar.toml resolver cache —
-  unrelated) to `stellarindex_api_cache_ops_total{result="miss"}`
+  to the API's `:3000` listener and the miss signal corrected
+  to `stellarindex_api_cache_ops_total{result="miss"}`
   + Redis keyspace stats; replica-lag caveat marked multi-host
   only / inert on r1. Status promoted draft → current.
 - 2026-04-23 — initial draft. Alert threshold is 2.5× the SLA

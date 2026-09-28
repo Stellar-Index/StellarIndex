@@ -401,36 +401,6 @@ func RateLimitKey(subject string, now time.Time, window time.Duration) RateLimit
 // (keys drain naturally; counter resets at window rollover).
 func RateLimitTTL(window time.Duration) time.Duration { return 2 * window }
 
-// ─── SEP-1 / home-domain cache ────────────────────────────────────
-//
-// Wire shape: `toml:<home-domain>`
-// Cached stellar.toml parse result. Lazy-populated by API handlers
-// on miss; also invalidated when the home-domain field of a
-// classic-asset record changes.
-
-// TOMLKey is the typed Redis key for the `toml:<home-domain>` family.
-type TOMLKey string
-
-// String returns the wire-format key.
-func (k TOMLKey) String() string { return string(k) }
-
-// TOML returns the cache key for a SEP-1 home-domain record.
-func TOML(homeDomain string) TOMLKey {
-	return TOMLKey("toml:" + strings.ToLower(homeDomain))
-}
-
-// TOMLTTL is the expiry for toml: keys — the cached SEP-1
-// `stellar.toml` overlay for /v1/assets/{id}.
-//
-// 24h, not minutes: a stellar.toml is issuer-controlled reference
-// data (org name, currency descriptions, image URLs) that changes
-// on the order of weeks-to-never. A short TTL just means every
-// cold /v1/assets/{id} for a domain whose entry has aged out pays
-// a fresh ~500ms upstream HTTPS fetch on the request path. A 24h
-// TTL collapses that to ~once per domain per day; explicit
-// busting is still available via Cache.Invalidate.
-const TOMLTTL = 24 * time.Hour
-
 // ─── Asset metadata — code/issuer/contract/decimals + SEP-1 overlay─
 //
 // Wire shape: `meta:<asset_id>`
