@@ -12,6 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/usage"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // postResponseWriteTimeout bounds the bookkeeping writes that run AFTER
@@ -23,6 +24,24 @@ import (
 // budget exactly as they did before. Generous relative to go-redis's 3 s
 // default so it is a backstop, not the usual limiter.
 const postResponseWriteTimeout = 5 * time.Second
+
+// streamMeterInterval is how often [meterOpenStream] re-bills a
+// still-open SSE connection. Without this, a stream is metered once
+// at open (GH-1279): it buys unbounded duration for one quota unit,
+// stays invisible in the DETAIL family for the rest of its lifetime,
+// and never gains a second unit no matter how long it runs. Chosen
+// to match the rate-limit bucket's per-minute granularity.
+//
+// atomic.Int64 (nanoseconds), not a plain time.Duration: a
+// per-connection ticker goroutine reads this on every tick from
+// outside the request goroutine, and [SetStreamMeterIntervalForTest]
+// can rewrite it from a still-running test while a previous test's
+// ticker goroutine has not yet observed its stream close.
+var streamMeterInterval atomic.Int64
+
+func init() {
+	streamMeterInterval.Store(int64(time.Minute))
+}
 
 // UsageTracker records per-request daily counters keyed on the
 // authenticated subject's OWNER ACCOUNT (auth.Subject Identifier, with
@@ -56,9 +75,12 @@ const postResponseWriteTimeout = 5 * time.Second
 // for stacks without the obs pair (tests). Unmatched paths bucket
 // under "unmatched".
 //
-// An SSE request ([isStreamingPath]) is recorded once, when its headers
-// commit (see [streamOpenMeter]); every other request after its handler
-// returns.
+// An SSE request ([isStreamingPath]) is recorded when its headers
+// commit (see [streamOpenMeter]), then re-billed every
+// [streamMeterInterval] for as long as it stays open (see
+// [meterOpenStream]) — a stream that never returns must still cost
+// more than one unit the longer it runs. Every other request is
+// recorded once, after its handler returns.
 //
 // Failures are logged at debug and dropped — usage tracking must
 // never block a request.
@@ -88,10 +110,6 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 			once := &usageRecordOnce{record: func(panicked bool) {
 				usageTrackerRecord(counter, logger, reqCtx, inner, rec, units, deadlineFired, panicked)
 			}}
-			var out http.ResponseWriter = rec
-			if isStreamingPath(r.URL.EscapedPath()) {
-				out = &streamOpenMeter{statusRecorder: rec, once: once}
-			}
 			// Deferred so a panicking handler still gets counted: Recoverer
 			// sits OUTSIDE this middleware, so a panic unwinds through here
 			// on its way up, and straight-line bookkeeping after
@@ -99,6 +117,17 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 			// so the outer Recoverer still sees and logs it; a panic never
 			// wrote rec.status, so it's classed as 5xx explicitly rather
 			// than read off the statusRecorder's 200 zero-value.
+			//
+			// Registered BEFORE the streaming block below so it runs AFTER
+			// that block's close(done)+<-exited (defers are LIFO): meterOpenStream
+			// must have FULLY RETURNED, not merely been signalled, before
+			// once.fire can newly flip fired()==true on the panic-before-open
+			// path — signalling alone left a window where the goroutine passes
+			// its done re-check, is preempted, sees close(done) then
+			// once.fire(true) both happen, and only then resumes: fired() now
+			// reads true and it bills rec's still-default 200 status as OK,
+			// eating quota on a request this same defer is about to class as
+			// a 5xx (COR-05), and double-billing besides.
 			defer func() {
 				p := recover()
 				once.fire(p != nil)
@@ -106,6 +135,29 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 					panic(p)
 				}
 			}()
+			var out http.ResponseWriter = rec
+			if isStreamingPath(r.URL.EscapedPath()) {
+				out = &streamOpenMeter{statusRecorder: rec, once: once}
+				// GH-1279: the open-time record above bills interval zero;
+				// without this, a stream held open longer than that buys
+				// unbounded duration for the same one unit. family is read
+				// BEFORE dispatch (pre-dispatch ResolveRoute fallback) so the
+				// ticker goroutine never races the mux's write to inner.Pattern.
+				if subject, ok := auth.SubjectFrom(reqCtx); ok {
+					if id := UsageKeyForSubject(subject); id != "" {
+						family := endpointFamily(inner)
+						done := make(chan struct{})
+						exited := make(chan struct{})
+						// Wait for meterOpenStream to actually return, not just observe
+						// close(done): bounded by postResponseWriteTimeout, since the
+						// only way this blocks is a tick already in flight finishing
+						// its counter writes under that same timeout.
+						defer func() { close(done); <-exited }()
+						//nolint:gosec,contextcheck // G118/contextcheck: intentional detach, same rationale (and pattern) as usageTrackerRecord's context.Background() below — ticks must outlive a client-aborted request ctx, not inherit it
+						go meterOpenStream(counter, logger, id, family, rec, once, units, deadlineFired, done, exited)
+					}
+				}
+			}
 			next.ServeHTTP(out, inner)
 		})
 	}
@@ -200,6 +252,13 @@ func (o *usageRecordOnce) fire(panicked bool) {
 	}
 }
 
+// fired reports whether the once-record has already run — used by
+// [meterOpenStream] to gate periodic ticks on the stream having
+// actually committed a response.
+func (o *usageRecordOnce) fired() bool {
+	return o.done.Load()
+}
+
 // streamOpenMeter records an SSE request's usage when the handler commits
 // its response headers, not when the stream closes: a stream can outlive
 // the day it opened on, and one ended by a process kill or deploy never
@@ -270,6 +329,133 @@ func ChargeUsage(r *http.Request, units int) {
 	if n := int64(units); n > u.n {
 		u.n = n
 	}
+}
+
+// meterOpenStream re-bills a live SSE connection every
+// [streamMeterInterval] for as long as it stays open, closing the
+// GH-1279 gap where a stream was (and, at open, still is) metered
+// exactly once: unbounded duration for one quota unit, invisible to
+// the DETAIL family for its whole lifetime.
+//
+// The ticker starts at DISPATCH — this goroutine is spawned just
+// before next.ServeHTTP, not at [streamOpenMeter]'s header commit —
+// so the billed total for a connection open from commit to close for
+// duration d is 1 (the open bill) + floor(d/streamMeterInterval) only
+// when dispatch and commit coincide, which they do for a handler that
+// writes its preamble immediately. A handler that does setup work
+// before its first write shifts every tick earlier relative to d by
+// that gap, since the ticker's own clock never restarts at commit;
+// gated ticks before commit are simply skipped (see once.fired()
+// below), not deferred to after it.
+//
+// Ticks are gated on once.fired(): [streamOpenMeter] fires it the
+// moment the handler commits headers/first write/flush, and an SSE
+// response can't change status after that (HTTP forbids it), so a
+// tick observing fired()==true is bound (via the atomic.Bool it
+// reads) to see rec.status/units as they stood at that commit —
+// billing a connection already confirmed successful without racing
+// the handler goroutine that still owns rec. A handler that errors
+// out before opening the stream never gets ticked at all.
+//
+// family and id are resolved once, before dispatch, and passed in
+// rather than recomputed per tick: after dispatch starts, the mux
+// mutates inner.Pattern from the handler's goroutine, so reading it
+// from here too would race it.
+//
+// Deliberately reuses [outcomeClass]/[billableClass]/[units] rather
+// than assuming success, so COR-05 (a platform-side 5xx must never
+// eat monthly quota) holds for every tick, not just the first.
+//
+// Writes run inline on this goroutine, not via [AfterResponse]'s
+// shared pool: this goroutine is already dedicated to one connection
+// (unlike a burst of post-response bookkeeping across many short
+// requests), so there is no fan-out to bound, and routing through the
+// pool's WaitGroup here made a test polling mid-stream race the
+// pool's own drain-for-test Wait() (sync.WaitGroup forbids a
+// concurrent Add once a Wait could observe zero).
+//
+// Stops when done is closed (the request handler returned), and closes
+// exited on its way out so the caller's deferred <-exited can block
+// until this goroutine has genuinely stopped touching rec/once/units —
+// not merely been told to (see UsageTracker's recover defer comment).
+//
+// A panic here would otherwise kill the whole API process; close(exited)
+// still runs on unwind, so the caller's <-exited never wedges.
+func meterOpenStream(counter *usage.Counter, logger *slog.Logger, id, family string, rec *statusRecorder, once *usageRecordOnce, units *usageUnits, deadlineFired *atomic.Bool, done <-chan struct{}, exited chan<- struct{}) {
+	defer worker.Recover(logger, "api-usage-stream-meter")
+	defer close(exited)
+	ticker := time.NewTicker(time.Duration(streamMeterInterval.Load()))
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			if !meterTick(counter, logger, id, family, rec, once, units, deadlineFired, done) {
+				return
+			}
+		}
+	}
+}
+
+// meterTick runs one [meterOpenStream] tick's re-check-and-bill decision,
+// split out so the caller's loop stays simple. Returns false once the
+// stream has closed, telling meterOpenStream to stop.
+func meterTick(counter *usage.Counter, logger *slog.Logger, id, family string, rec *statusRecorder, once *usageRecordOnce, units *usageUnits, deadlineFired *atomic.Bool, done <-chan struct{}) bool {
+	// Re-check done, non-blocking: a tick that was already in
+	// ticker.C's single-slot buffer the instant done closed must
+	// not slip through and read once more from rec after the
+	// request has finished with it.
+	select {
+	case <-done:
+		return false
+	default:
+	}
+	if hook := streamTickHook.Load(); hook != nil {
+		(*hook)()
+	}
+	if !once.fired() {
+		return true
+	}
+	class := outcomeClass(rec.status)
+	billable := billableClass(class, deadlineFired.Load())
+	n := units.get()
+	ctx, cancel := context.WithTimeout(context.Background(), postResponseWriteTimeout)
+	defer cancel()
+	if billable {
+		if err := counter.IncrementBy(ctx, id, n); err != nil {
+			obs.UsageUnitsDroppedTotal.WithLabelValues(obs.UsageCounterBillable).Add(float64(n))
+			logger.Debug("usage: stream tick increment failed", "err", err, "subject", id)
+		}
+	}
+	if err := counter.IncrementDetailBy(ctx, id, family, class, n); err != nil {
+		obs.UsageUnitsDroppedTotal.WithLabelValues(obs.UsageCounterDetail).Add(float64(n))
+		logger.Debug("usage: stream tick detail increment failed",
+			"err", err, "subject", id, "endpoint", family, "class", class)
+	}
+	return true
+}
+
+// SetStreamMeterIntervalForTest overrides [streamMeterInterval] for the
+// life of a test, returning a restore func. Test-only: production never
+// changes the interval at runtime.
+func SetStreamMeterIntervalForTest(d time.Duration) (restore func()) {
+	orig := streamMeterInterval.Load()
+	streamMeterInterval.Store(int64(d))
+	return func() { streamMeterInterval.Store(orig) }
+}
+
+// streamTickHook, when set, runs inside meterOpenStream on every tick,
+// after its done re-check and before it reads once.fired(). Test-only:
+// lets a test pause a tick at exactly the point the once.fire/exited
+// race lives, instead of relying on scheduling luck to land there.
+var streamTickHook atomic.Pointer[func()]
+
+// SetStreamTickHookForTest installs fn as [streamTickHook] for the life
+// of a test, returning a restore func. Test-only.
+func SetStreamTickHookForTest(fn func()) (restore func()) {
+	streamTickHook.Store(&fn)
+	return func() { streamTickHook.Store(nil) }
 }
 
 // UsageKeyForSubject picks the stable identifier we count under.
