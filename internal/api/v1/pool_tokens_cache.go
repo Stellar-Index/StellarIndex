@@ -59,6 +59,7 @@ func (c *poolTokensCache) PoolTokens(ctx context.Context, source string) (map[st
 		return prev.tokens, nil
 	}
 
+	//nolint:contextcheck // the fill is shared by every waiter, so no single caller's cancellation may abort it
 	ch := c.flight.DoChan(source, func() (val any, err error) {
 		// singleflight re-raises a panic on a fresh goroutine nothing can
 		// recover, so it must be turned into an error here.
@@ -68,7 +69,7 @@ func (c *poolTokensCache) PoolTokens(ctx context.Context, source string) (map[st
 				val, err = nil, errPoolTokensFillPanicked
 			}
 		}()
-		fillCtx, cancel := context.WithTimeout(context.Background(), poolTokensFillTimeout) //nolint:contextcheck // the fill is shared by every waiter, so no single caller's cancellation may abort it
+		fillCtx, cancel := context.WithTimeout(context.Background(), poolTokensFillTimeout)
 		defer cancel()
 		m, err := c.upstream.PoolTokens(fillCtx, source)
 		if err != nil {

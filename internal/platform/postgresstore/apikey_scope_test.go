@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -111,10 +112,10 @@ func TestAPIKeyStore_UpdateAndRevokeAreAccountScoped(t *testing.T) {
 		s, d := newRecordingStore(t)
 		d.rowsAffected = 0
 		st := NewAPIKeyStore(s)
-		if err := st.Update(ctx, owner, platform.APIKey{ID: "kid_abc"}); err != platform.ErrNotFound {
+		if err := st.Update(ctx, owner, platform.APIKey{ID: "kid_abc"}); !errors.Is(err, platform.ErrNotFound) {
 			t.Fatalf("Update err = %v, want ErrNotFound", err)
 		}
-		if err := st.Revoke(ctx, owner, "kid_abc", uuid.Nil, ""); err != platform.ErrNotFound {
+		if err := st.Revoke(ctx, owner, "kid_abc", uuid.Nil, ""); !errors.Is(err, platform.ErrNotFound) {
 			t.Fatalf("Revoke err = %v, want ErrNotFound", err)
 		}
 	})

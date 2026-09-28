@@ -411,7 +411,6 @@ func TestAssetGet_WarningSerialisationShape(t *testing.T) {
 // Proven red: against the pre-fix populateFiatView both fields are null.
 func TestAssetGet_NonUSDFiat_ServesPriceFromFXQuotes(t *testing.T) {
 	// 1 EUR = 1.17 USD.
-	const inverse = 1.17
 	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{
 		{Bucket: time.Now().UTC().Add(-24 * time.Hour), InverseUSDText: "1.17"},
 	}}
