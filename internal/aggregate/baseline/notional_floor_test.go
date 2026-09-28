@@ -17,12 +17,11 @@ import (
 func productionFloor() *big.Rat { return baseline.MinuteNotionalFloor(10_000, 24*time.Hour) }
 
 // withUSD re-stamps a series' per-minute USD notional.
-func withUSD(in []baseline.TimedVWAP, usd *big.Rat, notional int64) []baseline.TimedVWAP {
+func withUSD(in []baseline.TimedVWAP, usd *big.Rat) []baseline.TimedVWAP {
 	out := make([]baseline.TimedVWAP, len(in))
 	for i := range in {
 		out[i] = in[i]
 		out[i].USDVolume = usd
-		out[i].NotionalTrades = notional
 	}
 	return out
 }
@@ -40,35 +39,36 @@ func TestMinuteNotionalFloor(t *testing.T) {
 }
 
 // Two accounts cycling 0.01 USDC every minute for the whole 30-day window
-// must not author a baseline: nothing is persisted, so the pair stays in
-// bootstrap and its confidence stays capped (#1108).
+// ($864 of flow) buy one baseline point per ~$6.94, not one per print, so
+// the pair stays deep under the bootstrap gate (#1108).
 func TestRefresher_PennySelfTradesEveryMinuteStayCapped(t *testing.T) {
 	pair := mustPair(t, "native", "fiat:USD")
 	now := time.Now().UTC()
 	src := newStubSource()
-	src.set(pair, withUSD(stableTimedSeries(now, 30*1440), big.NewRat(2, 100), 2))
+	src.set(pair, withUSD(stableTimedSeries(now, 30*1440), big.NewRat(2, 100)))
 	sink := newStubSink()
 
 	r := baseline.NewRefresher(src, sink, 30*24*time.Hour, nil).WithMinuteNotionalFloor(productionFloor())
-	outcome, err := r.RefreshPair(context.Background(), pair)
-	if !errors.Is(err, baseline.ErrBelowNotionalFloor) {
-		t.Fatalf("err = %v, want ErrBelowNotionalFloor", err)
+	if outcome, err := r.RefreshPair(context.Background(), pair); err != nil || outcome != baseline.OutcomeOK {
+		t.Fatalf("RefreshPair = (%v, %v), want (ok, nil)", outcome, err)
 	}
-	if outcome != baseline.OutcomeBelowNotionalFloor {
-		t.Errorf("outcome = %v, want below_notional_floor", outcome)
+	d30 := sink.byPair[pair.String()].Day30
+	// 348 penny-pair minutes ($6.96) per point: 43,200/348 = 124 points.
+	if d30 == nil || d30.N != 123 {
+		t.Fatalf("Day30 = %+v, want N=123 (one return per $6.94 of flow)", d30)
 	}
-	if sink.calls != 0 {
-		t.Errorf("sink.calls = %d, want 0: a penny-authored baseline was persisted", sink.calls)
+	if days := float64(d30.N+1) / 1440; days >= confidence.BootstrapDensityDays {
+		t.Errorf("density = %.3f days, want < %.1f (bootstrap cap stays engaged)", days, confidence.BootstrapDensityDays)
 	}
 }
 
 // The issue's pair: mature, ~200 real minutes a day, with a self-trader
-// filling every other minute at a penny. Only the real minutes count, so
-// density stays under the bootstrap gate.
+// filling every other minute at a penny. The pennies add one point a day
+// ($12.40 of flow), so density stays where the real flow puts it.
 func TestRefresher_PennyPaddingDoesNotLiftDensity(t *testing.T) {
 	pair := mustPair(t, "native", "fiat:USD")
 	now := time.Now().UTC()
-	series := withUSD(stableTimedSeries(now, 30*1440), big.NewRat(1, 100), 1)
+	series := withUSD(stableTimedSeries(now, 30*1440), big.NewRat(1, 100))
 	realMinutes := 0
 	for i := range series {
 		if i%1440 < 200 {
@@ -89,12 +89,40 @@ func TestRefresher_PennyPaddingDoesNotLiftDensity(t *testing.T) {
 	if d30 == nil {
 		t.Fatal("Day30 nil")
 	}
-	if d30.N != realMinutes-1 {
-		t.Errorf("Day30.N = %d, want %d (real minutes only)", d30.N, realMinutes-1)
+	if want := realMinutes + 30 - 1; d30.N != want {
+		t.Errorf("Day30.N = %d, want %d (real minutes + one penny point a day)", d30.N, want)
 	}
 	// Same measure orchestrator.baselineAgeDays reads.
 	if days := float64(d30.N+1) / 1440; days >= confidence.BootstrapDensityDays {
 		t.Errorf("density = %.2f days, want < %.1f (bootstrap cap stays engaged)", days, confidence.BootstrapDensityDays)
+	}
+}
+
+// Sub-floor minutes merge into one point priced by USD weight, so a dust
+// print at a wild price moves it only in proportion to its USD share.
+func TestRefresher_VolumeBarPriceIsUSDWeighted(t *testing.T) {
+	pair := mustPair(t, "native", "fiat:USD")
+	now := time.Now().UTC()
+	var series []baseline.TimedVWAP
+	for i := 0; i < 10; i++ {
+		end := now.Add(-time.Duration(20-2*i) * time.Minute)
+		series = append(series,
+			baseline.TimedVWAP{VWAP: 1000, BucketEnd: end.Add(-time.Minute), USDVolume: big.NewRat(1, 100)},
+			baseline.TimedVWAP{VWAP: 2 + float64(i)*0.001, BucketEnd: end, USDVolume: big.NewRat(9_99, 100)})
+	}
+	src := newStubSource()
+	src.set(pair, series)
+	sink := newStubSink()
+
+	r := baseline.NewRefresher(src, sink, 30*24*time.Hour, nil).WithMinuteNotionalFloor(big.NewRat(10, 1))
+	if outcome, err := r.RefreshPair(context.Background(), pair); err != nil || outcome != baseline.OutcomeOK {
+		t.Fatalf("RefreshPair = (%v, %v), want (ok, nil)", outcome, err)
+	}
+	d30 := sink.byPair[pair.String()].Day30
+	// Each point is (1000*0.01 + p*9.99)/10 ≈ p+1, where an unweighted
+	// mean would put it at ~500; the median return stays near zero.
+	if d30 == nil || d30.N != 9 || d30.Median > 0.001 {
+		t.Errorf("Day30 = %+v, want N=9 with a small median return", d30)
 	}
 }
 
@@ -104,7 +132,7 @@ func TestRefresher_UnvaluedPairKeepsGuardUnderDistinctOutcome(t *testing.T) {
 	pair := mustPair(t, "native", "fiat:EUR")
 	now := time.Now().UTC()
 	src := newStubSource()
-	src.set(pair, withUSD(stableTimedSeries(now, 2*1440), nil, 0))
+	src.set(pair, withUSD(stableTimedSeries(now, 2*1440), nil))
 	sink := newStubSink()
 
 	r := baseline.NewRefresher(src, sink, 30*24*time.Hour, nil).WithMinuteNotionalFloor(productionFloor())
@@ -117,8 +145,9 @@ func TestRefresher_UnvaluedPairKeepsGuardUnderDistinctOutcome(t *testing.T) {
 	}
 }
 
-// A valued pair's unpriced minutes prove no notional and are dropped, and a
-// pair too thin for any baseline stays not_enough_samples, not below-floor.
+// A valued pair's unpriced minutes prove no notional and are dropped; a pair
+// too thin for any baseline stays not_enough_samples; a pair with minutes
+// but under one point of flow is below_notional_floor.
 func TestRefresher_NotionalOutcomesAreDistinct(t *testing.T) {
 	now := time.Now().UTC()
 	mixed := mustPair(t, "native", "fiat:USD")
@@ -126,13 +155,14 @@ func TestRefresher_NotionalOutcomesAreDistinct(t *testing.T) {
 	for i := range series {
 		if i%2 == 1 {
 			series[i].USDVolume = nil
-			series[i].NotionalTrades = 0
 		}
 	}
 	thin := mustPair(t, "native", "fiat:GBP")
+	dust := mustPair(t, "native", "fiat:JPY")
 	src := newStubSource()
 	src.set(mixed, series)
-	src.set(thin, withUSD(stableTimedSeries(now, 1), big.NewRat(1, 100), 1))
+	src.set(thin, withUSD(stableTimedSeries(now, 1), big.NewRat(1, 100)))
+	src.set(dust, withUSD(stableTimedSeries(now, 100), big.NewRat(1, 1000)))
 	sink := newStubSink()
 
 	r := baseline.NewRefresher(src, sink, 30*24*time.Hour, nil).WithMinuteNotionalFloor(productionFloor())
@@ -142,8 +172,12 @@ func TestRefresher_NotionalOutcomesAreDistinct(t *testing.T) {
 	if d30 := sink.byPair[mixed.String()].Day30; d30 == nil || d30.N != 720-1 {
 		t.Errorf("mixed Day30 = %+v, want N=719 (priced minutes only)", d30)
 	}
-	sum := r.RefreshAll(context.Background(), []canonical.Pair{mixed, thin}, 2)
-	if sum.OK != 1 || sum.NotEnoughSamples != 1 || sum.BelowNotionalFloor != 0 || sum.OKUnvalued != 0 {
-		t.Errorf("summary = %+v, want OK=1 NotEnoughSamples=1", sum)
+	if outcome, err := r.RefreshPair(context.Background(), dust); !errors.Is(err, baseline.ErrBelowNotionalFloor) ||
+		outcome != baseline.OutcomeBelowNotionalFloor {
+		t.Errorf("dust = (%v, %v), want below_notional_floor ($0.10 of flow is under one point)", outcome, err)
+	}
+	sum := r.RefreshAll(context.Background(), []canonical.Pair{mixed, thin, dust}, 2)
+	if sum.OK != 1 || sum.NotEnoughSamples != 1 || sum.BelowNotionalFloor != 1 || sum.OKUnvalued != 0 {
+		t.Errorf("summary = %+v, want OK=1 NotEnoughSamples=1 BelowNotionalFloor=1", sum)
 	}
 }

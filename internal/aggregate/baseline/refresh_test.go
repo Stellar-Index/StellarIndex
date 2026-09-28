@@ -95,10 +95,9 @@ func stableTimedSeries(now time.Time, n int) []baseline.TimedVWAP {
 		}
 		price += shift
 		out[i] = baseline.TimedVWAP{
-			VWAP:           price,
-			BucketEnd:      now.Add(-time.Duration(n-1-i) * time.Minute),
-			USDVolume:      big.NewRat(100, 1),
-			NotionalTrades: 1,
+			VWAP:      price,
+			BucketEnd: now.Add(-time.Duration(n-1-i) * time.Minute),
+			USDVolume: big.NewRat(100, 1),
 		}
 	}
 	return out
@@ -177,9 +176,9 @@ func TestRefresher_PartialBootstrap_OnlyDay30Valid(t *testing.T) {
 	src := newStubSource()
 	usd := big.NewRat(100, 1)
 	src.set(pair, []baseline.TimedVWAP{
-		{VWAP: 1.0, BucketEnd: now.Add(-8 * 24 * time.Hour), USDVolume: usd, NotionalTrades: 1},
-		{VWAP: 1.01, BucketEnd: now.Add(-2 * 24 * time.Hour), USDVolume: usd, NotionalTrades: 1},
-		{VWAP: 1.02, BucketEnd: now.Add(-30 * time.Minute), USDVolume: usd, NotionalTrades: 1},
+		{VWAP: 1.0, BucketEnd: now.Add(-8 * 24 * time.Hour), USDVolume: usd},
+		{VWAP: 1.01, BucketEnd: now.Add(-2 * 24 * time.Hour), USDVolume: usd},
+		{VWAP: 1.02, BucketEnd: now.Add(-30 * time.Minute), USDVolume: usd},
 	})
 	sink := newStubSink()
 

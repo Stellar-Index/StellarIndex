@@ -4397,8 +4397,8 @@ var AggregatorFXSnapFallbackTotal = prometheus.NewCounterVec(
 // not_enough_samples, below_notional_floor, read_error, write_error}.
 // Steady state is mostly `ok`; sustained `not_enough_samples` indicates
 // pairs in bootstrap (ADR-0019 §"Bootstrap policy"); `below_notional_floor`
-// counts pairs that trade but whose minutes carry too little USD notional
-// to train a baseline (no Phase 2 z-score freeze; Phase 1 still applies);
+// counts pairs that trade but carry too little USD flow in the window for
+// a baseline (no Phase 2 z-score freeze; Phase 1 still applies);
 // `ok_unvalued` counts pairs with no USD-valued minute whose baseline was
 // built from every minute; sustained `read_error` / `write_error`
 // indicate the storage layer needs investigation.

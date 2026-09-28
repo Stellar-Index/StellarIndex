@@ -3281,15 +3281,17 @@ pairs in bootstrap (ADR-0019 §"Bootstrap policy") — the API's
 confidence score for those pairs will fall back to the bootstrap
 factor instead of using a per-asset baseline.
 
-A minute trains the baseline only when it carries a trade of at least
-$0.01 and a summed USD notional of at least `min_usd_volume` divided by
-the longest window's minutes ($10,000 / 1,440 ≈ $6.94 on defaults).
-`below_notional_floor` counts pairs that trade but have too few such
-minutes: nothing is persisted, so they get no Phase 2 z-score freeze
-(Phase 1 still applies). `ok_unvalued` counts pairs with no USD-valued
-minute in the window (non-USD fiat quotes, a quote the USD resolver
-cannot price); their baseline is built from every minute. Sustained `read_error`
-or `write_error` rates indicate the storage layer needs investigation
+The baseline trains on USD-volume bars: consecutive priced minutes
+accumulate until they carry `min_usd_volume` divided by the longest
+window's minutes ($10,000 / 1,440 ≈ $6.94 on defaults), and each bar is
+one point priced at the USD-weighted mean of its minutes' VWAPs. Dust
+contributes its USD share of a point, not a point per print.
+`below_notional_floor` counts pairs that trade but carry too little USD
+flow in the window to form three bars: nothing is persisted, so they get
+no Phase 2 z-score freeze (Phase 1 still applies). `ok_unvalued` counts
+pairs with no USD-valued minute in the window (non-USD fiat quotes, a
+quote the USD resolver cannot price); their baseline is built from every
+minute. Sustained `read_error` or `write_error` rates indicate the storage layer needs investigation
 (prices_1m read failing or volatility_baseline_1m write conflict).
 
 ### `stellarindex_aggregator_supply_lake_clamp_ledgers`

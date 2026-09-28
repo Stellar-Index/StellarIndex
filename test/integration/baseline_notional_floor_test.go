@@ -15,15 +15,15 @@ import (
 
 // TestTimedVWAPsForPair1m_NotionalFloor pins that the anomaly baseline's
 // series carries each minute's USD notional across both stored directions,
-// and that the refresher's floor applied to it on real Postgres keeps
-// penny-authored minutes out of the baseline (#1108). All amounts 1e7.
+// and that the refresher's USD-volume bars over it on real Postgres keep
+// penny-authored minutes from buying baseline points (#1108). All amounts 1e7.
 //
-//	m0  one $20 fill                                   → $20,     1 notional
-//	m1  one $0.001 dust fill                           → $0.001,  0
-//	m2  one unpriced fill (usd_volume NULL)            → nil,     0
-//	m3  $0.001 dust beside a $20 fill                  → $20.001, 1
-//	m4  $0.001 dust stored; $20 fill stored flipped    → $20.001, 1
-//	m5..m64  sixty $0.01 self-trade minutes            → $0.01,   1 each
+//	m0  one $20 fill                                   → $20
+//	m1  one $0.001 dust fill                           → $0.001
+//	m2  one unpriced fill (usd_volume NULL)            → nil
+//	m3  $0.001 dust beside a $20 fill                  → $20.001
+//	m4  $0.001 dust stored; $20 fill stored flipped    → $20.001
+//	m5..m64  sixty $0.01 self-trade minutes            → $0.01 each
 func TestTimedVWAPsForPair1m_NotionalFloor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -89,13 +89,9 @@ func TestTimedVWAPsForPair1m_NotionalFloor(t *testing.T) {
 	if len(pts) != 65 {
 		t.Fatalf("got %d points, want 65 (one per traded minute)", len(pts))
 	}
-	type want struct {
-		usd      string // "" = nil
-		notional int64
-	}
-	wants := map[int]want{0: {"20", 1}, 1: {"1/1000", 0}, 2: {"", 0}, 3: {"20001/1000", 1}, 4: {"20001/1000", 1}}
+	wants := map[int]string{0: "20", 1: "1/1000", 2: "", 3: "20001/1000", 4: "20001/1000"} // "" = nil
 	for i := 5; i < 65; i++ {
-		wants[i] = want{"1/100", 1}
+		wants[i] = "1/100"
 	}
 	for i, p := range pts {
 		if !p.BucketEnd.Equal(m(i + 1)) {
@@ -106,20 +102,17 @@ func TestTimedVWAPsForPair1m_NotionalFloor(t *testing.T) {
 		}
 		w := wants[i]
 		switch {
-		case w.usd == "" && p.USDVolume != nil:
+		case w == "" && p.USDVolume != nil:
 			t.Errorf("point %d usd = %s, want nil (unpriced)", i, p.USDVolume.RatString())
-		case w.usd != "" && (p.USDVolume == nil || p.USDVolume.RatString() != w.usd):
-			t.Errorf("point %d usd = %v, want %s", i, p.USDVolume, w.usd)
-		}
-		if p.NotionalTrades != w.notional {
-			t.Errorf("point %d notional trades = %d, want %d", i, p.NotionalTrades, w.notional)
+		case w != "" && (p.USDVolume == nil || p.USDVolume.RatString() != w):
+			t.Errorf("point %d usd = %v, want %s", i, p.USDVolume, w)
 		}
 	}
 
 	// The production refresher, floor as wired on defaults, over the same
-	// rows: THIN's sixty penny minutes are dropped and only its three real
-	// minutes train (N=2); a pair of nothing but penny minutes gets no
-	// baseline; the all-unpriced pair keeps one under ok_unvalued.
+	// rows: THIN's three real minutes are three points (N=2) and its sixty
+	// pennies ($0.60) never make a point; a pair of nothing but pennies gets
+	// no baseline; the all-unpriced pair keeps one under ok_unvalued.
 	sink := &captureBaselineSink{}
 	r := baseline.NewRefresher(store, sink, baseline.DefaultWindow, nil).
 		WithMinuteNotionalFloor(baseline.MinuteNotionalFloor(10_000, 24*time.Hour))

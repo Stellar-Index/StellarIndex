@@ -82,8 +82,9 @@ func NewRefresher(src TimedVWAPSource, sink Sink, window time.Duration, logger *
 	return &Refresher{src: src, sink: sink, window: window, logger: logger, minuteFloor: new(big.Rat)}
 }
 
-// WithMinuteNotionalFloor sets the USD notional a priced minute must carry
-// to enter the baseline; see [MinuteNotionalFloor]. nil or negative means 0.
+// WithMinuteNotionalFloor sets the USD notional one baseline sample point
+// must carry; see [Refresher.volumeBars] and [MinuteNotionalFloor]. nil or
+// negative means 0 (every priced minute is its own point).
 func (r *Refresher) WithMinuteNotionalFloor(floor *big.Rat) *Refresher {
 	if floor == nil || floor.Sign() < 0 {
 		floor = new(big.Rat)
@@ -93,11 +94,10 @@ func (r *Refresher) WithMinuteNotionalFloor(floor *big.Rat) *Refresher {
 }
 
 // MinuteNotionalFloor pro-rates the publish floor (min_usd_volume per
-// window) to one minute of the LONGEST published window. Any window that
-// clears the publish floor therefore holds at least one minute at or above
-// it, so a pair that can publish can train a baseline, and buying the
-// bootstrap cap with self-trades costs the same sustained volume as clearing
-// the publish floor. minUSDVolume <= 0 (floor disabled) yields 0.
+// window) to one minute of the LONGEST published window, so a pair trading
+// at exactly the publish floor yields one baseline point per minute and the
+// bootstrap cap's density measures sustained USD flow, not print count.
+// minUSDVolume <= 0 (floor disabled) yields 0.
 func MinuteNotionalFloor(minUSDVolume float64, longestWindow time.Duration) *big.Rat {
 	minutes := int64(longestWindow / time.Minute)
 	if minUSDVolume <= 0 || minutes <= 0 {
@@ -121,9 +121,8 @@ const (
 	OutcomeReadError
 	OutcomeWriteError
 	// OutcomeBelowNotionalFloor: the pair traded enough minutes for a
-	// baseline, but too few cleared the per-minute notional floor. Nothing
-	// is persisted: a baseline authored by sub-floor prints is the one a
-	// self-trader can buy (#1108).
+	// baseline, but its whole window carried too little USD notional to
+	// form MinSamples+1 volume bars. Nothing is persisted.
 	OutcomeBelowNotionalFloor
 	// OutcomeOKUnvalued: no minute in the window carried a USD valuation,
 	// so notional is unmeasurable and the baseline was built from every
@@ -163,7 +162,7 @@ type RefreshSummary struct {
 }
 
 // ErrBelowNotionalFloor accompanies [OutcomeBelowNotionalFloor].
-var ErrBelowNotionalFloor = errors.New("baseline: too few minutes clear the notional floor")
+var ErrBelowNotionalFloor = errors.New("baseline: too little USD notional for a baseline")
 
 // RefreshPair recomputes the baseline for one pair and writes it.
 // Reads the pair's full 30-day timed VWAP series, splits into 1d /
@@ -179,7 +178,7 @@ var ErrBelowNotionalFloor = errors.New("baseline: too few minutes clear the noti
 //     the 30d window has fewer than [MinSamples] returns — the
 //     pair is in full bootstrap and nothing is persisted
 //   - (OutcomeBelowNotionalFloor, [ErrBelowNotionalFloor]) when it has
-//     enough minutes but too few clear the notional floor; nothing persisted
+//     enough minutes but too little USD notional; nothing persisted
 //   - (OutcomeOKUnvalued, nil) on a successful upsert for a pair with no
 //     USD-valued minute in the window
 //   - (OutcomeReadError, err) on a [TimedVWAPSource] failure
@@ -193,7 +192,7 @@ func (r *Refresher) RefreshPair(ctx context.Context, pair canonical.Pair) (Refre
 		return OutcomeReadError, fmt.Errorf("baseline: TimedVWAPsForPair1m %s: %w", pair.String(), err)
 	}
 
-	sample, valued := r.notionalSample(timed)
+	sample, valued := r.volumeBars(timed)
 	okOutcome := OutcomeOK
 	if !valued {
 		sample = timed
@@ -221,27 +220,40 @@ func (r *Refresher) RefreshPair(ctx context.Context, pair canonical.Pair) (Refre
 	return okOutcome, nil
 }
 
-// notionalSample keeps the minutes that carry at least one trade over the
-// $0.01 per-trade floor AND a summed USD notional at or above the refresher's
-// minute floor. These minutes are both the median/MAD sample and the
-// bootstrap cap's density (Day30.N), so a minute counts toward trust only
-// when it cost real notional to print. valued is false when no minute in
-// the series carried any USD valuation; such a pair cannot be measured and
-// the caller falls back to every minute. A valued pair's unpriced minutes
-// are dropped: they prove no notional.
-func (r *Refresher) notionalSample(timed []TimedVWAP) (sample []TimedVWAP, valued bool) {
-	sample = make([]TimedVWAP, 0, len(timed))
+// volumeBars turns a valued pair's minutes into USD-volume bars: consecutive
+// priced minutes accumulate until their summed notional reaches the minute
+// floor, then emit one point at the last minute's bucket end, priced at the
+// USD-weighted mean of their VWAPs. Every point, and so every return and
+// every unit of Day30.N density, costs a floor's worth of USD flow; a dust
+// minute contributes usd/floor of a point and that share of its price, so
+// real flow sets the median/MAD. A minute at or above the floor is its own
+// point at its exact VWAP. Unpriced minutes prove no notional and are
+// skipped; a trailing sub-floor remainder is dropped. valued is false when
+// no minute carried a USD valuation, and the caller falls back to every
+// minute.
+func (r *Refresher) volumeBars(timed []TimedVWAP) (bars []TimedVWAP, valued bool) {
+	bars = make([]TimedVWAP, 0, len(timed))
+	usd, px := new(big.Rat), new(big.Rat)
 	for i := range timed {
 		t := timed[i]
 		if t.USDVolume == nil || t.USDVolume.Sign() <= 0 {
 			continue
 		}
-		valued = true
-		if t.NotionalTrades > 0 && t.USDVolume.Cmp(r.minuteFloor) >= 0 {
-			sample = append(sample, t)
+		v := new(big.Rat).SetFloat64(t.VWAP)
+		if v == nil {
+			continue
 		}
+		valued = true
+		usd.Add(usd, t.USDVolume)
+		px.Add(px, v.Mul(v, t.USDVolume))
+		if usd.Cmp(r.minuteFloor) < 0 {
+			continue
+		}
+		mean, _ := px.Quo(px, usd).Float64()
+		bars = append(bars, TimedVWAP{VWAP: mean, BucketEnd: t.BucketEnd, USDVolume: new(big.Rat).Set(usd)})
+		usd, px = new(big.Rat), new(big.Rat)
 	}
-	return sample, valued
+	return bars, valued
 }
 
 // RefreshAll runs [Refresher.RefreshPair] for every pair in

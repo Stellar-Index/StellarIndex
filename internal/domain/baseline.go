@@ -15,7 +15,4 @@ type BaselineTimedVWAP struct {
 	// USDVolume is the minute's summed trades.usd_volume across both stored
 	// directions; nil when no trade in the minute carried a USD valuation.
 	USDVolume *big.Rat
-	// NotionalTrades counts the minute's trades at or above the $0.01
-	// per-trade notional floor (prices_1m.notional_trade_count).
-	NotionalTrades int64
 }

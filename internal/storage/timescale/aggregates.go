@@ -1803,24 +1803,23 @@ func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from,
 	// on [Store.VWAPsForPair1m].
 	//
 	// Each minute carries its USD notional (volume_usd, NULL when unpriced)
-	// and notional_trade_count so the refresher can apply its per-minute
-	// notional floor (#1108); the policy lives there, not in this read.
+	// so the refresher can build USD-volume bars (#1108); the policy lives
+	// there, not in this read.
 	const q = `
         SELECT (SUM(CASE WHEN base_asset = $1 THEN vwap * COALESCE(volume_priced, 0)
                          ELSE COALESCE(volume_priced, 0) END)
                   / NULLIF(SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume_priced, 0)
                                     ELSE vwap * COALESCE(volume_priced, 0) END), 0))::float8 AS vwap,
                bucket + INTERVAL '1 minute',
-               NULLIF(SUM(COALESCE(volume_usd, 0)), 0)::text,
-               SUM(COALESCE(notional_trade_count, 0))::bigint
+               NULLIF(SUM(COALESCE(volume_usd, 0)), 0)::text
           FROM (
-            (SELECT bucket, base_asset, vwap, volume_priced, volume_usd, notional_trade_count
+            (SELECT bucket, base_asset, vwap, volume_priced, volume_usd
                FROM prices_1m
               WHERE base_asset = $1 AND quote_asset = $2
                 AND bucket >= $3::timestamptz
                 AND bucket <  $4::timestamptz)
             UNION ALL
-            (SELECT bucket, base_asset, vwap, volume_priced, volume_usd, notional_trade_count
+            (SELECT bucket, base_asset, vwap, volume_priced, volume_usd
                FROM prices_1m
               WHERE base_asset = $2 AND quote_asset = $1
                 AND bucket >= $3::timestamptz
@@ -1846,7 +1845,7 @@ func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from,
 			t   domain.BaselineTimedVWAP
 			usd sql.NullString
 		)
-		if err := rows.Scan(&t.VWAP, &t.BucketEnd, &usd, &t.NotionalTrades); err != nil {
+		if err := rows.Scan(&t.VWAP, &t.BucketEnd, &usd); err != nil {
 			return nil, fmt.Errorf("timescale: TimedVWAPsForPair1m scan: %w", err)
 		}
 		if usd.Valid {
