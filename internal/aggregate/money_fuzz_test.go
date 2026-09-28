@@ -946,13 +946,13 @@ func FuzzAverageAggregatorPrices(f *testing.F) {
 				s, n, new(big.Rat).Quo(sum, big.NewRat(int64(n), 1)).FloatString(20))
 		}
 		mean := new(big.Rat).Quo(sum, big.NewRat(int64(n), 1))
-		if got.Cmp(mean) > 0 {
-			t.Fatalf("price %s exceeds the exact mean %s (truncation must round down)", s, mean.FloatString(20))
-		}
-		// The rendered price is the exact mean floored once at 14 dp.
-		ulp := new(big.Rat).SetFrac(big.NewInt(1), pow10(aggregatorCommonDecimals))
-		if new(big.Rat).Sub(mean, got).Cmp(ulp) >= 0 {
-			t.Fatalf("price %s is 1 ulp or more below the exact mean %s", s, mean.FloatString(20))
+		// The rendered price is the exact mean rounded half-up once at
+		// 14 dp: mean - ulp/2 < got <= mean + ulp/2.
+		halfULP := new(big.Rat).SetFrac(big.NewInt(1), new(big.Int).Lsh(pow10(aggregatorCommonDecimals), 1))
+		diff := new(big.Rat).Sub(got, mean)
+		if diff.Cmp(halfULP) > 0 || new(big.Rat).Neg(diff).Cmp(halfULP) >= 0 {
+			t.Fatalf("price %s is not the exact mean %s rounded half-up at %d dp",
+				s, mean.FloatString(20), aggregatorCommonDecimals)
 		}
 	})
 }

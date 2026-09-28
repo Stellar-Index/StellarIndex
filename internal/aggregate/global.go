@@ -488,9 +488,9 @@ func pow10(n int) *big.Int {
 // aggregator we wire today (CG=8, CMC=8). Returns a decimal string
 // + the latest observation timestamp + ok=true on success.
 //
-// ok=false when the input has zero rows, no row has a positive price,
-// or the mean is below one unit at 14 dp — a positive price rendered
-// as "0.00000000000000" is not a price, so the tier misses instead.
+// The mean is rounded half-up once at 14 dp. ok=false when the input
+// has zero rows, no row has a positive price, or the mean rounds to zero
+// at 14 dp — "0.00000000000000" is not a price, so the tier misses.
 func averageAggregatorPrices(rows []canonical.OracleUpdate) (string, time.Time, bool) {
 	if len(rows) == 0 {
 		return "", time.Time{}, false
@@ -519,10 +519,12 @@ func averageAggregatorPrices(rows []canonical.OracleUpdate) (string, time.Time, 
 		return "", time.Time{}, false
 	}
 
-	// avg_scaled = ⌊sum · 10^14 / contributed⌋ (all operands positive,
-	// so Quo truncation is floor).
+	// avg_scaled = round_half_up(sum · 10^14 / contributed)
+	//            = ⌊(2·num + den) / (2·den)⌋ (all operands positive).
 	sum.Mul(sum, new(big.Rat).SetFrac(target, big.NewInt(int64(contributed))))
-	avgScaled := new(big.Int).Quo(sum.Num(), sum.Denom())
+	twoNum := new(big.Int).Lsh(sum.Num(), 1)
+	twoNum.Add(twoNum, sum.Denom())
+	avgScaled := twoNum.Quo(twoNum, new(big.Int).Lsh(sum.Denom(), 1))
 	if avgScaled.Sign() <= 0 {
 		return "", time.Time{}, false
 	}

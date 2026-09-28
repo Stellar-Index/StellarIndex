@@ -366,6 +366,32 @@ func TestAverageAggregatorPrices_AboveCommonDecimals(t *testing.T) {
 	}
 }
 
+// The mean is rounded half-up once at 14 dp, not floored: a mean whose
+// 15th decimal is 5 rounds up, and one just below it rounds down.
+func TestAverageAggregatorPrices_RoundsHalfUp(t *testing.T) {
+	row := func(src string, price int64, dec uint8) canonical.OracleUpdate {
+		return canonical.OracleUpdate{Source: src, Timestamp: time.Now(), Price: canonical.NewAmount(big.NewInt(price)), Decimals: dec}
+	}
+	cases := []struct {
+		name string
+		rows []canonical.OracleUpdate
+		want string
+	}{
+		// (1.00000000000001 + 1.00000000000002) / 2 = 1.000000000000015
+		{"tie at 15th decimal", []canonical.OracleUpdate{row("a", 100_000_000_000_001, 14), row("b", 100_000_000_000_002, 14)}, "1.00000000000002"},
+		// 1.0000000000000149 sits just below the tie.
+		{"below tie", []canonical.OracleUpdate{row("a", 10_000_000_000_000_149, 16), row("b", 10_000_000_000_000_149, 16)}, "1.00000000000001"},
+		// 0.6e-14 is a positive mean that rounds to one unit, not zero.
+		{"sub-unit mean", []canonical.OracleUpdate{row("a", 6, 15)}, "0.00000000000001"},
+	}
+	for _, tc := range cases {
+		avg, _, ok := averageAggregatorPrices(tc.rows)
+		if !ok || avg != tc.want {
+			t.Errorf("%s: avg = (%q, %v), want (%q, true)", tc.name, avg, ok, tc.want)
+		}
+	}
+}
+
 // aliasAwareReader returns a VWAP keyed by the exact base form, so a
 // test can prove tryVWAPTier loops the asset aliases. Only the base
 // listed in `byBase` returns a hit; every other form misses.
