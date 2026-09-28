@@ -1029,6 +1029,11 @@ type Issuer struct {
 	SEP1Payload    json.RawMessage `json:"sep1_payload,omitempty"`
 	CreationLedger *uint32         `json:"creation_ledger,omitempty"`
 	Assets         []IssuedAsset   `json:"assets,omitempty"`
+	// CoverageNote is non-empty when the asset-list read failed
+	// (including a timeout) and Assets was omitted rather than
+	// published as a fabricated empty list. Absent means Assets is
+	// complete, or the issuer genuinely has never issued an asset.
+	CoverageNote string `json:"coverage_note,omitempty"`
 }
 
 // Cursor is one entry in the array returned by [Client.Cursors] —

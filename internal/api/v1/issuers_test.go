@@ -352,7 +352,9 @@ func TestHandleIssuer_ScamSuppressesSEP1Payload(t *testing.T) {
 // the issuer card still renders without it. The handler logs at
 // WARN and proceeds with assets = nil. Critical for explorer UX:
 // a failure to load the per-asset list shouldn't 500 the whole
-// issuer detail page.
+// issuer detail page. It must also carry a coverage_note so a
+// failed read is distinguishable on the wire from a genuine
+// zero-asset issuer (CA2-A04-harden-9).
 func TestHandleIssuer_AssetsSoftFail(t *testing.T) {
 	reader := &stubIssuersReader{
 		row: timescale.IssuerRow{
@@ -371,5 +373,18 @@ func TestHandleIssuer_AssetsSoftFail(t *testing.T) {
 	body, _ := readAll(resp)
 	if !strings.Contains(body, `"home_domain":"centre.io"`) {
 		t.Errorf("issuer body missing despite soft-fail path: %s", body)
+	}
+	var env struct {
+		Data v1.Issuer `json:"data"`
+	}
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&env); err != nil {
+		t.Fatalf("decode: %v (body=%s)", err, body)
+	}
+	if env.Data.CoverageNote == "" {
+		t.Error("coverage_note should be set when ListIssuerAssets fails, " +
+			"so a failed read isn't byte-identical to a zero-asset issuer")
+	}
+	if len(env.Data.Assets) != 0 {
+		t.Errorf("Assets = %+v, want empty on soft-fail", env.Data.Assets)
 	}
 }

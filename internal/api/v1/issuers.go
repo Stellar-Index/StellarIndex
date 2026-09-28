@@ -86,6 +86,12 @@ type Issuer struct {
 	SEP1Payload         json.RawMessage `json:"sep1_payload,omitempty"`
 	CreationLedger      *uint32         `json:"creation_ledger,omitempty"`
 	Assets              []IssuedAsset   `json:"assets,omitempty"`
+	// CoverageNote is an honest-degrade signal (mirrors ProtocolsView /
+	// AccountMovements): non-empty when ListIssuerAssets failed (including
+	// a deadline) and Assets was omitted rather than fabricated as a
+	// genuine zero-asset issuer. Absent = Assets is complete (or the issuer
+	// genuinely issues nothing).
+	CoverageNote string `json:"coverage_note,omitempty"`
 }
 
 // IssuedAsset is one entry in the issuer's `assets` list.
@@ -250,12 +256,29 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		if clientAborted(r, err) {
+			// Client went away mid-query — not a server fault.
+			// Same canonical ordering as handleIssuersList.
+			return
+		}
 		if handlerTimedOut(iCtx, err) {
 			s.logger.Warn("GetIssuer deadline exceeded", "g_strkey", gStrkey)
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/issuer-timeout",
 				"Issuer read timed out", http.StatusServiceUnavailable,
 				"the issuer + asset list scan didn't return in 8s; retry shortly.")
+			return
+		}
+		if transientStorageErr(err) {
+			// Postgres-side cancellation/transient network error — a
+			// retry would likely succeed, so surface 503 rather than
+			// booking a permanent availability failure. Same pattern
+			// as handleIssuersList's ListIssuers path.
+			s.logger.Warn("GetIssuer: transient storage error", "g_strkey", gStrkey, "err", err)
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/issuer-transient",
+				"Issuer read temporarily unavailable", http.StatusServiceUnavailable,
+				"the storage layer hit a transient error; retry shortly.")
 			return
 		}
 		s.logger.Warn("issuer read", "g_strkey", gStrkey, "err", err)
@@ -267,11 +290,17 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	assets, err := s.issuers.ListIssuerAssets(iCtx, gStrkey)
+	var assetsCoverageNote string
 	if err != nil {
 		// Soft-fail on the asset list — the issuer card still
-		// renders without it. Includes deadline exceeded.
+		// renders without it, but the coverage_note distinguishes
+		// this from a genuine zero-asset issuer (CA2-A04-harden-9).
+		// Includes deadline exceeded.
 		s.logger.Warn("issuer assets", "g_strkey", gStrkey, "err", err)
 		assets = nil
+		assetsCoverageNote = "the asset list for this issuer could not be read " +
+			"(storage error or timeout); assets is omitted (not shown as empty) " +
+			"and will reappear once the read recovers"
 	}
 
 	detailReason := scamReason(row.GStrkey)
@@ -297,6 +326,7 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 		SEP1ResolvedAt:      row.SEP1ResolvedAt,
 		SEP1Payload:         row.SEP1Payload,
 		CreationLedger:      row.CreationLedger,
+		CoverageNote:        assetsCoverageNote,
 	}
 	// Identity precedence (2026-08-06): DB row → live on-chain
 	// account state → curated knownIssuers map. The curated map used

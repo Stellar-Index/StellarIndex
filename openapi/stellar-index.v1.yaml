@@ -4110,6 +4110,16 @@ paths:
                                 first_seen_ledger: { type: integer }
                                 last_seen_ledger: { type: integer }
                                 observation_count: { type: integer, format: int64 }
+                          coverage_note:
+                            type: string
+                            description: |
+                              Honest-degrade signal (mirrors the `coverage_note`
+                              on `/protocols`): present ONLY when the asset-list
+                              read failed (including a timeout on the shared 8s
+                              deadline), so `assets` is OMITTED rather than
+                              published as a fabricated empty list. Absent means
+                              `assets` is complete, or the issuer genuinely has
+                              never issued an observed asset.
                     required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
