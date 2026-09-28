@@ -237,6 +237,48 @@ describe('liveSubline — asset-shape guard (SEC-15)', () => {
     );
     expect(result).toEqual({ sub: null, degraded: true });
   });
+
+  it('drops the subline instead of showing a stale price as live (CA2-A36-correct-5)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({ data: { price: '0.12345', flags: { stale: true } } }),
+        { status: 200 },
+      ),
+    );
+    const result = await liveSubline(
+      'markets',
+      'native~USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+      'https://api.stellarindex.io',
+    );
+    expect(result).toEqual({ sub: null, degraded: false });
+  });
+});
+
+describe('liveSubline — 404 is not an upstream failure (CA2-A36-correct-6)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('does not open the breaker on repeated documented 404s', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('not found', { status: 404 }));
+    const id =
+      'native~USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+
+    // A no-price/withheld pair legitimately 404s every time; five in a row
+    // must not trip the breaker (contrast with the 500 case above).
+    for (let i = 0; i < 5; i += 1) {
+      await liveSubline('markets', id, 'https://api.stellarindex.io');
+    }
+    expect(fetchSpy).toHaveBeenCalledTimes(5);
+
+    const result = await liveSubline(
+      'markets',
+      id,
+      'https://api.stellarindex.io',
+    );
+    expect(fetchSpy).toHaveBeenCalledTimes(6);
+    expect(result).toEqual({ sub: null, degraded: false });
+  });
 });
 
 describe('og function — degraded card cache-control (GH-893)', () => {

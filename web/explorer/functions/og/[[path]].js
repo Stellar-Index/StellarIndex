@@ -285,19 +285,34 @@ export async function liveSubline(type, rawId, apiOrigin) {
         headers: { 'user-agent': 'stellarindex-og/1' },
       },
     );
-    recordUpstreamOutcome(r.ok);
+    recordUpstreamOutcome(r.ok || r.status === 404);
     if (r.ok) {
-      const p = (await r.json())?.data?.price;
-      if (p != null) {
-        const n = Number(p);
+      const data = (await r.json())?.data;
+      // CA2-A36-correct-5: a dormant pair, a frozen-held value, or a
+      // first-ever low-confidence bucket all come back 200 with
+      // flags.stale=true — that price is real but not current, and the
+      // card must not present it as a LIVE quote (this fetch's whole
+      // reason to exist). Drop the subline instead of labeling a stale
+      // number as live; `degraded: false` because nothing failed and a
+      // dormant pair won't go fresh again inside the short retry TTL.
+      if (data?.price != null) {
+        if (data?.flags?.stale) {
+          return { sub: null, degraded: false };
+        }
+        const n = Number(data.price);
         const fmt =
           n >= 1
             ? n.toLocaleString('en-US', { maximumFractionDigits: 2 })
             : formatSubPriceDecimal(n);
         return { sub: `1 ${code(base)} = ${fmt} ${code(quote)}`, degraded: false };
       }
+      return { sub: null, degraded: true };
     }
-    return { sub: null, degraded: true };
+    // CA2-A36-correct-6: /v1/price legitimately 404s for a documented
+    // no-price or withheld pair (price.go's ErrPriceWithheld / not-found) —
+    // that is not an upstream failure, so it must not count toward the
+    // breaker above alongside real 5xx/timeout outcomes.
+    return { sub: null, degraded: r.status !== 404 };
   } catch {
     recordUpstreamOutcome(false);
     /* fall through to label-only, degraded card */
