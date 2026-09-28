@@ -85,6 +85,7 @@ chmod +x "$TMP/bin/curl"
 # literals in a parameter expansion.
 build_manifest() {
   SITE="$SITE" API="$API" FRESH_SHA="$FRESH_SHA" \
+    SITEMAP_BODY="${SITEMAP_BODY-}" \
     ISSUERS_BODY="${ISSUERS_BODY-}" \
     ASSETS_BODY="${ASSETS_BODY-}" \
     OG_STATUS="${OG_STATUS-}" \
@@ -117,7 +118,11 @@ home_html = (
 compare_default = json.dumps({"status": "identical", "ahead_by": 0})
 
 exact = [
-    {"url": f"{SITE}/sitemap.xml", "body": f"<urlset><url><loc>{SITE}/assets/</loc></url></urlset>"},
+    {
+        "url": f"{SITE}/sitemap.xml",
+        "body": os.environ["SITEMAP_BODY"]
+        or f"<urlset><url><loc>{SITE}/assets/</loc></url></urlset>",
+    },
     {"url": f"{SITE}/", "body": home_html},
     {
         "url": f"{API}/v1/assets?asset_class=all&limit=100",
@@ -202,6 +207,15 @@ expect_fail() {
 unset ISSUERS_BODY ASSETS_BODY OG_STATUS OG_CONTENT_TYPE COMPARE_BODY PROBE_OVERRIDE_MATCH PROBE_OVERRIDE_STATUS HOME_BADGE_TIME
 run
 expect_pass "healthy site: ALL CHECKS PASSED"
+
+# --- pipefail regression: a sitemap family whose own <loc> has no /family/
+# sub-path (so the section-1 URL lookup legitimately matches nothing) must
+# still fall back to "$SITE/$family/", not abort the whole crawl. Before
+# `|| true` was added to that lookup, `grep -oE` returning 1 on "no match"
+# failed the assignment under `set -euo pipefail` and killed the script
+# before its own `[ -z "$URL" ]` fallback ever ran. ---
+SITEMAP_BODY="<urlset><url><loc>$SITE/bare</loc></url></urlset>" run
+expect_pass "pipefail: a family with no matching sub-URL falls back, not aborts"
 
 # --- F136: an empty/unparseable issuer listing must FAIL, not silently
 # skip the closure loop ---

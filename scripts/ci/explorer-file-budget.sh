@@ -25,6 +25,16 @@ if [ ! -d "$OUT" ]; then
 fi
 
 count=$(find "$OUT" -type f | wc -l | tr -d ' ')
+
+# Zero files is a BROKEN GATE, not a clean build: an empty $OUT (a build
+# that emitted its HTML under a different path) makes `count` 0 and the
+# ceiling check below passes vacuously, reporting "OK" over headroom that
+# was never measured. Mirrors explorer-seo-lint.sh's floor (2026-08-04).
+if [ "$count" -eq 0 ]; then
+  echo "::error::explorer-file-budget found 0 files under $OUT — the export is empty or the output path moved. Refusing to pass vacuously." >&2
+  exit 1
+fi
+
 ceiling=$((LIMIT - MARGIN))
 
 echo "explorer static-export files: ${count}  (ceiling ${ceiling}, CF hard cap ${LIMIT})"

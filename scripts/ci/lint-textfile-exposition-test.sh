@@ -202,6 +202,51 @@ printf 'configs/ansible/roles/fixture/files/good.sh\n' > "$root/manifest"
 run_gate "$root" "$root/manifest"
 expect "a manifest row missing its columns is RED" red
 
+# ─── 3b. discovery beyond the literal word "textfile" ────────────────
+#
+# A producer whose destination arrives via a flag/env value never says
+# "textfile" anywhere in its source — the old discovery regex (`textfile`
+# alone) made it invisible to the census, so an unregistered one would pass
+# silently instead of failing the census-parity check. Neither fixture
+# below contains the substring "textfile"; each carries a different one of
+# the two signals now OR'd in alongside it.
+root="$(new_tree flagpath)"
+cat > "$root/configs/ansible/roles/fixture/files/flag-path.sh" <<'SH'
+#!/usr/bin/env bash
+# writes a Prometheus exposition file for node_exporter to scrape; the
+# destination arrives as $1, not a literal path.
+OUT="$1"
+TMP=$(mktemp)
+{
+  echo "# HELP stellarindex_fixture_widgets Widgets observed."
+  echo "# TYPE stellarindex_fixture_widgets gauge"
+  echo "stellarindex_fixture_widgets 1"
+} > "$TMP"
+mv "$TMP" "$OUT"
+SH
+: > "$root/manifest"
+run_gate "$root" "$root/manifest"
+expect "a producer naming node_exporter (never the word textfile) is discovered" red
+says   "…and flagged as new and unregistered" "NEW textfile-collector producer"
+
+root="$(new_tree flagpath2)"
+cat > "$root/configs/ansible/roles/fixture/files/dot-prom.sh" <<'SH'
+#!/usr/bin/env bash
+# emits a scrape file under a caller-chosen metrics directory.
+OUT="${1:-/var/lib/metrics/fixture-widgets.prom}"
+TMP=$(mktemp)
+{
+  echo "# HELP stellarindex_fixture_widgets Widgets observed."
+  echo "# TYPE stellarindex_fixture_widgets gauge"
+  echo "stellarindex_fixture_widgets 1"
+} > "$TMP"
+mv "$TMP" "$OUT"
+SH
+: > "$root/manifest"
+run_gate "$root" "$root/manifest"
+expect "a producer naming only a .prom path (never node_exporter or textfile) is discovered" red
+says   "…and flagged as new and unregistered" "NEW textfile-collector producer"
+
 # ─── 4. exposition grammar ──────────────────────────────────────────
 # emit <root> <line> — a producer whose only sample line is <line>.
 #
