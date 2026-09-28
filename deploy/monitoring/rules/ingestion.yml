@@ -1258,8 +1258,23 @@ groups:
       # invisible to on-call. Sensitive (any nonzero increase), same
       # `for: 0m` reasoning as the tripwire above — see
       # lint-tripwire-window.py.
+      # Second arm: this CounterVec{source} child is not pre-seeded, so a
+      # source's FIRST-EVER rejected call is BORN at 1 with no earlier
+      # sample and increase() reads 0 — the exact real-world case (an
+      # oracle a forgery attempt targets for the first time) would go
+      # silent. Same born-inside-the-window idiom as
+      # stellarindex_ingestion_persist_drop above. Both arms are wrapped
+      # in the same `sum by (source)` as the first arm — the metric's
+      # only label is `source`, but the scrape adds job/instance, and
+      # without the wrap the born arm's raw vector keeps them, producing
+      # a second, differently-labelled alert instance for the same event.
       - alert: stellarindex_ingestion_uncorroborated_calls
-        expr: sum by (source) (increase(stellarindex_source_uncorroborated_calls_total[15m])) > 0
+        expr: |
+          sum by (source) (increase(stellarindex_source_uncorroborated_calls_total[15m])) > 0
+          or sum by (source) (
+            stellarindex_source_uncorroborated_calls_total > 0
+            unless stellarindex_source_uncorroborated_calls_total offset 15m
+          )
         for: 0m
         labels:
           severity: ticket
