@@ -11552,6 +11552,16 @@ export interface components {
             coverage_from?: string;
             /** @description Extension member on `/v1/price/at`'s 404 only. True when the requested `ts` is at or before `coverage_from` — the instant predates the history this deployment holds for the pair, rather than falling in a gap within it. Omitted when false. */
             outside_coverage?: boolean;
+            /**
+             * Format: int64
+             * @description Extension member on a MonthlyQuota-shaped 429 only (see `#/components/responses/RateLimited`, `MonthlyQuotaExceeded`, `MonthlyQuotaUnavailable`). The account's monthly request cap.
+             */
+            monthly_quota?: number;
+            /**
+             * Format: int64
+             * @description Extension member on `monthly-quota-exceeded` 429s only. Month-to-date request count that triggered the cap. Omitted on `monthly-quota-unavailable` — the counter read failed, so there is no honest value to report.
+             */
+            month_to_date?: number;
         };
     };
     responses: {
@@ -11612,28 +11622,69 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
-        /** @description Rate-limit quota exhausted. See `Retry-After` header. */
+        /** @description 429 from either of the two independent gates that share this status on a metered route: the per-tier rate limiter (see `Retry-After` + `X-RateLimit-*` below) or, on Postgres-backed keys with a monthly cap, the MonthlyQuota middleware — which runs BEFORE the rate limiter in the same chain (see `middleware/doc.go`) and can 429 first. The two are distinguished by `type`/`title` in the body: see the `monthlyQuotaExceeded` and `monthlyQuotaUnavailable` examples below (or `#/components/responses/MonthlyQuotaExceeded` and `#/components/responses/MonthlyQuotaUnavailable`, documented standalone for the same shapes). */
         RateLimited: {
             headers: {
-                /** @description Seconds until the caller can retry. */
+                /** @description Seconds until the caller can retry. Always present on a MonthlyQuota fail-closed (`monthly-quota-unavailable`) 429; absent from a rate-limit 429 unless the limiter sets it. */
                 "Retry-After"?: number;
-                /** @description Request budget for the caller's tier in the current fixed window (per-key override applied when one is set). */
+                /** @description Request budget for the caller's tier in the current fixed window (per-key override applied when one is set). Rate-limit 429s only. */
                 "X-RateLimit-Limit"?: number;
-                /** @description Requests left in the current window AFTER this request. 0 means the next request in this window will be 429'd. */
+                /** @description Requests left in the current window AFTER this request. 0 means the next request in this window will be 429'd. Rate-limit 429s only. */
                 "X-RateLimit-Remaining"?: number;
                 /** @description Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). All three X-RateLimit-* headers ride every response the rate limiter evaluates — 2xx included, not just 429s — except a GET/HEAD response whose Cache-Control lets a shared cache reuse it without revalidating (the `public` bands), which omits them and X-Request-ID so a CDN cannot replay one caller's values to another. They are also absent on deployments running without a rate limiter and on requests served fail-open during a Redis outage. */
                 "X-RateLimit-Reset"?: number;
+                /** @description The account's monthly request cap. Present only on a MonthlyQuota-shaped 429 (both `monthly-quota-exceeded` and `monthly-quota-unavailable`). */
+                "X-StellarIndex-Monthly-Quota"?: number;
+                /** @description Month-to-date request count that triggered the cap. Present only on `monthly-quota-exceeded`; omitted on `monthly-quota-unavailable` (the counter read failed, so there is no honest value to report). */
+                "X-StellarIndex-Monthly-Used"?: number;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The account's monthly request quota (shared by every API key on the account) has been reached. Standalone form of the `monthlyQuotaExceeded` example on `RateLimited` — every path that references `RateLimited` can return this shape instead, since the MonthlyQuota middleware runs before the rate limiter on the same routes. */
+        MonthlyQuotaExceeded: {
+            headers: {
+                /** @description The account's monthly request cap. */
+                "X-StellarIndex-Monthly-Quota"?: number;
+                /** @description Month-to-date request count that triggered the cap. */
+                "X-StellarIndex-Monthly-Used"?: number;
                 [name: string]: unknown;
             };
             content: {
                 /**
                  * @example {
-                 *       "type": "https://api.stellarindex.io/errors/rate-limited",
-                 *       "title": "Rate limit exceeded",
+                 *       "type": "https://api.stellarindex.io/errors/monthly-quota-exceeded",
+                 *       "title": "Monthly quota exceeded",
                  *       "status": 429,
-                 *       "detail": "anonymous tier rate limit reached — the limit is deployment-configured (api.anon_rate_limit_per_min; the X-RateLimit-Limit response header carries the live value); retry in 23 seconds",
+                 *       "detail": "The account's monthly request quota has been reached (every API key on the account shares it). Reset on the 1st UTC.",
                  *       "instance": "/v1/assets",
-                 *       "request_id": "feb6615b1a38211b4835c0fefcd94ede"
+                 *       "monthly_quota": 1000000,
+                 *       "month_to_date": 1000000
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The monthly usage counter has been unreadable for longer than the fail-open dwell window, so the MonthlyQuota middleware can no longer prove the caller is under cap and fails closed. Standalone form of the `monthlyQuotaUnavailable` example on `RateLimited`. */
+        MonthlyQuotaUnavailable: {
+            headers: {
+                /** @description Seconds until the caller should retry. */
+                "Retry-After"?: number;
+                /** @description The account's monthly request cap. */
+                "X-StellarIndex-Monthly-Quota"?: number;
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "type": "https://api.stellarindex.io/errors/monthly-quota-unavailable",
+                 *       "title": "Monthly quota temporarily unavailable",
+                 *       "status": 429,
+                 *       "detail": "The monthly usage counter is temporarily unavailable and the cap cannot be verified; retry after the indicated delay.",
+                 *       "instance": "/v1/assets",
+                 *       "monthly_quota": 1000000
                  *     }
                  */
                 "application/problem+json": components["schemas"]["Problem"];

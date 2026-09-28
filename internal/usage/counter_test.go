@@ -177,6 +177,23 @@ func TestRead_EmptySubjectReturnsNil(t *testing.T) {
 	}
 }
 
+// TestRead_NilCounterIsNoOp — a nil *Counter must behave like the
+// disabled-tracking case (GH-800): IncrementBy and MonthToDate both
+// guard `c == nil`, but Read did not, so a deployment without a usage
+// counter wired up (`UsageReader` left nil-backed) panicked on
+// `c.nowFn()` the first time /v1/account/usage was hit instead of
+// returning an empty result the way the rest of the type does.
+func TestRead_NilCounterIsNoOp(t *testing.T) {
+	var c *usage.Counter
+	rows, err := c.Read(context.Background(), "subj-1", 7)
+	if err != nil {
+		t.Errorf("Read on nil Counter: %v", err)
+	}
+	if rows != nil {
+		t.Errorf("rows = %v, want nil", rows)
+	}
+}
+
 // TestRead_DaysClampedToRetention — asking for more days than the
 // retention window returns at most RetentionDays rows. Clamp is
 // load-bearing because the caller's `days` parameter is wire-
