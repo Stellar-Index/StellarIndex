@@ -69,6 +69,9 @@ func (r *stubPriceReader) RecentClosedSnapshots(_ context.Context, a, q canonica
 		return nil, r.err
 	}
 	key := a.String() + "/" + q.String()
+	if err := r.errByPair[key]; err != nil {
+		return nil, err
+	}
 	rows, ok := r.recent[key]
 	if !ok {
 		return []v1.PriceSnapshot{}, nil

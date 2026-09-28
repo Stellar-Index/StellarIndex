@@ -18,9 +18,9 @@ import (
 // times an FX rate. The FX feed converts that observation; it is not a
 // second market, and the pair the aggregator freezes is the USD leg —
 // there is no marker for the derived fiat pair. So single_source and
-// frozen on a derived response are the USD leg's (GH-953). Only the
-// freeze-aware surfaces (/v1/price, /v1/price/batch) substitute a held
-// value; the tip and the SEP-40 oracle stay freeze-agnostic.
+// frozen on a derived response are the USD leg's (GH-953). The
+// freeze-aware surfaces (/v1/price, /v1/price/batch and the SEP-40
+// x_last_price) substitute a held value; the tip stays freeze-agnostic.
 
 const (
 	xlmUSDKey    = "native/fiat:USD"
@@ -161,6 +161,7 @@ func TestDerivedFiatPriceFrozenLegServesHeldValueAndReportsFrozen(t *testing.T) 
 		for _, path := range []string{
 			"/v1/price?asset=native&quote=fiat:BRL",
 			"/v1/price/batch?asset_ids=native&quote=fiat:BRL",
+			"/v1/oracle/x_last_price?base=native&quote=fiat:BRL",
 		} {
 			label := leg.key + " " + path
 			status, env, price := getCross(t, base+path)
@@ -188,6 +189,10 @@ func TestDerivedFiatPriceFrozenLegWithNothingHeldServesNothing(t *testing.T) {
 	usdStatus, _, _ := getCross(t, base+"/v1/price?asset=native&quote=fiat:USD")
 	if usdStatus != http.StatusServiceUnavailable {
 		t.Errorf("/v1/price USD leg: status = %d, want 503 (the fixture's premise)", usdStatus)
+	}
+	status, _, body = getCross(t, base+"/v1/oracle/x_last_price?base=native&quote=fiat:BRL")
+	if status != http.StatusServiceUnavailable {
+		t.Errorf("/v1/oracle/x_last_price: a frozen USD leg with nothing held must refuse (503), got %d: %s", status, body)
 	}
 
 	status, env, body := getCross(t, base+"/v1/price/batch?asset_ids=native&quote=fiat:BRL")
@@ -217,9 +222,9 @@ func TestDerivedFiatPriceUnfrozenLegReportsFreezeChecked(t *testing.T) {
 	}
 }
 
-// The tip and the SEP-40 oracle are freeze-agnostic (price_tip.go's
-// handler doc): the derived BRL answer must be exactly what the same
-// surface serves for USD, times the rate — never a 404 while USD
+// The tip is freeze-agnostic (price_tip.go's handler doc): the derived
+// BRL answer must be exactly what the same surface serves for USD,
+// times the rate — never a 404 while USD
 // serves, never a silently substituted held value, and with the leg's
 // venues still credited.
 func TestDerivedFiatFreezeAgnosticSurfacesFollowTheirUSDLeg(t *testing.T) {
@@ -228,7 +233,6 @@ func TestDerivedFiatFreezeAgnosticSurfacesFollowTheirUSDLeg(t *testing.T) {
 		base := frozenLegServer(t, xlmUSDKey, "native", held)
 		for _, pair := range []struct{ usd, brl string }{
 			{"/v1/price/tip?asset=native&quote=fiat:USD", "/v1/price/tip?asset=native&quote=fiat:BRL"},
-			{"/v1/oracle/x_last_price?base=native&quote=fiat:USD", "/v1/oracle/x_last_price?base=native&quote=fiat:BRL"},
 		} {
 			label := pair.brl + " held=" + strconv.Quote(held)
 			usdStatus, _, usdPrice := getCross(t, base+pair.usd)

@@ -14898,10 +14898,11 @@ components:
           observed a meaningful divergence; treat with caution.
         - `frozen` — anomaly detection refused to publish the new
           bucket; this response carries the previous bucket's
-          last-known-good value (ADR-0019). Only fires on `/v1/price`
-          and on the 60-second `/v1/price/stream` series' `price_frozen`
-          event (which carries no value); tip + observations surfaces
-          ignore freeze.
+          last-known-good value (ADR-0019). Only fires on `/v1/price`,
+          on `/v1/oracle/lastprice` + `/v1/oracle/x_last_price`, and on
+          the 60-second `/v1/price/stream` series' `price_frozen` event
+          (which carries no value); tip + observations surfaces ignore
+          freeze.
         - `frozen_checked` — true only when the freeze marker was
           actually read (looker wired and the read succeeded). When
           false, `frozen` is NOT meaningful — the check never ran, so

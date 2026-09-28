@@ -60,8 +60,9 @@ type Envelope struct {
 //     per future internal/divergence/ cross-reference checks.
 //   - Frozen: anomaly detection refused to publish the new bucket;
 //     this response carries the previous bucket's last-known-good
-//     value (ADR-0019 freeze policy). Only fires on /v1/price; the
-//     tip + observations surfaces ignore freeze. FrozenChecked
+//     value (ADR-0019 freeze policy). Fires on /v1/price and the SEP-40
+//     lastprice/x_last_price; the tip + observations surfaces ignore
+//     freeze. FrozenChecked
 //     disambiguates "confirmed not frozen" from "the marker read
 //     failed, so this is unknown" — same posture as DivergenceChecked.
 //   - OutsideCoverage: the requested time range ends at or before the
