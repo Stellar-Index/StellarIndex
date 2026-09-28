@@ -50,6 +50,10 @@ const maxRateDeviation = 0.50
 // rejection metric's `source` label.
 const fxSource = "massive"
 
+// historySource labels dated bars: fetchHistory reads only the primary
+// client, whichever provider served the current rates.
+const historySource = fxSource
+
 // rateGuard is the per-ticker state behind the sanity band. lastAccepted
 // is the baseline a new rate is measured against; pending holds an
 // outlier that was rejected ONCE so a second, agreeing fetch can confirm
@@ -636,7 +640,7 @@ func (w *Worker) guardSnapshot(snap *Snapshot) guardResult {
 				Bucket:  bucket,
 				Ticker:  ticker,
 				RateUSD: p.RateUSD,
-				Source:  w.sourceLabel(),
+				Source:  historySource,
 			})
 		}
 		var healed bool
@@ -793,7 +797,7 @@ func (w *Worker) healFromHistoryMajority(
 			Bucket:  p.Date.UTC().Truncate(24 * time.Hour),
 			Ticker:  ticker,
 			RateUSD: p.RateUSD,
-			Source:  w.sourceLabel(),
+			Source:  historySource,
 		})
 	}
 	return batch, true
