@@ -33,13 +33,20 @@ var afterResponsePool = newAfterResponsePool(afterResponseWorkers, afterResponse
 // accepted (queued or running) but not yet finished, so tests can drain
 // it deterministically instead of racing the async completion.
 type afterResponsePoolT struct {
-	tasks chan func()
-	wg    sync.WaitGroup
+	tasks   chan func()
+	wg      sync.WaitGroup
+	workers int
+	started sync.Once
 }
 
+// newAfterResponsePool starts no goroutines: workers spawn on the first
+// submit, so importing this package leaves goleak-checked suites clean.
 func newAfterResponsePool(workers, queueSize int) *afterResponsePoolT {
-	p := &afterResponsePoolT{tasks: make(chan func(), queueSize)}
-	for i := 0; i < workers; i++ {
+	return &afterResponsePoolT{tasks: make(chan func(), queueSize), workers: workers}
+}
+
+func (p *afterResponsePoolT) start() {
+	for i := 0; i < p.workers; i++ {
 		go func() {
 			// Belt-and-braces alongside run's own per-task recover: run
 			// already keeps one bad task from taking a worker down, but a
@@ -49,7 +56,6 @@ func newAfterResponsePool(workers, queueSize int) *afterResponsePoolT {
 			p.loop()
 		}()
 	}
-	return p
 }
 
 func (p *afterResponsePoolT) loop() {
@@ -78,6 +84,7 @@ func (p *afterResponsePoolT) run(task func()) {
 // never as "not yet submitted". Returns false — without ever blocking —
 // when the queue is full; the caller counts that as a drop.
 func (p *afterResponsePoolT) submit(task func()) bool {
+	p.started.Do(p.start)
 	p.wg.Add(1)
 	select {
 	case p.tasks <- task:

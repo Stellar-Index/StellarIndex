@@ -55,6 +55,9 @@ func TestUsageEndpointDay_BillableEqualsQuotaCounter(t *testing.T) {
 			serve.ServeHTTP(httptest.NewRecorder(), req)
 		}
 	}
+	if !middleware.AfterResponseDrainForTest(5 * time.Second) {
+		t.Fatal("after-response usage writes did not drain")
+	}
 
 	sink := &rollupRowSink{}
 	rollup := usage.NewRollup(counter, sink, time.Minute, nil)
