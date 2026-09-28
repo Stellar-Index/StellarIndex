@@ -2,8 +2,11 @@ package aquarius
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"math/big"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,6 +16,120 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
+
+// aquariusFixtureFeeBps names the per-trade protocol fee, in basis
+// points, of every pool contract captured under
+// test/fixtures/aquarius — sourced from GH-1309's reconciliation
+// against real lake bytes. Used only by
+// TestTradeAmounts_feeIsGrossOfSoldAmount below.
+var aquariusFixtureFeeBps = map[string]int64{
+	"CAB6MICC2WKRT372U3FRPKGGVB5R3FDJSMWSLPF2UJNJPYMBZ76RQVYE": 15,
+	"CA6GAFOJCW4MGQQBUCQUSA3CLIH25G4SNKB2JHYKZCVWZTNW5VXMSC4O": 15,
+	"CDE57N6XTUPBKYYDGQMXX7E7SLNOLFY3JEQB4MULSMR2AKTSAENGX2HC": 5,
+}
+
+// TestTradeAmounts_feeIsGrossOfSoldAmount settles GH-1309: is a
+// decoded trade's BaseAmount (sold_amount) the taker's gross input,
+// or already net of the accompanying fee?
+//
+// Every real fixture satisfies fee == ceil(sold_amount * fee_bps /
+// 10000) — the fee is a fraction of the RAW sold_amount, which is
+// only arithmetically consistent if sold_amount is gross-of-fee. The
+// net hypothesis (gross input = sold_amount + fee, so
+// fee = gross * fee_bps / (10000 - fee_bps)) is checked too and must
+// NOT match: if it ever does, the gross/net call needs to be
+// reopened, not silently re-derived.
+func TestTradeAmounts_feeIsGrossOfSoldAmount(t *testing.T) {
+	root := filepath.Join("..", "..", "..", "test", "fixtures", "aquarius")
+	dirs, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("fixtures root unreadable: %v", err)
+	}
+
+	checked := 0
+	for _, d := range dirs {
+		if !d.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, d.Name())
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range files {
+			if filepath.Ext(f.Name()) != ".json" {
+				continue
+			}
+			checkAquariusFeeFixture(t, filepath.Join(dir, f.Name()), &checked)
+		}
+	}
+	if checked == 0 {
+		t.Skip("no fixtures for a pool in aquariusFixtureFeeBps")
+	}
+}
+
+func checkAquariusFeeFixture(t *testing.T, path string, checked *int) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fx aquariusFixture
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatal(err)
+	}
+	bps, ok := aquariusFixtureFeeBps[fx.ContractID]
+	if !ok {
+		return // pool not in the fee census; nothing to check
+	}
+
+	closedAt, err := time.Parse(time.RFC3339, fx.LedgerClosedAt)
+	if err != nil {
+		t.Fatalf("%s: parse ledger_closed_at: %v", path, err)
+	}
+	e := &events.Event{
+		Type:           "contract",
+		ContractID:     fx.ContractID,
+		Ledger:         fx.Ledger,
+		TxHash:         fx.TxHash,
+		LedgerClosedAt: fx.LedgerClosedAt,
+		Topic:          fx.Topics,
+		Value:          fx.Value,
+	}
+	tr, err := decodeTrade(e, closedAt)
+	if err != nil {
+		t.Fatalf("%s: decodeTrade: %v", path, err)
+	}
+	amounts, err := decodeTradeAmounts(fx.Value)
+	if err != nil {
+		t.Fatalf("%s: decodeTradeAmounts: %v", path, err)
+	}
+	*checked++
+
+	base := tr.BaseAmount.BigInt()
+	fee := amounts.Fee.BigInt()
+	bpsB := big.NewInt(bps)
+
+	// Gross hypothesis: BaseAmount is the taker's full input.
+	grossFee := new(big.Int).Mul(base, bpsB)
+	grossFee.Add(grossFee, big.NewInt(9999))
+	grossFee.Div(grossFee, big.NewInt(10000))
+	if grossFee.Cmp(fee) != 0 {
+		t.Errorf("%s: gross hypothesis: ceil(BaseAmount*%d/10000) = %s, fixture fee = %s",
+			path, bps, grossFee, fee)
+	}
+
+	// Net hypothesis (the anti-fix this test guards against): BaseAmount
+	// already excludes the fee, so the true gross input is
+	// BaseAmount+fee. Must NOT match.
+	denom := big.NewInt(10000 - bps)
+	netFee := new(big.Int).Mul(base, bpsB)
+	netFee.Add(netFee, new(big.Int).Sub(denom, big.NewInt(1)))
+	netFee.Div(netFee, denom)
+	if netFee.Cmp(fee) == 0 {
+		t.Errorf("%s: net hypothesis unexpectedly matched fixture fee %s — re-verify gross/net", path, fee)
+	}
+}
 
 // Decoder tests using SDK-encoded fixtures. Complement
 // real_fixture_test.go (mainnet captures): this file covers shapes
