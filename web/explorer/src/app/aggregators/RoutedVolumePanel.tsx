@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { hrefFor } from '@/lib/hrefFor';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
@@ -139,7 +140,7 @@ export function RoutedVolumePanel() {
                 </Td>
                 <Td>
                   <Link
-                    href={`/protocols/${r.protocol}`}
+                    href={hrefFor.protocol(r.protocol)}
                     className="text-brand-600 hover:underline"
                   >
                     {r.protocol}

@@ -146,11 +146,13 @@ const HREF = /\bhref\s*[=:]\s*\{?\s*(['"`])(\/[^'"`\n]*)\1/g;
 const NAVIGATE =
   /\b(?:push|replace|redirect|permanentRedirect)\(\s*(['"`])(\/[^'"`\n]*)\1/g;
 const RETURNED_PATH = /\breturn\s+(['"`])(\/[^'"`\n]*)\1/g;
+// An arrow's expression body is a return too (lib/hrefFor's builders).
+const ARROW_PATH = /=>\s*(['"`])(\/[^'"`\n]*)\1/g;
 
 function linkedPaths(file: string): Set<string> {
   const src = sourceOf(file);
   const paths = new Set<string>();
-  for (const pattern of [HREF, NAVIGATE, RETURNED_PATH]) {
+  for (const pattern of [HREF, NAVIGATE, RETURNED_PATH, ARROW_PATH]) {
     pattern.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(src)) !== null) {

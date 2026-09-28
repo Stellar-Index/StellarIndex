@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { hrefFor } from '@/lib/hrefFor';
 
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
@@ -136,7 +137,7 @@ export function HistoryTabPanel({
               </td>
               <td className="py-2 pr-3">
                 <Link
-                  href={`/sources/${r.source}`}
+                  href={hrefFor.source(r.source)}
                   className="bg-surface-subtle text-ink-body hover:text-brand-600 rounded-sm px-1.5 py-0.5 font-mono text-[11px]"
                 >
                   {r.source}

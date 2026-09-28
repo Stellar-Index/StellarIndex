@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { hrefFor } from '@/lib/hrefFor';
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
@@ -169,7 +170,7 @@ export function OraclesView() {
                   <tr key={o.name} className="hover:bg-surface-muted">
                     <Td>
                       <Link
-                        href={`/sources/${o.name}`}
+                        href={hrefFor.source(o.name)}
                         className={`inline-block rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase hover:underline ${tone}`}
                       >
                         {o.name}
@@ -265,7 +266,7 @@ export function OraclesView() {
                   >
                     <Td>
                       <Link
-                        href={`/sources/${s.source}`}
+                        href={hrefFor.source(s.source)}
                         className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase hover:underline ${tone}`}
                       >
                         {s.source}
@@ -342,7 +343,7 @@ export function OraclesView() {
                     >
                       <Td>
                         <Link
-                          href={`/sources/${s.source}`}
+                          href={hrefFor.source(s.source)}
                           className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase hover:underline ${tone}`}
                         >
                           {s.source}

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { hrefFor } from '@/lib/hrefFor';
 import { ExternalLink } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
@@ -194,7 +195,7 @@ function Card({ entry }: { entry: Entry }) {
       <div className="mt-4 flex flex-wrap gap-3 text-xs">
         {entry.protocolSlug && (
           <Link
-            href={`/protocols/${entry.protocolSlug}`}
+            href={hrefFor.protocol(entry.protocolSlug)}
             className="text-brand-600 inline-flex items-center gap-1 font-medium hover:underline"
           >
             Protocol analytics →
