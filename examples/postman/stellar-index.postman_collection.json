@@ -27264,7 +27264,7 @@
                       "apikey": [
                         {
                           "key": "key",
-                          "value": "stellarindex_session"
+                          "value": "__Host-stellarindex_session"
                         },
                         {
                           "key": "value",
@@ -27307,7 +27307,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -27364,7 +27364,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -27421,7 +27421,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -27478,7 +27478,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -27535,7 +27535,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -27592,7 +27592,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -27649,7 +27649,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -32337,7 +32337,7 @@
                   "apikey": [
                     {
                       "key": "key",
-                      "value": "stellarindex_session"
+                      "value": "__Host-stellarindex_session"
                     },
                     {
                       "key": "value",
@@ -32375,7 +32375,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -32418,7 +32418,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -32497,7 +32497,7 @@
                   "apikey": [
                     {
                       "key": "key",
-                      "value": "stellarindex_session"
+                      "value": "__Host-stellarindex_session"
                     },
                     {
                       "key": "value",
@@ -32548,7 +32548,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -32613,7 +32613,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -32678,7 +32678,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -32743,7 +32743,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -32808,7 +32808,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -32890,7 +32890,7 @@
                       "apikey": [
                         {
                           "key": "key",
-                          "value": "stellarindex_session"
+                          "value": "__Host-stellarindex_session"
                         },
                         {
                           "key": "value",
@@ -32936,7 +32936,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -32985,7 +32985,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -33040,7 +33040,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -33095,7 +33095,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -33160,7 +33160,7 @@
                   "apikey": [
                     {
                       "key": "key",
-                      "value": "stellarindex_session"
+                      "value": "__Host-stellarindex_session"
                     },
                     {
                       "key": "value",
@@ -33198,7 +33198,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -33241,7 +33241,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -33284,7 +33284,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -33363,7 +33363,7 @@
                   "apikey": [
                     {
                       "key": "key",
-                      "value": "stellarindex_session"
+                      "value": "__Host-stellarindex_session"
                     },
                     {
                       "key": "value",
@@ -33414,7 +33414,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -33479,7 +33479,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -33544,7 +33544,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -33609,7 +33609,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -33674,7 +33674,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -33769,7 +33769,7 @@
                       "apikey": [
                         {
                           "key": "key",
-                          "value": "stellarindex_session"
+                          "value": "__Host-stellarindex_session"
                         },
                         {
                           "key": "value",
@@ -33823,7 +33823,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -33891,7 +33891,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -33959,7 +33959,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -34027,7 +34027,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -34095,7 +34095,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -34163,7 +34163,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -34241,7 +34241,7 @@
                       "apikey": [
                         {
                           "key": "key",
-                          "value": "stellarindex_session"
+                          "value": "__Host-stellarindex_session"
                         },
                         {
                           "key": "value",
@@ -34287,7 +34287,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -34336,7 +34336,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -34391,7 +34391,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -34446,7 +34446,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -34501,7 +34501,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -34575,7 +34575,7 @@
                           "apikey": [
                             {
                               "key": "key",
-                              "value": "stellarindex_session"
+                              "value": "__Host-stellarindex_session"
                             },
                             {
                               "key": "value",
@@ -34626,7 +34626,7 @@
                                   "content": "Added as a part of security scheme: apikey",
                                   "type": "text/plain"
                                 },
-                                "key": "stellarindex_session",
+                                "key": "__Host-stellarindex_session",
                                 "value": "<API Key>"
                               }
                             ],
@@ -34682,7 +34682,7 @@
                                   "content": "Added as a part of security scheme: apikey",
                                   "type": "text/plain"
                                 },
-                                "key": "stellarindex_session",
+                                "key": "__Host-stellarindex_session",
                                 "value": "<API Key>"
                               }
                             ],
@@ -34738,7 +34738,7 @@
                                   "content": "Added as a part of security scheme: apikey",
                                   "type": "text/plain"
                                 },
-                                "key": "stellarindex_session",
+                                "key": "__Host-stellarindex_session",
                                 "value": "<API Key>"
                               }
                             ],
@@ -34794,7 +34794,7 @@
                                   "content": "Added as a part of security scheme: apikey",
                                   "type": "text/plain"
                                 },
-                                "key": "stellarindex_session",
+                                "key": "__Host-stellarindex_session",
                                 "value": "<API Key>"
                               }
                             ],
@@ -34850,7 +34850,7 @@
                                   "content": "Added as a part of security scheme: apikey",
                                   "type": "text/plain"
                                 },
-                                "key": "stellarindex_session",
+                                "key": "__Host-stellarindex_session",
                                 "value": "<API Key>"
                               }
                             ],
@@ -34917,7 +34917,7 @@
                   "apikey": [
                     {
                       "key": "key",
-                      "value": "stellarindex_session"
+                      "value": "__Host-stellarindex_session"
                     },
                     {
                       "key": "value",
@@ -34955,7 +34955,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -34998,7 +34998,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -35077,7 +35077,7 @@
                   "apikey": [
                     {
                       "key": "key",
-                      "value": "stellarindex_session"
+                      "value": "__Host-stellarindex_session"
                     },
                     {
                       "key": "value",
@@ -35128,7 +35128,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -35193,7 +35193,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -35258,7 +35258,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -35323,7 +35323,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -35388,7 +35388,7 @@
                           "content": "Added as a part of security scheme: apikey",
                           "type": "text/plain"
                         },
-                        "key": "stellarindex_session",
+                        "key": "__Host-stellarindex_session",
                         "value": "<API Key>"
                       }
                     ],
@@ -35483,7 +35483,7 @@
                       "apikey": [
                         {
                           "key": "key",
-                          "value": "stellarindex_session"
+                          "value": "__Host-stellarindex_session"
                         },
                         {
                           "key": "value",
@@ -35537,7 +35537,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -35605,7 +35605,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -35673,7 +35673,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -35741,7 +35741,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -35809,7 +35809,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -35887,7 +35887,7 @@
                       "apikey": [
                         {
                           "key": "key",
-                          "value": "stellarindex_session"
+                          "value": "__Host-stellarindex_session"
                         },
                         {
                           "key": "value",
@@ -35933,7 +35933,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -35982,7 +35982,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -36037,7 +36037,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -36092,7 +36092,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -36136,7 +36136,7 @@
               "request": {
                 "name": "Customer dashboard — request a magic-link sign-in email.",
                 "description": {
-                  "content": "Mints a single-use magic-link token (valid 15 minutes) and\nemails it to the address. Always returns `{status: \"sent\"}`\nregardless of whether the email matches an existing account\n— leaking that information would let attackers enumerate\nvalid users. First-time users have their account + owner-\nuser provisioned on the callback (not here), so the same\nflow handles login + signup.\n\nThe email carries both a one-click magic link (consumed by\n`/auth/callback`) and a 6-digit code (consumed by\n`/auth/verify-code`) — either signs the user in.\n\nDistinct from `/auth/sep10/*` (programmatic API auth via a\nsigned Stellar challenge). This endpoint is the entry point\nfor the cookie-based in-site dashboard at stellarindex.io/account.\n\nSets a short-lived, HttpOnly `stellarindex_login_intent`\ncookie that binds the emailed link to THIS browser;\n`/auth/callback` refuses to mint a session without it, so a\nlink mailed on to a third party cannot sign that third party\ninto this account. Up to three concurrently-live links per\nbrowser are remembered, so re-requesting doesn't invalidate\nthe first mail. The cookie is cleared on a successful sign-in.\n\nReturns 503 when the deployment hasn't configured the\ndashboard auth flow (api.dashboard.base_url empty).\n",
+                  "content": "Mints a single-use magic-link token (valid 15 minutes) and\nemails it to the address. Always returns `{status: \"sent\"}`\nregardless of whether the email matches an existing account\n— leaking that information would let attackers enumerate\nvalid users. First-time users have their account + owner-\nuser provisioned on the callback (not here), so the same\nflow handles login + signup.\n\nThe email carries both a one-click magic link (consumed by\n`/auth/callback`) and a 6-digit code (consumed by\n`/auth/verify-code`) — either signs the user in.\n\nDistinct from `/auth/sep10/*` (programmatic API auth via a\nsigned Stellar challenge). This endpoint is the entry point\nfor the cookie-based in-site dashboard at stellarindex.io/account.\n\nSets a short-lived, HttpOnly `__Host-stellarindex_login_intent`\ncookie that binds the emailed link to THIS browser;\n`/auth/callback` refuses to mint a session without it, so a\nlink mailed on to a third party cannot sign that third party\ninto this account. Up to three concurrently-live links per\nbrowser are remembered, so re-requesting doesn't invalidate\nthe first mail. The cookie is cleared on a successful sign-in.\n\nReturns 503 when the deployment hasn't configured the\ndashboard auth flow (api.dashboard.base_url empty).\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -36383,7 +36383,7 @@
               "request": {
                 "name": "Customer dashboard — consume a magic-link token + mint a session cookie.",
                 "description": {
-                  "content": "Reads the `token` query parameter, atomically marks it\nconsumed in `magic_link_tokens`, and on success sets an\nHttpOnly + Secure session cookie (`stellarindex_session`)\nand redirects (303) into the dashboard.\n\nFirst-time emails get a free-tier account + owner-role\nuser provisioned at this step. Returning users skip\nprovisioning and just get a fresh session.\n\nReturns 410 on expired tokens so the dashboard can render\na \"request a fresh link\" prompt distinct from the generic\n\"invalid token\" 400.\n",
+                  "content": "Reads the `token` query parameter, atomically marks it\nconsumed in `magic_link_tokens`, and on success sets an\nHttpOnly + Secure session cookie (`__Host-stellarindex_session`)\nand redirects (303) into the dashboard.\n\nFirst-time emails get a free-tier account + owner-role\nuser provisioned at this step. Returning users skip\nprovisioning and just get a fresh session.\n\nReturns 410 on expired tokens so the dashboard can render\na \"request a fresh link\" prompt distinct from the generic\n\"invalid token\" 400.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -36469,7 +36469,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Three cookies. `stellarindex_session` is the HttpOnly +\nSecure session credential. `stellarindex_session_present`\nrepeats its Domain, Path, Secure, SameSite and expiry\nwithout HttpOnly, and carries the constant `1` — a\npresence flag a browser client reads to decide whether a\ncall to `/v1/account/me` can succeed. It carries no\nidentity and no token, no endpoint reads it, and it\nauthorizes nothing. `stellarindex_login_device` is an\nHttpOnly, 400-day, server-signed marker scoped to\n`Path=/v1/auth/login`: it records that this browser has\nsigned in to this address, so a later `POST /auth/login`\nfrom it still receives a link when the per-address send\nlimit is full. It authenticates nothing.\n",
+                        "content": "Three cookies. `__Host-stellarindex_session` is the HttpOnly +\nSecure session credential. `stellarindex_session_present`\nrepeats its Domain, Path, Secure, SameSite and expiry\nwithout HttpOnly, and carries the constant `1` — a\npresence flag a browser client reads to decide whether a\ncall to `/v1/account/me` can succeed. It carries no\nidentity and no token, no endpoint reads it, and it\nauthorizes nothing. `stellarindex_login_device` is an\nHttpOnly, 400-day, server-signed marker scoped to\n`Path=/v1/auth/login`: it records that this browser has\nsigned in to this address, so a later `POST /auth/login`\nfrom it still receives a link when the per-address send\nlimit is full. It authenticates nothing.\n",
                         "type": "text/plain"
                       },
                       "key": "Set-Cookie",
@@ -36534,7 +36534,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "The link was opened in a browser that did not request it.\n`POST /auth/login` sets a short-lived, HttpOnly\n`stellarindex_login_intent` cookie binding the link to the\nrequesting browser; without a matching witness no session\nis minted (login-CSRF defence). The token is NOT consumed,\nso the originating browser can still complete the sign-in.\nClients should fall back to the 6-digit code, or request a\nfresh link from the device in hand.",
+                  "name": "The link was opened in a browser that did not request it.\n`POST /auth/login` sets a short-lived, HttpOnly\n`__Host-stellarindex_login_intent` cookie binding the link to the\nrequesting browser; without a matching witness no session\nis minted (login-CSRF defence). The token is NOT consumed,\nso the originating browser can still complete the sign-in.\nClients should fall back to the 6-digit code, or request a\nfresh link from the device in hand.",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -36712,7 +36712,7 @@
               "request": {
                 "name": "Customer dashboard — exchange the 6-digit email code for a session cookie.",
                 "description": {
-                  "content": "The paste-friendly alternative to clicking the magic link. The\nsign-in email carries both a clickable link (consumed by\n`/auth/callback`) and a 6-digit numeric code; this endpoint\nconsumes the code. The SPA calls it via a credentialed `fetch`\n— on success it sets the same HttpOnly + Secure session cookie\n(`stellarindex_session`) the callback does and returns\n`{status:\"ok\"}` (no redirect; the SPA navigates itself).\n\nFirst-time emails get a free-tier account + owner-role user\nprovisioned here, exactly as on the callback path.\n\nThe code is matched only against the email's in-flight login\ntokens, and each wrong guess burns an attempt — after a small\ncap the token stops being a code candidate (the link still\nworks). All failure modes — no outstanding token, wrong code,\nexpired, too many attempts — return the same generic 400 so a\ncaller can't probe which one occurred.\n",
+                  "content": "The paste-friendly alternative to clicking the magic link. The\nsign-in email carries both a clickable link (consumed by\n`/auth/callback`) and a 6-digit numeric code; this endpoint\nconsumes the code. The SPA calls it via a credentialed `fetch`\n— on success it sets the same HttpOnly + Secure session cookie\n(`__Host-stellarindex_session`) the callback does and returns\n`{status:\"ok\"}` (no redirect; the SPA navigates itself).\n\nFirst-time emails get a free-tier account + owner-role user\nprovisioned here, exactly as on the callback path.\n\nThe code is matched only against the email's in-flight login\ntokens, and each wrong guess burns an attempt — after a small\ncap the token stops being a code candidate (the link still\nworks). All failure modes — no outstanding token, wrong code,\nexpired, too many attempts — return the same generic 400 so a\ncaller can't probe which one occurred.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -36796,7 +36796,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Three cookies. `stellarindex_session` is the HttpOnly +\nSecure session credential. `stellarindex_session_present`\nrepeats its Domain, Path, Secure, SameSite and expiry\nwithout HttpOnly, and carries the constant `1` — a\npresence flag a browser client reads to decide whether a\ncall to `/v1/account/me` can succeed. It carries no\nidentity and no token, no endpoint reads it, and it\nauthorizes nothing. `stellarindex_login_device` is an\nHttpOnly, 400-day, server-signed marker scoped to\n`Path=/v1/auth/login`: it records that this browser has\nsigned in to this address, so a later `POST /auth/login`\nfrom it still receives a link when the per-address send\nlimit is full. It authenticates nothing.\n",
+                        "content": "Three cookies. `__Host-stellarindex_session` is the HttpOnly +\nSecure session credential. `stellarindex_session_present`\nrepeats its Domain, Path, Secure, SameSite and expiry\nwithout HttpOnly, and carries the constant `1` — a\npresence flag a browser client reads to decide whether a\ncall to `/v1/account/me` can succeed. It carries no\nidentity and no token, no endpoint reads it, and it\nauthorizes nothing. `stellarindex_login_device` is an\nHttpOnly, 400-day, server-signed marker scoped to\n`Path=/v1/auth/login`: it records that this browser has\nsigned in to this address, so a later `POST /auth/login`\nfrom it still receives a link when the per-address send\nlimit is full. It authenticates nothing.\n",
                         "type": "text/plain"
                       },
                       "key": "Set-Cookie",
@@ -37016,7 +37016,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Expires `stellarindex_session` and\n`stellarindex_session_present`.\n",
+                        "content": "Expires `__Host-stellarindex_session` and\n`stellarindex_session_present`.\n",
                         "type": "text/plain"
                       },
                       "key": "Set-Cookie",
@@ -37117,7 +37117,7 @@
                   "request": {
                     "name": "Customer dashboard — begin a passkey (WebAuthn) sign-in.",
                     "description": {
-                      "content": "Returns the WebAuthn credential-request options the browser\npasses to `navigator.credentials.get()`. Usernameless\n(discoverable credential): no email is asked for, so the\nendpoint reveals nothing to an anonymous caller.\n\n`userVerification` is `required`: the authenticator must\nverify the user (biometric / PIN) for the assertion to be\naccepted, so a passkey sign-in is never possession-only.\n\nSets an HMAC-signed, HttpOnly ceremony cookie\n(`stellarindex_passkey_ceremony`) binding the challenge to\nthis browser; `/auth/passkey/finish-login` requires it. The\nchallenge is valid for 5 minutes — enforced server-side, not\nmerely by the cookie's `Max-Age` — and is single-use.\n\nCapped per client IP (IPv6: per /64) at 20 calls per minute,\nindependently of the anonymous rate limit; past the cap the\ncall returns 429 with `Retry-After` and issues no challenge.\n",
+                      "content": "Returns the WebAuthn credential-request options the browser\npasses to `navigator.credentials.get()`. Usernameless\n(discoverable credential): no email is asked for, so the\nendpoint reveals nothing to an anonymous caller.\n\n`userVerification` is `required`: the authenticator must\nverify the user (biometric / PIN) for the assertion to be\naccepted, so a passkey sign-in is never possession-only.\n\nSets an HMAC-signed, HttpOnly ceremony cookie\n(`__Host-stellarindex_passkey_ceremony`) binding the challenge to\nthis browser; `/auth/passkey/finish-login` requires it. The\nchallenge is valid for 5 minutes — enforced server-side, not\nmerely by the cookie's `Max-Age` — and is single-use.\n\nCapped per client IP (IPv6: per /64) at 20 calls per minute,\nindependently of the anonymous rate limit; past the cap the\ncall returns 429 with `Retry-After` and issues no challenge.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -37367,7 +37367,7 @@
                   "request": {
                     "name": "Customer dashboard — finish a passkey sign-in; mints the session cookie.",
                     "description": {
-                      "content": "Verifies the authenticator's assertion (the JSON produced by\n`navigator.credentials.get()`) against the ceremony cookie's\nchallenge and the stored credential public key, then sets the\nSAME HttpOnly session cookie (`stellarindex_session`) the\nemail-code and magic-link flows mint, and returns\n`{status:\"ok\"}`.\n\nThe ceremony challenge is single-use: replaying a captured\nrequest (ceremony cookie plus the same assertion body) is\nrefused, as is a challenge older than its 5-minute lifetime.\n\nEvery verification failure — unknown credential, bad\nsignature, missing user verification, expired challenge,\nalready-used challenge, tampered ceremony cookie, or a\nsign-count regression (possible cloned authenticator; refused\nand logged) — returns the same generic 400 so a caller cannot\nprobe which credentials exist.\n",
+                      "content": "Verifies the authenticator's assertion (the JSON produced by\n`navigator.credentials.get()`) against the ceremony cookie's\nchallenge and the stored credential public key, then sets the\nSAME HttpOnly session cookie (`__Host-stellarindex_session`) the\nemail-code and magic-link flows mint, and returns\n`{status:\"ok\"}`.\n\nThe ceremony challenge is single-use: replaying a captured\nrequest (ceremony cookie plus the same assertion body) is\nrefused, as is a challenge older than its 5-minute lifetime.\n\nEvery verification failure — unknown credential, bad\nsignature, missing user verification, expired challenge,\nalready-used challenge, tampered ceremony cookie, or a\nsign-count regression (possible cloned authenticator; refused\nand logged) — returns the same generic 400 so a caller cannot\nprobe which credentials exist.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -37453,7 +37453,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Three cookies. `stellarindex_session` is the HttpOnly +\nSecure session credential. `stellarindex_session_present`\nrepeats its Domain, Path, Secure, SameSite and expiry\nwithout HttpOnly, and carries the constant `1` — a\npresence flag a browser client reads to decide whether a\ncall to `/v1/account/me` can succeed. It carries no\nidentity and no token, no endpoint reads it, and it\nauthorizes nothing. `stellarindex_login_device` is an\nHttpOnly, 400-day, server-signed marker scoped to\n`Path=/v1/auth/login`: it records that this browser has\nsigned in to this address, so a later `POST /auth/login`\nfrom it still receives a link when the per-address send\nlimit is full. It authenticates nothing.\n",
+                            "content": "Three cookies. `__Host-stellarindex_session` is the HttpOnly +\nSecure session credential. `stellarindex_session_present`\nrepeats its Domain, Path, Secure, SameSite and expiry\nwithout HttpOnly, and carries the constant `1` — a\npresence flag a browser client reads to decide whether a\ncall to `/v1/account/me` can succeed. It carries no\nidentity and no token, no endpoint reads it, and it\nauthorizes nothing. `stellarindex_login_device` is an\nHttpOnly, 400-day, server-signed marker scoped to\n`Path=/v1/auth/login`: it records that this browser has\nsigned in to this address, so a later `POST /auth/login`\nfrom it still receives a link when the per-address send\nlimit is full. It authenticates nothing.\n",
                             "type": "text/plain"
                           },
                           "key": "Set-Cookie",
@@ -37705,7 +37705,7 @@
                       "apikey": [
                         {
                           "key": "key",
-                          "value": "stellarindex_session"
+                          "value": "__Host-stellarindex_session"
                         },
                         {
                           "key": "value",
@@ -37744,7 +37744,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -37797,7 +37797,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -37841,7 +37841,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -37918,7 +37918,7 @@
                       "apikey": [
                         {
                           "key": "key",
-                          "value": "stellarindex_session"
+                          "value": "__Host-stellarindex_session"
                         },
                         {
                           "key": "value",
@@ -37961,7 +37961,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -38018,7 +38018,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -38075,7 +38075,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -38132,7 +38132,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -38189,7 +38189,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -38246,7 +38246,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -38319,7 +38319,7 @@
                       "apikey": [
                         {
                           "key": "key",
-                          "value": "stellarindex_session"
+                          "value": "__Host-stellarindex_session"
                         },
                         {
                           "key": "value",
@@ -38358,7 +38358,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -38402,7 +38402,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -38446,7 +38446,7 @@
                               "content": "Added as a part of security scheme: apikey",
                               "type": "text/plain"
                             },
-                            "key": "stellarindex_session",
+                            "key": "__Host-stellarindex_session",
                             "value": "<API Key>"
                           }
                         ],
@@ -38520,7 +38520,7 @@
                           "apikey": [
                             {
                               "key": "key",
-                              "value": "stellarindex_session"
+                              "value": "__Host-stellarindex_session"
                             },
                             {
                               "key": "value",
@@ -38567,7 +38567,7 @@
                                   "content": "Added as a part of security scheme: apikey",
                                   "type": "text/plain"
                                 },
-                                "key": "stellarindex_session",
+                                "key": "__Host-stellarindex_session",
                                 "value": "<API Key>"
                               }
                             ],
@@ -38617,7 +38617,7 @@
                                   "content": "Added as a part of security scheme: apikey",
                                   "type": "text/plain"
                                 },
-                                "key": "stellarindex_session",
+                                "key": "__Host-stellarindex_session",
                                 "value": "<API Key>"
                               }
                             ],
@@ -38673,7 +38673,7 @@
                                   "content": "Added as a part of security scheme: apikey",
                                   "type": "text/plain"
                                 },
-                                "key": "stellarindex_session",
+                                "key": "__Host-stellarindex_session",
                                 "value": "<API Key>"
                               }
                             ],
@@ -38729,7 +38729,7 @@
                                   "content": "Added as a part of security scheme: apikey",
                                   "type": "text/plain"
                                 },
-                                "key": "stellarindex_session",
+                                "key": "__Host-stellarindex_session",
                                 "value": "<API Key>"
                               }
                             ],
@@ -38785,7 +38785,7 @@
                                   "content": "Added as a part of security scheme: apikey",
                                   "type": "text/plain"
                                 },
-                                "key": "stellarindex_session",
+                                "key": "__Host-stellarindex_session",
                                 "value": "<API Key>"
                               }
                             ],

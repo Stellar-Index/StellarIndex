@@ -287,8 +287,9 @@ export type MeResponse = Omit<Schemas['Account'], 'tier'> & {
 // Cross-origin session detection (F-03) is now wired: the explorer
 // at stellarindex.io sends a CREDENTIALED request to the API at
 // api.stellarindex.io (cross-origin, same-site). This works because
-//   1. the session cookie is set with Domain=.stellarindex.io
-//      (cookie_domain) so it's visible to the apex,
+//   1. the session cookie is a host-only __Host- cookie on the API
+//      host, which the browser attaches to any credentialed request
+//      to that host (only the presence hint carries cookie_domain),
 //   2. the API CORS middleware emits Access-Control-Allow-Credentials
 //      for the explorer origin allow-list (allow_credentials=true),
 //   3. the cookie is SameSite=Lax, which is enough because the two

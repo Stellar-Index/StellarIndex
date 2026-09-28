@@ -128,7 +128,7 @@ func TestHandleLogin_SetsLoginIntentCookieForTheMintedToken(t *testing.T) {
 	if c == nil {
 		t.Fatal("no login-intent cookie set by /v1/auth/login")
 	}
-	want := loginIntentDigest(HashMagicLinkPlaintext(plaintext))
+	want := loginIntentDigest(r.h.cfg.Generator.Secret, HashMagicLinkPlaintext(plaintext))
 	if c.Value != want {
 		t.Errorf("cookie value = %q, want the emailed token's digest %q", c.Value, want)
 	}
@@ -253,16 +253,20 @@ func TestHandleLogin_ThrottledResponseStillCarriesAnIntentCookie(t *testing.T) {
 // token hash itself, or a leaked cookie would hand over a credential-
 // equivalent value.
 func TestLoginIntentDigest_DomainSeparated(t *testing.T) {
+	secret := []byte("test-secret-one")
 	hash := HashMagicLinkPlaintext("abc123")
-	d := loginIntentDigest(hash)
+	d := loginIntentDigest(secret, hash)
 	if d == string(hash) || d == hexOf(hash) {
 		t.Fatalf("digest equals the token hash: %q", d)
 	}
 	if !isLoginIntentDigest(d) {
 		t.Fatalf("digest %q is not the shape the cookie parser accepts", d)
 	}
-	if loginIntentDigest(HashMagicLinkPlaintext("abc124")) == d {
+	if loginIntentDigest(secret, HashMagicLinkPlaintext("abc124")) == d {
 		t.Fatal("digest collides across distinct tokens")
+	}
+	if loginIntentDigest([]byte("test-secret-two"), hash) == d {
+		t.Fatal("digest does not depend on the server secret")
 	}
 }
 

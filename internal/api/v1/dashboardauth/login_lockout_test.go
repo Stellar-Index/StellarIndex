@@ -211,7 +211,7 @@ func TestLockout_MagicLinkStillWorksWhileLocked(t *testing.T) {
 	plaintext := lr.extractTokenFromSentEmail(t)
 	req := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token="+url.QueryEscape(plaintext), nil)
 	req.RemoteAddr = "203.0.113.5:55123"
-	attachLoginIntent(req, plaintext)
+	attachLoginIntent(req, lr.h, plaintext)
 	w := httptest.NewRecorder()
 	lr.h.HandleCallback(w, req)
 	if !sessionCookieSet(w) {

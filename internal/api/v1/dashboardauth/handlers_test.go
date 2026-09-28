@@ -90,10 +90,10 @@ func attachCookies(req *http.Request, w *httptest.ResponseRecorder) {
 // `plaintext` without going through /login — for the cases that need a
 // token the store has never seen (or has since dropped), where the
 // binding must not be what decides the outcome.
-func attachLoginIntent(req *http.Request, plaintext string) {
+func attachLoginIntent(req *http.Request, h *Handlers, plaintext string) {
 	req.AddCookie(&http.Cookie{
 		Name:  LoginIntentCookieName,
-		Value: loginIntentDigest(HashMagicLinkPlaintext(plaintext)),
+		Value: loginIntentDigest(h.cfg.Generator.Secret, HashMagicLinkPlaintext(plaintext)),
 	})
 }
 
@@ -304,7 +304,7 @@ func TestHandleCallback_InvalidTokenReturns400(t *testing.T) {
 	cb.RemoteAddr = "203.0.113.5:55123"
 	// Intent witness present, token unknown to the store: the 400 must
 	// come from the token lookup, not from the C3-030 binding.
-	attachLoginIntent(cb, "deadbeef")
+	attachLoginIntent(cb, r.h, "deadbeef")
 	w := httptest.NewRecorder()
 	r.h.HandleCallback(w, cb)
 	if w.Code != http.StatusBadRequest {
@@ -335,7 +335,7 @@ func TestHandleCallback_TokenSingleUse(t *testing.T) {
 	// from the token's single-use consumption, not the binding.
 	cb2 := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token="+url.QueryEscape(plaintext), nil)
 	cb2.RemoteAddr = "203.0.113.5:55123"
-	attachLoginIntent(cb2, plaintext)
+	attachLoginIntent(cb2, r.h, plaintext)
 	w2 := httptest.NewRecorder()
 	r.h.HandleCallback(w2, cb2)
 	if w2.Code != http.StatusBadRequest {
