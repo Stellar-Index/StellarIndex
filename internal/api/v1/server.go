@@ -600,12 +600,13 @@ type Server struct {
 	globalPrice     aggregate.GlobalPriceReader
 	globalPriceOpts aggregate.GlobalPriceOptions
 	// sacWrappers is the operator-config map of Stellar-Asset-Contract
-	// C-strkey → "CODE-ISSUER" canonical asset key. Surfaced on
-	// /v1/sac-wrappers so the explorer can resolve raw Soroban
-	// contract addresses (which Soroswap/Phoenix/Aquarius/Comet
-	// emit as base/quote in their swap events) back to readable
-	// asset symbols. Nil means "operator hasn't configured the map"
-	// — the endpoint serves an empty object.
+	// C-strkey → supply.AssetKey form ("CODE:ISSUER", colon — or a bare
+	// contract id self-map for a pure SEP-41 token; see config.go's
+	// SACWrappers doc). Surfaced on /v1/sac-wrappers so the explorer can
+	// resolve raw Soroban contract addresses (which
+	// Soroswap/Phoenix/Aquarius/Comet emit as base/quote in their swap
+	// events) back to readable asset symbols. Nil means "operator hasn't
+	// configured the map" — the endpoint serves an empty object.
 	sacWrappers map[string]string
 	// networkPassphrase is the Stellar network passphrase, used to derive
 	// deterministic SAC contract ids for known assets (isKnownSAC). Empty
@@ -1588,7 +1589,8 @@ type Options struct {
 	DashboardPriceAlerts DashboardAuthMounter
 
 	// SACWrappers is the operator-config map of SAC C-strkey →
-	// "CODE-ISSUER" classic asset key. Backs /v1/sac-wrappers,
+	// supply.AssetKey classic asset key ("CODE:ISSUER", colon; matches
+	// [config.SupplyConfig.SACWrappers]). Backs /v1/sac-wrappers,
 	// the read-only resolution endpoint the explorer's AssetLabel
 	// joins client-side to render readable symbols for Soroban DEX
 	// pools (which use SAC contracts as base/quote at the wire). Nil

@@ -292,9 +292,16 @@ func (s *Server) resolveSupplyContractID(assetID string) (string, bool) {
 	if canonical.IsContractID(assetID) {
 		return assetID, true
 	}
-	for sac, assetKey := range s.sacWrappers {
-		if assetKey == assetID {
-			return sac, true
+	// sac_wrappers values are supply.AssetKey form (CODE:ISSUER, colon —
+	// config.go's doc and configs/example.toml agree), but assetID is the
+	// wire path segment (CODE-ISSUER, dash). Canonicalize both sides
+	// through supply.ParseAssetKey before comparing, or a configured
+	// override can never match its wire spelling.
+	if key, err := supply.ParseAssetKey(assetID); err == nil {
+		for sac, assetKey := range s.sacWrappers {
+			if assetKey == key {
+				return sac, true
+			}
 		}
 	}
 	parsed, err := canonical.ParseAsset(assetID)
