@@ -3151,6 +3151,10 @@ func (s *Server) handleErrorDoc(w http.ResponseWriter, r *http.Request) {
 	}
 	human := humaniseErrorSlug(slug)
 	typeURI := "https://api.stellarindex.io/errors/" + slug
+	// This handler content-negotiates on Accept (#1070): a shared cache
+	// keying solely on the URL would happily serve one representation to a
+	// client that asked for the other for the full max-age=3600 window.
+	w.Header().Add("Vary", "Accept")
 	if strings.Contains(r.Header.Get("Accept"), "text/html") {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=3600")
