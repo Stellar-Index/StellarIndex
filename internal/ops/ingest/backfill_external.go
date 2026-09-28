@@ -53,7 +53,7 @@ func backfillExternal(args []string) error {
 	toStr := fs.String("to", "", "End time, RFC 3339 (required, e.g. 2024-12-31T00:00:00Z)")
 	granStr := fs.String("granularity", "1h", "Candle granularity as a Go duration (1m / 15m / 1h / 4h / 1d / 1w)")
 	rawTrades := fs.Bool("raw-trades", false, "kraken only: walk the /Trades fills endpoint instead of /OHLC — the deep-history path (OHLC serves only the most recent 720 candles; board #44). Slower (rate-limited pagination) but reaches the pair's full history with exact per-fill prices.")
-	allowOverlap := fs.Bool("allow-overlap", false, "Write even though the trades table already holds rows for this source+pair inside [-from, -to). Rows from another path (live stream, candles vs fills) carry a different tx_hash and would be counted twice; use only to re-run or resume a window this command itself wrote.")
+	allowOverlap := fs.Bool("allow-overlap", false, "Write even though the trades table already holds rows for this source+pair inside [-from, -to). Rows from another path (live stream, candles vs fills) carry a different tx_hash and would be counted twice; use only to re-run or resume a window this command itself wrote. A candle run is still refused if the window holds a row it would not overwrite (e.g. one written at another -granularity).")
 	gate := opsutil.RegisterWriteGate(fs)
 	progressEvery := fs.Int("progress-every", 1000, "Print a progress line every N trades inserted")
 	if err := fs.Parse(args); err != nil {
@@ -141,6 +141,11 @@ func backfillExternal(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
+	if *allowOverlap {
+		if err := refuseForeignRows(insCtx, store, *source, pair, from, walkedTo(to, resumeFrom, partial), trades); err != nil {
+			return err
+		}
+	}
 	insErr := insertBackfilledTrades(insCtx, store, trades, *progressEvery, os.Stderr, t0)
 	if partial {
 		return partialWalkError(len(trades), resumeFrom, insErr)
@@ -252,6 +257,45 @@ func refuseStoredOverlap(ctx context.Context, probe storedTradeProbe, source str
 	return fmt.Errorf("backfill-external: %w: %s %s already has stored rows from %s inside [-from, -to); "+
 		"end the run with -to %s, or pass -allow-overlap only to re-run a window this command wrote",
 		errBackfillOverlap, source, pair.String(), at, at)
+}
+
+// errBackfillForeignRows marks an -allow-overlap run refused because the
+// window holds stored rows the run would not overwrite.
+var errBackfillForeignRows = errors.New("backfill window holds rows this run would not rewrite")
+
+// foreignTradeProbe is the storage seam refuseForeignRows depends on.
+type foreignTradeProbe interface {
+	TradesInWindowOutside(ctx context.Context, source string, pair canonical.Pair, from, to time.Time, keep []canonical.Trade) (int64, time.Time, error)
+}
+
+// refuseForeignRows bounds -allow-overlap to what it is for: re-running a
+// window this command wrote at the same granularity, where every stored
+// row is one the run upserts. A stored row outside the run's identities
+// (another granularity, the live stream, or a candle written before
+// granularity was part of its identity) would sit beside the new rows and
+// double the window's volume, so the write is refused.
+func refuseForeignRows(ctx context.Context, probe foreignTradeProbe, source string, pair canonical.Pair, from, to time.Time, trades []canonical.Trade) error {
+	n, first, err := probe.TradesInWindowOutside(ctx, source, pair, from, to, trades)
+	if err != nil {
+		return fmt.Errorf("backfill-external: overlap probe: %w", err)
+	}
+	if n == 0 {
+		return nil
+	}
+	return fmt.Errorf("backfill-external: %w: %s %s has %d stored row(s) from %s inside the walked window that this run's candles would not overwrite "+
+		"(another -granularity, the live stream, or pre-granularity candle identities); writing would count their volume twice. "+
+		"Re-run at the granularity that wrote the window, or end the run with -to %s",
+		errBackfillForeignRows, source, pair.String(), n, first.UTC().Format(time.RFC3339Nano), first.UTC().Format(time.RFC3339Nano))
+}
+
+// walkedTo is the exclusive end of the range a walk actually covered: the
+// requested -to, or just past the high-water trade of a walk that ended
+// early (stored rows beyond it are not ones the run could have rewritten).
+func walkedTo(to, resumeFrom time.Time, partial bool) time.Time {
+	if partial && resumeFrom.Before(to) {
+		return resumeFrom.Add(time.Microsecond)
+	}
+	return to
 }
 
 // checkStoredOverlap runs refuseStoredOverlap against the configured store.

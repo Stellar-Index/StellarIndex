@@ -85,7 +85,7 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 	}
 	// Refuse up front: the per-candle skip below would otherwise turn
 	// an unrepresentable symbol into a silently empty backfill.
-	if _, err := candleTxHash(symbol, 0); err != nil {
+	if _, err := candleTxHash(symbol, 0, granularity); err != nil {
 		return nil, fmt.Errorf("kraken.Backfill: %w", err)
 	}
 
@@ -139,7 +139,7 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 				break
 			}
 			closeTs := openTs + intervalSec - 1
-			trade, err := krakenCandleToTrade(c, symbol, pair, closeTs)
+			trade, err := krakenCandleToTrade(c, symbol, pair, closeTs, granularity)
 			if err != nil {
 				continue
 			}
@@ -249,8 +249,11 @@ func fetchKrakenOHLC(ctx context.Context, endpoint string, q url.Values) ([]krak
 	var last int64
 	for key, raw := range r.Result {
 		if key == "last" {
-			// `last` is a single integer (unquoted).
-			_ = json.Unmarshal(raw, &last)
+			// `last` is a single integer (unquoted). A zero cursor would
+			// end pagination after one page with no error.
+			if err := json.Unmarshal(raw, &last); err != nil {
+				return nil, 0, fmt.Errorf("decode last cursor %s: %w", raw, err)
+			}
 			continue
 		}
 		// Any other key is the pair's candle array.
@@ -264,7 +267,7 @@ func fetchKrakenOHLC(ctx context.Context, endpoint string, q url.Values) ([]krak
 // krakenCandleToTrade synthesises a canonical.Trade from a Kraken
 // candle. Price is the candle's VWAP (authoritative for the
 // bucket); quote amount is computed as price × base volume.
-func krakenCandleToTrade(c krakenCandle, symbol string, pair canonical.Pair, closeTs int64) (canonical.Trade, error) {
+func krakenCandleToTrade(c krakenCandle, symbol string, pair canonical.Pair, closeTs int64, granularity time.Duration) (canonical.Trade, error) {
 	volStr, ok := c.volumeStr()
 	if !ok {
 		return canonical.Trade{}, fmt.Errorf("missing volume")
@@ -299,7 +302,7 @@ func krakenCandleToTrade(c krakenCandle, symbol string, pair canonical.Pair, clo
 		return canonical.Trade{}, ErrDustTrade
 	}
 
-	txHash, err := candleTxHash(symbol, closeTs)
+	txHash, err := candleTxHash(symbol, closeTs, granularity)
 	if err != nil {
 		return canonical.Trade{}, err
 	}
@@ -316,19 +319,10 @@ func krakenCandleToTrade(c krakenCandle, symbol string, pair canonical.Pair, clo
 	}, nil
 }
 
-// candleTxHash is the identity of an OHLC-synthesised row: a candle has
-// no venue trade id, so it is keyed on its close time under a "-BF-"
-// infix that keeps it apart from formatTxHash's per-fill identities.
-// The seed leaves 8 bytes for the symbol; a longer one would truncate
-// closeTs and merge neighbouring candles on the trades PK, so it is
-// refused instead.
-func candleTxHash(symbol string, closeTs int64) (string, error) {
-	return scale.StrictSyntheticTxHash(backfillSeed(symbol, closeTs))
-}
-
-func backfillSeed(symbol string, closeTs int64) string {
-	normalised := strings.ReplaceAll(strings.ToUpper(symbol), "/", "")
-	return fmt.Sprintf("%s-BF-%020d", normalised, closeTs)
+// candleTxHash is the identity of an OHLC-synthesised row, which has no
+// venue trade id; see scale.CandleTxHash.
+func candleTxHash(symbol string, closeTs int64, granularity time.Duration) (string, error) {
+	return scale.CandleTxHash(strings.ReplaceAll(strings.ToUpper(symbol), "/", ""), closeTs, granularity)
 }
 
 // granularityToMinutes maps a time.Duration to Kraken's interval

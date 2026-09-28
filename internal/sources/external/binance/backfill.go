@@ -73,7 +73,7 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 	}
 	// Refuse up front: klineToTrade's per-candle skip would otherwise
 	// turn an unrepresentable symbol into a silently empty backfill.
-	if _, err := backfillTxHash(symbol, 0); err != nil {
+	if _, err := backfillTxHash(symbol, 0, granularity); err != nil {
 		return nil, fmt.Errorf("binance.Backfill: %w", err)
 	}
 
@@ -99,7 +99,7 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 		}
 
 		for _, c := range candles {
-			trade, err := klineToTrade(c, symbol, pair)
+			trade, err := klineToTrade(c, symbol, pair, granularity)
 			if err != nil {
 				// Per-candle skip — the surrounding range still
 				// produces useful output. Caller sees the gap
@@ -118,7 +118,13 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 		if !ok {
 			break
 		}
-		startMs = lastOpen + int64(granularity/time.Millisecond)
+		// A page that does not move the cursor (a caching proxy, a
+		// venue ignoring startTime) would otherwise repeat forever.
+		next := lastOpen + int64(granularity/time.Millisecond)
+		if next <= startMs {
+			return nil, fmt.Errorf("binance.Backfill: page did not advance past startTime %d (last open %d)", startMs, lastOpen)
+		}
+		startMs = next
 		// If the venue returned fewer than limit candles, we're done
 		// for this range — avoid a trailing no-op request.
 		if len(candles) < klineMaxLimit {
@@ -226,7 +232,7 @@ func fetchKlines(ctx context.Context, endpoint string, q url.Values) ([]kline, e
 //
 // The synthesised tx_hash is stable across repeated backfill runs:
 // see backfillTxHash.
-func klineToTrade(c kline, symbol string, pair canonical.Pair) (canonical.Trade, error) {
+func klineToTrade(c kline, symbol string, pair canonical.Pair, granularity time.Duration) (canonical.Trade, error) {
 	closeMs, ok := c.closeTimeMs()
 	if !ok {
 		return canonical.Trade{}, fmt.Errorf("kline missing close time")
@@ -253,7 +259,7 @@ func klineToTrade(c kline, symbol string, pair canonical.Pair) (canonical.Trade,
 		return canonical.Trade{}, fmt.Errorf("kline zero volume")
 	}
 
-	txHash, err := backfillTxHash(symbol, closeMs)
+	txHash, err := backfillTxHash(symbol, closeMs, granularity)
 	if err != nil {
 		return canonical.Trade{}, err
 	}
@@ -270,15 +276,11 @@ func klineToTrade(c kline, symbol string, pair canonical.Pair) (canonical.Trade,
 	}, nil
 }
 
-// backfillTxHash is the historical-candle equivalent of formatTxHash
-// — identical shape (64-char hex) but derived from the candle's
-// close-time rather than a per-trade aggTrade ID. The "-BF-" infix
-// keeps the two hash spaces apart only while the whole seed fits the
-// hash: the seed leaves 8 bytes for the symbol, and a longer one would
-// truncate closeMs so neighbouring candles overwrite each other on the
-// trades PK. Such a symbol is refused instead.
-func backfillTxHash(symbol string, closeMs int64) (string, error) {
-	return scale.StrictSyntheticTxHash(fmt.Sprintf("%s-BF-%020d", strings.ToUpper(symbol), closeMs))
+// backfillTxHash is the historical-candle equivalent of formatTxHash,
+// keyed on the candle's close time and granularity rather than an
+// aggTrade ID; see scale.CandleTxHash.
+func backfillTxHash(symbol string, closeMs int64, granularity time.Duration) (string, error) {
+	return scale.CandleTxHash(strings.ToUpper(symbol), closeMs, granularity)
 }
 
 // granularityToInterval maps a time.Duration to Binance's interval

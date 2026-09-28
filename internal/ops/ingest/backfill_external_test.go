@@ -239,3 +239,68 @@ func TestRefuseStoredOverlap_RefusesWindowWithStoredRows(t *testing.T) {
 		t.Fatalf("probe failure must fail the run as a probe error, got %v", err)
 	}
 }
+
+type fakeForeignProbe struct {
+	n     int64
+	first time.Time
+	err   error
+	to    time.Time
+	keep  []canonical.Trade
+}
+
+func (f *fakeForeignProbe) TradesInWindowOutside(_ context.Context, _ string, _ canonical.Pair, _, to time.Time, keep []canonical.Trade) (int64, time.Time, error) {
+	f.to, f.keep = to, keep
+	return f.n, f.first, f.err
+}
+
+// -allow-overlap exists to re-run a window at the granularity that wrote
+// it. A 1m window re-run at 1h would upsert one row per hour and leave
+// the other stored minute rows beside it; the write must be refused and
+// name the first such row.
+func TestRefuseForeignRows_RefusesRowsTheRunWouldNotRewrite(t *testing.T) {
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	pair, err := canonical.NewPair(xlm, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	from := time.Date(2025, 4, 18, 0, 0, 0, 0, time.UTC)
+	to := from.Add(24 * time.Hour)
+	minute := from.Add(59 * time.Second)
+	batch := []canonical.Trade{tradeAt("h", from.Add(time.Hour-time.Second))}
+
+	probe := &fakeForeignProbe{n: 1416, first: minute}
+	err = refuseForeignRows(context.Background(), probe, "kraken", pair, from, to, batch)
+	if !errors.Is(err, errBackfillForeignRows) {
+		t.Fatalf("err = %v, want errBackfillForeignRows", err)
+	}
+	if !strings.Contains(err.Error(), "1416 stored row(s) from 2025-04-18T00:00:59Z") {
+		t.Fatalf("refusal does not name the count and first foreign row: %v", err)
+	}
+	if len(probe.keep) != 1 || probe.keep[0].TxHash != "h" || !probe.to.Equal(to) {
+		t.Fatalf("probe got keep=%v to=%v, want the run's batch and -to", probe.keep, probe.to)
+	}
+
+	if err := refuseForeignRows(context.Background(), &fakeForeignProbe{}, "kraken", pair, from, to, batch); err != nil {
+		t.Fatalf("same-granularity re-run refused: %v", err)
+	}
+
+	probeErr := errors.New("connection refused")
+	err = refuseForeignRows(context.Background(), &fakeForeignProbe{err: probeErr}, "kraken", pair, from, to, batch)
+	if !errors.Is(err, probeErr) || errors.Is(err, errBackfillForeignRows) {
+		t.Fatalf("probe failure must fail the run as a probe error, got %v", err)
+	}
+}
+
+// A walk that ended early covered only up to its high-water trade; rows
+// past it are ones a later resume writes, not foreign ones.
+func TestWalkedTo(t *testing.T) {
+	to := time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC)
+	high := to.Add(-72 * time.Hour)
+	if got := walkedTo(to, time.Time{}, false); !got.Equal(to) {
+		t.Errorf("complete walk: %v, want %v", got, to)
+	}
+	if got, want := walkedTo(to, high, true), high.Add(time.Microsecond); !got.Equal(want) {
+		t.Errorf("partial walk: %v, want %v", got, want)
+	}
+}

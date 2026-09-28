@@ -8,6 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
 // pairsYAML is the declarative venue-pair table (see pairs.yaml for
@@ -96,7 +97,7 @@ func DefaultPairs() (map[string]canonical.Pair, error) {
 		}
 		// The candle seed is the longer synthesised identity, so a
 		// symbol that fits it also fits formatTxHash's.
-		if _, err := backfillTxHash(p.Symbol, 0); err != nil {
+		if _, err := backfillTxHash(p.Symbol, 0, scale.LegacyCandleGranularity); err != nil {
 			return nil, fmt.Errorf("binance pairs.yaml: %s: %w", p.Symbol, err)
 		}
 		base, err := p.Base.asset()
