@@ -4792,7 +4792,7 @@ paths:
                     properties:
                       data:
                         type: object
-                        description: "Operator diagnostics — the documented properties are the stable core; the handler also serves per-source coverage fields (density_pct, gap_free_pct, covered_ledgers, coverage_snapshot_at, entries_24h) and ADR-0033 completeness fields that evolve with the pipeline (board #33; x-stability: experimental per ADR-0042)."
+                        description: "Operator diagnostics — the documented properties are the stable core; ADR-0033 completeness fields evolve with the pipeline (board #33; x-stability: experimental per ADR-0042)."
                         required: [region, version, ledger, backfill, backfill_coverage, fx_backfill, supply, sources]
                         properties:
                           region:
@@ -4856,6 +4856,11 @@ paths:
                                 latest_ledger:   { type: integer, format: int64 }
                                 entries:         { type: integer, format: int64, description: "Always-on per-source ingested-entry tally — trades for exchange/DEX/CEX sources, oracle_updates for oracle sources (source_entry_counts, migration 0035). Exact even mid-backfill; renamed from trade_count 2026-05-15." }
                                 coverage_pct:    { type: number,  description: "Fraction of (genesis → tip) range with any data. 1.0 = covered. Doesn't detect internal gaps." }
+                                density_pct:     { type: number,  description: "Fraction of ledgers processed, from the union of backfill cursor intervals. 1.0 = fully backfilled. Omitted when zero." }
+                                covered_ledgers: { type: integer, format: int64, description: "Absolute count of ledgers covered by successful backfill ranges. Numerator of density_pct. Omitted when zero." }
+                                expected_ledgers: { type: integer, format: int64, description: "Denominator of density_pct — tip - genesis + 1, window-scoped when a coverage snapshot exists. Omitted when zero." }
+                                gap_free_pct:    { type: number,  description: "1 - max_gap_ledgers / expected_ledger. 1.0 when no contiguous gap above the per-target threshold, even for a legitimately sparse source. Omitted when zero." }
+                                coverage_snapshot_at: { type: string, format: date-time, description: "When the gap detector last refreshed this row's data-derived numbers. Absent before its first post-deploy cycle." }
                                 completeness_pct:        { type: number,  description: "ADR-0033 watermark coverage: (watermark - genesis + 1) / (tip - genesis + 1). No sparsity threshold — a single PROVEN gap pins it. Absent until compute-completeness has run for the source." }
                                 completeness_watermark:  { type: integer, format: int64, description: "Highest fully-verified ledger." }
                                 completeness_complete:   { type: boolean, description: "SERVED/combined axis of the ADR-0033/ADR-0034 two-axis verdict: substrate ∧ recognition ∧ the retention-scoped projection reconcile." }
@@ -4899,7 +4904,7 @@ paths:
                             type: array
                             items:
                               type: object
-                              required: [name, class, include_in_vwap, backfill_safe, trade_count_24h, markets_count_24h]
+                              required: [name, class, include_in_vwap, backfill_safe, trade_count_24h, entries_24h, enabled, markets_count_24h]
                               properties:
                                 name:              { type: string, example: "binance" }
                                 class:             { type: string, example: "exchange" }
@@ -4907,6 +4912,8 @@ paths:
                                 include_in_vwap:   { type: boolean }
                                 backfill_safe:     { type: boolean }
                                 trade_count_24h:   { type: integer, format: int64 }
+                                entries_24h:       { type: integer, format: int64, description: "Trailing-24h per-source event count (trades, oracle updates, …), non-zero for every active source unlike trade_count_24h which is trades-table-only." }
+                                enabled:           { type: boolean, description: "Whether the source is switched on for this deployment. false with entries_24h 0 means \"off\", not \"failing\"." }
                                 volume_24h_usd:    { type: string }
                                 markets_count_24h: { type: integer, format: int64 }
                     required: [data]
@@ -13353,6 +13360,7 @@ components:
         fee_pool: { type: string }
         base_fee: { type: string, description: "Base fee per operation in stroops, as a decimal string." }
         base_reserve: { type: string, description: "Base reserve in stroops, as a decimal string." }
+      required: [sequence, close_time, hash, prev_hash, protocol_version, tx_count, op_count, soroban_event_count, total_coins, fee_pool, base_fee, base_reserve]
     TxSummary:
       type: object
       description: Transaction summary (in ledger + tx listings).
@@ -13394,6 +13402,7 @@ components:
             inner_max_fee: { type: string, description: "The inner transaction's own fee bid, in stroops, as a decimal string." }
             inner_result_code: { type: integer, description: "Raw XDR TransactionResultCode of the inner transaction. Present with inner_hash." }
             inner_result: { type: string, description: "Human-readable slug for inner_result_code (e.g. tx_failed, tx_insufficient_balance) — why the inner transaction failed. Present with inner_hash." }
+      required: [hash, ledger, close_time, index, source_account, fee_charged, max_fee, operation_count, successful, result_code, result]
     Operation:
       type: object
       description: An operation decoded from XDR into clean JSON.
@@ -13427,6 +13436,7 @@ components:
         result_code: { type: integer, description: The operation's OUTER XDR OperationResultCode. Present in the per-transaction view. }
         result: { type: string, description: "Human-readable slug for result_code (e.g. op_inner, op_bad_auth, op_no_source_account). Present with result_code." }
         inner_result: { type: string, description: "For result op_inner, the operation's op-type-specific outcome (e.g. payment_underfunded, payment_success, invoke_host_function_trapped) — which operation of a tx_failed transaction failed, and why. Omitted otherwise." }
+      required: [ledger, close_time, tx_hash, tx_index, op_index, type]
     TxDetail:
       allOf:
         - { $ref: "#/components/schemas/TxSummary" }
@@ -13450,6 +13460,7 @@ components:
                 indistinguishable on the wire from a real empty.
                 Absent = every sub-read succeeded and empty arrays /
                 absent codes are real.
+          required: [operations]
     ContractEvent:
       type: object
       description: A contract event on a transaction's tx-detail view (internal/api/v1/explorer/tx.go TxEventView).
@@ -13459,6 +13470,7 @@ components:
         contract_id: { type: string, description: Emitting contract (C-strkey). }
         event_type: { type: string }
         topic_0: { type: string }
+      required: [op_index, event_index, contract_id, event_type]
     ContractActivityEvent:
       type: object
       description: A contract event on the contract-activity view (internal/api/v1/explorer/contracts.go ContractEventView).
@@ -13484,6 +13496,7 @@ components:
         transactions: { type: array, items: { $ref: "#/components/schemas/TxSummary" } }
         next_cursor: { type: string, description: "Opaque composite cursor (ledger.tx_index) for the next older page; absent on the last page." }
         scope: { type: string, enum: [all], description: "Activity scope. \"all\" = the account sourced the tx OR is a non-source participant in one of its operations." }
+      required: [account, transactions, scope]
     AccountOperations:
       type: object
       description: |
@@ -13505,6 +13518,7 @@ components:
             here (on-chain, fee-charged records), so this marker is what keeps a
             failed operation from masquerading as a real interaction. Absent =
             every operation carries its true transaction outcome.
+      required: [account, operations, scope]
     AccountMovement:
       type: object
       description: One row in an account's movement feed (ADR-0048 D5).
@@ -14757,10 +14771,10 @@ components:
         id:                   { type: string, format: uuid }
         event_type:           { type: string, enum: [incident.sev1, incident.resolved, anomaly.freeze, divergence.firing, price.alert] }
         attempt_count:        { type: integer, minimum: 0 }
-        next_attempt_at:      { type: [string, "null"], format: date-time, description: "When the worker will retry. Null/zero when terminal (delivered OR retry budget exhausted)." }
-        delivered_at:         { type: [string, "null"], format: date-time }
-        last_error:           { type: [string, "null"] }
-        last_response_status: { type: [integer, "null"], description: "HTTP status of the most-recent attempt." }
+        next_attempt_at:      { type: string, format: date-time, description: "When the worker will retry. Omitted (never null) when terminal (delivered OR retry budget exhausted)." }
+        delivered_at:         { type: string, format: date-time }
+        last_error:           { type: string }
+        last_response_status: { type: integer, description: "HTTP status of the most-recent attempt." }
         created_at:           { type: string, format: date-time }
       required: [id, event_type, attempt_count, created_at]
 
@@ -14848,7 +14862,7 @@ components:
           type: array
           items: { type: string }
           description: "One or more impacted surfaces — names match the status-page component set (api / indexer / aggregator / storage)."
-        postmortem:           { type: [string, "null"], description: "URL or path of the public postmortem, when published." }
+        postmortem:           { type: string, description: "URL or path of the public postmortem, when published." }
         at:                   { type: string, format: date-time, description: "When this delivery was generated (server time, RFC 3339 nanosecond)." }
       required: [event, slug, title, severity, status, started_at, affected_components, at]
 
@@ -15090,7 +15104,7 @@ components:
         not by parsing `next`.
       properties:
         next:
-          type: [string, "null"]
+          type: string
           description: |
             Opaque token to pass as the `cursor` query parameter on
             the next request. Base64url-encoded; contents are an
@@ -18364,8 +18378,8 @@ components:
             publication time is past the absolute 7-day bound.
             `no_supply`: no supply reading to multiply, refused rather
             than published as zero.
-        value_usd:           { type: [string, "null"], description: "circulating_supply / 10^decimals x listing_reference.price_usd, two fractional digits. Exact rational arithmetic throughout, rounded once at the end, so a consumer can add the served strings by hand and reach the same total. Present if and only if status is `published`." }
-        circulating_supply:  { type: [string, "null"], description: "The multiplicand: the raw integer supply, in the asset's smallest unit, that value_usd was computed from. Published here rather than inferred from the row's own `circulating_supply`, because the two can legitimately differ — this arm takes the LARGER of the row's reading and the lake's mint-burn total over the asset's SAC, and on the detail surface the row often has no reading at all. Scale it by the row's `decimals`." }
+        value_usd:           { type: string, description: "circulating_supply / 10^decimals x listing_reference.price_usd, two fractional digits. Exact rational arithmetic throughout, rounded once at the end, so a consumer can add the served strings by hand and reach the same total. Present if and only if status is `published`." }
+        circulating_supply:  { type: string, description: "The multiplicand: the raw integer supply, in the asset's smallest unit, that value_usd was computed from. Published here rather than inferred from the row's own `circulating_supply`, because the two can legitimately differ — this arm takes the LARGER of the row's reading and the lake's mint-burn total over the asset's SAC, and on the detail surface the row often has no reading at all. Scale it by the row's `decimals`." }
         supply_basis:
           type: string
           enum: [lake_flows, served]
@@ -18745,7 +18759,7 @@ components:
         verified_slug:     { type: string,  description: "Canonical slug (e.g. \"usdc\") the consumer can redirect to." }
         verified_asset_id: { type: string,  description: "Verified canonical asset_id (e.g. USDC-GA5Z…). EMPTY STRING when the ticker matches a well-known asset with NO verified Stellar issuance (USDT, XRP, BTC, …) — there is nothing on Stellar to redirect to; render the warning, do not redirect." }
         verified_name:     { type: string,  description: "Human-readable currency name (e.g. \"USD Coin\")." }
-        verified_issuer:   { type: [string, "null"], description: "Short attribution (e.g. \"Circle (centre.io)\"). Empty when the catalogue entry didn't include a verified_issuer_label." }
+        verified_issuer:   { type: string, description: "Short attribution (e.g. \"Circle (centre.io)\"). Empty when the catalogue entry didn't include a verified_issuer_label." }
         note:              { type: string,  description: "One-sentence warning rendered verbatim by clients." }
       required: [verified_slug, verified_asset_id, verified_name, note]
 
@@ -18826,7 +18840,7 @@ components:
         name:             { type: string, description: "Human-readable currency name." }
         verified_issuer:  { type: string, description: "Short attribution string (e.g. \"Circle (centre.io)\"). Empty when the catalogue entry didn't include a verified_issuer_label." }
         image:
-          type: [string, "null"]
+          type: string
           description: >-
             Asset logo URL from the issuer's SEP-1 TOML (https-only,
             sanitized). Wallets bulk-load logos from this listing.
@@ -19008,7 +19022,7 @@ components:
             on every deploy or restart; shortly after a restart the two
             timestamps sit close again, and `price_type: peg` is the
             durable signal that nothing was observed.
-        window_seconds:    { type: [integer, "null"], description: "Window size for vwap/twap; omitted for last_trade." }
+        window_seconds:    { type: integer, description: "Window size for vwap/twap; omitted for last_trade." }
         change_24h_pct:
           type: [string, "null"]
           description: >-
@@ -20004,6 +20018,21 @@ components:
             required: [hour, volume_usd, trade_count]
       required: [name, class, include_in_vwap, paid, backfill_available, backfill_safe, default_weight, on_chain]
 
+    MethodologySource:
+      type: object
+      description: "One venue as projected onto /v1/methodology (internal/api/v1/methodology.go MethodologySource) — the static registry subset of Source, never the live trade-count/volume/sparkline stats that only /v1/sources?include=stats populates."
+      properties:
+        name:               { type: string, description: "Stable connector identifier (matches canonical.Trade.Source)." }
+        class:              { type: string, enum: [exchange, aggregator, oracle, authority_sanity, bridge, lending, router] }
+        subclass:           { type: string, enum: [dex, cex, fx], description: "Empty (omitted) for non-exchange classes, except ecb (authority_sanity), which is fx." }
+        default_weight:     { type: integer }
+        include_in_vwap:    { type: boolean }
+        paid:               { type: boolean }
+        backfill_available: { type: boolean }
+        backfill_safe:      { type: boolean }
+        on_chain:           { type: boolean, description: "Whether the source observes the Stellar network directly rather than reading an off-chain vendor API." }
+      required: [name, class, default_weight, include_in_vwap, paid, backfill_available, backfill_safe, on_chain]
+
     Methodology:
       type: object
       properties:
@@ -20054,8 +20083,8 @@ components:
             required: [name, contributes_to_vwap, description]
         sources:
           type: array
-          description: Same data as `/v1/sources` (without live trade-count stats) — included so a transparency consumer can verify the policy in one round trip.
-          items: { $ref: "#/components/schemas/Source" }
+          description: Registry metadata for every venue — the static subset of `/v1/sources` (no live trade-count stats) — included so a transparency consumer can verify the policy in one round trip.
+          items: { $ref: "#/components/schemas/MethodologySource" }
         references:
           type: array
           items:
@@ -20257,6 +20286,7 @@ components:
             under the `unmatched` endpoint, not the caller's target
             route — the rejection happens before the router resolves
             a pattern.
+      required: [date, requests, billable, errors, throttled]
 
     UsageEnvelope:
       allOf:
