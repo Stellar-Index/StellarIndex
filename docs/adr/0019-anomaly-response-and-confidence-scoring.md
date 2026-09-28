@@ -455,6 +455,25 @@ superseded_by: null
 > thin single-venue pairs chains are deployed for. See
 > `internal/aggregate/orchestrator/triangulate_corroborate.go`.
 
+> **Amendment (2026-09-28, #1217) — the normalisation exponent gains
+> `w_tri`.** This amendment adds a seventh factor but never restated the
+> normalised-combiner exponent the 2026-07-24 amendment (below)
+> corrected to six terms. `score.go`'s `totalWeight` always includes the
+> triangulation weight (`triWeight` — 0 when unchecked, the configured
+> `TriangulationAgreement` when checked), so the exponent is
+>
+> ```
+> ^ (1 / (w_z + w_src + w_div + w_liq + w_xoracle + w_tri + w_qual))
+> ```
+>
+> not the six-term form. `w_tri = 0` for every un-triangulated pair, so
+> this changes nothing for the majority of the index — that is the
+> whole point of the "true no-op" property above. For a triangulated
+> pair, the six-term and seven-term readings diverge: a thin
+> single-source pair at 20% composite divergence scores 0.4330 on six
+> terms and 0.5237 on seven, straddling `confidence_max_freeze = 0.45`
+> in opposite directions.
+
 > **Amendment (2026-07-24, audit-2026-07-23 wave5 AGT-08).** The
 > "Factor shapes" bullet list below (`source_count_factor:
 > 1/(1+exp(-(n-3))) — caps confidence at ~0.3 for single-source

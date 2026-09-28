@@ -53,22 +53,25 @@ func readSquashed(t *testing.T, path string) string {
 }
 
 // TestADR0019PinsTheNormalisedCombiner — ADR-0019 must state the
-// normalisation exponent over the SUM of the six weights. The
-// original (immutable) formula block stays as written; the amendment
-// blockquote at the top of the ADR carries the correction, per the
-// docs/adr/README.md "supersede/amend, don't rewrite" rule.
+// normalisation exponent over the sum of ALL SEVEN weights (the six
+// original plus w_tri — score.go's totalWeight always includes
+// triWeight, 0 when triangulation is unchecked, #1217). The original
+// (immutable) formula block and the six-term 2026-07-24 correction
+// stay as written; a later amendment blockquote carries the seven-term
+// correction, per the docs/adr/README.md "supersede/amend, don't
+// rewrite" rule.
 func TestADR0019PinsTheNormalisedCombiner(t *testing.T) {
 	adr := readSquashed(t, adr0019Path)
 
-	// The normalising exponent, applied over the sum of all six
-	// per-factor weights.
+	// The normalising exponent, applied over the sum of all seven
+	// per-factor weights (w_tri included — #1217).
 	wantExponent := regexp.MustCompile(
-		`\^ \(1 / \(w_z \+ w_src \+ w_div \+ w_liq \+ w_xoracle \+ w_qual\)\)`)
+		`\^ \(1 / \(w_z \+ w_src \+ w_div \+ w_liq \+ w_xoracle \+ w_tri \+ w_qual\)\)`)
 	if !wantExponent.MatchString(adr) {
 		t.Errorf("ADR-0019 does not spell the normalisation exponent "+
-			"`^ (1 / (w_z + w_src + w_div + w_liq + w_xoracle + w_qual))` — "+
-			"its formula block describes a bare product, which is NOT what "+
-			"confidence.Compute ships (see %s)", adr0019Path)
+			"`^ (1 / (w_z + w_src + w_div + w_liq + w_xoracle + w_tri + w_qual))` — "+
+			"a six-term exponent omits score.go's triangulation weight, which is NOT "+
+			"what confidence.Compute ships whenever a pair triangulates (see %s)", adr0019Path)
 	}
 
 	// The generic restatement that ties the ADR to score.go's own
