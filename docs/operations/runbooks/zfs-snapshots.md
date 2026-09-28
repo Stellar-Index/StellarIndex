@@ -291,6 +291,18 @@ systemctl stop stellarindex-api stellarindex-aggregator stellarindex-indexer
 systemctl list-units 'stellarindex-*' 'cap67-*' --state=active   # stop anything else writing
 systemctl stop postgresql@15-main
 
+# 0b. Check the archive's timeline before rolling back anything. A prior
+#     rollback rehearsal or the offsite restore-drill can already have
+#     pushed a later timeline into this same repo; step 2 below promotes
+#     onto "current + 1", and restore_command=/bin/false there means
+#     Postgres cannot see the archive's .history files to detect a
+#     collision itself — it would only surface once archive-push runs.
+sudo -u postgres pgbackrest --stanza=stellarindex info | grep -E 'timeline|wal archive min/max'
+#     If a timeline at or above the one this promotion is about to create
+#     is already archived, pin an explicit, confirmed-unused
+#     recovery_target_timeline in step 2 instead of letting Postgres take
+#     the implicit next number.
+
 # 1. Roll back data AND WAL to the same snapshot.
 S=pre-v0921   # the snapshot name, e.g. manual-pre-v0921 or auto-YYYYMMDD-HHMM
 zfs rollback -r "data/postgres@$S"
