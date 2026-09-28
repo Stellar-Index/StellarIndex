@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -1655,6 +1656,9 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !middleware.ChargeRateLimit(w, r, rwaAssetsCost(m)) {
+		return
+	}
 	rows, join, readErr := s.rwaListingRows(r.Context(), m)
 	if readErr != nil {
 		if clientAborted(r, readErr) {
@@ -1808,15 +1812,27 @@ type rwaCatalogueJoin struct {
 	notObserved int
 }
 
-// rwaListingRows reads the member issuers through the SAME listing
-// query /v1/assets uses, one indexed page per issuer, and returns the
-// projected rows keyed by asset_id, plus what the read could not cover.
-// Running the real listing path is what guarantees this surface cannot
-// publish a valuation /v1/assets would have refused.
-func (s *Server) rwaListingRows(
-	ctx context.Context, m rwaMembership,
-) (map[string]AssetDetail, rwaCatalogueJoin, error) {
-	var join rwaCatalogueJoin
+// rwaAssetsCost is the rate-limit price, in tokens, of one
+// /v1/rwa/assets request: one per store listing read it makes. The
+// membership is cached, but the valuation behind it is not — every
+// request runs a /v1/assets listing read and its full post-query
+// pipeline per distinct member issuer, plus one batched catalogue read
+// for the contract arm — so the budget is denominated in those reads,
+// as /v1/price/batch's is in ids. Conservative: the pipeline's own
+// supply and price reads are not counted, nor is the curated arm's
+// catalogue read, whose membership is only known after the listing.
+func rwaAssetsCost(m rwaMembership) int {
+	cost := len(rwaMemberIssuers(m))
+	if len(m.contracts) > 0 {
+		cost++
+	}
+	return max(1, cost)
+}
+
+// rwaMemberIssuers returns the distinct classic member issuers, sorted —
+// the set [Server.rwaListingRows] reads one page per, and
+// [rwaAssetsCost] prices.
+func rwaMemberIssuers(m rwaMembership) []string {
 	issuers := make([]string, 0, rwaMaxIssuers)
 	seen := map[string]struct{}{}
 	for _, mem := range m.members {
@@ -1827,6 +1843,19 @@ func (s *Server) rwaListingRows(
 		issuers = append(issuers, mem.issuer)
 	}
 	sort.Strings(issuers)
+	return issuers
+}
+
+// rwaListingRows reads the member issuers through the SAME listing
+// query /v1/assets uses, one indexed page per issuer, and returns the
+// projected rows keyed by asset_id, plus what the read could not cover.
+// Running the real listing path is what guarantees this surface cannot
+// publish a valuation /v1/assets would have refused.
+func (s *Server) rwaListingRows(
+	ctx context.Context, m rwaMembership,
+) (map[string]AssetDetail, rwaCatalogueJoin, error) {
+	var join rwaCatalogueJoin
+	issuers := rwaMemberIssuers(m)
 
 	codesByIssuer := make(map[string][]string, len(issuers))
 	for _, mem := range m.members {
