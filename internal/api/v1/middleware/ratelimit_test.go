@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -194,6 +195,32 @@ func TestRateLimit_SkipsWhenSkipReturnsTrue(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != 200 {
 		t.Errorf("first non-skipped request rejected: %d", w.Code)
+	}
+}
+
+// TestRateLimit_TruncatesLongKeys guards the MaxRateLimitKeyLen cap on
+// RateLimit's entry point: two keys that agree on the first
+// MaxRateLimitKeyLen bytes and differ only after it must collapse onto
+// the same bucket, or a hostile caller mints unlimited distinct buckets
+// by varying an oversize key past the cap (e.g. via a crafted
+// X-Forwarded-For with a custom KeyFn).
+func TestRateLimit_TruncatesLongKeys(t *testing.T) {
+	rdb, _ := newRLRedis(t)
+	b := ratelimit.New(rdb, 1, time.Minute)
+	longShared := strings.Repeat("a", middleware.MaxRateLimitKeyLen+50)
+
+	h := middleware.RateLimit(b, fixedKeyFn(longShared+"AAAA"), nil, nil)(okHandler())
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("first request status = %d, want 200", w.Code)
+	}
+
+	h2 := middleware.RateLimit(b, fixedKeyFn(longShared+"BBBB"), nil, nil)(okHandler())
+	w = httptest.NewRecorder()
+	h2.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if w.Code != http.StatusTooManyRequests {
+		t.Errorf("second request (key differs only past MaxRateLimitKeyLen) status = %d, want 429 — key not truncated", w.Code)
 	}
 }
 
@@ -480,6 +507,85 @@ func TestSkipHealthAndMetrics(t *testing.T) {
 		if got := middleware.SkipHealthAndMetrics(r); got != want {
 			t.Errorf("SkipHealthAndMetrics(%q) = %v, want %v", path, got, want)
 		}
+	}
+}
+
+// TestRateLimitBySubject_SkipsWhenSkipReturnsTrue proves the skip block
+// (ratelimit.go's `if skip != nil && skip(r)`) is exercised on
+// RateLimitBySubject — the ONLY entry point production wires
+// (cmd/stellarindex-api/main.go), with the actual SkipHealthAndMetrics
+// predicate production uses. TestRateLimit_SkipsWhenSkipReturnsTrue
+// drives the same block on RateLimit, which production never
+// constructs (server.go declares it test-only), so it left this path
+// at 0% coverage: deleting the skip check inside RateLimitBySubject
+// left internal/api/v1, internal/ratelimit and cmd/stellarindex-api all
+// green (#1215).
+func TestRateLimitBySubject_SkipsWhenSkipReturnsTrue(t *testing.T) {
+	rdb, _ := newRLRedis(t)
+	anonBucket := ratelimit.New(rdb, 1, time.Minute)
+	authBucket := ratelimit.New(rdb, 1, time.Minute)
+
+	h := middleware.RateLimitBySubject(anonBucket, authBucket, middleware.SkipHealthAndMetrics, nil)(okHandler())
+
+	// Budget is 1. Call /v1/healthz 10x — none should count.
+	for i := 0; i < 10; i++ {
+		r := httptest.NewRequest(http.MethodGet, "/v1/healthz", nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("healthz request %d rejected: %d", i+1, w.Code)
+		}
+	}
+
+	// A non-skipped path (NOT "/" — SkipHealthAndMetrics treats the bare
+	// root as an infra probe too) still gets its one allowance...
+	r := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("first non-skipped request rejected: %d", w.Code)
+	}
+	// ...and is throttled past it, proving the skip bypassed only the
+	// health path rather than disabling the bucket entirely.
+	r = httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusTooManyRequests {
+		t.Errorf("second non-skipped request status = %d, want 429", w.Code)
+	}
+}
+
+// TestRateLimitBySubject_TruncatesLongAuthKeys guards the
+// MaxRateLimitKeyLen cap at RateLimitBySubject's own truncation site
+// (distinct from RateLimit's — TestRateLimit_TruncatesLongKeys does not
+// exercise this one). An authenticated subject's Identifier feeds
+// authenticatedRateLimitKey (UsageKeyForSubject) directly; two
+// identifiers that agree on the first MaxRateLimitKeyLen bytes of the
+// derived key and differ only after it must collapse onto the same
+// bucket.
+func TestRateLimitBySubject_TruncatesLongAuthKeys(t *testing.T) {
+	rdb, _ := newRLRedis(t)
+	anonBucket := ratelimit.New(rdb, 1, time.Minute)
+	authBucket := ratelimit.New(rdb, 1, time.Minute)
+
+	h := middleware.RateLimitBySubject(anonBucket, authBucket, nil, nil)(okHandler())
+	longShared := strings.Repeat("a", middleware.MaxRateLimitKeyLen+50)
+	reqWithIdentifier := func(suffix string) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		subject := auth.Subject{Identifier: longShared + suffix, Tier: auth.TierSEP10}
+		return r.WithContext(auth.WithSubject(r.Context(), subject))
+	}
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, reqWithIdentifier("AAAA"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("first request status = %d, want 200", w.Code)
+	}
+
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, reqWithIdentifier("BBBB"))
+	if w.Code != http.StatusTooManyRequests {
+		t.Errorf("second request (identifier differs only past MaxRateLimitKeyLen) status = %d, want 429 — key not truncated", w.Code)
 	}
 }
 
