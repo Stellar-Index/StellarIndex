@@ -19,11 +19,15 @@ import (
 // the requester did not write: another person's session and address.
 var staffExportRedactedKeys = []string{"actor_email", "session_id", "actor_user_id"}
 
+// ExtraKeysFunc lists the keys an account holds outside Postgres, by slug.
+type ExtraKeysFunc func(ctx context.Context, slug string) ([]platform.ExportAPIKey, error)
+
 // ExportAccount reads everything [platform.AccountExport] describes for
-// accountID, as requester sees it. Redis-held self-service keys are not
-// in Postgres; the caller appends them.
+// accountID, as requester sees it. extra, when non-nil, supplies the
+// Redis-held self-service keys; they are merged before usage is read so
+// their key:<id> usage rows are exported too.
 func (r *AccountStore) ExportAccount(
-	ctx context.Context, accountID, requester uuid.UUID, now time.Time,
+	ctx context.Context, accountID, requester uuid.UUID, now time.Time, extra ExtraKeysFunc,
 ) (platform.AccountExport, error) {
 	out := platform.AccountExport{SchemaVersion: platform.AccountExportSchemaVersion, GeneratedAt: now.UTC()}
 	if err := r.exportAccountRow(ctx, accountID, &out.Account); err != nil {
@@ -37,6 +41,7 @@ func (r *AccountStore) ExportAccount(
 		{"sessions", func() (err error) { out.Sessions, err = r.exportSessions(ctx, requester); return }},
 		{"passkeys", func() (err error) { out.Passkeys, err = r.exportPasskeys(ctx, requester); return }},
 		{"api keys", func() (err error) { out.APIKeys, err = r.exportAPIKeys(ctx, accountID); return }},
+		{"extra keys", func() error { return appendExtraKeys(ctx, &out, extra) }},
 		{"webhooks", func() (err error) { out.Webhooks, err = r.exportWebhooks(ctx, accountID); return }},
 		{"price alerts", func() (err error) { out.PriceAlerts, err = r.exportPriceAlerts(ctx, accountID); return }},
 		{"invites", func() (err error) { out.Invites, err = r.exportInvites(ctx, accountID); return }},
@@ -52,6 +57,28 @@ func (r *AccountStore) ExportAccount(
 		}
 	}
 	return out, nil
+}
+
+// appendExtraKeys adds the keys extra lists that Postgres does not already
+// hold (a register-mirrored key is in both).
+func appendExtraKeys(ctx context.Context, out *platform.AccountExport, extra ExtraKeysFunc) error {
+	if extra == nil {
+		return nil
+	}
+	keys, err := extra(ctx, out.Account.Slug)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]bool, len(out.APIKeys))
+	for _, k := range out.APIKeys {
+		seen[k.ID] = true
+	}
+	for _, k := range keys {
+		if !seen[k.ID] {
+			out.APIKeys = append(out.APIKeys, k)
+		}
+	}
+	return nil
 }
 
 func (r *AccountStore) exportAccountRow(ctx context.Context, id uuid.UUID, a *platform.ExportAccount) error {

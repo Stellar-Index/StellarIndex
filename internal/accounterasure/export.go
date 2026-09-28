@@ -10,12 +10,15 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
 // ExportStore is the Postgres half of an export; *postgresstore.AccountStore
 // satisfies it.
 type ExportStore interface {
-	ExportAccount(ctx context.Context, accountID, requester uuid.UUID, now time.Time) (platform.AccountExport, error)
+	ExportAccount(
+		ctx context.Context, accountID, requester uuid.UUID, now time.Time, extra postgresstore.ExtraKeysFunc,
+	) (platform.AccountExport, error)
 }
 
 // Exporter builds an account's data export: the Postgres document plus
@@ -27,22 +30,22 @@ type Exporter struct {
 
 // Export returns the document for requester, an owner of accountID.
 func (x *Exporter) Export(ctx context.Context, accountID, requester uuid.UUID, now time.Time) (platform.AccountExport, error) {
-	doc, err := x.Store.ExportAccount(ctx, accountID, requester, now)
-	if err != nil || x.Redis == nil {
-		return doc, err
+	var extra postgresstore.ExtraKeysFunc
+	if x.Redis != nil {
+		extra = x.redisKeys
 	}
-	recs, err := auth.NewRedisAPIKeyStore(x.Redis).ListKeysForIdentifier(ctx, auth.AccountIdentifier(doc.Account.Slug))
+	return x.Store.ExportAccount(ctx, accountID, requester, now, extra)
+}
+
+// redisKeys lists the self-service keys the Redis validator store holds
+// for slug.
+func (x *Exporter) redisKeys(ctx context.Context, slug string) ([]platform.ExportAPIKey, error) {
+	recs, err := auth.NewRedisAPIKeyStore(x.Redis).ListKeysForIdentifier(ctx, auth.AccountIdentifier(slug))
 	if err != nil {
-		return platform.AccountExport{}, fmt.Errorf("account export: redis keys: %w", err)
+		return nil, fmt.Errorf("account export: redis keys: %w", err)
 	}
-	seen := make(map[string]bool, len(doc.APIKeys))
-	for _, k := range doc.APIKeys {
-		seen[k.ID] = true
-	}
+	out := make([]platform.ExportAPIKey, 0, len(recs))
 	for _, r := range recs {
-		if seen[r.KeyID] {
-			continue // a Postgres key mirrored into Redis
-		}
 		k := platform.ExportAPIKey{
 			ID: r.KeyID, Store: "redis", Prefix: r.KeyPrefix, Name: r.Label, Tier: string(r.Tier),
 			Scopes: r.Scopes, RateLimitPerMin: r.RateLimitPerMin, MonthlyQuota: r.MonthlyQuota,
@@ -59,7 +62,7 @@ func (x *Exporter) Export(ctx context.Context, accountID, requester uuid.UUID, n
 			t := r.RevokedAt.UTC()
 			k.RevokedAt = &t
 		}
-		doc.APIKeys = append(doc.APIKeys, k)
+		out = append(out, k)
 	}
-	return doc, nil
+	return out, nil
 }

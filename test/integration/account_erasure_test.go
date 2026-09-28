@@ -437,7 +437,9 @@ func TestAccountErasure(t *testing.T) {
 	})
 
 	t.Run("ExportSeesOnlyTheRequestersPersonalData", func(t *testing.T) {
-		exp, err := accounts.ExportAccount(ctx, y.accountID, y.ownerID, time.Now())
+		mustExec(t, ctx, db, `INSERT INTO usage_daily (day, subject, endpoint, ok_count)
+			VALUES (current_date, $1, '/v1/price', 4)`, "key:"+y.redisKeyID)
+		exp, err := (&accounterasure.Exporter{Store: accounts, Redis: rdb}).Export(ctx, y.accountID, y.ownerID, time.Now())
 		if err != nil {
 			t.Fatalf("ExportAccount: %v", err)
 		}
@@ -472,8 +474,15 @@ func TestAccountErasure(t *testing.T) {
 				t.Errorf("another actor's address exported: %+v", a)
 			}
 		}
-		if len(exp.Usage) != 2 || len(exp.Users) != 2 || len(exp.APIKeys) != 1 {
-			t.Errorf("usage %d, users %d, keys %d; want 2, 2, 1", len(exp.Usage), len(exp.Users), len(exp.APIKeys))
+		if len(exp.Usage) != 3 || len(exp.Users) != 2 || len(exp.APIKeys) != 2 {
+			t.Errorf("usage %d, users %d, keys %d; want 3, 2, 2", len(exp.Usage), len(exp.Users), len(exp.APIKeys))
+		}
+		redisUsage := false
+		for _, u := range exp.Usage {
+			redisUsage = redisUsage || (u.Subject == "key:"+y.redisKeyID && u.OKCount == 4)
+		}
+		if !redisUsage {
+			t.Errorf("usage = %+v, want the Redis key's key:%s row", exp.Usage, y.redisKeyID)
 		}
 	})
 }
