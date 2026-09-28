@@ -113,7 +113,7 @@ func touchUsageRecord(w http.ResponseWriter, toucher KeyToucher, debouncer Touch
 	keyID := subject.KeyID
 	ip := net.ParseIP(RemoteIPFrom(r))
 	ua := truncateUserAgentForTouch(r.UserAgent())
-	fn := func() {
+	fn := func() { //nolint:contextcheck // intentional detach: post-response work outlives the request ctx
 		// Post-response bookkeeping: detached from the request's
 		// cancellation (an aborted client or an exhausted RequestTimeout
 		// budget must not silently drop the touch) but independently

@@ -162,7 +162,7 @@ func usageTrackerRecord(counter *usage.Counter, logger *slog.Logger, reqCtx cont
 	// wire, so it holds for every store wired here today; a driver
 	// that ignored ctx would block a pool worker for its own timeout
 	// instead.
-	fn := func() {
+	fn := func() { //nolint:contextcheck // intentional detach: post-response work outlives the request ctx
 		ctx, cancel := context.WithTimeout(context.Background(), postResponseWriteTimeout)
 		defer cancel()
 		if billable {
