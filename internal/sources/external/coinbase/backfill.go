@@ -3,6 +3,7 @@ package coinbase
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -27,6 +28,26 @@ const candlesPathTemplate = "/products/%s/candles"
 // candles**, tightest of the four CEXes. We paginate aggressively
 // to cover longer ranges.
 const coinbaseMaxResponse = 300
+
+// candlesRequestInterval paces the pagination loop under Coinbase's
+// public limit (10 requests/s per IP); unpaced pages draw HTTP 429.
+const candlesRequestInterval = 150 * time.Millisecond
+
+// candlesMaxAttempts bounds how often one rate-limited window is retried.
+const candlesMaxAttempts = 5
+
+// candlesRetryBase is the first 429 back-off when Retry-After is absent;
+// it doubles per attempt.
+const candlesRetryBase = time.Second
+
+// rateLimitedError is an HTTP 429. retryAfter is negative when the venue
+// sent no usable Retry-After header.
+type rateLimitedError struct {
+	retryAfter time.Duration
+	body       string
+}
+
+func (e *rateLimitedError) Error() string { return "http 429: " + e.body }
 
 // Backfill implements external.Backfiller for Coinbase Exchange.
 //
@@ -56,13 +77,27 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 	if !ok {
 		return nil, fmt.Errorf("coinbase.Backfill: pair %s not in configured PairMap", pair.String())
 	}
+	// Refuse up front: the per-candle skip would otherwise turn an
+	// unrepresentable product into a silently empty backfill.
+	if _, err := backfillTxHash(product, 0, granSec); err != nil {
+		return nil, fmt.Errorf("coinbase.Backfill: %w", err)
+	}
 
 	endpoint := s.restBase() + fmt.Sprintf(candlesPathTemplate, product)
 	startSec := from.Unix()
 	endSec := to.Unix()
 	var out []canonical.Trade
+	ticker := time.NewTicker(candlesRequestInterval)
+	defer ticker.Stop()
 
 	for startSec < endSec {
+		// Candles already converted are returned alongside the
+		// context error so the caller can salvage and resume.
+		select {
+		case <-ctx.Done():
+			return out, ctx.Err()
+		case <-ticker.C:
+		}
 		// Coinbase paginates by `start` + `end` in ISO-8601 or
 		// UNIX seconds. We request 300 candles' worth per call
 		// to maximise per-request yield.
@@ -76,9 +111,9 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 		q.Set("start", time.Unix(startSec, 0).UTC().Format(time.RFC3339))
 		q.Set("end", time.Unix(windowEnd, 0).UTC().Format(time.RFC3339))
 
-		candles, err := fetchCoinbaseCandles(ctx, endpoint, q)
+		candles, err := fetchCandlesWithRetry(ctx, endpoint, q)
 		if err != nil {
-			return nil, fmt.Errorf("coinbase.Backfill: %w", err)
+			return out, fmt.Errorf("coinbase.Backfill: %w", err)
 		}
 		if len(candles) == 0 {
 			// Advance window even on empty response so an illiquid
@@ -161,6 +196,41 @@ func (c coinbaseCandle) intAt(i int) (int64, bool) {
 	return 0, false
 }
 
+// fetchCandlesWithRetry retries a rate-limited window, honouring
+// Retry-After when present and backing off exponentially otherwise.
+func fetchCandlesWithRetry(ctx context.Context, endpoint string, q url.Values) ([]coinbaseCandle, error) {
+	backoff := candlesRetryBase
+	for attempt := 1; ; attempt++ {
+		candles, err := fetchCoinbaseCandles(ctx, endpoint, q)
+		var limited *rateLimitedError
+		if !errors.As(err, &limited) || attempt == candlesMaxAttempts {
+			return candles, err
+		}
+		wait := backoff
+		if limited.retryAfter >= 0 {
+			wait = limited.retryAfter
+		}
+		backoff *= 2
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+// parseRetryAfter reads a delay-seconds Retry-After value; -1 when absent
+// or not an integer.
+func parseRetryAfter(v string) time.Duration {
+	secs, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || secs < 0 {
+		return -1
+	}
+	return time.Duration(secs) * time.Second
+}
+
 func fetchCoinbaseCandles(ctx context.Context, endpoint string, q url.Values) ([]coinbaseCandle, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?"+q.Encode(), nil)
 	if err != nil {
@@ -181,6 +251,9 @@ func fetchCoinbaseCandles(ctx context.Context, endpoint string, q url.Values) ([
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 20*1024*1024))
 	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, &rateLimitedError{retryAfter: parseRetryAfter(resp.Header.Get("Retry-After")), body: string(body)}
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("http %d: %s", resp.StatusCode, string(body))
@@ -235,11 +308,15 @@ func coinbaseCandleToTrade(c coinbaseCandle, product string, pair canonical.Pair
 	if quote.Sign() == 0 {
 		return canonical.Trade{}, ErrDustTrade
 	}
+	txHash, err := backfillTxHash(product, closeSec, granSec)
+	if err != nil {
+		return canonical.Trade{}, err
+	}
 
 	return canonical.Trade{
 		Source:      SourceName,
 		Ledger:      0,
-		TxHash:      backfillTxHash(product, closeSec),
+		TxHash:      txHash,
 		OpIndex:     0,
 		Timestamp:   time.Unix(closeSec, 0).UTC(),
 		Pair:        pair,
@@ -248,23 +325,11 @@ func coinbaseCandleToTrade(c coinbaseCandle, product string, pair canonical.Pair
 	}, nil
 }
 
-// backfillTxHash from (product, close_time_sec). Dash-stripped to
-// match the live-stream hash convention.
-func backfillTxHash(product string, closeSec int64) string {
+// backfillTxHash is the Coinbase candle identity; see
+// scale.CandleTxHash. Dash-stripped to match the live-stream convention.
+func backfillTxHash(product string, closeSec int64, granSec int) (string, error) {
 	normalised := strings.ReplaceAll(strings.ToUpper(product), "-", "")
-	s := fmt.Sprintf("%s-BF-%020d", normalised, closeSec)
-	var hex strings.Builder
-	hex.Grow(64)
-	for _, b := range []byte(s) {
-		fmt.Fprintf(&hex, "%02x", b)
-		if hex.Len() >= 64 {
-			break
-		}
-	}
-	for hex.Len() < 64 {
-		hex.WriteByte('0')
-	}
-	return hex.String()[:64]
+	return scale.CandleTxHash(normalised, closeSec, time.Duration(granSec)*time.Second)
 }
 
 // granularityToSeconds maps time.Duration → Coinbase's supported

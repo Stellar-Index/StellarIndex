@@ -9,12 +9,14 @@
 package scale
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // DecimalStringToScaledInt parses a base-10 decimal string into an integer
@@ -215,4 +217,32 @@ func StrictSyntheticTxHash(seed string) (string, error) {
 		return "", fmt.Errorf("%w: %q is %d bytes", ErrSyntheticSeedTooLong, seed, len(seed))
 	}
 	return SyntheticTxHash(seed), nil
+}
+
+// LegacyCandleGranularity is backfill-external's default granularity.
+// Its candles keep the pre-granularity identity, so re-running the
+// default over history upserts the rows already written.
+const LegacyCandleGranularity = time.Hour
+
+// CandleTxHash is the synthetic tx_hash of one backfilled CEX candle:
+// symbol is the venue-normalised symbol, closeTs the bucket's close time
+// in the venue's native unit (the value its Trade.Timestamp carries).
+//
+// Candles of different granularities close at the same instant (the last
+// 1m candle of an hour and the 1h candle), and tx_hash is the only trades
+// PK column that can tell them apart, so granularity is part of the
+// identity. LegacyCandleGranularity keeps the "<SYM>-BF-<close>" seed
+// byte-for-byte; every other granularity is a SHA-256 over a seed that
+// names it. A symbol whose legacy seed would truncate is refused at every
+// granularity, so representability does not depend on the flag.
+func CandleTxHash(symbol string, closeTs int64, granularity time.Duration) (string, error) {
+	legacy, err := StrictSyntheticTxHash(fmt.Sprintf("%s-BF-%020d", symbol, closeTs))
+	if err != nil || granularity == LegacyCandleGranularity {
+		return legacy, err
+	}
+	if granularity <= 0 {
+		return "", fmt.Errorf("candle tx_hash: granularity %v must be positive", granularity)
+	}
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s-BF-%s-%020d", symbol, granularity, closeTs))
+	return hex.EncodeToString(sum[:]), nil
 }

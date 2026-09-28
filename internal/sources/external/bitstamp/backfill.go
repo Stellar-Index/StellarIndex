@@ -52,6 +52,11 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 	if !ok {
 		return nil, fmt.Errorf("bitstamp.Backfill: pair %s not in configured PairMap", pair.String())
 	}
+	// Refuse up front: the per-candle skip would otherwise turn an
+	// unrepresentable symbol into a silently empty backfill.
+	if _, err := backfillTxHash(symbol, 0, stepSec); err != nil {
+		return nil, fmt.Errorf("bitstamp.Backfill: %w", err)
+	}
 
 	endpoint := s.restBase() + fmt.Sprintf(ohlcPathTemplate, symbol)
 	return backfillOHLC(ctx, endpoint, symbol, pair, from.Unix(), to.Unix(), stepSec)
@@ -204,11 +209,15 @@ func bitstampCandleToTrade(c bitstampCandle, symbol string, pair canonical.Pair,
 	if quote.Sign() == 0 {
 		return canonical.Trade{}, ErrDustTrade
 	}
+	txHash, err := backfillTxHash(symbol, closeSec, stepSec)
+	if err != nil {
+		return canonical.Trade{}, err
+	}
 
 	return canonical.Trade{
 		Source:      SourceName,
 		Ledger:      0,
-		TxHash:      backfillTxHash(symbol, closeSec),
+		TxHash:      txHash,
 		OpIndex:     0,
 		Timestamp:   time.Unix(closeSec, 0).UTC(),
 		Pair:        pair,
@@ -217,23 +226,10 @@ func bitstampCandleToTrade(c bitstampCandle, symbol string, pair canonical.Pair,
 	}, nil
 }
 
-// backfillTxHash is the Bitstamp analogue of the per-venue
-// synthetic hash. Symbol is the lowercase concat form.
-func backfillTxHash(symbol string, closeSec int64) string {
-	normalised := strings.ToUpper(symbol)
-	s := fmt.Sprintf("%s-BF-%020d", normalised, closeSec)
-	var hex strings.Builder
-	hex.Grow(64)
-	for _, b := range []byte(s) {
-		fmt.Fprintf(&hex, "%02x", b)
-		if hex.Len() >= 64 {
-			break
-		}
-	}
-	for hex.Len() < 64 {
-		hex.WriteByte('0')
-	}
-	return hex.String()[:64]
+// backfillTxHash is the Bitstamp candle identity; see
+// scale.CandleTxHash. Symbol is the lowercase concat form.
+func backfillTxHash(symbol string, closeSec int64, stepSec int) (string, error) {
+	return scale.CandleTxHash(strings.ToUpper(symbol), closeSec, time.Duration(stepSec)*time.Second)
 }
 
 // granularityToSeconds maps Durations to Bitstamp's step values

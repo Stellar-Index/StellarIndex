@@ -125,7 +125,7 @@ func TestBackfill_SinglePage(t *testing.T) {
 	// This is the "rerunnable backfill hits the same primary key"
 	// invariant — no need for a second HTTP call, the formula is
 	// pure.
-	wantHash, err := backfillTxHash("XLMUSDT", wantCloseMs)
+	wantHash, err := backfillTxHash("XLMUSDT", wantCloseMs, time.Hour)
 	if err != nil {
 		t.Fatalf("backfillTxHash: %v", err)
 	}
@@ -295,6 +295,33 @@ func TestBackfill_HTTPError(t *testing.T) {
 	}
 }
 
+// A full page that does not advance the startTime cursor (a proxy
+// replaying one response) must fail the walk rather than append the
+// same 1000 candles once per request.
+func TestBackfill_NonAdvancingPageErrors(t *testing.T) {
+	const startMs = int64(1_745_000_000_000)
+	const hourMs = int64(3_600_000)
+	page := synthesiseKlines(klineMaxLimit, startMs, hourMs)
+	replays := make([][]kline, 10)
+	for i := range replays {
+		replays[i] = page
+	}
+	srv := newTestREST(t, replays)
+	defer srv.Close()
+
+	s := NewStreamer(mustPairMapBF(t))
+	s.Endpoint = srv.URL
+
+	from := time.UnixMilli(startMs).UTC()
+	trades, err := s.Backfill(context.Background(), mustPair(t), from, from.Add(5000*time.Hour), time.Hour)
+	if err == nil {
+		t.Fatalf("replayed page: got %d trades and nil error, want a no-progress error", len(trades))
+	}
+	if !strings.Contains(err.Error(), "did not advance") {
+		t.Fatalf("err = %v, want the no-progress failure", err)
+	}
+}
+
 // mustPair / mustPairMapBF — rename-suffixed to avoid conflicts with
 // helpers in streamer_test.go / parse_test.go.
 func mustPair(t *testing.T) canonical.Pair {
@@ -349,11 +376,11 @@ func TestBackfill_RejectsSymbolThatWouldTruncateSeed(t *testing.T) {
 
 // The longest symbols pairs.yaml ships (8 bytes) must still hash whole.
 func TestBackfillTxHash_EightByteSymbolKeepsFullCloseTime(t *testing.T) {
-	a, err := backfillTxHash("AVAXUSDT", 1_745_000_000_000)
+	a, err := backfillTxHash("AVAXUSDT", 1_745_000_000_000, time.Hour)
 	if err != nil {
 		t.Fatalf("backfillTxHash: %v", err)
 	}
-	b, err := backfillTxHash("AVAXUSDT", 1_745_000_000_001)
+	b, err := backfillTxHash("AVAXUSDT", 1_745_000_000_001, time.Hour)
 	if err != nil {
 		t.Fatalf("backfillTxHash: %v", err)
 	}

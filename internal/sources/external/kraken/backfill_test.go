@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -109,6 +111,58 @@ func TestKrakenBackfill_HappyPath(t *testing.T) {
 	}
 	if len(trades[0].TxHash) != 64 {
 		t.Errorf("TxHash len = %d", len(trades[0].TxHash))
+	}
+}
+
+// krakenBackfillHour runs Backfill over one hour at granularity g
+// against a server serving the matching candles.
+func krakenBackfillHour(t *testing.T, hourStart int64, g time.Duration) []canonical.Trade {
+	t.Helper()
+	step := int64(g / time.Second)
+	n := int(3600 / step)
+	srv := newTestKrakenREST(t, "XLMUSD", synthesiseKrakenCandles(n, hourStart, step), hourStart+int64(n-1)*step)
+	defer srv.Close()
+	pair, err := canonical.NewPair(mustAsset(t, "crypto:XLM"), mustAsset(t, "fiat:USD"))
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	s := NewStreamer(map[string]canonical.Pair{"XLMUSD": pair})
+	s.Endpoint = srv.URL
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	from := time.Unix(hourStart, 0).UTC()
+	trades, err := s.Backfill(ctx, pair, from, from.Add(time.Hour), g)
+	if err != nil {
+		t.Fatalf("Backfill at %v: %v", g, err)
+	}
+	if len(trades) != n {
+		t.Fatalf("Backfill at %v: %d trades, want %d", g, len(trades), n)
+	}
+	return trades
+}
+
+// The 1h candle and the hour's last 1m candle close at the same instant.
+// If they share (tx_hash, ts) they share the whole trades PK, and a 1m
+// run followed by a 1h run upserts the hour's volume onto the :59 minute
+// row — ~197% of true volume for the hour.
+func TestKrakenBackfill_GranularityIsPartOfCandleIdentity(t *testing.T) {
+	const hourStart = int64(484_722 * 3600)
+	hourly := krakenBackfillHour(t, hourStart, time.Hour)[0]
+	minutes := krakenBackfillHour(t, hourStart, time.Minute)
+
+	last := minutes[len(minutes)-1]
+	if !last.Timestamp.Equal(hourly.Timestamp) {
+		t.Fatalf("fixture: :59 minute closes at %v, hour at %v; want the same instant", last.Timestamp, hourly.Timestamp)
+	}
+	for _, m := range minutes {
+		if m.TxHash == hourly.TxHash && m.Timestamp.Equal(hourly.Timestamp) {
+			t.Fatalf("1h candle and 1m candle closing at %v share tx_hash %s", m.Timestamp, m.TxHash)
+		}
+	}
+	// The default granularity keeps the identity rows were written under.
+	legacy := scale.SyntheticTxHash(fmt.Sprintf("XLMUSD-BF-%020d", hourStart+3599))
+	if hourly.TxHash != legacy {
+		t.Fatalf("1h tx_hash = %s, want the stored legacy identity %s", hourly.TxHash, legacy)
 	}
 }
 
@@ -278,6 +332,36 @@ func TestKrakenBackfill_APIError(t *testing.T) {
 	}
 }
 
+// A `last` cursor that no longer decodes as an integer must fail the
+// walk, not end it after page one with err == nil.
+func TestKrakenBackfill_UndecodableLastCursorErrors(t *testing.T) {
+	const startSec = int64(1_745_002_800)
+	candles := synthesiseKrakenCandles(krakenMaxResponse, startSec, 60)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error":  []string{},
+			"result": map[string]any{"XLMUSD": candles, "last": strconv.FormatInt(startSec+60*krakenMaxResponse, 10)},
+		})
+	}))
+	defer srv.Close()
+
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	xlmUSD, _ := canonical.NewPair(xlm, usd)
+	s := NewStreamer(map[string]canonical.Pair{"XLMUSD": xlmUSD})
+	s.Endpoint = srv.URL
+
+	from := time.Unix(startSec, 0).UTC()
+	trades, err := s.Backfill(context.Background(), xlmUSD, from, from.Add(72*time.Hour), time.Minute)
+	if err == nil {
+		t.Fatalf("quoted last cursor: got %d trades and nil error, want a decode error", len(trades))
+	}
+	if !strings.Contains(err.Error(), "decode last cursor") {
+		t.Fatalf("err = %v, want the last-cursor decode failure", err)
+	}
+}
+
 // "RENDER/USD" leaves a 33-byte candle seed, which used to drop the
 // close time's last digit so neighbouring candles could share one
 // trades PK. Backfill must refuse it before walking rather than
@@ -319,7 +403,7 @@ func TestDefaultPairs_FitSyntheticTxHash(t *testing.T) {
 		t.Fatalf("DefaultPairs: %v", err)
 	}
 	for sym := range m {
-		if _, err := candleTxHash(sym, 0); err != nil {
+		if _, err := candleTxHash(sym, 0, scale.LegacyCandleGranularity); err != nil {
 			t.Errorf("candleTxHash(%q): %v", sym, err)
 		}
 		if _, err := formatTxHash(sym, 0); err != nil {

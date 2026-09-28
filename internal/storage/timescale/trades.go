@@ -2442,3 +2442,39 @@ func (s *Store) EarliestTradeInWindow(ctx context.Context, source string, pair c
 	}
 	return ts.UTC(), true, nil
 }
+
+// TradesInWindowOutside counts the stored (source, pair) rows in
+// [from, to) whose (tx_hash, ts) is not one of keep's, and returns the
+// earliest of them. Those are rows an upsert of keep would leave beside
+// its own, so writing keep over the window would count their volume twice.
+func (s *Store) TradesInWindowOutside(ctx context.Context, source string, pair canonical.Pair, from, to time.Time, keep []canonical.Trade) (int64, time.Time, error) {
+	const q = `
+        SELECT count(*), min(t.ts)
+          FROM trades t
+         WHERE t.base_asset  = $1::text
+           AND t.quote_asset = $2::text
+           AND t.source      = $3::text
+           AND t.ts         >= $4::timestamptz
+           AND t.ts          < $5::timestamptz
+           AND NOT EXISTS (
+                 SELECT 1
+                   FROM unnest($6::text[], $7::timestamptz[]) AS k(tx_hash, ts)
+                  WHERE k.tx_hash = t.tx_hash
+                    AND k.ts      = t.ts)`
+	hashes := make([]string, len(keep))
+	stamps := make([]time.Time, len(keep))
+	for i, tr := range keep {
+		hashes[i], stamps[i] = tr.TxHash, tr.Timestamp.UTC()
+	}
+	var (
+		n     int64
+		first sql.NullTime
+	)
+	err := s.db.QueryRowContext(ctx, q,
+		pair.Base.String(), pair.Quote.String(), source, from.UTC(), to.UTC(), hashes, stamps,
+	).Scan(&n, &first)
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("timescale: TradesInWindowOutside (%s %s): %w", source, pair.String(), err)
+	}
+	return n, first.Time.UTC(), nil
+}
