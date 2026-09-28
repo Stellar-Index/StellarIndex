@@ -739,6 +739,15 @@ stellarindex_backfill_from_ledger: 0
 #  will have later seams set when their indexers first start.]
 stellarindex_live_seam_ledger: 0
 
+# Lowest ledger the LOCAL galexie-archive mirror holds on purpose
+# (ADR-0027 trim; below it the cold tier serves). ONE value for every
+# consumer: the fill's static floor, archive-completeness's -from and the
+# verify-archive tiers' cold-start -from. 2 = no floor (the first ledger
+# galexie exports), right for an untrimmed or greenfield node. A trimmed
+# region sets it in its inventory in the same change that trims
+# (lcm-cache-tiering.md); r1.example.yml carries r1's trim boundary.
+stellarindex_archive_hot_floor: 2
+
 # ───── Stellar network / quorum ──────────────────────────────────────
 stellar_network:         "pubnet"
 

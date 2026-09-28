@@ -471,7 +471,7 @@
     group: root
     mode: "0644"
     content: |
-      ARCHIVE_HOT_FLOOR={{ stellarindex_archive_hot_floor | default(0) }}
+      ARCHIVE_HOT_FLOOR={{ stellarindex_archive_hot_floor }}
   tags: [galexie, archive-fill]
   when: (stellar_network | default('pubnet')) == 'pubnet'
 

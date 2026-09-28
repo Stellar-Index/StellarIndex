@@ -129,8 +129,9 @@ instead of holding every `-parallel` worker until SIGINT.
       `BackfillSafe=true` unconditionally.
 - [ ] **Galexie archive bucket reaches the requested range.**
       r1's `galexie-archive` mirror is TRIMMED to a hot floor
-      (ADR-0027; `stellarindex_archive_hot_floor` in the region's
-      inventory — 49,984,000 on r1 today), so it does **not** reach
+      (ADR-0027; `stellarindex_archive_hot_floor`, role default 2 = no
+      floor, set per region in the inventory — r1's trim boundary is
+      49,984,000, see `inventory/r1.example.yml`), so it does **not** reach
       ledger 2 and a request below the floor finds no objects. Check
       the floor before choosing `-from`:
       `ssh r1 'grep ARCHIVE_HOT_FLOOR /etc/default/galexie-archive-fill'`.

@@ -91,10 +91,12 @@ The journal's last lines indicate the failure mode:
     -fail-on-missed
   ```
 - [ ] **`run_stale`**: confirm the timer is enabled
-  (`systemctl enable --now verify-archive-tier-b.timer`). Note that during a
-  long Tier A bootstrap the shared singleton lock skips Tier B fires — the
-  timer still records a trigger, so staleness only fires on genuine
-  non-firing / repeated failure.
+  (`systemctl enable --now verify-archive-tier-b.timer`). During a long
+  Tier A run a Tier B fire queues behind the shared `verify-archive` lock
+  (`HEAVY_JOB_LOCK_WAIT`, up to 20h; the unit shows `activating`) and runs
+  when Tier A finishes. A wait that runs out fails the unit with "still
+  held after waiting" in the journal; find the holder with
+  `fuser -v /run/lock/stellarindex-heavy-verify-archive.lock`.
 - [ ] **Verification**: the next scheduled `verify-archive-tier-b.service`
   run completes cleanly (unit state `active`/`inactive`, not `failed`).
 

@@ -192,9 +192,9 @@ in real-time.
    ```
 
 > **Set the hot floor in the SAME change that trims.** The
-> `stellarindex_archive_hot_floor` inventory var (rendered to
-> `/etc/default/galexie-archive-fill`, `ARCHIVE_FROM` on
-> archive-completeness, and verify-archive-tier-a's cold-start default)
+> `stellarindex_archive_hot_floor` inventory var (role default 2 = no
+> floor; rendered to `/etc/default/galexie-archive-fill`, `ARCHIVE_FROM`
+> on archive-completeness, and the verify-archive tiers' cold-start `-from`)
 > tells the hourly mirror and the daily completeness check which
 > partitions are trimmed ON PURPOSE. Trim without raising it and the
 > next fill run re-downloads everything you deleted (~3.7 TB at the

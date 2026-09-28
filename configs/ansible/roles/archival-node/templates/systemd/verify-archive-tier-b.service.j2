@@ -38,7 +38,7 @@ WatchdogSec=1h
 # mid-pass would keep every run a full pass — the Tier A lesson).
 # FROM is the cold-start floor only; normal runs resume from the state
 # file's checkpoint high-water.
-Environment=VERIFY_ARCHIVE_FROM={{ stellarindex_archive_hot_floor | default(2) }}
+Environment=VERIFY_ARCHIVE_FROM={{ stellarindex_archive_hot_floor }}
 Environment=VERIFY_ARCHIVE_WORKERS=12
 Environment=VERIFY_ARCHIVE_MAX_RUNTIME=0
 Environment=VERIFY_ARCHIVE_STATE_FILE=/var/lib/stellarindex/verify-archive-state.json
@@ -81,6 +81,13 @@ EnvironmentFile=-/etc/default/stellarindex-ops
 # `exec`s the binary in place, keeping the payload as the unit's MAIN pid
 # (Type=notify + NotifyAccess=main + WatchdogSec intact).
 #
+# Tier A fires 74 minutes earlier and is uncapped (its bootstrap pass is
+# the longest heavy job), so a held lock QUEUES this fire behind it
+# (HEAVY_JOB_LOCK_WAIT, 20h) instead of skipping: a skip left the
+# checkpoint tier unverified for as long as Tier A ran, and in a
+# Type=notify unit an exit before READY=1 is a protocol failure whatever
+# SuccessExitStatus says. TimeoutStartSec below covers the wait.
+#
 # -fail-on-missed makes ADR-0017 contract 3 an exit code instead of a log
 # line. It is placed AFTER `stellarindex-ops verify-archive`: a flag among
 # the wrapper's leading arguments is eaten by run-heavy-job.sh and never
@@ -102,8 +109,9 @@ EnvironmentFile=-/etc/default/stellarindex-ops
 # run re-walks from there (widening, not skipping). node_exporter's
 # systemd collector raises stellarindex_verify_archive_tier_b_unit_failed
 # (severity: ticket) — runbook docs/operations/runbooks/verify-archive-tier-b.md.
-# 75 = run-heavy-job.sh skipped this fire (per-job lock held): not a
-# failure, but ExecMainStatus=75 keeps it distinct from a run.
+Environment=HEAVY_JOB_LOCK_WAIT=72000
+# 75 only reaches this unit from a caller that unsets the wait; kept for
+# the wrapper-wide SuccessExitStatus=75 contract.
 SuccessExitStatus=75
 # Timer-fired: shares run-heavy-job.sh's host-wide lock, never refused by it.
 Environment=HEAVY_JOB_CLASS=scheduled
@@ -142,8 +150,11 @@ ProtectControlGroups=true
 # unit needs is stated rather than inferred.
 ReadWritePaths=/var/lib/node_exporter/textfile_collector
 
-# TimeoutStartSec only governs READY=1; the walk is bounded by WatchdogSec.
-TimeoutStartSec=10m
+# TimeoutStartSec only governs READY=1: the lock wait
+# (HEAVY_JOB_LOCK_WAIT=72000) plus 10 minutes to start cleanly, in whole
+# seconds so scripts/ci/run-heavy-job-test.sh can prove it exceeds the
+# wait. The walk itself is bounded by WatchdogSec.
+TimeoutStartSec=72600
 
 # Deprioritize so the anchor pass yields CPU/IO to the API + postgres
 # during daytime hours rather than dragging p99.
