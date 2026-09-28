@@ -882,6 +882,7 @@ groups:
       - alert: stellarindex_sdex_orderbook_advance_held
         expr: |
           sum(rate(stellarindex_sdex_orderbook_maintain_total{outcome="advance_held"}[15m])) > 0
+          unless sum(rate(stellarindex_sdex_orderbook_maintain_total{outcome="advance_ok"}[15m])) > 0
         for: 30m
         labels:
           severity: ticket

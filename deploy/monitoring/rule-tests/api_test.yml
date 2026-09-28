@@ -288,6 +288,20 @@ tests:
         alertname: stellarindex_sdex_orderbook_advance_held
         exp_alerts: []
 
+  # ── occasional held ticks between real advances are not a hold ──
+  - interval: 1m
+    name: interleaved advance_held with advance_ok never trips advance_held
+    input_series:
+      - series: 'stellarindex_sdex_orderbook_maintain_total{job="stellarindex_api",instance="r1:8080",outcome="advance_held"}'
+        values: '0+1x120'
+      - series: 'stellarindex_sdex_orderbook_maintain_total{job="stellarindex_api",instance="r1:8080",outcome="advance_ok"}'
+        values: '0+1x120'
+
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_sdex_orderbook_advance_held
+        exp_alerts: []
+
   # ── the quarantine removal probe failing every tick tickets ──────
   # Advance is healthy but VerifyPending errors: the pending set never
   # drains and its offers stay withheld from every served book.
