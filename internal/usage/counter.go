@@ -417,7 +417,7 @@ func parseCount(v any) int64 {
 // gaps with zero buckets if the wire contract requires it). days
 // is clamped to RetentionDays — beyond that the data has expired.
 func (c *Counter) Read(ctx context.Context, subject string, days int) ([]Day, error) {
-	if subject == "" || days <= 0 {
+	if c == nil || subject == "" || days <= 0 {
 		return nil, nil
 	}
 	if days > RetentionDays {
