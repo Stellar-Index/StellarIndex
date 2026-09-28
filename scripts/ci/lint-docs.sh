@@ -380,10 +380,15 @@ stale_patterns=(
                                   # ATH/day-VWAP fix. Bare pattern (not scoped
                                   # to "R-008") so it also catches a citation
                                   # reappearing in the header list alone
-  "#1347\b"                      # STATUS.md's go-stellar-sdk v0.6 bump cited
-                                  # #1347 before it existed (RSWP-146); #1347
-                                  # is now a real, unrelated issue about
-                                  # retiring a data source
+  "Deferred #1347\b"              # STATUS.md's go-stellar-sdk v0.6 bump cited
+                                  # #1347 before it existed (RSWP-146). #1347
+                                  # is now the real "retiring a data source"
+                                  # issue, legitimately cited by number
+                                  # elsewhere (e.g. the retiring-a-source
+                                  # runbook), so the pattern is scoped to the
+                                  # original dangling phrase rather than a
+                                  # bare issue number that would also catch
+                                  # every correct future citation of it
   "#1353"                        # remediation STATUS.md cited the actions/checkout
                                   # v6→v7 bump PR as #1353 (RSWP-147); that number
                                   # now resolves to an unrelated auto-filed
