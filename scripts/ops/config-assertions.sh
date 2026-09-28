@@ -434,6 +434,31 @@ else
   skip archive_trimmer_uses_distinct_identity
 fi
 
+# ── MinIO Prometheus bearer token (INV-0981/INV-1144) ────────────────
+# /etc/prometheus/minio.token backed the 2026-07-03 incident (root
+# rotated, the token file kept the pre-rotation signature, and
+# minio_exporter_down paged) and had no ansible task producing it until
+# 16-prometheus-exporters.yml's Group D. That task only mints the file
+# when it is ABSENT (a svcacct secret is shown once, so it can never
+# safely overwrite one), so r1's 2026-07-03 hand-provisioned file
+# (root:prometheus 0640, predates this task) stays as-is rather than
+# converging to the fresh-bootstrap target (prometheus:prometheus
+# 0400) — both keep the secret out of "other", which is the property
+# that actually matters. Never read the content here — stat-only.
+if [[ -x /usr/local/bin/minio ]]; then
+  # shellcheck disable=SC2016  # the body is a script for the INNER bash
+  assert_cmd minio_prometheus_token_present bash -c '
+    f=/etc/prometheus/minio.token
+    [[ -s "$f" ]] || exit 1
+    owner="$(stat -c "%U" "$f" 2>/dev/null)"
+    group="$(stat -c "%G" "$f" 2>/dev/null)"
+    mode="$(stat -c "%a" "$f" 2>/dev/null)"
+    [[ ( "$owner" == "prometheus" || "$group" == "prometheus" ) && "${mode: -1}" == "0" ]]
+  '
+else
+  skip minio_prometheus_token_present
+fi
+
 mv "$TMP" "$OUT"
 chmod 644 "$OUT"
 echo "config-assertions: $fails failure(s)" >&2

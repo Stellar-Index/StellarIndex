@@ -1,6 +1,6 @@
 ---
 title: Runbook — MinIO Prometheus scrape returns 403
-last_verified: 2026-09-24
+last_verified: 2026-09-28
 status: current
 severity: P1
 ---
@@ -149,24 +149,21 @@ against the upstream MinIO docs.
 
 ## Long-term: Ansible
 
-This procedure is currently manual: **no Ansible task owns
-`/etc/prometheus/minio.token`.** Verified 2026-08-29 —
-`configs/ansible/roles/archival-node/tasks/09-minio.yml` never
-mentions the token, and nothing else in `configs/ansible/`
-templates it. (The scrape stanza in `prometheus.r1.yml` used to
-claim otherwise; that comment was corrected in the same pass.) The
-same gap is recorded in
-[credential-rotation.md](../credential-rotation.md#prometheus-bearer-token-regen-minio-root-rotation-only),
-which notes the 2026-07-03 incident where rotating the MinIO root
-password invalidated the bearer token by hand.
+Codified (INV-0981/INV-1144): Group D of
+`configs/ansible/roles/archival-node/tasks/16-prometheus-exporters.yml`
+(`--tags exporters`, gated on `run_minio` + `run_observability`) runs
+exactly steps 1-3 above and writes the token, but ONLY when
+`/etc/prometheus/minio.token` is absent — a svcacct secret is shown
+once, so the task can never safely overwrite an existing file. This
+procedure stays the fall-back for a first-ever provisioning where the
+task's preconditions (MinIO up, the `local` mc alias configured by
+`09-minio.yml`) are not yet met, and for the rotation case, which is
+always this manual mint-then-delete-then-reapply sequence — see
+[credential-rotation.md](../credential-rotation.md#prometheus-bearer-token-regen-inv-0981inv-1144--now-codified).
 
-When the gap closes, the token-mint step lives in `09-minio.yml`
-and the manual procedure here becomes a fall-back.
-
-Until then, `make verify-r1-sync` will surface any drift between
-the `prometheus.r1.yml` scrape config and the running daemon's
-view — but it can't generate the token file itself. That's an
-operator step every time the MinIO svcacct rotates.
+`scripts/ops/config-assertions.sh`'s `minio_prometheus_token_present`
+check (hourly) catches a missing, emptied, or wrong-owner file without
+reading it — see the same doc.
 
 ## Related
 
@@ -175,8 +172,8 @@ operator step every time the MinIO svcacct rotates.
 - F-0045 (audit-2026-05-26) — original finding.
 - `configs/prometheus/prometheus.r1.yml` — the `job_name: minio` scrape stanza.
 - F-0152 closure — sibling exporters (redis / postgres /
-  pgbackrest) now installed; MinIO is the last one waiting on
-  this manual token step.
+  pgbackrest) now installed; MinIO's token is the last piece,
+  closed by the Group D task above (INV-0981/INV-1144).
 - [exporter-down.md](exporter-down.md) — where
   `stellarindex_minio_exporter_down` routes; its per-exporter notes
   carry the day-to-day `Authorization: Bearer $(cat

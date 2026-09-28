@@ -10,7 +10,7 @@
 # files landed — the F-0085 meta-alert that fires `up == 0` is
 # the only thing that currently surfaces the gap.
 #
-# Three exporters wired here:
+# Four groups wired here:
 #   - Group A: redis_exporter via the Debian package
 #     `prometheus-redis-exporter` (port 9121). Distinct from the
 #     redis-sentinel role's tarball-based exporter — this is
@@ -28,6 +28,13 @@
 #     (port 9854). Same fail-fast checksum pattern as F-1280 /
 #     F-1285 / F-1291 / F-1293 — operator must set
 #     `pgbackrest_exporter_release_sha256` in inventory.
+#   - Group D: MinIO's native /minio/v2/metrics/cluster bearer token
+#     (INV-0981/INV-1144). No exporter binary — MinIO exposes its
+#     own metrics behind `admin:Prometheus`; provisioning was an
+#     operator hand-step (docs/operations/runbooks/minio-metrics-403.md)
+#     with no ansible task producing it, so a rebuilt or rotated host
+#     silently shipped a missing/empty `/etc/prometheus/minio.token`
+#     and every MinIO-dependent alert went blind.
 #
 # Env-files containing DATA_SOURCE_NAME live at mode 0640 with
 # group `prometheus` so the package-shipped systemd unit (which
@@ -259,3 +266,105 @@
         # two exporters above are PACKAGED (apt puts their units on the
         # host), so they are deliberately left unguarded.
         - not (ansible_check_mode and pgbackrest_exporter_unit is changed)
+
+# ── Group D: MinIO Prometheus bearer token ─────────────────────
+#
+# Procedure per docs/operations/runbooks/minio-metrics-403.md: a
+# dedicated `prometheus-read` policy scoped to `admin:Prometheus`
+# only, then a service account under MinIO root carrying that
+# policy — `mc admin user svcacct add` prints the generated secret
+# key ONCE, on creation, which is the bearer token
+# /minio/v2/metrics/cluster expects.
+#
+# Requires the `local` mc alias configured earlier in this role
+# (09-minio.yml) and the `prometheus` system user Group A/B above
+# create.
+- name: Group D — MinIO Prometheus bearer token (requires MinIO)
+  when: run_minio | bool
+  block:
+    - name: Render prometheus-read MinIO policy
+      # Same dir 09-minio.yml already created for the bucket policies.
+      ansible.builtin.copy:
+        dest: /etc/minio/policies/prometheus-read.json
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": ["admin:Prometheus"],
+                "Resource": ["arn:aws:s3:::*"]
+              }
+            ]
+          }
+
+    - name: Install / update prometheus-read MinIO policy
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/mc
+          - admin
+          - policy
+          - create
+          - local
+          - prometheus-read
+          - /etc/minio/policies/prometheus-read.json
+      changed_when: false
+
+    - name: Check for an existing Prometheus MinIO bearer token
+      ansible.builtin.stat:
+        path: /etc/prometheus/minio.token
+      register: minio_prom_token_file
+
+    - name: Generate the Prometheus MinIO bearer token
+      # Generated ONCE — svcacct add mints a NEW secret key every call, so
+      # re-running this on every apply would invalidate the previous token
+      # and break scraping until the next reload. Rotating it (MinIO root
+      # rotation only, docs/operations/credential-rotation.md) is a
+      # deliberate manual step: remove the file, then re-run this tag.
+      # stdout carries the secret key — no_log on this task and the write
+      # below, same posture as the `mc admin user add` tasks above.
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/mc
+          - admin
+          - user
+          - svcacct
+          - add
+          - local
+          - "{{ minio_root_user }}"
+          - --policy
+          - prometheus-read
+          - --name
+          - prometheus-metrics-scrape
+          - --description
+          - "Bearer-token scrape for /minio/v2/metrics/cluster"
+          - --json
+      register: minio_prom_svcacct
+      # Same reasoning as the mc-admin-user tasks in 09-minio.yml: a real
+      # MinIO mutation, not previewable, so it does not run under --check.
+      # Guarding the Write task below on the SAME condition (rather than
+      # `minio_prom_svcacct is not skipped`) matters on a fresh host that
+      # has never had a real apply: under --check the "no file yet" branch
+      # is always taken, so without this guard the Write task would
+      # reference `minio_prom_svcacct.stdout` from a task --check never ran.
+      when:
+        - not minio_prom_token_file.stat.exists
+        - not ansible_check_mode
+      changed_when: true
+      no_log: true
+
+    - name: Write the Prometheus MinIO bearer token file
+      ansible.builtin.copy:
+        dest: /etc/prometheus/minio.token
+        owner: prometheus
+        group: prometheus
+        mode: "0400"
+        content: "{{ (minio_prom_svcacct.stdout | from_json).secretKey }}"
+      when:
+        - not minio_prom_token_file.stat.exists
+        - not ansible_check_mode
+      no_log: true
+      notify: Restart prometheus
