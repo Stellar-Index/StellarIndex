@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"sync"
 	"time"
 
@@ -61,10 +62,11 @@ type Sink interface {
 // atomically — one read of the hypertable produces all three
 // windows.
 type Refresher struct {
-	src    TimedVWAPSource
-	sink   Sink
-	window time.Duration
-	logger *slog.Logger
+	src         TimedVWAPSource
+	sink        Sink
+	window      time.Duration
+	logger      *slog.Logger
+	minuteFloor *big.Rat
 }
 
 // NewRefresher constructs a Refresher. Pass `window <= 0` to use
@@ -77,7 +79,35 @@ func NewRefresher(src TimedVWAPSource, sink Sink, window time.Duration, logger *
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Refresher{src: src, sink: sink, window: window, logger: logger}
+	return &Refresher{src: src, sink: sink, window: window, logger: logger, minuteFloor: new(big.Rat)}
+}
+
+// WithMinuteNotionalFloor sets the USD notional one baseline sample point
+// must carry; see [Refresher.volumeBars] and [MinuteNotionalFloor]. nil or
+// negative means 0 (every priced minute is its own point).
+func (r *Refresher) WithMinuteNotionalFloor(floor *big.Rat) *Refresher {
+	if floor == nil || floor.Sign() < 0 {
+		floor = new(big.Rat)
+	}
+	r.minuteFloor = new(big.Rat).Set(floor)
+	return r
+}
+
+// MinuteNotionalFloor pro-rates the publish floor (min_usd_volume per
+// window) to one minute of the LONGEST published window, so a pair trading
+// at exactly the publish floor yields one baseline point per minute and the
+// bootstrap cap's density measures sustained USD flow, not print count.
+// minUSDVolume <= 0 (floor disabled) yields 0.
+func MinuteNotionalFloor(minUSDVolume float64, longestWindow time.Duration) *big.Rat {
+	minutes := int64(longestWindow / time.Minute)
+	if minUSDVolume <= 0 || minutes <= 0 {
+		return new(big.Rat)
+	}
+	f := new(big.Rat).SetFloat64(minUSDVolume)
+	if f == nil {
+		return new(big.Rat)
+	}
+	return f.Quo(f, new(big.Rat).SetInt64(minutes))
 }
 
 // RefreshOutcome describes the per-pair outcome of one refresh
@@ -90,6 +120,16 @@ const (
 	OutcomeNotEnoughSamples
 	OutcomeReadError
 	OutcomeWriteError
+	// OutcomeOKPerMinuteFallback: the window carried too little USD flow
+	// for MinSamples+1 volume bars, so the median/MAD were built one point
+	// per minute, as before volume bars, rather than leaving a publishable
+	// pair with no z-score freeze. Day30.N is clamped so the density stays
+	// that of the bars; see [Refresher.RefreshPair].
+	OutcomeOKPerMinuteFallback
+	// OutcomeOKUnvalued: no minute in the window carried a USD valuation,
+	// so notional is unmeasurable and the baseline was built from every
+	// minute to keep the z-score freeze live. Persisted, like OutcomeOK.
+	OutcomeOKUnvalued
 )
 
 func (o RefreshOutcome) String() string {
@@ -102,6 +142,10 @@ func (o RefreshOutcome) String() string {
 		return "read_error"
 	case OutcomeWriteError:
 		return "write_error"
+	case OutcomeOKPerMinuteFallback:
+		return "ok_per_minute_fallback"
+	case OutcomeOKUnvalued:
+		return "ok_unvalued"
 	default:
 		return "unknown"
 	}
@@ -111,10 +155,12 @@ func (o RefreshOutcome) String() string {
 // run. Counts per outcome let the caller emit metrics in one place
 // without scanning per-pair errors.
 type RefreshSummary struct {
-	OK               int
-	NotEnoughSamples int
-	ReadErrors       int
-	WriteErrors      int
+	OK                  int
+	NotEnoughSamples    int
+	ReadErrors          int
+	WriteErrors         int
+	OKPerMinuteFallback int
+	OKUnvalued          int
 }
 
 // RefreshPair recomputes the baseline for one pair and writes it.
@@ -130,6 +176,10 @@ type RefreshSummary struct {
 //   - (OutcomeNotEnoughSamples, [ErrNotEnoughSamples]) when even
 //     the 30d window has fewer than [MinSamples] returns — the
 //     pair is in full bootstrap and nothing is persisted
+//   - (OutcomeOKPerMinuteFallback, nil) on a successful upsert of the
+//     per-minute baseline for a pair with too little USD flow for bars
+//   - (OutcomeOKUnvalued, nil) on a successful upsert for a pair with no
+//     USD-valued minute in the window
 //   - (OutcomeReadError, err) on a [TimedVWAPSource] failure
 //   - (OutcomeWriteError, err) on a [Sink] failure
 func (r *Refresher) RefreshPair(ctx context.Context, pair canonical.Pair) (RefreshOutcome, error) {
@@ -141,9 +191,25 @@ func (r *Refresher) RefreshPair(ctx context.Context, pair canonical.Pair) (Refre
 		return OutcomeReadError, fmt.Errorf("baseline: TimedVWAPsForPair1m %s: %w", pair.String(), err)
 	}
 
-	d1, d7, d30 := SplitByLookback(timed, now)
-	multi := NewMultiBaseline(d1, d7, d30)
+	sample, valued := r.volumeBars(timed)
+	okOutcome := OutcomeOK
+	if !valued {
+		sample = timed
+		okOutcome = OutcomeOKUnvalued
+	}
 
+	multi := NewMultiBaseline(SplitByLookback(sample, now))
+	if multi.Day30 == nil && valued {
+		multi = NewMultiBaseline(SplitByLookback(timed, now))
+		okOutcome = OutcomeOKPerMinuteFallback
+		// Day30.N is also the bootstrap cap's density. Under three bars that
+		// density is ~0, but per-minute N is print count and dust can buy it
+		// past the gate (#1108). Clamping at MinZScoreSamples keeps the 30d
+		// window's freeze vote and drops the density to under an hour.
+		if multi.Day30 != nil && multi.Day30.N > MinZScoreSamples {
+			multi.Day30.N = MinZScoreSamples
+		}
+	}
 	if multi.Day30 == nil {
 		// Even the long window is in bootstrap; persist nothing.
 		// Caller's confidence-score loop applies ADR-0019 bootstrap
@@ -154,7 +220,43 @@ func (r *Refresher) RefreshPair(ctx context.Context, pair canonical.Pair) (Refre
 	if err := r.sink.UpsertBaseline(ctx, pair, now, windowStart, now, multi); err != nil {
 		return OutcomeWriteError, fmt.Errorf("baseline: UpsertBaseline %s: %w", pair.String(), err)
 	}
-	return OutcomeOK, nil
+	return okOutcome, nil
+}
+
+// volumeBars turns a valued pair's minutes into USD-volume bars: consecutive
+// priced minutes accumulate until their summed notional reaches the minute
+// floor, then emit one point at the last minute's bucket end, priced at the
+// USD-weighted mean of their VWAPs. Every point, and so every return and
+// every unit of Day30.N density, costs a floor's worth of USD flow; a dust
+// minute contributes usd/floor of a point and that share of its price, so
+// real flow sets the median/MAD. A minute at or above the floor is its own
+// point at its exact VWAP. Unpriced minutes prove no notional and are
+// skipped; a trailing sub-floor remainder is dropped. valued is false when
+// no minute carried a USD valuation, and the caller falls back to every
+// minute.
+func (r *Refresher) volumeBars(timed []TimedVWAP) (bars []TimedVWAP, valued bool) {
+	bars = make([]TimedVWAP, 0, len(timed))
+	usd, px := new(big.Rat), new(big.Rat)
+	for i := range timed {
+		t := timed[i]
+		if t.USDVolume == nil || t.USDVolume.Sign() <= 0 {
+			continue
+		}
+		v := new(big.Rat).SetFloat64(t.VWAP)
+		if v == nil {
+			continue
+		}
+		valued = true
+		usd.Add(usd, t.USDVolume)
+		px.Add(px, v.Mul(v, t.USDVolume))
+		if usd.Cmp(r.minuteFloor) < 0 {
+			continue
+		}
+		mean, _ := px.Quo(px, usd).Float64()
+		bars = append(bars, TimedVWAP{VWAP: mean, BucketEnd: t.BucketEnd, USDVolume: new(big.Rat).Set(usd)})
+		usd, px = new(big.Rat), new(big.Rat)
+	}
+	return bars, valued
 }
 
 // RefreshAll runs [Refresher.RefreshPair] for every pair in
@@ -216,6 +318,10 @@ loop:
 			sum.ReadErrors++
 		case OutcomeWriteError:
 			sum.WriteErrors++
+		case OutcomeOKPerMinuteFallback:
+			sum.OKPerMinuteFallback++
+		case OutcomeOKUnvalued:
+			sum.OKUnvalued++
 		}
 	}
 	return sum

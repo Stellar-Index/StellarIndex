@@ -706,7 +706,8 @@ func run(cfgPath string, dryRun bool) error {
 		baselineSinkAdapter{store: store},
 		baseline.DefaultWindow,
 		logger.With("component", "baseline-refresh"),
-	)
+	).WithMinuteNotionalFloor(baseline.MinuteNotionalFloor(
+		cfg.Aggregate.MinUSDVolume, orchestrator.LongestWindow(windows)))
 	var refresherWG sync.WaitGroup
 	refresherWG.Add(1)
 	go func() {
@@ -1806,9 +1807,13 @@ func runBaselineRefresh(ctx context.Context, r *baseline.Refresher, pairs []cano
 		obs.AggregatorBaselineRefreshTotal.WithLabelValues("not_enough_samples").Add(float64(sum.NotEnoughSamples))
 		obs.AggregatorBaselineRefreshTotal.WithLabelValues("read_error").Add(float64(sum.ReadErrors))
 		obs.AggregatorBaselineRefreshTotal.WithLabelValues("write_error").Add(float64(sum.WriteErrors))
+		obs.AggregatorBaselineRefreshTotal.WithLabelValues("ok_per_minute_fallback").Add(float64(sum.OKPerMinuteFallback))
+		obs.AggregatorBaselineRefreshTotal.WithLabelValues("ok_unvalued").Add(float64(sum.OKUnvalued))
 		logger.Info("baseline refresh complete",
 			"ok", sum.OK,
+			"ok_unvalued", sum.OKUnvalued,
 			"not_enough_samples", sum.NotEnoughSamples,
+			"ok_per_minute_fallback", sum.OKPerMinuteFallback,
 			"read_errors", sum.ReadErrors,
 			"write_errors", sum.WriteErrors,
 			"elapsed", time.Since(started).String(),
