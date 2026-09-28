@@ -921,9 +921,7 @@ type SoroswapConfig struct {
 // RegionConfig identifies the region this node belongs to, to tag
 // metrics and decide replication direction.
 type RegionConfig struct {
-	ID         string `toml:"id" doc:"Short region identifier, lowercase (r1/r2/r3)." default:"r1"`
-	Name       string `toml:"name" doc:"Human-readable region name (London, Ashburn, …)." default:"London"`
-	HomeDomain string `toml:"home_domain" doc:"DNS home domain for this org (used in stellar.toml + SCP quorum sub-quorum)." default:"stellarindex.io"`
+	ID string `toml:"id" doc:"Short region identifier, lowercase (r1/r2/r3)." default:"r1"`
 	// Deployment is the tier label /v1/status reports in
 	// `region.deployment` (and the ingestion diagnostics echo). It was
 	// hardcoded "production" in cmd/stellarindex-api, so the lean
@@ -940,7 +938,6 @@ type RegionConfig struct {
 // corresponding client.
 type StellarConfig struct {
 	Network           string   `toml:"network" doc:"Network passphrase name — pubnet / testnet / futurenet." default:"pubnet"`
-	CoreHTTPEndpoint  string   `toml:"core_http_endpoint" doc:"stellar-core admin HTTP (used for liveness)." default:"http://127.0.0.1:11626"`
 	RPCEndpoints      []string `toml:"rpc_endpoints" doc:"stellar-rpc endpoints for getEvents/getLedgers. Tried in order on failover. Default is a local, unkeyed node; a hosted third-party endpoint may embed an API key in the URL path/query — treat that value as a secret, same as chainlink's rpc_url." default:"[\"http://127.0.0.1:8000\"]"`
 	HistoryArchiveURL string   `toml:"history_archive_url" doc:"Public history archive (SDF or ours) for backfill catchup." default:"https://history.stellar.org/prd/core-live/core_live_001"`
 
@@ -1175,8 +1172,6 @@ func (s StorageConfig) ColdTieringEnabled() bool {
 type IngestionConfig struct {
 	EnabledSources     []string `toml:"enabled_sources" doc:"List of source connector names to run on this indexer replica. See config.KnownSources for valid values." default:"[\"soroswap\",\"aquarius\",\"phoenix\"]"`
 	BackfillFromLedger uint32   `toml:"backfill_from_ledger" doc:"Earliest ledger to backfill from; 0 = continue-from-persisted-cursor." default:"0"`
-	BackfillBatchSize  uint32   `toml:"backfill_batch_size" doc:"Ledgers per backfill fetch batch." default:"64"`
-	CursorStoreScheme  string   `toml:"cursor_store_scheme" doc:"Where per-source cursors live — postgres / redis." default:"postgres"`
 
 	// LiveSeamLedger is the first ledger written to the live bucket
 	// (galexie-live). Ledgers below it live in the historical bucket
@@ -1348,8 +1343,6 @@ type AnomalyThreshold struct {
 
 // AggregateConfig controls the aggregator's VWAP/TWAP computation.
 type AggregateConfig struct {
-	VWAPWindowSeconds            int                        `toml:"vwap_window_seconds" doc:"Rolling VWAP window in seconds." default:"300"`
-	TWAPWindowSeconds            int                        `toml:"twap_window_seconds" doc:"Rolling TWAP window in seconds (fallback when volume below threshold)." default:"300"`
 	MinUSDVolume                 float64                    `toml:"min_usd_volume" doc:"Per-pair minimum USD volume within the window for VWAP eligibility." default:"10000"`
 	MinMarketCapVolumeUSD        float64                    `toml:"min_market_cap_volume_usd" doc:"Valuation-integrity floor (USD): a market cap / FDV is SUPPRESSED (served null with market_cap_low_liquidity=true) when its backing price came from a single venue AND the asset's trailing-24h USD volume is below this floor. The AND is load-bearing — a single-venue asset with real volume, or any multi-source asset, keeps its cap. Stops one dust trade ('0.00001 of an asset for $10') presenting an obscure asset as worth billions. 0 disables the guard." default:"1000"`
 	MaxMarketCapVolumeRatio      float64                    `toml:"max_market_cap_volume_ratio" doc:"Valuation-integrity ceiling: a market cap / FDV is SUPPRESSED (served null with market_cap_low_liquidity=true) when the computed figure exceeds this multiple of the asset's own trailing-24h USD volume. Read it as days-to-turn-over — a cap of N x volume is the number of days the whole float would take to change hands once at the observed rate. The absolute floor beside it (min_market_cap_volume_usd) cannot see this case: it asks whether trading is small, and an asset can clear it with real four-figure volume while still claiming a cap nine orders of magnitude larger. Measured on pubnet 2026-09-15 the served set separated cleanly at this line: every recognised asset sat at or below 2,856x (7.8 years) and two vanity mints from one domain sat at 826,462x and 928,117x (2,300-2,500 years), together publishing $5.89B of the surface's headline total on $6,759 of combined daily volume. 0 disables the guard." default:"50000"`
@@ -1402,6 +1395,18 @@ type APIConfig struct {
 	AuthBackend         string   `toml:"auth_backend" doc:"Backing store for API-key validation. 'redis' (default) uses the legacy apikey:<hash> JSON records minted by /v1/signup. 'postgres' uses the platform.api_keys table (the dashboard's source of truth) with Redis as a read-through cache — required for keys minted from the dashboard to authenticate against the runtime API. Cutover knob: deployments running both /v1/signup keys and dashboard-minted keys should use 'postgres' (the validator falls back to Postgres on Redis cache miss + writes back, so existing legacy keys keep working transparently). CUTOVER PROCEDURE — this is the hot auth path on a live API, so flip after a soak, not blind: (1) leave 'redis' running and confirm the dashboard bundle is wired (api.dashboard.base_url set, Postgres reachable) — the Postgres validator is constructed regardless of this flag, so its InvalidateCachedKey path is already active on dashboard revoke; (2) flip a canary instance to 'postgres' and watch that authenticated traffic still 200s and that dashboard-minted keys now authenticate; (3) soak, then roll the fleet. ROLLBACK is instant and lossless: set 'redis' and restart — no data migration either direction (Postgres stays the dashboard's source of truth, Redis keeps the legacy /v1/signup records; the two populations coexist). The 'postgres' read-through cache lives under apikey-cache:<hash>, apart from the apikey:<hash> records, so after a flip the 'redis' validator never serves a leftover cache row as a credential; the rows roll off on their own TTL. Invalidation on revoke/update works in BOTH modes: 'redis' rewrites the canonical record in place; 'postgres' evicts the read-through cache entry (dashboard revoke + the admin tier clamp both call InvalidateCachedKey). NOTE: 'postgres' disables the legacy /v1/account/keys self-service surface (it writes only to Redis, which the Postgres validator does not read as canonical) — customers manage keys via /v1/dashboard/keys instead." default:"redis"`
 	AnonRateLimitPerMin int      `toml:"anon_rate_limit_per_min" doc:"Per-IP rate limit for anonymous requests. 0 DISABLES the anonymous tier entirely (fail-open, unbounded) — Validate() accepts 0 as a deliberate opt-out, but the API binary logs a boot-time WARN so the choice isn't silent (CFG-08, audit-2026-07-23)." default:"60"`
 	KeyRateLimitPerMin  int      `toml:"key_rate_limit_per_min" doc:"Per-API-key rate limit, default tier. 0 DISABLES the authenticated tier entirely (fail-open, unbounded) — Validate() accepts 0 as a deliberate opt-out, but the API binary logs a boot-time WARN so the choice isn't silent (CFG-08, audit-2026-07-23)." default:"1000"`
+
+	// RateLimitDwell wires ratelimit.WithDwellTime for the anon/key/
+	// failed-auth buckets. GH-1131: the dwell window was documented as
+	// operator-tunable but had no config path or caller, so the #625
+	// stellarindex_ratelimit_fail_open alert (10-minute rule window)
+	// could not be tuned around without a rebuild. A negative value
+	// disables the fail-open→fail-closed inversion.
+	RateLimitDwell time.Duration `toml:"rate_limit_dwell" doc:"Fail-open dwell window for the anon/key/failed-auth rate-limit buckets before Take starts returning ratelimit.ErrThrottleUnavailable (fail-CLOSED, 503) on sustained Redis errors. Mirrors ratelimit.DefaultDwellTime. Negative disables the inversion (legacy fail-open-always)." default:"30s"`
+
+	// MonthlyQuotaDwell wires middleware.WithMonthlyQuotaDwellTime.
+	// Mirrors RateLimitDwell for the monthly-quota gate (GH-1131).
+	MonthlyQuotaDwell time.Duration `toml:"monthly_quota_dwell" doc:"Fail-open dwell window for the monthly-quota middleware before month-to-date read errors flip it to fail-CLOSED (429 + Retry-After). Mirrors middleware.DefaultMonthlyQuotaDwellTime. Negative disables the inversion (legacy fail-open-always)." default:"30s"`
 
 	// FailedAuthRateLimitPerMin caps invalid-credential attempts (C3-5).
 	// Auth runs before the main rate limiter, so a wrong API key / SEP-10
@@ -2170,6 +2175,8 @@ func defaultAPIConfig() APIConfig {
 		AnonRateLimitPerMin:       60,
 		KeyRateLimitPerMin:        1000,
 		FailedAuthRateLimitPerMin: 20,
+		RateLimitDwell:            30 * time.Second,
+		MonthlyQuotaDwell:         30 * time.Second,
 		// Unauth-DoS chokepoint (audit-2026-07-16): the app-layer request
 		// deadline (15s) is the primary bound; the serving-pool
 		// statement_timeout (30s) is the SQL-side backstop, kept longer so
@@ -2232,19 +2239,24 @@ func defaultAPIConfig() APIConfig {
 // otherwise turn every such upgrade into a hard outage (#890). Add an entry
 // here in the same commit that removes the field; the value is a short note
 // on what replaced it, surfaced in the boot-time warning.
-var RetiredKeys = map[string]string{}
+var RetiredKeys = map[string]string{
+	"aggregate.vwap_window_seconds": "GH-1129: unread — windows come from aggregate.windows via AggregatorWindows()",
+	"aggregate.twap_window_seconds": "GH-1129: unread — windows come from aggregate.windows via AggregatorWindows()",
+	"ingestion.cursor_store_scheme": "GH-1129: unread — cursors are unconditionally Postgres",
+	"ingestion.backfill_batch_size": "GH-1129: unread",
+	"region.name":                   "GH-1129: unread — region label is region.id",
+	"region.home_domain":            "GH-1129: unread — SEP-10 reads api.sep10.home_domain",
+	"stellar.core_http_endpoint":    "GH-1129: unread — no liveness probe consumes it",
+}
 
 func Default() Config {
 	return Config{
 		Region: RegionConfig{
 			ID:         "r1",
-			Name:       "London",
-			HomeDomain: "stellarindex.io",
 			Deployment: "production",
 		},
 		Stellar: StellarConfig{
 			Network:           "pubnet",
-			CoreHTTPEndpoint:  "http://127.0.0.1:11626",
 			RPCEndpoints:      []string{"http://127.0.0.1:8000"},
 			HistoryArchiveURL: "https://history.stellar.org/prd/core-live/core_live_001",
 			// Pubnet protocol-transition boundaries (pinned to the leaf consts
@@ -2277,8 +2289,6 @@ func Default() Config {
 		Ingestion: IngestionConfig{
 			EnabledSources:     []string{"soroswap", "aquarius", "phoenix"},
 			BackfillFromLedger: 0,
-			BackfillBatchSize:  64,
-			CursorStoreScheme:  "postgres",
 			LiveSeamLedger:     0,
 			// Projector defaults to Phase-3 PARALLEL mode: when an
 			// operator enables it (Enabled=true) the dispatcher KEEPS
@@ -2361,8 +2371,6 @@ func Default() Config {
 // under funlen.
 func defaultAggregateConfig() AggregateConfig {
 	return AggregateConfig{
-		VWAPWindowSeconds:            300,
-		TWAPWindowSeconds:            300,
 		MinUSDVolume:                 10_000,
 		MinMarketCapVolumeUSD:        1_000,
 		MaxMarketCapVolumeRatio:      50_000,

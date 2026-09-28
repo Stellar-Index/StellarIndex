@@ -18,7 +18,6 @@ func TestLoadReader_happyPath(t *testing.T) {
 	tomlBody := `
 [region]
 id = "r2"
-name = "Ashburn"
 
 [stellar]
 network = "pubnet"
@@ -32,13 +31,6 @@ postgres_dsn = "postgres://u:p@h/db"
 	}
 	if c.Region.ID != "r2" {
 		t.Errorf("region.id = %q, want r2", c.Region.ID)
-	}
-	if c.Region.Name != "Ashburn" {
-		t.Errorf("region.name = %q", c.Region.Name)
-	}
-	// Default home_domain survives when the file omits it.
-	if c.Region.HomeDomain != "stellarindex.io" {
-		t.Errorf("default home_domain not applied, got %q", c.Region.HomeDomain)
 	}
 	if c.Storage.PostgresDSN != "postgres://u:p@h/db" {
 		t.Errorf("postgres_dsn = %q", c.Storage.PostgresDSN)
