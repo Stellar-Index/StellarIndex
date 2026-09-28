@@ -254,3 +254,102 @@ func TestFillRefusesConcurrentRun(t *testing.T) {
 		t.Fatalf("fill touched mc while another run held the lock: %v", calls)
 	}
 }
+
+// TestFillMirrorsNothingWhenNothingIsMissing: with the local archive already
+// matching AWS the needs-work list is empty, and Phase 3 must make no mirror
+// call. An xargs that runs its command once on empty input hands the worker
+// an empty partition, which mirrors the whole pubnet bucket past the floor.
+func TestFillMirrorsNothingWhenNothingIsMissing(t *testing.T) {
+	t.Parallel()
+	h := newFillHarness(t)
+
+	parts := []string{".config.json", "FFFFFFFF--0-63999", "FFD5FFFF--2688000-2751999"}
+	aws := h.writeList(t, "aws.list", parts...)
+	local := h.writeList(t, "local.list", parts...)
+	out, err := h.run(t, fillScript, "STUB_AWS_LIST="+aws, "STUB_LOCAL_LIST="+local)
+	if err != nil {
+		t.Fatalf("galexie-archive-fill: %v\n%s", err, out)
+	}
+	if got := readLines(t, h.mirrored); len(got) != 0 {
+		t.Fatalf("fill mirrored %v with nothing missing, want no mirror call", got)
+	}
+}
+
+// TestFillRefusesNonPartitionNames: partition names come from the upstream
+// bucket listing and the fill runs as root. A listed name that is not a
+// Galexie partition must never be parsed as shell or used as an mc path; the
+// valid partitions are still mirrored and the run then fails loudly.
+func TestFillRefusesNonPartitionNames(t *testing.T) {
+	t.Parallel()
+	h := newFillHarness(t)
+
+	const good = "FFD5FFFF--2688000-2751999"
+	pwned := filepath.Join(h.dir, "PWNED")
+	// No whitespace, so the name survives the script's `awk '{print $NF}'`.
+	evil := "x$(touch${IFS}" + pwned + ")--0-99999999"
+	aws := h.writeList(t, "aws.list", ".config.json", good, evil)
+	local := h.writeList(t, "local.list")
+	out, err := h.run(t, fillScript, "STUB_AWS_LIST="+aws, "STUB_LOCAL_LIST="+local)
+
+	if _, statErr := os.Stat(pwned); statErr == nil {
+		t.Fatalf("a listed partition name was executed as shell (created %s)\n%s", pwned, out)
+	}
+	if got := readLines(t, h.mirrored); !slices.Equal(got, []string{"local/galexie-archive/" + good + "/"}) {
+		t.Fatalf("fill mirrored %v, want only the valid partition %s", got, good)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("fill with a non-partition name listed: err=%v, want exit 1\n%s", err, out)
+	}
+	if !strings.Contains(out, "not Galexie partitions") {
+		t.Fatalf("fill did not name the refused entry:\n%s", out)
+	}
+}
+
+// TestFillRefusesBadPartialsBeforeDeleting: PARTIALS is operator input fed to
+// `mc rm --recursive --force`. One entry that is not a partition refuses the
+// whole list before anything is deleted; a valid list deletes exactly those.
+func TestFillRefusesBadPartialsBeforeDeleting(t *testing.T) {
+	t.Parallel()
+	h := newFillHarness(t)
+
+	const good = "FFD5FFFF--2688000-2751999"
+	aws := h.writeList(t, "aws.list", good)
+	local := h.writeList(t, "local.list", good)
+	env := []string{"STUB_AWS_LIST=" + aws, "STUB_LOCAL_LIST=" + local}
+
+	out, err := h.run(t, fillScript, append(env, "PARTIALS="+good+" ../other-bucket")...)
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("fill with a bad PARTIALS entry: err=%v, want exit 1\n%s", err, out)
+	}
+	if calls := mcCallsWithPrefix(t, h, "rm "); len(calls) != 0 {
+		t.Fatalf("fill deleted %v before refusing a bad PARTIALS entry", calls)
+	}
+
+	if out, err := h.run(t, fillScript, append(env, "PARTIALS="+good)...); err != nil {
+		t.Fatalf("fill with valid PARTIALS: %v\n%s", err, out)
+	}
+	want := []string{"rm --recursive --force local/galexie-archive/" + good + "/"}
+	if calls := mcCallsWithPrefix(t, h, "rm "); !slices.Equal(calls, want) {
+		t.Fatalf("fill deleted %v, want %v", calls, want)
+	}
+}
+
+func mcCallsWithPrefix(t *testing.T, h *fillHarness, prefix string) []string {
+	t.Helper()
+	b, err := os.ReadFile(h.mcCalls)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			calls = append(calls, line)
+		}
+	}
+	return calls
+}
