@@ -88,6 +88,7 @@ func TestSignupVerifySendFailure_DoesNotLogPlaintextEmail(t *testing.T) {
 
 		SignupVerifier:      noopSignupVerifier{},
 		SignupVerifyEmailer: failingVerifyEmailer{},
+		SignupVerifyBaseURL: "https://api.stellarindex.test/v1",
 	})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()

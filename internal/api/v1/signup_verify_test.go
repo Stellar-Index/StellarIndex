@@ -346,6 +346,7 @@ func TestSignup_IssuesVerificationToken_WhenWired(t *testing.T) {
 		Signups:             signups,
 		SignupVerifier:      verifier,
 		SignupVerifyEmailer: emailer,
+		SignupVerifyBaseURL: "https://api.stellarindex.test/v1",
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
@@ -443,6 +444,7 @@ func TestSignup_SendErrorIsNonFatal(t *testing.T) {
 		Signups:             signups,
 		SignupVerifier:      verifier,
 		SignupVerifyEmailer: emailer,
+		SignupVerifyBaseURL: "https://api.stellarindex.test/v1",
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

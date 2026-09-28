@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -211,9 +212,138 @@ func TestSignup_VerifyLinkIgnoresForgedHost(t *testing.T) {
 	if strings.Contains(got, "attacker.example") {
 		t.Errorf("verifyURL = %q, must not contain the forged Host", got)
 	}
-	const wantPrefix = "https://api.stellarindex.io/signup/verify?token="
+	const wantPrefix = "https://api.stellarindex.io/v1/signup/verify?token="
 	if !strings.HasPrefix(got, wantPrefix) {
 		t.Errorf("verifyURL = %q, want prefix %q (built from SignupVerifyBaseURL)", got, wantPrefix)
+	}
+}
+
+// newVerifyWiredSignupServer returns a signup server with the verify
+// flow wired against base, plus the fakes it records into.
+func newVerifyWiredSignupServer(t *testing.T, base string) (*httptest.Server, *fakeSignupVerifier, *fakeSignupVerifyEmailer) {
+	t.Helper()
+	verifier := newFakeSignupVerifier(nil)
+	emailer := &fakeSignupVerifyEmailer{}
+	srv := v1.New(v1.Options{
+		Auth: fakeAuthMiddleware(auth.Subject{}),
+		Accounts: &fakeAccountStore{
+			rec:   auth.APIKeyRecord{KeyID: "kid_base", Tier: auth.TierAPIKey},
+			plain: "sip_base",
+		},
+		Signups:             newFakeSignupTracker(),
+		SignupVerifier:      verifier,
+		SignupVerifyEmailer: emailer,
+		SignupVerifyBaseURL: base,
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return ts, verifier, emailer
+}
+
+// postSignupForgedHost posts a signup whose Host and X-Forwarded-*
+// headers name an attacker origin.
+func postSignupForgedHost(t *testing.T, ts *httptest.Server) v1.SignupResult {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/signup",
+		strings.NewReader(`{"email":"victim@example.com"}`))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Host = "attacker.example"
+	req.Header.Set("X-Forwarded-Proto", "http")
+	req.Header.Set("X-Forwarded-Host", "attacker.example")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /v1/signup: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (verification is best-effort)", resp.StatusCode)
+	}
+	var body struct {
+		Data v1.SignupResult `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return body.Data
+}
+
+// TestSignup_VerifyLinkFailsClosedWithoutUsableBase — T207: with no
+// usable configured base there is no trustworthy origin for the link,
+// so the request's Host must not stand in for it. No token is
+// reserved and no email is sent.
+func TestSignup_VerifyLinkFailsClosedWithoutUsableBase(t *testing.T) {
+	for name, base := range map[string]string{
+		"empty":       "",
+		"blank":       "   ",
+		"no scheme":   "api.stellarindex.test/v1",
+		"bad scheme":  "javascript:alert(1)",
+		"userinfo":    "https://user:pass@api.stellarindex.test/v1",
+		"query":       "https://api.stellarindex.test/v1?x=1",
+		"fragment":    "https://api.stellarindex.test/v1#x",
+		"scheme only": "https://",
+	} {
+		t.Run(name, func(t *testing.T) {
+			ts, verifier, emailer := newVerifyWiredSignupServer(t, base)
+			if postSignupForgedHost(t, ts).EmailVerificationSent {
+				t.Errorf("EmailVerificationSent = true, want false (base %q unusable)", base)
+			}
+			verifier.mu.Lock()
+			defer verifier.mu.Unlock()
+			if len(verifier.tokens) != 0 {
+				t.Errorf("Reserved tokens = %d, want 0", len(verifier.tokens))
+			}
+			emailer.mu.Lock()
+			defer emailer.mu.Unlock()
+			if len(emailer.sends) != 0 {
+				t.Errorf("sends = %d, want 0; sent %q", len(emailer.sends), emailer.sends[0].verifyURL)
+			}
+		})
+	}
+}
+
+// TestSignup_VerifyLinkResolvesToMountedRoute — the emailed link must
+// be the configured origin plus the route the server actually mounts
+// (GET /v1/signup/verify), whether or not the base carries "/v1".
+func TestSignup_VerifyLinkResolvesToMountedRoute(t *testing.T) {
+	for _, base := range []string{
+		"https://api.stellarindex.test/v1",
+		"https://api.stellarindex.test/v1/",
+		"https://api.stellarindex.test",
+	} {
+		t.Run(base, func(t *testing.T) {
+			ts, verifier, emailer := newVerifyWiredSignupServer(t, base)
+			if !postSignupForgedHost(t, ts).EmailVerificationSent {
+				t.Fatalf("EmailVerificationSent = false, want true")
+			}
+			verifier.mu.Lock()
+			var token string
+			for tok := range verifier.tokens {
+				token = tok
+			}
+			verifier.mu.Unlock()
+			emailer.mu.Lock()
+			got := emailer.sends[0].verifyURL
+			emailer.mu.Unlock()
+			want := "https://api.stellarindex.test/v1/signup/verify?token=" + token
+			if token == "" || got != want {
+				t.Fatalf("verifyURL = %q, want %q", got, want)
+			}
+			link, err := url.Parse(got)
+			if err != nil {
+				t.Fatalf("parse %q: %v", got, err)
+			}
+			resp, err := http.Get(ts.URL + link.RequestURI())
+			if err != nil {
+				t.Fatalf("GET %s: %v", link.RequestURI(), err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("GET %s = %d, want 200 (link must hit the mounted verify page)", link.RequestURI(), resp.StatusCode)
+			}
+		})
 	}
 }
 

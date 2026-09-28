@@ -454,6 +454,10 @@ unfreeze_buckets                    = 2
 # exposes :3000 (no auth if auth_mode=none) to the network — set this
 # to 127.0.0.1:3000 in that case (audit-2026-07-23 INF-19).
 listen_addr              = "0.0.0.0:3000"
+# SELF-HOSTERS: set this to YOUR public /v1 root. Emailed /v1/signup
+# verification links are built from it (never from the request's Host
+# header); the upstream value below would send your users' live tokens
+# to our host. Empty or non-http(s) suppresses the verification email.
 external_base_url        = "https://api.stellarindex.io/v1"
 # auth_mode=none matches this product's default posture: a public,
 # no-auth read API for market data (see the allowed_origins rationale

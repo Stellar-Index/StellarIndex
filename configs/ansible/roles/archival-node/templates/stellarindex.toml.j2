@@ -359,6 +359,9 @@ usd_pegged_classic_assets = []   {# pricing off (test net): no USD pegs, assets 
 # ──────────────────────────────────────────────────────────────────
 [api]
 listen_addr = "{{ stellarindex_api_listen_addr | default('127.0.0.1:3000') }}"
+# Origin of emailed signup-verification links; each network's inventory
+# overrides it (a testnet token is useless on the pubnet API).
+external_base_url = "{{ stellarindex_api_external_base_url | default('https://api.stellarindex.io/v1') }}"
 # The test-net explorer origins are included on every network so the nav
 # network-switcher can read each network's public /v1/ledger/tip cross-origin
 # (e.g. the mainnet explorer showing testnet's live ledger, and vice-versa).
