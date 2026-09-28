@@ -85,7 +85,19 @@ func registerAppMetrics() {
 		TradeInsertRetriesTotal,
 		TradeInsertBufferDepth,
 		StreamPublishTotal,
+	)
+	registerPricingMetrics()
+	registerProjectorMetrics()
+	registerAPIServingMetrics()
+	registerFreezeLifecycleMetrics()
+	registerAppMetricsTail()
+}
 
+// registerPricingMetrics registers price-serving, aggregator and supply
+// cross-check metrics. Peeled off [registerAppMetrics] for the same funlen
+// reason [registerProjectorMetrics] was: the set only grows.
+func registerPricingMetrics() {
+	Registry.MustRegister(
 		PriceStalenessSeconds,
 		OracleLastUpdateUnix,
 		OracleStreamRowsUnparsedTotal,
@@ -129,10 +141,6 @@ func registerAppMetrics() {
 
 		MarketsSkippedRowsTotal,
 	)
-	registerProjectorMetrics()
-	registerAPIServingMetrics()
-	registerFreezeLifecycleMetrics()
-	registerAppMetricsTail()
 }
 
 // registerProjectorMetrics registers the ADR-0032 projector family — lag,
