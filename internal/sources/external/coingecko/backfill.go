@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
@@ -162,7 +163,7 @@ func (p *Poller) fetchMarketChartRange(ctx context.Context, id, currency string,
 		req.Header.Set("x-cg-demo-api-key", p.DemoAPIKey)
 	}
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := httpx.NewKeyedClient("coingecko", 60*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http: %w", err)

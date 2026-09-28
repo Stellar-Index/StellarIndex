@@ -47,6 +47,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
@@ -269,7 +270,7 @@ func (p *Poller) fetchQuotes(ctx context.Context, selector, selectorValue string
 	req.Header.Set(APIKeyHeader, p.APIKey)
 	req.Header.Set("Accept", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := httpx.NewKeyedClient("coinmarketcap", 30*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return quotesResponse{}, fmt.Errorf("http: %w", err)

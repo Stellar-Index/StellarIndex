@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -277,10 +278,7 @@ func newListingClient(baseURL string, keys config.CoinGeckoVenueConfig) *listing
 	c := &listingClient{
 		authMode: "none",
 		baseURL:  listingDemoBaseURL,
-		http: &http.Client{
-			Timeout:       listingFetchTimeout,
-			CheckRedirect: keyedSameOriginRedirect("listing-sync"),
-		},
+		http:     httpx.NewKeyedClient("listing-sync", listingFetchTimeout),
 	}
 	if k := strings.TrimSpace(keys.APIKey); k != "" {
 		c.key, c.keyHeader, c.authMode, c.baseURL = k, "x-cg-pro-api-key", "pro", listingProBaseURL

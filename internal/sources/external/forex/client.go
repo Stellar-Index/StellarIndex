@@ -39,6 +39,8 @@ import (
 	neturl "net/url"
 	"strings"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 )
 
 // MassiveBase is the Massive REST API root.
@@ -63,7 +65,7 @@ type Client struct {
 // fetch must check ApiKey() first or trust upstream 401s.
 func NewClient(apiKey string) *Client {
 	return &Client{
-		http:   &http.Client{Timeout: fetchTimeout},
+		http:   httpx.NewKeyedClient("forex", fetchTimeout),
 		base:   MassiveBase,
 		apiKey: apiKey,
 	}
