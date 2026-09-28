@@ -25,6 +25,14 @@ const metricLastSuccessTimestamp = "stellarindex_supply_snapshot_last_success_ti
 
 const helpLastSuccessTimestamp = "Unix timestamp of the most recent successful snapshot."
 
+// metricVerifyRollupLastSuccessTimestamp is the staleness key for
+// `supply verify-rollup` runs — same carry-forward contract as
+// [metricLastSuccessTimestamp], on its own textfile so a stalled
+// verify-rollup timer doesn't get confused with a stalled snapshot one.
+const metricVerifyRollupLastSuccessTimestamp = "stellarindex_supply_verify_rollup_last_success_timestamp"
+
+const helpVerifyRollupLastSuccessTimestamp = "Unix timestamp of the most recent verify-rollup run with 0 drift and 0 missing checkpoints."
+
 // WriteSnapshotTextfile renders a [Supply] snapshot to path in the
 // Prometheus textfile-collector format used by node_exporter.
 //
@@ -42,7 +50,7 @@ const helpLastSuccessTimestamp = "Unix timestamp of the most recent successful s
 // `<path>.tmp` first, rename into place. node_exporter skips
 // `.tmp` files, so a partial write never appears in a scrape.
 func WriteSnapshotTextfile(path string, snap Supply, durationSec float64, pass bool) error {
-	return writeAtomicCarryingLastSuccess(path, func(w io.Writer) error {
+	return writeAtomicCarryingLastSuccess(path, metricLastSuccessTimestamp, helpLastSuccessTimestamp, func(w io.Writer) error {
 		return writeSnapshotMetrics(w, snap, durationSec, pass)
 	})
 }
@@ -65,8 +73,35 @@ func WriteSnapshotFailureTextfile(path, assetRaw string, durationSec float64) er
 	if err != nil {
 		assetKey = assetRaw
 	}
-	return writeAtomicCarryingLastSuccess(path, func(w io.Writer) error {
+	return writeAtomicCarryingLastSuccess(path, metricLastSuccessTimestamp, helpLastSuccessTimestamp, func(w io.Writer) error {
 		return writeFailureMetrics(w, assetKey, durationSec)
+	})
+}
+
+// WriteVerifyRollupTextfile renders a `supply verify-rollup` run to path in
+// the Prometheus textfile-collector format, mirroring [WriteSnapshotTextfile]'s
+// contract: pass=true emits a fresh `verify_rollup_last_success_timestamp`;
+// pass=false carries the previous file's forward (see
+// [writeAtomicCarryingLastSuccess]) rather than erasing it on one bad run.
+//
+// missingCount is watched SEP-41 contracts with no sep41_supply_rollup
+// checkpoint row — unexamined, not clean (see [rollupExitDecision]) — kept
+// distinct from driftCount because a stale-report investigation and a
+// deleted-row investigation start in different places.
+func WriteVerifyRollupTextfile(path string, checked, driftCount, missingCount int, durationSec float64, pass bool) error {
+	return writeAtomicCarryingLastSuccess(path, metricVerifyRollupLastSuccessTimestamp, helpVerifyRollupLastSuccessTimestamp, func(w io.Writer) error {
+		return writeVerifyRollupMetrics(w, checked, driftCount, missingCount, durationSec, pass)
+	})
+}
+
+// WriteVerifyRollupFailureTextfile is the failure-path emit for a run that
+// errored before it had checked/drift/missing counts to report (config
+// load, storage open, a re-sum query error). Only `unit_failed` and the
+// run-duration gauge; the previous file's `verify_rollup_last_success_timestamp`
+// is carried forward untouched.
+func WriteVerifyRollupFailureTextfile(path string, durationSec float64) error {
+	return writeAtomicCarryingLastSuccess(path, metricVerifyRollupLastSuccessTimestamp, helpVerifyRollupLastSuccessTimestamp, func(w io.Writer) error {
+		return writeVerifyRollupFailureMetrics(w, durationSec)
 	})
 }
 
@@ -183,6 +218,89 @@ func writeGaugeInt(w io.Writer, name, help, asset string, value int64) error {
 	return err
 }
 
+// writeGaugeIntNoLabel is [writeGaugeInt] without an `asset_key` label, for
+// metrics scoped to a whole run rather than one asset (verify-rollup).
+func writeGaugeIntNoLabel(w io.Writer, name, help string, value int64) error {
+	_, err := fmt.Fprintf(w,
+		"# HELP %s %s\n# TYPE %s gauge\n%s %d\n",
+		name, help, name, name, value)
+	return err
+}
+
+// writeVerifyRollupMetrics emits the full success-path metric set for a
+// `supply verify-rollup` run:
+//
+//	stellarindex_supply_verify_rollup_checked_total
+//	stellarindex_supply_verify_rollup_drift_total
+//	stellarindex_supply_verify_rollup_missing_total
+//	stellarindex_supply_verify_rollup_run_duration_seconds
+//	stellarindex_supply_verify_rollup_unit_failed                 0
+//	stellarindex_supply_verify_rollup_last_success_timestamp
+func writeVerifyRollupMetrics(w io.Writer, checked, driftCount, missingCount int, durationSec float64, pass bool) error {
+	if err := writeGaugeIntNoLabel(w,
+		"stellarindex_supply_verify_rollup_checked_total",
+		"Number of sep41_supply_rollup checkpoints checked in the most recent run.",
+		int64(checked)); err != nil {
+		return err
+	}
+	if err := writeGaugeIntNoLabel(w,
+		"stellarindex_supply_verify_rollup_drift_total",
+		"Number of (contract,kind) checkpoints that diverged from the authoritative re-sum in the most recent run.",
+		int64(driftCount)); err != nil {
+		return err
+	}
+	if err := writeGaugeIntNoLabel(w,
+		"stellarindex_supply_verify_rollup_missing_total",
+		"Number of watched SEP-41 contracts with no sep41_supply_rollup checkpoint row in the most recent run — unexamined, not clean.",
+		int64(missingCount)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w,
+		"# HELP stellarindex_supply_verify_rollup_run_duration_seconds Wall-clock duration of the most recent verify-rollup run.\n"+
+			"# TYPE stellarindex_supply_verify_rollup_run_duration_seconds gauge\n"+
+			"stellarindex_supply_verify_rollup_run_duration_seconds %.3f\n",
+		durationSec); err != nil {
+		return err
+	}
+	failed := 0
+	if !pass {
+		failed = 1
+	}
+	if err := writeGaugeIntNoLabel(w,
+		"stellarindex_supply_verify_rollup_unit_failed",
+		"1 when the most recent run failed (drift, missing checkpoints, or an error), 0 on a clean pass.",
+		int64(failed)); err != nil {
+		return err
+	}
+	if pass {
+		if err := writeGaugeIntNoLabel(w,
+			metricVerifyRollupLastSuccessTimestamp,
+			helpVerifyRollupLastSuccessTimestamp,
+			time.Now().Unix()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeVerifyRollupFailureMetrics emits a minimal failure-path block for a
+// verify-rollup run that errored before computing checked/drift/missing
+// counts. Mirrors [writeFailureMetrics].
+func writeVerifyRollupFailureMetrics(w io.Writer, durationSec float64) error {
+	if err := writeGaugeIntNoLabel(w,
+		"stellarindex_supply_verify_rollup_unit_failed",
+		"1 when the most recent run failed (drift, missing checkpoints, or an error), 0 on a clean pass.",
+		1); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(w,
+		"# HELP stellarindex_supply_verify_rollup_run_duration_seconds Wall-clock duration of the most recent verify-rollup run.\n"+
+			"# TYPE stellarindex_supply_verify_rollup_run_duration_seconds gauge\n"+
+			"stellarindex_supply_verify_rollup_run_duration_seconds %.3f\n",
+		durationSec)
+	return err
+}
+
 // stroopsToXLM divides a stroops *big.Int by 10^7 and returns the
 // XLM value as float64. Loses sub-stroop precision but the textfile
 // is monitoring data, not the source of truth (asset_supply_history
@@ -212,8 +330,8 @@ func stroopsToXLM(stroops *big.Int) float64 {
 // destroying a readable staleness key is worse than missing one
 // scrape of `unit_failed`, since `_stale` still escalates on the
 // surviving series while an erased one escalates never.
-func writeAtomicCarryingLastSuccess(path string, body func(io.Writer) error) error {
-	carried, err := readLastSuccessSamples(path)
+func writeAtomicCarryingLastSuccess(path, metricName, help string, body func(io.Writer) error) error {
+	carried, err := readLastSuccessSamples(path, metricName)
 	if err != nil {
 		return err
 	}
@@ -222,14 +340,13 @@ func writeAtomicCarryingLastSuccess(path string, body func(io.Writer) error) err
 		if err := body(&buf); err != nil {
 			return err
 		}
-		fresh, err := lastSuccessSamples(buf.Bytes())
+		fresh, err := lastSuccessSamples(buf.Bytes(), metricName)
 		if err != nil {
 			return err
 		}
 		if len(fresh) == 0 && len(carried) > 0 {
 			if _, err := fmt.Fprintf(&buf, "# HELP %s %s\n# TYPE %s gauge\n",
-				metricLastSuccessTimestamp, helpLastSuccessTimestamp,
-				metricLastSuccessTimestamp); err != nil {
+				metricName, help, metricName); err != nil {
 				return err
 			}
 			for _, line := range carried {
@@ -243,11 +360,11 @@ func writeAtomicCarryingLastSuccess(path string, body func(io.Writer) error) err
 	})
 }
 
-// readLastSuccessSamples returns the `last_success_timestamp` sample
-// lines of an existing textfile. A missing file yields no samples and
-// no error (first run — `_never_initialized` covers that state); any
-// other read error is returned so the caller leaves the file alone.
-func readLastSuccessSamples(path string) ([]string, error) {
+// readLastSuccessSamples returns metricName's sample lines from an
+// existing textfile. A missing file yields no samples and no error (first
+// run — `_never_initialized` covers that state); any other read error is
+// returned so the caller leaves the file alone.
+func readLastSuccessSamples(path, metricName string) ([]string, error) {
 	body, err := os.ReadFile(path) //nolint:gosec // same operator-supplied path this package writes
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -255,22 +372,22 @@ func readLastSuccessSamples(path string) ([]string, error) {
 		}
 		return nil, fmt.Errorf("read textfile %q: %w", path, err)
 	}
-	return lastSuccessSamples(body)
+	return lastSuccessSamples(body, metricName)
 }
 
 // lastSuccessSamples extracts the sample lines (labels and value
-// verbatim) of the `last_success_timestamp` family from textfile
-// content, skipping `# HELP` / `# TYPE` metadata — the caller
-// re-emits those so the family is declared exactly once. A scan
-// error is returned rather than swallowed: reporting "no samples"
-// for an unreadable file is exactly the erasure this guards.
-func lastSuccessSamples(body []byte) ([]string, error) {
+// verbatim) of the metricName family from textfile content, skipping
+// `# HELP` / `# TYPE` metadata — the caller re-emits those so the family
+// is declared exactly once. A scan error is returned rather than
+// swallowed: reporting "no samples" for an unreadable file is exactly the
+// erasure this guards.
+func lastSuccessSamples(body []byte, metricName string) ([]string, error) {
 	var out []string
 	sc := bufio.NewScanner(bytes.NewReader(body))
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
 		line := strings.TrimRight(sc.Text(), "\r")
-		rest, ok := strings.CutPrefix(line, metricLastSuccessTimestamp)
+		rest, ok := strings.CutPrefix(line, metricName)
 		if !ok {
 			continue
 		}
@@ -282,7 +399,7 @@ func lastSuccessSamples(body []byte) ([]string, error) {
 		out = append(out, line)
 	}
 	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("scan textfile for %s: %w", metricLastSuccessTimestamp, err)
+		return nil, fmt.Errorf("scan textfile for %s: %w", metricName, err)
 	}
 	return out, nil
 }

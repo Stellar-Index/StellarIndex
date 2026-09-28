@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/big"
 	"os"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
 // rollupTruthReader is the storage seam supplyVerifyRollup depends on —
@@ -69,8 +71,17 @@ type rollupTruthReader interface {
 //
 //	-config PATH             Required. Operator TOML (Postgres DSN).
 //	-contracts C1,C2,...     Restrict the check to these contract
-//	                         C-strkeys (default: every sep41_supply_rollup
-//	                         row). Makes the check scoped + resumable.
+//	                         C-strkeys (default: the operator's
+//	                         [supply].watched_sep41_contracts, so the run
+//	                         cross-checks against what is actually
+//	                         supposed to be watched rather than whatever
+//	                         rows happen to exist; falls back to every
+//	                         sep41_supply_rollup row when that list is
+//	                         empty). Any requested contract with no
+//	                         checkpoint row is reported MISSING and fails
+//	                         the run — a watched contract's row can be
+//	                         deleted without the table going empty.
+//	                         Makes the check scoped + resumable.
 //	-tolerance N             Absolute stroop tolerance per (contract,
 //	                         kind) before a diff is reported (default 0 —
 //	                         exact, the expected posture since both sides
@@ -80,16 +91,22 @@ type rollupTruthReader interface {
 //	-statement-timeout DUR   PG statement_timeout for EACH per-contract
 //	                         re-sum (default 15m).
 //	-timeout DUR             Overall wall-clock budget (default 2h).
+//	-textfile-output PATH    Path to write a Prometheus textfile
+//	                         (node_exporter textfile_collector format) so
+//	                         a "clean" claim is a scrape, not a pasted
+//	                         transcript. Empty = no metrics emit.
 func supplyVerifyRollup(args []string) error {
 	fs := flag.NewFlagSet("supply verify-rollup", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
-	contractsRaw := fs.String("contracts", "", "Comma-separated contract C-strkeys to check (default: all sep41_supply_rollup rows)")
+	contractsRaw := fs.String("contracts", "", "Comma-separated contract C-strkeys to check (default: the configured watched_sep41_contracts, else all sep41_supply_rollup rows)")
 	toleranceRaw := fs.String("tolerance", "0", "Absolute stroop tolerance per (contract,kind) before a diff is reported")
 	stmtTimeout := fs.Duration("statement-timeout", 15*time.Minute, "PG statement_timeout for each per-contract re-sum")
 	timeout := fs.Duration("timeout", 2*time.Hour, "overall wall-clock budget")
+	textfileOut := fs.String("textfile-output", "", "Path to write Prometheus textfile (node_exporter textfile_collector format). Empty = no metrics emit.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	startedAt := time.Now()
 	if *cfgPath == "" {
 		return errors.New("-config is required")
 	}
@@ -104,33 +121,57 @@ func supplyVerifyRollup(args []string) error {
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
-		return err
+		return verifyRollupFail(*textfileOut, startedAt, err)
 	}
+	contracts = resolveVerifyRollupContracts(contracts, cfg.Supply.WatchedSEP41Contracts)
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
 	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
 	if err != nil {
-		return fmt.Errorf("storage: %w", err)
+		return verifyRollupFail(*textfileOut, startedAt, fmt.Errorf("storage: %w", err))
 	}
 	defer func() { _ = store.Close() }()
 
-	drifts, checked, err := verifyRollupDrifts(ctx, store, contracts, tolerance, *stmtTimeout)
+	drifts, checked, missing, err := verifyRollupDrifts(ctx, store, contracts, tolerance, *stmtTimeout)
 	if err != nil {
-		return err
+		return verifyRollupFail(*textfileOut, startedAt, err)
 	}
 	reportRollupDrifts(os.Stdout, drifts, checked, tolerance)
-	return rollupExitDecision(drifts, checked)
+	reportRollupMissing(os.Stdout, missing)
+	decision := rollupExitDecision(drifts, checked, missing)
+	if *textfileOut != "" {
+		if werr := supply.WriteVerifyRollupTextfile(*textfileOut, checked, len(drifts), len(missing), time.Since(startedAt).Seconds(), decision == nil); werr != nil && decision == nil {
+			return fmt.Errorf("write verify-rollup textfile: %w", werr)
+		}
+	}
+	return decision
+}
+
+// verifyRollupFail is the early-failure path: a config/storage/query error
+// before checked/drift/missing counts exist. Mirrors
+// supplySnapshotMaybeEmitFailure — emits the minimal failure textfile
+// (carrying the previous last_success_timestamp forward) without masking
+// the original cause.
+func verifyRollupFail(textfileOut string, startedAt time.Time, cause error) error {
+	if textfileOut != "" {
+		_ = supply.WriteVerifyRollupFailureTextfile(textfileOut, time.Since(startedAt).Seconds())
+	}
+	return cause
 }
 
 // rollupExitDecision is the DB-free core of the command's exit status: a
-// drift is always fatal, and — so "nothing checked" is never conflated
-// with "all clean" — checking zero checkpoints is fatal too. An empty
-// sep41_supply_rollup table or a -contracts filter that matched nothing
-// must not print "OK: 0 checkpoint(s) reconcile" and exit 0; that reads as
-// a clean bill of health when in fact nothing was verified.
-func rollupExitDecision(drifts []completeness.TotalsDrift, checked int) error {
+// missing watched contract or a drift is always fatal, and — so "nothing
+// checked" is never conflated with "all clean" — checking zero checkpoints
+// is fatal too. An empty sep41_supply_rollup table or a -contracts filter
+// that matched nothing must not print "OK: 0 checkpoint(s) reconcile" and
+// exit 0; that reads as a clean bill of health when in fact nothing was
+// verified.
+func rollupExitDecision(drifts []completeness.TotalsDrift, checked int, missing []string) error {
+	if len(missing) > 0 {
+		return fmt.Errorf("verify-rollup: %d watched contract(s) have no sep41_supply_rollup checkpoint — unexamined, not clean: %s", len(missing), strings.Join(missing, ", "))
+	}
 	if len(drifts) > 0 {
 		return fmt.Errorf("sep41 rollup drift: %d (contract,kind) checkpoint(s) diverge from the authoritative re-sum — reset the fold and re-fold (`ch-rebuild -sep41 -write`, or Store.ResetSEP41SupplyRollupFold for a scoped set)", len(drifts))
 	}
@@ -143,27 +184,38 @@ func rollupExitDecision(drifts []completeness.TotalsDrift, checked int) error {
 // verifyRollupDrifts is the DB-free core: for each checkpoint it computes
 // the same-source bounded re-sum (truth) at the checkpoint's own
 // last_ledger, then hands both maps to
-// completeness.ReconcileRunningTotals. Returns the drifts (empty = clean)
-// and the number of contracts checked. Bounding the re-sum at each
-// contract's last_ledger is load-bearing: the fold covers exactly
-// ledger ≤ last_ledger, so summing to the tip would count the (correctly)
+// completeness.ReconcileRunningTotals. Returns the drifts (empty = clean),
+// the number of contracts checked, and — when contractIDs was given
+// explicitly (an operator -contracts subset, or the watched-set default) —
+// which of those requested contracts came back with no checkpoint row at
+// all (missing, sorted). Bounding the re-sum at each contract's
+// last_ledger is load-bearing: the fold covers exactly ledger ≤
+// last_ledger, so summing to the tip would count the (correctly)
 // un-folded live delta and false-positive.
-func verifyRollupDrifts(ctx context.Context, r rollupTruthReader, contractIDs []string, tolerance *big.Int, stmtTimeout time.Duration) ([]completeness.TotalsDrift, int, error) {
+func verifyRollupDrifts(ctx context.Context, r rollupTruthReader, contractIDs []string, tolerance *big.Int, stmtTimeout time.Duration) (drifts []completeness.TotalsDrift, checked int, missing []string, err error) {
 	checkpoints, err := r.ListSEP41RollupCheckpoints(ctx, contractIDs)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	cpMap := make(map[string]completeness.RunningTotals, len(checkpoints))
 	truthMap := make(map[string]completeness.RunningTotals, len(checkpoints))
+	got := make(map[string]struct{}, len(checkpoints))
 	for _, cp := range checkpoints {
+		got[cp.ContractID] = struct{}{}
 		cpMap[cp.ContractID] = kindTotalsToRunning(cp.Fold)
 		resum, rerr := r.SEP41SupplyEventKindResum(ctx, cp.ContractID, cp.LastLedger, stmtTimeout)
 		if rerr != nil {
-			return nil, 0, fmt.Errorf("re-sum %s@%d: %w", cp.ContractID, cp.LastLedger, rerr)
+			return nil, 0, nil, fmt.Errorf("re-sum %s@%d: %w", cp.ContractID, cp.LastLedger, rerr)
 		}
 		truthMap[cp.ContractID] = kindTotalsToRunning(resum)
 	}
-	return completeness.ReconcileRunningTotals(cpMap, truthMap, tolerance), len(checkpoints), nil
+	for _, c := range contractIDs {
+		if _, ok := got[c]; !ok {
+			missing = append(missing, c)
+		}
+	}
+	sort.Strings(missing)
+	return completeness.ReconcileRunningTotals(cpMap, truthMap, tolerance), len(checkpoints), missing, nil
 }
 
 // kindTotalsToRunning adapts the storage per-kind totals to the
@@ -190,6 +242,34 @@ func reportRollupDrifts(out io.Writer, drifts []completeness.TotalsDrift, checke
 			d.ContractID, d.Kind, d.Checkpoint.String(), d.Truth.String(), d.Delta.String())
 	}
 	_ = w.Flush()
+}
+
+// reportRollupMissing prints the watched contracts that came back with no
+// sep41_supply_rollup checkpoint row at all — the case reportRollupDrifts
+// can't show, since a missing contract contributes no drift and no
+// checked count.
+func reportRollupMissing(out io.Writer, missing []string) {
+	if len(missing) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(out, "MISSING: %d watched contract(s) have no sep41_supply_rollup checkpoint — unexamined, not clean:\n", len(missing))
+	for _, c := range missing {
+		_, _ = fmt.Fprintf(out, "  %s\n", c)
+	}
+}
+
+// resolveVerifyRollupContracts is the DB-free default-selection core: an
+// explicit -contracts flag always wins (operator-scoped / resumed run);
+// otherwise the run cross-checks against the configured watched set so a
+// watched contract whose checkpoint row was deleted is reported MISSING
+// rather than silently absent from "every row the table happens to hold".
+// Falls back to nil ("check all") only when nothing is configured (the
+// SEP-41 pipeline is off) — there is no watched set to cross-check against.
+func resolveVerifyRollupContracts(explicit, watched []string) []string {
+	if len(explicit) > 0 {
+		return explicit
+	}
+	return watched
 }
 
 // parseContractsCSV splits a comma-separated contract list, trimming

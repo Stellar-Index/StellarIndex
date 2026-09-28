@@ -11,7 +11,7 @@
 # silently, since systemd emits no warning for a "successful" merge.
 #
 # Usage: lint-systemd-envfile-order.sh [ROOT] [FILE...]
-# FILE defaults to the one unit SL07 was raised against; the
+# FILE defaults to the /bin/sh-free units SL07 applies to; the
 # self-test passes an explicit fixture path.
 set -uo pipefail
 
@@ -21,7 +21,8 @@ shift || true
 if [ "$#" -gt 0 ]; then
   FILES=("$@")
 else
-  FILES=("configs/ansible/roles/archival-node/templates/systemd/supply-snapshot.service.j2")
+  FILES=("configs/ansible/roles/archival-node/templates/systemd/supply-snapshot.service.j2"
+         "configs/ansible/roles/archival-node/templates/systemd/supply-verify-rollup.service.j2")
 fi
 
 fail=0

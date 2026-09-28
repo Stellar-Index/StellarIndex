@@ -1,0 +1,119 @@
+---
+# promtool unit tests for deploy/monitoring/rules/supply-verify-rollup.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/supply-verify-rollup_test.yml
+#
+# The job writes a textfile node_exporter re-serves on every scrape, so a
+# failed run's gauge persists until the next run. A failed run carries the
+# previous last_success_timestamp forward, so only clean runs age it.
+
+rule_files:
+  - ../rules/supply-verify-rollup.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── a failed run (drift / missing checkpoint / error) ────────────
+  - interval: 1m
+    name: a failed verify-rollup run tickets after 30m, not before
+    input_series:
+      - series: 'stellarindex_supply_verify_rollup_unit_failed{instance="r1:9100",job="node_exporter"}'
+        values: '1x60'
+      - series: 'stellarindex_supply_verify_rollup_last_success_timestamp{instance="r1:9100",job="node_exporter"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_supply_verify_rollup_unit_failed_alert
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: stellarindex_supply_verify_rollup_unit_failed_alert
+        exp_alerts:
+          - exp_labels:
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: supply
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-verify-rollup-unit-failed.md
+              summary: "supply verify-rollup most recent run failed \u2014 the SEP-41 supply rollup is not certified clean"
+              description: |
+                The daily `stellarindex-ops supply verify-rollup` run exited
+                non-zero: a sep41_supply_rollup checkpoint diverges from the
+                authoritative re-sum, a watched contract has no checkpoint row,
+                no checkpoint was checked, or the run errored. Served SEP-41
+                supply for the affected contracts may be wrong until the fold
+                is reset and re-folded. See the drift_total / missing_total
+                gauges and the unit's journal.
+
+  - interval: 1m
+    name: a clean run does not ticket
+    input_series:
+      - series: 'stellarindex_supply_verify_rollup_unit_failed{instance="r1:9100",job="node_exporter"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_supply_verify_rollup_unit_failed_alert
+        exp_alerts: []
+
+  # ── last clean run ages past the 36h threshold ───────────────────
+  # last_success frozen at t=0 (every later run failed, or the timer
+  # stopped): silent at 30h, fires past 36h + for.
+  - interval: 1m
+    name: a last clean run older than 36h trips stale
+    input_series:
+      - series: 'stellarindex_supply_verify_rollup_last_success_timestamp{instance="r1:9100",job="node_exporter"}'
+        values: '0x2400'
+    alert_rule_test:
+      - eval_time: 30h
+        alertname: stellarindex_supply_verify_rollup_stale
+        exp_alerts: []
+      - eval_time: 37h
+        alertname: stellarindex_supply_verify_rollup_stale
+        exp_alerts:
+          - exp_labels:
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: supply
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-verify-rollup-stale.md
+              summary: "supply verify-rollup has not passed clean for 1d 13h 0m 0s (cadence 24h, threshold 36h)"
+              description: |
+                Either the supply-verify-rollup timer isn't running, or every
+                run since the last clean one has failed. The rollup is no longer
+                certified to reconcile with its source events.
+      - eval_time: 37h
+        alertname: stellarindex_supply_verify_rollup_never_initialized
+        exp_alerts: []
+
+  # ── never scheduled / never passed clean ─────────────────────────
+  # Only the failure gauge exists (the state a host with no clean run
+  # is in); _stale cannot see an absent series, _never_initialized must.
+  # The stale case above is the negative: a present series never trips it.
+  - interval: 1m
+    name: a last_success series that never existed trips never_initialized
+    input_series:
+      - series: 'stellarindex_supply_verify_rollup_unit_failed{instance="r1:9100",job="node_exporter"}'
+        values: '1x2400'
+    alert_rule_test:
+      - eval_time: 37h
+        alertname: stellarindex_supply_verify_rollup_never_initialized
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: supply
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-verify-rollup-stale.md
+              summary: "supply verify-rollup has not passed clean in the last 36h \u2014 or has never run"
+              description: |
+                stellarindex_supply_verify_rollup_last_success_timestamp has been
+                absent from the scrape for ≥ 36 h. Either the timer
+                (supply-verify-rollup.timer) was never installed, node_exporter
+                is not reading the textfile directory, or no run has ever passed
+                clean (a failing run writes no last_success_timestamp).
+      - eval_time: 37h
+        alertname: stellarindex_supply_verify_rollup_stale
+        exp_alerts: []

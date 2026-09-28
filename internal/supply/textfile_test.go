@@ -324,6 +324,123 @@ func TestWriteSnapshotFailureTextfile_UnreadablePriorFileIsNotErased(t *testing.
 	}
 }
 
+// TestWriteVerifyRollupTextfile_PassRun pins the success-path metric set:
+// checked/drift/missing counts, run duration, unit_failed=0, and a fresh
+// last_success_timestamp.
+func TestWriteVerifyRollupTextfile_PassRun(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "supply_verify_rollup.prom")
+	if err := WriteVerifyRollupTextfile(path, 12, 0, 0, 3.5, true); err != nil {
+		t.Fatalf("WriteVerifyRollupTextfile: %v", err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	out := string(body)
+	wants := []string{
+		"stellarindex_supply_verify_rollup_checked_total 12",
+		"stellarindex_supply_verify_rollup_drift_total 0",
+		"stellarindex_supply_verify_rollup_missing_total 0",
+		"stellarindex_supply_verify_rollup_run_duration_seconds 3.500",
+		"stellarindex_supply_verify_rollup_unit_failed 0",
+		"stellarindex_supply_verify_rollup_last_success_timestamp",
+	}
+	for _, w := range wants {
+		if !strings.Contains(out, w) {
+			t.Errorf("missing %q:\n%s", w, out)
+		}
+	}
+}
+
+// TestWriteVerifyRollupTextfile_DriftAndMissingFailWithoutFreshTimestamp —
+// a run with drift or missing checkpoints is not a "pass": unit_failed=1
+// and no fresh last_success_timestamp is emitted (the previous file's
+// samples are carried forward instead, by [writeAtomicCarryingLastSuccess]).
+func TestWriteVerifyRollupTextfile_DriftAndMissingFailWithoutFreshTimestamp(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "supply_verify_rollup.prom")
+	if err := WriteVerifyRollupTextfile(path, 5, 2, 1, 1.0, false); err != nil {
+		t.Fatalf("WriteVerifyRollupTextfile: %v", err)
+	}
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	body := string(out)
+	if !strings.Contains(body, "stellarindex_supply_verify_rollup_unit_failed 1") {
+		t.Errorf("fail run should emit unit_failed=1:\n%s", body)
+	}
+	if !strings.Contains(body, "stellarindex_supply_verify_rollup_drift_total 2") ||
+		!strings.Contains(body, "stellarindex_supply_verify_rollup_missing_total 1") {
+		t.Errorf("fail run should still report the real drift/missing counts:\n%s", body)
+	}
+	if strings.Contains(body, "stellarindex_supply_verify_rollup_last_success_timestamp") {
+		t.Errorf("fail run should NOT emit a fresh last_success_timestamp:\n%s", body)
+	}
+}
+
+// TestWriteVerifyRollupTextfile_FailureCarriesLastSuccess is the
+// verify-rollup analogue of TestWriteSnapshotFailureTextfile_CarriesLastSuccessTimestamp:
+// a run that errors before computing counts (config/storage failure) must
+// not erase the staleness key a clean run before it established.
+func TestWriteVerifyRollupTextfile_FailureCarriesLastSuccess(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "supply_verify_rollup.prom")
+	if err := WriteVerifyRollupTextfile(path, 12, 0, 0, 3.5, true); err != nil {
+		t.Fatalf("seed success write: %v", err)
+	}
+	seeded, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read seeded file: %v", err)
+	}
+	want := grepLines(t, string(seeded), metricVerifyRollupLastSuccessTimestamp+" ")
+	if len(want) != 1 {
+		t.Fatalf("seed should hold exactly one last_success sample, got %d:\n%s", len(want), seeded)
+	}
+
+	if err := WriteVerifyRollupFailureTextfile(path, 0.2); err != nil {
+		t.Fatalf("WriteVerifyRollupFailureTextfile: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	body := string(raw)
+	got := grepLines(t, body, metricVerifyRollupLastSuccessTimestamp+" ")
+	if len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("last_success_timestamp must survive verbatim as %q, got %q\nfile:\n%s", want[0], got, body)
+	}
+	if !strings.Contains(body, "stellarindex_supply_verify_rollup_unit_failed 1") {
+		t.Errorf("failure write should emit unit_failed=1:\n%s", body)
+	}
+	if strings.Contains(body, "stellarindex_supply_verify_rollup_checked_total") {
+		t.Errorf("early-failure path has no counts, should not emit them:\n%s", body)
+	}
+}
+
+// TestWriteVerifyRollupFailureTextfile_NoPriorFileEmitsNothing mirrors
+// TestWriteSnapshotFailureTextfile_NoPriorFileEmitsNothing: a first-ever
+// run that errors before any success has nothing to carry, so the series
+// stays absent rather than fabricating a timestamp.
+func TestWriteVerifyRollupFailureTextfile_NoPriorFileEmitsNothing(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "supply_verify_rollup.prom")
+	if err := WriteVerifyRollupFailureTextfile(path, 0.2); err != nil {
+		t.Fatalf("WriteVerifyRollupFailureTextfile: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if strings.Contains(string(raw), metricVerifyRollupLastSuccessTimestamp) {
+		t.Errorf("no prior success to carry, must not fabricate one:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), "stellarindex_supply_verify_rollup_unit_failed 1") {
+		t.Errorf("first-run failure should still emit unit_failed=1:\n%s", raw)
+	}
+}
+
 // TestWriteSnapshotTextfile_FailFlagCarriesLastSuccess — the same invariant
 // through the other exported writer. pass=false emits no fresh timestamp,
 // so the previous one must survive here too.

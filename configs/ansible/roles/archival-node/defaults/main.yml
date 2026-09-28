@@ -951,6 +951,11 @@ archive_completeness_enabled: "{{ (stellar_network | default('pubnet')) == 'pubn
 # correct before anyone writes an inventory line.
 verify_served_values_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
 
+# supply-verify-rollup — daily SEP-41 supply-rollup reconciliation. Only
+# meaningful where the SEP-41 supply pipeline runs, i.e. where contracts are
+# watched; elsewhere it would fail "checked 0" nightly.
+supply_verify_rollup_enabled: "{{ (stellarindex_watched_sep41_contracts | default([]) | length) > 0 }}"
+
 # pgBackRest scheduled backups. pgBackRest itself is NOT installed by this
 # role (there is no apt task for it anywhere) — it is provisioned
 # out-of-band on the pubnet hosts. So on a test net, "enabled" installed a

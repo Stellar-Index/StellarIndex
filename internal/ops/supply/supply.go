@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"text/tabwriter"
 	"time"
@@ -738,6 +739,14 @@ func crossCheckAndReport(w io.Writer, primarySnap, otherSnap supply.Supply, wrap
 	return reportCrossCheck(w, result, primaryKey)
 }
 
+// stroopsOrNA renders a cross-check leg; nil means the leg was not evaluated.
+func stroopsOrNA(v *big.Int) string {
+	if v == nil {
+		return "n/a (not evaluated)"
+	}
+	return v.String()
+}
+
 // errCrossCheckUnchecked is returned when a partial-wrap result carries
 // no escrow leg: DivergenceStroops is then 0 by construction, so a green
 // status would certify a check that compared nothing (ADR-0011 CS-087).
@@ -752,6 +761,9 @@ func reportCrossCheck(w io.Writer, result supply.CrossCheckResult, primaryKey st
 	_, _ = fmt.Fprintf(w, "  primary_total:        %s\n", result.ClassicTotal.String())
 	_, _ = fmt.Fprintf(w, "  counterpart_total:    %s\n", result.SACTotal.String())
 	_, _ = fmt.Fprintf(w, "  divergence_stroops:   %s\n", result.DivergenceStroops.String())
+	_, _ = fmt.Fprintf(w, "  subset_bound_checked: %t\n", result.SubsetBoundChecked)
+	_, _ = fmt.Fprintf(w, "  over_mint_stroops:    %s\n", stroopsOrNA(result.OverMintStroops))
+	_, _ = fmt.Fprintf(w, "  escrow_excess_stroops: %s\n", stroopsOrNA(result.EscrowExcessStroops))
 	unchecked := result.WrapClass == supply.WrapClassPartial && !result.SubsetBoundChecked
 	switch {
 	case !result.WithinTolerance:

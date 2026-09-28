@@ -282,20 +282,15 @@ func (s *Server) storageSupplyResponse(ctx context.Context, assetID, contractID 
 
 // resolveSupplyContractID maps an asset_id to the contract_id supply_flows is
 // keyed by: a Soroban C-strkey is itself; a classic asset ("CODE-ISSUER") is
-// resolved to its Stellar-Asset-Contract. The operator's sac_wrappers map is
-// consulted first (an explicit override / fast path); any OTHER classic asset
-// falls through to deterministic SAC derivation — the SAC address is a pure
-// function of (asset, pubnet passphrase), valid even before the SAC is
-// deployed (canonical.Asset.SacContractID, board #40). Only unparseable ids
-// and shapes with no SAC (fiat:*) fail to resolve.
+// resolved to its Stellar-Asset-Contract by deterministic derivation — the SAC
+// address is a pure function of (asset, pubnet passphrase), valid even before
+// the SAC is deployed (canonical.Asset.SacContractID, board #40). sac_wrappers
+// is deliberately NOT consulted: an entry can only equal the derived SAC or
+// point supply at another contract. Only unparseable ids and shapes with no
+// SAC (fiat:*) fail to resolve.
 func (s *Server) resolveSupplyContractID(assetID string) (string, bool) {
 	if canonical.IsContractID(assetID) {
 		return assetID, true
-	}
-	for sac, assetKey := range s.sacWrappers {
-		if assetKey == assetID {
-			return sac, true
-		}
 	}
 	parsed, err := canonical.ParseAsset(assetID)
 	if err != nil || parsed.Type != canonical.AssetClassic {

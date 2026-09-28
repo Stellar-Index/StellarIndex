@@ -38,9 +38,12 @@ trap 'rm -rf "$TMP"' EXIT
 
 pass=0
 fail=0
+# Fixtures below model verify-served-values; the repo tree and the
+# supply-verify-rollup cases at the end set JOBS themselves.
+JOBS=served-values
 check() { # check <desc> <want-exit> <root>
   local desc="$1" want="$2" root="$3" got
-  bash "$LINT" "$root" >/dev/null 2>&1
+  CADENCE_JOBS="$JOBS" bash "$LINT" "$root" >/dev/null 2>&1
   got=$?
   if [ "$got" -eq "$want" ]; then
     echo "  ok   $desc"
@@ -159,7 +162,9 @@ YML
 
 echo "lint-served-value-cadence-test: scheduling + calibration verdicts"
 
-check "the repo's own tree passes" 0 "$PWD"
+JOBS="served-values supply-verify-rollup"
+check "the repo's own tree passes (every job)" 0 "$PWD"
+JOBS=served-values
 
 good="$(mk_tree good)"
 check "a complete fixture tree passes" 0 "$good"
@@ -243,6 +248,33 @@ check "a missing second rule tree is caught" 1 "$one_tree"
 empty_tasks="$(mk_tree empty_tasks)"
 rm "$empty_tasks/$TASKS"/*.yml
 check "an empty task tree fails rather than passing vacuously" 1 "$empty_tasks"
+
+# ── supply-verify-rollup, against copies of the real role + rules ────────
+JOBS=supply-verify-rollup
+rollup_tree() { # rollup_tree <name> — a copy of the repo paths the gate reads
+  local r="$TMP/$1"
+  mkdir -p "$r/configs/ansible/roles/archival-node" "$r/deploy/monitoring" "$r/configs/prometheus"
+  cp -R "$PWD/configs/ansible/roles/archival-node/templates" "$PWD/configs/ansible/roles/archival-node/tasks" \
+        "$PWD/configs/ansible/roles/archival-node/defaults" "$r/configs/ansible/roles/archival-node/"
+  cp -R "$PWD/deploy/monitoring/rules" "$r/deploy/monitoring/"
+  cp -R "$PWD/configs/prometheus/rules.r1" "$r/configs/prometheus/"
+  echo "$r"
+}
+
+rollup_ok="$(rollup_tree rollup_ok)"
+check "supply-verify-rollup: a copy of the real tree passes" 0 "$rollup_ok"
+
+rollup_no_timer="$(rollup_tree rollup_no_timer)"
+rm "$rollup_no_timer/$UNITS/supply-verify-rollup.timer.j2"
+check "supply-verify-rollup: a missing timer template is caught" 1 "$rollup_no_timer"
+
+rollup_off="$(rollup_tree rollup_off)"
+sed -i.bak 's/^supply_verify_rollup_enabled:.*/supply_verify_rollup_enabled: false/' "$rollup_off/$DEFAULTS/main.yml"
+check "supply-verify-rollup: a gate hardcoded false is caught" 1 "$rollup_off"
+
+rollup_unrendered="$(rollup_tree rollup_unrendered)"
+sed -i.bak '/^        - supply-verify-rollup\.service$/d' "$rollup_unrendered/$TASKS/14-stellarindex-services.yml"
+check "supply-verify-rollup: a service nothing renders is caught" 1 "$rollup_unrendered"
 
 echo "----"
 echo "lint-served-value-cadence-test: $pass passed, $fail failed"

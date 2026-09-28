@@ -17,6 +17,7 @@ adapted for the single-host scrape config in [`prometheus.r1.yml`](../prometheus
 | `external-pollers.yml` | `external-pollers.yml` | as-is |
 | `supply.yml` | `supply.yml` | as-is |
 | `supply-snapshot.yml` | `supply-snapshot.yml` | as-is |
+| `supply-verify-rollup.yml` | `supply-verify-rollup.yml` | as-is (textfile from `supply-verify-rollup.service`, archival-node role tag `ops-jobs`). |
 | `supply-refresh.yml` | `supply-refresh.yml` | as-is |
 | `archive-completeness.yml` | `archive-completeness.yml` | requires node_exporter `--collector.textfile` + `/var/lib/node_exporter/textfile_collector/` (provisioned by the archival-node role's `10-observability.yml` task). |
 | `verify-archive.yml` | `verify-archive.yml` | requires node_exporter `--collector.systemd` (already on). |

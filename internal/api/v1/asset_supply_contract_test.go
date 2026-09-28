@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
@@ -51,6 +52,34 @@ func TestAssetSupplyResponseFieldsMatchSpec(t *testing.T) {
 			"  documented but never served: %v\nedit openapi/stellar-index.v1.yaml to the "+
 			"handler's json tags (and regenerate docs/reference/api, examples/postman and "+
 			"web/explorer/src/api/types.ts)", undocumented, phantom)
+	}
+}
+
+// TestResolveSupplyContractID_IgnoresSacWrapperOverride pins that a classic
+// asset's supply always comes from its derived SAC: a sac_wrappers entry
+// mapping it to another contract (here XLM's SAC) must not redirect supply.
+func TestResolveSupplyContractID_IgnoresSacWrapperOverride(t *testing.T) {
+	const (
+		xlmSAC    = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
+		wireForm  = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		colonForm = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	)
+	parsed, err := canonical.ParseAsset(wireForm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := parsed.SacContractID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{sacWrappers: map[string]string{xlmSAC: colonForm}}
+
+	got, ok := srv.resolveSupplyContractID(wireForm)
+	if !ok {
+		t.Fatal("resolveSupplyContractID: classic asset did not resolve")
+	}
+	if got != want {
+		t.Errorf("contractID = %q, want the derived SAC %q (override must be ignored)", got, want)
 	}
 }
 

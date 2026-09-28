@@ -76,7 +76,7 @@ func TestVerifyRollupDrifts_Agreement(t *testing.T) {
 			"C_B": kt(42, 0, 7),
 		},
 	}
-	drifts, checked, err := verifyRollupDrifts(context.Background(), r, nil, big.NewInt(0), 5*time.Minute)
+	drifts, checked, missing, err := verifyRollupDrifts(context.Background(), r, nil, big.NewInt(0), 5*time.Minute)
 	if err != nil {
 		t.Fatalf("verifyRollupDrifts: %v", err)
 	}
@@ -85,6 +85,9 @@ func TestVerifyRollupDrifts_Agreement(t *testing.T) {
 	}
 	if checked != 2 {
 		t.Fatalf("checked = %d, want 2", checked)
+	}
+	if len(missing) != 0 {
+		t.Fatalf("expected no missing contracts (no explicit request), got %v", missing)
 	}
 	// Plumbing: the re-sum is bounded at each checkpoint's own last_ledger.
 	if r.gotResumLedgers["C_A"] != 100 || r.gotResumLedgers["C_B"] != 250 {
@@ -107,7 +110,7 @@ func TestVerifyRollupDrifts_KaleDoubleFold(t *testing.T) {
 			"KALE": kt(1000, 5, 0),
 		},
 	}
-	drifts, checked, err := verifyRollupDrifts(context.Background(), r, nil, big.NewInt(0), time.Minute)
+	drifts, checked, _, err := verifyRollupDrifts(context.Background(), r, nil, big.NewInt(0), time.Minute)
 	if err != nil {
 		t.Fatalf("verifyRollupDrifts: %v", err)
 	}
@@ -134,10 +137,10 @@ func TestVerifyRollupDrifts_ToleranceAbsorbs(t *testing.T) {
 		},
 		truth: map[string]timescale.SEP41KindTotals{"C_A": kt(1000, 0, 0)},
 	}
-	if drifts, _, err := verifyRollupDrifts(context.Background(), r, nil, big.NewInt(5), time.Minute); err != nil || len(drifts) != 0 {
+	if drifts, _, _, err := verifyRollupDrifts(context.Background(), r, nil, big.NewInt(5), time.Minute); err != nil || len(drifts) != 0 {
 		t.Fatalf("drift 5 == tolerance must be absorbed, got drifts=%+v err=%v", drifts, err)
 	}
-	if drifts, _, err := verifyRollupDrifts(context.Background(), r, nil, big.NewInt(4), time.Minute); err != nil || len(drifts) != 1 {
+	if drifts, _, _, err := verifyRollupDrifts(context.Background(), r, nil, big.NewInt(4), time.Minute); err != nil || len(drifts) != 1 {
 		t.Fatalf("drift 5 > tolerance 4 must be reported, got drifts=%+v err=%v", drifts, err)
 	}
 }
@@ -152,15 +155,45 @@ func TestVerifyRollupDrifts_ContractsFilterPlumbed(t *testing.T) {
 		},
 		truth: map[string]timescale.SEP41KindTotals{"C_A": kt(1, 0, 0), "C_B": kt(2, 0, 0)},
 	}
-	_, checked, err := verifyRollupDrifts(context.Background(), r, []string{"C_B"}, big.NewInt(0), time.Minute)
+	_, checked, missing, err := verifyRollupDrifts(context.Background(), r, []string{"C_B"}, big.NewInt(0), time.Minute)
 	if err != nil {
 		t.Fatalf("verifyRollupDrifts: %v", err)
 	}
 	if checked != 1 {
 		t.Fatalf("checked = %d, want 1 (only C_B)", checked)
 	}
+	if len(missing) != 0 {
+		t.Fatalf("expected no missing contracts (C_B has a row), got %v", missing)
+	}
 	if len(r.gotContracts) != 1 || r.gotContracts[0] != "C_B" {
 		t.Fatalf("contracts filter not forwarded: got %v", r.gotContracts)
+	}
+}
+
+// TestVerifyRollupDrifts_MissingContractReported: a requested contract
+// with no sep41_supply_rollup row at all (a watched contract whose row
+// was deleted, or that never got one) must come back in `missing`, not
+// silently drop out of the checked count — that's the "unexamined, not
+// clean" gap the row-deletion residue names.
+func TestVerifyRollupDrifts_MissingContractReported(t *testing.T) {
+	r := &fakeRollupReader{
+		checkpoints: []timescale.SEP41RollupCheckpoint{
+			{ContractID: "C_A", Fold: kt(1, 0, 0), LastLedger: 1},
+		},
+		truth: map[string]timescale.SEP41KindTotals{"C_A": kt(1, 0, 0)},
+	}
+	drifts, checked, missing, err := verifyRollupDrifts(context.Background(), r, []string{"C_A", "C_GONE"}, big.NewInt(0), time.Minute)
+	if err != nil {
+		t.Fatalf("verifyRollupDrifts: %v", err)
+	}
+	if len(drifts) != 0 {
+		t.Fatalf("expected no drift, got %+v", drifts)
+	}
+	if checked != 1 {
+		t.Fatalf("checked = %d, want 1 (only C_A has a row)", checked)
+	}
+	if len(missing) != 1 || missing[0] != "C_GONE" {
+		t.Fatalf("missing = %v, want [C_GONE]", missing)
 	}
 }
 
@@ -172,7 +205,7 @@ func TestReportRollupDrifts_OKAndDrift(t *testing.T) {
 	}
 
 	var driftBuf bytes.Buffer
-	drifts, _, _ := verifyRollupDrifts(context.Background(), &fakeRollupReader{
+	drifts, _, _, _ := verifyRollupDrifts(context.Background(), &fakeRollupReader{
 		checkpoints: []timescale.SEP41RollupCheckpoint{{ContractID: "KALE", Fold: kt(2000, 0, 0), LastLedger: 1}},
 		truth:       map[string]timescale.SEP41KindTotals{"KALE": kt(1000, 0, 0)},
 	}, nil, big.NewInt(0), time.Minute)
@@ -191,7 +224,7 @@ func TestReportRollupDrifts_OKAndDrift(t *testing.T) {
 // empty (OBS-01 / REL-02: "OK: 0 checkpoint(s) reconcile" previously exited
 // 0, indistinguishable from a genuine all-clean run).
 func TestRollupExitDecision_ZeroCheckedIsError(t *testing.T) {
-	if err := rollupExitDecision(nil, 0); err == nil {
+	if err := rollupExitDecision(nil, 0, nil); err == nil {
 		t.Fatal("checked=0, drifts=nil must return a non-nil error, got nil")
 	}
 }
@@ -199,7 +232,7 @@ func TestRollupExitDecision_ZeroCheckedIsError(t *testing.T) {
 // TestRollupExitDecision_CleanNonZeroIsOK: a genuine all-clean run (at
 // least one checkpoint checked, zero drift) must still exit 0.
 func TestRollupExitDecision_CleanNonZeroIsOK(t *testing.T) {
-	if err := rollupExitDecision(nil, 3); err != nil {
+	if err := rollupExitDecision(nil, 3, nil); err != nil {
 		t.Fatalf("checked=3, drifts=nil must return nil, got %v", err)
 	}
 }
@@ -212,12 +245,41 @@ func TestRollupExitDecision_DriftIsError(t *testing.T) {
 		checkpoints: []timescale.SEP41RollupCheckpoint{{ContractID: "KALE", Fold: kt(2000, 0, 0), LastLedger: 1}},
 		truth:       map[string]timescale.SEP41KindTotals{"KALE": kt(1000, 0, 0)},
 	}
-	drifts, checked, err := verifyRollupDrifts(context.Background(), r, nil, big.NewInt(0), time.Minute)
+	drifts, checked, missing, err := verifyRollupDrifts(context.Background(), r, nil, big.NewInt(0), time.Minute)
 	if err != nil {
 		t.Fatalf("verifyRollupDrifts: %v", err)
 	}
-	if err := rollupExitDecision(drifts, checked); err == nil {
+	if err := rollupExitDecision(drifts, checked, missing); err == nil {
 		t.Fatal("drift present must return a non-nil error, got nil")
+	}
+}
+
+// TestRollupExitDecision_MissingIsError: a watched contract with no
+// checkpoint row must fail the run even with zero drift — the row-deletion
+// residue this guards is invisible to drift and checked-count alone.
+func TestRollupExitDecision_MissingIsError(t *testing.T) {
+	if err := rollupExitDecision(nil, 2, []string{"C_GONE"}); err == nil {
+		t.Fatal("missing contract present must return a non-nil error, got nil")
+	}
+}
+
+// TestResolveVerifyRollupContracts pins the default-selection precedence:
+// an explicit -contracts flag wins; otherwise the configured watched set
+// is used (so the run cross-checks against it, not "every row the table
+// happens to hold"); with neither, nil ("check all") is the only sane
+// fallback.
+func TestResolveVerifyRollupContracts(t *testing.T) {
+	watched := []string{"C_WATCHED_1", "C_WATCHED_2"}
+	explicit := []string{"C_EXPLICIT"}
+
+	if got := resolveVerifyRollupContracts(explicit, watched); len(got) != 1 || got[0] != "C_EXPLICIT" {
+		t.Fatalf("explicit -contracts must win, got %v", got)
+	}
+	if got := resolveVerifyRollupContracts(nil, watched); len(got) != 2 || got[0] != "C_WATCHED_1" {
+		t.Fatalf("no -contracts must default to the watched set, got %v", got)
+	}
+	if got := resolveVerifyRollupContracts(nil, nil); got != nil {
+		t.Fatalf("no -contracts and no watched set must fall back to nil (check all), got %v", got)
 	}
 }
 
