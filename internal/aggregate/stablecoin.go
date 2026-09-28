@@ -32,7 +32,9 @@ var stablecoinFiatProxy = map[string]string{
 	"DAI":   "USD",
 	"PYUSD": "USD",
 	"USDP":  "USD",
-	// EUR-pegged stablecoins.
+	// EUR-pegged stablecoins. EURC/EUROC are one asset (canonical
+	// eurcAliasFamily); both keys stay because this map is keyed by the
+	// raw Asset.Code, before alias resolution.
 	"EURC":  "EUR",
 	"EUROC": "EUR",
 	"EUROB": "EUR",

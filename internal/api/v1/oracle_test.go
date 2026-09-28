@@ -303,6 +303,34 @@ func TestOracleLatest_ClassicExpandsToCryptoTicker(t *testing.T) {
 	}
 }
 
+// TestOracleLatest_VerifiedEURCReachesEUROCFeeds: the catalogue ticker is
+// EURC but RedStone publishes the same coin as crypto:EUROC, so the
+// ticker the verified issuer is granted must carry its rename alias.
+func TestOracleLatest_VerifiedEURCReachesEUROCFeeds(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
+	reader := &stubOracleReader{}
+	srv := v1.New(v1.Options{Oracle: reader, VerifiedCurrencies: cat})
+	tsrv := httpTestServer(t, srv)
+
+	const eurcClassic = "EURC-GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2"
+	resp := mustGet(t, tsrv.URL+"/v1/oracle/latest?asset="+eurcClassic)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	wantKeys := []string{eurcClassic, "crypto:EURC", "crypto:EUROC"}
+	if len(reader.lastAssets) != len(wantKeys) {
+		t.Fatalf("lastAssets = %+v, want %+v", reader.lastAssets, wantKeys)
+	}
+	for i, k := range wantKeys {
+		if reader.lastAssets[i] != k {
+			t.Errorf("lastAssets[%d] = %q, want %q", i, reader.lastAssets[i], k)
+		}
+	}
+}
+
 // TestOracleLatest_EveryAliasFamilyMemberCoversItsFamily is the guard
 // against a hand-rolled expander drifting from the alias registry: with a
 // configured classic↔SAC pair installed, querying ANY member of ANY
@@ -329,6 +357,7 @@ func TestOracleLatest_EveryAliasFamilyMemberCoversItsFamily(t *testing.T) {
 	families := [][]string{
 		{"native", "crypto:XLM", canonical.XLMSacContractID},
 		{usdcClassic, usdcSACContract},
+		{"crypto:EURC", "crypto:EUROC"},
 	}
 	for _, family := range families {
 		for _, member := range family {

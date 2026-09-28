@@ -63,6 +63,7 @@ func registerAppMetrics() {
 		ExternalFXRateRejectedTotal,
 		ExternalFXBaselineHealedTotal,
 		ExternalDustDroppedTotal,
+		ExternalPollerRefusedEntriesTotal,
 		CEXStreamDisconnectTotal, CEXStreamLastTradeUnix,
 		DiscoveryDroppedHitsTotal,
 		DiscoverySkippedHitsTotal,
@@ -1434,6 +1435,18 @@ var ExternalDustDroppedTotal = prometheus.NewCounterVec(
 		Help: "Streamed CEX trades dropped at ingest as sub-$0.001 dust, by source.",
 	},
 	[]string{"source"},
+)
+
+// ExternalPollerRefusedEntriesTotal — per-source, per-reason counter of
+// poller response entries refused rather than trusted: a symbol that
+// resolved to more than one coin, or an id-mode entry whose own id
+// disagrees with the id requested. Each refusal drops a reference price.
+var ExternalPollerRefusedEntriesTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_external_poller_refused_entries_total",
+		Help: "External poller response entries refused as ambiguous or inconsistent, by source and reason (ambiguous_symbol | id_mismatch).",
+	},
+	[]string{"source", "reason"},
 )
 
 // AMMSelfPairSwapTotal — per-source counter of AMM swap events decoded as a

@@ -1313,6 +1313,7 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 		// `id=<numeric>` for any ticker with an authoritative ID,
 		// disambiguating polluted tickers (LUNA, LUNC, etc.).
 		p.CMCIDs = catalogue.CoinMarketCapIDs()
+		p.Logger = logger
 		pollers = append(pollers, external.PollerSpec{
 			Poller: p,
 			Pairs:  aggregatorPairs,

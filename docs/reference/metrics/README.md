@@ -982,6 +982,20 @@ venue (e.g. `coinbase`) can mean the streamer wedged — cross-check
 `stellarindex_cex_stream_last_trade_unix` / the CEX stream disconnect
 counter.
 
+### `stellarindex_external_poller_refused_entries_total`
+
+Counter, labels `source`, `reason` ∈ {ambiguous_symbol, id_mismatch}.
+
+External-poller response entries refused instead of trusted, so the
+ticker gets no reference price that poll. Emitted by CoinMarketCap:
+`ambiguous_symbol` is a `symbol=` lookup that returned more than one
+coin (nothing in the payload says which is ours); `id_mismatch` is an
+`id=` entry whose own `id` disagrees with the id requested under that
+key, which is a payload integrity fault. Each refusal also logs a Warn
+naming the ticker. A steady non-zero `ambiguous_symbol` rate means a
+ticker needs a `coinmarketcap_id` in the verified catalogue; any
+`id_mismatch` is worth investigating.
+
 ### `stellarindex_discovery_dropped_hits_total`
 
 Counter, no labels.

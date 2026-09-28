@@ -56,23 +56,27 @@ func TestAssetVolumeCharacterRollupSQL_Shape(t *testing.T) {
 }
 
 // TestBuildAliasMapValues_XLMBaseline proves the alias-fold VALUES bind the
-// XLM baseline (crypto:XLM + the SAC → native) as ::text params starting at
-// the given index, in deterministic order.
+// compile-time baseline (crypto:XLM + the XLM SAC → native, crypto:EUROC →
+// crypto:EURC) as ::text params starting at the given index, sorted by form.
 func TestBuildAliasMapValues_XLMBaseline(t *testing.T) {
-	canonical.InstallAliasRegistry(nil) // XLM-only baseline
+	canonical.InstallAliasRegistry(nil) // compile-time baseline
 
 	valuesSQL, args := buildAliasMapValues(2)
-	if !strings.Contains(valuesSQL, "($2::text, $3::text)") ||
-		!strings.Contains(valuesSQL, "($4::text, $5::text)") {
-		t.Errorf("buildAliasMapValues(2) placeholders = %q, want $2..$5 ::text pairs", valuesSQL)
+	wantSQL := "($2::text, $3::text), ($4::text, $5::text), ($6::text, $7::text)"
+	if valuesSQL != wantSQL {
+		t.Errorf("buildAliasMapValues(2) placeholders = %q, want %q", valuesSQL, wantSQL)
 	}
-	if len(args) != 4 {
-		t.Fatalf("buildAliasMapValues args = %d, want 4 (two form→canon pairs)", len(args))
+	want := []any{
+		canonical.XLMSacContractID, "native",
+		"crypto:EUROC", "crypto:EURC",
+		"crypto:XLM", "native",
 	}
-	// Every canon target on the baseline is 'native'.
-	for i := 1; i < len(args); i += 2 {
-		if args[i] != "native" {
-			t.Errorf("alias arg[%d] canon = %v, want native", i, args[i])
+	if len(args) != len(want) {
+		t.Fatalf("buildAliasMapValues args = %v, want %v", args, want)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Errorf("alias arg[%d] = %v, want %v", i, args[i], want[i])
 		}
 	}
 }

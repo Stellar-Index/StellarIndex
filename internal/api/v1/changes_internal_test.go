@@ -58,10 +58,10 @@ func TestChangeSummaryCoinCandidates(t *testing.T) {
 			want:       []string{"USDC", "crypto:USDC"},
 		},
 		{
-			name:       "EURC expands like USDC",
+			name:       "EURC expands like USDC, plus the EUROC rename alias",
 			entityType: "coin",
 			entityID:   "EURC",
-			want:       []string{"EURC", "crypto:EURC"},
+			want:       []string{"EURC", "crypto:EURC", "crypto:EUROC"},
 		},
 		{
 			name:       "full asset_id with G-strkey returns input + parsed canonical form (which is identical)",

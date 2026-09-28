@@ -46,6 +46,62 @@ func TestXLMAliasFamily_IsValid(t *testing.T) {
 	}
 }
 
+// TestEURCAliasFamily_IsValid mirrors TestXLMAliasFamily_IsValid for
+// the EURC/EUROC rename family: struct literals bypass the
+// New* constructors, so validity and ordering are asserted here.
+func TestEURCAliasFamily_IsValid(t *testing.T) {
+	for _, a := range eurcAliasFamily {
+		if err := a.Validate(); err != nil {
+			t.Errorf("alias family member %q invalid: %v", a.String(), err)
+		}
+	}
+	if len(eurcAliasFamily) != 2 {
+		t.Fatalf("family size = %d, want 2 (EURC, EUROC)", len(eurcAliasFamily))
+	}
+	// EURC (the verified catalogue's post-rename ticker) is canonical;
+	// EUROC folds onto it.
+	want := []string{"crypto:EURC", "crypto:EUROC"}
+	for i := range want {
+		if got := eurcAliasFamily[i].String(); got != want[i] {
+			t.Errorf("family[%d] = %q, want %q", i, got, want[i])
+		}
+	}
+}
+
+// TestAssetAliases_EURCEUROC: both spellings must resolve to
+// the same two-member family regardless of which form a caller names,
+// mirroring the XLM cases in TestAssetAliases.
+func TestAssetAliases_EURCEUROC(t *testing.T) {
+	cases := map[string][]string{
+		"crypto:EURC":  {"crypto:EURC", "crypto:EUROC"},
+		"crypto:EUROC": {"crypto:EUROC", "crypto:EURC"},
+	}
+	for in, want := range cases {
+		a, err := ParseAsset(in)
+		if err != nil {
+			t.Fatalf("parse %s: %v", in, err)
+		}
+		got := AssetAliases(a)
+		if len(got) != len(want) {
+			t.Fatalf("AssetAliases(%s) = %v (len %d), want len %d", in, got, len(got), len(want))
+		}
+		for i := range want {
+			if got[i].String() != want[i] {
+				t.Errorf("AssetAliases(%s)[%d] = %q, want %q", in, i, got[i].String(), want[i])
+			}
+		}
+	}
+
+	// EUROB is a different token, deliberately not in the family.
+	eurob, err := ParseAsset("crypto:EUROB")
+	if err != nil {
+		t.Fatalf("parse crypto:EUROB: %v", err)
+	}
+	if got := AssetAliases(eurob); len(got) != 1 || !got[0].Equal(eurob) {
+		t.Errorf("AssetAliases(EUROB) = %v, want just itself", got)
+	}
+}
+
 // TestAssetAliases is the contract test for the primitive that
 // internal/api/v1 and internal/aggregate BOTH delegate to. It replaces
 // the two hand-kept-in-lock-step copies those packages used to carry
@@ -114,17 +170,18 @@ func TestAssetAliasStrings(t *testing.T) {
 // TestAllAliasForms pins the SQL-fold projection the volume-character rollup
 // binds: every NON-canonical form maps to its canonical form, and the
 // canonical form itself is NOT a key (it maps to itself via the caller's
-// COALESCE fallback). On the XLM-only baseline that is exactly
-// {crypto:XLM → native, <XLM SAC> → native}.
+// COALESCE fallback). On the compile-time baseline that is exactly
+// {crypto:XLM → native, <XLM SAC> → native, crypto:EUROC → crypto:EURC}.
 func TestAllAliasForms(t *testing.T) {
-	// Reset to the XLM-only baseline so the test is independent of any
-	// config-derived registry a prior test installed.
+	// Reset to the compile-time baseline so the test is independent of
+	// any config-derived registry a prior test installed.
 	InstallAliasRegistry(nil)
 
 	got := AllAliasForms()
 	want := map[string]string{
 		"crypto:XLM":     "native",
 		XLMSacContractID: "native",
+		"crypto:EUROC":   "crypto:EURC",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("AllAliasForms() = %v, want %v", got, want)
@@ -139,6 +196,9 @@ func TestAllAliasForms(t *testing.T) {
 	// treat a canonical row as an alias.
 	if _, ok := got["native"]; ok {
 		t.Errorf("AllAliasForms() maps the canonical form 'native' — it must be omitted")
+	}
+	if _, ok := got["crypto:EURC"]; ok {
+		t.Errorf("AllAliasForms() maps the canonical form 'crypto:EURC' — it must be omitted")
 	}
 }
 
