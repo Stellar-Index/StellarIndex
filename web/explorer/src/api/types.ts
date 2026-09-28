@@ -893,7 +893,13 @@ export interface paths {
          *
          *     - Heartbeats every 15 s as comment lines.
          *     - Resume after disconnect via `Last-Event-ID` (header preferred,
-         *       `?last_event_id=` fallback).
+         *       `?last_event_id=` fallback). When the resume window can't
+         *       cover the requested id — the buffer already evicted it — a
+         *       `stream_gap` event precedes the replay, carrying
+         *       `{"topic":…,"requested_after":…,"resumed_from":…}`.
+         *       `resumed_from` is the oldest id still available; events
+         *       between the two are gone. `stream_gap` carries no `id:` line
+         *       of its own and does not advance the client's resume cursor.
          *     - Events carry the `/v1/price` envelope shape (`data` +
          *       `as_of`); `flags` / `sources` are present only when the
          *       publishing path evaluated them — absent flags mean "not
