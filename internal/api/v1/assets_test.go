@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -293,6 +295,78 @@ func TestAssetGet_Kind_SetForReaderPathAndSurvivesResponseCache(t *testing.T) {
 		if env.Data.Kind != "stellar_asset" {
 			t.Errorf("%s request (i=%d): kind = %q, want \"stellar_asset\" — the reader.GetAsset path must have Kind stamped before the response is cached, not left to the (Kind-unaware) storage layer", label, i, env.Data.Kind)
 		}
+	}
+}
+
+// ctxDeadCountingReader answers GetAsset with a distinct Code each
+// call, independent of the request's context state (mirrors the real
+// AssetReader implementations, which don't observe cancellation
+// themselves — see GH-708).
+type ctxDeadCountingReader struct {
+	calls int
+}
+
+func (r *ctxDeadCountingReader) GetAsset(_ context.Context, a canonical.Asset) (v1.AssetDetail, error) {
+	r.calls++
+	return v1.AssetDetail{
+		AssetID:    a.String(),
+		Type:       "native",
+		Code:       fmt.Sprintf("CALL%d", r.calls),
+		Decimals:   7,
+		Sep1Status: "not_applicable",
+	}, nil
+}
+
+func (r *ctxDeadCountingReader) ListAssets(_ context.Context, _ string, _ int) ([]v1.AssetDetail, string, error) {
+	return nil, "", nil
+}
+
+// TestAssetGet_DeadContextBodyNotCached is the regression proof for
+// GH-708: handleAssetGet had no liveness gate between its cache miss
+// and its assetDetailCache.put, so a request whose context died mid-
+// chain (client gone, or the blanket request-timeout deadline) still
+// cached whatever best-effort body it had assembled and replayed it
+// as a fresh 200 for the full 120s TTL. A second, healthy request for
+// the same asset_id must therefore recompute rather than replay the
+// first (dead-context) render.
+func TestAssetGet_DeadContextBodyNotCached(t *testing.T) {
+	reader := &ctxDeadCountingReader{}
+	srv := v1.New(v1.Options{Assets: reader})
+	h := srv.Handler()
+
+	// Request 1: context already dead by the time it reaches the
+	// handler — simulating a client abort or a fired request-timeout
+	// deadline partway through the enrichment chain.
+	deadCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req1 := httptest.NewRequest(http.MethodGet, "/v1/assets/native", nil).WithContext(deadCtx)
+	rec1 := httptest.NewRecorder()
+	h.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("request 1 (dead context): status = %d", rec1.Code)
+	}
+
+	// Request 2: healthy context, same asset_id, well inside the 120s
+	// TTL. Must NOT be served from a cache entry request 1 wrote.
+	req2 := httptest.NewRequest(http.MethodGet, "/v1/assets/native", nil)
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("request 2 (healthy context): status = %d", rec2.Code)
+	}
+
+	var env struct {
+		Data v1.AssetDetail `json:"data"`
+	}
+	if err := json.Unmarshal(rec2.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode request 2 body: %v", err)
+	}
+	if reader.calls != 2 {
+		t.Fatalf("GetAsset called %d times, want 2 — the second request must recompute, not replay a body cached from the dead-context request", reader.calls)
+	}
+	if env.Data.Code != "CALL2" {
+		t.Fatalf("second request served code %q, want CALL2 — it must reflect the SECOND (healthy-context) GetAsset call, not a cached body from the dead-context request",
+			env.Data.Code)
 	}
 }
 

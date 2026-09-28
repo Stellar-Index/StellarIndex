@@ -3595,7 +3595,17 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// issuer doesn't. No-op when no catalogue is wired or the asset
 	// isn't a classic Stellar asset.
 	flags := s.verifiedCurrencyFlags(&detail, parsed)
-	if homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale {
+	// GH-708: every enrichment above is best-effort on r.Context() — a
+	// failure just leaves its field null, with no error plumbing back to
+	// here. So a context that died anywhere in that chain (client gone,
+	// or this handler's own middleware.RequestTimeout deadline) produced
+	// a numbers-free body with no other signal of it. Caching THAT body
+	// would replay a degraded snapshot as a fresh 200 for the full TTL —
+	// routinely triggered by the API's own 30s prewarm client outrunning
+	// a slow read. Stamp it stale and skip the cache write; the request
+	// itself still gets an honest (if degraded) answer.
+	ctxDead := r.Context().Err() != nil
+	if homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || ctxDead {
 		flags.Stale = true
 	}
 
@@ -3611,9 +3621,13 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, detail, flags)
 		return
 	}
-	// A failed decimals read is a transient outage: replaying its
-	// cap-less body for the whole TTL would outlive the outage.
-	if !detail.DecimalsUnresolved {
+	// A failed decimals read is a transient outage, and a dead context
+	// means this body was assembled from whatever best-effort reads
+	// happened to land before cancellation: either way, replaying it for
+	// the whole TTL would outlive the outage. Skip the cache write, not
+	// the response — the caller who is still listening gets the (stale-
+	// flagged) body they asked for.
+	if !detail.DecimalsUnresolved && !ctxDead {
 		s.assetDetailCache.put(cacheKey, body)
 	}
 	writeCachedAssetDetail(w, &assetDetailEntry{body: body, cachedAt: time.Now()})
