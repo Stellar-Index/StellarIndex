@@ -71,9 +71,6 @@ func TestResolver_HappyPath(t *testing.T) {
 	if sep.Version != "2.3.0" {
 		t.Errorf("Version = %q", sep.Version)
 	}
-	if !strings.HasPrefix(sep.NetworkPassphrase, "Public Global Stellar Network") {
-		t.Errorf("NetworkPassphrase = %q", sep.NetworkPassphrase)
-	}
 	if got := sep.Documentation["ORG_DBA"]; got != "Circle" {
 		t.Errorf("ORG_DBA = %q", got)
 	}

@@ -31,11 +31,6 @@ type SEP1 struct {
 	// Version is the TOML's declared SEP-1 version.
 	Version string
 
-	// NetworkPassphrase is the passphrase the operator claims
-	// their assets trade on. Should match our configured
-	// [StellarConfig.Network] — mismatch is a red flag.
-	NetworkPassphrase string
-
 	// Currencies is the [[CURRENCIES]] array — asset-specific
 	// metadata per SEP-1 §Currencies. Limited to the fields we
 	// surface via /v1/assets today; more land as needed.
@@ -542,9 +537,6 @@ func parseSEP1(body []byte) (*SEP1, error) {
 
 	if v, ok := raw["VERSION"].(string); ok {
 		sep.Version = truncateRunes(v, maxShortFieldRunes)
-	}
-	if v, ok := raw["NETWORK_PASSPHRASE"].(string); ok {
-		sep.NetworkPassphrase = truncateRunes(v, maxShortFieldRunes)
 	}
 
 	applySEP1Documentation(sep, raw)
