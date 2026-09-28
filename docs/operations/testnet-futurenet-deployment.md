@@ -1,6 +1,6 @@
 ---
 title: Testnet + Futurenet deployment
-last_verified: 2026-08-27
+last_verified: 2026-09-18
 status: current
 ---
 
