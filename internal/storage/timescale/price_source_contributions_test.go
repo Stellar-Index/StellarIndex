@@ -14,7 +14,7 @@ func TestInsertPriceSourceContributions_RefusesAMissingWindow(t *testing.T) {
 	s := &Store{}
 	valid := PriceSourceContribution{
 		AssetID: "crypto:BTC", QuoteID: "fiat:USD", Window: 5 * time.Minute,
-		Bucket: time.Now(), Source: "binance", Weight: 1, TradeCount: 1,
+		Bucket: time.Now(), Source: "binance", Weight: "1", TradeCount: 1,
 	}
 	for _, bad := range []time.Duration{0, -time.Minute, 1500 * time.Millisecond} {
 		row := valid

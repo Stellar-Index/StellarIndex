@@ -642,8 +642,9 @@ type ContributionRecord struct {
 	// rows looked authoritative while drifting from the
 	// contribution set actually published. The sink now reads
 	// SourceUSDVolume directly so persisted `volume_usd` matches
-	// what VWAP actually saw.
-	SourceUSDVolume map[string]float64
+	// what VWAP actually saw. Exact: each trade's quote amount over its
+	// decimal scale, summed as big.Rat.
+	SourceUSDVolume map[string]*big.Rat
 }
 
 // DivergenceRefresher is the seam the orchestrator uses to keep the
@@ -2158,7 +2159,7 @@ func (o *Orchestrator) fetchForTarget(
 	ctx context.Context,
 	target canonical.Pair,
 	from, to time.Time,
-) (trades []canonical.Trade, usdVolume float64, tradeUSD map[string]float64, proxied map[string]struct{}, err error) {
+) (trades []canonical.Trade, usdVolume float64, tradeUSD map[string]*big.Rat, proxied map[string]struct{}, err error) {
 	if !o.cfg.EnableStablecoinFiatProxy {
 		t, err := o.fetchTradesDetectTruncation(ctx, target, target, from, to)
 		if err != nil {
@@ -2176,7 +2177,7 @@ func (o *Orchestrator) fetchForTarget(
 	var merged []canonical.Trade
 	var sumUSD float64
 	var fetchErrs []error
-	tradeUSD = map[string]float64{}
+	tradeUSD = map[string]*big.Rat{}
 	proxied = map[string]struct{}{}
 	for _, src := range sources {
 		batch, ferr := o.fetchTradesDetectTruncation(ctx, target, src, from, to)
@@ -2244,7 +2245,7 @@ var _ = usdVolumeForPair
 // uses to decide whether the MinUSDVolume floor applies to a given
 // target pair, so the two can never disagree about which quote
 // shapes are USD-valuable (Guard 1, 2026-07-10).
-func usdVolumeForPairPerTrade(pair canonical.Pair, batch []canonical.Trade, classicUSDPegs, sorobanUSDPegs []canonical.Asset) (float64, map[string]float64) {
+func usdVolumeForPairPerTrade(pair canonical.Pair, batch []canonical.Trade, classicUSDPegs, sorobanUSDPegs []canonical.Asset) (float64, map[string]*big.Rat) {
 	if len(batch) == 0 {
 		return 0, nil
 	}
@@ -2254,8 +2255,8 @@ func usdVolumeForPairPerTrade(pair canonical.Pair, batch []canonical.Trade, clas
 	// One scale per DISTINCT decimals value, not per trade — a window
 	// carries hundreds of trades across at most three decimal classes.
 	scales := make(map[int]*big.Int, 3)
-	perTrade := make(map[string]float64, len(batch))
-	var total float64
+	perTrade := make(map[string]*big.Rat, len(batch))
+	sum := new(big.Rat)
 	for i := range batch {
 		amt := batch[i].QuoteAmount.BigInt()
 		if amt == nil || amt.Sign() == 0 {
@@ -2271,10 +2272,10 @@ func usdVolumeForPairPerTrade(pair canonical.Pair, batch []canonical.Trade, clas
 			scales[decimals] = scale
 		}
 		rat := new(big.Rat).SetFrac(amt, scale)
-		v, _ := rat.Float64() // i128:ok per-trade USD volume for the MinUSDVolume floor gate, not served
-		perTrade[batch[i].ID()] = v
-		total += v
+		perTrade[batch[i].ID()] = rat
+		sum.Add(sum, rat)
 	}
+	total, _ := sum.Float64() // i128:ok window USD volume for the MinUSDVolume floor gate, not served
 	return total, perTrade
 }
 
@@ -2431,14 +2432,17 @@ func isUSDPeggedSoroban(asset canonical.Asset, pegs []canonical.Asset) bool {
 // map is if `usdVolumeForPairPerTrade` decided the source pair's
 // quote isn't a recognised USD surface, in which case the trade
 // doesn't contribute to the USD-volume gate by definition.
-func survivorUSDVolume(trades []canonical.Trade, tradeUSD map[string]float64) float64 {
+func survivorUSDVolume(trades []canonical.Trade, tradeUSD map[string]*big.Rat) float64 {
 	if len(trades) == 0 || len(tradeUSD) == 0 {
 		return 0
 	}
-	var total float64
+	sum := new(big.Rat)
 	for i := range trades {
-		total += tradeUSD[trades[i].ID()]
+		if v, ok := tradeUSD[trades[i].ID()]; ok {
+			sum.Add(sum, v)
+		}
 	}
+	total, _ := sum.Float64() // i128:ok survivor USD volume for the MinUSDVolume floor gate, not served
 	return total
 }
 
@@ -2695,7 +2699,7 @@ func (o *Orchestrator) flushContributions(
 	pair canonical.Pair,
 	window time.Duration,
 	trades []canonical.Trade,
-	tradeUSD map[string]float64,
+	tradeUSD map[string]*big.Rat,
 ) {
 	if o.cfg.ContributionSink == nil {
 		return
@@ -2710,13 +2714,20 @@ func (o *Orchestrator) flushContributions(
 	// against; an outlier-dropped trade contributes 0 USD to its
 	// source's row instead of double-attributing through the
 	// pre-filter total.
-	var sourceUSD map[string]float64
+	var sourceUSD map[string]*big.Rat
 	if len(tradeUSD) > 0 {
-		sourceUSD = make(map[string]float64, len(contributions))
+		sourceUSD = make(map[string]*big.Rat, len(contributions))
 		for i := range trades {
-			if v, ok := tradeUSD[trades[i].ID()]; ok {
-				sourceUSD[trades[i].Source] += v
+			v, ok := tradeUSD[trades[i].ID()]
+			if !ok {
+				continue
 			}
+			acc, seen := sourceUSD[trades[i].Source]
+			if !seen {
+				acc = new(big.Rat)
+				sourceUSD[trades[i].Source] = acc
+			}
+			acc.Add(acc, v)
 		}
 	}
 	if err := o.cfg.ContributionSink.RecordContributions(ctx, ContributionRecord{

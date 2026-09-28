@@ -15,14 +15,15 @@ var ErrContributionWindowRequired = errors.New(
 
 // PriceSourceContribution is one row's worth of per-source weight
 // for a single (asset, quote, window, bucket). Window is required.
+// Weight and VolumeUSD are decimal strings bound straight to NUMERIC.
 type PriceSourceContribution struct {
 	AssetID    string
 	QuoteID    string
 	Window     time.Duration
 	Bucket     time.Time
 	Source     string
-	Weight     float64
-	VolumeUSD  *float64
+	Weight     string
+	VolumeUSD  *string
 	TradeCount int
 }
 
@@ -62,7 +63,7 @@ func (s *Store) InsertPriceSourceContributions(ctx context.Context, rows []Price
 		    asset_id, quote_id, window_seconds, bucket, source,
 		    weight, volume_usd, trade_count
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		VALUES ($1, $2, $3, $4, $5, $6::numeric, $7::numeric, $8)
 		ON CONFLICT (asset_id, quote_id, window_seconds, source, bucket) DO UPDATE SET
 		    weight       = EXCLUDED.weight,
 		    volume_usd   = EXCLUDED.volume_usd,
