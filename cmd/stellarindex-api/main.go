@@ -2343,8 +2343,8 @@ func newInProcessLoginThrottle() *inProcessLoginThrottle {
 
 // Allow implements dashboardauth.LoginThrottle. The in-process
 // Bucket path never returns an error (no backend to fail — see
-// Bucket.TakeN's doc), so the discarded errors here are always nil;
-// the signature is kept for interface conformance.
+// ratelimit's localStore), so the discarded errors here are always
+// nil; the signature is kept for interface conformance.
 func (t *inProcessLoginThrottle) Allow(ctx context.Context, ip, email string) (bool, error) {
 	allowed := true
 	if ip != "" {

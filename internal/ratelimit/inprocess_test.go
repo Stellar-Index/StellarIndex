@@ -144,25 +144,25 @@ func TestInProcess_FloodBeyondKeyCap_SharesFailClosedBucket(t *testing.T) {
 
 	// A client tracked before the flood keeps its own budget — the cap
 	// must not punish the population it was protecting.
-	if r, _ := b.TakeN(ctx, "anon:flood-0", 2); !r.Allowed {
+	if r, _ := b.Charge(ctx, "anon:flood-0", 1, 2); !r.Allowed {
 		t.Error("a key tracked before the cap must keep its private counter")
 	}
 }
 
-// TestInProcess_TakeNOverride confirms the per-subject limit override
+// TestInProcess_LimitOverride confirms the per-subject limit override
 // (paid-tier custom plan) flows through the in-process path too.
-func TestInProcess_TakeNOverride(t *testing.T) {
+func TestInProcess_LimitOverride(t *testing.T) {
 	b := ratelimit.New(nil, 1, time.Minute) // default max 1
 	ctx := context.Background()
 
 	// Override raises this key's budget to 2.
-	if r, _ := b.TakeN(ctx, "k", 2); !r.Allowed {
+	if r, _ := b.Charge(ctx, "k", 1, 2); !r.Allowed {
 		t.Fatal("1st with override=2 should be allowed")
 	}
-	if r, _ := b.TakeN(ctx, "k", 2); !r.Allowed {
+	if r, _ := b.Charge(ctx, "k", 1, 2); !r.Allowed {
 		t.Fatal("2nd with override=2 should be allowed")
 	}
-	if r, _ := b.TakeN(ctx, "k", 2); r.Allowed {
+	if r, _ := b.Charge(ctx, "k", 1, 2); r.Allowed {
 		t.Fatal("3rd with override=2 should be denied")
 	}
 }

@@ -26,7 +26,7 @@ const DefaultDwellTime = 30 * time.Second
 // ErrThrottleUnavailable signals the rate-limiter has been failing
 // open on Redis errors for longer than the configured dwell-time
 // and the caller should switch to fail-CLOSED (HTTP 503 +
-// Retry-After). Returned by [Bucket.Take] / [Bucket.TakeN] in place
+// Retry-After). Returned by [Bucket.Take] / [Bucket.Charge] in place
 // of the wrapped Redis error once the dwell-time threshold is
 // crossed; transient errors within the window keep returning the
 // wrapped Redis error so handlers retain their existing fail-open
@@ -67,7 +67,7 @@ type Bucket struct {
 	dwellTime time.Duration
 
 	// local is the in-process fixed-window fallback, non-nil iff rdb
-	// was nil at construction. When set, Take/TakeN bypass Redis
+	// was nil at construction. When set, Take/Charge bypass Redis
 	// entirely and enforce the limit from an in-memory map — the
 	// fail-CLOSED fallback that keeps the anon/key tiers throttled when
 	// Redis is absent at boot (C3-13 / C3-22). See [localStore].
@@ -279,41 +279,25 @@ var luaScript = redis.NewScript(lua)
 // every error as fail-open re-opens the sustained-outage bypass — see
 // the package doc's "Failure mode" section.
 func (b *Bucket) Take(ctx context.Context, key string) (Result, error) {
-	return b.TakeN(ctx, key, 0)
-}
-
-// TakeN is [Bucket.Take] with a per-call limit override. When limit
-// is > 0 it replaces the bucket's configured max for this single
-// increment; when ≤ 0 the bucket's max is used (so `TakeN(ctx, key, 0)`
-// is identical to `Take(ctx, key)`).
-//
-// Use this for per-subject limits that vary at runtime — e.g. a paid
-// customer with a `rate_limit_per_min` override on their API-key
-// record. The Redis key is shared across calls (so concurrent
-// requests still race against the same counter); the bucket itself
-// is stateless w.r.t. limit — the value is only consulted at Take
-// time, passed through to the Lua script as ARGV[2].
-//
-// Callers MUST pass a stable limit for any given Redis key —
-// flipping the limit between calls would race the in-flight counter
-// against an inconsistent threshold and produce undefined allow/deny
-// outcomes for callers near the boundary. In practice this means the
-// per-key override must be sticky for the key's lifetime, which is
-// the design today (RateLimitPerMin lives on the APIKeyRecord, not
-// on the request).
-func (b *Bucket) TakeN(ctx context.Context, key string, limit int) (Result, error) {
-	return b.Charge(ctx, key, 1, limit)
+	return b.Charge(ctx, key, 1, 0)
 }
 
 // Charge spends cost tokens against key's counter for the current
 // window in ONE atomic step and reports whether the request still fits.
-// It is the weighted form of [Bucket.TakeN] — `TakeN(ctx, key, limit)`
-// is exactly `Charge(ctx, key, 1, limit)` — and exists because a
-// request's price must track the work it buys: a batch route that
-// resolves 1000 ids for the single token a one-id request pays turns
-// the per-minute ceiling into a 1000x amplifier (F035 / F046 / K009,
-// reverification-2026-09-18). limit carries TakeN's per-subject
-// override semantics unchanged, including the stable-per-key rule.
+// `Take(ctx, key)` is exactly `Charge(ctx, key, 1, 0)`. Charge exists
+// because a request's price must track the work it buys: a batch route
+// that resolves 1000 ids for the single token a one-id request pays
+// turns the per-minute ceiling into a 1000x amplifier (F035 / F046 /
+// K009, reverification-2026-09-18).
+//
+// cost and limit are different axes. limit > 0 replaces the bucket's
+// max for this call only — a per-subject ceiling such as an API key's
+// `rate_limit_per_min` — and ≤ 0 uses the bucket's max. Callers MUST
+// pass a stable limit for any given key: flipping it between calls
+// races the shared counter against inconsistent thresholds. cost is
+// what this call spends. There is deliberately no take with one extra
+// int: whether that int is a cost or a ceiling is a guess at every call
+// site, and a wrong guess silently rewrites the key's limit.
 //
 // One round-trip whatever the cost (INCRBY). Never weight a request by
 // calling Take in a loop: that is cost round-trips, and no longer

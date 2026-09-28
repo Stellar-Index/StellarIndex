@@ -29,22 +29,21 @@
 //
 // # Weighted charges
 //
-// A request is not always worth one token. [Bucket.Take] and
-// [Bucket.TakeN] spend one; [Bucket.Charge] spends a caller-supplied
-// cost in the same single round-trip, for routes whose server-side
-// work is chosen by the client. Note the naming trap: TakeN's N is the
-// per-subject LIMIT override, not a cost — Charge is the only way to
-// make a request dearer.
+// A request is not always worth one token. [Bucket.Take] spends one;
+// [Bucket.Charge] spends a caller-supplied cost in the same single
+// round-trip, and takes the per-subject LIMIT override as a separate
+// argument so a cost can never be mistaken for a ceiling.
 //
 // The production middleware charges one token before dispatch and
-// lets a handler re-price the request once it has parsed the parameter
-// that sets the cost (middleware.ChargeRateLimit). The rule for which
-// routes must do so: any handler whose store work a client parameter
-// selects — a query plan, a collection size, a bucket granularity —
-// prices the request by that work before reading. Its call sites carry
-// the weights: GET/POST /v1/price/batch (one token per de-duplicated
-// asset id), GET /v1/assets (by query plan) and
-// GET /v1/history/since-inception (by granularity). Nothing enforces
+// lets a handler re-price the request once it knows what the request
+// will read (middleware.ChargeRateLimit). The rule for which routes
+// must do so: any handler whose uncached store work a client parameter
+// selects — a query plan, a collection size, a bucket granularity — or
+// that fans out into many reads per request prices the request by that
+// work before reading. Its call sites carry the weights:
+// GET/POST /v1/price/batch (one token per de-duplicated asset id),
+// GET /v1/assets (by query plan), GET /v1/history/since-inception (by
+// granularity) and GET /v1/rwa/assets (one per listing read). Nothing enforces
 // the rule across routes yet, so a new route of that shape has to be
 // enrolled by hand. Cost is clamped into [1, limit]; see
 // [Bucket.Charge] for why neither end is an error.
