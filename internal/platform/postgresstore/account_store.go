@@ -85,7 +85,10 @@ func scanAccount(row interface {
 
 // Create inserts a new account. The schema's CHECK constraints
 // catch malformed slugs / tiers / statuses; we map the unique-
-// violation case (slug collision) to platform.ErrConflict.
+// violation case (slug collision) to platform.ErrConflict. A slug an
+// erasure retired (erased_account_slugs, migration 0188) is a collision
+// too: Redis key records and usage counters are keyed by acct:<slug>, so
+// reissuing it would hand a new owner anything a cleanup missed.
 func (r *AccountStore) Create(ctx context.Context, a platform.Account) (platform.Account, error) {
 	const q = `
 		INSERT INTO accounts (
@@ -93,8 +96,11 @@ func (r *AccountStore) Create(ctx context.Context, a platform.Account) (platform
 			tier, status,
 			rate_limit_per_min_override, monthly_request_quota_override
 		)
-		VALUES ($1, $2, $3, $4, $5,
-		        NULLIF($6, 0), NULLIF($7, 0))
+		SELECT $1::text, $2::text, $3::citext, $4::text, $5::text,
+		       NULLIF($6::int, 0), NULLIF($7::bigint, 0)
+		 WHERE NOT EXISTS (
+		       SELECT 1 FROM erased_account_slugs
+		        WHERE slug_sha256 = sha256(convert_to($2::text, 'UTF8')))
 		RETURNING ` + accountColumns
 
 	row := r.s.db.QueryRowContext(ctx, q,
@@ -105,7 +111,8 @@ func (r *AccountStore) Create(ctx context.Context, a platform.Account) (platform
 	out, err := scanAccount(row)
 	if err != nil {
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == pgErrUniqueViolation {
+		if errors.Is(err, sql.ErrNoRows) ||
+			(errors.As(err, &pgErr) && pgErr.Code == pgErrUniqueViolation) {
 			return platform.Account{}, fmt.Errorf("create account: %w", platform.ErrConflict)
 		}
 		return platform.Account{}, fmt.Errorf("create account: %w", err)

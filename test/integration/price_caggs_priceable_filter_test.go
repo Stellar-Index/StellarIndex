@@ -174,7 +174,7 @@ func TestPriceCAGGsPriceableFilter(t *testing.T) {
 		t.Fatalf("migrate.New: %v", err)
 	}
 	t.Cleanup(func() { _, _ = m.Close() })
-	if err := m.Steps(-1); err != nil {
+	if err := m.Migrate(186); err != nil {
 		t.Fatalf("migrate down 0187: %v", err)
 	}
 	quiesceCAGGRefreshPolicies(t, ctx, db)
