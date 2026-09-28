@@ -72,7 +72,7 @@ func sep1RefreshCmd(args []string) error {
 	gate := opsutil.RegisterWriteGate(fs)
 	issuer := fs.String("issuer", "", "Refresh ONLY this issuer G-strkey, bypassing the staleness queue")
 	systemicRate := fs.Float64("systemic-failure-rate", defaultSystemicFailureRate,
-		"Failure fraction at or above which a run is judged a fault on OUR side: "+
+		"Failure fraction, over domains that have served a stellar.toml before, at or above which a run is judged a fault on OUR side: "+
 			"the retry backoff it applied is unwound and the run exits non-zero. "+
 			"Set above 1 to disable")
 	if err := fs.Parse(args); err != nil {
@@ -115,7 +115,9 @@ func sep1RefreshCmd(args []string) error {
 	if dryRun {
 		fmt.Println("(dry-run; no rows written)")
 	}
-	if sep1RunVerdict(ok, failed, *systemicRate) {
+	// The loop is sequential, so the attempted rows are a prefix even when the
+	// deadline cut the batch short.
+	if sep1RunVerdict(candidates[:ok+failed], failedKeys, *systemicRate) {
 		return reportSep1Systemic(store, ok+failed, failedKeys, dryRun)
 	}
 	return nil
@@ -361,10 +363,16 @@ func sep1Candidates(
 // and a failed attempt stamps that column just as a success does, so
 // the gauge stays green while the refresh is doing nothing useful.
 //
-// So the run judges ITSELF. A failure fraction this high over a sample
-// this large is not a property of the issuer population; it is a
-// property of the run. When that verdict lands the run does two things
-// no silent backoff would:
+// So the run judges ITSELF, on the one population whose failures carry
+// that information: domains that HAVE served a stellar.toml (the row holds
+// a payload). A domain that has never answered failing again says nothing
+// about us. Counting those made the verdict a property of the network, not
+// of the run: on testnet, where nearly every home_domain is junk, a healthy
+// run went 19 ok / 731 failed every hour, tripped the guard, and its unwind
+// kept the junk off the ladder so the next run was the same. Previously-
+// reached domains failing en masse is a regression, and that is not a
+// property of the issuer population. When that verdict lands the run does
+// two things no silent backoff would:
 //
 //  1. Unwinds the ladder step it just applied to every domain it
 //     failed, so a bad night leaves no trace on the schedule and
@@ -375,27 +383,43 @@ func sep1Candidates(
 //     reports "0 succeeded, 750 failed" to a journal nobody reads and
 //     exits 0.
 //
-// The threshold is calibrated against the measured baseline, not
-// guessed. On r1, 2026-09-12, a healthy run failed 291 of 500 — 58%,
-// because more than half of the population genuinely serves nothing.
-// 90% is comfortably above anything the population can produce and
-// comfortably below "everything is broken". minAttempts keeps a short
-// run (a nearly-drained queue, a deadline-truncated batch, a targeted
-// -issuer refresh) from tripping it on a handful of samples.
+// On r1, 2026-09-12, a healthy run failed 291 of 500, and all 291 were
+// domains that had never produced a payload (migration 0159), so the
+// regression rate of a healthy run is near zero. 90% sits far above that
+// and below "everything is broken". minAttempts counts only the reached
+// domains, so a short run (a nearly-drained queue, a deadline-truncated
+// batch, a targeted -issuer refresh) cannot trip it on a handful.
 const (
 	defaultSystemicFailureRate = 0.90
 	systemicMinAttempts        = 50
 )
 
 // sep1RunVerdict reports whether a run's failures should be read as a
-// fault on our side rather than on the issuers'. Pure, so the
+// fault on our side rather than on the issuers': the failure fraction over
+// the attempted candidates that had been reached before. Pure, so the
 // calibration is testable without a network or a database.
-func sep1RunVerdict(ok, failed int, rate float64) bool {
-	attempts := ok + failed
-	if attempts < systemicMinAttempts || rate > 1 {
+func sep1RunVerdict(attempted []timescale.IssuerSep1Candidate, failedKeys []string, rate float64) bool {
+	if rate > 1 {
 		return false
 	}
-	return float64(failed)/float64(attempts) >= rate
+	failed := make(map[string]struct{}, len(failedKeys))
+	for _, k := range failedKeys {
+		failed[k] = struct{}{}
+	}
+	var reached, regressed int
+	for _, c := range attempted {
+		if !c.Reached {
+			continue
+		}
+		reached++
+		if _, ok := failed[c.GStrkey]; ok {
+			regressed++
+		}
+	}
+	if reached < systemicMinAttempts {
+		return false
+	}
+	return float64(regressed)/float64(reached) >= rate
 }
 
 // reportSep1Systemic applies the systemic verdict: unwind, then fail.
