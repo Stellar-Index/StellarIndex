@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
@@ -45,7 +46,7 @@ func TestHandleReadyz_ConcurrentCallerAbandonsViaContext(t *testing.T) {
 	// (until cleanup), so the round never completes on its own.
 	go func() {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest("GET", "/v1/readyz", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/readyz", nil)
 		srv.handleReadyz(w, req)
 	}()
 	select {
@@ -58,7 +59,7 @@ func TestHandleReadyz_ConcurrentCallerAbandonsViaContext(t *testing.T) {
 	// round.
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	req := httptest.NewRequest("GET", "/v1/readyz", nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, "/v1/readyz", nil).WithContext(ctx)
 	w := httptest.NewRecorder()
 
 	done := make(chan struct{})
@@ -103,7 +104,7 @@ func TestHandleLivezLake_ConcurrentCallerAbandonsViaContext(t *testing.T) {
 
 	go func() {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest("GET", "/v1/livez/lake", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/livez/lake", nil)
 		srv.handleLivezLake(w, req)
 	}()
 	select {
@@ -114,7 +115,7 @@ func TestHandleLivezLake_ConcurrentCallerAbandonsViaContext(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	req := httptest.NewRequest("GET", "/v1/livez/lake", nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, "/v1/livez/lake", nil).WithContext(ctx)
 	w := httptest.NewRecorder()
 
 	done := make(chan struct{})
