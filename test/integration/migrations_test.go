@@ -130,6 +130,18 @@ func TestMigrationsRoundTrip(t *testing.T) {
             (source, ledger, tx_hash, op_index, ts,
              base_asset, quote_asset, base_amount, quote_amount)
         VALUES ('t', 1, 'aa', 0, now(), 'native', 'native', -1, 1)`)
+	// Zero legs too: a one-side-zero fill has no price, so a CHECK relaxed
+	// to >= 0 would let it reach the price views.
+	assertInsertRejected(t, db, ctx, "zero base_amount", `
+        INSERT INTO trades
+            (source, ledger, tx_hash, op_index, ts,
+             base_asset, quote_asset, base_amount, quote_amount)
+        VALUES ('t', 1, 'ab', 0, now(), 'native', 'native', 0, 1)`)
+	assertInsertRejected(t, db, ctx, "zero quote_amount", `
+        INSERT INTO trades
+            (source, ledger, tx_hash, op_index, ts,
+             base_asset, quote_asset, base_amount, quote_amount)
+        VALUES ('t', 1, 'ac', 0, now(), 'native', 'native', 1, 0)`)
 	// ledger=0 is ACCEPTED as of migration 0004 — off-chain
 	// sources (Binance / Kraken / Bitstamp / Coinbase / FX pollers
 	// / aggregators) deliberately stamp 0 and use (source, tx_hash,
