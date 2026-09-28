@@ -468,3 +468,47 @@ func TestKeyIndex_BuildIndexesALargeLegacyPopulation(t *testing.T) {
 		t.Errorf("owner legacy-7 lists %d keys, want %d", len(got), (population+42)/50)
 	}
 }
+
+// TestDeleteKeysForIdentifier_RemovesEveryOwnedRecord pins the erasure
+// primitive on both lookup paths: through the index and, with the index
+// family denied, through the keyspace walk. Another owner's key survives.
+func TestDeleteKeysForIdentifier_RemovesEveryOwnedRecord(t *testing.T) {
+	for _, denied := range []bool{false, true} {
+		t.Run(fmt.Sprintf("indexDenied=%v", denied), func(t *testing.T) {
+			f := newKeyIndexFixture(t)
+			const owner, other = "acct:erased", "acct:bystander"
+			_ = listedKeyIDs(t, f.store, owner)
+			f.denier.deny.Store(denied)
+			a, pa := f.mint(t, owner)
+			b, pb := f.mint(t, owner)
+			_, po := f.mint(t, other)
+
+			got, err := f.store.DeleteKeysForIdentifier(context.Background(), owner)
+			if err != nil {
+				t.Fatalf("DeleteKeysForIdentifier: %v", err)
+			}
+			if !sameKeyIDs(got, a.KeyID, b.KeyID) {
+				t.Errorf("deleted %v, want %s and %s", got, a.KeyID, b.KeyID)
+			}
+			if f.authenticates(pa) || f.authenticates(pb) {
+				t.Error("an erased key still authenticates")
+			}
+			if !f.authenticates(po) {
+				t.Error("another owner's key stopped authenticating")
+			}
+			f.denier.deny.Store(false)
+			if ids := listedKeyIDs(t, f.store, owner); len(ids) != 0 {
+				t.Errorf("owner still lists %v", ids)
+			}
+			if !denied {
+				if owned, ok := f.indexField(t, keyIndexOwnerPrefix+owner); ok {
+					t.Errorf("owner list survived: %q", owned)
+				}
+			}
+			again, err := f.store.DeleteKeysForIdentifier(context.Background(), owner)
+			if err != nil || len(again) != 0 {
+				t.Errorf("second delete = %v, %v; want nothing, nil", again, err)
+			}
+		})
+	}
+}

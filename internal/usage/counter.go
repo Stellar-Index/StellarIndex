@@ -453,3 +453,24 @@ func (c *Counter) Read(ctx context.Context, subject string, days int) ([]Day, er
 	}
 	return out, nil
 }
+
+// DeleteSubject deletes subject's per-day total and per-endpoint detail
+// keys for every day still inside the retention window, and returns how
+// many existed. Account erasure calls it; the keys are derived, not
+// scanned, so the cost is fixed per subject.
+func (c *Counter) DeleteSubject(ctx context.Context, subject string) (int64, error) {
+	if c == nil || subject == "" {
+		return 0, nil
+	}
+	today := c.nowFn().UTC()
+	keys := make([]string, 0, 2*(RetentionDays+1))
+	for i := 0; i <= RetentionDays; i++ {
+		day := today.AddDate(0, 0, -i).Format("2006-01-02")
+		keys = append(keys, c.keyPrefix+url.QueryEscape(subject)+":"+day, c.detailKey(subject, day))
+	}
+	n, err := c.rdb.Del(ctx, keys...).Result()
+	if err != nil {
+		return 0, fmt.Errorf("usage: delete subject: %w", err)
+	}
+	return n, nil
+}

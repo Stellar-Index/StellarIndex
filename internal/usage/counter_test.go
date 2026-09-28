@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -460,5 +461,37 @@ func TestMonthToDate_DurableReadsAreCached(t *testing.T) {
 	}
 	if durable.reads != 2 {
 		t.Errorf("usage_daily reads after one interval = %d, want 2", durable.reads)
+	}
+}
+
+// TestDeleteSubject_RemovesEveryRetainedDay — both key families, oldest
+// retained day included; another subject's keys are untouched.
+func TestDeleteSubject_RemovesEveryRetainedDay(t *testing.T) {
+	mr, rdb := newRedis(t)
+	clock := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	c := usage.New(rdb, usage.WithClock(func() time.Time { return clock }))
+	ctx := context.Background()
+	for _, d := range []int{0, 1, usage.RetentionDays} {
+		clock = time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC).AddDate(0, 0, -d)
+		_ = c.Increment(ctx, "id:acct:gone")
+		_ = c.IncrementDetail(ctx, "id:acct:gone", "/v1/price", usage.ClassOK)
+		_ = c.Increment(ctx, "id:acct:kept")
+	}
+	clock = time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+
+	n, err := c.DeleteSubject(ctx, "id:acct:gone")
+	if err != nil {
+		t.Fatalf("DeleteSubject: %v", err)
+	}
+	if n != 6 {
+		t.Errorf("deleted %d keys, want 6", n)
+	}
+	for _, k := range mr.Keys() {
+		if !strings.Contains(k, url.QueryEscape("id:acct:kept")) {
+			t.Errorf("key %q survived", k)
+		}
+	}
+	if len(mr.Keys()) != 3 {
+		t.Errorf("%d keys remain, want the other subject's 3", len(mr.Keys()))
 	}
 }

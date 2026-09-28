@@ -354,35 +354,79 @@ func (s *RedisAPIKeyStore) ListKeysForIdentifier(ctx context.Context, identifier
 	if identifier == "" {
 		return nil, errors.New("auth: ListKeysForIdentifier: identifier is required")
 	}
-
+	owned, err := s.recordsForIdentifier(ctx, identifier)
+	if err != nil {
+		return nil, fmt.Errorf("auth: ListKeysForIdentifier: %w", err)
+	}
 	var out []APIKeyRecord
+	for _, o := range owned {
+		out = append(out, o.rec)
+	}
+	return out, nil
+}
+
+// ownedRecord is one record an identifier holds, with the hash that keys it.
+type ownedRecord struct {
+	hash string
+	rec  APIKeyRecord
+}
+
+// recordsForIdentifier resolves identifier's records through the index when
+// it is usable and by walking otherwise; see [RedisAPIKeyStore.ListKeysForIdentifier].
+func (s *RedisAPIKeyStore) recordsForIdentifier(ctx context.Context, identifier string) ([]ownedRecord, error) {
+	var out []ownedRecord
 	if owned, _, usable := s.indexLookup(ctx, keyIndexOwnerPrefix+identifier); usable {
 		for _, hash := range strings.Fields(owned) {
 			rec, found, err := s.getRecord(ctx, hash)
 			if err != nil {
-				return nil, fmt.Errorf("auth: ListKeysForIdentifier: %w", err)
+				return nil, err
 			}
 			if !found {
 				s.pruneIndex(ctx, hash, "", identifier)
 				continue
 			}
 			if rec.Identifier == identifier {
-				out = append(out, rec)
+				out = append(out, ownedRecord{hash: hash, rec: rec})
 			}
 		}
 		return out, nil
 	}
-
-	err := s.walkAPIKeyRecords(ctx, func(_ string, rec APIKeyRecord) (bool, error) {
+	err := s.walkAPIKeyRecords(ctx, func(hash string, rec APIKeyRecord) (bool, error) {
 		if rec.Identifier == identifier {
-			out = append(out, rec)
+			out = append(out, ownedRecord{hash: hash, rec: rec})
 		}
 		return false, nil
 	})
-	if err != nil {
-		return nil, fmt.Errorf("auth: ListKeysForIdentifier: %w", err)
+	return out, err
+}
+
+// DeleteKeysForIdentifier deletes every record identifier owns, with its
+// index entries, and returns the deleted KeyIDs. Account erasure calls it
+// before and after its Postgres commit: a record left behind would
+// authenticate as whichever account next holds the identifier.
+func (s *RedisAPIKeyStore) DeleteKeysForIdentifier(ctx context.Context, identifier string) ([]string, error) {
+	if identifier == "" {
+		return nil, errors.New("auth: DeleteKeysForIdentifier: identifier is required")
 	}
-	return out, nil
+	owned, err := s.recordsForIdentifier(ctx, identifier)
+	if err != nil {
+		return nil, fmt.Errorf("auth: DeleteKeysForIdentifier: %w", err)
+	}
+	deleted := make([]string, 0, len(owned))
+	for _, o := range owned {
+		recordKey := cachekeys.APIKey(o.hash).String()
+		err := removeIndexedRecordScript.Run(ctx, s.rdb,
+			[]string{cachekeys.APIKeyIndex().String(), recordKey},
+			o.hash, o.rec.KeyID, identifier, "1").Err()
+		if isRedisNoPerm(err) {
+			err = s.rdb.Del(ctx, recordKey).Err()
+		}
+		if err != nil {
+			return deleted, fmt.Errorf("auth: DeleteKeysForIdentifier: redis del %s: %w", recordKey, err)
+		}
+		deleted = append(deleted, o.rec.KeyID)
+	}
+	return deleted, nil
 }
 
 // RevokeKeyByID deletes the API key whose KeyID matches `keyID`,
