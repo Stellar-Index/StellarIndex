@@ -130,6 +130,12 @@ describe('IssuerDetailPage generateMetadata', () => {
       params: Promise.resolve({ g_strkey: 'shell' }),
     });
     expect(meta.robots).toEqual({ index: false, follow: true });
+    // Root layout bakes `alternates: { canonical: '/' }`; metadata merges
+    // shallowly per top-level key, so this shell must override the whole
+    // key with `{}` rather than omit it — omitting it inherits the root's
+    // canonical verbatim (F097).
+    expect(meta).toHaveProperty('alternates');
+    expect(meta.alternates).toEqual({});
     expect(meta.alternates?.canonical).toBeUndefined();
     expect(meta.openGraph?.url).toBeUndefined();
     expect(meta.title).not.toMatch(/shell/i);

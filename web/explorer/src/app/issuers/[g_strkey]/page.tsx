@@ -149,10 +149,14 @@ export async function generateMetadata({
       // crawler happened to try. noindex is the same posture the other
       // long-tail shells take route-wide (/accounts, /contracts,
       // /ledgers, /transactions, /assets, /markets); follow stays on so
-      // the crawler still walks out through the nav. No `alternates`
-      // here — a canonical would still point every long-tail issuer at
-      // this one shell URL.
+      // the crawler still walks out through the nav.
+      // Metadata merges shallowly per top-level key, so omitting
+      // `alternates` here would inherit the root layout's
+      // `alternates: { canonical: '/' }` verbatim — every long-tail
+      // issuer would bake a rel=canonical pointing at the homepage.
+      // Override with an empty object so no canonical is emitted.
       robots: { index: false, follow: true },
+      alternates: {},
     };
   }
   const short = `${g_strkey.slice(0, 8)}…${g_strkey.slice(-4)}`;

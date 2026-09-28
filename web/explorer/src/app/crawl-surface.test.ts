@@ -330,6 +330,15 @@ describe('long-tail shell metadata', () => {
       '/markets/shell must declare alternates itself, not inherit the root layout canonical',
     ).toHaveProperty('alternates');
     expect(marketMeta.alternates?.canonical).toBeUndefined();
+
+    const issuerMeta = await issuerMetadata({
+      params: Promise.resolve({ g_strkey: 'shell' }),
+    });
+    expect(
+      issuerMeta,
+      '/issuers/shell must declare alternates itself, not inherit the root layout canonical',
+    ).toHaveProperty('alternates');
+    expect(issuerMeta.alternates?.canonical).toBeUndefined();
   });
 
   /**
