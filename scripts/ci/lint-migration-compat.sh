@@ -28,23 +28,38 @@
 #   add-not-null-column   ADD COLUMN … NOT NULL with no DEFAULT
 #   drop-view             DROP [MATERIALIZED] VIEW
 #   add-constraint        ALTER TABLE … ADD CONSTRAINT (tightening)
+#   dml                   DELETE FROM / TRUNCATE / UPDATE … SET, unguarded
+#                         (GH #1163 — 0137's bare `DELETE FROM
+#                         comet_liquidity;` passed every other class, and
+#                         its down was `SELECT 1`: a down/up cycle after
+#                         the replay repaired the table silently deleted
+#                         the repaired rows again)
 #
 #   Loosening operations (DROP CONSTRAINT, DROP INDEX, ADD COLUMN
 #   nullable, CREATE TABLE/INDEX/VIEW) are additive-safe and are NOT
 #   flagged.
 #
-# Two escape hatches, both auditable:
+# Escape hatches:
 #
 #   1. Inline, per statement — the rule-9 two-release dance:
 #          … DROP COLUMN foo;  -- migration-compat:ok <reason>
 #      The reason is mandatory and must say why the PREVIOUS released
 #      binary is unaffected (e.g. "shape added in 0104, no released
-#      binary reads it").
+#      binary reads it"). Does NOT clear `dml` — see 3 below.
 #
 #   2. scripts/ci/migration-compat.baseline — the grandfathered set of
 #      pre-existing violations, keyed `<file>:<class>`. Shrink-only:
 #      stale entries FAIL, and scripts/ci/lint-baseline-growth.sh makes
 #      any growth require an explicit `Baseline-Growth:` commit trailer.
+#
+#   3. `dml` only: a `RAISE EXCEPTION` row-count guard anywhere in the
+#      same migration file (the pattern in
+#      migrations/0152_drop_unwired_scaffold_tables.up.sql:88-97 — a
+#      `DO $$ … IF n > 0 THEN RAISE EXCEPTION … END IF; END $$;` block).
+#      An unconditional DELETE/TRUNCATE/UPDATE cannot prove the previous
+#      released binary's row-count assumptions still hold, so the inline
+#      marker alone is not enough for this class; it needs a statement
+#      that refuses to run rather than a promise in a comment.
 #
 # Usage:
 #   bash scripts/ci/lint-migration-compat.sh              # repo migrations/
@@ -78,13 +93,17 @@ if [ ! -d "$MIGRATIONS_DIR" ]; then
   exit 1
 fi
 
-# Three parallel arrays (a single `class|regex` string would split on
+# Four parallel arrays (a single `class|regex` string would split on
 # the `|` ALTERNATION inside the regexes themselves — that bug silently
 # truncated the `rename` pattern to `RENAME[[:space:]]+(TO`, which grep
 # rejected as unbalanced and `|| true` swallowed).
 #   CLASSES[i]  — display name, also the baseline key suffix
 #   MATCH[i]    — case-insensitive ERE that flags the line
 #   EXCLUDE[i]  — optional ERE; a matched line containing it is cleared
+#   GUARD[i]    — optional ERE; if found ANYWHERE in the file, every hit
+#                 of this class in this file is cleared outright (a
+#                 file-level escape, stronger than the per-line inline
+#                 marker — see `dml`)
 CLASSES=(
   'drop-table'
   'drop-column'
@@ -94,6 +113,7 @@ CLASSES=(
   'add-not-null-column'
   'drop-view'
   'add-constraint'
+  'dml'
 )
 MATCH=(
   'DROP[[:space:]]+TABLE'
@@ -104,6 +124,12 @@ MATCH=(
   'ADD[[:space:]]+(COLUMN[[:space:]]+)?(IF[[:space:]]+NOT[[:space:]]+EXISTS[[:space:]]+)?[a-zA-Z0-9_"]+[[:space:]]+[a-zA-Z0-9_()[:space:],]*NOT[[:space:]]+NULL'
   'DROP[[:space:]]+(MATERIALIZED[[:space:]]+)?VIEW'
   'ADD[[:space:]]+CONSTRAINT'
+  # Anchored to the start of the (whitespace-trimmed) line: a real
+  # DELETE/TRUNCATE/UPDATE statement always opens its line. That is what
+  # keeps this off prose — "TRUNCATE of audit_log" inside a COMMENT ON
+  # string, or a `BEFORE TRUNCATE ON t` trigger declaration — which never
+  # has the keyword as the line's first token.
+  '^[[:space:]]*(DELETE[[:space:]]+FROM|TRUNCATE|UPDATE[[:space:]]+[a-zA-Z0-9_."]+[[:space:]]+SET)'
 )
 EXCLUDE=(
   ''
@@ -117,6 +143,18 @@ EXCLUDE=(
   'DEFAULT'
   ''
   ''
+  ''
+)
+GUARD=(
+  ''
+  ''
+  ''
+  ''
+  ''
+  ''
+  ''
+  ''
+  'RAISE[[:space:]]+EXCEPTION'
 )
 
 # Baseline entries, one `<file>:<class>` per non-comment line.
@@ -169,6 +207,21 @@ for f in "$MIGRATIONS_DIR"/*.up.sql; do
     fi
     [ -z "$hits" ] && continue
     SEEN+=("${base}:${class}")
+    guard="${GUARD[$i]}"
+    if [ -n "$guard" ]; then
+      # Guarded classes (`dml`) do NOT get the inline per-line marker
+      # escape — a comment is not proof. Only the guard itself, or the
+      # baseline, clears a hit.
+      if grep -qiE -- "$guard" "$f"; then
+        continue
+      fi
+      if ! in_baseline "${base}:${class}"; then
+        echo "lint-migration-compat ❌ ${f}: ${class} — not old-binary-safe (migrations/README.md rule 9):" >&2
+        printf '%s\n' "$hits" | sed 's/^/  /' >&2
+        fail=1
+      fi
+      continue
+    fi
     # An inline `-- migration-compat:ok <reason>` on the matched line
     # is the rule-9 two-release-dance escape. Reason is mandatory.
     unmarked="$(printf '%s\n' "$hits" \
@@ -196,6 +249,9 @@ Fix one of these ways:
   * If the previous released binary provably cannot be affected, mark
     the statement inline and say why:
         ALTER TABLE t DROP COLUMN c;  -- migration-compat:ok column added in 0104, never read by a released binary
+  * For `dml` (DELETE/TRUNCATE/UPDATE): add a RAISE EXCEPTION row-count
+    guard to the migration — the inline marker alone does not clear this
+    class. See migrations/0152_drop_unwired_scaffold_tables.up.sql:88-97.
 EOF
   exit 1
 fi

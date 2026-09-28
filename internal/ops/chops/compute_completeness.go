@@ -2099,8 +2099,10 @@ func reconcileTarget(ctx context.Context, store *timescale.Store, src reconSourc
 // reDeriveSDEXCensusViaDecoder re-derives the expected SDEX trade count per
 // ledger by running the SDEX decoder over the certified CH operations and
 // counting the DISTINCT, Validate-passing trades it emits — mirroring exactly
-// what InsertTrade lands in the served tier (the Validate gate AND the served
-// PK's ON CONFLICT DO NOTHING de-dup). This is the honest projection oracle:
+// what InsertTrade lands in the served tier (the Validate gate; the served
+// PK has been an ON CONFLICT DO UPDATE since migration 0109, not a de-dup —
+// a colliding op_index overwrites rather than drops). This is the honest
+// projection oracle:
 // census == served by identical write logic, so the residual is exactly the
 // ops the served tier dropped (real coverage gaps) — not a methodology
 // artifact (one-side-zero fills or op_index fanout collisions, both of which

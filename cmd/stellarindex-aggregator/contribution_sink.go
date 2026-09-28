@@ -32,6 +32,11 @@ func (s *contributionSink) RecordContributions(ctx context.Context, rec orchestr
 	return s.store.InsertPriceSourceContributions(ctx, contributionRows(rec))
 }
 
+// contributionScale is the fractional digits a weight and a USD volume
+// are rendered at: exact for any USD amount scaled by up to 10^18, and a
+// weight's rounding error stays below 1e-18.
+const contributionScale = 18
+
 // contributionRows maps one record to its storage rows. rec.Window is
 // carried onto every row: it is the only thing telling the 5m, 1h and
 // 24h breakdowns of one pair apart.
@@ -53,11 +58,11 @@ func contributionRows(rec orchestrator.ContributionRecord) []timescale.PriceSour
 			Window:     rec.Window,
 			Bucket:     rec.ComputedAt,
 			Source:     c.Source,
-			Weight:     c.Weight,
+			Weight:     c.Weight.FloatString(contributionScale),
 			TradeCount: c.TradeCount,
 		}
-		if v, ok := rec.SourceUSDVolume[c.Source]; ok && v > 0 {
-			vol := v
+		if v, ok := rec.SourceUSDVolume[c.Source]; ok && v.Sign() > 0 {
+			vol := v.FloatString(contributionScale)
 			row.VolumeUSD = &vol
 		}
 		rows = append(rows, row)

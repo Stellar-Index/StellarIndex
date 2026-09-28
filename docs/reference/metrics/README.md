@@ -1852,6 +1852,21 @@ support needs to be able to tie "my key started rate-limiting" to a
 billing event, and an accidental mass-clamp from a bad tier map
 should not be invisible. Both label values pre-seeded at zero.
 
+### `stellarindex_mint_scope_clamp_refused_total`
+
+Counter, label `route` (`/v1/admin/keys` / `/v1/account/keys`).
+
+Key-mint requests `clampMintToCaller` refused because the request
+asked for more scope or rate limit than the minting credential itself
+holds (GH-1146) — a scope-narrowed key probing for privilege
+escalation. The refusal is already a 403 plus a WARN log line; this
+counter gives an alert something to fire on instead of relying on
+someone finding the log line after the fact.
+
+Labelled by route, not actor, to keep cardinality bounded to the two
+mint paths that funnel through the shared chokepoint. Both label
+values pre-seeded at zero.
+
 ### `stellarindex_aggregator_ticks_total`
 
 Counter, label `outcome` (`ok` / `error`).

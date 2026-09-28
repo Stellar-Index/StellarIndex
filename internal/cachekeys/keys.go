@@ -130,11 +130,26 @@ const VWAPMaxAge = 5 * time.Minute
 // [VWAPMaxAge] so a value can never outlive its publisher by more than
 // the silence grace. Returns 0 for zero window (callers should treat
 // as "don't cache").
+//
+// This is the package-default grace only. A caller whose tick interval
+// is not [orchestrator.DefaultInterval] — the "10 missed ticks"
+// relationship above is stated in prose, not derived — should use
+// [VWAPTTLWithMaxAge] instead (#1294): a deployment that raises the
+// interval otherwise gets fewer missed ticks of grace, and one whose
+// tick cycle exceeds VWAPMaxAge flaps between 200 and 404 for a reason
+// nothing here surfaces.
 func VWAPTTL(window time.Duration) time.Duration {
-	if window <= 0 || window < VWAPMaxAge {
+	return VWAPTTLWithMaxAge(window, VWAPMaxAge)
+}
+
+// VWAPTTLWithMaxAge is [VWAPTTL] with an explicit silence-grace ceiling
+// in place of the package default, for a caller whose tick interval
+// differs from [orchestrator.DefaultInterval].
+func VWAPTTLWithMaxAge(window, maxAge time.Duration) time.Duration {
+	if window <= 0 || window < maxAge {
 		return window
 	}
-	return VWAPMaxAge
+	return maxAge
 }
 
 // ─── VWAP Provenance — was this VWAP triangulated? ──────────────────

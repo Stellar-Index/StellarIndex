@@ -114,6 +114,11 @@ func decodeClaimAtom(
 	tradeIndex int,
 	takerAccount string,
 ) (canonical.Trade, error) {
+	if tradeIndex < 0 || tradeIndex >= opIndexFanoutStride {
+		return canonical.Trade{}, fmt.Errorf("%w: tradeIndex=%d stride=%d",
+			ErrClaimIndexOverflow, tradeIndex, opIndexFanoutStride)
+	}
+
 	var (
 		sellerAccount string
 		soldAsset     xdr.Asset

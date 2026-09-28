@@ -33,4 +33,14 @@ var (
 	// account). Usually indicates a protocol bump we haven't
 	// audited.
 	ErrMalformedClaimAtom = errors.New("sdex: malformed ClaimAtom")
+
+	// ErrClaimIndexOverflow — a claim atom's position within its op
+	// reached opIndexFanoutStride. Op-index fanout packs tradeIndex
+	// into OpIndex as opIdx*stride+tradeIndex (decode.go); an index
+	// at or past the stride aliases into the next op's OpIndex range,
+	// and the trades upsert has been ON CONFLICT DO UPDATE since
+	// migration 0109, so the alias would silently overwrite an
+	// unrelated trade instead of being rejected. Surfaced as a
+	// per-entry decode error so SourceDecodeErrorsTotal catches it.
+	ErrClaimIndexOverflow = errors.New("sdex: claim index exceeds op_index fanout stride")
 )

@@ -7,14 +7,18 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, type RequestExample } from '@/api/client';
-import { formatCompact } from '@/lib/format';
-import type { NamedLineSeries } from '@/components/charts/LineChart';
+import { formatCompact, sumDecimalStrings } from '@/lib/format';
 import { CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
 import { dropPartialTrailingDay, seriesPointTime } from '@/lib/series';
 import { CopyHash } from '../../explorer-shared';
 import { TimeSeriesChart, type ChartTone } from './TimeSeriesChart';
 import { Segmented, Skeleton } from '@/components/ui';
-import { BridgeShowcase, BreakdownDonuts, LineLegend } from './BridgeShowcase';
+import {
+  BridgeShowcase,
+  BreakdownDonuts,
+  LineLegend,
+  type LegendLine,
+} from './BridgeShowcase';
 
 const LineChart = dynamic(
   () => import('@/components/charts/LineChart').then((m) => m.LineChart),
@@ -193,10 +197,11 @@ function GroupedSeriesPanel({
   source: RequestExample;
   days: WindowDays;
 }) {
-  const lines: NamedLineSeries[] = group.series.map((s, i) => ({
+  const lines: LegendLine[] = group.series.map((s, i) => ({
     label: s.name.slice(group.title.length + ' · '.length),
     tone: 'brand',
     color: CATEGORICAL_PALETTE[i % CATEGORICAL_PALETTE.length],
+    total: seriesTotal(s.points),
     // Today's accumulating daily bucket is dropped (phantom-cliff honesty);
     // points with a non-parsable date or non-numeric value are dropped, not
     // plotted as 1970/zero fabrications.
@@ -629,11 +634,33 @@ function Cell({ value }: { value: string }) {
 // them 10^6 off, and a silently-wrong point is worse than a missing one.
 // Exported for BridgeShowcase, which shares the wire shape.
 export function toChartNumber(v: string): number | null {
+  const cleaned = cleanBespokeValue(v);
+  if (cleaned == null) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+// toDecimalString — toChartNumber's parse kept as an exact decimal string,
+// for totals summed with sumDecimalStrings rather than in float.
+export function toDecimalString(v: string): string | null {
+  const cleaned = cleanBespokeValue(v);
+  return cleaned != null && /^-?\d+(\.\d+)?$/.test(cleaned) ? cleaned : null;
+}
+
+// seriesTotal — the exact sum of the points a line plots.
+export function seriesTotal(points: BespokeSeries['points']): string | null {
+  return sumDecimalStrings(
+    dropPartialTrailingDay(points)
+      .filter((p) => seriesPointTime(p.date) != null)
+      .map((p) => toDecimalString(p.value)),
+  );
+}
+
+function cleanBespokeValue(v: string): string | null {
   if (!v) return null;
   const cleaned = v.replace(/[$,%\s]/g, '');
   if (cleaned === '' || /[a-zA-Z]/.test(cleaned)) return null;
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : null;
+  return cleaned;
 }
 
 // isContractId — a Soroban C-strkey: starts with 'C', 56 chars, base32 body.

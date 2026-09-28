@@ -18,10 +18,10 @@ import (
 )
 
 // bloatedLedgerCloseMeta returns a valid, XDR-ENCODABLE LCM (same
-// minimal shape as validLedgerCloseMeta in main_test.go) whose TxSet
-// carries many empty phases, so MarshalBinary takes measurably longer
-// than hashdb.Append's single 32-byte WriteAt. That timing skew is
-// what TestRecordHashdb_DurationExcludesMarshal below relies on.
+// minimal shape as validLedgerCloseMeta in main_test.go). Used below to
+// exercise recordHashdb with a realistic (if not literally huge) LCM;
+// the marshal's actual cost no longer matters to the test — see
+// TestRecordHashdb_DurationExcludesMarshal.
 func bloatedLedgerCloseMeta(seq uint32, phases int) sdkxdr.LedgerCloseMeta {
 	components := []sdkxdr.TxSetComponent{}
 	ps := make([]sdkxdr.TransactionPhase, phases)
@@ -71,10 +71,24 @@ func histogramSampleSum(t *testing.T, vec *prometheus.HistogramVec, labelKey, la
 // T138: HashdbAppendDurationSeconds documents itself (internal/obs/
 // metrics.go) as the latency of hashdb.Append's single O(1) WriteAt —
 // no seek, no fsync, no network I/O — not of marshaling the ledger.
-// A bloated LCM makes MarshalBinary take much longer than the 32-byte
-// write; if recordHashdb's timer starts before the marshal, the
-// observed duration tracks nearly the whole call instead of just the
-// write.
+//
+// Structural, not wall-clock-ratio: a prior version built an
+// implausibly large LCM and compared the OBSERVED metric against
+// time.Since(wallStart)/2 for the whole call. Under load a single
+// scheduler/fsync stall inside the (cheap) WriteAt was enough to push
+// that ratio past 50% with the marshal untouched — flaked twice on
+// 2026-09-28 in CI (#1539) despite passing 5/5 in isolation. Comparing
+// two real wall-clock measurements of a fast operation is inherently
+// noisy on a loaded machine.
+//
+// Here the test controls the marshal's cost directly via
+// marshalLedgerCloseMeta (a slow hook injecting a fixed, large sleep)
+// instead of relying on LCM size to make marshaling slow, and never
+// measures wall-clock time at all: it asserts the OBSERVED metric
+// stays far below the injected delay. If recordHashdb's timer started
+// before the marshal, observed would include the injected sleep and
+// blow the absolute ceiling by orders of magnitude — no ratio, no
+// load-sensitive baseline.
 func TestRecordHashdb_DurationExcludesMarshal(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	path := filepath.Join(t.TempDir(), "drift.db")
@@ -84,14 +98,20 @@ func TestRecordHashdb_DurationExcludesMarshal(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
+	const injectedMarshalDelay = 200 * time.Millisecond
+	orig := marshalLedgerCloseMeta
+	t.Cleanup(func() { marshalLedgerCloseMeta = orig })
+	marshalLedgerCloseMeta = func(lcm sdkxdr.LedgerCloseMeta) ([]byte, error) {
+		time.Sleep(injectedMarshalDelay)
+		return lcm.MarshalBinary()
+	}
+
 	lcm := bloatedLedgerCloseMeta(9000, 200000)
 
 	beforeSum := histogramSampleSum(t, obs.HashdbAppendDurationSeconds, "outcome", "ok")
 
 	var lastAppended atomic.Uint32
-	wallStart := time.Now()
 	recordHashdb(db, lcm, logger, &lastAppended)
-	wallElapsed := time.Since(wallStart).Seconds()
 
 	afterSum := histogramSampleSum(t, obs.HashdbAppendDurationSeconds, "outcome", "ok")
 	observed := afterSum - beforeSum
@@ -99,15 +119,14 @@ func TestRecordHashdb_DurationExcludesMarshal(t *testing.T) {
 	if observed <= 0 {
 		t.Fatalf("HashdbAppendDurationSeconds{ok} did not advance")
 	}
-	if wallElapsed <= 0 {
-		t.Fatalf("test did not measure any wall-clock time")
-	}
-	// The write itself is a handful of microseconds; if the marshal
-	// (which this LCM was built to make large) were inside the timed
-	// region, observed would track ~all of wallElapsed. Require it to
-	// be a small fraction — well below half — of the whole call.
-	if observed > wallElapsed/2 {
-		t.Errorf("HashdbAppendDurationSeconds{ok} observed=%.6fs is %.1f%% of the whole call (wall=%.6fs) — timer includes the LedgerCloseMeta marshal, not just hashdb.Append's WriteAt",
-			observed, 100*observed/wallElapsed, wallElapsed)
+	// The write itself is a handful of microseconds even on a loaded CI
+	// runner. Require observed to stay a small fraction of the delay we
+	// deliberately injected into the marshal — comfortable headroom
+	// above realistic WriteAt jitter, nowhere near the injected 200ms a
+	// timer-placement regression would leak in.
+	const maxWantedObserved = 20 * time.Millisecond
+	if observed > maxWantedObserved.Seconds() {
+		t.Errorf("HashdbAppendDurationSeconds{ok} observed=%.6fs exceeds %.3fs — timer includes the LedgerCloseMeta marshal (which this test made take >= %.3fs), not just hashdb.Append's WriteAt",
+			observed, maxWantedObserved.Seconds(), injectedMarshalDelay.Seconds())
 	}
 }

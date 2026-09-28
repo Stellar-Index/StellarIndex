@@ -110,9 +110,10 @@ stellarindex-ops archive-completeness verify -from <floor> -to <tip> -workers 8
 
 (The real
 flag set is `-archive-root`, `-from`, `-to`, `-workers`,
-`-owner-user`, `-owner-group`, `-output-file`, `-textfile-output`,
-`-write` — see `internal/ops/archive/archive_completeness.go` and
-`deploy/systemd/archive-completeness.service` for the exact
+`-owner-user`, `-owner-group`, `-network`, `-output-file`,
+`-textfile-output`, `-write` — see
+`internal/ops/archive/archive_completeness.go::archiveCompletenessVerify`
+and `deploy/systemd/archive-completeness.service` for the exact
 invocation. `-write` is REQUIRED to actually fetch/repair anything:
 without it, `fix`/`verify` are a fail-closed DRY RUN that report what
 would change and write nothing (#1191) — the shipped systemd units
@@ -483,11 +484,18 @@ FLAGS (shipped)
   -archive-root PATH    cross-anchor archive root (default
                         /srv/history-archive)
   -from N               first ledger sequence, inclusive (default 2)
-  -to N                 last ledger sequence, inclusive; REQUIRED.
-                        0 = resolve the tip from the live cursor
+  -to N                 last ledger sequence, inclusive; REQUIRED and
+                        non-zero. 0 does NOT resolve the tip — the
+                        binary refuses it outright ("-to is required").
+                        The ansible-installed unit computes a real
+                        value at start time (see below); running by
+                        hand, you must supply it yourself.
   -workers N            parallel fetch workers (default 8)
   -owner-user USER      file owner for placed files (default stellar)
   -owner-group GROUP    file group for placed files (default stellar)
+  -network NAME         pubnet (default) | testnet | futurenet — the
+                        cross-anchor FILL phase is pubnet-only and
+                        refuses on any other value
   -output-file PATH     write JSON gap report here (empty = stdout)
   -textfile-output PATH write a node_exporter textfile here
                         (empty = no metrics emit)

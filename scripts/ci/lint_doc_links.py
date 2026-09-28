@@ -242,14 +242,22 @@ def main():
         )
     fails = []
     adrs = {}
+    scanned = 0
     for path in files:
         base = os.path.basename(path)
         if base.startswith("_template") or "TEMPLATE" in base:
+            scanned += 1
             continue
         try:
             lines = open(path, encoding="utf-8").read().split("\n")
-        except Exception:
+        except FileNotFoundError:
+            # Went away mid-run (e.g. a concurrent process). Anything
+            # else — a bad encoding, permissions — must NOT be absorbed
+            # here: a bare `except Exception` once let one non-UTF-8 byte
+            # skip a file's scan silently while the summary line still
+            # reported it as scanned (GH-1255).
             continue
+        scanned += 1
         if sum(1 for line in lines if FENCE.match(line)) % 2:
             fails.append((path, 0, "", "has an ODD number of code fences — everything after "
                                        "the stray fence goes unscanned, so this gate is blind to it"))
@@ -289,6 +297,11 @@ def main():
 
     fails.extend(adr_identifier_fails(adrs))
 
+    if scanned < len(files):
+        fails.append(("lint-doc-links", 0, "",
+                       f"only {scanned} of {len(files)} discovered markdown file(s) were scanned "
+                       "— one or more went away mid-run"))
+
     for path, lineno, target, why in fails:
         loc = f"{path}:{lineno}" if lineno else path
         arrow = f" -> {target}" if target else ""
@@ -296,10 +309,10 @@ def main():
 
     print()
     if fails:
-        print(f"lint-doc-links: {len(fails)} failure(s) across {len(files)} markdown file(s)")
+        print(f"lint-doc-links: {len(fails)} failure(s) across {scanned} markdown file(s)")
     else:
         print("lint-doc-links: OK — every relative link and in-repo anchor resolves across "
-              f"{len(files)} markdown file(s)")
+              f"{scanned} markdown file(s)")
     return len(fails)
 
 

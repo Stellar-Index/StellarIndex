@@ -75,6 +75,7 @@ func registerAppMetrics() {
 		MonthlyQuotaFailClosedTotal,
 		AdminAuditWriteFailuresTotal,
 		AdminKeyBudgetClampsTotal,
+		MintScopeClampRefusedTotal,
 		CursorLastLedger,
 		DivergenceRefreshTotal,
 		DivergenceRefresherWired,
@@ -600,6 +601,11 @@ func seedBoundedLabelSeries() {
 	for _, outcome := range []string{"lowered", "failed"} {
 		AdminKeyBudgetClampsTotal.WithLabelValues(outcome)
 	}
+	// GH-1146: the two mint routes that funnel through clampMintToCaller.
+	// Unrolled rather than looped: the loop tipped seedBoundedLabelSeries
+	// over the gocognit ceiling, and two literal routes read no worse.
+	MintScopeClampRefusedTotal.WithLabelValues("/v1/admin/keys")
+	MintScopeClampRefusedTotal.WithLabelValues("/v1/account/keys")
 	// C3-023: producer-side webhook fan-out losses. The event-type set
 	// is platform.WebhookEventType's closed enum (kept as literals here
 	// so internal/obs stays free of an internal/platform import); the
@@ -4839,6 +4845,27 @@ var AdminKeyBudgetClampsTotal = prometheus.NewCounterVec(
 		Help: "API credentials whose per-minute budget was clamped to their account tier ceiling, by outcome (lowered|failed).",
 	},
 	[]string{"outcome"},
+)
+
+// MintScopeClampRefusedTotal counts mint requests `clampMintToCaller`
+// refused because they asked for more scope or rate limit than the
+// minting credential itself holds (GH-1146). The refusal is already a
+// 403 plus a WARN log line, but a scope-narrowed key probing for
+// privilege escalation left NO telemetry an alert could fire on — the
+// log line is only found after the fact, by someone already looking.
+//
+// Labelled by route, not actor: both mint paths (POST /v1/admin/keys,
+// POST /v1/account/keys) funnel through the same chokepoint, and the
+// route tells an operator which surface to go looking at without
+// admitting an unbounded actor identifier into the label set.
+//
+// Bounded set of two; pre-seeded.
+var MintScopeClampRefusedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_mint_scope_clamp_refused_total",
+		Help: "Key-mint requests refused because they exceeded the minting credential's own scope or rate limit, by route.",
+	},
+	[]string{"route"},
 )
 
 // ChLiveSinkLedgersTotal — count of ledgers processed by the

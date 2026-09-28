@@ -79,7 +79,14 @@ else
   # sigpipe-ok: `ss -tlnp` lists listening sockets only — tens of lines,
   # orders of magnitude under the pipe buffer, so awk's early exit cannot
   # make ss block on a write (#475).
-  actual="$(ss -tlnp 2>/dev/null | awk '/stellarindex-api/ {print $4; exit}')"
+  # #1097: TASK_COMM_LEN is 16 bytes including the NUL, so the kernel
+  # truncates "stellarindex-api" (16 chars) to "stellarindex-ap" in
+  # /proc/<pid>/comm — which is what `ss -p` reads. The full name never
+  # matched, so this check was unreachable: $actual was always empty and
+  # step 1's only comparator against the RUNNING process was silently
+  # skipped, with no output. Matching the truncated form the kernel
+  # actually reports, and now run as root per this script's own header.
+  actual="$(ss -tlnp 2>/dev/null | awk '/stellarindex-ap/ {print $4; exit}')"
   if [ -n "$actual" ]; then
     case "$actual" in
       127.0.0.1:*|"[::1]:"*)  pass "process bound to loopback" "$actual" ;;
@@ -93,6 +100,8 @@ else
         ;;
       *)  pass "process bound" "$actual" ;;
     esac
+  else
+    fail "process bind check" "no listening stellarindex-api socket found via ss -tlnp — is the service running?"
   fi
 fi
 echo
@@ -204,11 +213,27 @@ echo
 
 # ── 9. Boot warnings
 echo "  Recent SECURITY warnings"
-sec_warns="$(journalctl -u stellarindex-api -b -p warning --no-pager 2>/dev/null | grep -c SECURITY: || true)"
-if [ "$sec_warns" -eq 0 ]; then
-  pass "no SECURITY warnings since boot" ""
+# #1097: -p warning filters on the journal's syslog PRIORITY, a property
+# of the transport — systemd stamps every line from stderr at the
+# default PRIORITY=6/info because no SyslogLevel is set anywhere in this
+# repo's deploy config (grep -rn SyslogLevel deploy configs → 0) — not
+# on the JSON payload's own "level" field the structured logger writes.
+# -p warning selected nothing regardless of what was logged, so the four
+# logger.Warn SECURITY: call sites in cmd/stellarindex-api/main.go were
+# unreachable by this check. Grep the payload for the level instead, and
+# read every boot line first so an empty journal (unit not found, wrong
+# name, no boot logs yet) fails loudly rather than reading as zero
+# warnings.
+boot_log="$(journalctl -u stellarindex-api -b -o cat --no-pager 2>/dev/null)"
+if [ -z "$boot_log" ]; then
+  fail "no boot log read for stellarindex-api" "journalctl returned nothing — cannot assert on SECURITY warnings"
 else
-  fail "SECURITY warnings present" "$sec_warns lines — journalctl -u stellarindex-api -b -p warning | grep SECURITY"
+  sec_warns="$(printf '%s\n' "$boot_log" | grep -c '"level":"WARN".*SECURITY:' || true)"
+  if [ "$sec_warns" -eq 0 ]; then
+    pass "no SECURITY warnings since boot" ""
+  else
+    fail "SECURITY warnings present" "$sec_warns lines — journalctl -u stellarindex-api -b -o cat | grep SECURITY:"
+  fi
 fi
 echo
 

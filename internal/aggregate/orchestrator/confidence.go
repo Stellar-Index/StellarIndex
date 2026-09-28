@@ -58,10 +58,11 @@ type BaselineSource interface {
 	LatestBaseline(ctx context.Context, pair canonical.Pair) (baseline.MultiBaseline, time.Time, error)
 }
 
-// confidenceCacheTTL — the TTL is identical to VWAP so a stale
-// confidence record can't outlive the price it scored.
-func confidenceCacheTTL(window time.Duration) time.Duration {
-	return cachekeys.ConfidenceTTL(window)
+// confidenceCacheTTL — the TTL is identical to VWAP (derived from this
+// orchestrator's own cadence, #1294) so a stale confidence record can't
+// outlive the price it scored.
+func (o *Orchestrator) confidenceCacheTTL(window time.Duration) time.Duration {
+	return o.vwapTTL(window)
 }
 
 // confidenceComputation bundles the score with the z-score that
@@ -237,7 +238,7 @@ func (o *Orchestrator) cacheConfidence(
 		return
 	}
 	key := cachekeys.Confidence(pair.Base, pair.Quote, window)
-	if err := o.cache.Set(ctx, key.String(), body, confidenceCacheTTL(window)).Err(); err != nil {
+	if err := o.cache.Set(ctx, key.String(), body, o.confidenceCacheTTL(window)).Err(); err != nil {
 		obs.AggregatorConfidenceComputeTotal.WithLabelValues("write_error").Inc()
 		o.logger.Warn("confidence cache write failed",
 			"pair", pair.String(), "window", window.String(), "err", err)

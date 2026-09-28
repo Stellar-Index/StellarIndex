@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -112,7 +113,7 @@ func assertThreeWindowsStayDistinct(t *testing.T, ctx context.Context, db *sql.D
 	ethRow := func(w time.Duration, at time.Time, weight float64) []timescale.PriceSourceContribution {
 		return []timescale.PriceSourceContribution{{
 			AssetID: "crypto:ETH", QuoteID: "fiat:USD", Window: w, Bucket: at,
-			Source: "kraken", Weight: weight, TradeCount: 2,
+			Source: "kraken", Weight: strconv.FormatFloat(weight, 'f', -1, 64), TradeCount: 2,
 		}}
 	}
 	for i, w := range []time.Duration{5 * time.Minute, time.Hour, 24 * time.Hour} {
@@ -194,8 +195,8 @@ func assertOldBinaryInsertStillWorks(t *testing.T, ctx context.Context, db *sql.
 func assertMissingWindowWritesNothing(t *testing.T, ctx context.Context, db *sql.DB, store *timescale.Store, bucket time.Time) {
 	t.Helper()
 	err := store.InsertPriceSourceContributions(ctx, []timescale.PriceSourceContribution{
-		{AssetID: "crypto:SOL", QuoteID: "fiat:USD", Window: time.Hour, Bucket: bucket, Source: "kraken", Weight: 1, TradeCount: 1},
-		{AssetID: "crypto:SOL", QuoteID: "fiat:USD", Bucket: bucket, Source: "binance", Weight: 1, TradeCount: 1},
+		{AssetID: "crypto:SOL", QuoteID: "fiat:USD", Window: time.Hour, Bucket: bucket, Source: "kraken", Weight: "1", TradeCount: 1},
+		{AssetID: "crypto:SOL", QuoteID: "fiat:USD", Bucket: bucket, Source: "binance", Weight: "1", TradeCount: 1},
 	})
 	if !errors.Is(err, timescale.ErrContributionWindowRequired) {
 		t.Errorf("windowless row: err = %v, want ErrContributionWindowRequired", err)

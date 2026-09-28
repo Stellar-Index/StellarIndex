@@ -34,6 +34,67 @@ func archiveCompleteness(args []string) error {
 	}
 }
 
+// archiveCompletenessVerifyOpts is archive-completeness verify's parsed
+// flags (parseArchiveCompletenessVerifyFlags), factored out so a unit
+// file's rendered ExecStart argv can be proven parseable — and its
+// resolved values inspectable — without running the check/fill/report
+// phases (mirrors parseTrimFlags).
+type archiveCompletenessVerifyOpts struct {
+	archiveRoot    string
+	from, to       uint32
+	workers        int
+	ownerUser      string
+	ownerGroup     string
+	network        string
+	outputFile     string
+	textfileOutput string
+	gate           *opsutil.WriteGate
+}
+
+// parseArchiveCompletenessVerifyFlags parses and validates archive-completeness
+// verify's flags. -to has no usable zero value: unlike verify-archive's
+// -to (0 = unbounded/live is a real mode), a verify with no upper bound
+// would silently check nothing, so 0 is refused rather than defaulted —
+// see the ExecStartPre-computed ARCHIVE_TO wiring on the systemd units.
+func parseArchiveCompletenessVerifyFlags(args []string) (archiveCompletenessVerifyOpts, error) {
+	fs := flag.NewFlagSet("archive-completeness verify", flag.ContinueOnError)
+	archiveRoot := fs.String("archive-root", "/srv/history-archive",
+		"Cross-anchor archive root.")
+	from := fs.Uint("from", 2, "First ledger sequence (inclusive).")
+	to := fs.Uint("to", 0, "Last ledger sequence (inclusive). Required.")
+	workers := fs.Int("workers", 8, "Parallel fetch workers.")
+	ownerUser := fs.String("owner-user", "stellar", "File owner user.")
+	ownerGroup := fs.String("owner-group", "stellar", "File owner group.")
+	network := fs.String("network", "pubnet",
+		"Stellar network this archive belongs to. Cross-anchor FILL is PUBNET-ONLY (the built-in fallback sources are pubnet archives); a non-pubnet value makes the fill phase REFUSE rather than write pubnet checkpoints into a test-net store (audit 2026-08-26). Test nets self-heal archive gaps from their own galexie/core.")
+	outputFile := fs.String("output-file", "",
+		"Path to write JSON report. Empty = stdout.")
+	textfileOutput := fs.String("textfile-output", "",
+		"Path to write Prometheus textfile (node_exporter textfile_collector format). Empty = no metrics emit.")
+	gate := opsutil.RegisterWriteGate(fs)
+	if err := fs.Parse(args); err != nil {
+		return archiveCompletenessVerifyOpts{}, err
+	}
+	if *to == 0 {
+		return archiveCompletenessVerifyOpts{}, fmt.Errorf("-to is required")
+	}
+	if *from > *to {
+		return archiveCompletenessVerifyOpts{}, fmt.Errorf("-from (%d) must be <= -to (%d)", *from, *to)
+	}
+	return archiveCompletenessVerifyOpts{
+		archiveRoot:    *archiveRoot,
+		from:           uint32(*from),
+		to:             uint32(*to),
+		workers:        *workers,
+		ownerUser:      *ownerUser,
+		ownerGroup:     *ownerGroup,
+		network:        *network,
+		outputFile:     *outputFile,
+		textfileOutput: *textfileOutput,
+		gate:           gate,
+	}, nil
+}
+
 // archiveCompletenessVerify is the daily-cron mode: runs check →
 // fix → re-check, then emits a Prometheus textfile for
 // node_exporter's textfile_collector to scrape. Also writes the
@@ -51,31 +112,11 @@ func archiveCompleteness(args []string) error {
 //   - 1: residual missing files (fallback chain exhausted some)
 //   - other: I/O error
 func archiveCompletenessVerify(args []string) error {
-	fs := flag.NewFlagSet("archive-completeness verify", flag.ContinueOnError)
-	archiveRoot := fs.String("archive-root", "/srv/history-archive",
-		"Cross-anchor archive root.")
-	from := fs.Uint("from", 2, "First ledger sequence (inclusive).")
-	to := fs.Uint("to", 0, "Last ledger sequence (inclusive). Required.")
-	workers := fs.Int("workers", 8, "Parallel fetch workers.")
-	ownerUser := fs.String("owner-user", "stellar", "File owner user.")
-	ownerGroup := fs.String("owner-group", "stellar", "File owner group.")
-	network := fs.String("network", "pubnet",
-		"Stellar network this archive belongs to. Cross-anchor FILL is PUBNET-ONLY (the built-in fallback sources are pubnet archives); a non-pubnet value makes the fill phase REFUSE rather than write pubnet checkpoints into a test-net store (audit 2026-08-26). Test nets self-heal archive gaps from their own galexie/core.")
-	outputFile := fs.String("output-file", "",
-		"Path to write JSON report. Empty = stdout.")
-	textfileOutput := fs.String("textfile-output", "",
-		"Path to write Prometheus textfile (node_exporter textfile_collector format). Empty = no metrics emit.")
-	gate := opsutil.RegisterWriteGate(fs)
-	if err := fs.Parse(args); err != nil {
+	opts, err := parseArchiveCompletenessVerifyFlags(args)
+	if err != nil {
 		return err
 	}
-	if *to == 0 {
-		return fmt.Errorf("-to is required")
-	}
-	if uint64(*from) > uint64(*to) {
-		return fmt.Errorf("-from (%d) must be <= -to (%d)", *from, *to)
-	}
-	write := gate.Banner()
+	write := opts.gate.Banner()
 
 	startedAt := time.Now()
 	// #1191: the fix phase fetches over HTTP and writes/renames/chowns
@@ -87,33 +128,33 @@ func archiveCompletenessVerify(args []string) error {
 	defer cancel()
 
 	// Phase 1 — initial check.
-	checker := archivecompleteness.NewCrossAnchorChecker(*archiveRoot)
-	preRes, err := checker.Check(uint32(*from), uint32(*to))
+	checker := archivecompleteness.NewCrossAnchorChecker(opts.archiveRoot)
+	preRes, err := checker.Check(opts.from, opts.to)
 	if err != nil {
 		return fmt.Errorf("initial cross-anchor check: %w", err)
 	}
 
-	report := archivecompleteness.NewReport(uint32(*from), uint32(*to))
+	report := archivecompleteness.NewReport(opts.from, opts.to)
 	snapshot := archivecompleteness.NewMetricsSnapshot()
 
 	// Phase 2 — fix any missing.
 	fillRes, err := archiveCompletenessVerifyFill(ctx, write, preRes.Missing, archiveCompletenessVerifyFillOptions{
-		ArchiveRoot: *archiveRoot,
-		Workers:     *workers,
-		OwnerUser:   *ownerUser,
-		OwnerGroup:  *ownerGroup,
-		Network:     *network,
+		ArchiveRoot: opts.archiveRoot,
+		Workers:     opts.workers,
+		OwnerUser:   opts.ownerUser,
+		OwnerGroup:  opts.ownerGroup,
+		Network:     opts.network,
 	})
 	if err != nil {
 		return err
 	}
 
 	// Phase 3 — re-check; the post-fix state is what we report.
-	postRes, err := checker.Check(uint32(*from), uint32(*to))
+	postRes, err := checker.Check(opts.from, opts.to)
 	if err != nil {
 		return fmt.Errorf("post-fix cross-anchor check: %w", err)
 	}
-	report.SetCrossAnchor(*archiveRoot, postRes)
+	report.SetCrossAnchor(opts.archiveRoot, postRes)
 
 	// Populate metrics. LastSuccessTimestamp is set ONLY when the
 	// post-fix state is clean AND non-vacuous — alert rules rely on
@@ -135,23 +176,23 @@ func archiveCompletenessVerify(args []string) error {
 	}
 
 	// Write JSON report (operator-readable diagnostic).
-	if err := writeReport(report, *outputFile); err != nil {
+	if err := writeReport(report, opts.outputFile); err != nil {
 		return err
 	}
 
 	// Write Prometheus textfile (node_exporter scrapes this dir).
-	if *textfileOutput != "" {
-		if err := archivecompleteness.WriteTextfileAtomic(*textfileOutput, snapshot); err != nil {
+	if opts.textfileOutput != "" {
+		if err := archivecompleteness.WriteTextfileAtomic(opts.textfileOutput, snapshot); err != nil {
 			return fmt.Errorf("write textfile: %w", err)
 		}
 		fmt.Fprintf(os.Stderr,
-			"archive-completeness verify: metrics written to %s\n", *textfileOutput)
+			"archive-completeness verify: metrics written to %s\n", opts.textfileOutput)
 	}
 
 	if vacuous {
 		fmt.Fprintf(os.Stderr,
 			"archive-completeness verify: range [%d, %d] contains no checkpoint position — nothing was verified, not a clean pass\n",
-			*from, *to)
+			opts.from, opts.to)
 		return opsutil.ErrExitSilently
 	}
 	if report.AnyMissing() {

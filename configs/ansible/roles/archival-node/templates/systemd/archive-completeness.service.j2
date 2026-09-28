@@ -22,15 +22,27 @@ EnvironmentFile=-/etc/default/stellarindex
 EnvironmentFile=-/etc/default/stellarindex-ops
 # ARCHIVE_TO is computed at start time from the indexer cursor —
 # compute-archive-to.sh writes ARCHIVE_TO=<n> to the runtime env
-# file below, which then overrides the Environment= default.
+# file below, which then overrides the Environment= default (systemd
+# EnvironmentFile= always wins over a literal Environment=, regardless
+# of directive order).
 EnvironmentFile=-/run/archive-completeness.env
 
 # Sensible defaults. Operators override via /etc/default/archive-completeness.
 # ARCHIVE_FROM tracks the hot floor (ADR-0027 trim): below it the local
 # archive is deliberately empty and completeness of that range is the
 # cold tier's concern, verified by the cold-read canary instead.
+#
+# NOTE: there is deliberately no ARCHIVE_TO default here (#1179). It used
+# to be `Environment=ARCHIVE_TO=0`, which the binary rejects outright
+# ("-to is required", internal/ops/archive/archive_completeness.go).
+# That default is inert as long as compute-archive-to.sh keeps running
+# and succeeding (EnvironmentFile= always wins over Environment=), but
+# it is a landmine for anyone who copies this block for a manual run,
+# `systemctl cat`s the effective config expecting a real default, or
+# hits the one path (ExecStartPre skipped or overridden) where it
+# would reach the binary. Mirrors the already-fixed deploy/systemd/
+# archive-completeness.service reference unit.
 Environment=ARCHIVE_FROM={{ stellarindex_archive_hot_floor }}
-Environment=ARCHIVE_TO=0
 Environment=TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/archive_completeness.prom
 Environment=REPORT_OUTPUT=/var/lib/galexie/last-completeness-report.json
 Environment=WORKERS=8

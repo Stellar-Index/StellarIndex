@@ -186,14 +186,19 @@ func (h *Handler) setWasmLiveness(ctx context.Context, cid string, view *Contrac
 	}
 }
 
-// wasmCacheControl caches the wasm view hard — the wasm for a content-addressed
-// hash is immutable — unless it carries a ttl verdict, which is not: an
-// archival or restore must not hide behind a day-long cache.
+// wasmCacheControl bounds the wasm view's cache lifetime. The wasm for a
+// content-addressed hash IS immutable, but this URL is keyed on contract_id,
+// not on the wasm hash (#1070): an in-place upgrade changes the bytes this
+// same URL serves (see GET .../code-history), so treating it as
+// forever-immutable let a CDN/browser serve pre-upgrade bytecode, exports
+// and decompile for up to a day after an upgrade. Bounded to the standard
+// catalogue band instead until the route is content-addressed. A ttl
+// verdict (archival/restore) takes the tighter band regardless.
 func wasmCacheControl(view ContractWasmView) string {
 	if view.TTL != nil {
 		return "public, max-age=300"
 	}
-	return "public, max-age=86400"
+	return "public, max-age=60, s-maxage=300"
 }
 
 // nonNilStrings returns a non-nil slice so the JSON renders [] not null for a

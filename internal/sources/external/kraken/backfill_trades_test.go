@@ -154,3 +154,47 @@ func TestFetchKrakenTrades_OversizedBodyRefused(t *testing.T) {
 		t.Fatalf("oversized body: err = %v, want a body-cap refusal", err)
 	}
 }
+
+// TestFetchKrakenTrades_MalformedCursorRejected pins #937 item 3: /Trades
+// sends `last` as a quoted nanosecond string. If Kraken ever flips it to
+// an unquoted number (as /OHLC's `last` already is), json.Unmarshal into
+// the string `last` var must be observed, not swallowed — a swallowed
+// error leaves the cursor at its zero value and BackfillTrades' loop
+// reads last=="" as "no more pages", silently truncating a multi-year
+// walk to one page with err == nil.
+func TestFetchKrakenTrades_MalformedCursorRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"error":[],"result":{"XXLMZUSD":[],"last":1530403225770289000}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, last, err := fetchKrakenTrades(context.Background(), srv.URL, nil)
+	if err == nil {
+		t.Fatalf("unquoted cursor: err = nil, last = %q — want a decode error, not a silently zeroed cursor", last)
+	}
+	if !strings.Contains(err.Error(), "last cursor") {
+		t.Errorf("err = %v, want it to name the cursor field", err)
+	}
+}
+
+// TestBackfillTrades_MalformedCursorStopsWithError is the end-to-end
+// regression: a page-one cursor decode failure must abort the walk with
+// an error, not return page one's fills looking like a complete result.
+func TestBackfillTrades_MalformedCursorStopsWithError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"error":[],"result":{"XXLMZUSD":[
+["0.19329800","159.80957483",1530403225.7644963,"b","l","",460991]],
+"last":1530403225770289000}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	pair, _ := canonical.NewPair(mustAsset(t, "crypto:XLM"), mustAsset(t, "fiat:USD"))
+	s := &Streamer{Endpoint: srv.URL, PairMap: map[string]canonical.Pair{"XXLMZUSD": pair}}
+
+	from := time.Date(2018, 7, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)
+	_, err := s.BackfillTrades(context.Background(), pair, from, to)
+	if err == nil {
+		t.Fatal("BackfillTrades with a malformed cursor returned err == nil — a multi-year walk would silently report as complete after page one")
+	}
+}

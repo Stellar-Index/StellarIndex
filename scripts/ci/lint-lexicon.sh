@@ -36,17 +36,33 @@
 #
 # Exit 0 clean, non-zero on any violation. Wired into verify.sh,
 # `make lint-lexicon`, and CI's import-checks job.
+#
+# Usage: lint-lexicon.sh [ROOT]   (ROOT defaults to the repo root; the
+# self-test points it at fixture trees, same convention as
+# lint-apikey-scan.sh / lint-http-timeouts.sh). LEXICON_BASELINE overrides
+# the ratchet baseline path for the same reason.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-BASELINE="scripts/ci/lint-lexicon.baseline"
+root="${1:-.}"
+BASELINE="${LEXICON_BASELINE:-scripts/ci/lint-lexicon.baseline}"
 fail=0
+
+# Bare `internal cmd pkg` (not `./internal …`) when root is the default: the
+# ratchet baseline stores paths exactly as grep prints them, and `-r "./x"`
+# prefixes every match with `./`, which would make every baseline entry
+# look stale on the very invocation the baseline was written against.
+if [ "$root" = "." ]; then
+  dirs=(internal cmd pkg)
+else
+  dirs=("$root/internal" "$root/cmd" "$root/pkg")
+fi
 
 # ─── ZERO rules ──────────────────────────────────────────────────────
 
 # 1) Verb lexicon: no Fetch*/Make* funcs in production Go.
 hits=$(grep -rnE 'func (\([^)]+\) )?(Fetch|Make[A-Z])[A-Za-z]*\(' \
-  --include='*.go' --exclude='*_test.go' internal cmd pkg 2>/dev/null || true)
+  --include='*.go' --exclude='*_test.go' "${dirs[@]}" 2>/dev/null || true)
 if [ -n "$hits" ]; then
   echo "LEXICON: Fetch/Make verb — use Get (keyed read) / List (slice) / Load (embedded) / New (ctor)."
   echo "         See docs/architecture/lexicon.md (verb lexicon)."
@@ -54,9 +70,11 @@ if [ -n "$hits" ]; then
   fail=1
 fi
 
-# 2) slog is the only logger.
-hits=$(grep -rnE '"(github\.com/rs/zerolog|go\.uber\.org/zap[a-z/]*|github\.com/sirupsen/logrus)"|^[[:space:]]*"log"$' \
-  --include='*.go' --exclude='*_test.go' internal cmd pkg 2>/dev/null || true)
+# 2) slog is the only logger. The stdlib arm matches "log" with or without
+#    a leading import alias (`l "log"`, `_ "log"`) — anchored at the end so
+#    a longer path ending in /log ("github.com/foo/log") never matches.
+hits=$(grep -rnE '"(github\.com/rs/zerolog|go\.uber\.org/zap[a-z/]*|github\.com/sirupsen/logrus)"|(^|[[:space:]])([A-Za-z_][A-Za-z0-9_]* +)?"log"[[:space:]]*$' \
+  --include='*.go' --exclude='*_test.go' "${dirs[@]}" 2>/dev/null || true)
 if [ -n "$hits" ]; then
   echo "LEXICON: non-slog logger import — log/slog is the only logger (engineering-standards, Go idioms)."
   printf '%s\n' "$hits" | sed 's/^/  /'
@@ -79,7 +97,7 @@ trap 'rm -f "$current"' EXIT
   # ignores -v, silently dropping files on macOS. Capturing what survives
   # the filter and testing THAT for emptiness is portable, and (unlike a
   # trailing `head -1`) never closes the pipe on a file full of matches.
-  grep -rl 'Coin' --include='*.go' --exclude='*_test.go' internal cmd pkg 2>/dev/null | \
+  grep -rl 'Coin' --include='*.go' --exclude='*_test.go' "${dirs[@]}" 2>/dev/null | \
     while IFS= read -r f; do
       kept="$(grep -oE '[A-Za-z_]*Coin[A-Za-z_]*' "$f" | grep -vE 'Coinbase|CoinGecko|Coingecko|CoinMarketCap|cmcCoin|[Tt]otalCoins' || true)"
       if [ -n "$kept" ]; then
@@ -89,12 +107,12 @@ trap 'rm -f "$current"' EXIT
 
   # positional-logger: `logger *slog.Logger` as a positional ctor param.
   grep -rlE 'func New[A-Za-z]*\([^)]*logger \*slog\.Logger' \
-    --include='*.go' --exclude='*_test.go' internal cmd pkg 2>/dev/null | \
+    --include='*.go' --exclude='*_test.go' "${dirs[@]}" 2>/dev/null | \
     sed 's/^/positional-logger /'
 
   # variadic-option: `...Option` functional-options ctor.
   grep -rlE 'func New[A-Za-z]*\([^)]*\.\.\.[A-Za-z]*Option\)' \
-    --include='*.go' --exclude='*_test.go' internal cmd pkg 2>/dev/null | \
+    --include='*.go' --exclude='*_test.go' "${dirs[@]}" 2>/dev/null | \
     sed 's/^/variadic-option /'
 } | LC_ALL=C sort -u > "$current"
 
