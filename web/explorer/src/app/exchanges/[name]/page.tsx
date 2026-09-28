@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { hrefFor } from '@/lib/hrefFor';
 import { notFound } from 'next/navigation';
 import { ExternalLink } from 'lucide-react';
 
@@ -140,7 +141,7 @@ export default async function ExchangeDetailPage({
 
       <div className="flex flex-wrap gap-3 text-xs">
         <Link
-          href={`/sources/${name}`}
+          href={hrefFor.source(name)}
           className="text-ink-muted hover:text-brand-600 inline-flex items-center gap-1"
         >
           Source registry detail →

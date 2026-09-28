@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { hrefFor } from '@/lib/hrefFor';
 
 import { PROTOCOLS } from '@/app/protocols/registry';
 import { Container, PageHeader } from '@/components/ui';
@@ -56,7 +57,7 @@ export function CategoryHub({
         {items.map((p) => (
           <Link
             key={p.name}
-            href={`/protocols/${p.name}`}
+            href={hrefFor.protocol(p.name)}
             className="group border-line bg-surface hover:border-brand-300 hover:bg-surface-subtle rounded-xl border p-5 transition-colors"
           >
             <h2 className="text-ink group-hover:text-brand-600 text-lg font-semibold">

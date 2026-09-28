@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { hrefFor } from '@/lib/hrefFor';
 
 import { buildFetchData, requireRows } from '@/lib/buildFetch';
 import {
@@ -591,7 +592,7 @@ export default async function PairPage({ params }: { params: Params }) {
                     </td>
                     <td className="px-3 py-2 tracking-wider uppercase">
                       <Link
-                        href={`/sources/${t.source}`}
+                        href={hrefFor.source(t.source)}
                         className="hover:text-brand-600 hover:underline"
                       >
                         {t.source}
@@ -652,7 +653,7 @@ function SourceBreakdownPanel({ rows }: { rows: PoolRow[] }) {
           return (
             <li key={r.source} className="flex items-center gap-3 text-sm">
               <Link
-                href={`/sources/${r.source}`}
+                href={hrefFor.source(r.source)}
                 className="text-ink-body hover:text-brand-600 w-32 font-mono text-xs tracking-wider uppercase"
               >
                 {r.source}

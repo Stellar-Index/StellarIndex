@@ -11,6 +11,7 @@ import {
 
 import { Badge, Card, Container, type BadgeTone } from '@/components/ui';
 import { isSafeHref } from '@/lib/markdown';
+import { hrefFor } from '@/lib/hrefFor';
 import type { components, paths } from '@/api/types';
 import { API_BASE_URL, timeoutSignal } from '@/api/client';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -1718,7 +1719,7 @@ function IncidentHistory({
                     </Badge>
                     {e.slug ? (
                       <a
-                        href={`/status/incident/${e.slug}/`}
+                        href={hrefFor.incident(e.slug)}
                         className="text-ink hover:text-brand-600 truncate font-medium"
                       >
                         {e.title}
@@ -1741,7 +1742,7 @@ function IncidentHistory({
                 </p>
                 {e.slug && e.postmortem && (
                   <a
-                    href={`/status/incident/${e.slug}/`}
+                    href={hrefFor.incident(e.slug)}
                     className="text-brand-600 mt-2 inline-block text-xs font-medium hover:underline"
                   >
                     Read full postmortem →

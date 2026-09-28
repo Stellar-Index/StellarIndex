@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { hrefFor } from '@/lib/hrefFor';
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
@@ -527,7 +528,7 @@ function ReadingRow({ r }: { r: OracleReading }) {
 function SourcePill({ source }: { source: string }) {
   return (
     <Link
-      href={`/sources/${source}`}
+      href={hrefFor.source(source)}
       className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase hover:underline ${sourceToneClass(source)}`}
     >
       {source}
