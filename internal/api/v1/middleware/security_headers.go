@@ -33,8 +33,14 @@ import "net/http"
 //   - X-Frame-Options — prevents clickjacking of HTML pages;
 //     a JSON response can't be framed.
 //
-// Operators behind a reverse proxy that ALSO sets these get the
-// same value twice — idempotent.
+// The edge Caddyfile must set Referrer-Policy conditionally
+// (`?Referrer-Policy`, Caddy's set-if-absent operator) rather than
+// unconditionally: an unconditional edge value in the same header
+// block as a delete op is deferred to write-time (Caddy defers the
+// whole block once any field is deleted) and would overwrite this
+// no-referrer with the edge's looser default. Operators behind a
+// reverse proxy that respects that ordering get the same value
+// twice — idempotent.
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
