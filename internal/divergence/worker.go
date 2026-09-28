@@ -618,8 +618,21 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 	// nothing on the wire distinguishes from a fresh one except the quorum.
 	// Signal the outage so the refresh loop can emit a distinct outcome and
 	// page on a dark checker.
+	//
+	// #1044: asset_unsupported is structural non-coverage ("no reference
+	// for this pair on this source", reference.go:103-106), not a
+	// degradation — [ErrAssetUnsupported]'s own doc says so — but it was
+	// folded into FailureCount alongside real transport failures, so a
+	// pair whose every reference is unsupported (e.g. an FX-only oracle
+	// map queried for a pair with no configured coverage) tripped this
+	// exactly like a total outage and paged "checker running blind"
+	// forever. Only page when a GENUINE failure exists beyond the
+	// structurally-unsupported ones.
 	if res.SuccessCount == 0 {
-		return ErrNoReferenceResponded
+		unsupported := countOutcome(res.Outcomes, OutcomeAssetUnsupported)
+		if res.FailureCount > unsupported {
+			return ErrNoReferenceResponded
+		}
 	}
 	return nil
 }

@@ -353,6 +353,19 @@ func CountAgreeing(ourPrice float64, sources map[string]float64, thresholdPct fl
 	return n
 }
 
+// countOutcome returns how many entries of [Result.Outcomes] equal want —
+// e.g. how many references were OutcomeAssetUnsupported, to separate
+// structural non-coverage from a genuine reference failure (#1044).
+func countOutcome(outcomes map[string]string, want string) int {
+	n := 0
+	for _, o := range outcomes {
+		if o == want {
+			n++
+		}
+	}
+	return n
+}
+
 // errorOutcome is classifyError's bounded twin for [Result.Outcomes]:
 // the same sentinels, but every unrecognised error collapses to one
 // class instead of passing its text through.

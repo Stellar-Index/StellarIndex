@@ -190,6 +190,57 @@ func TestRefreshPair_AllReferencesDark_AgreementZeroMeansUnchecked(t *testing.T)
 	}
 }
 
+// TestRefreshPair_AllUnsupportedIsNotAnOutage pins #1044: a pair every
+// reference structurally doesn't cover (ErrAssetUnsupported —
+// reference.go's own doc: "no reference for this pair on this source,
+// not a degradation") must not be reported as ErrNoReferenceResponded.
+// Before the fix, FailureCount folded asset_unsupported in with genuine
+// transport failures, so a deployment with an uncovered pair paged
+// "checker running blind" forever with both references healthy.
+func TestRefreshPair_AllUnsupportedIsNotAnOutage(t *testing.T) {
+	refs := []divergence.Reference{
+		&stubReference{name: "a", err: divergence.ErrAssetUnsupported},
+		&stubReference{name: "b", err: divergence.ErrAssetUnsupported},
+	}
+	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{Threshold: 5.0})
+
+	err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now())
+	if err != nil {
+		t.Fatalf("RefreshPair err = %v, want nil — every reference is structurally unsupported, not failed", err)
+	}
+
+	body, gerr := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
+	if gerr != nil {
+		t.Fatalf("redis get: %v", gerr)
+	}
+	var cached divergence.CachedResult
+	if uerr := json.Unmarshal(body, &cached); uerr != nil {
+		t.Fatalf("unmarshal: %v", uerr)
+	}
+	if cached.SuccessCount != 0 {
+		t.Errorf("SuccessCount = %d, want 0", cached.SuccessCount)
+	}
+	if cached.FailureCount != 2 {
+		t.Errorf("FailureCount = %d, want 2 (still recorded, just not treated as an outage)", cached.FailureCount)
+	}
+}
+
+// TestRefreshPair_MixedUnsupportedAndFailedIsAnOutage guards the other
+// side of #1044: a genuine failure alongside unsupported references
+// must still page — the veto is only for the all-unsupported case.
+func TestRefreshPair_MixedUnsupportedAndFailedIsAnOutage(t *testing.T) {
+	refs := []divergence.Reference{
+		&stubReference{name: "a", err: divergence.ErrAssetUnsupported},
+		&stubReference{name: "b", err: divergence.ErrPriceUnavailable},
+	}
+	svc, _, _ := newTestService(t, refs, divergence.ServiceOptions{Threshold: 5.0})
+
+	err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now())
+	if !errors.Is(err, divergence.ErrNoReferenceResponded) {
+		t.Fatalf("RefreshPair err = %v, want ErrNoReferenceResponded (a genuine failure is mixed in with the unsupported one)", err)
+	}
+}
+
 // TestRefreshPair_SymmetricStraddleFiresWarning is the MNY-22
 // regression on the SERVED value (flags.divergence_warning, read
 // straight off CachedResult.WarningFired).
