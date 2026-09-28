@@ -46,6 +46,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -226,6 +227,10 @@ type Worker struct {
 	stopCh   chan struct{}
 	doneCh   chan struct{}
 	signFn   func(secret []byte, ts int64, payload []byte) string
+
+	// running latches true on the first Run call and never resets, so
+	// Run is one-shot for the Worker's lifetime (see Run's doc comment).
+	running atomic.Bool
 }
 
 // New constructs a Worker. store must be non-nil and must implement
@@ -319,9 +324,15 @@ func guardedClient(c *http.Client) *http.Client {
 }
 
 // Run drives the poll loop until ctx is cancelled. Returns the
-// context error on shutdown. Safe to call once; calling Run twice
-// on the same Worker panics.
+// context error on shutdown. Run may be called only ONCE per Worker
+// instance for its lifetime: a second call — whether concurrent with
+// the first or made after the first has already returned — returns
+// ErrAlreadyRunning without starting a second poll loop. Construct a
+// new Worker to run again.
 func (w *Worker) Run(ctx context.Context) error {
+	if !w.running.CompareAndSwap(false, true) {
+		return ErrAlreadyRunning
+	}
 	ticker := time.NewTicker(w.opts.PollInterval)
 	defer ticker.Stop()
 	defer close(w.doneCh)
