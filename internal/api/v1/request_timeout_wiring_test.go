@@ -71,15 +71,23 @@ func TestRequestTimeout_BoundsReachDBSeam(t *testing.T) {
 
 // TestRequestTimeout_DefaultAlwaysOn confirms a Server built without an
 // explicit RequestTimeout still bounds the read (the New() default), so
-// the protection is on by default rather than opt-in. Here the observed
-// deadline comes from the per-handler 8s wrap (tighter than the 15s
-// default), which is itself derived from the middleware-bounded context.
+// the protection is on by default rather than opt-in.
+//
+// This hits /v1/price/tip rather than /v1/vwap: handlePriceTip calls
+// s.computeTip(r.Context(), ...) straight through to TradesInRange with
+// no per-handler context.WithTimeout anywhere in that path (unlike
+// /v1/vwap's own 8s wrap, which used to satisfy this assertion whether
+// or not defaultRequestTimeout was ever installed — replacing
+// durationOr(opts.RequestTimeout, defaultRequestTimeout) with
+// opts.RequestTimeout left this test green with the middleware never
+// wired, #1213). With no competing handler-level deadline, the only
+// possible source of the bound observed here is the middleware.
 func TestRequestTimeout_DefaultAlwaysOn(t *testing.T) {
 	reader := &deadlineCapturingHistoryReader{trade: mkNativeUSDTrade()}
-	srv := v1.New(v1.Options{History: reader}) // no RequestTimeout set
+	srv := v1.New(v1.Options{History: reader, Prices: &stubPriceReader{}}) // no RequestTimeout set
 	ts := httpTestServer(t, srv)
 
-	resp := mustGet(t, ts.URL+"/v1/vwap?base=native&quote=fiat:USD")
+	resp := mustGet(t, ts.URL+"/v1/price/tip?asset=native&quote=fiat:USD&window_seconds=5")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
