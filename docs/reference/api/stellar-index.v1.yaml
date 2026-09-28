@@ -19242,7 +19242,23 @@ components:
                   description: |
                     First bucket after the widest interior gap. Only
                     present when `discontinuous=true`.
-              required: [asset_id, quote, price_type, granularity, points, discontinuous]
+                row_cap_truncated:
+                  type: boolean
+                  description: |
+                    True when the read hit the 50 000-bucket response
+                    cap, so `points` holds the OLDEST slice of this
+                    pair's history and stops short of the present.
+                    Opposite direction from `ChartEnvelope.data.truncated`
+                    (which flags the window starting before retention).
+                data_ends_at:
+                  type: string
+                  format: date-time
+                  description: |
+                    Last bucket in `points`. Only present when
+                    `row_cap_truncated=true`; tells a consumer "the
+                    series ends here" as distinct from "the data ends
+                    here".
+              required: [asset_id, quote, price_type, granularity, points, discontinuous, row_cap_truncated]
           required: [data]
 
     ChartEnvelope:

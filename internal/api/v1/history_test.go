@@ -886,6 +886,43 @@ func TestHistorySinceInception_GranularityForwarded(t *testing.T) {
 	}
 }
 
+// TestHistorySinceInception_RowCapTruncated pins #960: since-inception
+// has no window to compare against the 50k-bucket cap up front, so a
+// pair whose grid exceeds it must be flagged AFTER the read — an
+// oldest-first cap-hit is otherwise indistinguishable from a series
+// that legitimately ends at the last returned bucket.
+func TestHistorySinceInception_RowCapTruncated(t *testing.T) {
+	const historyMaxPoints = 50_000 // internal/api/v1/history.go
+	t0 := time.Unix(1_000_000_000, 0).UTC()
+	points := make([]v1.HistoryPoint, historyMaxPoints)
+	for i := range points {
+		points[i] = v1.HistoryPoint{Bucket: t0.Add(time.Duration(i) * time.Hour), VWAP: "1.0"}
+	}
+	reader := &stubHistoryReader{points: points}
+	srv := v1.New(v1.Options{History: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/history/since-inception?asset=native&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.HistorySeries `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+
+	if !env.Data.RowCapTruncated {
+		t.Error("row_cap_truncated = false, want true (read returned exactly historyMaxPoints rows)")
+	}
+	wantEnds := points[len(points)-1].Bucket
+	if env.Data.DataEndsAt == nil {
+		t.Fatal("data_ends_at = nil, want the last served bucket")
+	}
+	if !time.Time(*env.Data.DataEndsAt).Equal(wantEnds) {
+		t.Errorf("data_ends_at = %v, want %v", time.Time(*env.Data.DataEndsAt), wantEnds)
+	}
+}
+
 // TestSpecDeclares404OnScamWithholdingRoutes pins GH-1145: both
 // /history/since-inception and /chart return a 404 price-withheld when
 // seriesWithheldForScam fires (see handleHistorySinceInception and

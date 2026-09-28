@@ -10802,6 +10802,22 @@ export interface components {
                  *     present when `discontinuous=true`.
                  */
                 gap_ends_at?: string;
+                /**
+                 * @description True when the read hit the 50 000-bucket response
+                 *     cap, so `points` holds the OLDEST slice of this
+                 *     pair's history and stops short of the present.
+                 *     Opposite direction from `ChartEnvelope.data.truncated`
+                 *     (which flags the window starting before retention).
+                 */
+                row_cap_truncated: boolean;
+                /**
+                 * Format: date-time
+                 * @description Last bucket in `points`. Only present when
+                 *     `row_cap_truncated=true`; tells a consumer "the
+                 *     series ends here" as distinct from "the data ends
+                 *     here".
+                 */
+                data_ends_at?: string;
             };
         };
         ChartEnvelope: components["schemas"]["EnvelopeMeta"] & {
