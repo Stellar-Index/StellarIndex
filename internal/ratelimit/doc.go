@@ -29,12 +29,10 @@
 //
 // # Weighted charges
 //
-// A request is not always worth one token. [Bucket.Take] and
-// [Bucket.TakeN] spend one; [Bucket.Charge] spends a caller-supplied
-// cost in the same single round-trip, for routes whose server-side
-// work is chosen by the client. Note the naming trap: TakeN's N is the
-// per-subject LIMIT override, not a cost — Charge is the only way to
-// make a request dearer.
+// A request is not always worth one token. [Bucket.Take] spends one;
+// [Bucket.Charge] spends a caller-supplied cost in the same single
+// round-trip, and takes the per-subject LIMIT override as a separate
+// argument so a cost can never be mistaken for a ceiling.
 //
 // The production middleware charges one token before dispatch and
 // lets a handler re-price the request once it has parsed the parameter

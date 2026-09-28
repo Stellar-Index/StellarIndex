@@ -21,7 +21,7 @@ import (
 // counter, where the window is `unix_seconds / window_seconds`. The
 // Nth+1 request inside a window is rejected. Unlike the Redis path it
 // can never fail open — there is no backend to error, so
-// [Bucket.TakeN] on a local bucket always returns a nil error and an
+// [Bucket.Charge] on a local bucket always returns a nil error and an
 // authoritative allow/deny.
 //
 // # Memory bound

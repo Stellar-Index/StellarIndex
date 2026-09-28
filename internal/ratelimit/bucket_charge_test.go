@@ -40,8 +40,8 @@ func newChargeBucket(rdb redis.Cmdable, limit int) *ratelimit.Bucket {
 }
 
 // TestBucket_Charge_SpendsCostTokens is the F046 regression: the
-// limiter had no notion of cost — TakeN's N is a per-subject LIMIT and
-// the script did a plain INCR — so a 1000-id batch and a one-id read
+// limiter had no notion of cost — the only N it took was a per-subject
+// LIMIT and the script did a plain INCR — so a 1000-id batch and a one-id read
 // spent the same single token. A charge of N must move the counter by
 // N, in one call.
 func TestBucket_Charge_SpendsCostTokens(t *testing.T) {
@@ -179,18 +179,18 @@ func TestBucket_Charge_FirstWriteArmsExpiry(t *testing.T) {
 	}
 }
 
-// TestBucket_TakeN_StillSpendsOne pins that routing TakeN through
-// Charge changed nothing for every existing caller: the third argument
-// is still the per-subject LIMIT, and the spend is still one.
-func TestBucket_TakeN_StillSpendsOne(t *testing.T) {
+// TestBucket_Charge_LimitIsNotCost pins that the limit argument moves
+// only the ceiling, never the spend: a one-token charge under a raised
+// limit counts one and reports the raised ceiling's remainder.
+func TestBucket_Charge_LimitIsNotCost(t *testing.T) {
 	chargeBackends(t, func(t *testing.T, rdb redis.Cmdable) {
 		b := newChargeBucket(rdb, 5)
-		r, err := b.TakeN(context.Background(), "k", 50)
+		r, err := b.Charge(context.Background(), "k", 1, 50)
 		if err != nil {
-			t.Fatalf("TakeN: %v", err)
+			t.Fatalf("Charge: %v", err)
 		}
 		if r.Count != 1 || r.Remaining != 49 {
-			t.Fatalf("TakeN(limit=50) = count %d remaining %d; want 1/49", r.Count, r.Remaining)
+			t.Fatalf("Charge(cost=1, limit=50) = count %d remaining %d; want 1/49", r.Count, r.Remaining)
 		}
 	})
 }
