@@ -11,7 +11,7 @@ severity: P2
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_ingestion_insert_errors` (the sensitive `stellarindex_ingestion_persist_drop` sibling on the money-flow kinds shares this runbook) |
+| Alert | `stellarindex_ingestion_insert_errors` (the sensitive `stellarindex_ingestion_persist_drop` sibling on the money-flow kinds, and `stellarindex_ingestion_trustline_observation_drop` on `kind="trustline_observation"`, share this runbook) |
 | Severity | P2 (`severity: ticket`) |
 | Detected by | `configs/prometheus/rules.r1/ingestion.yml` (group `stellarindex.ingestion`, `severity: ticket`, `for: 5m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/ingestion.yml`. |
 | Typical MTTR | 15–60 min |
@@ -19,7 +19,7 @@ severity: P2
 
 ## Symptoms
 
-- `stellarindex_source_insert_errors_total{source=...,kind=...}` rises above 6/min sustained. `kind` is not just `trade|oracle`: `trade` is a permanently dropped trade and `trade_abandoned` a retry abandoned on shutdown / cycle timeout (cursor held, re-derivable — not a loss); the counter also carries `panic` (unhandled decode/persist panic, recovered in the sink), `dropped` (external retry-buffer overflow, ADR-0041), and the per-domain persist kinds — of which the money-flow set `trade` / `soroswap_router_swap` / `defindex_flow_strategy` / `defindex_flow_vault` has its own SENSITIVE any-nonzero tripwire (`stellarindex_ingestion_persist_drop`, `increase(...[15m]) > 0`) that shares this runbook_url, because a low-rate silent drop sits below the 0.1/s threshold here.
+- `stellarindex_source_insert_errors_total{source=...,kind=...}` rises above 6/min sustained. `kind` is not just `trade|oracle`: `trade` is a permanently dropped trade and `trade_abandoned` a retry abandoned on shutdown / cycle timeout (cursor held, re-derivable — not a loss); the counter also carries `panic` (unhandled decode/persist panic, recovered in the sink), `dropped` (external retry-buffer overflow, ADR-0041), and the per-domain persist kinds — of which the money-flow set `trade` / `soroswap_router_swap` / `defindex_flow_strategy` / `defindex_flow_vault` has its own SENSITIVE any-nonzero tripwire (`stellarindex_ingestion_persist_drop`, `increase(...[15m]) > 0`) that shares this runbook_url, because a low-rate silent drop sits below the 0.1/s threshold here. `kind="trustline_observation"` (classic-supply, no retry path) has the same shape of companion tripwire, `stellarindex_ingestion_trustline_observation_drop` (INV-0786; ~17,663 errors / 30 days on r1 sat under the 0.1/s gate with no alert at all before it).
 - `stellarindex_source_events_total` may still rise — the consumer is pulling events, it's the writer that's failing.
 - Dashboard view: *Ingestion → Insert errors* panel non-zero for > 5 min.
 - The offending source's `stellarindex_source_last_event_unix` may freeze (if persistence blocks until retry).

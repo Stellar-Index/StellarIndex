@@ -4234,7 +4234,7 @@ conjunct reads a real zero rather than no-data.
 ### `stellarindex_sdex_orderbook_maintain_total`
 
 Counter. Labels: `outcome` (`load_ok` | `load_error` | `advance_ok` |
-`advance_error` | `verify_ok` | `verify_error`).
+`advance_error` | `advance_held` | `verify_ok` | `verify_error`).
 
 Maintenance attempts for the in-process SDEX order book behind
 `/v1/sdex/orderbook`. `load_*` is the once-per-process full-slice
@@ -4243,11 +4243,21 @@ is the 60s incremental change apply; `verify_*` is the per-tick
 quarantine drain that lake-verifies version-tie suspect offers
 (2026-07-31 crossed-book fix) — unobserved when the quarantine is
 empty. Look here when the endpoint 503s past startup (repeated
-`load_error`), serves a stale `as_of_ledger` (`advance_error`), or
-serves thinner-than-real depth while
+`load_error`), serves a stale `as_of_ledger` (`advance_error` or
+`advance_held`), or serves thinner-than-real depth while
 `stellarindex_sdex_orderbook_pending_offers` stays high
 (`verify_error`). Pre-load advance ticks observe nothing by design —
 a healthy advance rate must not mask a stuck load.
+
+`advance_held` (INV-0780) is a clean tick — no error — that made ZERO
+cursor progress: an unhealed lake hole (see "advance held below a
+lake hole" in `internal/storage/clickhouse/sdex_offer_book_reader.go`)
+or a full ingest halt, as opposed to a legitimate advance that applied
+zero row CHANGES while the tip itself still moved. It exists because
+`advance_ok` cannot distinguish the two, so `maintain_failing`
+(error-only) stays silent through a long hold while the served book
+goes stale; `stellarindex_sdex_orderbook_advance_held` (30 min) covers
+it.
 
 ### `stellarindex_sdex_orderbook_maintain_duration_seconds`
 

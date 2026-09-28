@@ -5,21 +5,24 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellarindex_sdex_orderbook_maintain_failing` / `stellarindex_sdex_orderbook_crossed_book`
+# Runbook — `stellarindex_sdex_orderbook_maintain_failing` / `stellarindex_sdex_orderbook_advance_held` / `stellarindex_sdex_orderbook_crossed_book`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `stellarindex_sdex_orderbook_maintain_failing` (ticket), `stellarindex_sdex_orderbook_crossed_book` (ticket) |
+| Alerts | `stellarindex_sdex_orderbook_maintain_failing` (ticket), `stellarindex_sdex_orderbook_advance_held` (ticket), `stellarindex_sdex_orderbook_crossed_book` (ticket) |
 | Detected by | Prometheus rules in `deploy/monitoring/rules/api.yml` + `configs/prometheus/rules.r1/api.yml` |
 | Typical MTTR | 5–30 min (ClickHouse reachability, or the initial load exceeding its 30-min cap) |
-| Impact | Four distinct modes — check WHICH outcome or alert is firing. `load_error`: `/v1/sdex/orderbook` serves a 503 warming problem (user-visible outage of the endpoint). `advance_error`: the endpoint answers with increasingly stale depth, honestly timestamped (`as_of_ledger` stops advancing). `verify_error`: the version-tie quarantine stops draining, so its offers stay out of every served book — visible per side as `ask_offers_withheld` / `bid_offers_withheld`. `crossed_book`: a served pair has best bid > best ask — phantom offers on that market. |
+| Impact | Five distinct modes — check WHICH outcome or alert is firing. `load_error`: `/v1/sdex/orderbook` serves a 503 warming problem (user-visible outage of the endpoint). `advance_error`: the endpoint answers with increasingly stale depth, honestly timestamped (`as_of_ledger` stops advancing). `advance_held`: the SAME staleness as `advance_error` but never an error — a lake hole (or ingest halt) is holding the cursor at a fixed ledger. `verify_error`: the version-tie quarantine stops draining, so its offers stay out of every served book — visible per side as `ask_offers_withheld` / `bid_offers_withheld`. `crossed_book`: a served pair has best bid > best ask — phantom offers on that market. |
 
 ## Symptoms
 
 - `stellarindex_sdex_orderbook_maintain_total{outcome=~"load_error|advance_error|verify_error"}`
-  increasing for 30+ min.
+  increasing for 30+ min (`maintain_failing`), or
+  `stellarindex_sdex_orderbook_maintain_total{outcome="advance_held"}`
+  increasing for 30+ min with NO error outcome ever incrementing
+  (`advance_held` — see below).
 - `stellarindex_sdex_orderbook_pending_offers` flat and non-zero while
   `verify_error` rises (quarantine wedged), or
   `stellarindex_sdex_orderbook_crossed_pairs` > 0 for 30+ min.
@@ -66,19 +69,29 @@ curl -s localhost:9464/metrics | grep 'sdex_orderbook_maintain_duration_seconds.
    a code/schema issue, not an ops issue. File it; do not raise the
    cap ad hoc (the launch plan tracks initial-load wall-time as an
    acceptance item).
-4. A process restart re-runs the full load from scratch — only
+4. `advance_held` (no error outcome incrementing at all): the cursor is
+   held below an unhealed `ledger_entry_changes` hole, or the lake has
+   stopped receiving new ledgers entirely — the API journal names
+   which via "advance held below a lake hole" (cursor / contiguous_tip
+   / lake_max). Check `ch-live-catchup` and
+   `stellarindex_ingestion_cursor_stuck` / `stellarindex_ingestion_ledger_stalled`
+   first: a genuine lake-wide halt pages there too, and this alert is
+   the order book's own consumer-facing signal for the same root cause.
+   Self-heals the moment the hole is healed or ingest resumes — no
+   ops-side action beyond confirming that.
+5. A process restart re-runs the full load from scratch — only
    worthwhile if the maintainer goroutine itself is wedged (no
    load/advance observations at all for several minutes). A restart
    also re-quarantines every `intra_ledger_seq == 0` offer, so expect
    `pending_offers` to jump and the `*_offers_withheld` counts to be
    non-zero for hours afterwards.
-5. `verify_error` sustained: the removal probe (`OfferRemovedAt`, an
+6. `verify_error` sustained: the removal probe (`OfferRemovedAt`, an
    `IN (...)` point read on `ledger_entry_changes`) is failing. The
    book stays honest — suspects are withheld, never served — but it is
    thinner than the chain for as long as this lasts. Treat as a
    ClickHouse read failure; the journal line `sdex order book verify`
    carries the error.
-6. `crossed_book`: take the pair ids from the journal line above and
+7. `crossed_book`: take the pair ids from the journal line above and
    check the served book (`/v1/sdex/orderbook?selling=A&buying=B`). A
    crossed resting book is impossible on-chain, so one side carries an
    offer whose removal the lake never ingested. Verification cannot
@@ -124,3 +137,6 @@ hitting the cap before it happens.
 - 2026-09-23: `verify_error` joined the maintain-failing alert; added
   `stellarindex_sdex_orderbook_crossed_book` and the per-side
   `*_offers_withheld` counts on `/v1/sdex/orderbook`.
+- 2026-09-28 (INV-0780): added `advance_held` and its own
+  `stellarindex_sdex_orderbook_advance_held` alert — maintain_failing
+  is error-only and stayed silent through a lake-hole/cursor hold.

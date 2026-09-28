@@ -192,15 +192,15 @@ func TestAggregateOrderBookSide_ExactLevelsAndInversion(t *testing.T) {
 
 // TestSDEXOrderBookCache_MaintainObservesMetrics pins the op-qualified
 // outcome labels: Load records load_ok/load_error, Advance records
-// advance_ok/advance_error, and the pre-Load Advance no-op records
-// NOTHING (counting it as ok would mask a stuck load behind a healthy
-// advance rate).
+// advance_ok/advance_error/advance_held, and the pre-Load Advance no-op
+// records NOTHING (counting it as ok would mask a stuck load behind a
+// healthy advance rate).
 func TestSDEXOrderBookCache_MaintainObservesMetrics(t *testing.T) {
 	count := func(outcome string) uint64 {
 		return obstest.HistogramSampleCount(t, obs.SDEXOrderBookMaintainDurationSeconds, "outcome", outcome)
 	}
 	loadOK, loadErr := count("load_ok"), count("load_error")
-	advOK, advErr := count("advance_ok"), count("advance_error")
+	advOK, advErr, advHeld := count("advance_ok"), count("advance_error"), count("advance_held")
 
 	reader := &stubOfferBookReader{loadErr: errors.New("lake down")}
 	c := NewSDEXOrderBookCache(reader, nil)
@@ -227,6 +227,23 @@ func TestSDEXOrderBookCache_MaintainObservesMetrics(t *testing.T) {
 		t.Errorf("load_ok observations = %d, want %d", got, loadOK+1)
 	}
 
+	// A held tick (next == cursor, no error — the reader's early return
+	// below an unhealed lake hole) must NOT count as advance_ok: that
+	// would mask a stuck cursor behind a healthy-looking advance rate,
+	// exactly the gap INV-0780 closes. cursor is 0 post-Load here
+	// (reader.cursor is unset); nextCursor defaults to the same 0.
+	if err := c.Advance(context.Background()); err != nil {
+		t.Fatalf("held Advance: %v", err)
+	}
+	if got := count("advance_held"); got != advHeld+1 {
+		t.Errorf("advance_held observations = %d, want %d", got, advHeld+1)
+	}
+	if got := count("advance_ok"); got != advOK {
+		t.Errorf("held Advance must not observe advance_ok (got %d, want %d)", got, advOK)
+	}
+
+	// A real advance — the cursor moves — records advance_ok.
+	reader.nextCursor = 1
 	if err := c.Advance(context.Background()); err != nil {
 		t.Fatalf("Advance: %v", err)
 	}

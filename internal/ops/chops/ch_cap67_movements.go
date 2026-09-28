@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -55,6 +56,7 @@ func chCap67Movements(args []string) error {
 	followInterval := fs.Duration("follow-interval", 1*time.Second, "sleep between catch-ups in -follow mode. Kept ≥~0.5s: each tick re-scans the derive window, and sub-second ticks add ClickHouse read + small-write pressure for a latency gain the ~5s ledger cadence + upstream ingest already dominate.")
 	floorLedger := fs.Uint("floor-ledger", uint(timescale.SEP41MovementsFloorLedger), "first-run watermark floor — the P23/CAP-67 boundary this derive starts from BEFORE any watermark exists. Defaults to the pubnet P23 boundary; set to the chain's start on testnet/futurenet, where the whole chain is post-P23 (otherwise the derive floors ABOVE every ledger the net has and produces nothing). A first run clamps the floor UP to the lake's first ledger (no lake holds genesis=1), so 1 and 2 behave alike.")
 	network := fs.String("network", "pubnet", "Stellar network the lake belongs to (pubnet / testnet / futurenet). A CAP-67 transfer's asset label is trusted only when the emitting contract is that asset's SAC on THIS network; a wrong value labels every genuine SAC transfer by its contract id.")
+	heartbeat := fs.String("heartbeat", "", "node_exporter textfile path for the liveness/progress gauges (INV-0793). Empty = "+opsutil.DefaultTextfileDir+"/ops_job_ch_cap67_movements.prom when that directory exists (r1), otherwise no heartbeat at all")
 	maxDecodeErrs := registerDecodeBudget(fs)
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
@@ -77,6 +79,18 @@ func chCap67Movements(args []string) error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
+	// INV-0793: the watermark this job advances had no metric publisher at
+	// all, so a wedged -follow daemon (holding the watermark, and every
+	// downstream /movements read behind it, at a fixed ledger) looked
+	// exactly like a healthy one — same gap C6-020 closed for ch-backfill /
+	// ch-holders-rollup / usd-volume-restamp with this same primitive.
+	// record reports per-window, not just at run end: -follow's first-run
+	// backfill can run for hours, and a single end-of-run Progress call
+	// would leave the cursor flat (reading as hung) for the whole of it.
+	prog := newCap67Progress(*heartbeat)
+	ok := false
+	defer func() { prog.stop(ok) }()
+
 	if *follow {
 		if *from != 0 || *to != 0 {
 			return fmt.Errorf("-follow always resumes from the watermark to the contiguous tip; do not combine with -from/-to")
@@ -86,14 +100,61 @@ func chCap67Movements(args []string) error {
 			// the ENTIRE backlog on every tick, forever. The daemon must write.
 			return fmt.Errorf("-follow requires -write: a dry-run never advances the watermark and would re-derive the whole backlog each tick")
 		}
-		return runCap67Follow(ctx, *chAddr, uint32(*window), dryRun, *followInterval, uint32(*floorLedger)) //nolint:gosec // window/floor fit uint32
+		err := runCap67Follow(ctx, *chAddr, uint32(*window), dryRun, *followInterval, uint32(*floorLedger), prog.record) //nolint:gosec // window/floor fit uint32
+		ok = err == nil
+		return err
 	}
 
-	res, err := cap67CatchUpOnce(ctx, *chAddr, uint32(*from), uint32(*to), uint32(*window), dryRun, uint32(*floorLedger)) //nolint:gosec // ledger sequences fit uint32
+	res, err := cap67CatchUpOnce(ctx, *chAddr, uint32(*from), uint32(*to), uint32(*window), dryRun, uint32(*floorLedger), prog.record) //nolint:gosec // ledger sequences fit uint32
 	if err != nil {
 		return err
 	}
-	return enforceDecodeBudget("ch-cap67-movements", res.skipped, *maxDecodeErrs)
+	err = enforceDecodeBudget("ch-cap67-movements", res.skipped, *maxDecodeErrs)
+	ok = err == nil
+	return err
+}
+
+// cap67Progress accumulates one process's derived-row total and delegates
+// to the shared ops-job heartbeat (opsutil.JobHeartbeat) — the same
+// liveness/progress primitive ch-backfill, ch-holders-rollup and
+// usd-volume-restamp already publish, reused rather than a bespoke gauge
+// (INV-0793). total is cumulative across every catch-up tick in the
+// process's lifetime, so -follow's steady-state small ticks still read as
+// forward progress rather than resetting to near-zero every tick.
+type cap67Progress struct {
+	hb    *opsutil.JobHeartbeat
+	mu    sync.Mutex
+	total int64
+}
+
+// newCap67Progress starts the heartbeat. heartbeatPath is the -heartbeat
+// flag; see opsutil.NewJobHeartbeat for the empty-path resolution (inert
+// off r1).
+func newCap67Progress(heartbeatPath string) *cap67Progress {
+	hb := opsutil.NewJobHeartbeat("ch-cap67-movements", heartbeatPath, nil)
+	if hb.Enabled() {
+		fmt.Fprintf(os.Stderr, "ch-cap67-movements: heartbeat -> %s\n", hb.Path())
+	}
+	hb.Start()
+	return &cap67Progress{hb: hb}
+}
+
+// record is the per-window progress callback handed to runCap67CatchUp
+// (one-shot and, via runCap67Follow, every -follow tick). rows is the
+// window's own derived-row count (added to the running total); cursor is
+// the highest ledger the window reached.
+func (p *cap67Progress) record(rows int64, cursor uint32) {
+	p.mu.Lock()
+	p.total += rows
+	total := p.total
+	p.mu.Unlock()
+	p.hb.Progress(uint64(total), uint64(cursor)) //nolint:gosec // total/cursor are non-negative by construction
+}
+
+// stop writes the heartbeat's terminal state. Deferred so it runs on every
+// exit path (including a signal-cancelled -follow).
+func (p *cap67Progress) stop(ok bool) {
+	p.hb.Stop(ok)
 }
 
 // cap67NetworkPassphrase maps -network to the passphrase SAC ids derive
@@ -135,7 +196,12 @@ func (c cap67CatchUp) idle() bool { return c.last < c.start }
 // watermark twice over, so it never steps past a lake hole: Cap67Range
 // clamps the range (including an operator-supplied -to), and each advance
 // re-proves its own window hole-free before the watermark moves.
-func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32, dryRun bool, floorLedger uint32) (cap67CatchUp, error) {
+//
+// progress, when non-nil, is called after each window advances with that
+// window's row count and the ledger it reached (see cap67Progress.record) —
+// the per-window granularity a long -follow tick needs so a stalled watermark
+// is distinguishable from a hung process (INV-0793).
+func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32, dryRun bool, floorLedger uint32, progress func(rows int64, cursor uint32)) (cap67CatchUp, error) {
 	start, last, err := Cap67Range(ctx, chAddr, from, to, floorLedger)
 	if err != nil {
 		return cap67CatchUp{}, err
@@ -167,6 +233,9 @@ func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32
 			if err := clickhouse.SetCap67MovementsWatermark(ctx, chAddr, lo, hi); err != nil {
 				return res, fmt.Errorf("advance watermark to %d: %w", hi, err)
 			}
+		}
+		if progress != nil {
+			progress(n, hi)
 		}
 		fmt.Fprintf(os.Stderr, "ch-cap67-movements: window [%d,%d] done — %d movement rows (total %d, elapsed %s)\n",
 			lo, hi, n, res.rows, time.Since(runStart).Round(time.Second))
@@ -222,10 +291,10 @@ func followTick(base time.Duration, idle int) time.Duration {
 // is logged and retried on the next tick — the watermark holds, so NO ledger
 // is skipped — while a ctx-cancel ends the loop cleanly. Crash-safe: on
 // restart it resumes from the persisted watermark.
-func runCap67Follow(ctx context.Context, chAddr string, window uint32, dryRun bool, interval time.Duration, floorLedger uint32) error {
+func runCap67Follow(ctx context.Context, chAddr string, window uint32, dryRun bool, interval time.Duration, floorLedger uint32, progress func(rows int64, cursor uint32)) error {
 	fmt.Fprintf(os.Stderr, "ch-cap67-movements: FOLLOW mode — catch-up every %s, gated on the contiguous watermark, on %s\n", interval, chAddr)
 	return followLoop(ctx, interval, func(ctx context.Context, idle int) (bool, error) {
-		res, err := runCap67CatchUp(ctx, chAddr, 0, 0, window, dryRun, floorLedger)
+		res, err := runCap67CatchUp(ctx, chAddr, 0, 0, window, dryRun, floorLedger, progress)
 		if err != nil {
 			return false, err
 		}
