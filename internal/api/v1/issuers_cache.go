@@ -111,7 +111,7 @@ func (c *CachedIssuersReader) ListIssuers(ctx context.Context, limit int) ([]tim
 		return c.upstream.ListIssuers(ctx, limit)
 	}
 	key := newCacheKey("ListIssuers").int(limit).build()
-	return c.fetchList(ctx, "list_issuers", key, func(ctx context.Context) ([]timescale.IssuerSummary, error) {
+	return c.fetchList(ctx, key, func(ctx context.Context) ([]timescale.IssuerSummary, error) {
 		return c.upstream.ListIssuers(ctx, limit)
 	})
 }
@@ -119,15 +119,13 @@ func (c *CachedIssuersReader) ListIssuers(ctx context.Context, limit int) ([]tim
 // fetchList is the TTL + single-flight loop. Mirrors
 // CachedMarketsReader.fetchPairs (delete-on-error,
 // waiter-err-pointer panic safety). No SWR — the underlying query
-// is ~200ms not multi-second, so a cold-leader inline fetch on
-// expiry is acceptable; we don't need to add the goroutine
-// complexity that asset_catalogue_cache.go / markets_cache.go ship for
-// their multi-second worst cases. (If r1 measurements show
+// is ~200ms not multi-second, so an expired entry waits on a fresh
+// fill rather than serving stale. (If r1 measurements show
 // post-cache p95 still spiking on miss, the swr[T] helper from
 // asset_catalogue_cache.go drops in.)
 func (c *CachedIssuersReader) fetchList(
 	ctx context.Context,
-	op, key string,
+	key string,
 	upstream func(context.Context) ([]timescale.IssuerSummary, error),
 ) ([]timescale.IssuerSummary, error) {
 	c.mu.Lock()
@@ -137,51 +135,65 @@ func (c *CachedIssuersReader) fetchList(
 	if ok && e.flight == nil && time.Since(e.at) < c.ttl {
 		out := e.list
 		c.mu.Unlock()
-		obs.APICacheOpsTotal.WithLabelValues("issuers", op, "hit").Inc()
+		obs.APICacheOpsTotal.WithLabelValues("issuers", "list_issuers", "hit").Inc()
 		return out, nil
 	}
 
-	// (B) Refresh already in flight (cold or stale-leader-running) —
-	// join it rather than stampede upstream. Capture the entry
-	// pointer so we read the leader's result/err off the SAME
-	// struct we joined on; survives the leader's delete-on-error.
-	if ok && e.flight != nil {
-		entry := e
-		ch := e.flight
-		c.mu.Unlock()
-		select {
-		case <-ch:
-			if entry.err != nil {
-				obs.APICacheOpsTotal.WithLabelValues("issuers", op, "miss").Inc()
-				return nil, entry.err
-			}
-			obs.APICacheOpsTotal.WithLabelValues("issuers", op, "hit").Inc()
-			return entry.list, nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+	// (B)/(C) No fresh value: join the running fill, or take the slot
+	// and start one. Either way this caller only WAITS, on the fill or its
+	// own ctx: the fill runs detached (runDetachedFill), so one caller's abort
+	// cannot fail the others. The entry pointer is captured so the
+	// result/err is read off the SAME struct we joined, surviving the
+	// fill's delete-on-error.
+	entry, leader := e, false
+	if !ok || e.flight == nil {
+		entry, leader = &issuersCacheEntry{flight: make(chan struct{})}, true
+		c.entries[key] = entry
+		//nolint:gosec,contextcheck // G118 / contextcheck: intentional
+		// detached fill — see runDetachedFill.
+		go runDetachedFill(nil, "api-issuers-fill", cacheFillBudget, entry.flight, upstream, c.settleList(key, entry))
 	}
-
-	// (C) Leader: no entry, or a stale entry with no flight in
-	// progress. Take the slot, run the upstream call inline.
-	done := make(chan struct{})
-	entry := &issuersCacheEntry{flight: done}
-	c.entries[key] = entry
+	ch := entry.flight
 	c.mu.Unlock()
-	obs.APICacheOpsTotal.WithLabelValues("issuers", op, "miss").Inc()
+	if leader {
+		obs.APICacheOpsTotal.WithLabelValues("issuers", "list_issuers", "miss").Inc()
+	}
+	select {
+	case <-ch:
+		c.mu.Lock()
+		list, err := entry.list, entry.err
+		c.mu.Unlock()
+		if err != nil {
+			if !leader {
+				obs.APICacheOpsTotal.WithLabelValues("issuers", "list_issuers", "miss").Inc()
+			}
+			return nil, err
+		}
+		if !leader {
+			obs.APICacheOpsTotal.WithLabelValues("issuers", "list_issuers", "hit").Inc()
+		}
+		return list, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
 
-	rows, err := upstream(ctx)
-
-	c.mu.Lock()
-	if err == nil {
+// settleList applies a fetchList fill to entry: cache on success; on
+// failure hand err to the waiters and drop the entry so errors are never
+// cached.
+func (c *CachedIssuersReader) settleList(key string, entry *issuersCacheEntry) func([]timescale.IssuerSummary, error) {
+	return func(rows []timescale.IssuerSummary, err error) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if err != nil {
+			entry.err = err
+			if c.entries[key] == entry {
+				delete(c.entries, key)
+			}
+			return
+		}
 		entry.at = time.Now()
 		entry.list = rows
 		entry.flight = nil
-	} else {
-		entry.err = err
-		delete(c.entries, key) // don't cache the error for new callers
 	}
-	c.mu.Unlock()
-	close(done)
-	return rows, err
 }

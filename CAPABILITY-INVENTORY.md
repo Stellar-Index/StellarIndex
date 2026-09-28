@@ -66,6 +66,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 
 ## Cache keys — `internal/cachekeys` (the ONLY canonical key builder, ADR-0007)
 - `cachekeys.VWAP/OHLC/Price/Confidence/Freeze/RateLimitKey/TOML/Metadata/Divergence/APIKey/AssetsList/MarketsList/…` — never hand-format a Redis key; prewarm must call readers with byte-identical args
+- In-process single-flight fill (`internal/api/v1`) → `runDetachedFill(logger, name, budget, done, upstream, settle)` in `cache_fill.go`: runs the upstream call on its own budget, never a request ctx, and turns a panic into an error; waiters select on the flight vs their own ctx
 
 ## Prometheus metrics — `internal/obs` (convention, no factory)
 - Emit → declare a `prometheus.New*Vec` var in `obs/metrics.go` + register in `init()`; paired pattern `FooTotal{outcome}` + `FooDurationSeconds{outcome}` (copy `DivergenceRefreshTotal`)

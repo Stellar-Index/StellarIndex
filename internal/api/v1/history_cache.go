@@ -236,8 +236,7 @@ func (c *CachedHistoryReader) LatestTradePerSource(
 // entry. On success it caches (and clears flight so the entry is
 // reusable as a fresh/stale value). On error it does NOT cache —
 // the entry is removed from the map; waiters still read entry.err
-// via their retained pointer. Mirrors markets_cache.go refreshPools
-// + the cold-leader error path, unified.
+// via their retained pointer. Mirrors markets_cache.go settleFailedFillLocked.
 // errHistoryFillPanicked is what a cold waiter receives when the fill
 // goroutine it joined panicked. It is a distinct sentinel rather than a
 // reused upstream error so an operator reading the 5xx can tell "the
@@ -310,7 +309,7 @@ func (c *CachedHistoryReader) fill(
 		// Stale-while-revalidate refresh failed: KEEP serving the
 		// existing stale value. Don't set entry.err, don't delete —
 		// just clear flight so the next expiry retries. (Mirrors
-		// markets_cache.go refreshPools.)
+		// markets_cache.go settleFailedFillLocked.)
 		entry.flight = nil
 	default:
 		// Cold fill failed (no prior value): propagate the error to
