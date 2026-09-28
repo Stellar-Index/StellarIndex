@@ -120,10 +120,11 @@ const (
 	OutcomeNotEnoughSamples
 	OutcomeReadError
 	OutcomeWriteError
-	// OutcomeBelowNotionalFloor: the pair traded enough minutes for a
-	// baseline, but its whole window carried too little USD notional to
-	// form MinSamples+1 volume bars. Nothing is persisted.
-	OutcomeBelowNotionalFloor
+	// OutcomeOKPerMinuteFallback: the window carried too little USD flow
+	// for MinSamples+1 volume bars, so the baseline was built one point per
+	// minute, as before volume bars, rather than leaving a publishable pair
+	// with no z-score freeze. Its density is print-count and dust-buyable.
+	OutcomeOKPerMinuteFallback
 	// OutcomeOKUnvalued: no minute in the window carried a USD valuation,
 	// so notional is unmeasurable and the baseline was built from every
 	// minute to keep the z-score freeze live. Persisted, like OutcomeOK.
@@ -140,8 +141,8 @@ func (o RefreshOutcome) String() string {
 		return "read_error"
 	case OutcomeWriteError:
 		return "write_error"
-	case OutcomeBelowNotionalFloor:
-		return "below_notional_floor"
+	case OutcomeOKPerMinuteFallback:
+		return "ok_per_minute_fallback"
 	case OutcomeOKUnvalued:
 		return "ok_unvalued"
 	default:
@@ -153,16 +154,13 @@ func (o RefreshOutcome) String() string {
 // run. Counts per outcome let the caller emit metrics in one place
 // without scanning per-pair errors.
 type RefreshSummary struct {
-	OK                 int
-	NotEnoughSamples   int
-	ReadErrors         int
-	WriteErrors        int
-	BelowNotionalFloor int
-	OKUnvalued         int
+	OK                  int
+	NotEnoughSamples    int
+	ReadErrors          int
+	WriteErrors         int
+	OKPerMinuteFallback int
+	OKUnvalued          int
 }
-
-// ErrBelowNotionalFloor accompanies [OutcomeBelowNotionalFloor].
-var ErrBelowNotionalFloor = errors.New("baseline: too little USD notional for a baseline")
 
 // RefreshPair recomputes the baseline for one pair and writes it.
 // Reads the pair's full 30-day timed VWAP series, splits into 1d /
@@ -177,8 +175,8 @@ var ErrBelowNotionalFloor = errors.New("baseline: too little USD notional for a 
 //   - (OutcomeNotEnoughSamples, [ErrNotEnoughSamples]) when even
 //     the 30d window has fewer than [MinSamples] returns — the
 //     pair is in full bootstrap and nothing is persisted
-//   - (OutcomeBelowNotionalFloor, [ErrBelowNotionalFloor]) when it has
-//     enough minutes but too little USD notional; nothing persisted
+//   - (OutcomeOKPerMinuteFallback, nil) on a successful upsert of the
+//     per-minute baseline for a pair with too little USD flow for bars
 //   - (OutcomeOKUnvalued, nil) on a successful upsert for a pair with no
 //     USD-valued minute in the window
 //   - (OutcomeReadError, err) on a [TimedVWAPSource] failure
@@ -199,18 +197,15 @@ func (r *Refresher) RefreshPair(ctx context.Context, pair canonical.Pair) (Refre
 		okOutcome = OutcomeOKUnvalued
 	}
 
-	d1, d7, d30 := SplitByLookback(sample, now)
-	multi := NewMultiBaseline(d1, d7, d30)
-
+	multi := NewMultiBaseline(SplitByLookback(sample, now))
+	if multi.Day30 == nil && valued {
+		multi = NewMultiBaseline(SplitByLookback(timed, now))
+		okOutcome = OutcomeOKPerMinuteFallback
+	}
 	if multi.Day30 == nil {
-		// Persist nothing; the confidence loop applies ADR-0019 bootstrap
-		// policy. Report whether the floor, not thin trading, caused it.
-		if valued {
-			_, _, all30 := SplitByLookback(timed, now)
-			if len(ReturnsFromVWAPs(all30)) >= MinSamples {
-				return OutcomeBelowNotionalFloor, ErrBelowNotionalFloor
-			}
-		}
+		// Even the long window is in bootstrap; persist nothing.
+		// Caller's confidence-score loop applies ADR-0019 bootstrap
+		// policy.
 		return OutcomeNotEnoughSamples, ErrNotEnoughSamples
 	}
 
@@ -294,8 +289,7 @@ loop:
 			defer func() { <-sem }()
 
 			outcome, err := r.RefreshPair(ctx, pair)
-			if err != nil && !errors.Is(err, ErrNotEnoughSamples) &&
-				!errors.Is(err, ErrBelowNotionalFloor) && ctx.Err() == nil {
+			if err != nil && !errors.Is(err, ErrNotEnoughSamples) && ctx.Err() == nil {
 				r.logger.Warn("baseline refresh failed",
 					"pair", pair.String(), "outcome", outcome.String(), "err", err)
 			}
@@ -316,8 +310,8 @@ loop:
 			sum.ReadErrors++
 		case OutcomeWriteError:
 			sum.WriteErrors++
-		case OutcomeBelowNotionalFloor:
-			sum.BelowNotionalFloor++
+		case OutcomeOKPerMinuteFallback:
+			sum.OKPerMinuteFallback++
 		case OutcomeOKUnvalued:
 			sum.OKUnvalued++
 		}

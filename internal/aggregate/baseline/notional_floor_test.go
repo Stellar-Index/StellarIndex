@@ -2,7 +2,6 @@ package baseline_test
 
 import (
 	"context"
-	"errors"
 	"math/big"
 	"testing"
 	"time"
@@ -147,7 +146,7 @@ func TestRefresher_UnvaluedPairKeepsGuardUnderDistinctOutcome(t *testing.T) {
 
 // A valued pair's unpriced minutes prove no notional and are dropped; a pair
 // too thin for any baseline stays not_enough_samples; a pair with minutes
-// but under one point of flow is below_notional_floor.
+// but too little flow for three bars falls back to a per-minute baseline.
 func TestRefresher_NotionalOutcomesAreDistinct(t *testing.T) {
 	now := time.Now().UTC()
 	mixed := mustPair(t, "native", "fiat:USD")
@@ -172,12 +171,14 @@ func TestRefresher_NotionalOutcomesAreDistinct(t *testing.T) {
 	if d30 := sink.byPair[mixed.String()].Day30; d30 == nil || d30.N != 720-1 {
 		t.Errorf("mixed Day30 = %+v, want N=719 (priced minutes only)", d30)
 	}
-	if outcome, err := r.RefreshPair(context.Background(), dust); !errors.Is(err, baseline.ErrBelowNotionalFloor) ||
-		outcome != baseline.OutcomeBelowNotionalFloor {
-		t.Errorf("dust = (%v, %v), want below_notional_floor ($0.10 of flow is under one point)", outcome, err)
+	if outcome, err := r.RefreshPair(context.Background(), dust); err != nil || outcome != baseline.OutcomeOKPerMinuteFallback {
+		t.Errorf("dust = (%v, %v), want ok_per_minute_fallback ($0.10 of flow is under one bar)", outcome, err)
+	}
+	if d30 := sink.byPair[dust.String()].Day30; d30 == nil || d30.N != 99 {
+		t.Errorf("dust Day30 = %+v, want the per-minute N=99", d30)
 	}
 	sum := r.RefreshAll(context.Background(), []canonical.Pair{mixed, thin, dust}, 2)
-	if sum.OK != 1 || sum.NotEnoughSamples != 1 || sum.BelowNotionalFloor != 1 || sum.OKUnvalued != 0 {
-		t.Errorf("summary = %+v, want OK=1 NotEnoughSamples=1 BelowNotionalFloor=1", sum)
+	if sum.OK != 1 || sum.NotEnoughSamples != 1 || sum.OKPerMinuteFallback != 1 || sum.OKUnvalued != 0 {
+		t.Errorf("summary = %+v, want OK=1 NotEnoughSamples=1 OKPerMinuteFallback=1", sum)
 	}
 }

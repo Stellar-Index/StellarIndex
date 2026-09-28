@@ -4,7 +4,6 @@ package integration_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -111,8 +110,9 @@ func TestTimedVWAPsForPair1m_NotionalFloor(t *testing.T) {
 
 	// The production refresher, floor as wired on defaults, over the same
 	// rows: THIN's three real minutes are three points (N=2) and its sixty
-	// pennies ($0.60) never make a point; a pair of nothing but pennies gets
-	// no baseline; the all-unpriced pair keeps one under ok_unvalued.
+	// pennies ($0.60) never make a point; a pair of nothing but pennies has
+	// too little flow for bars and keeps main's per-minute baseline; the
+	// all-unpriced pair keeps one under ok_unvalued.
 	sink := &captureBaselineSink{}
 	r := baseline.NewRefresher(store, sink, baseline.DefaultWindow, nil).
 		WithMinuteNotionalFloor(baseline.MinuteNotionalFloor(10_000, 24*time.Hour))
@@ -121,15 +121,15 @@ func TestTimedVWAPsForPair1m_NotionalFloor(t *testing.T) {
 		t.Errorf("THIN refresh = (%v, %v, %+v), want (ok, nil) with Day30.N=2", outcome, err, sink.last.Day30)
 	}
 	outcome, err = r.RefreshPair(ctx, pairOf("PNY"))
-	if !errors.Is(err, baseline.ErrBelowNotionalFloor) || outcome != baseline.OutcomeBelowNotionalFloor {
-		t.Errorf("PNY refresh = (%v, %v), want below_notional_floor", outcome, err)
+	if err != nil || outcome != baseline.OutcomeOKPerMinuteFallback || sink.last.Day30 == nil || sink.last.Day30.N != 59 {
+		t.Errorf("PNY refresh = (%v, %v, %+v), want ok_per_minute_fallback with Day30.N=59", outcome, err, sink.last.Day30)
 	}
 	outcome, err = r.RefreshPair(ctx, pairOf("EURT"))
 	if err != nil || outcome != baseline.OutcomeOKUnvalued {
 		t.Errorf("EURT refresh = (%v, %v), want (ok_unvalued, nil)", outcome, err)
 	}
-	if sink.calls != 2 || sink.last.Day30 == nil || sink.last.Day30.N != 59 {
-		t.Errorf("sink calls=%d last=%+v, want THIN then EURT upserts, EURT Day30.N=59", sink.calls, sink.last.Day30)
+	if sink.calls != 3 || sink.last.Day30 == nil || sink.last.Day30.N != 59 {
+		t.Errorf("sink calls=%d last=%+v, want THIN, PNY, EURT upserts, EURT Day30.N=59", sink.calls, sink.last.Day30)
 	}
 }
 
