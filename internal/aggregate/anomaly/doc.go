@@ -28,34 +28,20 @@
 // Before publishing a VWAP the aggregator calls [Checker.Evaluate]
 // with:
 //
-//   - a previous VWAP for the same (pair, window) — the comparand
-//   - the new VWAP it's about to publish
+//   - the comparand: the previous non-empty closed one-minute bucket's
+//     VWAP (the last published VWAP only when no earlier minute is known)
+//   - a closed one-minute bucket's VWAP — the largest move among the
+//     minutes closed since the previous decision
 //   - how many sources contributed
 //
-// The thresholds below are calibrated against a CLOSED-BUCKET
-// comparand: "the previous closed bucket's VWAP", i.e. two
-// non-overlapping samples of the window's own grain. freeze_pct and
-// warn_pct are the size of a move between two such samples.
-//
-// KNOWN DEVIATION — the caller does not supply that comparand
-// (audit-2026-09-02 RLT-356, unfixed at the time of writing; do not
-// re-derive the thresholds from observed deviations until it is).
-// [internal/aggregate/orchestrator] computes a ROLLING window
-// (`from := now.Add(-window)`) on the TICK clock, recomputed every
-// `[aggregate].interval_seconds` (default 30 s) for every configured
-// window (default 5m, 1h, 24h), and passes the PREVIOUS TICK's VWAP
-// over that same rolling window. Consecutive comparands therefore
-// overlap by (window-interval)/window — 90% at 5m, 99.17% at 1h,
-// 99.965% at 24h — so the observed deviation_pct shrinks with the
-// window length rather than measuring a move of the window's grain,
-// and at 1h and 24h it is structurally near zero: freeze_pct is not
-// reachable there by any real movement. The same comparand feeds
-// Phase 2's z-score, whose MAD is built from ONE-MINUTE
-// bucket-to-bucket returns ([internal/aggregate/baseline]), so the
-// numerator's grain and the denominator's grain disagree there too.
-// Settling this needs the orchestrator, the baseline grain and the
-// confidence step moved together; treat the thresholds here as
-// calibrated for 5m until then.
+// The thresholds are calibrated per closed one-minute bucket: freeze_pct
+// and warn_pct are the size of a move between two consecutive,
+// non-overlapping minute buckets. [internal/aggregate/orchestrator]
+// scores that minute-on-minute move at every window length (5m, 1h,
+// 24h), never the tick-to-tick change of the overlapping rolling window,
+// which would damp a move by bucket/window and leave freeze_pct
+// unreachable at 1h and 24h. Phase 2's z-score scores the same returns,
+// the grain its MAD baseline is trained on ([internal/aggregate/baseline]).
 //
 // Evaluate returns a [Decision] with one of three actions:
 //
