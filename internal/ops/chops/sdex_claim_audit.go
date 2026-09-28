@@ -80,7 +80,7 @@ func sdexClaimAudit(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 			if tally.readerErr != nil {
 				readerFailures++
 				fmt.Fprintf(os.Stderr, "sdex-claim-audit: reader ledger %d: %v\n", seq, tally.readerErr)
-				return nil
+				return nil //nolint:nilerr // walk must continue past one bad ledger; readerFailures fails the command via claimAuditVerdict below
 			}
 			txReadFailures += tally.txReadFailures
 			totalClaims += tally.claims
@@ -211,36 +211,50 @@ func auditLedgerClaims(lcm sdkxdr.LedgerCloseMeta, passphrase string, dumpOps bo
 		if !tx.Result.Successful() {
 			continue
 		}
-		ops := tx.Envelope.Operations()
-		opResults, ok := tx.Result.Result.OperationResults()
-		if !ok {
-			continue
-		}
-		for i := range ops {
-			if i >= len(opResults) {
-				break
-			}
-			claims, drops := sdex.AuditOp(ops[i], opResults[i])
-			if dumpOps && isTradeOpType(ops[i].Body.Type) {
-				inner, hasInner := innerTradeCode(ops[i], opResults[i])
-				fmt.Printf("ledger=%d tx=%d op=%d type=%s outerCode=%d innerCode=%d(%v) claims=%d emitted=%d\n",
-					seq, tx.Index, i, ops[i].Body.Type.String(), opResults[i].Code, inner, hasInner, claims, claims-len(drops))
-			}
-			tally.claims += claims
-			for _, d := range drops {
-				tally.drops++
-				reason := classifyDrop(d.Reason)
-				if strings.HasPrefix(reason, "non-positive: one-side-zero") {
-					tally.oneSideZero++
-				}
-				tally.dropsByReason[reason]++
-				if len(tally.examples) < maxExamples {
-					tally.examples = append(tally.examples, fmt.Sprintf("ledger=%d op=%d atomType=%d: %s", seq, i, d.AtomType, d.Reason))
-				}
-			}
-		}
+		auditTxClaims(seq, tx, dumpOps, maxExamples, &tally)
 	}
 	return tally
+}
+
+// auditTxClaims runs every operation of one successful transaction through
+// the real SDEX decode path (sdex.AuditOp), folding claim/drop counts into
+// tally. maxExamples caps how many example drop lines tally collects (the
+// running total across the whole ledger walk, not just this transaction).
+func auditTxClaims(seq uint32, tx ingest.LedgerTransaction, dumpOps bool, maxExamples int, tally *claimAuditTally) {
+	ops := tx.Envelope.Operations()
+	opResults, ok := tx.Result.Result.OperationResults()
+	if !ok {
+		return
+	}
+	for i := range ops {
+		if i >= len(opResults) {
+			break
+		}
+		claims, drops := sdex.AuditOp(ops[i], opResults[i])
+		if dumpOps && isTradeOpType(ops[i].Body.Type) {
+			inner, hasInner := innerTradeCode(ops[i], opResults[i])
+			fmt.Printf("ledger=%d tx=%d op=%d type=%s outerCode=%d innerCode=%d(%v) claims=%d emitted=%d\n",
+				seq, tx.Index, i, ops[i].Body.Type.String(), opResults[i].Code, inner, hasInner, claims, claims-len(drops))
+		}
+		tally.claims += claims
+		recordClaimDrops(seq, i, drops, maxExamples, tally)
+	}
+}
+
+// recordClaimDrops folds one operation's dropped claim atoms into tally,
+// bucketing by reason and capping the collected example lines at maxExamples.
+func recordClaimDrops(seq uint32, opIdx int, drops []sdex.ClaimDrop, maxExamples int, tally *claimAuditTally) {
+	for _, d := range drops {
+		tally.drops++
+		reason := classifyDrop(d.Reason)
+		if strings.HasPrefix(reason, "non-positive: one-side-zero") {
+			tally.oneSideZero++
+		}
+		tally.dropsByReason[reason]++
+		if len(tally.examples) < maxExamples {
+			tally.examples = append(tally.examples, fmt.Sprintf("ledger=%d op=%d atomType=%d: %s", seq, opIdx, d.AtomType, d.Reason))
+		}
+	}
 }
 
 // isTradeOpType reports whether an op type can emit ClaimAtoms.
