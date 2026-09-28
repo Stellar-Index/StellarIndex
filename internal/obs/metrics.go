@@ -294,6 +294,7 @@ func registerAppMetricsTail() {
 		DispatcherTxReadErrorsTotal,
 		DispatcherTxEventReadErrorsTotal,
 		DispatcherEntryMetaUnsupportedTotal,
+		SourceUncorroboratedCallsTotal,
 
 		MEVDetectRunsTotal,
 		MEVEventsInsertedTotal,
@@ -1392,6 +1393,20 @@ var DispatcherEntryMetaUnsupportedTotal = prometheus.NewCounter(
 		Name: "stellarindex_dispatcher_entry_meta_unsupported_total",
 		Help: "Transactions whose apply-phase entry changes were skipped for an unhandled TransactionMeta version.",
 	},
+)
+
+// SourceUncorroboratedCallsTotal — per-source counter of oracle-class
+// ContractCall invocations dropped before Decode because they were only
+// DECLARED in the auth tree, never executed (W8.4a,
+// dispatcher.Stats.UncorroboratedCalls). Non-zero on an oracle source means
+// either a rejected price-forgery attempt or a routing-shape change — both
+// were invisible everywhere before this counter had a reader.
+var SourceUncorroboratedCallsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_source_uncorroborated_calls_total",
+		Help: "Oracle-class ContractCall invocations refused for lack of execution corroboration, per source. Non-zero means a rejected forged call or a routing-shape change.",
+	},
+	[]string{"source"},
 )
 
 // SourceUnknownSymbolsTotal — per-source counter of asset slots in
