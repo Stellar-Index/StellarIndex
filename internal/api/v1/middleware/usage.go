@@ -54,6 +54,10 @@ const postResponseWriteTimeout = 5 * time.Second
 // for stacks without the obs pair (tests). Unmatched paths bucket
 // under "unmatched".
 //
+// An SSE request ([isStreamingPath]) is recorded once, when its headers
+// commit (see [streamOpenMeter]); every other request after its handler
+// returns.
+//
 // Failures are logged at debug and dropped — usage tracking must
 // never block a request.
 //
@@ -79,6 +83,13 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 			// endpointFamily reads the dispatched copy: its r.Pattern
 			// fallback is set on the request the mux actually received.
 			inner := r.WithContext(context.WithValue(dispatchCtx, usageUnitsKey{}, units))
+			once := &usageRecordOnce{record: func(panicked bool) {
+				usageTrackerRecord(counter, logger, reqCtx, inner, rec, units, deadlineFired, panicked)
+			}}
+			var out http.ResponseWriter = rec
+			if isStreamingPath(r.URL.EscapedPath()) {
+				out = &streamOpenMeter{statusRecorder: rec, once: once}
+			}
 			// Deferred so a panicking handler still gets counted: Recoverer
 			// sits OUTSIDE this middleware, so a panic unwinds through here
 			// on its way up, and straight-line bookkeeping after
@@ -88,12 +99,12 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 			// than read off the statusRecorder's 200 zero-value.
 			defer func() {
 				p := recover()
-				usageTrackerRecord(counter, logger, reqCtx, inner, rec, units, deadlineFired, p != nil)
+				once.fire(p != nil)
 				if p != nil {
 					panic(p)
 				}
 			}()
-			next.ServeHTTP(rec, inner)
+			next.ServeHTTP(out, inner)
 		})
 	}
 }
@@ -157,6 +168,46 @@ func usageTrackerRecord(counter *usage.Counter, logger *slog.Logger, reqCtx cont
 		logger.Debug("usage: detail increment failed",
 			"err", err, "subject", id, "endpoint", family, "class", class)
 	}
+}
+
+// usageRecordOnce runs a request's usage bookkeeping at most once, from
+// whichever fires first: a stream's header commit or handler return.
+type usageRecordOnce struct {
+	done   atomic.Bool
+	record func(panicked bool)
+}
+
+func (o *usageRecordOnce) fire(panicked bool) {
+	if o.done.CompareAndSwap(false, true) {
+		o.record(panicked)
+	}
+}
+
+// streamOpenMeter records an SSE request's usage when the handler commits
+// its response headers, not when the stream closes: a stream can outlive
+// the day it opened on, and one ended by a process kill or deploy never
+// returns through the deferred close-time record at all. The status is
+// known at commit, so a stream refused with 429/5xx still stays unbilled.
+type streamOpenMeter struct {
+	*statusRecorder
+	once *usageRecordOnce
+}
+
+func (m *streamOpenMeter) WriteHeader(code int) {
+	m.statusRecorder.WriteHeader(code)
+	m.once.fire(false)
+}
+
+func (m *streamOpenMeter) Write(b []byte) (int, error) {
+	n, err := m.statusRecorder.Write(b)
+	m.once.fire(false)
+	return n, err
+}
+
+// Flush counts too: flushing an unwritten response commits an implicit 200.
+func (m *streamOpenMeter) Flush() {
+	m.statusRecorder.Flush()
+	m.once.fire(false)
 }
 
 // usageUnits is one request's metered cost in request units. The
