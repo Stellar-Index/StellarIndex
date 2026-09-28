@@ -4,13 +4,17 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -39,6 +43,9 @@ import (
 // (parseDirectoryTarball), `ReplaceDirectory` refuses an empty parse
 // (a broken fetch must not prune the table), and per-file JSON errors
 // are counted + reported, failing the run only if EVERYTHING failed.
+// `-sha256` with a commit-pinned `-url` refuses any tarball but the
+// reviewed one, and a committed run's prune / flag / un-flag counts
+// are exported as stellarindex_directory_sync_rows_changed{kind}.
 const (
 	directorySource     = "stellar-expert"
 	directoryDefaultURL = "https://github.com/stellar-expert/public-directory/archive/refs/heads/master.tar.gz"
@@ -95,6 +102,8 @@ func directorySync(args []string) error {
 	url := fs.String("url", directoryDefaultURL, "Tarball URL of the public-directory repo (https only)")
 	timeout := fs.Duration("timeout", 5*time.Minute, "Wall-clock timeout for the whole run")
 	acceptChurn := fs.Bool("accept-churn", false, "Accept a snapshot beyond the churn ceiling (prunes, newly scam-flags or un-flags more rows than one day plausibly does) — only for a known upstream mass change")
+	pinSHA256 := fs.String("sha256", "", "Hex SHA-256 the fetched tarball must match; set it with -url pinned to a commit archive so only reviewed upstream content is synced")
+	textfile := fs.String("textfile", "", "node_exporter textfile for a committed sync's per-kind change counts. Empty = "+opsutil.DefaultTextfileDir+"/"+directoryTextfileName+" when that directory exists (r1), otherwise none")
 	heartbeat := fs.String("heartbeat", "", "node_exporter textfile path for the run-outcome/progress gauges. Empty = "+opsutil.DefaultTextfileDir+"/ops_job_directory_sync.prom when that directory exists (r1), otherwise no heartbeat at all")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
@@ -103,8 +112,8 @@ func directorySync(args []string) error {
 	if *cfgPath == "" {
 		return errors.New("-config is required")
 	}
-	if !strings.HasPrefix(*url, "https://") {
-		return fmt.Errorf("-url must be https:// (got %q)", *url)
+	if err := checkDirectorySourceFlags(*url, *pinSHA256); err != nil {
+		return err
 	}
 	gate.Banner()
 	dryRun := gate.DryRun()
@@ -117,7 +126,7 @@ func directorySync(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	entries, skipped, err := fetchDirectoryTarball(ctx, *url)
+	entries, skipped, err := fetchDirectoryTarball(ctx, *url, *pinSHA256)
 	if err != nil {
 		return err
 	}
@@ -169,6 +178,7 @@ func directorySync(args []string) error {
 	}
 	hb.Progress(uint64(res.Upserted+res.Existing), 0) //nolint:gosec // non-negative row counts
 	exitOK = true
+	stampDirectorySyncTextfile(directoryTextfilePath(*textfile), res)
 	fmt.Printf("Synced: %d upserted, %d pruned, %d newly scam-flagged, %d un-flagged, %d held before, %d shadowed by another owner (source=%s).\n",
 		res.Upserted, res.Pruned, res.NewlyFlagged, res.Unflagged, res.Existing, res.Shadowed, directorySource)
 	return nil
@@ -181,7 +191,7 @@ const directoryFetchTimeout = 2 * time.Minute
 
 // fetchDirectoryTarball downloads the repo tarball and parses every
 // accounts/*.json blob into DirectoryEntry rows.
-func fetchDirectoryTarball(ctx context.Context, url string) (entries []timescale.DirectoryEntry, skipped int, err error) {
+func fetchDirectoryTarball(ctx context.Context, url, wantSHA256 string) (entries []timescale.DirectoryEntry, skipped int, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, 0, err
@@ -205,7 +215,44 @@ func fetchDirectoryTarball(ctx context.Context, url string) (entries []timescale
 		return nil, 0, fmt.Errorf("directory-sync: fetch: HTTP %d from %s", resp.StatusCode, url)
 	}
 
-	return parseDirectoryTarball(resp.Body, directoryMaxTarballBytes)
+	return parsePinnedDirectoryTarball(resp.Body, directoryMaxTarballBytes, wantSHA256)
+}
+
+var directorySHA256Re = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
+
+// checkDirectorySourceFlags validates -url and -sha256 before anything
+// is fetched.
+func checkDirectorySourceFlags(url, wantSHA256 string) error {
+	if !strings.HasPrefix(url, "https://") {
+		return fmt.Errorf("-url must be https:// (got %q)", url)
+	}
+	if wantSHA256 != "" && !directorySHA256Re.MatchString(wantSHA256) {
+		return fmt.Errorf("-sha256 must be 64 hex characters (got %q)", wantSHA256)
+	}
+	return nil
+}
+
+// parsePinnedDirectoryTarball is parseDirectoryTarball plus, when
+// wantSHA256 is set, a SHA-256 check over every compressed byte: any
+// tarball other than the pinned one is refused before an entry is
+// returned. gzip can stop short of trailing bytes, so the rest of the
+// stream is hashed too, under the same size bound.
+func parsePinnedDirectoryTarball(body io.Reader, maxBytes int64, wantSHA256 string) (entries []timescale.DirectoryEntry, skipped int, err error) {
+	if wantSHA256 == "" {
+		return parseDirectoryTarball(body, maxBytes)
+	}
+	h := sha256.New()
+	tee := io.TeeReader(body, h)
+	if entries, skipped, err = parseDirectoryTarball(tee, maxBytes); err != nil {
+		return nil, 0, err
+	}
+	if _, err = io.Copy(io.Discard, &boundedReader{r: tee, left: maxBytes}); err != nil {
+		return nil, 0, fmt.Errorf("directory-sync: tarball digest: %w", err)
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); !strings.EqualFold(got, wantSHA256) {
+		return nil, 0, fmt.Errorf("directory-sync: tarball sha256 %s does not match the pinned -sha256 %s — refusing", got, strings.ToLower(wantSHA256))
+	}
+	return entries, skipped, nil
 }
 
 // parseDirectoryTarball walks a gzip tarball of the repo, bounding
@@ -256,6 +303,48 @@ func parseDirectoryTarball(body io.Reader, maxBytes int64) (entries []timescale.
 		return nil, skipped, fmt.Errorf("directory-sync: parsed 0 entries (%d skipped) — refusing; upstream layout changed or fetch was truncated", skipped)
 	}
 	return entries, skipped, nil
+}
+
+// directoryTextfileName is the node_exporter textfile a committed sync's
+// change counts land in, beside its ops_job heartbeat.
+const directoryTextfileName = "directory_sync.prom"
+
+// directoryTextfilePath resolves -textfile: an explicit path wins; empty
+// means the default textfile directory when it exists, otherwise none.
+func directoryTextfilePath(explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	if st, err := os.Stat(opsutil.DefaultTextfileDir); err == nil && st.IsDir() {
+		return filepath.Join(opsutil.DefaultTextfileDir, directoryTextfileName)
+	}
+	return ""
+}
+
+// stampDirectorySyncTextfile records what a committed sync changed; a
+// failure to stamp is a warning, never the run's outcome.
+func stampDirectorySyncTextfile(path string, res timescale.DirectorySyncResult) {
+	if path == "" {
+		return
+	}
+	if err := writeTextfileAtomic(path, renderDirectorySyncTextfile(directorySource, res)); err != nil {
+		fmt.Fprintf(os.Stderr, "directory-sync: WARN textfile: %v\n", err)
+	}
+}
+
+// renderDirectorySyncTextfile renders stellarindex_directory_sync_rows_changed.
+// An un-flag re-publishes a withheld price, so it is exported for
+// alerting rather than left in journald.
+func renderDirectorySyncTextfile(source string, res timescale.DirectorySyncResult) string {
+	var b strings.Builder
+	b.WriteString("# HELP stellarindex_directory_sync_rows_changed Rows the most recent committed directory-sync changed, by kind: pruned, newly_flagged (scam-class tag added: price withheld) and unflagged (scam-class tag cleared or row pruned: price no longer withheld).\n# TYPE stellarindex_directory_sync_rows_changed gauge\n")
+	for _, k := range []struct {
+		kind string
+		n    int64
+	}{{"pruned", res.Pruned}, {"newly_flagged", res.NewlyFlagged}, {"unflagged", res.Unflagged}} {
+		fmt.Fprintf(&b, "stellarindex_directory_sync_rows_changed{source=%q,kind=%q} %d\n", source, k.kind, k.n)
+	}
+	return b.String()
 }
 
 // parseDirectoryFile decodes one accounts/<ADDRESS>.json blob,

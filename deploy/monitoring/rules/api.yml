@@ -544,6 +544,29 @@ groups:
             look for lock contention from directory-sync or pool
             exhaustion in the gate's WARN line.
 
+      # Every scam-class tag directory-sync clears re-publishes that
+      # issuer's price. Upstream clears tags rarely, so each un-flag is
+      # reviewed rather than trusted; the churn ceiling only bounds how
+      # many one run may clear. The textfile gauge holds the most recent
+      # committed run's count until the next daily run overwrites it.
+      - alert: stellarindex_directory_sync_unflagged
+        expr: max by (instance, source) (stellarindex_directory_sync_rows_changed{kind="unflagged"}) > 0
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/directory-sync-unflagged.md
+          summary: "directory-sync cleared {{ $value }} scam-class tag(s) from {{ $labels.source }} — those issuers are priced again"
+          description: |
+            The most recent committed directory-sync un-flagged
+            {{ $value }} address(es) of source {{ $labels.source }}: a
+            scam-class tag was removed upstream or the row was pruned,
+            so the scam-pricing gate no longer withholds their prices.
+            Confirm each un-flag against the upstream change. If one is
+            not a genuine upstream correction, pin directory-sync to the
+            last good upstream commit (-url + -sha256) and re-run it.
+
       # C3-067 (audit-2026-07-23): every privileged mutation on the admin
       # surfaces appends its audit row best-effort. The mutation
       # has already committed by then, so swallowing the error is right —

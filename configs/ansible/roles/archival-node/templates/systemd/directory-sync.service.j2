@@ -37,6 +37,10 @@ User=stellarindex
 Group=stellarindex
 
 ProtectSystem=strict
+# The run writes its ops_job heartbeat and its per-kind change counts
+# (directory_sync.prom) to the textfile collector; ProtectSystem=strict
+# makes /var read-only without this grant.
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
 PrivateTmp=true
 NoNewPrivileges=true
 ProtectKernelTunables=true

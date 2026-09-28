@@ -779,3 +779,50 @@ tests:
                  WHERE last_response_status >= 500
                    AND created_at > now() - interval '15 min'
                  GROUP BY webhook_id ORDER BY 2 DESC LIMIT 10`.
+
+  # ── directory-sync un-flags ticket ───────────────────────────────
+  # The most recent committed sync cleared 3 scam-class tags: those
+  # issuers are priced again, so the run tickets for review.
+  - interval: 1m
+    name: a directory-sync that un-flagged issuers tickets
+    input_series:
+      - series: 'stellarindex_directory_sync_rows_changed{job="node_exporter",instance="r1:9100",source="stellar-expert",kind="unflagged"}'
+        values: '3x30'
+      - series: 'stellarindex_directory_sync_rows_changed{job="node_exporter",instance="r1:9100",source="stellar-expert",kind="pruned"}'
+        values: '0x30'
+
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_directory_sync_unflagged
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              instance: r1:9100
+              source: stellar-expert
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/directory-sync-unflagged.md
+              summary: "directory-sync cleared 3 scam-class tag(s) from stellar-expert — those issuers are priced again"
+              description: |
+                The most recent committed directory-sync un-flagged
+                3 address(es) of source stellar-expert: a
+                scam-class tag was removed upstream or the row was pruned,
+                so the scam-pricing gate no longer withholds their prices.
+                Confirm each un-flag against the upstream change. If one is
+                not a genuine upstream correction, pin directory-sync to the
+                last good upstream commit (-url + -sha256) and re-run it.
+
+  # A sync that cleared nothing is silent, whatever else it changed.
+  - interval: 1m
+    name: a directory-sync with no un-flags raises nothing
+    input_series:
+      - series: 'stellarindex_directory_sync_rows_changed{job="node_exporter",instance="r1:9100",source="stellar-expert",kind="unflagged"}'
+        values: '0x30'
+      - series: 'stellarindex_directory_sync_rows_changed{job="node_exporter",instance="r1:9100",source="stellar-expert",kind="pruned"}'
+        values: '40x30'
+
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_directory_sync_unflagged
+        exp_alerts: []

@@ -631,12 +631,18 @@ func writeCuratedRWATextfile(path string, c curatedRWACounts, written, refused b
 		refusedV = 1
 	}
 	fmt.Fprintf(&b, "# HELP stellarindex_curated_rwa_sync_refused Whether the most recent run refused to read the curator (1: no API key configured).\n# TYPE stellarindex_curated_rwa_sync_refused gauge\nstellarindex_curated_rwa_sync_refused%s %d\n", lbl, refusedV)
+	return writeTextfileAtomic(path, b.String())
+}
 
+// writeTextfileAtomic writes a node_exporter exposition to a sibling
+// temp file and renames it over path, so the collector never reads a
+// half-written file.
+func writeTextfileAtomic(path, body string) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp.*")
 	if err != nil {
 		return err
 	}
-	if _, err := tmp.WriteString(b.String()); err != nil {
+	if _, err := tmp.WriteString(body); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmp.Name())
 		return err

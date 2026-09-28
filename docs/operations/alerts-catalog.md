@@ -29,7 +29,7 @@ enforces it); any per-alert detail page follows it.
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 65 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 220 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 221 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -617,6 +617,7 @@ auto-unfreeze at all. Rules in
 | `stellarindex_ratelimit_fail_closed` | `sum(rate(stellarindex_ratelimit_fail_closed_total[5m]))` | > 0 for ≥ 2 min (past the fail-open dwell time, the limiter is now failing CLOSED — every request in the bucket gets a 503; 2026-09-16: 2.03M 503s over 2h53m) | page | [ratelimit-fail-open](runbooks/ratelimit-fail-open.md) |
 | `stellarindex_monthly_quota_fail_open` | `sum(rate(stellarindex_monthly_quota_fail_open_total[5m]))` | > 0 for ≥ 10 min (metered-spend ceiling bypassing on a counter read error) | ticket | [monthly-quota-fail-open](runbooks/monthly-quota-fail-open.md) |
 | `stellarindex_scam_gate_fail_open` | `sum by (surface) (rate(stellarindex_scam_gate_lookup_failures_total[5m]))` | > 0 for ≥ 5 min (scam-pricing gate serving directory-flagged issuers' prices on an `account_directory` lookup error) | ticket | [scam-gate-fail-open](runbooks/scam-gate-fail-open.md) |
+| `stellarindex_directory_sync_unflagged` | `max by (instance, source) (stellarindex_directory_sync_rows_changed{kind="unflagged"})` (textfile gauge written by each committed `directory-sync`) | > 0 (the most recent sync cleared a scam-class tag, so the scam-pricing gate prices that issuer again; clears when the next daily sync commits none) | ticket | [directory-sync-unflagged](runbooks/directory-sync-unflagged.md) |
 | `stellarindex_admin_audit_write_failing` | `sum by (surface) (increase(stellarindex_admin_audit_write_failures_total[1h]))` | > 0 for ≥ 5 min (a privileged mutation committed with no durable audit row) | ticket | [admin-audit-write-failing](runbooks/admin-audit-write-failing.md) |
 | `stellarindex_passkey_clone_warning` | `sum(increase(stellarindex_passkey_login_refusals_total{reason="clone_warning"}[1h]))` | > 0 for ≥ 5 min (a passkey sign-in refused on a sign-counter regression — the credential's key has been copied) | ticket | [passkey-clone-warning](runbooks/passkey-clone-warning.md) |
 | `stellarindex_failed_auth_rate_high` | `sum(rate(stellarindex_failed_auth_total{outcome="rejected"}[5m]))` | > 1/s for ≥ 15 min (credentials rejected fleet-wide faster than three per-IP failed-auth caps — distributed guessing that no single IP or key-prefix bucket sees) | ticket | [failed-auth-rate-high](runbooks/failed-auth-rate-high.md) |
