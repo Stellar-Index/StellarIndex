@@ -121,6 +121,44 @@ crashed timer, or a connector outage.
 - `coingecko` will legitimately read stale until the CoinGecko Pro key lands
   (P0-3) — expected, not a regression.
 
+## Retiring a source
+
+Deliberately retiring a data source (dropping a dead integration) is not
+the same as a source going stale, but the watchdog cannot tell them
+apart on its own. `data-freshness.sh` enumerates every domain/source
+pair the table has EVER held — the fix for the opposite bug, where a
+source dead longer than the old window quietly left the `GROUP BY` and
+the alert resolved itself the worse the outage got. The trade-off is
+symmetric and deliberate (fail-closed): **a source retired on purpose
+keeps its history and therefore alarms forever** until you do one of
+the two things below. A retired feed has an operator behind the
+decision; a dead feed does not — the script cannot distinguish them, so
+it never resolves on its own for either.
+
+There is no exclusion list today. Pick one, in the SAME change that
+retires the source — not after the ticket has already fired:
+
+1. **Delete the source's rows.** Remove its rows from the table the
+   domain reads (`oracle_updates` for `oracle`, `fx_quotes` for `fx`,
+   `asset_supply_history` for `supply`) so it drops out of the universe
+   the watchdog enumerates. Irreversible — appropriate when the
+   integration is gone for good and its history has no further use.
+2. **Exclude it in the SQL.** Add the source to the domain's `WHERE`
+   clause in `data-freshness.sh` directly (there is no config flag for
+   this — it is a script edit). Keeps the historical rows while
+   stopping the alert; more of a moving part to remember, since a
+   revert of that one-line exclusion silently re-arms the alarm.
+
+**Never silence the alert at the Alertmanager level instead.** A
+blanket silence on `stellarindex_data_source_stale` hides every OTHER
+source's real outage behind the one you meant to retire — the watchdog
+alerts per `{domain, source}` label pair specifically so one dead feed
+never has to cost you visibility into the rest.
+
+If retiring a source becomes routine, the durable form is a declared
+retired-source list the script reads, making retirement a config change
+rather than a SQL edit — not built yet (see #1347).
+
 ## Related
 
 - `stellarindex_completeness_incomplete` — a source that ingests but no longer reconciles to the lake ([completeness-incomplete](completeness-incomplete.md)).
@@ -130,10 +168,16 @@ crashed timer, or a connector outage.
   emitter going dark ([data-freshness-watchdog-silent](data-freshness-watchdog-silent.md)).
 - `stellarindex_ingest_gap_detected` — contiguous on-chain ingest gaps (data-derived gap detector).
 - `docs/operations/launch-todo.md` — P0-3 (CoinGecko), the freshness-watchdog design.
+- [Retiring a source](#retiring-a-source) — both exit mechanisms for a source retired on purpose, linked from the alert itself.
 
 ## Changelog
 
 
+- 2026-09-28 — added the "Retiring a source" section (#1347): the only
+  prior documentation of the two exit mechanisms (delete rows / exclude
+  in SQL) was a comment in `data-freshness.sh`, unreachable from the
+  ticket a retired source raises forever. Linked from the alert
+  annotation.
 - 2026-09-01 — FX threshold 48 h → 76 h, mirroring
   `aggregate.composite_reference.fx_max_age_hours`. At 48 h the alert could not
   span a weekend market close and fired every Sunday against a healthy feed

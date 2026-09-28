@@ -3,6 +3,7 @@
 import Link from 'next/link';
 
 import { cn } from '@/lib/cn';
+import { ratioPct, sumDecimalStrings } from '@/lib/format';
 
 export type DonutSlice = {
   label: string;
@@ -12,6 +13,15 @@ export type DonutSlice = {
    */
   id?: string;
   value: number;
+  /**
+   * Exact fixed-point decimal string backing `value` (any consistent
+   * unit — dollars, cents, base units), for the legend/tooltip allocation
+   * percentage (ADR-0003). When every slice supplies one, the total and
+   * each percentage are computed exactly via `sumDecimalStrings` /
+   * `ratioPct` instead of dividing the float `value`s. `value` still
+   * drives the arc geometry, which is presentation only.
+   */
+  decimal?: string | null;
   /** Optional internal link for the legend row. */
   href?: string;
   /** Optional explicit color; otherwise drawn from the palette. */
@@ -65,6 +75,11 @@ export function DonutChart({
     .filter((s) => Number.isFinite(s.value) && s.value > 0)
     .sort((a, b) => b.value - a.value);
   const total = slices.reduce((sum, s) => sum + s.value, 0);
+  // Exact total for the legend/tooltip percentage — only when every slice
+  // carries the decimal string; a mixed set falls back to the float ratio.
+  const exactTotal = slices.every((s) => s.decimal != null)
+    ? sumDecimalStrings(slices.map((s) => s.decimal))
+    : null;
 
   if (slices.length === 0 || total <= 0) {
     return (
@@ -95,7 +110,7 @@ export function DonutChart({
       frac,
       dash: frac * c,
       offset: -cumulativeBefore[i] * c,
-      pct: frac * 100,
+      pct: exactTotal != null ? (ratioPct(s.decimal, exactTotal) ?? frac * 100) : frac * 100,
     };
   });
 

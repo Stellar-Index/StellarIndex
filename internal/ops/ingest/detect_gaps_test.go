@@ -1,16 +1,20 @@
 package ingest
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -39,7 +43,11 @@ func TestDetectGaps_RPCFlagOverridesDeadConfigEndpoint(t *testing.T) {
 			tipCalls.Add(1)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{"id":"ab","protocolVersion":22,"sequence":1000}}`)
+		// closeTime is "now" so this fixture clears the GH-1095 RPC
+		// freshness gate and reaches the storage-open failure this test
+		// actually pins.
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":1,"result":{"id":"ab","protocolVersion":22,"sequence":1000,"closeTime":"%d"}}`,
+			time.Now().Unix())
 	}))
 	defer live.Close()
 
@@ -64,6 +72,122 @@ func TestDetectGaps_RPCFlagOverridesDeadConfigEndpoint(t *testing.T) {
 	// Past the tip read, the unreachable DSN is the next failure.
 	if err == nil || !strings.HasPrefix(err.Error(), "storage:") {
 		t.Fatalf("with -rpc: want to reach storage, got %v", err)
+	}
+}
+
+// TestDetectGaps_StaleRPCTipFailsBeforeStorage pins GH-1095: the RPC tip
+// used to be trusted as ground truth with no freshness check of its own,
+// so a stuck or disconnected stellar-rpc node made every cursor compare
+// "ok" against a frozen tip. A tip whose closeTime is far in the past
+// must now fail closed, before the command ever reaches storage.
+func TestDetectGaps_StaleRPCTipFailsBeforeStorage(t *testing.T) {
+	staleClose := time.Now().Add(-1 * time.Hour).Unix()
+	stale := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":1,"result":{"id":"ab","protocolVersion":22,"sequence":1000,"closeTime":"%d"}}`,
+			staleClose)
+	}))
+	defer stale.Close()
+
+	path := filepath.Join(t.TempDir(), "stellarindex.toml")
+	body := "[stellar]\nrpc_endpoints = [\"" + closedURL(t) + "\"]\n\n[storage]\n" +
+		"postgres_dsn = \"postgres://u:p@" + strings.TrimPrefix(closedURL(t), "http://") +
+		"/db?sslmode=disable&connect_timeout=2\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := detectGaps([]string{"-config", path, "-rpc", stale.URL})
+	if err == nil || !strings.HasPrefix(err.Error(), "rpc tip stale:") {
+		t.Fatalf("want a stale-tip error, got %v", err)
+	}
+	if strings.HasPrefix(err.Error(), "storage:") {
+		t.Fatalf("stale-tip check must fail BEFORE storage is opened, got %v", err)
+	}
+}
+
+// TestParseRPCCloseTime pins the GH-1095 fail-closed contract: a missing
+// or malformed closeTime must error, never silently read as "now".
+func TestParseRPCCloseTime(t *testing.T) {
+	now := time.Now().Unix()
+	got, err := parseRPCCloseTime(strconv.FormatInt(now, 10))
+	if err != nil {
+		t.Fatalf("valid closeTime: unexpected error %v", err)
+	}
+	if got.Unix() != now {
+		t.Fatalf("parseRPCCloseTime(%d) = %v, want unix %d", now, got, now)
+	}
+
+	for _, bad := range []string{"", "not-a-number", "12.5"} {
+		if _, err := parseRPCCloseTime(bad); err == nil {
+			t.Errorf("parseRPCCloseTime(%q): want error, got nil (fail-closed contract broken)", bad)
+		}
+	}
+}
+
+// TestDetectGaps_ProjectorEnabledDefaultSourcesRegistryOK pins that
+// enabling the projector with the default enabled_sources set builds a
+// registry without error — the GH-1095 catalogue-join step added ahead
+// of the RPC/storage calls must not itself break a routine config.
+func TestDetectGaps_ProjectorEnabledDefaultSourcesRegistryOK(t *testing.T) {
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":1,"result":{"id":"ab","protocolVersion":22,"sequence":1000,"closeTime":"%d"}}`,
+			time.Now().Unix())
+	}))
+	defer live.Close()
+
+	path := filepath.Join(t.TempDir(), "stellarindex.toml")
+	body := "[stellar]\nrpc_endpoints = [\"" + closedURL(t) + "\"]\n\n[storage]\n" +
+		"postgres_dsn = \"postgres://u:p@" + strings.TrimPrefix(closedURL(t), "http://") +
+		"/db?sslmode=disable&connect_timeout=2\"\n\n[ingestion.projector]\nenabled = true\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := detectGaps([]string{"-config", path, "-rpc", live.URL})
+	// Registry-build errors surface as "projector registry: ..."; if the
+	// default enabled_sources set built cleanly, the next failure is the
+	// unreachable storage DSN, same as every other fixture in this file.
+	if err == nil || !strings.HasPrefix(err.Error(), "storage:") {
+		t.Fatalf("projector-enabled default config: want to reach storage, got %v", err)
+	}
+}
+
+// TestCatalogueMissingProjectorSources_ReapedSourceFlagged pins GH-1095:
+// a source catalogued in ingestion.enabled_sources (and thus registered
+// by projector.BuildRegistry) whose ("projector", <name>) cursor row was
+// reaped, or never created, must be reported — not silently absent from
+// the verdict because minLedgerBySource only looks at rows that exist.
+func TestCatalogueMissingProjectorSources_ReapedSourceFlagged(t *testing.T) {
+	cursors := []timescale.Cursor{
+		{Source: "ledgerstream", Sub: "", LastLedger: 900_000},
+		{Source: "projector", Sub: "soroswap", LastLedger: 899_500},
+		// "aquarius" is catalogued (expected) but its row was reaped —
+		// or ingest for it never started.
+	}
+	expected := []string{"soroswap", "aquarius"}
+
+	got := catalogueMissingProjectorSources(cursors, expected)
+
+	want := []string{"aquarius"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("catalogueMissingProjectorSources = %v, want %v", got, want)
+	}
+}
+
+// TestCatalogueMissingProjectorSources_NothingMissing pins the negative
+// case so the check doesn't cry wolf on a fully-cursored catalogue.
+func TestCatalogueMissingProjectorSources_NothingMissing(t *testing.T) {
+	cursors := []timescale.Cursor{
+		{Source: "ledgerstream", Sub: "", LastLedger: 900_000},
+		{Source: "projector", Sub: "soroswap", LastLedger: 899_500},
+		{Source: "projector", Sub: "band", LastLedger: 899_800},
+	}
+	expected := []string{"soroswap", "band"}
+
+	if got := catalogueMissingProjectorSources(cursors, expected); len(got) != 0 {
+		t.Fatalf("catalogueMissingProjectorSources = %v, want none missing", got)
 	}
 }
 

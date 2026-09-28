@@ -157,6 +157,17 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 			label := src.name + "/" + tgt.table
 			expTotal, actTotal := sumCounts(expected), sumCounts(actual)
 			if len(gaps) == 0 {
+				// A source redeployed behind a new contract id (config not
+				// updated) writes nothing, the re-derive expects nothing over
+				// two empty maps, and ReconcileCounts sees no mismatch — the
+				// same vacuous-pass shape verify-recognition already guards
+				// (#1093). expected=0 actual=0 is refused rather than
+				// certified: a target dark for weeks must not print OK.
+				if reconciliationIsVacuous(expTotal, actTotal) {
+					anyGaps = true
+					fmt.Fprintf(os.Stderr, "verify-reconciliation: %-28s VACUOUS — expected=0 actual=0 over ledgers [%d, %d]; refusing to certify reconciliation vacuously\n", label, lo, hi)
+					continue
+				}
 				fmt.Fprintf(os.Stderr, "verify-reconciliation: %-28s OK — expected=%d actual=%d\n", label, expTotal, actTotal)
 				continue
 			}
@@ -186,6 +197,15 @@ func sumCounts(m map[uint32]int) int {
 		total += v
 	}
 	return total
+}
+
+// reconciliationIsVacuous reports whether a no-gap target saw zero events on
+// both sides — the vacuous-pass shape (#1093): a source redeployed behind a
+// new contract id with the config not updated writes nothing, the re-derive
+// expects nothing over two empty maps, and ReconcileCounts sees no mismatch.
+// That is indistinguishable from "fully reconciled" unless it is refused.
+func reconciliationIsVacuous(expTotal, actTotal int) bool {
+	return expTotal == 0 && actTotal == 0
 }
 
 // seedSoroswapForRecon seeds the soroswap pair registry from the

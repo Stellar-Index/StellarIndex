@@ -528,6 +528,18 @@ history weekly.yml active 60
 run_check
 expect 'no scheduled run ever, 60d old → DEAD' 1 'the cron has not fired'
 
+# #1097: an undateable newest-run timestamp. days_since() returns -1 for
+# a created_at it can't parse; before the fix, `-1 -ge $n_days` is
+# always false, so this compared as FRESHER than a real run and fell
+# through to "live" silently.
+reset_case
+workflow weekly.yml '0 6 * * 1'
+printf '{"state":"active","created_at":"%s","workflow_runs":[{"conclusion":"success","created_at":"not-a-real-timestamp"}]}\n' \
+  "$(ago 60)" > "$TMP/fx/weekly.yml.json"
+run_check
+expect 'undateable newest run → DEAD, not live' 1 'DEAD  weekly.yml'
+expect '…and names the parse failure' 1 'timestamp could not be parsed'
+
 # ── Shapes that must NOT be flagged ─────────────────────────────────
 
 # A workflow merged two days ago has not had its first weekly fire.
@@ -537,13 +549,31 @@ history fresh.yml active 2
 run_check
 expect 'newly registered weekly workflow, no runs yet → live' 0 'live  fresh.yml'
 
-# Self-reference: the detector's own workflow is the one exclusion.
+# Self-reference: the detector's own workflow is the one exclusion, but a
+# real scheduled workflow alongside it still gets assessed.
+reset_case
+workflow ci-health.yml '17 */2 * * *'
+history ci-health.yml active 60 failure:0 failure:1 failure:2
+workflow weekly.yml '0 6 * * 1'
+history weekly.yml active 60 success:1
+SELF=ci-health.yml run_check
+expect 'the detector does not report itself' 0 'skip  ci-health.yml'
+expect '…and says why' 0 'self-reference'
+expect '…and its peer is still assessed' 0 'live  weekly.yml'
+
+# #1097: the self-exclusion hole. When ci-health.yml is the ONLY
+# schedule:-bearing workflow left in the directory, excluding it drops
+# assessed to 0 — before the fix, the guard was
+# `[ assessed -eq 0 ] && [ requested -gt excluded ]`, which is false
+# here (requested == excluded == 1), so the sweep printed a clean pass
+# over zero real checks. A yamlfmt pass silently rewriting every OTHER
+# scheduled workflow's `on:` block out of the parser's recognition
+# reduces to exactly this shape.
 reset_case
 workflow ci-health.yml '17 */2 * * *'
 history ci-health.yml active 60 failure:0 failure:1 failure:2
 SELF=ci-health.yml run_check
-expect 'the detector does not report itself' 0 'skip  ci-health.yml'
-expect '…and says why' 0 'self-reference'
+expect 'self as the only scheduled workflow is vacuous, not a clean pass' 2 'The gate did not run'
 
 # ── Enumeration is by schedule: trigger, not a hardcoded list ───────
 

@@ -5,7 +5,13 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
-import { formatCompact, formatPairPrice } from '@/lib/format';
+import {
+  formatCompact,
+  formatCompactUnits,
+  formatPairPrice,
+  ratioPct,
+  sumDecimalStrings,
+} from '@/lib/format';
 import { sourceToneClass } from '@/lib/pillTone';
 import { SourceSparkline } from '@/components/SourceSparkline';
 import {
@@ -68,10 +74,7 @@ export function ExchangesView() {
       r.trade_count_24h != null ||
       r.markets_count_24h != null,
   );
-  const totalVol = rows.reduce(
-    (s, r) => s + (r.volume_24h_usd ? Number(r.volume_24h_usd) : 0),
-    0,
-  );
+  const totalVol = sumDecimalStrings(rows.map((r) => r.volume_24h_usd)) ?? '0';
   const totalTrades = rows.reduce((s, r) => s + (r.trade_count_24h ?? 0), 0);
   const totalMarkets = rows.reduce((s, r) => s + (r.markets_count_24h ?? 0), 0);
 
@@ -99,7 +102,7 @@ export function ExchangesView() {
           <StatCell>
             <Stat
               label="24h volume"
-              value={statsAvailable ? `$${formatCompact(totalVol)}` : '—'}
+              value={statsAvailable ? `$${formatCompactUnits(totalVol)}` : '—'}
             />
           </StatCell>
           <StatCell>
@@ -128,7 +131,7 @@ export function ExchangesView() {
         }
         hint={
           rows.length > 0 && statsAvailable
-            ? `Total 24h: $${formatCompact(totalVol)} across ${formatCompact(totalTrades)} trades on ${totalMarkets} pairs`
+            ? `Total 24h: $${formatCompactUnits(totalVol)} across ${formatCompact(totalTrades)} trades on ${totalMarkets} pairs`
             : rows.length > 0
               ? '24h stats unavailable — refreshing'
               : 'Source: /v1/sources?include=stats'
@@ -184,7 +187,7 @@ export function ExchangesView() {
                 const vol = r.volume_24h_usd ? Number(r.volume_24h_usd) : 0;
                 const tone = sourceToneClass(r.name);
                 const label = LABEL[r.name] ?? r.name;
-                const share = totalVol > 0 ? (vol / totalVol) * 100 : 0;
+                const share = ratioPct(r.volume_24h_usd, totalVol) ?? 0;
                 return (
                   <TR key={r.name}>
                     <Td>

@@ -8,9 +8,18 @@
 # pins one of those incidents so the class stays closed.
 #
 # Runs read-only against production. Exit != 0 on any regression.
-set -eu
-# NOT pipefail: the sitemap greps feed head/awk which close the pipe
-# early — SIGPIPE would read as failure (exit 141).
+set -euo pipefail
+# No head/early-exit `awk … exit` / `sed … q` / piped `grep -q,-l,-m` sites
+# exist in this script (lint-shell-sigpipe already sweeps it, since `-e`
+# alone already put it in scope) — the awk stages below are all `NR==1` /
+# `NR<=40` with no `exit`, so they read to EOF and never close a pipe
+# early. The real pipefail hazard was different: three `VAR=$(… | grep
+# -oE … | sed/awk …)` assignments below had no `|| true`, and grep exits 1
+# on a legitimate "no match" (an empty sitemap, no /markets/ URL, no URL
+# for a sample family) — under pipefail that failed the assignment and,
+# under `-e`, aborted the whole crawl before its own `[ -z "$URL" ]` /
+# `if [ -n "$PAIR_URL" ]` fallbacks ran. Guarded with `|| true` below, the
+# same as this file's other optional lookups.
 
 SITE="${SITE:-https://stellarindex.io}"
 API="${API:-https://api.stellarindex.io}"
@@ -31,9 +40,9 @@ echo "== 1. sitemap sample resolves (one URL per path family)"
 SITEMAP=$(fetch "$SITE/sitemap.xml" || true)
 [ -n "$SITEMAP" ] || fail "sitemap.xml unfetchable"
 SAMPLE=$(echo "$SITEMAP" | grep -oE '<loc>[^<]+</loc>' | sed 's/<[^>]*>//g' |
-  awk -F/ '{print $4}' | sort -u | awk 'NR<=40')
+  awk -F/ '{print $4}' | sort -u | awk 'NR<=40' || true)
 for family in $SAMPLE; do
-  URL=$(echo "$SITEMAP" | grep -oE "<loc>$SITE/$family/[^<]*</loc>" | awk 'NR==1' | sed 's/<[^>]*>//g')
+  URL=$(echo "$SITEMAP" | grep -oE "<loc>$SITE/$family/[^<]*</loc>" | awk 'NR==1' | sed 's/<[^>]*>//g' || true)
   [ -z "$URL" ] && URL="$SITE/$family/"
   CODE=$(status_of "$URL")
   [ "$CODE" = "200" ] || fail "family $family: $URL → HTTP $CODE"
@@ -50,7 +59,7 @@ for path in / /assets/ /issuers/ /markets/ /contracts/ /transactions/ /protocols
 done
 
 echo "== 3. canonicals never double-encode (the %253A incident)"
-PAIR_URL=$(echo "$SITEMAP" | grep -oE '<loc>[^<]*/markets/[^<]+</loc>' | awk 'NR==1' | sed 's/<[^>]*>//g')
+PAIR_URL=$(echo "$SITEMAP" | grep -oE '<loc>[^<]*/markets/[^<]+</loc>' | awk 'NR==1' | sed 's/<[^>]*>//g' || true)
 if [ -n "$PAIR_URL" ]; then
   CANON=$(fetch "$PAIR_URL" | grep -oE '<link rel="canonical" href="[^"]+"' | awk 'NR==1' || true)
   grep -q '%25' <<<"$CANON" && fail "market canonical double-encoded: $CANON"

@@ -197,7 +197,9 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 
 // clampMintToCaller applies [auth.ClampToMinter] ahead of the store's own
 // re-check so a refused escalation is a 403 naming the reason, logged at
-// WARN with the actor, rather than a 500 or a silent refusal.
+// WARN with the actor and counted in [obs.MintScopeClampRefusedTotal]
+// (GH-1146) — otherwise a repeated escalation probe leaves no telemetry
+// an alert could fire on.
 func (s *Server) clampMintToCaller(
 	w http.ResponseWriter, r *http.Request, caller auth.Subject, scopes []string, rateLimitPerMin int,
 ) ([]string, bool) {
@@ -208,6 +210,7 @@ func (s *Server) clampMintToCaller(
 	s.logger.Warn("key mint refused: request exceeds the minting credential",
 		"err", err, "actor_key_id", caller.KeyID, "actor_identifier", caller.Identifier,
 		"path", r.URL.Path, "request_id", middleware.RequestIDFrom(r))
+	obs.MintScopeClampRefusedTotal.WithLabelValues(r.URL.Path).Inc()
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/scope-exceeds-caller",
 		"Scope exceeds caller", http.StatusForbidden,

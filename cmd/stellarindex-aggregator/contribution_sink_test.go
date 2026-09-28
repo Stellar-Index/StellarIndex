@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math/big"
 	"testing"
 	"time"
 
@@ -29,10 +30,10 @@ func TestContributionRows_CarryTheRecordsWindow(t *testing.T) {
 			Window:     window,
 			ComputedAt: computedAt,
 			Contributions: []aggregate.SourceContribution{
-				{Source: "binance", Weight: 0.6, TradeCount: 3},
-				{Source: "kraken", Weight: 0.4, TradeCount: 2},
+				{Source: "binance", Weight: big.NewRat(3, 5), TradeCount: 3},
+				{Source: "kraken", Weight: big.NewRat(2, 5), TradeCount: 2},
 			},
-			SourceUSDVolume: map[string]float64{"binance": 1200},
+			SourceUSDVolume: map[string]*big.Rat{"binance": big.NewRat(1200, 1)},
 		})
 		if len(rows) != 2 {
 			t.Fatalf("window %s: got %d rows, want 2", window, len(rows))
@@ -45,8 +46,35 @@ func TestContributionRows_CarryTheRecordsWindow(t *testing.T) {
 				t.Errorf("window %s: row %+v lost its pair or bucket", window, r)
 			}
 		}
-		if rows[0].VolumeUSD == nil || *rows[0].VolumeUSD != 1200 || rows[1].VolumeUSD != nil {
+		if rows[0].VolumeUSD == nil || *rows[0].VolumeUSD != "1200.000000000000000000" || rows[1].VolumeUSD != nil {
 			t.Errorf("window %s: volume_usd mapping changed: %v / %v", window, rows[0].VolumeUSD, rows[1].VolumeUSD)
 		}
+	}
+}
+
+// Weight and volume_usd land in NUMERIC columns and must reach them at
+// decimal precision, not float64's ~16 significant digits (GH #604).
+// A USD volume above 2^53 cents and a 1/3 share both lose digits as float.
+func TestContributionRows_RenderExactDecimals(t *testing.T) {
+	vol, ok := new(big.Rat).SetString("90071992547409.93") // 2^53+1 cents
+	if !ok {
+		t.Fatal("parse volume")
+	}
+	rows := contributionRows(orchestrator.ContributionRecord{
+		Window: time.Hour,
+		Contributions: []aggregate.SourceContribution{
+			{Source: "a", Weight: big.NewRat(1, 3), TradeCount: 1},
+			{Source: "b", Weight: big.NewRat(2, 3), TradeCount: 1},
+		},
+		SourceUSDVolume: map[string]*big.Rat{"a": vol},
+	})
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	if rows[0].Weight != "0.333333333333333333" || rows[1].Weight != "0.666666666666666667" {
+		t.Errorf("weights = %s / %s, want 18-digit decimals of 1/3 and 2/3", rows[0].Weight, rows[1].Weight)
+	}
+	if rows[0].VolumeUSD == nil || *rows[0].VolumeUSD != "90071992547409.930000000000000000" {
+		t.Errorf("volume_usd = %v, want 90071992547409.93 exactly", rows[0].VolumeUSD)
 	}
 }

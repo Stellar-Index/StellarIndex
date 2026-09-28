@@ -312,38 +312,36 @@ func newTierRollup() *usdVolumeTierRollup {
 	return &usdVolumeTierRollup{sumUSD: new(big.Rat), worstDelta: new(big.Rat)}
 }
 
-// verifyUSDVolumeDay checks one UTC day and returns the number of exact-tier
-// violations found.
+// classifyExactTierGroups classifies one day's (source, base, quote) groups
+// and checks each judged exact-tier group's identity, printing per-group
+// diagnostics as it goes. Returns the exact-tier violation count, how many
+// groups were judged against the identity, how many groups could not be
+// classified or had unparseable sums, and the tier rollups for the report.
+//
+// parseErrs is counted separately from violations here — the caller decides
+// whether to fold it in (#1093: it must, so a mis-spelled asset id on a
+// landed trade can't leave the judged population with a clean exit).
 //
 //nolint:gocognit // one linear pass: classify → accumulate → judge exact tiers → print.
-func verifyUSDVolumeDay(
-	ctx context.Context,
-	store *timescale.Store,
+func classifyExactTierGroups(
+	groups []timescale.TradeValuationGroup,
 	spec *timescale.USDVolumeQuoteSpec,
-	day time.Time,
 	minRows int64,
 	maxList int,
-) (int, error) {
-	groups, err := store.TradeValuationByDay(ctx, day)
-	if err != nil {
-		return 0, err
-	}
-
-	fmt.Printf("\n=== verify-usd-volume: %s (UTC) — %d (source, base, quote) group(s) ===\n",
-		day.Format(time.DateOnly), len(groups))
-
-	rollups := map[timescale.USDVolumeTier]*usdVolumeTierRollup{}
-	var (
-		violations int
-		listed     int
-		parseErrs  int
-	)
+) (violations, judged, parseErrs int, rollups map[timescale.USDVolumeTier]*usdVolumeTierRollup) {
+	rollups = map[timescale.USDVolumeTier]*usdVolumeTierRollup{}
+	listed := 0
 
 	for _, g := range groups {
 		tier, decimals, cerr := timescale.ClassifyUSDVolumeTier(g.Source, g.BaseAsset, g.QuoteAsset, spec)
 		if cerr != nil {
 			// An unparseable asset id on a LANDED trade is its own finding;
-			// report it rather than dropping the group silently.
+			// report it rather than dropping the group silently. Counted as
+			// a violation by the caller (#1093): ClassifyUSDVolumeTier's
+			// error path demotes the group to TierEstimated, which
+			// !tier.Exact() then skips — a mis-spelled asset id was
+			// otherwise dropped out of the judged population with no
+			// non-zero exit to show for it.
 			parseErrs++
 			fmt.Fprintf(os.Stderr, "  UNCLASSIFIABLE %s %s/%s: %v\n", g.Source, g.BaseAsset, g.QuoteAsset, cerr)
 		}
@@ -362,6 +360,7 @@ func verifyUSDVolumeDay(
 		if !tier.Exact() || g.PricedRows < minRows {
 			continue
 		}
+		judged++
 		delta, dok := timescale.ExactTierDelta(g, tier, decimals)
 		if !dok {
 			parseErrs++
@@ -391,14 +390,47 @@ func verifyUSDVolumeDay(
 			fmt.Printf("  … more violations suppressed (raise -max-list)\n")
 		}
 	}
+	return violations, judged, parseErrs, rollups
+}
+
+// usdVolumeTotalViolations combines the exact-tier and XLM-bound violation
+// counts with parseErrs (#1093): an unclassifiable or unparseable group on a
+// LANDED trade — a mis-spelled asset id, a scale ClassifyUSDVolumeTier
+// couldn't resolve — is a defect, not a benign skip. Before this, parseErrs
+// was printed but never folded in, so a day with nothing but unclassifiable
+// groups exited 0.
+func usdVolumeTotalViolations(exactViolations, xlmBoundViolations, parseErrs int) int {
+	return exactViolations + xlmBoundViolations + parseErrs
+}
+
+// verifyUSDVolumeDay checks one UTC day and returns the number of exact-tier
+// violations found.
+func verifyUSDVolumeDay(
+	ctx context.Context,
+	store *timescale.Store,
+	spec *timescale.USDVolumeQuoteSpec,
+	day time.Time,
+	minRows int64,
+	maxList int,
+) (int, error) {
+	groups, err := store.TradeValuationByDay(ctx, day)
+	if err != nil {
+		return 0, err
+	}
+
+	fmt.Printf("\n=== verify-usd-volume: %s (UTC) — %d (source, base, quote) group(s) ===\n",
+		day.Format(time.DateOnly), len(groups))
+
+	violations, judged, parseErrs, rollups := classifyExactTierGroups(groups, spec, minRows, maxList)
 
 	nb, err := verifyXLMBounds(ctx, store, groups, spec, day, minRows, maxList)
 	if err != nil {
 		return 0, err
 	}
-	violations += nb
+	violations = usdVolumeTotalViolations(violations, nb, parseErrs)
 
 	printUSDVolumeTierTable(rollups)
+	fmt.Printf("  judged=%d of %d group(s) against an exact-tier identity\n", judged, len(groups))
 	if parseErrs > 0 {
 		fmt.Printf("  %d group(s) could not be classified or parsed — listed on stderr above\n", parseErrs)
 	}

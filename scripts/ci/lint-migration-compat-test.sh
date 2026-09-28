@@ -14,7 +14,11 @@
 #   - `NOT NULL DEFAULT …` is not flagged (it is old-binary-safe);
 #   - a commented-out DDL line is not flagged;
 #   - baseline entries grandfather, and stale ones fail (repo mode)
-#     but are tolerated under `--staged` (older tag, fewer files).
+#     but are tolerated under `--staged` (older tag, fewer files);
+#   - `dml` (DELETE/TRUNCATE/UPDATE) needs a file-level RAISE EXCEPTION
+#     row-count guard — the inline marker alone does not clear it
+#     (GH #1163: 0137's bare `DELETE FROM comet_liquidity;` passed every
+#     other class).
 #
 # Run: bash scripts/ci/lint-migration-compat-test.sh
 set -uo pipefail
@@ -105,6 +109,36 @@ expect 'stale baseline entry tolerated under --staged' 0 'passed'
 # 5. New violations still fail under --staged (the deploy-time gate).
 run 'ALTER TABLE trades DROP COLUMN legacy_price;' '' --staged
 expect 'staged mode still blocks a new violation' 1 'drop-column'
+
+# 6. `dml` (GH #1163): unguarded DELETE/TRUNCATE/UPDATE, and its
+#    file-level RAISE EXCEPTION escape (stronger than the inline marker
+#    — see escape hatch 3 in lint-migration-compat.sh's header).
+run 'DELETE FROM comet_liquidity;' ''
+expect 'dml (bare DELETE) fires' 1 'dml'
+
+run 'TRUNCATE comet_liquidity;' ''
+expect 'dml (TRUNCATE) fires' 1 'dml'
+
+run 'UPDATE comet_liquidity SET event_index = 0;' ''
+expect 'dml (bare UPDATE) fires' 1 'dml'
+
+run 'DELETE FROM comet_liquidity;  -- migration-compat:ok replay repairs it' ''
+expect 'inline marker alone does not clear dml (needs a RAISE EXCEPTION guard)' 1 'dml'
+
+run 'DO $$
+DECLARE
+    n bigint;
+BEGIN
+    SELECT count(*) FROM comet_liquidity INTO n;
+    IF n > 100000 THEN
+        RAISE EXCEPTION '"'"'refusing to delete % rows'"'"', n;
+    END IF;
+    DELETE FROM comet_liquidity;
+END $$;' ''
+expect 'RAISE EXCEPTION guard clears dml (no inline marker needed)' 0 'passed'
+
+run 'DELETE FROM comet_liquidity;' '0001_fixture.up.sql:dml'
+expect 'baselined dml entry passes' 0 'passed'
 
 echo
 echo "lint-migration-compat-test: ${pass} passed, ${fail} failed"

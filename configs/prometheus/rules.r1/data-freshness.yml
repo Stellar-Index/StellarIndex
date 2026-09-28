@@ -23,7 +23,13 @@ groups:
             writer/timer stopped. The age is on
             stellarindex_data_freshness_age_seconds{domain="{{ $labels.domain }}",source="{{ $labels.source }}"}.
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-source-stale.md
+            If {{ $labels.domain }}/{{ $labels.source }} was retired on
+            purpose, this alert does NOT resolve on its own — see
+            "Retiring a source" in the runbook below for both exit
+            mechanisms. Never silence this alert at Alertmanager instead;
+            it hides every other source's real outage too.
+
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-source-stale.md#retiring-a-source
 
       # CS-102 (2026-07-28): the domain-level `supply` freshness check measures
       # max(time) across the WHOLE table, so it proves only that SOME asset is

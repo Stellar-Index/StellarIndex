@@ -235,34 +235,27 @@ func TestSourceContributions_PerSourceWeights(t *testing.T) {
 		bySource[c.Source] = c
 	}
 	// Total quote = 200+200+100+100 = 600
-	// binance: 400/600 ≈ 0.6667; kraken: 100/600 ≈ 0.1667; sdex: 100/600 ≈ 0.1667
-	if w := bySource["binance"].Weight; w < 0.66 || w > 0.67 {
-		t.Errorf("binance weight = %v, want ~0.6667", w)
+	for src, want := range map[string]*big.Rat{"binance": big.NewRat(2, 3), "kraken": big.NewRat(1, 6), "sdex": big.NewRat(1, 6)} {
+		if w := bySource[src].Weight; w.Cmp(want) != 0 {
+			t.Errorf("%s weight = %s, want %s", src, w.RatString(), want.RatString())
+		}
 	}
 	if c := bySource["binance"].TradeCount; c != 2 {
 		t.Errorf("binance count = %d, want 2", c)
 	}
-	if w := bySource["kraken"].Weight; w < 0.165 || w > 0.169 {
-		t.Errorf("kraken weight = %v, want ~0.1667", w)
-	}
-	// Weights sum to 1
-	var sum float64
+	sum := new(big.Rat)
 	for _, c := range got {
-		sum += c.Weight
+		sum.Add(sum, c.Weight)
 	}
-	if sum < 0.999 || sum > 1.001 {
-		t.Errorf("weights sum = %v, want 1.0", sum)
+	if sum.Cmp(big.NewRat(1, 1)) != 0 {
+		t.Errorf("weights sum = %s, want exactly 1", sum.RatString())
 	}
 }
 
-// TestSourceContributions_WeightIsCorrectlyRoundedAboveTwoPow53 pins
-// each weight to the correctly-rounded float64 of the exact ratio.
-// Rounding numerator and denominator to float64 before dividing is
-// lossy once a quote volume exceeds 2^53 — the ordinary case for a
-// Soroban i128 — and lands ulps away: for 2^53+1 over
-// (2^53+1)+(2^53+10) it gives 0.49999999999999966693 where the exact
-// ratio rounds to 0.49999999999999977796.
-func TestSourceContributions_WeightIsCorrectlyRoundedAboveTwoPow53(t *testing.T) {
+// TestSourceContributions_WeightIsExactAboveTwoPow53 pins each weight to
+// the exact ratio. Any float64 on the way loses it once a quote volume
+// exceeds 2^53, the ordinary case for a Soroban i128.
+func TestSourceContributions_WeightIsExactAboveTwoPow53(t *testing.T) {
 	const q1, q2 = 1<<53 + 1, 1<<53 + 10
 	trades := []canonical.Trade{
 		mkTradeWithSource("a", 1, q1),
@@ -273,13 +266,13 @@ func TestSourceContributions_WeightIsCorrectlyRoundedAboveTwoPow53(t *testing.T)
 		t.Fatalf("got %d sources, want 2", len(got))
 	}
 	total := big.NewInt(q1 + q2)
-	want := map[string]float64{}
+	want := map[string]*big.Rat{}
 	for src, q := range map[string]int64{"a": q1, "b": q2} {
-		want[src], _ = new(big.Rat).SetFrac(big.NewInt(q), total).Float64()
+		want[src] = new(big.Rat).SetFrac(big.NewInt(q), total)
 	}
 	for _, c := range got {
-		if c.Weight != want[c.Source] {
-			t.Errorf("%s weight = %.20g, want the correctly-rounded exact ratio %.20g", c.Source, c.Weight, want[c.Source])
+		if c.Weight.Cmp(want[c.Source]) != 0 {
+			t.Errorf("%s weight = %s, want the exact ratio %s", c.Source, c.Weight.RatString(), want[c.Source].RatString())
 		}
 	}
 }

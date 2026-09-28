@@ -13,11 +13,21 @@
 # `0113:drop-table` and `0115:drop-view` are genuine destructive
 # migrations that shipped under the old, unenforced policy.
 #
+# The four `dml` entries (GH #1163) are unconditional DELETE/UPDATE
+# statements that shipped before that class existed and have no
+# RAISE EXCEPTION row-count guard — the only escape `dml` accepts (see
+# lint-migration-compat.sh). They cannot be retrofitted with one without
+# rewriting an already-released migration, so they are grandfathered
+# here instead: 0135 (UPDATE, one-time slug backfill), 0137/0164
+# (DELETE, replay-disarm double-count fixes — re-derivable from the
+# lake), 0185 (DELETE, one-time bad-row prune).
+#
 # SHRINK-ONLY (CS-098): a stale entry fails the lint, and
 # scripts/ci/lint-baseline-growth.sh requires an explicit
 # `Baseline-Growth:` commit trailer for any addition. NEW migrations
-# should use the inline `-- migration-compat:ok <reason>` marker
-# instead of growing this file.
+# should use a RAISE EXCEPTION guard (`dml`) or the inline
+# `-- migration-compat:ok <reason>` marker (every other class) instead
+# of growing this file.
 0004_relax_trades_ledger_for_offchain.up.sql:add-constraint
 0030_asset_supply_history_unique_constraint.up.sql:add-constraint
 0053_blend_pk_granularity.up.sql:add-constraint
@@ -41,3 +51,7 @@
 0112_cctp_rozo_event_index.up.sql:add-constraint
 0113_drop_classic_movements.up.sql:drop-table
 0115_ohlc_extremes_notional_floor.up.sql:drop-view
+0135_full_issuer_slugs.up.sql:dml
+0137_disarm_comet_replay_doublecount.up.sql:dml
+0164_disarm_cctp_rozo_replay_doublecount.up.sql:dml
+0185_mev_drop_unproven_direction_sandwiches.up.sql:dml

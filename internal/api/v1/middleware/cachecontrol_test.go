@@ -40,6 +40,9 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		{"/v1/tx/notahash", "private, no-store"},
 		{"/v1/ledgers", "public, max-age=10, s-maxage=15"},
 		{"/v1/network/throughput", "public, max-age=10, s-maxage=15"},
+		// #1070: was the 300s catalogue band, 10x its own 30s SWR cache
+		// lifetime. Joins its /v1/network/throughput sibling instead.
+		{"/v1/network/stats", "public, max-age=10, s-maxage=15"},
 		// The operations directory is /v1/ledgers' sibling listing and
 		// joins the same band (#332 F2). It had no case at all and shipped
 		// `private, no-store` from the default.
@@ -125,11 +128,14 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		// cache band.
 		{"/v1/chart", "public, max-age=60, s-maxage=300"},
 		{"/v1/lending/pools", "public, max-age=60, s-maxage=300"},
-		{"/v1/aggregators", "public, max-age=60, s-maxage=300"},
-		{"/v1/network/stats", "public, max-age=60, s-maxage=300"},
 		{"/v1/sac-wrappers", "public, max-age=60, s-maxage=300"},
 		{"/v1/incidents", "public, max-age=60, s-maxage=300"},
 		{"/v1/pools", "public, max-age=60, s-maxage=300"},
+
+		// #1070: was the 300s catalogue band despite its own comment
+		// arguing for a 60s edge cache to match the 1-min attribution
+		// sweeper.
+		{"/v1/aggregators", "public, max-age=30, s-maxage=60"},
 
 		// Pool reserves — current contract state; shorter band than
 		// the /v1/pools listing (exact-match case wins).
@@ -291,7 +297,9 @@ func TestPolicyForPath_CDNDisabled(t *testing.T) {
 		{"/v1/markets", "public, max-age=60"},
 		{"/v1/pairs", "public, max-age=60"},
 		{"/v1/sources", "public, max-age=60"},
-		{"/v1/aggregators", "public, max-age=60"},
+		// #1070: /v1/aggregators moved to the 30s/60s short band.
+		{"/v1/aggregators", "public, max-age=30"},
+		{"/v1/network/stats", "public, max-age=10"},
 		{"/v1/oracle/lastprice", "public, max-age=30"},
 		// Non-cacheable directives unchanged.
 		{"/v1/healthz", "no-store"},

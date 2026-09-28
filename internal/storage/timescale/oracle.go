@@ -479,12 +479,14 @@ func (s *Store) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpda
 		a, err := canonical.ParseAsset(assetStr)
 		if err != nil {
 			obs.OracleStreamRowsUnparsedTotal.WithLabelValues(u.Source, "asset").Inc()
+			dropped++
 			continue
 		}
 		u.Asset = a
 		qa, err := canonical.ParseAsset(quoteStr)
 		if err != nil {
 			obs.OracleStreamRowsUnparsedTotal.WithLabelValues(u.Source, "quote").Inc()
+			dropped++
 			continue
 		}
 		u.Quote = qa

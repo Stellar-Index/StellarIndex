@@ -80,6 +80,13 @@ check "a real anchor with a double hyphen resolves" ok
 printf '# fixture\n\n```\n[gone](./nope-%s.md)\n' "$$" > "$FIX"
 check "an odd number of fences is reported, not silently trusted" red
 
+# GH-1255: a bare `except Exception: continue` absorbed a bad encoding the
+# same way it absorbed a file going away mid-run, so a non-UTF-8 byte
+# silently dropped a file from the scan and the gate reported OK anyway.
+printf '# fixture\n\nAll good here.\n' > "$FIX"
+printf '\xff' >> "$FIX"
+check "a file with invalid UTF-8 bytes fails the gate, not silently skipped" red
+
 # shellcheck disable=SC2016  # the backticks are literal fixture content
 printf '# fixture\n\nXDR notation: `Vec[Address](assets)` and `Vec[i128](amounts)`.\n' > "$FIX"
 check "a link-shaped token inside backticks is ignored" ok

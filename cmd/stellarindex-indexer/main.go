@@ -2323,6 +2323,15 @@ func openOrCreateHashDB(path string, startLedger uint32) (*hashdb.DB, error) {
 	return hashdb.Create(path, startLedger)
 }
 
+// marshalLedgerCloseMeta is indirected purely so
+// TestRecordHashdb_DurationExcludesMarshal can inject a controlled,
+// artificially slow marshal without needing an implausibly large LCM
+// (and the wall-clock-ratio comparison that made the test flake under
+// load, #1539). Production always takes the default.
+var marshalLedgerCloseMeta = func(lcm sdkxdr.LedgerCloseMeta) ([]byte, error) {
+	return lcm.MarshalBinary()
+}
+
 // recordHashdb appends the ledger's sha256(LCM) into hdb — the
 // append side of ADR-0016's drift detector, called once per ledger
 // from the live LCM read loop.
@@ -2351,7 +2360,7 @@ func openOrCreateHashDB(path string, startLedger uint32) (*hashdb.DB, error) {
 func recordHashdb(hdb *hashdb.DB, lcm sdkxdr.LedgerCloseMeta, logger *slog.Logger, lastAppended *atomic.Uint32) {
 	seq := lcm.LedgerSequence()
 
-	raw, err := lcm.MarshalBinary()
+	raw, err := marshalLedgerCloseMeta(lcm)
 	// Timed region starts AFTER the multi-megabyte LedgerCloseMeta
 	// marshal — HashdbAppendDurationSeconds documents itself as the
 	// latency of the O(1) positional WriteAt, not of serializing the

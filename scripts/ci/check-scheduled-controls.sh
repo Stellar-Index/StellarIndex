@@ -571,14 +571,25 @@ EOF
   verdict="live"
   detail=""
   remedy=""
-  if [ "$run_age" -ge "$n_days" ]; then
+  if [ "$run_age" -lt 0 ] || [ "$run_age" -ge "$n_days" ]; then
     verdict="DEAD"
-    if [ "$total" -eq 0 ]; then
+    if [ "$run_age" -lt 0 ]; then
+      # #1097: days_since() returns -1 for a timestamp it couldn't parse,
+      # and -1 -ge $n_days is always false, so an undateable run compared
+      # as FRESHER than one that ran an hour ago and fell through to
+      # "live" — the exact shape this script's header promises never
+      # happens ("Never a silent pass").
+      detail="the newest scheduled run's timestamp could not be parsed — cannot verify the schedule is firing"
+    elif [ "$total" -eq 0 ]; then
       detail="the cron has not fired once since the workflow was registered ${run_age}d ago"
     else
       detail="no scheduled run of any conclusion in ${run_age}d against a ${label} cadence — the schedule has stopped firing"
     fi
     remedy="$REMEDY_DEAD"
+  elif [ "$green_age" -lt 0 ]; then
+    verdict="FAIL"
+    detail="the schedule is firing (last run ${run_age}d ago) but the last green scheduled run's timestamp could not be parsed — cannot verify the control is passing"
+    remedy="$REMEDY_FAIL"
   elif [ "$green_age" -ge "$n_days" ]; then
     if [ "$green" -eq 0 ]; then
       detail="the schedule is firing (last run ${run_age}d ago) and has never produced a green scheduled run in ${green_age}d"
@@ -657,8 +668,15 @@ if [ "$requested" -eq 0 ]; then
   echo "scheduled-controls: found NO workflow with a schedule: trigger in ${WORKFLOW_DIR}. The cron enumerator or the directory is wrong — this is not a clean result." >&2
   exit 2
 fi
-if [ "$assessed" -eq 0 ] && [ "$requested" -gt "$excluded" ]; then
-  echo "scheduled-controls: $(( requested - excluded )) scheduled workflow(s) found but none could be read from the API. The gate did not run." >&2
+if [ "$assessed" -eq 0 ]; then
+  # #1097: this used to be guarded by `[ "$requested" -gt "$excluded" ]`
+  # too, so when the only schedule:-bearing workflow left standing was
+  # this detector's own file (requested == excluded), the guard went
+  # false and the sweep printed a clean pass over zero real checks — a
+  # yamlfmt pass rewriting `on:` to flow style on every OTHER scheduled
+  # workflow silences all of them with no line of output. assessed >= 1
+  # is required unconditionally; self-exclusion is not an escape from it.
+  echo "scheduled-controls: $(( requested - excluded )) scheduled workflow(s) found but none could be read from the API (assessed=0). The gate did not run." >&2
   exit 2
 fi
 
