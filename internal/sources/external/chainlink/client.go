@@ -226,7 +226,7 @@ var ErrRedirectRefused = errors.New("redirect refused: rpc endpoint URL may carr
 func DoWithoutRedirects(c *http.Client, req *http.Request) (*http.Response, error) {
 	cp := *c
 	cp.CheckRedirect = func(*http.Request, []*http.Request) error { return ErrRedirectRefused }
-	return cp.Do(req)
+	return cp.Do(req) //nolint:gosec // G704: both callers build req.URL from an operator-configured RPC endpoint (Client.Endpoint / CHAINLINK_RPC_URL), not request-tainted input
 }
 
 // RedactURLError converts a transport error into a string with any
