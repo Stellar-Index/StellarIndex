@@ -126,6 +126,16 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 	// Persist, audit-log and echo the CLAMPED set, never the request's:
 	// the audit trail has to record what was actually issued.
 	req.Scopes = scopes
+	// A request that leaves rate_limit_per_min unset (0) never reaches
+	// ClampToMinter's own-ceiling check (it only fires for
+	// rateLimitPerMin > 0), so an unset request would otherwise persist
+	// as 0 — the deployment/tier default, which can exceed a
+	// rate-limited caller's own ceiling. Inherit the caller's ceiling
+	// explicitly, mirroring ChildKeyRequest's unconditional copy
+	// (GH-1147).
+	if req.RateLimitPerMin == 0 && subject.RateLimitPerMin > 0 {
+		req.RateLimitPerMin = subject.RateLimitPerMin
+	}
 
 	rec, plaintext, err := s.accounts.Create(r.Context(), auth.CreateAPIKeyRequest{
 		MintedBy:        &subject,
