@@ -172,7 +172,7 @@ func (c *Client) do(ctx context.Context, method string, params []any, out any) e
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := DoWithoutRedirects(c.HTTPClient, req)
 	if err != nil {
 		// G10-04: a transport failure produces a *url.Error whose
 		// Error() embeds the full request URL — and Alchemy/Infura/
@@ -214,6 +214,19 @@ func (c *Client) do(ctx context.Context, method string, params []any, out any) e
 		return fmt.Errorf("chainlink: %s unmarshal result: %w", method, err)
 	}
 	return nil
+}
+
+// ErrRedirectRefused is the transport error for an RPC reply that tries
+// to redirect: the endpoint URL may carry an API key, and Go re-sends
+// the full previous URL as the next hop's Referer.
+var ErrRedirectRefused = errors.New("redirect refused: rpc endpoint URL may carry an API key")
+
+// DoWithoutRedirects sends req through a shallow copy of c that never
+// follows a redirect; c itself (timeout, transport) is left untouched.
+func DoWithoutRedirects(c *http.Client, req *http.Request) (*http.Response, error) {
+	cp := *c
+	cp.CheckRedirect = func(*http.Request, []*http.Request) error { return ErrRedirectRefused }
+	return cp.Do(req)
 }
 
 // RedactURLError converts a transport error into a string with any
