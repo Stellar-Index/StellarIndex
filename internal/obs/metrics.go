@@ -122,7 +122,6 @@ func registerPricingMetrics() {
 		PriceServeSubstanceUnmeasuredTotal,
 		PriceServeScamWithheldTotal,
 		PricingGuardTrailingFetchFailedTotal,
-		PricingGuardDegradedTotal,
 
 		SupplyCrossCheckDivergenceStroops,
 		SupplyCrossCheckTotal,
@@ -169,6 +168,7 @@ func registerProjectorMetrics() {
 // rather than a silently ever-longer function.
 func registerAPIServingMetrics() {
 	Registry.MustRegister(
+		PricingGuardDegradedTotal,
 		APICacheOpsTotal,
 		APICoverageFloorProbesTotal,
 		APISparkline7dRowsTotal,
