@@ -106,6 +106,8 @@ func mountAllDashboardPackages(t *testing.T, mux *http.ServeMux) map[string]bool
 		Passkeys: struct {
 			platform.WebAuthnCredentialStore
 		}{},
+		AccountEraser:    struct{ dashboardauth.AccountEraser }{},
+		AccountExporter:  struct{ dashboardauth.AccountExporter }{},
 		Sender:           &notify.NoopSender{},
 		DashboardBaseURL: "https://stellarindex.example",
 		EmailFrom:        "noreply@stellarindex.example",

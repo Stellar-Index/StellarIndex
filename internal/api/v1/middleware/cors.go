@@ -98,6 +98,8 @@ var DefaultCORSExposedHeaders = []string{
 	"X-StellarIndex-Monthly-Used",
 	"X-StellarIndex-Signup-Verify-Required",
 	"Idempotency-Replayed",
+	// The account export's file name (GET /v1/dashboard/account/export).
+	"Content-Disposition",
 }
 
 // CORS returns middleware that applies W3C CORS headers based on

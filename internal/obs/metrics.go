@@ -737,7 +737,9 @@ func seedLedgerstreamTierSeries() {
 // its own helper for the same gocognit ceiling that split
 // seedLedgerstreamTierSeries.
 func seedNotifySeries() {
-	for _, template := range []string{NotifyTemplateMagicLink, NotifyTemplateSignupVerify, NotifyTemplatePasskeyChanged} {
+	for _, template := range []string{
+		NotifyTemplateMagicLink, NotifyTemplateSignupVerify, NotifyTemplatePasskeyChanged, NotifyTemplateAccountErased,
+	} {
 		for _, result := range []string{NotifySendResultSent, NotifySendResultFailed} {
 			NotifySendsTotal.WithLabelValues(template, result)
 		}
@@ -2797,6 +2799,10 @@ const (
 	// passkey was added to or removed from their account. A failure means
 	// the owner is not told about a first-factor change.
 	NotifyTemplatePasskeyChanged = "passkey-changed"
+	// NotifyTemplateAccountErased — the confirmation to an account's owners
+	// that the account was erased (GH #809). A failure means the owner is
+	// not told about an irreversible deletion.
+	NotifyTemplateAccountErased = "account-erased"
 
 	// NotifySendResultSent — Sender.Send returned nil (accepted by Resend).
 	NotifySendResultSent = "sent"

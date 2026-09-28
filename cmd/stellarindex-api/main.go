@@ -68,6 +68,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Stellar-Index/StellarIndex/internal/accounterasure"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
@@ -2548,6 +2549,9 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 		// cookie_domain scopes only the presence hint; credential
 		// cookies are always host-only __Host- cookies.
 		SessionHintDomain: cfg.CookieDomain,
+		// GH #809: DELETE /v1/dashboard/account + GET .../export.
+		AccountEraser:   &accounterasure.Eraser{Store: accounts, Redis: rdb, Logger: logger.With("component", "account-erasure")},
+		AccountExporter: &accounterasure.Exporter{Store: accounts, Redis: rdb},
 	}
 	wireDashboardAuthThrottles(&authCfg, rdb, logger)
 	authH, err := dashboardauth.NewHandlers(&authCfg)

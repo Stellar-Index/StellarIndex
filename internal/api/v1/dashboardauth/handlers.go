@@ -149,6 +149,16 @@ type Config struct {
 	// hint only, so an explorer on a sibling host can read it. Empty
 	// = host-only. Credential cookies never carry a Domain.
 	SessionHintDomain string
+	// AccountEraser (optional) backs DELETE /v1/dashboard/account and
+	// AccountExporter (optional) GET /v1/dashboard/account/export (GH
+	// #809); nil leaves the route unmounted.
+	AccountEraser   AccountEraser
+	AccountExporter AccountExporter
+
+	// accountActions caps erasure and export attempts per user;
+	// accountIdempotency replays a retried erasure. Installed by validate().
+	accountActions     *ratelimit.LocalFixedWindowCounter
+	accountIdempotency *middleware.IdempotencyStore
 
 	// passkeyBeginLimiter caps anonymous begin-login ceremonies per
 	// client IP; installed by validate(), never configurable off.
@@ -216,6 +226,12 @@ func (c *Config) validate() error {
 	}
 	if c.SessionTTL == 0 {
 		c.SessionTTL = 30 * 24 * time.Hour
+	}
+	if c.accountActions == nil {
+		c.accountActions = ratelimit.NewLocalFixedWindowCounter(accountActionWindow, c.Now)
+	}
+	if c.accountIdempotency == nil {
+		c.accountIdempotency = middleware.NewIdempotencyStore(0)
 	}
 	return nil
 }
@@ -310,6 +326,17 @@ func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 			requireSession(http.HandlerFunc(h.HandlePasskeyList)))
 		mux.Handle("DELETE /v1/auth/passkey/credentials/{id}",
 			requireSession(sameSite(http.HandlerFunc(h.HandlePasskeyDelete))))
+	}
+
+	// Account erasure and export (GH #809), session-only: an API key can
+	// neither destroy nor download the account it belongs to.
+	if h.cfg.AccountEraser != nil {
+		idem := middleware.Idempotency(h.cfg.accountIdempotency, SessionAccountSubject)
+		mux.Handle("DELETE /v1/dashboard/account",
+			RequireSession(h.cfg)(sameSite(idem(http.HandlerFunc(h.HandleAccountDelete)))))
+	}
+	if h.cfg.AccountExporter != nil {
+		mux.Handle("GET /v1/dashboard/account/export", RequireSession(h.cfg)(http.HandlerFunc(h.HandleAccountExport)))
 	}
 }
 
@@ -993,14 +1020,18 @@ func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	// Clear the cookie regardless — even an invalid one, so
 	// the browser stops sending it.
+	h.clearSessionCookies(w)
+	w.WriteHeader(http.StatusOK)
+}
+
+// clearSessionCookies expires the session cookie and, in the same
+// response, its presence flag: a hint left behind would send the explorer
+// back for one more 401 per page load until it expired on its own.
+func (h *Handlers) clearSessionCookies(w http.ResponseWriter) {
 	cleared := credentialCookie(SessionCookieName, "")
 	cleared.MaxAge = -1
 	http.SetCookie(w, cleared)
-	// Drop the presence flag in the same response. A hint left behind
-	// here would send the explorer back for one more 401 per page load
-	// until it expired on its own.
 	h.clearSessionHintCookie(w)
-	w.WriteHeader(http.StatusOK)
 }
 
 // signupNewUser creates the account + first user from a

@@ -293,3 +293,57 @@ If this wasn't you, review your passkeys now and remove any you don't recognise:
 
 We send this notice for every passkey change on your account. If you made this change, no action is needed.
 `
+
+// AccountErasedInput is the data the account-erased notice expects.
+type AccountErasedInput struct {
+	// When is pre-formatted by the caller (UTC).
+	When string
+}
+
+// AccountErasedMessage renders the confirmation sent to an account's
+// owners after the account was erased, so an erasure they did not make is
+// visible to them. It names no slug, key or member: the mail goes to an
+// address the service has just forgotten.
+func AccountErasedMessage(from, recipient string, in AccountErasedInput) (Message, error) {
+	htmlBody, err := renderHTML("account_erased.html", accountErasedHTMLTemplate, in)
+	if err != nil {
+		return Message{}, err
+	}
+	textBody, err := renderText("account_erased.txt", accountErasedTextTemplate, in)
+	if err != nil {
+		return Message{}, err
+	}
+	return Message{
+		From:    from,
+		To:      []string{recipient},
+		Subject: "Your Stellar Index account was deleted",
+		HTML:    htmlBody,
+		Text:    textBody,
+		Tags:    map[string]string{"template": "account-erased"},
+	}, nil
+}
+
+const accountErasedHTMLTemplate = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:32px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0f172a;background:#f8fafc;">
+  <table style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:8px;padding:32px;border:1px solid #e2e8f0;" cellpadding="0" cellspacing="0" border="0" role="presentation">
+    <tr><td>
+      <h1 style="margin:0 0 12px;font-size:20px;font-weight:600;letter-spacing:-0.01em;">Your account was deleted</h1>
+      <p style="margin:0 0 16px;color:#475569;line-height:1.5;">Your Stellar Index account and everything in it (members, sign-in methods, API keys, webhooks and alerts) was deleted on {{.When}}. Its API keys no longer work.</p>
+      <p style="margin:0 0 24px;color:#0f172a;line-height:1.5;">If you did not do this, reply to this email.</p>
+      <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0;">
+      <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.5;">This is the last email we will send to this address about the account.</p>
+    </td></tr>
+  </table>
+</body>
+</html>`
+
+const accountErasedTextTemplate = `Your account was deleted
+
+Your Stellar Index account and everything in it (members, sign-in methods, API keys, webhooks and alerts) was deleted on {{.When}}. Its API keys no longer work.
+
+If you did not do this, reply to this email.
+
+This is the last email we will send to this address about the account.
+`

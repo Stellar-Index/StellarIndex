@@ -2578,7 +2578,7 @@ Pre-seeded on the `sweep` op.
 ### `stellarindex_notify_sends_total`
 
 Counter, labels `template` (`magic-link` / `signup-verify` /
-`passkey-changed`), `result` (`sent` / `failed`).
+`passkey-changed` / `account-erased`), `result` (`sent` / `failed`).
 
 Transactional-email sends through `internal/notify` (the Resend client).
 Before this counter, `internal/notify` had **zero** prometheus visibility,
@@ -2589,11 +2589,12 @@ call site: `sent` when Resend accepts, `failed` on any returned error
 (validation, provider-rejected, or transient/network). `magic-link` is the
 dashboard sign-in email; `signup-verify` is the API-signup confirmation
 email; `passkey-changed` tells a dashboard user a passkey was added to or
-removed from their account — these are the only `notify.Sender` paths
-(price alerts deliver via webhooks, not mail). A sustained `failed` ratio
-drives the `stellarindex_notify_send_failure_ratio_high` alert. Zero-seeded
-across the three templates × {sent, failed} so the ratio reads a real 0
-before the first email.
+removed from their account; `account-erased` confirms to an account's
+owners that the account was deleted — these are the only `notify.Sender`
+paths (price alerts deliver via webhooks, not mail). A sustained `failed`
+ratio drives the `stellarindex_notify_send_failure_ratio_high` alert.
+Zero-seeded across the four templates × {sent, failed} so the ratio reads
+a real 0 before the first email.
 
 ### `stellarindex_aggregator_dropped_trades_total`
 

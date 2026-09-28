@@ -3737,6 +3737,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/dashboard/account": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Customer dashboard — permanently delete this account.
+         * @description Session-gated, owner only; an API key cannot call it. Erases the
+         *     session's account immediately and irreversibly: every member,
+         *     session, passkey, API key (Postgres and Redis), webhook and its
+         *     deliveries, price alert, invite, sign-in token and lockout.
+         *     Audit rows about the account are kept with the customer's
+         *     address, agent, slug and names removed; usage counts are kept
+         *     for up to 12 months under an identifier unlinked from the
+         *     account. The account slug can never be reissued.
+         *
+         *     The session must have been created within the last 10 minutes
+         *     (`reauth-required` otherwise: sign in again, then retry), and the
+         *     body must repeat the account slug. On success the session
+         *     cookie is cleared and each owner is emailed a confirmation.
+         *     A retry after success answers 401, because the session is gone;
+         *     a failure (500) changes nothing, so the same session can retry.
+         *     Accounts with billing state or a staff member answer 409 and are
+         *     handled by an operator.
+         */
+        delete: operations["deleteDashboardAccount"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dashboard/account/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Customer dashboard — download everything held about this account.
+         * @description Session-gated, owner only, on a session created within the last
+         *     10 minutes. Returns one JSON attachment (`Cache-Control:
+         *     no-store`). Other members appear by address, role and dates only:
+         *     their sessions, passkeys, addresses and agents are theirs, not
+         *     the requester's. Staff identity is removed from audit rows. No
+         *     key hash, signing secret, session token hash, passkey public key
+         *     or MFA material is ever included. Every export writes an
+         *     `account.export` audit row carrying counts only.
+         */
+        get: operations["exportDashboardAccount"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/dashboard/keys": {
         parameters: {
             query?: never;
@@ -6549,6 +6612,185 @@ export interface components {
              */
             expires_at?: string;
             usage_alert_threshold_pct?: number;
+        };
+        /**
+         * @description Everything held about an account, as its requesting owner may see
+         *     it. `schema_version` changes when a field is removed or changes
+         *     meaning. jsonb values (`metadata`, delivery `payload`) are copied
+         *     verbatim; NUMERIC values are decimal strings.
+         */
+        AccountExport: {
+            /** @example 1 */
+            schema_version: number;
+            /** Format: date-time */
+            generated_at: string;
+            account: {
+                /** Format: uuid */
+                id?: string;
+                name?: string;
+                slug?: string;
+                billing_email?: string;
+                tier?: string;
+                status?: string;
+                /** Format: date-time */
+                created_at?: string;
+                /** Format: date-time */
+                suspended_at?: string;
+                suspended_reason?: string;
+                rate_limit_per_min_override?: number;
+                monthly_request_quota_override?: number;
+            };
+            users: {
+                /** Format: uuid */
+                id?: string;
+                email?: string;
+                display_name?: string;
+                role?: string;
+                /** Format: date-time */
+                email_verified_at?: string;
+                /** Format: date-time */
+                last_login_at?: string;
+                mfa_enabled?: boolean;
+                /** Format: date-time */
+                created_at?: string;
+                is_requester?: boolean;
+            }[];
+            /** @description The requester's own dashboard sessions. */
+            sessions: {
+                /** Format: uuid */
+                id?: string;
+                /** Format: date-time */
+                created_at?: string;
+                /** Format: date-time */
+                last_seen_at?: string;
+                /** Format: date-time */
+                expires_at?: string;
+                /** Format: date-time */
+                revoked_at?: string;
+                ip_first_seen?: string;
+                ip_last_seen?: string;
+                user_agent?: string;
+                geo_first_seen?: string;
+                geo_last_seen?: string;
+            }[];
+            /** @description The requester's own passkeys. */
+            passkeys: {
+                /** Format: uuid */
+                id?: string;
+                name?: string;
+                aaguid?: string;
+                transports?: string[];
+                backup_eligible?: boolean;
+                backup_state?: boolean;
+                /** Format: date-time */
+                created_at?: string;
+                /** Format: date-time */
+                last_used_at?: string;
+            }[];
+            api_keys: {
+                id?: string;
+                /** @enum {string} */
+                store?: "postgres" | "redis";
+                prefix?: string;
+                name?: string;
+                tier?: string;
+                scopes?: string[];
+                rate_limit_per_min?: number;
+                monthly_quota?: number;
+                ip_allowlist?: string[];
+                referer_allowlist?: string[];
+                /** Format: date-time */
+                created_at?: string;
+                /** Format: date-time */
+                expires_at?: string;
+                /** Format: date-time */
+                revoked_at?: string;
+                revoked_reason?: string;
+                /** Format: date-time */
+                last_used_at?: string;
+                last_used_ip?: string;
+                last_used_user_agent?: string;
+            }[];
+            webhooks: {
+                /** Format: uuid */
+                id?: string;
+                name?: string;
+                url?: string;
+                events?: string[];
+                enabled?: boolean;
+                /** Format: date-time */
+                created_at?: string;
+                /** Format: date-time */
+                updated_at?: string;
+                deliveries?: {
+                    /** Format: uuid */
+                    id?: string;
+                    event_type?: string;
+                    /** @description The delivered body, verbatim. */
+                    payload?: unknown;
+                    attempt_count?: number;
+                    /** Format: date-time */
+                    delivered_at?: string;
+                    last_error?: string;
+                    last_response_status?: number;
+                    /** Format: date-time */
+                    created_at?: string;
+                }[];
+            }[];
+            price_alerts: {
+                /** Format: uuid */
+                id?: string;
+                base_asset?: string;
+                quote_asset?: string;
+                /** @enum {string} */
+                condition?: "above" | "below";
+                /** @description Decimal string. */
+                threshold?: string;
+                cooldown_seconds?: number;
+                enabled?: boolean;
+                /** Format: date-time */
+                last_fired_at?: string;
+                /** Format: date-time */
+                created_at?: string;
+            }[];
+            invites: {
+                email?: string;
+                role?: string;
+                /** Format: date-time */
+                created_at?: string;
+                /** Format: date-time */
+                expires_at?: string;
+                /** Format: date-time */
+                accepted_at?: string;
+                /** Format: date-time */
+                revoked_at?: string;
+            }[];
+            /** @description Daily per-endpoint counts since the account was created. */
+            usage: {
+                /** Format: date */
+                day?: string;
+                subject?: string;
+                endpoint?: string;
+                ok_count?: number;
+                client_error_count?: number;
+                server_error_count?: number;
+                throttled_count?: number;
+            }[];
+            audit_log: {
+                /** Format: date-time */
+                ts?: string;
+                actor_kind?: string;
+                by_requester?: boolean;
+                action?: string;
+                target_kind?: string;
+                target_id?: string;
+                /** @description The row's metadata, verbatim, minus other people's identity. */
+                metadata?: unknown;
+                /** @description Present only on the requester's own actions. */
+                ip?: string;
+                /** @description Present only on the requester's own actions. */
+                user_agent?: string;
+            }[];
         };
         CreateKeyResponse: {
             /**
@@ -20298,6 +20540,172 @@ export interface operations {
             /** @description SignupVerifier not configured (Redis unavailable). */
             503: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    deleteDashboardAccount: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Optional client-chosen key (a UUID is ideal) that makes this
+                 *     create safe to retry. Send the SAME value when retrying a request
+                 *     whose outcome you never saw, such as a client timeout: within ten
+                 *     minutes of a successful original, the retry receives the original
+                 *     response verbatim (marked by an `Idempotency-Replayed: true`
+                 *     response header) instead of creating a second resource. A retry
+                 *     that arrives while the original is still running gets 409
+                 *     `idempotency-key-in-flight` with `Retry-After`. Only 2xx
+                 *     responses are replayed; a failed original may be retried with the
+                 *     same key. Keys are scoped to the caller, and dedup is held per API
+                 *     process, so it covers the retry window rather than surviving a
+                 *     restart. Longer than 256 bytes returns 400
+                 *     `idempotency-key-too-long`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "confirm": "acme"
+                 *     }
+                 */
+                "application/json": {
+                    /** @description The account slug, typed exactly. */
+                    confirm: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Account erased; the session cookie is cleared. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `confirm` is missing or is not the account slug. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description No valid session cookie, or the session is older than 10
+             *     minutes (`reauth-required`).
+             */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description The session user is not an owner, OR the write was blocked
+             *     as cross-site (`cross-site-request-blocked`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description The account cannot be erased from the dashboard
+             *     (`account-erasure-blocked`: billing state or a staff member),
+             *     or an `Idempotency-Key` matching this request is still being
+             *     processed (`idempotency-key-in-flight`).
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description More than 3 attempts by this user in the last hour. */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The erasure failed and nothing was changed; retry. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    exportDashboardAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The export. */
+            200: {
+                headers: {
+                    /** @description `attachment; filename="stellarindex-account-export-<unix>.json"` */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountExport"];
+                };
+            };
+            /**
+             * @description No valid session cookie, or the session is older than 10
+             *     minutes (`reauth-required`).
+             */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The session user is not an owner. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description More than 5 exports by this user in the last hour. */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {

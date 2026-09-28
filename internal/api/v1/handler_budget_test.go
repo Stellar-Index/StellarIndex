@@ -460,6 +460,8 @@ var inlineDetachments = map[string]string{
 		"written, which a client disconnect must not abort; bounded by sendTimeout",
 	"dashboardauth/credential_audit.go#notifyPasskeyChanged": "the passkey add/remove notice " +
 		"after the change committed, which a client disconnect must not drop; bounded by sendTimeout",
+	"dashboardauth/account.go#notifyAccountErased": "the erasure confirmation to each owner " +
+		"after the erasure committed, which a client disconnect must not drop; bounded by sendTimeout per owner",
 	"middleware/ratelimit.go#throttleContext": "the rate-limit take runs before the handler " +
 		"and must count an aborted request; bounded by throttleTakeTimeout",
 	"middleware/usage.go#usageTrackerRecord": "post-response usage metering, which must count an " +
