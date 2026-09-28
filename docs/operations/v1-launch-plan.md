@@ -1507,7 +1507,7 @@ older `### D — Decisions only the maintainer can make` table further down, **t
 
 **D7 is not a decision — it is work I owe:** the C4-012/13 third-alias thin-pool VWAP surface needs a deliberate review before public traffic. **DONE 2026-09-04** — row 1.9 above; the one exposed surface (`/v1/price/tip`) is fixed, and R1 in the artefact is the residual that IS a decision.
 
-**Correction to the security gate row:** it names `ratesengine-admin`, a pre-rename credential. Verified on r1 2026-08-29: MinIO root is now `stellarindex-admin` (40-char secret) and MinIO was restarted 2026-07-27, i.e. after the 2026-07-25 plaintext exposure. Whether the *password* rotated at that restart or only the username is not evidenced either way, so rotation is still worth doing on its own merits.
+**Correction to the security gate row:** it names `ratesengine-admin`, a pre-rename credential. Verified on r1 2026-08-29: MinIO root is now `stellarindex-admin` (40-char secret) and MinIO was restarted 2026-07-27, i.e. after the 2026-07-25 plaintext exposure. Verified 2026-09-28: the password rotated too — the old access key is rejected ("Access Key Id … does not exist") and the stored old secret differs from the live one. The exposure is closed; moving services off root to least-privilege users remains hygiene.
 
 
 ### D — Decisions only the maintainer can make
