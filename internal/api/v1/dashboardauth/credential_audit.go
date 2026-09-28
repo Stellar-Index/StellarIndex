@@ -1,12 +1,14 @@
 package dashboardauth
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/notify"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
@@ -67,6 +69,42 @@ func (h *Handlers) recordPasskeyRegistered(r *http.Request, sc SessionContext, r
 			"backup_eligible": row.BackupEligible,
 		},
 	})
+}
+
+// passkeySettingsPath is the dashboard page listing the user's passkeys.
+const passkeySettingsPath = "/dashboard/settings"
+
+// notifyPasskeyChanged counts a passkey add/remove and emails the user
+// whose sign-in methods changed, so a change made from a session they do
+// not control still reaches them. Best-effort for the same reason as the
+// audit row: the change has already committed.
+func (h *Handlers) notifyPasskeyChanged(r *http.Request, sc SessionContext, change notify.PasskeyChange) {
+	obs.PasskeyCredentialChangesTotal.WithLabelValues(string(change)).Inc()
+	var ip string
+	if addr := clientIP(r); addr != nil {
+		ip = addr.String()
+	}
+	msg, err := notify.PasskeyChangedMessage(h.cfg.EmailFrom, sc.User.Email, notify.PasskeyChangedInput{
+		Change:    change,
+		When:      h.cfg.Now().UTC().Format("2 Jan 2006 15:04 UTC"),
+		IPAddress: ip,
+		UserAgent: truncateUA(r.UserAgent()),
+		ManageURL: strings.TrimRight(h.cfg.DashboardBaseURL, "/") + passkeySettingsPath,
+	})
+	if err == nil {
+		// Detached from the request context, as the magic-link send is:
+		// the change is durable, so a client disconnect must not drop it.
+		sendCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), sendTimeout)
+		defer cancel()
+		err = h.cfg.Sender.Send(sendCtx, msg)
+	}
+	if err != nil {
+		obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplatePasskeyChanged, obs.NotifySendResultFailed).Inc()
+		h.cfg.Logger.Error("passkey change notice not sent",
+			"err", err, "change", change, "user_id", sc.User.ID)
+		return
+	}
+	obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplatePasskeyChanged, obs.NotifySendResultSent).Inc()
 }
 
 // recordPasskeyLoginRefusal counts and audits a sign-in refused after

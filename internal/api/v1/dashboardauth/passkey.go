@@ -60,6 +60,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/notify"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
@@ -594,6 +595,7 @@ func (h *Handlers) HandlePasskeyFinishRegister(w http.ResponseWriter, r *http.Re
 		return
 	}
 	h.recordPasskeyRegistered(r, sc, row)
+	h.notifyPasskeyChanged(r, sc, notify.PasskeyAdded)
 	h.clearPasskeyCeremonyCookie(w)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(passkeyDTOFrom(row))
@@ -894,5 +896,6 @@ func (h *Handlers) HandlePasskeyDelete(w http.ResponseWriter, r *http.Request) {
 		TargetKind: auditTargetPasskey,
 		TargetID:   id.String(),
 	})
+	h.notifyPasskeyChanged(r, sc, notify.PasskeyRemoved)
 	w.WriteHeader(http.StatusNoContent)
 }

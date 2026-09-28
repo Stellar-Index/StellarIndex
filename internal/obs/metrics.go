@@ -238,6 +238,7 @@ func registerAppMetricsTail() {
 		// [registerAppMetrics] for the same funlen reason as
 		// SourceUnrepresentableSymbolsTotal below.
 		PasskeyLoginRefusalsTotal,
+		PasskeyCredentialChangesTotal,
 
 		AMMSwapReceivedDivergenceTotal,
 		// Per-reference divergence metrics, here rather than beside
@@ -523,6 +524,7 @@ func seedBoundedLabelSeries() {
 		MagicLinkTokenErrorsTotal.WithLabelValues(op)
 	}
 	seedNotifySeries()
+	seedPasskeyCredentialChangeSeries()
 	// Bounded outcome set for the 2026-07-06 backpressure retry counter
 	// so the `trade_insert_backpressure` alert's rate() query reads a
 	// real zero (not "no data") before the first outage.
@@ -727,11 +729,16 @@ func seedLedgerstreamTierSeries() {
 // its own helper for the same gocognit ceiling that split
 // seedLedgerstreamTierSeries.
 func seedNotifySeries() {
-	for _, template := range []string{NotifyTemplateMagicLink, NotifyTemplateSignupVerify} {
+	for _, template := range []string{NotifyTemplateMagicLink, NotifyTemplateSignupVerify, NotifyTemplatePasskeyChanged} {
 		for _, result := range []string{NotifySendResultSent, NotifySendResultFailed} {
 			NotifySendsTotal.WithLabelValues(template, result)
 		}
 	}
+}
+
+func seedPasskeyCredentialChangeSeries() {
+	PasskeyCredentialChangesTotal.WithLabelValues(PasskeyChangeAdded)
+	PasskeyCredentialChangesTotal.WithLabelValues(PasskeyChangeRemoved)
 }
 
 // Handler returns an http.Handler that serves Prometheus-formatted
@@ -2797,6 +2804,10 @@ const (
 	// (cmd/stellarindex-api signupVerifyEmailerAdapter). A failure leaves
 	// the key usable but never flips email_verified.
 	NotifyTemplateSignupVerify = "signup-verify"
+	// NotifyTemplatePasskeyChanged — the notice to a dashboard user that a
+	// passkey was added to or removed from their account. A failure means
+	// the owner is not told about a first-factor change.
+	NotifyTemplatePasskeyChanged = "passkey-changed"
 
 	// NotifySendResultSent — Sender.Send returned nil (accepted by Resend).
 	NotifySendResultSent = "sent"
@@ -4687,6 +4698,24 @@ var PasskeyLoginRefusalsTotal = prometheus.NewCounterVec(
 		Help: "Passkey sign-ins refused after the assertion signature verified, by reason (clone_warning|ceremony_replay).",
 	},
 	[]string{"reason"},
+)
+
+// PasskeyCredentialChangesTotal counts passkeys added to or removed from
+// dashboard users' sign-in methods, by change. A burst of `added` across
+// accounts is the shape of hijacked sessions being turned into durable
+// credentials.
+var PasskeyCredentialChangesTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_passkey_credential_changes_total",
+		Help: "Passkeys added to or removed from dashboard users' sign-in methods, by change (added|removed).",
+	},
+	[]string{"change"},
+)
+
+// PasskeyCredentialChangesTotal change label values.
+const (
+	PasskeyChangeAdded   = "added"
+	PasskeyChangeRemoved = "removed"
 )
 
 // PasskeyLoginRefusalsTotal reason label values.
