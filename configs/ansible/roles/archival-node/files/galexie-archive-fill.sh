@@ -48,6 +48,7 @@ if ! flock -n "$lock_fd"; then
 fi
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/galexie-fill.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
+: > "$WORK/rejected.txt"
 
 # Hot floor (ADR-0027 trim): partitions whose ledger range ends BELOW
 # this are deliberately trimmed from local storage — the cold tier
@@ -102,12 +103,51 @@ aws_ls() {  # $1=prefix (after aws-public/), remaining args passed to mc ls
   return 1
 }
 
+# Partition names come from the upstream bucket listing or the operator and
+# become mc paths in a script run as root, so only this shape is accepted.
+PARTITION_RE='^[0-9A-F]{8}--[0-9]+-[0-9]+$'
+
+# valid_partitions — stdin names to stdout, keeping only Galexie partition
+# names (FC42F7FF--62720000-62783999). Empty lines and the bucket's
+# .config.json marker are dropped; anything else is recorded in
+# rejected.txt for report_rejected.
+valid_partitions() {
+  local p
+  while IFS= read -r p; do
+    case "$p" in '' | .config.json) continue ;; esac
+    if [[ "$p" =~ $PARTITION_RE ]]; then
+      printf '%s\n' "$p"
+    else
+      printf '%q\n' "$p" >> "$WORK/rejected.txt"
+    fi
+  done
+}
+
+# aws_partitions — the validated, sorted partition names on the AWS bucket.
+aws_partitions() {
+  aws_ls aws-public-blockchain/v1.1/stellar/ledgers/pubnet/ \
+    | awk '{print $NF}' | sed 's:/$::' | valid_partitions | sort
+}
+
+# report_rejected — exit 1, naming them, if any name was refused so far.
+report_rejected() {
+  if [ -s "$WORK/rejected.txt" ]; then
+    sort -u "$WORK/rejected.txt" > "$WORK/rejected.uniq.txt"
+    echo "galexie-archive-fill: FATAL — refused $(wc -l < "$WORK/rejected.uniq.txt") name(s) that are not Galexie partitions:" | tee -a "$LOG" >&2
+    tee -a "$LOG" < "$WORK/rejected.uniq.txt" >&2
+    exit 1
+  fi
+}
+
 if [ -n "$PARTIALS_INPUT" ]; then
   echo "=== $(date -Iseconds) Phase 1: delete known partials ===" | tee -a "$LOG"
-  echo "$PARTIALS_INPUT" | tr ' ' '\n' | grep -v '^$' | while read -r p; do
+  # Validate the whole list before deleting anything.
+  printf '%s\n' "$PARTIALS_INPUT" | tr ' ' '\n' | valid_partitions > "$WORK/partials.txt"
+  report_rejected
+  while read -r p; do
     echo "  rm: $p" | tee -a "$LOG"
     mc rm --recursive --force "local/galexie-archive/$p/" >/dev/null 2>&1 || true
-  done
+  done < "$WORK/partials.txt"
 fi
 
 # Phase 1b — auto-detect trailing-edge partials by sampling the latest
@@ -124,7 +164,7 @@ if [ "$PARTIAL_CHECK_WINDOW" -gt 0 ]; then
   # alphabetical sort puts the most recent (highest-ledger) partition
   # FIRST. e.g. FC42F7FF--62720000-... sorts BEFORE FFFFFFFF--0-63999
   # (genesis). `head -N` therefore gives us the latest N partitions —
-  # filter `.config.json` (the bucket marker file) out first.
+  # aws_partitions drops `.config.json` (the bucket marker file) first.
   #
   # `sort` writes to a FILE and `head` reads it back, rather than the
   # obvious `sort | head -n N`. Under `set -euo pipefail` that pipeline
@@ -137,9 +177,7 @@ if [ "$PARTIAL_CHECK_WINDOW" -gt 0 ]; then
   # random (#475; three failures in r1's journal, the last 2026-09-02
   # 18:19:35 UTC, AFTER the be4907c5 retry helper — which cannot help,
   # because the AWS call itself succeeded).
-  aws_ls aws-public-blockchain/v1.1/stellar/ledgers/pubnet/ \
-    | awk '{print $NF}' | sed 's:/$::' | { grep -v '^\.' || true; } \
-    | sort > "$WORK/partitions.txt"
+  aws_partitions > "$WORK/partitions.txt"
   head -n "$PARTIAL_CHECK_WINDOW" "$WORK/partitions.txt" \
     > "$WORK/tail.txt"
   while read -r p; do
@@ -172,8 +210,7 @@ if [ "$PARTIAL_CHECK_WINDOW" -gt 0 ]; then
 fi
 
 echo "=== $(date -Iseconds) Phase 2: build needs-work list ===" | tee -a "$LOG"
-aws_ls aws-public-blockchain/v1.1/stellar/ledgers/pubnet/ \
-  | awk '{print $NF}' | sed 's:/$::' | sort > "$WORK/aws.txt"
+aws_partitions > "$WORK/aws.txt"
 mc ls local/galexie-archive/ \
   | awk '{print $NF}' | sed 's:/$::' | sort > "$WORK/local.txt"
 comm -23 "$WORK/aws.txt" "$WORK/local.txt" \
@@ -211,14 +248,26 @@ echo "=== $(date -Iseconds) Phase 3: mirror per-partition (parallel=$PARALLEL) =
 # objects rather than a full re-download. --skip-errors is belt-and-braces.
 # Parallel=8 is conservative — 100 MB/s observed link saturation, so
 # more workers won't help.
-# shellcheck disable=SC2016  # $(date) is expanded by the per-partition bash
-xargs -a "$WORK/needs-work.txt" -P "$PARALLEL" -I {} bash -c '
-  echo "==> $(date -Iseconds) {}" >> "'"$LOG"'"
+# The partition reaches the worker as "$3", never as script text: `xargs -I
+# {}` splices it into the source bash then parses. -r: an empty list makes
+# no call, where one call with no partition would mirror the whole bucket.
+# The worker re-checks the name so an empty or malformed one can never
+# become a bucket-root path.
+# shellcheck disable=SC2016  # expanded by the per-partition bash
+xargs -r -a "$WORK/needs-work.txt" -d '\n' -P "$PARALLEL" -n 1 bash -c '
+  log=$1 re=$2 p=$3
+  if ! [[ "$p" =~ $re ]]; then
+    echo "galexie-archive-fill: refusing to mirror non-partition name: ${p@Q}" >&2
+    exit 1
+  fi
+  echo "==> $(date -Iseconds) $p" >> "$log"
   mc mirror --skip-errors \
-    "aws-public/aws-public-blockchain/v1.1/stellar/ledgers/pubnet/{}/" \
-    "local/galexie-archive/{}/" >> "'"$LOG"'" 2>&1
-  echo "<== $(date -Iseconds) {}" >> "'"$LOG"'"
-'
+    "aws-public/aws-public-blockchain/v1.1/stellar/ledgers/pubnet/$p/" \
+    "local/galexie-archive/$p/" >> "$log" 2>&1
+  echo "<== $(date -Iseconds) $p" >> "$log"
+' mirror-partition "$LOG" "$PARTITION_RE"
+
+report_rejected
 
 echo "=== $(date -Iseconds) Done ===" | tee -a "$LOG"
 echo "Next: stellarindex-ops verify-archive -tier all -from 2 -to <last-mirrored-ledger>" | tee -a "$LOG"

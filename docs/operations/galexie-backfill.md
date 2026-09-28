@@ -449,6 +449,13 @@ explicit override:
 PARTIALS="PART1 PART2 PART3" galexie-archive-fill
 ```
 
+Each entry must be a full partition name such as
+`FC42F7FF--62720000-62783999`, with no trailing slash. If any entry is
+not, the script rejects the whole list before deleting anything and
+exits 1. A name in the AWS listing that is not a partition (other than
+`.config.json`) is never mirrored. It is reported, and the run exits 1
+after the valid partitions are mirrored.
+
 The script takes its own lock (`/run/lock/galexie-archive-fill.lock`)
 and works in a private `mktemp -d` directory, so a manual run cannot
 overlap the timer's run: if the timer's run is still going, the manual
