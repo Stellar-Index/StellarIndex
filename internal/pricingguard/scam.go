@@ -41,7 +41,8 @@
 //   - /v1/price/stream, in closedStreamWithheld — at connect AND on
 //     every forwarded closed bucket, because the aggregator publishes
 //     that bucket with no gate consultation on the producer path;
-//   - /v1/vwap, /v1/twap and /v1/chart, in their handlers.
+//   - /v1/vwap, /v1/twap, /v1/chart and /v1/history/since-inception, in
+//     their handlers (the last two share seriesWithheldForScam).
 //
 // Every one of those sites asks the PAIR question. Inside
 // internal/api/v1 they all route through its scamWithheld helper. Its
