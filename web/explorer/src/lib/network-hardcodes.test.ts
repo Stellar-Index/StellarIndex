@@ -75,6 +75,9 @@ const ALLOWED = new Map<string, string>([
   // test nets and the whole SaaS surface is hidden there), so a mainnet
   // API example is correct wherever this page can actually render.
   ['app/dashboard/page.tsx', 'mainnet-only surface'],
+  // Byte-for-byte mirror of public/_headers' CSP, which names every
+  // network's API origin (mainnet, testnet, futurenet) in connect-src.
+  ['../functions/_shared/shellFallback.js', 'CSP mirror of public/_headers; lists all networks'],
 ]);
 
 /**
