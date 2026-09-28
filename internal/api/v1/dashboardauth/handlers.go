@@ -155,6 +155,10 @@ type Config struct {
 	// passkeyBeginLimiter caps anonymous begin-login ceremonies per
 	// client IP; installed by validate(), never configurable off.
 	passkeyBeginLimiter *ratelimit.LocalFixedWindowCounter
+	// signedInBrowserSends caps the sends [Handlers.admitSignedInBrowser]
+	// lets past a full LoginThrottle: one per address per link lifetime per
+	// instance. Installed by validate(), never configurable off.
+	signedInBrowserSends *ratelimit.LocalFixedWindowCounter
 }
 
 // validate fills in defaults and rejects unworkable configs.
@@ -172,10 +176,11 @@ func (c *Config) validate() error {
 		// The 6-digit code derivation must NEVER run unkeyed (that is
 		// the vulnerability this secret exists to close — see
 		// [Generator.CodeForHash]). No configured secret → random
-		// per-process one, which also keys the passkey ceremony cookie.
-		// Both stay unforgeable, but neither verifies on another
-		// instance or after a restart: in-flight codes and passkey
-		// ceremonies fail (the magic link keeps working).
+		// per-process one, which also keys the passkey ceremony and
+		// login-device cookies. All stay unforgeable, but none verifies
+		// on another instance or after a restart: in-flight codes,
+		// passkey ceremonies and login-device markers fail (the magic
+		// link keeps working).
 		secret := make([]byte, 32)
 		if _, err := c.Generator.Read(secret); err != nil {
 			return fmt.Errorf("dashboardauth: generate code secret: %w", err)
@@ -207,6 +212,9 @@ func (c *Config) validate() error {
 	}
 	if c.MagicLinkTTL == 0 {
 		c.MagicLinkTTL = 15 * time.Minute
+	}
+	if c.signedInBrowserSends == nil {
+		c.signedInBrowserSends = ratelimit.NewLocalFixedWindowCounter(max(c.MagicLinkTTL, time.Second), c.Now)
 	}
 	if c.SessionTTL == 0 {
 		c.SessionTTL = 30 * 24 * time.Hour
@@ -425,33 +433,8 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Magic-link abuse throttle (audit-2026-06-14 A12). Over quota → skip the
-	// send but return the SAME generic 200 below, so neither an attacker nor
-	// the victim's inbox learns a throttle fired. Throttle error → fall open.
-	// The global anon rate-limit is NOT what bounds sends then (it is far
-	// above any email cap); auth.RedisLoginThrottle only errors after its
-	// in-process fallback has admitted the send under the same caps.
-	if h.cfg.LoginThrottle != nil {
-		ok, terr := h.cfg.LoginThrottle.Allow(r.Context(), clientIP(r).String(), email)
-		switch {
-		case terr != nil:
-			h.cfg.Logger.Warn("login throttle unavailable; falling open", "err", terr)
-		case !ok:
-			h.cfg.Logger.Warn("magic-link login throttled", "ip", clientIP(r).String())
-			// Emit a login-intent cookie here too, of a token that was
-			// never persisted. Without it the throttled response would
-			// be the only 200 that carries no `Set-Cookie:
-			// stellarindex_login_intent` — a byte-visible oracle for
-			// "a throttle fired for this address", which is exactly
-			// what [LoginThrottle]'s contract forbids leaking. The
-			// decoy digest witnesses a token no store ever saw, so it
-			// can never redeem anything.
-			if _, decoy, _, gerr := h.cfg.Generator.NewToken(); gerr == nil {
-				h.setLoginIntentCookie(w, r, decoy)
-			}
-			_ = json.NewEncoder(w).Encode(loginResponse{Status: "sent"})
-			return
-		}
+	if h.loginThrottled(w, r, email) {
+		return
 	}
 
 	plaintext, hash, code, err := h.cfg.Generator.NewToken()
@@ -528,6 +511,57 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = json.NewEncoder(w).Encode(loginResponse{Status: "sent"})
+}
+
+// loginThrottled applies the magic-link abuse throttle (audit-2026-06-14
+// A12). Over quota → skip the send but write the SAME generic 200 the send
+// path does and report true, so neither an attacker nor the victim's inbox
+// learns a throttle fired. Throttle error → fall open. The global anon
+// rate-limit is NOT what bounds sends then (it is far above any email cap);
+// auth.RedisLoginThrottle only errors after its in-process fallback has
+// admitted the send under the same caps.
+func (h *Handlers) loginThrottled(w http.ResponseWriter, r *http.Request, email string) bool {
+	if h.cfg.LoginThrottle == nil {
+		return false
+	}
+	ok, terr := h.cfg.LoginThrottle.Allow(r.Context(), clientIP(r).String(), email)
+	switch {
+	case terr != nil:
+		h.cfg.Logger.Warn("login throttle unavailable; falling open", "err", terr)
+		return false
+	case ok:
+		return false
+	case h.admitSignedInBrowser(r, email):
+		h.cfg.Logger.Info("magic-link throttle full; sending to a browser previously signed in to this address",
+			"ip", clientIP(r).String())
+		return false
+	}
+	h.cfg.Logger.Warn("magic-link login throttled", "ip", clientIP(r).String())
+	// Emit a login-intent cookie here too, of a token that was never
+	// persisted. Without it the throttled response would be the only 200
+	// that carries no `Set-Cookie: stellarindex_login_intent` — a
+	// byte-visible oracle for "a throttle fired for this address", which is
+	// exactly what [LoginThrottle]'s contract forbids leaking. The decoy
+	// digest witnesses a token no store ever saw, so it can never redeem
+	// anything.
+	if _, decoy, _, gerr := h.cfg.Generator.NewToken(); gerr == nil {
+		h.setLoginIntentCookie(w, r, decoy)
+	}
+	_ = json.NewEncoder(w).Encode(loginResponse{Status: "sent"})
+	return true
+}
+
+// admitSignedInBrowser lets a send past a full LoginThrottle when the
+// request carries this address's [LoginDeviceCookieName] proof. The
+// per-address cap is shared by everyone who knows the address, so without
+// this the owner's own requests could be crowded out indefinitely; the
+// proof is something only a browser that has already signed in holds.
+// Bounded to one send per address per link lifetime per instance, so the
+// owner can always hold one live link and the bypass is no inbox flood.
+// The proof is checked first, so a caller without one never adds a key.
+func (h *Handlers) admitSignedInBrowser(r *http.Request, email string) bool {
+	return h.hasLoginDeviceProof(r, email) &&
+		h.cfg.signedInBrowserSends.Allow(hashEmailForLocker(email), 1)
 }
 
 // sessionSameSite picks the session-cookie SameSite policy. The explorer at
@@ -649,8 +683,10 @@ type verifyCodeResponse struct {
 //
 // Non-matching includes CORRECT-BUT-STALE. A code whose token has
 // expired, been consumed, burned [maxCodeAttempts], or been superseded
-// by a newer sign-in email is not a candidate, so submitting it registers a durable per-email failure
-// (C3-032) exactly as a wrong guess does. That is deliberate — the
+// by a newer sign-in email is not a candidate, so while ANY code is live
+// submitting it registers a durable per-email failure (C3-032) exactly as
+// a wrong guess does; with no live code nothing is compared and nothing
+// is charged. That is deliberate — the
 // server cannot distinguish "the owner pasted yesterday's code" from
 // "an attacker guessed a value that happens to match a dead token"
 // without leaking which — and it is affordable because the lockout
@@ -682,6 +718,13 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	// would be an enumeration oracle, and the anti-enumeration contract
 	// on this endpoint is absolute.
 	if h.loginCodeLocked(r, email) {
+		writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
+		return
+	}
+
+	// Nothing to compare against → the answer is already "no", and charging
+	// it would spend the owner's budget on a request that could not match.
+	if !h.loginCodeLive(r, email) {
 		writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
 		return
 	}
@@ -762,6 +805,19 @@ func (h *Handlers) loginCodeLocked(r *http.Request, email string) bool {
 		"email", maskEmail(email), "failed_count", state.FailedCount,
 		"locked_until", state.LockedUntil, "ip", clientIP(r).String())
 	return true
+}
+
+// loginCodeLive reports whether a code candidate exists for email. A
+// store error answers true: the attempt is then charged as before, never
+// waved through uncharged.
+func (h *Handlers) loginCodeLive(r *http.Request, email string) bool {
+	live, err := h.cfg.Tokens.HasLiveLoginCode(r.Context(), email, maxCodeAttempts)
+	if err != nil {
+		h.cfg.Logger.Warn("login code liveness check failed; charging the attempt",
+			"err", err, "email", maskEmail(email))
+		return true
+	}
+	return live
 }
 
 // chargeLoginCodeAttempt records this attempt against the email's
@@ -892,6 +948,9 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 	// response so the two can never disagree about whether a session
 	// was just issued. See [SessionHintCookieName].
 	h.setSessionHintCookie(w, sess.ExpiresAt)
+	if email, err := notify.CanonicalRecipient(user.Email); err == nil {
+		h.setLoginDeviceCookie(w, email)
+	}
 	return nil
 }
 

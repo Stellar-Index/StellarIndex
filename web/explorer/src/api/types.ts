@@ -21156,14 +21156,19 @@ export interface operations {
             303: {
                 headers: {
                     /**
-                     * @description Two cookies. `stellarindex_session` is the HttpOnly +
+                     * @description Three cookies. `stellarindex_session` is the HttpOnly +
                      *     Secure session credential. `stellarindex_session_present`
                      *     repeats its Domain, Path, Secure, SameSite and expiry
                      *     without HttpOnly, and carries the constant `1` — a
                      *     presence flag a browser client reads to decide whether a
                      *     call to `/v1/account/me` can succeed. It carries no
                      *     identity and no token, no endpoint reads it, and it
-                     *     authorizes nothing.
+                     *     authorizes nothing. `stellarindex_login_device` is an
+                     *     HttpOnly, 400-day, server-signed marker scoped to
+                     *     `Path=/v1/auth/login`: it records that this browser has
+                     *     signed in to this address, so a later `POST /auth/login`
+                     *     from it still receives a link when the per-address send
+                     *     limit is full. It authenticates nothing.
                      */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
@@ -21226,14 +21231,19 @@ export interface operations {
             200: {
                 headers: {
                     /**
-                     * @description Two cookies. `stellarindex_session` is the HttpOnly +
+                     * @description Three cookies. `stellarindex_session` is the HttpOnly +
                      *     Secure session credential. `stellarindex_session_present`
                      *     repeats its Domain, Path, Secure, SameSite and expiry
                      *     without HttpOnly, and carries the constant `1` — a
                      *     presence flag a browser client reads to decide whether a
                      *     call to `/v1/account/me` can succeed. It carries no
                      *     identity and no token, no endpoint reads it, and it
-                     *     authorizes nothing.
+                     *     authorizes nothing. `stellarindex_login_device` is an
+                     *     HttpOnly, 400-day, server-signed marker scoped to
+                     *     `Path=/v1/auth/login`: it records that this browser has
+                     *     signed in to this address, so a later `POST /auth/login`
+                     *     from it still receives a link when the per-address send
+                     *     limit is full. It authenticates nothing.
                      */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
@@ -21369,14 +21379,19 @@ export interface operations {
             200: {
                 headers: {
                     /**
-                     * @description Two cookies. `stellarindex_session` is the HttpOnly +
+                     * @description Three cookies. `stellarindex_session` is the HttpOnly +
                      *     Secure session credential. `stellarindex_session_present`
                      *     repeats its Domain, Path, Secure, SameSite and expiry
                      *     without HttpOnly, and carries the constant `1` — a
                      *     presence flag a browser client reads to decide whether a
                      *     call to `/v1/account/me` can succeed. It carries no
                      *     identity and no token, no endpoint reads it, and it
-                     *     authorizes nothing.
+                     *     authorizes nothing. `stellarindex_login_device` is an
+                     *     HttpOnly, 400-day, server-signed marker scoped to
+                     *     `Path=/v1/auth/login`: it records that this browser has
+                     *     signed in to this address, so a later `POST /auth/login`
+                     *     from it still receives a link when the per-address send
+                     *     limit is full. It authenticates nothing.
                      */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;

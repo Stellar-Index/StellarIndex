@@ -1,10 +1,12 @@
 package dashboardauth
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -131,6 +133,63 @@ func (h *Handlers) clearLoginIntentCookie(w http.ResponseWriter) {
 		Secure:   h.cfg.CookieSecure,
 		SameSite: sessionSameSite(),
 	})
+}
+
+// LoginDeviceCookieName marks a browser that has completed a sign-in for
+// one address. Its only effect: POST /v1/auth/login from this browser, for
+// that address, still gets a link when the per-address send cap — which
+// anyone who knows the address can fill — is exhausted (see
+// [Handlers.admitSignedInBrowser]). It authenticates nothing and is
+// scoped by Path to the login route, so no other route ever receives it.
+const LoginDeviceCookieName = "stellarindex_login_device"
+
+// loginDeviceTTL is the longest cookie lifetime browsers honour (RFC 6265bis
+// caps Max-Age at 400 days); every sign-in re-issues it.
+const loginDeviceTTL = 400 * 24 * time.Hour
+
+// loginDeviceMAC binds an address and an expiry under the server secret,
+// so the cookie can be neither forged nor moved to another address.
+func loginDeviceMAC(secret []byte, email string, expires int64) string {
+	m := hmac.New(sha256.New, secret)
+	m.Write([]byte("stellarindex/login-device/v1|"))
+	m.Write([]byte(strconv.FormatInt(expires, 10)))
+	m.Write([]byte("|"))
+	m.Write([]byte(email))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
+// setLoginDeviceCookie issues the proof for email, which must be in
+// [notify.CanonicalRecipient] form — the form HandleLogin checks against.
+func (h *Handlers) setLoginDeviceCookie(w http.ResponseWriter, email string) {
+	expires := h.cfg.Now().Add(loginDeviceTTL).Unix()
+	http.SetCookie(w, &http.Cookie{
+		Name:     LoginDeviceCookieName,
+		Value:    strconv.FormatInt(expires, 10) + loginIntentSeparator + loginDeviceMAC(h.cfg.Generator.Secret, email, expires),
+		Path:     "/v1/auth/login",
+		Domain:   h.cfg.CookieDomain,
+		MaxAge:   int(loginDeviceTTL / time.Second),
+		HttpOnly: true,
+		Secure:   h.cfg.CookieSecure,
+		SameSite: sessionSameSite(),
+	})
+}
+
+// hasLoginDeviceProof reports whether r carries an unexpired proof that
+// this browser has signed in to email before.
+func (h *Handlers) hasLoginDeviceProof(r *http.Request, email string) bool {
+	c, err := r.Cookie(LoginDeviceCookieName)
+	if err != nil {
+		return false
+	}
+	exp, mac, ok := strings.Cut(c.Value, loginIntentSeparator)
+	if !ok {
+		return false
+	}
+	expires, err := strconv.ParseInt(exp, 10, 64)
+	if err != nil || expires <= h.cfg.Now().Unix() {
+		return false
+	}
+	return hmac.Equal([]byte(mac), []byte(loginDeviceMAC(h.cfg.Generator.Secret, email, expires)))
 }
 
 // hasLoginIntent reports whether this browser is the one that asked

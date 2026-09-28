@@ -141,8 +141,8 @@ type Generator struct {
 	// Secret keys the 6-digit code derivation (see
 	// [Generator.CodeForHash]) AND, despite the env var's name, also
 	// keys the WebAuthn passkey-ceremony cookie MAC
-	// (passkeyCeremonyMAC in passkey.go) — the same server secret
-	// backs both. Production wires it from the
+	// (passkeyCeremonyMAC in passkey.go) and the login-device marker
+	// (loginDeviceMAC in login_intent.go) — one server secret backs all. Production wires it from the
 	// STELLARINDEX_DASHBOARD_CODE_SECRET env (config
 	// api.dashboard.code_secret_env); when left empty,
 	// Config.validate() fills a random per-process secret so neither
