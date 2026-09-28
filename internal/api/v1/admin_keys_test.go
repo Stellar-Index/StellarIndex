@@ -131,6 +131,44 @@ func TestAdminKeysCreate_Happy(t *testing.T) {
 	}
 }
 
+// TestAdminKeysCreate_RateLimitDefaultsToCaller pins GH-1147: an admin
+// mint request that omits rate_limit_per_min must inherit the CALLER's
+// own ceiling, not the deployment/tier default (0), which can exceed
+// it. ClampToMinter's own-ceiling check only fires for
+// rateLimitPerMin > 0, so a scoped operator on 500/min could otherwise
+// mint an unrestricted (0 = default, potentially far higher) key by
+// simply omitting the field. The clamped value must reach the store
+// call, the response and the audit row alike.
+func TestAdminKeysCreate_RateLimitDefaultsToCaller(t *testing.T) {
+	store := &fakeAccountStore{
+		rec:   auth.APIKeyRecord{KeyID: "kid_minted02"},
+		plain: "sip_x",
+	}
+	sink := &recordingAuditSink{}
+	caller := auth.Subject{
+		Identifier:      "operator:staff-1",
+		Tier:            auth.TierOperator,
+		KeyID:           "kid_operator1",
+		RateLimitPerMin: 500,
+	}
+	ts := newAdminTestServer(t, caller, store, sink)
+
+	resp := postJSON(t, ts.URL+"/v1/admin/keys",
+		`{"identifier":"acct:partner-co","label":"l"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", resp.StatusCode)
+	}
+	if store.gotReq.RateLimitPerMin != 500 {
+		t.Errorf("RateLimitPerMin = %d, want caller's own ceiling 500", store.gotReq.RateLimitPerMin)
+	}
+	if len(sink.entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1", len(sink.entries))
+	}
+	if !strings.Contains(string(sink.entries[0].Metadata), `"rate_limit_per_min":500`) {
+		t.Errorf("audit metadata rate_limit_per_min not clamped to 500: %s", sink.entries[0].Metadata)
+	}
+}
+
 // TestAdminKeysCreate_RequiresReason pins C3-107 (audit-2026-07-23).
 // Minting a privileged credential is at least as consequential as
 // setting a per-account override or killing a key, both of which hard-400
