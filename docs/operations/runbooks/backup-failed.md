@@ -235,6 +235,8 @@ usually explain both symptoms together.
 - `docs/operations/pgbackrest-encryption.md` — repo cipher / re-create procedure.
 - `docs/operations/off-site-backup-plan.md` — repo2 (offsite S3), live on r1 2026-08-29.
 - `backup-offsite-stale.md` — `stellarindex_backup_offsite_stale`, the repo2-specific staleness page.
+- `docs/operations/runbooks/account-erasure.md` — a restore brings erased accounts back; replay the
+  erasures before the API serves, and what backups keep after an erasure.
 - `docs/adr/0043-backup-and-restore-strategy.md`.
 - HA plan §3.3 "Backup" reality check + §8: `docs/architecture/ha-plan.md`.
 

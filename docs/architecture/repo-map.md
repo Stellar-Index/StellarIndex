@@ -68,6 +68,7 @@ status: living doc
 │   ├── supply/                   circulating/total/max supply derivation
 │   ├── auth/                     API-key + SEP-10 auth primitives
 │   ├── nettools/                 the single canonical SSRF blocklist (used by every outbound-URL feature)
+│   ├── accounterasure/           account erasure + data export, the one writer for both (GH #809)
 │   ├── signupreaper/             deletes orphan speculative-account rows
 │   ├── logincodereaper/          bounds the login_code_lockouts table
 │   ├── magiclinkreaper/          bounds the magic_link_tokens table

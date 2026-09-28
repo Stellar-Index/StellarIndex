@@ -92,6 +92,8 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - SEP-10 → `sep10.NewValidator(opts)`, `sep10.NewRedisReplayGuard(rdb)`
 - Throttles/verifiers → `NewRedisLoginThrottle`, `NewRedisSignupIPThrottle`, `NewRedisSignupVerifier`, `NewRedisSignupEmailLocker`, `NewRedisSignupTracker`, `NewRedisTouchDebouncer`
 - Store contracts → `platform.{AccountStore,APIKeyStore,UsageStore,WebhookStore,TokenStore,AuditStore}` (impls in `postgresstore`)
+- Erase / export an account → `accounterasure.Eraser.Erase` / `FinishBySlug`, `accounterasure.Exporter.Export` (the one writer; never hand-roll account deletes)
+- Delete an identifier's Redis keys → `auth.RedisAPIKeyStore.DeleteKeysForIdentifier`; a subject's usage counters → `usage.Counter.DeleteSubject`
 
 ## Email — `internal/notify`
 - Send → `notify.Sender`; `NewResendSender(apiKey)` (prod) / `NoopSender` (dev)

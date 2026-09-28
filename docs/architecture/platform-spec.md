@@ -1,7 +1,7 @@
 ---
 title: Platform spec — customer + staff dashboards, billing, full lifecycle
 last_verified: 2026-07-26
-status: design proposal — §7.2 admin endpoints split into SHIPPED vs proposed; §1.5, §2.1, §2.2, §3.1, §7 and §8.3 marked NOT BUILT against code 2026-09-02 (#363), §8.3 added 2026-09-22 (T297). Sections without a re-verification note were NOT re-verified
+status: design proposal — §7.2 admin endpoints split into SHIPPED vs proposed; §1.5, §2.1, §2.2, §3.1, §7 and §8.3 marked NOT BUILT against code 2026-09-02 (#363), §8.3 added 2026-09-22 (T297) and rewritten as BUILT 2026-09-28 (#809). Sections without a re-verification note were NOT re-verified
 ---
 
 # Platform spec — customer + staff dashboards, billing, full lifecycle
@@ -20,11 +20,10 @@ status: design proposal — §7.2 admin endpoints split into SHIPPED vs proposed
 > **Not built:** MFA/TOTP anywhere (§1.5), the `GET /v1/auth/whoami` route
 > (§2.1), the `permissions` JSON model (§2.2 — superseded by key scopes), the
 > `api_usage_events` event-ingestion pipeline (§3 — migration 0027 creates the
-> table, which stays empty; the CAGGs it names were never created), the staff perimeter (§7), the
-> MRR/ARR revenue surfaces (already covered by §4's SUPERSEDED banner), and
-> the GDPR data-subject-rights endpoints (§8.3 — no `data-export` or account
-> deletion route exists anywhere in `internal/api/v1`; also blocked on the
-> retention/legal decisions in the still-unmerged privacy-policy draft).
+> table, which stays empty; the CAGGs it names were never created), the staff perimeter (§7),
+> and the MRR/ARR revenue surfaces (already covered by §4's SUPERSEDED
+> banner). The GDPR data-subject-rights endpoints (§8.3) were built under GH
+> #809 as immediate erasure and a synchronous export.
 > The per-section notes added on 2026-09-02 mark each of these inline.
 
 ## Goals
@@ -790,34 +789,33 @@ audit-2026-07-23); the audit row carries `keys_clamped` /
 - `api_usage_events`: 12 months hot, then dropped (customers can
   export their own data anytime)
 
-### 8.3 GDPR / data subject rights — **NOT BUILT**
+### 8.3 GDPR / data subject rights — **BUILT (GH #809)**
 
-> **Not implemented (verified 2026-09-22, T297):** `server.go`'s account
-> route table has no `GET /v1/account/data-export` and no `DELETE
-> /v1/account`; only `DELETE /v1/account/keys/{keyID}` exists, which revokes
-> an API key, not the account. Shipping the design below is a legal/product
-> decision, not just an engineering one — the retention window, the
-> verification step for a deletion request, and how erasure interacts with
-> the 7-year archived `audit_log` (§8.2) all need a decision this doc does
-> not make. Track against the terms-of-service/privacy-policy review this
-> section depends on.
->
-> What exists today is operator closure: `PATCH /v1/admin/accounts/{id}`
-> with `status: closed` revokes every live Postgres-backed API key and every
-> member's dashboard session, and makes the status terminal (any later
-> non-`closed` status is a 409). The account-status gate also refuses any
-> session a failed sweep left behind, and customer-webhook deliveries fail
-> terminally for a closed account. It erases no PII, does not
-> revoke passkeys or disable price alerts, and is not a substitute for the
-> erasure below.
+Built differently from the original design: erasure is immediate, with no
+30-day reversible window, and the export is synchronous JSON, not an
+emailed link. Both are session-only (an API key can call neither),
+owner-only, and require a session minted within the last 10 minutes.
 
-Endpoints (rate-limited heavily):
+- `GET /v1/dashboard/account/export` — one JSON attachment
+  (`platform.AccountExport`): account, members, the requester's own
+  sessions and passkeys, keys (Postgres and Redis), webhooks with
+  deliveries, price alerts, invites, usage since the account was created,
+  and audit rows. Other members' sessions, addresses and agents, staff
+  identity, and every hash, secret and public key are left out. Writes an
+  `account.export` audit row with counts only.
+- `DELETE /v1/dashboard/account` — body `{"confirm":"<slug>"}`. Deletes
+  every row that holds the account in one transaction, scrubs its audit
+  rows (migration 0188), renames its usage rows to an unlinked subject,
+  tombstones the slug so it is never reissued, then deletes its Redis
+  keys and counters twice, and mails each owner a confirmation.
 
-- `GET /v1/account/data-export` — async job; emailed download
-  link when ready (~1h for power users)
-- `DELETE /v1/account` — schedules deletion in 30d; reversible
-  during the window. After 30d: account_id stays for foreign
-  keys but PII fields are nulled / hashed.
+`stellarindex-ops account-erase` runs the same code for requests received
+outside the dashboard. What is kept, the copies an erasure cannot reach
+(backups, snapshots, logs) and the restore procedure are in
+[`account-erasure.md`](../operations/runbooks/account-erasure.md).
+
+§8.2's 7-year audit archive is not built; `audit_log` has no retention
+job, which is why 0188 lets an erasure scrub it in place.
 
 ### 8.4 Compliance docs
 
