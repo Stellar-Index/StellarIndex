@@ -753,9 +753,9 @@ jumps ~13% on upgrade**, so anything sizing a window, a retention horizon
 or a capacity plan from ledgers/day needs re-checking before then.
 
 **Still open and genuinely the maintainer's:** #334 (no MX/SPF/DMARC — records
-posted), #345 (decks beyond the in-repo proposal), #346 F1/F4 (audit-log
-retention is a comment nothing enforces; the privacy page offers erasure
-that PRV-1 dropped), #378 (staging target, or retire the k6 role in
+posted), #345 (decks beyond the in-repo proposal), #346 F1 (audit-log
+retention is a comment nothing enforces; F4 is closed engineering-side:
+erasure was built in GH #809, superseding PRV-1), #378 (staging target, or retire the k6 role in
 favour of the SLA probe), #478 (what `oracle_stale` should mean on a
 change-driven oracle), #485 (whether those 15 alerts should reach anyone).
 
@@ -966,8 +966,8 @@ reframed** these plan items (each verified against the merged code; details inli
   census freshness).
 - **Gates reconciled to decisions:** **W6.4** (deploy-approval re-arm) is a
   launch-flip [OP] toggle, not a defect — the relaxed state is ACCEPTED
-  (NS-4/CID-4). **D10** GDPR erasure DROPPED (PRV-1); privacy hygiene landed
-  (PRV-2/3). **D9** Stripe reconcile ready to DROP citing ADR-0049.
+  (NS-4/CID-4). **D10** GDPR erasure DROPPED (PRV-1) — superseded: erasure
+  was built in GH #809, see D10 below; privacy hygiene landed (PRV-2/3). **D9** Stripe reconcile ready to DROP citing ADR-0049.
 - **NEW launch-day requirement (§2.8):** apply migrations **through 0143 before
   the binary** (REC-06 fail-closes `/readyz` otherwise); **0143 forces a one-time
   dashboard re-login** — a watch note, not an incident.
@@ -1554,6 +1554,10 @@ storing user data meaningfully). Privacy hygiene is addressed in code:
 magic-link reaper (PRV-2, `828de74c`) bounds the unauth-writable table; IPs
 are documented with their retention rationale (PRV-3, `0b3a783c`). What remains
 is a lightweight documentation sign-off, not open work.
+**Amended 2026-09-28 (#346):** PRV-1 is superseded. Account erasure and
+export were built in GH #809 (`internal/accounterasure`, migration 0188);
+the operator procedure and the backup/snapshot copies an erasure cannot
+reach are in `runbooks/account-erasure.md`.
 
 ---
 
