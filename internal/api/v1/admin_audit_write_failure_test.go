@@ -62,7 +62,7 @@ func TestAdminAuditWriteFailure_KeyMint(t *testing.T) {
 	ts := newAdminTestServer(t, operatorSubject(), store, sink)
 
 	resp := postJSON(t, ts.URL+"/v1/admin/keys",
-		`{"identifier":"acct:partner-co","label":"partner-integration","scopes":["read"],"rate_limit_per_min":5000}`)
+		`{"identifier":"acct:partner-co","account":"partner-co","label":"partner-integration","scopes":["read"],"rate_limit_per_min":5000}`)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 (an audit failure must not block the mint)", resp.StatusCode)
 	}
@@ -85,7 +85,7 @@ func TestAdminAuditWriteFailure_KeyMint_NotCountedWhenAuditSucceeds(t *testing.T
 	sink := &recordingAuditSink{} // no error
 	ts := newAdminTestServer(t, operatorSubject(), store, sink)
 
-	resp := postJSON(t, ts.URL+"/v1/admin/keys", `{"identifier":"acct:ok","label":"l"}`)
+	resp := postJSON(t, ts.URL+"/v1/admin/keys", `{"identifier":"acct:ok","account":"ok","label":"l"}`)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status = %d, want 201", resp.StatusCode)
 	}

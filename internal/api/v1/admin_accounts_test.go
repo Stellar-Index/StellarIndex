@@ -45,6 +45,18 @@ func (f *fakePlatformAccountStore) Get(_ context.Context, id uuid.UUID) (platfor
 	return a, nil
 }
 
+func (f *fakePlatformAccountStore) GetBySlug(_ context.Context, slug string) (platform.Account, error) {
+	if f.getErr != nil {
+		return platform.Account{}, f.getErr
+	}
+	for _, a := range f.byID {
+		if a.Slug == slug {
+			return a, nil
+		}
+	}
+	return platform.Account{}, platform.ErrNotFound
+}
+
 func (f *fakePlatformAccountStore) Update(_ context.Context, a platform.Account) error {
 	f.updateCalls++
 	f.lastUpdate = a

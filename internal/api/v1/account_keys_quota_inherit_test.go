@@ -119,7 +119,7 @@ func TestAdminKeysCreate_InheritsTargetIdentifierCeiling(t *testing.T) {
 
 	sink := &recordingAuditSink{}
 	ts := newAdminTestServer(t, operatorSubject(), store, sink)
-	resp := postJSON(t, ts.URL+"/v1/admin/keys", `{"identifier":"acct:metered-co","label":"ops-minted"}`)
+	resp := postJSON(t, ts.URL+"/v1/admin/keys", `{"identifier":"acct:metered-co","account":"metered-co","label":"ops-minted"}`)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST /v1/admin/keys status = %d, want 201", resp.StatusCode)
 	}

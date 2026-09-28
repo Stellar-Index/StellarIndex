@@ -31,6 +31,7 @@ import (
 // account-level tier + rate-limit / monthly-quota overrides.
 type PlatformAccountStore interface {
 	Get(ctx context.Context, id uuid.UUID) (platform.Account, error)
+	GetBySlug(ctx context.Context, slug string) (platform.Account, error)
 	Update(ctx context.Context, a platform.Account) error
 	// UpdateAtomic loads the row, applies mutate, and writes the result
 	// back inside one transaction holding a row lock — see

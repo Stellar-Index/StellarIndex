@@ -21,12 +21,22 @@ import (
 // The audit sink test double is keybudgets_fakes_test.go's
 // recordingAuditSink — same package, same AuditSink shape.
 
+// adminTestAccountSlugs are the platform accounts newAdminTestServer
+// knows, so an acct:<slug> mint in these tests passes the existence check.
+var adminTestAccountSlugs = []string{"partner-co", "metered-co", "target", "ok", "self", "x"}
+
 func newAdminTestServer(t *testing.T, subject auth.Subject, store v1.AccountStore, sink v1.AuditSink) *httptest.Server {
 	t.Helper()
+	accounts := &fakePlatformAccountStore{byID: map[uuid.UUID]platform.Account{}}
+	for _, slug := range adminTestAccountSlugs {
+		id := uuid.New()
+		accounts.byID[id] = platform.Account{ID: id, Slug: slug}
+	}
 	srv := v1.New(v1.Options{
-		Auth:     fakeAuthMiddleware(subject),
-		Accounts: store,
-		Audit:    sink,
+		Auth:             fakeAuthMiddleware(subject),
+		Accounts:         store,
+		Audit:            sink,
+		PlatformAccounts: accounts,
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
@@ -88,7 +98,7 @@ func TestAdminKeysCreate_Happy(t *testing.T) {
 	ts := newAdminTestServer(t, operatorSubject(), store, sink)
 
 	resp := postJSON(t, ts.URL+"/v1/admin/keys",
-		`{"identifier":"acct:partner-co","label":"partner-integration","scopes":["read"],"rate_limit_per_min":5000}`)
+		`{"identifier":"acct:partner-co","account":"partner-co","label":"partner-integration","scopes":["read"],"rate_limit_per_min":5000}`)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status = %d, want 201", resp.StatusCode)
 	}
@@ -126,6 +136,9 @@ func TestAdminKeysCreate_Happy(t *testing.T) {
 		e.TargetKind != "api_key" || e.TargetID != "kid_minted01" {
 		t.Errorf("audit entry = %+v", e)
 	}
+	if !strings.Contains(string(e.Metadata), `"target_account":"partner-co"`) {
+		t.Errorf("audit metadata missing target account: %s", e.Metadata)
+	}
 	if !strings.Contains(string(e.Metadata), "acct:partner-co") {
 		t.Errorf("audit metadata missing target identifier: %s", e.Metadata)
 	}
@@ -154,7 +167,7 @@ func TestAdminKeysCreate_RateLimitDefaultsToCaller(t *testing.T) {
 	ts := newAdminTestServer(t, caller, store, sink)
 
 	resp := postJSON(t, ts.URL+"/v1/admin/keys",
-		`{"identifier":"acct:partner-co","label":"l"}`)
+		`{"identifier":"acct:partner-co","account":"partner-co","label":"l"}`)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status = %d, want 201", resp.StatusCode)
 	}
@@ -180,7 +193,7 @@ func TestAdminKeysCreate_RequiresReason(t *testing.T) {
 	ts := newAdminTestServer(t, operatorSubject(), store, sink)
 
 	resp := postJSONWithReason(t, ts.URL+"/v1/admin/keys", "",
-		`{"identifier":"acct:partner-co","label":"l"}`)
+		`{"identifier":"acct:partner-co","account":"partner-co","label":"l"}`)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400 without X-Reason (same contract as "+
 			"PATCH /v1/admin/accounts and DELETE /v1/admin/keys/{keyID})", resp.StatusCode)
@@ -205,7 +218,7 @@ func TestAdminKeysCreate_ReasonReachesAuditRow(t *testing.T) {
 
 	const reason = "partner onboarding SI-4412"
 	resp := postJSONWithReason(t, ts.URL+"/v1/admin/keys", reason,
-		`{"identifier":"acct:partner-co","label":"l"}`)
+		`{"identifier":"acct:partner-co","account":"partner-co","label":"l"}`)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status = %d, want 201", resp.StatusCode)
 	}
@@ -236,7 +249,7 @@ func TestAdminKeysCreate_NonOperator403(t *testing.T) {
 
 func TestAdminKeysCreate_Anonymous401(t *testing.T) {
 	ts := newAdminTestServer(t, auth.Subject{}, &fakeAccountStore{}, nil)
-	resp := postJSON(t, ts.URL+"/v1/admin/keys", `{"identifier":"acct:x","label":"l"}`)
+	resp := postJSON(t, ts.URL+"/v1/admin/keys", `{"identifier":"acct:x","account":"x","label":"l"}`)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", resp.StatusCode)
 	}
@@ -248,10 +261,10 @@ func TestAdminKeysCreate_Validation(t *testing.T) {
 		body string
 	}{
 		{"missing identifier", `{"label":"l"}`},
-		{"missing label", `{"identifier":"acct:x"}`},
-		{"bad tier", `{"identifier":"acct:x","label":"l","tier":"sep10"}`},
-		{"bad scope", `{"identifier":"acct:x","label":"l","scopes":["everything"]}`},
-		{"bad rate limit", `{"identifier":"acct:x","label":"l","rate_limit_per_min":-1}`},
+		{"missing label", `{"identifier":"acct:x","account":"x"}`},
+		{"bad tier", `{"identifier":"acct:x","account":"x","label":"l","tier":"sep10"}`},
+		{"bad scope", `{"identifier":"acct:x","account":"x","label":"l","scopes":["everything"]}`},
+		{"bad rate limit", `{"identifier":"acct:x","account":"x","label":"l","rate_limit_per_min":-1}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

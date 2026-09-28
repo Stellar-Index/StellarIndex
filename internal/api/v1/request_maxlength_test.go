@@ -47,7 +47,7 @@ func TestRequestMaxLengthCountsCodePoints(t *testing.T) {
 	}{
 		{"account key label", accountKey, 128, func(v string) map[string]any { return map[string]any{"label": v} }},
 		{"admin key label", adminKey, 128, func(v string) map[string]any {
-			return map[string]any{"identifier": "acct:x", "label": v}
+			return map[string]any{"identifier": "acct:x", "account": "x", "label": v}
 		}},
 		{"suspended_reason", override, 500, func(v string) map[string]any {
 			return map[string]any{"status": "suspended", "suspended_reason": v}
