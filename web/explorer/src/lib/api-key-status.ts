@@ -20,6 +20,17 @@ export function keyStatus(
   return 'active';
 }
 
+/**
+ * The RFC 3339 `expires_at` for a `datetime-local` input value, read in
+ * the browser's time zone. Undefined when empty or unparseable.
+ */
+export function expiresAtFromLocalInput(value: string): string | undefined {
+  if (!value) return undefined;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return undefined;
+  return d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
 /** True when the key authenticates right now. */
 export function isKeyLive(
   k: Pick<APIKey, 'revoked_at' | 'expires_at'>,

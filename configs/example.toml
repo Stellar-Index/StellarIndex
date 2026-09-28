@@ -521,10 +521,9 @@ allowed_origins          = ["*"]
 # that proxy, or a direct attacker can spoof XFF.
 trusted_proxy_cidrs      = []
 
-# auth_backend — 'redis' (legacy /v1/signup records) or 'postgres'
-# (platform.api_keys, required for dashboard-minted keys to
-# authenticate against the runtime API; falls back to Postgres on
-# Redis cache miss). See internal/config/config.go for the soak/
+# auth_backend — 'redis' (apikey:<hash> records; dashboard-minted keys
+# are mirrored there whenever Redis is configured) or 'postgres'
+# (platform.api_keys; falls back to Postgres on Redis cache miss). See internal/config/config.go for the soak/
 # rollback cutover procedure before flipping this on a live API.
 # auth_backend = "redis"
 

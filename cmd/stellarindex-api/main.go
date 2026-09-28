@@ -2499,6 +2499,16 @@ func buildDashboardSender(cfg config.DashboardConfig, logger *slog.Logger) (noti
 	return s, nil
 }
 
+// dashboardKeyMirror is the Redis key store every dashboard-minted key is
+// also written to, whatever auth_backend says: a key minted under one
+// backend must still die on revoke after a flip to the other. Nil without Redis.
+func dashboardKeyMirror(rdb redis.UniversalClient) dashboardkeys.KeyMirror {
+	if rdb == nil {
+		return nil
+	}
+	return auth.NewRedisAPIKeyStore(rdb)
+}
+
 func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.UniversalClient, logger *slog.Logger) (dashboardBundle, error) {
 	if cfg.BaseURL == "" {
 		logger.Warn("dashboard not wired (api.dashboard.base_url is empty); /v1/auth/* + /v1/dashboard/* will 404")
@@ -2573,6 +2583,7 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 
 	keysH, err := dashboardkeys.NewHandlers(dashboardkeys.Config{
 		Keys:             keysStore,
+		Mirror:           dashboardKeyMirror(rdb),
 		CacheInvalidator: pgValidator,
 		Audit:            dashboardAudit,
 		Logger:           logger.With("component", "dashboard-keys"),

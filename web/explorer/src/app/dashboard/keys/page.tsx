@@ -42,12 +42,13 @@ import {
 } from '@/components/ui';
 import {
   fmtDate,
+  fmtDateTime,
   fmtInt,
   fmtRelative,
   tierCeiling,
 } from '@/lib/account-format';
 
-import { keyStatus } from '@/lib/api-key-status';
+import { expiresAtFromLocalInput, keyStatus } from '@/lib/api-key-status';
 
 import { AccountGate } from '../AccountGate';
 
@@ -278,13 +279,20 @@ function CreateKeyForm({
   const [description, setDescription] = useState('');
   const [rateLimit, setRateLimit] = useState(ceiling ?? 1000);
   const [ipAllowlist, setIpAllowlist] = useState('');
+  const [expiry, setExpiry] = useState('');
   const [nameError, setNameError] = useState<string | null>(null);
+  const [expiryError, setExpiryError] = useState<string | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (creating) return;
     if (!name.trim()) {
       setNameError('Give the key a name so you can find it later.');
+      return;
+    }
+    const expiresAt = expiresAtFromLocalInput(expiry);
+    if (expiry && (!expiresAt || new Date(expiresAt) <= new Date())) {
+      setExpiryError('Pick a moment in the future, or leave it empty.');
       return;
     }
     setCreating(true);
@@ -298,6 +306,7 @@ function CreateKeyForm({
         description: description.trim() || undefined,
         rate_limit_per_min: rateLimit,
         ip_allowlist: ipList.length ? ipList : undefined,
+        expires_at: expiresAt,
       });
       onCreated(resp);
     } catch (err) {
@@ -387,6 +396,24 @@ function CreateKeyForm({
               placeholder={'203.0.113.0/24\n198.51.100.7'}
             />
           </Field>
+
+          <Field
+            label="Expires"
+            htmlFor="key-expiry"
+            hint="Optional — in your local time. The key stops authenticating at this moment. Leave empty for a key that never expires."
+            error={expiryError ?? undefined}
+          >
+            <Input
+              id="key-expiry"
+              type="datetime-local"
+              value={expiry}
+              onChange={(e) => {
+                setExpiry(e.target.value);
+                if (expiryError) setExpiryError(null);
+              }}
+              className="max-w-64"
+            />
+          </Field>
         </CardBody>
         <CardFooter className="justify-end gap-2">
           <Button
@@ -426,6 +453,7 @@ function KeysTable({
             <Th align="right">Rate limit</Th>
             <Th>Created</Th>
             <Th>Last used</Th>
+            <Th>Expires</Th>
             <Th>Status</Th>
             <Th align="right">Actions</Th>
           </tr>
@@ -462,6 +490,11 @@ function KeysTable({
                 <Td>
                   <span title={k.last_used_at ?? undefined}>
                     {k.last_used_at ? fmtRelative(k.last_used_at) : '—'}
+                  </span>
+                </Td>
+                <Td>
+                  <span title={k.expires_at ?? undefined}>
+                    {k.expires_at ? fmtDateTime(k.expires_at) : 'Never'}
                   </span>
                 </Td>
                 <Td>

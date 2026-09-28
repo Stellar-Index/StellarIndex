@@ -5,7 +5,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +23,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardkeys"
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardpricealerts"
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardwebhooks"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
@@ -296,6 +299,42 @@ func TestBuildDashboardBundle_UnconfiguredIsNotAnError(t *testing.T) {
 	if bundle.pgValidator != nil {
 		t.Error("unconfigured bundle carries a Postgres API-key validator; auth_backend=postgres " +
 			"must fall back to the Noop (503) rather than borrow a half-built validator")
+	}
+}
+
+// TestDashboardKeyMirror_WiredWheneverRedisExists pins GH-966: the
+// dashboard key mirror depends on Redis alone, never on auth_backend, so a
+// key minted under redis still dies when a postgres-backend instance
+// revokes it.
+func TestDashboardKeyMirror_WiredWheneverRedisExists(t *testing.T) {
+	t.Parallel()
+
+	if m := dashboardKeyMirror(nil); m != nil {
+		t.Errorf("no redis: mirror = %T, want an untyped nil", m)
+	}
+	rdb := testRedisClient(t)
+	m := dashboardKeyMirror(rdb)
+	if m == nil {
+		t.Fatal("redis configured but no mirror: dashboard keys 401 on the redis validator")
+	}
+	ctx := context.Background()
+	minted := "sip_" + strings.Repeat("ab", 32)
+	ident := auth.AccountIdentifier("example")
+	err := m.CreateWithSecret(ctx, auth.MirroredKey{Plaintext: minted, Record: auth.APIKeyRecord{
+		KeyID: "kid_mirror", Identifier: ident, PermissionsAll: true, MonthlyQuota: 1_000,
+	}})
+	if err != nil {
+		t.Fatalf("CreateWithSecret: %v", err)
+	}
+	validator := auth.NewRedisAPIKeyValidator(rdb)
+	if _, err := validator.Lookup(ctx, minted); err != nil {
+		t.Fatalf("mirrored key does not authenticate on the redis validator: %v", err)
+	}
+	if err := m.RevokeKeyByID(ctx, ident, "kid_mirror"); err != nil {
+		t.Fatalf("RevokeKeyByID: %v", err)
+	}
+	if _, err := validator.Lookup(ctx, minted); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Errorf("Lookup after mirror revoke = %v, want ErrUnauthorized", err)
 	}
 }
 
