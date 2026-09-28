@@ -629,6 +629,35 @@ groups:
             leaves the hole, and internal/projector clamps to the
             contiguous watermark behind it.
 
+      # The read-undercount twin of the errored rule above. An undercount
+      # ledger is NOT an error: the extract succeeds and its ledgers row is
+      # written, so the commit marker claims a ledger whose contract_events
+      # are short, and ch-live-catchup (which re-fills MISSING ledgers)
+      # never revisits it. On the census path the ledger_ingest_log row is
+      # skipped instead, leaving a substrate gap. Same [30m] / for: 15m
+      # shape as the errored rule so one isolated bad ledger stays true
+      # past the pending period.
+      - alert: stellarindex_ingestion_ch_live_sink_read_undercount
+        expr: increase(stellarindex_ch_live_sink_read_undercount_total[30m]) > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink-read-undercount.md
+          summary: "Indexer read path could not fully decode ledgers ({{ $labels.kind }})"
+          description: |
+            stellarindex_ch_live_sink_read_undercount_total{kind="{{ $labels.kind }}"}
+            advanced in the last 30 minutes. A transaction envelope,
+            its events, or a ledger-entry meta could not be read, so
+            the ledger was written to the ClickHouse lake with an
+            undercount (tx_read_errors / tx_event_read_errors /
+            entry_meta_unsupported) or its ledger_ingest_log substrate
+            row was skipped (*_census kinds). ch-live-catchup does not
+            heal the lake case: the ledgers row exists. A climb on
+            every ledger is a TransactionMeta version break.
+
       # Served-tier twin of the ch_live_sink rules above. The Postgres
       # pipeline sink's shutdown drain is bounded (pipeline.ShutdownDeadline
       # → drainTimeout) and the indexer upserts the ledger cursor per
