@@ -474,6 +474,7 @@ type Server struct {
 	// refuse to serve it (T650). See fxCrossStale's doc comment.
 	fxCrossMaxAge    time.Duration
 	explorer         ExplorerReader
+	issuerAuthFlags  IssuerAuthFlagsReader
 	staticHomeDomain func(ctx context.Context, issuer string) (string, bool)
 	explorerHandler  *explorerpkg.Handler // network-explorer endpoints (ADR-0038); see explorer.go
 	// directory resolves curated third-party issuer labels
@@ -1311,6 +1312,12 @@ type Options struct {
 	// *clickhouse.ExplorerReader satisfies it. Nil → those routes 503.
 	Explorer ExplorerReader
 
+	// IssuerAuthFlags, when non-nil, is the point lookup /v1/issuers/{g}
+	// reads the issuer's live AccountEntry through, instead of Explorer's
+	// AccountStateCached fan-out to trustlines and offers. Production wiring
+	// is *clickhouse.ExplorerReader.
+	IssuerAuthFlags IssuerAuthFlagsReader
+
 	// StaticHomeDomain, when non-nil, is the operator-static
 	// [metadata.issuer_home_domains] map (gated on no AccountEntry
 	// observation). The asset-detail backfill consults it AFTER the live
@@ -1792,6 +1799,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		currencies:              opts.Currencies,
 		fxCrossMaxAge:           fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours),
 		explorer:                opts.Explorer,
+		issuerAuthFlags:         opts.IssuerAuthFlags,
 		staticHomeDomain:        opts.StaticHomeDomain,
 		directory:               opts.Directory,
 		volumeCharacter:         opts.VolumeCharacter,

@@ -73,6 +73,16 @@ func (l *sep1CallLog) SetIssuerSep1Payload(_ context.Context, gStrkey, _ string,
 	return !l.moved[gStrkey], nil
 }
 
+func (l *sep1CallLog) SyncIssuerHomeDomain(_ context.Context, gStrkey, homeDomain string) (bool, error) {
+	l.add("rebind " + gStrkey + " " + homeDomain)
+	return true, nil
+}
+
+func (l *sep1CallLog) ClearIssuerHomeDomain(_ context.Context, gStrkey string) (bool, error) {
+	l.add("clear " + gStrkey)
+	return true, nil
+}
+
 // count returns how many times step appears in the log.
 func (l *sep1CallLog) count(step string) int {
 	n := 0
@@ -152,7 +162,7 @@ func TestSep1RefreshLoopSurvivesAHostileTOML(t *testing.T) {
 	var before, after runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
-	ok, failed := sep1RefreshLoop(ctx, log, resolver, candidates, false)
+	ok, failed := sep1RefreshLoop(ctx, log, sep1ChainFor(candidates...), resolver, candidates, false)
 	runtime.ReadMemStats(&after)
 
 	// 1. The run completed and the issuer BEHIND the poison one was served.
@@ -194,8 +204,8 @@ func TestSep1RefreshLoopSurvivesAHostileTOML(t *testing.T) {
 func TestSep1RefreshLoopMarksBeforeASuccessToo(t *testing.T) {
 	log := &sep1CallLog{}
 	srv, domain := sep1TestDomain(t, log, "GBEHIND", healthyTOML)
-	ok, failed := sep1RefreshLoop(context.Background(), log, sep1TestResolver(srv),
-		[]timescale.IssuerSep1Candidate{{GStrkey: "GBEHIND", HomeDomain: domain}}, false)
+	cands := []timescale.IssuerSep1Candidate{{GStrkey: "GBEHIND", HomeDomain: domain}}
+	ok, failed := sep1RefreshLoop(context.Background(), log, sep1ChainFor(cands...), sep1TestResolver(srv), cands, false)
 	if ok != 1 || len(failed) != 0 {
 		t.Fatalf("sep1RefreshLoop = (%d, %v); want (1, [])", ok, failed)
 	}
@@ -211,8 +221,8 @@ func TestSep1RefreshLoopMarksBeforeASuccessToo(t *testing.T) {
 func TestSep1RefreshLoopMovedDomainIsNotAFailure(t *testing.T) {
 	log := &sep1CallLog{moved: map[string]bool{"GBEHIND": true}}
 	srv, domain := sep1TestDomain(t, log, "GBEHIND", healthyTOML)
-	ok, failed := sep1RefreshLoop(context.Background(), log, sep1TestResolver(srv),
-		[]timescale.IssuerSep1Candidate{{GStrkey: "GBEHIND", HomeDomain: domain}}, false)
+	cands := []timescale.IssuerSep1Candidate{{GStrkey: "GBEHIND", HomeDomain: domain}}
+	ok, failed := sep1RefreshLoop(context.Background(), log, sep1ChainFor(cands...), sep1TestResolver(srv), cands, false)
 	if ok != 1 || len(failed) != 0 {
 		t.Fatalf("sep1RefreshLoop = (%d, %v); want (1, [])", ok, failed)
 	}
@@ -224,8 +234,8 @@ func TestSep1RefreshLoopMovedDomainIsNotAFailure(t *testing.T) {
 func TestSep1RefreshLoopDryRunWritesNothing(t *testing.T) {
 	log := &sep1CallLog{}
 	srv, domain := sep1TestDomain(t, log, "GBEHIND", healthyTOML)
-	ok, failed := sep1RefreshLoop(context.Background(), log, sep1TestResolver(srv),
-		[]timescale.IssuerSep1Candidate{{GStrkey: "GBEHIND", HomeDomain: domain}}, true)
+	cands := []timescale.IssuerSep1Candidate{{GStrkey: "GBEHIND", HomeDomain: domain}}
+	ok, failed := sep1RefreshLoop(context.Background(), log, sep1ChainFor(cands...), sep1TestResolver(srv), cands, true)
 	if ok != 1 || len(failed) != 0 {
 		t.Fatalf("sep1RefreshLoop(dryRun) = (%d, %v); want (1, [])", ok, failed)
 	}

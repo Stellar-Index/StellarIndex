@@ -1106,6 +1106,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// reader through narrower seams, same nil-degrade posture.
 	var lakeWatermarkReader v1.LakeWatermarkReader
 	var tokenDecimalsReader v1.TokenDecimalsReader
+	// issuerAuthFlagsReader is the same lake reader through the key_xdr point
+	// lookup /v1/issuers/{g} re-reads the issuer's AccountEntry with.
+	var issuerAuthFlagsReader v1.IssuerAuthFlagsReader
 	// storageSupplyReader is the SAME concrete lake reader through a narrower
 	// seam: it sums a token's supply out of its own Soroban contract storage
 	// for the tokens the SEP-41 event log cannot see. Same nil-degrade posture
@@ -1148,6 +1151,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			protocolActivityReader = er
 			lakeWatermarkReader = er
 			tokenDecimalsReader = er
+			issuerAuthFlagsReader = er
 			storageSupplyReader = er
 			tokenSymbolReader = er
 			soroswapTVLReserves = er
@@ -1419,6 +1423,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		ContractCatalogue:  store,
 		LakeWatermark:      lakeWatermarkReader,
 		Explorer:           explorerReader,
+		IssuerAuthFlags:    issuerAuthFlagsReader,
 		StaticHomeDomain:   homeDomainLookup.static,
 		Volume:             storeVolumeReader{s: store},
 		Change24h:          storeChange24hReader{s: store, pegs: usdPegs, decimals: nonstandardDecimalsCache, logger: logger},

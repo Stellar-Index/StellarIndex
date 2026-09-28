@@ -278,13 +278,7 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 		AuthRevocable: row.AuthRevocable,
 		AuthImmutable: row.AuthImmutable,
 		AuthClawback:  row.AuthClawback,
-		// Carrying the persisted provenance is what ARMS the skip-gate in
-		// enrichIssuerFromAccountState below: a `last_known_before_removal`
-		// row must always be re-offered to the live reader, because it stops
-		// being true the moment the account is re-created and the drain's
-		// primary queue (`auth_required IS NULL`) will never revisit it. The
-		// drain's own re-check passes cover that row nightly; this covers it
-		// per request.
+		// The persisted provenance stands whenever no live entry resolves.
 		AuthFlagsSource:     row.AuthFlagsSource,
 		AuthFlagsAsOfLedger: row.AuthFlagsAsOfLedger,
 		SEP1ResolvedAt:      row.SEP1ResolvedAt,
@@ -310,7 +304,7 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 	// raw stellar.toml JSONB those two fields are extracted FROM, so
 	// leaving it populated re-served the same impersonated org_name/
 	// home_domain the two assignments above were clearing.
-	if detailReason != "" && !row.OrgVerified {
+	if detailReason != "" && !out.OrgVerified {
 		out.HomeDomain, out.OrgName = "", ""
 		out.SEP1Payload = nil
 	}
@@ -369,96 +363,79 @@ func (s *Server) writeIssuerReadProblem(w http.ResponseWriter, r *http.Request, 
 		"Storage layer returned an error.")
 }
 
-// enrichIssuerFromAccountState fills auth-flags + home_domain from the on-chain
-// AccountEntry (via the explorer's CH AccountState) when the dedicated issuer
-// resolver hasn't populated them — so the issuer panel shows real values
-// instead of "not yet resolved", for dormant issuers too once the account
-// backfill lands (data-truth G2). Stellar AccountEntry flags: AUTH_REQUIRED=1,
-// AUTH_REVOCABLE=2, AUTH_IMMUTABLE=4, AUTH_CLAWBACK=8. No-op when nothing is
-// missing or the explorer reader isn't wired.
+// IssuerAuthFlagsReader is the narrow lake seam /v1/issuers/{g_strkey} reads an
+// issuer's current AccountEntry flags + home_domain through.
+type IssuerAuthFlagsReader interface {
+	BulkAccountAuthFlags(ctx context.Context, gStrkeys []string) (map[string]clickhouse.AccountAuthFlags, error)
+}
+
+// enrichIssuerFromAccountState overlays the issuer's live on-chain AccountEntry
+// (auth flags, home_domain, as-of ledger) onto the persisted row. Stellar
+// AccountEntry flags: AUTH_REQUIRED=1, AUTH_REVOCABLE=2, AUTH_IMMUTABLE=4,
+// AUTH_CLAWBACK=8. No-op when no live entry resolves.
 //
-// PROVENANCE (#374). A live AccountEntry is the authority on its own account,
-// so when one resolves its flags REPLACE anything the drain persisted and the
-// reading is stamped `live` with the entry's ledger. When none resolves,
-// whatever is persisted stands untouched and unlabelled: absence from the
-// current-state projection is what a merged account AND a lake-coverage gap
-// both look like, so this path may never conclude "removed" on its own — only
-// the drain, which reads an actual `removed` row and its removal ledger, may
-// write `last_known_before_removal`.
+// A live AccountEntry is the authority on its own account, so it is consulted
+// for every row, filled or not: the persisted columns are an older reading of
+// the same entry and a filled row is exactly the shape that can hold a domain
+// the account has since moved away from. When no live entry resolves, the
+// persisted reading stands untouched: absence from the current-state
+// projection is what a merged account AND a lake-coverage gap both look like,
+// so only the drain, which reads an actual `removed` row, may write
+// `last_known_before_removal`.
 func (s *Server) enrichIssuerFromAccountState(ctx context.Context, gStrkey string, out *Issuer) {
-	// The skip is a cost guard, not a correctness one, and it is exempt for
-	// a last-known-before-removal row, which stops being true the moment the
-	// account is re-created. A row with no provenance predates migration
-	// 0153, whose backfill records why those are known to be live-sourced.
-	//
-	// WHAT THE SKIP COSTS, AND WHAT IT STILL LEAVES STALE (RSEC-V1 / RLT-470).
-	// It covers the 44,247 of 49,002 resolved r1 rows that carry both flags
-	// and a home_domain, which is exactly the population that can hold a
-	// LAPSED domain — so an anchor's on-chain correction does not reach this
-	// response until the drain's nightly chain re-check writes it to the row
-	// (see ingest.issuerFlagsChainRecheckPass, which is what bounds that
-	// staleness to one run rather than to "until an operator notices").
-	//
-	// Arming it here would cost a measured +0.47s per cold issuer detail
-	// (api.stellarindex.io 2026-09-19: /v1/issuers/{g} 0.20s, the same
-	// account's state read 0.67s cold and 0.20s warm behind the 30s TTL), a
-	// 3.4x regression on a long-tail page most views arrive cold at. That
-	// price buys nothing on its own either: the identity surface the finding
-	// turns on — org name, logo, the verified badge — comes from sep1_payload,
-	// which the hourly refresh fetches against the STORED column, so a
-	// read-path override would serve the chain's domain beside the lapsed
-	// domain's org identity.
-	//
-	// The cost is an artefact of the seam, not of the read: AccountStateCached
-	// fans out to trustlines and offers, none of which this needs. The narrow
-	// reader the drain already uses (clickhouse BulkAccountAuthFlags, a
-	// key_xdr point lookup measured at 0.028s) returns exactly the four flags,
-	// the home_domain and the as-of ledger. Putting THAT on the ExplorerReader
-	// seam is what lets the skip go entirely; the acceptance test for it ships
-	// red behind `//go:build rsecv1evidence`.
-	if out.AuthFlagsSource != string(clickhouse.AuthFlagsSourceLastKnownBeforeRemoval) &&
-		out.AuthRequired != nil && out.HomeDomain != "" {
+	live, ok := s.liveIssuerAccount(ctx, gStrkey)
+	if !ok {
 		return
 	}
-	if s.explorer == nil {
-		return
-	}
-	st, _, err := s.explorer.AccountStateCached(ctx, gStrkey)
-	if err != nil || !st.Exists {
-		return
-	}
-	req := st.Flags&0x1 != 0
-	rev := st.Flags&0x2 != 0
-	imm := st.Flags&0x4 != 0
-	claw := st.Flags&0x8 != 0
+	req, rev, imm, claw := live.Required, live.Revocable, live.Immutable, live.Clawback
 	out.AuthRequired = &req
 	out.AuthRevocable = &rev
 	out.AuthImmutable = &imm
 	out.AuthClawback = &claw
 	out.AuthFlagsSource = string(clickhouse.AuthFlagsSourceLive)
-	if st.LastModifiedLedger > 0 {
-		asOf := st.LastModifiedLedger
+	out.AuthFlagsAsOfLedger = nil
+	if live.AsOfLedger > 0 {
+		asOf := live.AsOfLedger
 		out.AuthFlagsAsOfLedger = &asOf
-	} else {
-		out.AuthFlagsAsOfLedger = nil
 	}
-	if st.HomeDomain != "" {
-		// The live entry WINS, it does not merely fill a gap.
-		//
-		// This used to be `out.HomeDomain == "" && …`, which inverted the
-		// precedence for the one field where it matters most: the auth
-		// flags six lines up are REPLACED by the same entry, and
-		// home_domain is read from the same struct, decoded from the same
-		// AccountEntry, by the same reader. Nothing else is a better
-		// source — the persisted column is a copy of this field, and
-		// between its two writers it was write-once, so a stored value is
-		// at best an older reading of what we are holding right now.
-		//
-		// Serving the older one is what let a lapsed former domain keep
-		// standing as an anchor's identity after the anchor had already
-		// moved on-chain. An empty live value is NOT taken as a
-		// retraction: a merged account's reading is persisted without a
-		// domain on purpose, and the lake can simply not have the field.
-		out.HomeDomain = st.HomeDomain
+	// An empty live value is NOT a retraction: a merged account's reading is
+	// persisted without a domain on purpose, and the lake can lack the field.
+	if live.HomeDomain == "" || live.HomeDomain == out.HomeDomain {
+		return
 	}
+	out.HomeDomain = live.HomeDomain
+	// The stored SEP-1 identity was fetched from the domain the account no
+	// longer declares, so it is not this domain's claim about this account.
+	out.OrgName, out.OrgVerified = "", false
+	out.SEP1Payload, out.SEP1ResolvedAt = nil, nil
+}
+
+// liveIssuerAccount reads the issuer's current AccountEntry: through the
+// narrow key_xdr point lookup when wired, else through the explorer's full
+// account-state read.
+func (s *Server) liveIssuerAccount(ctx context.Context, gStrkey string) (clickhouse.AccountAuthFlags, bool) {
+	if s.issuerAuthFlags != nil {
+		m, err := s.issuerAuthFlags.BulkAccountAuthFlags(ctx, []string{gStrkey})
+		if err != nil {
+			return clickhouse.AccountAuthFlags{}, false
+		}
+		f, ok := m[gStrkey]
+		return f, ok && f.Source == clickhouse.AuthFlagsSourceLive
+	}
+	if s.explorer == nil {
+		return clickhouse.AccountAuthFlags{}, false
+	}
+	st, _, err := s.explorer.AccountStateCached(ctx, gStrkey)
+	if err != nil || !st.Exists {
+		return clickhouse.AccountAuthFlags{}, false
+	}
+	return clickhouse.AccountAuthFlags{
+		Required:   st.Flags&0x1 != 0,
+		Revocable:  st.Flags&0x2 != 0,
+		Immutable:  st.Flags&0x4 != 0,
+		Clawback:   st.Flags&0x8 != 0,
+		HomeDomain: st.HomeDomain,
+		Source:     clickhouse.AuthFlagsSourceLive,
+		AsOfLedger: st.LastModifiedLedger,
+	}, true
 }

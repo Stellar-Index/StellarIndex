@@ -14,7 +14,7 @@
 [Unit]
 Description=Stellar Index — SEP-1 issuer-metadata refresh (hourly)
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/internal/metadata/doc.go
-After=network-online.target postgresql.service
+After=network-online.target postgresql.service clickhouse-server.service
 Wants=network-online.target
 
 [Service]
@@ -59,6 +59,9 @@ EnvironmentFile=-/etc/default/stellarindex-ops
 # before each fetch so an overrun aborts cleanly at a row boundary rather
 # than mid-write. TimeoutStartSec below must stay above RUN_TIMEOUT.
 Environment=CONFIG_PATH=/etc/stellarindex.toml
+# Each issuer's on-chain home_domain is re-read from the lake before its
+# fetch, so a domain the account no longer declares is never fetched.
+Environment=CH_ADDR=127.0.0.1:9300
 Environment=LIMIT=750
 Environment=OLDER_THAN=24h
 Environment=RUN_TIMEOUT=25m
@@ -66,6 +69,7 @@ Environment=EXTRA_FLAGS=
 
 ExecStart=/usr/local/bin/stellarindex-ops sep1-refresh \
   -config ${CONFIG_PATH} \
+  -ch-addr ${CH_ADDR} \
   -limit ${LIMIT} \
   -older-than ${OLDER_THAN} \
   -timeout ${RUN_TIMEOUT} \
@@ -73,7 +77,7 @@ ExecStart=/usr/local/bin/stellarindex-ops sep1-refresh \
   $EXTRA_FLAGS
 
 # De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
-# created by 04-users.yml (CS-119). Only reads config + writes Postgres.
+# created by 04-users.yml (CS-119). Reads config + ClickHouse, writes Postgres.
 User=stellarindex
 Group=stellarindex
 

@@ -185,7 +185,9 @@ var persistIssuerAuthFlagsQuery = `
 		                             THEN auth_flags_source ELSE $7::text END,
 		    auth_flags_as_of_ledger = CASE WHEN $7::text = ''
 		                             THEN auth_flags_as_of_ledger ELSE $8::integer END
-		 WHERE g_strkey = $1`
+		 WHERE g_strkey = $1
+		   AND ($7::text = '' OR $8::integer IS NULL OR auth_flags_as_of_ledger IS NULL
+		        OR auth_flags_as_of_ledger <= $8::integer)`
 
 // PersistIssuerAuthFlags writes decoded auth flags for the given issuers,
 // returning how many rows it actually changed.
@@ -243,6 +245,11 @@ var persistIssuerAuthFlagsQuery = `
 // Source therefore leaves BOTH columns untouched rather than nulling them:
 // "unknown provenance" is a safe state to leave alone, and clearing a
 // known-good label would be a regression, not a no-op.
+//
+// A labelled reading older than the one on record is refused: the row keeps
+// the newer reading and the write does not count as a change. Two drain runs,
+// or a drain and a lagging lake read, can otherwise land out of order and
+// reinstate a home_domain the account had already moved away from.
 func (s *Store) PersistIssuerAuthFlags(ctx context.Context, flags []IssuerAuthFlags) (int, error) {
 	if len(flags) == 0 {
 		return 0, nil
