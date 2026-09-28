@@ -66,6 +66,7 @@ func sdexClaimAudit(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 
 	walked := 0
 	var totalClaims, totalDrops int
+	var readerFailures, txReadFailures int
 	dropsByReason := map[string]int{}
 	ledgersWithDrops := map[uint32]int{}
 	oneSideZeroByLedger := map[uint32]int{}
@@ -75,50 +76,25 @@ func sdexClaimAudit(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 		func(lcm sdkxdr.LedgerCloseMeta) error {
 			walked++
 			seq := lcm.LedgerSequence()
-			reader, rerr := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(passphrase, lcm)
-			if rerr != nil {
-				fmt.Fprintf(os.Stderr, "sdex-claim-audit: reader ledger %d: %v\n", seq, rerr)
-				return nil
+			tally := auditLedgerClaims(lcm, passphrase, *dumpOps, *examples-len(exampleLines))
+			if tally.readerErr != nil {
+				readerFailures++
+				fmt.Fprintf(os.Stderr, "sdex-claim-audit: reader ledger %d: %v\n", seq, tally.readerErr)
+				return nil //nolint:nilerr // walk must continue past one bad ledger; readerFailures fails the command via claimAuditVerdict below
 			}
-			defer func() { _ = reader.Close() }()
-			for {
-				tx, terr := reader.Read()
-				if errors.Is(terr, io.EOF) {
-					break
-				}
-				if terr != nil || !tx.Result.Successful() {
-					continue
-				}
-				ops := tx.Envelope.Operations()
-				opResults, ok := tx.Result.Result.OperationResults()
-				if !ok {
-					continue
-				}
-				for i := range ops {
-					if i >= len(opResults) {
-						break
-					}
-					claims, drops := sdex.AuditOp(ops[i], opResults[i])
-					if *dumpOps && isTradeOpType(ops[i].Body.Type) {
-						inner, hasInner := innerTradeCode(ops[i], opResults[i])
-						fmt.Printf("ledger=%d tx=%d op=%d type=%s outerCode=%d innerCode=%d(%v) claims=%d emitted=%d\n",
-							seq, tx.Index, i, ops[i].Body.Type.String(), opResults[i].Code, inner, hasInner, claims, claims-len(drops))
-					}
-					totalClaims += claims
-					for _, d := range drops {
-						totalDrops++
-						ledgersWithDrops[seq]++
-						reason := classifyDrop(d.Reason)
-						if strings.HasPrefix(reason, "non-positive: one-side-zero") {
-							oneSideZeroByLedger[seq]++
-						}
-						dropsByReason[reason]++
-						if len(exampleLines) < *examples {
-							exampleLines = append(exampleLines, fmt.Sprintf("ledger=%d op=%d atomType=%d: %s", seq, i, d.AtomType, d.Reason))
-						}
-					}
-				}
+			txReadFailures += tally.txReadFailures
+			totalClaims += tally.claims
+			totalDrops += tally.drops
+			if tally.drops > 0 {
+				ledgersWithDrops[seq] += tally.drops
 			}
+			if tally.oneSideZero > 0 {
+				oneSideZeroByLedger[seq] += tally.oneSideZero
+			}
+			for r, c := range tally.dropsByReason {
+				dropsByReason[r] += c
+			}
+			exampleLines = append(exampleLines, tally.examples...)
 			return nil
 		},
 	)
@@ -133,6 +109,8 @@ func sdexClaimAudit(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	fmt.Printf("total dropped (NOT emitted as trades):    %d\n", totalDrops)
 	fmt.Printf("trades we emit (claims - drops):          %d\n", totalClaims-totalDrops)
 	fmt.Printf("ledgers with >=1 drop:                    %d\n", len(ledgersWithDrops))
+	fmt.Printf("reader failures (ledger skipped):         %d\n", readerFailures)
+	fmt.Printf("tx read failures (SDK error, skipped):    %d\n", txReadFailures)
 
 	reasons := make([]string, 0, len(dropsByReason))
 	for r := range dropsByReason {
@@ -170,7 +148,113 @@ func sdexClaimAudit(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	// a phantom decoder gap of exactly the ledgers nobody read. A SIGINT
 	// lands here too: the walk treats context.Canceled as a clean exit,
 	// and an interrupted audit is not an audit.
-	return walkCoverage("sdex-claim-audit", uint32(*from), uint32(*to), walked, streamBucket)
+	coverageErr := walkCoverage("sdex-claim-audit", uint32(*from), uint32(*to), walked, streamBucket)
+	return claimAuditVerdict(coverageErr, readerFailures, txReadFailures, totalClaims)
+}
+
+// claimAuditVerdict combines the coverage gate with the reader/tx
+// read-failure gate. A ledger the reader couldn't open, or a transaction
+// the SDK couldn't read, is silently excluded from "total claim atoms
+// (= Hubble trade count)" — walked already counted the ledger, so
+// coverageErr alone cannot see the gap. Either failure count above zero
+// means the headline total is an undercount, not the Hubble-comparable
+// figure it claims to be, regardless of whether coverage itself was
+// complete.
+func claimAuditVerdict(coverageErr error, readerFailures, txReadFailures, totalClaims int) error {
+	if readerFailures == 0 && txReadFailures == 0 {
+		return coverageErr
+	}
+	return errors.Join(coverageErr, fmt.Errorf(
+		"sdex-claim-audit: %d ledger(s) unreadable and %d transaction(s) hit an SDK read "+
+			"error, both silently excluded from the %d claim atoms above — the total is not "+
+			"the Hubble-comparable count it claims to be; refusing to certify an undercounted total",
+		readerFailures, txReadFailures, totalClaims))
+}
+
+// claimAuditTally is one ledger's claim-audit walk: the claim/drop counts
+// sdex.AuditOp reports, plus the two failure classes sdexClaimAudit refuses
+// to fold into "no claims here" — a whole-ledger reader failure and a
+// per-tx SDK read error (terr != nil), each distinct from an ordinary
+// failed transaction (!tx.Result.Successful(), which legitimately carries
+// no claims and is correctly skipped).
+type claimAuditTally struct {
+	readerErr      error
+	txReadFailures int
+	claims, drops  int
+	dropsByReason  map[string]int
+	oneSideZero    int
+	examples       []string
+}
+
+// auditLedgerClaims runs every successful transaction in one ledger
+// through the real SDEX decode path (sdex.AuditOp), tallying claim atoms
+// and drops. maxExamples caps how many example drop lines it collects
+// (the running total across the whole walk, not just this ledger).
+func auditLedgerClaims(lcm sdkxdr.LedgerCloseMeta, passphrase string, dumpOps bool, maxExamples int) claimAuditTally {
+	seq := lcm.LedgerSequence()
+	reader, rerr := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(passphrase, lcm)
+	if rerr != nil {
+		return claimAuditTally{readerErr: rerr}
+	}
+	defer func() { _ = reader.Close() }()
+
+	tally := claimAuditTally{dropsByReason: map[string]int{}}
+	for {
+		tx, terr := reader.Read()
+		if errors.Is(terr, io.EOF) {
+			break
+		}
+		if terr != nil {
+			tally.txReadFailures++
+			continue
+		}
+		if !tx.Result.Successful() {
+			continue
+		}
+		auditTxClaims(seq, tx, dumpOps, maxExamples, &tally)
+	}
+	return tally
+}
+
+// auditTxClaims runs every operation of one successful transaction through
+// the real SDEX decode path (sdex.AuditOp), folding claim/drop counts into
+// tally. maxExamples caps how many example drop lines tally collects (the
+// running total across the whole ledger walk, not just this transaction).
+func auditTxClaims(seq uint32, tx ingest.LedgerTransaction, dumpOps bool, maxExamples int, tally *claimAuditTally) {
+	ops := tx.Envelope.Operations()
+	opResults, ok := tx.Result.Result.OperationResults()
+	if !ok {
+		return
+	}
+	for i := range ops {
+		if i >= len(opResults) {
+			break
+		}
+		claims, drops := sdex.AuditOp(ops[i], opResults[i])
+		if dumpOps && isTradeOpType(ops[i].Body.Type) {
+			inner, hasInner := innerTradeCode(ops[i], opResults[i])
+			fmt.Printf("ledger=%d tx=%d op=%d type=%s outerCode=%d innerCode=%d(%v) claims=%d emitted=%d\n",
+				seq, tx.Index, i, ops[i].Body.Type.String(), opResults[i].Code, inner, hasInner, claims, claims-len(drops))
+		}
+		tally.claims += claims
+		recordClaimDrops(seq, i, drops, maxExamples, tally)
+	}
+}
+
+// recordClaimDrops folds one operation's dropped claim atoms into tally,
+// bucketing by reason and capping the collected example lines at maxExamples.
+func recordClaimDrops(seq uint32, opIdx int, drops []sdex.ClaimDrop, maxExamples int, tally *claimAuditTally) {
+	for _, d := range drops {
+		tally.drops++
+		reason := classifyDrop(d.Reason)
+		if strings.HasPrefix(reason, "non-positive: one-side-zero") {
+			tally.oneSideZero++
+		}
+		tally.dropsByReason[reason]++
+		if len(tally.examples) < maxExamples {
+			tally.examples = append(tally.examples, fmt.Sprintf("ledger=%d op=%d atomType=%d: %s", seq, opIdx, d.AtomType, d.Reason))
+		}
+	}
 }
 
 // isTradeOpType reports whether an op type can emit ClaimAtoms.

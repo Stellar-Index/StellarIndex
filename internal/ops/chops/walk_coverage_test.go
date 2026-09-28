@@ -179,9 +179,14 @@ func TestSdexClaimAudit_GatesOnRequestedCoverage(t *testing.T) {
 		t.Error("sdexClaimAudit does not count the ledgers it walked — it cannot assert " +
 			"delivered == requested without the delivered half")
 	}
-	if !strings.Contains(body, `return walkCoverage("sdex-claim-audit", uint32(*from), uint32(*to), walked, streamBucket)`) {
-		t.Error("sdexClaimAudit never returns walkCoverage — a short walk exits 0 and its " +
+	if !strings.Contains(body, `walkCoverage("sdex-claim-audit", uint32(*from), uint32(*to), walked, streamBucket)`) {
+		t.Error("sdexClaimAudit never calls walkCoverage — a short walk exits 0 and its " +
 			"claim-atom tally reads as a decoder gap (RLT-282)")
+	}
+	if !strings.Contains(body, "claimAuditVerdict(coverageErr, readerFailures, txReadFailures, totalClaims)") {
+		t.Error("sdexClaimAudit does not gate on reader/tx read failures — a ledger the reader " +
+			"couldn't open or a transaction the SDK couldn't read is silently excluded from " +
+			"\"total claim atoms (= Hubble trade count)\" and the run must not certify that as complete")
 	}
 	if !strings.Contains(body, "opsutil.ResolveStreamBucket(cfg, *bucket, uint32(*from), uint32(*to))") {
 		t.Error("the galexie bucket must come from opsutil.ResolveStreamBucket, not a local default")
