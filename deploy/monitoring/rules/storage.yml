@@ -1067,6 +1067,39 @@ groups:
             the role), 1 = configured but failing —
             `journalctl -u ch-lake-backup.service -n 100`.
 
+      # off-site-backup-plan.md §1 (NS03) — same inert-mechanism-first
+      # shape as ch_lake_backup_stale above: the `configured` gauge is
+      # emitted on every run (0 or 1), so it anchors "never had a verified
+      # success" the same way ch_schema_snapshot's timestamp anchors the
+      # lake-backup alert. 48h, not 96h: the mirror is hourly, not daily.
+      - alert: stellarindex_galexie_archive_mirror_stale
+        expr: |
+          (time() - stellarindex_galexie_archive_mirror_last_success_timestamp) > 48 * 3600
+          or
+          (
+            stellarindex_galexie_archive_mirror_configured
+            unless on (instance)
+            max_over_time(stellarindex_galexie_archive_mirror_last_success_timestamp[48h])
+          )
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-mirror.md
+          summary: "Galexie archive has no verified off-site mirror younger than 48 h on {{ $labels.instance }}"
+          description: |
+            No galexie-archive-mirror run has completed and verified clean
+            on this host in 48 h, or none ever has. Without one the
+            archive has no off-site copy at all — a pool or box loss
+            recovers only via re-ingest of the public Stellar history
+            archives (days-weeks). `stellarindex_galexie_archive_mirror_configured`
+            splits the cases: 0 = no off-site target configured (set
+            galexie_archive_mirror_s3_endpoint + the vault key pair and
+            re-apply the role), 1 = configured but failing —
+            `journalctl -u galexie-archive-mirror.service -n 100`.
+
       # Causal, early signal for both snapshot alerts above (same shape
       # as pgbackrest_backup_unit_failed): the unit is Type=oneshot with
       # no OnFailure, so a failed run otherwise surfaces only 36 h later.

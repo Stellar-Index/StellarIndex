@@ -38,6 +38,7 @@ configs/healthchecks/smoke.sh                                             api_sm
 configs/healthchecks/hc-ping.sh                                           hc_ping_${check}.prom              internal/ops/chops/healthcheck_ping_delivery_test.go
 deploy/clickhouse/lake-dedup-driver.sh                                    lake_dedup_${T}.prom               deploy/clickhouse/lake-dedup-driver-test.sh
 scripts/ops/ch-lake-backup.sh                                             ch_lake_backup.prom                scripts/ops/ch-lake-backup-test.sh
+scripts/ops/galexie-archive-mirror.sh                                     galexie_archive_mirror.prom        scripts/ops/galexie-archive-mirror-test.sh
 scripts/ops/ch-schema-snapshot.sh                                         ch_schema_snapshot.prom            scripts/ops/ch-schema-snapshot-test.sh
 scripts/ops/config-assertions.sh                                          config_assertions.prom             -
 scripts/ops/restore-drill.sh                                              restore_drill.prom                 scripts/ops/restore-drill-run-test.sh
