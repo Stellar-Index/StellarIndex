@@ -1,7 +1,13 @@
 package timescale
 
 import (
+	"bytes"
+	"context"
+	"database/sql/driver"
+	"log/slog"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
@@ -25,9 +31,8 @@ import (
 // relabel had worked.
 //
 // This asserts the PARSER's verdict on the shapes an operator typo
-// actually produces, and that the counter is wired for both fields —
-// exercising the query itself needs Postgres, which the integration
-// suite covers.
+// actually produces; [TestLatestOracleStreams_DropsUnparseableRowsLoudly]
+// drives the real reader.
 func TestOracleStreamUnparsedRowsAreCounted(t *testing.T) {
 	// Shapes a hand-written UPDATE plausibly produces. Each must FAIL to
 	// parse — if canonical ever starts accepting one, the drop (and this
@@ -51,16 +56,69 @@ func TestOracleStreamUnparsedRowsAreCounted(t *testing.T) {
 		t.Fatalf("ParseAsset(\"fiat:USD\") failed: %v — the drop path would swallow "+
 			"every healthy row", err)
 	}
+}
 
-	// Both fields are wired, and the counter exists before its first
-	// increment for neither label combination (it is deliberately not
-	// pre-seeded — see the alert's own comment).
-	obs.OracleStreamRowsUnparsedTotal.WithLabelValues("redstone", "asset").Inc()
-	obs.OracleStreamRowsUnparsedTotal.WithLabelValues("redstone", "quote").Inc()
-	for _, field := range []string{"asset", "quote"} {
-		got := testutil.ToFloat64(obs.OracleStreamRowsUnparsedTotal.WithLabelValues("redstone", field))
-		if got < 1 {
-			t.Errorf("counter for field=%q did not record the drop (got %v)", field, got)
-		}
+// TestLatestOracleStreams_DropsUnparseableRowsLoudly drives
+// [Store.LatestOracleStreams] itself through the scripted driver, rather
+// than self-incrementing the counter the way this file used to (GH-1219,
+// residue of #339's partial restoration of PR #248): `dropped` was
+// declared and read but never incremented in either parse-fail continue
+// branch, so the "no longer SILENT" slog.Warn summary was unreachable
+// dead code even though the per-row counter fired correctly. One healthy
+// row, one with an unparseable asset, one with an unparseable quote —
+// both continue branches must fire.
+func TestLatestOracleStreams_DropsUnparseableRowsLoudly(t *testing.T) {
+	var buf bytes.Buffer
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	const source = "gh1219-fixture"
+	beforeAsset := testutil.ToFloat64(obs.OracleStreamRowsUnparsedTotal.WithLabelValues(source, "asset"))
+	beforeQuote := testutil.ToFloat64(obs.OracleStreamRowsUnparsedTotal.WithLabelValues(source, "quote"))
+
+	ts := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	store, _ := newScriptedStore(t, scriptedResult{
+		cols: []string{
+			"source", "contract_id", "ledger", "tx_hash", "op_index", "ts",
+			"asset", "quote", "price", "decimals", "confidence", "observer",
+		},
+		rows: [][]driver.Value{
+			{source, "", int64(1000), "tx-good", int64(0), ts, "native", "fiat:USD", "100", int64(7), 0.9, ""},
+			// Truncated + lower-cased strkey — same shape TestOracleStreamUnparsedRowsAreCounted pins as unparseable.
+			{source, "", int64(1001), "tx-bad-asset", int64(0), ts, "usdc-ga5zsejyb37jrc5", "fiat:USD", "100", int64(7), 0.9, ""},
+			// Missing the fiat: prefix.
+			{source, "", int64(1002), "tx-bad-quote", int64(0), ts, "native", "USD", "100", int64(7), 0.9, ""},
+		},
+	})
+
+	out, err := store.LatestOracleStreams(context.Background())
+	if err != nil {
+		t.Fatalf("LatestOracleStreams: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %d row(s), want 1 (the two unparseable rows must be dropped): %+v", len(out), out)
+	}
+	if out[0].TxHash != "tx-good" {
+		t.Errorf("surviving row has tx_hash %q, want the healthy row tx-good", out[0].TxHash)
+	}
+
+	if got := testutil.ToFloat64(obs.OracleStreamRowsUnparsedTotal.WithLabelValues(source, "asset")) - beforeAsset; got != 1 {
+		t.Errorf("asset-field unparsed counter moved by %v, want exactly 1", got)
+	}
+	if got := testutil.ToFloat64(obs.OracleStreamRowsUnparsedTotal.WithLabelValues(source, "quote")) - beforeQuote; got != 1 {
+		t.Errorf("quote-field unparsed counter moved by %v, want exactly 1", got)
+	}
+
+	logs := buf.String()
+	if !strings.Contains(logs, "rows dropped for unparseable asset/quote") {
+		t.Fatalf("dropped rows produced no drop-summary log line — 'no longer SILENT' is the file's own "+
+			"claim; log output:\n%s", logs)
+	}
+	if !strings.Contains(logs, "dropped=2") {
+		t.Errorf("drop summary does not report dropped=2 for the two unparseable rows, log output:\n%s", logs)
+	}
+	if !strings.Contains(logs, "returned=1") {
+		t.Errorf("drop summary does not report returned=1, log output:\n%s", logs)
 	}
 }
