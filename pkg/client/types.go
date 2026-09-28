@@ -251,6 +251,10 @@ type HistorySeries struct {
 	Discontinuous bool           `json:"discontinuous"`
 	GapStartsAt   *time.Time     `json:"gap_starts_at,omitempty"`
 	GapEndsAt     *time.Time     `json:"gap_ends_at,omitempty"`
+	// RowCapTruncated is true when the series hit the row cap before
+	// `to`; DataEndsAt is then the last returned bucket.
+	RowCapTruncated bool       `json:"row_cap_truncated"`
+	DataEndsAt      *time.Time `json:"data_ends_at,omitempty"`
 }
 
 // HistoryPoint is one row of a [HistorySeries].
@@ -690,6 +694,9 @@ type OHLCBar struct {
 	QuoteVolumeDecimals *int `json:"quote_volume_decimals"`
 	TradeCount          int  `json:"trade_count"`
 	Truncated           bool `json:"truncated"`
+	// Clamped is true when the requested `to` fell in the still-filling
+	// bucket (or the future) and was pulled back to the last closed one.
+	Clamped bool `json:"clamped"`
 }
 
 // OHLCSeriesResponse is the data shape returned by [Client.OHLCSeries]:
@@ -1346,6 +1353,8 @@ type VWAPResult struct {
 	TradeCount          int  `json:"trade_count"`
 	OutliersFiltered    int  `json:"outliers_filtered"`
 	Truncated           bool `json:"truncated"`
+	// Clamped: see [OHLCBar.Clamped].
+	Clamped bool `json:"clamped"`
 }
 
 // TWAPResult is the data shape returned by [Client.TWAP] —
@@ -1360,6 +1369,8 @@ type TWAPResult struct {
 	TradeCount       int       `json:"trade_count"`
 	OutliersFiltered int       `json:"outliers_filtered"`
 	Truncated        bool      `json:"truncated"`
+	// Clamped: see [OHLCBar.Clamped].
+	Clamped bool `json:"clamped"`
 }
 
 // Pool is one row from [Client.Pools] — a single (source, base,
