@@ -150,6 +150,11 @@ func (c *Client) EthGetLogs(
 	return logs, nil
 }
 
+// maxRPCBodyBytes caps a JSON-RPC response read. Providers cap
+// eth_getLogs near 10 MB / 10k logs; the headroom covers envelope
+// overhead while stopping a wedged endpoint from OOMing the ingester.
+const maxRPCBodyBytes = 32 << 20
+
 // do is the one-shot HTTP wrapper shared by every RPC method.
 // Marshals the JSON-RPC request, posts, decodes the response, and
 // unmarshals `result` into `out`.
@@ -184,9 +189,12 @@ func (c *Client) do(ctx context.Context, method string, params []any, out any) e
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRPCBodyBytes+1))
 	if err != nil {
 		return fmt.Errorf("chainlink: %s read body: %w", method, err)
+	}
+	if int64(len(body)) > maxRPCBodyBytes {
+		return fmt.Errorf("chainlink: %s body exceeds %d bytes", method, maxRPCBodyBytes)
 	}
 	if resp.StatusCode != http.StatusOK {
 		// Bound the snippet so a giant HTML error page doesn't

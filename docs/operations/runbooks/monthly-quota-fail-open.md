@@ -74,7 +74,7 @@ one's is money.
   within ~10 min of the last bypass.
 - **AUTH drift** → the API's Redis password is the
   `STELLARINDEX_REDIS_PASSWORD` environment override (config field
-  `[storage] redis_password_env`), not a hand-edited TOML value. Re-sync it
+  `[storage] redis_password`), not a hand-edited TOML value. Re-sync it
   in the unit's `EnvironmentFile` (`/etc/default/stellarindex`) to Redis's
   `requirepass` (ansible `redis_password`), then
   `systemctl restart stellarindex-api`.

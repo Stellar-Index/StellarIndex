@@ -66,7 +66,10 @@ history_archive_url = "https://history.stellar.org/prd/core-live/core_live_001"
 postgres_dsn       = "postgres://stellarindex@127.0.0.1:5432/stellarindex?sslmode=disable"
 
 redis_addr         = "127.0.0.1:6379"
-# redis_password_env = "STELLARINDEX_REDIS_PASSWORD"   # uncomment + set env
+# redis_password holds the password VALUE, not an env-var name. Leave it
+# unset here and export STELLARINDEX_REDIS_PASSWORD instead. The old key
+# redis_password_env still loads, with a deprecation warning.
+# redis_password = ""
 #
 # redis_username (F-1213, codex audit-2026-05-12). Empty (default)
 # AUTHs as Redis's legacy 'default' user. Set to 'stellarindex' (or
@@ -119,11 +122,11 @@ s3_secret_key_env  = "STELLARINDEX_S3_SECRET_KEY"
 # behavior. The password is injected via the
 # STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD env var, never this file.
 # clickhouse_serving_user      = "api_serving"
-# clickhouse_serving_password_env is a MISNOMER kept for backward
-# compat (audit C3-15): it holds the password VALUE itself (via the
-# STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD env override), not an
-# env-var name to dereference.
-# clickhouse_serving_password_env = ""
+# clickhouse_serving_password holds the password VALUE itself (via the
+# STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD env override), not an env-var
+# name. The old key clickhouse_serving_password_env still loads, with a
+# deprecation warning.
+# clickhouse_serving_password = ""
 
 # background_statement_timeout — session-level Postgres
 # statement_timeout for the long-running indexer/aggregator pools
