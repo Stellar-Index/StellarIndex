@@ -2379,8 +2379,8 @@ func TestUSDVolumeForPairPerTrade_PerSourceDecimals(t *testing.T) {
 		if math.Abs(total-10_000) > 0.01 {
 			t.Fatalf("total = %.2f, want 10000 — a 1e8 divisor yields %.2f", total, 10_000.0/100)
 		}
-		if got := per[trades[0].ID()]; math.Abs(got-10_000) > 0.01 {
-			t.Errorf("per-trade USD = %.2f, want 10000", got)
+		if got := per[trades[0].ID()]; got.Cmp(big.NewRat(10_000, 1)) != 0 {
+			t.Errorf("per-trade USD = %s, want exactly 10000", got.RatString())
 		}
 	})
 

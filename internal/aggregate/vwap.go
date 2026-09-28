@@ -82,11 +82,11 @@ func TotalQuoteVolume(trades []canonical.Trade) canonical.Amount {
 // SourceContribution captures one source's share of a windowed VWAP
 // — the building block the explorer source-contribution donut renders.
 //
-// Weight is a fraction in [0, 1]; sums to 1.0 across all
-// contributions for the same trade slice (modulo float rounding).
+// Weight is the exact quote-volume share in [0, 1]; the weights of one
+// trade slice sum to exactly 1.
 type SourceContribution struct {
 	Source      string
-	Weight      float64
+	Weight      *big.Rat
 	BaseVolume  *big.Int
 	QuoteVolume *big.Int
 	TradeCount  int
@@ -132,13 +132,9 @@ func SourceContributions(trades []canonical.Trade) []SourceContribution {
 	}
 	out := make([]SourceContribution, 0, len(bySource))
 	for source, a := range bySource {
-		// One correctly-rounded conversion of the exact ratio. Rounding
-		// numerator and denominator to float64 first is lossy above 2^53
-		// — every Soroban quote volume — and lands the weight ulps off.
-		weight, _ := new(big.Rat).SetFrac(a.quote, totalQuote).Float64() // i128:ok per-source contribution share in [0,1]; one correctly-rounded conversion of the exact ratio
 		out = append(out, SourceContribution{
 			Source:      source,
-			Weight:      weight,
+			Weight:      new(big.Rat).SetFrac(a.quote, totalQuote),
 			BaseVolume:  a.base,
 			QuoteVolume: a.quote,
 			TradeCount:  a.count,

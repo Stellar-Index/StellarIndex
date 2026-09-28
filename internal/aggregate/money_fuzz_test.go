@@ -254,7 +254,7 @@ func FuzzVWAP(f *testing.F) {
 			cb, cq := new(big.Int), new(big.Int)
 			count := 0
 			for _, c := range contribs {
-				if c.Weight < 0 || c.Weight > 1 {
+				if c.Weight.Sign() < 0 || c.Weight.Cmp(big.NewRat(1, 1)) > 0 {
 					t.Fatalf("weight %v outside [0,1]", c.Weight)
 				}
 				cb.Add(cb, c.BaseVolume)
