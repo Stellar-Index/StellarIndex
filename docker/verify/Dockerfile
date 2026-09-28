@@ -45,8 +45,7 @@ RUN go install mvdan.cc/gofumpt@${GOFUMPT_VERSION} \
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl git jq make openssh-client pipx python3 python3-jinja2 python3-yaml rsync shellcheck xz-utils \
     && rm -rf /var/lib/apt/lists/* \
-    && corepack enable pnpm \
-    && corepack prepare pnpm@10.33.0 --activate \
+    && npm install --global pnpm@10.33.0 \
     && npm install --global "openapi-to-postmanv2@${OPENAPI_TO_POSTMAN_VERSION}"
 
 RUN set -eux; \
