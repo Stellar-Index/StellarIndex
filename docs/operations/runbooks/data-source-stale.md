@@ -69,7 +69,8 @@ journalctl -u stellarindex-indexer -u stellarindex-api --since '2 hours ago' | g
   column — a failed fetch as much as a success — so a night where our DNS or
   egress is broken leaves the gauge perfectly green. The signal for that case
   is a *failed unit*, not a stale domain: the job judges its own failure rate
-  and exits non-zero when it crosses 90% over 50+ attempts, which trips
+  over domains that have served a stellar.toml before (never-reached domains
+  do not count) and exits non-zero when it crosses 90% over 50+ of them, which trips
   `stellarindex_systemd_unit_failed`. See
   `journalctl -u sep1-refresh --since -24h | grep SYSTEMIC`.
 - **`domain="trades"` (CEX/DEX) stale:** the venue connector/dispatcher stopped;
