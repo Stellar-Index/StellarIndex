@@ -29,7 +29,7 @@ enforces it); any per-alert detail page follows it.
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 65 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 226 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 229 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -642,6 +642,9 @@ auto-unfreeze at all. Rules in
 | `stellarindex_supply_snapshot_critical_stale` | same | > 72 h for ≥ 5 min | page | [supply-snapshot-stale](runbooks/supply-snapshot-stale.md) |
 | `stellarindex_supply_snapshot_never_initialized` | `absent_over_time(stellarindex_supply_snapshot_last_success_timestamp[36h])` | == 1 for ≥ 5 min | ticket | [supply-snapshot-never-initialized](runbooks/supply-snapshot-never-initialized.md) |
 | `stellarindex_supply_snapshot_circulating_zero` | `stellarindex_supply_snapshot_circulating_xlm{asset_key="XLM"}` | ≤ 0 for ≥ 5 min | page | [supply-snapshot-circulating-zero](runbooks/supply-snapshot-circulating-zero.md) |
+| `stellarindex_supply_verify_rollup_unit_failed_alert` | `stellarindex_supply_verify_rollup_unit_failed` | > 0 for ≥ 30 min (drift, a watched contract with no checkpoint, 0 checked, or an error) | ticket | [supply-verify-rollup-unit-failed](runbooks/supply-verify-rollup-unit-failed.md) |
+| `stellarindex_supply_verify_rollup_stale` | `time() - stellarindex_supply_verify_rollup_last_success_timestamp` | > 36 h for ≥ 5 min | ticket | [supply-verify-rollup-stale](runbooks/supply-verify-rollup-stale.md) |
+| `stellarindex_supply_verify_rollup_never_initialized` | `absent_over_time(stellarindex_supply_verify_rollup_last_success_timestamp[36h])` | == 1 for ≥ 5 min | ticket | [supply-verify-rollup-stale](runbooks/supply-verify-rollup-stale.md) |
 | `stellarindex_aggregator_supply_refresh_stalled` | `time() - max(timestamp(stellarindex_aggregator_supply_refresh_total{outcome="ok"}))` | > 30 min for ≥ 5 min | page | [supply-refresh-stalled](runbooks/supply-refresh-stalled.md) |
 | `stellarindex_aggregator_supply_refresh_error_dominant` | error-outcome rate / total-rate | > 50% for ≥ 30 min | ticket | [supply-refresh-error-dominant](runbooks/supply-refresh-error-dominant.md) |
 | `stellarindex_aggregator_supply_refresh_never_initialized` | `absent_over_time(stellarindex_aggregator_supply_refresh_total{outcome="ok"}[36h])` | == 1 for ≥ 5 min | ticket | [supply-snapshot-never-initialized](runbooks/supply-snapshot-never-initialized.md) + per-alert detail [aggregator-supply-refresh-never-initialized](runbooks/aggregator-supply-refresh-never-initialized.md) |

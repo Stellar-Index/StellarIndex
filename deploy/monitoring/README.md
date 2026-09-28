@@ -39,6 +39,7 @@ deploy/monitoring/
 │   ├── supply.yml              SAC cross-check divergence
 │   ├── supply-refresh.yml      Aggregator-resident supply-refresh stalled / error-dominant
 │   ├── supply-snapshot.yml     systemd-timer-path supply-snapshot stale / circulating-zero / unit-failed
+│   ├── supply-verify-rollup.yml  SEP-41 supply-rollup reconciliation unit-failed / stale / never-initialized
 │   └── verify-archive.yml      verify-archive run-stale / unit-failed
 ```
 

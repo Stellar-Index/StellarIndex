@@ -1,0 +1,23 @@
+# systemd timer: daily SEP-41 supply-rollup reconciliation.
+#
+# Rendered by Ansible. Companion to supply-verify-rollup.service. A daily
+# clean run is what turns "the rollup reconciles" into a scraped
+# last_success_timestamp instead of a pasted transcript.
+#
+# Time slot: 06:53 UTC + up to 5 min jitter, after the 04:42 supply-snapshot
+# and the 06:00 ch-supply gap-fill so they don't overlap on Postgres.
+#
+# Persistent=true: a fire missed while the box was off runs on next boot.
+
+[Unit]
+Description=Daily SEP-41 supply-rollup reconciliation
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-verify-rollup-unit-failed.md
+
+[Timer]
+OnCalendar=*-*-* 06:53:00 UTC
+RandomizedDelaySec=300
+Persistent=true
+Unit=supply-verify-rollup.service
+
+[Install]
+WantedBy=timers.target

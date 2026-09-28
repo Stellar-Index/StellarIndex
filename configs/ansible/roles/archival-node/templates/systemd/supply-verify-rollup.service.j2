@@ -1,0 +1,61 @@
+# systemd unit: SEP-41 supply-rollup reconciliation (read-only).
+#
+# Rendered by Ansible. Runs `stellarindex-ops supply verify-rollup`, which
+# re-sums sep41_supply_events for every watched contract at its checkpoint's
+# last_ledger and diffs that against the sep41_supply_rollup fold. Drift, a
+# watched contract with no checkpoint row, or zero checkpoints checked all
+# exit non-zero and set stellarindex_supply_verify_rollup_unit_failed=1; only
+# a clean run advances _last_success_timestamp. The alerts in
+# deploy/monitoring/rules/supply-verify-rollup.yml read that textfile.
+#
+# Configuration (override via /etc/default/supply-verify-rollup):
+#   CONFIG_PATH      Default /etc/stellarindex.toml
+#   TEXTFILE_OUTPUT  Path under node_exporter's textfile_collector dir.
+#   RUN_TIMEOUT      The binary's overall wall-clock budget.
+#   EXTRA_FLAGS      Optional flags (e.g. -contracts C...,C...).
+
+[Unit]
+Description=Stellar Index — SEP-41 supply-rollup reconciliation (daily)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-verify-rollup-unit-failed.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Defaults first: Environment=/EnvironmentFile= apply in file order and the
+# later one wins, so the operator's /etc/default files must come after.
+Environment=CONFIG_PATH=/etc/stellarindex.toml
+Environment=TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/supply_verify_rollup.prom
+Environment=RUN_TIMEOUT=2h
+Environment=EXTRA_FLAGS=
+
+EnvironmentFile=-/etc/default/supply-verify-rollup
+EnvironmentFile=-/etc/default/stellarindex
+EnvironmentFile=-/etc/default/stellarindex-ops
+
+# No -write: verify-rollup only reads.
+ExecStart=/usr/local/bin/stellarindex-ops supply verify-rollup \
+  -config ${CONFIG_PATH} \
+  -timeout ${RUN_TIMEOUT} \
+  -textfile-output ${TEXTFILE_OUTPUT} \
+  $EXTRA_FLAGS
+
+User=stellarindex
+Group=stellarindex
+
+# Config is read-only; the textfile_collector dir is the only writable
+# path. A non-default TEXTFILE_OUTPUT needs ReadWritePaths to match.
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
+
+# RUN_TIMEOUT bounds the run and still writes the failure textfile; this is
+# the backstop for a binary that cannot reach its own deadline.
+TimeoutStartSec=2h15min
+
+[Install]
+WantedBy=multi-user.target
