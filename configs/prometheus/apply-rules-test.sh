@@ -34,6 +34,8 @@ groups:
         for: 5m
         labels: {severity: page}
         annotations: {summary: "fixture"}
+      - record: fixture:up_ratio:5m
+        expr: avg(up)
 EOF
 
 # Serves a fixed /api/v1/rules body on loopback, port chosen by the OS.
@@ -84,17 +86,26 @@ expect() {
   pass=$((pass + 1))
 }
 
-# Live set matches the repo exactly: live-check OK.
+# Live set matches the repo exactly, including the recording rule:
+# live-check OK. Regression proof for the F-1219 recurrence — a
+# codified `record:` was permanently read as "loaded but NOT in the
+# repo" because the comparison set only ever held alert names.
 cat >"$TMP/matching.json" <<'EOF'
 {"status":"success","data":{"groups":[{"name":"fixture","rules":[
   {"name":"FixtureAlertA","health":"ok"},
-  {"name":"FixtureAlertB","health":"ok"}
+  {"name":"FixtureAlertB","health":"ok"},
+  {"name":"fixture:up_ratio:5m","health":"ok"}
 ]}]}}
 EOF
 start_mock "$TMP/matching.json"
 OUT="$(PROM_URL="http://127.0.0.1:$MOCK_PORT" bash "$SCRIPT" --live-check "$SRC" 2>&1)"; RC=$?
 stop_mock
-expect 'live matches repo → OK' 0
+expect 'live matches repo (alerts + recording rule) → OK' 0
+if grep -q 'fixture:up_ratio:5m' <<<"$OUT"; then
+  echo "FAIL: a codified recording rule was reported as drift" >&2; fail=$((fail + 1))
+else
+  echo "ok: codified recording rule not reported as drift"; pass=$((pass + 1))
+fi
 
 # Live set is missing an alert the repo declares (the T677 scenario: repo
 # has moved on, the host has not). This is the regression proof — on the
@@ -102,7 +113,8 @@ expect 'live matches repo → OK' 0
 # with "unbound variable"/usage error rather than detecting the drift.
 cat >"$TMP/missing.json" <<'EOF'
 {"status":"success","data":{"groups":[{"name":"fixture","rules":[
-  {"name":"FixtureAlertA","health":"ok"}
+  {"name":"FixtureAlertA","health":"ok"},
+  {"name":"fixture:up_ratio:5m","health":"ok"}
 ]}]}}
 EOF
 start_mock "$TMP/missing.json"
@@ -121,6 +133,7 @@ cat >"$TMP/extra.json" <<'EOF'
 {"status":"success","data":{"groups":[{"name":"fixture","rules":[
   {"name":"FixtureAlertA","health":"ok"},
   {"name":"FixtureAlertB","health":"ok"},
+  {"name":"fixture:up_ratio:5m","health":"ok"},
   {"name":"StaleAlertC","health":"ok"}
 ]}]}}
 EOF

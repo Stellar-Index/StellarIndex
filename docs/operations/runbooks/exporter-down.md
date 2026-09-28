@@ -99,9 +99,9 @@ only), so do not go looking there when an r1 exporter misbehaves.
   inventory). Feeds `stellarindex_timescale_backup_failed` +
   `stellarindex_timescale_backup_none_24h`.
 - **minio** — unit `minio`, port 9000. Bearer token at
-  `/etc/prometheus/minio.token`; rotate via
-  `mc admin prometheus generate`. Feeds galexie-archive +
-  archive-completeness families.
+  `/etc/prometheus/minio.token`; regenerate per
+  [credential-rotation.md](../credential-rotation.md#prometheus-bearer-token-regen-inv-0981inv-1144--now-codified).
+  Feeds galexie-archive + archive-completeness families.
 
 ## Root cause analysis
 

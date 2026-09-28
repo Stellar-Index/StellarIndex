@@ -1,6 +1,6 @@
 ---
 title: Credential rotation runbook
-last_verified: 2026-07-05
+last_verified: 2026-09-28
 status: current
 ---
 
@@ -141,31 +141,58 @@ check `configs/ansible/roles/archival-node/defaults/main.yml` (search
    50` should show continued successful uploads with no
    `SignatureDoesNotMatch`; `/usr/local/bin/config-assertions.sh`
    should print no `FAIL galexie_writer_creds_valid` (see below).
-6. **Rotating MinIO root** additionally invalidates the Prometheus
-   scrape bearer token — see the next subsection. This is exactly
-   the 2026-07-03 incident: root got rotated, `/etc/prometheus/minio.token`
-   kept signing with the old root creds, and `minio_exporter_down`
-   fired.
+6. **Rotating MinIO root no longer touches the Prometheus scrape
+   bearer token** — see the next subsection for why (it moved off a
+   root-signed JWT to an independent service-account secret after
+   the 2026-07-03 incident, where root got rotated,
+   `/etc/prometheus/minio.token` kept signing with the old root
+   creds, and `minio_exporter_down` fired).
 
-### Prometheus bearer-token regen (MinIO root rotation only)
+### Prometheus bearer-token regen (INV-0981/INV-1144 — now codified)
 
-Only needed when the **root** password changes — the bucket-scoped
-writer/reader users above don't touch the metrics scrape path.
+Codified since Group D of
+`configs/ansible/roles/archival-node/tasks/16-prometheus-exporters.yml`:
+a `prometheus-read` MinIO policy scoped to `admin:Prometheus`, and a
+service account under MinIO root carrying it (the procedure in
+[runbooks/minio-metrics-403.md](runbooks/minio-metrics-403.md)).
+`mc admin user svcacct add` prints the generated secret key **once**,
+on creation, which the task writes to
+`/etc/prometheus/minio.token` (`prometheus:prometheus`, `0400`) and
+notifies `Restart prometheus`. A normal apply is a no-op once the file
+exists — the task is gated on the file's absence, because re-running
+`svcacct add` would mint a NEW secret and invalidate the one already
+in use.
+
+Because the token belongs to a **service account**, not root itself,
+rotating the MinIO root password (the section above) no longer
+invalidates it — the 2026-07-03 incident (root rotated,
+`/etc/prometheus/minio.token` kept signing with the old root creds,
+`minio_exporter_down` fired) was specific to the older
+`mc admin prometheus generate` JWT, which this procedure replaced.
+Root rotation needs no follow-up here.
+
+**To rotate the scrape token itself** (suspected leak, not a root
+rotation):
 
 ```sh
-mc admin prometheus generate local > /etc/prometheus/minio.token
-systemctl reload prometheus     # must reload to pick up the new bearer file
+ssh root@136.243.90.96
+mc admin user svcacct rm local <the-access-key-shown-by-svcacct-info>
+rm -f /etc/prometheus/minio.token
 ```
+
+then re-run the `exporters` tag (`ansible-playbook -i inventory/r1.yml
+playbooks/archival-node.yml --tags exporters`) — Group D lives in
+`16-prometheus-exporters.yml`, not `09-minio.yml`, so `--tags minio`
+alone would not reach it — to mint a new one and restart Prometheus
+onto it.
 
 See [runbooks/exporter-down.md](runbooks/exporter-down.md#per-exporter-notes)
 for the day-to-day symptom (`minio_exporter_down`) and
 [runbooks/minio-metrics-403.md](runbooks/minio-metrics-403.md) for
-the companion 403 case. This step is **not yet codified in
-ansible** — it was applied by hand on 2026-07-03 (AGENTS.md's "codify
-every host change" rule is violated here until a task lands in
-`09-minio.yml` to template `/etc/prometheus/minio.token` from a
-`mc admin prometheus generate` run; tracked as a follow-up, not done
-in this pass).
+the companion 403 case. `scripts/ops/config-assertions.sh`'s
+`minio_prometheus_token_present` check (hourly) catches a missing,
+emptied, or wrong-owner file — stat only, it never reads the token —
+the same backstop pattern as `galexie_writer_creds_valid` above.
 
 ### The `SignatureDoesNotMatch` drift symptom
 
