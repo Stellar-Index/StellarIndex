@@ -3,6 +3,7 @@ package streaming
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -138,6 +139,13 @@ func acquireGlobalStreamSlot() (release func(), ok bool) {
 // internal/config/caddy_sse_timeouts_test.go holds every Caddy timeout
 // on the stream path to at least two of these.
 const DefaultHeartbeatInterval = 15 * time.Second
+
+// DefaultRetry is the SSE reconnection-delay hint (the `retry:`
+// field) writeStream sends once in the connection prelude. A client
+// that loses the connection waits this long before its own
+// automatic reconnect, giving the server headroom to recover
+// (deploy roll, transient LB blip) without a reconnect stampede.
+const DefaultRetry = 5000 * time.Millisecond
 
 // StreamOptions tunes [Stream] behaviour. Zero values use sensible
 // defaults so most callers can pass `StreamOptions{}`.
@@ -282,8 +290,12 @@ func writeStream(w http.ResponseWriter, r *http.Request, ch <-chan Event, opts S
 	// immediately rather than waiting for the first event. Some
 	// clients deadlock if the server hasn't written headers + flushed
 	// before they time out.
+	//
+	// retry: precedes :connected so a client that reconnects mid-way
+	// through the prelude (or one that only reads the first frame)
+	// still picks up the reconnection-delay hint (Refs #1035).
 	setWriteDeadline()
-	if _, err := fmt.Fprint(w, ":connected\n\n"); err != nil {
+	if _, err := fmt.Fprintf(w, "retry: %d\n\n:connected\n\n", DefaultRetry.Milliseconds()); err != nil {
 		return
 	}
 	flusher.Flush()
@@ -409,6 +421,7 @@ func LastEventIDFrom(r *http.Request) string {
 
 // WriteFrame emits one SSE frame to w:
 //
+//	retry: <ms>        (omitted when Retry == 0)
 //	id: <ID>
 //	event: <Type>      (omitted when Type == "")
 //	data: <line 1>
@@ -424,6 +437,11 @@ func LastEventIDFrom(r *http.Request) string {
 func WriteFrame(w http.ResponseWriter, ev Event) error {
 	var b strings.Builder
 	b.Grow(len(ev.Data) + 64)
+	if ev.Retry > 0 {
+		b.WriteString("retry: ")
+		b.WriteString(strconv.FormatInt(ev.Retry.Milliseconds(), 10))
+		b.WriteByte('\n')
+	}
 	if ev.ID != "" {
 		b.WriteString("id: ")
 		b.WriteString(ev.ID)

@@ -229,6 +229,12 @@ func readPriceStreamFrame(t *testing.T, br *bufio.Reader, timeout time.Duration)
 		if strings.HasPrefix(line, ":") {
 			continue
 		}
+		// retry: is a standalone prelude field (no data line) —
+		// never a client-visible frame on its own; skip it like a
+		// comment.
+		if strings.HasPrefix(line, "retry:") {
+			continue
+		}
 		if line == "\n" {
 			if sb.Len() > 0 {
 				return sb.String()

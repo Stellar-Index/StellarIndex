@@ -38,6 +38,12 @@ type Event struct {
 	// Hub for buffer-eviction policies; clients don't see it
 	// directly.
 	Timestamp time.Time
+
+	// Retry, when non-zero, is an SSE `retry:` reconnection-delay
+	// hint attached to this event. Most events leave it zero;
+	// writeStream sends the connection-wide default once in the
+	// prelude rather than per-event (see DefaultRetry).
+	Retry time.Duration
 }
 
 // Generator is a goroutine-safe monotonic event-ID source. Each

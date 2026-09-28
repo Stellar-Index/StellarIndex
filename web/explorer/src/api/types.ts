@@ -924,6 +924,14 @@ export interface paths {
          *       `/v1/history/since-inception` for chart granularities.
          *     - 503 when the deployment hasn't wired the streaming Hub
          *       (typical pre-aggregator state).
+         *     - 404 means the pair is withheld (scam/substance gate) at
+         *       connect time — the same verdict `/v1/price` would answer
+         *       404 for. The gate is re-checked on every closed bucket
+         *       too: a pair withheld PARTWAY through an open connection is
+         *       not disconnected — its buckets are silently dropped and
+         *       heartbeats continue, so a client must treat prolonged
+         *       silence with no error as "possibly withheld", not "still
+         *       healthy".
          */
         get: operations["streamPrices"];
         put?: never;

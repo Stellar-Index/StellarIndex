@@ -37,6 +37,12 @@ func readSSEFrames(t *testing.T, body io.Reader, want int, timeout time.Duration
 		if strings.HasPrefix(line, ":") {
 			continue
 		}
+		// retry: is a standalone prelude field (no data line), so it
+		// never dispatches a client-visible event; skip it like a
+		// comment rather than let it seed a bogus first "frame".
+		if strings.HasPrefix(line, "retry:") {
+			continue
+		}
 		if line == "\n" {
 			if current.Len() > 0 {
 				frames = append(frames, current.String())
