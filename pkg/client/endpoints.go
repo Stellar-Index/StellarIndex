@@ -275,8 +275,9 @@ func (c *Client) HistorySinceInception(ctx context.Context, q HistoryQuery) (*En
 // and Quote are required. From + To are optional (server defaults
 // to `now-1h .. now`); Limit defaults to 1000, and a value outside
 // [1, 10000] is REJECTED with a 400 rather than reduced to the
-// maximum. Cursor paginates — pass the previous response's
-// `Pagination.Next` to walk forward.
+// maximum. Cursor paginates — [Pagination] is a pointer, nil on the
+// terminal page, so check `prev.Pagination != nil` before reading
+// `prev.Pagination.Next` to walk forward.
 //
 // Note: distinct from [HistoryQuery] (which targets the
 // since-inception bucketed series). This surface returns RAW
@@ -288,7 +289,7 @@ type HistoryRangeQuery struct {
 	From   time.Time // optional
 	To     time.Time // optional
 	Limit  int       // optional; default 1000; outside [1, 10000] → 400
-	Cursor string    // optional; opaque from prior Pagination.Next
+	Cursor string    // optional; opaque from prior response's Pagination.Next (Pagination is nil on the terminal page)
 }
 
 // History fetches raw trades for [Base, Quote] within the
@@ -299,9 +300,11 @@ type HistoryRangeQuery struct {
 //
 // Use cases: trade-level audits, regulatory exports, custom
 // aggregations the server doesn't pre-compute. Pagination via
-// `Cursor` (opaque base64); the walker collects pages by
-// re-issuing with `Cursor: prev.Pagination.Next` until the
-// returned cursor is empty.
+// `Cursor` (opaque base64); the walker collects pages by checking
+// `prev.Pagination != nil` and re-issuing with
+// `Cursor: prev.Pagination.Next` until Pagination comes back nil —
+// NOT until Next is empty, which never happens: the terminal page
+// omits Pagination entirely rather than sending an empty Next.
 //
 // `flags.stale` doesn't apply here (this surface returns raw
 // stored trades, not a VWAP). Other envelope flags propagate
@@ -447,7 +450,9 @@ func (c *Client) OHLCSeries(ctx context.Context, q OHLCSeriesQuery) (*Envelope[O
 
 // AssetsOptions paginates through the asset catalogue. Empty
 // Cursor starts from the beginning; pass the previous response's
-// Pagination.Next to walk forward.
+// Pagination.Next to walk forward — but check `prev.Pagination != nil`
+// first, since Pagination is nil (not an empty-Next struct) on the
+// terminal page.
 type AssetsOptions struct {
 	Cursor string
 	Limit  int // 0 → server default (typically 100)
@@ -1351,10 +1356,10 @@ type PoolsQuery struct {
 // row but TWO Pool rows. Use Pools when you need per-venue
 // breakdown; use Markets when you want the unified pair view.
 //
-// Pagination follows the cursor protocol — pass back
-// `env.Pagination.Next` from a prior response as PoolsQuery.Cursor
-// to fetch the next page; an empty Pagination.Next signals no more
-// results.
+// Pagination follows the cursor protocol — check `env.Pagination != nil`
+// (it is a pointer, nil on the terminal page) before passing back
+// `env.Pagination.Next` from a prior response as PoolsQuery.Cursor to
+// fetch the next page; a nil Pagination signals no more results.
 func (c *Client) Pools(ctx context.Context, q PoolsQuery) (*Envelope[[]Pool], error) {
 	v := url.Values{}
 	if q.Source != "" {
