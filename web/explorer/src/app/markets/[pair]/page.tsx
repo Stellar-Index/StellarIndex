@@ -7,7 +7,9 @@ import {
   formatCompact,
   formatPairPrice,
   formatSubunitPrice,
+  ratioPct,
   scaleBaseUnits,
+  sumDecimalStrings,
 } from '@/lib/format';
 import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
 import { Container, Breadcrumbs } from '@/components/ui';
@@ -390,10 +392,10 @@ export default async function PairPage({ params }: { params: Params }) {
   const trend24h = points
     .map((pt) => Number(pt.p))
     .filter((n) => Number.isFinite(n));
-  const volume24hUsd = points.reduce((acc, pt) => {
-    const v = pt.v_usd != null ? Number(pt.v_usd) : NaN;
-    return Number.isFinite(v) ? acc + v : acc;
-  }, 0);
+  // Summed exactly; converted once, for the display label only.
+  const volume24hUsd = Number(
+    sumDecimalStrings(points.map((pt) => pt.v_usd)) ?? 0,
+  );
 
   // FEC A1-6: BreadcrumbList JSON-LD derives from the visible Crumb[]
   // inside Breadcrumbs below — no hand-rolled LD.
@@ -635,10 +637,7 @@ function SourceBreakdownPanel({ rows }: { rows: PoolRow[] }) {
   // contributed trades but the aggregator hasn't priced (Phase 1
   // USD-pegged-quote rule). Those rows show "—" and don't count
   // toward the bar denominator.
-  const totalUSD = rows.reduce((acc, r) => {
-    const v = Number(r.volume_24h_usd ?? '0');
-    return Number.isFinite(v) ? acc + v : acc;
-  }, 0);
+  const totalUSD = sumDecimalStrings(rows.map((r) => r.volume_24h_usd));
   return (
     <Panel
       title="Sources contributing"
@@ -647,10 +646,7 @@ function SourceBreakdownPanel({ rows }: { rows: PoolRow[] }) {
       <ul className="space-y-2">
         {rows.map((r) => {
           const v = r.volume_24h_usd ? Number(r.volume_24h_usd) : null;
-          const pct =
-            totalUSD > 0 && v != null && Number.isFinite(v)
-              ? (v / totalUSD) * 100
-              : null;
+          const pct = ratioPct(r.volume_24h_usd, totalUSD, 1);
           const lp = r.last_price ? Number(r.last_price) : null;
           const lpFixed = lp == null ? null : formatPairPrice(lp);
           return (

@@ -29,7 +29,11 @@ import type { paths } from '@/api/types';
 import { DonutChart } from '@/components/charts/DonutChart';
 import { FreshnessMarker } from '@/components/primitives';
 import { OperationMixPanel } from '@/components/NetworkInsight';
-import { formatCompact } from '@/lib/format';
+import {
+  formatCompact,
+  formatCompactUnits,
+  sumDecimalStrings,
+} from '@/lib/format';
 import {
   type Envelope,
   type Ledger,
@@ -443,12 +447,9 @@ function HeroStats({ stats: s, tip }: { stats?: NetworkStats; tip?: Ledger }) {
   // still shows the full CEX-vs-on-chain split by design.)
   const { data: sources } = useSources(undefined, true);
   const onChain = (sources ?? []).filter(isOnChainSource);
-  const stellarVolume = onChain
-    .filter((x) => x.subclass === 'dex')
-    .reduce(
-      (sum, x) => sum + (x.volume_24h_usd ? Number(x.volume_24h_usd) : 0),
-      0,
-    );
+  const stellarVolume = sumDecimalStrings(
+    onChain.filter((x) => x.subclass === 'dex').map((x) => x.volume_24h_usd),
+  );
   // Stellar markets = active (venue, pair) pools summed across on-chain
   // DEX venues (a pair traded on two DEXes counts as two markets).
   const stellarMarkets = onChain.reduce(
@@ -472,7 +473,11 @@ function HeroStats({ stats: s, tip }: { stats?: NetworkStats; tip?: Ledger }) {
       <StatCell>
         <Stat
           label="24h volume"
-          value={stellarVolume > 0 ? `$${formatCompact(stellarVolume)}` : '—'}
+          value={
+            stellarVolume != null && Number(stellarVolume) > 0
+              ? `$${formatCompactUnits(stellarVolume)}`
+              : '—'
+          }
           sub="Stellar on-chain"
         />
       </StatCell>
@@ -833,10 +838,14 @@ function NetworkComposition() {
   const statsAvailable = (data ?? []).some((s) => s.volume_24h_usd != null);
   const slices = (data ?? [])
     .filter(isOnChainSource)
-    .map((s) => ({ label: s.name, value: Number(s.volume_24h_usd ?? 0) }))
+    .map((s) => ({
+      label: s.name,
+      value: Number(s.volume_24h_usd ?? 0),
+      raw: s.volume_24h_usd,
+    }))
     .filter((x) => Number.isFinite(x.value) && x.value > 0)
     .sort((a, b) => b.value - a.value);
-  const total = slices.reduce((sum, s) => sum + s.value, 0);
+  const total = sumDecimalStrings(slices.map((s) => s.raw)) ?? '0';
 
   return (
     <Panel
@@ -862,7 +871,7 @@ function NetworkComposition() {
       {slices.length > 0 && (
         <DonutChart
           data={slices}
-          centerLabel={`$${formatCompact(total)}`}
+          centerLabel={`$${formatCompactUnits(total)}`}
           centerSub="24h vol"
           formatValue={(n) => `$${formatCompact(n)}`}
         />

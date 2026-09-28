@@ -6,7 +6,11 @@ import dynamic from 'next/dynamic';
 import { Panel } from '@/components/reveal';
 import type { RequestExample } from '@/api/client';
 import { cn } from '@/lib/cn';
-import { formatCompact } from '@/lib/format';
+import {
+  formatCompact,
+  formatCompactUnits,
+  sumDecimalStrings,
+} from '@/lib/format';
 import { dropPartialTrailingDay, seriesPointTime } from '@/lib/series';
 import type {
   NamedLineSeries,
@@ -19,7 +23,9 @@ import {
 } from '@/components/charts/DonutChart';
 import { Skeleton } from '@/components/ui';
 import {
+  seriesTotal,
   toChartNumber,
+  toDecimalString,
   BespokeTablePanel,
   windowLabelFor,
   type Bespoke,
@@ -61,16 +67,20 @@ const PER_CHAIN_IN = 'Inbound · ';
 const PER_CHAIN_OUT = 'Outbound · ';
 const CUMULATIVE = 'Cumulative net inflow (all-time)';
 
+/** A plotted line plus the exact window total its legend shows. */
+export type LegendLine = NamedLineSeries & { total: string | null };
+
 function toLine(
   s: BespokeSeries,
   label: string,
   tone: LineSeriesTone,
   color?: string,
-): NamedLineSeries {
+): LegendLine {
   return {
     label,
     tone,
     color,
+    total: seriesTotal(s.points),
     // Today's accumulating daily bucket is dropped (phantom-cliff honesty;
     // hourly 24h-window points keep the live day); points with a
     // non-parsable date or non-numeric value are dropped rather than
@@ -96,7 +106,7 @@ function isAuxSeries(s: BespokeSeries): boolean {
 // flowLines — project a bespoke series list onto the totals chart's named
 // lines: the inbound/outbound pair when both are present (cctp), else the
 // first non-auxiliary series as a single line (rozo's settled volume).
-export function flowLines(series: BespokeSeries[]): NamedLineSeries[] {
+export function flowLines(series: BespokeSeries[]): LegendLine[] {
   const inbound = series.find((s) => s.name === INBOUND_TOTAL);
   const outbound = series.find((s) => s.name === OUTBOUND_TOTAL);
   if (inbound && outbound) {
@@ -140,7 +150,7 @@ export function chainColor(label: string): string {
 export function perChainLines(
   series: BespokeSeries[],
   prefix: string,
-): NamedLineSeries[] {
+): LegendLine[] {
   return series
     .filter((s) => s.name.startsWith(prefix))
     .map((s) => {
@@ -208,8 +218,12 @@ export function BreakdownDonuts({
           >
             <DonutChart
               data={slices}
-              centerLabel={formatCompact(
-                slices.reduce((s, x) => s + x.value, 0),
+              centerLabel={formatCompactUnits(
+                sumDecimalStrings(
+                  b.rows
+                    .map((r) => toDecimalString(r.value))
+                    .filter((v) => v != null && Number(v) > 0),
+                ) ?? '0',
               )}
               centerSub={b.unit || undefined}
               formatValue={formatCompact}
@@ -224,7 +238,7 @@ export function BreakdownDonuts({
 // LineLegend — the static legend row for a multi-line chart: one entry per
 // line with its hue swatch and window total. Exported for BespokeSection's
 // grouped multi-line panels.
-export function LineLegend({ lines }: { lines: NamedLineSeries[] }) {
+export function LineLegend({ lines }: { lines: LegendLine[] }) {
   if (lines.length === 0) return null;
   return (
     <ul className="text-ink-muted flex flex-wrap gap-x-4 gap-y-1 text-xs">
@@ -247,7 +261,7 @@ export function LineLegend({ lines }: { lines: NamedLineSeries[] }) {
           <span className="text-ink-body font-mono tabular-nums">
             {/* A gap point (null value) contributes nothing to the
                 total — it is a day with no reading, not a zero. */}
-            {formatCompact(l.data.reduce((s, p) => s + (p.value ?? 0), 0))}
+            {formatCompactUnits(l.total ?? '0')}
           </span>
         </li>
       ))}

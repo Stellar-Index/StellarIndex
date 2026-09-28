@@ -22,7 +22,12 @@ import { fetchPriceBatchChunked, isPriceableAssetId } from '@/lib/price-batch';
 import type { components } from '@/api/types';
 import { assetHref } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
-import { formatCompact, formatPriceSmall, formatRelative } from '@/lib/format';
+import {
+  formatCompact,
+  formatPriceSmall,
+  formatRelative,
+  ratioPct,
+} from '@/lib/format';
 import { scaledUnits } from '../explorer-shared';
 
 // Mirror of the slice of AccountStateResp we need (kept local so this
@@ -257,6 +262,8 @@ export function AccountPositions({ id }: { id: string }) {
     0n,
   );
   const total = Number(totalCents) / 100;
+  const sharePct = (cents: bigint | null) =>
+    (ratioPct(String(cents ?? 0n), String(totalCents), 1) ?? 0).toFixed(1);
   const pricedCount = holdings.filter((h) => h.valueUSD != null).length;
   // An unpriced positive balance adds $0 to the sum, so the total is a floor
   // (AGENTS.md invariant 1): mark it "≥" and name what it leaves out.
@@ -294,6 +301,7 @@ export function AccountPositions({ id }: { id: string }) {
         id: h.asset,
         label: shortAssetText(h.asset),
         value: h.valueUSD as number,
+        cents: h.valueCents,
         ...(slug ? { href: assetHref(slug) } : {}),
       };
     });
@@ -334,7 +342,7 @@ export function AccountPositions({ id }: { id: string }) {
             value={slices[0] ? slices[0].label : '—'}
             sub={
               slices[0] && total > 0
-                ? `${((slices[0].value / total) * 100).toFixed(1)}% ${shareOf}`
+                ? `${sharePct(slices[0].cents)}% ${shareOf}`
                 : undefined
             }
           />
@@ -416,7 +424,7 @@ export function AccountPositions({ id }: { id: string }) {
                 </Td>
                 <Td align="right" className="text-ink-muted font-mono">
                   {h.valueUSD != null && total > 0
-                    ? `${((h.valueUSD / total) * 100).toFixed(1)}%`
+                    ? `${sharePct(h.valueCents)}%`
                     : '—'}
                 </Td>
               </TR>

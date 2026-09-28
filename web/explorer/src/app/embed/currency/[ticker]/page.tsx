@@ -4,7 +4,7 @@ import { Suspense } from 'react';
 import { assetHrefFor } from '@/lib/fiat-slugs';
 import type { components } from '@/api/types';
 import { API_BASE_URL } from '@/api/client';
-import { formatSubunitPrice } from '@/lib/format';
+import { changePct, formatSubunitPrice } from '@/lib/format';
 
 import { LivePrice } from '../../LivePrice';
 import { EmbedCurrencyPathView } from './EmbedCurrencyPathView';
@@ -99,7 +99,7 @@ type ChartPoint = components['schemas']['HistoryPoint'];
 // than a static price. Degrades to [] on any error (price-only render).
 async function fetchFxSeries(
   ticker: string,
-): Promise<{ date: string; inverse_usd: number }[]> {
+): Promise<{ date: string; inverse_usd: number; raw: string }[]> {
   if (isCIStub) return [];
   try {
     const res = await fetch(
@@ -109,7 +109,11 @@ async function fetchFxSeries(
     if (!res.ok) return [];
     const env = (await res.json()) as { data?: { points?: ChartPoint[] } };
     return (env.data?.points ?? [])
-      .map((p) => ({ date: p.t, inverse_usd: p.p != null ? Number(p.p) : NaN }))
+      .map((p) => ({
+        date: p.t,
+        inverse_usd: p.p != null ? Number(p.p) : NaN,
+        raw: p.p ?? '',
+      }))
       .filter((p) => Number.isFinite(p.inverse_usd) && p.inverse_usd > 0);
   } catch {
     return [];
@@ -185,10 +189,8 @@ export default async function EmbedCurrencyPage({
   // change needs intraday granularity we don't pull here, so the 24h
   // chip stays hidden — better honest than fabricated.
   const change7d: number | null =
-    series.length >= 2 && series[0].inverse_usd > 0
-      ? ((series[series.length - 1].inverse_usd - series[0].inverse_usd) /
-          series[0].inverse_usd) *
-        100
+    series.length >= 2
+      ? changePct(series[0].raw, series[series.length - 1].raw)
       : null;
   const change24h: number | null = null;
 

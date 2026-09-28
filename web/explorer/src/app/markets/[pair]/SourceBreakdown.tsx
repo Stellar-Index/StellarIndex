@@ -5,7 +5,11 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { DonutChart } from '@/components/charts/DonutChart';
 import { apiGet, asExample } from '@/api/client';
-import { formatCompact } from '@/lib/format';
+import {
+  formatCompact,
+  formatCompactUnits,
+  sumDecimalStrings,
+} from '@/lib/format';
 
 interface SourceVolume {
   source: string;
@@ -62,7 +66,12 @@ export function SourceBreakdown({
       value: Number(s.volume_24h_usd),
       href: `/sources/${encodeURIComponent(s.source)}`,
     }));
-  const total = slices.reduce((sum, s) => sum + s.value, 0);
+  const total =
+    sumDecimalStrings(
+      (data?.sources ?? [])
+        .filter((s) => Number(s.volume_24h_usd) > 0)
+        .map((s) => s.volume_24h_usd),
+    ) ?? '0';
 
   // No priced volume → nothing meaningful to chart; stay quiet rather
   // than render an empty frame.
@@ -84,7 +93,7 @@ export function SourceBreakdown({
       {slices.length > 0 && (
         <DonutChart
           data={slices}
-          centerLabel={`$${formatCompact(total)}`}
+          centerLabel={`$${formatCompactUnits(total)}`}
           centerSub="24h vol"
           formatValue={(n) => `$${formatCompact(n)}`}
         />
