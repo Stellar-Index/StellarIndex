@@ -602,9 +602,10 @@ func seedBoundedLabelSeries() {
 		AdminKeyBudgetClampsTotal.WithLabelValues(outcome)
 	}
 	// GH-1146: the two mint routes that funnel through clampMintToCaller.
-	for _, route := range []string{"/v1/admin/keys", "/v1/account/keys"} {
-		MintScopeClampRefusedTotal.WithLabelValues(route)
-	}
+	// Unrolled rather than looped: the loop tipped seedBoundedLabelSeries
+	// over the gocognit ceiling, and two literal routes read no worse.
+	MintScopeClampRefusedTotal.WithLabelValues("/v1/admin/keys")
+	MintScopeClampRefusedTotal.WithLabelValues("/v1/account/keys")
 	// C3-023: producer-side webhook fan-out losses. The event-type set
 	// is platform.WebhookEventType's closed enum (kept as literals here
 	// so internal/obs stays free of an internal/platform import); the
