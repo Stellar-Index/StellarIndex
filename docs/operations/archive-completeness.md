@@ -110,10 +110,13 @@ stellarindex-ops archive-completeness verify -from <floor> -to <tip> -workers 8
 
 (The real
 flag set is `-archive-root`, `-from`, `-to`, `-workers`,
-`-owner-user`, `-owner-group`, `-output-file`, `-textfile-output` —
-see `cmd/stellarindex-ops/main.go::archiveCompletenessVerify` and
+`-owner-user`, `-owner-group`, `-output-file`, `-textfile-output`,
+`-write` — see `internal/ops/archive/archive_completeness.go` and
 `deploy/systemd/archive-completeness.service` for the exact
-invocation. There is no `-range`/`-checks`/`-trust-leader` flag; the
+invocation. `-write` is REQUIRED to actually fetch/repair anything:
+without it, `fix`/`verify` are a fail-closed DRY RUN that report what
+would change and write nothing (#1191) — the shipped systemd units
+pass it. There is no `-range`/`-checks`/`-trust-leader` flag; the
 range-keyword and per-check selectors below describe the *target*
 ADR-0017 design, not the shipped command.)
 
@@ -245,6 +248,7 @@ on R1. Existing R1 gaps as of 2026-04-27:
      -c 'SELECT GREATEST(MAX(last_ledger) - 64, 2) FROM ingestion_cursors WHERE last_ledger > 0')
    /usr/local/sbin/run-heavy-job.sh archive-completeness-manual \
      /usr/local/bin/stellarindex-ops archive-completeness verify \
+       -write \
        -from "$(grep -oE '[0-9]+' /etc/default/galexie-archive-fill | head -1)" \
        -to "$TO" -workers 16 \
        -output-file /var/lib/galexie/cross-anchor-gaps.json
@@ -305,6 +309,7 @@ The timer fires
 # ExecStart, with ARCHIVE_FROM = the hot floor and ARCHIVE_TO from above:
 run-heavy-job.sh archive-completeness \
   stellarindex-ops archive-completeness verify \
+    -write \
     -from ${ARCHIVE_FROM} -to ${ARCHIVE_TO} -workers 8 \
     -network ${STELLAR_NETWORK} \
     -textfile-output /var/lib/node_exporter/textfile_collector/archive_completeness.prom \
@@ -467,8 +472,8 @@ What is still NOT implemented is the FLAG set below the line — the
 `-range` / `-checks` / `-trust-leader` flags belong to the target
 ADR-0017 design and do not exist in the binary (the real flags are
 `-from` / `-to` / `-archive-root` / `-network` / `-output-file` /
-`-textfile-output`). Read the usage block below as the target shape,
-not as today's interface.
+`-textfile-output` / `-write`). Read the usage block below as the
+target shape, not as today's interface.
 
 ```
 USAGE
@@ -486,6 +491,9 @@ FLAGS (shipped)
   -output-file PATH     write JSON gap report here (empty = stdout)
   -textfile-output PATH write a node_exporter textfile here
                         (empty = no metrics emit)
+  -write                apply changes. Without it, fix/verify are a
+                        fail-closed DRY RUN: they report what would
+                        change and write nothing (#1191)
 
 EXIT CODES
   0   clean — no missing files after the fill pass

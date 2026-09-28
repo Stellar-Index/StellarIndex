@@ -180,13 +180,14 @@ ssh <host> 'journalctl -u archivist-refetch -f'
 
 Then repair anything archivist could not, from the nine cross-anchor
 sources, with `archive-completeness` (`-to` is REQUIRED — it is not
-optional and `0` is rejected; see
-[archive-completeness.md](archive-completeness.md)):
+optional and `0` is rejected; `-write` is REQUIRED too — without it
+`fix`/`verify` fail-closed DRY RUN and report what would change but
+write nothing; see [archive-completeness.md](archive-completeness.md)):
 
 ```sh
 ssh <host> '/usr/local/sbin/run-heavy-job.sh archive-completeness-bringup \
   /usr/local/bin/stellarindex-ops archive-completeness fix \
-    -from <hot-floor-or-2> -to <tip> -workers 8 -network pubnet'
+    -write -from <hot-floor-or-2> -to <tip> -workers 8 -network pubnet'
 ```
 
 Sweep again to confirm:

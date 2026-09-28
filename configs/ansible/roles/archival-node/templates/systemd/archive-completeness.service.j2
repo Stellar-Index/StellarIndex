@@ -43,6 +43,7 @@ SuccessExitStatus=75
 Environment=HEAVY_JOB_CLASS=scheduled
 ExecStart=/usr/local/sbin/run-heavy-job.sh archive-completeness \
   /usr/local/bin/stellarindex-ops archive-completeness verify \
+  -write \
   -from ${ARCHIVE_FROM} \
   -to ${ARCHIVE_TO} \
   -workers ${WORKERS} \

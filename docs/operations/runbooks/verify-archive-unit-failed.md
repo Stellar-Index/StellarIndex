@@ -73,13 +73,13 @@ cf. PR #253).`
   A 1h budget on an 8-worker run gets enough coverage to confirm
   whether the original failure persists. Don't push the full
   run yet — the next scheduled timer will retry.
-- [ ] **If the failure mode is `is missing`**: trigger a manual `archive-completeness fix` to backfill the missing file from the public-archive fallback chain (note: the subcommand has NO `-config` flag and `-to` is REQUIRED):
+- [ ] **If the failure mode is `is missing`**: trigger a manual `archive-completeness fix` to backfill the missing file from the public-archive fallback chain (note: the subcommand has NO `-config` flag, and `-to` and `-write` are both REQUIRED — without `-write` it is a dry-run preview that writes nothing):
   ```sh
   ssh root@136.243.90.96
   # head = current network tip ledger (e.g. from /v1/diagnostics/cursors)
   /usr/local/sbin/run-heavy-job.sh archive-completeness-fix \
     /usr/local/bin/stellarindex-ops archive-completeness fix \
-    -from 2 -to <head-ledger>
+    -write -from 2 -to <head-ledger>
   # or simply re-fire the scheduled path (check → fix → re-check + textfile):
   systemctl start archive-completeness.service
   ```

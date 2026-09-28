@@ -1,7 +1,6 @@
 package archive
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -65,6 +64,7 @@ func archiveCompletenessVerify(args []string) error {
 		"Path to write JSON report. Empty = stdout.")
 	textfileOutput := fs.String("textfile-output", "",
 		"Path to write Prometheus textfile (node_exporter textfile_collector format). Empty = no metrics emit.")
+	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -74,8 +74,16 @@ func archiveCompletenessVerify(args []string) error {
 	if uint64(*from) > uint64(*to) {
 		return fmt.Errorf("-from (%d) must be <= -to (%d)", *from, *to)
 	}
+	write := gate.Banner()
 
 	startedAt := time.Now()
+	// #1191: the fix phase fetches over HTTP and writes/renames/chowns
+	// into -archive-root with no write gate and on context.Background(),
+	// discarding the parent's cancellation — a signal-aware ctx here lets
+	// a mid-fill SIGTERM/SIGINT stop the fetch loop cleanly instead of
+	// running to completion regardless.
+	ctx, cancel := opsutil.SignalContext()
+	defer cancel()
 
 	// Phase 1 — initial check.
 	checker := archivecompleteness.NewCrossAnchorChecker(*archiveRoot)
@@ -89,7 +97,19 @@ func archiveCompletenessVerify(args []string) error {
 
 	// Phase 2 — fix any missing.
 	var fillRes archivecompleteness.FillResult
-	if len(preRes.Missing) > 0 {
+	switch {
+	case len(preRes.Missing) == 0:
+		// Nothing to fix.
+	case !write:
+		// #1191: this is the mode the systemd timer fires, unattended,
+		// with no preview and no confirmation — a stale -archive-root
+		// default or a mis-templated mount got checkpoints fetched and
+		// chowned into the wrong tree with nobody looking. Fail-closed
+		// DRY RUN by default; the shipped systemd units pass -write.
+		fmt.Fprintf(os.Stderr,
+			"archive-completeness verify: DRY RUN — %d missing checkpoint(s) found, not fixed (pass -write to apply)\n",
+			len(preRes.Missing))
+	default:
 		filler, err := archivecompleteness.NewCrossAnchorFiller(archivecompleteness.FillerOptions{
 			ArchiveRoot: *archiveRoot,
 			Workers:     *workers,
@@ -100,7 +120,7 @@ func archiveCompletenessVerify(args []string) error {
 		if err != nil {
 			return fmt.Errorf("filler: %w", err)
 		}
-		fillRes = filler.Fill(context.Background(), preRes.Missing)
+		fillRes = filler.Fill(ctx, preRes.Missing)
 		fmt.Fprintf(os.Stderr,
 			"archive-completeness verify: filled %d / %d missing checkpoints (workers=%d)\n",
 			fillRes.Filled, len(preRes.Missing), *workers)
@@ -191,6 +211,7 @@ func archiveCompletenessFix(args []string) error {
 		"Stellar network this archive belongs to. Cross-anchor FILL is PUBNET-ONLY (the built-in fallback sources are pubnet archives); a non-pubnet value makes the fill phase REFUSE rather than write pubnet checkpoints into a test-net store (audit 2026-08-26). Test nets self-heal archive gaps from their own galexie/core.")
 	outputFile := fs.String("output-file", "",
 		"Path to write JSON post-fix report. Default: stdout.")
+	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -200,6 +221,13 @@ func archiveCompletenessFix(args []string) error {
 	if uint64(*from) > uint64(*to) {
 		return fmt.Errorf("-from (%d) must be <= -to (%d)", *from, *to)
 	}
+	write := gate.Banner()
+
+	// #1191: signal-aware ctx so a mid-fill SIGTERM/SIGINT stops the
+	// fetch loop instead of the discarded context.Background() running
+	// it to completion regardless.
+	ctx, cancel := opsutil.SignalContext()
+	defer cancel()
 
 	// Phase 1 — check: enumerate the missing list.
 	checker := archivecompleteness.NewCrossAnchorChecker(*archiveRoot)
@@ -227,6 +255,20 @@ func archiveCompletenessFix(args []string) error {
 		// Already complete; nothing to do.
 		return writeReport(report, *outputFile)
 	}
+	if !write {
+		// #1191: HTTP-fetches and os.Create/os.Rename/os.Chown into
+		// -archive-root with no preview and no confirmation — a stale
+		// -archive-root default or a mis-templated mount got checkpoints
+		// written into the wrong tree with nobody looking. Fail-closed
+		// DRY RUN by default.
+		fmt.Fprintf(os.Stderr,
+			"archive-completeness fix: DRY RUN — %d missing checkpoint(s) would be fetched via the fallback chain (pass -write to apply)\n",
+			len(res.Missing))
+		if err := writeReport(report, *outputFile); err != nil {
+			return err
+		}
+		return opsutil.ErrExitSilently
+	}
 
 	// Phase 2 — fix: fetch each missing checkpoint via the
 	// multi-source fallback chain.
@@ -240,7 +282,7 @@ func archiveCompletenessFix(args []string) error {
 	if err != nil {
 		return fmt.Errorf("filler: %w", err)
 	}
-	fillRes := filler.Fill(context.Background(), res.Missing)
+	fillRes := filler.Fill(ctx, res.Missing)
 	fmt.Fprintf(os.Stderr,
 		"archive-completeness fix: %d filled / %d failed (workers=%d)\n",
 		fillRes.Filled, len(fillRes.Failed), *workers)
