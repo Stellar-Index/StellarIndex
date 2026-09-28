@@ -1,6 +1,6 @@
 ---
 title: Runbook — freeze-recovery-stalled
-last_verified: 2026-08-29
+last_verified: 2026-09-28
 status: current
 severity: P3
 ---
@@ -146,9 +146,23 @@ Decision tree:
   unfreeze" state) and records a normal recovery on `/v1/anomalies`
   for a freeze that never recovered:
 
+  `freeze_events` is `create_hypertable('freeze_events', 'frozen_at', …)`
+  (migrations/0018) with `timescaledb.compress` set (no
+  `add_compression_policy` scheduled today, so nothing compresses it yet
+  — but the statement should not rely on that staying true). `recovered_at`
+  and `hold_until` are not the partition column, so a predicate on them
+  alone gives the planner nothing to chunk-exclude on. Bound `frozen_at`
+  too: every row this statement can legally touch is an open freeze from
+  the CURRENT stall (the ladder escalates after 4×30min, so a stalled
+  incident is hours old, never weeks) — 7 days is generous headroom, not
+  a guess.
+
   ```sql
   -- Close only rows whose durable hold has demonstrably lapsed
-  -- (10 min is comfortably past the 5-min marker/ladder grace).
+  -- (10 min is comfortably past the 5-min marker/ladder grace), and
+  -- only within the current incident's window (chunk exclusion on the
+  -- frozen_at partition column — see above; widen if this stall has
+  -- genuinely run longer than 7 days).
   -- recovered_at_ledger stays NULL: the ledger is unknown at manual
   -- close time, and 0 would violate the CHECK constraint
   -- (migrations/0018:54 — recovered_at_ledger >= frozen_at_ledger).
@@ -156,6 +170,7 @@ Decision tree:
      SET recovered_at = now(),
          recovered_at_ledger = NULL
    WHERE recovered_at IS NULL
+     AND frozen_at > now() - interval '7 days'
      AND (hold_until IS NULL OR hold_until < now() - interval '10 minutes');
   ```
 
