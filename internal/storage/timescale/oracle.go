@@ -171,6 +171,9 @@ func (s *Store) LatestOracleUpdatesForAsset(ctx context.Context, asset canonical
 // e.g. user-facing `native` expands to `[native, crypto:XLM]`
 // because Reflector publishes XLM under the global crypto ticker
 // rather than the per-network "native" form.
+//
+// No time floor on purpose: /v1/oracle/latest reports a dormant feed's
+// last reading, which a recency window would silently drop.
 func (s *Store) LatestOracleUpdatesForAssets(ctx context.Context, assets []canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, error) {
 	if len(assets) == 0 {
 		return nil, nil
