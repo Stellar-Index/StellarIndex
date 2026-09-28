@@ -69,18 +69,9 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 	if err != nil {
 		return nil, err
 	}
-	inverse := make(map[string]string, len(s.PairMap))
-	for sym, p := range s.PairMap {
-		inverse[p.String()] = sym
-	}
-	product, ok := inverse[pair.String()]
-	if !ok {
-		return nil, fmt.Errorf("coinbase.Backfill: pair %s not in configured PairMap", pair.String())
-	}
-	// Refuse up front: the per-candle skip would otherwise turn an
-	// unrepresentable product into a silently empty backfill.
-	if _, err := backfillTxHash(product, 0, granSec); err != nil {
-		return nil, fmt.Errorf("coinbase.Backfill: %w", err)
+	product, err := s.resolveBackfillProduct(pair, granSec)
+	if err != nil {
+		return nil, err
 	}
 
 	endpoint := s.restBase() + fmt.Sprintf(candlesPathTemplate, product)
@@ -122,31 +113,70 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 			continue
 		}
 
-		// Coinbase returns candles in REVERSE chronological order
-		// (newest first). Walk the slice backwards so we emit
-		// chronologically.
-		for i := len(candles) - 1; i >= 0; i-- {
-			c := candles[i]
-			trade, err := coinbaseCandleToTrade(c, product, pair, granSec)
-			if err != nil {
-				continue
-			}
-			out = append(out, trade)
-		}
+		out = append(out, coinbaseCandlesToTrades(candles, product, pair, granSec)...)
 
-		// Advance startSec to one granularity past the most-recent
-		// emitted candle (= candles[0].time_sec + granularity).
-		newestOpen, ok := candles[0].openTimeSec()
-		if !ok {
-			break
-		}
-		next := newestOpen + int64(granSec)
-		if next <= startSec {
+		next, done := advanceCoinbaseCursor(candles, startSec, granSec)
+		if done {
 			break
 		}
 		startSec = next
 	}
 	return out, nil
+}
+
+// resolveBackfillProduct maps pair to its configured Coinbase product
+// (the inverse of PairMap) and refuses up front if the product can't
+// be represented in a backfill tx hash — the per-candle skip would
+// otherwise turn an unrepresentable product into a silently empty
+// backfill.
+func (s *Streamer) resolveBackfillProduct(pair canonical.Pair, granSec int) (string, error) {
+	inverse := make(map[string]string, len(s.PairMap))
+	for sym, p := range s.PairMap {
+		inverse[p.String()] = sym
+	}
+	product, ok := inverse[pair.String()]
+	if !ok {
+		return "", fmt.Errorf("coinbase.Backfill: pair %s not in configured PairMap", pair.String())
+	}
+	if _, err := backfillTxHash(product, 0, granSec); err != nil {
+		return "", fmt.Errorf("coinbase.Backfill: %w", err)
+	}
+	return product, nil
+}
+
+// coinbaseCandlesToTrades converts one page of candles into trades.
+// Coinbase returns candles in REVERSE chronological order (newest
+// first); walk the slice backwards so trades emit chronologically.
+// A candle coinbaseCandleToTrade can't represent is skipped, not
+// failed — the surrounding range still produces useful output.
+func coinbaseCandlesToTrades(candles []coinbaseCandle, product string, pair canonical.Pair, granSec int) []canonical.Trade {
+	out := make([]canonical.Trade, 0, len(candles))
+	for i := len(candles) - 1; i >= 0; i-- {
+		trade, err := coinbaseCandleToTrade(candles[i], product, pair, granSec)
+		if err != nil {
+			continue
+		}
+		out = append(out, trade)
+	}
+	return out
+}
+
+// advanceCoinbaseCursor computes the next window's startSec: one
+// granularity past the most-recent emitted candle (=
+// candles[0].time_sec + granularity, since candles[0] is newest).
+// done=true means the caller should stop paginating — either the
+// newest candle carried no parseable open time, or the cursor failed
+// to advance (a page that repeats would otherwise loop forever).
+func advanceCoinbaseCursor(candles []coinbaseCandle, startSec int64, granSec int) (next int64, done bool) {
+	newestOpen, ok := candles[0].openTimeSec()
+	if !ok {
+		return 0, true
+	}
+	next = newestOpen + int64(granSec)
+	if next <= startSec {
+		return 0, true
+	}
+	return next, false
 }
 
 func (s *Streamer) restBase() string {
