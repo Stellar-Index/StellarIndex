@@ -50,11 +50,11 @@ func (c substrateProblemFakeConn) QueryRow(_ context.Context, query string, args
 	switch {
 	case strings.Contains(query, "uniqExact"):
 		rows := c.presentIn(0, uint64(c.to))
-		var max uint64
+		var hi uint64
 		if len(rows) > 0 {
-			max = rows[len(rows)-1]
+			hi = rows[len(rows)-1]
 		}
-		return substrateProblemFakeRow{vals: []uint64{c.haveMin, max, uint64(len(rows))}}
+		return substrateProblemFakeRow{vals: []uint64{c.haveMin, hi, uint64(len(rows))}}
 	case strings.Contains(query, "gap_start"):
 		lo, hi := args[0].(uint64), args[1].(uint64)
 		rows := c.presentIn(lo, hi)
