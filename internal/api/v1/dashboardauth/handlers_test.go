@@ -735,6 +735,48 @@ func TestHandleLogin_ThrottleErrors_FailsOpen(t *testing.T) {
 	}
 }
 
+// TestHandleLogin_EmailDescribesUAFromClosedVocabulary: the login email
+// describes the requesting client only in terms from a fixed browser/OS
+// vocabulary. Whatever else the User-Agent header carries must not reach
+// either rendered body.
+func TestHandleLogin_EmailDescribesUAFromClosedVocabulary(t *testing.T) {
+	const prose = "URGENT call +1-555-0100 to secure your account"
+	cases := []struct {
+		name, ua, want string
+	}{
+		{"known browser with trailing prose", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0 " + prose, "(Firefox on Windows)"},
+		{"prose only", prose, "(an unrecognised browser)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newTestRig(t)
+			body, _ := json.Marshal(loginRequest{Email: "alice@example.com"})
+			req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", bytes.NewReader(body))
+			req.RemoteAddr = "203.0.113.5:55123"
+			req.Header.Set("User-Agent", tc.ua)
+			w := httptest.NewRecorder()
+			r.h.HandleLogin(w, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", w.Code)
+			}
+			msg, ok := r.sender.Last()
+			if !ok {
+				t.Fatal("no email sent")
+			}
+			for part, rendered := range map[string]string{"text": msg.Text, "html": msg.HTML} {
+				for _, leaked := range []string{"URGENT", "555-0100", "secure your account", "Mozilla", "Gecko"} {
+					if strings.Contains(rendered, leaked) {
+						t.Errorf("%s body carries UA text %q", part, leaked)
+					}
+				}
+				if !strings.Contains(rendered, tc.want) {
+					t.Errorf("%s body missing client description %q", part, tc.want)
+				}
+			}
+		})
+	}
+}
+
 // TestTruncateUA_RuneSafe — GH-1303: a multi-byte rune straddling the
 // byte-256 truncation boundary must not be split. A byte-slice
 // truncation (the pre-fix behaviour) cuts the leading bytes of "€"

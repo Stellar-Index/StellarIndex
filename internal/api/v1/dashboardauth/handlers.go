@@ -495,7 +495,7 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		Code:             code,
 		ExpiresInMinutes: int(h.cfg.MagicLinkTTL / time.Minute),
 		IPAddress:        clientIP(r).String(),
-		UserAgent:        truncateUA(r.UserAgent()),
+		UserAgent:        notify.ClientFromUserAgent(r.UserAgent()),
 	})
 	if err != nil {
 		h.cfg.Logger.Error("render magic link template", "err", err)
@@ -1212,16 +1212,10 @@ func safeText(s string, maxRunes int) string {
 	return s
 }
 
-// uaDangerousChars strips the characters a crafted UA needs to break
-// out of the plaintext magic-link template's literal "(...)" delimiter
-// or otherwise read as unrelated, trusted-looking prose: quoting/paren
-// chars that can close the delimiter early, sentence punctuation
-// ("URGENT:", "call us!"), and Unicode bidi-override / zero-width /
-// line-separator code points (not caught by safeText's <0x20 check,
-// since they aren't ASCII control chars). RLT-320/RSEC-N1: safeText
-// (CS-071) only ever stopped control-char line injection — printable
-// content was rendered verbatim, and the HTML template's escaping
-// (html/template) has no plaintext equivalent.
+// uaDangerousChars strips delimiter/sentence punctuation and bidi,
+// zero-width and line-separator code points (which safeText's <0x20 check
+// misses) from the UA we store and display. Outbound email never renders
+// the raw UA; it uses notify.ClientFromUserAgent's closed vocabulary.
 var uaDangerousChars = regexp.MustCompile(
 	"[()\"'`:!?<>\\[\\]{}\u200b\u200e\u200f\u2028\u2029\u0085\u202a-\u202e\u2066-\u2069]")
 
