@@ -1,6 +1,6 @@
 ---
 title: RWA coverage — reconciliation against the public Stellar RWA dashboard
-last_verified: 2026-09-10
+last_verified: 2026-09-28
 status: current
 ---
 
@@ -66,7 +66,7 @@ be exactly the fabricated figure the whole definition exists to prevent.
 
 | Issuer | Dune | Ours | Cause | Detail |
 | --- | ---: | ---: | --- | --- |
-| Spiko | $1,605.0M | $0 | NOT COLLECTED | `GD2ELXTH…` is in the directory, tagged `issuer`, correct domain. Issues no classic asset. `sep1-refresh -issuer` returns `sql: no rows in result set` — absent from the `issuers` table entirely. Now reported in `unreached_entities`. |
+| Spiko | $1,605.0M | $0 | NOT COLLECTED | `GD2ELXTH…` is in the directory, tagged `issuer`, correct domain. Issues no classic asset. `sep1-refresh -issuer` returns `sql: no rows in result set` — absent from the `issuers` table entirely. Now reported in `unreached_entities`. **Since bound:** nine Spiko share-class contracts are curated contract bindings in `internal/rwa/contract.go`; their served figure is *(not measured)* here. |
 | Realiz | $558.9M | $0 | NOT COLLECTED | Directory presence stated; address form *(not measured)*. |
 | Tradable | $548.1M | $0 | NOT COLLECTED | Directory presence stated; address form *(not measured)*. |
 | Ondo | $535.6M | *(unvalued)* | VALUED DIFFERENTLY | **In our set today.** Admitted on `oracle_rwa_feed` under `GAJMPX5N…`, and its ADR-0028 binding is recorded in `internal/rwa/oracle_reference.go`. The token has no Stellar market price, so `valuation.status: unpriced` and it contributes nothing to the total. This is the valuation-basis gap in its purest form: same asset, same supply, no publishable price. |
@@ -80,7 +80,7 @@ be exactly the fabricated figure the whole definition exists to prevent.
 | Etherfuse | $17.5M | *(part of $3.88M)* | VALUED DIFFERENTLY | **In our set today**, three assets: USTRY, CETES, TESOURO under `GCRYUGD5…`. Only CETES carries a served price; the other two are `unpriced` pending the substance gate. Our supply reading is trustline-derived, which omits claimable balances and LP-locked holdings — a structural undercount against a total-supply figure. |
 | Mercado Bitcoin | $12.4M | $0 | NOT COLLECTED | In the directory; issues no classic asset (measured). |
 | Black Manta | $9.3M | $0 | NOT COLLECTED | Directory presence stated; address form *(not measured)*. |
-| Matrixdock | $4.6M | $0 | NOT COLLECTED | `XAUm` is ADR-0028 allow-listed, so a directory-named contract for it would be admitted on `contract_oracle_rwa_feed` today. Address form *(not measured)*. |
+| Matrixdock | $4.6M | $0 | NOT COLLECTED | As of this measurement. **Bound 2026-09-16:** `CC2RBGYN…`, the address `matrixdock.com` names for XAUm on Stellar, is a curated contract binding classed `commodity`, and the independent listing directory names the same address — the pair [C2's second arm](rwa-definition.md#two-ways-to-satisfy-it-and-why-they-are-not-the-same-shape) requires. Its served figure since then is *(not measured)* here. |
 | Bitbond | $3.1M | $0 | NOT COLLECTED | Directory presence stated; address form *(not measured)*. |
 | **Total** | **$4,032.3M** | **$3.88M** | | |
 
@@ -88,12 +88,21 @@ be exactly the fabricated figure the whole definition exists to prevent.
 
 Thirteen of sixteen are **NOT COLLECTED** — and that phrase is doing
 precise work. They were not refused. The `issuers` table the classic arm
-walks is written from exactly one call site, `registerIssuerSeen`, on
-classic-asset registration. An entity whose Stellar presence is
-contract-issued never gets a row there, therefore never gets a SEP-1
-fetch, therefore never becomes a candidate. It was not excluded by
-requirement R1 so much as never assembled into the population R1 runs
-over.
+walks is written only by the classic-asset registry. When this was
+measured that registry had one writer, `registerIssuerSeen`, and it ran
+only on a trade — so an issuer whose classic assets are held but never
+traded was never collected either. Migration 0158 and
+`stellarindex-ops asset-registry-backfill` added a holdings source
+(`insertIssuersBatch`) that closes that half; the
+[note under the definition](rwa-definition.md#the-definition) records the
+`registry → issuer-enrich → sep1-refresh → candidacy` chain a newly
+registered issuer still has to pass through. Neither writer can see an
+entity whose Stellar presence is contract-issued: it never gets a row,
+therefore never gets a SEP-1 fetch, therefore never becomes a candidate.
+It was not excluded by requirement R1 so much as never assembled into the
+population R1 runs over. The table above predates the holdings source,
+so for a classic issuer it may overstate the NOT COLLECTED share of the
+gap; it was not re-measured.
 
 That is a silent discard, and it is the same defect class the funnel
 work closed for the classic path, one level further out. It is now
@@ -133,7 +142,10 @@ indefensible. The contract arm re-reads the entry at valuation time.
 **Not closed — the dollar figure.** For the reason in
 [the section above](#the-two-numbers-do-not-measure-the-same-thing).
 
-**Not closed — thirteen entities still have no address we can value.**
+**Not closed — at this measurement, thirteen entities had no address we
+could value.** Two have since been bound in-repo — Spiko's nine share
+classes and Matrixdock's XAUm, [§2](#2-curated-directory-entries-for-the-contract-addresses-operator--most-of-the-count-gap)
+below.
 A recognised G-account tells us an entity exists. It does not tell us
 which contract holds its assets, and we hold no deployer edge that would
 (the `contractid` registry is factory-anchored per ADR-0035 and covers
@@ -151,7 +163,14 @@ The machinery is already on this surface and already gated. Every row
 carries a `reference` block: an independent oracle's valuation of the
 real-world instrument, with its publisher, feed id, denominator and
 vintage, joined through a curated `(code, issuer) → feed` table that
-fails closed. Today it feeds only the `premium` column.
+fails closed. When this page was written it fed only the `premium`
+column.
+
+**Since built**, on the terms below: every row now carries a separate
+`reference_valuation` and the set a `summary.reference_valuation` total,
+never folded into `market_cap_usd` — see
+[the second valuation](rwa-definition.md#the-second-valuation-what-the-backing-is-claimed-to-be-worth).
+The rest of this section is the decision as it was argued.
 
 Multiplying that reference by circulating supply would produce a
 NAV-based market cap — the same measure the dashboard publishes —

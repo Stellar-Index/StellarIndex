@@ -1,6 +1,6 @@
 ---
 title: XLM circulating-supply methodology
-last_verified: 2026-07-07
+last_verified: 2026-09-28
 status: current
 ---
 
@@ -18,10 +18,31 @@ shows the live reconciliation that proves it is market-comparable.
 
 ```
 total_supply       = 50,001,806,812 XLM        (frozen constant, see below)
-circulating_supply = total_supply − Σ(SDF non-circulating account balances)
+circulating_supply = max(0, total_supply − Σ(SDF non-circulating account balances))
 max_supply         = total_supply              (XLM is hard-capped)
-market_cap_usd     = circulating_supply × VWAP price
+market_cap_usd     = circulating_supply ÷ 10^decimals × price_usd
 ```
+
+The block is written in XLM; on the wire the supply fields are integer
+**stroops** (`decimals` is 7), so the market cap divides by 10^7 before
+multiplying — exact rational
+arithmetic, rounded once to 2 dp. The zero clamp is only reachable through
+a misconfigured reserve list, and it keeps a negative supply, and the
+negative market cap it would imply, off the wire.
+
+`price_usd` is the price `/v1/assets/native` itself serves. It is **not**
+the aggregator's σ-filtered VWAP. In order, it is:
+
+1. the most recent **closed** 1-minute bucket for XLM in USD, across XLM's
+   aliases — a plain Σquote ÷ Σbase. A trailing-baseline guard checks it
+   and serves the last good bucket instead when the latest is grossly off;
+2. when no such bucket exists, a stablecoin-to-fiat proxy: XLM's price
+   against a USD-pegged stablecoin, read the same way. On that leg a pair
+   with no closed bucket may fall back to its last trade, flagged stale,
+   unless the thin-market gate withholds it.
+
+`market_cap_usd` is absent, never zero, when there is no price or no
+supply reading, or when a valuation guard refuses it.
 
 `supply_basis` on the response is `xlm_sdf_reserve_exclusion` when the
 exclusion is applied (the production state), or `xlm_total_only` if no

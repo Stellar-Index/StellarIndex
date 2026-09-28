@@ -22,8 +22,8 @@ import (
 //
 // # Why this arm exists at all
 //
-// The classic arm walks issuers, and that table is populated from ONE
-// call site — registerIssuerSeen, on classic-asset registration. An
+// The classic arm walks issuers, and only the classic-asset registry
+// writes that table (registerIssuerSeen, insertIssuersBatch). An
 // entity issuing only contract tokens gets no row there, so it gets no
 // SEP-1 fetch and never becomes a candidate. Measured on r1 2026-09-10,
 // `sep1-refresh -issuer` for Franklin Templeton and for Spiko both

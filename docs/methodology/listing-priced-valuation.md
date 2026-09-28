@@ -1,6 +1,6 @@
 ---
 title: Listing-priced valuation
-last_verified: 2026-09-15
+last_verified: 2026-09-28
 status: current
 ---
 
@@ -31,14 +31,43 @@ into market cap would state something false.
 
 ## What has to be true
 
-Five conditions, all of them, in this order.
+Seven conditions, all of them, in the order the code checks them. The
+first two carry **no status**: a row failing either gets neither block.
+Every later one names itself in `listing_valuation.status`.
 
 1. **The asset is in the verified catalogue.** A `(code, issuer)` pair
    written into `internal/currency/data/seed.yaml` — a code change and a
    redeploy. The listing corroborates; the catalogue attests. Neither
-   alone publishes anything.
+   alone publishes anything. Silent, because the listing has no standing
+   to price an asset this repository has not attested, and a status on
+   every row of the long tail would drown the rows that matter.
 
-2. **The listing names the address exactly.** Two routes count:
+2. **The row is not suppressed and not impersonating.** Three checks,
+   all silent: the issuer carries a scam-class directory tag; the
+   issuer's directory tags could not be read (an unanswered read is not
+   "no tags", so it withholds the same way); or the row is flagged
+   `unverified_ticker_collision`. Such a row publishes no valuation of
+   any kind, and this arm must not be the one path that re-publishes a
+   dollar figure underneath it. Silent because a status would be a
+   second, quieter place to state an accusation that belongs on the
+   row's own warning fields.
+
+3. **There is a hole, and it is a price hole.** A row that publishes a
+   market cap is left alone entirely (`market_cap_published`). So is a
+   row carrying an observed market price that cleared the substance gate
+   with no dust suppression (`market_price_observed`): its missing cap is
+   a missing *supply* reading, and filling it from a third party would
+   hide a gap in this index's own data behind somebody else's number. A
+   declared-peg or transitive price is a conversion basis, not an
+   observation, and does **not** stand the arm down.
+
+4. **The directory snapshot is readable.** The read fails closed: an
+   unreadable or empty snapshot publishes nothing and says
+   `listing_unavailable`, which means *nobody looked* and never *nobody
+   lists it*.
+
+5. **The listing names the address exactly** — else `not_listed`. Two
+   routes count:
 
    | Route | What the platform published |
    |---|---|
@@ -62,30 +91,24 @@ Five conditions, all of them, in this order.
    balance — and a code match would hand each of them the real
    instrument's price.
 
-3. **There is a hole, and it is a price hole.** A row that publishes a
-   market cap is left alone entirely (`status: market_cap_published`). So
-   is a row carrying an observed market price that cleared the substance
-   gate with no dust suppression (`status: market_price_observed`): its
-   missing cap is a missing *supply* reading, and filling it from a third
-   party would hide a gap in this index's own data behind somebody else's
-   number. A declared-peg or transitive price is a conversion basis, not
-   an observation, and does **not** stand the arm down.
+6. **The listed price is usable.** Absent is `no_listing_price`, and the
+   storage read already blanks a price older than 24 hours, so that is
+   what an old price normally reads as. Its age is re-checked here on the
+   **platform's** publication clock, by the same two constants the RWA
+   reference arm uses — 72 hours labels it `stale`, 7 days withholds it
+   as `listing_price_expired` — so the documented bound holds however the
+   row arrived. A zero,
+   negative or unparseable price is `listing_price_not_positive`: the
+   product would be a number nobody claimed.
 
-4. **The supply comes from the lake, not from a trustline sum.** The
-   figure multiplies the larger of the row's own reading and
-   Σmint − Σburn − Σclawback over the asset's SAC, and `supply_basis`
+7. **The supply comes from the lake, not from a trustline sum** — else
+   `no_supply`. The figure multiplies the larger of the row's own reading
+   and Σmint − Σburn − Σclawback over the asset's SAC, and `supply_basis`
    says which was used. USDT0 is why: its trustline-visible supply is
    **6,469 tokens against 2,581,052 by mint−burn**, because almost all of
    its float sits in balances a trustline query is blind to by
    construction. Valuing the wrong one publishes a figure 400× too small
    and looks entirely plausible doing it.
-
-5. **The snapshot is fresh.** The directory read fails closed: an
-   unreadable or empty snapshot publishes nothing and says
-   `listing_unavailable`, which means *nobody looked* and never *nobody
-   lists it*. The price's own age is bounded on the **platform's**
-   publication clock, by the same two constants the RWA reference arm
-   uses — 72 hours labels it `stale`, 7 days withholds it entirely.
 
 ## What it is not
 
@@ -101,6 +124,9 @@ together:
   its gates to. It is a second opinion, published because withholding a
   figure that can be correctly sourced and correctly labelled is its own
   kind of dishonesty — not because it is equivalent.
+
+The arithmetic is the same on both — supply ÷ 10^decimals × price, at the
+decimals the row publishes. What differs is whose price it is.
 
 A consumer that adds the two has to say so. The `/rwa` page's stablecoin
 tile does: the moment its total contains a listing-priced row, the tile's
