@@ -123,7 +123,7 @@ func detectGaps(args []string) error {
 
 	missing := catalogueMissingProjectorSources(cursors, expectedProjected)
 	if len(missing) > 0 {
-		fmt.Fprintf(os.Stdout, "MISSING (catalogued in ingestion.enabled_sources, no ingestion_cursors row — reaped or never started): %v\n", missing)
+		_, _ = fmt.Fprintf(os.Stdout, "MISSING (catalogued in ingestion.enabled_sources, no ingestion_cursors row — reaped or never started): %v\n", missing)
 	}
 
 	switch {
