@@ -6568,8 +6568,20 @@ export interface components {
             /** @enum {string} */
             tier: "apikey" | "partner" | "operator";
             rate_limit_per_min: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description The stored per-key value (absent = inherit). Not what is
+             *     enforced; render `effective_monthly_quota`.
+             */
             monthly_quota?: number;
+            /**
+             * Format: int64
+             * @description The monthly request-unit quota auth enforces on this key
+             *     (0 = unmetered): `monthly_quota` resolved through the
+             *     account override, which a key at 0 inherits and which caps
+             *     any higher key value.
+             */
+            effective_monthly_quota: number;
             usage_alert_threshold_pct?: number;
             /**
              * @description Capability scopes (read / account / dashboard / admin).
@@ -10004,7 +10016,7 @@ export interface components {
          */
         AssetListingValuation: {
             /**
-             * @description The single authority on why there is or is not a figure. `published`: a listing price and a supply reading were both available. `market_cap_published`: an observed market cap is served, so this arm stands down — it fills a hole, and there is none. `market_price_observed`: the row carries an observed market price that cleared every gate and still no cap, so the hole is a missing supply reading rather than a price problem, and filling it from a third party would hide a gap in this index's own data. `listing_unavailable`: the listing directory could not be read, is not wired, or holds no fresh rows — nobody looked, which is never the same statement as "nobody lists it". `not_listed`: the directory WAS read and names neither the classic id nor the SAC; the ordinary state of almost every asset on this network, and not an accusation. `no_listing_price`: named, but unpriced, or priced past the 24h bound the directory enforces on the platform's own publication clock. `listing_price_expired`: the publication time is past the absolute 7-day bound. `no_supply`: no supply reading to multiply, refused rather than published as zero.
+             * @description The single authority on why there is or is not a figure. `published`: a listing price and a supply reading were both available. `market_cap_published`: an observed market cap is served, so this arm stands down — it fills a hole, and there is none. `market_price_observed`: the row carries an observed market price that cleared every gate and still no cap, so the hole is a missing supply reading rather than a price problem, and filling it from a third party would hide a gap in this index's own data. `listing_unavailable`: the listing directory could not be read, is not wired, or holds no fresh rows — nobody looked, which is never the same statement as "nobody lists it". `not_listed`: the directory WAS read and names neither the classic id nor the SAC; the ordinary state of almost every asset on this network, and not an accusation. `no_listing_price`: named, but unpriced, or priced past the 24h bound the directory enforces on the platform's own publication clock. `listing_price_not_positive`: the published price is zero, negative or unparseable, so no valuation can be taken from it. `listing_price_expired`: the publication time is past the absolute 7-day bound. `no_supply`: no supply reading to multiply, refused rather than published as zero.
              * @enum {string}
              */
             status: "published" | "market_cap_published" | "market_price_observed" | "listing_unavailable" | "not_listed" | "no_listing_price" | "listing_price_not_positive" | "listing_price_expired" | "no_supply";
@@ -10524,9 +10536,11 @@ export interface components {
          *     publishes a stellar.toml whose [[CURRENCIES]] entry
          *     matches the asset's `(code, issuer)` — `sep1_status`
          *     then reads "verified". `not_applicable` (native, fiat,
-         *     SAC-only), `not_fetched` (operator hasn't configured the
-         *     home-domain map for this issuer), `unreachable` (fetch
-         *     or parse failed), and `no_match` (TOML loaded but no
+         *     SAC-only), `not_fetched` (OURS — no fetch has been
+         *     attempted for this issuer yet), `unreachable` (THEIRS —
+         *     a fetch was attempted and produced nothing storable: a
+         *     404, a dead name, a TLS failure, or a document that
+         *     would not parse), and `no_match` (TOML loaded but no
          *     matching currency block) leave the overlay fields null.
          */
         AssetMetadata: {
@@ -11396,7 +11410,7 @@ export interface components {
              */
             class: "exchange" | "aggregator" | "oracle" | "authority_sanity" | "bridge" | "lending" | "router";
             /**
-             * @description Refines `class=exchange` for UIs that group venues. Empty (omitted) for non-exchange classes.
+             * @description Refines `class=exchange` for UIs that group venues. Empty (omitted) for non-exchange classes, except `ecb` (`authority_sanity`), which is `fx` because the forex worker's ECB standby writes fiat FX rates under that name.
              * @enum {string}
              */
             subclass?: "dex" | "cex" | "fx";

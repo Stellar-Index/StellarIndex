@@ -1,6 +1,6 @@
 ---
 title: Runbook — supply-cross-check-divergence
-last_verified: 2026-07-25
+last_verified: 2026-09-28
 status: living
 severity: P3
 ---
@@ -392,14 +392,19 @@ Capture for the postmortem:
   active backfills (operator action) — the gauge label is
   per-asset, so you can `ALERTMANAGER silence` just the affected
   `classic_key`.
-- **Clock skew between processes**: if the cross-checker's
-  Algorithm-2 read happens at ledger N and Algorithm-3 read at
-  ledger N+1, a fresh mint between them looks like divergence. For
-  `wrap_class="partial_wrap"` this only matters in the SAC-ahead
-  direction (Algorithm 3 observing a mint Algorithm 2 hasn't caught
-  up to yet); the aggregator orchestrator pins both reads to the same
-  ledger boundary, so a regression that breaks that pinning would
-  surface as a chronic 1-2-stroop noise floor.
+- **Clock skew between processes**: each snapshot is the LATEST
+  independently-computed reading for its own `asset_key`, written by
+  its own per-asset refresher — nothing pins the two reads to the same
+  ledger (`internal/supply/crosscheck_refresher.go`: "they can
+  describe wildly different ledgers"). A pair whose snapshots are more
+  than `CrossCheckLedgerTolerance` (1000 ledgers, ~1.4h) apart is
+  refused as `status: misaligned` rather than compared — no divergence
+  is published for it; it surfaces on
+  [`supply-cross-check-unevaluable`](supply-cross-check-unevaluable.md)
+  instead. Inside the tolerance, a mint that lands between the two
+  reads can still show up as a small, non-chronic `escrow_excess`
+  reading; it clears on the next tick once both sides have advanced
+  past it.
 
 ## Related
 

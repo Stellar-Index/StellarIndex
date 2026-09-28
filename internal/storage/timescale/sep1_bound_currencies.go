@@ -354,7 +354,7 @@ func boundSep1CurrenciesFromPayload(
 		case strings.TrimSpace(c.Issuer) == "":
 			census.EntriesMissingIssuer++
 			continue
-		case !sep1EntryBindsTo(c.Issuer, gStrkey):
+		case !Sep1EntryBindsTo(c.Issuer, gStrkey):
 			census.EntriesNamingAnotherIssuer++
 			continue
 		}
@@ -381,7 +381,7 @@ func boundSep1CurrenciesFromPayload(
 	return out, census
 }
 
-// sep1EntryBindsTo reports whether a [[CURRENCIES]] entry's DECLARED
+// Sep1EntryBindsTo reports whether a [[CURRENCIES]] entry's DECLARED
 // issuer names the account that served the file.
 //
 // The comparison is on the canonical strkey, not on the bytes the toml
@@ -396,7 +396,11 @@ func boundSep1CurrenciesFromPayload(
 // Anything that is not shaped like a G-account strkey binds to nothing.
 // That is deliberate: the rule's whole value is that it names ONE
 // account, and a value that cannot be an account names none.
-func sep1EntryBindsTo(declared, serving string) bool {
+//
+// Exported so every issuer-binding check (bound-currency scan, image
+// overlay, org-verification) shares the one canonicalisation instead of
+// each keeping its own copy to drift out of sync.
+func Sep1EntryBindsTo(declared, serving string) bool {
 	d := canonicalAccountStrkey(declared)
 	return d != "" && d == canonicalAccountStrkey(serving)
 }

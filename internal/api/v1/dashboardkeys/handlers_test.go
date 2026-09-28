@@ -431,6 +431,51 @@ func TestHandleList_OnlyOwnAccount(t *testing.T) {
 	}
 }
 
+// TestHandleList_ServesEnforcedMonthlyQuota: the list must carry the quota
+// auth enforces, not the stored column, so the dashboard never shows an
+// inheriting key as unlimited or a key above the override at its stored cap.
+func TestHandleList_ServesEnforcedMonthlyQuota(t *testing.T) {
+	cases := []struct {
+		name      string
+		override  int64
+		stored    int64
+		wantQuota int64
+	}{
+		{"inherit override", 250_000, 0, 250_000},
+		{"override caps a higher key", 100_000, 5_000_000, 100_000},
+		{"key below override", 100_000, 50_000, 50_000},
+		{"no override honours key", 0, 75_000, 75_000},
+		{"no override, unset key is unmetered", 0, 0, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, store, sc := newTestRig(t)
+			sc.Account.MonthlyRequestQuotaOverride = tc.override
+			store.byID["k"] = platform.APIKey{ID: "k", AccountID: sc.Account.ID, MonthlyQuota: tc.stored}
+
+			w := httptest.NewRecorder()
+			h.HandleList(w, sessionRequest(t, http.MethodGet, "/v1/dashboard/keys", nil, sc))
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d", w.Code)
+			}
+			var resp struct {
+				Keys []map[string]any `json:"keys"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil || len(resp.Keys) != 1 {
+				t.Fatalf("decode: %v, keys=%d", err, len(resp.Keys))
+			}
+			got, ok := resp.Keys[0]["effective_monthly_quota"].(float64)
+			if !ok || int64(got) != tc.wantQuota {
+				t.Errorf("effective_monthly_quota = %v, want %d", resp.Keys[0]["effective_monthly_quota"], tc.wantQuota)
+			}
+			// Must agree with what auth resolves for the same key.
+			if enforced := sc.Account.ResolveKeyMonthlyQuota(tc.stored); enforced != tc.wantQuota {
+				t.Errorf("auth enforces %d, dashboard shows %d", enforced, tc.wantQuota)
+			}
+		})
+	}
+}
+
 // TestHandleList_BoundsRevokedHistory pins GH-766: a create/revoke loop grows
 // revoked rows without bound, so the list returns every active key but only
 // the listRevokedLimit most recent revoked ones, and says it truncated.
@@ -640,21 +685,21 @@ func (f *fakeKeyStore) ListForAccount(ctx context.Context, accountID uuid.UUID, 
 	return out, more, nil
 }
 
-func (f *fakeKeyStore) Update(_ context.Context, k platform.APIKey) error {
+func (f *fakeKeyStore) Update(_ context.Context, accountID uuid.UUID, k platform.APIKey) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if _, ok := f.byID[k.ID]; !ok {
+	if cur, ok := f.byID[k.ID]; !ok || cur.AccountID != accountID {
 		return platform.ErrNotFound
 	}
 	f.byID[k.ID] = k
 	return nil
 }
 
-func (f *fakeKeyStore) Revoke(_ context.Context, id string, by uuid.UUID, reason string) error {
+func (f *fakeKeyStore) Revoke(_ context.Context, accountID uuid.UUID, id string, by uuid.UUID, reason string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	k, ok := f.byID[id]
-	if !ok {
+	if !ok || k.AccountID != accountID {
 		return platform.ErrNotFound
 	}
 	if k.RevokedAt.IsZero() {
@@ -692,7 +737,7 @@ func TestToDTO_OmitsZeroTimes(t *testing.T) {
 		ID: "kid_1", Name: "fresh", KeyPrefix: "sip_abc123",
 		CreatedAt: time.Now().UTC(),
 		// RevokedAt / LastUsedAt / ExpiresAt left zero.
-	})
+	}, platform.Account{})
 	b, err := json.Marshal(dto)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -708,7 +753,7 @@ func TestToDTO_OmitsZeroTimes(t *testing.T) {
 	}
 
 	// A revoked key DOES surface revoked_at.
-	rev := toDTO(platform.APIKey{ID: "kid_2", CreatedAt: time.Now().UTC(), RevokedAt: time.Now().UTC()})
+	rev := toDTO(platform.APIKey{ID: "kid_2", CreatedAt: time.Now().UTC(), RevokedAt: time.Now().UTC()}, platform.Account{})
 	if rb, _ := json.Marshal(rev); !strings.Contains(string(rb), "revoked_at") {
 		t.Errorf("revoked key must include revoked_at: %s", rb)
 	}
@@ -1020,7 +1065,7 @@ func TestToDTO_TimestampsRenderUTC(t *testing.T) {
 	at := time.Date(2026, 6, 1, 2, 0, 0, 0, time.FixedZone("CEST", 2*60*60))
 	b, err := json.Marshal(toDTO(platform.APIKey{
 		ID: "kid_1", CreatedAt: at, ExpiresAt: at, RevokedAt: at, LastUsedAt: at,
-	}))
+	}, platform.Account{}))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}

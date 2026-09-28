@@ -357,6 +357,15 @@ for the full tiering rationale and what's populated vs. not yet
 (`ledger_entry_changes` is schema'd but not yet written — see that
 plan's §"Accepted exclusion").
 
+The reference `stellarindex-api` unit orders itself `After=clickhouse-server.service`
+(ordering only, so it is a no-op for a remote or Docker-managed
+ClickHouse). Before it starts listening, the API dials both lake readers
+concurrently and retries for up to seven seconds, with the last attempt
+starting about six seconds in. A ClickHouse that has not answered by then
+leaves the lake-backed endpoints on 503 and
+`stellarindex_dependency_up{dependency="clickhouse"}` at 0 until you
+restart the API.
+
 If you skip ClickHouse, set `storage.clickhouse_live_sink = false`
 and `storage.clickhouse_projector_source = false` — both keys are
 under `[storage]`, and `internal/config/load.go` rejects an unknown

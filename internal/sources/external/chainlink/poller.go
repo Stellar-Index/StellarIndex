@@ -14,6 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
@@ -303,10 +304,8 @@ func (p *Poller) project(pair canonical.Pair, spec FeedSpec, rnd Round) (canonic
 		return canonical.OracleUpdate{}, fmt.Errorf("%w: %s feed=%s has no resolved decimals", ErrDecimalsUnresolved, pair.String(), spec.Address)
 	}
 
-	// Apply Invert: 1/answer at the same decimal scale. Inversion
-	// happens on the BIG INT — `(10^(2*decimals)) / answer` keeps
-	// the result at `decimals` scale. We don't downcast to float
-	// here because oracle_updates stores raw integers per ADR-0003.
+	// Apply Invert: 1/answer at the same decimal scale, on the big.Int
+	// (oracle_updates stores raw integers per ADR-0003).
 	rawAnswer, ok := new(big.Int).SetString(rnd.Answer, 10)
 	if !ok {
 		return canonical.OracleUpdate{}, fmt.Errorf("%w: bad decimal answer %q", ErrMalformedResult, rnd.Answer)
@@ -316,10 +315,9 @@ func (p *Poller) project(pair canonical.Pair, spec FeedSpec, rnd Round) (canonic
 		if rawAnswer.Sign() == 0 {
 			return canonical.OracleUpdate{}, fmt.Errorf("%w: cannot invert zero", ErrMalformedResult)
 		}
-		// numerator = 10^(2 * decimals); inverted = numerator / rawAnswer
-		// keeps the result at `decimals` scale.
-		exp := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(2*decimals)), nil)
-		answer = new(big.Int).Quo(exp, rawAnswer)
+		// Round half-up like every other inverted feed; a truncating
+		// Quo biases every inverted price low.
+		answer = scale.InvertScaled(rawAnswer, int(decimals))
 	}
 	if answer.Sign() <= 0 {
 		return canonical.OracleUpdate{}, fmt.Errorf("%w: post-invert non-positive %s", ErrNonPositivePrice, answer.String())

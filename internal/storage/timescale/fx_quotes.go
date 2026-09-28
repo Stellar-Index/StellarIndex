@@ -15,20 +15,20 @@ import (
 )
 
 // FXQuote is one (date, ticker) snapshot from the forex pipeline.
-// Rates are NUMERIC in the DB; we round-trip them through string
-// in the wire shape but use float64 here for the in-process
-// comparison + chart math (precision loss above 2^53 isn't a
-// concern for fx rates which are O(1)–O(10000)).
+// Rates are NUMERIC in the DB. RateUSD is the write input; the read
+// path returns both columns as exact NUMERIC text so no served price
+// passes through a float (ADR-0003).
 type FXQuote struct {
 	Bucket  time.Time
 	Ticker  string
 	RateUSD float64
-	// InverseUSD is the stored NUMERIC reciprocal on read. It is IGNORED
-	// on write: [Store.InsertFXQuoteBatch] derives inverse_usd from
-	// rate_usd in NUMERIC so the column never carries a float64 quotient.
+	// InverseUSD is IGNORED on write: [Store.InsertFXQuoteBatch] derives
+	// inverse_usd from rate_usd in NUMERIC so the column never carries a
+	// float64 quotient. Unset on read; use InverseUSDText.
 	InverseUSD float64
-	// InverseUSDText is inverse_usd's exact NUMERIC text on read (unset
-	// on write, like InverseUSD).
+	// RateUSDText and InverseUSDText are rate_usd and inverse_usd's exact
+	// NUMERIC text on read (unset on write).
+	RateUSDText    string
 	InverseUSDText string
 	Source         string
 }
@@ -130,7 +130,7 @@ func (s *Store) InsertFXQuoteBatch(ctx context.Context, quotes []FXQuote) error 
 // `history_all`, etc. on the response.
 func (s *Store) ListFXHistory(ctx context.Context, ticker string, from, to time.Time) ([]FXQuote, error) {
 	const stmt = `
-		SELECT bucket, ticker, rate_usd, inverse_usd, inverse_usd::text, COALESCE(source, '')
+		SELECT bucket, ticker, rate_usd::text, inverse_usd::text, COALESCE(source, '')
 		  FROM fx_quotes
 		 WHERE ticker = $1
 		   AND bucket BETWEEN $2 AND $3
@@ -144,7 +144,7 @@ func (s *Store) ListFXHistory(ctx context.Context, ticker string, from, to time.
 	var out []FXQuote
 	for rows.Next() {
 		var q FXQuote
-		if err := rows.Scan(&q.Bucket, &q.Ticker, &q.RateUSD, &q.InverseUSD, &q.InverseUSDText, &q.Source); err != nil {
+		if err := rows.Scan(&q.Bucket, &q.Ticker, &q.RateUSDText, &q.InverseUSDText, &q.Source); err != nil {
 			return nil, fmt.Errorf("timescale: ListFXHistory scan: %w", err)
 		}
 		out = append(out, q)

@@ -525,7 +525,20 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 	// latch, so it carries the last evaluated verdict forward.
 	warningFired, firingSince := s.lastWarning(pair.String()), s.lastFiringSince(pair.String())
 	if evaluated {
-		rawFiring := res.DivergencePct > s.threshold || agreeing == 0
+		// #1041: at the quorum floor (SuccessCount==2) the median is an
+		// arithmetic mean, so ONE reference off by more than 2×threshold
+		// fires the median leg even when the OTHER reference agrees to
+		// the last decimal — agreeing==0 only vetoes total
+		// non-corroboration, never a partial one. Require agreement to
+		// be in the MINORITY (agreeing < ceil(SuccessCount/2)) before the
+		// median leg can fire: majority corroboration means the
+		// divergence is attributable to the disagreeing minority, not to
+		// us. This does not touch the agreeing==0 leg above it — that
+		// one fires independent of DivergencePct (MNY-22: two references
+		// symmetric around ourPrice put the median AT ourPrice while
+		// nobody individually agrees).
+		medianLegFiring := res.DivergencePct > s.threshold && agreeing < (res.SuccessCount+1)/2
+		rawFiring := medianLegFiring || agreeing == 0
 		warningFired, firingSince = s.warningPersists(pair.String(), rawFiring, gateAt)
 	}
 

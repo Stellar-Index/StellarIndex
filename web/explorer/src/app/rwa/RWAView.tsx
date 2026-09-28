@@ -951,6 +951,31 @@ export function splitBasis(
   };
 }
 
+/**
+ * The headline's provenance claim. "An independent oracle's valuation"
+ * is only true when EVERY contributing row is `oracle_instrument_nav` —
+ * the total can also mix in listing-platform prices (a claim about the
+ * TOKEN, not the backing) and prospectus constant-NAV declarations,
+ * each a different kind of claim than an oracle feed
+ * (`RWAReferenceSummary.provenances`, `basis` spells out the mix in
+ * full below this line). Falls back to the same "independent oracle"
+ * phrasing when `provenances` is absent (a summary predating this
+ * field, or the degenerate zero-contributor case) rather than
+ * asserting a mix that isn't confirmed.
+ */
+function referenceBasisPhrase(
+  provenances: Schemas['RWAReferenceSummary']['provenances'],
+): string {
+  if (
+    provenances != null &&
+    provenances.length > 0 &&
+    !provenances.every((p) => p === 'oracle_instrument_nav')
+  ) {
+    return 'the published reference valuation';
+  }
+  return "an independent oracle's valuation";
+}
+
 /** The full basis, one click away from the figure it describes. */
 function BasisDisclosure({ label, text }: { label: string; text: string }) {
   return (
@@ -1015,7 +1040,7 @@ function ReferenceHeadline({
       <div className="text-ink-muted mt-0.5 text-sm">
         {referenceTotal == null
           ? 'No member carries an independent valuation of its instrument'
-          : `Circulating supply × an independent oracle's valuation of the instrument — ${reference?.assets_valued ?? 0} of ${summary.assets} assets`}
+          : `Circulating supply × ${referenceBasisPhrase(reference?.provenances)} of the instrument — ${reference?.assets_valued ?? 0} of ${summary.assets} assets`}
       </div>
       {/* The floor, stated rather than implied by the "≥". A reader who
           reads past the glyph still has to be told the total is short
@@ -1354,8 +1379,21 @@ function HeadlineStats({
         {reference?.sources != null && reference.sources.length > 0 && (
           <>
             <strong>Where the reference comes from.</strong>{' '}
-            {reference.sources.join(', ')} — each row names its own feed and the
-            moment that feed published.{' '}
+            {reference.sources.join(', ')}
+            {reference.provenances != null &&
+            reference.provenances.length > 1 ? (
+              <>
+                {' '}
+                — {reference.provenances.length} different kinds of claim, not
+                all oracle feeds; the figure above says which is which.{' '}
+              </>
+            ) : (
+              <>
+                {' '}
+                — each row names its own feed and the moment that feed
+                published.{' '}
+              </>
+            )}
           </>
         )}
       </p>

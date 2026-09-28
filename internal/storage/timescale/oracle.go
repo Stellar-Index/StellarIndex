@@ -148,9 +148,6 @@ func (s *Store) LatestOracleUpdateForAsset(ctx context.Context, source string, a
 // [LatestOracleUpdateForAsset] and wrapping in a 1-element slice,
 // but with an empty slice instead of ErrNotFound for "none").
 //
-// Implementation: DISTINCT ON (source) per Postgres idiom, which
-// pairs with (source, asset, ts DESC, ledger DESC) for a cheap scan.
-//
 // Single-key wrapper around [LatestOracleUpdatesForAssets] —
 // preserved for callers that haven't switched to the multi-key
 // shape yet.
@@ -192,18 +189,37 @@ func (s *Store) LatestOracleUpdatesForAssets(ctx context.Context, assets []canon
 	for i, a := range assets {
 		keys[i] = a.String()
 	}
+	// Aggregate-then-fetch instead of DISTINCT ON over every matching row:
+	// max(ts) per (source, asset, quote) — the compress_segmentby key — is
+	// answered from compressed-batch metadata, and the lateral fetches one
+	// stream's newest rows by exact ts. The DISTINCT ON form sorted the
+	// asset's whole history (318,908 rows, 541 ms on r1 2026-09-28).
+	// OFFSET 0 keeps the lateral a parameterised nested loop; flattened,
+	// the planner hash-joins against a full scan of the open chunk.
 	const q = `
-        SELECT DISTINCT ON (source, quote)
-               source, COALESCE(contract_id, ''),
-               ledger, tx_hash, op_index, ts,
-               asset, quote,
-               price, decimals,
-               COALESCE(confidence, 0),
-               COALESCE(observer, '')
-          FROM oracle_updates
-         WHERE asset = ANY($1)
-           AND ($2 = '' OR source = $2)
-         ORDER BY source, quote, ts DESC, ledger DESC
+        WITH latest AS (
+            SELECT source, asset, quote, max(ts) AS ts
+              FROM oracle_updates
+             WHERE asset = ANY($1)
+               AND ($2 = '' OR source = $2)
+             GROUP BY source, asset, quote
+        )
+        SELECT DISTINCT ON (o.source, o.quote)
+               o.source, COALESCE(o.contract_id, ''),
+               o.ledger, o.tx_hash, o.op_index, o.ts,
+               o.asset, o.quote,
+               o.price, o.decimals,
+               COALESCE(o.confidence, 0),
+               COALESCE(o.observer, '')
+          FROM latest l
+          CROSS JOIN LATERAL (
+                SELECT * FROM oracle_updates u
+                 WHERE u.asset = ANY($1)
+                   AND u.source = l.source AND u.asset = l.asset
+                   AND u.quote = l.quote AND u.ts = l.ts
+                OFFSET 0
+          ) o
+         ORDER BY o.source, o.quote, o.ts DESC, o.ledger DESC
     `
 	rows, err := s.db.QueryContext(ctx, q, keys, sourceFilter)
 	if err != nil {

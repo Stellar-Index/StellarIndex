@@ -144,6 +144,8 @@ func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 // by the API's /v1/assets/{id} F2-fields path. Returns
 // [ErrNotFound] when the asset has no recorded supply (the asset-
 // detail handler then publishes nil for every supply field).
+// No time floor on purpose: a stale supply is still served with its
+// as-of, and (asset_key, time DESC) makes each chunk one index seek.
 func (s *Store) LatestSupply(ctx context.Context, assetKey string) (supply.Supply, error) {
 	const q = `
 		SELECT time, total_supply::text, circulating_supply::text, max_supply::text, basis, ledger_sequence, sac_wrapped_stroops::text

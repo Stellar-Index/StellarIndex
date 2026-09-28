@@ -515,8 +515,8 @@ function PerKeyTable({ keys }: { keys: APIKey[] }) {
               </Td>
               <Td align="right">{fmtInt(k.rate_limit_per_min)}/min</Td>
               <Td align="right">
-                {k.monthly_quota ? (
-                  fmtInt(k.monthly_quota)
+                {k.effective_monthly_quota ? (
+                  fmtInt(k.effective_monthly_quota)
                 ) : (
                   <Badge tone="neutral">Unlimited</Badge>
                 )}

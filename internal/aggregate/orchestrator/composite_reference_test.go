@@ -332,6 +332,25 @@ func TestCompositeReference_OracleFXLegCannotCorroborate(t *testing.T) {
 	assertUnavailableFroze(t, res, "composite_unavailable: fx_source_class=reflector-fx")
 }
 
+// TestCompositeReference_ECBStandbyFXLegCorroborates — rows the forex
+// worker's ECB standby wrote while the primary was down are an FX leg.
+func TestCompositeReference_ECBStandbyFXLegCorroborates(t *testing.T) {
+	for _, src := range []string{"ecb", "ecb+massive"} {
+		res := runCompositeRefScenario(t, compositeRefScenario{
+			legSources:    []string{"kraken", "coinbase"},
+			legPriceT2:    15_000_000,
+			fxObservedAge: time.Hour,
+			fxSource:      src,
+			targetSources: []string{"soroswap"},
+			enabled:       true,
+		})
+		if res.froze {
+			t.Errorf("fx source %q: freeze engaged (reason %q) — the standby's FX leg was refused",
+				src, res.marker.marks[0].decision.Reason)
+		}
+	}
+}
+
 func assertUnavailableFroze(t *testing.T, res compositeRefResult, wantReason string) {
 	t.Helper()
 	if !res.froze {
