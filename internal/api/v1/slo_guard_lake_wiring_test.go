@@ -77,6 +77,16 @@ func lakeWiredOptionKeys(t *testing.T, path string) map[string]bool {
 		t.Fatalf("parse %s: %v", path, err)
 	}
 	tainted := map[string]bool{}
+	// A variable declared as a clickhouse reader is one whatever fills it,
+	// including a helper that dials inside closures.
+	ast.Inspect(f, func(n ast.Node) bool {
+		if vs, ok := n.(*ast.ValueSpec); ok && isClickHouseType(vs.Type) {
+			for _, id := range vs.Names {
+				tainted[id.Name] = true
+			}
+		}
+		return true
+	})
 	for changed := true; changed; {
 		changed = false
 		ast.Inspect(f, func(n ast.Node) bool {
@@ -113,6 +123,15 @@ func lakeWiredOptionKeys(t *testing.T, path string) map[string]bool {
 		return true
 	})
 	return keys
+}
+
+// isClickHouseType reports whether t is clickhouse.X or *clickhouse.X.
+func isClickHouseType(t ast.Expr) bool {
+	if star, ok := t.(*ast.StarExpr); ok {
+		t = star.X
+	}
+	sel, ok := t.(*ast.SelectorExpr)
+	return ok && isPkgSelector(sel, "clickhouse", sel.Sel.Name)
 }
 
 // taintsLHS reports whether as's i-th left-hand side receives a lake value:

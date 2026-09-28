@@ -92,6 +92,11 @@ systemctl restart clickhouse-server
 curl -s localhost:3000/v1/readyz | python3 -m json.tool | grep -A2 clickhouse
 ```
 
+If ClickHouse answers `SELECT 1` but readyz still reports it down with
+"boot retry window" in the error, ClickHouse did not answer the API's
+last boot attempt (about six seconds after start), so the API never wired
+its lake readers. Restart the API: `systemctl restart stellarindex-api`.
+
 Ingest resumes from its cursor — no manual backfill is needed for a
 restart-length outage. If the gap is long enough to matter, verify with
 the gap detector rather than assuming, and catch up projected sources

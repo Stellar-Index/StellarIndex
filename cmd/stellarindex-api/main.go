@@ -1083,10 +1083,28 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// Live per-token supply from the decode-at-ingest supply_flows lake
 	// (ADR-0034) backs GET /v1/assets/{id}/supply. Optional: when ClickHouse
 	// isn't configured, the reader stays nil and the endpoint 503s. A failed
-	// dial is non-fatal — the rest of the API still serves.
+	// dial is non-fatal — the rest of the API still serves. Both lake
+	// readers are dialled concurrently inside one short retry window (see
+	// dialLakeReadersAtBoot).
+	var (
+		lakeSupply      *clickhouse.SupplyReader
+		lakeSupplyErr   error
+		lakeExplorer    *clickhouse.ExplorerReader
+		lakeExplorerErr error
+	)
+	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
+		user, pass := cfg.Storage.ClickHouseServingUser, cfg.Storage.ClickHouseServingPassword
+		lakeSupply, lakeSupplyErr, lakeExplorer, lakeExplorerErr = dialLakeReadersAtBoot(rootCtx, logger, addr, time.Now().Add(clickhouseBootDialBudget),
+			func(ctx context.Context) (*clickhouse.SupplyReader, error) {
+				return clickhouse.NewSupplyReaderAuth(ctx, addr, user, pass)
+			},
+			func(ctx context.Context) (*clickhouse.ExplorerReader, error) {
+				return clickhouse.NewExplorerReaderAuth(ctx, addr, user, pass)
+			})
+	}
 	var tokenSupplyReader v1.TokenSupplyReader
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
-		sr, err := clickhouse.NewSupplyReaderAuth(rootCtx, addr, cfg.Storage.ClickHouseServingUser, cfg.Storage.ClickHouseServingPassword)
+		sr, err := lakeSupply, lakeSupplyErr
 		if err != nil {
 			logger.Warn("token supply reader unavailable; /v1/assets/{id}/supply will 503", "addr", addr, "err", err)
 		} else {
@@ -1135,7 +1153,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// nil-degrade posture (the endpoint 503s without the lake).
 	var sdexOfferBook v1.SDEXOfferBookReader
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
-		er, err := clickhouse.NewExplorerReaderAuth(rootCtx, addr, cfg.Storage.ClickHouseServingUser, cfg.Storage.ClickHouseServingPassword)
+		er, err := lakeExplorer, lakeExplorerErr
 		// The readiness checker is registered for a CONFIGURED ClickHouse
 		// whether or not this dial succeeded — see clickhouseReadyChecks.
 		checks = append(checks, clickhouseReadyChecks(addr, er, err)...)
@@ -2888,8 +2906,9 @@ func (c redisChecker) Ping(ctx context.Context) error {
 // cutoff) as the Ping probe: a cheap query against the small
 // `stellar.ledgers` table, no new ClickHouse-side surface needed.
 //
-// `r` is nil when the boot dial failed. The checker still exists in
-// that state and still reports down — see clickhouseReadyChecks.
+// `r` is nil when every boot dial in the retry window failed. The checker
+// still exists in that state and still reports down — see
+// clickhouseReadyChecks.
 type clickhouseChecker struct {
 	r       *clickhouse.ExplorerReader
 	dialErr error
@@ -2899,7 +2918,7 @@ func (c clickhouseChecker) Name() string   { return "clickhouse" }
 func (c clickhouseChecker) Critical() bool { return false }
 func (c clickhouseChecker) Ping(ctx context.Context) error {
 	if c.r == nil {
-		return fmt.Errorf("clickhouse was unreachable when this process started and has not been re-dialled since; every lake-backed endpoint is 503ing and a restart is required to re-wire them: %w", c.dialErr)
+		return fmt.Errorf("clickhouse stayed unreachable for this process's whole boot retry window (%s) and is not re-dialled after it; every lake-backed endpoint is 503ing and a restart is required to re-wire them: %w", clickhouseBootDialBudget, c.dialErr)
 	}
 	_, err := c.r.LakeTipLedger(ctx)
 	return err
@@ -2919,11 +2938,13 @@ func (c clickhouseChecker) Ping(ctx context.Context) error {
 // signal that it is gone" was the state with no signal. Endpoints
 // 503'd and nothing paged.
 //
-// A configured-but-unreachable ClickHouse therefore registers a checker
-// that reports down for the process's lifetime. That is the truth: none
-// of the ten lake-backed seams is re-dialled after a failed boot dial,
-// so the dependency really is down until the process restarts, and the
-// error says so rather than implying a transient probe failure.
+// A ClickHouse still unreachable when dialLakeReadersAtBoot's window ends
+// therefore registers a checker that reports down for the process's
+// lifetime. That is the truth: none of the lake-backed seams is
+// re-dialled after that, so a Ping that re-dialled and went green would
+// hide endpoints that are still 503ing until the process restarts. Only a
+// ClickHouse that answers before the last attempt (at least
+// clickhouseBootDialMinAttempt before the window ends) avoids this state.
 //
 // No address configured is the one case that publishes nothing, and
 // that is correct: a deployment without a lake has no such dependency,
