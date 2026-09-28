@@ -24,8 +24,9 @@ type FXQuoteWriter interface {
 // imports forex types via the v1 API package; the dependency would
 // cycle).
 type FXQuote struct {
-	Bucket  time.Time
-	Ticker  string
+	Bucket time.Time
+	Ticker string
+	//floatmoney:ok known debt (#600) — ingest DTO feeding timescale.FXQuote.RateUSD (same debt); upstream ECB/fallback sources are JSON floats today
 	RateUSD float64
 	Source  string
 }
@@ -79,6 +80,7 @@ type rateGuard struct {
 	// `history_deviation_stuck` reason (excluded from the alert, still
 	// WARN-logged + graphable). Any acceptance, or a DIFFERENT rejected
 	// value, resets the streak — fresh disagreement always alerts.
+	//floatmoney:ok known debt (#600) — holds a copy of the same float64 RateUSD (above) for equality/streak comparison, not persisted or served
 	stuckRejectedRate float64
 	stuckCount        int
 
@@ -94,6 +96,7 @@ type rateGuard struct {
 	// which for a broken-current/healthy-history upstream is every
 	// refresh — sharing the fields would reset the veto streak before
 	// it could ever engage. Reset by any accepted current rate.
+	//floatmoney:ok known debt (#600) — same class as stuckRejectedRate above
 	conflictStuckRate  float64
 	conflictStuckCount int
 

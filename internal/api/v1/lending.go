@@ -144,6 +144,7 @@ type ReserveView struct {
 	// isn't in the captured contract-storage window — supplied /
 	// borrowed / utilization are still exact.
 	BorrowAPR *float64 `json:"borrow_apr"`
+	//floatmoney:ok a yield rate/fraction (like BorrowAPR above), not a principal amount
 	SupplyAPR *float64 `json:"supply_apr"`
 }
 

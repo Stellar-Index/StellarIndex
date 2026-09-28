@@ -40,6 +40,7 @@ type Reference interface {
 
 // Quote is one reference's price and when its upstream observed it.
 type Quote struct {
+	//floatmoney:ok external reference price used only for divergence comparison against our own VWAP, never stored or served as canonical money
 	Price float64
 	AsOf  time.Time
 }

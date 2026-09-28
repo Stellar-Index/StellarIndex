@@ -45,6 +45,7 @@ type CachedResult struct {
 	PairID string `json:"pair_id"`
 
 	// OurPrice / Median / DivergencePct mirror the comparator output.
+	//floatmoney:ok internal Redis cache wire shape read only by the aggregator's cross-oracle signal (confidence.go lookupCrossOracle); never re-served — the durable ObservationRecord path formats to decimal strings at the sink boundary (worker.go RecordObservation)
 	OurPrice      float64 `json:"our_price"`
 	Median        float64 `json:"median"`
 	DivergencePct float64 `json:"divergence_pct"`

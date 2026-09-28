@@ -14,7 +14,7 @@ import (
 type Currency struct {
 	Ticker  string  // upper-case ISO-4217 (USD, EUR, JPY, …)
 	Name    string  // display name ("United States Dollar")
-	RateUSD float64 // 1 USD = N units of this currency
+	RateUSD float64 //floatmoney:ok known debt (#600) — same chain as worker.go/fx_quotes.go RateUSD; 1 USD = N units of this currency
 	// UpdateAt is the publication time of the refresh whose rate this
 	// is. It trails [Snapshot.PublishedAt] when the worker is HOLDING the
 	// ticker's last guarded rate (see servedSnapshot in worker.go).
@@ -49,8 +49,9 @@ type Snapshot struct {
 
 // HistoryPoint is one daily rate datum for the 7d series.
 type HistoryPoint struct {
-	Date    time.Time // YYYY-MM-DD UTC
-	RateUSD float64   // 1 USD = N units on that date
+	Date time.Time // YYYY-MM-DD UTC
+	//floatmoney:ok known debt (#600) — same chain as Currency.RateUSD above; 1 USD = N units on that date
+	RateUSD float64
 }
 
 // Cache holds the latest forex snapshot. Safe for concurrent use;

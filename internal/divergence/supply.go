@@ -730,6 +730,7 @@ func (c *CoinGeckoSupplyReference) Name() string { return "coingecko" }
 // coinGeckoResponse is the subset of `/coins/{id}` we consume.
 type coinGeckoResponse struct {
 	MarketData struct {
+		//floatmoney:ok CoinGecko wire decode, used only as an external cross-check reference in LookupCirculatingSupply (SupplyReference interface), never stored or served as canonical money
 		CirculatingSupply float64 `json:"circulating_supply"`
 		// LastUpdated is the upstream publication time (RFC 3339) used
 		// for the CS-089 staleness gate. Absent → gate no-ops.

@@ -168,7 +168,7 @@ type ReserveMetrics struct {
 	UtilizationPct     float64 // 0..100
 	HasAPR             bool
 	BorrowAPR          float64 // fraction (0.05 = 5%); valid only when HasAPR
-	SupplyAPR          float64
+	SupplyAPR          float64 //floatmoney:ok a yield rate/fraction (like BorrowAPR above), not a principal amount
 }
 
 // BaseMetrics derives the config-FREE current-state metrics (supplied /
