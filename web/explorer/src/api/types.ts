@@ -3252,10 +3252,13 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Daily per-endpoint request counters for the authenticated caller.
+         * Daily per-endpoint request counters for the authenticated account.
          * @description Returns per-day, per-endpoint-family usage rows for the
-         *     authenticated caller over the trailing 30 days: one row per
-         *     (date, endpoint) with `requests` (every non-429 response,
+         *     authenticated caller's ACCOUNT over the trailing 30 days — the
+         *     aggregate across every API key the account holds, not just
+         *     the credential used on this request (every key on an account
+         *     shares one metered counter and one monthly quota): one row
+         *     per (date, endpoint) with `requests` (every non-429 response,
          *     5xx included), `billable` (the request units the monthly
          *     quota counts), `errors` (4xx excluding 429, plus 5xx), and
          *     `throttled` (429 rejections — tallied separately and never
@@ -6579,7 +6582,11 @@ export interface components {
              * @description The monthly request-unit quota auth enforces on this key
              *     (0 = unmetered): `monthly_quota` resolved through the
              *     account override, which a key at 0 inherits and which caps
-             *     any higher key value.
+             *     any higher key value. Shared, not per-key: every API key
+             *     on the account draws against this SAME calendar-month
+             *     counter, so the account's quota is reached when any
+             *     combination of its keys' traffic sums to it, not only when
+             *     one key does alone (reset on the 1st UTC).
              */
             effective_monthly_quota: number;
             usage_alert_threshold_pct?: number;
