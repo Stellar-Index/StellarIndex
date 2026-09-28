@@ -18,11 +18,9 @@ import (
 // 32 bytes for the return slot). So the response is exactly 5 × 32
 // = 160 bytes = 320 hex chars (plus the 0x prefix).
 //
-// We don't decode answeredInRound — Chainlink itself only uses it
-// for liveness checks ("did the answer get carried forward across
-// aggregators or was it freshly computed in this round"). For our
-// purposes the round is uniquely identified by RoundID + the feed
-// address; answeredInRound adds no information for ingestion.
+// answeredInRound is decoded so the poller can refuse a carried-forward
+// round (answeredInRound < roundId) — Chainlink's own consumer guidance.
+
 // maxPlausibleUpdatedAtUnix caps the feed-reported updatedAt (Unix
 // seconds) before any clock comparison. A value that exceeds the
 // int64 / timestamptz range would wrap NEGATIVE in the int64() cast
@@ -93,13 +91,15 @@ func decodeLatestRoundData(rawHex, feedAddress string, now time.Time) (Round, er
 	if err != nil {
 		return Round{}, fmt.Errorf("feed=%s round=%d: %w", feedAddress, roundID, err)
 	}
-	// answeredInRound — uint80 in word 4 (ignored).
+	// answeredInRound — uint80 in word 4, phase-encoded like roundId.
+	answeredInRound := decodeRoundID(bytes[150:160])
 
 	return Round{
-		FeedAddress: strings.ToLower(feedAddress),
-		RoundID:     roundID,
-		Answer:      answer.String(),
-		UpdatedAt:   time.Unix(int64(updatedAt), 0).UTC(),
+		FeedAddress:     strings.ToLower(feedAddress),
+		RoundID:         roundID,
+		AnsweredInRound: answeredInRound,
+		Answer:          answer.String(),
+		UpdatedAt:       time.Unix(int64(updatedAt), 0).UTC(),
 	}, nil
 }
 

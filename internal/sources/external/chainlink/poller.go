@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -26,9 +28,9 @@ import (
 // one canonical.OracleUpdate per new round.
 //
 // Stateless w.r.t. its own writes (the dedup cache rebuilds at boot
-// — first poll after restart re-emits the latest round per feed,
-// which the storage layer's PK ON CONFLICT clause idempotently
-// rejects). Goroutine-safe; the framework's runner serialises
+// — first poll after restart re-emits the latest round per feed if
+// it is within the feed's MaxAge, which the storage layer's PK ON
+// CONFLICT clause idempotently rejects). Goroutine-safe; the framework's runner serialises
 // PollOnce calls per source so internal mutexes only guard against
 // future concurrent-PollOnce paths.
 type Poller struct {
@@ -88,6 +90,10 @@ func NewPoller(rpcURL string, feedMap map[string]FeedSpec) *Poller {
 	for k := range feedMap {
 		obs.ChainlinkFeedDecimalsMismatchTotal.WithLabelValues("ingest", k)
 		obs.ChainlinkFeedDecimalsVerifyFailedTotal.WithLabelValues("ingest", k)
+		for _, o := range feedOutcomes {
+			obs.ChainlinkFeedPollsTotal.WithLabelValues(k, o)
+		}
+		obs.ChainlinkFeedLastSuccessUnix.WithLabelValues(k)
 	}
 	return &Poller{
 		Client:      NewClient(rpcURL, nil),
@@ -121,11 +127,78 @@ type pollResult struct {
 	round  Round
 }
 
-// pollFeed resolves decimals, fetches the latest round and, if it's
-// new, projects and commits it. ok=false means "already emitted this
-// round" (no-op, nothing for the caller to report) — the one path
-// PollOnce's fan-in must NOT receive a result for.
+// Per-feed poll outcomes, the label values of
+// obs.ChainlinkFeedPollsTotal.
+const (
+	outcomeEmitted        = "emitted"
+	outcomeUnchanged      = "unchanged"
+	outcomeStale          = "stale"
+	outcomeCarriedForward = "carried_forward"
+	outcomeError          = "error"
+)
+
+var feedOutcomes = []string{outcomeEmitted, outcomeUnchanged, outcomeStale, outcomeCarriedForward, outcomeError}
+
+// recordFeedOutcome counts one feed's poll outcome and, for a fresh
+// round, advances its last-success gauge.
+func (p *Poller) recordFeedOutcome(pair canonical.Pair, outcome string) {
+	obs.ChainlinkFeedPollsTotal.WithLabelValues(pair.String(), outcome).Inc()
+	if outcome == outcomeEmitted || outcome == outcomeUnchanged {
+		obs.ChainlinkFeedLastSuccessUnix.WithLabelValues(pair.String()).Set(float64(p.clock().Unix()))
+	}
+}
+
+// failureOutcome maps a per-feed poll error to its outcome label.
+func failureOutcome(err error) string {
+	switch {
+	case errors.Is(err, ErrStaleRound):
+		return outcomeStale
+	case errors.Is(err, ErrCarriedForwardRound):
+		return outcomeCarriedForward
+	default:
+		return outcomeError
+	}
+}
+
+// checkRoundCurrent refuses a round that is not a current publication:
+// a carried-forward answer, or one older than the feed's MaxAge. It
+// runs before dedup so a frozen feed keeps reporting stale every tick
+// instead of reading as "unchanged".
+func checkRoundCurrent(pair canonical.Pair, spec FeedSpec, rnd Round, now time.Time) error {
+	if rnd.AnsweredInRound != nil && rnd.RoundID != nil && rnd.AnsweredInRound.Cmp(rnd.RoundID) < 0 {
+		return fmt.Errorf("%w: %s round=%s answeredInRound=%s",
+			ErrCarriedForwardRound, pair.String(), rnd.RoundID, rnd.AnsweredInRound)
+	}
+	maxAge := spec.MaxAge
+	if maxAge <= 0 {
+		maxAge = DefaultMaxAge(pair.String())
+	}
+	if age := now.Sub(rnd.UpdatedAt); age > maxAge {
+		return fmt.Errorf("%w: %s round=%s updated %s ago, max %s",
+			ErrStaleRound, pair.String(), rnd.RoundID, age.Truncate(time.Second), maxAge)
+	}
+	return nil
+}
+
+// pollFeed resolves decimals, fetches the latest round, refuses it if
+// it is not current, and, if it's new, projects and commits it.
+// ok=false means "already emitted this round" (no-op, nothing for the
+// caller to report) — the one path PollOnce's fan-in must NOT receive
+// a result for. Every path records the feed's outcome.
 func (p *Poller) pollFeed(ctx context.Context, pair canonical.Pair, spec FeedSpec) (pollResult, bool) {
+	res, ok := p.pollFeedOnce(ctx, pair, spec)
+	switch {
+	case !ok:
+		p.recordFeedOutcome(pair, outcomeUnchanged)
+	case res.err != nil:
+		p.recordFeedOutcome(pair, failureOutcome(res.err))
+	default:
+		p.recordFeedOutcome(pair, outcomeEmitted)
+	}
+	return res, ok
+}
+
+func (p *Poller) pollFeedOnce(ctx context.Context, pair canonical.Pair, spec FeedSpec) (pollResult, bool) {
 	// Scale first: the on-chain decimals() verified against the
 	// configured value (decimals.go). A disagreeing or unknown
 	// scale refuses the feed before its price is read.
@@ -137,6 +210,9 @@ func (p *Poller) pollFeed(ctx context.Context, pair canonical.Pair, spec FeedSpe
 	rnd, err := p.fetchLatest(ctx, pair, spec)
 	if err != nil {
 		return pollResult{err: err, pair: pair}, true
+	}
+	if err := checkRoundCurrent(pair, spec, rnd, p.clock()); err != nil {
+		return pollResult{err: err, pair: pair, round: rnd}, true
 	}
 	if !p.Cache.wouldEmit(rnd.FeedAddress, rnd.RoundID) {
 		// Already emitted this round (or a newer one) — no-op.
@@ -167,9 +243,10 @@ func (p *Poller) pollFeed(ctx context.Context, pair canonical.Pair, spec FeedSpe
 // one OracleUpdate if the round is new. Returns updates, never
 // trades (Chainlink is oracle-class).
 //
-// Per-pair errors are logged + counted via the framework's
-// outcome="error" metric, not bubbled — one bad feed shouldn't
-// stop the other 515.
+// Per-feed failures (including stale and carried-forward rounds) are
+// logged and counted on stellarindex_chainlink_feed_polls_total, not
+// bubbled — one bad feed shouldn't stop the others. The framework's
+// outcome="error" only fires when no feed produced an update.
 //
 // Bounded concurrency: at most `p.Concurrency` simultaneous
 // eth_call requests. Polite default for shared RPC endpoints.
@@ -185,6 +262,12 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	}
 	sem := make(chan struct{}, conc)
 	results := make(chan pollResult, len(pairs))
+
+	// anyCurrent tracks whether ANY feed was current this tick — emitted
+	// OR unchanged. "Unchanged" (ok=false from pollFeed) sends nothing to
+	// results, so without this the fan-in below can't tell "a sibling is
+	// fine, it just has nothing new" from "every feed failed" (#939).
+	var anyCurrent atomic.Bool
 
 	var wg sync.WaitGroup
 	for _, pr := range pairs {
@@ -207,12 +290,17 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 			defer func() {
 				if rec := recover(); rec != nil {
 					worker.Report(logger, "external-chainlink-feed-poll", rec)
+					p.recordFeedOutcome(pair, outcomeError)
 					results <- pollResult{err: fmt.Errorf("chainlink feed poll panicked: %v", rec), pair: pair}
 				}
 			}()
-			if res, ok := p.pollFeed(ctx, pair, spec); ok {
-				results <- res
+			res, ok := p.pollFeed(ctx, pair, spec)
+			if !ok {
+				// Unchanged: no-op, but still a feed that is current.
+				anyCurrent.Store(true)
+				return
 			}
+			results <- res
 		}(pr, spec)
 	}
 	go func() {
@@ -235,6 +323,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 			logger.Warn("chainlink feed poll failed",
 				"source", SourceName,
 				"pair", r.pair.String(),
+				"outcome", failureOutcome(r.err),
 				"err", r.err)
 			continue
 		}
@@ -248,7 +337,8 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	// Convention from coingecko: nil/nil/nil = "skipped" (poll fired
 	// but found nothing). Returning err here would mark the WHOLE
 	// tick as "error" even when most feeds succeeded — that's bad
-	// signal hygiene. Per-feed errors are already logged above.
+	// signal hygiene. Per-feed errors are already logged and counted
+	// (stellarindex_chainlink_feed_polls_total) above.
 	//
 	// G10-02 (liveness): but an all-feeds-FAILED cycle is NOT a
 	// healthy skip. Pre-fix this branch returned (nil,nil,nil) even
@@ -259,8 +349,14 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	// zero successful updates AND at least one feed errored — a
 	// genuine "polled and found nothing new" cycle (firstErr == nil)
 	// still skips cleanly.
+	//
+	// #939: an unchanged sibling (ok=false, nothing sent to results)
+	// is ALSO current, not a failure. Surface firstErr only when NO
+	// feed was current this tick — otherwise a stale/errored feed's
+	// error would flip a genuinely healthy tick to "error" just
+	// because its unchanged sibling had nothing new to report.
 	if len(updates) == 0 {
-		if firstErr != nil {
+		if firstErr != nil && !anyCurrent.Load() {
 			return nil, nil, firstErr
 		}
 		return nil, nil, nil

@@ -40,6 +40,16 @@ freshness ceiling for current-price endpoints) and dedupe by
 results in a `canonical.OracleUpdate` row — repeated polls of an
 unchanged feed are no-ops.
 
+Before dedup, a round is refused if it is not a current publication:
+`answeredInRound < roundId` (carried forward) or `updatedAt` older than
+the feed's `MaxAge` (from its heartbeat; see `defaults.go`). A refused
+round is never written; every feed's outcome is counted on
+`stellarindex_chainlink_feed_polls_total{pair,outcome}` and a fresh
+round advances `stellarindex_chainlink_feed_last_success_unix{pair}`,
+which `stellarindex_chainlink_feed_stale` alerts on — so one dark feed
+is visible even while its siblings keep the poller's tick green.
+Backfill (`AnswerUpdated` logs) is not age-gated.
+
 ## Files
 
 ```
@@ -91,7 +101,8 @@ poll_interval  = "30s"
 # decimals() (8 on every Chainlink USD feed) on the first poll and daily.
 # When set, it is verified against decimals(); on disagreement the feed
 # is refused (ERROR log + stellarindex_chainlink_feed_decimals_mismatch_total)
-# until config and chain agree.
+# until config and chain agree. max_age_hours may be omitted: it
+# defaults to the pair's heartbeat budget (3h crypto, 76h FX).
 [external.chainlink.feed_map]
   "crypto:BTC/fiat:USD"  = { address = "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c" }
   "crypto:ETH/fiat:USD"  = { address = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419" }

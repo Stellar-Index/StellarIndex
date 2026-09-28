@@ -848,6 +848,30 @@ only a WARN log. Zero forever is the healthy state; a sustained rate
 means the RPC endpoint or the feed is unhealthy even though pricing
 keeps working.
 
+### `stellarindex_chainlink_feed_polls_total`
+
+Counter, labels `pair`, `outcome` ∈ {emitted, unchanged, stale,
+carried_forward, error}.
+
+Per-feed outcome of every `[external.chainlink]` ingest poll (indexer).
+`emitted` wrote a new round; `unchanged` saw a fresh round already
+written; `stale` refused a round older than the feed's `max_age_hours`;
+`carried_forward` refused a round whose `answeredInRound < roundId`;
+`error` is an RPC, decode, decimals or projection failure. The poller's
+`stellarindex_external_poller_polls_total{source="chainlink"}` turns
+`error` only when no feed produced an update, so a single dark feed
+among healthy siblings shows here and nowhere else. Series are seeded
+at zero per configured feed.
+
+### `stellarindex_chainlink_feed_last_success_unix`
+
+Gauge, label `pair`.
+
+UNIX seconds of the last ingest poll whose round was within the feed's
+max age (`emitted` or `unchanged`). Seeded to 0 per configured feed, so
+a feed that never succeeds after a restart still has a series. Alerted
+by `stellarindex_chainlink_feed_stale`.
+
 ### `stellarindex_external_fx_last_quote_unix`
 
 Gauge, label `source`.

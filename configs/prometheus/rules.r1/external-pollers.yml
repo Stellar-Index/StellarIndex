@@ -61,6 +61,31 @@ groups:
             indexer host lost outbound HTTPS to ECB, or the poller
             goroutine deadlocked.
 
+      # One Chainlink ingest feed has returned no round within its
+      # max_age_hours for 30+ min. The poller's own tick stays green
+      # while any sibling feed succeeds, so this per-feed gauge is the
+      # only signal for a single dark feed (stale, carried-forward or
+      # erroring). Seeded to 0 per feed, so a feed that never succeeds
+      # after a restart fires too.
+      - alert: stellarindex_chainlink_feed_stale
+        expr: |
+          (time() - stellarindex_chainlink_feed_last_success_unix) > 1800
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: external-poller
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/chainlink-feed-stale.md
+          summary: "Chainlink feed {{ $labels.pair }} has returned no current round in 30+ min"
+          description: |
+            The Chainlink ingest poller has written no current round
+            for {{ $labels.pair }} for 30+ min, while other feeds may
+            still be succeeding. Check
+            stellarindex_chainlink_feed_polls_total{pair="{{ $labels.pair }}"}
+            by outcome: stale (feed older than its max_age_hours, e.g.
+            paused or retired), carried_forward, or error.
+
       # Active fiat-FX feed (`massive`, the internal/sources/external/forex
       # worker) has gone dry. Distinct from the poller-staleness alert
       # above: `massive` does NOT run under the external.Connector

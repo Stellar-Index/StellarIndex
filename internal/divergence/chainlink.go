@@ -157,16 +157,9 @@ type ChainlinkFeed struct {
 	MaxAge time.Duration
 }
 
-// Chainlink staleness defaults (CS-089). Crypto/USD mainnet feeds
-// heartbeat at ≤1h (plus deviation triggers), so 3h means "missed
-// two heartbeats + slack". FX feeds heartbeat at 24h and pause over
-// market closes — a Friday-close round is legitimately ~72h old on
-// Sunday night, so 76h tolerates the weekend without masking a
-// genuinely frozen feed for a week.
-const (
-	defaultChainlinkMaxAgeCrypto = 3 * time.Hour
-	defaultChainlinkMaxAgeFX     = 76 * time.Hour
-)
+// defaultChainlinkMaxAgeFX is the Chainlink FX staleness default
+// (CS-089), owned by the ingest source so both readers agree.
+const defaultChainlinkMaxAgeFX = externalchainlink.DefaultMaxAgeFX
 
 // NewChainlinkReference constructs a Chainlink-backed reference.
 //
@@ -204,14 +197,13 @@ func NewChainlinkReference(opts ChainlinkOptions) *ChainlinkReference {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	builtins := defaultChainlinkFeedMap()
 	feedMap := defaultChainlinkFeedMap()
 	for k, v := range opts.FeedMap {
 		spec := chainlinkFeedSpec(v)
 		// Decimals == 0 is left as-is: it means "adopt the on-chain
 		// decimals()" (chainlink_decimals.go), not "divide by 10^0".
 		if spec.MaxAge == 0 {
-			spec.MaxAge = defaultChainlinkMaxAge(k, builtins)
+			spec.MaxAge = externalchainlink.DefaultMaxAge(k)
 		}
 		feedMap[k] = spec
 	}
@@ -236,27 +228,10 @@ func NewChainlinkReference(opts ChainlinkOptions) *ChainlinkReference {
 	}
 }
 
-// defaultChainlinkMaxAge is the budget for an operator feed that omits
-// MaxAge: a built-in key keeps its built-in budget, and any other
-// fiat/fiat key is an FX feed that pauses over market closes.
-func defaultChainlinkMaxAge(key string, builtins map[string]chainlinkFeedSpec) time.Duration {
-	if b, ok := builtins[key]; ok && b.MaxAge > 0 {
-		return b.MaxAge
-	}
-	base, quote, ok := strings.Cut(key, "/")
-	if ok && strings.HasPrefix(base, "fiat:") && strings.HasPrefix(quote, "fiat:") {
-		return defaultChainlinkMaxAgeFX
-	}
-	return defaultChainlinkMaxAgeCrypto
-}
-
 // defaultChainlinkFeedMap returns the built-in seed of pair →
 // AggregatorV3 contract addresses, derived from the ingest source's
 // [externalchainlink.DefaultFeedMap] so the two can't drift onto
-// different proxies for the same pair: this package owns only the
-// field it adds, MaxAge, calibrated per feed class (crypto/USD feeds
-// heartbeat at ≤1h, FX feeds at 24h and pause over market closes — a
-// Friday close legitimately ages ~72h by Sunday).
+// different proxies, or different staleness budgets, for the same pair.
 func defaultChainlinkFeedMap() map[string]chainlinkFeedSpec {
 	src := externalchainlink.DefaultFeedMap()
 	out := make(map[string]chainlinkFeedSpec, len(src))
@@ -265,7 +240,7 @@ func defaultChainlinkFeedMap() map[string]chainlinkFeedSpec {
 			Address:  v.Address,
 			Decimals: int(v.Decimals),
 			Invert:   v.Invert,
-			MaxAge:   defaultChainlinkMaxAge(k, nil),
+			MaxAge:   v.MaxAge,
 		}
 	}
 	return out

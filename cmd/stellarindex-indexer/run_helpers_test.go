@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
@@ -132,6 +133,27 @@ func TestChainlinkFeedSetFromConfig_CarriesAddressAndInvertThrough(t *testing.T)
 	if !spec.Invert {
 		t.Error("Invert was dropped — the poller would publish the reciprocal pair, and 1/x " +
 			"is a plausible-looking price rather than an obvious error")
+	}
+}
+
+// TestChainlinkFeedSetFromConfig_CarriesMaxAgeThrough — a dropped
+// max_age_hours would silently fall back to the class default, and an
+// omitted one must resolve per pair (FX 76h), not to one constant.
+func TestChainlinkFeedSetFromConfig_CarriesMaxAgeThrough(t *testing.T) {
+	t.Parallel()
+
+	feeds, _, err := chainlinkFeedSetFromConfig(map[string]config.ChainlinkFeedSetting{
+		"crypto:BTC/fiat:USD": {Address: "0x00000000000000000000000000000000000000ab", MaxAgeHours: 5},
+		"fiat:CHF/fiat:USD":   {Address: "0x00000000000000000000000000000000000000ac"},
+	})
+	if err != nil {
+		t.Fatalf("chainlinkFeedSetFromConfig: %v", err)
+	}
+	if got := feeds["crypto:BTC/fiat:USD"].MaxAge; got != 5*time.Hour {
+		t.Errorf("BTC MaxAge = %s, want the operator's 5h", got)
+	}
+	if got := feeds["fiat:CHF/fiat:USD"].MaxAge; got != externalchainlink.DefaultMaxAgeFX {
+		t.Errorf("CHF MaxAge = %s, want the FX default %s", got, externalchainlink.DefaultMaxAgeFX)
 	}
 }
 

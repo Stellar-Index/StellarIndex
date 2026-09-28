@@ -294,6 +294,7 @@ func TestPollOnce_emitsOracleUpdate(t *testing.T) {
 	p := NewPoller(srv.URL, map[string]FeedSpec{
 		pair.String(): {Address: feedAddr, Decimals: 8},
 	})
+	p.now = func() time.Time { return time.Unix(int64(updatedAt), 0).Add(time.Minute) }
 
 	_, updates, err := p.PollOnce(context.Background(), []canonical.Pair{pair})
 	if err != nil {
@@ -384,6 +385,7 @@ func TestPollOnce_projectFailureDoesNotStrandRound(t *testing.T) {
 	p := NewPoller(srv.URL, map[string]FeedSpec{
 		pair.String(): {Address: feedAddr, Decimals: 8, Invert: true},
 	})
+	p.now = func() time.Time { return time.Unix(int64(updatedAt), 0).Add(time.Minute) }
 
 	// First poll: round 100 inverts to zero → project() refuses it.
 	// Zero updates, an error surfaced.
