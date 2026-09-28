@@ -41,10 +41,15 @@ interface PriceResp {
   price_type?: string;
   observed_at?: string;
   window_seconds?: number;
-  // Server-computed trailing-24h percentage change (decimal string,
-  // e.g. "+1.27"). RLT-069: re-deriving this from two /v1/chart points
-  // duplicated a computation the API already publishes and disagreed
-  // with it whenever a bucket was missing or backfilled.
+}
+
+// One row of GET /v1/price/batch — the only price surface that carries
+// change_24h_pct (openapi/stellar-index.v1.yaml: "Present on
+// /v1/price/batch rows ... omitted otherwise"). The single-row /v1/price
+// endpoint fetched above never sets this field, so the 24h badge must be
+// baked from a batch call rather than read off `price`.
+interface PriceBatchRow {
+  asset_id: string;
   change_24h_pct?: string | null;
 }
 
@@ -265,6 +270,21 @@ function fetchPrice(base: string, quote: string): Promise<PriceResp | null> {
   );
 }
 
+// Server-computed trailing-24h percentage change (decimal string, e.g.
+// "+1.27"). RLT-069: re-deriving this from two /v1/chart points
+// duplicated a computation the API already publishes and disagreed with
+// it whenever a bucket was missing or backfilled — but the figure only
+// exists on /v1/price/batch (CA2-A35-correct-5), so it's baked from a
+// one-asset batch call rather than the single-row /v1/price fetch above.
+// softFail for the same reason as fetchPrice: a cold/slow batch lookup
+// must degrade to no baked badge, not abort the export.
+function fetchChange24h(base: string, quote: string): Promise<string | null> {
+  return buildFetchData<PriceBatchRow[]>(
+    `/v1/price/batch?asset_ids=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
+    { softFail: true, timeoutMs: 6_000, attempts: 2 },
+  ).then((rows) => rows?.[0]?.change_24h_pct ?? null);
+}
+
 function fetchChart(base: string, quote: string): Promise<ChartResp | null> {
   return buildFetchData<ChartResp>(
     `/v1/chart?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&timeframe=24h&granularity=1h`,
@@ -332,13 +352,15 @@ export default async function PairPage({ params }: { params: Params }) {
   }
   const { base, quote } = decoded;
 
-  const [price, chart, ohlc, history, sourceBreakdown] = await Promise.all([
-    fetchPrice(base, quote),
-    fetchChart(base, quote),
-    fetchOhlc(base, quote),
-    fetchHistory(base, quote),
-    fetchSourceBreakdown(base, quote),
-  ]);
+  const [price, change24hPct, chart, ohlc, history, sourceBreakdown] =
+    await Promise.all([
+      fetchPrice(base, quote),
+      fetchChange24h(base, quote),
+      fetchChart(base, quote),
+      fetchOhlc(base, quote),
+      fetchHistory(base, quote),
+      fetchSourceBreakdown(base, quote),
+    ]);
 
   const baseLabel = shortAssetText(base);
   const quoteLabel = shortAssetText(quote);
@@ -358,12 +380,9 @@ export default async function PairPage({ params }: { params: Params }) {
   // whenever a bucket is missing, backfilled, or the window boundary
   // doesn't land exactly on the two samples picked here.
   const points = chart?.points ?? [];
-  const change24hNum =
-    price?.change_24h_pct != null ? Number(price.change_24h_pct) : null;
+  const change24hNum = change24hPct != null ? Number(change24hPct) : null;
   const change24h =
-    change24hNum != null && Number.isFinite(change24hNum)
-      ? change24hNum
-      : null;
+    change24hNum != null && Number.isFinite(change24hNum) ? change24hNum : null;
   // Render the rest of the fetched /v1/chart series instead of
   // discarding it (visuals survey bug #7): the hourly VWAP trend as a
   // build-time SVG sparkline, and the summed 24h USD volume across
