@@ -649,3 +649,35 @@ func TestWorker_TerminalMarkWriteError_SurfacesOnMarkErrorCounter(t *testing.T) 
 		t.Errorf("the terminal 'disabled' outcome must NOT be counted when its mark write failed, got delta %v", disabledDelta)
 	}
 }
+
+// TestWorker_Run_SequentialSecondCallReturnsErrAlreadyRunning: Run's doc
+// comment promises a second call — concurrent OR after the first has
+// already returned — gets ErrAlreadyRunning rather than starting a
+// second poll loop. Q143: this pins the sequential case specifically,
+// since a naive "reset the running flag on return" guard passes the
+// concurrent race test but re-arms Run for a second call once the first
+// has exited, silently breaking the one-shot-for-the-worker's-lifetime
+// contract the doc promises.
+func TestWorker_Run_SequentialSecondCallReturnsErrAlreadyRunning(t *testing.T) {
+	store := newFakeStore()
+	w := customerwebhook.NewUnguardedForTest(store, customerwebhook.Options{
+		PollInterval: 5 * time.Millisecond,
+		HTTPClient:   &http.Client{Timeout: 10 * time.Second},
+	})
+
+	// First call: already-canceled context so Run's initial tick runs
+	// once, then the ctx.Done() case returns immediately.
+	firstCtx, firstCancel := context.WithCancel(context.Background())
+	firstCancel()
+	if err := w.Run(firstCtx); err != context.Canceled {
+		t.Fatalf("first Run() = %v, want context.Canceled", err)
+	}
+
+	// Second call, after the first has returned: must be refused, not
+	// silently start a second poll loop.
+	secondCtx, secondCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer secondCancel()
+	if err := w.Run(secondCtx); !errors.Is(err, customerwebhook.ErrAlreadyRunning) {
+		t.Fatalf("second sequential Run() = %v, want ErrAlreadyRunning", err)
+	}
+}
