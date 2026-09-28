@@ -73,6 +73,20 @@ type APIError struct {
 	// CoverageFrom is also set; false carries no information on its
 	// own (the server omits it whenever the floor is unknown).
 	OutsideCoverage bool
+
+	// MonthlyQuota is the `monthly_quota` extension member on a
+	// MonthlyQuota-shaped 429 (middleware.MonthlyQuota's
+	// monthly-quota-exceeded and monthly-quota-unavailable bodies): the
+	// account's monthly request cap. Nil on any other error, including
+	// a plain rate-limit 429.
+	MonthlyQuota *int64
+
+	// MonthToDate is the `month_to_date` extension member on a
+	// monthly-quota-exceeded 429 only: the account's month-to-date
+	// request count that triggered the cap. Nil on
+	// monthly-quota-unavailable (the counter read failed, so the server
+	// has no honest value to report) and on any other error.
+	MonthToDate *int64
 }
 
 // RetryAfterDuration reports the recommended back-off and whether the
@@ -160,6 +174,8 @@ func parseAPIError(status int, contentType, retryAfter string, body []byte) *API
 	apiErr.RequestID = p.RequestID
 	apiErr.CoverageFrom = p.CoverageFrom
 	apiErr.OutsideCoverage = p.OutsideCoverage
+	apiErr.MonthlyQuota = p.MonthlyQuota
+	apiErr.MonthToDate = p.MonthToDate
 
 	// Valid JSON that carried NONE of the problem+json fields (e.g. a
 	// proxy or non-conforming service replying
@@ -236,4 +252,6 @@ type problemJSON struct {
 	RequestID       string     `json:"request_id,omitempty"`
 	CoverageFrom    *time.Time `json:"coverage_from,omitempty"`
 	OutsideCoverage bool       `json:"outside_coverage,omitempty"`
+	MonthlyQuota    *int64     `json:"monthly_quota,omitempty"`
+	MonthToDate     *int64     `json:"month_to_date,omitempty"`
 }
