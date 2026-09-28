@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -96,34 +97,15 @@ func archiveCompletenessVerify(args []string) error {
 	snapshot := archivecompleteness.NewMetricsSnapshot()
 
 	// Phase 2 — fix any missing.
-	var fillRes archivecompleteness.FillResult
-	switch {
-	case len(preRes.Missing) == 0:
-		// Nothing to fix.
-	case !write:
-		// #1191: this is the mode the systemd timer fires, unattended,
-		// with no preview and no confirmation — a stale -archive-root
-		// default or a mis-templated mount got checkpoints fetched and
-		// chowned into the wrong tree with nobody looking. Fail-closed
-		// DRY RUN by default; the shipped systemd units pass -write.
-		fmt.Fprintf(os.Stderr,
-			"archive-completeness verify: DRY RUN — %d missing checkpoint(s) found, not fixed (pass -write to apply)\n",
-			len(preRes.Missing))
-	default:
-		filler, err := archivecompleteness.NewCrossAnchorFiller(archivecompleteness.FillerOptions{
-			ArchiveRoot: *archiveRoot,
-			Workers:     *workers,
-			OwnerUser:   *ownerUser,
-			OwnerGroup:  *ownerGroup,
-			Network:     *network,
-		})
-		if err != nil {
-			return fmt.Errorf("filler: %w", err)
-		}
-		fillRes = filler.Fill(ctx, preRes.Missing)
-		fmt.Fprintf(os.Stderr,
-			"archive-completeness verify: filled %d / %d missing checkpoints (workers=%d)\n",
-			fillRes.Filled, len(preRes.Missing), *workers)
+	fillRes, err := archiveCompletenessVerifyFill(ctx, write, preRes.Missing, archiveCompletenessVerifyFillOptions{
+		ArchiveRoot: *archiveRoot,
+		Workers:     *workers,
+		OwnerUser:   *ownerUser,
+		OwnerGroup:  *ownerGroup,
+		Network:     *network,
+	})
+	if err != nil {
+		return err
 	}
 
 	// Phase 3 — re-check; the post-fix state is what we report.
@@ -185,6 +167,54 @@ func archiveCompletenessVerify(args []string) error {
 	fmt.Fprintf(os.Stderr,
 		"archive-completeness verify: clean (%.1fs)\n", snapshot.RunDurationSeconds)
 	return nil
+}
+
+// archiveCompletenessVerifyFillOptions carries the filler config for
+// archiveCompletenessVerifyFill (split out of archiveCompletenessVerify's
+// flag vars to keep the fill phase testable in isolation).
+type archiveCompletenessVerifyFillOptions struct {
+	ArchiveRoot string
+	Workers     int
+	OwnerUser   string
+	OwnerGroup  string
+	Network     string
+}
+
+// archiveCompletenessVerifyFill runs verify's Phase 2: a no-op when
+// nothing is missing, a dry-run notice when -write was not passed, or
+// an actual fetch-and-place otherwise.
+func archiveCompletenessVerifyFill(ctx context.Context, write bool, missing []uint32, opts archiveCompletenessVerifyFillOptions) (archivecompleteness.FillResult, error) {
+	switch {
+	case len(missing) == 0:
+		// Nothing to fix.
+		return archivecompleteness.FillResult{}, nil
+	case !write:
+		// #1191: this is the mode the systemd timer fires, unattended,
+		// with no preview and no confirmation — a stale -archive-root
+		// default or a mis-templated mount got checkpoints fetched and
+		// chowned into the wrong tree with nobody looking. Fail-closed
+		// DRY RUN by default; the shipped systemd units pass -write.
+		fmt.Fprintf(os.Stderr,
+			"archive-completeness verify: DRY RUN — %d missing checkpoint(s) found, not fixed (pass -write to apply)\n",
+			len(missing))
+		return archivecompleteness.FillResult{}, nil
+	default:
+		filler, err := archivecompleteness.NewCrossAnchorFiller(archivecompleteness.FillerOptions{
+			ArchiveRoot: opts.ArchiveRoot,
+			Workers:     opts.Workers,
+			OwnerUser:   opts.OwnerUser,
+			OwnerGroup:  opts.OwnerGroup,
+			Network:     opts.Network,
+		})
+		if err != nil {
+			return archivecompleteness.FillResult{}, fmt.Errorf("filler: %w", err)
+		}
+		fillRes := filler.Fill(ctx, missing)
+		fmt.Fprintf(os.Stderr,
+			"archive-completeness verify: filled %d / %d missing checkpoints (workers=%d)\n",
+			fillRes.Filled, len(missing), opts.Workers)
+		return fillRes, nil
+	}
 }
 
 // archiveCompletenessFix runs the `check` then fetches every
