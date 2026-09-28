@@ -55,6 +55,8 @@ var handlerSpecFieldPairs = []struct {
 	{"AccountActivity", reflect.TypeOf(explorerpkg.AccountActivityView{})},
 	{"AccountTrade", reflect.TypeOf(explorerpkg.AccountTradeEntry{})},
 	{"TxSummary", reflect.TypeOf(explorerpkg.TxSummaryView{})},
+	{"ContractEvent", reflect.TypeOf(explorerpkg.TxEventView{})},
+	{"ContractActivityEvent", reflect.TypeOf(explorerpkg.ContractEventView{})},
 	{"KeyCreated", reflect.TypeOf(KeyCreated{})},
 	{"AccountUser", reflect.TypeOf(AccountUser{})},
 	{"AccountInfo", reflect.TypeOf(AccountInfo{})},
@@ -68,6 +70,7 @@ var handlerSpecFieldPairs = []struct {
 	{"BespokeTable", reflect.TypeOf(BespokeTable{})},
 	{"RWAAsset", reflect.TypeOf(RWAAsset{})},
 	{"GET /diagnostics/ingestion", reflect.TypeOf(IngestionDiagnostics{})},
+	{"GET /sources/{name}/health", reflect.TypeOf(SourceHealthRow{})},
 }
 
 // TestHandlerRequiredFieldsAreAlwaysServed is the other direction: a
