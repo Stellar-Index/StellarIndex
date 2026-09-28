@@ -1450,6 +1450,14 @@ jobs:
         # curl: 5 attempts over ~60s so a cold cache right after the
         # api restart does not false-fail; --fail-with-body so a 5xx
         # shows its body in the log. F-1298: values through `env:`.
+        #
+        # GH-1253: without this guard, a red Config-apply gate skips this
+        # step entirely — exactly when the operator most needs to know
+        # whether the edge is serving with config outstanding and
+        # binaries already live. Same condition as the advisory
+        # fleet-parity step below: run whenever the playbook succeeded,
+        # cancellation aside.
+        if: ${{ !cancelled() && steps.playbook.outcome == 'success' }}
         env:
           REGION: ${{ inputs.region }}
           DEPLOY_HOST: ${{ steps.region.outputs.host }}
