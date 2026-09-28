@@ -1788,6 +1788,17 @@ credential. Both values are pre-seeded at zero.
 Alert: `stellarindex_passkey_clone_warning` (on `clone_warning` only) →
 [passkey-clone-warning](../../operations/runbooks/passkey-clone-warning.md).
 
+### `stellarindex_passkey_credential_changes_total`
+
+Counter, label `change` (`added` / `removed`).
+
+Passkeys added to or removed from a dashboard user's sign-in methods.
+Each change also appends a `passkey.register` / `passkey.delete` row to
+`audit_log` and emails the user a `passkey-changed` notice (counted on
+`stellarindex_notify_sends_total`). A burst of `added` across accounts
+is the shape of hijacked sessions being turned into durable
+credentials. Both values are pre-seeded at zero. No alert.
+
 ### `stellarindex_failed_auth_total`
 
 Counter, label `outcome` (`rejected` / `throttled`).
@@ -2561,8 +2572,8 @@ Pre-seeded on the `sweep` op.
 
 ### `stellarindex_notify_sends_total`
 
-Counter, labels `template` (`magic-link` / `signup-verify`), `result`
-(`sent` / `failed`).
+Counter, labels `template` (`magic-link` / `signup-verify` /
+`passkey-changed`), `result` (`sent` / `failed`).
 
 Transactional-email sends through `internal/notify` (the Resend client).
 Before this counter, `internal/notify` had **zero** prometheus visibility,
@@ -2572,11 +2583,12 @@ signup-verify path only logs it. Incremented at every `notify.Sender.Send`
 call site: `sent` when Resend accepts, `failed` on any returned error
 (validation, provider-rejected, or transient/network). `magic-link` is the
 dashboard sign-in email; `signup-verify` is the API-signup confirmation
-email — the two are the only `notify.Sender` paths (price alerts deliver
-via webhooks, not mail). A sustained `failed` ratio drives the
-`stellarindex_notify_send_failure_ratio_high` alert. Zero-seeded across the
-two templates × {sent, failed} so the ratio reads a real 0 before the first
-email.
+email; `passkey-changed` tells a dashboard user a passkey was added to or
+removed from their account — these are the only `notify.Sender` paths
+(price alerts deliver via webhooks, not mail). A sustained `failed` ratio
+drives the `stellarindex_notify_send_failure_ratio_high` alert. Zero-seeded
+across the three templates × {sent, failed} so the ratio reads a real 0
+before the first email.
 
 ### `stellarindex_aggregator_dropped_trades_total`
 
