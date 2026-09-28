@@ -57,6 +57,14 @@ func TestMigration0174_NoOpLeavesCompressedChunksCompressed(t *testing.T) {
 	}
 	applyMigrationsUpTo(t, dsn, 174)
 	requireSEP41AmountCheck(t, ctx, db, true, "v0.92.0 state after the 0174 no-op")
+
+	// Recompress before the down: the ADD CONSTRAINT above ran against
+	// decompressed chunks, and left uncompressed. The v0.92.0-state down
+	// (DROP CONSTRAINT on a CHECK that actually exists) is only exercised
+	// against production's shape if it runs against compressed chunks too.
+	seedCompressedSEP41TransferChunk(t, ctx, db)
+	requireCompressedSEP41TransferChunks(t, ctx, db, 2, "recompressed before the v0.92.0-state down")
+
 	applyMigrationsUpTo(t, dsn, 173)
 	requireSEP41AmountCheck(t, ctx, db, false, "after 0174 down from the v0.92.0 state")
 }
