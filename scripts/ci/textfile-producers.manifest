@@ -66,3 +66,4 @@ internal/ops/chops/verify_served_values.go                                served
 internal/ops/opsutil/job_heartbeat.go                                     operator-supplied                  internal/ops/opsutil/job_heartbeat_test.go
 internal/supply/textfile.go                                               operator-supplied                  internal/supply/textfile_test.go
 internal/ops/ingest/curated_rwa_sync.go                                    operator-supplied                  internal/ops/ingest/curated_rwa_sync_test.go
+internal/ops/ingest/directory_sync.go                                      directory_sync.prom                internal/ops/ingest/directory_sync_test.go
