@@ -209,7 +209,7 @@ func TestAliasForms_ConfigRegistry(t *testing.T) {
 	// USDC classic ↔ its SAC (the operator's canonical example).
 	const usdcClassic = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	const usdcSAC = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
-	reg, err := NewAliasRegistry(map[string]string{usdcSAC: usdcClassic})
+	reg, err := NewAliasRegistry(PubnetPassphrase, map[string]string{usdcSAC: usdcClassic})
 	if err != nil {
 		t.Fatalf("NewAliasRegistry: %v", err)
 	}

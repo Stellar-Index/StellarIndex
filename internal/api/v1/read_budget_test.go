@@ -207,7 +207,7 @@ func productionShapedServer(
 // registry.
 func installProductionAliasRegistry(t *testing.T) {
 	t.Helper()
-	reg, err := canonical.NewAliasRegistry(map[string]string{
+	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{
 		r1SACWrapperUSDC: "USDC:" + testUSDCIssuer,
 	})
 	if err != nil {

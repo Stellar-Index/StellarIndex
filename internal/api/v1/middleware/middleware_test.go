@@ -392,6 +392,19 @@ func TestSecurityHeaders_SetsNosniff(t *testing.T) {
 	}
 }
 
+// Some API URLs are navigations whose query carries a credential
+// (/v1/auth/callback?token=...); no response may forward it as a Referer.
+func TestSecurityHeaders_SetsNoReferrer(t *testing.T) {
+	h := mw.SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://app.stellarindex.io/", http.StatusSeeOther)
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token=x", nil))
+	if got := rec.Header().Get("Referrer-Policy"); got != "no-referrer" {
+		t.Errorf("Referrer-Policy = %q, want no-referrer", got)
+	}
+}
+
 func TestSecurityHeaders_IdempotentWithEdgeProxy(t *testing.T) {
 	// Wrap a handler that pretends the edge proxy already set
 	// nosniff. Verify middleware's set leaves the final value

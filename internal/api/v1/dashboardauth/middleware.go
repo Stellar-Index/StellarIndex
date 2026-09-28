@@ -92,7 +92,7 @@ func Middleware(cfg *Config) func(http.Handler) http.Handler {
 // RequireSession returns middleware that 401s requests
 // without a valid session. Wire it inside Middleware(...) for
 // dashboard routes that require login.
-func RequireSession(cfg *Config) func(http.Handler) http.Handler {
+func RequireSession() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if _, ok := SessionFromContext(r.Context()); !ok {

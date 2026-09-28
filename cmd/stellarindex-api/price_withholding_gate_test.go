@@ -408,7 +408,7 @@ func TestPriceWithheldChokepointResolvesSACSpelling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("soroban asset: %v", err)
 	}
-	reg, err := canonical.NewAliasRegistry(map[string]string{sacID: code + ":" + issuer})
+	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{sacID: code + ":" + issuer})
 	if err != nil {
 		t.Fatalf("alias registry: %v", err)
 	}

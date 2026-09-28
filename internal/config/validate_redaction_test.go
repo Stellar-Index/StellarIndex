@@ -140,16 +140,16 @@ func TestValidate_RedactedErrorsStillIdentifyTheSetting(t *testing.T) {
 // TestValidate_EnvVarNameSwapStillEchoesTheName pins the deliberate
 // exception to the no-echo rule, so a later tightening pass does not
 // redact a message whose entire diagnostic is the value. The
-// redis_password_env / clickhouse_serving_password_env branches fire
+// redis_password / clickhouse_serving_password branches fire
 // ONLY when the value matched `^STELLARINDEX_[A-Z0-9_]+$` — i.e. it is
 // provably one of this project's own env-var NAMES and provably not the
 // password the field is supposed to hold.
 func TestValidate_EnvVarNameSwapStillEchoesTheName(t *testing.T) {
 	for field, mutate := range map[string]func(*config.Config){
-		"storage.redis_password_env": func(c *config.Config) {
+		"storage.redis_password": func(c *config.Config) {
 			c.Storage.RedisPassword = "STELLARINDEX_REDIS_PASSWORD"
 		},
-		"storage.clickhouse_serving_password_env": func(c *config.Config) {
+		"storage.clickhouse_serving_password": func(c *config.Config) {
 			c.Storage.ClickHouseServingPassword = "STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD"
 		},
 	} {

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -136,5 +137,20 @@ func TestBackfillTrades_UnresponsiveVenueIsBounded(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("BackfillTrades did not return within 5 s against a venue that never responds — the /Trades GET is unbounded (http.DefaultClient has no Timeout), so one black-holed connection wedges the whole backfill")
+	}
+}
+
+// A /Trades body over maxRESTBodyBytes is refused, not decoded: the pad
+// keeps the JSON valid, so only the cap can reject it.
+func TestFetchKrakenTrades_OversizedBodyRefused(t *testing.T) {
+	pad := strings.Repeat("a", maxRESTBodyBytes)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, `{"error":[],"result":{"XXLMZUSD":[],"last":"1"},"pad":"%s"}`, pad)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, _, err := fetchKrakenTrades(context.Background(), srv.URL, nil)
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized body: err = %v, want a body-cap refusal", err)
 	}
 }

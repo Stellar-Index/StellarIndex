@@ -362,6 +362,50 @@ else
   bad "Tier D cron is missing tag or textfile-metric parity (see above)"
 fi
 
+# ── 8. pipefail: a peer-mismatch exit must not be swallowed by `| logger` ──
+pipefail_ok=0
+"$PY" - "$TASK_FILE" <<'PY_PIPEFAIL_EOF' || pipefail_ok=1
+import sys
+
+import yaml
+
+TASK_NAME = "Install Tier D verify-archive weekly cron"
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    tasks = yaml.safe_load(fh)
+
+job = None
+for task in tasks or []:
+    if isinstance(task, dict) and task.get("name") == TASK_NAME:
+        job = (task.get("ansible.builtin.cron") or {}).get("job")
+if not job:
+    print(f"  FAIL — task {TASK_NAME!r} (or its `job:`) not found; this gate must not pass vacuously")
+    sys.exit(1)
+
+failures = 0
+pipefail_at = job.find("set -o pipefail")
+logger_at = job.find("| logger")
+if pipefail_at < 0:
+    print("  FAIL — job has no `set -o pipefail`: `verify-archive ... | logger` exits with "
+          "logger's status (always 0), so a peer-mismatch or archive-error run reads as clean")
+    failures += 1
+elif logger_at < 0:
+    print("  FAIL — job no longer pipes to logger; re-derive whether pipefail is still needed")
+    failures += 1
+elif pipefail_at > logger_at:
+    print("  FAIL — `set -o pipefail` appears AFTER the `| logger` pipeline it must cover")
+    failures += 1
+else:
+    print("  ok   — `set -o pipefail` is set before the `| logger` pipeline")
+
+sys.exit(1 if failures else 0)
+PY_PIPEFAIL_EOF
+if [ "$pipefail_ok" -eq 0 ]; then
+  ok "Tier D cron sets pipefail so a verify-archive failure isn't discarded by the logger pipe"
+else
+  bad "Tier D cron can exit 0 on a real verify-archive failure (see above)"
+fi
+
 echo
 echo "verify-archive-tier-d-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

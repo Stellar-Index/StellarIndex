@@ -104,10 +104,15 @@ type Marker struct {
 	//
 	// It is carried forward only while [LadderStillLive] holds for it:
 	// an unowned ladder is a snapshot nobody is advancing, so it retires
-	// itself once its own hold plus the grace has passed, and every
-	// window that is genuinely still frozen has claimed an owned entry
-	// long before then (a live freeze re-marks every tick).
+	// itself once its own hold plus the grace has passed. Until then it
+	// keeps the pair present, but a window may ADOPT it only within one
+	// grace of [Marker.UnownedSince] — see [Writer.LoadStateForWindow].
 	UnownedLadder State `json:"unowned_ladder,omitempty"`
+
+	// UnownedSince is when [Marker.UnownedLadder] was recorded: the
+	// upgrade or durable recovery that produced it, carried forward
+	// unchanged. Zero when there is none.
+	UnownedSince time.Time `json:"unowned_since,omitempty"`
 
 	// State is the ADR-0019 freeze-lifecycle state (fired_at,
 	// hold_until, extensions_used, escalated, unfreeze_streak). Zero
@@ -478,7 +483,7 @@ func (w *Writer) markHold(
 	key := cachekeys.Freeze(asset, quote)
 	label := windowLabel(window)
 	now := w.now()
-	windowed, ladders, unowned, prior := w.mergeLadders(ctx, asset, quote, label, state)
+	windowed, ladders, unowned, unownedSince, prior := w.mergeLadders(ctx, asset, quote, label, state)
 	marker := Marker{
 		AssetID:       asset.String(),
 		QuoteID:       quote.String(),
@@ -490,6 +495,7 @@ func (w *Writer) markHold(
 		Windowed:      windowed,
 		Ladders:       ladders,
 		UnownedLadder: unowned,
+		UnownedSince:  unownedSince,
 		State:         state,
 	}
 	if label == "" && !state.Active() && prior != nil && w.lifecycleTTLFloor(*prior, "", now) > 0 {
@@ -827,13 +833,14 @@ func (w *Writer) mergeLadders(
 	asset, quote canonical.Asset,
 	label string,
 	state State,
-) (bool, map[string]State, State, *Marker) {
+) (bool, map[string]State, State, time.Time, *Marker) {
 	key := cachekeys.Freeze(asset, quote)
 	marker, ok, err := w.readMarker(ctx, key)
 	now := w.now()
 	ladders := map[string]State{}
 	windowed := false
 	var unowned State
+	var unownedSince time.Time
 	// prior is the marker this write replaces, for the one caller that
 	// may have to leave it as it is ([Writer.markHold]'s Mark branch).
 	var prior *Marker
@@ -851,6 +858,7 @@ func (w *Writer) mergeLadders(
 		// a sibling's escalation one tick after the durable read saved it.
 		ladders, unowned = w.liveDurableLadders(ctx, asset, quote)
 		windowed = len(ladders) > 0
+		unownedSince = now
 	case marker.Windowed:
 		windowed = true
 		for k, v := range marker.Ladders {
@@ -862,16 +870,19 @@ func (w *Writer) mergeLadders(
 			}
 		}
 		unowned = marker.UnownedLadder
+		unownedSince = marker.UnownedSince
 	default:
 		// Upgrading a marker written before per-window ladders existed:
-		// its pair-level ladder has no owner, so it stays readable by
-		// every window until each has claimed its own.
+		// its pair-level ladder has no owner, so the windows that were
+		// running it may adopt it on the upgrade tick.
 		unowned = marker.State
+		unownedSince = now
 	}
 	if !LadderStillLive(unowned, w.ladderGrace, now) {
 		// Nobody is advancing an unowned snapshot; once its own hold
 		// plus the grace has passed it describes no running freeze.
 		unowned = State{}
+		unownedSince = time.Time{}
 	}
 	if label == "" {
 		// An unscoped write claims no window, but it must not HIDE the
@@ -884,14 +895,14 @@ func (w *Writer) mergeLadders(
 		// i.e. a windowed marker, or a present-but-empty marker reads as
 		// "frozen pair-wide, this window never was" and the window
 		// publishes the bucket an escalated freeze was withholding.
-		return windowed || len(ladders) > 0 || unowned.Active(), ladders, unowned, prior
+		return windowed || len(ladders) > 0 || unowned.Active(), ladders, unowned, unownedSince, prior
 	}
 	if state.Active() {
 		ladders[label] = state
 	} else {
 		delete(ladders, label)
 	}
-	return true, ladders, unowned, prior
+	return true, ladders, unowned, unownedSince, prior
 }
 
 // lifecycleTTLFloor is the shortest TTL the marker may be written with
@@ -1085,9 +1096,14 @@ func (w *Writer) LoadState(ctx context.Context, asset, quote canonical.Asset) (S
 // purpose, because the alternative is silently DROPPING a freeze that is
 // still running:
 //
-//   - a marker written before [Marker.Ladders] existed. It is replaced
-//     by the owning window's next lifecycle write, so it survives at
-//     most from an upgrade until the freeze's next tick.
+//   - a marker written before [Marker.Ladders] existed. The first
+//     lifecycle write upgrades it and keeps its ladder as
+//     [Marker.UnownedLadder], which a window with no entry of its own
+//     adopts only within one ladder grace of [Marker.UnownedSince] — the
+//     upgrade tick, when every window that was running it re-reads it.
+//     After that the snapshot still keeps the pair present until its own
+//     hold plus the grace, but a window reaching the freeze step later
+//     (one that was under the USD-volume floor) reads the zero [State].
 //   - a durable ladder with no recorded owner, read only when the marker
 //     is gone (the [Writer.LoadState] contract above): a `freeze_events`
 //     row written before migration 0163, or a [LadderStore] that is not
@@ -1097,11 +1113,13 @@ func (w *Writer) LoadState(ctx context.Context, asset, quote canonical.Asset) (S
 // A durable record that DOES carry the window (migration 0163) is scoped
 // exactly like the marker — see [Writer.loadDurableWindowLadder].
 //
-// Both therefore hold for every window of the pair until a window-scoped
-// record replaces them: over-freezing a window is a degraded price that
-// is already flagged frozen pair-wide and releases itself on the ADR's
-// auto-unfreeze, whereas under-freezing publishes the manipulated print
-// the freeze exists to withhold.
+// The adoption bound matters because the ladder carries Escalated, which
+// ADR-0019 never auto-releases: without it a window that adopted a
+// sibling's escalated snapshot at any point in the snapshot's life held
+// until a manual unfreeze. Within the bound, over-freezing a window that
+// the unscoped record could not tell apart is preferred to
+// under-freezing, which publishes the manipulated print the freeze
+// exists to withhold.
 func (w *Writer) LoadStateForWindow(
 	ctx context.Context,
 	asset, quote canonical.Asset,
@@ -1133,18 +1151,28 @@ func (w *Writer) loadState(ctx context.Context, asset, quote canonical.Asset, wi
 	if label != "" && marker.Windowed {
 		// Present (the pair is frozen), and this window's ladder is
 		// whatever the marker records for it. With no entry of its own
-		// it falls back to a still-live ladder the pair holds with no
-		// recorded owner, and to the zero State when there is none.
-		// See the doc comment above.
+		// it falls back to the unowned ladder only on the tick that
+		// recorded it, and otherwise to the zero State. See the doc
+		// comment above.
 		if st, owned := marker.Ladders[label]; owned && LadderStillLive(st, w.ladderGrace, w.now()) {
 			return st, true, nil
 		}
-		if LadderStillLive(marker.UnownedLadder, w.ladderGrace, w.now()) {
+		if w.unownedAdoptable(marker, w.now()) {
 			return marker.UnownedLadder, true, nil
 		}
 		return State{}, true, nil
 	}
 	return marker.State, true, nil
+}
+
+// unownedAdoptable reports whether a window with no ladder of its own may
+// take `marker`'s unowned one: it is still live, and it was recorded no
+// more than one grace ago, i.e. this is the upgrade or recovery tick.
+func (w *Writer) unownedAdoptable(marker Marker, now time.Time) bool {
+	if !LadderStillLive(marker.UnownedLadder, w.ladderGrace, now) || marker.UnownedSince.IsZero() {
+		return false
+	}
+	return !now.After(marker.UnownedSince.Add(w.ladderGrace))
 }
 
 // loadDurableLadder is [Writer.LoadState]'s marker-miss branch: consult the

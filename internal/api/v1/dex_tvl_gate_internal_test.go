@@ -162,7 +162,7 @@ func TestTVLValuer_GateSeesTheCanonicalIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("derive SAC: %v", err)
 	}
-	reg, err := canonical.NewAliasRegistry(map[string]string{sac: scamCode + ":" + scamIssuer})
+	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{sac: scamCode + ":" + scamIssuer})
 	if err != nil {
 		t.Fatalf("alias registry: %v", err)
 	}

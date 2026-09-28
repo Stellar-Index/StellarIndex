@@ -39,7 +39,7 @@ related:
 >   `[storage] redis_sentinel_addrs` (**corrected 2026-09-02** — there is
 >   no `redis.sentinel_addrs` key; the fields are flat members of
 >   `StorageConfig`: `redis_sentinel_addrs`, `redis_master_name`,
->   `redis_password_env`, `internal/config/config.go:869-877`, and the
+>   `redis_password`, `internal/config/config.go`, and the
 >   table below already uses the flat names), production today exercises
 >   only the plain
 >   `redis.NewClient` branch — the `FailoverClient` branch is correct code

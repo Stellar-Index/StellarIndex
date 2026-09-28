@@ -3,13 +3,13 @@ package v1
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
-	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // errNetworkStatsColdFailed is returned to a waiter that joined a cold
@@ -44,6 +44,8 @@ type CachedNetworkStatsReader struct {
 	at     time.Time
 	val    timescale.NetworkStats
 	hasVal bool
+	// err is the last fill's failure, handed to cold waiters.
+	err    error
 	flight chan struct{}
 }
 
@@ -97,11 +99,11 @@ func (c *CachedNetworkStatsReader) GetNetworkStatsAt(ctx context.Context) (times
 			c.mu.Unlock()
 			obs.APICacheOpsTotal.WithLabelValues("network_stats", "get", "stale").Inc()
 			//nolint:gosec,contextcheck // G118 / contextcheck: intentional —
-			// the SWR background refresh MUST use a fresh context (refresh ->
-			// context.Background), NOT the request ctx, which is cancelled the
+			// the SWR background refresh MUST use a fresh context
+			// (runDetachedFill), NOT the request ctx, which is cancelled the
 			// instant the stale response is written; reusing it would abort
 			// every refresh, defeating the point of serving stale.
-			go c.refresh(done)
+			go runDetachedFill(c.logger, "api-network-stats-refresh", cacheFillBudget, done, c.upstream.GetNetworkStats, c.settle)
 			return v, at, true, nil
 		}
 		c.mu.Unlock()
@@ -109,83 +111,61 @@ func (c *CachedNetworkStatsReader) GetNetworkStatsAt(ctx context.Context) (times
 		return v, at, true, nil
 	}
 
-	// (B) Cold fetch already in flight (nothing stale to serve) — join it.
-	if c.flight != nil {
-		ch := c.flight
+	// (B)/(C) Cold: nothing stale to serve. Join the running fill or start
+	// one, then wait on it OR this caller's ctx. The fill never runs on a
+	// request ctx, so one caller's abort cannot fail the others.
+	ch, leader := c.flight, c.flight == nil
+	if leader {
+		ch = make(chan struct{})
+		c.flight = ch
+		//nolint:gosec,contextcheck // G118 / contextcheck: intentional
+		// detached fill — see runDetachedFill.
+		go runDetachedFill(c.logger, "api-network-stats-refresh", cacheFillBudget, ch, c.upstream.GetNetworkStats, c.settle)
+	}
+	c.mu.Unlock()
+	if leader {
+		obs.APICacheOpsTotal.WithLabelValues("network_stats", "get", "miss").Inc()
+	}
+	select {
+	case <-ch:
+		c.mu.Lock()
+		v, at, ok, fillErr := c.val, c.at, c.hasVal, c.err
 		c.mu.Unlock()
-		select {
-		case <-ch:
-			c.mu.Lock()
-			v, at, ok := c.val, c.at, c.hasVal
-			c.mu.Unlock()
-			if !ok {
+		if !ok {
+			if !leader {
 				obs.APICacheOpsTotal.WithLabelValues("network_stats", "get", "miss").Inc()
-				return timescale.NetworkStats{}, time.Time{}, false, errNetworkStatsColdFailed
 			}
-			obs.APICacheOpsTotal.WithLabelValues("network_stats", "get", "hit").Inc()
-			return v, at, false, nil // freshly refreshed by the leader — not stale
-		case <-ctx.Done():
-			return timescale.NetworkStats{}, time.Time{}, false, ctx.Err()
+			if fillErr != nil {
+				return timescale.NetworkStats{}, time.Time{}, false, fmt.Errorf("%w: %w", errNetworkStatsColdFailed, fillErr)
+			}
+			return timescale.NetworkStats{}, time.Time{}, false, errNetworkStatsColdFailed
 		}
+		if !leader {
+			obs.APICacheOpsTotal.WithLabelValues("network_stats", "get", "hit").Inc()
+		}
+		return v, at, false, nil // freshly filled — not stale
+	case <-ctx.Done():
+		return timescale.NetworkStats{}, time.Time{}, false, ctx.Err()
 	}
-
-	// (C) Cold leader: block inline — nothing stale to serve.
-	done := make(chan struct{})
-	c.flight = done
-	c.mu.Unlock()
-	obs.APICacheOpsTotal.WithLabelValues("network_stats", "get", "miss").Inc()
-
-	v, err := c.upstream.GetNetworkStats(ctx)
-
-	c.mu.Lock()
-	var at time.Time
-	if err == nil {
-		c.val = v
-		c.at = time.Now()
-		c.hasVal = true
-		at = c.at
-	}
-	c.flight = nil
-	c.mu.Unlock()
-	close(done)
-	return v, at, false, err // just fetched live — not stale
 }
 
-// refresh runs the upstream call OFF the request path for the (A') branch:
-// a fresh background context (the triggering request's ctx dies the instant
-// the stale response is written), on success swaps val+at under the lock, on
-// failure keeps the stale value and only clears the in-flight marker.
-// clearFlight releases the single-flight marker. Deferred by refresh so
-// it runs on EVERY exit including a panic.
-func (c *CachedNetworkStatsReader) clearFlight() {
+// settle applies a fill's outcome (the upstream call ran detached, never
+// on a request ctx). On success it swaps val+at; on failure it keeps any
+// stale value and records err for cold waiters. Clearing the in-flight
+// marker is what makes the next request retry.
+func (c *CachedNetworkStatsReader) settle(v timescale.NetworkStats, err error) {
 	c.mu.Lock()
-	c.flight = nil
-	c.mu.Unlock()
-}
-
-func (c *CachedNetworkStatsReader) refresh(done chan struct{}) {
-	defer close(done)
-	// Clearing the in-flight marker is what makes the NEXT request
-	// retry. Deferred so it runs on a PANIC too: this cache holds ONE
-	// entry, so a marker left set freezes /v1/network-stats on its
-	// last value for the life of the process — and a cold process
-	// would answer errNetworkStatsColdFailed forever.
-	defer c.clearFlight()
-	defer worker.Recover(c.logger, "api-network-stats-refresh")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	v, err := c.upstream.GetNetworkStats(ctx)
-
-	c.mu.Lock()
+	c.err = err
 	if err == nil {
 		c.val = v
 		c.at = time.Now()
 		c.hasVal = true
 	}
+	stale := c.hasVal
+	c.flight = nil
 	c.mu.Unlock()
 
-	if err != nil {
+	if err != nil && stale {
 		obs.APICacheOpsTotal.WithLabelValues("network_stats", "get", "refresh_error").Inc()
 	}
 }

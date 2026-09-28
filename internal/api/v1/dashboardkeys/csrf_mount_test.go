@@ -88,6 +88,48 @@ func assertWriteBlocked(t *testing.T, h http.Handler, req *http.Request, origin 
 	}
 }
 
+// TestMount_EveryDashboardRouteRequiresSession: every route of the
+// session-only dashboard packages is gated at Mount by
+// dashboardauth.RequireSession, not by each handler remembering to check.
+// The request is anonymous AND cross-site, so a route whose session gate
+// is missing or sits inside another layer answers something other than
+// the session gate's 401.
+func TestMount_EveryDashboardRouteRequiresSession(t *testing.T) {
+	mux := http.NewServeMux()
+	mountAllDashboardPackages(t, mux)
+
+	var routes []string
+	for _, pkg := range []string{"dashboardkeys", "dashboardpricealerts", "dashboardwebhooks"} {
+		routes = append(routes, routeLiterals(t, filepath.Join("..", pkg))...)
+	}
+	if len(routes) == 0 {
+		t.Fatal("found no dashboard routes — the source scan is not looking at the right shape")
+	}
+	sort.Strings(routes)
+	idPath := regexp.MustCompile(`\{[^}]+\}`)
+	for _, route := range routes {
+		method, path, _ := strings.Cut(route, " ")
+		target := idPath.ReplaceAllString(path, "8f14e45f-ceea-467a-9575-1c1d1f6e0e5b")
+		t.Run(route, func(t *testing.T) {
+			req := httptest.NewRequest(method, target, strings.NewReader("{}"))
+			req.Host = "api.stellarindex.io"
+			req.Header.Set("Origin", "https://evil.example")
+			w := httptest.NewRecorder()
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("anonymous %s reached its handler (%v)", route, r)
+				}
+			}()
+			mux.ServeHTTP(w, req)
+			var body map[string]any
+			_ = json.Unmarshal(w.Body.Bytes(), &body)
+			if w.Code != http.StatusUnauthorized || body["detail"] != "authentication required" {
+				t.Fatalf("anonymous %s answered %d %v, want the session gate's 401", route, w.Code, body)
+			}
+		})
+	}
+}
+
 // mountAllDashboardPackages mounts every dashboard* package the way
 // v1.Server does and returns the package directory names it covered. The
 // stores are nil-backed: the guard must answer before any handler runs.

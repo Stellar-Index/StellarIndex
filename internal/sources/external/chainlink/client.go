@@ -150,6 +150,11 @@ func (c *Client) EthGetLogs(
 	return logs, nil
 }
 
+// maxRPCBodyBytes caps a JSON-RPC response read. Providers cap
+// eth_getLogs near 10 MB / 10k logs; the headroom covers envelope
+// overhead while stopping a wedged endpoint from OOMing the ingester.
+const maxRPCBodyBytes = 32 << 20
+
 // do is the one-shot HTTP wrapper shared by every RPC method.
 // Marshals the JSON-RPC request, posts, decodes the response, and
 // unmarshals `result` into `out`.
@@ -180,13 +185,16 @@ func (c *Client) do(ctx context.Context, method string, params []any, out any) e
 		// the raw error would leak the secret into the journal. Redact
 		// the URL before wrapping so the error stays diagnostic without
 		// exposing the key.
-		return fmt.Errorf("chainlink: %s transport: %s", method, RedactURLError(err, c.Endpoint))
+		return fmt.Errorf("chainlink: %s transport: %w", method, NewRedactedTransportError(err, c.Endpoint))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRPCBodyBytes+1))
 	if err != nil {
 		return fmt.Errorf("chainlink: %s read body: %w", method, err)
+	}
+	if int64(len(body)) > maxRPCBodyBytes {
+		return fmt.Errorf("chainlink: %s body exceeds %d bytes", method, maxRPCBodyBytes)
 	}
 	if resp.StatusCode != http.StatusOK {
 		// Bound the snippet so a giant HTML error page doesn't
@@ -253,6 +261,31 @@ func RedactURLError(err error, endpoint string) string {
 	// Rebuild the message as "<op> <redacted-url>: <underlying>" so it
 	// stays shaped like the original *url.Error but without the secret.
 	return fmt.Sprintf("%s %q: %v", ue.Op, RedactEndpoint(endpoint), ue.Err)
+}
+
+// RedactedTransportError pairs a URL-redacted message with the
+// original transport error: Error() renders only the redacted text,
+// but Unwrap() returns the real error, so errors.Is/As still reach
+// sentinels like context.DeadlineExceeded, net.Error or the *url.Error
+// itself. A caller that instead does
+// fmt.Errorf("...: %s", RedactURLError(err, endpoint)) turns err into
+// a leaf — the message survives but every classification through it
+// is silently lost.
+type RedactedTransportError struct {
+	msg string
+	err error
+}
+
+func (e *RedactedTransportError) Error() string { return e.msg }
+func (e *RedactedTransportError) Unwrap() error { return e.err }
+
+// NewRedactedTransportError builds a [RedactedTransportError] from a
+// transport error, redacting endpoint via [RedactURLError] for the
+// message while keeping err reachable through Unwrap. Every
+// RedactURLError caller wrapping a transport failure should route
+// through this instead of hand-rolling the same msg/err pair.
+func NewRedactedTransportError(err error, endpoint string) *RedactedTransportError {
+	return &RedactedTransportError{msg: RedactURLError(err, endpoint), err: err}
 }
 
 // RedactEndpoint returns a log-safe form of an RPC endpoint: scheme +

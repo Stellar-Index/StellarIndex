@@ -115,28 +115,36 @@ func activeAliasRegistry() *AliasRegistry {
 
 // NewAliasRegistry builds the process registry from the operator's SAC
 // wrapper map (`[supply].sac_wrappers`: SAC contract C-strkey →
-// classic `CODE:ISSUER`). The result is the compile-time baseline PLUS one
-// two-form family per wrapper, with the SAC form ordered LAST so a thin
-// Soroban pool can never outrank the classic asset's depth on a
-// classic-keyed read (the invariant [AssetAliases] documents).
+// classic `CODE:ISSUER`) on the network identified by passphrase. The
+// result is the compile-time baseline PLUS one two-form family per wrapper,
+// with the SAC form ordered LAST so a thin Soroban pool can never outrank
+// the classic asset's depth on a classic-keyed read (the invariant
+// [AssetAliases] documents).
 //
-// It is strict: a malformed contract id or asset key is returned as an
-// error rather than silently dropped, because a dropped wrapper is
-// invisible under-counted volume — the exact class of defect this
-// registry exists to remove. Entries whose classic form equals their SAC
-// form (the pure-SEP-41 `contract_id → contract_id` convention) are a
-// single identity with nothing to alias and are skipped. Wrappers that
-// would touch a form already claimed by the baseline (e.g. an operator
-// listing the XLM SAC itself) are skipped so the baseline's canonical
-// families are never overwritten.
-func NewAliasRegistry(sacWrappers map[string]string) (*AliasRegistry, error) {
+// It is strict, and every rejection is returned as an error rather than
+// silently dropped, because a dropped wrapper is invisible under-counted
+// volume and a wrong one merges an arbitrary contract into a classic
+// asset's identity:
+//   - a malformed contract id or asset key;
+//   - a SAC id that is not the deterministic SAC derivation of its
+//     classic asset on this network (a mis-paired wrapper would alias an
+//     arbitrary contract — e.g. a scam token — onto the classic asset);
+//   - a wrapper that would claim a form already in another family.
+//
+// Entries whose asset key equals their contract id (the pure-SEP-41
+// `contract_id → contract_id` convention) are a single identity with
+// nothing to alias and are skipped. A verified XLM SAC → `native` entry
+// is already the baseline's family and is likewise a no-op.
+func NewAliasRegistry(passphrase string, sacWrappers map[string]string) (*AliasRegistry, error) {
+	if passphrase == "" {
+		return nil, fmt.Errorf("alias registry: empty network passphrase")
+	}
 	families := make(map[string][]Asset, len(baseAliasFamilies)+2*len(sacWrappers))
 	for k, v := range baseAliasFamilies {
 		families[k] = v
 	}
 
-	// Deterministic iteration: stable error reporting and stable
-	// first-wins resolution of any duplicate classic key.
+	// Deterministic iteration: stable error reporting.
 	sacIDs := make([]string, 0, len(sacWrappers))
 	for id := range sacWrappers {
 		sacIDs = append(sacIDs, id)
@@ -158,11 +166,24 @@ func NewAliasRegistry(sacWrappers map[string]string) (*AliasRegistry, error) {
 			// Pure SEP-41 self-map: one identity, nothing to unify.
 			continue
 		}
-		if _, ok := families[sacStr]; ok {
+		derived, err := classic.sacContractIDOn(passphrase)
+		if err != nil {
+			return nil, fmt.Errorf("alias registry: sac wrapper %q asset key %q: %w", sacID, classicKey, err)
+		}
+		if derived != sacStr {
+			return nil, fmt.Errorf("alias registry: sac wrapper %q is not the SAC of %q on this network (derived %s)",
+				sacID, classicKey, derived)
+		}
+		if classic.Type == AssetNative {
+			// The derivation above proved this is the network's XLM SAC;
+			// the baseline owns the XLM family.
 			continue
 		}
+		if _, ok := families[sacStr]; ok {
+			return nil, fmt.Errorf("alias registry: sac wrapper %q: contract already belongs to another alias family", sacID)
+		}
 		if _, ok := families[classicStr]; ok {
-			continue
+			return nil, fmt.Errorf("alias registry: sac wrapper %q: asset %q already belongs to another alias family", sacID, classicKey)
 		}
 		// SAC form LAST: money-safety invariant. The read paths take the
 		// FIRST alias that produces a usable answer, so on a classic-keyed

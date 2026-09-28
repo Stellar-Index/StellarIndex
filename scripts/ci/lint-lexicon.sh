@@ -46,20 +46,20 @@ fail=0
 
 # 1) Verb lexicon: no Fetch*/Make* funcs in production Go.
 hits=$(grep -rnE 'func (\([^)]+\) )?(Fetch|Make[A-Z])[A-Za-z]*\(' \
-  --include='*.go' --exclude='*_test.go' internal/ cmd/ pkg/ 2>/dev/null || true)
+  --include='*.go' --exclude='*_test.go' internal cmd pkg 2>/dev/null || true)
 if [ -n "$hits" ]; then
   echo "LEXICON: Fetch/Make verb — use Get (keyed read) / List (slice) / Load (embedded) / New (ctor)."
   echo "         See docs/architecture/lexicon.md (verb lexicon)."
-  echo "$hits" | sed 's/^/  /'
+  printf '%s\n' "$hits" | sed 's/^/  /'
   fail=1
 fi
 
 # 2) slog is the only logger.
 hits=$(grep -rnE '"(github\.com/rs/zerolog|go\.uber\.org/zap[a-z/]*|github\.com/sirupsen/logrus)"|^[[:space:]]*"log"$' \
-  --include='*.go' --exclude='*_test.go' internal/ cmd/ pkg/ 2>/dev/null || true)
+  --include='*.go' --exclude='*_test.go' internal cmd pkg 2>/dev/null || true)
 if [ -n "$hits" ]; then
   echo "LEXICON: non-slog logger import — log/slog is the only logger (engineering-standards, Go idioms)."
-  echo "$hits" | sed 's/^/  /'
+  printf '%s\n' "$hits" | sed 's/^/  /'
   fail=1
 fi
 
@@ -79,7 +79,7 @@ trap 'rm -f "$current"' EXIT
   # ignores -v, silently dropping files on macOS. Capturing what survives
   # the filter and testing THAT for emptiness is portable, and (unlike a
   # trailing `head -1`) never closes the pipe on a file full of matches.
-  grep -rl 'Coin' --include='*.go' --exclude='*_test.go' internal/ cmd/ pkg/ 2>/dev/null | \
+  grep -rl 'Coin' --include='*.go' --exclude='*_test.go' internal cmd pkg 2>/dev/null | \
     while IFS= read -r f; do
       kept="$(grep -oE '[A-Za-z_]*Coin[A-Za-z_]*' "$f" | grep -vE 'Coinbase|CoinGecko|Coingecko|CoinMarketCap|cmcCoin|[Tt]otalCoins' || true)"
       if [ -n "$kept" ]; then
@@ -89,12 +89,12 @@ trap 'rm -f "$current"' EXIT
 
   # positional-logger: `logger *slog.Logger` as a positional ctor param.
   grep -rlE 'func New[A-Za-z]*\([^)]*logger \*slog\.Logger' \
-    --include='*.go' --exclude='*_test.go' internal/ cmd/ pkg/ 2>/dev/null | \
+    --include='*.go' --exclude='*_test.go' internal cmd pkg 2>/dev/null | \
     sed 's/^/positional-logger /'
 
   # variadic-option: `...Option` functional-options ctor.
   grep -rlE 'func New[A-Za-z]*\([^)]*\.\.\.[A-Za-z]*Option\)' \
-    --include='*.go' --exclude='*_test.go' internal/ cmd/ pkg/ 2>/dev/null | \
+    --include='*.go' --exclude='*_test.go' internal cmd pkg 2>/dev/null | \
     sed 's/^/variadic-option /'
 } | LC_ALL=C sort -u > "$current"
 
@@ -113,14 +113,14 @@ if [ -n "$new_violations" ]; then
   echo "LEXICON: new deviation(s) not in $BASELINE — new code must use the canonical term/idiom"
   echo "         (asset not coin; Logger in the Options struct, not positional / ...Option)."
   echo "         See docs/architecture/lexicon.md + engineering-standards.md 'Go idioms'."
-  echo "$new_violations" | sed 's/^/  + /'
+  printf '%s\n' "$new_violations" | sed 's/^/  + /'
   fail=1
 fi
 
 if [ -n "$stale_entries" ]; then
   echo "LEXICON: stale baseline entr(y/ies) — the file no longer deviates. Delete the line(s)"
   echo "         from $BASELINE (the baseline is shrink-only)."
-  echo "$stale_entries" | sed 's/^/  - /'
+  printf '%s\n' "$stale_entries" | sed 's/^/  - /'
   fail=1
 fi
 

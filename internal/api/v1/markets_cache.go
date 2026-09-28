@@ -10,7 +10,6 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
-	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // CachedMarketsReader wraps a [MarketsReader] with a small per-key
@@ -313,11 +312,11 @@ func (c *CachedMarketsReader) fetchPairs(
 			obs.APICacheOpsTotal.WithLabelValues("markets", op, "stale").Inc()
 			//nolint:gosec,contextcheck // G118 / contextcheck:
 			// intentional. The SWR background refresh MUST use a
-			// fresh context (refreshPairs -> context.Background),
+			// fresh context (runDetachedFill),
 			// NOT the request ctx: it is cancelled the instant the
 			// stale response is written, so reusing it would abort
 			// every refresh — defeating the entire point of SWR.
-			go c.refreshPairs(op, entry, done, upstream)
+			go runDetachedFill(c.logger, "api-markets-pairs-refresh", marketsRefreshBudget, done, marketsPageFill(upstream), c.settlePairs(op, key, entry))
 			return slices.Clone(out), next, at, true, nil
 		}
 		c.mu.Unlock()
@@ -325,100 +324,99 @@ func (c *CachedMarketsReader) fetchPairs(
 		return slices.Clone(out), next, at, true, nil
 	}
 
-	// (B) Cold fetch in flight (no prior success to serve) — join it
-	// rather than stampede upstream. Capture the entry pointer (not
-	// just the chan) so we read the leader's result/err off the SAME
-	// struct we joined on; survives the leader's delete-on-error.
-	if ok && e.flight != nil {
-		entry := e
-		ch := e.flight
-		c.mu.Unlock()
-		select {
-		case <-ch:
-			if entry.err != nil {
-				obs.APICacheOpsTotal.WithLabelValues("markets", op, "miss").Inc()
-				return nil, "", time.Time{}, false, entry.err
-			}
-			obs.APICacheOpsTotal.WithLabelValues("markets", op, "hit").Inc()
-			return slices.Clone(entry.pairs), entry.cursor, entry.at, false, nil
-		case <-ctx.Done():
-			return nil, "", time.Time{}, false, ctx.Err()
-		}
+	// (B)/(C) Cold: no prior success to serve. Join the running fill or
+	// start one, then wait on it OR this caller's ctx. The fill runs
+	// detached (runDetachedFill), so one caller's abort cannot fail the others
+	// or leave the key unfilled. The entry pointer is captured so the
+	// result/err is read off the SAME struct we joined, surviving the
+	// fill's delete-on-error.
+	entry, leader := c.joinOrStartColdLocked(e, ok, key)
+	if leader {
+		//nolint:gosec,contextcheck // G118 / contextcheck: intentional
+		// detached fill — see runDetachedFill.
+		go runDetachedFill(c.logger, "api-markets-pairs-refresh", marketsRefreshBudget, entry.flight, marketsPageFill(upstream), c.settlePairs(op, key, entry))
 	}
+	ch := entry.flight
+	c.mu.Unlock()
+	if leader {
+		obs.APICacheOpsTotal.WithLabelValues("markets", op, "miss").Inc()
+	}
+	select {
+	case <-ch:
+		c.mu.Lock()
+		rows, cursor, at, err := entry.pairs, entry.cursor, entry.at, entry.err
+		c.mu.Unlock()
+		if err != nil {
+			if !leader {
+				obs.APICacheOpsTotal.WithLabelValues("markets", op, "miss").Inc()
+			}
+			return nil, "", time.Time{}, false, err
+		}
+		if !leader {
+			obs.APICacheOpsTotal.WithLabelValues("markets", op, "hit").Inc()
+		}
+		return slices.Clone(rows), cursor, at, false, nil
+	case <-ctx.Done():
+		return nil, "", time.Time{}, false, ctx.Err()
+	}
+}
 
-	// (C) Cold leader: no entry (or a prior failed cold fetch left
-	// none). Block inline — nothing stale to serve.
-	done := make(chan struct{})
-	entry := &marketsCacheEntry{flight: done}
+// joinOrStartColdLocked returns the in-flight cold entry for key, or
+// installs a fresh one (leader=true) whose fill the caller must start.
+// Caller holds c.mu.
+func (c *CachedMarketsReader) joinOrStartColdLocked(e *marketsCacheEntry, ok bool, key string) (*marketsCacheEntry, bool) {
+	if ok && e.flight != nil {
+		return e, false
+	}
+	entry := &marketsCacheEntry{flight: make(chan struct{})}
 	evictOldestMarketsEntry(c.entries)
 	c.entries[key] = entry
-	c.mu.Unlock()
-	obs.APICacheOpsTotal.WithLabelValues("markets", op, "miss").Inc()
-
-	rows, cursor, err := upstream(ctx)
-
-	c.mu.Lock()
-	var at time.Time
-	if err == nil {
-		at = time.Now()
-		entry.at = at
-		entry.pairs = rows
-		entry.cursor = cursor
-		entry.flight = nil
-	} else {
-		entry.err = err
-		delete(c.entries, key) // don't cache the error for new callers
-	}
-	c.mu.Unlock()
-	close(done)
-	return slices.Clone(rows), cursor, at, false, err
+	return entry, true
 }
 
-// refreshPairs runs the upstream call OFF the request path for the
-// SWR (A') branch of fetchPairs. Fresh background context (the
-// request ctx dies when the stale response is written); on success
-// swaps pairs+cursor+at under the lock; on failure keeps the stale
-// value and only clears the in-flight marker (retry next request);
-// single-flighted via done/entry.flight. Mirrors
-// asset_catalogue_cache.go refreshRows.
-// clearFlight releases the single-flight marker on entry. Deferred by
-// both refreshers so it runs on EVERY exit including a panic — an entry
-// left in flight is never refreshed again.
-func (c *CachedMarketsReader) clearFlight(entry *marketsCacheEntry) {
-	c.mu.Lock()
+// settleFailedFillLocked applies a failed fill to entry. With a prior
+// success it keeps serving that stale value (retry next request); cold,
+// it hands err to the waiters and drops the entry so errors are never
+// cached. Caller holds c.mu.
+func (c *CachedMarketsReader) settleFailedFillLocked(op, key string, entry *marketsCacheEntry, err error) {
 	entry.flight = nil
-	c.mu.Unlock()
+	if !entry.at.IsZero() {
+		obs.APICacheOpsTotal.WithLabelValues("markets", op, "refresh_error").Inc()
+		return
+	}
+	entry.err = err
+	if c.entries[key] == entry {
+		delete(c.entries, key)
+	}
 }
 
-func (c *CachedMarketsReader) refreshPairs(
-	op string,
-	entry *marketsCacheEntry,
-	done chan struct{},
-	upstream func(context.Context) ([]Market, string, error),
-) {
-	defer close(done)
-	// Clearing the in-flight marker is what makes the NEXT request
-	// retry. Deferred (rather than left inline below) so it runs on a
-	// PANIC too: an entry left in flight is never refreshed again,
-	// because (A') only kicks a refresh when e.flight == nil — the
-	// key would serve its stale value for the life of the process.
-	defer c.clearFlight(entry)
-	defer worker.Recover(c.logger, "api-markets-pairs-refresh")
-	ctx, cancel := context.WithTimeout(context.Background(), marketsRefreshBudget)
-	defer cancel()
+// marketsPage carries one upstream page through runDetachedFill.
+type marketsPage[T any] struct {
+	rows   []T
+	cursor string
+}
 
-	rows, cursor, err := upstream(ctx)
-
-	c.mu.Lock()
-	if err == nil {
-		entry.at = time.Now()
-		entry.pairs = rows
-		entry.cursor = cursor
+// marketsPageFill adapts a (rows, cursor, err) upstream to runDetachedFill.
+func marketsPageFill[T any](upstream func(context.Context) ([]T, string, error)) func(context.Context) (marketsPage[T], error) {
+	return func(ctx context.Context) (marketsPage[T], error) {
+		rows, cursor, err := upstream(ctx)
+		return marketsPage[T]{rows, cursor}, err
 	}
-	c.mu.Unlock()
+}
 
-	if err != nil {
-		obs.APICacheOpsTotal.WithLabelValues("markets", op, "refresh_error").Inc()
+// settlePairs applies a fetchPairs fill (cold or SWR) to entry.
+func (c *CachedMarketsReader) settlePairs(op, key string, entry *marketsCacheEntry) func(marketsPage[Market], error) {
+	return func(page marketsPage[Market], err error) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if err != nil {
+			c.settleFailedFillLocked(op, key, entry, err)
+			return
+		}
+		entry.at = time.Now()
+		entry.pairs = page.rows
+		entry.cursor = page.cursor
+		entry.flight = nil
 	}
 }
 
@@ -456,7 +454,7 @@ func (c *CachedMarketsReader) fetchPools(
 			//nolint:gosec,contextcheck // G118 / contextcheck:
 			// intentional — see fetchPairs (A'). The pools refresh
 			// MUST outlive the stale response's request ctx.
-			go c.refreshPools(op, entry, done, upstream)
+			go runDetachedFill(c.logger, "api-markets-pools-refresh", marketsRefreshBudget, done, marketsPageFill(upstream), c.settlePools(op, key, entry))
 			return slices.Clone(out), next, nil
 		}
 		c.mu.Unlock()
@@ -464,79 +462,50 @@ func (c *CachedMarketsReader) fetchPools(
 		return slices.Clone(out), next, nil
 	}
 
-	// (B) Cold fetch in flight — join.
-	if ok && e.flight != nil {
-		entry := e
-		ch := e.flight
+	// (B)/(C) Cold: join or start a detached fill — see fetchPairs.
+	entry, leader := c.joinOrStartColdLocked(e, ok, key)
+	if leader {
+		//nolint:gosec,contextcheck // G118 / contextcheck: intentional
+		// detached fill — see runDetachedFill.
+		go runDetachedFill(c.logger, "api-markets-pools-refresh", marketsRefreshBudget, entry.flight, marketsPageFill(upstream), c.settlePools(op, key, entry))
+	}
+	ch := entry.flight
+	c.mu.Unlock()
+	if leader {
+		obs.APICacheOpsTotal.WithLabelValues("markets", op, "miss").Inc()
+	}
+	select {
+	case <-ch:
+		c.mu.Lock()
+		rows, cursor, err := entry.pools, entry.cursor, entry.err
 		c.mu.Unlock()
-		select {
-		case <-ch:
-			if entry.err != nil {
+		if err != nil {
+			if !leader {
 				obs.APICacheOpsTotal.WithLabelValues("markets", op, "miss").Inc()
-				return nil, "", entry.err
 			}
-			obs.APICacheOpsTotal.WithLabelValues("markets", op, "hit").Inc()
-			return slices.Clone(entry.pools), entry.cursor, nil
-		case <-ctx.Done():
-			return nil, "", ctx.Err()
+			return nil, "", err
 		}
+		if !leader {
+			obs.APICacheOpsTotal.WithLabelValues("markets", op, "hit").Inc()
+		}
+		return slices.Clone(rows), cursor, nil
+	case <-ctx.Done():
+		return nil, "", ctx.Err()
 	}
-
-	// (C) Cold leader: block inline.
-	done := make(chan struct{})
-	entry := &marketsCacheEntry{flight: done}
-	evictOldestMarketsEntry(c.entries)
-	c.entries[key] = entry
-	c.mu.Unlock()
-	obs.APICacheOpsTotal.WithLabelValues("markets", op, "miss").Inc()
-
-	rows, cursor, err := upstream(ctx)
-
-	c.mu.Lock()
-	if err == nil {
-		entry.at = time.Now()
-		entry.pools = rows
-		entry.cursor = cursor
-		entry.flight = nil
-	} else {
-		entry.err = err
-		delete(c.entries, key)
-	}
-	c.mu.Unlock()
-	close(done)
-	return slices.Clone(rows), cursor, err
 }
 
-// refreshPools is refreshPairs for the Pool return type. Mirrors
-// asset_catalogue_cache.go refreshRows.
-func (c *CachedMarketsReader) refreshPools(
-	op string,
-	entry *marketsCacheEntry,
-	done chan struct{},
-	upstream func(context.Context) ([]Pool, string, error),
-) {
-	defer close(done)
-	// Clearing the in-flight marker is what makes the NEXT request
-	// retry. Deferred (rather than left inline below) so it runs on a
-	// PANIC too: an entry left in flight is never refreshed again,
-	// because (A') only kicks a refresh when e.flight == nil — the
-	// key would serve its stale value for the life of the process.
-	defer c.clearFlight(entry)
-	defer worker.Recover(c.logger, "api-markets-pools-refresh")
-	ctx, cancel := context.WithTimeout(context.Background(), marketsRefreshBudget)
-	defer cancel()
-
-	rows, cursor, err := upstream(ctx)
-
-	c.mu.Lock()
-	if err == nil {
+// settlePools is settlePairs for the Pool return type.
+func (c *CachedMarketsReader) settlePools(op, key string, entry *marketsCacheEntry) func(marketsPage[Pool], error) {
+	return func(page marketsPage[Pool], err error) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if err != nil {
+			c.settleFailedFillLocked(op, key, entry, err)
+			return
+		}
 		entry.at = time.Now()
-		entry.pools = rows
-		entry.cursor = cursor
-	}
-	c.mu.Unlock()
-
-	if err != nil {
-		obs.APICacheOpsTotal.WithLabelValues("markets", op, "refresh_error").Inc()
+		entry.pools = page.rows
+		entry.cursor = page.cursor
+		entry.flight = nil
 	}
 }

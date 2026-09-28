@@ -26,7 +26,7 @@ const (
 
 func installThinPoolRegistry(t *testing.T) canonical.Asset {
 	t.Helper()
-	reg, err := canonical.NewAliasRegistry(map[string]string{
+	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{
 		thinPoolAquaSAC: "AQUA:" + thinPoolAquaIssuer,
 	})
 	if err != nil {

@@ -215,7 +215,7 @@ func run(cfgPath string, dryRun bool) error {
 	// resolve classic↔SAC pairs from [supply].sac_wrappers through it,
 	// SAC form LAST. Fail-closed on a malformed wrapper — silently
 	// dropped, it becomes under-counted volume.
-	aliasRegistry, err := canonical.NewAliasRegistry(cfg.Supply.SACWrappers)
+	aliasRegistry, err := canonical.NewAliasRegistry(cfg.Stellar.Passphrase(), cfg.Supply.SACWrappers)
 	if err != nil {
 		return fmt.Errorf("alias registry: %w", err)
 	}

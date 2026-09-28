@@ -455,11 +455,16 @@ Galexie-bucket read path.
   — copy this, not the generated reference, as your starting file;
   every block has prose explaining the trade-offs (CORS, trusted
   proxies, stablecoin fiat-proxy expansion, supply observers, etc).
-- **Secrets never go in the TOML.** Every secret-shaped field is a
-  `*_env` field naming an environment variable — `s3_access_key_env`,
-  `redis_password_env`, and so on — set the actual value via your
-  own secret manager (Vault, AWS Secrets Manager, or a root-owned
-  `/etc/default/stellarindex-ops` per §4.7) before starting the binary.
+- **Secrets never go in the TOML.** A `*_env` field names an environment
+  variable that holds the secret (`s3_access_key_env`, `resend_api_key_env`,
+  and so on). The two password fields, `redis_password` and
+  `clickhouse_serving_password`, hold the value itself, so leave them unset
+  in the file and inject `STELLARINDEX_REDIS_PASSWORD` /
+  `STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD` instead. Either way, set the
+  actual value via your own secret manager (Vault, AWS Secrets Manager, or a
+  root-owned `/etc/default/stellarindex-ops` per §4.7) before starting the
+  binary. The old keys `redis_password_env` and
+  `clickhouse_serving_password_env` still load, with a deprecation warning.
 - **Known on-chain sources** (`[ingestion] enabled_sources`):
   `internal/config/validate.go`'s `KnownSources` list is the
   authoritative whitelist; adding a new one is documented in
