@@ -1350,6 +1350,20 @@ counts to verify the closed-bucket fanout path: steady publishes
 with zero subscribers means clients aren't connecting; zero
 publishes with active subscribers means the producer is starved.
 
+### `stellarindex_stream_publish_stall_total`
+
+Counter, label `stream` (currently only `price_stream`).
+
+Per-stream counter of poll ticks where the reader missed its own
+per-poll timeout (`internal/api/streampublish.Publisher` scopes each
+tick to `context.WithTimeout(ctx, interval)`) while the publisher's
+parent context was still live. A nonzero or climbing value means the
+upstream `PriceReader` is consistently slower than the poll interval
+for that stream — reader-side latency, not shutdown, and distinct
+from `stellarindex_stream_publish_total` staying flat on a quiet
+market (both counters stay flat there; only this one moves under a
+slow reader).
+
 ### `stellarindex_ch_live_sink_ledgers_total`
 
 Counter, label `outcome` (`written` | `buffered` | `dropped` |

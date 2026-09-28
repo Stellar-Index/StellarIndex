@@ -210,8 +210,17 @@ func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic str
 		if errors.Is(err, v1.ErrPriceNotFound) || errors.Is(err, v1.ErrPriceWithheld) {
 			return
 		}
-		// Suppress log noise on shutdown.
-		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		// Suppress log noise on shutdown: the parent ctx itself is
+		// done. A pollCtx-only DeadlineExceeded (the parent still
+		// live) is a reader stall, not shutdown, and must not be
+		// mistaken for one — see [obs.StreamPublishStallTotal].
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			obs.StreamPublishStallTotal.WithLabelValues("price_stream").Inc()
+			p.logger.Warn("streampublish: reader missed poll deadline",
+				"pair", pair.String(), "interval", p.interval)
 			return
 		}
 		p.logger.Warn("streampublish: LatestPrice failed",

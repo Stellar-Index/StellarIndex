@@ -85,6 +85,7 @@ func registerAppMetrics() {
 		TradeInsertRetriesTotal,
 		TradeInsertBufferDepth,
 		StreamPublishTotal,
+		StreamPublishStallTotal,
 	)
 	registerPricingMetrics()
 	registerProjectorMetrics()
@@ -3105,6 +3106,29 @@ var StreamPublishTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_stream_publish_total",
 		Help: "Closed-bucket envelopes published to the streaming Hub, labelled by stream surface (e.g. price_stream).",
+	},
+	[]string{"stream"},
+)
+
+// StreamPublishStallTotal — per-stream counter of poll ticks whose
+// reader missed its own poll deadline while the parent context was
+// still live: [streampublish.Publisher] scopes each tick to a
+// context.WithTimeout(ctx, interval) so one slow pair can't wedge
+// the poll loop, but that timeout firing is a reader stall, not
+// shutdown, and must not be swallowed silently.
+//
+// A nonzero or climbing value means the upstream reader is
+// consistently slower than the poll interval for that stream —
+// distinct from a quiet market (StreamPublishTotal flat, this flat
+// too) and distinct from shutdown (neither counter moves because
+// the loop exits via ctx.Done()).
+//
+// Cardinality: one series per stream surface — low single-digit at
+// maturity, same as StreamPublishTotal.
+var StreamPublishStallTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_stream_publish_stall_total",
+		Help: "Poll ticks where the reader missed its own per-poll timeout while the parent context was still live, labelled by stream surface (e.g. price_stream).",
 	},
 	[]string{"stream"},
 )
