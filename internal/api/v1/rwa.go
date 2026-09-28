@@ -799,6 +799,11 @@ const (
 	// for the 5-decimal funds in the measured population, eleven orders
 	// of magnitude the other way for the 18-decimal one.
 	//
+	// Also reported when the scale WAS read but disagrees with the one
+	// the DEX price was normalised with (the nonstandard-decimals
+	// projection has not caught up with the lake): the supply and the
+	// price are then on different scales and no single exponent is right.
+	//
 	// Refused rather than defaulted because the error is silent and
 	// unbounded, and because this is the one surface where the exponent
 	// IS the number. The circulating supply is still served beside it:
@@ -2101,7 +2106,7 @@ func rwaValuationOf(d AssetDetail) RWAValuation {
 		// Reported before the supply reason, because it is the more
 		// specific finding: a row here HAS a supply and is missing the
 		// exponent, which is a different gap with a different owner.
-		if d.DecimalsUnresolved {
+		if d.DecimalsUnresolved || d.MarketCapDecimalsMismatch {
 			return RWAValuation{Status: RWAValuationDecimalsUnknown, PriceUSD: d.PriceUSD, PriceBasis: d.PriceBasis}
 		}
 		return RWAValuation{Status: RWAValuationNoSupply, PriceUSD: d.PriceUSD, PriceBasis: d.PriceBasis}

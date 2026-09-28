@@ -263,13 +263,15 @@ const (
 	// but published no price for it, or published one whose own
 	// publication time is past the storage layer's price bound.
 	ListingValuationNoListingPrice = "no_listing_price"
+	// ListingValuationPriceNotPositive — the published price is zero,
+	// negative or unparseable, so no valuation can be taken from it.
+	ListingValuationPriceNotPositive = "listing_price_not_positive"
 	// ListingValuationPriceExpired — the price carries a publication
 	// time past [rwaReferenceMaxAge]. Re-checked here even though the
 	// storage reader enforces a tighter bound in SQL, for the reason
 	// the RWA path re-checks its own: the bound this surface documents
 	// has to hold however the row reached it.
-	ListingValuationPriceNotPositive = "listing_price_not_positive"
-	ListingValuationPriceExpired     = "listing_price_expired"
+	ListingValuationPriceExpired = "listing_price_expired"
 	// ListingValuationNoSupply — neither the lake's flow total nor the
 	// row's own reading produced a supply to multiply. Refused rather
 	// than published as zero.
@@ -385,9 +387,12 @@ func (s *Server) assetListingSnapshotWithin(ctx context.Context, budget time.Dur
 	}
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget)
 	defer cancel()
+	// Stamped only once the read has returned, as rwaCuratedSnapshot does:
+	// a read that panics leaves the entry expired for the next caller.
+	snap := s.readAssetListing(rctx)
+	s.assetListings.snap = snap
 	s.assetListings.at = time.Now()
-	s.assetListings.snap = s.readAssetListing(rctx)
-	return s.assetListings.snap
+	return snap
 }
 
 // readAssetListing performs the one directory read behind the cache.

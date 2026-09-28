@@ -309,8 +309,11 @@ func TestScamGateUndeclaredSACSpellingIsANoOp(t *testing.T) {
 		t.Errorf("an UNDECLARED wrapper returned %d, want 200 — a deployment with no "+
 			"wrapper configured must see no behaviour change. Body: %s", resp.StatusCode, body)
 	}
-	if len(dir.asked) != 0 {
-		t.Errorf("directory was asked about %v for an undeclared wrapper, want no lookup — "+
-			"the contract id carries no G-address the directory could match", dir.asked)
+	// The contract's own C-address is a directory key in its own right;
+	// the issuer is not reachable from it without a declared wrapper.
+	for _, a := range dir.asked {
+		if a != sacID {
+			t.Errorf("directory was asked about %s for an undeclared wrapper, want only its own address %s", a, sacID)
+		}
 	}
 }

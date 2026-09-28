@@ -208,10 +208,30 @@ func rwaContractServerWithPrecise(
 		TokenSymbol:       &stubTokenSymbols{byID: symbols},
 		TokenSupply:       &stubTokenSupplies{byID: supplies},
 		TokenDecimals:     &stubTokenDecimalsRdr{byID: decimals},
+		// The steady state: the guard has confirmed every non-7 scale, so
+		// the catalogue price is on the scale the lake reports.
+		NonstandardDecimals: confirmedNonstandardDecimals(t, decimals),
 		// A real floor, so the dust guard is live rather than disabled
 		// by a zero that would make every cap publish unconditionally.
 		MinMarketCapVolumeUSD: 1000,
 	})
+}
+
+// confirmedNonstandardDecimals is the nonstandard-decimals projection the
+// decimals guard converges on: one row per non-7 scale.
+func confirmedNonstandardDecimals(t *testing.T, decimals map[string]uint32) *v1.NonstandardDecimalsCache {
+	t.Helper()
+	var rows []timescale.NonstandardDecimalsAsset
+	for id, d := range decimals {
+		if d != 7 {
+			rows = append(rows, timescale.NonstandardDecimalsAsset{Asset: id, Decimals: int(d), Source: "aquarius"})
+		}
+	}
+	c := v1.NewNonstandardDecimalsCache(&stubNonstandardDecimalsReader{rows: rows}, nil)
+	if err := c.Refresh(context.Background()); err != nil {
+		t.Fatalf("decimals cache refresh: %v", err)
+	}
+	return c
 }
 
 // TestRWAContracts_AdmitsAndValuesARecognisedContract is the positive

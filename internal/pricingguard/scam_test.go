@@ -245,14 +245,52 @@ func TestScamGate_WithheldThroughSACSpelling(t *testing.T) {
 	}
 }
 
-// TestScamGate_BareSorobanHasNoFlaggableIssuer is the other half of the
-// same rule. A pure-SEP-41 contract with no classic twin has no
-// G-address anywhere in its identity, so the account directory cannot
-// speak to it: the gate must return false WITHOUT a lookup, exactly as
-// it did before the canonical resolution was added. Resolving an asset
-// that is in no family returns the asset itself, so the classic guard
-// still rejects it.
-func TestScamGate_BareSorobanHasNoFlaggableIssuer(t *testing.T) {
+// addrDir flags exactly the listed addresses and counts lookups per address.
+type addrDir struct {
+	flagged map[string]bool
+	calls   map[string]int
+}
+
+func (d *addrDir) DirectoryEntryByAddress(_ context.Context, address string) (timescale.DirectoryEntry, bool, error) {
+	if d.calls == nil {
+		d.calls = map[string]int{}
+	}
+	d.calls[address]++
+	if d.flagged[address] {
+		return timescale.DirectoryEntry{Address: address, Tags: []string{"malicious"}}, true, nil
+	}
+	return timescale.DirectoryEntry{}, false, nil
+}
+
+const bareContract = "CBEM2CAIYLM3HBOPU5HLQL7V5BUAKM3N77DYQKX4FNHTQLQUUD2ZFBOX"
+
+// TestScamGate_DirectoryFlaggedContractIsWithheld: a contract token whose
+// OWN C-address the directory flags is withheld on either leg, the way a
+// flagged issuer's classic asset is.
+func TestScamGate_DirectoryFlaggedContractIsWithheld(t *testing.T) {
+	ctx := context.Background()
+	bare, err := canonical.NewSorobanAsset(bareContract)
+	if err != nil {
+		t.Fatalf("soroban asset: %v", err)
+	}
+	g := NewScamGate(&addrDir{flagged: map[string]bool{bareContract: true}}, ScamGateOptions{})
+	if !g.Withheld(ctx, bare, "price_read") {
+		t.Fatal("a directory-flagged contract token's price was served")
+	}
+	if !g.WithheldPair(ctx, bare, canonical.NativeAsset(), "price_read") {
+		t.Error("<flagged contract>/native was served")
+	}
+	if !g.WithheldPair(ctx, canonical.NativeAsset(), bare, "vwap") {
+		t.Error("native/<flagged contract> was served — the quote leg must be judged the same way")
+	}
+}
+
+// TestScamGate_BareSorobanIsJudgedOnItsOwnAddress is the other half of the
+// same rule. A pure-SEP-41 contract with no classic twin has no issuer
+// G-address, but the directory labels C-addresses too, so the gate asks
+// about the contract itself — and only about it. Resolving an asset that
+// is in no family returns the asset itself, so no classic lookup happens.
+func TestScamGate_BareSorobanIsJudgedOnItsOwnAddress(t *testing.T) {
 	ctx := context.Background()
 	// A registry is installed and knows a DIFFERENT wrapper, so the miss
 	// is a genuine "no family", not an empty registry.
@@ -273,22 +311,22 @@ func TestScamGate_BareSorobanHasNoFlaggableIssuer(t *testing.T) {
 	canonical.InstallAliasRegistry(reg)
 	t.Cleanup(func() { canonical.InstallAliasRegistry(nil) })
 
-	bare, err := canonical.NewSorobanAsset("CBEM2CAIYLM3HBOPU5HLQL7V5BUAKM3N77DYQKX4FNHTQLQUUD2ZFBOX")
+	bare, err := canonical.NewSorobanAsset(bareContract)
 	if err != nil {
 		t.Fatalf("soroban asset: %v", err)
 	}
-	fd := &fakeDir{entry: timescale.DirectoryEntry{Tags: []string{"scam"}}, found: true}
-	g := NewScamGate(fd, ScamGateOptions{})
+	// The directory flags a different address: the contract is clean.
+	dir := &addrDir{flagged: map[string]bool{"GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA": true}}
+	g := NewScamGate(dir, ScamGateOptions{})
 	if g.Withheld(ctx, bare, "price_read") {
-		t.Error("a Soroban asset with no classic twin has no directory-flaggable " +
-			"issuer — the gate cannot speak to it and must not withhold")
+		t.Error("an unflagged contract was withheld")
 	}
-	if fd.calls != 0 {
-		t.Errorf("bare Soroban asset triggered %d directory lookups, want 0", fd.calls)
+	if len(dir.calls) != 1 || dir.calls[bareContract] != 1 {
+		t.Errorf("directory lookups = %v, want exactly one, on the contract's own address", dir.calls)
 	}
 
-	// XLM's SAC canonicalises to `native`, which likewise carries no
-	// issuer: unchanged, and still no lookup.
+	// XLM's SAC canonicalises to `native`, which carries no address to
+	// flag: still no lookup.
 	xlmSAC, err := canonical.NewSorobanAsset(canonical.XLMSacContractID)
 	if err != nil {
 		t.Fatalf("xlm sac: %v", err)
@@ -296,7 +334,7 @@ func TestScamGate_BareSorobanHasNoFlaggableIssuer(t *testing.T) {
 	if g.Withheld(ctx, xlmSAC, "price_read") {
 		t.Error("XLM's SAC canonicalises to native, which has no issuer to flag")
 	}
-	if fd.calls != 0 {
-		t.Errorf("XLM SAC triggered %d directory lookups, want 0", fd.calls)
+	if len(dir.calls) != 1 {
+		t.Errorf("XLM SAC triggered a directory lookup: %v", dir.calls)
 	}
 }

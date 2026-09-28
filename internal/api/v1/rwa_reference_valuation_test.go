@@ -817,6 +817,7 @@ func rwaContractServerWithOracle(
 		TokenSymbol:           &stubTokenSymbols{byID: map[string]string{rwaContractGood: symbol}},
 		TokenSupply:           &stubTokenSupplies{byID: map[string]string{rwaContractGood: supply}},
 		TokenDecimals:         &stubTokenDecimalsRdr{byID: map[string]uint32{rwaContractGood: decimals}},
+		NonstandardDecimals:   confirmedNonstandardDecimals(t, map[string]uint32{rwaContractGood: decimals}),
 		Oracle:                oracle,
 		MinMarketCapVolumeUSD: 1000,
 	})

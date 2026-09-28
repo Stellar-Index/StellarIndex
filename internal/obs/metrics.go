@@ -4980,16 +4980,23 @@ var NonstandardDecimalsPartialAliasFamilyTotal = prometheus.NewCounter(
 //     for (GH-1059); correlate the contract from the paired WARN log line.
 //   - site="asset_listing" — GET /v1/assets found the same disagreement
 //     for a listing row (GH-1009). Same refusal, same unlabelled asset.
+//   - site="rwa_contract" — GET /v1/rwa/assets found it for a contract
+//     row's DEX-priced market cap. Same refusal (valuation status
+//     decimals_unavailable), same unlabelled asset.
+//   - site="lending_reserve" — GET /v1/lending/pools/{pool}/reserves found
+//     a reserve's decimals disagreeing with the scale its USD price was
+//     normalised with. The reserve's USD figures are withheld and it is
+//     left out of tvl_usd.
 //
 // Expected value is 0 in steady state. A nonzero guard_reconcile count is
 // a repaired drift (hand-seeded row that contradicted the lake, or a
-// re-captured instance); a sustained asset_detail/asset_listing count means
+// re-captured instance); a sustained count at any request site means
 // the guard is not converging and is folded into the
 // stellarindex_nonstandard_decimals_correction_failing alert.
 var NonstandardDecimalsLockstepMismatchTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_nonstandard_decimals_lockstep_mismatch_total",
-		Help: "Observations that the lake's on-chain decimals() and the nonstandard_decimals_assets projection disagree for one asset. Labels: site (guard_reconcile = repaired at aggregation time; asset_detail/asset_listing = market cap refused at request time), asset (C-strkey, populated for guard_reconcile only — request-driven sites leave it empty to bound cardinality). Expected 0; see runbook dex-nonstandard-decimals.md.",
+		Help: "Observations that the lake's on-chain decimals() and the nonstandard_decimals_assets projection disagree for one asset. Labels: site (guard_reconcile = repaired at aggregation time; asset_detail/asset_listing/rwa_contract/lending_reserve = valuation refused at request time), asset (C-strkey, populated for guard_reconcile only — request-driven sites leave it empty to bound cardinality). Expected 0; see runbook dex-nonstandard-decimals.md.",
 	},
 	[]string{"site", "asset"},
 )
