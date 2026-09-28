@@ -477,3 +477,59 @@ func TestAccountErasure(t *testing.T) {
 		}
 	})
 }
+
+// TestAccountErasureBoundaries pins what an erasure must leave alone.
+func TestAccountErasureBoundaries(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	rdb, _ := startRedis(t, ctx)
+	accounts := postgresstore.NewAccountStore(postgresstore.New(db))
+	eraser := &accounterasure.Eraser{Store: accounts, Redis: rdb}
+
+	// /v1/register records the billing address unverified: it can be a
+	// stranger's, whose login state and invites the erasure must keep.
+	t.Run("BillingAddressOwnerKeepsLoginState", func(t *testing.T) {
+		x := seedErasureAccount(t, ctx, db, rdb, "john", "b.example", "7")
+		stranger := "billing-7@b.example"
+		var otherID, otherOwner uuid.UUID
+		if err := db.QueryRowContext(ctx, `INSERT INTO accounts (name, slug, billing_email)
+			VALUES ('Other', 'other', 'other@c.example') RETURNING id`).Scan(&otherID); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.QueryRowContext(ctx, `INSERT INTO users (account_id, email, role)
+			VALUES ($1, $2, 'owner') RETURNING id`, otherID, strings.ToUpper(stranger)).Scan(&otherOwner); err != nil {
+			t.Fatal(err)
+		}
+		mustExec(t, ctx, db, `INSERT INTO login_code_lockouts (email, failed_count) VALUES ($1, 4)`, stranger)
+		mustExec(t, ctx, db, `INSERT INTO magic_link_tokens (token_hash, email, purpose, expires_at, requested_ip)
+			VALUES ('ml-stranger', $1, 'login', now() + interval '1 hour', '203.0.113.5')`, stranger)
+		mustExec(t, ctx, db, `INSERT INTO invites (token_hash, account_id, email, role, invited_by_user_id, expires_at)
+			VALUES ('inv-stranger', $1, $2, 'member', $3, now() + interval '1 day')`, otherID, stranger, otherOwner)
+
+		if _, err := eraser.Erase(ctx, x.accountID, platform.ActorUser); err != nil {
+			t.Fatalf("Erase: %v", err)
+		}
+		var lockouts, links, invites, memberLockouts int
+		if err := db.QueryRowContext(ctx, `SELECT
+			(SELECT count(*) FROM login_code_lockouts WHERE email = $1 AND failed_count = 4),
+			(SELECT count(*) FROM magic_link_tokens WHERE email = $1),
+			(SELECT count(*) FROM invites WHERE email = $1),
+			(SELECT count(*) FROM login_code_lockouts WHERE email = 'mary-7@b.example')`, stranger).
+			Scan(&lockouts, &links, &invites, &memberLockouts); err != nil {
+			t.Fatal(err)
+		}
+		if lockouts != 1 || links != 1 || invites != 1 {
+			t.Errorf("stranger's lockout/magic link/invite = %d/%d/%d, want 1/1/1 kept", lockouts, links, invites)
+		}
+		if memberLockouts != 0 {
+			t.Errorf("the erased member's lockout survived (%d)", memberLockouts)
+		}
+	})
+}

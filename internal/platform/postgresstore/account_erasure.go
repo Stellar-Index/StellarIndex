@@ -32,7 +32,10 @@ type ErasurePlan struct {
 	// OwnerEmails are the addresses of the account's owner users, for the
 	// confirmation mail.
 	OwnerEmails []string
-	// Emails is every member address plus the billing address, lowercased.
+	// Emails is every member address, lowercased. The billing address is
+	// not one: /v1/register records it unverified, so it may be a
+	// stranger's, and their login state and invites are not this
+	// account's to erase.
 	Emails  []string
 	UserIDs []uuid.UUID
 	// KeyIDs and KeyHashes are the account's Postgres api_keys rows; the
@@ -103,8 +106,6 @@ func (r *AccountStore) PlanErasure(ctx context.Context, id uuid.UUID) (ErasurePl
 	case staff > 0:
 		return ErasurePlan{}, fmt.Errorf("%w: a member is staff", ErrErasureBlocked)
 	}
-	p.Emails = append(p.Emails, strings.ToLower(p.BillingEmail))
-
 	rows, err := r.s.db.QueryContext(ctx,
 		`SELECT id, email::text, role FROM users WHERE account_id = $1 ORDER BY created_at`, id)
 	if err != nil {
