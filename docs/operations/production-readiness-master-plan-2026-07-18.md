@@ -62,7 +62,9 @@ The single, honest, dependency-ordered plan to take StellarIndex (Stellar explor
   CALL refresh_continuous_aggregate('prices_1h',  NULL, now());  CALL refresh_continuous_aggregate('prices_4h', NULL, now());
   CALL refresh_continuous_aggregate('prices_1d',  NULL, now());  CALL refresh_continuous_aggregate('prices_1w', NULL, now());
   CALL refresh_continuous_aggregate('prices_1mo', NULL, now());
-  CALL refresh_continuous_aggregate('twap_1h', NULL, now());     CALL refresh_continuous_aggregate('twap_1d', NULL, now());
+  -- DO NOT RUN (post-0156: deletes TWAP history): CALL refresh_continuous_aggregate('twap_1h', NULL, now());
+  -- DO NOT RUN (post-0156: deletes TWAP history): CALL refresh_continuous_aggregate('twap_1d', NULL, now());
+  -- TWAP re-mat is windowed now: docs/operations/runbooks/twap-history-missing.md
   ```
   Then verify /v1/ohlc + /v1/chart serve history again.
 
@@ -83,7 +85,8 @@ The single, honest, dependency-ordered plan to take StellarIndex (Stellar explor
   CALL refresh_continuous_aggregate('prices_1m',  now()-INTERVAL '7 days', now());
   CALL refresh_continuous_aggregate('prices_15m', now()-INTERVAL '30 days', now());
   CALL refresh_continuous_aggregate('prices_1h',  NULL, now());  -- and 4h,1d,1w,1mo
-  CALL refresh_continuous_aggregate('twap_1h', NULL, now());     -- and twap_1d
+  -- DO NOT RUN (post-0156: deletes TWAP history): CALL refresh_continuous_aggregate('twap_1h', NULL, now());
+  -- TWAP re-mat is windowed now: docs/operations/runbooks/twap-history-missing.md
   ```
   Then verify /v1/ohlc + /v1/chart serve again. (0116 already applied direct → migrate up no-ops it; 0117–0122 additive, panel-verified.)
 - **Post-deploy verify:** schema_migrations advanced (114→122), 6 binaries fresh (was dev-unknown), services active, CH tip advancing, /v1/* serving. THEN the re-mat above.

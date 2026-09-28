@@ -82,16 +82,12 @@ correction. ~124K Soroban DEX trades (Aquarius 104K, Phoenix 8K,
 Soroswap 8K, Comet 38) were ingested before the SAC config landed
 and remain NULL.
 
-Script: `scripts/ops/recompute-usd-volume-soroban.sql` is idempotent
-(filters `WHERE usd_volume IS NULL` so re-runs are safe).
-
-```sh
-ssh root@r1
-PGPASSWORD=$(cat /etc/stellarindex/postgres-password.txt) \
-  psql -h 127.0.0.1 -U stellarindex -d stellarindex \
-       -v ON_ERROR_STOP=1 \
-       -f /path/to/recompute-usd-volume-soroban.sql
-```
+The one-shot SQL script this step used to run was an unbounded
+`UPDATE trades` on a compressed hypertable and has been removed. Use
+`stellarindex-ops usd-volume-restamp -tier exact -fill-null` as
+described in
+[sac-wrappers-and-usd-volume.md](../sac-wrappers-and-usd-volume.md#backfilling-historical-usd-volume);
+it is idempotent (a re-run reports 0).
 
 Expect ~124K row updates. Per-source post-fix volume on the
 `/v1/sources` envelope should land:

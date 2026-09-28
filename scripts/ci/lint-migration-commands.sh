@@ -338,6 +338,243 @@ for b in ${base_keys+"${base_keys[@]}"}; do
   esac
 done
 
+# ── the operator corpus: destructive forms outside migration headers ──
+#
+# A header is not the only place an operator is handed SQL. Runbooks,
+# alert annotations and ops scripts hand it over too, and no gate read
+# them: both rule trees and the twap-history-missing runbook prescribed
+# the NULL-start TWAP refresh 0156 marks DO NOT RUN, and an ops script ran
+# an unbounded UPDATE on trades. The rules below are about DESTRUCTION,
+# not coverage, so they hold for every file in scope with no baseline and
+# no test escape:
+#
+#   NULL-START REFRESH — `refresh_continuous_aggregate(<view>, NULL, …)`
+#   on a view built directly FROM a relation that carries a retention
+#   policy processes every invalidation the drops wrote, against a
+#   source whose old chunks are gone, and deletes that history. The
+#   retained relations and the views over them are derived from the
+#   migrations in order, so arming a new policy extends the rule. A view
+#   name the gate cannot resolve (`{{ $labels.view }}`, `<view>`) counts,
+#   since it may be one. Exempt only under a `DO NOT RUN` marker in the
+#   80 characters before the call. Migrations are held to it from 0156,
+#   the file that created the hazard; earlier ones are immutable and
+#   their forms are baselined above.
+#
+#   UNBOUNDED DML — an UPDATE or DELETE on a compressed hypertable in
+#   an ops or dev SQL script must name the table's time column after
+#   WHERE. Without it the plan cannot prune chunks: the Go restamp path
+#   measured such a `trades` UPDATE at 260 result relations and ~270 GB
+#   of WAL, on a host whose pg_wal sits on a 49 GB root filesystem
+#   (internal/storage/timescale/usd_volume_restamp.go). The compressed
+#   tables and their time columns are derived from the migrations
+#   (add/remove_compression_policy, create_hypertable).
+op_dirs=()
+for d in docs deploy configs scripts/ops scripts/dev; do
+  [ -d "$d" ] && op_dirs+=("$d")
+done
+
+ups=()
+for f in "${migs[@]}"; do
+  case "$f" in *.up.sql) ups+=("$f") ;; esac
+done
+
+# One view per line: every view whose latest definition selects FROM a
+# relation with a retention policy still attached after the last migration.
+retained_views="$(
+  awk '
+    function flush(   s, t, stmt, name, f, semi) {
+      s = buf; buf = ""
+      while (match(s, /(add|remove)_retention_policy\([ \t\n]*'"'"'[a-z0-9_]+'"'"'|create[ \t\n]+materialized[ \t\n]+view[ \t\n]+(if[ \t\n]+not[ \t\n]+exists[ \t\n]+)?[a-z0-9_.]+/)) {
+        t = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH)
+        if (t ~ /^create/) {
+          name = t; sub(/.*[ \t\n]/, "", name); sub(/^public\./, "", name)
+          stmt = s; semi = index(stmt, ";"); if (semi) stmt = substr(stmt, 1, semi)
+          if (match(stmt, /\n[ \t]*from[ \t\n]+[a-z0-9_.]+/)) {
+            f = substr(stmt, RSTART, RLENGTH); sub(/.*[ \t\n]/, "", f); sub(/^public\./, "", f)
+            src[name] = f
+          }
+        } else {
+          name = t; sub(/^[^'"'"']*'"'"'/, "", name); sub(/'"'"'$/, "", name)
+          if (t ~ /^add/) ret[name] = 1; else delete ret[name]
+        }
+      }
+    }
+    BEGIN { RS = "\001" }   # one record per file
+    { buf = "\n" tolower($0); gsub(/--[^\n]*/, "", buf); flush() }
+    END { for (v in src) if (src[v] in ret) print v }
+  ' ${ups+"${ups[@]}"} | sort
+)"
+
+op_files=()
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  op_files+=("$f")
+done < <(
+  {
+    if [ "${#op_dirs[@]}" -gt 0 ]; then
+      find "${op_dirs[@]}" -type f \( -name '*.md' -o -name '*.yml' -o -name '*.yaml' \
+        -o -name '*.sql' -o -name '*.sh' -o -name '*.j2' \)
+    fi
+    for f in "${migs[@]}"; do
+      n="${f#migrations/}"; n="${n%%_*}"
+      case "$n" in [0-9][0-9][0-9][0-9]) [ "$((10#$n))" -ge 156 ] && echo "$f" ;; esac
+    done
+  } | sed 's#^\./##' | sort -u
+)
+
+# Only files naming the function reach awk, which reads each whole.
+ref_files=()
+if [ "${#op_files[@]}" -gt 0 ]; then
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    ref_files+=("$f")
+  done < <(grep -l -e refresh_continuous_aggregate -- "${op_files[@]}" || true)
+fi
+
+null_hits=""
+if [ "${#ref_files[@]}" -gt 0 ]; then
+  null_hits="$(
+    HAZARD="$retained_views" awk '
+      BEGIN { n = split(ENVIRON["HAZARD"], h, "\n"); for (i = 1; i <= n; i++) if (h[i] != "") hz[h[i]] = 1 }
+      function nullstart(args,   name, rest, q) {
+        sub(/^[ \t\n]*/, "", args)
+        if (substr(args, 1, 1) == "'"'"'") {
+          rest = substr(args, 2); q = index(rest, "'"'"'")
+          if (q == 0) return ""
+          name = substr(rest, 1, q - 1); rest = substr(rest, q + 1)
+        } else {
+          if (!match(args, /[,)]/)) return ""
+          name = substr(args, 1, RSTART - 1); rest = substr(args, RSTART)
+        }
+        name = tolower(name); sub(/[ \t\n]+$/, "", name)
+        sub(/^(::[a-z_]+)?[ \t\n]*/, "", rest)
+        if (substr(rest, 1, 1) != ",") return ""
+        rest = tolower(substr(rest, 2)); sub(/^[ \t\n]*/, "", rest)
+        if (rest !~ /^null([^a-z0-9_]|$)/ && tolower(args) !~ /window_start[ \t\n]*=>[ \t\n]*null([^a-z0-9_]|$)/) return ""
+        if ((name in hz) || name !~ /^[a-z_][a-z0-9_]*$/) return name
+        return ""
+      }
+      # index(), not match(): a one-true-awk match() over a whole file is
+      # quadratic, 5 s on the 350 KB launch plan.
+      function flush(file,   s, off, i, pos, rest, pre, win, name, snip, junk) {
+        s = buf; off = 0
+        while ((i = index(s, "refresh_continuous_aggregate")) > 0) {
+          pos = off + i
+          rest = substr(s, i + 28)
+          off += i + 27
+          s = rest
+          if (!match(substr(rest, 1, 40), /^[ \t\n]*\(/)) continue
+          name = nullstart(substr(rest, RLENGTH + 1, 400))
+          if (name == "") continue
+          pre = substr(buf, 1, pos - 1)
+          win = substr(pre, length(pre) > 80 ? length(pre) - 79 : 1)
+          if (index(win, "DO NOT RUN")) continue
+          snip = substr(buf, pos, 90); gsub(/[ \t\n]+/, " ", snip)
+          printf "%s:%d\t%s\t%s\n", file, split(pre, junk, "\n"), name, snip
+        }
+      }
+      BEGIN { RS = "\001" }   # one record per file
+      { buf = $0; flush(FILENAME) }
+    ' "${ref_files[@]}"
+  )"
+fi
+
+op_fail=0
+if [ -n "$null_hits" ]; then
+  op_fail=1
+  echo "lint-migration-commands: FAIL — NULL-start refresh of a view over a retained source:" >&2
+  while IFS=$'\t' read -r where name snip; do
+    echo "  $where  (view: $name)" >&2
+    echo "    $snip" >&2
+  done <<<"$null_hits"
+  cat >&2 <<'NULLSTART'
+
+A NULL start makes the refresh process every invalidation a retention
+drop wrote, against a source whose old chunks are gone, and it DELETES
+that history (migrations/0156_prices_1m_retention.up.sql, "TWAP").
+Rewrite it windowed — an explicit start, `force => true`, after the
+source's own rebuild — as docs/operations/runbooks/twap-history-missing.md
+does. If the form is quoted so an operator recognises it, put
+`DO NOT RUN:` immediately before it.
+NULLSTART
+fi
+
+compressed="$(
+  awk '
+    BEGIN { RS = "\001" }   # one record per file
+    {
+      s = "\n" tolower($0); gsub(/--[^\n]*/, "", s)
+      while (match(s, /(add|remove)_compression_policy\([ \t\n]*'"'"'[a-z0-9_]+'"'"'|create_hypertable\([ \t\n]*'"'"'[a-z0-9_.]+'"'"'[ \t\n]*,[ \t\n]*(by_range\([ \t\n]*)?'"'"'[a-z0-9_]+'"'"'/)) {
+        t = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH)
+        # Not split(): one-true-awk also splits a one-char separator on newlines.
+        name = t; sub(/^[^'"'"']*'"'"'/, "", name); sub(/'"'"'.*/, "", name); sub(/^public\./, "", name)
+        col = t; sub(/'"'"'[^'"'"']*$/, "", col); sub(/.*'"'"'/, "", col)
+        if (t ~ /^create/) tcol[name] = col
+        else if (t ~ /^add/) comp[name] = 1
+        else delete comp[name]
+      }
+    }
+    END { for (x in comp) print x, ((x in tcol) ? tcol[x] : "?") }
+  ' ${ups+"${ups[@]}"} | sort
+)"
+
+dml_files=()
+for d in scripts/ops scripts/dev; do
+  [ -d "$d" ] || continue
+  while IFS= read -r f; do
+    [ -n "$f" ] && dml_files+=("$f")
+  done < <(find "$d" -type f -name '*.sql' | sort)
+done
+
+dml_hits=""
+if [ "${#dml_files[@]}" -gt 0 ] && [ -n "$compressed" ]; then
+  dml_hits="$(
+    COMPRESSED="$compressed" awk '
+      BEGIN {
+        RS = "\001"   # one record per file
+        n = split(ENVIRON["COMPRESSED"], rows, "\n")
+        for (i = 1; i <= n; i++) if (split(rows[i], kv, " ") == 2) tc[kv[1]] = kv[2]
+      }
+      function check(stmt, file, line,   t, rest, w, pre) {
+        for (t in tc) {
+          if (!match(stmt, "(^|[^a-z0-9_])(update|delete[ \t\n]+from)[ \t\n]+(only[ \t\n]+)?(public[.])?" t "([^a-z0-9_]|$)")) continue
+          pre = substr(stmt, 1, RSTART)
+          rest = substr(stmt, RSTART + RLENGTH)
+          w = match(rest, /(^|[^a-z0-9_])where([^a-z0-9_]|$)/) ? substr(rest, RSTART) : ""
+          if (tc[t] != "?" && w ~ ("(^|[^a-z0-9_])" tc[t] "([^a-z0-9_]|$)")) continue
+          printf "%s:%d\t%s\t%s\n", file, line + gsub(/\n/, "\n", pre), t, tc[t]
+        }
+      }
+      {
+        s = tolower($0); gsub(/--[^\n]*/, "", s)
+        line = 1
+        while (s != "") {
+          i = index(s, ";"); if (i == 0) i = length(s)
+          stmt = substr(s, 1, i); s = substr(s, i + 1)
+          check(stmt, FILENAME, line)
+          line += gsub(/\n/, "\n", stmt)
+        }
+      }
+    ' "${dml_files[@]}"
+  )"
+fi
+
+if [ -n "$dml_hits" ]; then
+  op_fail=1
+  echo "lint-migration-commands: FAIL — UPDATE/DELETE on a compressed hypertable with no time-column predicate:" >&2
+  while IFS=$'\t' read -r where tbl col; do
+    echo "  $where  ($tbl: needs a WHERE on $col)" >&2
+  done <<<"$dml_hits"
+  cat >&2 <<'UNBOUNDED'
+
+A compressed hypertable's plan prunes chunks only on its time column; any
+other predicate makes every chunk a result relation, decompressed inside one
+transaction. Bound the statement by time and walk the range in slices, or
+use the tool that already does (stellarindex-ops usd-volume-restamp for
+trades.usd_volume).
+UNBOUNDED
+fi
+
 if [ "$fail" -ne 0 ]; then
   cat >&2 <<'EOF'
 
@@ -365,11 +602,15 @@ EOF
   exit 1
 fi
 [ "$stale" -eq 0 ] || exit 1
+[ "$op_fail" -eq 0 ] || exit 1
 
 echo "lint-migration-commands: OK — ${#migs[@]} migration file(s), ${paragraphs} header" \
      "paragraph(s); ${n_recipe} recipe(s) (${n_covered} test-covered," \
      "${uncovered} grandfathered), ${n_warning} DO-NOT-RUN warning(s)," \
-     "${n_sketch} sketch(es)."
+     "${n_sketch} sketch(es); ${#op_files[@]} operator file(s) checked for NULL-start" \
+     "refreshes of: $(printf '%s' "$retained_views" | tr '\n' ' ');" \
+     "${#dml_files[@]} ops SQL file(s) checked for unbounded DML on $(printf '%s\n' "$compressed" | grep -c .)" \
+     "compressed hypertable(s)."
 
 # ── docs fenced ```sql DELETE/UPDATE time-bound check (GH-795) ────────
 DOCS="docs"

@@ -196,6 +196,7 @@ expect_not "go-only: no shellcheck" "plan  shellcheck:" "$out"
 expect_not "go-only: no lint-shell-sigpipe" "lint-shell-sigpipe" "$out"
 expect_not "go-only: no actionlint" "actionlint" "$out"
 expect_not "go-only: no migration gates" "lint-migrations" "$out"
+expect_not "go-only: no lint-migration-commands (Go is not in its operator corpus)" "lint-migration-commands" "$out"
 expect_not "go-only: no check-verify-parity" "check-verify-parity" "$out"
 
 R="$TMP/shonly"; new_repo "$R"
@@ -222,9 +223,17 @@ put "$R" CHANGELOG.md '# changelog'
 git -C "$R" add -A
 out="$(cd "$R" && "$DISPATCH" --staged --plan 2>&1)"; rc=$?
 expect_exit "md-only: plans cleanly" 0 "$rc"
-expect_has "md-only: lint-doc-links scoped to both files, one deferral — never reads as fully linted" "lint-changed: plan — 1 lint(s) over 2 changed file(s), 1 deferred" "$out"
+expect_has "md-only: lint-doc-links and lint-migration-commands, one deferral — never reads as fully linted" "lint-changed: plan — 2 lint(s) over 2 changed file(s), 1 deferred" "$out"
+expect_has "md-only: a docs/ runbook selects lint-migration-commands (it scans runbooks for a NULL-start refresh)" "plan  lint-migration-commands:" "$out"
 expect_has "md-only: lint-doc-links scoped to both changed files" "lint-doc-links.sh CHANGELOG.md docs/a.md" "$out"
 expect_has "md-only: lint-docs still names the file count and itself" "skip  lint-docs: 2 .md file(s) changed; lint-docs" "$out"
+
+R="$TMP/opsonly"; new_repo "$R"
+put "$R" scripts/ops/fix.sql 'SELECT 1;'
+git -C "$R" add -A
+out="$(cd "$R" && "$DISPATCH" --staged --plan 2>&1)"
+expect_has "ops-sql-only: a scripts/ops change selects lint-migration-commands" "plan  lint-migration-commands:" "$out"
+expect_not "ops-sql-only: but not the migration-file gates" "lint-migrations" "$out"
 
 R="$TMP/lake"; new_repo "$R"
 put "$R" internal/r/reader.go $'package r\n\nconst q = "SELECT count() FROM stellar.transactions"\n'
@@ -451,8 +460,8 @@ if [ -x "$TMP/customhooks/pre-commit" ]; then ok "the hook was written there"; e
 echo "lint-changed-test: the dispatcher and the installer pass their own lints"
 out="$("$DISPATCH" -- scripts/dev/lint-changed.sh scripts/dev/install-hooks.sh 2>&1)"; rc=$?
 expect_exit "lint-changed over its own two scripts passes" 0 "$rc"
-selfcount=4; [ "$HAVE_SHELLCHECK" -eq 1 ] && selfcount=5
-expect_has "and accounts for what it ran (bash -n twice, sigpipe, fixture-isolation, shellcheck)" "lint-changed: OK — ${selfcount} lint(s) over 2 changed file(s)" "$out"
+selfcount=5; [ "$HAVE_SHELLCHECK" -eq 1 ] && selfcount=6
+expect_has "and accounts for what it ran (bash -n twice, sigpipe, fixture-isolation, migration-commands, shellcheck)" "lint-changed: OK — ${selfcount} lint(s) over 2 changed file(s)" "$out"
 
 echo "lint-changed-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

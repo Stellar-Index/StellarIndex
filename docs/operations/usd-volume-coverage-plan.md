@@ -167,7 +167,7 @@ surface so it gates go-live rather than sitting beside it.
 ### Backfill
 Forward-fix alone leaves history wrong. `fx_quotes` reaches back to 2026-05-10,
 so historical trades can be revalued at point-in-time rates. Follow the existing
-`scripts/ops/recompute-usd-volume-soroban.sql` precedent. Trades older than the
+`stellarindex-ops usd-volume-restamp` precedent. Trades older than the
 FX history need a documented policy (nearest-available rate, or leave unpriced
 and exclude from historical volume claims).
 

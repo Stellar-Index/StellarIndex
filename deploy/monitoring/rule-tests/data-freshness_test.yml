@@ -62,9 +62,12 @@ tests:
                 the API serves NO bars for older ranges at this grain while recent bars, and
                 every newest-bar freshness check, look healthy.
 
-                Fix: run the documented follow-up once prices_1m is whole —
-                `CALL refresh_continuous_aggregate('twap_1h', NULL, now());` — then
-                confirm this clears on the next data-freshness tick.
+                Fix: re-materialize ONLY the empty range, per the runbook —
+                `CALL refresh_continuous_aggregate('twap_1h', '<start>'::timestamptz, '<end>'::timestamptz, force => true);`
+                with <start> the oldest bar of its source and <end> this view's oldest bar, at least the view's minimum refresh window apart (runbook step 2). Never a
+                NULL start: once prices_1m's retention (migration 0156) is armed, a NULL-start
+                TWAP refresh deletes the history it was meant to restore. Then confirm this clears
+                on the next data-freshness tick.
 
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/twap-history-missing.md
           - exp_labels:
@@ -85,9 +88,12 @@ tests:
                 the API serves NO bars for older ranges at this grain while recent bars, and
                 every newest-bar freshness check, look healthy.
 
-                Fix: run the documented follow-up once prices_1m is whole —
-                `CALL refresh_continuous_aggregate('twap_1d', NULL, now());` — then
-                confirm this clears on the next data-freshness tick.
+                Fix: re-materialize ONLY the empty range, per the runbook —
+                `CALL refresh_continuous_aggregate('twap_1d', '<start>'::timestamptz, '<end>'::timestamptz, force => true);`
+                with <start> the oldest bar of its source and <end> this view's oldest bar, at least the view's minimum refresh window apart (runbook step 2). Never a
+                NULL start: once prices_1m's retention (migration 0156) is armed, a NULL-start
+                TWAP refresh deletes the history it was meant to restore. Then confirm this clears
+                on the next data-freshness tick.
 
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/twap-history-missing.md
 
@@ -155,9 +161,12 @@ tests:
                 the API serves NO bars for older ranges at this grain while recent bars, and
                 every newest-bar freshness check, look healthy.
 
-                Fix: run the documented follow-up once prices_1m is whole —
-                `CALL refresh_continuous_aggregate('prices_1d', NULL, now());` — then
-                confirm this clears on the next data-freshness tick.
+                Fix: re-materialize ONLY the empty range, per the runbook —
+                `CALL refresh_continuous_aggregate('prices_1d', '<start>'::timestamptz, '<end>'::timestamptz, force => true);`
+                with <start> the oldest bar of its source and <end> this view's oldest bar, at least the view's minimum refresh window apart (runbook step 2). Never a
+                NULL start: once prices_1m's retention (migration 0156) is armed, a NULL-start
+                TWAP refresh deletes the history it was meant to restore. Then confirm this clears
+                on the next data-freshness tick.
 
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/twap-history-missing.md
 
