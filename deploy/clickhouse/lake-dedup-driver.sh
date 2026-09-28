@@ -43,6 +43,13 @@
 # rows_after, and dup_rows_removed — a partition whose counts do not
 # shrink was already clean (the driver skips partitions with zero
 # measured duplicate rows up front, so this should be rare).
+#
+# Progress also lands as node_exporter textfile-collector gauges
+# (stellarindex_lake_dedup_*, in <TEXTFILE_DIR>/lake_dedup_<table>.prom),
+# written tmp-then-mv like ch-schema-drift.sh's emit_intent_metrics, so
+# a multi-day run is visible to monitoring. Every exit, including an
+# ABORT or SIGTERM/SIGINT/SIGHUP, writes running=0 and last_exit_ok.
+# TEXTFILE_DIR=/dev/null opts out, same convention as that emitter.
 set -uo pipefail
 
 T="${1:?usage: lake-dedup-driver.sh <table> [max_partitions]}"
@@ -56,8 +63,80 @@ DRY_RUN="${DRY_RUN:-0}"
 CH="${CH:-clickhouse-client --port 9300}"
 OUT="${OUT:-/var/log/lake-dedup-${T}.log}"
 STOP="${STOP:-/tmp/lake-dedup.stop}"
+TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
+METRICS_OUT="$TEXTFILE_DIR/lake_dedup_${T}.prom"
+PROGRESS_FILE="$METRICS_OUT.progress"
 
 log() { echo "$(date -Iseconds) $*" | tee -a "$OUT"; }
+
+# write_progress <processed> — records live partition-progress where the
+# background heartbeat ticker (a forked subshell — see below) can read
+# it. A forked subshell only ever sees $n as of the instant it forked,
+# never a later increment in the parent, so progress has to cross that
+# boundary through a file rather than a variable.
+write_progress() {
+  [ "$TEXTFILE_DIR" = "/dev/null" ] && return 0
+  echo "$1" > "$PROGRESS_FILE" 2>/dev/null || true
+}
+
+# emit_metrics <running> <exit_ok-or-empty> — atomic textfile-collector
+# write. exit_ok is only meaningful (and only emitted) once the run has
+# ended; mid-run calls pass "".
+emit_metrics() {
+  [ "$TEXTFILE_DIR" = "/dev/null" ] && return 0
+  local running="$1" exit_ok="$2" processed tmp
+  processed=$(cat "$PROGRESS_FILE" 2>/dev/null || echo 0)
+  mkdir -p "$TEXTFILE_DIR" 2>/dev/null
+  tmp="${METRICS_OUT}.tmp.$$"
+  {
+    echo "# HELP stellarindex_lake_dedup_running 1 while lake-dedup-driver is executing this table, 0 once it has exited."
+    echo "# TYPE stellarindex_lake_dedup_running gauge"
+    echo "stellarindex_lake_dedup_running{table=\"$T\"} $running"
+    echo "# HELP stellarindex_lake_dedup_heartbeat_unix Unix time of the most recent liveness write, rewritten every 60s independent of partition progress so a stalled OPTIMIZE is distinguishable from a dead process."
+    echo "# TYPE stellarindex_lake_dedup_heartbeat_unix gauge"
+    echo "stellarindex_lake_dedup_heartbeat_unix{table=\"$T\"} $(date +%s)"
+    echo "# HELP stellarindex_lake_dedup_partitions_total Dup-candidate partitions found for the current run."
+    echo "# TYPE stellarindex_lake_dedup_partitions_total gauge"
+    echo "stellarindex_lake_dedup_partitions_total{table=\"$T\"} ${total:-0}"
+    echo "# HELP stellarindex_lake_dedup_partitions_processed Partitions this run has finished OPTIMIZE-ing (or planned, under DRY_RUN) so far."
+    echo "# TYPE stellarindex_lake_dedup_partitions_processed gauge"
+    echo "stellarindex_lake_dedup_partitions_processed{table=\"$T\"} $processed"
+    if [ -n "$exit_ok" ]; then
+      echo "# HELP stellarindex_lake_dedup_last_exit_ok 1 when the most recent run for this table exited cleanly, 0 when it aborted."
+      echo "# TYPE stellarindex_lake_dedup_last_exit_ok gauge"
+      echo "stellarindex_lake_dedup_last_exit_ok{table=\"$T\"} $exit_ok"
+    fi
+  } > "$tmp" 2>/dev/null
+  chmod 644 "$tmp" 2>/dev/null
+  mv "$tmp" "$METRICS_OUT" 2>/dev/null
+}
+
+# finish_metrics <rc> — stop the heartbeat ticker and any in-flight
+# OPTIMIZE client, then write the terminal state. Runs as the EXIT trap
+# on every exit, including the enumeration ABORT before `total` is known.
+finish_metrics() {
+  local rc="$1"
+  if [ -n "${opt_pid:-}" ]; then
+    kill "$opt_pid" 2>/dev/null
+    wait "$opt_pid" 2>/dev/null
+  fi
+  if [ -n "${hb_pid:-}" ]; then
+    kill "$hb_pid" 2>/dev/null
+    wait "$hb_pid" 2>/dev/null
+  fi
+  if [ "$rc" -eq 0 ]; then emit_metrics 0 1; else emit_metrics 0 0; fi
+  rm -f "$PROGRESS_FILE" 2>/dev/null
+}
+# On a signal the EXIT trap alone sees the last command's status (often
+# 0), so each signal exits 128+signo explicitly and reads as a failure.
+on_signal() { log "ABORT: received SIG$1 — stopping"; exit "$2"; }
+trap 'finish_metrics "$?"' EXIT
+trap 'on_signal HUP 129' HUP
+trap 'on_signal INT 130' INT
+trap 'on_signal TERM 143' TERM
+# Reset before anything can abort, so no exit path reports a stale
+# progress file left by a killed earlier run.
+write_progress 0
 
 # require_number <label> <value> — fail CLOSED unless $2 is a plain
 # non-negative integer. A clickhouse-client failure (auth, OOM, server
@@ -111,6 +190,14 @@ fi
 total=$(echo "$PARTS" | grep -c . || true)
 log "dup-candidate partitions: $total"
 
+emit_metrics 1 ""
+if [ "$TEXTFILE_DIR" != "/dev/null" ]; then
+  # $$ is the driver's pid inside the subshell too: stop ticking if the
+  # driver was SIGKILLed, or a dead run would keep reporting running=1.
+  ( while sleep 60; do kill -0 "$$" 2>/dev/null || exit 0; emit_metrics 1 ""; done ) &
+  hb_pid=$!
+fi
+
 n=0
 for p in $PARTS; do
   [ -f "$STOP" ] && { log "STOP file present — exiting cleanly after $n partitions"; break; }
@@ -142,12 +229,18 @@ for p in $PARTS; do
 
   if [ "$DRY_RUN" = "1" ]; then
     log "DRY partition=$p rows=$rows_before bytes=$bytes_before"
+    write_progress "$n"
     continue
   fi
 
   t0=$(date +%s)
-  $CH --receive_timeout 7200 -q "OPTIMIZE TABLE stellar.${T} PARTITION '${p}' FINAL" < /dev/null 2>>"$OUT"
+  # Backgrounded and waited on so a signal is handled now, not after a
+  # merge that can run up to --receive_timeout.
+  $CH --receive_timeout 7200 -q "OPTIMIZE TABLE stellar.${T} PARTITION '${p}' FINAL" < /dev/null 2>>"$OUT" &
+  opt_pid=$!
+  wait "$opt_pid"
   rc=$?
+  opt_pid=""
   if [ "$rc" -ne 0 ]; then
     log "ABORT partition=$p: OPTIMIZE FAILED rc=$rc — see $OUT for clickhouse-client's stderr"
     exit 1
@@ -162,6 +255,7 @@ for p in $PARTS; do
   fi
   require_number "rows_after" "$rows_after"
   log "partition=$p rc=$rc rows_before=$rows_before rows_after=$rows_after dup_removed=$((rows_before - rows_after)) elapsed=$(( $(date +%s) - t0 ))s"
+  write_progress "$n"
 done
 
 log "=== done: $n partitions processed ==="
