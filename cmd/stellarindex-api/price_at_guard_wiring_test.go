@@ -75,8 +75,7 @@ var rawPrices1mReads = []string{
 
 // guardEntryPoints are the pricingguard functions that judge such a read.
 var guardEntryPoints = []string{
-	"GuardServedVWAP1m", "GuardServedVWAP1mConfidence",
-	"GuardServedVWAP1mAt", "GuardServedVWAP1mSeries",
+	"GuardServedVWAP1mConfidence", "GuardServedVWAP1mAt", "GuardServedVWAP1mSeries",
 }
 
 // TestRawPrices1mReadersPassTheGuard: every function under cmd/ that calls

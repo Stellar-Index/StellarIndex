@@ -200,9 +200,12 @@ type tipProducer struct {
 	cancel context.CancelFunc
 	linger *time.Timer
 	// minter is the caller charged for this producer's registry entry.
-	// The charge is held for the entry's whole life — through the linger
-	// — and released only when the entry is deleted.
+	// When it closes its last stream while others still hold the entry,
+	// the charge moves to one of them; after the last holder leaves it is
+	// held through the linger and released only when the entry is deleted.
 	minter string
+	// holders counts refs per caller; entries are deleted at zero.
+	holders map[string]int
 	// start and logger are kept so [tipProducerRegistry.respawnIfLive]
 	// can relaunch the compute loop for THIS entry.
 	start  func(ctx context.Context)
@@ -413,6 +416,11 @@ func (r *tipProducerRegistry) removeLocked(key tipProducerKey, p *tipProducer) {
 // The aggregate rate is charged even for an unattributed caller.
 func (r *tipProducerRegistry) chargeLocked(caller string, ticks int) {
 	r.ticks += ticks
+	r.chargeCallerLocked(caller, ticks)
+}
+
+// chargeCallerLocked adds one producer costing ticks to caller's quota.
+func (r *tipProducerRegistry) chargeCallerLocked(caller string, ticks int) {
 	if caller == unattributedTipCaller {
 		return
 	}
@@ -430,11 +438,37 @@ func (r *tipProducerRegistry) chargeLocked(caller string, ticks int) {
 // the registry.
 func (r *tipProducerRegistry) dischargeLocked(p *tipProducer) {
 	r.ticks -= p.ticks
-	if p.minter == unattributedTipCaller {
+	r.dischargeCallerLocked(p.minter, p.ticks)
+}
+
+// dischargeCallerLocked removes one producer costing ticks from caller's
+// quota.
+func (r *tipProducerRegistry) dischargeCallerLocked(caller string, ticks int) {
+	if caller == unattributedTipCaller {
 		return
 	}
-	decrementOrDelete(r.minted, p.minter, 1)
-	decrementOrDelete(r.mintedTicks, p.minter, p.ticks)
+	decrementOrDelete(r.minted, caller, 1)
+	decrementOrDelete(r.mintedTicks, caller, ticks)
+}
+
+// transferChargeLocked moves p's per-caller charge from a minter that no
+// longer holds it to a caller that does. The quota must meter what a
+// caller controls: once the minter has left, the entry lives only as long
+// as the remaining holders keep it, so charging the minter would refuse it
+// new pairs while it holds none. Moving the charge to a holder, rather than
+// dropping it, keeps a second address from holding producers alive for
+// free after the first mints them. The smallest attributed holder is
+// chosen so the successor is deterministic.
+func (r *tipProducerRegistry) transferChargeLocked(p *tipProducer) {
+	next := unattributedTipCaller
+	for c := range p.holders {
+		if c != unattributedTipCaller && (next == unattributedTipCaller || c < next) {
+			next = c
+		}
+	}
+	r.dischargeCallerLocked(p.minter, p.ticks)
+	r.chargeCallerLocked(next, p.ticks)
+	p.minter = next
 }
 
 // decrementOrDelete subtracts n from m[k], deleting the entry at zero so
@@ -472,7 +506,8 @@ func (r *tipProducerRegistry) acquire(
 // A NEW producer is refused when it would take caller past its quota of
 // minted producers or its share of the compute rate, or the registry past
 // its producer ceiling or aggregate rate budget. Joining an ALREADY-RUNNING producer is always allowed and
-// never charged: refusing that would turn a popular pair's own viewers
+// never charged a new producer — though a join during the linger takes
+// over the departed minter's existing charge: refusing a join would turn a popular pair's own viewers
 // away while costing nothing to serve, which is the opposite of the
 // protection intended — and it is the page-reload case the linger
 // exists for. Callers must not use release unless the outcome is
@@ -492,6 +527,12 @@ func (r *tipProducerRegistry) acquireFor(
 			p.linger = nil
 		}
 		p.refs++
+		p.holders[caller]++
+		// A join during the linger: the minter holds nothing, so the
+		// charge moves to the holder now keeping the entry alive.
+		if _, holding := p.holders[p.minter]; !holding {
+			r.transferChargeLocked(p)
+		}
 	} else {
 		ticks := tipTicksPerMinute(key.window)
 		if outcome := r.admitLocked(caller, ticks); outcome != tipProducerAdmitted {
@@ -501,7 +542,10 @@ func (r *tipProducerRegistry) acquireFor(
 		// stored on the producer record and invoked by the linger timer
 		// in release() once the last reference is gone.
 		ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec
-		p = &tipProducer{refs: 1, cancel: cancel, minter: caller, ticks: ticks, start: start, logger: logger}
+		p = &tipProducer{
+			refs: 1, holders: map[string]int{caller: 1}, cancel: cancel,
+			minter: caller, ticks: ticks, start: start, logger: logger,
+		}
 		r.active[key] = p
 		r.producersGauge().Inc()
 		r.chargeLocked(caller, ticks)
@@ -517,10 +561,10 @@ func (r *tipProducerRegistry) acquireFor(
 		// not left with heartbeats only until every viewer leaves.
 		r.spawn(ctx, key, p)
 	}
-	return func() { r.release(key) }, tipProducerAdmitted
+	return func() { r.release(key, caller) }, tipProducerAdmitted
 }
 
-func (r *tipProducerRegistry) release(key tipProducerKey) {
+func (r *tipProducerRegistry) release(key tipProducerKey, caller string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	p, ok := r.active[key]
@@ -528,7 +572,11 @@ func (r *tipProducerRegistry) release(key tipProducerKey) {
 		return
 	}
 	p.refs--
+	decrementOrDelete(p.holders, caller, 1)
 	if p.refs > 0 {
+		if _, holding := p.holders[p.minter]; !holding {
+			r.transferChargeLocked(p)
+		}
 		return
 	}
 	linger := r.lingerFor

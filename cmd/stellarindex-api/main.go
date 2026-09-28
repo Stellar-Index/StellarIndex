@@ -3531,6 +3531,14 @@ func (r redisTriangulatedLooker) LookupCompositeMeta(
 	return val, true, nil
 }
 
+// globalPriceStore is the storage seam [globalPriceReader] reads;
+// *timescale.Store satisfies it.
+type globalPriceStore interface {
+	pricingguard.TrailingReader
+	LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair) (timescale.Vwap1mRow, error)
+	LatestAggregatorPricesForPair(ctx context.Context, base, quote canonical.Asset, sources []string) ([]canonical.OracleUpdate, error)
+}
+
 // globalPriceReader adapts *timescale.Store + the existing Redis
 // triangulated looker to aggregate.GlobalPriceReader (R-018 Phase
 // 1.4a). Each method maps to one tier of ComputeGlobalPrice:
@@ -3542,7 +3550,7 @@ func (r redisTriangulatedLooker) LookupCompositeMeta(
 //
 // Constructed once at startup and passed via v1.Options.GlobalPrice.
 type globalPriceReader struct {
-	s         *timescale.Store
+	s         globalPriceStore
 	tri       redisTriangulatedLooker
 	pkPairFor func(base, quote canonical.Asset) (canonical.Pair, error)
 	logger    *slog.Logger                // nil → no guard logging
@@ -3579,11 +3587,16 @@ func (g globalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical
 	// bare Σ(quote)/Σ(base) closed bucket that bypasses the orchestrator's
 	// σ-outlier filter / min-USD-volume gate / freeze protection, so the
 	// GlobalAssetView headline price carries the identical unfiltered
-	// fat-finger / manipulation vector. pricingguard.GuardServedVWAP1m
-	// serves last-known-good when the latest bucket is grossly off its
-	// recent trailing baseline, and is a byte-identical pass-through on a
-	// healthy bucket (fails open on thin history).
-	served := pricingguard.GuardServedVWAP1m(ctx, g.s, g.logger, pair, row)
+	// fat-finger / manipulation vector. The guard serves last-known-good
+	// when the latest bucket is grossly off its recent trailing baseline,
+	// and is a byte-identical pass-through on a healthy bucket. The
+	// headline has no stale flag to carry an unvalidated bucket (no
+	// trailing baseline), so that reads as "no data" and the caller falls
+	// through to its other tiers — the point-in-time guard's rule.
+	served, lowConfidence, _ := pricingguard.GuardServedVWAP1mConfidence(ctx, g.s, g.logger, pair, row)
+	if lowConfidence {
+		return "", time.Time{}, 0, nil, false, nil
+	}
 	// row.Bucket is the bucket's *start*; the closed-bucket contract
 	// (ADR-0015) means the bucket's served observation_at is the
 	// bucket end. Add one minute to surface the consumer-facing
@@ -4040,7 +4053,7 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	// headline pairs with a real fiat CEX market (crypto:XLM/fiat:USD via
 	// Kraken/Coinbase). A single fat-finger / manipulation trade in the
 	// served minute would otherwise corrupt the price with stale=false, no
-	// outlier rejection, no volume floor. pricingguard.GuardServedVWAP1m
+	// outlier rejection, no volume floor. pricingguard.GuardServedVWAP1mConfidence
 	// applies a robust sanity bound over the pair's recent trailing closed
 	// buckets and serves last-known-good when the latest is grossly off
 	// (adversarial-review HIGH). It is a pass-through (byte-identical) on a

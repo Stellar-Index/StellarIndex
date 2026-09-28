@@ -122,6 +122,7 @@ func registerPricingMetrics() {
 		PriceServeSubstanceUnmeasuredTotal,
 		PriceServeScamWithheldTotal,
 		PricingGuardTrailingFetchFailedTotal,
+		PricingGuardDegradedTotal,
 
 		SupplyCrossCheckDivergenceStroops,
 		SupplyCrossCheckTotal,
@@ -691,6 +692,12 @@ func seedBoundedLabelSeriesTail() {
 	// be indistinguishable from "never wired" — seed both known paths.
 	for _, path := range []string{"latest", "at"} {
 		PricingGuardTrailingFetchFailedTotal.WithLabelValues(path)
+		for _, reason := range []string{"outlier", "unvalidated"} {
+			PricingGuardDegradedTotal.WithLabelValues(path, reason)
+		}
+	}
+	for _, reason := range []string{"outlier", "unvalidated"} {
+		PricingGuardDegradedTotal.WithLabelValues("series", reason)
 	}
 }
 
@@ -3769,6 +3776,22 @@ var PricingGuardTrailingFetchFailedTotal = prometheus.NewCounterVec(
 		Help: "Serving-sanity guard trailing-baseline fetches that errored and fell back to serving the candidate unguarded (fail-open), by path (latest|at).",
 	},
 	[]string{"path"},
+)
+
+// PricingGuardDegradedTotal counts serving-sanity guard decisions that
+// did not serve the current bucket as a validated price, so "the guard is
+// holding a pair" is distinguishable from "the market is quiet". `path` is
+// the guard entry point (latest | at | series); `reason` is outlier (the
+// candidate failed the robust band) or unvalidated (no trailing baseline).
+// What the caller then served is per path: latest serves last-known-good
+// or a low-confidence value, at withholds unless a last-known-good bucket
+// meets the staleness bound, series drops the bucket.
+var PricingGuardDegradedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_pricingguard_degraded_total",
+		Help: "Serving-sanity guard decisions that did not serve the current bucket as a validated price, by path (latest|at|series) and reason (outlier|unvalidated).",
+	},
+	[]string{"path", "reason"},
 )
 
 // ─── Supply-derivation metrics ────────────────────────────────────

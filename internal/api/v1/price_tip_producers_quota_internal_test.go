@@ -178,6 +178,117 @@ func TestTipProducerRegistry_JoiningAnExistingProducerIsNeverCharged(t *testing.
 	}
 }
 
+// The charge follows the entry's HOLDERS, not whoever minted it (#1103).
+// A caller who opened a popular pair and then closed every stream no
+// longer influences the entry's life — other viewers do — so it must not
+// stay charged for it, or it is refused new pairs while holding none. The
+// charge moves to a caller still holding the entry, who is keeping it
+// alive; the linger after the LAST holder leaves stays charged to that
+// holder, which is the window the abort-loop flood exploits.
+func TestTipProducerRegistry_MinterLeavingHandsTheChargeToAHolder(t *testing.T) {
+	reg := &tipProducerRegistry{maxPerCaller: 1, lingerFor: time.Hour}
+	start := func(ctx context.Context) { <-ctx.Done() }
+	key := tipProducerKey{asset: "native", quote: "fiat:USD", window: 5}
+	ticks := tipTicksPerMinute(key.window)
+
+	minted, outcome := reg.acquireFor(key, attackerCaller, nil, start)
+	if outcome != tipProducerAdmitted {
+		t.Fatalf("mint = %s, want %s", outcome, tipProducerAdmitted)
+	}
+	minterSecond, outcome := reg.acquireFor(key, attackerCaller, nil, start)
+	if outcome != tipProducerAdmitted {
+		t.Fatalf("minter's second viewer = %s, want %s", outcome, tipProducerAdmitted)
+	}
+	joined, outcome := reg.acquireFor(key, bystanderCaller, nil, start)
+	if outcome != tipProducerAdmitted {
+		t.Fatalf("join = %s, want %s", outcome, tipProducerAdmitted)
+	}
+
+	// The minter still holds one stream: it still pays.
+	minted()
+	if got := reg.mintedFor(attackerCaller); got != 1 {
+		t.Fatalf("mintedFor(minter) = %d while it still holds a stream, want 1", got)
+	}
+
+	minterSecond()
+	if got := reg.mintedFor(attackerCaller); got != 0 {
+		t.Errorf("mintedFor(minter) = %d after its last stream closed while another "+
+			"caller keeps the entry alive, want 0", got)
+	}
+	if got := reg.mintedTicks[attackerCaller]; got != 0 {
+		t.Errorf("mintedTicks[minter] = %d after it left, want 0", got)
+	}
+	if got := reg.mintedFor(bystanderCaller); got != 1 {
+		t.Errorf("mintedFor(holder) = %d, want 1 — the charge must move to the caller "+
+			"keeping the entry alive, not vanish", got)
+	}
+	if got := reg.mintedTicks[bystanderCaller]; got != ticks {
+		t.Errorf("mintedTicks[holder] = %d, want %d", got, ticks)
+	}
+	if reg.ticks != ticks {
+		t.Errorf("aggregate ticks = %d after a transfer, want %d unchanged", reg.ticks, ticks)
+	}
+	if got := reg.running(); got != 1 {
+		t.Fatalf("running() = %d, want 1 — the producer must keep serving its holder", got)
+	}
+
+	other, outcome := reg.acquireFor(
+		tipProducerKey{asset: "native", quote: "fiat:USD", window: 6}, attackerCaller, nil, start)
+	if outcome != tipProducerAdmitted {
+		t.Fatalf("former minter's next pair = %s, want %s — it holds no streams", outcome,
+			tipProducerAdmitted)
+	}
+	other()
+
+	// The last holder leaving starts the linger, charged to that holder.
+	joined()
+	if got := reg.mintedFor(bystanderCaller); got != 1 {
+		t.Errorf("mintedFor(last holder) = %d during the linger, want 1", got)
+	}
+}
+
+// A caller joining a LINGERING entry — its minter already left and holds
+// no reference — takes over the charge (#1103). Otherwise the minter stays
+// charged for an entry kept alive only by someone else's stream.
+func TestTipProducerRegistry_JoinDuringLingerTakesTheCharge(t *testing.T) {
+	reg := &tipProducerRegistry{maxPerCaller: 1, lingerFor: time.Hour}
+	start := func(ctx context.Context) { <-ctx.Done() }
+	key := tipProducerKey{asset: "native", quote: "fiat:USD", window: 5}
+	ticks := tipTicksPerMinute(key.window)
+
+	minted, outcome := reg.acquireFor(key, attackerCaller, nil, start)
+	if outcome != tipProducerAdmitted {
+		t.Fatalf("mint = %s, want %s", outcome, tipProducerAdmitted)
+	}
+	minted() // linger armed; the minter stays charged through it
+	if got := reg.mintedFor(attackerCaller); got != 1 {
+		t.Fatalf("mintedFor(minter) = %d during the linger, want 1", got)
+	}
+
+	joined, outcome := reg.acquireFor(key, bystanderCaller, nil, start)
+	if outcome != tipProducerAdmitted {
+		t.Fatalf("join during linger = %s, want %s", outcome, tipProducerAdmitted)
+	}
+	defer joined()
+	if got := reg.mintedFor(attackerCaller); got != 0 {
+		t.Errorf("mintedFor(minter) = %d after a join during the linger, want 0", got)
+	}
+	if got := reg.mintedFor(bystanderCaller); got != 1 {
+		t.Errorf("mintedFor(joiner) = %d, want 1 — the charge moves to the holder", got)
+	}
+	if reg.ticks != ticks {
+		t.Errorf("aggregate ticks = %d after a transfer, want %d unchanged", reg.ticks, ticks)
+	}
+
+	other, outcome := reg.acquireFor(
+		tipProducerKey{asset: "native", quote: "fiat:USD", window: 6}, attackerCaller, nil, start)
+	if outcome != tipProducerAdmitted {
+		t.Fatalf("former minter's next pair = %s, want %s — it holds no streams", outcome,
+			tipProducerAdmitted)
+	}
+	other()
+}
+
 // The quota is only as good as its key. IPv6 callers must aggregate to
 // their /64 (SEC-15): a quota keyed on the full /128 is bypassed by
 // rotating the low bits of a prefix the caller already controls.

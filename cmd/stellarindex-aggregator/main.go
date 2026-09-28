@@ -2759,11 +2759,16 @@ func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canoni
 			// Same serving-sanity guard as the API raw-bucket paths: the
 			// bare closed bucket bypasses the orchestrator's σ-outlier /
 			// min-volume / freeze filters, so a fat-finger print would
-			// fire a SPURIOUS alert. GuardServedVWAP1m serves last-known-
-			// good off the trailing baseline of the pair actually read,
-			// is byte-identical on a healthy bucket, and fails open on
-			// thin history.
-			served := pricingguard.GuardServedVWAP1m(ctx, r.store, r.logger, pair, row)
+			// fire a SPURIOUS alert. The guard serves last-known-good off
+			// the trailing baseline of the pair actually read and is
+			// byte-identical on a healthy bucket. An unvalidated bucket (no
+			// trailing baseline) is the guard's fail-open case; an alert
+			// has no stale flag to carry that doubt, so it does not fire,
+			// sticky like the withholding gate above.
+			served, lowConfidence, _ := pricingguard.GuardServedVWAP1mConfidence(ctx, r.store, r.logger, pair, row)
+			if lowConfidence {
+				return "", time.Time{}, false, nil
+			}
 			// The guard's VWAP is the raw quote/base CAGG ratio, exactly
 			// as /v1/price's normalizeRawPriceSnapshot reads it before
 			// AdjustPrice. Apply the same correction here: the customer's
