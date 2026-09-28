@@ -186,16 +186,28 @@ outage. The revert landed after the tag.
   indistinguishable from no page at all, which is exactly how this was first
   written up. A phone-paging receiver is still an open decision (owner:
   maintainer).
-- **Nothing paged on the failure mode that actually caused the outage.** There
-  was no signal on the rate limiter failing closed or on Redis refusing
-  writes — those metrics didn't exist. In progress, on branches, not yet
-  shipped: `stellarindex_ratelimit_fail_closed_total` with a page rule on it,
-  `stellarindex_redis_command_errors_total{class}`, and a widened Redis
-  OOM/READONLY alert that also catches MISCONF.
-- **Usage-counter loss during an outage was invisible.** The ~1.78M increments
-  dropped in this window weren't counted anywhere.
-  `stellarindex_usage_units_dropped_total` is in progress, on a branch, not
-  yet shipped.
+- ~~Nothing paged on the failure mode that actually caused the outage~~ —
+  **shipped 2026-09-27.** There was no signal on the rate limiter failing
+  closed or on Redis refusing writes when this line was first written; both
+  now exist. `stellarindex_ratelimit_fail_closed_total` counts the fail-closed
+  transition itself, and `stellarindex_ratelimit_fail_closed` (`api.yml`,
+  `severity: page`) fires directly on it — so the next occurrence of this
+  exact mechanism pages on its own signal instead of only being reachable
+  through the root-disk or Postgres alerts. Every Redis client also now
+  counts failures by class via `stellarindex_redis_command_errors_total{class}`.
+  The write-rejection alert (`stellarindex_redis_write_rejected_oom`,
+  `cache.yml`) was widened to `OOM|READONLY|NOREPLICAS` — **not** to MISCONF or
+  EXECABORT as this bullet originally asked for: `stellarindex_redis_writes_blocked`
+  (bgsave status) already pages on the MISCONF shape this incident hit, and a
+  second rule on the same event would double-page it; EXECABORT is a
+  client-side MULTI queueing error, not a server write rejection. All three
+  alerts have promtool rule-test coverage (`deploy/monitoring/rule-tests/`),
+  including a fixture that pins MISCONF as deliberately non-paging here.
+- ~~Usage-counter loss during an outage was invisible~~ — **shipped 2026-09-27.**
+  The ~1.78M increments dropped in this window weren't counted anywhere at the
+  time. `stellarindex_usage_units_dropped_total{counter}` now counts a failed
+  counter write directly, with `stellarindex_usage_write_failing` (ticket
+  severity) alerting on the billable class.
 - **The 16 GB swapfile** holds 24 MB on a 188 GB host with 131 GB available. It
   is a third of the root filesystem doing nothing.
 
