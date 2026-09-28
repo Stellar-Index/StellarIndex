@@ -16,7 +16,7 @@
 //
 // Phase 2, shipped, lives at [internal/aggregate/baseline]
 // (per-asset MAD baselines + z-score) and
-// [internal/aggregate/confidence] (six-factor weighted-geomean
+// [internal/aggregate/confidence] (seven-factor weighted-geomean
 // confidence). The aggregator orchestrator wires both — Phase 1 here
 // gates "is this movement large for this asset class" while Phase 2
 // gates "is this movement statistically anomalous AND under-confident
@@ -65,7 +65,7 @@
 // # Asset classification
 //
 // Operator config maps each asset to a class via
-// `[anomaly_detection.classifications]`. Anything not explicitly
+// `[anomaly.classifications]`. Anything not explicitly
 // classified falls through to [ClassDefault] with conservative
 // thresholds.
 //
@@ -85,5 +85,5 @@
 // [internal/aggregate/confidence]) layer cleanly on top of an
 // untouched math layer.
 //
-// [ADR-0019]: ../../docs/adr/0019-anomaly-response-and-confidence-scoring.md
+// [ADR-0019]: ../../../docs/adr/0019-anomaly-response-and-confidence-scoring.md
 package anomaly
