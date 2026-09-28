@@ -249,6 +249,14 @@ change). At minimum, edit:
   ClickHouse (§4.5), uncomment the two switches and set them
   `false`** — the indexer dials that address at boot and refuses to
   start when nothing answers.
+- `[api] external_base_url` — **your own** public `/v1` root, e.g.
+  `https://api.example.com/v1`. When an email sender is configured, the
+  `/v1/signup` verification link is built from this value and nothing
+  else (the request's `Host` header is client-controlled and is never
+  used). Leaving the upstream default `https://api.stellarindex.io/v1`
+  emails your users' live verification tokens to our host, where they
+  do not work. An empty or non-`http(s)` value suppresses the
+  verification email (`email_verification_sent: false`).
 
 Secrets never belong in this file — see §5.
 

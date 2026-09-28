@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"unicode/utf8"
 
@@ -295,12 +297,19 @@ func (s *Server) issueSignupVerification(r *http.Request, keyID, toEmail string)
 			"err", err, "key_id", keyID)
 		return false
 	}
+	// Built before Reserve so an unusable base never strands a
+	// reserved token that no email will carry.
+	verifyURL, err := buildSignupVerifyURL(s.signupVerifyBaseURL, token)
+	if err != nil {
+		s.logger.Warn("signup verification: public base URL unusable",
+			"err", err, "key_id", keyID)
+		return false
+	}
 	if err := s.signupVerifier.Reserve(r.Context(), token, keyID, auth.DefaultSignupVerifyTTL); err != nil {
 		s.logger.Warn("signup verification: token reservation failed",
 			"err", err, "key_id", keyID)
 		return false
 	}
-	verifyURL := buildSignupVerifyURL(r, token, s.signupVerifyBaseURL)
 	if err := s.signupVerifyEmailer.SendSignupVerification(r.Context(), toEmail, verifyURL); err != nil {
 		s.logger.Warn("signup verification: send failed",
 			"err", err, "key_id", keyID, "to", maskEmail(toEmail))
@@ -309,33 +318,25 @@ func (s *Server) issueSignupVerification(r *http.Request, keyID, toEmail string)
 	return true
 }
 
-// buildSignupVerifyURL constructs the absolute click-through URL
-// the customer sees in the verification email. Built from
-// baseURL (operator config, normally cfg.API.ExternalBaseURL) —
-// NEVER from the request's Host header, which is client-supplied
-// and unauthenticated: a forged `Host` would otherwise land a
-// live, single-use token in an attacker-controlled link
-// (CA2-A20-harden-5). baseURL's trailing "/v1" (or plain "/") is
-// trimmed so the result doesn't double up on the "/v1" prefix
-// already applied to the mounted route.
-//
-// Empty baseURL falls back to the request's scheme+Host — local
-// dev only; production config always sets external_base_url.
-func buildSignupVerifyURL(r *http.Request, plaintextToken, baseURL string) string {
-	baseURL = strings.TrimSuffix(strings.TrimSuffix(baseURL, "/"), "/v1")
-	if baseURL != "" {
-		return baseURL + "/signup/verify?token=" + plaintextToken
+// buildSignupVerifyURL joins the operator-configured public API root
+// (cfg.API.ExternalBaseURL, with or without its trailing "/v1") to the
+// mounted GET /v1/signup/verify route. The request's Host and
+// X-Forwarded-* headers are client-controlled, so the link is never
+// derived from them: there is no fallback, and an unusable base is an
+// error the caller fails closed on.
+func buildSignupVerifyURL(base, plaintextToken string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(base))
+	if err != nil {
+		return "", errors.New("signup verify base URL does not parse")
 	}
-	scheme := "https"
-	if r.TLS == nil && (r.Host == "localhost" || strings.HasPrefix(r.Host, "127.0.0.1") || strings.HasPrefix(r.Host, "localhost:")) {
-		scheme = "http"
+	if (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" ||
+		u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return "", fmt.Errorf("signup verify base URL %q must be an absolute http(s) URL with no userinfo, query or fragment", u.Redacted())
 	}
-	// X-Forwarded-Proto from Caddy / Cloudflare wins when present
-	// — that's the source of truth for the original-request scheme.
-	if xfp := r.Header.Get("X-Forwarded-Proto"); xfp == "http" || xfp == "https" {
-		scheme = xfp
-	}
-	return scheme + "://" + r.Host + "/v1/signup/verify?token=" + plaintextToken
+	u.Path = strings.TrimSuffix(strings.TrimRight(u.Path, "/"), "/v1") + "/v1/signup/verify"
+	u.RawPath = ""
+	u.RawQuery = url.Values{"token": {plaintextToken}}.Encode()
+	return u.String(), nil
 }
 
 // signupIPThrottleOK runs the F-1232 per-IP signup throttle check.

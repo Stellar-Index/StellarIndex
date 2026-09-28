@@ -24,6 +24,8 @@ all:
     home_domain:         "stellarindex.io"
     # /v1/status region.deployment — this is NOT production (#328).
     region_deployment:   "futurenet"
+    # api.external_base_url — origin of emailed signup-verification links.
+    stellarindex_api_external_base_url: "https://api.futurenet.stellarindex.io/v1"
     archival_node_min_ram_mb: 18000
 
     # ── THE network switch ──

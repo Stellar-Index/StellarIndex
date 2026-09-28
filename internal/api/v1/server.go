@@ -931,9 +931,8 @@ type Options struct {
 	// CA2-A20-harden-5: the client-supplied Host header is
 	// untrustworthy (a forged Host lands a live token in an
 	// attacker-controlled link), so the emailed URL MUST come
-	// from operator config, not the request. Empty falls back to
-	// the request's scheme+Host (local dev only — production
-	// config always sets this).
+	// from operator config, not the request. Empty or not an
+	// absolute http(s) URL suppresses the verification email.
 	SignupVerifyBaseURL string
 
 	// APIKeyEmailVerifier, when non-nil, lets the
