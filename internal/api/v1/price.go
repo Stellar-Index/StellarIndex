@@ -1649,9 +1649,9 @@ func fxCrossStale(observedAt time.Time, maxAge time.Duration) bool {
 // bucket was read under, zero when a fallback layer answered — the
 // governing-pair input /v1/price's own freeze check takes.
 //
-// It reads no freeze marker: the tip and oracle surfaces that share it
-// are freeze-agnostic. The freeze-aware surfaces apply the leg's freeze
-// through [Server.resolveFrozenServeFor].
+// It reads no freeze marker: the tip that shares it is freeze-agnostic.
+// The freeze-aware surfaces apply the leg's freeze through
+// [Server.resolveFrozenServeFor].
 func (s *Server) resolveUSDLeg(
 	ctx context.Context, asset canonical.Asset,
 ) (snap PriceSnapshot, sources []string, served canonical.Asset, ok, withheld bool) {

@@ -34,7 +34,9 @@ type SEP40Price struct {
 // fiat:USD always — clients wanting a different quote should
 // hit /v1/price?asset=&quote= or /v1/oracle/x_last_price.
 //
-// 404 when no price observation exists for the asset.
+// 404 when no price observation exists for the asset. A frozen pair
+// (ADR-0019) serves the held last-known-good with flags.frozen, or 503
+// when none is held — never the refused bucket.
 func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	reader := s.prices
 	if reader == nil {
@@ -81,7 +83,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	// key and misses a fresh `crypto:XLM/fiat:USD` VWAP that CEX
 	// trades populate — returning stale/empty here while /v1/price
 	// serves fresh. See readPriceWithAliases for the full rationale.
-	snapshot, sources, stale, err := s.readPriceWithAliases(ctx, reader, asset, defaultPriceQuote)
+	snapshot, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, reader, asset, defaultPriceQuote)
 	// Substance-gated pair: withheld beats the fallback chain — same
 	// rationale as handlePrice (see ErrPriceWithheld). The SEP-40
 	// surface is the LAST place a substanceless price belongs: its
@@ -111,7 +113,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		var ok bool
 		viaFallback = true
 		var withheld bool
-		snapshot, sources, _, triangulated, ok, withheld = s.priceFallback(ctx, asset, defaultPriceQuote)
+		snapshot, sources, served, triangulated, ok, withheld = s.priceFallback(ctx, asset, defaultPriceQuote)
 		// MSP-06: a withheld verdict reached from the proxy leg must be
 		// reported as withheld, not as "no price data" — the two are
 		// different answers, and only the withheld problem names the raw
@@ -155,18 +157,59 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// dex-nonstandard-decimals forward normalization on the raw
-	// closed-1m-bucket read — see handlePrice's equivalent call.
-	if !viaFallback {
-		s.normalizeRawPriceSnapshot(&snapshot, asset, defaultPriceQuote)
+	// A frozen pair serves the value the freeze is HOLDING, never the
+	// refused bucket just read — see [Server.resolveFrozenServe].
+	held := s.resolveFrozenServeFor(r, snapshot, asset, served, defaultPriceQuote)
+	if held.outcome == frozenServeNothingHeld {
+		writeFrozenNothingHeldProblem(w, r, asset, defaultPriceQuote)
+		return
 	}
+	out, flags, sources := s.sep40Serve(asset, defaultPriceQuote, sep40Read{
+		snapshot: snapshot, sources: sources, stale: stale, triangulated: triangulated, viaFallback: viaFallback,
+	}, held)
+	writeJSON(w, out, flags, sources...)
+}
 
+// sep40Read is what a SEP-40 single-price handler read, before the
+// freeze verdict is applied.
+type sep40Read struct {
+	snapshot     PriceSnapshot
+	sources      []string
+	stale        bool
+	triangulated bool
+	viaFallback  bool
+}
+
+// sep40Serve applies the freeze verdict the handler already resolved and
+// builds the response. A held value replaces the read wholesale — value,
+// sources, triangulation — and is stale and single-sourced by
+// construction, as on /v1/price.
+func (s *Server) sep40Serve(asset, quote canonical.Asset, rd sep40Read, held frozenResolution) (SEP40Price, Flags, []string) {
+	if held.outcome == frozenServeHeld {
+		rd = sep40Read{
+			snapshot: held.snapshot, sources: held.sources, stale: true,
+			triangulated: held.triangulated, viaFallback: true,
+		}
+	}
+	// dex-nonstandard-decimals forward normalization on the raw
+	// closed-1m-bucket read only — see handlePrice's equivalent call.
+	if !rd.viaFallback {
+		s.normalizeRawPriceSnapshot(&rd.snapshot, asset, quote)
+	}
 	out := SEP40Price{
 		Asset:     asset.String(),
-		Price:     snapshot.Price,
-		Timestamp: snapshot.ObservedAt,
+		Price:     rd.snapshot.Price,
+		Timestamp: rd.snapshot.ObservedAt,
 	}
-	writeJSON(w, out, Flags{Stale: stale, Triangulated: triangulated}, sources...)
+	frozen := held.outcome == frozenServeHeld
+	flags := Flags{
+		Stale:         rd.stale,
+		Triangulated:  rd.triangulated,
+		Frozen:        frozen,
+		FrozenChecked: held.checked,
+		SingleSource:  frozen,
+	}
+	return out, flags, rd.sources
 }
 
 // handleOraclePrices serves GET /v1/oracle/prices?asset=<id>&records=N.
@@ -236,7 +279,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
-	snapshots, triangulated, err := s.recentClosedWithStablecoinFallback(ctx, asset, defaultPriceQuote, records)
+	snapshots, viaPeg, err := s.recentClosedWithStablecoinFallback(ctx, asset, defaultPriceQuote, records)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -282,7 +325,10 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 			Timestamp: snap.ObservedAt,
 		}
 	}
-	writeJSON(w, out, Flags{Triangulated: triangulated})
+	// A peg-proxied series is not a print of the fiat:USD pair and sits
+	// below the surface's baseline: stale as well as triangulated, the
+	// F-1339 rule lastprice/x_last_price follow.
+	writeJSON(w, out, Flags{Stale: viaPeg, Triangulated: viaPeg})
 }
 
 // recentClosedWithStablecoinFallback wraps PriceReader.RecentClosedSnapshots
@@ -291,8 +337,13 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 // #1220). When the literal asset/fiat:USD lookup returns an
 // empty slice AND quote is fiat:USD AND the operator declared
 // classic USD pegs, walks the pegs and returns the first non-empty
-// asset/<peg> result. triangulated=true on the return so the
-// envelope can stamp Flags{Triangulated: true}.
+// asset/<peg> result. viaPeg=true on the return so the envelope can
+// stamp the peg-served series stale and triangulated.
+//
+// A withheld peg leg is not a miss: the asset HAS a price there that
+// policy declines to publish. A later peg may still serve (as in
+// [Server.walkUSDPegs]); if none does, the first withheld verdict is
+// returned so the handler answers withheld rather than 200 [].
 //
 // Without this, /v1/oracle/prices?asset=native silently returns an
 // empty data array on Stellar mainnet — same out-of-the-box failure
@@ -307,8 +358,8 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 // F-1340 closed on the single-snapshot surfaces.
 func (s *Server) recentClosedWithStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, n int,
-) ([]PriceSnapshot, bool, error) {
-	snapshots, err := s.recentClosedForAliases(ctx, asset, quote, n)
+) (snapshots []PriceSnapshot, viaPeg bool, err error) {
+	snapshots, err = s.recentClosedForAliases(ctx, asset, quote, n)
 	if err != nil {
 		return nil, false, err
 	}
@@ -318,6 +369,7 @@ func (s *Server) recentClosedWithStablecoinFallback(
 	if quote.Type != canonical.AssetFiat || quote.Code != "USD" {
 		return snapshots, false, nil
 	}
+	var withheldErr error
 	for _, peg := range s.usdPeggedClassics {
 		// A peg asked for under any of its spellings — the classic id or
 		// its SAC wrapper — is not a market against itself.
@@ -325,10 +377,16 @@ func (s *Server) recentClosedWithStablecoinFallback(
 			continue
 		}
 		pegSnapshots, pegErr := s.recentClosedForAliases(ctx, asset, peg, n)
+		if errors.Is(pegErr, ErrPriceWithheld) && withheldErr == nil {
+			withheldErr = pegErr
+		}
 		if pegErr != nil || len(pegSnapshots) == 0 {
 			continue
 		}
 		return pegSnapshots, true, nil
+	}
+	if withheldErr != nil {
+		return nil, false, withheldErr
 	}
 	return snapshots, false, nil
 }
@@ -375,7 +433,8 @@ const (
 // lastprice parsing path; the implicit quote is whatever was
 // passed in the request.
 //
-// 404 when no observation exists for the pair.
+// 404 when no observation exists for the pair. Freeze handling as
+// handleOracleLastPrice.
 func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) {
 	reader := s.prices
 	if reader == nil {
@@ -400,7 +459,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 	// alias loop, exactly as handlePrice does — so `x_last_price(native,
 	// fiat:USD)` resolves a fresh `crypto:XLM/fiat:USD` VWAP that CEX
 	// trades populate rather than missing it on the literal form.
-	snapshot, sources, stale, err := s.readPriceWithAliases(ctx, reader, base, quote)
+	snapshot, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, reader, base, quote)
 	// Substance-gated pair: withheld beats the fallback chain — same
 	// rationale as handleOracleLastPrice above.
 	if errors.Is(err, ErrPriceWithheld) {
@@ -422,7 +481,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		var ok bool
 		viaFallback = true
 		var withheld bool
-		snapshot, sources, _, triangulated, ok, withheld = s.priceFallback(ctx, base, quote)
+		snapshot, sources, served, triangulated, ok, withheld = s.priceFallback(ctx, base, quote)
 		// MSP-06, as above.
 		if !ok && withheld {
 			writePriceWithheldProblem(w, r, base, quote, PriceWithheldUnattributed)
@@ -462,18 +521,16 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// dex-nonstandard-decimals forward normalization (M2) on the raw
-	// closed-1m-bucket read — see handleOracleLastPrice's equivalent call.
-	if !viaFallback {
-		s.normalizeRawPriceSnapshot(&snapshot, base, quote)
+	// Freeze, then the shared tail — see handleOracleLastPrice.
+	held := s.resolveFrozenServeFor(r, snapshot, base, served, quote)
+	if held.outcome == frozenServeNothingHeld {
+		writeFrozenNothingHeldProblem(w, r, base, quote)
+		return
 	}
-
-	out := SEP40Price{
-		Asset:     base.String(),
-		Price:     snapshot.Price,
-		Timestamp: snapshot.ObservedAt,
-	}
-	writeJSON(w, out, Flags{Stale: stale, Triangulated: triangulated}, sources...)
+	out, flags, sources := s.sep40Serve(base, quote, sep40Read{
+		snapshot: snapshot, sources: sources, stale: stale, triangulated: triangulated, viaFallback: viaFallback,
+	}, held)
+	writeJSON(w, out, flags, sources...)
 }
 
 // parseXLastPriceBaseQuote extracts + validates the base/quote pair for
