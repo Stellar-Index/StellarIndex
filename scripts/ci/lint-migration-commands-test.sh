@@ -43,12 +43,21 @@ trap 'rm -rf "$TMP"' EXIT
 pass=0
 fail=0
 check() { # check <desc> <want-exit> <root>
-  local desc="$1" want="$2" root="$3" got
-  bash "$LINT" "$root" >/dev/null 2>&1
+  local desc="$1" want="$2" root="$3" got err
+  # Captures stderr only (2>&1, then >/dev/null): an exit code alone
+  # cannot tell a real pass from a subshell that crashed and left the
+  # reader loop an empty/truncated list — a `<( )` process substitution's
+  # exit status never reaches its reader, so that crash prints to stderr
+  # but the script still exits 0. A bash parser diagnostic there is a
+  # gate that passed for the wrong reason, want or not.
+  err="$(bash "$LINT" "$root" 2>&1 >/dev/null)"
   got=$?
-  if [ "$got" -eq "$want" ]; then
+  if [ "$got" -eq "$want" ] && ! grep -q ': line [0-9][0-9]*: syntax error' <<<"$err"; then
     echo "  ok   $desc"
     pass=$((pass + 1))
+  elif [ "$got" -eq "$want" ]; then
+    echo "  FAIL $desc (exit $got matched, but bash reported: ${err##*$'\n'})"
+    fail=$((fail + 1))
   else
     echo "  FAIL $desc (exit $got, want $want)"
     fail=$((fail + 1))

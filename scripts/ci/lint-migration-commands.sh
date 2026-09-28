@@ -406,10 +406,14 @@ retained_views="$(
 )"
 
 op_files=()
-while IFS= read -r f; do
-  [ -n "$f" ] || continue
-  op_files+=("$f")
-done < <(
+# A command substitution ($( )), checkable by `set -e` — not a process
+# substitution (`<( )`), whose subshell's exit status never reaches the
+# reader loop, so a crash inside it (e.g. a parser bug) is silently
+# swallowed and this gate reports ok over a truncated file list. See bash
+# 3.2's rejection of a bare `case` pattern written inside `<( )`: the
+# pattern needs a leading `(` there, which is why one appears below even
+# though it changes nothing under a case statement outside a substitution.
+op_files_raw="$(
   {
     if [ "${#op_dirs[@]}" -gt 0 ]; then
       find "${op_dirs[@]}" -type f \( -name '*.md' -o -name '*.yml' -o -name '*.yaml' \
@@ -417,10 +421,14 @@ done < <(
     fi
     for f in "${migs[@]}"; do
       n="${f#migrations/}"; n="${n%%_*}"
-      case "$n" in [0-9][0-9][0-9][0-9]) [ "$((10#$n))" -ge 156 ] && echo "$f" ;; esac
+      case "$n" in ([0-9][0-9][0-9][0-9]) [ "$((10#$n))" -ge 156 ] && echo "$f" ;; esac
     done
   } | sed 's#^\./##' | sort -u
-)
+)"
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  op_files+=("$f")
+done <<<"$op_files_raw"
 
 # Only files naming the function reach awk, which reads each whole.
 ref_files=()
