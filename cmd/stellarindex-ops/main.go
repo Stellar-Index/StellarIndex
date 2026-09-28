@@ -402,22 +402,24 @@ Subcommands:
                           hands the address back to the next sync. Dry run
                           unless -write.
   curated-rwa-sync -config PATH [-base-url URL] [-write] [-timeout DUR] [-textfile PATH]
-                          Cache a third party's curated list of tokenized
-                          real-world assets on Stellar, and that party's own
-                          USD price per token, into rwa_curated_directory for
-                          the RWA surface's CURATED arm. First curator: the
-                          Stellar team's "RWAs on Stellar" dashboard, read as the
-                          latest RESULT of its public queries (GET
-                          /api/v1/query/{id}/results) — the private upload
-                          tables behind it cannot be executed against by
-                          anyone else. Executes nothing; bills by datapoints
-                          (fractions of a credit), which are printed and,
-                          with -textfile, emitted as a gauge. A row is the curator's
-                          word and is served under its own basis and total,
-                          never inside the verified set. Malformed addresses
-                          are skipped and counted; a price with no day is
-                          dropped, never given one. Refuses an empty result.
-                          Key from DUNE_API_KEY (required).
+                          Cache a third party's PUBLISHED totals about
+                          tokenized real-world assets on Stellar — a
+                          monthly market-cap total and a subclass split —
+                          into curated_rwa_published_series for the RWA
+                          surface's CURATED arm. First curator: the
+                          Stellar team's "RWAs on Stellar" dashboard, read
+                          as the latest RESULT of its public queries (GET
+                          /api/v1/query/{id}/results) — the private
+                          per-asset upload tables behind it cannot be read
+                          by anyone else. Executes nothing; bills by
+                          datapoints (fractions of a credit), which are
+                          printed and, with -textfile, emitted as a gauge.
+                          A row is the curator's own arithmetic and is
+                          served under its own basis and total, never
+                          inside the verified set. A malformed or
+                          unparseable row refuses the whole run — nothing
+                          is silently skipped and kept. Refuses an empty
+                          result. Key from DUNE_API_KEY (required).
   listing-sync -config PATH [-base-url URL] [-write] [-timeout DUR]
                           Cache the Stellar slice of an independent price-
                           aggregation platform's own per-coin platform->address
