@@ -1,17 +1,23 @@
 package streampublish_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 	"github.com/Stellar-Index/StellarIndex/internal/api/streampublish"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // fakeReader returns canned snapshots keyed by pair string. The
@@ -334,5 +340,66 @@ func TestPublisher_Run_RecoversPanickingPollLoop(t *testing.T) {
 		// exited instead of crashing the process.
 	case <-time.After(3 * time.Second):
 		t.Fatal("Publisher.Run did not return after its poll goroutine panicked — the per-pair recover is missing")
+	}
+}
+
+// stallReader blocks past its pollCtx deadline on every call, so the
+// error tickOnce sees is pollCtx's own DeadlineExceeded rather than a
+// signal that the parent ctx (and therefore the publisher) is
+// shutting down.
+type stallReader struct{}
+
+func (stallReader) LatestPrice(ctx context.Context, _, _ canonical.Asset) (v1.PriceSnapshot, []string, bool, error) {
+	<-ctx.Done()
+	return v1.PriceSnapshot{}, nil, false, ctx.Err()
+}
+
+// TestPublisher_PollTimeoutIsNotShutdown proves CA2-A33-correct-0: a
+// reader that outlives the poll interval must be logged and counted
+// as a stall, not treated as if the parent ctx were cancelled. Before
+// the fix, tickOnce's error branch matched context.DeadlineExceeded
+// unconditionally and returned silently even with a live parent ctx —
+// this test fails against that code because neither the WARN log nor
+// obs.StreamPublishStallTotal ever fires.
+func TestPublisher_PollTimeoutIsNotShutdown(t *testing.T) {
+	hub := streaming.NewHub(0)
+	asset := mustParse(t, "native")
+	quote := mustParse(t, "fiat:USD")
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+
+	// New clamps interval to a 1s floor, so this is also the
+	// effective poll cadence — not a request for tighter polling.
+	const interval = time.Second
+	pub := streampublish.New(hub, stallReader{}, interval, logger, streampublish.Options{})
+
+	before := testutil.ToFloat64(obs.StreamPublishStallTotal.WithLabelValues("price_stream"))
+
+	// Parent ctx stays live for the whole test — only pollCtx (scoped
+	// to interval) ever expires.
+	ctx, cancelRun := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = pub.Run(ctx, []canonical.Pair{{Base: asset, Quote: quote}})
+		close(done)
+	}()
+
+	// Two poll intervals' worth of stalls (immediate poll-once tick +
+	// one ticker fire), then stop the loop.
+	time.Sleep(2500 * time.Millisecond)
+	cancelRun()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after cancel")
+	}
+
+	after := testutil.ToFloat64(obs.StreamPublishStallTotal.WithLabelValues("price_stream"))
+	if after <= before {
+		t.Errorf("StreamPublishStallTotal did not increment: before=%v after=%v", before, after)
+	}
+	if !strings.Contains(logBuf.String(), "reader missed poll deadline") {
+		t.Errorf("expected a poll-deadline WARN log, got: %s", logBuf.String())
 	}
 }
