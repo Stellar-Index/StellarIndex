@@ -44,8 +44,10 @@ var knownCryptoCodes = map[string]struct{}{
 	// as crypto only; it was arriving as `raw:USDT0` and ticketing
 	// stellarindex_ingestion_oracle_unknown_symbols).
 	"USDT0": {},
-	// Euro-pegged stablecoins. Same reasoning — keep as crypto here,
-	// let the aggregator decide to map them to fiat:EUR.
+	// Euro-pegged stablecoins — keep as crypto here, let the aggregator
+	// decide to map them to fiat:EUR. EURC and EUROC are one asset
+	// (Circle's rename), unified by alias.go's eurcAliasFamily; EUROB is
+	// a different token and deliberately not aliased.
 	"EURC": {}, "EUROC": {}, "EUROB": {},
 	// Mexican Peso stablecoin (Bitso MXNe). Aggregator maps to fiat:MXN.
 	"MXNe": {},

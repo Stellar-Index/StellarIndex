@@ -94,9 +94,11 @@ func (s *Server) oracleAssetCandidates(a canonical.Asset) []canonical.Asset {
 	// global stablecoin tickers (USDC, PYUSD, EURC) match Reflector's
 	// per-ticker rows. Harmless on verified assets Reflector doesn't
 	// track (the ANY($1) filter just yields zero rows for that key).
+	// The granted ticker is expanded through its own family too: a feed may
+	// publish under a renamed spelling (crypto:EUROC for crypto:EURC).
 	if ticker, ok := s.verifiedTickerFor(a); ok {
 		if x, err := canonical.ParseAsset("crypto:" + ticker); err == nil {
-			candidates = appendAssetsUnique(candidates, x)
+			candidates = appendAssetsUnique(candidates, canonical.AssetAliases(x)...)
 		}
 	}
 	return candidates
