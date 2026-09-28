@@ -267,7 +267,12 @@ func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 		return "public, max-age=60", true
 	case path == "/v1/ledgers", path == "/v1/network/throughput",
 		path == "/v1/operations", path == "/v1/contracts",
-		contractDetailPath.MatchString(path):
+		contractDetailPath.MatchString(path),
+		// Network-stats strip (#1070): a 30s SWR cache carrying
+		// latest_ledger, which advances every ~5s — the 300s catalogue
+		// band it sat in was 10x its own cache lifetime. Joins its
+		// /v1/network/throughput sibling in the short band instead.
+		path == "/v1/network/stats":
 		if cdnEnabled {
 			return "public, max-age=10, s-maxage=15", true
 		}
@@ -391,7 +396,12 @@ func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 		// The non-Stellar half of the /v1/assets catalogue (LC-001): same
 		// wire shape and the same live valuations, so the same band.
 		path == "/v1/external/assets",
-		strings.HasPrefix(path, "/v1/external/assets/"):
+		strings.HasPrefix(path, "/v1/external/assets/"),
+		// Routers registry + routed-via 24h rollup (#1070). Wired to the raw
+		// store with no in-process cache and the attribution sweeper keeps
+		// it fresh on a 1-min cadence — a 60s edge entry (not the 300s
+		// catalogue band it sat in) is what stays inside that cadence.
+		path == "/v1/aggregators":
 		if cdnEnabled {
 			return "public, max-age=30, s-maxage=60", true
 		}
@@ -550,13 +560,6 @@ func routePolicy(path string, cdnEnabled bool) (string, bool) {
 		path == "/v1/pools",
 		// Lending pools — Blend pool list; same registry shape.
 		path == "/v1/lending/pools",
-		// Routers registry + routed-via 24h rollup. Rolling
-		// observation kept fresh by the 1-min attribution
-		// sweeper; a 60s edge cache stays inside that cadence.
-		path == "/v1/aggregators",
-		// Network-stats strip — single SQL query backing the
-		// explorer's home network strip; cheap to cache.
-		path == "/v1/network/stats",
 		// Incident JSON list — embedded with the binary, only
 		// changes on redeploy. (.atom variant sets its own header.)
 		path == "/v1/incidents",

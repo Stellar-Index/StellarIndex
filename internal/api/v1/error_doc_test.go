@@ -42,6 +42,11 @@ func TestHandleErrorDoc(t *testing.T) {
 		if got, _ := data["type"].(string); got != "https://api.stellarindex.io/errors/account-not-found" {
 			t.Errorf("type = %q, want the canonical URI", got)
 		}
+		if got := strings.Join(rec.Header().Values("Vary"), ","); !strings.Contains(got, "Accept") {
+			t.Errorf("Vary = %q, want it to include Accept (#1070: this handler "+
+				"content-negotiates on Accept with no Vary, so a shared cache can "+
+				"serve the wrong representation)", got)
+		}
 	})
 
 	t.Run("unknown slug 404s", func(t *testing.T) {

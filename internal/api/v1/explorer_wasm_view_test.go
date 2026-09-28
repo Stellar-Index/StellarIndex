@@ -27,8 +27,12 @@ func TestExplorer_ContractWasm_OK(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
-	if cc := resp.Header.Get("Cache-Control"); cc != "public, max-age=86400" {
-		t.Errorf("Cache-Control = %q, want day-long immutable cache", cc)
+	// #1070: this URL is keyed on contract_id, not the wasm hash it
+	// returns, so a day-long "immutable" cache served pre-upgrade
+	// bytecode for up to 24h after an in-place upgrade. Bounded to the
+	// standard catalogue band instead.
+	if cc := resp.Header.Get("Cache-Control"); cc != "public, max-age=60, s-maxage=300" {
+		t.Errorf("Cache-Control = %q, want the bounded catalogue band", cc)
 	}
 	var body struct {
 		Data v1.ContractWasmView `json:"data"`
