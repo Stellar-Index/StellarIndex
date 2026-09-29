@@ -48,7 +48,7 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	from := fs.Uint("from", 0, "First ledger sequence (inclusive, required)")
 	to := fs.Uint("to", 0, "Last ledger sequence (inclusive, required)")
 	resume := fs.Bool("resume", true, "Resume from saved cursor if a checkpoint exists for this from/to pair (default true)")
-	bucket := fs.String("bucket", "", "Override storage bucket (default cfg.Storage.S3BucketLive)")
+	bucket := fs.String("bucket", "", "Override bucket (default: s3_bucket_archive, then s3_bucket_live)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -58,6 +58,10 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	write := gate.Banner()
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
+	if err != nil {
+		return err
+	}
+	streamBucket, err := historicReadBucket(cfg, *bucket)
 	if err != nil {
 		return err
 	}
@@ -111,10 +115,6 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 		return nil
 	}
 
-	streamBucket := cfg.Storage.S3BucketLive
-	if *bucket != "" {
-		streamBucket = *bucket
-	}
 	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, streamBucket, 1)
 
 	fmt.Fprintf(os.Stderr, "backfill-router: streaming ledgers %d..%d from bucket %q\n",
@@ -266,7 +266,8 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	if totalLedgers == 0 {
 		return fmt.Errorf(
 			"backfill-router walked 0 of %d ledgers in range [%d,%d] from bucket %q — "+
-				"the bucket likely has no files there; historical ranges need -bucket galexie-archive",
+				"the bucket likely has no files there; historical ranges need the archive bucket, "+
+				"and the archive's hourly mirror of live may not yet hold a -to near the tip",
 			uint32(*to)-startLedger+1, startLedger, uint32(*to), streamBucket)
 	}
 
