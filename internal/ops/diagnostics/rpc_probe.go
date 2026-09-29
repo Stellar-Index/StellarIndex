@@ -74,36 +74,39 @@ func rpcProbe(endpoint string) error {
 
 	// Range of events available — 1-event probe from just before tip
 	// so we know the retention window.
-	start := l.Sequence - 1
-	er, err := c.GetEvents(ctx, start, 0, nil, &stellarrpc.Pagination{Limit: 1})
-	if err != nil {
-		fmt.Printf("\n  getEvents:       ⚠ %v\n", err)
+	if start, ok := eventsProbeStart(l.Sequence); !ok {
+		fmt.Printf("\n  getEvents:       skipped — node reports latestLedger 0\n")
 	} else {
-		window := er.LatestLedger - er.OldestLedger
-		fmt.Printf("\n  events window:   oldest=%d  latest=%d  (~%d ledgers ≈ %.1f d at 5s cadence)\n",
-			er.OldestLedger, er.LatestLedger, window, float64(window)*5/86400)
-		if len(er.Events) > 0 {
-			fmt.Printf("  sample event:    contract=%s… type=%s topics=%d\n",
-				shortHex(er.Events[0].ContractID, 12), er.Events[0].Type, len(er.Events[0].Topic))
-		}
+		er, err := c.GetEvents(ctx, start, 0, nil, &stellarrpc.Pagination{Limit: 1})
+		if err != nil {
+			fmt.Printf("\n  getEvents:       ⚠ %v\n", err)
+		} else {
+			window := er.LatestLedger - er.OldestLedger
+			fmt.Printf("\n  events window:   oldest=%d  latest=%d  (~%d ledgers ≈ %.1f d at 5s cadence)\n",
+				er.OldestLedger, er.LatestLedger, window, float64(window)*5/86400)
+			if len(er.Events) > 0 {
+				fmt.Printf("  sample event:    contract=%s… type=%s topics=%d\n",
+					shortHex(er.Events[0].ContractID, 12), er.Events[0].Type, len(er.Events[0].Topic))
+			}
 
-		// getTransaction round-trip against the sample event's tx
-		// hash. Proves the RPC's tx retention window covers at least
-		// the current tip — sources rely on this to decode tx-level
-		// context (observer account, envelope XDR).
-		if len(er.Events) > 0 && er.Events[0].TxHash != "" {
-			tx, err := c.GetTransaction(ctx, er.Events[0].TxHash)
-			switch {
-			case err != nil:
-				fmt.Printf("  getTransaction:  ⚠ %v\n", err)
-			case tx.Status == stellarrpc.TxStatusNotFound:
-				// Should not happen for a tx we JUST saw in getEvents,
-				// but surfaces any retention-window mismatch.
-				fmt.Printf("  getTransaction:  ⚠ tx %s… not found (retention window mismatch)\n",
-					shortHex(er.Events[0].TxHash, 8))
-			default:
-				fmt.Printf("  getTransaction:  ✓ status=%s ledger=%d appOrder=%d\n",
-					tx.Status, tx.Ledger, tx.ApplicationOrder)
+			// getTransaction round-trip against the sample event's tx
+			// hash. Proves the RPC's tx retention window covers at least
+			// the current tip — sources rely on this to decode tx-level
+			// context (observer account, envelope XDR).
+			if len(er.Events) > 0 && er.Events[0].TxHash != "" {
+				tx, err := c.GetTransaction(ctx, er.Events[0].TxHash)
+				switch {
+				case err != nil:
+					fmt.Printf("  getTransaction:  ⚠ %v\n", err)
+				case tx.Status == stellarrpc.TxStatusNotFound:
+					// Should not happen for a tx we JUST saw in getEvents,
+					// but surfaces any retention-window mismatch.
+					fmt.Printf("  getTransaction:  ⚠ tx %s… not found (retention window mismatch)\n",
+						shortHex(er.Events[0].TxHash, 8))
+				default:
+					fmt.Printf("  getTransaction:  ✓ status=%s ledger=%d appOrder=%d\n",
+						tx.Status, tx.Ledger, tx.ApplicationOrder)
+				}
 			}
 		}
 	}
@@ -125,3 +128,12 @@ func shortHex(s string, n int) string {
 }
 
 // ─── backfill-external ──────────────────────────────────────────
+
+// eventsProbeStart returns the ledger to start the 1-event probe from,
+// one before tip. ok is false at seq 0, where seq-1 would wrap uint32.
+func eventsProbeStart(seq uint32) (start uint32, ok bool) {
+	if seq == 0 {
+		return 0, false
+	}
+	return seq - 1, true
+}
