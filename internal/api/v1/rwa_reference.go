@@ -694,13 +694,6 @@ func rwaApplyReference(
 		rwaApplyContractReference(a, listings[a.ContractID], now)
 		return
 	}
-	// A read that did not answer knows nothing either way. Reporting it
-	// as an absence would publish a finding the read did not earn, and on
-	// the wire it would be indistinguishable from a genuine one.
-	if !snap.available {
-		rwaRefuseReference(a, RWAPremiumReferenceUnavailable)
-		return
-	}
 	if rwa.ConstantNAVISINConflict(a.Code, a.Issuer, a.AnchorAsset) {
 		rwaRefuseReference(a, RWAPremiumReferenceISINMismatch)
 		return
@@ -762,6 +755,14 @@ func rwaApplyReference(
 		return
 	}
 
+	// A read that did not answer knows nothing either way. Reporting it
+	// as an absence would publish a finding the read did not earn, and on
+	// the wire it would be indistinguishable from a genuine one. Only an
+	// oracle-bound row reads it: the unbound arm above never does.
+	if !snap.available {
+		rwaRefuseReference(a, RWAPremiumReferenceUnavailable)
+		return
+	}
 	ref, ok := snap.byFeed[feed]
 	if !ok {
 		if snap.nonUSD[feed] != "" {

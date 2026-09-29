@@ -46,6 +46,33 @@ func TestRWAApplyReference_ProspectusConstantNAV(t *testing.T) {
 	}
 }
 
+// Neither the prospectus CNAV nor a classic listing price comes from the
+// oracle stream, so an oracle read that did not answer must not withhold
+// either under the outage reason.
+func TestRWAApplyReference_OracleOutageLeavesUnboundArmsAlone(t *testing.T) {
+	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	supply := "566742721191613"
+	issuer := "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP"
+	mk := func() *RWAAsset {
+		return &RWAAsset{AssetID: "gBENJI-" + issuer, Code: "gBENJI", Issuer: issuer, CirculatingSupply: &supply, Decimals: intPtr(7)}
+	}
+	down := rwaReferences{}
+
+	a := mk()
+	rwaApplyReference(a, down, nil, map[string]timescale.ListingEntry{}, now)
+	if a.Reference == nil || a.Reference.Provenance != RWAReferenceProspectusCNAV {
+		t.Errorf("CNAV row under an oracle outage: reference=%+v premium=%q, want the prospectus CNAV",
+			a.Reference, a.Premium.Status)
+	}
+
+	b := mk()
+	rwaApplyReference(b, down, nil, map[string]timescale.ListingEntry{b.AssetID: {PriceUSD: "0.99", PricedAt: now.Add(-time.Hour), Source: "listing", ListingID: "x"}}, now)
+	if b.Reference == nil || b.Reference.Provenance != RWAReferenceListingPrice {
+		t.Errorf("listing-priced row under an oracle outage: reference=%+v premium=%q, want the listing arm",
+			b.Reference, b.Premium.Status)
+	}
+}
+
 // A prospectus constant NAV is a rule, but the READING of it is bounded
 // like every other reference: through the binding's review deadline the
 // row is served at par unlabelled; from the first instant after it the

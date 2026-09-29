@@ -775,18 +775,34 @@ func TestRWAAssets_FunnelValuationArmDoesNotAdmitOrRefuse(t *testing.T) {
 				name, v.Funnel.Stages)
 		}
 	}
-	// And with no oracle at all every served row is dropped under the
+	// With no oracle at all every oracle-bound row is dropped under the
 	// outage, which is a different statement from a network whose
-	// instruments nobody prices.
+	// instruments nobody prices. A row no oracle is bound to never reads
+	// the oracle, so its verdict must not move with the outage.
 	stages := rwaValuationArm(t, without)
 	if stages[1].Count != 0 {
 		t.Errorf("reference-valued = %d with no oracle wired, want 0", stages[1].Count)
 	}
-	if len(stages[0].Dropped) != 1 || stages[0].Dropped[0].Reason != v1.RWAPremiumReferenceUnavailable {
-		t.Errorf("drops = %+v, want every row under %q", stages[0].Dropped, v1.RWAPremiumReferenceUnavailable)
+	withDrops := map[string]int{}
+	for _, d := range rwaValuationArm(t, withOracle)[0].Dropped {
+		withDrops[d.Reason] = d.Count
 	}
-	if stages[0].Dropped[0].Actor != "operator" {
-		t.Errorf("an outage was attributed to %q, not the operator who can fix it", stages[0].Dropped[0].Actor)
+	outage := 0
+	for _, d := range stages[0].Dropped {
+		if d.Reason == v1.RWAPremiumReferenceUnavailable {
+			outage = d.Count
+			if d.Actor != "operator" {
+				t.Errorf("an outage was attributed to %q, not the operator who can fix it", d.Actor)
+			}
+			continue
+		}
+		if withDrops[d.Reason] != d.Count {
+			t.Errorf("drop %q = %d without the oracle, %d with it: an unbound row's verdict moved with an oracle outage",
+				d.Reason, d.Count, withDrops[d.Reason])
+		}
+	}
+	if outage == 0 {
+		t.Errorf("drops = %+v, want the oracle-bound rows under %q", stages[0].Dropped, v1.RWAPremiumReferenceUnavailable)
 	}
 }
 
