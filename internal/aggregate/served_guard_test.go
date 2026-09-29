@@ -90,7 +90,7 @@ func TestGuardServedVWAP_DepegNotHidden(t *testing.T) {
 func TestGuardServedVWAP_VolatilePairRealMovePasses(t *testing.T) {
 	// A genuinely volatile pair: recent buckets span a wide range. A real
 	// continuation of that volatility must pass (the MAD band earns it the
-	// latitude; the ratio band alone already covers <=10x).
+	// latitude; the ratio band alone already covers <=3x).
 	trailing := rats(t, "8.0", "7.0", "6.5", "6.0", "5.5", "5.0", "4.5", "4.0", "3.5", "3.0")
 	for _, cand := range []string{"9.0", "2.5", "10.0", "2.0"} {
 		if accept, lkg := GuardServedVWAP(rat(t, cand), trailing); !accept {
@@ -100,8 +100,8 @@ func TestGuardServedVWAP_VolatilePairRealMovePasses(t *testing.T) {
 }
 
 func TestGuardServedVWAP_ModerateMovePasses(t *testing.T) {
-	// A 3x move on an otherwise steady pair is within the wide ratio band
-	// (<=10x): serve it. We favour serving a real price over over-filtering.
+	// A 3x move on an otherwise steady pair is on the inclusive edge of the
+	// ratio band (<=3x): serve it. We favour serving a real price over over-filtering.
 	trailing := repeatRat(t, "2.0", 8)
 	if accept, _ := GuardServedVWAP(rat(t, "6.0"), trailing); !accept {
 		t.Fatal("3x move (2.0 -> 6.0) should pass the conservative guard")

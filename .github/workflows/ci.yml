@@ -2323,6 +2323,12 @@ jobs:
         # ClickHouse, no writes outside a temp dir.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-clickhouse-host-gate-test.sh
+      - name: ansible listing-sync pubnet gate
+        # listing-sync caches pubnet-only addresses; on a test net it can
+        # corroborate nothing and fails hourly. Pins the install/enable to
+        # listing_sync_enabled and the retire block to its negation.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-listing-sync-gate-test.sh
       - name: zfs-snapshot dataset coverage
         # NS03 (audit-2026-09-02): the rolling-snapshot job covered
         # data/clickhouse and data/postgres — both DERIVED — while the

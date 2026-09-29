@@ -1,6 +1,6 @@
 ---
 title: Runbook — supply-cross-check-divergence
-last_verified: 2026-09-28
+last_verified: 2026-09-29
 status: living
 severity: P3
 ---
@@ -342,10 +342,29 @@ below is the generic path.
       `counterpart_ledger` lines name the stalled side, whose supply
       refresh must catch up before the comparison means anything.
 
-- [ ] **Replay the affected range.** Per-algorithm replay
-      subcommands aren't shipped yet — the operator path today is
-      restarting the indexer with a config override that re-reads
-      the ledger window. See `cmd/stellarindex-indexer` flags.
+- [ ] **Replay the affected range** on the side the audit shows wrong.
+      Each algorithm's writer has its own catch-up; restarting the
+      indexer re-reads nothing (it has no ledger-window flag).
+      - **Algorithm 3** (SEP-41 event sum, `sep41_supply_events`) is a
+        projected source. Rewind it to the first diverging ledger; the
+        running indexer re-projects from there, and the same command
+        resets the `sep41_supply_rollup` fold so the aggregator re-sums
+        the corrected rows. Decompress the window first
+        ([projector-replay](projector-replay.md) pre-flight):
+        ```sh
+        stellarindex-ops projector-replay -config /etc/stellarindex.toml \
+            -source sep41_supply -from <first-diverging-ledger> -write
+        ```
+        Once the cursor is back at tip, confirm the fold with
+        `stellarindex-ops supply verify-rollup -config /etc/stellarindex.toml -contracts <C…>`
+        (under `run-heavy-job.sh` on r1).
+      - **Algorithm 2** (classic components). The SAC-wrapped leg
+        re-seeds with `stellarindex-ops supply seed-sac-balances` and the
+        claimable leg with `stellarindex-ops supply seed-claimable-balances`
+        (both `-write`, under `run-heavy-job.sh`; the dormant-holder path
+        above shows the flags). The trustline and liquidity-pool legs
+        have no lake re-seed: only the live indexer's observers write
+        them, so a fault there is a code defect to escalate, not a replay.
 
 - [ ] **Verify** the divergence gauge drops below 2 within 10 min of
       the replay completing. The gauge updates once per aggregator

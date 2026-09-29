@@ -240,31 +240,48 @@ monitoring category error, not indexer corruption (served supply was
 always correct). The compare is now `internal/supply.WrapClass`-aware
 per pair:
 
-- **`WrapClassPartial`** (the default): checks a subset bound instead
-  of equality — a SAC's `total_supply` (the wrapped amount) can never
-  legitimately exceed its classic asset's `total_supply`, because
-  `SACWrapped` is one of Algorithm 2's own non-negative addends
-  (`total = Trustline + Claimable + LPReserve + SACWrapped`).
-  `sac_total > classic_total` is impossible under correct accounting
-  and fires; `sac_total ≤ classic_total` (the normal partially-wrapped
-  state) does not.
+- **`WrapClassPartial`** (the default): `supply.CrossCheckSubsetBound`
+  computes two legs instead of an equality.
+  - *Leg 1, over-mint* — `max(0, sac_total − classic_total)` — is
+    reported as `OverMintStroops` for triage only and never pages. It
+    compares the SAC's cumulative net mint with the classic
+    outstanding supply, which legitimately diverges when wrapped units
+    are later retired classically (BLND) or a one-time SAC mint is
+    distributed classic-side (PHO).
+  - *Leg 2, escrow-exceeds-minted* — `max(0, SACWrapped − sac_total)`
+    — is the leg that feeds the divergence gauge. Algorithm 2's
+    `SACWrapped` component (the ledger-entry sum of SAC balances) and
+    Algorithm 3's `total_supply` (the event-derived net mint) observe
+    the same escrowed amount through independent data paths, and every
+    escrowed unit got there by a mint, so escrow above net mint means
+    mints the indexer never captured or burns it double-counted.
 - **`WrapClassFull`** (operator-attested via
   `[supply].fully_wrapped_sacs`; none configured as of 2026-07-08):
   keeps the ORIGINAL ADR-0011 equality compare, for a pair the
-  operator has confirmed is 100% SAC-represented.
+  operator has confirmed is 100% SAC-represented. The equality already
+  implies the escrow bound, so leg 2 is not evaluated separately.
 
-The REAL subset compare — Algorithm 2's `SACWrapped` component
-(`ClassicSupplyComponents.SACWrapped`) vs Algorithm 3's `total_supply`,
-which per ADR-0011/0022's own math IS a true equality (both measure
-the same wrapped amount via independent data paths) — is not available
-at the cross-check compare site today: `ClassicComputer.Compute` folds
-`SACWrapped` into the classic `TotalSupply` before returning a
-`Supply`, and only that folded total reaches `asset_supply_history`.
-Wiring the real subset compare is a follow-up (BACKLOG #59), tracked
-as needing either a persisted `sac_wrapped_stroops` column/`Supply`
-field, or the refresher querying
-`ClassicSupplyStore.SumSACBalancesAtOrBefore` directly instead of the
-persisted snapshot.
+Leg 2 reads `SACWrapped` from the persisted classic snapshot, not
+from a second query. `ClassicComputer.Compute` still folds `SACWrapped`
+into `TotalSupply`, and additionally carries it out as
+`Supply.SACWrappedStroops`, persisted in
+`asset_supply_history.sac_wrapped_stroops` (migration 0117). Reading it
+off the same row keeps the component at the snapshot's own ledger;
+querying `ClassicSupplyStore.SumSACBalancesAtOrBefore` from the
+refresher instead would compare a component taken at an unrelated
+ledger and open a second read path to the same number.
+
+The column is NULL — and `SACWrappedStroops` nil — for a row written
+before migration 0117 and for an asset with no observed SAC balance
+(no `sac_balance_observations` row at or before the snapshot's
+ledger). It is never defaulted to zero:
+`0 ≤ sac_total` holds vacuously, so a zero would publish a check that
+verified nothing. Such a pair reports the `unchecked` outcome and its
+gauge series is cleared (`supply audit -cross-check` prints
+`UNCHECKED` for the same state). Leg 2 is an upper bound on escrow,
+not proof that escrow was fully observed: an under-counted
+`SACWrapped` (the dormant pool-balance case below) sits under
+`sac_total` and passes quietly.
 
 The aggregator's `supply.CrossCheckRefresher`
 (`internal/supply/crosscheck_refresher.go`, wired in
@@ -292,7 +309,7 @@ both the classic and the SAC sides via `Store.LatestSupply`, runs
   on the other outcomes, so it is never a stale reading.
 - `stellarindex_supply_cross_check_total{outcome,wrap_class}` —
   counter labelled by `within | over | missing_snapshot | read_error |
-  misaligned`.
+  misaligned | unchecked`.
 
 The supply.yml alert (`stellarindex_supply_cross_check_divergence`)
 fires when the gauge stays > 1 for ≥ 5 min — unchanged expression;
@@ -582,11 +599,12 @@ above for what each class checks):
 
 | Outcome | Means | Operator action |
 |---------|-------|-----------------|
-| `within` | Both snapshots loaded; divergence ≤ 1 stroop (`partial_wrap`: `sac_total ≤ classic_total + 1`; `full_wrap`: `\|classic_total − sac_total\| ≤ 1`) | none — steady state |
+| `within` | Both snapshots loaded; divergence ≤ 1 stroop (`partial_wrap`: leg 2, `SACWrapped ≤ sac_total + 1` — the escrow excess is at most 1 stroop; `full_wrap`: `\|classic_total − sac_total\| ≤ 1`) | none — steady state |
 | `over` | Both snapshots loaded; divergence > 1 stroop | follow `supply-cross-check-divergence` runbook |
 | `missing_snapshot` | One/both sides have no row in `asset_supply_history` yet | bootstrap window — no action unless sustained past first refresh of each side |
 | `read_error` | Transient storage read failure | check `pg-conns-saturated` / `timescale-primary-down` runbooks |
 | `misaligned` | Both snapshots loaded but > 1000 ledgers apart — one side's refresher stalled | follow `supply-refresh-stalled` for the stale side |
+| `unchecked` | Both snapshots loaded, `partial_wrap` pair, but the classic snapshot has no `sac_wrapped_stroops` (pre-0117 row, or no `sac_balance_observations` row at or before its ledger), so leg 2 is not evaluated and the gauge series is cleared | no alert fires (`stellarindex_supply_cross_check_unevaluable` excludes `unchecked`); if the pair should be checked, seed its SAC balances (`supply seed-sac-balances`, with `-full-history` for dormant holders) and confirm with `supply audit -cross-check` |
 
 A brief `missing_snapshot` is the normal first-tick warmup state and is
 not escalated. Any of `missing_snapshot`, `read_error` or `misaligned`
