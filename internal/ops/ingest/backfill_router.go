@@ -61,7 +61,7 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	if err != nil {
 		return err
 	}
-	streamBucket, err := historicReadBucket(cfg, *bucket)
+	streamBucket, err := opsutil.HistoricReadBucket(cfg, *bucket)
 	if err != nil {
 		return err
 	}

@@ -339,6 +339,17 @@ func SplitRange(from, to uint32, n int) []RangeChunk {
 	return out
 }
 
+// HistoricReadBucket resolves the bucket for a read over a backfilled range:
+// -bucket, else the archive (live is trimmed), else live.
+func HistoricReadBucket(cfg config.Config, override string) (string, error) {
+	for _, b := range []string{override, cfg.Storage.S3BucketArchive, cfg.Storage.S3BucketLive} {
+		if b != "" {
+			return b, nil
+		}
+	}
+	return "", fmt.Errorf("no bucket: set -bucket or storage.s3_bucket_archive / s3_bucket_live")
+}
+
 // ResolveStreamBucket resolves which galexie bucket a BOUNDED backfill
 // walk reads, given the operator's -bucket override and the requested
 // ledger range. Every ops subcommand that walks a historic range
