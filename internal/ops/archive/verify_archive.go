@@ -79,15 +79,14 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 		"Archive URL for Tier E (empty → file://<archive-root>)")
 	archivistTimeout := fs.Duration("archivist-timeout", 30*time.Minute,
 		"Maximum runtime for the stellar-archivist scan command")
-	failOnMissed := fs.Bool("fail-on-missed", false,
+	failOnMissed := fs.Bool("fail-on-missed", true,
 		"Treat checkpointsMissed > 0 as a hard failure (ADR-0017 X1.7). "+
 			"Counts only checkpoints absent from INSIDE the mirror's own "+
 			"coverage span — a checkpoint the walk reached before the mirror's "+
 			"fill job did is reported as unmirrored, never as missed, so this "+
-			"flag cannot fire on the trailing edge. Default off for backward "+
-			"compat with the operator workflow that tolerated scattered missed "+
-			"checkpoints; the deployed tier-B units pass it (ADR-0017 "+
-			"amendment 2026-09-19).")
+			"flag cannot fire on the trailing edge. Default on; "+
+			"-fail-on-missed=false tolerates scattered missed checkpoints "+
+			"(a run that matched none still fails).")
 	maxRuntime := fs.Duration("max-runtime", 24*time.Hour,
 		"Hard cap on total verification runtime. 0 = no cap (run until "+
 			"completion or operator interrupt). Default 24h matches the "+
@@ -734,7 +733,7 @@ func checkpointAnchorReached(checkpointsOK, checkpointsMissed, checkpointsUnmirr
 // checkpoint anchor missed — the run verified NOTHING against the
 // cross-anchor archive) is fatal REGARDLESS of failOnMissed. This is
 // distinct from a PARTIAL miss (some matched, some missed), which
-// only fails when the operator opted into -fail-on-missed. An
+// fails unless the operator opted out with -fail-on-missed=false. An
 // all-missed range was never actually anchored, so it must not be
 // certified complete or advance the checkpoint tier's
 // LastVerifiedLedger — the caller skips the state-persist on any
