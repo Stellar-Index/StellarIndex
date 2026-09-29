@@ -9,6 +9,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
@@ -416,6 +417,12 @@ type ExplorerReader struct {
 	// per request (Q203). Non-nil for every reader built by the
 	// constructors; nil-safe for test-built readers (permanent miss).
 	disasmCache *wasmDisasmCache
+
+	// moduleCache and wasmFlight back ContractWasm's per-hash stage: the
+	// blob read + export parse is memoised, and concurrent cold requests for
+	// one hash share a single read and a single wabt run.
+	moduleCache *wasmModuleCache
+	wasmFlight  singleflight.Group
 }
 
 // SetWealthRefreshErrorHandler installs a callback for background
@@ -513,6 +520,7 @@ func newExplorerReader(conn driver.Conn) *ExplorerReader {
 		stateFlight:              newPerKeyFlight(),
 		refreshGate:              NewRefreshGate(DefaultDetachedRefreshLimit),
 		disasmCache:              newWasmDisasmCache(),
+		moduleCache:              newWasmModuleCache(),
 		ttlVerdicts: newTTLLivenessCache(func(ctx context.Context, keys []string) (map[string]TTLLiveness, error) {
 			// Verdicts are judged at the lake's tip AS OF compute time —
 			// "current" means current relative to what the lake holds now.
