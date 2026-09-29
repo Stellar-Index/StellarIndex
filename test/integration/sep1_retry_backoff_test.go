@@ -166,6 +166,10 @@ func TestSep1RetryBackoff(t *testing.T) {
 		if _, ferr := store.MarkIssuerSep1Failed(ctx, healthy); ferr != nil {
 			t.Fatalf("MarkIssuerSep1Failed: %v", ferr)
 		}
+		if u, err := store.IssuerSep1Unreachable(ctx, healthy); err != nil || !u {
+			t.Fatalf("IssuerSep1Unreachable after a failure = (%v, %v), want (true, nil)", u, err)
+		}
+		_, failing := boundScan(t, ctx, store)
 		ageSep1ResolvedAt(t, ctx, store, healthy, 40*24*time.Hour)
 		if candidateSet(t, ctx, store, 24*time.Hour, 100)[healthy] {
 			t.Fatalf("a once-failed domain is still a candidate; the rest of this case proves nothing")
@@ -187,6 +191,16 @@ func TestSep1RetryBackoff(t *testing.T) {
 		}
 		if !candidateSet(t, ctx, store, 24*time.Hour, 100)[healthy] {
 			t.Errorf("an unwound domain is not back in the queue")
+		}
+		// sep1_resolved_at keeps its stamp through the unwind, so it cannot
+		// be what tells an outage on our side from the issuer's failure.
+		if u, err := store.IssuerSep1Unreachable(ctx, healthy); err != nil || u {
+			t.Errorf("IssuerSep1Unreachable after the unwind = (%v, %v), want (false, nil): "+
+				"the only failure was ours", u, err)
+		}
+		if _, unwound := boundScan(t, ctx, store); failing.IssuersFetchedWithoutPayload-unwound.IssuersFetchedWithoutPayload != 1 {
+			t.Errorf("census served-nothing count %d -> %d across the unwind, want it to drop by exactly 1",
+				failing.IssuersFetchedWithoutPayload, unwound.IssuersFetchedWithoutPayload)
 		}
 
 		// Unwinding a row that never failed must floor at zero rather than

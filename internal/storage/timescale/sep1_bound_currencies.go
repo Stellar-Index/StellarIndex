@@ -106,11 +106,9 @@ type Sep1BoundCensus struct {
 	// whose stellar.toml was fetched and parsed at least once.
 	IssuersWithPayload int
 	// IssuersFetchedWithoutPayload counts issuers whose domain a fetch
-	// has REACHED and which hold no payload all the same:
-	// sep1_resolved_at is set, sep1_payload is NULL. The refresh cron
-	// stamps sep1_resolved_at on every terminating path, success or
-	// failure, so these are domains that were asked and served nothing
-	// this index could store.
+	// has REACHED and which hold no payload all the same: a live failure
+	// streak (sep1_consecutive_failures > 0) and a NULL sep1_payload —
+	// the predicate [Store.IssuerSep1Unreachable] serves per asset.
 	//
 	// It exists because the difference IssuersWithHomeDomain -
 	// IssuersWithPayload was read as "never fetched" and published as
@@ -245,16 +243,15 @@ func (s *Store) BoundSep1Currencies(ctx context.Context, keep Sep1CurrencyFilter
 	//
 	// The second count separates the two ways an in-scope issuer can
 	// hold no payload, which the difference from IssuersWithPayload
-	// cannot: a fetch nobody has run yet (sep1_resolved_at NULL —
-	// an operator's backlog) from a domain that WAS reached and served
-	// nothing storable (sep1_resolved_at set, sep1_payload NULL —
-	// the issuer's own publication). Every terminating path in the
-	// refresh cron stamps sep1_resolved_at, including each failure, so
-	// the second predicate really does mean "attempted at least once".
+	// cannot: our backlog from a domain that WAS reached and served
+	// nothing storable (the issuer's own publication). The second
+	// predicate reads the failure streak rather than sep1_resolved_at,
+	// which a systemic-outage unwind leaves stamped on rows that never
+	// failed on their side — see [Store.IssuerSep1Unreachable].
 	// Both counts come off one aggregate so they describe one moment.
 	const popQ = `SELECT count(*) FILTER (WHERE home_domain IS NOT NULL AND btrim(home_domain) <> ''),
 	                     count(*) FILTER (WHERE home_domain IS NOT NULL AND btrim(home_domain) <> ''
-	                                        AND sep1_resolved_at IS NOT NULL
+	                                        AND COALESCE(sep1_consecutive_failures, 0) > 0
 	                                        AND sep1_payload IS NULL)
 	                FROM issuers`
 	if err := s.db.QueryRowContext(ctx, popQ).Scan(

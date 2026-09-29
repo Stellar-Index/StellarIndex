@@ -18427,9 +18427,10 @@ components:
           description: |
             State of the SEP-1 overlay for this asset.
             - not_applicable: no home-domain (native, fiat, SAC-only).
-            - not_fetched:    no fetch has been ATTEMPTED for this issuer.
-              OURS — a backlog or an unwired resolver, never a statement
-              about the issuer.
+            - not_fetched:    no fetch has been ATTEMPTED for this issuer,
+              or only attempts an outage on our side voided. OURS — a
+              backlog or an unwired resolver, never a statement about
+              the issuer.
             - verified:       SEP-1 fetched + matching [[CURRENCIES]] entry found.
             - no_match:       SEP-1 fetched but no matching issuer+code entry.
             - unreachable:    a fetch WAS attempted and produced nothing
@@ -18897,7 +18898,8 @@ components:
         matches the asset's `(code, issuer)` — `sep1_status`
         then reads "verified". `not_applicable` (native, fiat,
         SAC-only), `not_fetched` (OURS — no fetch has been
-        attempted for this issuer yet), `unreachable` (THEIRS —
+        attempted for this issuer yet, or only attempts an outage
+        on our side voided), `unreachable` (THEIRS —
         a fetch was attempted and produced nothing storable: a
         404, a dead name, a TLS failure, or a document that
         would not parse), and `no_match` (TOML loaded but no

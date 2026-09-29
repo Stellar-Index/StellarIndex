@@ -11,7 +11,7 @@ import (
 
 // wiringPayloadOnlySep1Cache is the shape a future caching wrapper could
 // take: it answers GetIssuerSep1Cached but was never given
-// IssuerSep1Attempted, so it does not satisfy the optional
+// IssuerSep1Unreachable, so it does not satisfy the optional
 // Sep1FetchStateReader seam consulted via type assertion in
 // sep1StatusForNoPayload.
 type wiringPayloadOnlySep1Cache struct{}
@@ -28,7 +28,7 @@ func (wiringFetchStateSep1Cache) GetIssuerSep1Cached(context.Context, string) (*
 	return nil, nil
 }
 
-func (wiringFetchStateSep1Cache) IssuerSep1Attempted(context.Context, string) (bool, error) {
+func (wiringFetchStateSep1Cache) IssuerSep1Unreachable(context.Context, string) (bool, error) {
 	return false, nil
 }
 

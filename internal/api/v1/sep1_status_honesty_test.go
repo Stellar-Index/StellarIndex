@@ -22,7 +22,7 @@ func (s *sep1StateStub) GetIssuerSep1Cached(context.Context, string) (*timescale
 	return nil, nil // the state both statuses share: no payload
 }
 
-func (s *sep1StateStub) IssuerSep1Attempted(_ context.Context, g string) (bool, error) {
+func (s *sep1StateStub) IssuerSep1Unreachable(_ context.Context, g string) (bool, error) {
 	s.asked = append(s.asked, g)
 	return s.attempted, s.stateErr
 }
