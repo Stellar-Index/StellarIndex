@@ -619,7 +619,7 @@ func (s *Server) cachedRWAPremiumHistory(ctx context.Context) rwaPremiumHistory 
 		//nolint:gosec,contextcheck // G118 / contextcheck: intentional
 		// detached build — see runDetachedFill.
 		go runDetachedFill(s.logger, "api-rwa-premium-build", rwaPremiumHistoryBudget, ch,
-			func(ctx context.Context) (rwaPremiumHistory, error) { return s.buildRWAPremiumHistory(ctx), nil },
+			func(ctx context.Context) (rwaPremiumHistory, error) { return s.buildRWAPremiumHistory(ctx), nil }, //nolint:unparam // runDetachedFill's signature; failure is .available
 			s.settleRWAPremiumHistory)
 	}
 	s.rwaPremMu.Unlock()

@@ -641,7 +641,7 @@ func (s *Server) cachedRWAValueHistory(ctx context.Context) rwaValueHistory {
 		//nolint:gosec,contextcheck // G118 / contextcheck: intentional
 		// detached build — see runDetachedFill.
 		go runDetachedFill(s.logger, "api-rwa-history-build", rwaHistoryBudget, ch,
-			func(ctx context.Context) (rwaValueHistory, error) { return s.buildRWAValueHistory(ctx), nil },
+			func(ctx context.Context) (rwaValueHistory, error) { return s.buildRWAValueHistory(ctx), nil }, //nolint:unparam // runDetachedFill's signature; failure is .available
 			s.settleRWAValueHistory)
 	}
 	s.rwaHistMu.Unlock()
