@@ -12,10 +12,44 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/metadata"
 )
 
-// bodyCapBytes mirrors the unexported metadata.maxBodyBytes (1 MiB) — the
-// two guards below are meant to be checked from outside the package, so the
-// cap is restated rather than exported just for a test.
-const bodyCapBytes = 1 << 20
+// bodyCapBytes mirrors the unexported metadata.maxBodyBytes (100 KiB, the
+// SEP-1 limit) — the guards below are meant to be checked from outside the
+// package, so the cap is restated rather than exported just for a test.
+const bodyCapBytes = 100 << 10
+
+// TestResolver_BodyCapBoundary pins the cap to the byte: a valid document of
+// exactly the cap is read and parsed, one byte more is refused.
+func TestResolver_BodyCapBoundary(t *testing.T) {
+	doc := func(size int) []byte {
+		head := "VERSION = \"2.0.0\"\n# "
+		return []byte(head + strings.Repeat("x", size-len(head)-1) + "\n")
+	}
+	cases := []struct {
+		name    string
+		size    int
+		wantErr error
+	}{
+		{"at the cap", bodyCapBytes, nil},
+		{"one byte over", bodyCapBytes + 1, metadata.ErrTOMLTooLarge},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := doc(tc.size)
+			if len(body) != tc.size {
+				t.Fatalf("fixture is %d bytes; want %d", len(body), tc.size)
+			}
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write(body)
+			}))
+			defer srv.Close()
+
+			_, err := newLocalResolver(t, srv).Resolve(context.Background(), hostOf(t, srv))
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Resolve(%d-byte document) = %v; want %v", tc.size, err, tc.wantErr)
+			}
+		})
+	}
+}
 
 // TestResolver_RejectsDeclaredOversizedBody pins the guard that fires on an
 // HONEST Content-Length: a server declaring a body over the cap must be

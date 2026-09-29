@@ -226,14 +226,16 @@ var ErrSSRFBlocked = errors.New("sep1: target IP is in a private or reserved ran
 
 // ErrTOMLTooLarge is returned when the response body exceeds
 // [maxBodyBytes].
-var ErrTOMLTooLarge = errors.New("sep1: TOML body exceeds 1 MiB limit")
+var ErrTOMLTooLarge = errors.New("sep1: TOML body exceeds 100 KiB limit")
 
-// maxBodyBytes caps the stellar.toml body size. SEP-1 files
-// shouldn't exceed a few KB; 1 MiB is a generous safety net.
-const maxBodyBytes = 1 << 20
+// maxBodyBytes caps the stellar.toml body size at SEP-1's own limit;
+// the reference client (go-stellar-sdk clients/stellartoml
+// StellarTomlMaxSize) enforces the same 100 * 1024.
+const maxBodyBytes = 100 << 10
 
 // ErrTOMLTooDeep is returned when a stellar.toml nests structural
-// brackets deeper than [maxTOMLNestingDepth].
+// brackets, or tables through dotted keys and headers, deeper than
+// [maxTOMLNestingDepth].
 //
 // # Why a byte cap is not enough
 //
@@ -242,7 +244,7 @@ const maxBodyBytes = 1 << 20
 // nesting depth. Measured against the pinned decoder on this host:
 // 250 nested inline tables (1,005 bytes) allocate 8 MiB, 1,000 (4 KB)
 // allocate 117 MiB, 4,000 (16 KB) allocate 1.81 GiB in 0.72s — roughly
-// quadratic, and a 1 MiB body admits ~260,000 levels. The refresh unit
+// quadratic, and a 100 KiB body admits ~26,000 levels. The refresh unit
 // runs under MemoryMax=2G, so a 16 KB document any 1-XLM account can
 // publish from its home_domain is enough to have the whole worker
 // SIGKILLed by the cgroup. Depth is the one dimension that does this:
@@ -252,7 +254,7 @@ const maxBodyBytes = 1 << 20
 // So the depth is bounded BEFORE the body reaches the decoder, and a
 // document over the bound is refused the way any other unparseable
 // document is — the issuer is marked failed and the run moves on.
-var ErrTOMLTooDeep = errors.New("sep1: TOML nests structural brackets deeper than the parse budget allows")
+var ErrTOMLTooDeep = errors.New("sep1: TOML nests tables deeper than the parse budget allows")
 
 // Nesting bounds enforced by [checkTOMLNesting].
 //
@@ -260,15 +262,29 @@ var ErrTOMLTooDeep = errors.New("sep1: TOML nests structural brackets deeper tha
 // where strings and comments are. 32 is far past anything SEP-1
 // describes — the deepest construct the spec has is an inline table
 // inside an array of tables, two levels — and bounds the decoder's work
-// on a full 1 MiB body to a few hundred KB of allocation.
+// on a full-size body to a few hundred KB of allocation.
 //
-// maxRawTOMLNestingDepth is insurance against that scan disagreeing
-// with the decoder's own lexer about where a string ends: the raw count
-// ignores strings and comments entirely, so it can only ever
-// OVER-estimate the true depth. It cannot miss a deep document, and a
-// document trips it only by carrying 256 unclosed brackets of literal
-// text. At depth 256 the decoder allocates ~8 MiB, so a divergence that
-// slips past the lexical bound still cannot reach the memory ceiling.
+// maxRawTOMLNestingDepth bounds a second, context-free count that
+// ignores strings and comments, so opening brackets and dots in data
+// raise it. It is a backstop for a string-aware scan that loses track of
+// a string, not a guarantee: a closing bracket in data lowers it, so a
+// body that pairs every hidden opener with a closer in a comment or
+// string defeats it. The guarantee is the string-aware scans ending
+// every string and comment where the decoder's lexer does, which
+// TestSkipTOMLStringMatchesDecoder checks exhaustively over short
+// strings. A document trips the raw bound only with 256 unclosed
+// brackets of literal text; at that depth the decoder allocates ~8 MiB.
+//
+// Both bounds also apply to table nesting spelled with dots, which
+// brackets never see: every segment of `a.b.c = 1` or `[a.b.c]` is a
+// table the decoder creates, and its cost is quadratic in the length of
+// the full key path. The path a key reaches — its table header, the keys
+// owning every inline table it sits in, and its own segments — is held
+// to maxTOMLNestingDepth; SEP-1's deepest is two (`[[CURRENCIES]]` then
+// `code`). A full body of 32-segment paths costs ~110 MiB of transient
+// allocation where one unbounded 16,000-segment key cost 4.75 GiB. The
+// raw bound is looser for dots than for brackets: a full body of
+// 251-segment keys, which only it would stop, allocates ~1 GiB.
 const (
 	maxTOMLNestingDepth    = 32
 	maxRawTOMLNestingDepth = 256
@@ -277,18 +293,202 @@ const (
 // checkTOMLNesting refuses a document whose structural nesting would
 // make the decode superlinearly expensive. See [ErrTOMLTooDeep].
 func checkTOMLNesting(body []byte) error {
+	body = stripTOMLBOM(body)
 	if rawBracketDepth(body) > maxRawTOMLNestingDepth ||
-		tomlNestingDepth(body) > maxTOMLNestingDepth {
+		tomlNestingDepth(body) > maxTOMLNestingDepth ||
+		rawKeyPathDepth(body) > maxRawTOMLNestingDepth ||
+		tomlKeyPathDepth(body) > maxTOMLNestingDepth {
 		return ErrTOMLTooDeep
 	}
 	return nil
 }
 
+// stripTOMLBOM drops the byte-order mark the pinned decoder drops before
+// lexing (toml parse.go), so a header on the first line still starts it.
+func stripTOMLBOM(body []byte) []byte {
+	switch {
+	case bytes.HasPrefix(body, []byte("\xff\xfe")), bytes.HasPrefix(body, []byte("\xfe\xff")):
+		return body[2:]
+	case bytes.HasPrefix(body, []byte("\xef\xbb\xbf")):
+		return body[3:]
+	}
+	return body
+}
+
+// rawKeyPathDepth over-estimates the longest key path in body, in
+// segments, without knowing where strings or comments are: every dot
+// counts. At each dot and each `=` the estimate is the current table
+// header, plus one entry per unclosed bracket holding the dots that
+// preceded it on its line, plus every dot so far on the current line.
+// Inline tables may span lines, so it is this accumulation, not the dots
+// on any one line, that bounds a path the string-aware
+// [tomlKeyPathDepth] cannot see.
+//
+// The header is taken from a line whose first non-blank byte is `[`: it
+// replaces the previous header when no bracket is open, and can only
+// raise it when one is (the open bracket may be data the decoder never
+// saw). Like [rawBracketDepth], a closing bracket that is data cancels
+// an opening one, so this is a backstop, not the bound itself.
+func rawKeyPathDepth(body []byte) int {
+	var owners []int
+	inside, header, line, run, deepest := 0, 0, 0, 0, 0
+	lineStart := true
+	headerAt := 0 // 0: not a header line; 1: `[` with nothing open; 2: `[` inside a bracket
+	endLine := func() {
+		switch headerAt {
+		case 1:
+			header = line + 1
+		case 2:
+			header = max(header, line+1)
+		}
+		line, run, headerAt, lineStart = 0, 0, 0, true
+	}
+	for _, c := range body {
+		switch c {
+		case ' ', '\t':
+			continue
+		case '\n':
+			endLine()
+			continue
+		case '.':
+			line++
+			run++
+			deepest = max(deepest, header+inside+line+1)
+		case '=':
+			deepest = max(deepest, header+inside+line+1)
+		case '{', '[':
+			if c == '[' && lineStart {
+				headerAt = 1
+				if len(owners) > 0 {
+					headerAt = 2
+				}
+			}
+			owners = append(owners, run+1)
+			inside += run + 1
+			run = 0
+		case '}', ']':
+			if n := len(owners); n > 0 {
+				inside -= owners[n-1]
+				owners = owners[:n-1]
+			}
+		}
+		lineStart = false
+	}
+	return deepest
+}
+
+// tomlKeyPathDepth returns the longest key path, in segments, that the
+// decoder would build for any key or table header in body: the current
+// table header's segments, plus the segments of the key owning each
+// enclosing inline table or array, plus the key's own. Strings and
+// comments are skipped as in [tomlNestingDepth], so dots in data (and in
+// quoted key segments) do not count.
+//
+// A dot counts toward a key only while every byte since the last
+// separator could belong to a key: a bare-key character, a space or
+// tab, a dot, or a quoted segment. Any other byte ends the run, which
+// is what keeps floats and dates in values out of the count.
+func tomlKeyPathDepth(body []byte) int {
+	s := keyPathScan{lineStart: true}
+	for i := 0; i < len(body); {
+		switch c := body[i]; c {
+		case '#':
+			i = skipTOMLComment(body, i)
+			s.newline()
+		case '"', '\'':
+			i = skipTOMLString(body, i)
+			s.lineStart = false
+		default:
+			s.step(c)
+			i++
+		}
+	}
+	return s.deepest
+}
+
+// keyPathScan is the state of [tomlKeyPathDepth] between bytes.
+type keyPathScan struct {
+	owners    []int // segments each open value bracket adds to the path inside it
+	inside    int   // sum of owners
+	header    int   // segments of the current table header
+	dots      int   // dots in the current run of key bytes
+	pending   int   // segments of the key whose value comes next
+	deepest   int
+	inHeader  bool
+	lineStart bool // only spaces and tabs since the last newline
+}
+
+func (s *keyPathScan) step(c byte) {
+	switch {
+	case c == '\n':
+		s.newline()
+	case c == ' ' || c == '\t':
+	case c == '.':
+		s.dots++
+		s.lineStart = false
+	case isTOMLBareKeyByte(c):
+		s.lineStart = false
+	case c == '=':
+		s.pending = s.dots + 1
+		s.deepest = max(s.deepest, s.header+s.inside+s.pending)
+		s.dots, s.lineStart = 0, false
+	case c == '[' || c == '{':
+		s.open(c)
+	case c == ']' || c == '}':
+		s.close()
+	default:
+		s.dots, s.pending, s.lineStart = 0, 0, false
+	}
+}
+
+// open handles an opening bracket: a table header when it starts a line
+// outside any value, otherwise a value whose contents sit under the key
+// that owns it.
+func (s *keyPathScan) open(c byte) {
+	if c == '[' && len(s.owners) == 0 && (s.lineStart || s.inHeader) {
+		s.inHeader = true
+	} else {
+		s.owners = append(s.owners, s.pending)
+		s.inside += s.pending
+	}
+	s.dots, s.pending, s.lineStart = 0, 0, false
+}
+
+// close stops counting down at an empty stack, as [tomlNestingDepth] does.
+func (s *keyPathScan) close() {
+	if s.inHeader {
+		s.endHeader()
+	} else if n := len(s.owners); n > 0 {
+		s.inside -= s.owners[n-1]
+		s.owners = s.owners[:n-1]
+	}
+	s.dots, s.pending = 0, 0
+}
+
+func (s *keyPathScan) newline() {
+	if s.inHeader {
+		s.endHeader()
+	}
+	s.dots, s.pending, s.lineStart = 0, 0, true
+}
+
+func (s *keyPathScan) endHeader() {
+	s.header = s.dots + 1
+	s.deepest = max(s.deepest, s.header)
+	s.inHeader = false
+}
+
+// isTOMLBareKeyByte reports whether c may appear in a TOML bare key.
+func isTOMLBareKeyByte(c byte) bool {
+	return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-'
+}
+
 // rawBracketDepth returns the greatest excess of opening over closing
 // brackets at any point in body, counting every byte — inside strings
-// and comments included. Deliberately context-free: it is the bound
-// that holds even if [tomlNestingDepth] and the decoder's lexer
-// disagree, and it over-estimates rather than under-estimates.
+// and comments included. Deliberately context-free, so an opening
+// bracket in data raises it; a closing bracket in data lowers it just
+// the same, which is why it backs up [tomlNestingDepth] rather than
+// replacing it.
 func rawBracketDepth(body []byte) int {
 	depth, deepest := 0, 0
 	for _, c := range body {
@@ -367,14 +567,23 @@ func skipTOMLString(body []byte, i int) int {
 		width = 3
 	}
 	escaped := quote == '"'
+	afterBackslash := -1 // index just past the last `\\` escape
 	for j := i + width; j < len(body); {
 		switch {
 		case escaped && body[j] == '\\':
+			// A single-line string cannot continue past a newline, escaped
+			// or not; a multi-line one can (line-ending backslash).
+			if width == 1 && j+1 < len(body) && body[j+1] == '\n' {
+				return j + 1
+			}
+			if j+1 < len(body) && body[j+1] == '\\' {
+				afterBackslash = j + 2
+			}
 			j += 2
 		case width == 1 && body[j] == '\n':
 			return j
 		case body[j] == quote && closesTOMLString(body, j, quote, width):
-			return j + width
+			return endOfTOMLStringClose(body, j, quote, width, afterBackslash == j)
 		default:
 			j++
 		}
@@ -391,8 +600,27 @@ func closesTOMLString(body []byte, j int, quote byte, width int) bool {
 	return j+2 < len(body) && body[j+1] == quote && body[j+2] == quote
 }
 
-// Per-field length caps. The 1 MiB body cap bounds the whole TOML,
-// but a single field (e.g. DOCUMENTATION.ORG_NAME) can still be ~1 MiB
+// endOfTOMLStringClose returns the index just past the closing delimiter
+// found at body[j]. A multi-line string may end with up to two quote
+// bytes of content before its closing three (`"""x"""""` is `x""`), which
+// the decoder's lexer includes in the string. Right after an escaped
+// backslash the lexer takes three: its six-quote check exempts a run
+// preceded by `\` without asking whether that `\` was itself escaped
+// (toml v1.6.0 lex.go lexMultilineString).
+func endOfTOMLStringClose(body []byte, j int, quote byte, width int, afterBackslash bool) int {
+	maxExtra := 2
+	if afterBackslash {
+		maxExtra = 3
+	}
+	end := j + width
+	for extra := 0; width == 3 && extra < maxExtra && end < len(body) && body[end] == quote; extra++ {
+		end++
+	}
+	return end
+}
+
+// Per-field length caps. The 100 KiB body cap bounds the whole TOML,
+// but a single field (e.g. DOCUMENTATION.ORG_NAME) can still be ~100 KiB
 // of one string — and we store + serve these values verbatim (every
 // /v1/issuers response, the explorer's issuer <h1>). Cap each copied
 // string at parse time so a hostile issuer can't bloat our storage or
@@ -406,7 +634,7 @@ const (
 )
 
 // maxDocumentationFields and maxCurrencies bound FIELD/ENTRY COUNT,
-// not byte size: the 1 MiB body cap and the per-field rune caps above
+// not byte size: the 100 KiB body cap and the per-field rune caps above
 // bound the bytes of any one value, but nothing stopped a document
 // with an unbounded number of short DOCUMENTATION keys or CURRENCIES
 // entries from growing the parsed struct — and every field/entry is
@@ -605,7 +833,7 @@ func parseCurrency(m map[string]any) Currency {
 	c := Currency{}
 	// getString reads a string field and caps it to maxRunes on a
 	// rune boundary (see [truncateRunes]) so a hostile issuer can't
-	// smuggle a ~1 MiB currency field past the whole-body cap.
+	// smuggle a ~100 KiB currency field past the whole-body cap.
 	getString := func(k string, maxRunes int) string {
 		if v, ok := m[k].(string); ok {
 			return truncateRunes(v, maxRunes)
@@ -892,8 +1120,8 @@ func recoverSEP1Sections(body []byte) (map[string]any, []SkippedSection, error) 
 		if strings.TrimSpace(chunk) == "" {
 			continue
 		}
-		part := map[string]any{}
-		if err := toml.Unmarshal([]byte(chunk), &part); err != nil {
+		part, err := parseTOMLSection(chunk)
+		if err != nil {
 			header := "(top-level keys)"
 			if se[0] < len(lines) && isTOMLTableHeader(lines[se[0]]) {
 				header = strings.TrimSpace(lines[se[0]])
@@ -909,6 +1137,22 @@ func recoverSEP1Sections(body []byte) (map[string]any, []SkippedSection, error) 
 		return nil, nil, errors.New("sep1: section recovery read nothing")
 	}
 	return out, skipped, nil
+}
+
+// parseTOMLSection decodes one section split out by
+// [recoverSEP1Sections]. The nesting check is repeated per section: a
+// malformation earlier in the document can leave the whole-body scan
+// reading this section as nested inside it, while the decoder sees it
+// standalone.
+func parseTOMLSection(chunk string) (map[string]any, error) {
+	if err := checkTOMLNesting([]byte(chunk)); err != nil {
+		return nil, err
+	}
+	part := map[string]any{}
+	if err := toml.Unmarshal([]byte(chunk), &part); err != nil {
+		return nil, err
+	}
+	return part, nil
 }
 
 // isTOMLTableHeader reports whether a line begins a top-level table or
