@@ -64,3 +64,47 @@ func TestCCTPInboundSumsExcludeForwardRestatement(t *testing.T) {
 		t.Error("cctpBurnsCTE must filter event_type = 'deposit_for_burn' only")
 	}
 }
+
+// cctpOrderByTerms returns the comma-separated terms of the LAST ORDER BY
+// in q, with any trailing LIMIT stripped and whitespace collapsed.
+func cctpOrderByTerms(q string) []string {
+	q = strings.Join(strings.Fields(q), " ")
+	i := strings.LastIndex(q, "ORDER BY ")
+	if i < 0 {
+		return nil
+	}
+	clause := q[i+len("ORDER BY "):]
+	if j := strings.Index(clause, " LIMIT "); j >= 0 {
+		clause = clause[:j]
+	}
+	terms := strings.Split(clause, ",")
+	for k := range terms {
+		terms[k] = strings.TrimSpace(terms[k])
+	}
+	return terms
+}
+
+// collectPerChainSeries starts a new series whenever chain_key changes, so
+// chains with equal window volume must not interleave by bucket.
+func TestCCTPPerChainSeriesOrderIsDeterministic(t *testing.T) {
+	topRe := regexp.MustCompile(`top AS \((SELECT chain_key, sum\(amount\) AS vol FROM j[^)]*)\)`)
+	for _, inbound := range []bool{true, false} {
+		for _, windowDays := range []int{1, 7, 30, 90} {
+			q := cctpPerChainSeriesQuery(windowDays, inbound)
+
+			m := topRe.FindStringSubmatch(q)
+			if m == nil {
+				t.Fatalf("inbound=%v window=%d: top CTE not found in query:\n%s", inbound, windowDays, q)
+			}
+			if got, want := cctpOrderByTerms(m[1]), []string{"2 DESC", "chain_key ASC"}; strings.Join(got, ", ") != strings.Join(want, ", ") {
+				t.Errorf("inbound=%v window=%d: top CTE ORDER BY = %q, want %q (volume ties must break on chain_key before LIMIT 5)",
+					inbound, windowDays, got, want)
+			}
+
+			if got, want := cctpOrderByTerms(q), []string{"top.vol DESC", "j.chain_key ASC", "2 ASC"}; strings.Join(got, ", ") != strings.Join(want, ", ") {
+				t.Errorf("inbound=%v window=%d: outer ORDER BY = %q, want %q (chain_key must precede the bucket so each chain's rows are contiguous)",
+					inbound, windowDays, got, want)
+			}
+		}
+	}
+}
