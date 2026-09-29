@@ -13,16 +13,20 @@ import (
 // narrow identity columns. The old form's argMax(topics_xdr)/argMax(data_xdr)
 // exemplar state — one wide string pair per distinct key — is what scaled the
 // query's footprint with the post-P23 distinct-shape population until it died
-// at any server memory cap.
+// at any server memory cap. topics_xdr is read only for the non-Symbol
+// topic[0] key (GH-807), and is empty for every Symbol shape.
 func TestDistinctShapesWindowQuery_NoWideColumns(t *testing.T) {
 	q := distinctShapesWindowQuery(ClassicTokenTopic0Syms)
-	for _, forbidden := range []string{"topics_xdr", "data_xdr", "op_args_xdr", "argMax"} {
+	for _, forbidden := range []string{"data_xdr", "op_args_xdr", "argMax"} {
 		if strings.Contains(q, forbidden) {
 			t.Errorf("shape scan must not touch %q (wide-column read is phase 2's batched exemplar fetch):\n%s", forbidden, q)
 		}
 	}
+	if got := strings.Count(q, "topics_xdr"); got != 3 || strings.Count(q, "if(topic_0_sym = '', ") != 3 {
+		t.Errorf("topics_xdr must appear only in the three non-Symbol-guarded key columns (got %d):\n%s", got, q)
+	}
 	for _, required := range []string{
-		"GROUP BY contract_id, topic_0_sym",
+		"GROUP BY contract_id, topic_0_sym, t0, t1, tn",
 		"count() AS cnt",
 		"min(ledger_seq) AS lo",
 		"max(ledger_seq) AS hi",
@@ -67,6 +71,7 @@ func TestDistinctShapesWatchedQuery_IncludesTopicsAndContracts(t *testing.T) {
 		"topic_0_sym IN ('transfer','mint','burn','clawback','approve','set_authorized')",
 		"contract_id IN ('CAAA','CBBB')",
 		"GROUP BY contract_id, topic_0_sym",
+		"'' AS t0",
 		"WHERE ledger_seq BETWEEN ? AND ?",
 	} {
 		if !strings.Contains(q, required) {
@@ -75,6 +80,9 @@ func TestDistinctShapesWatchedQuery_IncludesTopicsAndContracts(t *testing.T) {
 	}
 	if strings.Contains(q, "NOT IN") {
 		t.Errorf("watched shape scan must INCLUDE the topic set, not exclude it:\n%s", q)
+	}
+	if strings.Contains(q, "topics_xdr") {
+		t.Errorf("watched shape scan only matches Symbol topics, so it must not read topics_xdr:\n%s", q)
 	}
 }
 
@@ -86,16 +94,17 @@ func TestShapeExemplarQuery(t *testing.T) {
 		{ContractID: "CAAA", Topic0Sym: "swap", MaxLedger: 51_000_123},
 		{ContractID: "CBBB", Topic0Sym: "it's odd", MaxLedger: 62_999_999},
 		{ContractID: "CCCC", Topic0Sym: "swap", MaxLedger: 51_000_123}, // shares a ledger with CAAA
+		{ContractID: "CDDD", t0: "AAAAAQ==", t1: "AAAAAg==", tn: 3, MaxLedger: 62_999_999},
 	}
 	q := shapeExemplarQuery(shapes)
 	for _, required := range []string{
-		"argMax(event_type, ledger_seq)",
-		"argMax(topics_xdr, ledger_seq)",
-		"argMax(data_xdr, ledger_seq)",
-		"GROUP BY contract_id, topic_0_sym",
-		"('CAAA','swap')",
-		`('CBBB','it\'s odd')`,
-		"('CCCC','swap')",
+		"argMax((event_type, topics_xdr, data_xdr), ledger_seq) AS ex",
+		"GROUP BY contract_id, topic_0_sym, t0, t1, tn",
+		"(contract_id, topic_0_sym, t0, t1, tn) IN (",
+		"('CAAA','swap','','',0)",
+		`('CBBB','it\'s odd','','',0)`,
+		"('CCCC','swap','','',0)",
+		"('CDDD','','AAAAAQ==','AAAAAg==',3)",
 		"62999999",
 		"SETTINGS",
 		"max_threads = 2",
