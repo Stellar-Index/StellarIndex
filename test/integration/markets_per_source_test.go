@@ -124,6 +124,19 @@ func TestMarketsListingGrain(t *testing.T) {
 			t.Errorf("/v1/markets?source=soroswap volume_24h_usd = %v but /v1/pools?source=soroswap = %v — the two surfaces must agree",
 				numeric(t, row.Volume24hUSD), numeric(t, pools[0].Volume24hUSD))
 		}
+
+		// The zero-value filter means "every venue", not "no venue".
+		all, _, err := store.AllPools(ctx, timescale.PoolsFilter{}, "", 100, timescale.MarketsOrderVolume24hDesc)
+		if err != nil {
+			t.Fatalf("AllPools(PoolsFilter{}): %v", err)
+		}
+		seen := map[string]bool{}
+		for _, p := range all {
+			seen[p.Source] = true
+		}
+		if !seen["soroswap"] || !seen["sdex"] {
+			t.Errorf("AllPools(PoolsFilter{}) sources = %v, want both soroswap and sdex (unset Sources is no filter)", seen)
+		}
 	})
 
 	t.Run("last_price is today's price, not yesterday's close", func(t *testing.T) {

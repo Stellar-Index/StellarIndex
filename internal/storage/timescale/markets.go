@@ -382,7 +382,12 @@ func poolsFilterSQL(canonBase, canonQuote string) string {
 
 // poolsFilterArgs binds $4..$7 for poolsFilterSQL.
 func poolsFilterArgs(filter PoolsFilter) []any {
-	return []any{filter.Sources, assetAliasBind(filter.Base), assetAliasBind(filter.Quote), assetAliasBind(filter.Asset)}
+	sources := filter.Sources
+	if sources == nil {
+		// Same NULL trap as assetAliasBind: nil binds NULL and $4 would exclude every row.
+		sources = []string{}
+	}
+	return []any{sources, assetAliasBind(filter.Base), assetAliasBind(filter.Quote), assetAliasBind(filter.Asset)}
 }
 
 func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit int, order MarketsOrder) (string, []any) { //nolint:funlen // CTE + select + 2 ordering branches form one query template; splitting would scatter the SQL across helpers

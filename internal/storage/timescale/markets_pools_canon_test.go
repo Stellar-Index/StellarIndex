@@ -119,3 +119,24 @@ func TestBuildPoolsQuery_PairFilterAdmitsBothOrientations(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildPoolsQuery_UnsetSourcesBindsEmptyArray(t *testing.T) {
+	t.Parallel()
+	since := time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)
+	for name, order := range map[string]MarketsOrder{
+		"volume_24h_desc": MarketsOrderVolume24hDesc,
+		"pair":            MarketsOrderPair,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, args := buildPoolsQuery(since, PoolsFilter{}, "", 100, order)
+			got, ok := args[3].([]string)
+			if !ok {
+				t.Fatalf("$4 is %T (%v), want []string", args[3], args[3])
+			}
+			if got == nil || len(got) != 0 {
+				t.Errorf("$4 = %#v, want []string{}: a nil slice binds SQL NULL and PoolsFilter{} returns no rows", got)
+			}
+		})
+	}
+}
