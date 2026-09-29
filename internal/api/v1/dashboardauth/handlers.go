@@ -942,6 +942,10 @@ func (h *Handlers) startSessionForEmail(w http.ResponseWriter, r *http.Request, 
 	return h.mintSession(w, r, user)
 }
 
+// maxLiveSessionsPerUser is how many signed-in devices a user keeps;
+// minting one more revokes the oldest.
+const maxLiveSessionsPerUser = 10
+
 // mintSession bumps last_login, creates the DB session row, and
 // writes the session cookie for an ALREADY-AUTHENTICATED user. It is
 // the single session-issuance path — magic link, email code, and
@@ -988,6 +992,11 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 	})
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
+	}
+	// Bounds the live-session row count per user however fast a door
+	// mints. Best-effort like the replaced-session revoke above.
+	if err := h.cfg.Users.CapUserSessions(r.Context(), user.ID, sess.ID, maxLiveSessionsPerUser); err != nil {
+		h.cfg.Logger.Warn("cap live sessions at login", "err", err, "user_id", user.ID)
 	}
 
 	sc := credentialCookie(SessionCookieName, token)

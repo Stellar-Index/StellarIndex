@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
 // Wave-D PFR-04 observed, correctly, that NOTHING in the repo exercised
@@ -138,6 +142,52 @@ func TestStorePriceReaderStalenessBoundary(t *testing.T) {
 			if got := stale(bucketStart, tc.lowConfidence); got != tc.wantStale {
 				t.Errorf("close %v old (lowConfidence=%v): stale = %v, want %v",
 					tc.closeAge, tc.lowConfidence, got, tc.wantStale)
+			}
+		})
+	}
+}
+
+// A guard-substituted bucket is served stale even inside the freshness
+// window: the response holds an older value in place of the current
+// minute, and without the flag it reads the same as a quiet market.
+func TestStorePriceReaderGuardedSnapshotFlagsSubstitutionStale(t *testing.T) {
+	t.Parallel()
+
+	base, quote := canonical.NativeAsset(), mustFiatUSD(t)
+	pair, err := canonical.NewPair(base, quote)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	var store headlineVWAPStore
+	for i := 3; i < 16; i++ {
+		store.trailing = append(store.trailing, headlineRow(i, "1.0"))
+	}
+	now := headlineRow(0, "1.0").Bucket.Add(time.Minute)
+	r := storePriceReader{now: func() time.Time { return now }}
+
+	for _, tc := range []struct {
+		name            string
+		candidate       string
+		wantPrice       string
+		wantStale       bool
+		wantSubstituted bool
+	}{
+		{"validated bucket serves fresh", "1.0", "1.0", false, false},
+		{"outlier serves last-known-good as stale", "100.0", "1.0", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			served, lowConfidence, substituted := pricingguard.GuardServedVWAP1mConfidence(
+				context.Background(), store, nil, pair, headlineRow(0, tc.candidate))
+			snap, stale := r.guardedSnapshot(base, quote, served, lowConfidence, substituted)
+			if snap.Price != tc.wantPrice {
+				t.Errorf("price = %s, want %s", snap.Price, tc.wantPrice)
+			}
+			if snap.Substituted != tc.wantSubstituted {
+				t.Errorf("Substituted = %v, want %v", snap.Substituted, tc.wantSubstituted)
+			}
+			if stale != tc.wantStale {
+				t.Errorf("stale = %v, want %v", stale, tc.wantStale)
 			}
 		})
 	}

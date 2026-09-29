@@ -39,15 +39,17 @@ function stripComments(body: string): string {
 }
 
 /**
- * True if `body` renders an `<img>` without ever calling
- * isSafePublicImageUrl for real — i.e. a genuine occurrence, not one
- * mentioned only in a comment. Comments are stripped BEFORE both checks,
- * so neither an `<img` inside a comment nor a decoy comment naming the
- * guard can change the verdict.
+ * True if `body` renders more `<img>` tags than it makes real
+ * isSafePublicImageUrl calls. Counting per callsite means one guarded
+ * `<img>` (or a bare import) cannot vouch for an unguarded sibling.
+ * Comments are stripped first, so neither an `<img` inside a comment nor
+ * a decoy comment naming the guard can change the verdict.
  */
 function isUnguardedImg(body: string): boolean {
   const code = stripComments(body);
-  return /<img[\s>]/.test(code) && !code.includes('isSafePublicImageUrl');
+  const imgs = code.match(/<img[\s>]/g)?.length ?? 0;
+  const guards = code.match(/\bisSafePublicImageUrl\(/g)?.length ?? 0;
+  return imgs > guards;
 }
 
 /** Index of the bracket closing the `{` or `(` at `open`, or -1 if unbalanced. */
@@ -151,6 +153,41 @@ describe('trust-surface guards', () => {
       }
     `;
     expect(isUnguardedImg(guarded)).toBe(false);
+  });
+
+  it('the SEC-10 <img> guard judges each <img>, not the file', () => {
+    // One guarded <img> must not vouch for an unguarded sibling, nor may
+    // an import that is never called.
+    const mixed = `
+      import { isSafePublicImageUrl } from '@/lib/safe-domain';
+      export function Pair({ a, b }: { a: string; b: string }) {
+        return (
+          <>
+            {isSafePublicImageUrl(a) && <img src={a} />}
+            <img src={b} />
+          </>
+        );
+      }
+    `;
+    expect(isUnguardedImg(mixed)).toBe(true);
+
+    const importOnly = `
+      import { isSafePublicImageUrl } from '@/lib/safe-domain';
+      export const Icon = ({ src }: { src: string }) => <img src={src} />;
+    `;
+    expect(isUnguardedImg(importOnly)).toBe(true);
+
+    const bothGuarded = `
+      export function Pair({ a, b }: { a: string; b: string }) {
+        return (
+          <>
+            {isSafePublicImageUrl(a) && <img src={a} />}
+            {isSafePublicImageUrl(b) && <img src={b} />}
+          </>
+        );
+      }
+    `;
+    expect(isUnguardedImg(bothGuarded)).toBe(false);
   });
 
   it('every JSON-LD dangerouslySetInnerHTML sink escapes via serializeJsonLd (T195)', () => {
