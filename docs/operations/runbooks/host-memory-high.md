@@ -80,12 +80,11 @@ ssh root@136.243.90.96 'systemctl status "heavy-*.scope" --no-pager'
      if `available` is low AND applications are getting ENOMEM,
      that's a real problem.
 
-4. **ZFS ARC.** No ARC cap is codified — `zfs_arc_max` appears
-   nowhere in the ansible role, so ARC follows the ZFS default
-   (up to ~half of RAM, shrinking under pressure).
-   `TODO(maintainer): if a hand-set ARC cap exists live on r1, codify it
-   in the role (AGENTS.md ansible-drift rule); if not, decide
-   whether one is wanted.`
+4. **ZFS ARC.** Capped at 32 GiB (floor 8 GiB) by
+   `/etc/modprobe.d/zfs.conf`, rendered by the archival-node role
+   (`zfs_arc_max_bytes` / `zfs_arc_min_bytes` in its defaults). The
+   file is read only at module load: a changed cap needs a reboot or
+   a hand write to `/sys/module/zfs/parameters/zfs_arc_max`.
    - Signal: `arcstat` / `/proc/spl/kstat/zfs/arcstats` shows ARC
      size close to RAM size.
    - Mitigation: ARC is reclaimable and usually self-corrects;

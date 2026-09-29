@@ -180,6 +180,11 @@ zfs_ashift:          12          # 4K NVMe sector alignment
 zfs_os_drives_needing_data_partition: []
 zfs_os_drives_data_partition_number: 4
 
+# ARC bounds in bytes (32 GiB / 8 GiB), matching r1's /etc/modprobe.d/zfs.conf
+# byte for byte so the first apply there reports no change.
+zfs_arc_max_bytes: 34359738368
+zfs_arc_min_bytes: 8589934592
+
 # Per-workload dataset tuning.
 #
 # recordsize is the PARSABLE byte value (131072, not "128K"): the
