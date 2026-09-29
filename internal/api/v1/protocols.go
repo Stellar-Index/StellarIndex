@@ -1269,22 +1269,31 @@ func applyProtocolBreakdown(view *ProtocolDetailView, breakdown []clickhouse.Pro
 // fillProtocolContractActivity merges per-contract event counts + last-seen onto
 // the roster (degrades on error).
 func (s *Server) fillProtocolContractActivity(ctx context.Context, name string, ids []string, plan protocolActivityPlan, view *ProtocolDetailView) bool {
-	var act []clickhouse.ProtocolContractActivity
-	var err error
 	if plan.fast != nil {
 		// Fast path: per-contract counts over the daily pre-aggregation
 		// (sub-second) instead of the raw `contract_events FINAL` scan
 		// (57s / 2 GiB-limit kill — the certified-lake "unavailable" root
 		// cause + a primary CH-load source). Falls back to raw when the
-		// daily table isn't available (mirrors the daily/breakdown paths).
-		act, err = plan.fast.ProtocolContractActivityFast(ctx, ids, plan.sinceDay)
-	} else {
-		act, err = s.protocolActivity.ProtocolContractActivity(ctx, ids, plan.sinceLedger)
+		// daily table isn't available or the fast read errors (mirrors
+		// fillProtocolSeriesAndBreakdown).
+		act, err := plan.fast.ProtocolContractActivityFast(ctx, ids, plan.sinceDay)
+		if err == nil {
+			applyProtocolContractActivity(view, act)
+			return true
+		}
+		s.logger.Warn("fast contract activity failed; raw fallback", "source", name, "err", err)
 	}
+	act, err := s.protocolActivity.ProtocolContractActivity(ctx, ids, plan.sinceLedger)
 	if err != nil {
 		s.logger.Warn("protocol contract activity failed", "source", name, "err", err)
 		return false
 	}
+	applyProtocolContractActivity(view, act)
+	return true
+}
+
+// applyProtocolContractActivity merges per-contract counts + last-seen onto the roster.
+func applyProtocolContractActivity(view *ProtocolDetailView, act []clickhouse.ProtocolContractActivity) {
 	byID := make(map[string]clickhouse.ProtocolContractActivity, len(act))
 	for _, a := range act {
 		byID[a.ContractID] = a
@@ -1299,7 +1308,6 @@ func (s *Server) fillProtocolContractActivity(ctx context.Context, name string, 
 			view.Contracts[i].LastSeen = a.LastSeen.UTC().Format(time.RFC3339)
 		}
 	}
-	return true
 }
 
 // protocolActivityPlanFor derives the shared analytics plan from ONE lake
