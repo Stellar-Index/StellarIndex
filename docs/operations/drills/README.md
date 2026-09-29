@@ -26,7 +26,7 @@ playbook + relevant runbooks.
 
 | Date | Tier | Scenario | Outcome | Open action items |
 | --- | --- | --- | --- | --- |
-| 2026-04-30 | SEV-1 tabletop | Timescale primary failover ([writeup](2026-04-sev1-timescale-failover.md)) | ran solo (1 participant, not the 3-person minimum) | Quarterly chaos drill running `drop_chunks` on staging; Patroni-driven failover scenario script; 3-person tabletop after launch |
+| 2026-04-30 | SEV-1 tabletop | Timescale primary failover ([writeup](2026-04-sev1-timescale-failover.md)) | ran solo (1 participant, not the 3-person minimum) | Quarterly chaos drill running `drop_chunks` on staging; 3-person tabletop after launch |
 | 2026-04-30 | SEV-2 tabletop | Soroswap decoder regression ([writeup](2026-04-sev2-soroswap-decode-regression.md)) | ran solo (1 participant, not the 3-person minimum) | Per-source decode-error ratio alert; stellar-core release-notes watcher; wire `stellarindex-ops backfill -source` end-to-end + integration test; 3-person tabletop with state-transition rehearsal |
 
 The two writeups above stay in this directory until their open
@@ -42,6 +42,7 @@ docs/operations/drills/
 ├── README.md                          (this file)
 ├── scenarios/                          tabletop scripts (canonical)
 │   ├── sev1-timescale-primary-failover.md   (storage tier — disk-full)
+│   ├── sev1-patroni-failover.md             (storage tier — Patroni failover; unvalidated)
 │   ├── sev1-anomaly-freeze-stuck.md         (aggregator — stuck freeze marker)
 │   ├── sev2-source-decoder-regression.md    (ingest — protocol upgrade)
 │   └── sev2-redis-sentinel-failover.md      (cache tier — master swap)
