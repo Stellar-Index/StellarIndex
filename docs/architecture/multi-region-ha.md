@@ -303,7 +303,12 @@ wanted.
    `redis_cluster`=3, `prometheus_pair`=2) that no inventory defines and that need
    multiple hosts per region. "Single-region HA on R1" is a **procure-and-build**, not a
    role-wiring. The archival-node role also does **not install** ClickHouse/Redis (it
-   config-overlays a hand-built box) — that automation must be written.
+   config-overlays a hand-built box) — that automation must be written. Redis in-flight
+   encryption is an open decision of this build: the redis-sentinel role authenticates
+   (`requirepass`/`masterauth`, optional ACL) but ships no TLS, and the Go client dials
+   plain `host:port`. Once replication and Sentinel traffic leave one host, decide
+   `tls-port`/`tls-replication` plus a client TLS config. Redis never spans regions (§3a),
+   so this is in-region traffic only.
 6. **Multi-region inventory + deploy**: create the group-structured inventory; add r2/r3
    to the `deploy.yml` enum + case + per-region SSH host-keys; fix the dead
    `postgres_replication_role`/seam-ledger config; wire ClickHouse install + the

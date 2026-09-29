@@ -23,6 +23,9 @@ redis_group: redis
 
 # Auth — set redis_password from vault. masterauth is set to the
 # same value so replicas authenticate to the primary.
+# TODO: no TLS — AUTH, replication and Sentinel traffic are cleartext
+# on the in-region network. Decide tls-port/tls-replication at the
+# multi-host build (docs/architecture/multi-region-ha.md §7.5).
 redis_password: ""
 
 # F-1213 (audit-2026-05-12): when true, the role also renders
