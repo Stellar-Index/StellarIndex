@@ -60,9 +60,9 @@ func TestUpdateRateLimit_FindsCorrectKeyAmongMultiple(t *testing.T) {
 	store, _, _ := newTestStore(t)
 	ctx := context.Background()
 
-	r1, _, _ := store.Create(ctx, CreateAPIKeyRequest{Identifier: "c1", Tier: TierAPIKey, RateLimitPerMin: 1000})
+	r1, _, _ := store.Create(ctx, CreateAPIKeyRequest{Identifier: "c1", Tier: TierAPIKey, RateLimitPerMin: 2000})
 	r2, _, _ := store.Create(ctx, CreateAPIKeyRequest{Identifier: "c2", Tier: TierAPIKey, RateLimitPerMin: 1000})
-	r3, _, _ := store.Create(ctx, CreateAPIKeyRequest{Identifier: "c3", Tier: TierAPIKey, RateLimitPerMin: 1000})
+	r3, _, _ := store.Create(ctx, CreateAPIKeyRequest{Identifier: "c3", Tier: TierAPIKey, RateLimitPerMin: 3000})
 
 	// Lift r2 only.
 	updated, err := store.UpdateRateLimit(ctx, r2.KeyID, 50000)
@@ -79,18 +79,16 @@ func TestUpdateRateLimit_FindsCorrectKeyAmongMultiple(t *testing.T) {
 		t.Errorf("Identifier = %q, want c2", updated.Identifier)
 	}
 
-	// Verify r1 and r3 are untouched by running a no-op
-	// UpdateRateLimit (set to their current value) which returns
-	// the record. If they'd been mutated by the r2 update, this
-	// would surface.
-	for _, kid := range []string{r1.KeyID, r3.KeyID} {
-		got, err := store.UpdateRateLimit(ctx, kid, 1000)
+	// Distinct seeds, read back without writing: a no-op UpdateRateLimit
+	// would rewrite the value it then asserts on.
+	for kid, want := range map[string]int{r1.KeyID: 2000, r3.KeyID: 3000} {
+		got, err := store.GetByKeyID(ctx, kid)
 		if err != nil {
 			t.Errorf("re-read %s: %v", kid, err)
 			continue
 		}
-		if got.RateLimitPerMin != 1000 {
-			t.Errorf("%s RateLimitPerMin = %d, want 1000 (untouched)", kid, got.RateLimitPerMin)
+		if got.RateLimitPerMin != want {
+			t.Errorf("%s RateLimitPerMin = %d, want %d (untouched)", kid, got.RateLimitPerMin, want)
 		}
 	}
 }
