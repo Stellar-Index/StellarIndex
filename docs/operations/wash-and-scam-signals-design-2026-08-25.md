@@ -1,7 +1,7 @@
 ---
 title: Volume-legitimacy + scam signals for the asset directory
-last_verified: 2026-08-24
-status: partially shipped — §3 landed (#423, #460); §4 policy still pending
+last_verified: 2026-09-29
+status: shipped — §3 landed (#423, #460); §2 rollup + §4-B annotate-and-demote landed (#168); §5 folds into the priceless-popular tripwire
 date: 2026-08-25
 ---
 
@@ -96,8 +96,10 @@ we chase phantoms. Wire §2's `volume_character` into #28's floor: only
 `market`-character volume counts toward "popular".
 
 ## Build sequencing
-1. §3 scam-label surfacing — ship immediately (read-join + UI, panel-verified).
-2. §2 rollup + `volume_character` — next, with the census query as the test oracle.
-3. §4 ranking — gated on the operator choosing A or B (default B on no answer,
-   since the goal directive says work everything with my recommendations).
+1. §3 scam-label surfacing — shipped (#423, #460): read-join + UI, panel-verified.
+2. §2 rollup + `volume_character` — shipped (#168): `assetcharacterrollup` worker,
+   migration 0149.
+3. §4 ranking — B (annotate + demote) taken as the default-on-no-answer; shipped
+   in #168. `AssetsOrderVolume24hUSDDesc` ranks on `SortVolume24hUSD`
+   (`asset_catalogue.go`), raw volume stays visible.
 4. §5 — folds into #28 when that builds.
