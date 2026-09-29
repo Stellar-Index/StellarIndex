@@ -384,11 +384,14 @@
                   <profile>ops_batch</profile>
                   <quota>default</quota>
                   <access_management>0</access_management>
-                  <!-- Pinned to the `stellar` database like api_serving:
-                       the ops jobs derive/verify Tier-1 lake tables and
-                       nothing else on this host. -->
+                  <!-- The ops jobs derive/verify Tier-1 lake tables in
+                       `stellar` and read `system` (parts, tables,
+                       query_log, processes) for census and gates. CH
+                       rejects a narrower <grants> beside any other
+                       access setting on an XML user. -->
                   <allow_databases>
                       <database>stellar</database>
+                      <database>system</database>
                   </allow_databases>
               </{{ clickhouse_ops_batch_user }}>
           </users>
