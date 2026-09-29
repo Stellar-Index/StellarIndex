@@ -108,6 +108,9 @@ type passkeyRig struct {
 	passkeys *fakeWebAuthnStore
 	user     platform.User
 	account  platform.Account
+	// sessionID, when set, is the presented session withSession plants;
+	// otherwise each request gets a fresh unstored ID.
+	sessionID uuid.UUID
 }
 
 func newPasskeyRig(t *testing.T) *passkeyRig {
@@ -135,8 +138,12 @@ func newPasskeyRig(t *testing.T) *passkeyRig {
 // withSession plants an authenticated SessionContext, as the resolver
 // middleware would after validating a cookie.
 func (r *passkeyRig) withSession(req *http.Request) *http.Request {
+	id := r.sessionID
+	if id == uuid.Nil {
+		id = uuid.New()
+	}
 	return req.WithContext(WithSession(req.Context(), SessionContext{
-		Session: platform.Session{ID: uuid.New(), UserID: r.user.ID},
+		Session: platform.Session{ID: id, UserID: r.user.ID},
 		User:    r.user,
 		Account: r.account,
 	}))

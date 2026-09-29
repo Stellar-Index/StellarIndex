@@ -580,6 +580,12 @@ func (h *Handlers) HandlePasskeyFinishRegister(w http.ResponseWriter, r *http.Re
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
+	// A new sign-in method invalidates the existing sessions: any other
+	// holder of this user's cookie must re-authenticate. The credential is
+	// already committed, so a failed revoke is logged, not a 500.
+	if err := h.cfg.Users.RevokeOtherUserSessions(r.Context(), sc.User.ID, sc.Session.ID); err != nil {
+		h.cfg.Logger.Error("revoke other sessions after passkey registration", "err", err, "user_id", sc.User.ID)
+	}
 	h.recordPasskeyRegistered(r, sc, row)
 	h.notifyPasskeyChanged(r, sc, notify.PasskeyAdded)
 	h.clearPasskeyCeremonyCookie(w)
