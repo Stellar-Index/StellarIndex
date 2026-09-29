@@ -922,6 +922,26 @@ func peerCheckpointBounds(from, to uint32) (uint32, uint32, error) {
 	return uint32(firstCP), uint32(lastCP), nil //nolint:gosec // G115: both are <= to, which is a uint32.
 }
 
+// peerSampleCheckpoints returns evenly-spaced checkpoints in [firstCP, lastCP],
+// always including both ends even when sampleN is below 2.
+func peerSampleCheckpoints(firstCP, lastCP uint32, sampleN int) []uint32 {
+	samples := []uint32{firstCP}
+	if lastCP == firstCP {
+		return samples
+	}
+	if sampleN > 1 {
+		stride := uint32(1)
+		totalCP := (lastCP-firstCP)/64 + 1
+		if uint32(sampleN) < totalCP {
+			stride = totalCP / uint32(sampleN)
+		}
+		for seq := firstCP + stride*64; seq < lastCP; seq += stride * 64 {
+			samples = append(samples, seq)
+		}
+	}
+	return append(samples, lastCP)
+}
+
 // verifyArchivePeers samples checkpoints in [from, to] and cross-
 // compares each peer's history-XXXXXXXX.json. Any disagreement is a
 // consensus-level finding — either one peer has replayed wrong, or
@@ -966,21 +986,7 @@ func verifyArchivePeers(from, to uint32, peerList string, sampleN int) error { /
 		return err
 	}
 
-	// Sample evenly-spaced checkpoints. Always include first and last.
-	samples := []uint32{firstCP}
-	if lastCP != firstCP && sampleN > 1 {
-		stride := uint32(1)
-		totalCP := (lastCP-firstCP)/64 + 1
-		if uint32(sampleN) < totalCP {
-			stride = totalCP / uint32(sampleN)
-		}
-		for seq := firstCP + stride*64; seq < lastCP; seq += stride * 64 {
-			samples = append(samples, seq)
-		}
-		if samples[len(samples)-1] != lastCP {
-			samples = append(samples, lastCP)
-		}
-	}
+	samples := peerSampleCheckpoints(firstCP, lastCP, sampleN)
 
 	fmt.Fprintf(os.Stderr, "verify-archive: peer diff — %d peers × %d checkpoints in [%d,%d]\n",
 		len(peers), len(samples), firstCP, lastCP)

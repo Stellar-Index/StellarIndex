@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -113,6 +114,31 @@ func TestWatchdogGate(t *testing.T) {
 	p.WalkActive.Store(false)
 	if !gate.shouldPing() {
 		t.Error("withheld the ping after the walk completed")
+	}
+}
+
+func TestPeerSampleCheckpointsAlwaysIncludesBothEnds(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		first, last uint32
+		sampleN     int
+		want        []uint32
+	}{
+		{name: "single checkpoint", first: 63, last: 63, sampleN: 20, want: []uint32{63}},
+		{name: "one sample", first: 63, last: 703, sampleN: 1, want: []uint32{63, 703}},
+		{name: "zero samples", first: 63, last: 703, sampleN: 0, want: []uint32{63, 703}},
+		{name: "negative samples", first: 63, last: 703, sampleN: -1, want: []uint32{63, 703}},
+		{name: "two samples", first: 63, last: 319, sampleN: 2, want: []uint32{63, 191, 319}},
+		{name: "more samples than checkpoints", first: 63, last: 255, sampleN: 20, want: []uint32{63, 127, 191, 255}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := peerSampleCheckpoints(tc.first, tc.last, tc.sampleN); !slices.Equal(got, tc.want) {
+				t.Fatalf("peerSampleCheckpoints(%d,%d,%d) = %v, want %v", tc.first, tc.last, tc.sampleN, got, tc.want)
+			}
+		})
 	}
 }
 
