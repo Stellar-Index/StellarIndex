@@ -1326,10 +1326,12 @@ groups:
       #   - `restore_drill*.prom`: monthly timer against a 24h threshold
       #     (see stellarindex_restore_drill_textfile_stale below, which
       #     carries the right threshold for this producer).
+      #   - `alertmanager_receivers.prom`: rewritten only by a hand run of
+      #     configs/alertmanager/apply.sh, so its age is the config's age.
       - alert: stellarindex_textfile_producer_stale
         expr: |
           time() - node_textfile_mtime_seconds{
-            file!~".*/ops_job_.*\\.pid[0-9]+\\.prom$|.*/ops_job_(backfill|usd_volume_restamp)\\.prom$|.*/restore_drill.*\\.prom$"
+            file!~".*/ops_job_.*\\.pid[0-9]+\\.prom$|.*/ops_job_(backfill|usd_volume_restamp)\\.prom$|.*/restore_drill.*\\.prom$|.*/alertmanager_receivers\\.prom$"
           } > 86400
         for: 30m
         labels:
