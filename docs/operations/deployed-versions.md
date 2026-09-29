@@ -1,6 +1,6 @@
 ---
 title: r1 deployed versions — source of record + snapshot
-last_verified: 2026-09-27
+last_verified: 2026-09-29
 status: reference
 ---
 
@@ -41,7 +41,7 @@ timestamp and its contents are the tag that was deployed — this is what
 distinguishes *deployed* from merely *tagged* (a `git tag` / release cut does
 not imply the fleet moved to it).
 
-## Snapshot (2026-08-20, from the sidecars above)
+## Snapshot (2026-09-29, from the sidecars above)
 
 Point-in-time; the sidecars are the live truth. The release-managed set
 (`aggregator`/`api`/`indexer`/`migrate`/`ops`/`sla-probe`) is monitored for
@@ -53,12 +53,12 @@ time; a mismatch that persists is the F-1314 / 2026-08-28 drift class the
 
 | Binary                   | Deployed version | Deployed (host mtime) |
 |--------------------------|------------------|-----------------------|
-| stellarindex-api         | v0.38.2          | 2026-08-19            |
-| stellarindex-indexer     | v0.38.2          | 2026-08-19            |
-| stellarindex-ops         | v0.38.2          | 2026-08-19            |
-| stellarindex-aggregator  | v0.36.0          | 2026-08-17            |
-| stellarindex-sla-probe   | v0.36.0          | 2026-08-17            |
-| stellarindex-migrate     | v0.28.1          | 2026-08-08            |
+| stellarindex-api         | v0.92.1          | 2026-09-29            |
+| stellarindex-indexer     | v0.92.1          | 2026-09-29            |
+| stellarindex-ops         | v0.92.1          | 2026-09-29            |
+| stellarindex-aggregator  | v0.92.1          | 2026-09-29            |
+| stellarindex-sla-probe   | v0.92.1          | 2026-09-29            |
+| stellarindex-migrate     | v0.92.1          | 2026-09-29            |
 
 Notes:
 - `migrate` is in `deploy.yml`'s default binary set and its "Reconcile the
@@ -79,6 +79,14 @@ Notes:
   reintroduce a "migrate lags by design" policy.
 - Legacy `ratesengine-*` sidecars may also be present on the host — those predate
   the binary rename and are NOT the current fleet; ignore them.
+
+## Planned maintenance
+
+| Date (UTC) | Release | Service | Window | Duration |
+|------------|---------|---------|--------|----------|
+| 2026-09-29 | v0.92.1 (schema 162→187) | API | 03:35:19–03:36:54, plus two restarts of seconds each (binary swap 03:42:37, config apply ~03:49:50) | 1m35s |
+| 2026-09-29 | v0.92.1 | aggregator (prices, MEV detection) | 03:35:19–03:41:13 | 5m54s |
+| 2026-09-29 | v0.92.1 | cap67 movements writer | 03:35:19–~03:49:50 | ~14m30s |
 
 ## Keeping this answerable
 
