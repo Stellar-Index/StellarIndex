@@ -1,7 +1,7 @@
 ---
 title: Consolidated deploy plan — cancel Phase 0 + deploy + single re-derive
 last_verified: 2026-07-18
-status: BLOCKED-on-capacity (comprehensive fill needs ~2.7-3 TiB; ~1 TiB free) — see capacity section
+status: SUPERSEDED 2026-07-19 (capacity bar met; see phase-a-capacity-relief-2026-07-18.md) — retained for historical context
 severity: P1
 ---
 

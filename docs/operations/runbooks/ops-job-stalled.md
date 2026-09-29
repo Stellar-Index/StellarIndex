@@ -322,7 +322,7 @@ Two things an enumeration of the wrapper's payloads turned up on
 2026-09-04 while sizing the stop bound. Neither is caused by the bound;
 both bear on what a stop actually achieves.
 
-- **`internal/ops/archive/verify_archive.go:400-402` documents a signal
+- **`internal/ops/archive/verify_archive.go:432-435` documents a signal
   path that does not exist.** The comment on the `maxRuntime == 0`
   branch says the binary "still honours external SIGTERM via the SDK's
   signal hooks". That file imports no `os/signal`, and no package it

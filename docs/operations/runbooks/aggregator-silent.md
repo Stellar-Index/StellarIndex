@@ -15,7 +15,7 @@ severity: P1
 | Severity | **P1** (`severity: page`) |
 | Detected by | `configs/prometheus/rules.r1/aggregator.yml` (group `stellarindex.aggregator`, `severity: page`, `for: 5m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/aggregator.yml`. |
 | Typical MTTR | 5–20 min |
-| Impact | Zero VWAP cache writes for 5+ min. **`/v1/price`** serves progressively staler cached VWAPs — the orchestrator publishes `cachekeys.VWAP` keys that `price.go` serves — so `flags.stale` flips, and rewritten/triangulated pairs start 404ing as their key TTLs lapse (the May-10 SEV-2 shape). **`/v1/vwap` is unaffected**: it ALWAYS scans raw trades on-query (`internal/api/v1/vwap.go:114-118`) — it neither degrades nor lags when the aggregator goes silent. |
+| Impact | Zero VWAP cache writes for 5+ min. **`/v1/price`** serves progressively staler cached VWAPs — the orchestrator publishes `cachekeys.VWAP` keys that `price.go` serves — so `flags.stale` flips, and rewritten/triangulated pairs start 404ing as their key TTLs lapse (the May-10 SEV-2 shape). **`/v1/vwap` is unaffected**: it ALWAYS scans raw trades on-query (`internal/api/v1/vwap.go:153-157`) — it neither degrades nor lags when the aggregator goes silent. |
 
 ## Symptoms
 
@@ -42,7 +42,7 @@ journalctl -u stellarindex-aggregator -n 50 --no-pager
 # with the indexer. R1's prometheus.r1.yml scrapes :9465 for the
 # aggregator; :9464 is the INDEXER's port. Use :9465 when probing
 # the aggregator. The auto-shift keys off `obs.metrics_listen` being
-# left at its default (cmd/stellarindex-aggregator/main.go:1689-1694,
+# left at its default (cmd/stellarindex-aggregator/main.go:2114-2116,
 # shifts to 127.0.0.1:9465); to pin a different port, set
 # `obs.metrics_listen` in the aggregator's TOML.
 curl -fs http://localhost:9465/metrics | grep -E '^stellarindex_aggregator_(ticks_total|empty_windows|dropped_trades|vwap_writes)'
@@ -128,7 +128,7 @@ Capture for the postmortem:
 ## Changelog
 
 - 2026-08-28 — re-verified against HEAD. Impact rewritten: `/v1/vwap`
-  always scans raw trades on-query (`internal/api/v1/vwap.go:114-118`)
+  always scans raw trades on-query (`internal/api/v1/vwap.go:153-157`)
   and is UNAFFECTED — the aggregator's cache writes feed `/v1/price`
   (May-10 SEV-2 staleness/404 shape). Full rule expr quoted (incl. the
   `absent_over_time` branch). Redis failover advice removed — no

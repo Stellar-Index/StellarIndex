@@ -35,7 +35,7 @@ severity: P2
    - `markets` / `source_markets` — backs `/v1/markets?source=<x>`
    - `markets` / `asset_markets` — backs `/v1/markets?asset=<x>`
    - `markets` / `all_pools` — backs `/v1/pools`
-2. **Check the prewarm code.** Open `cmd/stellarindex-api/main.go`, function `prewarmCaches` (main.go:4429) — it dispatches two tiers: `prewarmHeavy` (the `sources_stats` family, 5-min cadence) and `prewarmLight` (markets/pools/coins/native, 60 s cadence). Find the call corresponding to the alerted op. Compare every argument against what the handler at `internal/api/v1/markets.go` passes.
+2. **Check the prewarm code.** Open `cmd/stellarindex-api/main.go`, function `prewarmCaches` (main.go:5235) — it dispatches two tiers: `prewarmHeavy` (the `sources_stats` family, 5-min cadence) and `prewarmLight` (markets/pools/coins/native, 60 s cadence). Find the call corresponding to the alerted op. Compare every argument against what the handler at `internal/api/v1/markets.go` passes.
 3. **Diff the cache keys.** The cache key is a `fmt.Sprintf` of the args (see `internal/api/v1/markets_cache.go` `fetchPairs` / `fetchPools`). If the prewarm passes `Order=0` and the handler passes `Order=1`, the keys differ. We've shipped 3 of these bugs in 24h (Order dimension, #1194 Sources, Limit dimension) — same family.
 4. **Sanity check the cache TTL vs prewarm cadence.** `v1.NewCachedMarketsReader(...)` is constructed with `2*time.Minute`; `prewarmCaches` runs the heavy tier every 5 min and the light tier every 60 s. If a tier's cadence ever exceeds its caches' TTL, the cache expires before the next refresh and looks like a miss-storm.
 
@@ -97,7 +97,7 @@ severity: P2
   expanded from 4 markets-ops to the real seven `cache` label
   values (`coins`/`issuers`/`markets`/`network_stats`/`observations`/
   `oracle`/`sources_stats`); `prewarmOnce` corrected to
-  `prewarmCaches` (main.go:4429) with its two tiers (heavy 5 min /
+  `prewarmCaches` (main.go:5235) with its two tiers (heavy 5 min /
   light 60 s); TTL corrected 30 s → `2*time.Minute` and the stale
   25 s cadence claim dropped; prewarm coverage updated —
   `source_markets` is now prewarmed per-CEX and `all_pools`

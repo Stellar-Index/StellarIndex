@@ -82,7 +82,7 @@ cat /var/lib/node_exporter/textfile_collector/sla_probe.prom
 
 4. **`SLA_PROBE_TEXTFILE_OUTPUT` explicitly blanked** — the wrapper
    DEFAULTS the textfile path (`SLA_PROBE_TEXTFILE_OUTPUT`,
-   `configs/healthchecks/sla-probe.sh:54`), so an absent env var
+   `configs/healthchecks/sla-probe.sh:60`), so an absent env var
    still writes; only an explicitly emptied
    `SLA_PROBE_TEXTFILE_OUTPUT=` in
    `/etc/default/stellarindex-healthchecks` disables the write.
@@ -129,7 +129,7 @@ cat /var/lib/node_exporter/textfile_collector/sla_probe.prom
   on pass; whole-file rewrite ⇒ failing runs drop the series — the
   absent branch catches every-run-failed). Root cause 4 rewritten:
   the wrapper defaults `SLA_PROBE_TEXTFILE_OUTPUT`
-  (sla-probe.sh:54) — absent env still writes; only an explicit
+  (sla-probe.sh:60) — absent env still writes; only an explicit
   blank disables (`TEXTFILE_OUTPUT` belongs to the supply-snapshot
   unit); ReadWritePaths/EROFS added. Root cause 3 disambiguated
   under OBS-2 via a grep of the textfile. False-positive section

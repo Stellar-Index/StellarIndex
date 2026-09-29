@@ -1,7 +1,7 @@
 ---
 title: "Runbook — Phase A: capacity relief (execute-ready)"
 last_verified: 2026-07-18
-status: ready-pending-go
+status: SUPERSEDED 2026-07-19 (capacity decision below) — retained for historical context
 severity: P1
 ---
 
