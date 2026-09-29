@@ -191,17 +191,20 @@ export function renderOpFieldValue(key: string, v: unknown): string {
 }
 
 // scaledUnits scales an exact base-unit integer STRING by 10^decimals
-// for display, splitting the string at the decimal point so the raw
-// (possibly >2^53) integer is NEVER routed through Number() as a whole —
-// only the human-scale magnitude is floated (mirrors displayUnits /
-// bigStroopsToXlm; ADR-0003). Returns NaN for non-integer input so
-// callers can fall back to the raw string.
+// for display. Scaling happens on the decimal string, so the result is
+// one correctly-rounded parse of the exact value (never Number(int) /
+// 10^d, which rounds twice). It is still a float, approximate beyond ~15
+// significant digits: display and charts only (ADR-0003). Returns NaN
+// for non-integer input so callers can fall back to the raw string.
 export function scaledUnits(baseUnits: string, decimals: number): number {
   const s = baseUnits.trim();
   if (!/^-?\d+$/.test(s)) return NaN;
   const neg = s.startsWith('-');
   const digits = neg ? s.slice(1) : s;
-  if (decimals <= 0) return Number(neg ? `-${digits}` : digits);
+  if (decimals <= 0) {
+    const n = Number(digits + '0'.repeat(-decimals));
+    return neg ? -n : n;
+  }
   const padded = digits.padStart(decimals + 1, '0');
   const whole = padded.slice(0, padded.length - decimals);
   const frac = padded.slice(padded.length - decimals);
