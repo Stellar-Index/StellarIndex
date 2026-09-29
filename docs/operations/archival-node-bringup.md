@@ -255,7 +255,10 @@ wrapper is mandatory for a walk this long —
 `<SEAM>` is the live-start ledger from step 1. Tier A walks every
 ledger and confirms the hash chain links; Tier B compares each 64th
 ledger's hash against the local `/srv/history-archive`; Tier E
-runs `stellar-archivist scan` on the local archive.
+runs `stellar-archivist scan` on the local archive. Tier E needs the
+full mirror, so `-tier all` fails once `/srv/history-archive` is
+trimmed to `history/` + `ledger/` (storage-considerations.md Move A);
+after the trim use `-tier chain` and `-tier checkpoint`.
 
 Expected outcome: `verified <N> ledgers, chain-link integrity OK ✓,
 checkpoint anchor OK ✓ (XX matched, YY missed)`. **Both Tier A and

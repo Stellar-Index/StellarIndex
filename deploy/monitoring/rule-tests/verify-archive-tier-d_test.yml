@@ -1,14 +1,12 @@
 # verify-archive Tier D (multi-peer fork-detection) staleness.
 #
-# Separate file, not appended to verify-archive_test.yml, for the same
-# reason as verify-archive-tier-e_test.yml: Tier D's window is 8 DAYS
+# Separate file, not appended to verify-archive_test.yml: Tier D's window is 8 DAYS
 # (weekly cron) against Tier A/B's 36 HOURS (nightly systemd timers), and
 # promtool's unit-test replay evaluates every rule at this file's
 # top-level `evaluation_interval`, not a per-test `interval:` override —
 # mixing an 8d window into the 1m-global tier-a/b file would either time
 # out loading the range vector at 1-minute resolution or silently never
-# fire. `evaluation_interval: 1h` here mirrors
-# verify-archive-tier-e_test.yml's own reasoning.
+# fire, hence `evaluation_interval: 1h` here.
 #
 # No unit_failed pair is possible for Tier D: it is installed as an
 # ansible.builtin.cron entry (14-stellarindex-services.yml), not a

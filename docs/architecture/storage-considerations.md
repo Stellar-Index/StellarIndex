@@ -222,7 +222,11 @@ ADR-0017 contracts 3+4 currently SATISFIED. Daemon is keeping `ledger/` current.
 | LCM bucket corrupted → need ledger-state reconstruction from bucket/ | Low | 4-10h rebuild before recovery work |
 | SDF deprecates `history.stellar.org` during a future DR | Very low | Fall back to peer mirrors (LOBSTR/SatoshiPay/Blockdaemon/etc.); slower |
 
-**Decision status:** OPEN. Operator-gated. Pending in [Task #7].
+**Decision status:** EXECUTED on r1 (2026-05-21, the `/srv/history-archive`
+mtime; 21 GB remain, `history/` + `ledger/` only). Tier E consequently
+cannot pass locally — a 2026-09-29 bounded scan failed on every
+transaction/result set (`got 0000…`) — so its monthly cron and staleness
+alert were retired; see [galexie-backfill.md](../operations/galexie-backfill.md) §Tier E.
 
 ### Move B: Drop /srv/history-archive entirely (incl. `ledger/` + `history/`)
 
@@ -250,9 +254,9 @@ quotes 13.85 TB usable.
 The corollary is the part that still matters: **there is no parity
 left to trade for space.** Going below raidz1 means a stripe with
 zero redundancy on the canonical archive — rejected. Capacity relief
-is software-only (Move A, ZSTD recompression, and Move F's compression
-policy) plus a second server. **NOT Move D** — executed 2026-07-26,
-already spent — and **NOT Move E**, which is forbidden (raw trades are
+is software-only (ZSTD recompression and Move F's compression
+policy) plus a second server. **NOT Moves A or D** — executed 2026-05-21
+and 2026-07-26, already spent — and **NOT Move E**, which is forbidden (raw trades are
 kept forever; see its entry). This sentence named "Moves A/D/E" until
 2026-08-31, on the doc's own most recent edit, which is how both dead
 levers kept reading as live (wave-D PS-05/PS-06).
@@ -455,8 +459,8 @@ This restores all four subdirs in seconds.
 
 ## Open questions / things still to verify
 
-- [x] *Answered 2026-09-29:* Tier E is now a routine monthly cron (`configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml`, "verify-archive Tier E"; installed on r1 2026-09-28, first run on the 15th) with a staleness alert and runbook `docs/operations/runbooks/verify-archive-tier-e.md`. Original question: has Tier E ever been documented as a routine practice anywhere we haven't searched? (Searched 10 ops docs; only `archival-node-bringup.md` mentions it in the bring-up sequence, and even there Tier A+B are the success criteria.)
-- [x] *Answered 2026-09-29:* the monthly Tier E cron above is what makes R1's side of the promise real; R2/R3 remain deferred. Original question: what's the exact relationship between ADR-0016's "trust R1's Tier B + E verification" promise to R2/R3 and the operational reality that Tier E hasn't been run on R1 either? (Audit finding: R2/R3 are deferred and the "trust" relationship is theoretical.)
+- [x] *Answered 2026-09-29:* no, and it no longer can be: Move A trimmed the mirror, so a local Tier E scan fails by construction and the monthly cron added for it was retired. Tier E is operator-run against a full archive (`-archivist-url`); see `docs/operations/galexie-backfill.md` §Tier E. Original question: has Tier E ever been documented as a routine practice anywhere we haven't searched?
+- [x] *Answered 2026-09-29:* R1 can offer R2/R3 Tier B only; Tier E's subject (the bucket bytes) no longer exists on R1 after Move A. R2/R3 remain deferred. Original question: what's the exact relationship between ADR-0016's "trust R1's Tier B + E verification" promise to R2/R3 and the operational reality that Tier E hasn't been run on R1 either?
 - [x] *Answered 2026-09-29:* only `galexie-archive`. `internal/ops/archive/trim_galexie_archive.go` deletes solely from `cfg.Storage.S3BucketArchive`, and its MinIO identity is scoped to that bucket. Original question: does the trim cover `galexie-live` too, or only `galexie-archive`? (Need to skim; relevant if we ever want to trim live bucket's older partitions.)
 - [ ] Confirm MinIO du for `galexie-archive` vs `galexie-live` per-bucket breakdown (du is slow over 4.96 TB; still pending).
 

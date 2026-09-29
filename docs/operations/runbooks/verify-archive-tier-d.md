@@ -25,7 +25,7 @@ mode Tier A/B cannot see, since both anchor against our own mirror. If a
 peer's bytes hash to a different chain than the network's signed reality,
 Tier D catches it (ADR-0016 §7.4).
 
-Like Tier E, Tier D is installed as a weekly **cron** entry
+Tier D is installed as a weekly **cron** entry
 (`stellarindex-verify-archive-tier-d`, Sunday 10:23 UTC —
 `configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml`),
 not a systemd timer, so there is no `node_systemd_unit_state` series to
@@ -72,8 +72,6 @@ ssh r1 'journalctl -t stellarindex-tier-d --since "-10 days" --no-pager | tail -
 
 ## Related
 
-- [verify-archive-tier-e](verify-archive-tier-e.md) — the other cron-only
-  tier, same staleness-as-only-signal shape.
 - [verify-archive-run-stale](verify-archive-run-stale.md) — the Tier A
   staleness page (the higher-urgency chain-integrity counterpart).
 - ADR-0016 §7.4 — Tier D in the cross-region trust model.
