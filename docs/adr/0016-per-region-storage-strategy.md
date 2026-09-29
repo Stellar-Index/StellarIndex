@@ -89,6 +89,16 @@ serving the same closed-bucket API contract.**
 
 ### R1 (Frankfurt) — full local mirror
 
+> **Doc-truth correction (2026-09-29).** R1 no longer holds a full SDF
+> mirror. `/srv/history-archive` was trimmed to `history/` + `ledger/`
+> (~21 GB) on 2026-05-21
+> ([`storage-considerations.md`](../architecture/storage-considerations.md)
+> Move A). Tier E (`stellar-archivist scan --verify`) needs the
+> transaction, result and bucket files, so it cannot run against the
+> local mirror; its monthly cron was retired and it is operator-run
+> against a peer archive. R1's scheduled tiers are now Tier A + B + D.
+> Where this ADR says R2/R3 trust "R1's Tier B + E", read Tier B only.
+
 - Storage: 4 × 7.68 TB NVMe raidz2 (current Hetzner spec)
 - galexie-archive: local MinIO (~4.76 TB)
 - /srv/history-archive: full SDF mirror (~7 TB)

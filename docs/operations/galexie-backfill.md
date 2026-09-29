@@ -209,43 +209,26 @@ JSON fetches of ~1 KB each. Run on demand.
 
 ### Tier E — stellar-archivist scan of the source archive (housekeeping)
 
-Validates `/srv/history-archive` itself: every checkpoint file is
-present and verifies, and every referenced bucket's sha256 is
-recomputed and checked against its name. Tier B anchors against this
-mirror's manifest, so this is the only tier that catches bit rot in
-the mirror.
+Runs `stellar-archivist scan --verify <url>` (without `--verify` a
+scan only checks that files exist): every checkpoint file is present
+and verifies, and every referenced bucket's sha256 is recomputed and
+checked against its name. Defaults to `file://<archive-root>`; pass
+`-archivist-url` to scan another archive.
 
-Wired into `verify-archive` as a tier — under the hood it shells
-out to `stellar-archivist scan --verify <url>` (without `--verify`
-a scan only checks that files exist). Defaults to scanning the
-local mirror at `file://<archive-root>`; pass `-archivist-url
-https://...` to scan a peer's published archive instead.
+**Operator-run only; not scheduled.** r1's `/srv/history-archive` was
+trimmed to `history/` + `ledger/`
+([storage-considerations.md](../architecture/storage-considerations.md)
+Move A), so a local scan fails by construction: every transaction and
+result set reads as missing (`got 0000…`). The monthly cron and its
+staleness alert were retired for that reason. Tier B still anchors the
+files that remain. To audit the full archive, scan a peer and budget
+for re-downloading it; the flag default of 30 min is too short:
 
 ```sh
 stellarindex-ops verify-archive -config /etc/stellarindex.toml \
-  -tier archivist
-# or against a remote archive:
-stellarindex-ops verify-archive -config /etc/stellarindex.toml \
-  -tier archivist \
+  -tier archivist -archivist-timeout 48h \
   -archivist-url https://history.stellar.org/prd/core-live/core_live_001
 ```
-
-**Scheduled monthly** on hosts with the local mirror (the same
-`verify_archive_tier_b_enabled` gate as Tier B): the
-`stellarindex-verify-archive-tier-e` cron (15th, 12:43) in
-`14-stellarindex-services.yml`, under `run-heavy-job.sh` with a 48 h
-`-archivist-timeout`, logging to journald as `stellarindex-tier-e`
-and writing
-`stellarindex_verify_archive_last_success_unix{tier="archivist"}`.
-`stellarindex_verify_archive_tier_e_run_stale` (ticket, 35d + slack —
-see [alerts-catalog.md](alerts-catalog.md#verify-archive-timer-alerts)
-and [verify-archive-tier-e](runbooks/verify-archive-tier-e.md)) tickets
-off that series; a failing run also shows in
-`journalctl -t stellarindex-tier-e`. Still run it by hand immediately
-before kicking off a backfill, to catch disk corruption before
-building hours of replay on top of it. The hashing scan is
-long-running: the flag default of 30 min is too short for the full
-pubnet mirror, so pass `-archivist-timeout 48h` by hand as well.
 
 ## Tuning — when 60 ledgers/sec isn't enough
 
@@ -527,8 +510,8 @@ first.
 
 ## What we do today
 
-- **At backfill time:** Tier A + Tier B + Tier E.
-- **Monthly:** Tier E on the local mirror (cron, see Tier E above).
+- **At backfill time:** Tier A + Tier B (Tier E only against a full
+  archive — see Tier E above).
 - **First-pass disaster-recovery rehearsal:** Tier C once, to prove
   the path works.
 - **Periodic health check:** Tier D quarterly, or any time a

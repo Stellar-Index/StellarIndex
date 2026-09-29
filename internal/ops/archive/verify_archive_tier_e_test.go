@@ -54,11 +54,16 @@ var tierFlagByADRLetter = map[string]string{
 // TestVerifyArchiveTiers_ADRIntegrityLeaderTiersAreScheduled: ADR-0016 makes
 // R1 the integrity leader on the strength of its PERIODIC tiers, and R2/R3
 // delegate B + E to it. Every tier that sentence names must be invoked by a
-// shipped unit or cron, or the guarantee is a claim nothing runs.
+// shipped unit or cron, or the guarantee is a claim nothing runs. ADRs are
+// immutable, so a later doc-truth correction stating "scheduled tiers are
+// now Tier …" supersedes the original sentence.
 func TestVerifyArchiveTiers_ADRIntegrityLeaderTiersAreScheduled(t *testing.T) {
 	t.Parallel()
 	adr := readRepoFile(t, "docs/adr/0016-per-region-storage-strategy.md")
-	m := regexp.MustCompile(`integrity leader\*: its periodic\s+Tier ((?:[A-E](?:\s*\+\s*)?)+)`).FindStringSubmatch(adr)
+	m := regexp.MustCompile(`scheduled tiers are now Tier ((?:[A-E](?:\s*\+\s*)?)+)`).FindStringSubmatch(adr)
+	if m == nil {
+		m = regexp.MustCompile(`integrity leader\*: its periodic\s+Tier ((?:[A-E](?:\s*\+\s*)?)+)`).FindStringSubmatch(adr)
+	}
 	if m == nil {
 		t.Fatal("ADR-0016 no longer states R1's periodic tiers as `integrity leader*: its periodic Tier …`; re-derive this test")
 	}
