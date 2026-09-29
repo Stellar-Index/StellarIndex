@@ -120,21 +120,7 @@ limiting at the edge, and IP-based bot blocking out of the box.
    Let's Encrypt with a long-lived Cloudflare-issued cert so
    the connection from CF edge → R1 origin is authenticated.
 
-## 5. Stripe webhook secret (if launching paid tiers day 1)
-
-**Config — `/etc/default/stellarindex`:**
-
-```sh
-STELLARINDEX_STRIPE_WEBHOOK_SECRET=whsec_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
-```
-
-(Sourced into the systemd unit via `EnvironmentFile=`.)
-
-Restart: `systemctl restart stellarindex-api`. Verify via Stripe's
-"Send test event" button → should land in `journalctl -u
-stellarindex-api` and apply the upgrade.
-
-## 6. Healthchecks.io URLs
+## 5. Healthchecks.io URLs
 
 Five URLs go into `/etc/default/stellarindex-healthchecks`
 (F-1267 corrected the four-vs-five count on 2026-05-13 — the
@@ -175,7 +161,7 @@ systemctl restart \
 bash /opt/stellarindex/alertmanager/apply.sh
 ```
 
-## 7. FX API keys (recommended, not blocking)
+## 6. FX API keys (recommended, not blocking)
 
 The 4 FX sources flagged "stopped" in `/v1/sources` are missing
 operator-supplied API keys. Set in `[external.fx]` under
@@ -192,7 +178,7 @@ Restart the indexer. Aggregator picks them up on the next tick.
 Without these, fiat divergence has fewer cross-checks (CoinGecko
 + Reflector still cover most cases). Not a launch blocker.
 
-## 8. Smoke from the open internet
+## 7. Smoke from the open internet
 
 Once DNS lands and Caddy has its cert:
 
@@ -204,7 +190,7 @@ API_BASE_URL=https://api.stellarindex.io make smoke
 13/13 green confirms TLS + DNS + cert + path are all healthy
 end-to-end before customer traffic arrives.
 
-## 9. Backup baseline
+## 8. Backup baseline
 
 The launch-readiness backlog has `L4.16` for automated daily
 Postgres dumps + MinIO snapshot replication; until that lands,
