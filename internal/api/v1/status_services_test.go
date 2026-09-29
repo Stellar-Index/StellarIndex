@@ -59,7 +59,7 @@ func TestStatus_DeclaredServicesOnly_AbsentAggregatorIsNotDegraded(t *testing.T)
 				"indexer": now.Add(-5 * time.Second),
 			},
 			latency:   StatusLatency{P50Ms: 10, P95Ms: 80, P99Ms: 200, WindowSecs: 300},
-			freshness: StatusFreshness{ActiveSources: 1, TotalSources: 1},
+			freshness: StatusFreshness{ActiveSources: new(1), TotalSources: new(1)},
 			incidents: StatusIncidents{ActiveCount: 0},
 		},
 	})
