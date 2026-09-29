@@ -314,8 +314,8 @@ contractid-aware, gate `Matches()` on `reg.Has(contractID)`).
   terms generally prohibit this. Blended outputs (`/v1/price|vwap|…`) are defensible. Decide
   whether to gate raw source-attributed endpoints for restricted venues.
 - [ ] **External security review** booking (P2-3).
-- [ ] Confirm CoinGecko Pro redistribution terms; add a `NOTICE`/`THIRD_PARTY` file + the
-  goxdr dual-license (GPL/Apache→Apache elected) note for the pre-flip SBOM gate.
+- [ ] Confirm CoinGecko Pro redistribution terms at purchase. (`github.com/xdrpp/goxdr`, pulled in
+  via `txnbuild`, is dual GPL-3/Apache-2.0; we take it under Apache-2.0.)
 
 ## Launch cutover (operator/DNS — P2-5/P2-6)
 - [ ] DNS flip finalization, public rate-limit tier, announcement, 24h watch (endpoints are

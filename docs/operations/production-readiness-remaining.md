@@ -42,7 +42,7 @@ rows) — accept + document, recover via op-census if ever needed.
 | F6 ≡ C2-16 — oracle-reconcile window netting | ⬜ | Deferred with rationale: needs a content-level per-update reconcile on a vintage-stable identity |
 | F8 / F9 / F10 | ⬜ | Lower-severity fail-opens from the sweep |
 | C2-11 / C2-18 — Soroban topics>4 schema + re-ingest; drop dead `classic_movements` | ⬜ | Structural, `[OP]`-coordinated. Re-ingest reads the topic-complete lake (cheap) |
-| C3-7 — `stellarindex-indexer -dry-run` opens a live CH connection | ⬜ | Confirm/close during the E gate |
+| C3-7 — `stellarindex-indexer -dry-run` opens a live CH connection | ✅ | Dry-run returns before the first ClickHouse dial (the live sink); `TestDryRunExitsBeforeBackgroundWorkers` |
 | M4 — caller-side supply close-timestamp fix | ⬜ | Regression guard landed; caller fix still deferred |
 | Same-bug-class day-alignment in `protocol_reader.go` / `protocols.go` / `contracts_list.go` | ⬜ | The 17280 ledger-count window; fixed in `NetworkThroughput` only so far |
 

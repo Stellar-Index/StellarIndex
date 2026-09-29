@@ -467,5 +467,4 @@ Run quarterly:
   ADR-0050 — re-read on each change to those docs.
 
 A failed drift signal is a launch-readiness regression — file
-an issue with the `dr-readiness` label (TODO(maintainer): confirm the label
-exists on GitHub; nothing in-tree defines it).
+an issue with the `dr-readiness` label.

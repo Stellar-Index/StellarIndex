@@ -166,6 +166,30 @@ func TestDecodeRelay_HappyPath(t *testing.T) {
 	}
 }
 
+// A future relay that appends an arg (e.g. `signer: Address` at index 4)
+// must still decode the first four positionally.
+func TestDecodeRelay_TrailingArgIgnored(t *testing.T) {
+	const resolveSec = uint64(1_745_000_000)
+	args := []string{
+		encodeAddressArg(t, relayerG),
+		encodeSymbolRatesArg(t, []struct {
+			Symbol string
+			Rate   uint64
+		}{{"BTC", 500_000_000_000_000}}),
+		encodeU64Arg(t, resolveSec),
+		encodeU64Arg(t, 1),
+		encodeAddressArg(t, relayerG),
+	}
+	updates, err := decodeRelayArgs(FnRelay, args, adapterC,
+		52_000_000, "abcd", 0, "", "", time.Now())
+	if err != nil {
+		t.Fatalf("decodeRelayArgs: %v", err)
+	}
+	if len(updates) != 1 || updates[0].Observer != relayerG || updates[0].Timestamp.Unix() != int64(resolveSec) {
+		t.Fatalf("got %+v", updates)
+	}
+}
+
 // TestDecodeRelay_ContractRelayerValidates pins GH-598: `relay` declares
 // `from` as a Soroban Address, so the relayer may be a contract. Every
 // decoded update must still pass OracleUpdate.Validate — the check the
