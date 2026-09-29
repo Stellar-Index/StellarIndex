@@ -19,12 +19,17 @@ import (
 type TopicShape struct {
 	ContractID string
 	Topic0Sym  string
-	Count      uint64
-	MinLedger  uint32
-	MaxLedger  uint32
-	EventType  string
-	Topics     []string // base64 SCVal topics of a representative event
-	DataXDR    string   // base64 SCVal data of that event
+	// t0, t1 and tn widen the identity when topic[0] is not a Symbol
+	// (Topic0Sym ""): every such event would otherwise share one shape per
+	// contract, so one recognised exemplar hid its unrecognised siblings (GH-807).
+	t0, t1    string
+	tn        uint64
+	Count     uint64
+	MinLedger uint32
+	MaxLedger uint32
+	EventType string
+	Topics    []string // base64 SCVal topics of a representative event
+	DataXDR   string   // base64 SCVal data of that event
 }
 
 // Event reconstructs the representative [events.Event] for this shape — enough
@@ -63,7 +68,23 @@ const recognitionScanWindow = 1_000_000
 const exemplarBatchSize = 200
 
 // shapeKey is the distinct-shape identity the scan accumulates on.
-type shapeKey struct{ contract, topic0 string }
+type shapeKey struct {
+	contract, topic0, t0, t1 string
+	tn                       uint64
+}
+
+func (s TopicShape) key() shapeKey {
+	return shapeKey{contract: s.ContractID, topic0: s.Topic0Sym, t0: s.t0, t1: s.t1, tn: s.tn}
+}
+
+// nonSymbolShapeCols are the GH-807 key columns, empty for a Symbol topic[0]
+// so group-key state grows only for the rare non-Symbol shapes. They make the
+// scan read topics_xdr (measured on r1: 4.5 s / 30.6 GiB -> 12.9 s / 82.5 GiB
+// per 1M-ledger window); a recognition claim that hides shapes is not cheaper
+// to be wrong.
+const nonSymbolShapeCols = `if(topic_0_sym = '', topics_xdr[1], '') AS t0,
+			if(topic_0_sym = '', topics_xdr[2], '') AS t1,
+			if(topic_0_sym = '', length(topics_xdr), 0) AS tn`
 
 // DistinctTopicShapes returns one representative event per distinct
 // (contract_id, topic_0_sym) in contract_events over [from,to]. Optionally
@@ -168,7 +189,16 @@ func finishShapeScan(ctx context.Context, conn driver.Conn, acc map[shapeKey]*To
 		if out[i].ContractID != out[j].ContractID {
 			return out[i].ContractID < out[j].ContractID
 		}
-		return out[i].Topic0Sym < out[j].Topic0Sym
+		if out[i].Topic0Sym != out[j].Topic0Sym {
+			return out[i].Topic0Sym < out[j].Topic0Sym
+		}
+		if out[i].t0 != out[j].t0 {
+			return out[i].t0 < out[j].t0
+		}
+		if out[i].t1 != out[j].t1 {
+			return out[i].t1 < out[j].t1
+		}
+		return out[i].tn < out[j].tn
 	})
 
 	if err := fetchShapeExemplars(ctx, conn, out); err != nil {
@@ -189,13 +219,14 @@ func distinctShapesWindowQuery(excludeTopic0 []string) string {
 		SELECT
 			contract_id,
 			topic_0_sym,
+			%s,
 			count() AS cnt,
 			min(ledger_seq) AS lo,
 			max(ledger_seq) AS hi
 		FROM stellar.contract_events
 		%s
-		GROUP BY contract_id, topic_0_sym
-		%s`, where, boundedScanSettings)
+		GROUP BY contract_id, topic_0_sym, t0, t1, tn
+		%s`, nonSymbolShapeCols, where, boundedScanSettings)
 }
 
 // distinctShapesWatchedQuery is the phase-1 scan for
@@ -207,10 +238,15 @@ func distinctShapesWindowQuery(excludeTopic0 []string) string {
 func distinctShapesWatchedQuery(topic0, contractIDs []string) string {
 	where := fmt.Sprintf("WHERE ledger_seq BETWEEN ? AND ? AND topic_0_sym IN (%s) AND contract_id IN (%s)",
 		sqlQuoteList(topic0), sqlQuoteEscapedList(contractIDs))
+	// topic_0_sym IN (non-empty Symbols): the GH-807 columns are constant
+	// here, so they are not read from topics_xdr.
 	return fmt.Sprintf(`
 		SELECT
 			contract_id,
 			topic_0_sym,
+			'' AS t0,
+			'' AS t1,
+			toUInt64(0) AS tn,
 			count() AS cnt,
 			min(ledger_seq) AS lo,
 			max(ledger_seq) AS hi
@@ -225,17 +261,17 @@ func distinctShapesWatchedQuery(topic0, contractIDs []string) string {
 func mergeShapeWindow(rows driver.Rows, acc map[shapeKey]*TopicShape) error {
 	for rows.Next() {
 		var (
-			contract, topic0 string
-			cnt              uint64
-			lo, hi           uint32
+			contract, topic0, t0, t1 string
+			tn, cnt                  uint64
+			lo, hi                   uint32
 		)
-		if err := rows.Scan(&contract, &topic0, &cnt, &lo, &hi); err != nil {
+		if err := rows.Scan(&contract, &topic0, &t0, &t1, &tn, &cnt, &lo, &hi); err != nil {
 			return fmt.Errorf("clickhouse: scan topic shape: %w", err)
 		}
-		k := shapeKey{contract: contract, topic0: topic0}
+		k := shapeKey{contract: contract, topic0: topic0, t0: t0, t1: t1, tn: tn}
 		s := acc[k]
 		if s == nil {
-			acc[k] = &TopicShape{ContractID: contract, Topic0Sym: topic0, Count: cnt, MinLedger: lo, MaxLedger: hi}
+			acc[k] = &TopicShape{ContractID: contract, Topic0Sym: topic0, t0: t0, t1: t1, tn: tn, Count: cnt, MinLedger: lo, MaxLedger: hi}
 			continue
 		}
 		s.Count += cnt
@@ -264,20 +300,24 @@ func shapeExemplarQuery(shapes []TopicShape) string {
 			seenLedger[s.MaxLedger] = true
 			ledgers = append(ledgers, strconv.FormatUint(uint64(s.MaxLedger), 10))
 		}
-		pairs = append(pairs, "("+sqlQuoteEscaped(s.ContractID)+","+sqlQuoteEscaped(s.Topic0Sym)+")")
+		pairs = append(pairs, "("+sqlQuoteEscaped(s.ContractID)+","+sqlQuoteEscaped(s.Topic0Sym)+","+
+			sqlQuoteEscaped(s.t0)+","+sqlQuoteEscaped(s.t1)+","+strconv.FormatUint(s.tn, 10)+")")
 	}
+	// One tuple argMax, so the three exemplar fields come from the same event.
 	return fmt.Sprintf(`
-		SELECT
-			contract_id,
-			topic_0_sym,
-			argMax(event_type, ledger_seq) AS event_type,
-			argMax(topics_xdr, ledger_seq) AS topics,
-			argMax(data_xdr, ledger_seq)   AS data
-		FROM stellar.contract_events
-		WHERE ledger_seq IN (%s)
-		  AND (contract_id, topic_0_sym) IN (%s)
-		GROUP BY contract_id, topic_0_sym
-		%s`, strings.Join(ledgers, ","), strings.Join(pairs, ","), boundedScanSettings)
+		SELECT contract_id, topic_0_sym, t0, t1, tn, ex.1 AS event_type, ex.2 AS topics, ex.3 AS data
+		FROM (
+			SELECT
+				contract_id,
+				topic_0_sym,
+				%s,
+				argMax((event_type, topics_xdr, data_xdr), ledger_seq) AS ex
+			FROM stellar.contract_events
+			WHERE ledger_seq IN (%s)
+			  AND (contract_id, topic_0_sym, t0, t1, tn) IN (%s)
+			GROUP BY contract_id, topic_0_sym, t0, t1, tn
+		)
+		%s`, nonSymbolShapeCols, strings.Join(ledgers, ","), strings.Join(pairs, ","), boundedScanSettings)
 }
 
 // fetchShapeExemplars fills EventType/Topics/DataXDR for every shape in-place,
@@ -285,7 +325,7 @@ func shapeExemplarQuery(shapes []TopicShape) string {
 func fetchShapeExemplars(ctx context.Context, conn driver.Conn, shapes []TopicShape) error {
 	idx := make(map[shapeKey]int, len(shapes))
 	for i, s := range shapes {
-		idx[shapeKey{contract: s.ContractID, topic0: s.Topic0Sym}] = i
+		idx[s.key()] = i
 	}
 	for start := 0; start < len(shapes); start += exemplarBatchSize {
 		end := start + exemplarBatchSize
@@ -318,13 +358,14 @@ func scanShapeExemplars(rows driver.Rows, idx map[shapeKey]int, shapes []TopicSh
 	filled := 0
 	for rows.Next() {
 		var (
-			contract, topic0, eventType, data string
-			topics                            []string
+			contract, topic0, t0, t1, eventType, data string
+			tn                                        uint64
+			topics                                    []string
 		)
-		if err := rows.Scan(&contract, &topic0, &eventType, &topics, &data); err != nil {
+		if err := rows.Scan(&contract, &topic0, &t0, &t1, &tn, &eventType, &topics, &data); err != nil {
 			return filled, fmt.Errorf("clickhouse: scan shape exemplar: %w", err)
 		}
-		i, ok := idx[shapeKey{contract: contract, topic0: topic0}]
+		i, ok := idx[shapeKey{contract: contract, topic0: topic0, t0: t0, t1: t1, tn: tn}]
 		if !ok {
 			return filled, fmt.Errorf("clickhouse: shape exemplar for unknown shape (%s, %q)", contract, topic0)
 		}
