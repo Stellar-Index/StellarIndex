@@ -339,7 +339,7 @@ func resolveRef(doc map[string]any, ref string) map[string]any {
 }
 
 // mergeSchema flattens $ref + allOf into a single schema map with a
-// combined "properties" set.
+// combined "properties" set and the union of every part's "required".
 func mergeSchema(doc map[string]any, schema map[string]any) map[string]any {
 	if schema == nil {
 		return nil
@@ -349,6 +349,17 @@ func mergeSchema(doc map[string]any, schema map[string]any) map[string]any {
 	}
 	out := map[string]any{}
 	props := map[string]any{}
+	var required []any
+	seenReq := map[string]bool{}
+	addRequired := func(s map[string]any) {
+		req, _ := s["required"].([]any)
+		for _, r := range req {
+			if name, ok := r.(string); ok && !seenReq[name] {
+				seenReq[name] = true
+				required = append(required, name)
+			}
+		}
+	}
 	for k, v := range schema {
 		out[k] = v
 	}
@@ -360,11 +371,12 @@ func mergeSchema(doc map[string]any, schema map[string]any) map[string]any {
 				continue
 			}
 			for k, v := range merged {
-				if k == "properties" {
+				if k == "properties" || k == "required" {
 					continue
 				}
 				out[k] = v
 			}
+			addRequired(merged)
 			if pp, ok := merged["properties"].(map[string]any); ok {
 				for k, v := range pp {
 					props[k] = v
@@ -372,6 +384,7 @@ func mergeSchema(doc map[string]any, schema map[string]any) map[string]any {
 			}
 		}
 	}
+	addRequired(schema)
 	if pp, ok := schema["properties"].(map[string]any); ok {
 		for k, v := range pp {
 			props[k] = v
@@ -379,6 +392,9 @@ func mergeSchema(doc map[string]any, schema map[string]any) map[string]any {
 	}
 	if len(props) > 0 {
 		out["properties"] = props
+	}
+	if len(required) > 0 {
+		out["required"] = required
 	}
 	return out
 }
@@ -591,11 +607,19 @@ func (w *schemaWalker) walk(raw map[string]any, typ reflect.Type, path string) {
 	}
 	w.seen[key] = true
 	s := mergeSchema(w.doc, raw)
-	if _, union := s["oneOf"]; union {
-		return // branch is chosen per call site via envelopeRef, not here
-	}
 	if typ != timeType && reflect.PointerTo(typ).Implements(unmarshalerType) {
 		return // custom decoder (json.RawMessage, unions) owns the wire shape
+	}
+	if alts, union := s["oneOf"].([]any); union {
+		// A top-level response oneOf is split per call site via envelopeRef;
+		// below that only the nullable `oneOf: [X, {type: null}]` is decidable.
+		v, nonNull := nullableVariant(alts)
+		if v != nil {
+			w.walk(v, typ, path)
+			return
+		}
+		w.drift = append(w.drift, fmt.Sprintf("%s: oneOf with %d non-null branches — the walker cannot pick one to check against SDK type %v; split it via envelopeRef, give the Go type an UnmarshalJSON, or add a schemaExceptions entry with a reason", path, nonNull, typ))
+		return
 	}
 	if st := specSchemaType(s); !goDecodes(st, typ) {
 		w.drift = append(w.drift, fmt.Sprintf("%s: spec type %q, SDK Go type %v cannot decode it", path, st, typ))
@@ -613,6 +637,25 @@ func (w *schemaWalker) walk(raw map[string]any, typ reflect.Type, path string) {
 	default:
 		// scalar leaf: goDecodes above already checked it
 	}
+}
+
+// nullableVariant returns X for `oneOf: [X, {type: null}]` (either
+// order) and the non-null branch count; X is nil when that count is not 1.
+func nullableVariant(alts []any) (map[string]any, int) {
+	var only map[string]any
+	nonNull := 0
+	for _, a := range alts {
+		am, _ := a.(map[string]any)
+		if am == nil || am["type"] == "null" {
+			continue
+		}
+		nonNull++
+		only = am
+	}
+	if nonNull != 1 {
+		return nil, nonNull
+	}
+	return only, 1
 }
 
 // goJSONFields maps a struct's JSON names to their fields (embedded
