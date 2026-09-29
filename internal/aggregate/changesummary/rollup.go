@@ -191,19 +191,28 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 // refresh runs one pass over every configured entity. Per-entity
-// failures log + continue — a single broken pair must not block
-// the rest of the working set.
+// failures continue — a single broken pair must not block the rest
+// of the working set — and are reported once per pass at Warn.
 func (w *Worker) refresh(ctx context.Context) {
 	now := w.clock().UTC()
 	// Look back 30 days + a small buffer to capture the current
 	// observation that anchors d30 deltas.
 	from := now.Add(-30 * 24 * time.Hour).Add(-1 * time.Hour)
 
+	var failed []string
+	var firstErr error
 	for _, ent := range w.entities {
 		if err := w.refreshOne(ctx, ent, from, now); err != nil {
-			w.logger.Debug("change-summary refresh",
-				"type", ent.Type, "id", ent.ID, "err", err)
+			failed = append(failed, ent.Type+"/"+ent.ID)
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
+	}
+	if len(failed) > 0 && ctx.Err() == nil {
+		w.logger.Warn("change-summary pass had failures",
+			"failed", len(failed), "total", len(w.entities),
+			"entities", failed, "first_err", firstErr)
 	}
 }
 
