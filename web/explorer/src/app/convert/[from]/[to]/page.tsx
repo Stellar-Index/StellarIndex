@@ -107,7 +107,8 @@ export async function generateStaticParams() {
 // returned every cross-rate at once; rc.48 removed that route.
 // We now hit two endpoints in parallel:
 //
-//   1. /v1/assets/{from} for the identity (ticker, name)
+//   1. /v1/external/assets/{from} for the identity (ticker, name);
+//      /v1/assets is Stellar-only and 404s a fiat ticker
 //   2. /v1/price/batch?asset_ids=fiat:{to}&quote=fiat:{from} for
 //      the singleton from→to rate
 //
@@ -125,7 +126,7 @@ async function fetchDetail(
     // assets/[slug]/page.tsx: a persistent transport failure throws
     // and fails the build rather than baking a rate-less page.
     buildFetchData<{ ticker: string; name: string; price_usd?: string | null }>(
-      `/v1/assets/${from.toUpperCase()}`,
+      `/v1/external/assets/${from.toUpperCase()}`,
     ),
     // The rate itself — softFail, like fetchPriceDirect's /v1/price
     // call: useConvertRate (ConvertLive.tsx) re-fetches this pair
