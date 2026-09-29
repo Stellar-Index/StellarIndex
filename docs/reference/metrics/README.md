@@ -2562,8 +2562,16 @@ removed. `audit_log` is deliberately not swept.
 ### `stellarindex_retention_reaper_errors_total`
 
 Counter, labelled `reaper` (same values), pre-seeded at 0. Failed
-retention sweeps; each is retried on the next hourly tick. Non-zero and
-rising means the table is growing again.
+retention sweeps or row counts; each is retried on the next hourly tick.
+Non-zero and rising means the table is growing again.
+
+### `stellarindex_retention_reaper_rows`
+
+Gauge, labelled `reaper` ∈ {`webhook_delivery`}. Current row count of the
+table the reaper bounds, refreshed every sweep (including one whose DELETE
+failed). `webhook_deliveries` is written by customer-configured fan-out, so
+sustained growth past the 30-day window means the sweep is not keeping up.
+The `session` reaper publishes no count, so its series is absent.
 
 ### `stellarindex_login_code_lockout_rows_deleted_total`
 
