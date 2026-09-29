@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
@@ -434,31 +435,37 @@ func TestFill_EmptyMissingList(t *testing.T) {
 	}
 }
 
-// TestFiller_ParentDirsAreTraversable is the regression test for the
-// cold audit of 2026-08-04.
-//
-// fetchOne created the checkpoint's parent directories 0750 as root and
-// chowned only the FILE, so every checkpoint the filler placed was
-// unreachable by the non-root verifier the chown exists for — a reader
-// needs +x on every directory on the path. Measured on r1: 24 depth-2
-// directories created since 2026-05-12 were non-o+rx, covering 24,044
-// checkpoints, i.e. the entire recent window. Enabling the ADR-0017
-// anchor check would have failed with EACCES, which the verifier treats
-// as a hard mismatch rather than a missing file.
+// TestFiller_ParentDirsAreTraversable drives Fill into an empty archive
+// root and asserts every directory it creates on the way to the placed
+// checkpoint is o+rx: the non-root verifier needs +x on each one, and
+// fetchOne once created them 0750, making every placed file EACCES.
 func TestFiller_ParentDirsAreTraversable(t *testing.T) {
-	root := t.TempDir()
+	// Pin the umask so the assertion measures the mode fetchOne requests,
+	// not the host's umask; non-parallel, so no other test observes it.
+	old := syscall.Umask(0o022)
+	t.Cleanup(func() { syscall.Umask(old) })
+
+	ts := fakeSource(t, func(relPath string) (int, []byte) {
+		return http.StatusOK, checkpointGzipBody(seqFromRelPath(t, relPath))
+	})
+	f, root := makeFiller(t, []archivecompleteness.Source{{Name: "s", URL: ts.URL}})
+
 	// ledger/03/cd/28/ledger-03cd28ff.xdr.gz — the real shape.
-	dir := filepath.Join(root, "ledger", "03", "cd", "28")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
+	res := f.Fill(context.Background(), []uint32{0x03cd28ff})
+	if res.Filled != 1 {
+		t.Fatalf("Filled = %d, want 1 (Failed=%v)", res.Filled, res.Failed)
+	}
+	file := filepath.Join(root, "ledger", "03", "cd", "28", "ledger-03cd28ff.xdr.gz")
+	if _, err := os.Stat(file); err != nil {
+		t.Fatalf("placed checkpoint: %v", err)
 	}
 
-	for d := dir; d != root; d = filepath.Dir(d) {
+	for d := filepath.Dir(file); d != root; d = filepath.Dir(d) {
 		fi, err := os.Stat(d)
 		if err != nil {
 			t.Fatalf("stat %s: %v", d, err)
 		}
-		if fi.Mode().Perm()&0o005 == 0 {
+		if fi.Mode().Perm()&0o005 != 0o005 {
 			t.Errorf("directory %s is mode %o — without o+rx a non-root verifier gets EACCES on every checkpoint beneath it",
 				d, fi.Mode().Perm())
 		}
