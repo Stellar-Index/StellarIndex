@@ -46,3 +46,12 @@ describe('markets/[pair] OHLC volume scale', () => {
     expect(src).toMatch(/decimals == null[\s\S]{0,160}return '—'/);
   });
 });
+
+describe('markets/[pair] OHLC fetch', () => {
+  // A 422 all-filtered bar aborted the mainnet export (AQUA~native).
+  it('degrades to no strip rather than failing the build', () => {
+    expect(src).toMatch(
+      /buildFetchData<OhlcResp>\(\s*`\/v1\/ohlc[^`]*`,\s*\{ softFail: true/,
+    );
+  });
+});

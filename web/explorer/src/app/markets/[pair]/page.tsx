@@ -300,8 +300,12 @@ function fetchOhlc(base: string, quote: string): Promise<OhlcResp | null> {
   // want for the markets-pair OHLC strip. The earlier `interval=1h`
   // param was silently ignored (not in the API schema) but the
   // default-window happened to match. Drop it for honesty.
+  // softFail like fetchPrice: the trailing-hour bar is ephemeral, and a
+  // typed 422 (every trade in the hour filtered as an outlier) is a real
+  // state that must render no strip, not abort the export.
   return buildFetchData<OhlcResp>(
     `/v1/ohlc?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
+    { softFail: true, timeoutMs: 6_000, attempts: 2 },
   );
 }
 
