@@ -171,26 +171,19 @@ func newClosedStreamSeries(asset, quote canonical.Asset, windowSeconds int) (*cl
 // admit reports whether a frame may be forwarded. A payload that does not
 // name one of this connection's spellings is passed through: selection
 // only ever chooses between the alias series, it never filters content.
+//
+// A price_withheld frame is ranked like a bucket but never recorded: its
+// as_of is the publisher's wall clock, which must not steer selection.
 func (c *closedStreamSeries) admit(data []byte) bool {
-	var env struct {
-		Data struct {
-			AssetID    string `json:"asset_id"`
-			Quote      string `json:"quote"`
-			ObservedAt string `json:"observed_at"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(data, &env); err != nil {
-		return true
-	}
-	at, err := time.Parse(time.RFC3339Nano, env.Data.ObservedAt)
-	if err != nil {
-		return true
-	}
-	r, ok := c.rank[env.Data.AssetID+"/"+env.Data.Quote]
+	key, at, bucket, ok := closedStreamFrameSeries(data)
 	if !ok {
 		return true
 	}
-	if prev, seen := c.lastSeen[r]; !seen || at.After(prev) {
+	r, ok := c.rank[key]
+	if !ok {
+		return true
+	}
+	if prev, seen := c.lastSeen[r]; bucket && (!seen || at.After(prev)) {
 		c.lastSeen[r] = at
 	}
 	for higher := 0; higher < r; higher++ {
@@ -199,6 +192,31 @@ func (c *closedStreamSeries) admit(data []byte) bool {
 		}
 	}
 	return true
+}
+
+// closedStreamFrameSeries reads the "asset/quote" series a frame belongs to
+// and its time: a price_update envelope's data.observed_at (bucket true), or
+// a price_withheld body's top-level as_of.
+func closedStreamFrameSeries(data []byte) (key string, at time.Time, bucket, ok bool) {
+	var env struct {
+		Data struct {
+			AssetID    string `json:"asset_id"`
+			Quote      string `json:"quote"`
+			ObservedAt string `json:"observed_at"`
+		} `json:"data"`
+		AssetID string `json:"asset_id"`
+		Quote   string `json:"quote"`
+		AsOf    string `json:"as_of"`
+	}
+	if json.Unmarshal(data, &env) != nil {
+		return "", time.Time{}, false, false
+	}
+	if env.Data.ObservedAt != "" {
+		at, err := time.Parse(time.RFC3339Nano, env.Data.ObservedAt)
+		return env.Data.AssetID + "/" + env.Data.Quote, at, true, err == nil
+	}
+	at, err := time.Parse(time.RFC3339Nano, env.AsOf)
+	return env.AssetID + "/" + env.Quote, at, false, err == nil && env.AssetID != ""
 }
 
 // forwardClosedStream bridges the Hub subscription onto the SSE writer
@@ -217,11 +235,10 @@ func (c *closedStreamSeries) admit(data []byte) bool {
 // life of an SSE connection, which is hours. That is the 2026-08-04
 // valuation-incident class surviving the fix meant to close it.
 //
-// A withheld bucket is DROPPED, not turned into a stream error: the tip
-// stream's shared producer behaves identically (a withheld tick emits
-// nothing and the connection heartbeats on), and closing the stream
-// would send every EventSource into a reconnect storm against a pair
-// whose verdict may well flip back at the next TTL expiry.
+// A withheld bucket is REPLACED by a price_withheld event, not turned
+// into a stream error: closing the stream would send every EventSource
+// into a reconnect storm against a pair whose verdict may well flip back
+// at the next TTL expiry, and dropping it would read as a quiet market.
 func (s *Server) forwardClosedStream(
 	ctx context.Context,
 	ch chan<- streaming.Event,
@@ -243,8 +260,11 @@ func (s *Server) forwardClosedStream(
 			if !series.admit(ev.Data) {
 				continue
 			}
-			if s.closedStreamWithheld(ctx, asset, quote) != pricingguard.NotWithheld {
-				continue
+			if withheld := s.closedStreamWithheld(ctx, asset, quote); withheld != pricingguard.NotWithheld {
+				var ok bool
+				if ev, ok = closedStreamWithheldEvent(ev, asset, quote, withheldReasonFor(withheld)); !ok {
+					continue
+				}
 			}
 			select {
 			case <-ctx.Done():
@@ -253,6 +273,28 @@ func (s *Server) forwardClosedStream(
 			}
 		}
 	}
+}
+
+// closedStreamWithheldEvent stands in for a refused closed bucket. It keeps
+// the bucket's id, so a resume cursor moves past it, and its as_of.
+func closedStreamWithheldEvent(ev streaming.Event, asset, quote canonical.Asset, reason PriceWithheldReason) (streaming.Event, bool) {
+	var bucket struct {
+		AsOf WireTime `json:"as_of"`
+	}
+	if json.Unmarshal(ev.Data, &bucket) != nil || bucket.AsOf.IsZero() {
+		bucket.AsOf = WireTime(time.Now().UTC())
+	}
+	body, err := json.Marshal(tipWithheldPayload{
+		AssetID: asset.String(),
+		Quote:   quote.String(),
+		Reason:  reason,
+		AsOf:    bucket.AsOf,
+	})
+	if err != nil {
+		return streaming.Event{}, false
+	}
+	ev.Type, ev.Data = "price_withheld", body
+	return ev, true
 }
 
 // closedStreamQueueDepth is the forwarder→writer hand-off buffer, the
@@ -275,7 +317,8 @@ const closedStreamQueueDepth = 4
 //   - On connect: SSE headers, optional buffered-replay from
 //     `Last-Event-ID` (Hub maintains a per-topic ring buffer).
 //   - Per closed bucket: one `price_update` event with the same
-//     envelope shape as a `/v1/price` response.
+//     envelope shape as a `/v1/price` response, or `price_withheld`
+//     while a withholding gate refuses the pair.
 //   - Heartbeats every 15 s as comment lines.
 //
 // Pre-flight 503: when no Hub is wired (typical pre-launch state

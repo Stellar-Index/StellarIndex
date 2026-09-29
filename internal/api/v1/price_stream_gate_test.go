@@ -204,10 +204,11 @@ func TestPriceStream_ScamFlaggedIssuer_RefusesConnect(t *testing.T) {
 // because the aggregator keeps publishing that pair's closed bucket
 // regardless (nothing on the producer side consults a gate).
 //
-// The assertion is on the CONTENT of the next frame, not on silence: a
+// The assertion is on the CONTENT of the next frames, not on silence: a
 // withheld bucket is published between two servable ones, and the
-// subscriber must see the later servable bucket next — never the
-// withheld one. Pre-fix the next frame is the withheld bucket.
+// subscriber must see a price_withheld marker in its place — never the
+// withheld price, and never nothing, which reads as a quiet market —
+// then the later servable bucket.
 func TestPriceStream_GateFlipMidStreamWithholdsBucket(t *testing.T) {
 	hub := streaming.NewHub(0)
 	gate := newClosedStreamGate(false) // servable at connect
@@ -253,15 +254,23 @@ func TestPriceStream_GateFlipMidStreamWithholdsBucket(t *testing.T) {
 	// the bucket is decided under the withholding verdict and not by a
 	// race with the line below.
 	gate.setWithhold(true)
-	hub.Publish(topic, "price_update", []byte(`{"price":"999.99"}`))
+	hub.Publish(topic, "price_update", []byte(`{"price":"999.99","as_of":"2026-05-02T12:05:00Z"}`))
 	gate.awaitConsultation(gateSyncBudget)
 
-	// Verdict flips back; bucket 3 is servable again. The NEXT frame the
-	// subscriber sees must be bucket 3 — pre-fix it is bucket 2.
+	// Verdict flips back; bucket 3 is servable again. The subscriber must
+	// see the marker for bucket 2 and then bucket 3.
 	gate.setWithhold(false)
 	hub.Publish(topic, "price_update", []byte(`{"price":"0.43"}`))
 
 	frame := readPriceStreamFrame(t, br, 3*time.Second)
+	if strings.Contains(frame, "999.99") {
+		t.Fatalf("withheld closed bucket was fanned out to the subscriber: %q", frame)
+	}
+	if !strings.Contains(frame, "event: price_withheld") || !strings.Contains(frame, `"reason":"substance"`) ||
+		!strings.Contains(frame, `"as_of":"2026-05-02T12:05:00Z"`) {
+		t.Fatalf("withheld bucket frame = %q, want a price_withheld marker with reason substance and the bucket's as_of", frame)
+	}
+	frame = readPriceStreamFrame(t, br, 3*time.Second)
 	if strings.Contains(frame, "999.99") {
 		t.Fatalf("withheld closed bucket was fanned out to the subscriber: %q", frame)
 	}

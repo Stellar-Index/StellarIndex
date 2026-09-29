@@ -233,6 +233,10 @@ func priceWithheldReason(err error) PriceWithheldReason {
 	return PriceWithheldUnattributed
 }
 
+// PriceWithheldReasonOf is [priceWithheldReason] for producers outside
+// this package that put a withholding on a stream.
+func PriceWithheldReasonOf(err error) PriceWithheldReason { return priceWithheldReason(err) }
+
 // PriceSubstanceGate is the serving-side thin-market gate seam.
 // Production implementation: internal/pricingguard.SubstanceGate,
 // wired by the binaries. The v1 server consults it directly only on
