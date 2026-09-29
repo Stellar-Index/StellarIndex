@@ -740,8 +740,13 @@ WHERE source_account != '';
 -- least its own ledger. A too-HIGH watermark only costs scan range; a
 -- too-LOW one HIDES DATA. Never narrow the MV set below the readers'
 -- account-role set. Readers take max() across un-merged RMT rows and fall
--- back to the UNBOUNDED scan when an account has no row (pre-backfill
--- accounts degrade to the old perf, never to missing rows).
+-- back to the UNBOUNDED scan when an account has no row.
+--
+-- A fresh host gets these MVs before any ingest, so they see every row and
+-- the invariant holds from the start. A host whose lake PREDATES the MVs
+-- must run account_activity.sql's Step-2 backfill before deploying a reader:
+-- until then a re-ingest of old ledgers can create an account's ONLY row
+-- below its true last activity — a too-LOW bound (see the HAZARD there).
 CREATE TABLE IF NOT EXISTS stellar.account_activity
 (
     account_id  String,
