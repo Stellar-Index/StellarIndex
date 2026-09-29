@@ -110,16 +110,16 @@ func TestQ250_AnsibleResolvesNoHostsWithoutExplicitInventory(t *testing.T) {
 	// Control: the explicit form still resolves exactly one region, so the
 	// leg above is not merely "ansible is broken in this environment".
 	out, err = runAnsible(t, bin, dir, env,
-		"--list-hosts", "-i", "inventory/testnet.yml", "playbooks/deploy-binary.yml")
+		"--list-hosts", "-i", "inventory/testnet.example.yml", "playbooks/deploy-binary.yml")
 	if err != nil {
-		t.Fatalf("explicit -i inventory/testnet.yml failed: %v\n%s", err, out)
+		t.Fatalf("explicit -i inventory/testnet.example.yml failed: %v\n%s", err, out)
 	}
 	if !strings.Contains(out, "si-testnet") {
-		t.Errorf("explicit -i inventory/testnet.yml did not resolve si-testnet:\n%s", out)
+		t.Errorf("explicit -i inventory/testnet.example.yml did not resolve si-testnet:\n%s", out)
 	}
 	for _, host := range realInventoryHosts[1:] {
 		if strings.Contains(out, host) {
-			t.Errorf("explicit -i inventory/testnet.yml leaked %q from another region:\n%s", host, out)
+			t.Errorf("explicit -i inventory/testnet.example.yml leaked %q from another region:\n%s", host, out)
 		}
 	}
 }

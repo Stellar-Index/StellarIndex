@@ -485,6 +485,29 @@ func TestF2_FiatAssetSkipsLookup(t *testing.T) {
 	}
 }
 
+// TestF2_FiatUSDServesIdentityPrice — fiat:USD is priced at par without
+// consulting the reader (an empty stub has no fiat:USD/fiat:USD pair), and
+// the identity price must not manufacture a market cap.
+func TestF2_FiatUSDServesIdentityPrice(t *testing.T) {
+	srv := v1.New(v1.Options{
+		Prices: &stubPriceReader{},
+		Supply: &stubSupplyLooker{hit: true, snap: xlmSupplySnap()},
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/assets/fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	mustContain(t, body, `"price_usd":"1.00000000000000"`)
+	for _, field := range []string{`"market_cap_usd"`, `"fdv_usd"`, `"price_basis"`} {
+		if strings.Contains(body, field) {
+			t.Errorf("field %s must be absent for the identity price: %s", field, body)
+		}
+	}
+}
+
 // TestF2_PriceLookupErrorFallsThrough — a real (non-NotFound) price
 // reader error falls through silently; F2 fields stay null, no 5xx.
 // Mirrors the divergence-error best-effort posture.

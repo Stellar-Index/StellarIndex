@@ -1,7 +1,10 @@
 package archive
 
 import (
+	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -47,7 +50,7 @@ func TestCheckpointAnchorDecision_AllMatchedIsClean(t *testing.T) {
 // from the DAT-09 all-missed case).
 func TestCheckpointAnchorDecision_PartialMiss(t *testing.T) {
 	if err := checkpointAnchorDecision(8, 2, false); err != nil {
-		t.Errorf("partial miss without -fail-on-missed should be clean, got %v", err)
+		t.Errorf("partial miss with -fail-on-missed=false should be clean, got %v", err)
 	}
 	err := checkpointAnchorDecision(8, 2, true)
 	if err == nil {
@@ -55,6 +58,36 @@ func TestCheckpointAnchorDecision_PartialMiss(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "fail-on-missed") {
 		t.Errorf("expected 'fail-on-missed' in error, got: %v", err)
+	}
+}
+
+// TestVerifyArchive_FailOnMissedDefaultsOn pins ADR-0017 X1.7: a manual
+// run that omits the flag must still exit non-zero on a partial miss.
+func TestVerifyArchive_FailOnMissedDefaultsOn(t *testing.T) {
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = orig })
+	parseErr := verifyArchive([]string{"-h"})
+	_ = w.Close()
+	os.Stderr = orig
+	out, _ := io.ReadAll(r)
+	if !errors.Is(parseErr, flag.ErrHelp) {
+		t.Fatalf("verifyArchive(-h) = %v, want flag.ErrHelp", parseErr)
+	}
+
+	_, usage, ok := strings.Cut(string(out), "-fail-on-missed\n")
+	if !ok {
+		t.Fatalf("-fail-on-missed missing from usage:\n%s", out)
+	}
+	if next := strings.Index(usage, "\n  -"); next >= 0 {
+		usage = usage[:next]
+	}
+	if !strings.Contains(usage, "(default true)") {
+		t.Errorf("-fail-on-missed must default to true; usage entry:\n%s", usage)
 	}
 }
 

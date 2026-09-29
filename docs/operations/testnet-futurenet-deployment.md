@@ -72,6 +72,23 @@ Fill the `X.X.X.X` VM IPs, `allowed_ssh_cidrs`, and create the vault
 secrets (`testnet.secrets.yml` / `futurenet.secrets.yml`) with DB / MinIO /
 CH-serving passwords (same shape as `r1.secrets.yml`).
 
+The filled inventories are untracked like `r1.yml` (`.gitignore` keeps only
+`*.example.yml`); they carry host addresses and operator keys and live on the
+operator's machine.
+
+Pin the host keys before the first run — both SSH hops verify against
+`configs/ansible/inventory/known_hosts` (also untracked) and fail on a
+mismatch instead of accepting whatever answers:
+
+```sh
+ssh-keyscan -t ed25519 HOST_PUBLIC_IP > configs/ansible/inventory/known_hosts
+ssh root@HOST_PUBLIC_IP 'ssh-keyscan -t ed25519 192.168.122.10 192.168.122.20' \
+  >> configs/ansible/inventory/known_hosts
+```
+
+Re-capture a line only after confirming out of band why the key changed
+(reprovisioned VM, reinstalled host).
+
 **Testnet is Phase 1** (fully working). **Futurenet is Phase 2** — galexie
 has no built-in futurenet preset, so its captive core needs an explicit
 passphrase + history archives; provision + test that on the VM before
