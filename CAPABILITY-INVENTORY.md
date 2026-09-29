@@ -119,6 +119,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - Integration path decision → `scripts/ci/prepush-integration-required.sh BASE HEAD`
 
 ---
-_Maintenance: this file must stay current — D4 recommends a CI check that every non-source
-leaf package has a `doc.go`, and a Definition-of-Done line requiring "checked
-CAPABILITY-INVENTORY.md before writing new utility code."_
+_Maintenance: this file must stay current. `lint-docs.sh` fails any `internal/` or `pkg/`
+package without a package comment, and the Definition of Done
+(docs/engineering-standards.md §2.1) requires checking this file before writing new
+utility code._
