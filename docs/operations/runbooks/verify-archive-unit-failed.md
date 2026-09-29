@@ -45,7 +45,7 @@ The journal output's last lines indicate the failure mode:
 
 | Pattern | Cause |
 | ------- | ----- |
-| `chain break at ledger L` | Real corruption — escalate (see RCA). Emitted by `verify_archive_chunks.go:223-228`. Tier B's analogue is `checkpoint anchor mismatch at ledger N`. |
+| `chain break at ledger L` | Real corruption — escalate (see RCA). Emitted by `verify_archive_chunks.go:180` (chunk boundary) and `:320` (in-chunk). Tier B's analogue is `checkpoint anchor mismatch at ledger N`. |
 | `is missing` (the datastore's missing-object error) | Missing file in galexie-archive; should also fire `stellarindex_archive_files_missing`. Trailing-edge misses (files galexie hasn't written yet) are tolerated. |
 | `WATCHDOG` timeout / `SIGTERM` | 1h of *silence* tripped `WatchdogSec` (r1 runs uncapped — `VERIFY_ARCHIVE_MAX_RUNTIME=0`; binary default 24h); investigate what the walk was stuck on |
 | `access denied` / `403` | AWS / MinIO credentials in `/etc/default/stellarindex-ops` rotated or wrong |

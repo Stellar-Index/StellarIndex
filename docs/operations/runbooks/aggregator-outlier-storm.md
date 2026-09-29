@@ -37,10 +37,8 @@ severity: P3
 >    disagreement cannot see, proven fireable on the 2026-08-14
 >    token-farm fixture (40 % trim share; see the promtool case). Both
 >    are covered by `deploy/monitoring/rule-tests/aggregator_test.yml`.
->    The old counter gate survives one more week as
->    `stellarindex_aggregator_outlier_trim_rate_legacy` (same expr /
->    for; **retire 2026-09-04**) as the live cross-check — expect it to
->    fire alongside `trim_fraction` on a sustained wave.
+>    The old counter gate, `stellarindex_aggregator_outlier_trim_rate_legacy`,
+>    was retired on 2026-09-04 and is no longer in either rule tree.
 
 ## At a glance
 
@@ -57,7 +55,6 @@ severity: P3
 - `outlier_storm`: `max by (pair)(stellarindex_aggregator_venue_vwap{window="5m"}) / min by (pair)(...) − 1 > 0.01` with ≥ 2 venue series, for a **single** `pair`, sustained past 15 m.
 - `trim_fraction`: `1 − window_trades{stage="outlier"} / window_trades{stage="class"} > 0.2` on `window="24h"` with ≥ 20 class-filtered trades, sustained past 30 m.
 - `volume_trim_fraction`: `1 − window_base_volume{stage="outlier"} / window_base_volume{stage="class"} > 0.2` on any window with class volume > 0, sustained past 15 m. A value of exactly 1 with `window_trades{stage="class"} > 0` is a withheld (contested) window.
-- `trim_rate_legacy` (until 2026-09-04): `sum by (pair) rate(dropped_trades_total{reason="outlier"}[10m]) > 10` for 2 h — the per-tick re-count; treat exactly like `trim_fraction`.
 - The published VWAP for that pair is typically still correct — cross-check the
   pair's `div:<pair>` Redis flag / API `flags.divergence_warning` for actual
   price impact before assuming the served number is wrong.
@@ -237,7 +234,7 @@ Capture for the postmortem:
   density (the token-farm fixture passed 480/480 wave prints);
   spam-bucket fixtures added; `trim_fraction` promtool case now uses
   the fixture's real filter output (1200 / 720); old counter gate kept
-  as `outlier_trim_rate_legacy` for one week (retire 2026-09-04).
+  as `outlier_trim_rate_legacy` for one week (retired 2026-09-04).
 - 2026-09-24 — `outlier_volume_trim_fraction` on every window, from the
   new `window_base_volume{stage}` gauge: a withheld 5m or 1h window, or
   a single-venue wash burst, is visible where the 24h count rule and the

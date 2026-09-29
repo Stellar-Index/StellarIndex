@@ -455,9 +455,9 @@ This restores all four subdirs in seconds.
 
 ## Open questions / things still to verify
 
-- [ ] Has Tier E ever been documented as a routine practice anywhere we haven't searched? (Searched 10 ops docs; only `archival-node-bringup.md` mentions it in the bring-up sequence, and even there Tier A+B are the success criteria.)
-- [ ] What's the exact relationship between ADR-0016's "trust R1's Tier B + E verification" promise to R2/R3 and the operational reality that Tier E hasn't been run on R1 either? (Audit finding: R2/R3 are deferred and the "trust" relationship is theoretical.)
-- [ ] Does `cmd/stellarindex-ops/trim_galexie_archive.go` cover `galexie-live` bucket too, or only `galexie-archive`? (Need to skim; relevant if we ever want to trim live bucket's older partitions.)
+- [x] *Answered 2026-09-29:* Tier E is now a routine monthly cron (`configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml`, "verify-archive Tier E"; installed on r1 2026-09-28, first run on the 15th) with a staleness alert and runbook `docs/operations/runbooks/verify-archive-tier-e.md`. Original question: has Tier E ever been documented as a routine practice anywhere we haven't searched? (Searched 10 ops docs; only `archival-node-bringup.md` mentions it in the bring-up sequence, and even there Tier A+B are the success criteria.)
+- [x] *Answered 2026-09-29:* the monthly Tier E cron above is what makes R1's side of the promise real; R2/R3 remain deferred. Original question: what's the exact relationship between ADR-0016's "trust R1's Tier B + E verification" promise to R2/R3 and the operational reality that Tier E hasn't been run on R1 either? (Audit finding: R2/R3 are deferred and the "trust" relationship is theoretical.)
+- [x] *Answered 2026-09-29:* only `galexie-archive`. `internal/ops/archive/trim_galexie_archive.go` deletes solely from `cfg.Storage.S3BucketArchive`, and its MinIO identity is scoped to that bucket. Original question: does the trim cover `galexie-live` too, or only `galexie-archive`? (Need to skim; relevant if we ever want to trim live bucket's older partitions.)
 - [ ] Confirm MinIO du for `galexie-archive` vs `galexie-live` per-bucket breakdown (du is slow over 4.96 TB; still pending).
 
 ---
