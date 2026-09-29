@@ -55,7 +55,7 @@ func scanSorobanEvents(args []string) error { //nolint:funlen,gocognit,gocyclo /
 	if err != nil {
 		return err
 	}
-	bucket, err := historicReadBucket(cfg, *bucketOverride)
+	bucket, err := opsutil.HistoricReadBucket(cfg, *bucketOverride)
 	if err != nil {
 		return err
 	}
@@ -263,15 +263,4 @@ func renderSCVal(sv sdkxdr.ScVal, depth int) any { //nolint:gocyclo,gocognit,fun
 	default:
 		return sv.Type.String()
 	}
-}
-
-// historicReadBucket resolves the galexie bucket for a historic walk: -bucket,
-// else the archive (live is trimmed), else live.
-func historicReadBucket(cfg config.Config, override string) (string, error) {
-	for _, b := range []string{override, cfg.Storage.S3BucketArchive, cfg.Storage.S3BucketLive} {
-		if b != "" {
-			return b, nil
-		}
-	}
-	return "", fmt.Errorf("no bucket: set -bucket or storage.s3_bucket_archive / s3_bucket_live")
 }

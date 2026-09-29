@@ -37,7 +37,7 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	from := fs.Uint("from", 0, "first ledger sequence (inclusive, required)")
 	to := fs.Uint("to", 0, "last ledger sequence (inclusive, required)")
-	bucket := fs.String("bucket", "", "override storage bucket (default cfg.Storage.S3BucketLive)")
+	bucket := fs.String("bucket", "", "override storage bucket (default: s3_bucket_archive, then s3_bucket_live)")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	examples := fs.Int("examples", 20, "max per-ledger mismatch examples to print")
 	totalHistory := fs.Uint("project-to", 0, "tip ledger to project full-history footprint against (0 = skip projection)")
@@ -56,9 +56,9 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
-	streamBucket := cfg.Storage.S3BucketLive
-	if *bucket != "" {
-		streamBucket = *bucket
+	streamBucket, err := opsutil.HistoricReadBucket(cfg, *bucket)
+	if err != nil {
+		return err
 	}
 	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, streamBucket, 1)
 	passphrase := cfg.Stellar.Passphrase()

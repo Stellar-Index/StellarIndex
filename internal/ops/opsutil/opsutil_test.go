@@ -290,3 +290,28 @@ func TestNoOpsSubcommandDeclaresADryRunOptOut(t *testing.T) {
 		t.Fatalf("scanned %d non-test files under internal/ops — the walk is not seeing the tree", scanned)
 	}
 }
+
+func TestHistoricReadBucket(t *testing.T) {
+	t.Parallel()
+	cfg := func(archive, live string) config.Config {
+		var c config.Config
+		c.Storage.S3BucketArchive, c.Storage.S3BucketLive = archive, live
+		return c
+	}
+	cases := []struct {
+		name, archive, live, override, want string
+	}{
+		{"archive preferred over trimmed live", "galexie-archive", "galexie-live", "", "galexie-archive"},
+		{"live when no archive configured", "", "galexie-live", "", "galexie-live"},
+		{"explicit override wins", "galexie-archive", "galexie-live", "custom", "custom"},
+	}
+	for _, tc := range cases {
+		got, err := HistoricReadBucket(cfg(tc.archive, tc.live), tc.override)
+		if err != nil || got != tc.want {
+			t.Errorf("%s: got (%q, %v), want %q", tc.name, got, err, tc.want)
+		}
+	}
+	if _, err := HistoricReadBucket(cfg("", ""), ""); err == nil {
+		t.Error("no bucket configured and no -bucket: want an error, got nil")
+	}
+}
