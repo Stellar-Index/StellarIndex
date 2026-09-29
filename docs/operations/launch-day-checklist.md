@@ -59,14 +59,12 @@ The week before the cut. Done while everything is still calm.
 - [ ] **Merge freeze.** No new PRs to `main` except critical
       bug fixes flagged with the `launch-blocker` label.
       Document the freeze in `#stellar-index` and pin the date.
-- [ ] **Public-flip dry-run.** Walk the
-      [public-flip cut-over mechanics](public-flip.md#cut-over-mechanics)
-      against a temporary `Stellar-Index/StellarIndex-dryrun`
-      repo. Verify zero diff between private working tree and
-      the orphan-branch initial commit. Delete the dryrun repo.
-- [ ] **Customer demo (L6.6) scheduled.** Calendar invite sent;
-      demo deck reviewed; demo URL is the soon-to-be-public
-      `api.stellarindex.io` (not staging).
+
+Struck 2026-09-29 so the T-1 "all boxes ticked" rule can be met: the
+public-flip dry-run (the repo has been public since 2026-07-03, so there
+is no orphan-branch cut to rehearse) and the customer demo (L6.6 maps to
+W6.7 announcement copy in `v1-launch-plan.md`; there are no customers at
+the 1.0 cut).
 
 ## T-1 day — go/no-go
 
