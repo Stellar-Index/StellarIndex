@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -278,7 +279,7 @@ func NewHandlers(cfg *Config) (*Handlers, error) {
 //	POST /v1/auth/login        — request sign-in email (link + code)
 //	GET  /v1/auth/callback     — consume magic-link token, mint session
 //	POST /v1/auth/verify-code  — consume the 6-digit code, mint session
-//	POST /v1/auth/logout       — revoke current session
+//	POST /v1/auth/logout       — revoke current session (?all=true: every session of its user)
 //
 // Plus, when Config.Passkeys is wired (see passkey.go):
 //
@@ -1020,17 +1021,44 @@ func (h *Handlers) revokePresentedSession(r *http.Request) {
 }
 
 // HandleLogout revokes the current session and clears the
-// cookie. Idempotent — calling without a session cookie is a
-// 200, not a 401.
+// cookie. With ?all=true it revokes every session of the presented
+// session's user instead. Idempotent — calling without a session
+// cookie is a 200, not a 401.
 func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
+	all := false
+	if v := r.URL.Query().Get("all"); v != "" {
+		parsed, err := strconv.ParseBool(v)
+		if err != nil {
+			// Refuse rather than fall back to a narrower logout than the
+			// caller asked for.
+			writeProblem(w, http.StatusBadRequest, "all must be true or false", r.URL.Path)
+			return
+		}
+		all = parsed
+	}
 	if c, err := r.Cookie(SessionCookieName); err == nil && c.Value != "" {
 		// The cookie is the random token, not the PK — hash it, resolve
 		// the row, and revoke by internal ID. Best-effort: a missing /
 		// already-revoked session is not an error at logout.
-		if sess, err := h.cfg.Users.GetSessionByTokenHash(r.Context(), HashSessionToken(c.Value)); err == nil {
+		sess, err := h.cfg.Users.GetSessionByTokenHash(r.Context(), HashSessionToken(c.Value))
+		switch {
+		case err == nil && all:
+			// Not best-effort: a 200 here tells the user every other
+			// session is dead, so a failed revoke must surface.
+			if err := h.cfg.Users.RevokeAllUserSessions(r.Context(), sess.UserID); err != nil {
+				h.cfg.Logger.Error("revoke all sessions at logout", "err", err, "user_id", sess.UserID)
+				writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
+				return
+			}
+		case err == nil:
 			if err := h.cfg.Users.RevokeSession(r.Context(), sess.ID); err != nil {
 				h.cfg.Logger.Warn("revoke session at logout", "err", err)
 			}
+		case all && !errors.Is(err, platform.ErrNotFound):
+			// Keep the cookie so the caller can retry once the store is back.
+			h.cfg.Logger.Error("resolve session at logout", "err", err)
+			writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
+			return
 		}
 	}
 	// Clear the cookie regardless — even an invalid one, so

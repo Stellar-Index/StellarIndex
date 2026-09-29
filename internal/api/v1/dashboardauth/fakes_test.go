@@ -289,6 +289,19 @@ func (f *fakeUserStore) RevokeAllUserSessions(_ context.Context, userID uuid.UUI
 	return nil
 }
 
+func (f *fakeUserStore) RevokeOtherUserSessions(_ context.Context, userID, keepSessionID uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := time.Now().UTC()
+	for id, s := range f.sessions {
+		if s.UserID == userID && id != keepSessionID && s.RevokedAt.IsZero() {
+			s.RevokedAt = now
+			f.sessions[id] = s
+		}
+	}
+	return nil
+}
+
 type fakeTokenStore struct {
 	mu      sync.Mutex
 	tokens  map[string]platform.MagicLinkToken // hex(hash) → row

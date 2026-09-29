@@ -345,6 +345,17 @@ func (r *UserStore) RevokeAllUserSessions(ctx context.Context, userID uuid.UUID)
 	return nil
 }
 
+// RevokeOtherUserSessions logs the user out everywhere except
+// keepSessionID. Idempotent.
+func (r *UserStore) RevokeOtherUserSessions(ctx context.Context, userID, keepSessionID uuid.UUID) error {
+	const q = `UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL`
+	_, err := r.s.db.ExecContext(ctx, q, userID, keepSessionID)
+	if err != nil {
+		return fmt.Errorf("revoke other user sessions: %w", err)
+	}
+	return nil
+}
+
 // errNilClientIP is returned by ipString when ip is nil.
 var errNilClientIP = errors.New("postgresstore: nil client IP")
 

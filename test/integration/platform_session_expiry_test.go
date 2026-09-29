@@ -68,3 +68,70 @@ func TestSessionByTokenHash_RejectsExpired(t *testing.T) {
 		t.Errorf("live session must still resolve: %v", err)
 	}
 }
+
+// TestRevokeOtherUserSessions_KeepsOnlyTheNamedSession pins the store half of
+// "adding a passkey ends every other session": the kept session and other
+// users' sessions stay live, every other session of the user is revoked.
+func TestRevokeOtherUserSessions_KeepsOnlyTheNamedSession(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	store := postgresstore.New(db)
+	acct, err := postgresstore.NewAccountStore(store).Create(ctx, platform.Account{
+		Name: "Revoke Co", Slug: "revoke-co", Tier: platform.TierFree, Status: platform.AccountActive,
+	})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	users := postgresstore.NewUserStore(store)
+	newUser := func(email string, role platform.Role) platform.User {
+		t.Helper()
+		u, err := users.CreateUser(ctx, platform.User{AccountID: acct.ID, Email: email, Role: role})
+		if err != nil {
+			t.Fatalf("create user %s: %v", email, err)
+		}
+		return u
+	}
+	owner := newUser("owner@revoke.example", platform.RoleOwner)
+	member := newUser("member@revoke.example", platform.RoleMember)
+
+	mint := func(u platform.User, token string) (platform.Session, []byte) {
+		t.Helper()
+		hash := sha256.Sum256([]byte(token))
+		ip := net.ParseIP("203.0.113.7")
+		s, err := users.CreateSession(ctx, platform.Session{
+			UserID: u.ID, TokenHash: hash[:], ExpiresAt: time.Now().Add(time.Hour),
+			IPFirstSeen: ip, IPLastSeen: ip, UserAgent: "test",
+		})
+		if err != nil {
+			t.Fatalf("create session %s: %v", token, err)
+		}
+		return s, hash[:]
+	}
+	kept, keptHash := mint(owner, "kept-cookie-token")
+	_, otherHash := mint(owner, "other-cookie-token")
+	_, memberHash := mint(member, "member-cookie-token")
+
+	for range 2 { // idempotent
+		if err := users.RevokeOtherUserSessions(ctx, owner.ID, kept.ID); err != nil {
+			t.Fatalf("RevokeOtherUserSessions: %v", err)
+		}
+	}
+	if _, err := users.GetSessionByTokenHash(ctx, keptHash); err != nil {
+		t.Errorf("kept session must still resolve: %v", err)
+	}
+	if _, err := users.GetSessionByTokenHash(ctx, otherHash); !errors.Is(err, platform.ErrNotFound) {
+		t.Errorf("the user's other session still resolves: err=%v", err)
+	}
+	if _, err := users.GetSessionByTokenHash(ctx, memberHash); err != nil {
+		t.Errorf("another user's session must be untouched: %v", err)
+	}
+}
