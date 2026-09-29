@@ -70,6 +70,7 @@ func registerAppMetrics() {
 		DiscoveryRecordFailuresTotal,
 		MetricsRegistryPresent,
 		SourceInsertErrorsTotal,
+		TradesZeroLegAdmittedTotal,
 		RateLimitFailOpenTotal,
 		MonthlyQuotaFailOpenTotal,
 		MonthlyQuotaFailClosedTotal,
@@ -482,6 +483,9 @@ func seedBoundedLabelSeries() {
 	AMMSelfPairSwapTotal.WithLabelValues("comet")
 	// Same dead-metric ambiguity as AMMSelfPairSwapTotal above, same fix.
 	AMMNonPositiveSwapTotal.WithLabelValues("comet")
+	// Zero-leg fills are rare (tens per day) and sdex is their only known
+	// producer; seeded so a fresh deploy shows "armed", not "absent".
+	TradesZeroLegAdmittedTotal.WithLabelValues("sdex")
 	AMMSwapReceivedDivergenceTotal.WithLabelValues("phoenix")
 	for _, outcome := range []string{"written", "buffered", "dropped", "errored"} {
 		ChLiveSinkLedgersTotal.WithLabelValues(outcome)
@@ -2203,6 +2207,22 @@ const (
 	// InsertErrorKindTradeAbandoned: a trade whose infra-fault retry was
 	// abandoned on ctx cancellation; re-derivable from the CH lake.
 	InsertErrorKindTradeAbandoned = "trade_abandoned"
+)
+
+// TradesZeroLegAdmittedTotal — per-source counter of trades admitted to
+// the served tier with exactly one zero leg (an SDEX fill whose base or
+// quote rounded to zero stroops). Such a row is stored but unpriceable, so
+// every price path filters it out. SDEX is the only known producer; every
+// other decoder and CEX parser drops zero legs upstream, so a non-sdex
+// series is an upstream change worth a look, not an error. Incremented at
+// the Go write gates (InsertTrade, filterStorableTrades) once
+// canonical.Trade.Validate has passed the row. Detection only.
+var TradesZeroLegAdmittedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_trades_zero_leg_admitted_total",
+		Help: "Trades admitted to the served tier with exactly one zero leg (stored, unpriceable). By source.",
+	},
+	[]string{"source"},
 )
 
 // CursorLastLedger — per-source gauge, the last-committed cursor

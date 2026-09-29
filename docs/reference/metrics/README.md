@@ -1358,6 +1358,24 @@ NOT counted here — they land on
 [`stellarindex_source_insert_errors_total`](#stellarindex_source_insert_errors_total)
 (`kind=trade` / `kind=dropped`).
 
+### `stellarindex_trades_zero_leg_admitted_total`
+
+Counter, label `source`. Seeded at zero for `sdex`.
+
+Trades admitted to the served `trades` table with exactly one zero leg:
+an SDEX fill whose base or quote amount rounded to zero stroops. The row
+is stored (migration 0191 dropped the `> 0` CHECKs) but has no price, so
+every price path — the 0187 CAGGs, VWAP/TWAP, `/v1/price` — filters it
+out. Incremented at the Go write gates (`InsertTrade`,
+`filterStorableTrades`) when `canonical.Trade.Validate` admits the row,
+before the INSERT — so a batch that fails and is retried row by row
+counts the same fill twice, and the counter is an upper bound on rows
+stored. A both-zero or negative leg still fails Validate and lands on
+`stellarindex_source_insert_errors_total{kind="trade"}`. `sdex` is the
+only known producer — every other decoder and CEX parser drops zero legs
+upstream — so a series for any other source means an upstream parser
+changed. Detection only; no alert.
+
 ### `stellarindex_trade_insert_buffer_depth`
 
 Gauge (no labels).

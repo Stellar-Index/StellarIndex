@@ -992,6 +992,7 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	if err := t.Validate(); err != nil {
 		return err
 	}
+	countZeroLegAdmitted(t)
 
 	// One statement, two effects, fully atomic:
 	//   1. Upsert the trade (idempotent-corrective on its PK). On
@@ -1653,6 +1654,7 @@ func (s *Store) filterStorableTrades(trades []canonical.Trade) []canonical.Trade
 			firstBad = i
 			break
 		}
+		countZeroLegAdmitted(trades[i])
 	}
 	if firstBad == -1 {
 		return trades
@@ -1662,6 +1664,7 @@ func (s *Store) filterStorableTrades(trades []canonical.Trade) []canonical.Trade
 	for _, t := range trades[firstBad:] {
 		err := t.Validate()
 		if err == nil {
+			countZeroLegAdmitted(t)
 			storable = append(storable, t)
 			continue
 		}
@@ -1687,6 +1690,15 @@ func (s *Store) filterStorableTrades(trades []canonical.Trade) []canonical.Trade
 func IsOneSideZeroFill(t canonical.Trade) bool {
 	bs, qs := t.BaseAmount.Sign(), t.QuoteAmount.Sign()
 	return bs >= 0 && qs >= 0 && (bs == 0) != (qs == 0)
+}
+
+// countZeroLegAdmitted bumps [obs.TradesZeroLegAdmittedTotal] for a trade
+// that passed Validate with exactly one zero leg. Called only after Validate,
+// at each Go write gate, so the counter reads "stored but unpriceable".
+func countZeroLegAdmitted(t canonical.Trade) {
+	if IsOneSideZeroFill(t) {
+		obs.TradesZeroLegAdmittedTotal.WithLabelValues(t.Source).Inc()
+	}
 }
 
 // registryObservation is the highest-ledger observation of a landed asset
