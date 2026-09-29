@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // IssuerRow is the read-side projection of one row from the
@@ -622,6 +624,11 @@ func sep1ResetOnHomeDomainChange(newHD string) string {
 		"@changed", "("+newHD+") IS DISTINCT FROM home_domain")
 }
 
+// ErrSep1PayloadRejected marks a payload Postgres refused on its content
+// (SQLSTATE class 22, e.g. a `\u0000` jsonb will not hold): the document's
+// fault, not the database's, so the caller keeps the retry-ladder step.
+var ErrSep1PayloadRejected = errors.New("sep1 payload rejected by the database")
+
 // SetIssuerSep1Payload writes a SEP-1 fetch result back to the
 // issuers row — sep1_payload (jsonb) + sep1_resolved_at = now() — and
 // clears the retry ladder (migration 0159). In the same transaction it
@@ -683,6 +690,10 @@ func (s *Store) SetIssuerSep1Payload(ctx context.Context, gStrkey, fetchedFrom s
            AND home_domain = $3
     `
 	if _, err = tx.ExecContext(ctx, q, gStrkey, string(payload), fetchedFrom); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && strings.HasPrefix(pgErr.Code, "22") {
+			return false, fmt.Errorf("timescale: SetIssuerSep1Payload: %w: %w", ErrSep1PayloadRejected, err)
+		}
 		return false, fmt.Errorf("timescale: SetIssuerSep1Payload: %w", err)
 	}
 	for _, c := range changes {

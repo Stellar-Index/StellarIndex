@@ -57,7 +57,7 @@ func TestSep1RefreshRebindsToTheChainsDomainBeforeFetching(t *testing.T) {
 		issuer: {HomeDomain: current, Source: clickhouse.AuthFlagsSourceLive, AsOfLedger: 64228661},
 	}}
 
-	ok, failed := sep1RefreshLoop(context.Background(), log, chain, sep1TestResolver(storedSrv),
+	ok, failed, _ := sep1RefreshLoop(context.Background(), log, chain, sep1TestResolver(storedSrv),
 		[]timescale.IssuerSep1Candidate{{GStrkey: issuer, HomeDomain: stored}}, false)
 	if ok != 1 || len(failed) != 0 {
 		t.Fatalf("sep1RefreshLoop = (%d, %v); want (1, [])", ok, failed)
@@ -79,7 +79,7 @@ func TestSep1RefreshClearsADomainTheChainNoLongerDeclares(t *testing.T) {
 		issuer: {Source: clickhouse.AuthFlagsSourceLive, AsOfLedger: 64228661},
 	}}
 
-	ok, failed := sep1RefreshLoop(context.Background(), log, chain, sep1TestResolver(srv),
+	ok, failed, _ := sep1RefreshLoop(context.Background(), log, chain, sep1TestResolver(srv),
 		[]timescale.IssuerSep1Candidate{{GStrkey: issuer, HomeDomain: stored}}, false)
 	if ok != 1 || len(failed) != 0 {
 		t.Fatalf("sep1RefreshLoop = (%d, %v); want (1, [])", ok, failed)
@@ -94,19 +94,25 @@ func TestSep1RefreshClearsADomainTheChainNoLongerDeclares(t *testing.T) {
 // confirmed, so it is not fetched. The attempt is marked and failed, which
 // keeps a lake outage inside the systemic verdict's unwind.
 func TestSep1RefreshDoesNotFetchAnUnconfirmedDomain(t *testing.T) {
-	for name, chain := range map[string]sep1ChainStub{
+	for name, tc := range map[string]struct {
+		chain   sep1ChainStub
+		ourSide bool
+	}{
 		"no live entry": {},
-		"lake error":    {err: errors.New("clickhouse down")},
+		"lake error":    {chain: sep1ChainStub{err: errors.New("clickhouse down")}, ourSide: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			const issuer = "GUNREAD"
 			log := &sep1CallLog{}
 			srv, stored := sep1TestDomain(t, log, "stored", tomlListing("Stored Domain Org", issuer))
 
-			ok, failed := sep1RefreshLoop(context.Background(), log, chain, sep1TestResolver(srv),
+			ok, failed, ourFault := sep1RefreshLoop(context.Background(), log, tc.chain, sep1TestResolver(srv),
 				[]timescale.IssuerSep1Candidate{{GStrkey: issuer, HomeDomain: stored}}, false)
 			if ok != 0 || len(failed) != 1 || failed[0] != issuer {
 				t.Fatalf("sep1RefreshLoop = (%d, %v); want (0, [%s])", ok, failed, issuer)
+			}
+			if got := len(ourFault) == 1; got != tc.ourSide {
+				t.Errorf("our-fault keys = %v; want our-side=%v — only a lake failure is ours to unwind", ourFault, tc.ourSide)
 			}
 			if got := fmt.Sprint(log.steps()); got != "[mark "+issuer+"]" {
 				t.Errorf("call order = %s; want [mark %s] — nothing may be fetched or written", got, issuer)
@@ -126,12 +132,40 @@ func TestSep1RefreshDryRunRebindsNothing(t *testing.T) {
 		issuer: {HomeDomain: current, Source: clickhouse.AuthFlagsSourceLive, AsOfLedger: 64228661},
 	}}
 
-	ok, failed := sep1RefreshLoop(context.Background(), log, chain, sep1TestResolver(srv),
+	ok, failed, _ := sep1RefreshLoop(context.Background(), log, chain, sep1TestResolver(srv),
 		[]timescale.IssuerSep1Candidate{{GStrkey: issuer, HomeDomain: stored}}, true)
 	if ok != 1 || len(failed) != 0 {
 		t.Fatalf("sep1RefreshLoop = (%d, %v); want (1, [])", ok, failed)
 	}
 	if got := fmt.Sprint(log.steps()); got != "[fetch current]" {
 		t.Errorf("dry run call log = %s; want [fetch current]", got)
+	}
+}
+
+// TestSep1RefreshClassifiesAFailedWrite — a payload the database refused on
+// its content is the document's fault and keeps its ladder step; any other
+// write failure is ours and is handed back for unwinding.
+func TestSep1RefreshClassifiesAFailedWrite(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err     error
+		ourSide bool
+	}{
+		"payload rejected": {err: fmt.Errorf("timescale: %w: 22P05", timescale.ErrSep1PayloadRejected)},
+		"store down":       {err: errors.New("connection refused"), ourSide: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			const issuer = "GWRITE"
+			log := &sep1CallLog{writeErr: map[string]error{issuer: tc.err}}
+			srv, stored := sep1TestDomain(t, log, "stored", tomlListing("Stored Domain Org", issuer))
+			cands := []timescale.IssuerSep1Candidate{{GStrkey: issuer, HomeDomain: stored}}
+
+			ok, failed, ourFault := sep1RefreshLoop(context.Background(), log, sep1ChainFor(cands...), sep1TestResolver(srv), cands, false)
+			if ok != 0 || len(failed) != 1 || failed[0] != issuer {
+				t.Fatalf("sep1RefreshLoop = (%d, %v); want (0, [%s])", ok, failed, issuer)
+			}
+			if got := len(ourFault) == 1; got != tc.ourSide {
+				t.Errorf("our-fault keys = %v; want our-side=%v", ourFault, tc.ourSide)
+			}
+		})
 	}
 }

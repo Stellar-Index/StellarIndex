@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -129,6 +130,16 @@ func TestSep1RetryBackoff(t *testing.T) {
 		ageSep1ResolvedAt(t, ctx, store, recovered, 40*24*time.Hour)
 		if !candidateSet(t, ctx, store, 24*time.Hour, 100)[recovered] {
 			t.Errorf("a recovered domain is not back in the queue")
+		}
+	})
+
+	t.Run("a payload the database refuses is the document's fault", func(t *testing.T) {
+		// jsonb cannot hold U+0000 (22P05), and any account can publish a
+		// toml that decodes to one. The refresh keeps that ladder step, so
+		// the store must tell it apart from an outage on our side.
+		_, err := store.SetIssuerSep1Payload(ctx, dead, "coinonstellar.com", []byte(`{"OrgName":"a\u0000b"}`))
+		if !errors.Is(err, timescale.ErrSep1PayloadRejected) {
+			t.Errorf("SetIssuerSep1Payload(NUL) err = %v; want ErrSep1PayloadRejected", err)
 		}
 	})
 
