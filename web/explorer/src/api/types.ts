@@ -536,7 +536,9 @@ export interface paths {
          *        over it. The same chain fires on `/v1/price/tip`,
          *        `/v1/price/batch`, `/v1/oracle/lastprice`,
          *        `/v1/oracle/x_last_price`, the `/v1/assets/{id}` USD price
-         *        and the `/v1/observations` triangulation hint.
+         *        and the `/v1/observations` triangulation hint — except
+         *        that the two SEP-40 point reads answer 404 instead of the
+         *        declaration, since their shape has no `price_type` to mark it.
          *     4. Fiat-vs-fiat cross-rate from the forex snapshot when both
          *        sides are `fiat:` typed (e.g.
          *        `?asset=fiat:EUR&quote=fiat:USD`). Computed as
@@ -3156,7 +3158,8 @@ export interface paths {
          *     carries `flags.stale=true`, and `flags.triangulated=true`
          *     when it is composed rather than observed — the declared-peg
          *     XLM cross, a triangulated chain, a fiat cross-rate. 404 when
-         *     the chain serves nothing.
+         *     the chain serves nothing, or only a declared peg (SEP-40's
+         *     `None`: a declaration is not a price record).
          */
         get: operations["getOracleLastPrice"];
         put?: never;
@@ -3212,7 +3215,8 @@ export interface paths {
          *     the same fallback chain as `/v1/price` runs; an answer
          *     served that way carries `flags.stale=true`, and
          *     `flags.triangulated=true` when it is composed rather than
-         *     observed. 404 when the chain serves nothing.
+         *     observed. 404 when the chain serves nothing, or only a
+         *     declared peg (SEP-40's `None`).
          */
         get: operations["getOracleCrossPrice"];
         put?: never;
@@ -19416,8 +19420,8 @@ export interface operations {
                  *     (`crypto:XLM`, the XLM SAC), and a `<code>-<G…>` classic
                  *     reads its own `fiat:USD` market first and then the
                  *     fallback chain — a declared USD peg such as
-                 *     `USDC-GA5Z…` is served through its XLM cross, or as the
-                 *     declaration when no market prices it.
+                 *     `USDC-GA5Z…` is served through its XLM cross, and 404s
+                 *     when no market prices it.
                  * @example crypto:XLM
                  */
                 asset: string;
