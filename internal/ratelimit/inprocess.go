@@ -4,6 +4,7 @@
 package ratelimit
 
 import (
+	"net/netip"
 	"sync"
 	"time"
 )
@@ -42,13 +43,16 @@ import (
 // inserted. Overflow is therefore fail-CLOSED — past the cap the whole
 // overflow population shares a single limit-sized budget for the rest of
 // the window — which is the right degradation for a limiter whose only
-// job is to survive a flood: >100k distinct keys inside one window on a
-// single process IS the flood, and already-tracked clients keep their
-// own independent counters. Resident memory is bounded to
-// localStoreMaxKeys+1 entries (a few MB), full stop.
+// job is to survive a flood, and already-tracked clients keep their own
+// independent counters. Resident memory is bounded to localStoreMaxKeys+1
+// entries (a few MB), plus at most as many per-/48 counters.
 //
-// Anonymous keys resolve to the forge-resistant client IP, so distinct
-// keys track distinct real clients — not attacker-rotatable values.
+// Anonymous keys resolve to the forge-resistant client IP, masked to /64
+// for IPv6. That makes 100k keys only ~1.5 /48 allocations, so a single
+// cheap IPv6 holder could fill the cap and push every NEW client into the
+// shared bucket. Each IPv6 /48 may therefore insert at most
+// [localStoreMaxKeysPer48] keys per window; its further /64s share one
+// per-/48 bucket, and filling the cap takes ~100 distinct /48s.
 type localStore struct {
 	mu      sync.Mutex
 	entries map[string]localEntry
@@ -64,6 +68,12 @@ type localStore struct {
 	// package's own tests can drive the overflow path at a small size
 	// instead of allocating 100k entries.
 	maxKeys int
+
+	// per48 counts, per window, how many keys each IPv6 /48 (keyed by
+	// [slash48Key]) has inserted; maxPer48 caps it. A field for the same
+	// test-sizing reason as maxKeys.
+	per48    map[string]localEntry
+	maxPer48 int
 
 	// sweeps counts completed full scans. Observability for the
 	// invariant test that pins "at most one sweep per window" — the
@@ -82,6 +92,14 @@ type localEntry struct {
 // new keys share [localOverflowKey]'s bucket instead of growing the map.
 const localStoreMaxKeys = 100_000
 
+// localStoreMaxKeysPer48 caps the keys one IPv6 /48 may insert per window
+// before its further /64s share a single per-/48 bucket.
+const localStoreMaxKeysPer48 = 1024
+
+// localPer48BucketTag marks a per-/48 shared bucket key; the NUL byte
+// keeps it disjoint from every real /64 key, as with [localOverflowKey].
+const localPer48BucketTag = "\x00per48\x00"
+
 // localOverflowKey is the shared bucket every key beyond the cap is
 // folded into. The NUL bytes make it unreachable as a real limiter key
 // (callers pass IPs, API-key hashes and `<prefix>:<value>` strings), so
@@ -91,7 +109,12 @@ const localStoreMaxKeys = 100_000
 const localOverflowKey = "\x00overflow\x00"
 
 func newLocalStore() *localStore {
-	return &localStore{entries: make(map[string]localEntry), maxKeys: localStoreMaxKeys}
+	return &localStore{
+		entries:  make(map[string]localEntry),
+		maxKeys:  localStoreMaxKeys,
+		per48:    make(map[string]localEntry),
+		maxPer48: localStoreMaxKeysPer48,
+	}
 }
 
 // take increments key's counter for the named window and reports the
@@ -109,8 +132,8 @@ func (s *localStore) take(key string, window int64, limit int, now time.Time, wi
 	s.gcLocked(window, now, windowDur)
 
 	e, tracked := s.entries[key]
-	if !tracked && len(s.entries) >= s.maxKeys {
-		key = localOverflowKey
+	if !tracked {
+		key = s.admitLocked(key, window)
 		e = s.entries[key]
 	}
 	if e.window != window {
@@ -119,6 +142,50 @@ func (s *localStore) take(key string, window int64, limit int, now time.Time, wi
 	e.count++
 	s.entries[key] = e
 	return e.count, e.count <= limit
+}
+
+// admitLocked picks the bucket an untracked key is counted against: its
+// own, its /48's shared bucket once that /48 has used its per-window
+// allowance, or [localOverflowKey] once the map is full. Caller holds s.mu.
+func (s *localStore) admitLocked(key string, window int64) string {
+	p48, isV6 := slash48Key(key)
+	if isV6 {
+		c := s.per48[p48]
+		if c.window != window {
+			c = localEntry{window: window}
+		}
+		if c.count >= s.maxPer48 {
+			key = localPer48BucketTag + p48
+		} else if len(s.entries) < s.maxKeys {
+			c.count++
+			s.per48[p48] = c
+		}
+	}
+	if _, tracked := s.entries[key]; !tracked && len(s.entries) >= s.maxKeys {
+		return localOverflowKey
+	}
+	return key
+}
+
+// slash48Key returns key with a trailing IPv6 address masked to its /48,
+// keeping any caller prefix ("anon:", "ip:") so namespaces stay disjoint.
+// The first parseable suffix is the longest, i.e. the whole address; a
+// hex-looking prefix can only widen the grouping, never narrow it.
+func slash48Key(key string) (string, bool) {
+	for i := 0; i < len(key); i++ {
+		if i > 0 && key[i-1] != ':' {
+			continue
+		}
+		addr, err := netip.ParseAddr(key[i:])
+		if err != nil {
+			continue
+		}
+		if !addr.Is6() || addr.Is4In6() {
+			return "", false
+		}
+		return key[:i] + netip.PrefixFrom(addr.WithZone(""), 48).Masked().Addr().String(), true
+	}
+	return "", false
 }
 
 // gcLocked deletes entries belonging to a window strictly older than
@@ -143,6 +210,11 @@ func (s *localStore) gcLocked(current int64, now time.Time, windowDur time.Durat
 	for k, e := range s.entries {
 		if e.window < current {
 			delete(s.entries, k)
+		}
+	}
+	for k, c := range s.per48 {
+		if c.window < current {
+			delete(s.per48, k)
 		}
 	}
 	s.lastGC = now

@@ -1,7 +1,8 @@
 ---
 # node_exporter + stellar-core-prometheus-exporter + promtail.
-# Metrics on :9100 and :9473 respectively; both bound to loopback
-# and reachable only over the internal_cidrs (nftables enforces).
+# Metrics on :9100 and :9473 respectively. node_exporter binds all
+# interfaces because the central Prometheus scrapes every host on :9100;
+# nftables admits 9100 only from internal_cidrs and drops :9473 off-host.
 # Promtail ships journald logs to the local Loki (:3100).
 
 # Node-exporter source-of-truth: the Debian package
@@ -35,6 +36,9 @@
     state: directory
     owner: stellarindex
     group: stellarindex
+    # Group-write is for units that write .prom files via
+    # SupplementaryGroups=stellarindex: pgbackrest-backup.service (User=postgres)
+    # and the DynamicUser stellarindex-{sla-probe,smoke,heartbeat@}.service.
     mode: "0775"
 
 # /etc/default/supply-snapshot — operator override that wires the
