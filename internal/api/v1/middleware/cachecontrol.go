@@ -516,7 +516,7 @@ func routePolicy(path string, cdnEnabled bool) (string, bool) {
 		return "private, no-cache, must-revalidate", true
 
 	// ─── Status — customer-facing health rollup ─────────────────
-	// /v1/status is what the explorer /status page polls every 10 s
+	// /v1/status is what the explorer /status page polls every 30 s
 	// and what monitoring dashboards (and the smoke timer) poll on a
 	// longer interval. A 10 s cache absorbs the polling fan-out
 	// without delaying alert-state propagation enough to matter —
