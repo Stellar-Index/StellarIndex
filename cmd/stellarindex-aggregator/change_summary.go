@@ -66,6 +66,11 @@ func buildChangeSummaryEntities(pairs []canonical.Pair) []changesummary.Entity {
 	out := make([]changesummary.Entity, 0, 2*len(pairs))
 	seenCoins := make(map[string]struct{}, len(pairs))
 	for _, p := range pairs {
+		// No trade is ever recorded as native/fiat (fiat-quoted XLM arrives as
+		// crypto:XLM), so these entities fail every pass; the API aliases native to crypto:XLM.
+		if p.Base.Type == canonical.AssetNative && p.Quote.Type == canonical.AssetFiat {
+			continue
+		}
 		baseID := p.Base.String()
 		if _, ok := seenCoins[baseID]; !ok {
 			out = append(out, changesummary.Entity{

@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // changesSpecPath is the operation the change-summary worker is the
@@ -188,4 +190,19 @@ func sortedKeys(m map[string]struct{}) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func TestBuildChangeSummaryEntitiesSkipsNativeFiat(t *testing.T) {
+	var sawXLMCoin bool
+	for _, e := range buildChangeSummaryEntities(defaultPairs()) {
+		if e.Pair.Base.Type == canonical.AssetNative && e.Pair.Quote.Type == canonical.AssetFiat {
+			t.Errorf("emitted %s/%s: native/fiat has no prices_1m rows and fails every pass", e.Type, e.ID)
+		}
+		if e.Type == "coin" && e.ID == "crypto:XLM" {
+			sawXLMCoin = true
+		}
+	}
+	if !sawXLMCoin {
+		t.Error("coin/crypto:XLM missing; /v1/changes/coin/native aliases to it")
+	}
 }
