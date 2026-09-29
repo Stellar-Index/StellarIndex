@@ -6,6 +6,8 @@
 # (cheap no-op on already-ZSTD partitions). Resumable: safe to restart.
 # RECOMPRESS_COMPLETE is logged, and the exit is 0, only when every partition
 # was rewritten; a failed query or a skipped partition exits non-zero.
+# Stopping this script does not stop the in-flight OPTIMIZE (the merge runs
+# server-side); see ops-job-stalled.md "A ClickHouse merge outlives its client".
 set -uo pipefail
 LOG="${RECOMPRESS_LOG:-/var/log/recompress-lec.log}"
 FLOOR_KB=524288000   # 500 GiB abort floor
