@@ -105,8 +105,11 @@ type scriptedFastStub struct {
 	fastContract int
 	rawSeries    int
 	rawBreak     int
+	rawContract  int
 	seriesPoint  []clickhouse.ProtocolDailyPoint
 	breakdownErr error // injected failure for ProtocolEventBreakdownFast
+	contractErr  error // injected failure for ProtocolContractActivityFast
+	contractRows []clickhouse.ProtocolContractActivity
 }
 
 func (s *scriptedFastStub) DailyActivityAvailable(context.Context) (bool, bool) {
@@ -148,7 +151,17 @@ func (s *scriptedFastStub) ProtocolContractActivityFast(context.Context, []strin
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.fastContract++
+	if s.contractErr != nil {
+		return nil, s.contractErr
+	}
 	return nil, nil
+}
+
+func (s *scriptedFastStub) ProtocolContractActivity(context.Context, []string, uint32) ([]clickhouse.ProtocolContractActivity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rawContract++
+	return s.contractRows, nil
 }
 
 func (s *scriptedFastStub) ProtocolDailyActivity(context.Context, []string, uint32) ([]clickhouse.ProtocolDailyPoint, error) {
@@ -545,6 +558,36 @@ func TestEnrichProtocolAnalytics_FastBreakdownErrorForcesBothToRaw(t *testing.T)
 	if stub.rawSeries != 1 || stub.rawBreak != 1 {
 		t.Fatalf("raw series/breakdown = %d/%d, want 1/1: a fast breakdown error must force BOTH fills onto raw together, not just the failing one",
 			stub.rawSeries, stub.rawBreak)
+	}
+}
+
+// A fast per-contract read error must fall back to the raw reader, not
+// blank the roster's event counts while the raw path could have answered.
+func TestEnrichProtocolAnalytics_FastContractActivityErrorFallsBackToRaw(t *testing.T) {
+	const cid = "CCONTRACTFALLBACKTEST"
+	lastSeen := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	stub := &scriptedFastStub{
+		answers:      []probeAnswer{{true, true}},
+		contractErr:  errors.New("fast contract activity timeout"),
+		contractRows: []clickhouse.ProtocolContractActivity{{ContractID: cid, Events: 42, LastSeen: lastSeen}},
+	}
+	srv := New(Options{ProtocolActivity: stub})
+	meta, ok := protocolByName("soroswap")
+	if !ok {
+		t.Fatal("soroswap missing from registry")
+	}
+	view := ProtocolDetailView{ProtocolView: ProtocolView{Name: meta.Name}, Contracts: []ProtocolContractView{{ContractID: cid}}}
+	if !srv.enrichProtocolAnalytics(context.Background(), meta, &view) {
+		t.Fatal("enrich degraded despite a raw contract-activity fallback being available")
+	}
+	stub.mu.Lock()
+	fast, raw := stub.fastContract, stub.rawContract
+	stub.mu.Unlock()
+	if fast != 1 || raw != 1 {
+		t.Fatalf("fast/raw contract activity calls = %d/%d, want 1/1", fast, raw)
+	}
+	if got := view.Contracts[0]; got.Events != 42 || got.LastSeen != "2026-07-30T12:00:00Z" {
+		t.Fatalf("contract = %+v, want Events=42 LastSeen=2026-07-30T12:00:00Z from the raw fallback", got)
 	}
 }
 
