@@ -150,4 +150,7 @@ all:
           ansible_user: "root"
           ansible_port: 22
           ansible_ssh_private_key_file: "~/.ssh/si_deploy"
-          ansible_ssh_common_args: '-o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o ProxyCommand="ssh -i ~/.ssh/si_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -W %h:%p root@HOST_PUBLIC_IP"'  # REPLACE HOST_PUBLIC_IP
+          # Both hops verify against inventory/known_hosts (untracked; capture it
+          # with ssh-keyscan per docs/operations/testnet-futurenet-deployment.md)
+          # so a changed host key fails the run instead of being accepted.
+          ansible_ssh_common_args: '-o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile={{ inventory_dir }}/known_hosts -o ProxyCommand="ssh -i ~/.ssh/si_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile={{ inventory_dir }}/known_hosts -W %h:%p root@HOST_PUBLIC_IP"'  # REPLACE HOST_PUBLIC_IP

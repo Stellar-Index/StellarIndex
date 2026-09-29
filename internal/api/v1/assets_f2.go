@@ -364,6 +364,13 @@ func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asse
 	if s.prices == nil || detail.PriceUSD != nil {
 		return 0
 	}
+	if asset.Equal(defaultPriceQuote) {
+		// USD in USD is 1 by definition — the same identity the catalogue
+		// view serves; no market is read, so no venue count backs it.
+		identity := "1.00000000000000"
+		detail.PriceUSD = &identity
+		return 0
+	}
 	l := s.lookupUSDPriceWithSources(ctx, asset)
 	if l.withheld != "" {
 		detail.PriceWithheldReason = l.withheld

@@ -349,6 +349,7 @@ echo "=== ClickHouse Prometheus endpoint self-test ===" && ./scripts/ci/clickhou
 # used to hard-fail the whole role. Runs the role's own main.yml locally
 # (~12s, --check for the log-discipline arms) — no hosts, no ClickHouse.
 echo "=== Ansible ClickHouse host-gate self-test ===" && ./scripts/ci/ansible-clickhouse-host-gate-test.sh
+echo "=== Ansible listing-sync pubnet gate ===" && ./scripts/ci/ansible-listing-sync-gate-test.sh
 echo "=== Alertmanager apply-path parity ===" && ./scripts/ci/check-alertmanager-parity.sh
 echo "=== Alertmanager apply-path parity self-test ===" && ./scripts/ci/check-alertmanager-parity-test.sh
 echo "=== pgBackRest backup wrapper self-test ===" && ./scripts/ci/pgbackrest-backup-test.sh
@@ -595,6 +596,7 @@ lane_d() { # everything else
     echo "=== Ansible nftables per-source SSH rate-limit self-test ===" && ./scripts/ci/ansible-ssh-rate-limit-test.sh
     echo "=== Ansible prometheus archival-host guard self-test ===" && ./scripts/ci/ansible-prometheus-host-guard-test.sh
     echo "=== Ansible exporter listen-address self-test ===" && ./scripts/ci/ansible-exporter-listen-address-test.sh
+    echo "=== Ansible textfile-collector dir mode self-test ===" && ./scripts/ci/ansible-textfile-dir-mode-test.sh
     echo "=== Ansible prometheus port var self-test ===" && ./scripts/ci/ansible-prometheus-port-var-test.sh
     echo "=== Ansible node-exporter-collectors install self-test ===" && ./scripts/ci/ansible-node-exporter-collectors-install-test.sh
     echo "=== Ansible Caddy signing-key pipefail self-test ===" && ./scripts/ci/ansible-caddy-key-pipefail-test.sh

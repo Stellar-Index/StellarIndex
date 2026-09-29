@@ -151,5 +151,5 @@ ssh root@136.243.90.96 'systemctl status "heavy-*.scope" --no-pager'
   (MemoryMax=20G / MemorySwapMax=0) and galexie carries
   MemoryLow=16G (2026-07-05 wedge = canonical case) — added to
   Impact + diagnosis (journalctl ENOMEM grep,
-  `systemctl status run-heavy-*.scope`). Detected-by converted to
+  `systemctl status "heavy-*.scope"`). Detected-by converted to
   the dual-tree convention; ssh commands use the r1 shape.
