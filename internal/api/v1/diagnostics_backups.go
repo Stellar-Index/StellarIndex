@@ -253,7 +253,7 @@ const backupsCacheTTL = 60 * time.Second
 // backupsQueryBudget bounds a rebuild's Prometheus fan-out. It runs on
 // its own detached context (see handleDiagnosticsBackups), never on
 // the ctx of whichever request happened to trigger it — a rebuild is
-// shared, via s.backups.mu, with every request blocked behind it.
+// shared, via s.backups.buildMu, with every request queued behind it.
 const backupsQueryBudget = 3 * time.Second
 
 // errBackupsQueryPanicked is recorded in a query's error slot when its
@@ -634,9 +634,56 @@ func firstUnixTime(samples []promSample) *time.Time {
 
 // backupsCache is the handler's 60 s in-process snapshot cache.
 type backupsCache struct {
-	mu      sync.Mutex
+	mu      sync.Mutex // guards snap and builtAt only; never held across IO
 	snap    BackupsDiagnostics
 	builtAt time.Time
+	// buildMu admits one rebuild at a time so concurrent stale readers
+	// share the leader's Prometheus fan-out instead of each running one.
+	buildMu sync.Mutex
+}
+
+// cached returns the snapshot if it is within backupsCacheTTL of now.
+func (c *backupsCache) cached(now time.Time) (BackupsDiagnostics, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.builtAt.IsZero() || now.Sub(c.builtAt) >= backupsCacheTTL {
+		return BackupsDiagnostics{}, false
+	}
+	return c.snap, true
+}
+
+// rebuildBackups refreshes s.backups and returns the snapshot to serve.
+func (s *Server) rebuildBackups() BackupsDiagnostics {
+	s.backups.buildMu.Lock()
+	defer s.backups.buildMu.Unlock()
+	now := time.Now().UTC()
+	if snap, ok := s.backups.cached(now); ok {
+		return snap // the rebuild this caller queued behind already refreshed it
+	}
+	// Detached from r.Context(): the rebuild is shared with every request
+	// queued on buildMu, so the leader's disconnect must not fail it for all.
+	ctx, cancel := context.WithTimeout(context.Background(), backupsQueryBudget)
+	fresh := buildBackupsSnapshot(ctx, s.logger, s.backupMetrics, now)
+	cancel()
+	// builtAt is stamped from the clock AFTER the build, not the
+	// one taken before the (up-to-backupsQueryBudget) fan-out —
+	// otherwise the cache is treated as fresh for up to
+	// backupsQueryBudget longer than it actually is.
+	builtAt := time.Now().UTC()
+	s.backups.mu.Lock()
+	defer s.backups.mu.Unlock()
+	if fresh.SourceStatus == "unknown" && !s.backups.builtAt.IsZero() {
+		// Every query failed (or the fan-out was starved) this
+		// round. Keep serving the previous good snapshot rather
+		// than replacing it with an all-"unknown" document; still
+		// advance builtAt so the handler doesn't hammer Prometheus
+		// every request until a query succeeds again.
+		s.backups.builtAt = builtAt
+	} else {
+		s.backups.snap = fresh
+		s.backups.builtAt = builtAt
+	}
+	return s.backups.snap
 }
 
 // handleDiagnosticsBackups serves GET /v1/diagnostics/backups.
@@ -658,37 +705,10 @@ func (s *Server) handleDiagnosticsBackups(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	now := time.Now().UTC()
-	s.backups.mu.Lock()
-	defer s.backups.mu.Unlock()
-	if s.backups.builtAt.IsZero() || now.Sub(s.backups.builtAt) >= backupsCacheTTL {
-		// Detached from r.Context(): this rebuild is shared with every
-		// request blocked on s.backups.mu behind it (the cache is
-		// updated once and read by all of them), so the triggering
-		// caller's own disconnect must not fail their queries too —
-		// the same shape as RLT-439 (CachedOracleReader.fetch running
-		// a shared fill inline on the leader's own ctx).
-		ctx, cancel := context.WithTimeout(context.Background(), backupsQueryBudget)
-		fresh := buildBackupsSnapshot(ctx, s.logger, s.backupMetrics, now) //nolint:contextcheck // intentional detach — the rebuild is shared via s.backups.mu; the triggering caller's own disconnect must not fail it for every request behind the lock
-		cancel()
-		// builtAt is stamped from the clock AFTER the build, not the
-		// one taken before the (up-to-backupsQueryBudget) fan-out —
-		// otherwise the cache is treated as fresh for up to
-		// backupsQueryBudget longer than it actually is.
-		builtAt := time.Now().UTC()
-		if fresh.SourceStatus == "unknown" && !s.backups.builtAt.IsZero() {
-			// Every query failed (or the fan-out was starved) this
-			// round. Keep serving the previous good snapshot rather
-			// than replacing it with an all-"unknown" document; still
-			// advance builtAt so the handler doesn't hammer Prometheus
-			// every request until a query succeeds again.
-			s.backups.builtAt = builtAt
-		} else {
-			s.backups.snap = fresh
-			s.backups.builtAt = builtAt
-		}
+	snap, ok := s.backups.cached(time.Now().UTC())
+	if !ok {
+		snap = s.rebuildBackups() //nolint:contextcheck // intentional detach; see rebuildBackups
 	}
-	snap := s.backups.snap
 
 	w.Header().Set("Cache-Control", "public, max-age=60, s-maxage=60")
 	// flags.stale mirrors the roll-up so polling clients can spot a
