@@ -50,6 +50,9 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # The dev compose stack's default credentials (deploy/docker-compose/dev.yaml).
+      STELLARINDEX_POSTGRES_DSN: postgres://stellarindex:stellarindex-dev@localhost:5432/stellarindex?sslmode=disable
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
