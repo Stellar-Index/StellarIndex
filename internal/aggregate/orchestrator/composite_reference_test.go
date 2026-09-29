@@ -224,7 +224,7 @@ func TestCompositeReference_MarketWideMoveDoesNotFreeze(t *testing.T) {
 	// read before and after to prove the suppression is attributed to
 	// the firing pair, not folded into one process-wide tally.
 	unrelatedPair := mkPair(t, "crypto", "BTC", "fiat", "USD")
-	beforeUnrelated := testutil.ToFloat64(obs.AggregatorCompositeFreezeSuppressedTotal.WithLabelValues(unrelatedPair.String(), (15 * time.Minute).String()))
+	beforeUnrelated := testutil.ToFloat64(obs.AggregatorCompositeFreezeSuppressedTotal.WithLabelValues(unrelatedPair.String(), windowLabel(15*time.Minute)))
 	res := runCompositeRefScenario(t, compositeRefScenario{
 		legSources:    []string{"kraken", "coinbase"},
 		legPriceT2:    15_000_000, // XLM/USD moved WITH the venue → composite 0.12
@@ -260,18 +260,18 @@ func TestCompositeReference_MarketWideMoveDoesNotFreeze(t *testing.T) {
 	if n := distinctSourceCount(res.t2Trades); n != 1 {
 		t.Errorf("freeze-leg source count = %d, want 1 — the composite must never widen source_count", n)
 	}
-	if got := testutil.ToFloat64(obs.AggregatorCompositeFreezeSuppressedTotal.WithLabelValues(res.xlmGBP.String(), res.window.String())); got < 1 {
-		t.Errorf("composite_freeze_suppressed_total{pair=%s,window=%s} = %v, want >= 1", res.xlmGBP.String(), res.window.String(), got)
+	if got := testutil.ToFloat64(obs.AggregatorCompositeFreezeSuppressedTotal.WithLabelValues(res.xlmGBP.String(), windowLabel(res.window))); got < 1 {
+		t.Errorf("composite_freeze_suppressed_total{pair=%s,window=%s} = %v, want >= 1", res.xlmGBP.String(), windowLabel(res.window), got)
 	}
-	if got := testutil.ToFloat64(obs.AggregatorCompositeFreezeSuppressedTotal.WithLabelValues(unrelatedPair.String(), (15*time.Minute).String())) - beforeUnrelated; got != 0 {
+	if got := testutil.ToFloat64(obs.AggregatorCompositeFreezeSuppressedTotal.WithLabelValues(unrelatedPair.String(), windowLabel(15*time.Minute))) - beforeUnrelated; got != 0 {
 		t.Errorf("composite_freeze_suppressed_total{pair=%s} advanced by %v, want 0 — suppression must be attributed to the firing pair, not a shared/global series", unrelatedPair.String(), got)
 	}
 	if g := testutil.ToFloat64(obs.AggregatorCompositeCorroboration.WithLabelValues(
-		res.xlmGBP.String(), res.window.String(), string(compositeVerdictCorroborated))); g != 1 {
+		res.xlmGBP.String(), windowLabel(res.window), string(compositeVerdictCorroborated))); g != 1 {
 		t.Errorf("composite_corroboration{verdict=corroborated} = %v, want 1", g)
 	}
 	if g := testutil.ToFloat64(obs.AggregatorCompositeReferenceLegSources.WithLabelValues(
-		res.xlmGBP.String(), res.window.String(), res.xlmUSD.String())); g != 2 {
+		res.xlmGBP.String(), windowLabel(res.window), res.xlmUSD.String())); g != 2 {
 		t.Errorf("composite_reference_leg_sources{leg=XLM/USD} = %v, want 2", g)
 	}
 }
@@ -369,7 +369,7 @@ func assertUnavailableFroze(t *testing.T, res compositeRefResult, wantReason str
 		t.Errorf("tick 3: served VWAP = %q, want the LKG 0.080000000000", res.servedT3)
 	}
 	if g := testutil.ToFloat64(obs.AggregatorCompositeCorroboration.WithLabelValues(
-		res.xlmGBP.String(), res.window.String(), string(compositeVerdictUnavailable))); g != 1 {
+		res.xlmGBP.String(), windowLabel(res.window), string(compositeVerdictUnavailable))); g != 1 {
 		t.Errorf("composite_corroboration{verdict=unavailable} = %v, want 1", g)
 	}
 }
@@ -534,7 +534,7 @@ func TestCompositeReference_LegDispersionCannotCorroborate(t *testing.T) {
 		t.Errorf("reason %q should carry the leg dispersion (~148 bps)", reason)
 	}
 	if g := testutil.ToFloat64(obs.AggregatorCompositeReferenceLegDispersionBps.WithLabelValues(
-		res.xlmGBP.String(), res.window.String(), res.xlmUSD.String())); g < 100 || g > 200 {
+		res.xlmGBP.String(), windowLabel(res.window), res.xlmUSD.String())); g < 100 || g > 200 {
 		t.Errorf("composite_reference_leg_dispersion_bps{leg=XLM/USD} = %v, want ~148", g)
 	}
 }
@@ -765,7 +765,7 @@ func compositeSeriesFor(t *testing.T, c prometheus.Collector, pair, window strin
 // only recordVenueVWAPs had one).
 //
 // Note the label-value trap: emitCompositeReference labels the window
-// with window.String() ("1m0s"), not windowLabel ("1m"). A clear written
+// with windowLabel ("1m"), not window.String() ("1m0s"). A clear written
 // against the other convention deletes nothing and this test fails.
 func TestCompositeReference_VerdictGaugeRetiredWhenPairLeavesTheEvaluatedSet(t *testing.T) {
 	// A target no other test in this package uses, so the series counted
@@ -809,7 +809,7 @@ func TestCompositeReference_VerdictGaugeRetiredWhenPairLeavesTheEvaluatedSet(t *
 	if err := o.Tick(context.Background()); err != nil {
 		t.Fatalf("tick 1: %v", err)
 	}
-	pairLabel, windowLabelValue := xlmCHF.String(), window.String()
+	pairLabel, windowLabelValue := xlmCHF.String(), windowLabel(window)
 	if n := compositeSeriesFor(t, obs.AggregatorCompositeCorroboration, pairLabel, windowLabelValue); n != len(compositeVerdicts) {
 		t.Fatalf("after an evaluated tick: %d verdict series for %s/%s, want %d",
 			n, pairLabel, windowLabelValue, len(compositeVerdicts))
@@ -872,7 +872,7 @@ func TestCompositeReference_LegSeriesRetiredWhenLegDropsOnEligibleTarget(t *test
 		},
 		CompositeReference: CompositeReferenceConfig{Enabled: true, Targets: []canonical.Pair{xlmJPY}},
 	})
-	pairLabel, windowLabelValue := xlmJPY.String(), window.String()
+	pairLabel, windowLabelValue := xlmJPY.String(), windowLabel(window)
 
 	// Tick 1: two-venue leg, single-venue target → every leg series set.
 	store.perPair[xlmUSD.String()] = []canonical.Trade{
