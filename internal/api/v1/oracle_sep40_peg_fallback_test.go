@@ -119,3 +119,32 @@ func TestOraclePrices_PegFallbackIsStale(t *testing.T) {
 		})
 	}
 }
+
+// A declared peg is an assumption, not a record: SEP-40's answer for "no
+// record" is None, and SEP40Price has no field to tell a declaration from
+// a print. Both point reads refuse it where /v1/price serves it as "peg".
+func TestOracleSEP40PointReads_RefuseADeclaredPeg(t *testing.T) {
+	usdc, _ := oraclePegs(t)
+	srv := v1.New(v1.Options{
+		Prices:            &stubPriceReader{err: v1.ErrPriceNotFound},
+		USDPeggedClassics: []canonical.Asset{usdc},
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	status, body := getBody(t, ts.URL+"/v1/price?asset="+usdc.String()+"&quote=fiat:USD")
+	if status != http.StatusOK || !strings.Contains(body, `"price_type":"peg"`) {
+		t.Fatalf("precondition: /v1/price must serve the declaration as price_type peg, got %d: %s", status, body)
+	}
+	for _, path := range []string{
+		"/v1/oracle/lastprice?asset=" + usdc.String(),
+		"/v1/oracle/lastprice?asset=crypto:USDC",
+		"/v1/oracle/x_last_price?base=" + usdc.String() + "&quote=fiat:USD",
+		"/v1/oracle/x_last_price?base=crypto:USDC&quote=fiat:USD",
+		"/v1/oracle/x_last_price?base=crypto:EURC&quote=fiat:EUR",
+	} {
+		status, body := getBody(t, ts.URL+path)
+		if status != http.StatusNotFound || !strings.Contains(body, "errors/price-not-found") {
+			t.Errorf("%s: status = %d, want 404 price-not-found (a declaration is not a SEP-40 record): %s", path, status, body)
+		}
+	}
+}
