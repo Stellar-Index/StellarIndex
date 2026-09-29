@@ -150,8 +150,8 @@ lives in the discovery doc + the package's symbol_resolver.
 3. **New optional arg added** — Soroban contracts can extend
    signatures by adding args. If a future relay accepts an extra
    `signer: Address` at index 4, our decoder ignores trailing args
-   so we still extract the first 4 correctly. **Probably safe**,
-   pending verification.
+   so we still extract the first 4 correctly
+   (`TestDecodeRelay_TrailingArgIgnored`).
 4. **Args swapped without signature change** (e.g. `(symbol, u64)`
    → `(u64, symbol)` inside the inner Vec) — silently produces
    wrong attribution. **No automated detection** — every new WASM
