@@ -41,9 +41,13 @@ export function buildConvertParams(
   tickers: string[],
 ): { from: string; to: string }[] {
   const out: { from: string; to: string }[] = [];
-  const hubSet = new Set(HUB_TICKERS);
+  // A hub the catalogue does not serve would bake a page whose identity read
+  // fails the export, so hubs are only ever drawn from the served tickers.
+  const served = new Set(tickers);
+  const hubs = HUB_TICKERS.filter((t) => served.has(t));
+  const hubSet = new Set(hubs);
   // Pass 1: every hub × every ticker (forward).
-  for (const from of HUB_TICKERS) {
+  for (const from of hubs) {
     for (const to of tickers) {
       if (from === to) continue;
       out.push({ from, to });
@@ -52,7 +56,7 @@ export function buildConvertParams(
   // Pass 2: every non-hub ticker → every hub (reverse); hub×hub already in pass 1.
   for (const from of tickers) {
     if (hubSet.has(from)) continue;
-    for (const to of HUB_TICKERS) {
+    for (const to of hubs) {
       if (from === to) continue;
       out.push({ from, to });
     }
