@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -641,5 +642,76 @@ func TestHandleDiagnosticsBackups_KeepsPreviousSnapshotOnAllFailedRebuild(t *tes
 	}
 	if env2.Data["source_status"] != "ok" {
 		t.Errorf("source_status = %v after an all-failed rebuild, want the previous good snapshot (ok) kept", env2.Data["source_status"])
+	}
+}
+
+// lockProbeWriter records, on each Write, whether s.backups.mu was free.
+type lockProbeWriter struct {
+	*httptest.ResponseRecorder
+	mu          *sync.Mutex
+	heldOnWrite bool
+}
+
+func (w *lockProbeWriter) Write(b []byte) (int, error) {
+	if w.mu.TryLock() {
+		w.mu.Unlock()
+	} else {
+		w.heldOnWrite = true
+	}
+	return w.ResponseRecorder.Write(b)
+}
+
+// TestHandleDiagnosticsBackups_ResponseWriteDoesNotHoldCacheLock: the
+// response write must happen outside s.backups.mu, or one slow client
+// stalls every other caller of the endpoint behind it.
+func TestHandleDiagnosticsBackups_ResponseWriteDoesNotHoldCacheLock(t *testing.T) {
+	srv := New(Options{BackupMetrics: &switchableBackupMetrics{}})
+	for _, pass := range []string{"rebuild", "cached"} {
+		w := &lockProbeWriter{ResponseRecorder: httptest.NewRecorder(), mu: &srv.backups.mu}
+		srv.handleDiagnosticsBackups(w, httptest.NewRequest(http.MethodGet, "/v1/diagnostics/backups", nil))
+		if w.Code != http.StatusOK || w.Body.Len() == 0 {
+			t.Fatalf("%s: status = %d, body %d bytes; want 200 with a body", pass, w.Code, w.Body.Len())
+		}
+		if w.heldOnWrite {
+			t.Errorf("%s: s.backups.mu was held during the response write", pass)
+		}
+	}
+}
+
+// gatedBackupMetrics signals entered on its first query, then blocks
+// every query until proceed is closed.
+type gatedBackupMetrics struct {
+	once    sync.Once
+	entered chan struct{}
+	proceed chan struct{}
+}
+
+func (g *gatedBackupMetrics) queryVector(_ context.Context, _ string) ([]promSample, error) {
+	g.once.Do(func() { close(g.entered) })
+	<-g.proceed
+	return nil, nil
+}
+
+// TestHandleDiagnosticsBackups_RebuildDoesNotHoldCacheLock: the
+// Prometheus fan-out must run with s.backups.mu free, so the cache
+// stays readable for the whole (up to backupsQueryBudget) rebuild.
+func TestHandleDiagnosticsBackups_RebuildDoesNotHoldCacheLock(t *testing.T) {
+	g := &gatedBackupMetrics{entered: make(chan struct{}), proceed: make(chan struct{})}
+	srv := New(Options{BackupMetrics: g})
+
+	done := make(chan struct{})
+	go func() {
+		srv.handleDiagnosticsBackups(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/diagnostics/backups", nil))
+		close(done)
+	}()
+	<-g.entered
+	free := srv.backups.mu.TryLock()
+	if free {
+		srv.backups.mu.Unlock()
+	}
+	close(g.proceed)
+	<-done
+	if !free {
+		t.Fatal("s.backups.mu was held across the Prometheus rebuild")
 	}
 }
