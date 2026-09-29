@@ -17,35 +17,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestAnswerUpdatedTopic0 sanity-checks the init() computation —
-// the keccak256 hash of "AnswerUpdated(int256,uint256,uint256)"
-// has been a public, well-known value since Chainlink's
-// AggregatorV3Interface was first published. If our keccak
-// implementation ever computes something different, the topic
-// filter for backfill stops matching anything and the bug is
-// silent — this test catches it at build time.
-//
-// Reference value confirmed against the Etherscan log decoder for
-// the well-known ETH/USD feed
-// (0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419) on block 19000000.
+// TestAnswerUpdatedTopic0 pins topic0 to the literal keccak256 of
+// "AnswerUpdated(int256,uint256,uint256)"; a wrong hash makes backfill match nothing, silently.
 func TestAnswerUpdatedTopic0(t *testing.T) {
 	t.Parallel()
-	want := "0x0559884fd3a460db3073d4c0a9e8b3a8d8a4b6e8a4b6e8a4b6e8a4b6e8a4b6e8"
-	// We can't hardcode the want in the test (we'd just be checking
-	// the same constant twice), so re-compute by an independent
-	// path — keccak256 of the signature string.
-	if AnswerUpdatedTopic0 == "" {
-		t.Fatal("AnswerUpdatedTopic0 unset — init() did not run")
+	const want = "0x0559884fd3a460db3073b7fc896cc77986f16e378210ded43186175bf646fc5f"
+	if AnswerUpdatedTopic0 != want {
+		t.Errorf("AnswerUpdatedTopic0 = %s, want %s", AnswerUpdatedTopic0, want)
 	}
-	if !strings.HasPrefix(AnswerUpdatedTopic0, "0x") {
-		t.Errorf("topic0 missing 0x prefix: %s", AnswerUpdatedTopic0)
-	}
-	if len(AnswerUpdatedTopic0) != 66 {
-		t.Errorf("topic0 wrong length: %s (want 66 chars including 0x)", AnswerUpdatedTopic0)
-	}
-	// Sanity log so a future operator running -v can confirm the
-	// computed value matches what they see in Etherscan.
-	t.Logf("computed AnswerUpdatedTopic0 = %s (Etherscan-known: %s)", AnswerUpdatedTopic0, want)
 }
 
 // TestDecodeLatestRoundData_happy covers the 5-tuple ABI decode
