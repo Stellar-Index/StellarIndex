@@ -673,18 +673,18 @@ func (o *Orchestrator) emitCompositeReference(pair canonical.Pair, window time.D
 		if v == ref.verdict {
 			val = 1
 		}
-		obs.AggregatorCompositeCorroboration.WithLabelValues(pair.String(), window.String(), string(v)).Set(val)
+		obs.AggregatorCompositeCorroboration.WithLabelValues(pair.String(), windowLabel(window), string(v)).Set(val)
 	}
 	// Delete-then-set, as recordVenueVWAPs: a leg that did not resolve (or
 	// was never reached) this tick must not keep last tick's reading.
-	labels := prometheus.Labels{"pair": pair.String(), "window": window.String()}
+	labels := prometheus.Labels{"pair": pair.String(), "window": windowLabel(window)}
 	obs.AggregatorCompositeReferenceLegSources.DeletePartialMatch(labels)
 	obs.AggregatorCompositeReferenceLegDispersionBps.DeletePartialMatch(labels)
 	for leg, n := range ref.legSources {
-		obs.AggregatorCompositeReferenceLegSources.WithLabelValues(pair.String(), window.String(), leg).Set(float64(n))
+		obs.AggregatorCompositeReferenceLegSources.WithLabelValues(pair.String(), windowLabel(window), leg).Set(float64(n))
 	}
 	for leg, bps := range ref.legDispersionBps {
-		obs.AggregatorCompositeReferenceLegDispersionBps.WithLabelValues(pair.String(), window.String(), leg).Set(bps)
+		obs.AggregatorCompositeReferenceLegDispersionBps.WithLabelValues(pair.String(), windowLabel(window), leg).Set(bps)
 	}
 	attrs := []any{
 		"pair", pair.String(),
@@ -714,10 +714,10 @@ func (o *Orchestrator) emitCompositeReference(pair canonical.Pair, window time.D
 // restarts. Same shape as recordVenueVWAPs' delete-then-set for a venue
 // that stopped trading.
 //
-// The label values MUST match emitCompositeReference's (`window.String()`,
-// not windowLabel) or this deletes nothing at all.
+// The label values MUST match emitCompositeReference's (windowLabel, not
+// window.String()) or this deletes nothing at all.
 func (o *Orchestrator) clearCompositeReference(pair canonical.Pair, window time.Duration) {
-	labels := prometheus.Labels{"pair": pair.String(), "window": window.String()}
+	labels := prometheus.Labels{"pair": pair.String(), "window": windowLabel(window)}
 	obs.AggregatorCompositeCorroboration.DeletePartialMatch(labels)
 	obs.AggregatorCompositeReferenceLegSources.DeletePartialMatch(labels)
 	obs.AggregatorCompositeReferenceLegDispersionBps.DeletePartialMatch(labels)
