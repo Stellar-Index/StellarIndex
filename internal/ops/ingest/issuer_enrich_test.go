@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -108,5 +109,14 @@ func TestIssuerEnrichLoop_ContinuesPastBatchFailure(t *testing.T) {
 	}
 	if len(writer.written) != 20 {
 		t.Fatalf("writer wrote %d row(s), want 20", len(writer.written))
+	}
+}
+
+func TestIssuerEnrichRejectsNonPositiveBatch(t *testing.T) {
+	for _, b := range []string{"0", "-1"} {
+		err := issuerEnrich([]string{"-batch", b})
+		if err == nil || !strings.Contains(err.Error(), "-batch must be > 0") {
+			t.Fatalf("-batch %s: err = %v, want -batch must be > 0", b, err)
+		}
 	}
 }

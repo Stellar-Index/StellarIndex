@@ -33,6 +33,9 @@ func issuerEnrich(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if *batch <= 0 {
+		return fmt.Errorf("-batch must be > 0, got %d", *batch)
+	}
 	gate.Banner()
 	dryRun := gate.DryRun()
 
