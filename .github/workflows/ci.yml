@@ -2373,6 +2373,11 @@ jobs:
         # bound to all interfaces. Structural grep, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-exporter-listen-address-test.sh
+      - name: textfile-collector dir mode test
+        # Both declaring tasks must agree (else alternate applies flip
+        # it) and group-write must stay tied to its group writers.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-textfile-dir-mode-test.sh
       - name: prometheus port var wiring test (SL19)
         # prometheus.yml.j2, prometheus.service.j2 and 06-firewall.yml
         # hardcoded literal 9090/9093 instead of referencing
