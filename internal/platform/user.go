@@ -123,4 +123,8 @@ type UserStore interface {
 	// user — invoked on password reset, MFA reset, account
 	// suspension. Idempotent.
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error
+
+	// RevokeOtherUserSessions revokes every active session for the user
+	// except keepSessionID. Idempotent.
+	RevokeOtherUserSessions(ctx context.Context, userID, keepSessionID uuid.UUID) error
 }

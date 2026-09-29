@@ -4158,6 +4158,10 @@ export interface paths {
          *     signed-out state. Sets a Max-Age=-1 cookie so the browser
          *     drops it on the next response.
          *
+         *     With `all=true`, every session of the presented session's
+         *     user is revoked ("sign out everywhere"), not only this one.
+         *     Without a live session cookie, `all` changes nothing.
+         *
          *     Clears `stellarindex_session_present` in the same response,
          *     so a browser is never left holding a presence flag for a
          *     session that no longer exists.
@@ -4291,6 +4295,9 @@ export interface paths {
          *     THIS user, be within its 5-minute lifetime, and not already
          *     have been used) and stores the credential's public key. The
          *     private key never leaves the user's authenticator.
+         *
+         *     On success every other session of the user is revoked; the
+         *     session that registered the passkey stays signed in.
          *
          *     A label longer than 100 characters is truncated to 100
          *     characters (not bytes — multi-byte names keep their full
@@ -21922,7 +21929,17 @@ export interface operations {
     };
     logout: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description `true` revokes every session of the presented session's
+                 *     user. Parsed as a Go boolean (`true`/`false`, `t`/`f`,
+                 *     `1`/`0`, any casing of `true`/`false`); an empty value is
+                 *     treated as absent and any other value is a 400 that revokes
+                 *     nothing. With `all`, a session lookup that fails for a reason
+                 *     other than an unknown cookie is a 500 and the cookies are kept.
+                 */
+                all?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -21941,6 +21958,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description `all` is not a boolean; nothing was revoked. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /**
              * @description Cross-site write blocked: state-changing dashboard + auth
              *     requests must carry an `Origin` (or `Referer`) matching
@@ -21948,6 +21974,19 @@ export interface operations {
              *     (`cross-site-request-blocked`).
              */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /**
+             * @description `all=true` could not revoke the user's sessions; they are
+             *     still live and the cookies are left in place so the
+             *     caller can retry.
+             */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
