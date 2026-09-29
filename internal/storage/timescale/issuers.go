@@ -332,32 +332,33 @@ type IssuerSep1Currency struct {
 // [metadata.Resolver.Resolve] — that fetch dominated /v1/assets/{id}
 // p95 (4+ seconds on cold issuers). The DB-cached path is one indexed
 // SELECT.
-// IssuerSep1Attempted reports whether a SEP-1 fetch has ever been ATTEMPTED
-// for this issuer, which the payload alone cannot say.
+// IssuerSep1Unreachable reports whether the issuer's current failure streak
+// is one the payload alone cannot show: attempts that ended without a
+// storable document, and that no systemic-outage unwind took back.
 //
 // [GetIssuerSep1Cached] returns (nil, nil) for both of the ways an issuer can
-// hold no payload, and they are opposite findings. `sep1_resolved_at IS NULL`
-// is OUR backlog — nothing has run. `sep1_resolved_at` set with a NULL payload
-// is the ISSUER's publication: the domain was reached and served nothing this
-// index could store, which on 2026-09-16 meant a real asset manager's
-// stellar.toml with an unterminated string on line 20 — one missing quote,
-// thirteen live RWA-class declarations unreadable.
+// hold no payload, and they are opposite findings: OUR backlog, or the
+// ISSUER's publication — on 2026-09-16 a real asset manager's stellar.toml
+// with an unterminated string on line 20, thirteen live RWA-class
+// declarations unreadable.
 //
-// Every terminating path in the refresh cron stamps `sep1_resolved_at`,
-// including each failure, so "attempted at least once" is exactly what a
-// non-NULL value means.
-func (s *Store) IssuerSep1Attempted(ctx context.Context, gStrkey string) (bool, error) {
-	const q = `SELECT sep1_resolved_at IS NOT NULL FROM issuers WHERE g_strkey = $1`
-	var attempted bool
-	if err := s.db.QueryRowContext(ctx, q, gStrkey).Scan(&attempted); err != nil {
+// It reads sep1_consecutive_failures, not sep1_resolved_at, because the
+// refresh cron stamps resolved_at BEFORE each fetch and keeps it through
+// [Store.UnwindIssuerSep1Backoff]: after an outage on our side it is set on
+// every row the run touched. The unwind takes the failure step back, so the
+// counter is what still separates their failures from ours.
+func (s *Store) IssuerSep1Unreachable(ctx context.Context, gStrkey string) (bool, error) {
+	const q = `SELECT COALESCE(sep1_consecutive_failures, 0) > 0 FROM issuers WHERE g_strkey = $1`
+	var unreachable bool
+	if err := s.db.QueryRowContext(ctx, q, gStrkey).Scan(&unreachable); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// No issuer row at all: nothing has been attempted, because
 			// there is nothing to attempt it against.
 			return false, nil
 		}
-		return false, fmt.Errorf("timescale: IssuerSep1Attempted: %w", err)
+		return false, fmt.Errorf("timescale: IssuerSep1Unreachable: %w", err)
 	}
-	return attempted, nil
+	return unreachable, nil
 }
 
 func (s *Store) GetIssuerSep1Cached(ctx context.Context, gStrkey string) (*IssuerSep1Cached, error) {

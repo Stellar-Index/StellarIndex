@@ -37,15 +37,15 @@ type Sep1CachedReader interface {
 	GetIssuerSep1Cached(ctx context.Context, gStrkey string) (*timescale.IssuerSep1Cached, error)
 }
 
-// Sep1FetchStateReader answers the one question a payload cannot: was a fetch
-// ever ATTEMPTED for this issuer?
+// Sep1FetchStateReader answers the one question a payload cannot: has this
+// issuer's own domain failed to serve a storable document?
 //
 // Declared HERE rather than added to the interface above so every existing
 // stub implementing that one keeps compiling — the same reasoning
 // [ContractStorageSupplyReader] records, and the reason this is consulted
 // through a type assertion rather than required.
 type Sep1FetchStateReader interface {
-	IssuerSep1Attempted(ctx context.Context, gStrkey string) (bool, error)
+	IssuerSep1Unreachable(ctx context.Context, gStrkey string) (bool, error)
 }
 
 // Compile-time proof that the production reader still satisfies the seam —
@@ -4168,9 +4168,10 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 // payload apart, because they are opposite findings and only one of them is
 // about the issuer.
 //
-// `not_fetched` is OURS: nothing has run for this issuer yet. `unreachable` is
-// THEIRS: the domain was reached and served nothing this index could store — a
-// 404, a dead name, a TLS failure, or a document that would not parse.
+// `not_fetched` is OURS: nothing has run for this issuer yet, or only runs a
+// systemic outage on our side voided. `unreachable` is THEIRS: the domain was
+// reached and served nothing this index could store — a 404, a dead name, a
+// TLS failure, or a document that would not parse.
 //
 // They were one value until 2026-09-16, when a real asset manager's
 // stellar.toml turned out to carry an unterminated string on line 20. One
@@ -4189,13 +4190,13 @@ func (s *Server) sep1StatusForNoPayload(ctx context.Context, issuer string) stri
 	if !ok {
 		return "not_fetched"
 	}
-	attempted, err := rd.IssuerSep1Attempted(ctx, issuer)
+	unreachable, err := rd.IssuerSep1Unreachable(ctx, issuer)
 	if err != nil {
 		s.logger.Warn("sep1 overlay: fetch-state read failed",
 			"issuer", issuer, "err", err)
 		return "not_fetched"
 	}
-	if attempted {
+	if unreachable {
 		return "unreachable"
 	}
 	return "not_fetched"
