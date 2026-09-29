@@ -89,10 +89,9 @@ const closedStreamGateSurface = "price_stream"
 // on a timed-out consultation — pricingguard's documented posture, so a
 // DB blip cannot blank every price at once — which means a budget set
 // too tight would silently re-open the very hole this gate closes.
-// Verdicts are TTL-cached per pair inside the gates and closed buckets
-// arrive at most once per window (300 s minimum), so the steady-state
-// cost of the generous budget is nil; only a genuinely stalled DB pays
-// it, and it pays in latency rather than in a re-exposed price.
+// Verdicts are TTL-cached per pair inside the gates, and the forwarder
+// asks once per drained batch rather than per event, so only a genuinely
+// stalled DB pays the budget, in latency rather than a re-exposed price.
 const closedStreamGateBudget = tipStreamTickTimeout
 
 // closedStreamWithheld reports whether an aggregated closed-bucket
@@ -232,6 +231,7 @@ func (s *Server) forwardClosedStream(
 	defer s.recoverStreamProducer("price_stream")
 	defer close(ch)
 
+	var batch []streaming.Event
 	for {
 		select {
 		case <-ctx.Done():
@@ -240,16 +240,28 @@ func (s *Server) forwardClosedStream(
 			if !open {
 				return
 			}
-			if !series.admit(ev.Data) {
+			// One verdict per drained batch, asked after every event in it
+			// arrived: gating each event serially lets a slow gate back the
+			// Hub queue up until Publish evicts this subscriber.
+			batch = batch[:0]
+			for n := len(sub); ; n-- {
+				if series.admit(ev.Data) {
+					batch = append(batch, ev)
+				}
+				if n == 0 {
+					break
+				}
+				ev = <-sub
+			}
+			if len(batch) == 0 || s.closedStreamWithheld(ctx, asset, quote) != pricingguard.NotWithheld {
 				continue
 			}
-			if s.closedStreamWithheld(ctx, asset, quote) != pricingguard.NotWithheld {
-				continue
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case ch <- ev:
+			for _, ev := range batch {
+				select {
+				case <-ctx.Done():
+					return
+				case ch <- ev:
+				}
 			}
 		}
 	}
