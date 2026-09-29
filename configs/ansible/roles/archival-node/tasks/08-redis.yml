@@ -41,6 +41,17 @@
     - Restart redis
   no_log: true
 
+# A CONFIG REWRITE taken while the server had no password serialises
+# `user default on nopass`; that ACL line wins over requirepass, leaving
+# redis open and every client AUTH rejected (seen on r1).
+- name: Drop a CONFIG REWRITE `user default ... nopass` line that voids requirepass
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: '^user\s+default\s.*\bnopass\b'
+    state: absent
+  notify:
+    - Restart redis
+
 - name: Bind redis-server to loopback only
   ansible.builtin.lineinfile:
     path: /etc/redis/redis.conf
