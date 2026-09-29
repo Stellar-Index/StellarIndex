@@ -333,6 +333,9 @@ type rwaValueHistory struct {
 	excluded   map[string]int
 	sources    []string
 	builtAt    time.Time
+	// stale marks a cached assembly served past its TTL because the
+	// rebuild failed or has not answered; builtAt is then its real age.
+	stale bool
 }
 
 // ─── handler ────────────────────────────────────────────────────────
@@ -383,7 +386,7 @@ func (s *Server) handleRWAHistory(w http.ResponseWriter, r *http.Request) {
 	view.Sources = hist.sources
 	view.Points, view.Truncated = rwaHistoryTotal(hist.members, hist.setAssets, from)
 	view.Groups = rwaHistoryGroups(hist, groupBy, from)
-	writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
+	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(hist.builtAt), Flags: Flags{Stale: hist.stale}})
 }
 
 // writeRWASeriesUnavailable answers an RWA series that has no assembly
@@ -631,51 +634,46 @@ func (s *Server) cachedRWAValueHistory(ctx context.Context) rwaValueHistory {
 		s.rwaHistMu.Unlock()
 		return h
 	}
-	if ch := s.rwaHistFlight; ch != nil {
-		s.rwaHistMu.Unlock()
-		select {
-		case <-ch:
-			s.rwaHistMu.Lock()
-			var h rwaValueHistory
-			if s.rwaHistCache != nil {
-				h = *s.rwaHistCache
-			}
-			s.rwaHistMu.Unlock()
-			return h
-		case <-ctx.Done():
-			return rwaValueHistory{}
-		}
+	ch := s.rwaHistFlight
+	if ch == nil {
+		ch = make(chan struct{})
+		s.rwaHistFlight = ch
+		//nolint:gosec,contextcheck // G118 / contextcheck: intentional
+		// detached build — see runDetachedFill.
+		go runDetachedFill(s.logger, "api-rwa-history-build", rwaHistoryBudget, ch,
+			func(ctx context.Context) (rwaValueHistory, error) { return s.buildRWAValueHistory(ctx), nil },
+			s.settleRWAValueHistory)
 	}
-	done := make(chan struct{})
-	s.rwaHistFlight = done
 	s.rwaHistMu.Unlock()
-
-	built := s.rwaValueHistoryBuildSafely(ctx)
-
-	s.rwaHistMu.Lock()
-	if built.available {
-		s.rwaHistCache = &built
-		s.rwaHistAt = time.Now()
-	} else if s.rwaHistCache != nil {
-		built = *s.rwaHistCache
+	select {
+	case <-ch:
+	case <-ctx.Done():
 	}
-	s.rwaHistFlight = nil
-	s.rwaHistMu.Unlock()
-	close(done)
-	return built
+	return s.lastRWAValueHistory()
 }
 
-// rwaValueHistoryBuildSafely runs buildRWAValueHistory and converts a
-// panic into an unavailable result rather than leaving rwaHistFlight set
-// forever — a panic between "flight registered" and "flight cleared"
-// would otherwise wedge every future caller in the single-flight wait.
-func (s *Server) rwaValueHistoryBuildSafely(ctx context.Context) (built rwaValueHistory) {
-	defer func() {
-		if r := recover(); r != nil {
-			built = rwaValueHistory{}
-		}
-	}()
-	return s.buildRWAValueHistory(ctx)
+// settleRWAValueHistory caches a build that answered and releases the flight.
+func (s *Server) settleRWAValueHistory(built rwaValueHistory, err error) {
+	s.rwaHistMu.Lock()
+	defer s.rwaHistMu.Unlock()
+	if err == nil && built.available {
+		s.rwaHistCache = &built
+		s.rwaHistAt = time.Now()
+	}
+	s.rwaHistFlight = nil
+}
+
+// lastRWAValueHistory returns the cached assembly, stale once past its
+// TTL, or an unavailable one when no build has ever succeeded.
+func (s *Server) lastRWAValueHistory() rwaValueHistory {
+	s.rwaHistMu.Lock()
+	defer s.rwaHistMu.Unlock()
+	if s.rwaHistCache == nil {
+		return rwaValueHistory{}
+	}
+	h := *s.rwaHistCache
+	h.stale = time.Since(s.rwaHistAt) >= rwaHistoryTTL
+	return h
 }
 
 // buildRWAValueHistory assembles one history: today's membership, the

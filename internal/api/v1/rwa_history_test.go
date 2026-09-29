@@ -24,6 +24,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -277,6 +278,124 @@ func TestRWAHistory_AColdFailedBuildIsNotASectorOfZero(t *testing.T) {
 	}
 	if ra := h.Get("Retry-After"); ra != "30" {
 		t.Errorf("Retry-After = %q, want 30", ra)
+	}
+}
+
+// TestRWAHistory_ACarriedForwardAssemblyIsStaleAndDated — once a rebuild
+// fails, the last good assembly is served flagged stale and dated by its
+// build, never as a fresh answer as of now (GH-549).
+func TestRWAHistory_ACarriedForwardAssemblyIsStaleAndDated(t *testing.T) {
+	bound, dir, rows := oneBoundMember()
+	sac := rwaHistSAC(t, "USTRY", rwaGoodIssuer)
+	supply := &stubFlowSupply{days: []clickhouse.SupplyFlowDay{histFlow(sac, 1, "200000000")}}
+	srv := rwaHistoryServer(t, bound, dir, rows, supply,
+		&stubOracleHistory{rows: []timescale.OracleDayPoint{histOracle("redstone", "USTRY", 1, 107000000)}},
+	)
+	ts := httpTestServer(t, srv)
+	get := func() (asOf string, stale bool, points int) {
+		t.Helper()
+		resp := mustGet(t, ts.URL+"/v1/rwa/history?timeframe=all")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		var env struct {
+			Data  v1.RWAHistoryView `json:"data"`
+			AsOf  string            `json:"as_of"`
+			Flags struct {
+				Stale bool `json:"stale"`
+			} `json:"flags"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return env.AsOf, env.Flags.Stale, len(env.Data.Points)
+	}
+
+	freshAsOf, stale, _ := get()
+	if stale {
+		t.Fatal("a fresh assembly is flagged stale")
+	}
+	supply.err = errors.New("lake unreachable")
+	srv.AgeRWASeriesCachesForTest(v1.RWAHistoryTTL + time.Minute)
+	carriedAsOf, stale, points := get()
+	if !stale {
+		t.Error("an assembly carried past a failed rebuild is served as fresh")
+	}
+	if carriedAsOf != freshAsOf {
+		t.Errorf("as_of = %s, want the carried assembly's build time %s", carriedAsOf, freshAsOf)
+	}
+	if points == 0 {
+		t.Error("the carried assembly lost its points")
+	}
+}
+
+// blockingFlowSupply holds the supply read until released, and closes
+// cancelled if the build's context is cancelled while it waits.
+type blockingFlowSupply struct {
+	stubFlowSupply
+	entered, release, cancelled chan struct{}
+	calls                       atomic.Int32
+}
+
+func (s *blockingFlowSupply) DailySupplyFlowsForContracts(
+	ctx context.Context, contractIDs []string,
+) ([]clickhouse.SupplyFlowDay, error) {
+	if s.calls.Add(1) == 1 {
+		close(s.entered)
+	}
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		close(s.cancelled)
+		return nil, ctx.Err()
+	}
+	return s.stubFlowSupply.DailySupplyFlowsForContracts(ctx, contractIDs)
+}
+
+// TestRWAHistory_AnAbortingClientDoesNotAbortTheSharedBuild — the build
+// is shared by every waiter and the cache, so the client that happened to
+// start it must not be able to cancel it by disconnecting (GH-549).
+func TestRWAHistory_AnAbortingClientDoesNotAbortTheSharedBuild(t *testing.T) {
+	bound, dir, rows := oneBoundMember()
+	sac := rwaHistSAC(t, "USTRY", rwaGoodIssuer)
+	supply := &blockingFlowSupply{
+		stubFlowSupply: stubFlowSupply{days: []clickhouse.SupplyFlowDay{histFlow(sac, 1, "200000000")}},
+		entered:        make(chan struct{}),
+		release:        make(chan struct{}),
+		cancelled:      make(chan struct{}),
+	}
+	srv := rwaHistoryServer(t, bound, dir, rows, supply,
+		&stubOracleHistory{rows: []timescale.OracleDayPoint{histOracle("redstone", "USTRY", 1, 107000000)}},
+	)
+	ts := httpTestServer(t, srv)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/v1/rwa/history?timeframe=all", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if resp, err := http.DefaultClient.Do(req); err == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	<-supply.entered
+	cancel()
+	<-done
+	select {
+	case <-supply.cancelled:
+		t.Fatal("the disconnecting client cancelled the shared build")
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(supply.release)
+
+	if v := getRWAHistory(t, srv, "?timeframe=all"); len(v.Points) == 0 {
+		t.Error("the next request got no series from the build the aborted client started")
+	}
+	if n := supply.calls.Load(); n != 1 {
+		t.Errorf("supply read %d times, want 1: the aborted build was not the one cached", n)
 	}
 }
 
