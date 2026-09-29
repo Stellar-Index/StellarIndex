@@ -102,6 +102,7 @@ func TestValidateTriangulationChain_BadStructure(t *testing.T) {
 	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
 	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
 	xlmGBP := mkPair(t, "crypto", "XLM", "fiat", "GBP")
+	eurGBP := mkPair(t, "fiat", "EUR", "fiat", "GBP")
 
 	tests := []struct {
 		name     string
@@ -122,6 +123,11 @@ func TestValidateTriangulationChain_BadStructure(t *testing.T) {
 			name:     "last-leg quote mismatch",
 			chain:    TriangulationChain{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdEUR}},
 			wantWord: "last leg quote",
+		},
+		{
+			name:     "fiat/fiat leg without USD",
+			chain:    TriangulationChain{Target: xlmGBP, Legs: []canonical.Pair{xlmEUR, eurGBP}},
+			wantWord: "without USD",
 		},
 	}
 	for _, tc := range tests {
