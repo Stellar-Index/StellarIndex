@@ -7,10 +7,10 @@ import (
 )
 
 // DefaultPairs returns the built-in Kraken symbol → canonical.Pair
-// map — XLM across six fiat currencies, two crypto anchors, plus
-// the top-cap globals against USD. Kraken is the widest XLM-fiat
-// source we integrate AND lists every major we want for cross-
-// venue VWAP coverage.
+// map — XLM across the three fiat currencies Kraken lists it
+// against, two crypto anchors, plus the top-cap globals against
+// USD. Kraken lists every major we want for cross-venue VWAP
+// coverage.
 //
 // XLM is represented as crypto:XLM so it aligns with Binance's
 // XLMUSDT and with Reflector CEX outputs. Fiats use the fiat:
@@ -36,9 +36,9 @@ func DefaultPairs() (map[string]canonical.Pair, error) {
 		return nil, fmt.Errorf("ETH: %w", err)
 	}
 
-	// The fiat allow-list (ADR-0010) covers all six Kraken XLM
-	// quote currencies.
-	fiats := []string{"USD", "EUR", "GBP", "AUD", "CAD", "CHF"}
+	// Only quotes Kraken's AssetPairs lists for XLM: an unlisted pair is
+	// rejected at subscribe time and delivers nothing.
+	fiats := []string{"USD", "EUR", "GBP"}
 	fiatAssets := make(map[string]canonical.Asset, len(fiats))
 	for _, code := range fiats {
 		a, err := canonical.NewFiatAsset(code)
@@ -69,9 +69,6 @@ func DefaultPairs() (map[string]canonical.Pair, error) {
 		{"XLM/USD", xlm, fiatAssets["USD"]},
 		{"XLM/EUR", xlm, fiatAssets["EUR"]},
 		{"XLM/GBP", xlm, fiatAssets["GBP"]},
-		{"XLM/AUD", xlm, fiatAssets["AUD"]},
-		{"XLM/CAD", xlm, fiatAssets["CAD"]},
-		{"XLM/CHF", xlm, fiatAssets["CHF"]},
 	}
 	// BTC + ETH cross-fiat. Pre-2026-05-14 these were USD-only,
 	// which left BTC/EUR (and ETH/EUR) with single-source coverage
