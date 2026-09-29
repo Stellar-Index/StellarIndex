@@ -334,21 +334,27 @@ func rehydratePaths(schema datastore.DataStoreSchema, from, to uint32) []string 
 		// infinite loop if the schema is malformed.
 		schema.LedgersPerFile = 1
 	}
+	if from > to {
+		return nil
+	}
 	// Align `from` down to its file's start boundary so a -from in
 	// mid-file still rehydrates the file containing it.
 	start := schema.GetSequenceNumberStartBoundary(from)
 	estFiles := int((to-start)/schema.LedgersPerFile) + 1
 	seen := make(map[string]struct{}, estFiles)
 	out := make([]string, 0, estFiles)
-	for seq := start; seq <= to; seq += schema.LedgersPerFile {
+	for seq := start; ; seq += schema.LedgersPerFile {
 		path := schema.GetObjectKeyFromSequenceNumber(seq)
-		if _, dup := seen[path]; dup {
-			continue
+		if _, dup := seen[path]; !dup {
+			seen[path] = struct{}{}
+			out = append(out, path)
 		}
-		seen[path] = struct{}{}
-		out = append(out, path)
+		// Compare the remaining distance, not seq+step, so a -to near
+		// MaxUint32 cannot wrap seq back below it and loop forever.
+		if to-seq < schema.LedgersPerFile {
+			return out
+		}
 	}
-	return out
 }
 
 func parseRehydrateFlags(args []string) (rehydrateOpts, error) {
