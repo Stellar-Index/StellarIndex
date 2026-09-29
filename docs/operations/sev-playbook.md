@@ -480,10 +480,14 @@ of Week 1; rotation starts Week 2).
 If all oncall unreachable for > 30 min during a SEV-1:
 1. Declare the incident in the public Discord anyway (community
    visibility > silence).
-2. Use the break-glass credentials in `vault/sealed/incident-
-   recovery.seal` (procedure in `docs/operations/runbooks/break-
-   glass.md`, TBD). These require two operators to unseal — a
-   deliberate speed-bump.
+2. There is **no sealed break-glass credential** and no two-operator
+   unseal procedure. Production secrets live only in the
+   ansible-vault encrypted inventory described in
+   [credential-rotation.md](credential-rotation.md); acting on them
+   needs an operator's local copy of that untracked file plus the
+   vault password. Until a break-glass mechanism is decided and
+   built, a SEV-1 with every oncall unreachable has no further
+   recovery path — step 1 is the whole fallback.
 
 ---
 

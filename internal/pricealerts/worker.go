@@ -180,8 +180,9 @@ func (w *Worker) sweepOnce(ctx context.Context) string {
 	}
 	now := w.now()
 	hadError := false
+	reads := make(map[pairKey]vwapRead)
 	for _, a := range alerts {
-		outcome, err := w.evaluateOne(ctx, a, now)
+		outcome, err := w.evaluateOne(ctx, a, now, reads)
 		if errors.Is(err, context.Canceled) {
 			return "ok"
 		}
@@ -209,9 +210,9 @@ func (w *Worker) sweepOnce(ctx context.Context) string {
 // the sweep context. A crossing is claimed before it is enqueued, so a
 // fan-out left with whatever the reads did not spend could claim the
 // crossing and then run out of time before enqueueing it.
-func (w *Worker) evaluateOne(ctx context.Context, a platform.PriceAlert, now time.Time) (string, error) {
+func (w *Worker) evaluateOne(ctx context.Context, a platform.PriceAlert, now time.Time, reads map[pairKey]vwapRead) (string, error) {
 	readCtx, cancel := context.WithTimeout(ctx, w.alertTimeout)
-	c, outcome, err := w.checkCrossing(readCtx, a, now)
+	c, outcome, err := w.checkCrossing(readCtx, a, now, reads)
 	cancel()
 	if err != nil {
 		return w.failureOutcome(readCtx, err)
@@ -248,9 +249,19 @@ type crossing struct {
 	hooks       []platform.CustomerWebhook
 }
 
+// pairKey and vwapRead memoise LatestVWAP per pair within one sweep.
+type pairKey struct{ base, quote canonical.Asset }
+
+type vwapRead struct {
+	price       string
+	bucketClose time.Time
+	ok          bool
+	err         error
+}
+
 // checkCrossing does every read an alert needs before it can fire. A nil
 // crossing with a nil error means a benign outcome, returned as its label.
-func (w *Worker) checkCrossing(ctx context.Context, a platform.PriceAlert, now time.Time) (*crossing, string, error) {
+func (w *Worker) checkCrossing(ctx context.Context, a platform.PriceAlert, now time.Time, reads map[pairKey]vwapRead) (*crossing, string, error) {
 	base, err := canonical.ParseAsset(a.BaseAsset)
 	if err != nil {
 		return nil, "", fmt.Errorf("parse base asset %q: %w", a.BaseAsset, err)
@@ -260,9 +271,22 @@ func (w *Worker) checkCrossing(ctx context.Context, a platform.PriceAlert, now t
 		return nil, "", fmt.Errorf("parse quote asset %q: %w", a.QuoteAsset, err)
 	}
 
-	priceStr, bucketClose, ok, err := w.prices.LatestVWAP(ctx, base, quote)
-	if err != nil {
-		return nil, "", fmt.Errorf("read latest vwap: %w", err)
+	// Errors are memoised too: a pair whose read failed or timed out is not
+	// re-read once per alert on it, each spending another alert budget.
+	key := pairKey{base: base, quote: quote}
+	r, seen := reads[key]
+	if !seen {
+		r.price, r.bucketClose, r.ok, r.err = w.prices.LatestVWAP(ctx, base, quote)
+		// Later alerts reuse this error under a live context, so it must carry
+		// the deadline itself for failureOutcome to class them as timeouts too.
+		if dl := ctx.Err(); r.err != nil && errors.Is(dl, context.DeadlineExceeded) && !errors.Is(r.err, dl) {
+			r.err = fmt.Errorf("%w: %w", r.err, dl)
+		}
+		reads[key] = r
+	}
+	priceStr, bucketClose, ok := r.price, r.bucketClose, r.ok
+	if r.err != nil {
+		return nil, "", fmt.Errorf("read latest vwap: %w", r.err)
 	}
 	if !ok {
 		// No closed bucket in scope — benign (like divergence no_vwap).

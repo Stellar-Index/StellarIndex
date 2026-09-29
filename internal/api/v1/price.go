@@ -774,7 +774,8 @@ func (s *Server) parsePricePairParams(w http.ResponseWriter, r *http.Request) (a
 // `flags.stale` here means specifically "the closed bucket wasn't
 // available and this degraded to a last-trade fallback" — or that the
 // pair is frozen and the response is the held value, which also sets
-// `flags.frozen` (see [Server.resolveFrozenServe]).
+// `flags.frozen` (see [Server.resolveFrozenServe]), or that the
+// serving-sanity guard held an older bucket in place of an outlier.
 //
 // This surface will read slightly differently from /v1/price/tip and
 // from the price_usd inlined on /v1/assets rows — different windows,

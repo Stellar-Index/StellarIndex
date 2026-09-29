@@ -90,3 +90,27 @@ groups:
             of users never received their magic link or confirmation email.
 
             Runbook: docs/operations/runbooks/notify-send-failure.md
+
+      # Mirror of the rule in deploy/monitoring/rules/notify.yml. Global
+      # ceiling on mail actually sent: the login throttles are per inbox and
+      # per IP, so only an aggregate rate sees volume spread across both.
+      - alert: stellarindex_notify_send_rate_high
+        expr: sum(rate(stellarindex_notify_sends_total{result="sent"}[15m])) * 3600 > 300
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: notify
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+          summary: "Transactional email is going out at {{ $value | humanize }}/h (ceiling 300/h)"
+          description: |
+            Successful transactional email sends, summed across every
+            template, have stayed above 300 mails/hour for 15+ minutes. The
+            per-inbox and per-IP login-mail throttles bound each caller, not
+            the total, so this is the only signal that aggregate volume has
+            left its normal range — a send loop, or sign-in links requested
+            for many addresses from many IPs. Sustained high volume spends
+            the sending domain's reputation for every recipient.
+
+            Runbook: docs/operations/runbooks/notify-send-failure.md

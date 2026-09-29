@@ -50,7 +50,7 @@ type RedisAPIKeyValidator struct {
 	accounts AccountStatusReader
 
 	// statusTTL / statusMaxStale bound the account-status cache below.
-	// See [WithAccountStatusCacheTTL] and [accountActive].
+	// See [DefaultAccountStatusCacheTTL] and [accountActive].
 	statusTTL      time.Duration
 	statusMaxStale time.Duration
 
@@ -264,19 +264,6 @@ func WithClock(now func() time.Time) RedisOption {
 // lookup, no per-request Postgres read.
 func WithAccountStatus(accounts AccountStatusReader) RedisOption {
 	return func(v *RedisAPIKeyValidator) { v.accounts = accounts }
-}
-
-// WithAccountStatusCacheTTL overrides the account-status cache
-// freshness window (default [DefaultAccountStatusCacheTTL]). A
-// non-positive value falls back to the default. The ride-out staleness
-// bound (how long a cached status may cover a Postgres outage) is
-// derived as a fixed multiple of the TTL — see [accountActive].
-func WithAccountStatusCacheTTL(ttl time.Duration) RedisOption {
-	return func(v *RedisAPIKeyValidator) {
-		if ttl > 0 {
-			v.statusTTL = ttl
-		}
-	}
 }
 
 // WithMirroredKeyIdleTTL overrides the sliding idle window re-applied on
