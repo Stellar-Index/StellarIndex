@@ -4,6 +4,4 @@
 # as stale, and lint-baseline-growth.sh fails any addition without a
 # Baseline-Growth trailer naming this file.
 account_cohort_rollup.sql:stellar.asset_month_usd_prices.volume_usd
-account_cohort_rollup.sql:stellar.account_cohort_positions.amount
 tier1_schema.sql:stellar.asset_month_usd_prices.volume_usd
-tier1_schema.sql:stellar.account_cohort_positions.amount
