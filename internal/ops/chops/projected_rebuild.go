@@ -597,6 +597,10 @@ type ProjectedRebuildResult struct {
 	// missing from the served tier until the underlying defect is fixed and
 	// the range is re-run with -resume=false.
 	PermanentDrops int64
+	// EvictedOrphans is the stateful decoder's count of correlation-buffer
+	// entries aged out without their partner event (e.g. a Soroswap SwapEvent
+	// whose SyncEvent never arrived) — trades lost before reaching the store.
+	EvictedOrphans int64
 	// KindCounts is emitted-event count by consumer.Event.EventKind() —
 	// the "per-topic emitted counts" report so an operator can eyeball
 	// against the census tables. ADR-0033 compute-completeness remains
@@ -717,9 +721,25 @@ func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (Pro
 	result.InsertErrors = counters.insertErrors.Load()
 	result.WindowsHeld = counters.windowsHeld.Load()
 	result.PermanentDrops = counters.permanentDrops.Load()
+	result.EvictedOrphans = collectEvictedOrphans(opts.Source, logger)
 	result.KindCounts = counters.kindCounts
 	result.Elapsed = time.Since(start)
 	return result, runErr
+}
+
+// collectEvictedOrphans must run after every worker has exited; the decoder
+// is built fresh per invocation, so the count is this run's alone.
+func collectEvictedOrphans(src projector.Source, logger *slog.Logger) int64 {
+	reporter, ok := src.Decoder.(interface{ EvictedOrphans() int })
+	if !ok {
+		return 0
+	}
+	n := int64(reporter.EvictedOrphans())
+	if n > 0 {
+		logger.Warn("projected-rebuild: decoder evicted orphaned correlation entries — those trades were never emitted",
+			"source", src.Name, "evicted_orphans", n)
+	}
+	return n
 }
 
 // projectedRebuildCounters holds the atomic progress counters
@@ -994,6 +1014,12 @@ func projectedRebuildLossLines(r ProjectedRebuildResult) []string {
 			"!! Their windows ARE checkpointed: the rejection is deterministic, so a re-run CANNOT land them.",
 			"!! Each is logged above with its ledger/tx/op and the store's error. Fix the defect, then",
 			"!! re-run the affected range with -resume=false.")
+	}
+	if r.EvictedOrphans > 0 {
+		lines = append(lines,
+			fmt.Sprintf("\n!! %d orphaned event(s) EVICTED by the decoder — their partner event never arrived within the correlation window,",
+				r.EvictedOrphans),
+			"!! so those trades were never emitted and are NOT in the served tier.")
 	}
 	return lines
 }

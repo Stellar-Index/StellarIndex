@@ -4,6 +4,7 @@
 package chops
 
 import (
+	"bytes"
 	"errors"
 	"log/slog"
 	"reflect"
@@ -14,6 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/projector"
 )
 
 // ─── buildWindowPlan: gap-free, overlap-free, exact coverage ──────────────
@@ -415,5 +417,46 @@ func TestProjectedRebuildOutcome_LossyRunExitsNonZero(t *testing.T) {
 	}
 	if err := projectedRebuildOutcome(ProjectedRebuildResult{WindowsHeld: 1}, fatal, true); err != nil {
 		t.Errorf("interrupted run: outcome = %v, want nil (re-run with -resume)", err)
+	}
+}
+
+// orphanFakeDecoder is a correlation-buffer decoder that reports evicted orphans.
+type orphanFakeDecoder struct {
+	fakeDecoder
+	orphans int
+}
+
+func (f *orphanFakeDecoder) EvictedOrphans() int { return f.orphans }
+
+// A rebuild whose decoder evicted orphaned swaps must say so in its result,
+// its summary and its log, not read as a clean run.
+func TestCollectEvictedOrphans_ReachesResultSummaryAndLog(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	src := projector.Source{Name: "soroswap", Decoder: &orphanFakeDecoder{orphans: 7}}
+
+	n := collectEvictedOrphans(src, logger)
+	if n != 7 {
+		t.Fatalf("collectEvictedOrphans = %d, want 7", n)
+	}
+	for _, want := range []string{"level=WARN", "source=soroswap", "evicted_orphans=7"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("log missing %q:\n%s", want, buf.String())
+		}
+	}
+	lines := strings.Join(projectedRebuildLossLines(ProjectedRebuildResult{EvictedOrphans: n}), "\n")
+	if !strings.Contains(lines, "7 orphaned event(s) EVICTED") {
+		t.Errorf("summary loss lines missing the evicted count:\n%s", lines)
+	}
+
+	buf.Reset()
+	if n := collectEvictedOrphans(projector.Source{Name: "soroswap", Decoder: &orphanFakeDecoder{}}, logger); n != 0 || buf.Len() != 0 {
+		t.Errorf("zero evictions: got %d and log %q, want 0 and no log", n, buf.String())
+	}
+	if n := collectEvictedOrphans(projector.Source{Name: "aquarius", Decoder: &fakeDecoder{}}, logger); n != 0 || buf.Len() != 0 {
+		t.Errorf("stateless decoder: got %d and log %q, want 0 and no log", n, buf.String())
+	}
+	if got := projectedRebuildLossLines(ProjectedRebuildResult{}); len(got) != 0 {
+		t.Errorf("clean run loss lines = %q, want none", got)
 	}
 }
