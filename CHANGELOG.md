@@ -20,6 +20,99 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.94.0] — 2026-09-29
+
+30 commits since v0.93.0: the cohort DeFi amounts now sum exactly in
+Int256 (OPERATOR ACTION REQUIRED, see below), SEP-1 outages on our side
+stop being published as the issuer's broken domain, the Tier E archive
+verification cron that could never pass is retired, two explorer export
+aborts are fixed, and three pilot waves of inventory fixes land.
+
+### Changed
+
+- **cohort — DeFi position amounts are summed exactly in `Int256`,
+  never through a float (#1628, OPERATOR ACTION REQUIRED):**
+  `stellar.account_cohort_positions{,_staging}.amount` moves from
+  `Float64` to `Int256`. `deploy/clickhouse/account_cohort_rollup.sql`
+  is `si-apply-scope: operator`, so deploy does not apply it. Immediately
+  before rolling the API binary, run
+  `clickhouse-client --port 9300 --multiquery < deploy/clickhouse/account_cohort_rollup.sql`
+  (idempotent). The ch-float lint baseline moves to
+  `lint-migrations-ch-float.baseline`.
+- **ops — verify-archive:** the monthly Tier E cron
+  (`stellar-archivist scan --verify` against the local mirror) is retired
+  along with its alert, rule test and runbook. The mirror was trimmed to
+  `history/` + `ledger/` on 2026-05-21, so the scan failed on every result
+  set and the staleness alert only ever measured that. The `-tier`
+  archivist code stays for operator runs with `-archivist-url`; the
+  scheduled tiers are A + B + D (#1637).
+
+### Fixed
+
+- **metadata — SEP-1 (#1634, #1635):** `sep1_status=unreachable` and the
+  RWA funnel's served-nothing count read `sep1_consecutive_failures > 0`
+  instead of `sep1_resolved_at`. A run judged a systemic outage on our
+  side no longer publishes every touched issuer as having a broken
+  domain. A key that failed on our side is unwound from the retry
+  ladder at the end of its run, and a payload Postgres rejects
+  (SQLSTATE class 22) counts as the document's fault.
+- **rwa:** a classic row valued by the listing directory or a
+  prospectus constant NAV is no longer withheld as
+  `reference_unavailable` when the oracle read fails; only oracle-bound
+  rows depend on it (#1630). `/v1/rwa/history` sends `as_of` and
+  `stale` on a carried-forward series and no longer shares its build
+  with the caller's context (#1623).
+  Contract-only rows are no longer grouped under a blank `by_issuer` key,
+  and `home_domain` carries the issuer's domain rather than the listing
+  directory's (#1636).
+- **explorer:** convert pages read identity from `/v1/external/assets`
+  and bake only served hub tickers (#1629). The markets OHLC strip
+  soft-fails, so an hour whose trades were all filtered as outliers
+  cannot abort the export (#1631).
+- **changesummary:** the four native/fiat entities are no longer
+  emitted (no trade is recorded against them), and a failing pass warns
+  once instead of logging each failure at Debug (#1632).
+- **recognition:** events whose `topic[0]` is not a Symbol are split
+  into distinct shapes by `topics_xdr[1..2]` and arity, so one
+  recognised exemplar no longer hides its unrecognised siblings (#1622).
+- **api — protocols:** when the materialised contract-activity read
+  errors, the protocol page's enrich block falls back to the raw
+  `contract_events` read (already bounded by the raw scan ceiling)
+  instead of degrading to empty (#1645).
+- **timescale:** `PoolsFilter` with no sources binds an empty `text[]`
+  rather than `NULL`, so "no source filter" means match everything (#1644).
+- **timescale — CCTP:** the per-chain volume series breaks ties on
+  `chain_key`, so two chains with equal window volume no longer interleave
+  into many one-row series and the top-5 cut is stable (#1646).
+- **ingest — backfill-router:** the default bucket is the archive bucket,
+  falling back to the live one only when no archive is configured; a
+  historic range against the trimmed live bucket used to exit 0 with
+  "done. 0 ledgers" (#1649). `ch-gate` takes the same default, so a gate
+  over a backfilled range no longer walks 0 ledgers and passes (#1651).
+- **tests:** the checkpoint parent-directory test drives the production
+  `fetchOne` path instead of creating the directories itself (#1647); the
+  SDK spec-contract harness unions `allOf` required lists and walks
+  nullable `oneOf` fields, so `AssetDetail.unverified_warning` and
+  `.fiat_code_anchor` are now compared against the Go types (#1650); the
+  auth rate-limit cross-key isolation test can now fail (#1642); the
+  Chainlink `AnswerUpdated` topic0 is pinned to its known keccak256 (#1643).
+- **docs — launch checklist:** the public-flip dry-run and customer demo
+  boxes are struck; neither applies at 1.0 (#1648).
+- **api — backups:** the diagnostics cache lock is no longer held across
+  the rebuild and the response write, so one slow rebuild cannot stall
+  every concurrent `/v1/backups` read (#1641).
+- **chops — rebuild:** orphaned events evicted during a rebuild are
+  reported in the summary instead of dropped from the count (#1640).
+- **ingest — issuer-enrich:** a non-positive `-batch` is rejected before
+  the command opens any connection (#1639).
+- **diagnostics — rpc-probe:** the getEvents probe is skipped when the
+  node reports `latestLedger` 0 instead of underflowing the range (#1638).
+- **ansible — redis:** the role drops a `CONFIG REWRITE` `nopass` ACL
+  line that overrode `requirepass` (#1627).
+- **ci:** the nightly chaos job gets the dev stack's Postgres DSN (#1625).
+- Band relay trailing-arg tolerance pinned by a test; stale runbook
+  citations and an overdue retirement corrected (#1626, #1633).
+
 ## [v0.93.0] — 2026-09-29
 
 166 commits since v0.92.1 — self-service account erasure/export, a
@@ -684,292 +777,3 @@ pass and is called out first.
   row all equal to the lake, 0 disagreeing — the defect was structural, not
   a live divergence. Runbook: `docs/operations/runbooks/dex-nonstandard-decimals.md`
   ("Decimals lockstep").
-
-## [v0.90.0] — 2026-09-18
-
-### Added
-
-- **ops:** `stellarindex_sink_undrained_rows_total{sink,kind}` counts the
-  rows the Postgres pipeline sink's bounded shutdown drain abandoned
-  unwritten, by row and by kind (`trade` / `event`), and
-  `stellarindex_ingestion_sink_undrained_rows` (ticket, fires at once)
-  alerts on any increase in both rule trees. The indexer upserts the
-  ledger cursor per ledger before the sink writes, so a row lost at
-  shutdown was a served-tier gap that surfaced only as an ERROR log line
-  nothing alerted on — the ClickHouse live-sink half of the same class
-  already had its `dropped` counter and rules. Runbook:
-  `docs/operations/runbooks/sink-undrained-rows.md`.
-
-### Changed
-
-- **ci/docker:** the six `docker/stellarindex-*.Dockerfile`s pin both
-  base images by immutable digest — `golang:1.27-alpine@sha256:cf6fca66…`
-  and `gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872…`,
-  the multi-platform index digests resolved on 2026-09-18 with
-  `docker buildx imagetools inspect`. The tag stays in the reference
-  for readability but the digest is what the build pulls, so a
-  re-tagged or tampered upstream tag can no longer change what ships
-  without a diff here. Closes the `TODO(supply-chain, DEP-low)` left
-  by #14, which could not resolve digests offline. Dependabot's docker
-  ecosystem (already watching `/docker`) keeps the digests current.
-- **explorer:** `GET /v1/accounts/{g}/graph/cohort` prices only the 50
-  largest holdings by balance (plus the flow assets) and says so:
-  `valuation.price_cap` and `valuation.unpriced_over_cap` count what the
-  cap left unpriced. A large cohort carries up to 400 holdings and every
-  price is a live read of 40–350 ms, so pricing them all serially spent
-  the whole 8 s request budget on prices alone.
-- **explorer/api:** the repo's own drift guards applied in two spots the
-  2026-09-14→17 commits missed (#515). `Sep1FetchStateReader` — the
-  optional seam behind the `not_fetched` / `unreachable` split on
-  `/v1/assets/{id}` — now carries the compile-time `*timescale.Store`
-  assertion `preciseSupplyReader` already has, so a reader that stops
-  satisfying it is a build failure rather than a silent revert of every
-  attempted-and-failed issuer to `not_fetched`. The explorer's `Coin`
-  takes `listing_reference` / `listing_valuation` from the generated
-  `Asset` schema instead of a hand-written copy, and the account
-  board-standing panel derives the creator / sponsor bodies from the
-  generated `operations` types and reads the rows without `as` casts.
-
-- **ops:** `curated-rwa-sync` reads the totals the curator PUBLISHES
-  instead of the per-asset tables it cannot read. The two CSV uploads
-  behind the "RWAs on Stellar" dashboard are private to the uploading
-  team — Dune refuses a SQL execution over them to every outside account
-  ("Uploaded table … does not exist or it is private") — so the arm's
-  execute-and-page design could never load a row. The run now GETs the
-  latest result of the dashboard's public queries (6961845 "RWA Mcap by
-  Month", 6961847 "Mcap by Month by Asset Subclass"), pages to the
-  declared row count with strict per-row decoding, and replaces the
-  curator's rows per series in one transaction into the new
-  `curated_rwa_published_series` (migration 0162). A read bills by
-  datapoint and never executes a query, so the textfile's
-  `execution_cost_credits` gauge — which would have graphed a cost that
-  cannot occur — is replaced by `datapoints_read`, and
-  `executed_at_unix` records when the curator's query last ran; the
-  `priced` gauge, which counted per-asset prices the run cannot see, is
-  gone. Alert rules, their promtool fixture and the runbook follow.
-- **api:** `/v1/rwa/assets` `curated` carries a `published` block — the
-  curator's latest monthly total (`total_usd`, `as_of`, `executed_at`),
-  its split by the curator's subclass labels, the full monthly series,
-  the public queries it came from, and `gap_vs_verified_usd` (published
-  minus this index's verified reference total, signed). Status
-  `published_totals` names the state where the totals answered and no
-  per-asset row is readable, and the `basis` prose now says the
-  curator's list and prices are private and only its published totals
-  are read. Existing fields keep their meaning; the Go SDK, the spec and
-  the derived artifacts follow.
-- **explorer:** the RWA page's curated panel shows the curator's
-  published total, the month it is for, when the curator last computed
-  it, the signed gap to the verified figure and the subclass split, in
-  place of an empty comparison.
-
-### Fixed
-
-- **api:** the `supply_basis` enums on `Asset` and `RWAAsset` in
-  `openapi/stellar-index.v1.yaml` carry `sep41_total_only`, the value
-  `/v1/assets/{asset_id}` has served since v0.21.0 for a SEP-41 token
-  whose admin balance came back zero — the DEFAULT reading for an
-  unconfigured token, not an edge case. The constant was added to the Go
-  vocabulary without touching the spec, so the generated docs mirror,
-  Postman collection and explorer `types.ts` all published a closed
-  union the API did not honour. A spec test now pins both enums to the
-  `internal/supply` const block in declaration order, the way the
-  `/v1/ohlc` interval enum is pinned to its route table.
-- **sources/chainlink:** both Chainlink readers verify each feed's
-  scale against the AggregatorV3 proxy's on-chain `decimals()` instead
-  of trusting the configured (or built-in 8) value blind. The
-  `[divergence.chainlink]` cross-check reference and the
-  `[external.chainlink]` `oracle_updates` poller (and its backfill)
-  read `decimals()` over the JSON-RPC path they already use, on first
-  use and daily: an omitted `decimals` adopts the on-chain value; a set
-  value that agrees flows; a set value that disagrees is logged at
-  ERROR with both numbers, counted on the new
-  `stellarindex_chainlink_feed_decimals_mismatch_total{consumer,pair}`
-  and the feed is REFUSED (`price_unavailable` for the divergence
-  worker, a per-feed error for the poller) until they agree — a
-  cross-check that scales wrongly is a permanent false divergence, and
-  a mis-scaled oracle row is worse than none. A failed `decimals()`
-  read keeps the last known value with a WARN and retries after 5 min;
-  a feed with neither a configured nor a read value is refused rather
-  than guessed. r1 runs both readers enabled (EUR/GBP/JPY on the
-  cross-check, the six built-in feeds on the poller), every one at 8,
-  so no production reading changes; the guard is for the value that
-  drifts. `BuildFeedSet` and the divergence constructor no longer
-  substitute 8 for an omitted value (the poller's `project` refuses a
-  literal 0 as `ErrDecimalsUnresolved`), and the reference takes a
-  `Logger` so the verification lines land in the process log.
-- **ci:** the weekly ansible-drift verdict's comment-only classifier
-  picks the comment token per file type (#519). It stripped from the
-  first `#`, `--` or `//` whatever the file, so every URL host
-  (`https://…`) and every long flag (`--config-file …`) was discarded
-  from both sides of a hunk before the compare, and a changed S3
-  endpoint in `pgbackrest.conf`, a changed retention flag in
-  `/etc/default/prometheus` or a re-pointed `ExecStart` in a systemd
-  unit was reported under a ✅ as "comments only" — the exact hand edit
-  on r1 the control exists to catch, across 69 of the role's templates.
-  The classifier now uses ONE token chosen from the hunk's host path
-  (`--` for `.sql`; `#` for shell, YAML, TOML, systemd units, `.conf`
-  and the extensionless `/etc/default`, `logrotate.d`, `Caddyfile` and
-  `sshd_config` files the role renders; `//` for Go/TS/JS), treats a
-  type with no known convention (ClickHouse `.xml`) as substantive
-  outright, and only honours a token that begins a word, so `https://`
-  and a `#fragment` inside a URL never read as comments. The fixture
-  suite gains the three drift rows above, a URL-fragment row, an
-  unknown-type row, and the `.sql`/`.yml` comment-only rows; the five
-  drift rows exit 0 against the shipped classifier.
-- **ops:** `sla-proof-from-probe.sh` treats a headline cell it cannot
-  evaluate — no row for that endpoint in that family, a non-numeric
-  value, a NaN or an infinity — as NOT PROVEN, and the window cannot
-  read PROVEN while any such cell stands. The refusal was per family
-  (a series absent for every endpoint) but the verdict is per cell, so
-  one endpoint missing from `p95_max` or lacking an availability
-  denominator rendered `n/a` and counted as a pass: the week read PROVEN
-  with part of one endpoint's SLA unmeasured, in the exact document the
-  refusal exists to prevent. The report now names each unevaluable cell
-  and an endpoint with a sample count but no bound stays in the table
-  instead of vanishing from it. Not reachable on the real capture
-  (every endpoint is in every family), but the first relabel or
-  latency-only endpoint would have made it so silently (#513).
-- **ops:** `curated-rwa-sync.service` describes itself. Its header, its
-  `RUN_TIMEOUT` sizing note and its memory-ceiling note were the
-  listing-sync unit's verbatim — CoinGecko, migration 0160,
-  `COINGECKO_API_KEY`, a 3.7 MB catalogue — so `systemctl cat` told the
-  operator the alert sent there the wrong upstream, key and migration.
-  Directives unchanged. The key file is now ONE mechanism everywhere:
-  the role renders `/etc/default/curated-rwa-sync` from
-  `vault_dune_api_key` when the vault defines it (else installs the
-  placeholder once), `root:root 0600` — what r1 has carried since the
-  unit shipped and what the runbook and alert already prescribed, where
-  the role said `0640 root:stellarindex`. The new vault value is in the
-  preflight shell-metacharacter census like every other env-file
-  secret, and the runbook names the `medium` tier the code asks for.
-  (#518)
-- **ops:** `postgresql.conf.j2` renders `min_wal_size = 512MB` again.
-  The 2026-09-15 edit templated both WAL lines while sizing only
-  `max_wal_size`, and its inline default moved `min_wal_size` 512MB →
-  2GB unmentioned; the 09-16 revert restored `max_wal_size` alone, so
-  every host rendered `min_wal_size = max_wal_size` and r1 runs 2GB
-  today. The comment now states the intended pair (2GB / 512MB, the
-  values the 2026-07-03 drift audit proved effective), that the next
-  apply is an effective diff on r1 with the Postgres restart handler
-  behind it, and how to land it by reload instead. The headroom guard
-  the comment pointed at (`postgres_wal_headroom_assert`) does not
-  exist; it names the real task now. Nothing applied to any host.
-  (#512)
-- **rwa:** the prospectus constant-NAV reference carries a review bound.
-  Each `rwa.ConstantNAV` binding now derives a `ReviewBy` date from the
-  date its issuer page was read plus a documented 90-day interval (a
-  CNAV fund's NAV is 1.00 every day until the fund changes regime, and a
-  regime change surfaces in the fund's quarterly reporting), and past
-  that date `/v1/rwa/assets` serves the row with `stale: true` and a
-  `source` saying the binding is due for re-verification. It was the
-  one reference on the surface with no staleness mechanism — served
-  `stale: false` forever, so a class converted, merged or wound down
-  would have stayed at par until someone edited Go. The IB class
-  (gBENJI, LU2900381208) binding also cited the AB class's page as its
-  evidence; both bindings now cite their own share-class page as the
-  issuer's product sitemap enumerates them.
-- **api:** `/v1/ohlc?interval=2h|12h|3d|2w` answers 200 again. The four
-  widths were routed to the store's re-bucketing read with fold
-  literals (`2 hours`, `12 hours`, `3 days`, `2 weeks`) that its
-  hand-kept allow-list never learnt, so every request at them failed
-  with `outInterval not in allow-list` and a 500 on the public API from
-  the day #213 shipped them (launch plan W8-17). The interval ladder is
-  now one table, `timescale.OHLCRoutes`: the API's validation and 400
-  body, the serving reader's choice of view and the fold allow-list all
-  derive from it, so a routed interval cannot be one the store refuses
-  (W8-20). Pinned by an executing test over every folded route,
-  including 2w's Monday alignment against `prices_1w`, and by a test
-  that holds the spec's enum to the table.
-- **rwa:** the classic arm's scan pre-filter now reads the declared
-  `anchor_asset` beside the code and the anchor type, so an entry that
-  declares type `other` beside a well-formed ISIN reaches the
-  definition. It read the type and the code only, which dropped
-  Franklin's gBENJI, grBENJI and sgBENJI as `no_real_world_instrument_basis`
-  before the ISIN arm, the domain-sibling recognition arm or the
-  constant-NAV reference ever ran — both v0.89.2 arms shipped green and
-  had zero live effect (29 assets, 18 issuers; expected 32 and 21). The
-  pre-filter guard test now spans every asset-side input requirement 4
-  reads, and a test drives the production filter through the production
-  build.
-- **rwa:** the classic arm resolves its listing-directory row by the
-  same rule `/v1/assets` uses — the `CODE-GISSUER` id first, then the
-  Stellar Asset Contract address derived from it — instead of the
-  classic id alone. The directory publishes each asset under one form
-  with no pattern, so a SAC-listed classic member was refused as
-  `reference_not_bound` while the snapshot in hand named its address,
-  and a SAC-listed CNAV share class took the prospectus rule over the
-  live observation. One resolver now serves both surfaces (#514).
-- **rwa:** `recognition` is documented as present on every served row
-  — on classic rows `curated_account_directory` or
-  `curated_account_directory_via_domain_sibling` — in the Go doc, the
-  OpenAPI spec and the derived reference, Postman and explorer types;
-  the served `definition.requirements` name the sibling and ISIN
-  routes; and the one-entity-per-domain assumption the sibling route
-  rests on is stated where the route is defined and in the methodology
-  (#520).
-- **explorer:** the cohort view labels its contracts BEFORE it prices
-  holdings, and the contract → protocol index is built on its own 5 s
-  deadline, detached from the request that triggered it. A cohort of 400
-  holdings burned the request budget on price reads, labelled its
-  contracts on a dead context, and — because the index cached whatever a
-  cancelled build returned for ten minutes — served a statics-only map to
-  every other root until the TTL lapsed: eight registered Aquarius pools
-  read `protocol: null` on every request. An incomplete build now serves
-  its partial map but retries within 30 s, logs one line with the entry
-  count and the failed sources, and the API's 5-minute prewarm loop
-  builds it so no request meets it cold.
-- **explorer:** every served dollar on the cohort view is exact
-  (ADR-0003, #516): `price_usd` is the price string the reader served,
-  and `value_usd`, `total_usd`, `inflow_usd` and `outflow_usd` are
-  `balance × price` as rationals rounded once to two places. Through
-  `float64`, one unit at `0.015` rendered `0.01` and a `1.10` price came
-  back as `1.1`.
-- **ops:** the cap67 movements follow daemon's first run starts at the
-  lake's first ledger, not below it. Floored at genesis (`-floor-ledger
-  1`, the test-net setting) it resumed from ledger 1, which no lake holds
-  (every net's lake begins at 2), and the contiguity gate read that as a
-  boundary hole forever: both test nets' `account_movements` archives
-  sat empty for months while the daemon re-ran a full-lake scan every
-  second in silence. The first run now clamps up to `min(ledger_seq)`,
-  a long idle run is named in the journal (`idle: start=… contiguous
-  tip=… min_present=…`, every 30 idle ticks) and the tick backs off
-  (doubling past 30 idle ticks, capped at 30 s, back to the base the
-  moment a tick derives). The ansible default for the non-pubnet floor
-  is 2 as well, so the config no longer asks for a ledger that does not
-  exist.
-- **clickhouse:** the creators rollup splits its two creation arms at the
-  NETWORK's P23 boundary instead of pubnet's constant.
-  `ch-creators-rollup` takes `-config PATH` (the unit passes
-  `/etc/stellarindex.toml`) and reads `stellar.movements_floor_ledger`;
-  without it the pubnet boundary
-  applies. On a reset testnet/futurenet every ledger sits below
-  58,762,517, so the classic arm owned all of them and looked for
-  `create_account` movements a post-P23-only chain never writes —
-  `account_creator_edges` stayed empty and every `created` cohort with
-  it, however full the archive.
-- **ops:** `curated-rwa-sync` asks Dune for the `medium` execution tier.
-  It asked for `small`, which Dune does not name; every run with a key
-  configured was refused before the SQL ran (`HTTP 400: This performance
-  tier is not available with your subscription`), so the curated arm
-  never loaded a row. Verified against the live API: `medium`, `large`
-  and the default all execute on the current plan.
-
-- **timescale:** `BatchInsertTrades` sends its rows in parameter-safe
-  sub-batches (5,000 rows × 13 binds, under Postgres' 65,535-parameter
-  ceiling) and tallies the outcome once across them. A 100,000-row batch —
-  the bulk backfill's fallback size — failed with "extended protocol
-  limited to 65535 parameters" and dropped to one INSERT per row, which
-  is why a 40k-ledger SDEX re-derive chunk took five hours.
-- **ops:** every `refresh_continuous_aggregate` CALL the backfill makes
-  now runs under a per-CALL `statement_timeout` derived from the window
-  it refreshes (5 min per hour of window, floor 10 min, ceiling 4 h),
-  set on the one pooled connection that runs it and handed back with
-  the connection's previous value. The ops pool is deliberately
-  unbounded and the CALL ran on a context with no deadline, so one
-  wedged refresh held every `-parallel` worker behind the refresh lock
-  until SIGINT; a Go-side deadline alone would not have helped, since
-  the driver closes the socket and leaves the backend materialising with
-  the view's refresh lock held. When the bound fires the backend cancels
-  the statement, the chunk fails with a typed error the log carries with
-  the view, the window and the bound, the run continues, and the
-  connection is returned usable (W8-19).
