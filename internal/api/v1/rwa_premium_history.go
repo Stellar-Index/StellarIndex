@@ -383,10 +383,8 @@ type rwaPremiumHistory struct {
 	excluded   map[string]int
 	sources    []string
 	builtAt    time.Time
-	// stale is true when this assembly is a previously-cached one served
-	// verbatim after a failed rebuild — builtAt then reflects the LAST
-	// successful build, not "now". The handler must surface this so a
-	// caller can't mistake it for a fresh answer.
+	// stale marks a cached assembly served past its TTL because the
+	// rebuild failed or has not answered; builtAt is then its real age.
 	stale bool
 }
 
@@ -614,52 +612,46 @@ func (s *Server) cachedRWAPremiumHistory(ctx context.Context) rwaPremiumHistory 
 		s.rwaPremMu.Unlock()
 		return h
 	}
-	if ch := s.rwaPremFlight; ch != nil {
-		s.rwaPremMu.Unlock()
-		select {
-		case <-ch:
-			s.rwaPremMu.Lock()
-			var h rwaPremiumHistory
-			if s.rwaPremCache != nil {
-				h = *s.rwaPremCache
-			}
-			s.rwaPremMu.Unlock()
-			return h
-		case <-ctx.Done():
-			return rwaPremiumHistory{}
-		}
+	ch := s.rwaPremFlight
+	if ch == nil {
+		ch = make(chan struct{})
+		s.rwaPremFlight = ch
+		//nolint:gosec,contextcheck // G118 / contextcheck: intentional
+		// detached build — see runDetachedFill.
+		go runDetachedFill(s.logger, "api-rwa-premium-build", rwaPremiumHistoryBudget, ch,
+			func(ctx context.Context) (rwaPremiumHistory, error) { return s.buildRWAPremiumHistory(ctx), nil }, //nolint:unparam // runDetachedFill's signature; failure is .available
+			s.settleRWAPremiumHistory)
 	}
-	done := make(chan struct{})
-	s.rwaPremFlight = done
 	s.rwaPremMu.Unlock()
-
-	built := s.rwaPremiumHistoryBuildSafely(ctx)
-
-	s.rwaPremMu.Lock()
-	if built.available {
-		s.rwaPremCache = &built
-		s.rwaPremAt = time.Now()
-	} else if s.rwaPremCache != nil {
-		built = *s.rwaPremCache
-		built.stale = true
+	select {
+	case <-ch:
+	case <-ctx.Done():
 	}
-	s.rwaPremFlight = nil
-	s.rwaPremMu.Unlock()
-	close(done)
-	return built
+	return s.lastRWAPremiumHistory()
 }
 
-// rwaPremiumHistoryBuildSafely runs buildRWAPremiumHistory and converts a
-// panic into an unavailable result rather than leaving rwaPremFlight set
-// forever — a panic between "flight registered" and "flight cleared"
-// would otherwise wedge every future caller in the single-flight wait.
-func (s *Server) rwaPremiumHistoryBuildSafely(ctx context.Context) (built rwaPremiumHistory) {
-	defer func() {
-		if r := recover(); r != nil {
-			built = rwaPremiumHistory{}
-		}
-	}()
-	return s.buildRWAPremiumHistory(ctx)
+// settleRWAPremiumHistory caches a build that answered and releases the flight.
+func (s *Server) settleRWAPremiumHistory(built rwaPremiumHistory, err error) {
+	s.rwaPremMu.Lock()
+	defer s.rwaPremMu.Unlock()
+	if err == nil && built.available {
+		s.rwaPremCache = &built
+		s.rwaPremAt = time.Now()
+	}
+	s.rwaPremFlight = nil
+}
+
+// lastRWAPremiumHistory returns the cached assembly, stale once past its
+// TTL, or an unavailable one when no build has ever succeeded.
+func (s *Server) lastRWAPremiumHistory() rwaPremiumHistory {
+	s.rwaPremMu.Lock()
+	defer s.rwaPremMu.Unlock()
+	if s.rwaPremCache == nil {
+		return rwaPremiumHistory{}
+	}
+	h := *s.rwaPremCache
+	h.stale = time.Since(s.rwaPremAt) >= rwaPremiumHistoryTTL
+	return h
 }
 
 // buildRWAPremiumHistory assembles one series: today's membership, the

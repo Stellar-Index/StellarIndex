@@ -22,3 +22,17 @@ func (s *Server) AgeLivezLakeCacheForTest(d time.Duration) {
 	defer s.livezLakeMu.Unlock()
 	s.livezLakeAt = s.livezLakeAt.Add(-d)
 }
+
+// AgeRWASeriesCachesForTest moves the cached /v1/rwa/history and
+// /v1/rwa/premium assemblies d into the past, as if d had elapsed.
+func (s *Server) AgeRWASeriesCachesForTest(d time.Duration) {
+	s.rwaHistMu.Lock()
+	s.rwaHistAt = s.rwaHistAt.Add(-d)
+	s.rwaHistMu.Unlock()
+	s.rwaPremMu.Lock()
+	s.rwaPremAt = s.rwaPremAt.Add(-d)
+	s.rwaPremMu.Unlock()
+}
+
+// RWAHistoryTTL is the production /v1/rwa/history cache TTL.
+const RWAHistoryTTL = rwaHistoryTTL
