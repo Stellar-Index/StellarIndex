@@ -109,7 +109,7 @@ func sep1RefreshCmd(args []string) error {
 	defer func() { _ = chain.Close() }()
 
 	resolver := metadata.NewResolver(metadata.Options{Timeout: 10 * time.Second})
-	ok, failedKeys := sep1RefreshLoop(ctx, store, chain, resolver, candidates, dryRun)
+	ok, failedKeys, ourFaultKeys := sep1RefreshLoop(ctx, store, chain, resolver, candidates, dryRun)
 	failed := len(failedKeys)
 	fmt.Printf("\n%d succeeded, %d failed\n", ok, failed)
 	if dryRun {
@@ -120,6 +120,8 @@ func sep1RefreshCmd(args []string) error {
 	if sep1RunVerdict(candidates[:ok+failed], failedKeys, *systemicRate) {
 		return reportSep1Systemic(store, ok+failed, failedKeys, dryRun)
 	}
+	// A systemic run has unwound every failed key above, these included.
+	unwindSep1Backoff(store, ourFaultKeys, dryRun)
 	return nil
 }
 
@@ -157,10 +159,12 @@ type sep1Resolver interface {
 const sep1PerIssuerBudget = 30 * time.Second
 
 // sep1RefreshLoop resolves each candidate in turn and returns the
-// success count plus the g_strkeys of every attempt that produced no
-// payload. The failed keys are carried out (rather than just counted) so
-// a systemic verdict can take the ladder step back for exactly those
-// rows and nothing else.
+// success count, the g_strkeys of every attempt that produced no payload,
+// and the subset of those that failed on OUR side. The failed keys are
+// carried out (rather than just counted) so a systemic verdict can take
+// the ladder step back for exactly those rows and nothing else; the
+// our-fault keys get that step back even when the run is not systemic,
+// because a streak is served as sep1_status=unreachable.
 //
 // Sequential on purpose — see the package docblock: the TOML parser's
 // cost is superlinear on attacker-authored input and the unit runs under
@@ -168,25 +172,42 @@ const sep1PerIssuerBudget = 30 * time.Second
 func sep1RefreshLoop(
 	ctx context.Context, store sep1Store, chain sep1ChainReader, resolver sep1Resolver,
 	candidates []timescale.IssuerSep1Candidate, dryRun bool,
-) (int, []string) {
-	var ok int
-	failedKeys := make([]string, 0, len(candidates))
+) (ok int, failedKeys, ourFaultKeys []string) {
+	failedKeys = make([]string, 0, len(candidates))
 	for _, c := range candidates {
 		if err := ctx.Err(); err != nil {
 			fmt.Printf("\nAborted at %d/%d (deadline): %v\n", ok+len(failedKeys), len(candidates), err)
 			break
 		}
-		if refreshOneSep1Issuer(ctx, store, chain, resolver, c, dryRun) {
+		switch refreshOneSep1Issuer(ctx, store, chain, resolver, c, dryRun) {
+		case sep1Stored:
 			ok++
-			continue
+		case sep1OurFault:
+			ourFaultKeys = append(ourFaultKeys, c.GStrkey)
+			failedKeys = append(failedKeys, c.GStrkey)
+		case sep1Failed:
+			failedKeys = append(failedKeys, c.GStrkey)
 		}
-		failedKeys = append(failedKeys, c.GStrkey)
 	}
-	return ok, failedKeys
+	return ok, failedKeys, ourFaultKeys
 }
 
+// sep1Outcome is one issuer's attempt, split by whose fault a failure was.
+type sep1Outcome int
+
+const (
+	// sep1Stored: a payload was written, or there was nothing to fetch.
+	sep1Stored sep1Outcome = iota
+	// sep1Failed: the domain served nothing usable; the ladder step stands.
+	sep1Failed
+	// sep1OurFault: the lake read or a store write failed; the domain was
+	// never judged, so the ladder step is taken back.
+	sep1OurFault
+)
+
 // refreshOneSep1Issuer fetches, parses and stores one issuer's
-// stellar.toml, reporting whether a payload was written.
+// stellar.toml, reporting whether a payload was written and, if not,
+// whose fault that was.
 //
 // # Why the attempt is marked FIRST
 //
@@ -213,14 +234,18 @@ func sep1RefreshLoop(
 func refreshOneSep1Issuer(
 	ctx context.Context, store sep1Store, chain sep1ChainReader, resolver sep1Resolver,
 	c timescale.IssuerSep1Candidate, dryRun bool,
-) bool {
+) sep1Outcome {
 	c, binding := confirmSep1Domain(ctx, store, chain, c, dryRun)
 	if binding == sep1DomainCleared {
-		return true
+		return sep1Stored
 	}
 	markSep1Attempted(ctx, store, c.GStrkey, dryRun)
-	if binding == sep1DomainUnconfirmed {
-		return false
+	switch binding {
+	case sep1DomainUnconfirmed:
+		return sep1Failed
+	case sep1DomainUnchecked:
+		return sep1OurFault
+	case sep1DomainConfirmed, sep1DomainCleared:
 	}
 
 	// The fetch+parse runs on its own budget so a single domain cannot
@@ -231,7 +256,7 @@ func refreshOneSep1Issuer(
 	sep, err := resolver.Resolve(fetchCtx, sep1FetchDomain(c.GStrkey, c.HomeDomain))
 	if err != nil {
 		fmt.Printf("FAIL  %s  %s  %v\n", c.GStrkey, c.HomeDomain, err)
-		return false
+		return sep1Failed
 	}
 	// Bidirectional SEP-1 verification: the org is only "verified" if the
 	// fetched toml's [[CURRENCIES]] lists THIS issuer back — i.e. the domain
@@ -247,24 +272,27 @@ func refreshOneSep1Issuer(
 		// pre-mark has already taken this row off the head of the queue.
 		// Cold audit 2026-08-03.
 		fmt.Printf("FAIL  %s  marshal: %v\n", c.GStrkey, jerr)
-		return false
+		return sep1Failed
 	}
 	if !dryRun {
 		stored, err := store.SetIssuerSep1Payload(ctx, c.GStrkey, c.HomeDomain, payload)
 		if err != nil {
 			fmt.Printf("FAIL  %s  write: %v\n", c.GStrkey, err)
-			return false
+			if errors.Is(err, timescale.ErrSep1PayloadRejected) {
+				return sep1Failed
+			}
+			return sep1OurFault
 		}
 		if !stored {
 			// home_domain changed mid-fetch. Not a failed attempt: the change
 			// already reset this row's ladder, so the systemic unwind must not
 			// take a step back from it.
 			fmt.Printf("MOVED %s  %s  home_domain changed during the fetch; payload discarded\n", c.GStrkey, c.HomeDomain)
-			return true
+			return sep1Stored
 		}
 	}
 	fmt.Printf("OK    %s  %s  org=%q verified=%v\n", c.GStrkey, c.HomeDomain, sep.OrgName, orgVerified)
-	return true
+	return sep1Stored
 }
 
 // sep1DomainBinding is what the chain says about a candidate's stored
@@ -277,8 +305,10 @@ const (
 	// sep1DomainCleared: the chain declares no domain; the row was cleared and
 	// there is nothing to fetch.
 	sep1DomainCleared
-	// sep1DomainUnconfirmed: no live entry answered, or the re-bind failed.
+	// sep1DomainUnconfirmed: no live entry answered.
 	sep1DomainUnconfirmed
+	// sep1DomainUnchecked: the lake read or the re-bind failed on our side.
+	sep1DomainUnchecked
 )
 
 // confirmSep1Domain re-reads the issuer's live home_domain and re-binds the
@@ -293,7 +323,7 @@ func confirmSep1Domain(
 	live, err := chain.BulkAccountAuthFlags(ctx, []string{c.GStrkey})
 	if err != nil {
 		fmt.Printf("FAIL  %s  %s  chain read: %v\n", c.GStrkey, c.HomeDomain, err)
-		return c, sep1DomainUnconfirmed
+		return c, sep1DomainUnchecked
 	}
 	f, ok := live[c.GStrkey]
 	if !ok || f.Source != clickhouse.AuthFlagsSourceLive {
@@ -311,7 +341,7 @@ func confirmSep1Domain(
 		}
 		if err != nil {
 			fmt.Printf("FAIL  %s  %s  re-bind to %q: %v\n", c.GStrkey, c.HomeDomain, f.HomeDomain, err)
-			return c, sep1DomainUnconfirmed
+			return c, sep1DomainUnchecked
 		}
 	}
 	fmt.Printf("MOVED %s  %s -> %q  re-bound to the on-chain home_domain\n", c.GStrkey, c.HomeDomain, f.HomeDomain)
@@ -426,23 +456,29 @@ func sep1RunVerdict(attempted []timescale.IssuerSep1Candidate, failedKeys []stri
 func reportSep1Systemic(store *timescale.Store, attempts int, failedKeys []string, dryRun bool) error {
 	fmt.Printf("\nSYSTEMIC: %d of %d attempts failed — reading this as a fault on OUR side, "+
 		"not %d newly-dead domains.\n", len(failedKeys), attempts, len(failedKeys))
-	if !dryRun {
-		// The run's own context may already be past its deadline (that is
-		// one of the ways a run ends up looking systemic), and the unwind
-		// is the whole point of the verdict — it must not be skipped
-		// because the budget that produced the verdict has expired.
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second) //nolint:contextcheck // deliberately detached: the expired run budget must not cancel the corrective write
-		defer cancel()
-		n, err := store.UnwindIssuerSep1Backoff(ctx, failedKeys)
-		if err != nil {
-			fmt.Printf("WARN  unwind-backoff: %v\n", err)
-		} else {
-			fmt.Printf("Unwound the retry backoff on %d issuer(s); their schedule is untouched.\n", n)
-		}
-	}
+	unwindSep1Backoff(store, failedKeys, dryRun)
 	return fmt.Errorf("sep1-refresh: %d of %d attempts failed — refusing to treat that as %d "+
 		"dead domains; check DNS/egress from this host, then re-run",
 		len(failedKeys), attempts, len(failedKeys))
+}
+
+// unwindSep1Backoff takes back the ladder step this run applied to keys.
+func unwindSep1Backoff(store *timescale.Store, keys []string, dryRun bool) {
+	if dryRun || len(keys) == 0 {
+		return
+	}
+	// The run's own context may already be past its deadline (that is
+	// one of the ways a run ends up looking systemic), and the unwind
+	// is corrective — it must not be skipped because the budget that
+	// produced the failures has expired.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	n, err := store.UnwindIssuerSep1Backoff(ctx, keys)
+	if err != nil {
+		fmt.Printf("WARN  unwind-backoff: %v\n", err)
+		return
+	}
+	fmt.Printf("Unwound the retry backoff on %d issuer(s); their schedule is untouched.\n", n)
 }
 
 // markSep1Attempted bumps sep1_resolved_at so an issuer under attempt
