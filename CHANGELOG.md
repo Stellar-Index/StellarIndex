@@ -20,6 +20,167 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.93.0] — 2026-09-29
+
+166 commits since v0.92.1 — self-service account erasure/export, a
+dashboard-secret boot check (OPERATOR ACTION REQUIRED, see below), and a
+coverage-honesty pass over the history/rate/account-state read paths.
+
+### Added
+
+- **api/platform — self-service account erasure and data export (GH #809):**
+  `DELETE /v1/dashboard/account` and `GET /v1/dashboard/account/export`,
+  backed by one `accounterasure.Eraser` writer shared with the new
+  `stellarindex-ops account-erase` CLI. Erasure runs as one transaction
+  (close, scrub `audit_log` subject-identifying fields, delete invites,
+  alerts, webhooks, keys, usage events, magic links, users, rename
+  `usage_daily` rows to an `erased:<uuid>` subject, tombstone the slug so
+  a reused email can't inherit a prior member's Redis/usage state) and
+  reports a committed erasure as done even when only its cleanup step
+  fails. Export covers Redis-held self-service key/usage rows. Erasure
+  and account creation are serialised per slug behind an advisory lock;
+  billing-address login state is preserved when only a member address is
+  erased. Migration 0188 adds `audit_log_erase_metadata()` and the slug
+  tombstone table.
+- **supply — provenance stamping for reserve-account seed observations
+  (migration 0189):** `supply seed-observations` now stamps a checkpoint
+  row on a full pass, matching the SAC-balance and claimable-balance
+  seeders; a partial, failed or `-dry-run` pass stamps nothing.
+- **ops — `supply verify-rollup` on a timer with alerts:** new
+  `supply-verify-rollup.{service,timer}` on archival-node hosts (daily
+  06:53 UTC, read-only), gated on `watched_sep41_contracts` being
+  non-empty; unit-failed/stale/never-initialized Prometheus rules and a
+  `-textfile-output` scrape target replace the pasted-transcript verdict.
+  `supply audit -cross-check` now prints both cross-check legs instead of
+  only the pass/fail verdict.
+- **metadata — SEP-1 identity-change history (migration 0190):**
+  `issuer_identity_history` records one row per changed field
+  (`OrgName`, `ORG_URL`, `ORG_LOGO`, currency `Image`, …) whenever a
+  refresh overwrites an established issuer's SEP-1 payload; the
+  data-freshness watchdog now keys off the last *successful* fetch
+  instead of the last attempt, so a domain failing every refresh no
+  longer reads fresh.
+- **streaming:** a resume past the replay ring's eviction floor now
+  emits an explicit `stream_gap` event naming the requested and oldest
+  available cursor, instead of silently truncating; SSE connections open
+  with a retry hint in the prelude.
+
+### Fixed
+
+- **auth — dashboard MAC keys derived per purpose, secret now required
+  (OPERATOR ACTION REQUIRED, #1615):** the login-code HMAC,
+  passkey-ceremony cookie, magic-link tag and login-device marker each
+  MACed under one shared root secret; each now derives its own
+  HKDF-SHA256 key. The API refuses to boot when passkeys are wired (every
+  host that mounts the dashboard) and `STELLARINDEX_DASHBOARD_CODE_SECRET`
+  is empty. In-flight codes/links/ceremonies/device markers invalidate
+  once on deploy; hashed sessions are unaffected. The ansible env
+  template (#1618) now refuses to render on a dashboard-mounting host
+  with no `vault_dashboard_code_secret`, rather than deploying green and
+  crashlooping the API.
+- **ops — archival-node Redis requires auth (T641):** `requirepass` +
+  loopback bind, wired into api/indexer/aggregator and the Prometheus
+  redis exporter via a new vault `redis_password` (empty by default, so
+  a fresh checkout fails ansible's preflight assert instead of shipping
+  an open cache).
+- **security — redirect/origin leakage:** the API's CORS lists trust
+  only served origins; the dashboard client and vendor HTTP sources (CEX
+  connectors) keep their API key on the origin instead of forwarding it
+  to a redirect target; the Chainlink Ethereum RPC client refuses to
+  follow any redirect.
+- **chainlink:** rounds older than a per-feed `MaxAge` (heartbeat-derived;
+  `[external.chainlink.feed_map]` gains `max_age_hours`) or with an
+  undecoded carried-forward `answeredInRound` are refused instead of
+  projected as a fresh publication; per-feed poll outcome and
+  last-success metrics replace the single tick-level WARN.
+- **api — coverage-honesty gaps on history/rate/account-state responses:**
+  `/v1/history/since-inception` flags row-cap truncation
+  (`row_cap_truncated` + `data_ends_at`) instead of silently stopping
+  mid-series; `/v1/vwap`, `/v1/twap` and `/v1/ohlc` clamp an explicit
+  `to` inside the still-filling bucket the same way a defaulted `to`
+  already was, and surface it as `clamped`; `/v1/accounts/{g}` stamps
+  `as_of_ledger` from its own 30s cache vintage instead of a
+  serve-time watermark read that could outrun the cached body; the SDEX
+  orderbook handler now flags `stale` when the source has stopped
+  advancing instead of always reporting fresh.
+- **streaming:** a multi-topic SSE resume (up to 9 alias topics) merged
+  each topic's buffered replay sequentially instead of by id, so
+  resuming after a Hub-wide id gap walked backwards at topic boundaries;
+  replay is now merge-sorted by id across topics before sending.
+- **api — spec/handler drift:** reconciled OpenAPI vs. handler on
+  methodology, diagnostics and required/nullable fields; monthly-quota
+  429 now sends `Retry-After`; SSE streams are re-billed periodically
+  instead of once at open; refused mint-scope escalations are counted,
+  not just logged; the `/v1/rwa/assets` rate-limit charge is weighted by
+  its listing reads.
+- **storage:** unbounded latest-row hypertable reads are bounded, and new
+  ones are lint-gated from being added unbounded; the trades floor is
+  derived from the newest *compressed* chunk; a baseline minute only
+  counts past the notional floor; explorer sums/ratios and source
+  contributions are computed as exact decimals rather than float
+  aggregation; `contract-code-history` ClickHouse reads fall back to the
+  legacy scan on an empty index; the aggregator's baseline-bar VWAP
+  narrowing is marked explicitly non-monetary.
+- **ops — monitoring/gate gaps closed:** cursor-hold, trustline-error and
+  cap67-heartbeat detection; `archive-completeness fix`/`verify` gated
+  behind `-write`; `detect-gaps` catches reaped catalogue sources and
+  stale RPC tips; `curated-rwa-sync` asks Dune for a valid execution tier
+  (it asked for a tier Dune doesn't name, so every keyed run 400'd);
+  `sdex-claim-audit` fails on a silent reader/tx read drop; two more
+  vacuous-pass shell-gate holes closed (#1097, #1093).
+  `prometheus-rules-drift`'s live-check compares recording rules, not
+  only alert rules, closing a weekly false-positive; the MinIO
+  Prometheus scrape token is now a dedicated service-account secret
+  (rotation-safe — rotating MinIO root no longer invalidates it)
+  instead of a root-signed JWT.
+- **ops — MinIO repinned to a pullable source:** MinIO Inc closed
+  anonymous registry/binary pulls in 2025; images and binaries now come
+  from `cgr.dev/chainguard/minio`, pinned by digest. An apply keeps an
+  existing host's binaries unless `-e minio_allow_binary_upgrade=true` is
+  passed, so this does not touch r1's running MinIO by default.
+- **dashboardauth:** credential cookies are host-only and the
+  login-intent witness is keyed to match; magic links are bound to a
+  per-browser id so a throttled login can't evict another session; the
+  durable code budget is only charged when a code is actually live;
+  passkey add/remove notifies the account holder; dashboard-minted keys
+  are mirrored into the Redis validator store; the login-client
+  description is drawn from a closed vocabulary.
+- **auth — scam-gate the aggregator tier of the asset headline;**
+  `RateLimitBySubject`'s skip predicate is now exercised by test; admin
+  key minting inherits the caller's rate limit when unset (GH-1147).
+- **a batch of Intel-track fixes** across pricing, storage, ops and
+  explorer surfaces (two batches, 22 issues: #1331, #1332, #530, #594,
+  #600, #1346, #948, #834, #799, #767, #1261, #1148, #645, #711, #605,
+  #1055, #1235, #1337, #724, plus a macOS lexicon fix; #1541, #1540).
+- **W3 slice 78:** usage bookkeeping now runs on panic as well as the
+  success path, with a usage-write alert; explorer price-freshness
+  fixes.
+- **release process:** `cut-release.sh` refuses to tag on a missing,
+  stale or failing weekly SLA proof.
+- **ci:** textfile discovery, budget floor, lexicon regex and a SIGPIPE
+  gap fixed in the served-value gates; `lint-doc-links` no longer
+  silently skips an unreadable file; `lint-migration-commands` no longer
+  crashes under bash 3.2; migration-compat lint gains a `dml` class;
+  gosec SSRF/nilerr false positives silenced on HEAD; Served-path smoke
+  now guarded by the same `if:` as fleet-parity.
+- **deps:** routine npm/Go/GitHub Actions bumps; the golang 1.27
+  Dockerfile bump was reverted until `go.mod` moves with it.
+- Various: `funlen`/`gocognit` cleanups, SDEX `op_index` fanout guarded
+  against claim-index overflow, three cache-control mis-bands corrected,
+  `LatestOracleStreams`' dropped-row counter increment fixed,
+  `defaultRequestTimeout` exercised on a route with no handler-level
+  wrap, the response cache write skipped when a dead context assembled
+  the body, a `NULL`-start TWAP-view refresh refused outside migration
+  headers, `window_seconds` omitted on tip fallbacks with concurrent tip
+  ticks capped, the pricingguard call kept inside `LatestVWAP`,
+  `Worker.Run` made one-shot for its lifetime (Q143), `Counter.Read`
+  guarded against a nil receiver, the heavy-job scope's memory cap moved
+  onto the unit wrapper, the ledger-read undercount metered and alerted
+  (T399), the verify sweep alerted when permanently idle (T132), and the
+  `ops_batch` ClickHouse user granted `system` database access so
+  `compute-completeness`'s event census can read `system.parts`
+  (already hot-patched on r1; this codifies it).
+
 ## [v0.92.1] — 2026-09-28
 
 One day, 20 commits since v0.92.0 — a deploy-safety release.
@@ -812,12 +973,3 @@ pass and is called out first.
   the statement, the chunk fails with a typed error the log carries with
   the view, the window and the bound, the run continues, and the
   connection is returned usable (W8-19).
-
-## [v0.89.3] — 2026-09-17
-
-### Added
-
-- **explorer:** the cohort's contracts table names a token contract the
-  protocol roster does not claim — a Stellar Asset Contract by its
-  classic asset's code, a SEP-41 token by its symbol — as `label`
-  (`token USDC`) instead of leaving every such row unlabelled.
