@@ -94,8 +94,6 @@ type probeAnswer struct{ avail, definitive bool }
 // scriptedFastStub is a lake reader whose fast-availability probe follows
 // a script, recording probe/tip/fast-read call counts.
 type scriptedFastStub struct {
-	prewarmActivityStub
-
 	mu           sync.Mutex
 	answers      []probeAnswer
 	probeCalls   int
