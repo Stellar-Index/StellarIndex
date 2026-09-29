@@ -12086,22 +12086,12 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
-        /** @description Server is degraded (dependency outage, startup, shutdown). */
+        /** @description Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown). */
         ServiceUnavailable: {
             headers: {
                 [name: string]: unknown;
             };
             content: {
-                /**
-                 * @example {
-                 *       "type": "https://api.stellarindex.io/errors/account-store-unavailable",
-                 *       "title": "Account store not configured",
-                 *       "status": 503,
-                 *       "detail": "this deployment has no AccountStore wired — typically because Redis is unavailable",
-                 *       "instance": "/v1/account/keys",
-                 *       "request_id": "70c8017d79651070fd16c2c9f065d846"
-                 *     }
-                 */
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };

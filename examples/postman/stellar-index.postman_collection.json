@@ -1285,7 +1285,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -1476,7 +1476,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -1996,7 +1996,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -2221,7 +2221,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -2662,7 +2662,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -3019,7 +3019,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -3449,7 +3449,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -3822,7 +3822,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -4270,7 +4270,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -4763,7 +4763,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -5323,7 +5323,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -5774,7 +5774,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -6132,7 +6132,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -6601,7 +6601,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -6966,7 +6966,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -7366,7 +7366,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -7955,7 +7955,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -8481,7 +8481,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -8873,7 +8873,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -9700,7 +9700,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -10419,7 +10419,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -11120,7 +11120,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -11580,7 +11580,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -11884,7 +11884,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -12260,7 +12260,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -12636,7 +12636,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -13075,7 +13075,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -13682,7 +13682,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -14163,7 +14163,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -14598,7 +14598,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -14891,7 +14891,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -15079,7 +15079,7 @@
                           "_postman_previewlanguage": "json"
                         },
                         {
-                          "name": "Server is degraded (dependency outage, startup, shutdown).",
+                          "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                           "originalRequest": {
                             "url": {
                               "path": [
@@ -15299,7 +15299,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -16485,7 +16485,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -16939,7 +16939,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -17285,7 +17285,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -17664,7 +17664,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -18156,7 +18156,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -18429,7 +18429,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -18687,7 +18687,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -18939,7 +18939,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -19153,7 +19153,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -19364,7 +19364,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -19828,7 +19828,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -20392,7 +20392,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -22271,7 +22271,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -22883,7 +22883,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -23030,7 +23030,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -23183,7 +23183,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -23315,7 +23315,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -24296,7 +24296,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -25392,7 +25392,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -26848,7 +26848,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -27621,7 +27621,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -28267,7 +28267,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -28845,7 +28845,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -29317,7 +29317,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -29989,7 +29989,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -30290,7 +30290,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -30724,7 +30724,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -31253,7 +31253,7 @@
                           "_postman_previewlanguage": "json"
                         },
                         {
-                          "name": "Server is degraded (dependency outage, startup, shutdown).",
+                          "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                           "originalRequest": {
                             "url": {
                               "path": [
@@ -37171,7 +37171,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -37494,7 +37494,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -37756,7 +37756,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -38034,7 +38034,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -38297,7 +38297,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -38594,7 +38594,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -38799,7 +38799,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -39200,7 +39200,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -39404,7 +39404,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -39731,7 +39731,7 @@
                           "_postman_previewlanguage": "json"
                         },
                         {
-                          "name": "Server is degraded (dependency outage, startup, shutdown).",
+                          "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                           "originalRequest": {
                             "url": {
                               "path": [
@@ -39940,7 +39940,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -40238,7 +40238,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -40404,7 +40404,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -40634,7 +40634,7 @@
                   "_postman_previewlanguage": "text"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -40799,7 +40799,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -41043,7 +41043,7 @@
                   "_postman_previewlanguage": "text"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -41284,7 +41284,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -41441,7 +41441,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -41560,7 +41560,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -41764,7 +41764,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -41987,7 +41987,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -42186,7 +42186,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -42435,7 +42435,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -42706,7 +42706,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -43058,7 +43058,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -43329,7 +43329,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -43591,7 +43591,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -43889,7 +43889,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -44113,7 +44113,7 @@
                           "_postman_previewlanguage": "json"
                         },
                         {
-                          "name": "Server is degraded (dependency outage, startup, shutdown).",
+                          "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                           "originalRequest": {
                             "url": {
                               "path": [
@@ -44342,7 +44342,7 @@
                           "_postman_previewlanguage": "json"
                         },
                         {
-                          "name": "Server is degraded (dependency outage, startup, shutdown).",
+                          "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                           "originalRequest": {
                             "url": {
                               "path": [
@@ -44550,7 +44550,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -44740,7 +44740,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
               "originalRequest": {
                 "url": {
                   "path": [
