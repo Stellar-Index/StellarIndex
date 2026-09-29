@@ -243,28 +243,43 @@ func (s *Server) forwardClosedStream(
 			// One verdict per drained batch, asked after every event in it
 			// arrived: gating each event serially lets a slow gate back the
 			// Hub queue up until Publish evicts this subscriber.
-			batch = batch[:0]
-			for n := len(sub); ; n-- {
-				if series.admit(ev.Data) {
-					batch = append(batch, ev)
-				}
-				if n == 0 {
-					break
-				}
-				ev = <-sub
-			}
+			batch = series.drainAdmitted(batch[:0], ev, sub)
 			if len(batch) == 0 || s.closedStreamWithheld(ctx, asset, quote) != pricingguard.NotWithheld {
 				continue
 			}
-			for _, ev := range batch {
-				select {
-				case <-ctx.Done():
-					return
-				case ch <- ev:
-				}
+			if !sendClosedStreamBatch(ctx, ch, batch) {
+				return
 			}
 		}
 	}
+}
+
+// drainAdmitted appends first and whatever sub already has queued to
+// batch, keeping the frames admit lets through.
+func (c *closedStreamSeries) drainAdmitted(batch []streaming.Event, first streaming.Event, sub <-chan streaming.Event) []streaming.Event {
+	ev := first
+	for n := len(sub); ; n-- {
+		if c.admit(ev.Data) {
+			batch = append(batch, ev)
+		}
+		if n == 0 {
+			return batch
+		}
+		ev = <-sub
+	}
+}
+
+// sendClosedStreamBatch reports false when ctx ended before the batch
+// was handed over.
+func sendClosedStreamBatch(ctx context.Context, ch chan<- streaming.Event, batch []streaming.Event) bool {
+	for _, ev := range batch {
+		select {
+		case <-ctx.Done():
+			return false
+		case ch <- ev:
+		}
+	}
+	return true
 }
 
 // closedStreamQueueDepth is the forwarder→writer hand-off buffer, the
