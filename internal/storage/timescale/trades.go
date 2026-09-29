@@ -912,10 +912,9 @@ var ErrNoFXQuote = errors.New("timescale: no FX quote at or before cutoff")
 // because their amounts are normalised onto a fixed integer scale
 // (AGENTS.md "External-source amount scaling is NOT uniform") where
 // an equal-value reading doesn't carry the same "decoder is broken"
-// signal an on-chain 1:1 does. canonical.Trade.Validate() already
-// requires both amounts to be strictly positive before a trade can
-// reach either insert path, so the nonzero check here is
-// defence-in-depth, not load-bearing.
+// signal an on-chain 1:1 does. canonical.Trade.Validate() admits one
+// zero leg (an SDEX rounding fill) and there is no DB CHECK on the legs,
+// so the nonzero check here is load-bearing: 0 == 0 is not a 1:1 trade.
 func isDexUnitRatioTrade(ledger uint32, base, quote canonical.Amount) bool {
 	if ledger == 0 {
 		return false
@@ -1422,17 +1421,13 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
 // re-runs don't inflate the count.
 //
 // Storability pre-filter: each sub-batch is ONE all-or-nothing multi-row
-// INSERT, so a single row that violates a DB constraint aborts that whole
-// sub-batch — which is exactly what an SDEX one-side-zero fill does (the
-// decoder KEEPS those rounding-artifact fills for the ADR-0033 census, but the served
-// tier's `base_amount > 0 AND quote_amount > 0` CHECK — INV-6, migration
-// 0001 — cannot hold a zero leg). [Store.filterStorableTrades] drops the
-// rows that would fail so they can never sink a batch of otherwise-good
-// trades. This mirrors the single-row [Store.InsertTrade] Validate gate and
-// the authoritative completeness reconcile's own Validate gate
-// (reDeriveSDEXCensusViaDecoder), so census/served/reconcile stay
-// consistent. USD-volume is computed per row from the store's USD-volume
-// resolver, same as the single row path.
+// INSERT, so one invalid row would abort that whole sub-batch.
+// [Store.filterStorableTrades] drops rows that fail [canonical.Trade.Validate]
+// (the same gate as the single-row [Store.InsertTrade]) so they can never
+// sink a batch of otherwise-good trades. An SDEX one-side-zero fill passes
+// Validate and is stored (unpriceable: every price path filters on
+// `base_amount > 0 AND quote_amount > 0`). USD-volume is computed per row
+// from the store's USD-volume resolver, same as the single row path.
 //
 // Partial success is explicit. Each sub-batch commits in its own
 // transaction (one transaction across them would hold every row lock and
@@ -1451,10 +1446,8 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 		return nil
 	}
 
-	// Drop rows the served tier cannot hold BEFORE building the
-	// all-or-nothing sub-batch INSERTs (see the godoc). A one-side-zero SDEX
-	// fill would otherwise trip the base/quote > 0 CHECK and roll back every
-	// good trade in its sub-batch. When the whole batch is unstorable this
+	// Drop invalid rows BEFORE building the all-or-nothing sub-batch
+	// INSERTs (see the godoc). When the whole batch is unstorable this
 	// returns early — there is nothing to insert, and the skips are already
 	// accounted for inside the filter.
 	storable := s.filterStorableTrades(trades)
@@ -1623,27 +1616,16 @@ func (s *Store) registerBatchLandedAssets(ctx context.Context, seenAssets map[st
 	}
 }
 
-// filterStorableTrades returns the subset of a batch the served `trades`
-// tier can actually hold — the rows for which [canonical.Trade.Validate]
-// passes (in particular base_amount > 0 AND quote_amount > 0, the INV-6
-// CHECK from migration 0001). It exists because each [Store.BatchInsertTrades]
-// sub-batch is ONE all-or-nothing multi-row INSERT: a single row that fails
-// that CHECK aborts the entire statement, rolling back every good trade in
-// its sub-batch, failing the batch from there on, and forcing a slow per-row fallback that also counts the offending
-// row as an insert error (tripping stellarindex_source_insert_errors_total).
+// filterStorableTrades returns the subset of a batch for which
+// [canonical.Trade.Validate] passes. Each [Store.BatchInsertTrades] sub-batch
+// is ONE all-or-nothing multi-row INSERT, so a malformed row (negative leg,
+// both legs zero, missing identity) would otherwise take the good trades of
+// its sub-batch down with it. A dropped row is a genuine upstream/decoder bug
+// and stays loud (SourceInsertErrorsTotal + ERROR), exactly as the single-row
+// InsertTrade path surfaces it.
 //
-// The dominant — and only EXPECTED — unstorable row is the SDEX one-side-
-// zero fill: internal/sources/sdex.decodeClaimAtom KEEPS a fill whose base
-// OR quote leg rounded to 0 (it is a real on-chain trade effect the ADR-0033
-// census counts and the ClickHouse substrate retains), but that row has no
-// price and cannot satisfy the served tier's `> 0` CHECK. The authoritative
-// completeness reconcile (chops.reDeriveSDEXCensusViaDecoder) already
-// excludes these from the served-EXPECTED count through the identical
-// Validate gate, so dropping them here keeps census/served/reconcile
-// consistent rather than introducing a mismatch. Such a fill is a benign
-// no-op (DEBUG). Any OTHER validation failure is a genuine upstream/decoder
-// bug and stays loud (SourceInsertErrorsTotal + ERROR), exactly as the
-// single-row InsertTrade path surfaces it.
+// An SDEX one-side-zero fill (one leg rounded to 0) passes Validate and is
+// stored; it is counted on [obs.TradesZeroLegAdmittedTotal].
 //
 // The common case — an all-valid batch — allocates nothing and returns the
 // input slice unchanged.
@@ -1668,12 +1650,6 @@ func (s *Store) filterStorableTrades(trades []canonical.Trade) []canonical.Trade
 			storable = append(storable, t)
 			continue
 		}
-		if IsOneSideZeroFill(t) {
-			slog.Default().Debug("timescale: batch skipped one-side-zero fill (no served price; kept in CH substrate, census-counted — INV-6)",
-				"source", t.Source, "ledger", t.Ledger, "tx_hash", t.TxHash, "op_index", t.OpIndex,
-				"base", t.BaseAmount.String(), "quote", t.QuoteAmount.String())
-			continue
-		}
 		obs.SourceInsertErrorsTotal.WithLabelValues(t.Source, obs.InsertErrorKindTradeDropped).Inc()
 		slog.Default().Error("timescale: batch dropped invalid trade before insert",
 			"source", t.Source, "ledger", t.Ledger, "tx_hash", t.TxHash, "op_index", t.OpIndex, "err", err)
@@ -1682,11 +1658,9 @@ func (s *Store) filterStorableTrades(trades []canonical.Trade) []canonical.Trade
 }
 
 // IsOneSideZeroFill reports whether t is the SDEX rounding artifact where
-// exactly one leg rounded to 0 while the other stayed positive — the single
-// [canonical.Trade.Validate] failure the ingest path expects and treats as a
-// benign no-op (see [Store.filterStorableTrades]). A both-zero atom is
-// already dropped in the decoder, and a negative leg is never a valid Stellar
-// amount, so neither qualifies.
+// exactly one leg rounded to 0 while the other stayed positive. Such a trade
+// is stored but unpriceable. A both-zero atom is dropped in the decoder, and
+// a negative leg is never a valid Stellar amount, so neither qualifies.
 func IsOneSideZeroFill(t canonical.Trade) bool {
 	bs, qs := t.BaseAmount.Sign(), t.QuoteAmount.Sign()
 	return bs >= 0 && qs >= 0 && (bs == 0) != (qs == 0)
@@ -1768,7 +1742,8 @@ type registryObservation struct {
 // only runs its length for a market with none, which is precisely the
 // market a recency bound would answer WRONG. This read backs
 // /v1/price's last-trade arm, so a window here would stop serving a
-// price for a quiet market rather than merely slow it down.
+// price for a quiet market rather than merely slow it down. Zero-leg
+// (unpriceable) rows are excluded so the last trade is always a price.
 func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit int) ([]canonical.Trade, error) {
 	if limit <= 0 {
 		limit = 100
@@ -1783,6 +1758,7 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
            FROM trades
           WHERE base_asset  = $1
             AND quote_asset = $2
+            AND base_amount > 0 AND quote_amount > 0
           ORDER BY ts DESC, ledger DESC
           LIMIT $3)
         UNION ALL
@@ -1795,6 +1771,7 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
            FROM trades
           WHERE base_asset  = $2
             AND quote_asset = $1
+            AND base_amount > 0 AND quote_amount > 0
           ORDER BY ts DESC, ledger DESC
           LIMIT $3)
         ORDER BY ts DESC, ledger DESC

@@ -3642,7 +3642,8 @@ var APICORSDecisionsTotal = prometheus.NewCounterVec(
 // AggregatorDroppedTradesTotal — count of trades the orchestrator
 // removed from the VWAP input set, labelled by reason and by the
 // CONFIGURED target pair. "class" = removed by the ClassExchange-only
-// filter; "outlier" = removed by the σ-threshold filter. Operators
+// filter; "unpriceable" = a stored trade with a zero leg (no price);
+// "outlier" = removed by the σ-threshold filter. Operators
 // alert on a sudden spike in "class" (a new venue mis-registered) or
 // "outlier" (a market in distress flooding the window with anomalies).
 //
@@ -3672,7 +3673,7 @@ var APICORSDecisionsTotal = prometheus.NewCounterVec(
 var AggregatorDroppedTradesTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_dropped_trades_total",
-		Help: "Trades removed from the VWAP input set, labelled by reason (class|outlier) and configured target pair.",
+		Help: "Trades removed from the VWAP input set, labelled by reason (class|unpriceable|outlier) and configured target pair.",
 	},
 	[]string{"reason", "pair"},
 )

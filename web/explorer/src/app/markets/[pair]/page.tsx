@@ -26,6 +26,7 @@ import { SourceBreakdown } from './SourceBreakdown';
 import { shortAssetText } from '@/lib/asset-label';
 import { assetHref, assetHrefFor } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
+import type { TradeRow } from '@/api/hooks';
 
 type Params = Promise<{ pair: string }>;
 
@@ -90,24 +91,6 @@ interface OhlcResp {
   quote_volume_decimals?: number;
   trade_count: number;
   truncated: boolean;
-}
-
-interface HistoryTrade {
-  source: string;
-  ledger?: number;
-  tx_hash?: string;
-  op_index?: number;
-  ts: string;
-  base_asset: string;
-  quote_asset: string;
-  base_amount?: string;
-  quote_amount?: string;
-  price: string;
-  // Smallest-unit scale per side (divisor 10^n). /v1/history resolves
-  // the Soroban token's declared decimals(); omitted (→ fall back to 7)
-  // for native/classic/fiat.
-  base_decimals?: number;
-  quote_decimals?: number;
 }
 
 const PAIR_SEPARATOR = '~';
@@ -309,11 +292,8 @@ function fetchOhlc(base: string, quote: string): Promise<OhlcResp | null> {
   );
 }
 
-async function fetchHistory(
-  base: string,
-  quote: string,
-): Promise<HistoryTrade[]> {
-  const rows = await buildFetchData<HistoryTrade[]>(
+async function fetchHistory(base: string, quote: string): Promise<TradeRow[]> {
+  const rows = await buildFetchData<TradeRow[]>(
     `/v1/history?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&limit=50`,
   );
   return rows ?? [];
@@ -603,7 +583,7 @@ export default async function PairPage({ params }: { params: Params }) {
                       </Link>
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
-                      {t.price}
+                      {t.price ?? '—'}
                     </td>
                     {/* AM-02: amounts arrive as smallest-unit scaled
                         integers; render in asset units using the per-side

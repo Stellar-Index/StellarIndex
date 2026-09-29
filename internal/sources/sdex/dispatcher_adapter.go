@@ -49,9 +49,8 @@ func (d *Decoder) Decode(ctx dispatcher.OpContext) ([]consumer.Event, error) {
 
 // DecodeCounted is the completeness-census-facing variant of Decode: same
 // decode logic, but also returns how many claim atoms failed to decode
-// (decodeClaimAtom errors — structurally malformed claims, NOT the trades
-// canonical.Trade.Validate() later rejects as one-sided fills, which both
-// the live writer and the census intentionally filter symmetrically).
+// (decodeClaimAtom errors — structurally malformed claims, NOT one-sided
+// fills, which decode cleanly and are stored by the writer).
 //
 // The census (compute_completeness.go's reDeriveSDEXCensusViaDecoder) needs
 // this count to mark a ledger BLIND rather than silently treating a

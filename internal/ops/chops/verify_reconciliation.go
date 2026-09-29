@@ -149,7 +149,7 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 			if !src.census {
 				expected = completeness.SumKinds(byKind, tgt.kinds...)
 			}
-			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, lo, hi)
+			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), lo, hi)
 			if aerr != nil {
 				return fmt.Errorf("%s/%s: actual counts: %w", src.name, tgt.table, aerr)
 			}

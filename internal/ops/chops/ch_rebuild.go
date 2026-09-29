@@ -1000,7 +1000,9 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 					})
 					for _, ev := range outs {
 						te, ok := ev.(sdex.TradeEvent)
-						if !ok || te.Trade.Validate() != nil {
+						// Zero-leg fills stay out of census AND served count until
+						// a full-history walk lands them; see sdexPriceableFilter.
+						if !ok || te.Trade.Validate() != nil || timescale.IsOneSideZeroFill(te.Trade) {
 							continue
 						}
 						byLedger[te.Trade.Ledger] = append(byLedger[te.Trade.Ledger], ev)
@@ -1015,7 +1017,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 				}); derr != nil {
 					return fmt.Errorf("ch-rebuild: sdex reconcile stream [%d,%d]: %w", wlo, whi, derr)
 				}
-				served, serr := store.CountRowsByLedger(ctx, "trades", "ledger", "source='sdex'", wlo, whi)
+				served, serr := store.CountRowsByLedger(ctx, "trades", "ledger", "source='sdex' AND "+sdexPriceableFilter, wlo, whi)
 				if serr != nil {
 					return fmt.Errorf("ch-rebuild: sdex reconcile served counts [%d,%d]: %w", wlo, whi, serr)
 				}
@@ -1098,7 +1100,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 			return store.BulkBackfillTrades(ctx, batch, timescale.BulkBackfillOptions{})
 		}
 	}
-	written, failed, dropped := drainAndWrite(ctx, logger, w, buf, *write)
+	written, failed := drainAndWrite(ctx, logger, w, buf, *write)
 
 	if *write {
 		// ─── reset the SEP-41 supply rollup fold checkpoint ──────────────
@@ -1130,21 +1132,19 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 
 	// ─── report ──────────────────────────────────────────────────────────
 	fmt.Printf("\n=== ch-rebuild [%d,%d] %s ===\n", lo, hi, mode)
-	fmt.Printf("%-16s %14s %14s %14s\n", "source", "written", "dropped", "failed")
-	var total, totalDropped, totalFailed int
+	fmt.Printf("%-16s %14s %14s\n", "source", "written", "failed")
+	var total, totalFailed int
 	for _, src := range cat {
 		n, okW := written[src.name]
-		d, okD := dropped[src.name]
 		f, okF := failed[src.name]
-		if !okW && !okD && !okF {
+		if !okW && !okF {
 			continue
 		}
-		fmt.Printf("%-16s %14d %14d %14d\n", src.name, n, d, f)
+		fmt.Printf("%-16s %14d %14d\n", src.name, n, f)
 		total += n
-		totalDropped += d
 		totalFailed += f
 	}
-	fmt.Printf("%-16s %14d %14d %14d\n", "TOTAL", total, totalDropped, totalFailed)
+	fmt.Printf("%-16s %14d %14d\n", "TOTAL", total, totalFailed)
 	if !*write {
 		fmt.Printf("\n(dry-run — re-run with -write to persist to Postgres)\n")
 	}
@@ -1210,18 +1210,15 @@ func writeTradeBatch(ctx context.Context, logger *slog.Logger, w eventWriter, ba
 	return nil
 }
 
-// tallyTrade counts a trade the batch writer accepted: the served tier drops
-// the expected one-side-zero SDEX fill, and any other invalid row is a decoder
-// bug that must fail the run, as the store's own filter treats it.
-func tallyTrade(t canonical.Trade, src string, written, failed, dropped map[string]int) {
-	switch {
-	case t.Validate() == nil:
+// tallyTrade counts a trade the batch writer accepted: a Validate-passing row
+// (including a one-side-zero SDEX fill) is stored; any other row is a decoder
+// bug the store's filter drops, so it must fail the run.
+func tallyTrade(t canonical.Trade, src string, written, failed map[string]int) {
+	if t.Validate() == nil {
 		written[src]++
-	case timescale.IsOneSideZeroFill(t):
-		dropped[src]++
-	default:
-		failed[src]++
+		return
 	}
+	failed[src]++
 }
 
 // drainAndWrite persists the buffered events to Postgres and returns per-source
@@ -1238,13 +1235,11 @@ func tallyTrade(t canonical.Trade, src string, written, failed, dropped map[stri
 // RA-1: an event is counted in written[source] ONLY after its insert is
 // confirmed. A row whose batch AND per-row insert both fail — or whose
 // HandleEvent returns an error — is tallied in failed[source] and never
-// inflates written[]. A trade the served tier refuses
-// (a one-side-zero fill, timescale.IsOneSideZeroFill) never lands and is tallied in dropped[].
-// In dry-run (write=false) nothing is persisted and the same split is predicted.
-func drainAndWrite(ctx context.Context, logger *slog.Logger, w eventWriter, buf []consumer.Event, write bool) (written, failed, dropped map[string]int) { //nolint:gocognit,gocyclo,funlen // linear: three symmetric batch/flush closures + a per-event dispatch; splitting the flush closures apart hurts clarity.
+// inflates written[]. A trade that fails Validate never lands and is tallied
+// in failed[]. In dry-run (write=false) nothing is persisted and the same split is predicted.
+func drainAndWrite(ctx context.Context, logger *slog.Logger, w eventWriter, buf []consumer.Event, write bool) (written, failed map[string]int) { //nolint:gocognit,gocyclo,funlen // linear: three symmetric batch/flush closures + a per-event dispatch; splitting the flush closures apart hurts clarity.
 	written = map[string]int{}
 	failed = map[string]int{}
-	dropped = map[string]int{}
 
 	// The bulk writer wants ONE large buffer, not 1000-row slices: its
 	// emptiness proof is one round trip per source per call, and its COPY
@@ -1264,10 +1259,6 @@ func drainAndWrite(ctx context.Context, logger *slog.Logger, w eventWriter, buf 
 		if err := writeTradeBatch(ctx, logger, w, batch); err != nil {
 			logger.Warn("batch trade insert failed; per-row fallback", "n", len(batch), "err", err)
 			for i, t := range batch {
-				if t.Validate() != nil && timescale.IsOneSideZeroFill(t) {
-					dropped[batchSrc[i]]++
-					continue
-				}
 				if ierr := w.insertTrade(ctx, t); ierr != nil {
 					logger.Error("per-row trade insert failed", "source", batchSrc[i], "err", ierr)
 					failed[batchSrc[i]]++
@@ -1276,10 +1267,10 @@ func drainAndWrite(ctx context.Context, logger *slog.Logger, w eventWriter, buf 
 				}
 			}
 		} else {
-			// The writer succeeds while silently dropping rows the served tier
-			// refuses (filterStorableTrades); those never landed.
+			// The writer succeeds while silently dropping Validate-failing rows
+			// (filterStorableTrades); those never landed.
 			for i, s := range batchSrc {
-				tallyTrade(batch[i], s, written, failed, dropped)
+				tallyTrade(batch[i], s, written, failed)
 			}
 		}
 		batch = batch[:0]
@@ -1346,7 +1337,7 @@ func drainAndWrite(ctx context.Context, logger *slog.Logger, w eventWriter, buf 
 		}
 		if !write { // dry-run: count what WOULD be written
 			if t, ok := tradeOf(ev); ok {
-				tallyTrade(t, ev.Source(), written, failed, dropped)
+				tallyTrade(t, ev.Source(), written, failed)
 			} else {
 				written[ev.Source()]++
 			}
@@ -1401,11 +1392,7 @@ func drainAndWrite(ctx context.Context, logger *slog.Logger, w eventWriter, buf 
 		}
 		fmt.Fprintf(os.Stderr, "ch-rebuild: wrote %d events in %s\n", wrote, time.Since(wStart).Round(time.Second))
 	}
-	for src, n := range dropped {
-		logger.Warn("trades dropped as unstorable in the served tier; not counted as written",
-			"source", src, "dropped", n)
-	}
-	return written, failed, dropped
+	return written, failed
 }
 
 // parseCSVList splits a comma-separated flag value into a trimmed,

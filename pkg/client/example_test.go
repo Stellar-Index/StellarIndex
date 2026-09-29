@@ -632,7 +632,11 @@ func ExampleClient_Observations() {
 		return
 	}
 	for _, row := range got.Data {
-		fmt.Printf("%s @ %s: %s\n", row.Source, row.Timestamp.Format("15:04:05Z"), row.Price)
+		price := "no price" // a zero-leg fill has a null price
+		if row.Price != nil {
+			price = *row.Price
+		}
+		fmt.Printf("%s @ %s: %s\n", row.Source, row.Timestamp.Format("15:04:05Z"), price)
 	}
 
 	// Output:
@@ -1117,8 +1121,11 @@ func ExampleClient_History() {
 		return
 	}
 	for _, t := range got.Data {
+		if t.Price == nil { // a zero-leg fill has no price
+			continue
+		}
 		fmt.Printf("%s %s @ %s\n",
-			t.Source, t.Timestamp.Format("15:04:05"), t.Price)
+			t.Source, t.Timestamp.Format("15:04:05"), *t.Price)
 	}
 
 	// Output:
