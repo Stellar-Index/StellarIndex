@@ -585,6 +585,7 @@ func maybeTolerateTrailingMissing(cfg Config, from, to, delivered uint32, err er
 	if seq > to || to-seq > window {
 		return err
 	}
+	obs.LedgerstreamTrailingMissingToleratedTotal.Inc()
 	if cfg.Logger != nil {
 		cfg.Logger.WithFields(map[string]interface{}{
 			"missing_ledger": seq,
