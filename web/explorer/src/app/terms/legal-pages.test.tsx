@@ -38,8 +38,11 @@ describe('legal pages', () => {
       screen.getAllByText(/JURISDICTION — TO BE CONFIRMED/).length,
     ).toBeGreaterThan(0);
     expect(
-      screen.getByRole('link', { name: 'privacy policy' }),
-    ).toHaveAttribute('href', '/privacy');
+      screen
+        .getAllByRole('link', { name: 'privacy policy' })
+        .map((a) => a.getAttribute('href'))
+        .sort(),
+    ).toEqual(['/privacy', '/privacy#rights']);
   });
 
   it('privacy states the retention the code enforces and the contact mailbox', () => {
@@ -53,7 +56,24 @@ describe('legal pages', () => {
     expect(screen.getByText(/Valid for 15 minutes/)).toHaveTextContent(
       /48 hours/,
     );
-    expect(screen.getByText(/lasts up to 30 days/)).toBeInTheDocument();
+    expect(screen.getByText(/lasts up to 30 days/)).toHaveTextContent(
+      /deleted automatically 90 days after it expires/,
+    );
+    // Nothing reaps or archives audit_log (platform-spec §8.2).
+    expect(
+      screen.getByText(/Nothing deletes or archives audit-log entries/),
+    ).toHaveTextContent(/kept indefinitely/);
+    expect(document.body.textContent).not.toMatch(/then archived/);
+    // Five cookies, set by internal/api/v1/dashboardauth.
+    for (const name of [
+      '__Host-stellarindex_session',
+      'stellarindex_session_present',
+      '__Host-stellarindex_login_intent',
+      'stellarindex_login_device',
+      '__Host-stellarindex_passkey_ceremony',
+    ]) {
+      expect(screen.getByText(name)).toBeInTheDocument();
+    }
     const mailto = screen.getAllByRole('link', {
       name: 'security@stellarindex.io',
     });

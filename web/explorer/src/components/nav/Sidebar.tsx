@@ -100,8 +100,7 @@ const NAV: NavGroup[] = [
       { href: '/status', label: 'Status', icon: Activity, statusDot: true },
     ],
   },
-  // nav/Footer.tsx is not the site-wide chrome; the rail is, so the legal
-  // pages must be linked here. Network-agnostic: outside TESTNET_HIDDEN_HREFS.
+  // Network-agnostic: outside TESTNET_HIDDEN_HREFS.
   {
     title: 'Legal',
     items: [

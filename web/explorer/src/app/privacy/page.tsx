@@ -1,45 +1,33 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-// DRAFT — NEEDS LEGAL REVIEW (2026-08-28).
+// DRAFT — NEEDS LEGAL REVIEW.
 //
-// Why this page exists: the platform stores real PII (account email,
-// full-resolution IP addresses, user agents) and the launch plan's D10
-// item was reduced to a "documentation sign-off" (v1-launch-plan.md
-// §D10, 2026-08-15) on the basis that the privacy hygiene was done in
-// code (PRV-2 magic-link reaper, PRV-3 IP-retention rationale). The
-// public-facing half of that sign-off — telling users what is kept and
-// for how long — did not exist. This draft states ONLY what the code
-// and migrations show is actually collected, and cites the retention
-// figure the code enforces for each item; it must be corrected, not
-// re-worded, if the code changes:
-//
-//   - magic_link_tokens (email, requested_ip): 15-min TTL, expired rows
-//     swept 48 h later — internal/magiclinkreaper, PRV-2.
-//   - login_code_lockouts (email, ip): swept 48 h — internal/logincodereaper.
-//   - sessions (ip_first/last_seen, user_agent): 30-day TTL
-//     (dashboardauth.SessionTTL). NOTE: there is no session reaper, so
-//     expired rows persist until deleted manually — flagged below.
-//   - api_keys.last_used_ip / user_agent: for the life of the key;
-//     revoked keys are soft-deleted "forever" (migration 0027).
-//   - audit_log.ip / user_agent: 12-month online retention (migration 0027).
-//   - api_usage_events: NOT WIRED (no writer) — nothing stored, so it is
-//     deliberately not described as collected.
-//   - anonymous rate-limit counters: per-IP, per-minute, in Redis only.
-//   - IPs are kept at FULL resolution on purpose (PRV-3, migration 0027):
-//     they back abuse/session-hijack forensics and the inbox-bomb throttle.
-//
-// Processors named are only those the repo shows: Resend (email,
-// internal/notify/resend.go), Cloudflare (Pages hosting of this
-// explorer, wrangler.toml; R2 off-site backups per ADR-0050), the
-// API/database host (Hetzner, docs/operations/self-hosting.md), and
-// GitHub (issues). No analytics, ad, or tracking script is loaded
-// (src/app/layout.tsx carries only schema.org JSON-LD).
+// States only what the code and migrations do; correct it, do not reword it,
+// when they change. Sources for each retention figure:
+//   - magic_link_tokens (email, requested_ip): 15-min TTL, deleted 48 h after
+//     expiry — internal/magiclinkreaper.
+//   - login_code_lockouts (email only, no IP): deleted 48 h after settling —
+//     internal/logincodereaper.
+//   - sessions (IPs, user agent, CF-IPCountry): 30-day TTL
+//     (dashboardauth.SessionTTL); deleted 90 days after expiry or revocation —
+//     internal/retentionreaper.SessionRetention.
+//   - webhook_deliveries (payload): deleted 30 days after the attempt settles —
+//     retentionreaper.WebhookDeliveryRetention.
+//   - api_keys.last_used_ip / user_agent: no reaper; kept until erasure.
+//   - audit_log: no reaper and no archiver (platform-spec §8.2); append-only
+//     except the erasure scrub (migrations 0179, 0188).
+//   - usage: Redis counters 35-day TTL (internal/usage); usage_daily 12-month
+//     retention policy on 90-day chunks (migration 0167).
+//   - api_usage_events: no writer (internal/platform/usage.go), so not listed.
+//   - logs: Loki 720 h (configs/loki/loki.r1.yml), journald 14 d.
+//   - erasure and export: internal/accounterasure, runbook account-erasure.md.
+// Processors named are only those the repo references: Resend
+// (internal/notify/resend.go), Cloudflare Pages (web/explorer/wrangler.toml),
+// Hetzner (the API host), GitHub. No analytics script is loaded.
 //
 // Every statement a lawyer must confirm is tagged `LEGAL-REVIEW` in a JSX
-// comment immediately above it (JSX cannot carry an HTML `<!-- -->`
-// comment; `{/* LEGAL-REVIEW */}` is the equivalent). Structure mirrors
-// /sla and /terms.
+// comment immediately above it.
 
 export const metadata: Metadata = {
   title: 'Privacy Policy — Stellar Index',
@@ -48,8 +36,8 @@ export const metadata: Metadata = {
   alternates: { canonical: '/privacy' },
 };
 
-// LAST_UPDATED is the draft date, not an effective date.
-const LAST_UPDATED = '2026-08-28 (DRAFT)';
+// Replace with the effective date when the text is signed off.
+const LAST_UPDATED = 'DRAFT — no effective date yet';
 
 export default function PrivacyPage() {
   return (
@@ -67,8 +55,9 @@ export default function PrivacyPage() {
           api.stellarindex.io, why, for how long, who processes it, and what
           rights you have. The short version: we run no advertising or analytics
           trackers, we never sell data, and the only personal data we hold is
-          what an account and abuse-prevention actually need — an email address,
-          and IP addresses kept for bounded periods.
+          what an account and abuse-prevention use — an email address, IP
+          addresses and browser user agents. Section 6 lists how long each is
+          kept; some records have no automatic deletion.
         </p>
         <p className="text-ink-muted text-xs">Last updated: {LAST_UPDATED}</p>
       </header>
@@ -87,7 +76,9 @@ export default function PrivacyPage() {
             None of this is recorded in the repo. */}
         <p>
           The data controller for the Service is{' '}
-          <Placeholder>OPERATING ENTITY + ADDRESS — TO BE CONFIRMED</Placeholder>
+          <Placeholder>
+            OPERATING ENTITY + ADDRESS — TO BE CONFIRMED
+          </Placeholder>
           , operating as Stellar Index. Contact for anything in this policy:{' '}
           <a
             href="mailto:security@stellarindex.io"
@@ -114,7 +105,7 @@ export default function PrivacyPage() {
           rows={[
             {
               term: 'IP address',
-              def: 'Used in memory to enforce the anonymous per-IP rate limit (a rolling one-minute counter). The counter expires with its window; it is not written to a database.',
+              def: 'Used to enforce the anonymous per-IP rate limit: a counter keyed by your IP address is held in our cache (Redis) for the current one-minute window and expires within minutes. It is not written to the account database.',
             },
             {
               term: 'Request logs',
@@ -122,13 +113,18 @@ export default function PrivacyPage() {
             },
           ]}
         />
-        {/* LEGAL-REVIEW: edge/server access-log retention. The repo does not
-            pin a number for HTTP access logs (Cloudflare edge logs +
-            API-host journal). State the real figure once confirmed. */}
+        {/* LEGAL-REVIEW: Cloudflare's own edge-log retention is not
+            recorded in the repo. */}
         <p>
-          Server and edge logs are retained for{' '}
-          <Placeholder>ACCESS-LOG RETENTION — TO BE CONFIRMED</Placeholder> and
-          are used only for operations, security, and abuse investigation.
+          Our server logs, including web-server access logs with client IP
+          addresses, are kept for up to 30 days in our log store and up to 14
+          days in the host system journal, and are used only for operations,
+          security, and abuse investigation. Logs kept by Cloudflare at its edge
+          are retained for{' '}
+          <Placeholder>
+            CLOUDFLARE EDGE-LOG RETENTION — TO BE CONFIRMED
+          </Placeholder>
+          .
         </p>
         <p>
           We load <strong>no</strong> third-party analytics, advertising, or
@@ -147,17 +143,25 @@ export default function PrivacyPage() {
           Sign-in is passwordless: you enter an email address, we send a
           single-use magic link (or a short code), and clicking it creates a
           session. Passkeys (WebAuthn) can be added as a second sign-in method.
-          We hold no passwords. For an account we process:
+          We hold no passwords. An account can also be created from the terminal
+          with <code>POST /v1/register</code>, which asks for nothing: a name
+          and an email address are both optional, and an address given there is
+          stored as a contact address without being verified. For an account we
+          process:
         </p>
         <DefList
           rows={[
             {
               term: 'Email address',
-              def: 'Your sign-in identity and the address we send magic links and account notices to. Required.',
+              def: 'Your sign-in identity and the address we send magic links and account notices to. Required to sign in to the dashboard; optional for an account created with POST /v1/register.',
             },
             {
-              term: 'Display name',
-              def: 'Optional, set by you.',
+              term: 'Sign-in requests',
+              def: 'Each magic link we issue is recorded with the email address and the IP address that requested it. To limit abuse we also count requests per IP address and per email address over a rolling hour in our cache (Redis).',
+            },
+            {
+              term: 'Account name',
+              def: 'Derived from your email address when the account is created at sign-in, or the name you gave to POST /v1/register.',
             },
             {
               term: 'Passkey public keys',
@@ -165,22 +169,37 @@ export default function PrivacyPage() {
             },
             {
               term: 'API keys',
-              def: 'We store a hash of each key, its name, tier and limits, and — each time it is used — the last-seen time, IP address and user agent, so you can spot a leaked key from your dashboard.',
+              def: 'We store a hash of each key, its name, tier and limits, and — each time it is used — the last-used time, IP address and user agent. Your dashboard shows the last-used time; the IP address and user agent are included in your data export.',
             },
             {
               term: 'Usage counts',
-              def: 'Per-key request counts by minute and by month for rate limiting, your quota, and the usage chart in your dashboard. These are counts, not request bodies.',
+              def: 'Per-account request counts by day and by endpoint (successful, client-error, server-error and rate-limited) for your quota and the usage chart in your dashboard, plus short-lived per-minute rate-limit counters. These are counts, not request bodies.',
             },
             {
               term: 'Sessions',
-              def: 'For each dashboard session: creation time, last-seen time, the first and most recent IP address, and the user agent.',
+              def: "For each dashboard session: creation time, last-seen time, the first and most recent IP address, the user agent, and the country code our CDN attaches to the request (Cloudflare's CF-IPCountry header) when present.",
             },
             {
               term: 'Audit log',
               def: 'Security-relevant account actions (sign-in, key minted, key revoked, and similar) with the acting IP address and user agent.',
             },
+            {
+              term: 'Webhooks',
+              def: 'If you register a webhook: its name, HTTPS URL, event types and signing secret, and a log of each delivery attempt including the payload sent and the response status.',
+            },
+            {
+              term: 'Price alerts',
+              def: 'If you create a price alert: the asset pair, condition, threshold and when it last fired.',
+            },
           ]}
         />
+        <p>
+          An API key can also be requested without a dashboard account through{' '}
+          <code>POST /v1/signup</code>. For that we store a SHA-256 hash of the
+          email address you give, with no expiry, so the same address cannot
+          request a second key. Such a key is not part of an account, so the
+          export and erasure in section 8 do not cover it; ask us by email.
+        </p>
         {/* LEGAL-REVIEW: lawful basis. Draft: Art. 6(1)(b) contract for the
             account itself; Art. 6(1)(f) legitimate interests for the
             security/abuse-prevention IP retention. */}
@@ -204,15 +223,17 @@ export default function PrivacyPage() {
           address — so the IP behind each request is the only signal that lets
           us throttle inbox-bombing and detect an attacker minting links for
           someone else&rsquo;s mailbox. Likewise, the IP on a session and on an
-          API key&rsquo;s last use is what lets you and us recognise a hijacked
-          session or a leaked key. A masked prefix would defeat all three
-          controls.
+          API key&rsquo;s last use is what lets us recognise a hijacked session
+          or a leaked key; both are included in your data export. A masked
+          prefix would defeat all three controls.
         </p>
         <p>
-          In exchange, every IP-bearing record has a bounded lifetime (section
-          6), and we do not use IP addresses for anything other than security,
-          abuse prevention, and operating the Service. We do not geolocate you
-          for advertising, profile you, or link your IP to third-party data.
+          Some IP-bearing records are deleted automatically and some are not:
+          the last-used IP of an API key and the IP addresses on audit-log
+          entries are kept until the account is erased (section 6). We do not
+          use IP addresses for anything other than security, abuse prevention,
+          and operating the Service. We do not geolocate you for advertising,
+          profile you, or link your IP to third-party data.
         </p>
       </Section>
 
@@ -230,11 +251,15 @@ export default function PrivacyPage() {
           rows={[
             {
               term: 'Resend',
-              def: 'Transactional email delivery. Receives your email address and the magic-link message we send to it.',
+              def: 'Transactional email delivery. Receives your email address and the sign-in, verification and account-security messages we send to it.',
             },
             {
               term: 'Cloudflare',
-              def: 'Serves this explorer web site from its edge network and provides DNS and DDoS protection, so it sees your IP address and requests in transit. Off-site encrypted backups of the database are also stored on Cloudflare R2.',
+              def: 'Serves this explorer web site from its edge network, so it sees your IP address and requests to the site in transit.',
+            },
+            {
+              term: 'Off-site backup storage',
+              def: 'Encrypted off-site copies of the database are stored with a storage provider.',
             },
             {
               term: 'Hetzner',
@@ -246,11 +271,11 @@ export default function PrivacyPage() {
             },
           ]}
         />
-        {/* LEGAL-REVIEW: (a) confirm Resend is the live mail provider in
-            production (config MAIL_PROVIDER); (b) confirm R2 backups are
-            live, not just planned (ADR-0050 / off-site-backup-plan.md);
-            (c) data-centre regions for Hetzner + Cloudflare and the
-            international-transfer basis (SCCs / UK IDTA / adequacy). */}
+        {/* LEGAL-REVIEW: (a) name the off-site backup provider — the repo
+            leaves it to the operator (ADR-0043); (b) whether Cloudflare also
+            provides DNS/DDoS or fronts the API — not recorded in the repo;
+            (c) data-centre regions and the international-transfer basis
+            (SCCs / UK IDTA / adequacy). */}
         <p>
           Data is stored in{' '}
           <Placeholder>DATA-CENTRE REGION(S) — TO BE CONFIRMED</Placeholder>.
@@ -277,53 +302,67 @@ export default function PrivacyPage() {
             },
             {
               term: 'Sign-in lockouts',
-              def: 'Records of repeated failed sign-in codes (email + IP) are deleted automatically after 48 hours.',
+              def: 'Records of repeated failed sign-in codes (email address only) are deleted automatically 48 hours after the lockout ends.',
             },
             {
               term: 'Sessions',
-              def: 'A dashboard session lasts up to 30 days, or until you sign out or we revoke it.',
+              def: 'A dashboard session lasts up to 30 days, or until you sign out or we revoke it. The session record (including its IP addresses and user agent) is deleted automatically 90 days after it expires or is revoked.',
             },
             {
-              term: 'API-key last-use',
-              def: 'The last-used IP and user agent are overwritten on each use and kept while the key exists. Revoked keys are retained (hash, name, timestamps) so your dashboard can show rotation history.',
+              term: 'API keys',
+              def: 'The last-used IP and user agent are overwritten on each use. Keys, including revoked keys and their last-use details, are kept until the account is erased; nothing deletes them sooner.',
+            },
+            {
+              term: 'Usage counts',
+              def: 'Daily per-endpoint counts are deleted automatically after 12 months (in practice up to about 15, as they are dropped in 90-day blocks).',
+            },
+            {
+              term: 'Webhook deliveries',
+              def: 'The delivery log, including payloads, is deleted automatically 30 days after each delivery.',
             },
             {
               term: 'Audit log',
-              def: 'Kept online for 12 months, then archived.',
+              def: 'Nothing deletes or archives audit-log entries today: they are kept indefinitely until a retention period is decided. An account erasure removes the identifying fields from them (section 8).',
             },
             {
               term: 'Account and email',
-              def: 'Kept while the account is open. Closed accounts are removed on request (section 7).',
+              def: 'Kept while the account is open, until it is erased (section 8).',
             },
           ]}
         />
-        {/* LEGAL-REVIEW: (a) there is no automatic sweep of EXPIRED session
-            rows today (no sessionreaper package) — either add one or
-            state that expired session records persist until manual
-            deletion; (b) audit-log archive destination and its retention
-            are not pinned in the repo ("archived to S3 by an offline
-            job", migration 0027). */}
       </Section>
 
       <Section
         id="cookies"
         title="7. Cookies"
-        subtitle="Two, both strictly necessary"
+        subtitle="Five, all for signing in"
       >
         <p>
-          The Service sets cookies only for signing in. Because both are
+          The Service sets cookies only for signing in. Because they are
           strictly necessary for a feature you asked for, no consent banner is
           shown.
         </p>
         <DefList
           rows={[
             {
-              term: 'Session cookie',
-              def: 'Set when you sign in to the dashboard; identifies your session for up to 30 days. HttpOnly, Secure, SameSite.',
+              term: '__Host-stellarindex_session',
+              def: 'Set when you sign in to the dashboard; identifies your session and expires with it (up to 30 days). HttpOnly, Secure, SameSite=Lax.',
             },
             {
-              term: 'Login-intent cookie',
-              def: 'Set when you request a magic link and cleared when you use it; binds the link to the browser that asked for it so a link cannot be used to sign someone else in.',
+              term: 'stellarindex_session_present',
+              def: 'Set alongside the session cookie with the value "1" and the same lifetime, so this web site can tell that you are signed in without reading the session itself. Readable by scripts on the site; SameSite=Lax.',
+            },
+            {
+              term: '__Host-stellarindex_login_intent',
+              def: 'Set when you request a magic link and cleared when you use it; lasts at most 15 minutes. Binds the link to the browser that asked for it so a link cannot be used to sign someone else in. HttpOnly, Secure, SameSite=Lax.',
+            },
+            {
+              term: 'stellarindex_login_device',
+              def: 'Set each time you sign in and kept for 400 days. Holds an expiry time and a keyed hash of your email address (not the address itself), so this browser can still request a sign-in link for that address when the per-address sending limit has been used up by someone else. Sent only to the sign-in endpoint; it signs nothing in. HttpOnly.',
+            },
+            {
+              term: '__Host-stellarindex_passkey_ceremony',
+              def: 'Set while you register or use a passkey; lasts at most 5 minutes. HttpOnly, Secure, SameSite=Lax.',
             },
           ]}
         />
@@ -350,23 +389,45 @@ export default function PrivacyPage() {
             security@stellarindex.io
           </a>{' '}
           from the address on your account, so we can verify it is you. We
-          respond within one month. Most of what we hold is visible to you
-          already in your{' '}
+          respond within one month. Your{' '}
           <Link href="/dashboard" className="text-brand-600 hover:underline">
             dashboard
           </Link>{' '}
-          (keys, sessions, usage), and you can revoke keys and sessions there
-          yourself.
+          shows your API keys, usage, passkeys, price alerts and webhooks, and
+          you can revoke keys there yourself; it has no view of your sessions
+          other than signing out.
         </p>
-        {/* LEGAL-REVIEW: erasure is a manual operator process — the
-            self-service GDPR Art. 17 flow was DROPPED (PRV-1, 2026-08-15).
-            Confirm the manual procedure and its turnaround, and note any
-            data we must keep despite an erasure request (audit log for
-            abuse cases, under Art. 17(3)). */}
         <p>
-          When we erase an account we delete the email address, sessions,
-          passkeys, and API keys. We may retain minimal audit-log entries where
-          we need them to defend against abuse or legal claims.
+          An account owner can also act directly through the API, signed in to
+          the dashboard (an API key cannot do either) and within 10 minutes of
+          signing in: <code>GET /v1/dashboard/account/export</code> returns
+          everything we hold about the account as a JSON download, and{' '}
+          <code>DELETE /v1/dashboard/account</code> erases it. The explorer has
+          no button for either yet.
+        </p>
+        {/* LEGAL-REVIEW: confirm the manual procedure's turnaround, and the
+            Art. 17(3) basis for what an erasure keeps (below). */}
+        <p>
+          An erasure takes effect immediately; there is no grace period and it
+          cannot be undone. It deletes the account, its members&rsquo; sign-in
+          records, sessions and passkeys, API keys, webhooks and their delivery
+          log, price alerts, pending invitations and sign-in tokens, and the
+          account&rsquo;s cached counters. Erasing through the API emails each
+          owner a confirmation; an erasure we carry out on an emailed request
+          does not.
+        </p>
+        <p>
+          Some records are kept after an erasure, no longer linked to you:
+          audit-log entries have your email address, IP address and user agent
+          removed (entries recording an action by our staff keep the staff
+          member&rsquo;s identity); daily usage counts are re-labelled with a
+          random identifier and age out after 12 months; and a hash of the
+          account name is kept so the name cannot be reused. An erasure does not
+          reach database backups and snapshots, which we do not promise to
+          expire on any schedule; server logs, which age out after up to 30
+          days; or copies of sent email held by our email provider under its own
+          retention. If we restore from a backup, our restore procedure
+          re-applies every erasure before the API serves the restored data.
         </p>
         {/* LEGAL-REVIEW: supervisory authority — ICO for UK, or the
             relevant EU DPA, depending on the controller's jurisdiction. */}

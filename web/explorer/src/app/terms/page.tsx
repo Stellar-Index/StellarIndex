@@ -1,17 +1,11 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-// DRAFT — NEEDS LEGAL REVIEW (2026-08-28).
+// DRAFT — NEEDS LEGAL REVIEW.
 //
-// Why this page exists: the explorer + API had accounts, API keys, a
-// magic-link sign-in and a public data feed, but no Terms of Service
-// anywhere — the launch plan's D10 privacy sign-off (v1-launch-plan.md
-// §D10) assumed a legal surface that was never written. This is a
-// first draft assembled from what the code and ADRs actually promise
-// (ADR-0049: anonymous reads, free self-service accounts, staff-set
-// partner limits, NO payment surface), so it deliberately contains no
-// billing, refund, or subscription terms — inventing those here would
-// contradict ADR-0049.
+// States only what the code and ADRs promise (ADR-0049: anonymous reads,
+// free self-service accounts, staff-set partner limits, NO payment surface),
+// so it deliberately contains no billing, refund, or subscription terms.
 //
 // Every statement a lawyer must confirm is tagged `LEGAL-REVIEW` in a JSX
 // comment immediately above it. (JSX cannot carry an HTML `<!-- -->`
@@ -29,9 +23,8 @@ export const metadata: Metadata = {
   alternates: { canonical: '/terms' },
 };
 
-// LAST_UPDATED is the draft date, not an effective date. Set the real
-// effective date when the operator signs the text off.
-const LAST_UPDATED = '2026-08-28 (DRAFT)';
+// Replace with the effective date when the text is signed off.
+const LAST_UPDATED = 'DRAFT — no effective date yet';
 
 export default function TermsPage() {
   return (
@@ -106,10 +99,8 @@ export default function TermsPage() {
           rows={[
             {
               term: 'Anonymous',
-              // LEGAL-REVIEW: production enforces anon_rate_limit_per_min = 6000
-              // (configs/ansible/roles/archival-node/templates/stellarindex.toml.j2);
-              // the configs/example.toml default is 60 and /pricing still says
-              // "60 req/min per IP". Stating the figure that prod enforces.
+              // Production enforces anon_rate_limit_per_min = 6000 (ansible
+              // stellarindex.toml.j2); the code default is 60.
               def: 'Every public endpoint may be read without an account or key, rate-limited per IP address (currently 6,000 requests per minute).',
             },
             {
@@ -121,7 +112,7 @@ export default function TermsPage() {
               // template) — the 6,000 default only applies to keys minted with
               // no explicit limit (ratelimit.go bucketKeyAndOverrideForRequest).
               // 1,000 is therefore the figure a self-service account gets.
-              def: 'Creating an account (magic-link sign-in, or POST /v1/register) issues an API key with its own per-key rate limit (currently 1,000 requests per minute for self-service keys) and a monthly request quota, plus usage analytics.',
+              def: 'An account (created by magic-link sign-in, or by POST /v1/register, which also issues a first key) lets you mint API keys, each with its own per-key rate limit (currently up to 1,000 requests per minute) and a monthly request quota, plus usage analytics.',
             },
             {
               term: 'Partner',
@@ -138,11 +129,12 @@ export default function TermsPage() {
           are indicative and may change under section 8.
         </p>
         <p>
-          You must provide a working email address to create an account, and you
-          are responsible for everything done with your account and your API
-          keys. Keep keys secret: do not commit them to public repositories or
-          ship them in client-side code where a scoped widget token is available
-          instead. If a key is exposed, revoke it from your{' '}
+          Signing in to the dashboard requires a working email address; an
+          account created with POST /v1/register needs none, but without one we
+          cannot contact you or verify a request from you. You are responsible
+          for everything done with your account and your API keys. Keep keys
+          secret: do not commit them to public repositories or ship them in
+          client-side code. If a key is exposed, revoke it from your{' '}
           <Link href="/dashboard" className="text-brand-600 hover:underline">
             account
           </Link>{' '}
@@ -307,17 +299,27 @@ export default function TermsPage() {
       >
         <p>
           You may stop using the Service at any time and may revoke your API
-          keys from your account. To close your account entirely, email{' '}
+          keys from your account. An account owner can close the account
+          entirely with <code>DELETE /v1/dashboard/account</code> while signed
+          in to the dashboard (the explorer has no button for it yet), or by
+          emailing{' '}
           <a
             href="mailto:security@stellarindex.io"
             className="text-brand-600 hover:underline"
           >
             security@stellarindex.io
           </a>{' '}
-          from the address on the account.
-          {/* LEGAL-REVIEW: there is no self-service account-close or
-              GDPR-erasure flow (PRV-1 dropped it, 2026-08-15); closure is
-              a manual operator action. Confirm the mailbox and turnaround. */}
+          from the address on the account. Closing an account erases it
+          immediately and cannot be undone; the{' '}
+          <Link
+            href="/privacy#rights"
+            className="text-brand-600 hover:underline"
+          >
+            privacy policy
+          </Link>{' '}
+          lists what is kept.
+          {/* LEGAL-REVIEW: confirm the mailbox and the turnaround for an
+              emailed request. */}
         </p>
         <p>
           We may suspend or revoke keys, or suspend or close accounts,
