@@ -429,10 +429,9 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	// failed on the trailing-edge missing file.
 	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, bucket, workers)
 
-	// maxRuntime == 0 → no cap (uncancellable parent). Operators
-	// pass 0 for full-archive runs that exceed any single-day
-	// budget; the binary still honours external SIGTERM via the
-	// SDK's signal hooks.
+	// maxRuntime == 0 → no cap, for full-archive runs that exceed any
+	// single-day budget. No signal handler is registered here, so SIGTERM
+	// takes the default action (immediate exit) — safe for a read-only walk.
 	var (
 		ctx    context.Context
 		cancel context.CancelFunc

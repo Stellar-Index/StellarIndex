@@ -318,22 +318,10 @@ record why, because the range is then knowingly un-backfilled.
 
 ## Follow-ups (measured, not fixed here)
 
-Two things an enumeration of the wrapper's payloads turned up on
-2026-09-04 while sizing the stop bound. Neither is caused by the bound;
-both bear on what a stop actually achieves.
+Found by an enumeration of the wrapper's payloads on 2026-09-04 while
+sizing the stop bound. Not caused by the bound; it bears on what a stop
+actually achieves.
 
-- **`internal/ops/archive/verify_archive.go:432-435` documents a signal
-  path that does not exist.** The comment on the `maxRuntime == 0`
-  branch says the binary "still honours external SIGTERM via the SDK's
-  signal hooks". That file imports no `os/signal`, and no package it
-  reaches registers a handler for the archive-verify path — the
-  uncancellable-parent branch builds its context from
-  `context.Background()` with nothing wired to a signal. A SIGTERM to
-  that job is therefore the default disposition (immediate death), not
-  a cancellation the walk observes. The behaviour is safe for a
-  read-only walk; the comment is what is wrong, and it describes exactly
-  the semantics the stop bound is documented against, so it will
-  mislead the next reader who checks how a stop lands.
 - **A ClickHouse `OPTIMIZE … FINAL` cannot be stopped by killing its
   client.** `scripts/ops/recompress-lec.sh` issues `OPTIMIZE TABLE
   stellar.ledger_entry_changes PARTITION ID '<p>' FINAL` over the HTTP
