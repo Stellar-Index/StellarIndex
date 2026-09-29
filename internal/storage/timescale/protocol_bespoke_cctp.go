@@ -202,7 +202,8 @@ func cctpOutboundBreakdownQuery() string {
 
 // cctpPerChainSeriesQuery builds the top-5-chains-by-window-volume
 // directional series: (chain_key, bucket, usdc) rows ordered by each
-// chain's total volume descending, then bucket.
+// chain's total volume descending, then chain_key, then bucket. chain_key
+// breaks volume ties so each chain's rows stay contiguous for collectPerChainSeries.
 func cctpPerChainSeriesQuery(windowDays int, inbound bool) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	var j string
@@ -215,14 +216,14 @@ func cctpPerChainSeriesQuery(windowDays int, inbound bool) string {
 		 j AS (SELECT ts, amount, COALESCE(domain::text, '') AS chain_key FROM b)`
 	}
 	return j + `,
-		 top AS (SELECT chain_key, sum(amount) AS vol FROM j GROUP BY 1 ORDER BY 2 DESC LIMIT 5)
+		 top AS (SELECT chain_key, sum(amount) AS vol FROM j GROUP BY 1 ORDER BY 2 DESC, chain_key ASC LIMIT 5)
 		SELECT j.chain_key,
 		       to_char(date_trunc('` + trunc + `', j.ts), '` + format + `'),
 		       (sum(j.amount) / 1000000::numeric)::numeric(24,6)::text
 		FROM j JOIN top USING (chain_key)
 		WHERE true` + completeDaysOnly(windowDays, "j.ts") + `
 		GROUP BY j.chain_key, 2, top.vol
-		ORDER BY top.vol DESC, 2 ASC`
+		ORDER BY top.vol DESC, j.chain_key ASC, 2 ASC`
 }
 
 // cctpCumulativeNetInflowQuery is the all-time daily running sum of
