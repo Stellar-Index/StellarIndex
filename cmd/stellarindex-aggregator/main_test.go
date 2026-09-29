@@ -573,7 +573,7 @@ func TestBuildDivergenceReferences_AggregatorParity(t *testing.T) {
 		Redstone:  config.DivergenceOracleConfig{Enabled: true},
 		Band:      config.DivergenceOracleConfig{Enabled: true},
 	}
-	refs := buildDivergenceReferences(cfg, nopOracleReaderAgg{}, discardLogger())
+	refs := buildDivergenceReferences(cfg, config.CoinGeckoVenueConfig{}, nopOracleReaderAgg{}, discardLogger())
 	got := make(map[string]bool, len(refs))
 	for _, r := range refs {
 		got[r.Name()] = true
@@ -599,7 +599,7 @@ func TestBuildDivergenceReferences_AggregatorParity(t *testing.T) {
 		Redstone: config.DivergenceOracleConfig{Enabled: true},
 		Band:     config.DivergenceOracleConfig{Enabled: true},
 	}
-	for _, r := range buildDivergenceReferences(cfg, nopOracleReaderAgg{}, discardLogger()) {
+	for _, r := range buildDivergenceReferences(cfg, config.CoinGeckoVenueConfig{}, nopOracleReaderAgg{}, discardLogger()) {
 		if r.Name() == divergence.SyntheticCrossName {
 			t.Fatalf("synthetic cross constructed without an FX leg class")
 		}
