@@ -137,11 +137,18 @@ var ErrCap67MovementsHole = errors.New("clickhouse: cap67 movements window is no
 // by this run, so stamping the window's top would claim them as done.
 var ErrCap67MovementsSkippedPrefix = errors.New("clickhouse: cap67 movements window skips ledgers below it")
 
+// ErrCap67MovementsEventShortfall reports a REFUSED watermark advance: the
+// window's ledgers are all present but stellar.contract_events holds fewer
+// rows than they declare, so the derive read an incomplete event set. Like a
+// hole it is delay, not failure — the next run re-derives once events return.
+var ErrCap67MovementsEventShortfall = errors.New("clickhouse: cap67 movements window is missing contract events")
+
 // SetCap67MovementsWatermark records completion through `thru` for the
 // derive window [from, thru] — and ONLY if that advance is proven: the lake
-// holds every ledger in the window AND the window continues the derived
-// prefix rather than jumping over part of it (see cap67AdvanceProven for
-// both refusals and for the re-derive case, which records nothing).
+// holds every ledger in the window and every event those ledgers declare, AND
+// the window continues the derived prefix rather than jumping over part of it
+// (see cap67AdvanceProven for the refusals and for the re-derive case, which
+// records nothing).
 //
 // WHY the proof is required at the WRITE: the watermark is read back as
 // max(thru_ledger) and the derive resumes at watermark+1 with no trailing
@@ -190,6 +197,8 @@ func SetCap67MovementsWatermark(ctx context.Context, addr string, from, thru uin
 //     would otherwise stamp those ledgers done. A FIRST run (watermark 0) has
 //     no prefix to keep — the -floor-ledger boundary is where coverage starts.
 //   - the lake has a hole inside the window (see cap67WindowContiguous).
+//   - the window's ledgers are present but their events are not (see
+//     cap67WindowEventsPresent).
 //
 // A window entirely at or below the watermark is a legitimate idempotent
 // re-derive (account_movements is a ReplacingMergeTree): it claims nothing
@@ -207,6 +216,9 @@ func cap67AdvanceProven(ctx context.Context, conn driver.Conn, from, thru uint32
 			ErrCap67MovementsSkippedPrefix, from, thru, wm+1, wm+1, from-1)
 	}
 	if err := cap67WindowContiguous(ctx, conn, from, thru); err != nil {
+		return false, err
+	}
+	if err := cap67WindowEventsPresent(ctx, conn, from, thru); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -232,3 +244,34 @@ func cap67WindowContiguous(ctx context.Context, conn driver.Conn, from, thru uin
 	}
 	return nil
 }
+
+// cap67WindowEventsPresent errors (wrapping ErrCap67MovementsEventShortfall)
+// when stellar.contract_events holds fewer rows in [from, thru] than
+// stellar.ledgers declares via soroban_event_count — the window-scoped form of
+// EventCensusShortfalls. Ledger contiguity alone does not prove the events: a
+// dropped or unrestored contract_events partition leaves ledgers intact, and
+// the derive would read it as a stretch with no movements. Both sides are
+// primary-key ranges over one window; unmerged RMT duplicates can only raise
+// present, so they never cause a false refusal.
+func cap67WindowEventsPresent(ctx context.Context, conn driver.Conn, from, thru uint32) error {
+	var expected, present uint64
+	if err := conn.QueryRow(ctx, cap67WindowEventCensusQuery, from, thru, from, thru).Scan(&expected, &present); err != nil {
+		return fmt.Errorf("clickhouse: cap67 window [%d,%d] event census: %w", from, thru, err)
+	}
+	if present < expected {
+		return fmt.Errorf("%w: [%d,%d] holds %d of %d contract events — the watermark stays where it is",
+			ErrCap67MovementsEventShortfall, from, thru, present, expected)
+	}
+	return nil
+}
+
+// cap67WindowEventCensusQuery dedupes soroban_event_count per ledger as
+// eventCensusExpected does. Binds: from, thru, from, thru.
+const cap67WindowEventCensusQuery = `
+	SELECT
+		(SELECT toUInt64(sum(cnt)) FROM (
+			SELECT ledger_seq, argMax(soroban_event_count, ingested_at) AS cnt
+			FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?
+			GROUP BY ledger_seq
+		)),
+		(SELECT toUInt64(count()) FROM stellar.contract_events WHERE ledger_seq BETWEEN ? AND ?)`

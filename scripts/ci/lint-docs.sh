@@ -1733,6 +1733,38 @@ PY
   fi
 fi
 
+# ─── Documented make targets exist ───────────────────────────────────────────
+#
+# A contributor or operator page that says `make X` is an instruction to run
+# it; a target the Makefile lacks fails with "No rule to make target". Scans
+# inline `make X` and `make X` lines inside fenced blocks; "no `make X`" is
+# the one phrasing that documents an absence and is exempt.
+if [ -f Makefile ]; then
+  make_targets=$(grep -oE '^[A-Za-z0-9_.-]+:' Makefile | tr -d ':' | sort -u)
+  # shellcheck disable=SC2016  # awk program: literal backticks and $, not shell
+  while read -r loc target; do
+    [ -n "$target" ] || continue
+    grep -qxF -- "$target" <<<"$make_targets" ||
+      err "$loc documents 'make $target', but the Makefile has no '$target' target — add the target or correct the doc."
+  done < <(git ls-files -z -- 'docs/operations/*.md' 'docs/contributing/*.md' CONTRIBUTING.md README.md AGENTS.md |
+    xargs -0 awk '
+      FNR == 1 { fence = 0 }
+      /^[[:space:]]*```/ { fence = !fence; next }
+      {
+        line = $0
+        while (match(line, /`make [a-z0-9][A-Za-z0-9_.-]*[` ]/)) {
+          pre = substr(line, 1, RSTART - 1)
+          t = substr(line, RSTART + 6, RLENGTH - 7)
+          if (pre !~ /[Nn]o $/) print FILENAME ":" FNR, t
+          line = substr(line, RSTART + RLENGTH)
+        }
+        if (fence && match($0, /^[[:space:]]*(\$ )?make [a-z0-9][A-Za-z0-9_.-]*/)) {
+          t = substr($0, RSTART, RLENGTH); sub(/.*make /, "", t)
+          print FILENAME ":" FNR, t
+        }
+      }')
+fi
+
 # ─── CHANGELOG.md stays a rolling window ─────────────────────────────────────
 #
 # A multi-MB changelog is read by every agent that edits it and was the

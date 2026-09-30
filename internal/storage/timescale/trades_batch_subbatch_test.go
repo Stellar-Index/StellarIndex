@@ -74,8 +74,8 @@ func TestBatchInsertTrades_FailedSubBatchKeepsCommittedOutcome(t *testing.T) {
 	const source = "subbatch_partial"
 	deadlock := &pgconn.PgError{Code: "40P01", Message: "deadlock detected"}
 	store, conn := newScriptedStore(t,
-		scriptedResult{}, landedRows(source, 7, 4999), // sub-batch 1: cap, then 2 landed rows
-		scriptedResult{}, scriptedResult{err: deadlock}, // sub-batch 2: cap, then the fault
+		landedRows(source, 7, 4999),        // sub-batch 1: 2 landed rows
+		scriptedResult{err: deadlock},      // sub-batch 2: the fault
 		scriptedResult{}, scriptedResult{}, // registry: issuer, classic_assets
 	)
 	newBefore := testutil.ToFloat64(obs.TradeInsertOutcomeTotal.WithLabelValues(source, "new"))
@@ -117,8 +117,8 @@ func TestBatchInsertTrades_RegistryKeepsHighestLedgerAcrossSubBatches(t *testing
 	t.Parallel()
 	const source = "subbatch_merge"
 	store, conn := newScriptedStore(t,
-		scriptedResult{}, landedRows(source, 10),
-		scriptedResult{}, landedRows(source, 5500),
+		landedRows(source, 10),
+		landedRows(source, 5500),
 		scriptedResult{}, scriptedResult{},
 	)
 	if err := store.BatchInsertTrades(context.Background(), subBatchTrades(t, source, tradeInsertMaxRows+1000)); err != nil {
