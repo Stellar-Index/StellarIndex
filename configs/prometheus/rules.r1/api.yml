@@ -500,6 +500,32 @@ groups:
             store. If this fires ALONE, suspect the usage-counter key
             namespace or an eviction policy rather than Redis availability.
 
+      # Companion to the fail-open alert above: past the dwell window
+      # (middleware.DefaultMonthlyQuotaDwellTime, 30s) of continuous read
+      # errors the middleware stops failing open and 429s every metered
+      # request instead, so the fail-open counter goes flat and cannot
+      # hold a 10-minute rate. This is the signal for a SUSTAINED outage.
+      # `for: 2m`, not 10m — each second of it denies paying customers.
+      - alert: stellarindex_monthly_quota_fail_closed
+        expr: sum(rate(stellarindex_monthly_quota_fail_closed_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: page
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/monthly-quota-fail-open.md
+          summary: "Monthly quota is FAILING CLOSED — metered keys are being 429'd ({{ $value | humanize }} req/s)"
+          description: |
+            The per-key monthly quota counter has been unreadable for longer
+            than the fail-open dwell window, so the middleware has flipped
+            to failing CLOSED: every request from a metered key (one with a
+            monthly quota) now gets a 429 with Retry-After instead of being
+            served, whether or not the key is anywhere near its cap. This
+            is customer-visible denial for paying customers. Clears once
+            the counter has been read without error for the same dwell
+            window.
+
       # GH-1277: the write side of the usage meter had no observability
       # at all — a failed Increment/IncrementDetailBy logged at Debug
       # and was otherwise invisible. stellarindex_usage_units_dropped_total
