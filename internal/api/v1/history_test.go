@@ -416,7 +416,7 @@ func TestHistory_ReturnsTrades(t *testing.T) {
 	if env.Data[0].BaseAsset != "native" || env.Data[0].QuoteAsset != "fiat:USD" {
 		t.Errorf("pair fields wrong: %+v", env.Data[0])
 	}
-	if env.Data[0].Price == "" {
+	if env.Data[0].Price == nil || *env.Data[0].Price == "" {
 		t.Error("price missing")
 	}
 	if reader.lastCall.limit != 50 {

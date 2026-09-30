@@ -51,10 +51,8 @@ issue or PR restoring the `containers:` job in
   ecosystem (`.github/dependabot.yml`, `directory: /docker`) opens
   the PR when the tag moves to a new digest. When refreshing by hand,
   update all six Dockerfiles in the same commit and keep the two
-  digests identical across them. A tag whose digest cannot be resolved
-  offline is left TAG-only with a `TODO(supply-chain, DEP-low)` comment
-  explaining why — never fabricate a digest — and gets pinned in the
-  PR that next has registry access.
+  digests identical across them. `lint-go-toolchain-parity.sh` fails a
+  tag-only `FROM golang:` line, so resolve the digest before the PR lands.
 - **Builder stage** uses `golang:<major.minor>-alpine` and runs the same
   `go build -trimpath -buildvcs=true -ldflags=...` invocation the
   release workflow does, so the locally-built image and the

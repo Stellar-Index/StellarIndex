@@ -1,6 +1,6 @@
 ---
 title: sorocredit WASM-history audit
-last_verified: 2026-09-22
+last_verified: 2026-09-30
 status: "ratified 2026-07-07 — 8th symbol admitted (see 2026-09-22 addendum)"
 source: sorocredit
 backfill_safe: true
@@ -282,16 +282,16 @@ unblocked:
 - Any of the 4 recurring event types grows a second structural
   fingerprint (re-run the §2 fingerprint query; extend `last_verified`).
 
-### Belt-and-suspenders follow-up (optional, not blocking)
+### Belt-and-suspenders follow-up — done 2026-09-30
 
-If a future re-audit wants to confirm the instance-entry signal
-directly in the under-covered early window, a **scoped**
-`stellarindex-ops wasm-history -contracts CCG5EWFY… -from 61620822
--to 62000000` walk (bounded, ~380 k ledgers, run under the heavy-job
-wrapper when verify-archive is idle) would do it. It is not required
-for this verdict: event-schema invariance already excludes any
-schema-breaking upgrade, which is the only property `BackfillSafe`
-protects.
+The under-covered early window was walked directly from the archive:
+`stellarindex-ops wasm-history -bucket galexie-archive -contracts
+CCG5EWFY… -from 61620822 -to 62000000 -parallel 4` under the heavy-job
+wrapper on r1 (379,179 ledgers, 15m25s). Result: one range, one hash —
+`84a88013828d4c4f4e4f5d0fa2f686050d69889384a044eab3ec4b1169f810ea`
+over [61,620,822 → 62,000,000]. The instance-entry signal is now
+confirmed for the whole of the contract's life, not only the dense
+partitions; nothing in the verdict changes.
 
 ## 2026-09-22 addendum — TreasuryUpdated (8th symbol) admitted
 

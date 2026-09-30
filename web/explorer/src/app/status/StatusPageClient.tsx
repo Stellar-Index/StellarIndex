@@ -136,7 +136,8 @@ type IngestionSnapshot = Omit<
       completeness_complete?: boolean;
       completeness_lake_complete?: boolean;
       // Evolving: the REAL age of the row's data (web-status-4). The gap
-      // detector (30 min cadence) stamps `coverage_snapshot_at`; the daily
+      // detector (per-row `coverage_scan_cadence_s`) stamps
+      // `coverage_snapshot_at`; the daily
       // compute-completeness timer stamps `completeness_computed_at`.
       // `backfill_coverage_as_of` is only the API's assembly time.
       coverage_snapshot_at?: string;
@@ -380,7 +381,11 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     group: 'Catalogue',
     description:
       'Asset directory (every classic asset, with coin-overlay fields)',
-    probe: { kind: 'get', path: '/v1/assets?limit=1', expect: expectNonEmptyArray },
+    probe: {
+      kind: 'get',
+      path: '/v1/assets?limit=1',
+      expect: expectNonEmptyArray,
+    },
   },
   {
     path: '/v1/assets/{id}',
@@ -392,13 +397,21 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     path: '/v1/markets',
     group: 'Catalogue',
     description: 'Trading pairs',
-    probe: { kind: 'get', path: '/v1/markets?limit=1', expect: expectNonEmptyArray },
+    probe: {
+      kind: 'get',
+      path: '/v1/markets?limit=1',
+      expect: expectNonEmptyArray,
+    },
   },
   {
     path: '/v1/issuers',
     group: 'Catalogue',
     description: 'Issuer directory',
-    probe: { kind: 'get', path: '/v1/issuers?limit=1', expect: expectNonEmptyArray },
+    probe: {
+      kind: 'get',
+      path: '/v1/issuers?limit=1',
+      expect: expectNonEmptyArray,
+    },
   },
   {
     path: '/v1/sources',
@@ -810,9 +823,8 @@ function PageHead({ error, asOf }: { error: string | null; asOf: string }) {
         </div>
         <h1 className="text-h1 text-ink font-semibold">Stellar Index status</h1>
         <p className="text-ink-muted mt-2 max-w-prose text-[15px] leading-relaxed">
-          Live service health, request latency, ingest freshness, and a
-          curated public-endpoint matrix — probed independently from your
-          browser.
+          Live service health, request latency, ingest freshness, and a curated
+          public-endpoint matrix — probed independently from your browser.
         </p>
       </div>
       {/* The pulse is a liveness claim: it only pulses green while the
@@ -1318,8 +1330,7 @@ function ActiveIncidents({
   // silent collapse W1.1 guards against elsewhere on this page (RLT-465).
   incidentsStatus?: string;
 }) {
-  const trusted =
-    incidentsStatus === 'ok' || incidentsStatus === 'degraded';
+  const trusted = incidentsStatus === 'ok' || incidentsStatus === 'degraded';
   return (
     <section>
       <SectionHead>Active incidents</SectionHead>
@@ -2069,11 +2080,11 @@ function SupplyCard({ supply }: { supply: IngestionSnapshot['supply'] }) {
 // `backfill_coverage_as_of` is the API's per-request ASSEMBLY time (it
 // reads "4s ago" forever); the figures come from rows with their own
 // cadence. Two missed cycles = stale:
-//   - gap detector → `coverage_snapshot_at`, every 30 min
-//     (internal/storage/timescale/gap_detector.go GapDetectorInterval);
+//   - gap detector → `coverage_snapshot_at`, every `coverage_scan_cadence_s`
+//     (30 min default, 6 h for the largest tables; absent → the default);
 //   - compute-completeness → `completeness_computed_at`, the daily 05:30 UTC
 //     systemd timer (configs/ansible … compute-completeness.timer.j2).
-const COVERAGE_SNAPSHOT_STALE_MS = 2 * 30 * 60_000;
+const DEFAULT_COVERAGE_SCAN_CADENCE_S = 30 * 60;
 const COMPLETENESS_STALE_MS = 2 * 24 * 3_600_000;
 
 // coverageDataAge — which timestamp the row's DISPLAYED figure is dated by,
@@ -2087,8 +2098,16 @@ function coverageDataAge(
   const at = ran ? r.completeness_computed_at : r.coverage_snapshot_at;
   const ageS = snapshotAgeSeconds(at);
   if (ageS == null) return { at, stale: false };
-  const limitMs = ran ? COMPLETENESS_STALE_MS : COVERAGE_SNAPSHOT_STALE_MS;
+  const limitMs = ran
+    ? COMPLETENESS_STALE_MS
+    : 2 * coverageScanCadenceS(r) * 1000;
   return { at, stale: ageS * 1000 > limitMs };
+}
+
+function coverageScanCadenceS(
+  r: IngestionSnapshot['backfill_coverage'][number],
+): number {
+  return r.coverage_scan_cadence_s ?? DEFAULT_COVERAGE_SCAN_CADENCE_S;
 }
 
 function BackfillCoverageTable({
@@ -2102,9 +2121,10 @@ function BackfillCoverageTable({
     return (
       <div className="border-warn-300 bg-warn-50 text-warn-700 rounded-lg border p-3 text-xs">
         Coverage snapshot pending. This table shows two figures on different
-        cadences: the gap-detector snapshot refreshes every 30 min, and the
-        ADR-0033 completeness verdict is a daily job (05:30 UTC), so a verified
-        row is normally hours old and that is expected — not a stalled pipeline.
+        cadences: the gap-detector snapshot refreshes every 30 min (6 h for the
+        largest tables), and the ADR-0033 completeness verdict is a daily job
+        (05:30 UTC), so a verified row is normally hours old and that is
+        expected — not a stalled pipeline.
       </div>
     );
   }
@@ -2128,7 +2148,7 @@ function BackfillCoverageTable({
              which is a DAILY job (05:30 UTC) — so a reading of a few hours is
              the normal state, not a stall. Without saying so the figure reads
              as a broken pipeline to anyone who assumes it tracks ingest. */
-          title="Oldest figure in the table. The completeness verdict is recomputed daily (05:30 UTC) and the gap-detector snapshot every 30 min, so a few hours here is expected."
+          title="Oldest figure in the table. The completeness verdict is recomputed daily (05:30 UTC) and the gap-detector snapshot every 30 min to 6 h per source, so a few hours here is expected."
         >
           {oldestDataAt && (
             <>
@@ -2304,7 +2324,7 @@ function BackfillCoverageTable({
                     title={
                       ran
                         ? 'When compute-completeness last verified this source (daily timer).'
-                        : 'When the gap detector last measured this source (30 min cadence).'
+                        : `When the gap detector last measured this source (${formatDurationShort(coverageScanCadenceS(r))} cadence).`
                     }
                   >
                     {age.at ? formatRelative(age.at) : '—'}

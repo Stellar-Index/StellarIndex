@@ -77,6 +77,12 @@ Notes:
   (#427): that exclusion is about `migrate` gating no config surface, not
   about deploy cadence, and stays regardless of the above — it does not
   reintroduce a "migrate lags by design" policy.
+- The same minimum runs over the region's manifest set only
+  (`scripts/dev/region-binaries.tsv`): a sidecar for a binary the manifest
+  excludes at that region — testnet's `stellarindex-aggregator`, unit
+  disabled, sidecar frozen at v0.63.0 — is reported as ignored and does not
+  drag the baseline back. Nothing deploys that binary there, so its sidecar
+  says nothing about which config the host has applied.
 - Legacy `ratesengine-*` sidecars may also be present on the host — those predate
   the binary rename and are NOT the current fleet; ignore them.
 
