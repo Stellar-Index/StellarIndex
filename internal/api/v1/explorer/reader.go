@@ -462,6 +462,9 @@ type Handler struct {
 	// contract_detail_cache.go.
 	contractDetail contractDetailCache
 
+	// sacNames memoises proven SAC resolutions across requests (movements.go).
+	sacNames sacNameMemo
+
 	// throughput is the single-entry, single-flighted cache in front of
 	// GET /v1/network/throughput — a FINAL scan over up to a year of
 	// stellar.ledgers that ran inline on the 8s request budget and lost
