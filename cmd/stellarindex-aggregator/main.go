@@ -585,7 +585,7 @@ func run(cfgPath string, dryRun bool) error {
 		},
 		DisableClassFilter:        cfg.Aggregate.DisableClassFilter,
 		EnableStablecoinFiatProxy: cfg.Aggregate.EnableStablecoinFiatProxy,
-		USDPeggedClassicAssets:    parseUSDPeggedClassicAssets(cfg.Trades.USDPeggedClassicAssets, logger),
+		USDPeggedClassicAssets:    cfg.Trades.USDPeggedClassics(logger),
 		USDPeggedSorobanAssets:    resolveUSDPeggedSorobanAssets(cfg.Trades.USDPeggedClassicAssets, cfg.Supply.SACWrappers, logger),
 		OutlierSigmaThreshold:     cfg.Aggregate.OutlierSigmaThreshold,
 		MinUSDVolume:              cfg.Aggregate.MinUSDVolume,
@@ -1105,7 +1105,7 @@ func run(cfgPath string, dryRun bool) error {
 		// the same [pricing_guard] policy and USD pegs the API applies.
 		Withheld: pricelesscoverage.SubstanceWithheld(
 			buildAggregatorSubstanceGate(cfg.PricingGuard, store, logger),
-			parseUSDPeggedClassicAssets(cfg.Trades.USDPeggedClassicAssets, logger)),
+			cfg.Trades.USDPeggedClassics(logger)),
 	}
 	pricelessTripwire := pricelesscoverage.New(store, pricelessOpts)
 	// A Soroban-venue trade is keyed by the token contract; a SAC's price
@@ -1927,43 +1927,6 @@ func (a divergenceLedgerAdapter) LatestLedger() uint32 {
 // operator tuning. Parallel to cmd/stellarindex-indexer's
 // defaultAggregatorPairs (kept per-binary so each can evolve
 // independently).
-// parseUSDPeggedClassicAssets resolves the operator-declared
-// `[trades].usd_pegged_classic_assets` strings (e.g.
-// `"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"`)
-// into canonical assets so the orchestrator's stablecoin-fiat-proxy
-// expansion can also pull XLM/USDC-GA5Z…-style classic-quoted trades
-// when the target is `XLM/fiat:USD`.
-//
-// Soft-fails: a single malformed / non-classic entry is logged and
-// skipped rather than aborting startup. TradesConfig.validate() at config
-// load already parses each entry and rejects anything that is not a
-// classic (7-decimal) credit asset, so on a well-formed config this loop
-// never hits either skip path; reaching one would mean the validator
-// regressed, in which case the safe behaviour is "skip and keep serving"
-// — a missing classic peg is a smaller failure than the binary refusing
-// to start.
-func parseUSDPeggedClassicAssets(raws []string, logger *slog.Logger) []canonical.Asset {
-	if len(raws) == 0 {
-		return nil
-	}
-	out := make([]canonical.Asset, 0, len(raws))
-	for _, raw := range raws {
-		asset, err := canonical.ParseAsset(raw)
-		if err != nil {
-			logger.Warn("usd_pegged_classic_assets: skipping malformed entry",
-				"raw", raw, "err", err)
-			continue
-		}
-		if asset.Type != canonical.AssetClassic {
-			logger.Warn("usd_pegged_classic_assets: ignoring non-classic asset",
-				"raw", raw, "type", asset.Type)
-			continue
-		}
-		out = append(out, asset)
-	}
-	return out
-}
-
 // resolveUSDPeggedSorobanAssets derives the Soroban SAC-wrapper
 // contracts that inherit a USD peg transitively from
 // `[trades].usd_pegged_classic_assets` via `[supply].sac_wrappers`
@@ -1977,7 +1940,7 @@ func parseUSDPeggedClassicAssets(raws []string, logger *slog.Logger) []canonical
 // usd_volume pipeline) gets the aggregator's min_usd_volume floor
 // applied to that SAC-quoted pair for free (Guard 1, 2026-07-10).
 //
-// Soft-fails like its sibling parseUSDPeggedClassicAssets: a
+// Soft-fails like config.TradesConfig.USDPeggedClassics: a
 // malformed classic-peg entry or a sac_wrappers value that doesn't
 // parse as a classic asset_key is skipped rather than aborting
 // startup — TradesConfig.validate() / SupplyConfig.Validate() at
@@ -1991,7 +1954,7 @@ func resolveUSDPeggedSorobanAssets(classicPegRaws []string, sacWrappers map[stri
 	for _, raw := range classicPegRaws {
 		asset, err := canonical.ParseAsset(raw)
 		if err != nil || asset.Type != canonical.AssetClassic {
-			continue // already validated + logged by parseUSDPeggedClassicAssets
+			continue // already validated + logged by TradesConfig.USDPeggedClassics
 		}
 		pegged[asset.Code+"-"+asset.Issuer] = struct{}{}
 	}

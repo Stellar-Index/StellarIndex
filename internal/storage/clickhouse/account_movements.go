@@ -367,9 +367,8 @@ func sortAccountMovementRowsForInsert(rows []AccountMovementRow) {
 // per-writer-file convention (participant_backfill.go, sink.go each
 // define their own).
 func openAccountMovementsWrite(ctx context.Context, addr string) (driver.Conn, error) {
-	// Ops-batch identity from the environment (2026-08-28 r1 incident;
-	// see ops_auth.go) — CH `default` user when unset.
-	auth, err := opsAuth()
+	// Identity from the environment; see ops_auth.go.
+	auth, err := chAuth()
 	if err != nil {
 		return nil, err
 	}

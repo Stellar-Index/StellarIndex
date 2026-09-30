@@ -1,6 +1,6 @@
 ---
 title: Public status page at `status.stellarindex.io`
-last_verified: 2026-09-24
+last_verified: 2026-09-29
 status: operator runbook
 ---
 
@@ -57,8 +57,9 @@ deploy:                        ← Cloudflare Pages, explorer-deploy.yml
 
 The page is **NOT independent of the API.** `StatusPageClient.tsx` fetches
 `API_BASE_URL` at runtime — `/v1/status` (polled), `/v1/status/notices`,
-`/v1/incidents`, `/v1/diagnostics/ingestion`, and each row's own probe —
-directly from the visitor's browser. What survives an API-side outage is
+`/v1/incidents`, `/v1/diagnostics/ingestion`, `/v1/diagnostics/backups`,
+the `/v1/ledger/stream` SSE feed, and each row's own probe — directly
+from the visitor's browser. What survives an API-side outage is
 narrower than "independent": the static shell (layout, incident history
 baked in at build time from the `internal/incidents/data/*.md` corpus)
 still renders, but every live panel — overall status, latency, ingest
@@ -86,23 +87,43 @@ The binding runbook for SEV-1 / SEV-2 updates is
 
 ## Component status states
 
-Modelled after Atlassian Statuspage:
+`/v1/status` uses four states, computed by `rollupOverall` in
+`internal/api/v1/status.go`:
 
-- **operational** — green; no active incident.
-- **degraded_performance** — partial latency / error-rate impact.
-- **partial_outage** — major subsystem down but some surface still
-  works.
-- **major_outage** — API unavailable.
-- **under_maintenance** — scheduled; not an incident.
+- **ok** — every declared service heartbeat is fresh, the metrics
+  backend answered, no page-severity alert is firing and the latency
+  SLO holds.
+- **degraded** — the API is serving but at least one signal is
+  unhealthy: a service reports degraded, the metrics backend is
+  unreachable, a page-severity alert is firing, the latency SLO is
+  breached, or only some services could be observed.
+- **down** — at least one service's heartbeat is older than its
+  staleness threshold. A missing heartbeat is `unknown`, not `down`.
+- **unknown** — no service could be observed at all. The page also
+  shows this locally before its first successful poll.
+
+Each entry in `services[]` is `ok`, `down` or `unknown` on the same
+heartbeat rule. The incidents block carries its own `incidents_status`
+(`ok`, `degraded`, `unknown`); `unknown` means the alerts query failed
+and the counts must not be read as zero.
 
 ## Programmatic incident sources
 
-The status page does not poll Prometheus directly — that's the
-authoritative source for engineers, not the public-facing signal.
-SEV declarations are surfaced via the SEV playbook to the on-call,
-who then mirrors the relevant status onto the public page. This
-keeps the public page editorial (no false-positive flapping) and
-the Prometheus dashboards authoritative (no editorial gate).
+The page has two incident feeds, and only one is editorial:
+
+- **Firing alerts — automatic, no editorial gate.** `/v1/status`
+  (`PrometheusStatusBackend.Incidents` in `internal/api/v1/status.go`)
+  queries `ALERTS{alertstate="firing"}` (minus the dead-man's switch)
+  and publishes up to 16 alerts verbatim: the raw `alertname`, its
+  severity (normalised to `page|ticket|informational|unknown`) and its
+  `runbook_url`. The page renders them under active incidents with a
+  Runbook link. Any alert that fires reaches customers on the next poll
+  (30 s, behind a 10 s edge cache) — write alert names and runbook
+  URLs as public text.
+- **Declared incidents — editorial.** SEV declarations go through the
+  SEV playbook to the on-call, who writes the incident file
+  (`internal/incidents/data/`) that `/v1/incidents` serves as the
+  incident history. That feed carries the customer-facing wording.
 
 ## CI / deploy
 
