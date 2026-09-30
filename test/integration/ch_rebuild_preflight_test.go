@@ -105,7 +105,9 @@ func TestCHRebuildPreflight_AnswersWithoutTouchingTheLakeOrTheServedTier(t *test
 
 	// ── 2. control: the real run reaches the lake, and the lake is dead ─
 	before := servedRows(t)
-	if _, err = captureStdout(t, func() error { return chops.Run(args()) }); err == nil || !strings.Contains(err.Error(), "event stream") {
+	// The first lake read is the factory-child preseed (a dial of deadLake),
+	// so the address, not the stage name, is what proves the run got there.
+	if _, err = captureStdout(t, func() error { return chops.Run(args()) }); err == nil || !strings.Contains(err.Error(), deadLake) {
 		t.Fatalf("control: the un-preflighted run should fail on the unreachable lake; got err=%v — "+
 			"without this, a passing preflight proves nothing about WHERE it stopped", err)
 	}
