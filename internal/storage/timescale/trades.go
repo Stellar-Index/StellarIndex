@@ -100,6 +100,9 @@ type USDVolumeFXResolver interface {
 //     usd_volume = base_amount/1e7 × XLM/USD. See
 //     [tradeUSDVolumeViaXLMBaseAnchor].
 //
+// On a DEX trade with an XLM leg on EITHER side, that XLM anchor runs
+// ahead of tier 3 (base side first, then [tradeUSDVolumeViaXLMQuoteAnchorFor]).
+//
 // Tiers 1 + 2 trust their pegs at insert time — depeg events
 // are observed separately via the divergence + anomaly paths and
 // do NOT change the inserted usd_volume retroactively. Tiers 3 + 4
@@ -193,6 +196,13 @@ func tradeUSDVolume(ctx context.Context, t canonical.Trade, quoteSpec *USDVolume
 	// SubclassDEX-only, so CEX pricing is untouched.
 	if isXLMAsset(t.Pair.Base) {
 		if v := tradeUSDVolumeViaXLMBaseAnchor(ctx, t, md.Subclass, fxResolver); v != nil {
+			return v
+		}
+	}
+	// Same anchor when the pool stored XLM as the QUOTE leg: orientation is
+	// the pool's token order, so both sides of one economic swap must value alike.
+	if isXLMAsset(t.Pair.Quote) && !isXLMAsset(t.Pair.Base) {
+		if v := tradeUSDVolumeViaXLMQuoteAnchorFor(ctx, t, fxResolver); v != nil {
 			return v
 		}
 	}
@@ -655,8 +665,10 @@ func tradeUSDVolumeViaXLMBaseAnchorFor(ctx context.Context, t canonical.Trade, r
 // timestamp; mirroring the row is therefore the whole difference between
 // the two tiers, and a change to the anchor moves both at once.
 //
-// ONLY the XLM leg, deliberately. The live insert path reaches this
-// population through [tradeUSDVolumeViaFX], which additionally
+// The insert path ([tradeUSDVolume]) takes this branch ahead of
+// [tradeUSDVolumeViaFX], so a re-derive and a fresh insert agree.
+//
+// ONLY the XLM leg, deliberately. [tradeUSDVolumeViaFX] additionally
 // cross-checks the two legs and stores the SMALLER when they diverge by
 // more than [usdLegAgreementFactor]. That cross-check defends a value
 // resting on a token leg an attacker can author (the tier-3b bridge, the

@@ -566,6 +566,62 @@ func TestTradeUSDVolume_XLMBaseLegBeatsABridgedQuotePrice(t *testing.T) {
 	}
 }
 
+// TestTradeUSDVolume_XLMLegIsOrientationSymmetric: one economic swap of
+// 1 XLM for 5,000 AQUA, stored either way round, gets the same usd_volume
+// even when the token leg's rate diverges >10x from the XLM leg — and the
+// insert path agrees with the xlm-quote re-derive for the quote-XLM form.
+func TestTradeUSDVolume_XLMLegIsOrientationSymmetric(t *testing.T) {
+	t.Parallel()
+	xlm := canonical.NativeAsset()
+	xlmSAC, err := canonical.NewSorobanAsset(nativeXLMSAC)
+	if err != nil {
+		t.Fatalf("NewSorobanAsset(nativeXLMSAC): %v", err)
+	}
+	aqua, err := canonical.NewClassicAsset("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
+	if err != nil {
+		t.Fatalf("NewClassicAsset AQUA: %v", err)
+	}
+	// XLM leg $0.12; AQUA leg 5,000 x $0.0000001 = $0.0005 (240x lower).
+	resolver := stubFXResolver{prices: map[string]string{
+		xlm.String():  "0.12",
+		aqua.String(): "0.0000001",
+	}}
+	const xlmStroops, aquaUnits = 10_000_000, 50_000_000_000
+	const want = "0.12000000"
+
+	mk := func(base, quote canonical.Asset, baseAmt, quoteAmt int64) canonical.Trade {
+		tr := mkClassicDEXTrade(t, "sdex", base, quote, quoteAmt)
+		tr.BaseAmount = canonical.NewAmount(big.NewInt(baseAmt))
+		return tr
+	}
+	cases := map[string]canonical.Trade{
+		"XLM base":      mk(xlm, aqua, xlmStroops, aquaUnits),
+		"XLM quote":     mk(aqua, xlm, aquaUnits, xlmStroops),
+		"XLM SAC quote": mk(aqua, xlmSAC, aquaUnits, xlmStroops),
+		"XLM SAC base":  mk(xlmSAC, aqua, xlmStroops, aquaUnits),
+	}
+	for name, tr := range cases {
+		got := tradeUSDVolume(context.Background(), tr, nil, resolver)
+		if got == nil || *got != want {
+			t.Errorf("%s: usd_volume = %v, want %s (the XLM leg, whichever side holds it)", name, usdVolumeOrNil(got), want)
+		}
+		if !isXLMAsset(tr.Pair.Quote) {
+			continue
+		}
+		restamp := tradeUSDVolumeViaXLMQuoteAnchorFor(context.Background(), tr, resolver)
+		if restamp == nil || got == nil || *restamp != *got {
+			t.Errorf("%s: insert wrote %v but the xlm-quote re-derive writes %v", name, usdVolumeOrNil(got), usdVolumeOrNil(restamp))
+		}
+	}
+}
+
+func usdVolumeOrNil(s *string) string {
+	if s == nil {
+		return "<nil>"
+	}
+	return *s
+}
+
 // TestTradeUSDVolume_NonXLMBaseStillUsesQuoteResolution pins that the
 // reorder is scoped to XLM. A non-XLM base resolves through the same
 // poisonable bridge as the quote, so it earns no precedence — tier 3
