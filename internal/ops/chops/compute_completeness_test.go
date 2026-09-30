@@ -25,7 +25,7 @@ import (
 // addresses are syntactically valid C-strkeys; the catalogue only
 // checks non-emptiness.
 func testConfigWithAllSources() config.Config {
-	cfg := config.Config{}
+	cfg := pubnetFloorConfig()
 	cfg.Oracle.Reflector.DEXContract = "CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M"
 	cfg.Oracle.Reflector.CEXContract = "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6ZLSDJLGA"
 	cfg.Oracle.Reflector.FXContract = "CBKGPWGKSKZF52CFHMTRR23TBWTPMRDIYZ4O2P5VS65BMHYH4DXMCJZC"

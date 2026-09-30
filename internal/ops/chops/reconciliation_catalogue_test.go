@@ -58,7 +58,7 @@ func TestBuildReconciliationCatalogue_PromotesSEP41WhenWatched(t *testing.T) {
 		if _, ok := want[src.name]; ok {
 			want[src.name] = true
 			if src.genesis != 50_457_424 {
-				t.Errorf("%s: genesis = %d, want 50_457_424 (sorobanEraGenesis)", src.name, src.genesis)
+				t.Errorf("%s: genesis = %d, want 50_457_424 (default soroban_genesis_ledger)", src.name, src.genesis)
 			}
 			if src.aggregateReconcile != "" {
 				t.Errorf("%s: must stay on the strict per-ledger reconcile (CS-084), got opt-out %q", src.name, src.aggregateReconcile)
@@ -132,7 +132,7 @@ func TestBuildReconciliationCatalogue_NoSEP41WithoutWatchedSet(t *testing.T) {
 // contractIDs prefilter; kinds "sep41_transfers.event" /
 // "sep41_supply.event"; genesis 50_457_424).
 func TestBuildSEP41ReconSources_OptIn(t *testing.T) {
-	cfg := config.Config{}
+	cfg := pubnetFloorConfig()
 	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
 
 	cat, err := buildSEP41ReconSources(cfg)
@@ -158,7 +158,7 @@ func TestBuildSEP41ReconSources_OptIn(t *testing.T) {
 		}
 		delete(want, src.name)
 		if src.genesis != 50_457_424 {
-			t.Errorf("%s: genesis = %d, want 50_457_424 (sorobanEraGenesis)", src.name, src.genesis)
+			t.Errorf("%s: genesis = %d, want 50_457_424 (default soroban_genesis_ledger)", src.name, src.genesis)
 		}
 		if src.dec == nil {
 			t.Errorf("%s: nil decoder", src.name)
@@ -230,7 +230,7 @@ func TestSEP41Filter_ScopesToWatchedSetOnly(t *testing.T) {
 	)
 	filterFor := func(t *testing.T, watched []string) string {
 		t.Helper()
-		cfg := config.Config{}
+		cfg := pubnetFloorConfig()
 		cfg.Supply.WatchedSEP41Contracts = watched
 		cat, err := buildSEP41ReconSources(cfg)
 		if err != nil {
@@ -261,9 +261,9 @@ func TestSEP41Filter_ScopesToWatchedSetOnly(t *testing.T) {
 // predicate. An order-sensitive filter would orphan the recorded floor
 // on every config reshuffle and silently disable detectFloorLoss.
 func TestSEP41Filter_StableAcrossOrdering(t *testing.T) {
-	fwd := config.Config{}
+	fwd := pubnetFloorConfig()
 	fwd.Supply.WatchedSEP41Contracts = []string{testWatchedSEP41[0], testWatchedSEP41[1]}
-	rev := config.Config{}
+	rev := pubnetFloorConfig()
 	rev.Supply.WatchedSEP41Contracts = []string{testWatchedSEP41[1], testWatchedSEP41[0]}
 
 	catF, err := buildSEP41ReconSources(fwd)
@@ -686,5 +686,51 @@ func TestCatalogueGenesisLocksStepWithGapDetectorTargets(t *testing.T) {
 	}
 	if checked < 20 || constants != len(packageGenesis) {
 		t.Fatalf("checked %d catalogued sources (want >= 20) and %d of %d package constants — the guard no longer covers the catalogue", checked, constants, len(packageGenesis))
+	}
+}
+
+// pubnetFloorConfig is an otherwise-empty config carrying the default
+// (pubnet) Soroban floor that config.LoadWithEnv applies.
+func pubnetFloorConfig() config.Config {
+	var cfg config.Config
+	cfg.Stellar.SorobanGenesisLedger = config.Default().Stellar.SorobanGenesisLedger
+	return cfg
+}
+
+// The sep41 sources' genesis is the network's Soroban floor: on a test net
+// (floor 1) the pubnet ledger would sit above the tip and certify nothing.
+func TestBuildSEP41ReconSources_GenesisFromConfig(t *testing.T) {
+	cfg := config.Config{}
+	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
+	cfg.Stellar.SorobanGenesisLedger = 1
+	cat, err := buildSEP41ReconSources(cfg)
+	if err != nil {
+		t.Fatalf("buildSEP41ReconSources: %v", err)
+	}
+	for _, src := range cat {
+		if src.genesis != 1 {
+			t.Errorf("%s: genesis = %d, want 1 (stellar.soroban_genesis_ledger)", src.name, src.genesis)
+		}
+	}
+
+	cfg.Stellar.SorobanGenesisLedger = 0
+	if _, err := buildSEP41ReconSources(cfg); err == nil || !strings.Contains(err.Error(), "soroban_genesis_ledger") {
+		t.Errorf("zero floor: err = %v, want an error naming soroban_genesis_ledger", err)
+	}
+}
+
+// The pubnet default must stay the protocol-20 activation ledger the scan
+// floored at before it became configurable, and a test net's 1 must pass through.
+func TestSorobanEraFloor(t *testing.T) {
+	if got, err := sorobanEraFloor(config.Default()); err != nil || got != 50_457_424 {
+		t.Errorf("default floor = %d, %v; want 50457424", got, err)
+	}
+	cfg := config.Config{}
+	cfg.Stellar.SorobanGenesisLedger = 1
+	if got, err := sorobanEraFloor(cfg); err != nil || got != 1 {
+		t.Errorf("test-net floor = %d, %v; want 1", got, err)
+	}
+	if _, err := sorobanEraFloor(config.Config{}); err == nil || !strings.Contains(err.Error(), "soroban_genesis_ledger") {
+		t.Errorf("zero floor: err = %v, want an error naming soroban_genesis_ledger", err)
 	}
 }

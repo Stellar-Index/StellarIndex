@@ -902,6 +902,10 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 	if err != nil {
 		return nil, err
 	}
+	genesis, err := sorobanEraFloor(cfg)
+	if err != nil {
+		return nil, err
+	}
 	// topic0Syms mirrors the live projector's SQL prefilter for the same
 	// sources (projector/registry.go sep41TransferSyms / sep41SupplySyms) —
 	// the re-derive must stream the same population the live writer sees.
@@ -911,7 +915,7 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 	// ~35 of the full verify's ~37 minutes (measured 2026-07-27).
 	return []reconSource{
 		{
-			name: sep41transfers.SourceName, genesis: sorobanEraGenesis,
+			name: sep41transfers.SourceName, genesis: genesis,
 			dec: tdec, contractIDs: watched,
 			topic0Syms: []string{
 				sep41transfers.SymbolTransfer,
@@ -922,7 +926,7 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 			targets: []reconTarget{{"sep41_transfers", filter, []string{sep41transfers.EventKind}}},
 		},
 		{
-			name: sep41supply.SourceName, genesis: sorobanEraGenesis,
+			name: sep41supply.SourceName, genesis: genesis,
 			dec: sdec, contractIDs: watched,
 			topic0Syms: []string{
 				sep41supply.SymbolMint,

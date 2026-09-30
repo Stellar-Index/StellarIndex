@@ -110,7 +110,7 @@ func TestRecognitionAttribution_EveryPinningSourceCanFail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cfg config.Config
+	cfg := pubnetFloorConfig()
 	cfg.Supply.WatchedSEP41Contracts = []string{sep41Contract}
 	ownerOf, cat := staticOwnersFor(t, cfg)
 
@@ -133,7 +133,7 @@ func TestRecognitionAttribution_EveryPinningSourceCanFail(t *testing.T) {
 			t.Errorf("gap on pinned contract %s fell into unattributed", c)
 		}
 		for _, name := range want {
-			ok, _ := sourceRecognitionOK(sorobanEraGenesis, gapLedger, recBySource[name], false, priorProjection{})
+			ok, _ := sourceRecognitionOK(config.Default().Stellar.SorobanGenesisLedger, gapLedger, recBySource[name], false, priorProjection{})
 			if ok {
 				t.Errorf("%s pins %s but recognition_ok stayed true over a gap on it (attributed: %v)",
 					name, c, recBySource)
