@@ -307,6 +307,84 @@ func TestAssetVolumeCharacter_ClassicPoolMakerIsNotAnAccount(t *testing.T) {
 	}
 }
 
+// TestAssetVolumeCharacter_MakerlessAMMKeyedOnTaker: a Soroban AMM swap
+// stores no maker. One account swapping an asset back and forth through an
+// AMM must read as ONE concentrated actor in both the per-asset read and the
+// rollup, and a maker-less row must not disturb an order-book asset's pairs.
+func TestAssetVolumeCharacter_MakerlessAMMKeyedOnTaker(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	c.InstallAliasRegistry(nil)
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+
+	ammID := mustClassicID(t, "AMMX", tieIssuerB)
+	mixID := mustClassicID(t, "MIXX", tieIssuerC)
+	ts := time.Now().UTC().Add(-1 * time.Hour).Truncate(time.Second)
+	nonce := 2000
+	insertAMM := func(base, taker string, usdVol float64) {
+		nonce++
+		if _, err := db.ExecContext(ctx, `INSERT INTO trades
+		  (source, ledger, tx_hash, op_index, ts, base_asset, quote_asset,
+		   base_amount, quote_amount, usd_volume, maker, taker)
+		  VALUES ('soroswap', $1, $2, 0, $3, $4, 'native', 1, 1, $5, NULL, $6)`,
+			50_000_000+nonce, fmt.Sprintf("%064x", nonce), ts, base, usdVol, taker,
+		); err != nil {
+			t.Fatalf("insert amm trade nonce=%d: %v", nonce, err)
+		}
+	}
+
+	trader := charAccount(50)
+	for i := 0; i < 10; i++ {
+		insertAMM(ammID, trader, 1000)
+	}
+	insertAMM(ammID, charAccount(51), 100)
+
+	// Mixed: six equal order-book pairs plus one small maker-less AMM swap.
+	for i := byte(0); i < 6; i++ {
+		nonce++
+		insertCharTrade(t, ctx, db, nonce, ts, mixID, "native", charAccount(60+2*i), charAccount(61+2*i), 1000)
+	}
+	insertAMM(mixID, charAccount(80), 500)
+
+	if err := store.RefreshAssetVolumeCharacter(ctx); err != nil {
+		t.Fatalf("RefreshAssetVolumeCharacter: %v", err)
+	}
+	cases := []struct {
+		assetID  string
+		topShare float64
+		char     string
+	}{
+		{ammID, 0.9901, timescale.VolumeCharacterConcentrated}, // 10000/10100 on the lone taker
+		{mixID, 0.1538, timescale.VolumeCharacterMarket},       // 1000/6500 per order-book pair
+	}
+	for _, tc := range cases {
+		per, err := store.AssetVolumeCharacter(ctx, tc.assetID)
+		if err != nil {
+			t.Fatalf("AssetVolumeCharacter(%s): %v", tc.assetID, err)
+		}
+		roll, found, err := store.AssetVolumeCharacterRollup(ctx, tc.assetID)
+		if err != nil || !found {
+			t.Fatalf("AssetVolumeCharacterRollup(%s): found=%v err=%v", tc.assetID, found, err)
+		}
+		for name, got := range map[string]timescale.AssetVolumeCharacter{"per-asset": per, "rollup": roll} {
+			if got.TopAccountPairVolShare != tc.topShare {
+				t.Errorf("%s %s top_account_pair_vol_share = %v, want %v", tc.assetID, name, got.TopAccountPairVolShare, tc.topShare)
+			}
+			if got.Character != tc.char {
+				t.Errorf("%s %s character = %q, want %q", tc.assetID, name, got.Character, tc.char)
+			}
+		}
+	}
+}
+
 // TestAssetVolumeCharacterRollup_DemoteSort proves §4-B "annotate + demote":
 // under the default AssetsOrderVolume24hUSDDesc sort, a high-RAW-volume
 // CONCENTRATED (wash) asset ranks BELOW a lower-raw-volume MARKET asset,

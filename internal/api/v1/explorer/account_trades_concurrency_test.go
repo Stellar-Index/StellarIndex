@@ -2,7 +2,9 @@ package explorer
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -66,7 +68,8 @@ func TestAccountTrades_GateBoundsConcurrentScans(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			w := getAccount(h, (*Handler).AccountTrades, "/v1/accounts/"+validTestAccount+"/trades")
+			// Distinct callers: the per-caller cap must not mask the global one.
+			w := getAccountTradesFrom(h, fmt.Sprintf("198.51.100.%d:1234", i+1))
 			codes[i] = w.Code
 		}(i)
 	}
@@ -101,5 +104,86 @@ func TestAccountTrades_GateBoundsConcurrentScans(t *testing.T) {
 		if c != http.StatusOK {
 			t.Errorf("request %d served %d, want 200 (it should get a slot within the gate wait, not shed)", i, c)
 		}
+	}
+}
+
+// getAccountTradesFrom serves one /trades request from remoteAddr, the
+// caller identity an anonymous request is keyed on.
+func getAccountTradesFrom(h *Handler, remoteAddr string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, "/v1/accounts/"+validTestAccount+"/trades", nil)
+	req.SetPathValue("g_strkey", validTestAccount)
+	req.RemoteAddr = remoteAddr
+	w := httptest.NewRecorder()
+	h.AccountTrades(w, req)
+	return w
+}
+
+// TestAccountTrades_OneScanPerCaller pins that one caller cannot hold more
+// than one gate slot: its second concurrent scan sheds at once without
+// taking a slot, while another caller is still admitted.
+func TestAccountTrades_OneScanPerCaller(t *testing.T) {
+	reader := &blockingTradesReader{
+		entered: make(chan struct{}, 4),
+		release: make(chan struct{}),
+	}
+	h := newProbeHandler(nil, nil)
+	h.Trades = reader
+
+	var wg sync.WaitGroup
+	codes := make(map[string]int)
+	var mu sync.Mutex
+	serve := func(name, addr string) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w := getAccountTradesFrom(h, addr)
+			mu.Lock()
+			codes[name] = w.Code
+			mu.Unlock()
+		}()
+	}
+	awaitEntry := func(name string) {
+		select {
+		case <-reader.entered:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s never reached the reader", name)
+		}
+	}
+
+	serve("a1", "198.51.100.1:1111")
+	awaitEntry("a1")
+
+	// A's second scan must shed at once; run it aside so a handler that
+	// admits it (and parks in the reader) fails rather than hangs.
+	second := make(chan int, 1)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		second <- getAccountTradesFrom(h, "198.51.100.1:2222").Code
+	}()
+	select {
+	case code := <-second:
+		if code != http.StatusServiceUnavailable {
+			t.Errorf("caller A's second concurrent scan served %d, want 503 shed", code)
+		}
+	case <-time.After(accountTradesGateWait):
+		t.Errorf("caller A's second concurrent scan was admitted, want an immediate 503 shed")
+	}
+	if got := len(accountTradesGate); got != 1 {
+		t.Errorf("gate slots held = %d after the per-caller shed, want 1 (only A's first scan)", got)
+	}
+
+	serve("b1", "203.0.113.7:1111")
+	awaitEntry("b1")
+
+	close(reader.release)
+	wg.Wait()
+	for _, name := range []string{"a1", "b1"} {
+		if codes[name] != http.StatusOK {
+			t.Errorf("%s served %d, want 200", name, codes[name])
+		}
+	}
+	if w := getAccountTradesFrom(h, "198.51.100.1:3333"); w.Code != http.StatusOK {
+		t.Errorf("caller A after its scan completed served %d, want 200 (slot not released)", w.Code)
 	}
 }

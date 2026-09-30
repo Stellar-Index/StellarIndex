@@ -43,11 +43,13 @@ type stubMarketHistory struct {
 	err         error
 	askedAssets []string
 	askedQuotes []string
+	askedFroms  []time.Time
 }
 
 func (s *stubMarketHistory) DailyMarketDays(
-	_ context.Context, assets, quotes []canonical.Asset, _, _ time.Time,
+	_ context.Context, assets, quotes []canonical.Asset, from, _ time.Time,
 ) ([]timescale.MarketDay, error) {
+	s.askedFroms = append(s.askedFroms, from)
 	for _, a := range assets {
 		s.askedAssets = append(s.askedAssets, a.String())
 	}
@@ -284,6 +286,28 @@ func TestRWAPremium_ReadsTheDollarInEverySpellingItIsWrittenAs(t *testing.T) {
 	}
 	if !sawFiatUSD {
 		t.Errorf("quote spellings = %v, want fiat:USD among them", market.askedQuotes)
+	}
+}
+
+// TestRWAPremium_BothLegsReadFromABoundedFloor — both legs read the
+// full history, but through an explicit lower bound: a zero `from` is
+// an open-ended range scan the query-shape lints cannot see.
+func TestRWAPremium_BothLegsReadFromABoundedFloor(t *testing.T) {
+	bound, dir, rows := oneBoundMember()
+	oracle := &stubOracleHistory{rows: []timescale.OracleDayPoint{
+		histOracle("redstone", "USTRY", 1, 107000000),
+	}}
+	market := &stubMarketHistory{}
+	srv := rwaPremiumServer(t, bound, dir, rows, oracle, market)
+	_ = getRWAPremium(t, srv, "?timeframe=all")
+	genesis := time.Date(2015, 9, 30, 0, 0, 0, 0, time.UTC)
+	if len(oracle.froms) == 0 || len(market.askedFroms) == 0 {
+		t.Fatalf("reads: oracle=%d market=%d, want both legs read", len(oracle.froms), len(market.askedFroms))
+	}
+	for _, from := range append(oracle.froms, market.askedFroms...) {
+		if from.IsZero() || from.After(genesis) {
+			t.Errorf("from = %v, want a non-zero floor at or before pubnet genesis %v", from, genesis)
+		}
 	}
 }
 
