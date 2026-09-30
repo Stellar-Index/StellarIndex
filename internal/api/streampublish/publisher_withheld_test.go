@@ -43,7 +43,10 @@ func TestPublisher_WithheldPairPublishesTheWithholding(t *testing.T) {
 		AssetID: "native", Quote: "fiat:USD", Price: "0.07", PriceType: "vwap",
 		ObservedAt: v1.WireTime(time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)), WindowSeconds: 60,
 	})
-	ch, cancelSub := hub.Subscribe([]string{v1.PriceStreamTopic(asset, quote, 60)}, "")
+	ch, cancelSub, err := hub.Subscribe([]string{v1.PriceStreamTopic(asset, quote, 60)}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancelSub()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
