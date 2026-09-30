@@ -110,6 +110,10 @@ type VWAPUSDFXResolver struct {
 	// pathCache is keyed per asset, not per minute: whether an asset has
 	// ever had a USD path does not vary by trade minute. Same TTL as cache.
 	pathCache map[string]usdPathCacheEntry
+	// sweepAt is the cache size that triggers the next sweep; it doubles
+	// past the survivors so a resident set of fresh entries is not rescanned
+	// on every insert.
+	sweepAt int
 }
 
 type usdPathCacheEntry struct {
@@ -278,10 +282,10 @@ func NewVWAPUSDFXResolver(store *Store, opts VWAPUSDFXResolverOptions) (*VWAPUSD
 // expansion existed, and [NewUSDVolumeQuoteSpec] is where an operator's
 // unparseable peg is rejected on the production wiring path.
 //
-// Matching is therefore string-shaped: [classicKey] renders a wrapper's
-// target in the same "CODE-ISSUER" wire form the peg list is written in,
-// so a peg spelled any other way expands to nothing — which is already
-// what it does in the SQL, where it is bound literally.
+// A parseable classic peg is rendered through [classicKey] so a
+// "CODE:ISSUER" spelling (which config and the quote spec both accept)
+// binds the "CODE-ISSUER" form prices_1m stores and wrappers resolve to.
+// An unparseable one passes through verbatim.
 //
 // Order is deterministic (declared pegs first, then wrappers by contract
 // id) so the bound array — and therefore the query plan — is stable across
@@ -299,8 +303,12 @@ func usdPegForms(classicPegs []string, sacWrappers map[string]string) ([]string,
 	}
 	pegged := make(map[string]struct{}, len(classicPegs))
 	for _, raw := range classicPegs {
-		pegged[raw] = struct{}{}
-		add(raw)
+		form := raw
+		if a, err := canonical.ParseAsset(raw); err == nil && a.Type == canonical.AssetClassic {
+			form = classicKey(a)
+		}
+		pegged[form] = struct{}{}
+		add(form)
 	}
 	sacIDs := make([]string, 0, len(sacWrappers))
 	for sacID := range sacWrappers {
@@ -604,18 +612,16 @@ func (r *VWAPUSDFXResolver) lookupCache(key fxCacheKey) (string, bool) {
 func (r *VWAPUSDFXResolver) storeCache(key fxCacheKey, entry fxCacheEntry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	// Bounded eviction (audit-2026-06-11 G11-05): before the map can
-	// grow unbounded, opportunistically drop every entry past its TTL.
-	// These are entries lookupCache already treats as misses, so the
-	// sweep is correctness-neutral. Only runs when the map is large,
-	// so the O(n) scan is amortised away under steady-state ingest.
-	if len(r.cache) >= fxCacheSweepThreshold {
+	// Drop entries past their TTL (lookupCache already treats them as
+	// misses, so this is correctness-neutral) once the map is large.
+	if len(r.cache) >= max(fxCacheSweepThreshold, r.sweepAt) {
 		now := r.clock()
 		for k, e := range r.cache {
 			if now.Sub(e.cachedAt) > r.cacheTTL {
 				delete(r.cache, k)
 			}
 		}
+		r.sweepAt = 2 * len(r.cache)
 	}
 	r.cache[key] = entry
 }

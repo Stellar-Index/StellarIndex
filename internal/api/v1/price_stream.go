@@ -375,7 +375,11 @@ func (s *Server) handlePriceStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	series, topics := newClosedStreamSeries(asset, quote, window)
-	sub, cancelSub := s.hub.Subscribe(topics, streaming.LastEventIDFrom(r))
+	sub, cancelSub, err := s.hub.Subscribe(topics, streaming.LastEventIDFrom(r))
+	if err != nil {
+		streaming.WriteSubscribeRefused(w)
+		return
+	}
 	defer cancelSub()
 
 	ch := make(chan streaming.Event, closedStreamQueueDepth)

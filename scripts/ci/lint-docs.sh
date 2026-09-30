@@ -638,6 +638,7 @@ for pattern in "${stale_patterns[@]}"; do
     CODE_OF_CONDUCT.md \
     CHANGELOG.md \
     docs/reference/ \
+    docs/audit/recipe.md \
     docs/architecture/ \
     docs/design/ \
     docs/operations/ \

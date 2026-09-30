@@ -107,9 +107,8 @@ func InsertEntryChanges(ctx context.Context, addr string, rows []LedgerEntryChan
 	if err := resolveChangeIndexCollisions(rows); err != nil {
 		return 0, err
 	}
-	// Ops-batch identity from the environment (2026-08-28 r1 incident;
-	// see ops_auth.go) — CH `default` user when unset.
-	auth, err := opsAuth()
+	// Identity from the environment; see ops_auth.go.
+	auth, err := chAuth()
 	if err != nil {
 		return 0, err
 	}

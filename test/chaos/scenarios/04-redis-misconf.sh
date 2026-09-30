@@ -1,26 +1,39 @@
 #!/usr/bin/env bash
 # Scenario 04 — Force Redis into MISCONF (stop-writes-on-bgsave-error)
-# and assert the full F-0039 cascade response chain:
+# and assert the rate limiter's dwell-time policy end to end.
 #
-#   1. /v1/price             → 200 with flags.stale:true  (NOT 500)
-#   2. /v1/oracle/latest     → 503 + Retry-After:30       (Wave-0 step 7)
-#   3. /v1/vwap, /v1/twap    → 503 + Retry-After:30
-#   4. /v1/lending/pools     → 503 + Retry-After:30
-#   5. POST /v1/signup       → 503 + errors/throttle-unavailable AFTER
-#                              the 30s dwell-time window (fail-CLOSED;
-#                              F-0049 / F-0149 / ffc33c15)
+# What MISCONF reaches
+# ────────────────────
+# Redis keeps serving reads under MISCONF and refuses every write. The
+# anonymous GET data routes only READ Redis on the request path; their
+# read-through cache writes are best-effort (a refused SET is logged and
+# the handler answers from the database). The one Redis write every
+# request makes is the rate-limit take (an INCRBY script), and the
+# rate-limit middleware wraps every route except the health/metrics
+# probes. So the limiter's failure policy decides what clients see —
+# internal/ratelimit/doc.go, "Failure mode — dwell-time fail-open
+# inversion":
 #
-# Then heals Redis and verifies every route returns to nominal.
+#   (a) Inside the dwell window (api.rate_limit_dwell, default 30s,
+#       ratelimit.DefaultDwellTime), counted from the FIRST failed take,
+#       the limiter fails OPEN: every route answers exactly as it did
+#       before MISCONF, and never 500.
+#   (b) Once the failures outlast the dwell window it fails CLOSED:
+#       every rate-limited route, POST /v1/signup included, answers 503
+#       errors/throttle-unavailable + Retry-After before its handler runs.
+#
+# Then heals Redis and verifies every GET route returns to its baseline.
 #
 # Why this scenario exists
 # ────────────────────────
-# Pre-Wave-0 (commit a91f901b), Redis MISCONF surfaced as HTTP 500
-# `errors/internal` on 5 handler families — semantically wrong (500 =
-# code bug, 503 = infra) and starved clients of the Retry-After hint
-# that lets well-behaved integrators back off automatically. The
-# May-10 SEV-2 left the API returning 500s for ~17 minutes while
-# operators were still rolling the runbook. This scenario is the
-# CI-side guard that the 503 mapping doesn't silently regress.
+# A write-refusing Redis must surface as a 503 with a Retry-After hint
+# (infra, back off) rather than a 500 (code bug), and a sustained outage
+# must not leave the limiter failing open indefinitely. This scenario is
+# the CI-side guard that neither regresses.
+#
+# The dwell clock is per limiter bucket and stays armed until a full
+# dwell window of unbroken successes, so this scenario relies on the
+# earlier scenarios only probing the limiter-exempt health routes.
 #
 # Reproduction technique
 # ──────────────────────
@@ -36,20 +49,6 @@
 # it as a protected config. Recovery is symmetric: restore the mode +
 # BGSAVE. The already-open AOF file keeps accepting appends; only new
 # file creation (the RDB temp file) fails.
-#
-# Pass criteria + invariants
-# ──────────────────────────
-# - GET routes that *write* a cache entry on success (the cascade-
-#   affected family) MUST return 503 + Retry-After:30 + type URL
-#   ending in `errors/cache-unavailable`. A 500 here is a regression.
-# - GET routes that *only read* and have a fallback path (/v1/price)
-#   MUST stay 200 with flags.stale:true. A 5xx here means the read
-#   path leaks through to Redis writes that aren't supposed to fire.
-# - The signup throttle is fail-CLOSED post-dwell-time: during the
-#   first 30s of MISCONF, signup may still 200 (the dwell-time
-#   tolerates transient Redis blips); after 30s it MUST 503.
-# - Recovery is fast: every route back to baseline within 30s of
-#   `redis-cli BGSAVE` succeeding.
 
 set -euo pipefail
 
@@ -59,9 +58,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/common.sh"
 
 REDIS_CONTAINER="${REDIS_CONTAINER:-stellarindex-redis}"
-# Dwell-time on r1 / dev = 30s (auth.DefaultSignupThrottleDwellTime
-# and ratelimit.DefaultDwellTime both lock to that value — keep this
-# constant in step or the signup-fail-closed assertion will misfire).
+# Must match the API's api.rate_limit_dwell (default 30s).
 DWELL_TIME_SEC="${DWELL_TIME_SEC:-30}"
 HEALTH_URL="$CHAOS_TARGET/v1/healthz"
 PRICE_URL="$CHAOS_TARGET/v1/price?asset=native&quote=fiat:USD"
@@ -70,15 +67,24 @@ VWAP_URL="$CHAOS_TARGET/v1/vwap?base=native&quote=fiat:USD"
 TWAP_URL="$CHAOS_TARGET/v1/twap?base=native&quote=fiat:USD"
 LENDING_URL="$CHAOS_TARGET/v1/lending/pools"
 SIGNUP_URL="$CHAOS_TARGET/v1/signup"
+GET_ROUTES=(
+    "/v1/price|$PRICE_URL"
+    "/v1/oracle/latest|$ORACLE_URL"
+    "/v1/vwap|$VWAP_URL"
+    "/v1/twap|$TWAP_URL"
+    "/v1/lending/pools|$LENDING_URL"
+)
 # Set by force_redis_misconf once the snapshot dir's mode is known, so
 # the EXIT trap only restores a mode it actually changed.
 REDIS_DIR=""
 REDIS_DIR_MODE=""
+PROBE_BODY="$(mktemp)"
 
 chaos_setup
 
 # ─── cleanup: always heal Redis on exit ────────────────────────────
 cleanup() {
+    rm -f "$PROBE_BODY"
     if container_exists "$REDIS_CONTAINER"; then
         log "cleanup: restoring Redis writeable state"
         # Best-effort: this runs from the EXIT trap and must not itself
@@ -104,57 +110,36 @@ trap cleanup EXIT
 
 # ─── helpers ───────────────────────────────────────────────────────
 
-# http_status_and_header URL HEADER [TIMEOUT_SEC] →
-#   echoes "<status> <header-value>" (header-value may be empty).
-# Used to assert both the status code AND the Retry-After hint in a
-# single curl invocation.
-http_status_and_header() {
-    local url="$1"
-    local header="$2"
-    local timeout="${3:-5}"
-    local out
-    out="$(curl --silent --output /dev/null \
-                 --write-out "%{http_code} %header{$header}" \
-                 --max-time "$timeout" "$url" 2>/dev/null || echo "000 ")"
-    echo "$out"
+# probe METHOD URL [DATA] — one request; sets PROBE_STATUS and
+# PROBE_RETRY_AFTER and leaves the body in $PROBE_BODY. curl already
+# prints "000" on a connect/timeout failure, so its exit is swallowed.
+probe() {
+    local method="$1" url="$2" data="${3:-}" out
+    local args=(--silent --max-time 5 --output "$PROBE_BODY"
+                --write-out '%{http_code} %header{retry-after}' -X "$method")
+    if [ -n "$data" ]; then
+        args+=(-H 'Content-Type: application/json' -d "$data")
+    fi
+    out="$(curl "${args[@]}" "$url" 2>/dev/null || true)"
+    PROBE_STATUS="${out%% *}"
+    PROBE_RETRY_AFTER="${out#* }"
 }
 
-# Assert a route is in the cascade-503 state. Pass if status==503
-# AND Retry-After is set (per writeCacheUnavailableProblem).
-assert_cascade_503() {
+# assert_throttle_unavailable NAME METHOD URL [DATA] — the fail-CLOSED
+# answer: 503, a Retry-After hint, and the throttle-unavailable type.
+assert_throttle_unavailable() {
     local name="$1"
-    local url="$2"
-    local out status retry
-    out="$(http_status_and_header "$url" "Retry-After")"
-    status="${out%% *}"
-    retry="${out#* }"
-    if [ "$status" != "503" ]; then
-        die "$name: expected 503 under MISCONF, got $status"
+    probe "$2" "$3" "${4:-}"
+    if [ "$PROBE_STATUS" != "503" ]; then
+        die "$name: expected 503 throttle-unavailable after the ${DWELL_TIME_SEC}s dwell window, got $PROBE_STATUS"
     fi
-    if [ -z "$retry" ] || [ "$retry" = " " ]; then
-        warn "$name: 503 received but Retry-After header was empty"
-    else
-        log "$name: ✓ 503 + Retry-After:${retry% }"
+    if [ -z "$PROBE_RETRY_AFTER" ]; then
+        die "$name: 503 without a Retry-After header"
     fi
-}
-
-# Assert /v1/price stays 200 with stale flag — degraded but not broken.
-assert_price_stale() {
-    local out status
-    out="$(curl --silent --max-time 5 --write-out '\n%{http_code}' "$PRICE_URL" 2>/dev/null || echo "ERR")"
-    status="$(echo "$out" | tail -1)"
-    if [ "$status" != "200" ]; then
-        # 200 is preferred, but a 503 cache-unavailable on /v1/price
-        # is documented Wave-0 behaviour for the cold-cache case;
-        # treat it as acceptable (the regression we're hunting is a
-        # 500, not a 503).
-        case "$status" in
-            503) log "/v1/price returned 503 under MISCONF (cold-cache; acceptable)" ;;
-            *)   die "/v1/price expected 200|503 under MISCONF, got $status" ;;
-        esac
-        return
+    if ! grep -q 'errors/throttle-unavailable' "$PROBE_BODY"; then
+        die "$name: 503 without the errors/throttle-unavailable problem type: $(head -c 300 "$PROBE_BODY")"
     fi
-    log "/v1/price: ✓ 200 (read path tolerates MISCONF)"
+    log "$name: ✓ 503 errors/throttle-unavailable + Retry-After:$PROBE_RETRY_AFTER"
 }
 
 # redis_config_set NAME VALUE — returns non-zero with Redis's reply on
@@ -229,74 +214,64 @@ heal_redis_misconf() {
 }
 
 # ─── 1. baseline ───────────────────────────────────────────────────
+# Each GET route's pre-MISCONF status is its nominal answer on this
+# stack (an empty dev stack may legitimately 404 a pair with no trades).
 assert_status "$HEALTH_URL" "200"
+BASELINE=()
+for i in "${!GET_ROUTES[@]}"; do
+    name="${GET_ROUTES[$i]%%|*}"
+    probe GET "${GET_ROUTES[$i]#*|}"
+    case "$PROBE_STATUS" in
+        000|5??) die "$name: baseline returned $PROBE_STATUS before any fault was injected" ;;
+    esac
+    BASELINE[i]="$PROBE_STATUS"
+    log "$name: baseline $PROBE_STATUS"
+done
 
 # ─── 2. force MISCONF ──────────────────────────────────────────────
 force_redis_misconf
 
-# Give the API a tick to pick up the new state (its cache writes
-# fire on read-through; the next /v1/price miss will surface the
-# MISCONF reply).
-log "waiting 3s for API to observe MISCONF on next write"
-sleep 3
+# ─── 3. inside the dwell window: fail OPEN ─────────────────────────
+# The first failed take below arms the limiter's dwell clock.
+dwell_armed_at="$(date -u +%s)"
+log "phase (a): limiter must fail OPEN for ${DWELL_TIME_SEC}s from the first refused take"
+for i in "${!GET_ROUTES[@]}"; do
+    name="${GET_ROUTES[$i]%%|*}"
+    probe GET "${GET_ROUTES[$i]#*|}"
+    if [ "$(($(date -u +%s) - dwell_armed_at))" -ge "$DWELL_TIME_SEC" ]; then
+        die "$name: phase (a) overran the ${DWELL_TIME_SEC}s dwell window; its answer ($PROBE_STATUS) proves nothing"
+    fi
+    if [ "$PROBE_STATUS" != "${BASELINE[i]}" ]; then
+        die "$name: expected baseline ${BASELINE[i]} inside the dwell window (fail-OPEN), got $PROBE_STATUS"
+    fi
+    log "$name: ✓ $PROBE_STATUS (fail-OPEN inside the dwell window)"
+done
 
-# ─── 3. assert cascade response chain ──────────────────────────────
-log "verifying cascade response chain"
-assert_cascade_503 "/v1/oracle/latest" "$ORACLE_URL"
-assert_cascade_503 "/v1/vwap"          "$VWAP_URL"
-assert_cascade_503 "/v1/twap"          "$TWAP_URL"
-assert_cascade_503 "/v1/lending/pools" "$LENDING_URL"
-assert_price_stale
-
-# ─── 4. signup throttle fail-CLOSED after dwell-time ──────────────
-# During the first 30s of MISCONF the rate-limit middleware still
-# fails open (the dwell-time policy tolerates transient blips);
-# only AFTER 30s sustained MISCONF does it fail closed with 503 +
-# errors/throttle-unavailable. Sleep through the dwell window then
-# assert.
-elapsed_since_misconf="$(($(date -u +%s) - SCENARIO_START - 3))"
-remaining="$((DWELL_TIME_SEC - elapsed_since_misconf + 2))"
+# ─── 4. past the dwell window: fail CLOSED ─────────────────────────
+remaining="$((dwell_armed_at + DWELL_TIME_SEC + 2 - $(date -u +%s)))"
 if [ "$remaining" -gt 0 ]; then
-    log "sleeping ${remaining}s for signup dwell-time window to elapse"
+    log "sleeping ${remaining}s for the dwell window to elapse"
     sleep "$remaining"
 fi
-log "verifying signup throttle fail-CLOSED post-dwell-time"
-signup_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
-                      --max-time 5 -X POST \
-                      -H 'Content-Type: application/json' \
-                      -d '{"email":"chaos-04@example.test"}' \
-                      "$SIGNUP_URL" 2>/dev/null || echo "000")"
-case "$signup_status" in
-    503) log "POST /v1/signup: ✓ 503 (fail-CLOSED post-dwell-time)" ;;
-    # 429 = legitimately throttled (not the failure mode we're
-    # testing but indicates the limiter is alive); fail anything
-    # that's NOT a 5xx envelope or 429.
-    429) log "POST /v1/signup returned 429 — rate-limited (acceptable; throttle alive)" ;;
-    *)   die "POST /v1/signup expected 503 post-dwell, got $signup_status" ;;
-esac
+log "phase (b): every rate-limited route must fail CLOSED"
+for route in "${GET_ROUTES[@]}"; do
+    assert_throttle_unavailable "${route%%|*}" GET "${route#*|}"
+done
+# The limiter rejects before the handler runs, so this creates no signup.
+assert_throttle_unavailable "POST /v1/signup" POST "$SIGNUP_URL" '{"email":"chaos-04@example.test"}'
 
 # ─── 5. heal + verify nominal ──────────────────────────────────────
+# The first successful take lets requests through again; the dwell
+# clock itself only disarms after a full window of unbroken successes.
 heal_redis_misconf
-
-# Give the API time to observe the healed Redis. The next cache
-# write will succeed and the 503 surface will revert.
-assert_recovers_within "$ORACLE_URL" "200" 30
-# Lenient final assertion for /v1/vwap: on a fresh stack the pair may
-# legitimately have NO trades and return 404 — that is NOT a
-# regression (the contract here is "not stuck at 503"). The previous
-# code used assert_recovers_within, which calls die()→exit on a
-# non-200, so the trailing `|| log ...` NEVER fired and a no-trades
-# 404 produced a FALSE regression verdict (G22-05). Use a non-fatal
-# wait that simply gives recovery time, then let the 200|404
-# case-check below be the real assertion.
-wait_for_status "$VWAP_URL" "200" 30 || \
-    log "/v1/vwap did not reach 200 within 30s (may be legitimate no-trades 404)"
-post_heal_vwap="$(http_status "$VWAP_URL" 5)"
-case "$post_heal_vwap" in
-    200|404) log "/v1/vwap post-heal: $post_heal_vwap (acceptable)" ;;
-    *)       die "/v1/vwap stuck at $post_heal_vwap after Redis heal" ;;
-esac
-
+for i in "${!GET_ROUTES[@]}"; do
+    name="${GET_ROUTES[$i]%%|*}"
+    url="${GET_ROUTES[$i]#*|}"
+    if ! wait_for_status "$url" "${BASELINE[i]}" 30; then
+        die "$name: did not return to baseline ${BASELINE[i]} within 30s of the Redis heal (last: $(http_status "$url" 5))"
+    fi
+    log "$name: ✓ back to baseline ${BASELINE[i]}"
+done
 assert_recovers_within "$HEALTH_URL" "200" 30
 
-chaos_teardown_pass "F-0039 cascade: 503-on-MISCONF mapped, signup fail-CLOSED post-dwell, recovered within 30s of heal"
+chaos_teardown_pass "MISCONF: limiter fail-OPEN inside the ${DWELL_TIME_SEC}s dwell window, 503 throttle-unavailable after it (signup included), recovered within 30s of heal"
