@@ -1,6 +1,8 @@
 package sdex
 
 import (
+	"errors"
+
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -49,7 +51,8 @@ func (d *Decoder) Decode(ctx dispatcher.OpContext) ([]consumer.Event, error) {
 
 // DecodeCounted is the completeness-census-facing variant of Decode: same
 // decode logic, but also returns how many claim atoms failed to decode
-// (decodeClaimAtom errors — structurally malformed claims, NOT the trades
+// (decodeClaimAtom errors other than [ErrNoOpClaim] — structurally malformed
+// claims, NOT the both-zero no-op claims both sides drop, NOR the trades
 // canonical.Trade.Validate() later rejects as one-sided fills, which both
 // the live writer and the census intentionally filter symmetrically).
 //
@@ -89,6 +92,9 @@ func (*Decoder) decodeCounted(ctx dispatcher.OpContext) ([]consumer.Event, int) 
 			i,
 			taker,
 		)
+		if errors.Is(err, ErrNoOpClaim) {
+			continue
+		}
 		if err != nil {
 			// Count the per-claim failure HERE. The previous comment
 			// said "counted by the dispatcher", but the dispatcher only
