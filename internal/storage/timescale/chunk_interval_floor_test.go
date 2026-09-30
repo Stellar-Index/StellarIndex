@@ -128,7 +128,7 @@ func TestHypertableChunkIntervals_LedgerReadsKnownWidths(t *testing.T) {
 		"trades":          chunkIntervalFloor,  // 1 day in 0001, widened by 0062
 		"freeze_events":   30 * 24 * time.Hour, // 0018
 		"fx_quotes":       30 * 24 * time.Hour, // 0028
-		"fx_fixings":      30 * 24 * time.Hour, // 0192
+		"fx_fixings":      30 * 24 * time.Hour, // 0193
 		"rozo_events":     chunkIntervalFloor,  // 0039
 		"prices_1m":       0,                   // a CAGG, never a create_hypertable call
 		"sep41_transfers": chunkIntervalFloor,  // 1 day in 0047, widened by 0171

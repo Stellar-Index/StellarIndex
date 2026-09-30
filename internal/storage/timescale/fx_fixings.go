@@ -10,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// FXFixing is one fx_fixings row (migration 0192): a vendor-time FX bar,
+// FXFixing is one fx_fixings row (migration 0193): a vendor-time FX bar,
 // units of Ticker per 1 USD. RateUSD is exact NUMERIC text on write and read.
 type FXFixing struct {
 	Ticker     string
@@ -237,8 +237,9 @@ func (s *Store) fxFixingDailyArm(ctx context.Context, tickers []string, cutoff t
 	return nil
 }
 
-// fxFixingFirstBarEnds returns the earliest bar_end per ticker that has any
-// fixing. One index probe per ticker.
+// fxFixingFirstBarEnds returns, per ticker that has any fixing, the bar_end
+// of its earliest bar. Ordering on the partitioning column lets the
+// chunk-ordered scan stop at the first chunk holding the ticker.
 func (s *Store) fxFixingFirstBarEnds(ctx context.Context, tickers []string) (map[string]time.Time, error) {
 	const q = `
 		SELECT t.ticker, f.bar_end
@@ -246,7 +247,7 @@ func (s *Store) fxFixingFirstBarEnds(ctx context.Context, tickers []string) (map
 		  CROSS JOIN LATERAL (
 		        SELECT bar_end FROM fx_fixings
 		         WHERE ticker = t.ticker
-		         ORDER BY bar_end ASC
+		         ORDER BY bar_start ASC, bar_end ASC
 		         LIMIT 1) f
 	`
 	rows, err := s.db.QueryContext(ctx, q, tickers)

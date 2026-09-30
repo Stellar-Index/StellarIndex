@@ -1,4 +1,4 @@
--- 0192 up — create fx_fixings (vendor-time FX bars: hourly where Massive has them, daily below)
+-- 0193 up — create fx_fixings (vendor-time FX bars: hourly where Massive has them, daily below)
 --
 -- A closed derived fiat price must convert at an FX rate that is a pure
 -- function of the bucket it prices, identical in every region and on every
@@ -30,7 +30,7 @@ CREATE TABLE fx_fixings (
     bar_end      timestamptz NOT NULL,
     rate_usd     numeric     NOT NULL CHECK (rate_usd > 0),
     source       text        NOT NULL,
-    generation   integer     NOT NULL DEFAULT 0,
+    generation   bigint      NOT NULL DEFAULT 0,
     ingested_at  timestamptz NOT NULL DEFAULT clock_timestamp(),
     CHECK (bar_end > bar_start),
     -- A daily bar and the midnight hourly bar share bar_start.

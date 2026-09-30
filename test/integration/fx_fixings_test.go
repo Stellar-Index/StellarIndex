@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestFXFixings covers the fx_fixings table (migration 0192): the append
+// TestFXFixings covers the fx_fixings table (migration 0193): the append
 // path and the vendor-time binding a closed fiat cross converts at. One
 // container; each subtest owns its tickers.
 func TestFXFixings(t *testing.T) {

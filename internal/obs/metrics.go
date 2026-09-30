@@ -1842,7 +1842,7 @@ var ExternalFXBaselineHealedTotal = prometheus.NewCounterVec(
 	[]string{"source"},
 )
 
-// FX fixings (fx_fixings, migration 0192): the vendor-time hourly series a
+// FX fixings (fx_fixings, migration 0193): the vendor-time hourly series a
 // closed derived fiat price binds to. The forex worker appends it after each
 // refresh; these carry its liveness and the gate's verdicts.
 var (

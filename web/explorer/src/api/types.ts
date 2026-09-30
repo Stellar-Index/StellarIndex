@@ -586,8 +586,8 @@ export interface paths {
          *     fixing bound to the bucket's close, never at the live rate. When
          *     no fixing binds within the 76 h lookback the price is withheld:
          *     a `price-withheld` 404 titled "Price withheld — FX leg
-         *     unavailable" (reason `fx_leg_unavailable`), omitted and listed as
-         *     withheld on `/v1/price/batch`. A failed FX read is a 503
+         *     unavailable", omitted and listed as withheld on
+         *     `/v1/price/batch`. A failed FX read is a 503
          *     `price-unavailable`, and the batch row is omitted without being
          *     listed. `/v1/price/tip` keeps the live rate.
          */
@@ -10824,7 +10824,7 @@ export interface components {
              * @enum {string}
              */
             fx_resolution?: "hourly" | "daily";
-            /** @description The USD price a closed-surface USD-anchored fiat cross converted: `price` × `fx_rate` = the served price, and `observed_at` is the served `observed_at`. */
+            /** @description The USD price a closed-surface USD-anchored fiat cross converted: `price` × `fx_rate` equals the served price up to its rendering (15 fractional digits, more for a very small rate, trailing zeros trimmed), and `observed_at` is the served `observed_at`. */
             usd_leg?: {
                 /** @description Decimal string. Never JSON number. */
                 price: string;

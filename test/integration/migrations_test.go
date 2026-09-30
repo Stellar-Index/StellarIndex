@@ -237,13 +237,14 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	assertColumnType(t, db, ctx, "defindex_fees", "derive_generation", "bigint")
 	assertColumnType(t, db, ctx, "defindex_admin_events", "derive_generation", "bigint")
 
-	// 0192 — fx_fixings, the vendor-time FX series: hypertable, the
+	// 0193 — fx_fixings, the vendor-time FX series: hypertable, the
 	// binding index, compression, and no retention policy.
 	assertHypertableExists(t, db, ctx, "fx_fixings")
 	assertIndexExists(t, db, ctx, "fx_fixings", "fx_fixings_ticker_bar_end_idx")
 	assertCompressionEnabled(t, db, ctx, "fx_fixings", true)
 	assertPolicyAttached(t, db, ctx, "fx_fixings", "policy_compression")
 	assertPolicyAbsent(t, db, ctx, "fx_fixings", "policy_retention")
+	assertColumnType(t, db, ctx, "fx_fixings", "generation", "bigint")
 
 	// ─── Down: roll everything back ─────────────────────────────
 	// 0191's down refuses (LOUD) while any trades row has a zero leg;

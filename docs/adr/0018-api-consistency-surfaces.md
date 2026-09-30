@@ -146,7 +146,7 @@ where `USD/EUR` comes from a forex source per ADR-0010):
 > surfaces (`/v1/price`, `/v1/price/batch`, the SEP-40 reads) used the
 > in-memory live FX snapshot, so a closed answer moved on every forex
 > refresh and differed by region. They now bind the vendor's time series
-> (`fx_fixings`, migration 0192): the bar with the greatest `bar_end ≤
+> (`fx_fixings`, migration 0193): the bar with the greatest `bar_end ≤
 > E − 3h` (hourly over daily, then the highest generation) within
 > `pricing_guard.fx_cross_max_age_hours`, where E is the USD leg's bucket
 > end (fiat/fiat: the current minute; a frozen leg: the held value's
