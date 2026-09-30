@@ -111,6 +111,7 @@ tests:
               severity: ticket
               team: stellarindex
               component: infra
+              alert_family: zfs_pool_capacity
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
               summary: "ZFS data pool free space low (2% of capacity free)"
@@ -130,6 +131,7 @@ tests:
               severity: page
               team: stellarindex
               component: infra
+              alert_family: zfs_pool_capacity
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
               summary: "ZFS data pool CRITICALLY low (2% of capacity free) (SEV-1)"
@@ -166,6 +168,7 @@ tests:
               severity: ticket
               team: stellarindex
               component: infra
+              alert_family: zfs_pool_capacity
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
               summary: "ZFS data pool free space low (6.486% of capacity free)"

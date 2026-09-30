@@ -1846,6 +1846,7 @@ jobs:
           python3 -m pip install --quiet 'Jinja2==3.1.6' 'PyYAML==6.0.2'
           ./scripts/ci/check-alertmanager-parity.sh
           ./scripts/ci/check-alertmanager-parity-test.sh
+          bash configs/alertmanager/inhibit-rules-test.sh
       - name: validate the rules-apply script (and that it still counts alerts)
         # apply-rules.sh verifies a deploy by asserting every alert it
         # extracted from the repo actually loaded on the host. That check
