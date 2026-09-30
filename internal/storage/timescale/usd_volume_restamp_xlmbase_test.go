@@ -41,7 +41,11 @@ func xlmBaseScan(base, quote, baseAmt, quoteAmt string, stored *string) xlmBaseR
 // insert path calls.
 func xlmAnchorAt(r USDVolumeFXResolver) func(canonical.Trade) *string {
 	return func(t canonical.Trade) *string {
-		return tradeUSDVolumeViaXLMBaseAnchorFor(context.Background(), t, r)
+		v, err := tradeUSDVolumeViaXLMBaseAnchorFor(context.Background(), t, r)
+		if err != nil {
+			panic(err)
+		}
+		return v
 	}
 }
 

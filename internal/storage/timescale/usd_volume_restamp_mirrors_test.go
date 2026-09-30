@@ -5,6 +5,7 @@ package timescale
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"strings"
 	"testing"
@@ -52,7 +53,7 @@ func bigIntFromString(t *testing.T, s string) *big.Int {
 // the same closure [Store.PlanXLMQuoteUSDVolumeRestamp] injects.
 func xlmQuoteValuerAt(r USDVolumeFXResolver) restampValuer {
 	return func(t canonical.Trade) (*string, error) {
-		return tradeUSDVolumeViaXLMQuoteAnchorFor(context.Background(), t, r), nil
+		return tradeUSDVolumeViaXLMQuoteAnchorFor(context.Background(), t, r)
 	}
 }
 
@@ -60,7 +61,7 @@ func xlmQuoteValuerAt(r USDVolumeFXResolver) restampValuer {
 // the as-of gate left out (it is pinned separately, against a database).
 func cexFiatValuerAt(r USDVolumeFXResolver) restampValuer {
 	return func(t canonical.Trade) (*string, error) {
-		return tradeUSDVolumeViaFiatQuoteFor(context.Background(), t, r), nil
+		return tradeUSDVolumeViaFiatQuoteFor(context.Background(), t, r)
 	}
 }
 
@@ -106,7 +107,10 @@ func TestXLMQuoteRestampDecide_ValuesTheXLMLegAndIsLockstepWithTheInsertPath(t *
 		BaseAmount:  canonical.NewAmount(bigIntFromString(t, "49999996")),
 		QuoteAmount: canonical.NewAmount(bigIntFromString(t, "7132667")),
 	}
-	viaBase := tradeUSDVolumeViaXLMBaseAnchorFor(context.Background(), mirrored, resolver)
+	viaBase, err := tradeUSDVolumeViaXLMBaseAnchorFor(context.Background(), mirrored, resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if viaBase == nil || *viaBase != got.Want {
 		t.Errorf("xlm-quote wrote %q, the base-side anchor computes %v for the same economic trade", got.Want, viaBase)
 	}
@@ -224,7 +228,7 @@ func TestRestampTierGates_TheSubstanceGate(t *testing.T) {
 		switch name {
 		case "xlm-base":
 			value = func(tr canonical.Trade) (*string, error) {
-				return tradeUSDVolumeViaXLMBaseAnchorFor(context.Background(), tr, resolver), nil
+				return tradeUSDVolumeViaXLMBaseAnchorFor(context.Background(), tr, resolver)
 			}
 		case "xlm-quote":
 			value = xlmQuoteValuerAt(resolver)
@@ -240,6 +244,48 @@ func TestRestampTierGates_TheSubstanceGate(t *testing.T) {
 		}
 		if got.Want != "" {
 			t.Errorf("%s: token/token row was valued at %q — the substance gate is open", name, got.Want)
+		}
+	}
+}
+
+// TestRestampDecide_ResolverErrorAbortsNotDeclines: a rate source that
+// cannot be read must fail the run, not be filed as "anchor declined" —
+// otherwise a broken read reports a whole window as unpriceable.
+func TestRestampDecide_ResolverErrorAbortsNotDeclines(t *testing.T) {
+	t.Parallel()
+	readErr := errors.New("prices_1m read failed")
+	broken := stubFXResolver{err: readErr}
+	cases := []struct {
+		name  string
+		row   restampScanRow
+		gate  restampGate
+		value restampValuer
+	}{
+		{
+			name: "xlm-base",
+			row:  mirrorScan("sdex", "native", xlmBaseTestQuote, "49999996", "7132667", strptr("0.00372265")),
+			gate: xlmBaseTierFor,
+			value: func(tr canonical.Trade) (*string, error) {
+				return tradeUSDVolumeViaXLMBaseAnchorFor(context.Background(), tr, broken)
+			},
+		},
+		{
+			name:  "xlm-quote",
+			row:   mirrorScan("sdex", xlmBaseTestQuote, "native", "7132667", "49999996", strptr("0.00372265")),
+			gate:  xlmQuoteTierFor,
+			value: xlmQuoteValuerAt(broken),
+		},
+		{
+			name:  "cex-fx",
+			row:   mirrorScan("binance", "crypto:BTC", "fiat:EUR", "100000", "25000000000", nil),
+			gate:  cexFiatTierFor,
+			value: cexFiatValuerAt(broken),
+		},
+	}
+	for _, tc := range cases {
+		_, disp, err := restampDecide(tc.row, nil, tc.gate, tc.value, true, nil)
+		if !errors.Is(err, readErr) {
+			t.Errorf("%s: resolver read error surfaced as err=%v disposition=%v, want the error", tc.name, err, disp)
 		}
 	}
 }
