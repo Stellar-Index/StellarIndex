@@ -5865,11 +5865,11 @@ func prewarmClassicLakeSupply(ctx context.Context, srv *v1.Server) {
 
 // prewarmIssuerLimits are the /v1/issuers limits worth keeping warm.
 //
-// The cache key is per-limit (newCacheKey("ListIssuers").int(limit)), so
-// warming a limit nobody requests is a phantom slot that costs a query
-// and helps no one — the /v1/pools lesson in [prewarmLight], where a
-// mismatched key left every user request paying 10-30s against a cache
-// that looked warm.
+// CachedIssuersReader serves every limit from one ceiling-sized entry, so
+// the first of these fills it and the rest are hits; the list stays so the
+// guard test can prove each real caller's limit lands warm — the /v1/pools
+// lesson in [prewarmLight], where a mismatched key left every user request
+// paying 10-30s against a cache that looked warm.
 //
 // These are the limits real callers actually send:
 //   - 1 and 100 — the explorer.

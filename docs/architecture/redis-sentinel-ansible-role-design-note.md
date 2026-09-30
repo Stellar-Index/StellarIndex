@@ -94,7 +94,7 @@ role lands so the source-of-truth stops contradicting itself.
 | Decision | Source | Value |
 |---|---|---|
 | Topology | This role decides | Sentinel: 1 primary + 2 replicas + 3 Sentinels (one per host) |
-| Persistence | ha-plan §3.4 | AOF every-second + RDB nightly |
+| Persistence | ha-plan §3.4 | AOF every-second + local RDB snapshots (no off-host copy) |
 | Failover RTO | ha-plan §3.4 | 15-30 s |
 | Cross-region replication | ha-plan §3.4 | Explicitly NO — cache-only, re-hydrates from Timescale |
 | Front | **shipped** | Client-side Sentinel-aware discovery via go-redis `FailoverClient` in `internal/storage/redisclient/`. Application binaries pass `redis_sentinel_addrs` + `redis_master_name` + `redis_username` + `redis_password` and the client resolves the current primary automatically. No HAProxy or VIP required. |
