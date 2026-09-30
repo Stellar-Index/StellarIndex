@@ -433,6 +433,11 @@ explicit override:
 PARTIALS="PART1 PART2 PART3" galexie-archive-fill
 ```
 
+The mirror runs as the bucket-scoped writer (`ARCHIVE_ALIAS`,
+`archivewriter`), which cannot delete. The partials delete goes through
+`ARCHIVE_DELETE_ALIAS` (default `local`, MinIO root); if that alias is
+not configured the run exits 1 before deleting anything.
+
 Each entry must be a full partition name such as
 `FC42F7FF--62720000-62783999`, with no trailing slash. If any entry is
 not, the script rejects the whole list before deleting anything and
