@@ -113,22 +113,16 @@ jobs:
             TARGET="${USER}@${R1_HOST}"
             SSH_OPTS=(-i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=20)
 
-            {
-              scp "${SSH_OPTS[@]}" -q configs/prometheus/apply-rules.sh \
-                "${TARGET}:/tmp/apply-rules.sh" &&
+            # PROM_URL defaults to localhost:9090 inside apply-rules.sh,
+            # which is correct here — this ssh runs the check ON r1,
+            # where Prometheus's rules API is reachable, rather than
+            # tunnelling it (the lifecycle/query API is not exposed
+            # off-host). One session into a fresh mktemp -d (0700): nothing
+            # is staged at a predictable path another host user could pre-plant.
+            (cd configs/prometheus && tar -cf - apply-rules.sh rules.r1/*.yml) |
               ssh "${SSH_OPTS[@]}" "$TARGET" \
-                'rm -rf /tmp/rules.r1.check && mkdir -p /tmp/rules.r1.check' &&
-              scp "${SSH_OPTS[@]}" -q configs/prometheus/rules.r1/*.yml \
-                "${TARGET}:/tmp/rules.r1.check/" &&
-              # PROM_URL defaults to localhost:9090 inside apply-rules.sh,
-              # which is correct here — this ssh runs the check ON r1,
-              # where Prometheus's rules API is reachable, rather than
-              # tunnelling it (the lifecycle/query API is not exposed
-              # off-host).
-              ssh "${SSH_OPTS[@]}" "$TARGET" \
-                'bash /tmp/apply-rules.sh --live-check /tmp/rules.r1.check'
-            } > /tmp/live-check.txt 2>&1 || rc=$?
-            ssh "${SSH_OPTS[@]}" "$TARGET" 'rm -rf /tmp/rules.r1.check /tmp/apply-rules.sh' || true
+                'set -eu; d=$(mktemp -d); trap "rm -rf -- \"\$d\"" EXIT; tar -xf - -C "$d"; bash "$d/apply-rules.sh" --live-check "$d/rules.r1"' \
+              > /tmp/live-check.txt 2>&1 || rc=$?
             report="$(cat /tmp/live-check.txt)"
           fi
           echo "$report"

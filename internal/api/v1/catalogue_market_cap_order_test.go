@@ -8,6 +8,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -144,5 +147,137 @@ func TestCatalogueListingRanksOnTheFilledMarketCap(t *testing.T) {
 	first := rankedPage(t, ts, "/v1/assets?asset_class=stablecoin&limit=1")
 	if len(first) != 1 || first[0].Slug != "eurc" {
 		t.Fatalf("limit=1 page = %+v, want [eurc] (the largest market cap in the class)", first)
+	}
+}
+
+// tickingTwinAssets is rankedTwinAssets whose caps can swap order between
+// requests, standing in for an FX or price tick between two page reads.
+type tickingTwinAssets struct {
+	rankedTwinAssets
+	swapped atomic.Bool
+}
+
+func (s *tickingTwinAssets) LatestSupplyObservations(
+	ctx context.Context, window time.Duration,
+) (map[string]timescale.SupplyObservation, error) {
+	out, err := s.rankedTwinAssets.LatestSupplyObservations(ctx, window)
+	if s.swapped.Load() {
+		usdc, eurc := rankedTwins[rankUSDCIssuer][0], rankedTwins[rankEURCIssuer][0]
+		out[usdc], out[eurc] = out[eurc], out[usdc]
+	}
+	return out, err
+}
+
+// TestCataloguePagesSurviveARerank walks the class listing one row per page
+// with the caps re-ordering after page 1. Every row must be served exactly
+// once: the cursor has to name what was served, not a position in a list
+// that is re-ranked on every request.
+func TestCataloguePagesSurviveARerank(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assets := &tickingTwinAssets{}
+	ts := httpTestServer(t, v1.New(v1.Options{
+		AssetsReader:       assets,
+		VerifiedCurrencies: cat,
+	}))
+
+	want := len(rankedPage(t, ts, "/v1/assets?asset_class=stablecoin&limit=100"))
+	order := walkCataloguePages(t, ts, "/v1/assets?asset_class=stablecoin&limit=1", &assets.swapped)
+	assertEachServedOnceEURCFirst(t, order, want)
+}
+
+// TestUnifiedCataloguePagesSurviveARerank is the same walk over the unified
+// listing's catalogue phase, whose `catalogue:` cursor must name the served
+// rows too.
+func TestUnifiedCataloguePagesSurviveARerank(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := httpTestServer(t, v1.New(v1.Options{
+		AssetsReader:       &rankedTwinAssets{},
+		VerifiedCurrencies: cat,
+	}))
+	var never atomic.Bool
+	want := len(walkCataloguePages(t, baseline, "/v1/assets?asset_class=all&limit=1", &never))
+
+	assets := &tickingTwinAssets{}
+	ts := httpTestServer(t, v1.New(v1.Options{
+		AssetsReader:       assets,
+		VerifiedCurrencies: cat,
+	}))
+	order := walkCataloguePages(t, ts, "/v1/assets?asset_class=all&limit=1", &assets.swapped)
+	assertEachServedOnceEURCFirst(t, order, want)
+}
+
+// walkCataloguePages follows pagination.next from path until the listing
+// ends or leaves the catalogue phase, setting tick after page 1.
+func walkCataloguePages(t *testing.T, ts *testServer, path string, tick *atomic.Bool) []string {
+	t.Helper()
+	var order []string
+	cursor := ""
+	for page := 0; page < 500; page++ {
+		resp := mustGet(t, ts.URL+path+"&cursor="+url.QueryEscape(cursor))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("page %d: status %d", page, resp.StatusCode)
+		}
+		var env struct {
+			Data       []rankedRow `json:"data"`
+			Pagination *struct {
+				Next string `json:"next"`
+			} `json:"pagination"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+			t.Fatalf("page %d: decode: %v", page, err)
+		}
+		for _, r := range env.Data {
+			order = append(order, r.Slug)
+		}
+		tick.Store(true)
+		if env.Pagination == nil || env.Pagination.Next == "" || strings.HasPrefix(env.Pagination.Next, "classic:") {
+			return order
+		}
+		cursor = env.Pagination.Next
+	}
+	t.Fatalf("walk of %s did not end: %v", path, order)
+	return nil
+}
+
+func assertEachServedOnceEURCFirst(t *testing.T, order []string, want int) {
+	t.Helper()
+	seen := map[string]int{}
+	for _, slug := range order {
+		seen[slug]++
+	}
+	if len(order) != want || len(seen) != want {
+		t.Fatalf("walked %d rows (%d distinct), want each of %d once: %v", len(order), len(seen), want, order)
+	}
+	if order[0] != "eurc" || order[1] != "usdc" {
+		t.Errorf("order = %v, want eurc (largest on page 1) then usdc (largest of the rest after the tick)", order)
+	}
+}
+
+func TestCatalogueListingRejectsAForeignCursor(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httpTestServer(t, v1.New(v1.Options{
+		AssetsReader:       &rankedTwinAssets{},
+		VerifiedCurrencies: cat,
+	}))
+	for _, cursor := range []string{"2", "not-a-cursor", "W10"} { // W10 = base64url("[]")
+		resp := mustGet(t, ts.URL+"/v1/assets?asset_class=stablecoin&limit=1&cursor="+cursor)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("cursor %q: status %d, want 400", cursor, resp.StatusCode)
+		}
+	}
+	for _, cursor := range []string{"catalogue:2", "catalogue:abc", "catalogue:W10"} {
+		resp := mustGet(t, ts.URL+"/v1/assets?asset_class=all&limit=1&cursor="+cursor)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("cursor %q: status %d, want 400", cursor, resp.StatusCode)
+		}
 	}
 }

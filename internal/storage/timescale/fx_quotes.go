@@ -156,6 +156,39 @@ func (s *Store) ListFXHistory(ctx context.Context, ticker string, from, to time.
 	return out, nil
 }
 
+// LatestFXQuotes returns the newest fx_quotes row per ticker whose bucket
+// is at or after since, rates as exact NUMERIC text. The forex worker
+// seeds its held rates from it on cold start.
+func (s *Store) LatestFXQuotes(ctx context.Context, since time.Time) ([]FXQuote, error) {
+	const stmt = `
+		SELECT DISTINCT ON (ticker)
+		       bucket, ticker, rate_usd::text, inverse_usd::text, COALESCE(source, '')
+		  FROM fx_quotes
+		 WHERE bucket >= $1::timestamptz
+		 ORDER BY ticker, bucket DESC
+	`
+	rows, err := s.db.QueryContext(ctx, stmt, since.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("timescale: LatestFXQuotes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []FXQuote
+	for rows.Next() {
+		var q FXQuote
+		if err := rows.Scan(&q.Bucket, &q.Ticker, &q.RateUSDText, &q.InverseUSDText, &q.Source); err != nil {
+			return nil, fmt.Errorf("timescale: LatestFXQuotes scan: %w", err)
+		}
+		if q.Source == "" {
+			q.Source = fxQuotesSourceLabel
+		}
+		out = append(out, q)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: LatestFXQuotes rows: %w", err)
+	}
+	return out, nil
+}
+
 // ─── X2.5 forex-snap read path (fx_quotes-first, BACKLOG #42) ────────
 //
 // The triangulation forex-snap ([Store.FXQuoteAtOrBefore]) historically

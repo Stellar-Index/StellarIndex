@@ -68,6 +68,8 @@ func TestIsOnChain_Partition(t *testing.T) {
 		"ecb": true,
 		// Ethereum oracle (JSON-RPC), not Stellar
 		"chainlink": true,
+		// fund NAV vendor API
+		"tiingo": true,
 	}
 	for name := range Registry {
 		got := IsOnChain(name)
@@ -79,6 +81,21 @@ func TestIsOnChain_Partition(t *testing.T) {
 	// Unknown sources fall through to on-chain (registry is closed).
 	if !IsOnChain("does-not-exist") {
 		t.Error("IsOnChain(unknown) should default true (closed registry)")
+	}
+}
+
+// A fund NAV is a reference value for the RWA surface only; admitting it
+// to VWAP would price a fund share as if it were a market trade.
+func TestRegistry_TiingoIsReferenceOnly(t *testing.T) {
+	m, ok := Registry["tiingo"]
+	if !ok {
+		t.Fatal("tiingo missing from Registry")
+	}
+	if m.Class != ClassOracle || m.IncludeInVWAP || m.DefaultWeight != 0 || m.Paid {
+		t.Errorf("tiingo = %+v; want ClassOracle, IncludeInVWAP false, DefaultWeight 0, Paid false", m)
+	}
+	if IsOnChain("tiingo") {
+		t.Error("IsOnChain(tiingo) = true; it is an off-chain vendor API")
 	}
 }
 
