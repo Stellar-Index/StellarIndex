@@ -2369,6 +2369,25 @@ func (s *Server) handlePublic(pattern string, h http.HandlerFunc) {
 	s.publicRoutes.Handle(s.mux, pattern, h)
 }
 
+// handleAdmin mounts an operator-only route. The operator tier and, for
+// writes, the X-Reason header are enforced here at the mount so a new
+// /v1/admin/ handler cannot ship without them; handlers keep their own
+// checks as defence in depth.
+func (s *Server) handleAdmin(pattern string, h http.HandlerFunc) {
+	_, instance, _ := strings.Cut(pattern, " ")
+	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := s.requireOperator(w, r, instance); !ok {
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			if _, ok := s.requireReason(w, r); !ok {
+				return
+			}
+		}
+		h(w, r)
+	})
+}
+
 func (s *Server) mountRoutes() { //nolint:funlen // route registration is intentionally one block for grep-ability; splitting into sub-functions makes "where is /v1/X served?" harder to answer.
 	// Health / meta endpoints. Deliberately NOT behind rate-limit
 	// middleware — infra (k8s probes, load balancers) hits these.
@@ -2674,15 +2693,15 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 		middleware.NewIdempotencyStore(0), accountKeyIdempotencySubject,
 	)(http.HandlerFunc(s.handleAccountKeysCreate)))
 	s.mux.HandleFunc("DELETE /v1/account/keys/{keyID}", s.handleAccountKeysRevoke)
-	// Operator surface: mint a key for ANOTHER identifier. Gated on
-	// TierOperator inside the handler; audit-logged via Options.Audit.
-	s.mux.HandleFunc("POST /v1/admin/keys", s.handleAdminKeysCreate)
+	// Operator surface (handleAdmin gates tier + X-Reason at the mount):
+	// mint a key for ANOTHER identifier; audit-logged via Options.Audit.
+	s.handleAdmin("POST /v1/admin/keys", s.handleAdminKeysCreate)
 	// Operator surface: revoke ANOTHER identifier's key — the leaked-key
 	// kill switch (C3-010, audit-2026-07-23). Self-service revoke needs
 	// the customer's own credential, so before this there was no
 	// operator path to stop a compromised key. X-Reason + audit-logged
 	// "key.revoke".
-	s.mux.HandleFunc("DELETE /v1/admin/keys/{keyID}", s.handleAdminKeysRevoke)
+	s.handleAdmin("DELETE /v1/admin/keys/{keyID}", s.handleAdminKeysRevoke)
 	// Operator surface: per-account tier + status + rate-limit /
 	// monthly-quota overrides (admin Phase 1.5). Same TierOperator gate as
 	// /v1/admin/keys; PATCH additionally requires an X-Reason header and
@@ -2690,14 +2709,14 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// the next Postgres API-key validator Lookup for that account; a
 	// `status` change to suspended/closed is the account-level kill
 	// switch that same Lookup already enforces.
-	s.mux.HandleFunc("GET /v1/admin/accounts/{id}", s.handleAdminAccountGet)
-	s.mux.HandleFunc("PATCH /v1/admin/accounts/{id}", s.handleAdminAccountOverrides)
+	s.handleAdmin("GET /v1/admin/accounts/{id}", s.handleAdminAccountGet)
+	s.handleAdmin("PATCH /v1/admin/accounts/{id}", s.handleAdminAccountOverrides)
 	// Operator surface: customer-facing status banners (incident
 	// tooling, admin Phase 1.5). Create/list/resolve gated on
 	// TierOperator; create + resolve require X-Reason and audit-log.
-	s.mux.HandleFunc("GET /v1/admin/status-notices", s.handleAdminStatusNoticesList)
-	s.mux.HandleFunc("POST /v1/admin/status-notices", s.handleAdminStatusNoticeCreate)
-	s.mux.HandleFunc("POST /v1/admin/status-notices/{id}/resolve", s.handleAdminStatusNoticeResolve)
+	s.handleAdmin("GET /v1/admin/status-notices", s.handleAdminStatusNoticesList)
+	s.handleAdmin("POST /v1/admin/status-notices", s.handleAdminStatusNoticeCreate)
+	s.handleAdmin("POST /v1/admin/status-notices/{id}/resolve", s.handleAdminStatusNoticeResolve)
 	s.handlePublic("POST /v1/signup", s.handleSignup)
 	// Open registration — the curl-first agent onboarding path:
 	// creates a free-tier platform account + first API key in one
