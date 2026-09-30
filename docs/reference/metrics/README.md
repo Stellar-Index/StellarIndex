@@ -442,6 +442,21 @@ key-enumerated rather than warmed — a caller minting distinct pairs to
 force reads, the same signature the `evicted` result carries on
 `stellarindex_api_cache_ops_total`.
 
+### `stellarindex_api_lcm_home_domain_fallback_total`
+
+Counter, no labels.
+
+One increment per failed read of the issuer home-domain observations
+(`account_observations`, ADR-0021) — a storage error or the 100 ms read
+bound expiring. The failed read is served as "unobserved", so the
+operator-static `[metadata.issuer_home_domains]` map (or, on asset
+detail, the live on-chain read) answers instead, and an issuer that
+cleared its home_domain on chain can briefly show its static value
+again. An `/v1/assets` listing page is one read, however many rows it
+holds. It should sit at zero on a healthy database; a
+sustained non-zero rate means served home domains are coming from
+operator config rather than the chain.
+
 ## Ingestion (indexer binary)
 
 ### `stellarindex_source_events_total`
