@@ -120,7 +120,7 @@ func (h *Handler) AccountActivity(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	v, asOf, degraded, err := h.contractDetailCached(ctx, "act:"+g, func(rctx context.Context) (any, error) {
+	v, asOf, degraded, err := h.contractDetailCached(ctx, accountActivityCacheKey+g, func(rctx context.Context) (any, error) {
 		return h.computeAccountActivity(rctx, g)
 	})
 	if err != nil {
