@@ -1537,8 +1537,15 @@ func runSupplyRefresh(ctx context.Context, r *supply.Refresher, cadence time.Dur
 		out := r.Tick(ctx)
 		obs.AggregatorSupplyRefreshTotal.WithLabelValues(assetKey, string(out.Kind)).Inc()
 		obs.AggregatorSupplyRefreshDurationSeconds.WithLabelValues(string(out.Kind)).Observe(time.Since(start).Seconds())
+		if out.BandBreach != "" {
+			obs.SupplyWriteBandBreachTotal.WithLabelValues(assetKey, out.BandBreach).Inc()
+		}
 	}
 
+	// Seed both directions so increase() reads zero, not absent, before a breach.
+	for _, direction := range []string{"up", "down"} {
+		obs.SupplyWriteBandBreachTotal.WithLabelValues(assetKey, direction)
+	}
 	tick() // immediate first refresh
 
 	ticker := time.NewTicker(cadence)
