@@ -32,10 +32,12 @@ import (
 // v235+, the Ubuntu 22.04/24.04 targets ship 249/255). This test pins
 // the GUARANTEE rather than the directive: it resolves the environment
 // each unit would hand its process when the ops env file carries the
-// pair, feeds it to [opsAuthFrom], and asserts the identity that comes
-// out — CH's `default` user for the live daemons, `ops_batch` for the
-// batch one-shots that share the file (so a future over-broad strip
-// cannot quietly re-break #243 in the other direction).
+// pair (and, in a second pass, /etc/default/stellarindex the live-daemon
+// pair), feeds it to [chAuthFrom], and asserts the identity that comes
+// out — live_daemon (CH `default` before the live pair is rendered) for
+// the live daemons, `ops_batch` for the batch one-shots that share the
+// file (so a future over-broad strip cannot quietly re-break #243 in the
+// other direction).
 //
 // Deliberately NOT credited as a strip: `Environment=VAR=` neutralising.
 // systemd.exec(5) documents EnvironmentFile= as overriding Environment=,
@@ -98,46 +100,71 @@ func TestOpsBatchIdentityNeverReachesLiveDaemons(t *testing.T) {
 	requireHeavyJobWrapperImportsPair(t, root)
 	scripts := loadOpsScripts(t, root)
 
-	var liveChecked, batchChecked []string
-	for _, u := range units {
-		env := u.resolveEnv(opsEnvPair, scripts)
-		auth, err := opsAuthFrom(func(k string) string { return env[k] })
-		if err != nil {
-			t.Fatalf("%s: opsAuthFrom on the resolved unit environment: %v", u.rel, err)
+	// Both rollout states: the live pair not yet rendered (live daemons
+	// must stay on CH `default`) and rendered into /etc/default/stellarindex.
+	for _, live := range []map[string]string{nil, liveEnvPair} {
+		var liveChecked, liveNamed, batchChecked []string
+		for _, u := range units {
+			env := u.resolveEnv(opsEnvPair, live, scripts)
+			auth, err := chAuthFrom(func(k string) string { return env[k] })
+			if err != nil {
+				t.Fatalf("%s: chAuthFrom on the resolved unit environment: %v", u.rel, err)
+			}
+			liveWant := clickhouse.Auth{Database: "stellar"}
+			if live != nil && u.sourcesEnvFile(liveEnvFileBase) {
+				liveWant = clickhouse.Auth{Database: "stellar", Username: live[LiveUserEnv], Password: live[LivePasswordEnv]}
+			}
+			arm, violation := identityViolation(u, auth, liveWant, serving, scripts)
+			switch arm {
+			case armLive:
+				liveChecked = append(liveChecked, u.rel)
+				if auth.Username == liveEnvPair[LiveUserEnv] {
+					liveNamed = append(liveNamed, u.rel)
+				}
+			case armBatch:
+				batchChecked = append(batchChecked, u.rel)
+			}
+			if violation != "" {
+				t.Error(violation)
+			}
 		}
-		arm, violation := identityViolation(u, auth, serving, scripts)
-		switch arm {
-		case armLive:
-			liveChecked = append(liveChecked, u.rel)
-		case armBatch:
-			batchChecked = append(batchChecked, u.rel)
-		}
-		if violation != "" {
-			t.Error(violation)
+
+		// Non-vacuity: the six known live-daemon units, and batch units from
+		// each batch route (direct, via a shipped script), must be examined.
+		requireExamined(t, "live-daemon", liveChecked, []string{
+			"deploy/systemd/stellarindex-indexer.service",
+			"deploy/systemd/stellarindex-aggregator.service",
+			"deploy/systemd/stellarindex-api.service",
+			"configs/ansible/roles/archival-node/templates/systemd/stellarindex-indexer.service.j2",
+			"configs/ansible/roles/archival-node/templates/systemd/stellarindex-aggregator.service.j2",
+			"configs/ansible/roles/archival-node/templates/systemd/stellarindex-api.service.j2",
+		})
+		requireExamined(t, "batch", batchChecked, []string{
+			"configs/ansible/roles/archival-node/templates/systemd/cap67-movements.service.j2",
+			"configs/ansible/roles/archival-node/templates/systemd/ch-supply.service.j2",
+			"configs/ansible/roles/archival-node/templates/systemd/compute-completeness.service.j2",
+			"deploy/systemd/stellarindex-completeness.service",
+		})
+		if live != nil {
+			requireExamined(t, "live_daemon-authenticated", liveNamed, []string{
+				"configs/ansible/roles/archival-node/templates/systemd/stellarindex-indexer.service.j2",
+				"configs/ansible/roles/archival-node/templates/systemd/stellarindex-aggregator.service.j2",
+				"configs/ansible/roles/archival-node/templates/systemd/stellarindex-api.service.j2",
+			})
 		}
 	}
-
-	// Non-vacuity: the six known live-daemon units, and batch units from
-	// each batch route (direct, via a shipped script), must be examined.
-	requireExamined(t, "live-daemon", liveChecked, []string{
-		"deploy/systemd/stellarindex-indexer.service",
-		"deploy/systemd/stellarindex-aggregator.service",
-		"deploy/systemd/stellarindex-api.service",
-		"configs/ansible/roles/archival-node/templates/systemd/stellarindex-indexer.service.j2",
-		"configs/ansible/roles/archival-node/templates/systemd/stellarindex-aggregator.service.j2",
-		"configs/ansible/roles/archival-node/templates/systemd/stellarindex-api.service.j2",
-	})
-	requireExamined(t, "batch", batchChecked, []string{
-		"configs/ansible/roles/archival-node/templates/systemd/cap67-movements.service.j2",
-		"configs/ansible/roles/archival-node/templates/systemd/ch-supply.service.j2",
-		"configs/ansible/roles/archival-node/templates/systemd/compute-completeness.service.j2",
-		"deploy/systemd/stellarindex-completeness.service",
-	})
 }
 
 // opsEnvPair is the ops env file's pair, as
 // docs/operations/clickhouse-ops-batch-profile.md tells the operator to write it.
 var opsEnvPair = map[string]string{OpsUserEnv: "ops_batch", OpsPasswordEnv: "vault-generated-hex"}
+
+// liveEnvPair is the live-daemon pair as stellarindex.env.j2 renders it
+// into /etc/default/stellarindex.
+var liveEnvPair = map[string]string{LiveUserEnv: "live_daemon", LivePasswordEnv: "vault-generated-live-hex"}
+
+// liveEnvFileBase is the env file the live-daemon pair is templated into.
+const liveEnvFileBase = "stellarindex"
 
 const (
 	armLive  = "live"
@@ -147,13 +174,14 @@ const (
 // identityViolation classifies u (armLive, armBatch, or "" when the unit
 // never reaches a ClickHouse-opening stellarindex binary) and describes
 // why auth is the wrong identity for that arm, or returns "" when right.
-func identityViolation(u systemdUnit, auth clickhouse.Auth, serving map[string]bool, scripts map[string]opsScript) (arm, violation string) {
+// liveWant is the live-daemon identity the unit's environment configures.
+func identityViolation(u systemdUnit, auth, liveWant clickhouse.Auth, serving map[string]bool, scripts map[string]opsScript) (arm, violation string) {
 	batchWant := clickhouse.Auth{Database: "stellar", Username: opsEnvPair[OpsUserEnv], Password: opsEnvPair[OpsPasswordEnv]}
 	switch {
 	case u.runsAnyOf(serving):
-		want := clickhouse.Auth{Database: "stellar"}
+		want := liveWant
 		if auth != want {
-			violation = fmt.Sprintf("%s starts a live serving binary but would authenticate to ClickHouse as %+v, want %+v (CH's unauthenticated `default` user).\n"+
+			violation = fmt.Sprintf("%s starts a live serving binary but would authenticate to ClickHouse as %+v, want %+v (live_daemon when configured, else CH's `default` user; never ops_batch).\n"+
 				"  It sources %v, and the ops-batch pair is templated into /etc/default/%s, so every ClickHouse connection this daemon opens would run at the LOW-priority ops_batch tier — the inverse of the 2026-08-28 r1 incident (#243, #292).\n"+
 				"  Fix: add `UnsetEnvironment=%s %s` to the unit's [Service] section (or stop sourcing the batch env file).",
 				u.rel, auth, want, u.envFile, opsEnvFileBase, OpsUserEnv, OpsPasswordEnv)
@@ -279,18 +307,17 @@ func (u systemdUnit) reachesOpsViaScript(scripts map[string]opsScript) bool {
 }
 
 // resolveEnv models the environment the unit's ClickHouse-opening child
-// process sees, for the ops-batch pair only: every EnvironmentFile=
-// naming the ops env file contributes `contents`, UnsetEnvironment= is
+// process sees, for the ops-batch and live-daemon pairs only: every
+// EnvironmentFile= naming the ops env file contributes `contents`, one
+// naming the live env file contributes `live`, UnsetEnvironment= is
 // applied after them (systemd.exec(5)), and then, inside the process,
-// run-heavy-job.sh imports the pair when unset and a script that
+// run-heavy-job.sh imports the ops pair when unset and a script that
 // exports the ops env file loads it.
-func (u systemdUnit) resolveEnv(contents map[string]string, scripts map[string]opsScript) map[string]string {
+func (u systemdUnit) resolveEnv(contents, live map[string]string, scripts map[string]opsScript) map[string]string {
 	env := map[string]string{}
 	for _, f := range u.envFile {
-		if filepath.Base(f) != opsEnvFileBase {
-			continue
-		}
-		for k, v := range contents {
+		src := map[string]map[string]string{opsEnvFileBase: contents, liveEnvFileBase: live}[filepath.Base(f)]
+		for k, v := range src {
 			env[k] = v
 		}
 	}
@@ -307,9 +334,11 @@ func (u systemdUnit) resolveEnv(contents map[string]string, scripts map[string]o
 	return env
 }
 
-func (u systemdUnit) sourcesOpsEnvFile() bool {
+func (u systemdUnit) sourcesOpsEnvFile() bool { return u.sourcesEnvFile(opsEnvFileBase) }
+
+func (u systemdUnit) sourcesEnvFile(base string) bool {
 	for _, f := range u.envFile {
-		if filepath.Base(f) == opsEnvFileBase {
+		if filepath.Base(f) == base {
 			return true
 		}
 	}
@@ -453,12 +482,12 @@ func TestOpsBatchIdentityScriptRoutedBatchUnits(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			u := systemdUnit{rel: tc.name, envFile: tc.envFile, unset: map[string]bool{}, exec: tc.exec}
-			env := u.resolveEnv(opsEnvPair, scripts)
-			auth, err := opsAuthFrom(func(k string) string { return env[k] })
+			env := u.resolveEnv(opsEnvPair, liveEnvPair, scripts)
+			auth, err := chAuthFrom(func(k string) string { return env[k] })
 			if err != nil {
 				t.Fatal(err)
 			}
-			arm, violation := identityViolation(u, auth, serving, scripts)
+			arm, violation := identityViolation(u, auth, clickhouse.Auth{Database: "stellar"}, serving, scripts)
 			if arm != tc.wantArm || (violation != "") != tc.wantViolation {
 				t.Fatalf("arm %q violation %q, want arm %q violation=%v", arm, violation, tc.wantArm, tc.wantViolation)
 			}

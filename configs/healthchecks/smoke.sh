@@ -21,6 +21,11 @@
 #     (configs/prometheus/rules.r1/api-smoke.yml). Written on every
 #     run, unconditionally.
 #
+# A failing run pings /fail only after HC_FAIL_AFTER (default 2)
+# consecutive failing runs, so one run overlapping a deploy restart
+# does not cost a down + up email pair; api_smoke.prom still carries
+# every run's verdict at once, so the Prometheus alerts are unchanged.
+#
 # The textfile is the leg that is not optional. With only the
 # Healthchecks leg, an unset URL left a 5-minute timer running 34 jq
 # shape assertions — the one check that can see a 200 carrying
@@ -112,11 +117,7 @@ fi
 # must land even when curl spends its whole retry budget hanging.
 emit_metric "$RC"
 
-if [ "$RC" -eq 0 ]; then
-  hc_ping smoke "$URL" --data-binary "$OUT"
-else
-  hc_ping smoke "${URL:+${URL}/fail}" --data-binary "$OUT"
-fi
+hc_ping_verdict smoke "$URL" "$RC" "${HC_FAIL_AFTER:-2}" --data-binary "$OUT"
 
 # Always exit 0 from the timer's perspective — same contract as
 # heartbeat.sh. Failures route via the textfile metric the alert rules

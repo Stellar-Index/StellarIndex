@@ -55,7 +55,10 @@ func TestPublisher_NormalizesNonstandardDecimals(t *testing.T) {
 
 	pub := streampublish.New(hub, reader, time.Second, nil, streampublish.Options{Decimals: decimals})
 
-	ch, cancel := hub.Subscribe([]string{topic}, "")
+	ch, cancel, err := hub.Subscribe([]string{topic}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancel()
 
 	ctx, cancelRun := context.WithCancel(context.Background())

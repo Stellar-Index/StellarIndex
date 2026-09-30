@@ -179,8 +179,8 @@ func decodeClaimAtom(
 	// aggregator/OHLC/outlier paths already skip zero legs (Sign()<=0) and
 	// tradeUSDVolume returns NULL, so pricing is unaffected.
 	if soldAmount <= 0 && boughtAmount <= 0 {
-		return canonical.Trade{}, fmt.Errorf("%w: both-zero no-op claim sold=%d bought=%d",
-			ErrMalformedClaimAtom, soldAmount, boughtAmount)
+		return canonical.Trade{}, fmt.Errorf("%w: sold=%d bought=%d",
+			ErrNoOpClaim, soldAmount, boughtAmount)
 	}
 
 	base, err := xdrAssetToCanonical(soldAsset)

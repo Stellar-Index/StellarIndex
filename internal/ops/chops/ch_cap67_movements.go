@@ -225,7 +225,8 @@ func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32
 		res.skipped += skipped
 		if !dryRun {
 			// The advance re-proves [lo,hi] hole-free at the write and
-			// REFUSES otherwise (ErrCap67MovementsHole): the range was
+			// REFUSES otherwise (ErrCap67MovementsHole,
+			// ErrCap67MovementsEventShortfall): the range was
 			// resolved once, up front, and the watermark is the only record
 			// of what has been derived. A refusal ends the run with the
 			// watermark where it was — in -follow mode the next tick retries

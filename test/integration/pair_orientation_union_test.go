@@ -138,11 +138,31 @@ func TestPairReadersFoldBothOrientationsAsUnion(t *testing.T) {
 // keys the batch by the listing's CANONICAL rows; FLIP/native is stored
 // only as (native, FLIP), so a read of the stored key alone drew 24 zero
 // bars beside a $100 volume_24h_usd. Every seeded trade sits inside the
-// last hour, so the 24 hourly bars must sum to the headline exactly.
+// last hour, so the 24 hourly bars must sum to the headline exactly. A
+// FLIP/XLM-SAC trade is folded into the FLIP/native row, so the bars must
+// read that spelling too.
 func TestMarketsSparklineMatchesListingVolume(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	f := seedOrientationFixture(ctx, t)
+
+	xlmSAC, err := c.NewSorobanAsset(c.XLMSacContractID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flipSAC, _ := c.NewPair(f.flipXLM.Base, xlmSAC)
+	sacTrade := mkAPITrade(4, f.flipMin.Add(15*time.Second), flipSAC, 1_000_000, 500_000)
+	if err := f.store.InsertTrade(ctx, sacTrade); err != nil {
+		t.Fatalf("InsertTrade(SAC leg): %v", err)
+	}
+	if _, err := f.store.DB().ExecContext(ctx,
+		`UPDATE trades SET usd_volume = 50 WHERE tx_hash = $1`, sacTrade.TxHash); err != nil {
+		t.Fatalf("stamp SAC-leg usd_volume: %v", err)
+	}
+	if _, err := f.store.DB().ExecContext(ctx,
+		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh prices_1m: %v", err)
+	}
 
 	rows, _, err := f.store.DistinctPairs(ctx, "", 50)
 	if err != nil {
@@ -168,9 +188,9 @@ func TestMarketsSparklineMatchesListingVolume(t *testing.T) {
 	}
 	flipKey := f.flipXLM.Base.String() + "|" + f.flipXLM.Quote.String()
 	twoKey := f.twoXLM.Base.String() + "|" + f.twoXLM.Quote.String()
-	if want[flipKey] == nil || want[flipKey].Cmp(big.NewRat(100, 1)) != 0 ||
+	if want[flipKey] == nil || want[flipKey].Cmp(big.NewRat(150, 1)) != 0 ||
 		want[twoKey] == nil || want[twoKey].Cmp(big.NewRat(200, 1)) != 0 {
-		t.Fatalf("fixture: listing volumes = %v, want %s=100 and %s=200", want, flipKey, twoKey)
+		t.Fatalf("fixture: listing volumes = %v, want %s=150 and %s=200", want, flipKey, twoKey)
 	}
 
 	hist, err := f.store.GetPairsVolumeHistory24hBatch(ctx, pairs)

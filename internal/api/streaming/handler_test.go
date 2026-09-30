@@ -327,3 +327,64 @@ func TestStream_RevalidateFailureEndsStream(t *testing.T) {
 		t.Errorf("Revalidate ran %d times, want one per heartbeat (>= 3)", checks.Load())
 	}
 }
+
+// TestStream_MaxLifetimeEndsStreamAndResumes — a client that never reads
+// never makes a write block, so only a lifetime bound frees its slot. The
+// server must end the stream after MaxLifetime even while heartbeats and
+// events keep flowing, and the reconnect must resume from Last-Event-ID.
+func TestStream_MaxLifetimeEndsStreamAndResumes(t *testing.T) {
+	hub := streaming.NewHub(0)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		streaming.Stream(w, r, hub, []string{"topic"}, streaming.StreamOptions{
+			HeartbeatInterval: 20 * time.Millisecond,
+			MaxLifetime:       200 * time.Millisecond,
+		})
+	}))
+	defer srv.Close()
+
+	resp, err := srv.Client().Get(srv.URL)
+	if err != nil {
+		t.Fatalf("GET stream: %v", err)
+	}
+	defer resp.Body.Close()
+	time.Sleep(50 * time.Millisecond)
+	hub.Publish("topic", "price_update", []byte(`{"n":1}`))
+
+	ended := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(resp.Body)
+		ended <- b
+	}()
+	var body string
+	select {
+	case b := <-ended:
+		body = string(b)
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream outlived MaxLifetime")
+	}
+	if !strings.HasSuffix(body, ":reconnect\n\n") {
+		t.Errorf("stream did not end with the :reconnect comment; tail = %q", body)
+	}
+	var lastID string
+	for _, line := range strings.Split(body, "\n") {
+		if id, ok := strings.CutPrefix(line, "id: "); ok {
+			lastID = id
+		}
+	}
+	if lastID == "" {
+		t.Fatalf("no event delivered before the lifetime ended; body = %q", body)
+	}
+
+	hub.Publish("topic", "price_update", []byte(`{"n":2}`))
+	req, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
+	req.Header.Set("Last-Event-ID", lastID)
+	resp2, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("reconnect: %v", err)
+	}
+	defer resp2.Body.Close()
+	frames := readSSEFrames(t, resp2.Body, 1, 2*time.Second)
+	if len(frames) != 1 || !strings.Contains(frames[0], `data: {"n":2}`) {
+		t.Errorf("reconnect with Last-Event-ID replayed %q, want the missed {\"n\":2} event", frames)
+	}
+}
