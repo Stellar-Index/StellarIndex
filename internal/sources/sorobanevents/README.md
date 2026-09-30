@@ -2,6 +2,18 @@
 
 Catch-all Soroban-event landing-zone capture (ADR-0029).
 
+> **Status: superseded, decommission pending.** ADR-0029 is superseded
+> by [ADR-0034](../../../docs/adr/0034-tiered-clickhouse-architecture.md):
+> the raw landing zone of record is the ClickHouse lake, and the
+> projector reads `contract_events` from it by default
+> (`clickhouse_projector_source`, ADR-0041), not `soroban_events`. The
+> indexer still writes `soroban_events` and `backfill -source
+> soroban-events` still runs until the Postgres landing zone is removed
+> (ADR-0034's amendment; #803). Do not build new consumers on this
+> table or on the `INSERT ... SELECT FROM soroban_events` backfill
+> pattern below — replay a projected source with `projector-replay`
+> instead.
+
 ## Scope
 
 Every Soroban contract event that flows through the dispatcher is
