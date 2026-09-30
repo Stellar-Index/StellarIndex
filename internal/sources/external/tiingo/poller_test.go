@@ -16,7 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-const testKey = "fixture-tiingo-token" // gitleaks:allow
+const testKey = "tk_0123456789abcdef0123456789abcdef"
 
 var _ external.Poller = (*Poller)(nil)
 
