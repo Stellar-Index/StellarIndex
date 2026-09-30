@@ -58,10 +58,11 @@ regexes = [
 ]
 
 [[rules.allowlists]]
-description = "Base64 XDR golden fixtures in Go tests: topics_xdr / data_xdr / LedgerKey bodies captured from the certified raw lake (public on-chain data). Every XDR union these fixtures carry opens with a 4-byte big-endian discriminant below 2^8, so the base64 always starts with AAAA; a random credential starts that way with probability 2^-24. Scoped to *_test.go so the exemption cannot reach production code."
+description = "Base64 XDR golden fixtures in Go tests: topics_xdr / data_xdr / LedgerKey bodies captured from the certified raw lake (public on-chain data). Every XDR union these fixtures carry opens with a 4-byte big-endian discriminant below 2^8, so the base64 always starts with AAAA; a random credential starts that way with probability 2^-24. Scoped to *_test.go and the WASM audit logs (whose SQL evidence quotes the CONTRACT_CODE LedgerKey) so the exemption cannot reach production code."
 condition = "AND"
 paths = [
   '''_test\.go$''',
+  '''^docs/operations/wasm-audits/[^/]+\.md$''',
 ]
 regexes = [
   '''^AAAA[A-Za-z0-9+/]{12,}={0,2}$''',
