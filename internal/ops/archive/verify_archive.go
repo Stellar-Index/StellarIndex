@@ -430,8 +430,8 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 
 	// maxRuntime == 0 → no cap (uncancellable parent). Operators
 	// pass 0 for full-archive runs that exceed any single-day
-	// budget; the binary still honours external SIGTERM via the
-	// SDK's signal hooks.
+	// budget. No signal handler is wired on either branch, so SIGTERM
+	// kills the walk outright; chunks already done are in -state-file.
 	var (
 		ctx    context.Context
 		cancel context.CancelFunc
