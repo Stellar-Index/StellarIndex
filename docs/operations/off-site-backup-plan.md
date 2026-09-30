@@ -93,7 +93,7 @@ Back up the full lake so recovery is a **restore (~hours)**, not a re-walk (~wee
 
 - Tool: ClickHouse's native **`BACKUP DATABASE`** (part-level **incremental** via `base_backup` — after the first 14.6 TiB full, dailies are only the new parts ≈ 11 GiB). It takes a consistent snapshot of parts; no downtime.
 - Do the **first full backup AFTER the capacity-relief recompress** plus a `tx_hash_index` dedupe: `operations.body_xdr` and `operation_results.result_xdr` are still LZ4 on r1 ([`runbooks/phase-a-capacity-relief-2026-07-18.md`](runbooks/phase-a-capacity-relief-2026-07-18.md) Step 3b recompresses them) and `tx_hash_index` is 2× duplicated (an `OPTIMIZE … FINAL`, not in that runbook) — ≈ 2.8 TiB reclaimable across both, off every chain the BX41 stores.
-- Restore = provision CH → `RESTORE DATABASE … FROM Disk('si_lake_backup', …)` ([`runbooks/ch-lake-backup.md`](runbooks/ch-lake-backup.md#restore)) → `verify-lake`/`verify-contiguity`/`reconcile-balances` as the acceptance gate.
+- Restore = provision CH → `RESTORE DATABASE … FROM Disk('si_lake_backup', …)` ([`runbooks/ch-lake-backup.md`](runbooks/ch-lake-backup.md#restore)) → `verify-lake`/`verify-contiguity`/`reconcile-balances` as the acceptance gate. `verify-lake` also runs daily against the live lake ([`runbooks/lake-verify.md`](runbooks/lake-verify.md)), so the gate is known-green before a restore needs it.
 - **Also keep the rebuild recipe** (schema DDL, cursor/watermark, `done-windows`) — that's the *both-copies-gone* fallback: re-derive from the archive. Belt and suspenders, tiny to store.
 
 ## Cross-cutting

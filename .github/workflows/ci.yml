@@ -754,6 +754,12 @@ jobs:
       - name: lint-agents-file self-test
         # Proves each of those five assertions can still go red.
         run: ./scripts/ci/lint-agents-file-test.sh
+      - name: lint-remote-tmp-staging
+        # No workflow may scp to a fixed /tmp path on a remote host; a
+        # predictable name there can be pre-planted before a privileged run.
+        run: ./scripts/ci/lint-remote-tmp-staging.sh
+      - name: lint-remote-tmp-staging self-test
+        run: ./scripts/ci/lint-remote-tmp-staging-test.sh
       - name: lint-doc-links
         # Every relative markdown link must resolve. A broken link in a
         # runbook is an operational defect: the operator follows the
@@ -768,6 +774,8 @@ jobs:
         # verify.sh: a gate wired into one surface and not its mirror is the
         # defect this repository has shipped twice.
         run: ./scripts/dev/lint-changed-test.sh
+      - name: doctor self-test
+        run: ./scripts/dev/doctor-test.sh
       - name: lint-external-channels
         # A repository setting or DNS name that is switched off cannot be
         # seen from inside the tree, so three published channels shipped
@@ -1838,6 +1846,7 @@ jobs:
           python3 -m pip install --quiet 'Jinja2==3.1.6' 'PyYAML==6.0.2'
           ./scripts/ci/check-alertmanager-parity.sh
           ./scripts/ci/check-alertmanager-parity-test.sh
+          bash configs/alertmanager/inhibit-rules-test.sh
       - name: validate the rules-apply script (and that it still counts alerts)
         # apply-rules.sh verifies a deploy by asserting every alert it
         # extracted from the repo actually loaded on the host. That check

@@ -64,7 +64,7 @@ the `env:` column.
 | `storage.clickhouse_addr` | `string` | `127.0.0.1:9300` | — | ClickHouse native address host:port for the Tier-1 lake (ADR-0034); used by the indexer real-time dual-sink. |
 | `storage.clickhouse_live_sink` | `bool` | `true` | — | Enable the real-time ClickHouse dual-sink: the indexer writes each ledger's structural extract to CH inline (non-blocking), keeping the lake within ~seconds of the chain. ON by default (ADR-0041): the certified-lake substrate backs the coverage claim, the CH completeness path, and lake-derived supply — opt out only on deployments that cannot run ClickHouse, accepting the loss of all three. |
 | `storage.clickhouse_projector_source` | `bool` | `true` | — | Feed-switch: the projector reads forward events from the ClickHouse lake (contract_events) instead of Postgres soroban_events, enabling soroban_events decommission. Requires clickhouse_live_sink. ON by default (ADR-0041), matching the production topology. |
-| `storage.clickhouse_serving_user` | `string` | `` | — | ClickHouse username the API's serving reads (explorer endpoints, incl. GET /v1/accounts/{g}/movements) authenticate as (ADR-0048 D4). Empty (default) uses ClickHouse's default user, unchanged from pre-D4 behavior. |
+| `storage.clickhouse_serving_user` | `string` | `` | — | ClickHouse username the API's serving reads (explorer endpoints, incl. GET /v1/accounts/{g}/movements) authenticate as (ADR-0048 D4). Empty (default) uses the environment's identity: STELLARINDEX_CLICKHOUSE_LIVE_USER when set, else ClickHouse's default user. |
 | `storage.clickhouse_serving_password` | `string` | `` | `STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD` | The ClickHouse serving user's password itself, NOT an env-var NAME to dereference — inject it via the STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD env override rather than writing it to this file. The old key clickhouse_serving_password_env is a deprecated alias (accepted with a boot warning). Empty (default) uses no password, matching an empty clickhouse_serving_user. |
 
 ### `[ingestion]`
@@ -288,7 +288,7 @@ the `env:` column.
 | `divergence.min_sources_for_warning` | `int` | `2` | — | Minimum successful references before warning_fired can be true. |
 | `divergence.per_reference_timeout_seconds` | `int` | `5` | — | Bound for each reference call. Default 5. |
 | `divergence.coingecko.enabled` | `bool` | `true` | — | Whether the CoinGecko reference is wired into the divergence service. |
-| `divergence.coingecko.base_url` | `string` | `` | — | CoinGecko API base URL. Empty defaults to https://api.coingecko.com/api/v3. |
+| `divergence.coingecko.base_url` | `string` | `` | — | CoinGecko API base URL. Empty defaults to https://api.coingecko.com/api/v3, or https://pro-api.coingecko.com/api/v3 when external.coingecko.api_key is set. The reference authenticates with the external.coingecko keys. |
 | `divergence.coingecko.id_map` | `map` | `{}` | — | Maps canonical asset_id → CoinGecko slug. Operator-curated; empty falls back to the built-in default covering XLM + major stables. |
 | `divergence.coingecko.max_age_minutes` | `int` | `0` | — | Staleness ceiling in minutes for the CoinGecko quote's upstream last_updated_at; older quotes are rejected as reference-unavailable (CS-089). 0 = 30-minute default. |
 | `divergence.chainlink.enabled` | `bool` | `false` | — | Whether the Chainlink reference is wired into the divergence service. |

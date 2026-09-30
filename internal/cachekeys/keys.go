@@ -278,7 +278,7 @@ func VWAPCompositeMeta(base, quote canonical.Asset, window time.Duration) VWAPCo
 }
 
 // CompositeMeta is the read-side view of the JSON blob the aggregator
-// writes to a [VWAPCompositeMeta] key. It models only the two
+// writes to a [VWAPCompositeMeta] key. It models only the
 // consumer-facing quality signals the /v1/price handler surfaces —
 // path_count / combined_confidence / low_confidence are written by the
 // aggregator but not read on this path, so they are intentionally
@@ -292,6 +292,9 @@ type CompositeMeta struct {
 	// Rerouted is true when the composite substituted around a dry
 	// configured chain leg (R3 leg-substitution).
 	Rerouted bool `json:"rerouted"`
+	// PivotUnverified is true when a priced leg was all stablecoin-proxy
+	// prints, so its par-to-USD assumption went unchecked.
+	PivotUnverified bool `json:"pivot_unverified"`
 }
 
 // DecodeCompositeMeta parses the JSON blob stored under a
@@ -596,9 +599,10 @@ func APIKey(keyHash string) APIKeyRecordKey {
 	return APIKeyRecordKey("apikey:" + keyHash)
 }
 
-// APIKeyTTL is the TTL for apikey: records. Zero — keys live until
-// explicitly deleted; expiry/revocation are encoded in the JSON
-// payload so the lookup can return the right error sentinel
+// APIKeyTTL is the TTL for operator-issued apikey: records (self-service
+// and register-mirror records carry auth.MirroredKeyIdleTTL instead).
+// Zero — keys live until explicitly deleted; expiry/revocation are
+// encoded in the JSON payload so the lookup can return the right error sentinel
 // (ErrTokenExpired vs ErrUnauthorized). Zero is also what keeps them
 // out of the instance's volatile-lru eviction pool: the plaintext is
 // unrecoverable, so an evicted record is a lost credential (GH-1317).
@@ -619,6 +623,13 @@ func (k APIKeyCacheKey) String() string { return string(k) }
 // hex-encoded SHA-256 of the plaintext key.
 func APIKeyCache(keyHash string) APIKeyCacheKey {
 	return APIKeyCacheKey("apikey-cache:" + keyHash)
+}
+
+// APIKeyCacheEvicted returns the short-lived tombstone an eviction writes
+// for keyHash; while it lives the validator does not re-populate
+// [APIKeyCache]. Kept under `apikey-cache:` so the same ACL rule admits it.
+func APIKeyCacheEvicted(keyHash string) APIKeyCacheKey {
+	return APIKeyCacheKey("apikey-cache:" + keyHash + ":evicted")
 }
 
 // ─── API-key lookup index ─────────────────────────────────────────

@@ -153,7 +153,11 @@ Verified against `phoenix-contracts` `pool/src/contract.rs`. There are
 `(ledger, tx_hash, op_index)` into one trade. The **newer** pool WASM
 emits ONE `ScvSymbol("swap")` event whose `ScvMap` body carries the
 whole trade (underscore-spelled Symbol keys), decoded directly by
-`decodeSwapMap` with no correlation buffer. Because gating is by
+`decodeSwapMap` with no correlation buffer. The same WASM emits
+`provide_liquidity` / `withdraw_liquidity` in that single-event Map shape
+too (`decodeProvideLiquidityMap` / `decodeWithdrawLiquidityMap`, same
+`phoenix_liquidity` rows; the withdraw body's `auto_unstake_*` keys are
+unused). Because gating is by
 contract identity, a curated pool that upgrades from one shape to the
 other in place is already covered — only the decode dispatch depends on
 the topic shape.

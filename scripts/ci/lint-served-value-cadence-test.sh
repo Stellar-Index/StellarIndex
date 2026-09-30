@@ -39,7 +39,7 @@ trap 'rm -rf "$TMP"' EXIT
 pass=0
 fail=0
 # Fixtures below model verify-served-values; the repo tree and the
-# supply-verify-rollup cases at the end set JOBS themselves.
+# supply-verify-rollup / verify-lake cases at the end set JOBS themselves.
 JOBS=served-values
 check() { # check <desc> <want-exit> <root>
   local desc="$1" want="$2" root="$3" got
@@ -162,7 +162,7 @@ YML
 
 echo "lint-served-value-cadence-test: scheduling + calibration verdicts"
 
-JOBS="served-values supply-verify-rollup"
+JOBS="served-values supply-verify-rollup verify-lake"
 check "the repo's own tree passes (every job)" 0 "$PWD"
 JOBS=served-values
 
@@ -275,6 +275,22 @@ check "supply-verify-rollup: a gate hardcoded false is caught" 1 "$rollup_off"
 rollup_unrendered="$(rollup_tree rollup_unrendered)"
 sed -i.bak '/^        - supply-verify-rollup\.service$/d' "$rollup_unrendered/$TASKS/14-stellarindex-services.yml"
 check "supply-verify-rollup: a service nothing renders is caught" 1 "$rollup_unrendered"
+
+# ── verify-lake: installed unconditionally, no defaults variable ─────────
+JOBS=verify-lake
+lake_ok="$(rollup_tree lake_ok)"
+rm -rf "${lake_ok:?}/$DEFAULTS"
+check "verify-lake: an unconditional job passes with no defaults file" 0 "$lake_ok"
+
+lake_no_timer="$(rollup_tree lake_no_timer)"
+rm "$lake_no_timer/$UNITS/verify-lake.timer.j2"
+check "verify-lake: a missing timer template is caught" 1 "$lake_no_timer"
+
+lake_unenabled="$(rollup_tree lake_unenabled)"
+sed -i.bak '/^- name: Enable + start verify-archive/,/^  when:/{/^    - verify-lake\.timer$/d;}' "$lake_unenabled/$TASKS/14-stellarindex-services.yml"
+lake_timer_refs="$(grep -c '^    - verify-lake\.timer$' "$lake_unenabled/$TASKS/14-stellarindex-services.yml" || true)"
+[ "$lake_timer_refs" = 1 ] || echo "  (fixture enable-loop edit did not apply)"
+check "verify-lake: a timer nothing enables is caught" 1 "$lake_unenabled"
 
 echo "----"
 echo "lint-served-value-cadence-test: $pass passed, $fail failed"

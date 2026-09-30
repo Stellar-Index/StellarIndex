@@ -218,3 +218,18 @@ func TestUSDPegForms_RejectsMalformedWrapper(t *testing.T) {
 		t.Errorf("usdPegForms = %q, want the peg bound verbatim with no expansion", forms)
 	}
 }
+
+// TestUSDPegForms_NormalisesColonSpelling — config and the quote spec both
+// accept "CODE:ISSUER"; the FX tier must bind the "CODE-ISSUER" form
+// prices_1m stores, and still expand the peg's SAC wrapper.
+func TestUSDPegForms_NormalisesColonSpelling(t *testing.T) {
+	t.Parallel()
+	const colon = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	forms, err := usdPegForms([]string{colon}, pegSACWrappersFixture)
+	if err != nil {
+		t.Fatalf("usdPegForms: %v", err)
+	}
+	if len(forms) != 2 || forms[0] != usdcClassicPeg || forms[1] != usdcSAC {
+		t.Errorf("usdPegForms(%q) = %q, want [%s %s]", colon, forms, usdcClassicPeg, usdcSAC)
+	}
+}

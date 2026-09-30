@@ -211,7 +211,7 @@ func TestPrice_ThinPoolThirdAlias_NativeQuoteWalkStaysOnTheLiteralQuote(t *testi
 // default request shape, ?quote=fiat:USD, which no on-chain venue quotes
 // and which therefore resolves through the stablecoin proxy. The proxy
 // walks the operator's declared pegs in their CLASSIC spelling only
-// (parseUSDPeggedClassics in the API binary rejects any other form), so
+// (config.TradesConfig.USDPeggedClassics rejects any other form), so
 // the deep book answers and the SAC-quoted pool is never a candidate —
 // even though it is fresher.
 func TestPrice_ThinPoolThirdAlias_FiatProxyWalksClassicPegsOnly(t *testing.T) {

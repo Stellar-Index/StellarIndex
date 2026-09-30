@@ -187,7 +187,8 @@ type chunkRestampTier interface {
 	// probe answers, READ-ONLY, whether [lo, hi) still holds a row this run
 	// would change. A chunk that probes clean is skipped without being
 	// decompressed — what makes a rerun resume at the first unfinished
-	// chunk (INV-3: at the run's own generation).
+	// chunk (INV-3: at the run's own generation). A clean probe still
+	// counts toward the closing report, which names the whole window.
 	probe(ctx context.Context, lo, hi time.Time) (bool, error)
 	// preview is the dry run's read-only pass over [lo, hi): it folds the
 	// slice into the run's totals and returns the operator-facing
@@ -1112,6 +1113,22 @@ func validateRestampGeneration(gen int64, now time.Time) error {
 			"-max-generation and could never be re-derived again — pass the generation a previous run printed, or nothing", gen, nowUnix)
 	}
 	return nil
+}
+
+// resolveRestampMaxGeneration turns -max-generation into the scan's read
+// bound: negative means the run's own generation. A bound above the
+// generation is refused — the scan would select rows the UPDATE's
+// `derive_generation <= generation` guard can never write, so every run
+// would re-plan them, write nothing, and report them as a concurrent writer.
+func resolveRestampMaxGeneration(maxGen, generation int64) (int64, error) {
+	if maxGen < 0 {
+		return generation, nil
+	}
+	if maxGen > generation {
+		return 0, fmt.Errorf("usd-volume-restamp: -max-generation %d is above the run's generation %d: rows stamped in between are candidates "+
+			"this run can never write — pass a value <= %d, or omit it to target everything this run can re-derive", maxGen, generation, generation)
+	}
+	return maxGen, nil
 }
 
 // fmtBytes renders a byte count the way pg_size_pretty does (1024-based,
