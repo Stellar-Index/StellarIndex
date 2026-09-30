@@ -411,9 +411,10 @@ const fxQuoteBucketAtOrBeforeSelect = `
 // [at-lookback, at] — the caller must then REFUSE to price rather than
 // reach forward to a later bucket or extrapolate from an older one.
 //
-// AT OR BEFORE, never after: a rate published after the trade is
-// information the trade did not have, and using it would make a
-// backfilled value depend on when the operator ran the tool.
+// AT OR BEFORE is day-bucket granularity, not publication time: the
+// bucket's date is <= at, but its rate is overwritten by every later
+// refresh that day and by the trailing-7d history bars, so it can carry
+// a rate published up to a day after `at`. Never a later bucket, though.
 func (s *Store) FXQuoteBucketAtOrBefore(ctx context.Context, ticker string, at time.Time, lookback time.Duration) (time.Time, bool, error) {
 	var bucket time.Time
 	err := s.db.QueryRowContext(ctx, fxQuoteBucketAtOrBeforeSelect,

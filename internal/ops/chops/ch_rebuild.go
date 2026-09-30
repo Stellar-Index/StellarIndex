@@ -3,7 +3,6 @@ package chops
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -491,7 +490,7 @@ func reportCHRebuildPreflight(w io.Writer, lo, hi uint32, rederive []string) err
 // repopulate-after-truncate). Window [from,to] per partition for the full run
 // so the streamed result set + the successful-tx IN-set stay bounded.
 func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: seed, event pass, optional op pass, report; splitting hurts clarity.
-	fs := flag.NewFlagSet("ch-rebuild", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("ch-rebuild")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	from := fs.Uint("from", 0, "first ledger sequence (inclusive, required)")
 	to := fs.Uint("to", 0, "last ledger sequence (inclusive, required)")
@@ -504,7 +503,6 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	includeSEP41 := fs.Bool("sep41", false, "also re-derive the SEP-41 watched-contract sources (sep41_transfers, sep41_supply) from the lake via a contract_id-prefiltered event pass (their topics are the CAP-67 firehose the main pass excludes). FULL re-derive contract: for a whole-history rebuild run this as part of the truncate+re-derive procedure — TRUNCATE sep41_transfers + sep41_supply_events FIRST (historical rows predate the migration-0057 event_index PK, so multiple same-op events sit COLLAPSED on disk; the idempotent ON CONFLICT writes cannot un-collapse them — recover-into-existing is accepted only if you accept that residue). ROLLUP: when the SUPPLY source is re-derived, -write AUTO-RESETS the sep41_supply_rollup fold checkpoint after the events land (a FULL re-derive resets every watched contract's fold columns) so the aggregator worker re-folds from zero instead of double-counting the re-derived history (the KALE 2× served-value bug, incident 2026-07-06); the seeded migration-0088 genesis baseline is PRESERVED, so no manual TRUNCATE sep41_supply_rollup + re-seed is needed. After a full-history -write re-derive the two sources become eligible for the ADR-0033 projection reconcile — DONE (2026-07-11, windows 50.0M-63.42M, rc=0): buildReconciliationCatalogue now promotes them into the default catalogue unconditionally whenever [supply] watched_sep41_contracts is configured (no further code change needed), so verify-reconciliation/ch-reproject/compute-completeness all see them. Because that promotion is config-gated, not re-derive-state-gated, a FUTURE full truncate+re-derive will show the two sources as reconcile-red for the DURATION of the rebuild (truncated table vs. lake expectation) exactly like any other source mid-rebuild — expected, not a regression. For a SCOPED dropped-rows recovery (a decoder bug that lost a handful of rows from post-0057-clean data), use -contracts to narrow to the affected contracts instead — no truncate needed, the additive ON CONFLICT write only ADDS the missing rows (docs/operations/sep41-mint-recovery.md). Requires [supply] watched_sep41_contracts. Respects -sources.")
 	contractsCSV := fs.String("contracts", "", "comma-separated contract C-strkeys to SCOPE the read to (default: no scope). For -sep41 this REPLACES [supply] watched_sep41_contracts as the contract_id READ prefilter, so a scoped recovery does an indexed scan of ONLY these contracts' events (far cheaper than all watched contracts) and idempotently ADDS their missing rows — the leanest way to recover dropped rows without a full re-derive. With -sep41 -write on the SUPPLY source, ONLY these contracts' sep41_supply_rollup fold rows are reset afterwards (genesis baseline preserved), so the worker re-folds their recovered below-checkpoint rows — a scoped recovery is safe by default, no manual rollup surgery. Must be a SUBSET of the watched set: the sep41 decoders still gate Matches() on the full watched set, so a contract outside it is read but decoded to nothing (a warning is printed). For the general event pass it is an extra decode-time contract gate. See docs/operations/sep41-mint-recovery.md.")
 	sep41SupplyOnly := fs.Bool("sep41-supply-only", false, "with -sep41 -sources sep41_supply: narrow the CH read to the supply-affecting topics (mint/burn/clawback) via the topic_0_sym prefilter, skipping the transfer firehose at the SQL layer — so recovering a high-transfer-volume contract's few mints does not re-read millions of transfer events. Invalid unless sep41_transfers is disabled (via -sources sep41_supply): the topic prefilter would otherwise silently drop transfer recovery.")
-	write := fs.Bool("write", false, "actually write to Postgres (default: dry-run, count only)")
 	bulkTrades := fs.Bool("bulk-trades", false, "with -write: land trade rows through the BULK backfill writer (timescale.Store.BulkBackfillTrades) instead of the per-batch upsert. Opt-in and BACKFILL-ONLY. It proves - per source, scoped by ledger AND ts - that the target range holds no stored rows, then resolves usd_volume for the whole buffer through a worker pool and streams the rows in over parallel binary COPY connections. Rows are identical to the upsert path's (same storability gate, same intra-batch PK dedupe, same tradeUSDVolume waterfall, same derive_generation, same source_entry_counts / registry / sentinel side effects); the difference is that a latency-bound workload stops being serial. If the range is NOT empty - or a COPY hits a unique violation because something wrote underneath it - the buffer is handed to the ordinary generation-guarded upsert instead and the run says so. Worth it for a historical re-derive below the source's floor; pointless (and it will just fall back) for a recovery into populated ledgers.")
 	allowLiveOverlap := fs.Bool("allow-live-overlap", false, "DANGEROUS: bypass the live-cursor guard and -write a range the live projector's cursor for a PROJECTED source is still inside. Only pass this if you have independently verified the live projector will not process this range concurrently — see the ADR-0048 D3 one-writer contract on checkCHRebuildLiveOverlap.")
 	preflight := fs.Bool("preflight", false, "with -write: run the refusals this exact -write invocation would hit BEFORE it reads the lake — the BackfillSafe gate (both legs), the live-cursor one-writer guard, and the buffered-range ceiling — then print one line naming the sources it would re-derive (`"+chRebuildPreflightPrefix+" [from,to] rederive=a,b,c`) on stdout and exit 0 WITHOUT reading ClickHouse or writing a row. A refusal exits non-zero exactly as the real run would. It exists for a caller that must do something destructive before the re-derive (scripts/ops/ch-rebuild-projected.sh DELETEs the window first): ask here, and delete only what this prints. Runtime failures (a lake stream error, a failed write) are by nature not covered.")
@@ -513,13 +511,14 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	write := gate.Enabled()
 	if *cfgPath == "" || *from == 0 || *to == 0 || *to < *from {
 		return fmt.Errorf("-config, -from, -to are required; -to must be >= -from")
 	}
-	if err := checkCHRebuildPreflightFlags(*preflight, *write); err != nil {
+	if err := checkCHRebuildPreflightFlags(*preflight, write); err != nil {
 		return err
 	}
-	if err := checkCHRebuildRecordDirtyFlags(*recordDirty, *preflight, *write); err != nil {
+	if err := checkCHRebuildRecordDirtyFlags(*recordDirty, *preflight, write); err != nil {
 		return err
 	}
 	// -contracts scopes both passes to a contract subset; the sep41 pass pushes
@@ -533,7 +532,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	// Asked before the config load so the refusal needs no reachable
 	// database; the default-all case is asked again once the catalogue
 	// exists — see checkCHRebuildBackfillSafe.
-	if *write {
+	if write {
 		if gerr := checkCHRebuildBackfillSafe(parseCSVList(*only)); gerr != nil {
 			return gerr
 		}
@@ -665,7 +664,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	// ADR-0031/0032 gives to the projector alone. Refuse the overlap the
 	// same way projected-rebuild does — see checkCHRebuildLiveOverlap.
 	passes := chRebuildPasses{sep41: *includeSEP41, contractCalls: *contractCalls, sdex: *includeSDEX}
-	if *write {
+	if write {
 		// BackfillSafe gate, second leg (F050): everything this run would
 		// decode, which with no -sources is the whole catalogue.
 		if gerr := checkCHRebuildBackfillSafe(reDerivedSourcesInRun(cat, sep41Cat, passes, enabled)); gerr != nil {
@@ -687,7 +686,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	}
 
 	mode := "DRY-RUN (count only)"
-	if *write {
+	if write {
 		mode = "WRITE"
 		// The ADR-0033 completeness verdict does NOT learn about this
 		// rewrite. projector-replay records a projection dirty window so
@@ -755,6 +754,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	if *preflight {
 		return reportCHRebuildPreflight(os.Stdout, lo, hi, reDerivedSourcesInRun(cat, sep41Cat, passes, enabled))
 	}
+	gate.Banner()
 	// Factory-anchored sources (ADR-0035): seed each gate registry from
 	// the factory's creation events in [genesis, lo) BEFORE the
 	// re-derive, exactly as verify-reconciliation and
@@ -1096,9 +1096,9 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 			return store.BulkBackfillTrades(ctx, batch, timescale.BulkBackfillOptions{})
 		}
 	}
-	written, failed := drainAndWrite(ctx, logger, w, buf, *write)
+	written, failed := drainAndWrite(ctx, logger, w, buf, write)
 
-	if *write {
+	if write {
 		// ─── reset the SEP-41 supply rollup fold checkpoint ──────────────
 		// A -sep41 -write run rewrites sep41_supply_events history BELOW the
 		// aggregator's incremental sep41_supply_rollup checkpoint. The rollup
@@ -1113,7 +1113,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		// supply source actually being re-derived: a transfers-only run
 		// (-sources sep41_transfers) leaves sep41_supply_events untouched, so
 		// there is nothing to re-fold.
-		if reset, resetContracts := sep41RollupResetPlan(*includeSEP41, *write, enabled(sep41supply.SourceName), contractsOverride); reset {
+		if reset, resetContracts := sep41RollupResetPlan(*includeSEP41, write, enabled(sep41supply.SourceName), contractsOverride); reset {
 			n, rerr := store.ResetSEP41SupplyRollupFold(ctx, resetContracts)
 			if rerr != nil {
 				return fmt.Errorf("ch-rebuild: sep41 rollup reset: %w", rerr)
@@ -1129,7 +1129,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	// ─── report ──────────────────────────────────────────────────────────
 	fmt.Printf("\n=== ch-rebuild [%d,%d] %s ===\n", lo, hi, mode)
 	rerr := reportCHRebuildCounts(os.Stdout, cat, reDerivedSourcesInRun(cat, sep41Cat, passes, enabled), parseCSVList(*requireRows), written, failed)
-	if !*write {
+	if !write {
 		fmt.Printf("\n(dry-run — re-run with -write to persist to Postgres)\n")
 	}
 	return rerr
