@@ -17,7 +17,12 @@ import {
   formatSubunitPrice,
   multiplyDecimalStrings,
 } from '@/lib/format';
-import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
+import {
+  serializeJsonLd,
+  datasetJsonLd,
+  ogImageFor,
+  shellMetadata,
+} from '@/lib/seo';
 import { assetHref } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { Badge, Breadcrumbs, Container } from '@/components/ui';
@@ -631,33 +636,13 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { slug } = await params;
-  // The runtime-fallback shell's HTML serves for ARBITRARY long-tail
-  // asset URLs, so its baked metadata must be generic — the literal
-  // param would title every such page "shell". AssetPathView restamps
-  // document.title client-side once the real asset loads.
+  // The runtime-fallback shell's HTML serves for arbitrary long-tail
+  // assets; AssetPathView restamps document.title once the asset loads.
   if (slug.toLowerCase() === 'shell') {
-    return {
-      title: 'Asset',
-      description:
-        'Stellar asset detail, rendered live from the Stellar Index API.',
-      // This one document answers 200 for EVERY unmatched /assets/*
-      // path, garbage included, so indexing it files a soft-404 under
-      // whatever URL the crawler happened to try. noindex is the same
-      // posture the other long-tail shells take route-wide
-      // (/accounts, /contracts, /ledgers, /transactions); follow stays
-      // on so the crawler still walks out through the nav.
-      robots: { index: false, follow: true },
-      // Metadata merges shallowly per top-level key (Next's
-      // mergeMetadata only touches keys present in THIS object), so
-      // omitting `alternates` here does not mean "no canonical" — it
-      // inherits the root layout's `alternates: { canonical: '/' }`
-      // verbatim. Every one of these arbitrary long-tail URLs was
-      // baking a rel=canonical pointing at the homepage; noindex only
-      // stopped it from being indexed under that tag, it didn't remove
-      // the tag. Override with an empty object so no canonical (or
-      // atom-feed `types`) is emitted at all.
-      alternates: {},
-    };
+    return shellMetadata(
+      'Asset',
+      'Stellar asset detail, rendered live from the Stellar Index API.',
+    );
   }
   const metaResults = await Promise.all([
     fetchCoin(slug),

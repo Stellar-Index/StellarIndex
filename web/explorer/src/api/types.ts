@@ -3356,6 +3356,10 @@ export interface paths {
          *     the ceiling returns 409 — revoke a key via
          *     `DELETE /v1/account/keys/{keyID}` and retry.
          *
+         *     A SEP-10-authenticated caller gets 403 `key-mint-not-available`:
+         *     an `auth_mode = "sep10"` deployment honours only SEP-10 tokens,
+         *     so a minted key would have no use there.
+         *
          *     The new key inherits the caller's identifier and tier. An
          *     **operator-tier** caller rotating its own credential here is
          *     held to the admin-write contract: the `X-Reason` header is
@@ -19837,7 +19841,8 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             /**
              * @description Caller is not an account tier (`apikey` or `operator`) —
-             *     a SEP-10 wallet token cannot mint API keys.
+             *     a SEP-10 wallet token cannot mint API keys
+             *     (`key-mint-not-available`).
              */
             403: {
                 headers: {

@@ -576,16 +576,14 @@ Differences from the recipe above:
   mc alias set aws-public https://s3.us-east-2.amazonaws.com "" "" --api S3v4
 
   # Use the same per-partition fill helper, just point at the
-  # Vultr alias as destination
-  PARTIALS="" galexie-archive-fill \
-    --dest vultr-objstor/galexie-archive \
-    --source aws-public/aws-public-blockchain/v1.1/stellar/ledgers/pubnet/
+  # Vultr alias as destination (the source is always the aws-public
+  # alias's pubnet prefix)
+  ARCHIVE_DEST=vultr-objstor/galexie-archive galexie-archive-fill
   ```
 
-  (The current `galexie-archive-fill` script is hardcoded to
-  `local/galexie-archive` — making `--dest` configurable is a small
-  ansible role tweak; track as operator follow-up if R3 is being
-  brought up before that lands.)
+  `ARCHIVE_DEST` defaults to `local/galexie-archive` and must be
+  `<mc-alias>/<bucket>[/<prefix>]`; the script refuses anything else
+  before its first `mc` call.
 
   Wall-clock: ~6-8 h (same bandwidth as R1's fill, plus Vultr's S3
   endpoint write latency from the bare metal).
