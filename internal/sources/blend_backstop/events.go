@@ -33,11 +33,11 @@ const MainnetBackstopV2 = "CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3
 // V1 address without re-declaring the constant value here.
 const MainnetBackstopV1 = blend.MainnetBackstopV1
 
-// BackstopGenesisLedger is the first ledger at which a Blend Backstop
-// contract could emit — aligned with the Blend pool factory genesis
-// (the backstop deploys alongside the protocol). Used by the
-// per-source gap detector to size expected coverage.
-const BackstopGenesisLedger uint32 = 56_627_571
+// BackstopGenesisLedger is a lower bound on any Blend Backstop event: the
+// Blend rollout's first contract instantiation, which the V1 backstop
+// (earliest pinned lake event: 51_499_926) postdates. Sizes the gap
+// detector's, the reconcile's and a fresh projector cursor's range.
+const BackstopGenesisLedger = blend.FactoryGenesisLedger
 
 // Event names — topic[0] Symbol strings emitted by the backstop
 // contract. 12 events across the V1 + V2 Backstop surface (V1 uses
