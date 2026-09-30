@@ -257,7 +257,8 @@ const (
 		     AND bucket >= NOW() - INTERVAL '24 hours'
 		   ORDER BY bucket DESC
 		   LIMIT 1
-		)
+		),
+		per_source AS (
 		SELECT source,
 		       COUNT(*)::bigint AS trades_24h,
 		       SUM(
@@ -285,7 +286,9 @@ const (
 		       AND NOT (base_asset = ANY($1) AND quote_asset = ANY($2))
 		  ) t
 		 GROUP BY source
-		 ORDER BY 2 DESC
+		)
+		SELECT source, trades_24h, volume_usd_24h, markets_24h FROM per_source
+		 ORDER BY volume_usd_24h::numeric DESC NULLS LAST, trades_24h DESC, source
 	`
 	assetSourceStatsQuery = `
 		WITH xlm_usd AS (
@@ -300,7 +303,8 @@ const (
 		     AND bucket >= NOW() - INTERVAL '24 hours'
 		   ORDER BY bucket DESC
 		   LIMIT 1
-		)
+		),
+		per_source AS (
 		SELECT source,
 		       COUNT(*)::bigint AS trades_24h,
 		       SUM(
@@ -319,12 +323,15 @@ const (
 		 WHERE ts >= now() - INTERVAL '24 hours'
 		   AND (base_asset = ANY($1) OR quote_asset = ANY($1))
 		 GROUP BY source
-		 ORDER BY 2 DESC
+		)
+		SELECT source, trades_24h, volume_usd_24h, markets_24h FROM per_source
+		 ORDER BY volume_usd_24h::numeric DESC NULLS LAST, trades_24h DESC, source
 	`
 )
 
 // PairSourceStats returns trailing-24h per-source USD volume + trade
-// count for a single (base, quote) market, ordered by volume desc.
+// count for a single (base, quote) market, ordered by USD volume desc
+// (underivable volume last), then trade count, then source.
 // Backs the volume-by-source breakdown (pie) on the market-pair page —
 // the recent-trades feed only samples a page of rows, so an accurate
 // 24h share needs this aggregate.
@@ -339,7 +346,8 @@ func (s *Store) PairSourceStats(ctx context.Context, base, quote []string) ([]So
 
 // AssetSourceStats returns trailing-24h per-source USD volume + trade
 // count aggregated over every market the asset appears in (base OR
-// quote side). Backs the volume-by-source breakdown on the asset page.
+// quote side), in PairSourceStats' order. Backs the volume-by-source
+// breakdown on the asset page.
 //
 // asset is the full set of canonical FORMS to match (see
 // PairSourceStats) so a multi-form asset's legs aggregate together.
