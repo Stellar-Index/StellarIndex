@@ -45,14 +45,27 @@ var ErrRefreshSaturated = errors.New("clickhouse: detached refresh capacity satu
 // the rest — a crawler churning fabricated contract ids could hold all
 // 4 slots with contract-detail refreshes, and every cold account /
 // holders / directory page then fast-503d behind it. TryAcquireClass
-// additionally caps each class at half the global limit, so a burst in
-// one class leaves headroom for the others while the global bound (the
-// pool-safety property) is unchanged.
+// therefore caps each client-keyed class at a quarter of the global limit
+// (so several driven classes cannot fill the pool between them) and keeps
+// one slot that no client-keyed class may take, so the server-keyed
+// prewarm refreshes always have room. The global bound (the pool-safety
+// property) is unchanged.
 type RefreshGate struct {
 	sem chan struct{}
 
 	mu      sync.Mutex
-	classes map[string]chan struct{}
+	classes map[string]int // slots held per class
+	client  int            // slots held by client-keyed classes
+}
+
+// serverKeyedClasses are the refresh classes whose keys the server fixes
+// (one or a handful, kicked by operator prewarm loops). Every other class
+// is keyed on caller-chosen ids, so a client can mint cold keys at will.
+var serverKeyedClasses = map[string]bool{
+	"contracts_dir":      true,
+	"network_throughput": true,
+	"ops_directory":      true,
+	"protocol_bespoke":   true,
 }
 
 // DefaultDetachedRefreshLimit is the production bound on concurrently
@@ -101,60 +114,62 @@ func (g *RefreshGate) Release() {
 	<-g.sem
 }
 
-// classSem returns (lazily creating) the per-class semaphore, capped at
-// half the global limit (min 1).
-func (g *RefreshGate) classSem(class string) chan struct{} {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.classes == nil {
-		g.classes = make(map[string]chan struct{})
-	}
-	sem, ok := g.classes[class]
-	if !ok {
-		limit := cap(g.sem) / 2
-		if limit < 1 {
-			limit = 1
-		}
-		sem = make(chan struct{}, limit)
-		g.classes[class] = sem
-	}
-	return sem
-}
-
 // TryAcquireClass claims a slot for a named refresh class without
-// blocking: the class must be under its own cap (half the global
-// limit) AND the global bound must have room. False means skip the
-// refresh — same contract as TryAcquire. Every refusal is counted on
+// blocking. A client-keyed class may hold a quarter of the global limit
+// and, with the other client-keyed classes, all but one slot; a
+// server-keyed class may hold half. False means skip the refresh — same
+// contract as TryAcquire. Every refusal is counted on
 // obs.ExplorerRefreshGateSaturatedTotal, since the caller only sees a 503.
 func (g *RefreshGate) TryAcquireClass(class string) bool {
 	if g == nil {
 		return true
 	}
-	sem := g.classSem(class)
-	select {
-	case sem <- struct{}{}:
-	default:
+	limit := cap(g.sem)
+	serverKeyed := serverKeyedClasses[class]
+	classCap := max(1, limit/4)
+	if serverKeyed {
+		classCap = max(1, limit/2)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.classes[class] >= classCap {
 		obs.ExplorerRefreshGateSaturatedTotal.WithLabelValues(class, "class").Inc()
+		return false
+	}
+	if !serverKeyed && limit > 1 && g.client >= limit-1 {
+		obs.ExplorerRefreshGateSaturatedTotal.WithLabelValues(class, "global").Inc()
 		return false
 	}
 	select {
 	case g.sem <- struct{}{}:
-		return true
 	default:
-		<-sem // give the class token back — all-or-nothing
 		obs.ExplorerRefreshGateSaturatedTotal.WithLabelValues(class, "global").Inc()
 		return false
 	}
+	if g.classes == nil {
+		g.classes = make(map[string]int)
+	}
+	g.classes[class]++
+	if !serverKeyed {
+		g.client++
+	}
+	return true
 }
 
-// ReleaseClass returns both tokens claimed by a successful
-// TryAcquireClass.
+// ReleaseClass returns the slot claimed by a successful TryAcquireClass.
 func (g *RefreshGate) ReleaseClass(class string) {
 	if g == nil {
 		return
 	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	<-g.sem
-	<-g.classSem(class)
+	if g.classes[class]--; g.classes[class] <= 0 {
+		delete(g.classes, class)
+	}
+	if !serverKeyedClasses[class] {
+		g.client--
+	}
 }
 
 // DetachedRefreshGate exposes the reader's gate so the API-layer explorer

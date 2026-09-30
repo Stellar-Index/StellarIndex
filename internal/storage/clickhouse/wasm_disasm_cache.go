@@ -63,16 +63,69 @@ func (c *wasmDisasmCache) put(wasmHash string, e wasmDisasmEntry, now time.Time)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.entries) >= wasmDisasmCacheMax {
-		// Approximate LRU (oldest-inserted wins) — same tradeoff as
-		// accountStateCache: one pass only when at capacity.
-		var oldestKey string
-		var oldestAt time.Time
-		for k, existing := range c.entries {
-			if oldestKey == "" || existing.cachedAt.Before(oldestAt) {
-				oldestKey, oldestAt = k, existing.cachedAt
-			}
+		evictOldest(c.entries, func(e wasmDisasmEntry) time.Time { return e.cachedAt })
+	}
+	e.cachedAt = now
+	c.entries[wasmHash] = e
+}
+
+// evictOldest drops the oldest-inserted entry — approximate LRU, same
+// tradeoff as accountStateCache: one pass only when at capacity.
+func evictOldest[E any](entries map[string]E, at func(E) time.Time) {
+	var oldestKey string
+	var oldestAt time.Time
+	for k, existing := range entries {
+		if oldestKey == "" || at(existing).Before(oldestAt) {
+			oldestKey, oldestAt = k, at(existing)
 		}
-		delete(c.entries, oldestKey)
+	}
+	delete(entries, oldestKey)
+}
+
+// wasmModuleCacheMax bounds resident module blobs. A Soroban module is capped
+// by network config (128 KiB today), so the worst case is tens of MiB.
+const wasmModuleCacheMax = 256
+
+// wasmModuleEntry is one wasm hash's lake blob plus its native export parse.
+type wasmModuleEntry struct {
+	code      []byte
+	exports   []WasmExport
+	parseNote string
+	cachedAt  time.Time
+}
+
+// wasmModuleCache memoises the contract_code blob per wasm hash so a repeat
+// request skips the lake read and the export parse. Like wasmDisasmCache it
+// has no TTL: the bytes behind a content-addressed hash never change. A lake
+// miss is not cached, so code that lands later is found on the next request.
+type wasmModuleCache struct {
+	mu      sync.Mutex
+	entries map[string]wasmModuleEntry
+}
+
+func newWasmModuleCache() *wasmModuleCache {
+	return &wasmModuleCache{entries: make(map[string]wasmModuleEntry)}
+}
+
+// get is nil-safe: a test-built reader behaves as a permanent miss.
+func (c *wasmModuleCache) get(wasmHash string) (wasmModuleEntry, bool) {
+	if c == nil {
+		return wasmModuleEntry{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[wasmHash]
+	return e, ok
+}
+
+func (c *wasmModuleCache) put(wasmHash string, e wasmModuleEntry, now time.Time) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.entries) >= wasmModuleCacheMax {
+		evictOldest(c.entries, func(e wasmModuleEntry) time.Time { return e.cachedAt })
 	}
 	e.cachedAt = now
 	c.entries[wasmHash] = e

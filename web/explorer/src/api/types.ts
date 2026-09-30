@@ -9945,6 +9945,8 @@ export interface components {
                  *     `count((rate(stellarindex_source_events_total[7d]) > 0)
                  *     and on (source) (stellarindex_source_enabled == 1))`)
                  *     — a subset of `total_sources` by construction.
+                 *     Absent (not 0) when the freshness query failed; a
+                 *     failed query also rolls `overall` to "degraded".
                  */
                 active_sources?: number;
                 /**
@@ -9959,7 +9961,7 @@ export interface components {
                  *     registered=21, active=15 — before the API binary
                  *     published the `massive` FX worker's own enabled
                  *     series; with it, enabled and active each read one
-                 *     higher.
+                 *     higher. Absent (not 0) when the freshness query failed.
                  */
                 total_sources?: number;
             };
@@ -15791,6 +15793,16 @@ export interface operations {
                  *     exclusive with `source`.
                  */
                 asset?: string;
+                /**
+                 * @description Comma-separated opt-in row enrichments, off by default.
+                 *     `sparkline` populates `volume_history_24h` (24 hourly USD
+                 *     buckets, both stored orientations of the pair summed);
+                 *     `inception` populates `first_trade_at` (the pair's first
+                 *     daily bucket). Both are best-effort: a failed enrichment
+                 *     ships the page without the field rather than an error.
+                 * @example sparkline,inception
+                 */
+                include?: string;
             };
             header?: never;
             path?: never;
@@ -18325,13 +18337,17 @@ export interface operations {
                  */
                 class?: "exchange" | "aggregator" | "oracle" | "authority_sanity" | "lending" | "router" | "bridge";
                 /**
-                 * @description Opt-in extras. `stats` populates each row's
-                 *     `trade_count_24h` from a single GROUP BY on the trades
-                 *     hypertable — cheap, but a DB hit so opt-in. Absent the
-                 *     param the response stays the all-static-registry
-                 *     projection.
+                 * @description Comma-separated opt-in extras. `stats` populates each
+                 *     row's `trade_count_24h`, `volume_24h_usd` and
+                 *     `markets_count_24h` from a single GROUP BY on the trades
+                 *     hypertable — cheap, but a DB hit so opt-in. `sparkline`
+                 *     adds `volume_history_24h` (24 hourly buckets) and
+                 *     `sparkline7d` adds `volume_history_7d` (168 hourly
+                 *     buckets); each implies `stats`. Absent the param the
+                 *     response stays the all-static-registry projection.
+                 * @example stats,sparkline
                  */
-                include?: "stats";
+                include?: string;
             };
             header?: never;
             path?: never;

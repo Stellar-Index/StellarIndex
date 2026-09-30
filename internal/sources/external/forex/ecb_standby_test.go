@@ -64,3 +64,27 @@ func TestRefreshOnce_ECBStandbyAttributesEachRowToItsFetcher(t *testing.T) {
 		t.Fatalf("batch has %d current and %d dated rows; the scenario needs both", current, dated)
 	}
 }
+
+// The served snapshot names the feed behind each rate: what the standby
+// answered says ecb, and a ticker it does not carry is held with the
+// primary's name, so /v1/price can credit the feed that actually priced it.
+func TestRefreshOnce_ServedCurrenciesCarryTheirPublishingFeed(t *testing.T) {
+	w := newTestWorker(t).WithFallbacks(ECBProvider{Endpoint: ecbServer(t, ecbDailyXML, http.StatusOK).URL})
+	held := time.Now().UTC().Add(-time.Hour)
+	w.cache.Set(&Snapshot{Currencies: []Currency{
+		{Ticker: "EUR", Name: "Euro", RateUSD: 0.8, UpdateAt: held, Source: fxSource},
+		{Ticker: "NGN", Name: "Nigerian Naira", RateUSD: 1500, UpdateAt: held, Source: fxSource},
+	}})
+	w.refreshOnce(context.Background())
+
+	want := map[string]string{"EUR": "ecb", "NGN": fxSource}
+	got := map[string]string{}
+	for _, c := range w.cache.Latest().Currencies {
+		got[c.Ticker] = c.Source
+	}
+	for ticker, source := range want {
+		if got[ticker] != source {
+			t.Errorf("%s source = %q, want %q (served: %v)", ticker, got[ticker], source, got)
+		}
+	}
+}
