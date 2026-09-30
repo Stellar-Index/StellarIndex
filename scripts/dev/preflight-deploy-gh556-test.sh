@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# preflight-deploy-gh556-test.sh — regression fixture for GH-556(b)/(d):
+# preflight-deploy-gh556-test.sh — regression fixture for GH-556(b)/(c)/(d):
 #
 #   (b) `gh` missing must be a DECISION NEEDED (exit 1), not a soft note
 #       that leaves the script exit 0 with the release unverified.
+#   (c) a region with no manifest row must not name --refresh-manifest as
+#       the remedy: it rewrites an existing row and cannot add one.
 #   (d) configs/prometheus/rules.r1/ is applied automatically ONLY on r1
 #       (deploy.yml's "Apply Prometheus rules (r1)" step is
 #       `if: inputs.region == 'r1'`). Elsewhere it must stay SUBSTANTIVE.
@@ -157,6 +159,20 @@ assert_not_contains "testnet has no dispatch step that applies rules.r1/" "$out3
 if [ "$rc3" -eq 0 ]; then
     echo "FAIL: testnet must report the rules.r1/ change as an outstanding decision (exit $rc3)" >&2
     echo "$out3" >&2
+    fail=1
+fi
+
+# ── test 4: a missing row is not remedied by --refresh-manifest ──────────
+# The fixture has no futurenet row. The refresh only rewrites an existing
+# row, so the refusal must point at the hand-added row, not at itself.
+out4="$(PATH="$TMP/bin:/usr/bin:/bin" "$TMP/scripts/dev/preflight-deploy.sh" \
+    --region futurenet --version v0.2.0 --refresh-manifest 2>&1)"
+rc4=$?
+echo "  test 4 (missing row + --refresh-manifest) exit code: $rc4"
+assert_contains "a missing row is added by hand" "$out4" "add one by hand"
+assert_not_contains "--refresh-manifest is not offered as the whole remedy" "$out4" "re-derive it with --refresh-manifest"
+if [ "$rc4" -ne 2 ]; then
+    echo "FAIL: a region with no manifest row must exit 2 (got $rc4)" >&2
     fail=1
 fi
 
