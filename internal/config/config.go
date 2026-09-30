@@ -1504,7 +1504,7 @@ type DashboardConfig struct {
 
 	EmailFrom string `toml:"email_from" doc:"From: address for transactional emails (e.g. 'Stellar Index <hello@stellarindex.io>'). Must match a domain Resend has verified for the configured API key." default:"Stellar Index <hello@stellarindex.io>"`
 
-	ResendAPIKeyEnv string `toml:"resend_api_key_env" doc:"Environment variable holding the Resend transactional-email API key (re_…). Empty value leaves the dashboard auth flow on a NoopSender — magic-link tokens land in the API logs only, useful for local dev. Production sets this." default:"STELLARINDEX_RESEND_API_KEY"`
+	ResendAPIKeyEnv string `toml:"resend_api_key_env" doc:"Environment variable holding the Resend transactional-email API key (re_…). An unset or empty value wires an unconfigured mail sender: POST /v1/auth/login answers 503 and counts a failed send, and signup reports email_verification_sent:false. Production sets this." default:"STELLARINDEX_RESEND_API_KEY"`
 
 	CodeSecretEnv string `toml:"code_secret_env" doc:"Environment variable holding the server secret that keys the 6-digit email-code derivation (HMAC over the stored token hash — without it a Postgres read would reveal every in-flight sign-in code) AND the WebAuthn passkey-ceremony, magic-link login-intent and login-device cookie MACs. Each consumer MACs under its own HKDF-derived key. Any long random string (32+ bytes). Required while passkeys are wired (the API refuses to start without it); otherwise an unset/empty env falls back to a random per-process secret: still keyed, but in-flight codes, magic links and browsers' login-device markers stop verifying across a restart or another instance." default:"STELLARINDEX_DASHBOARD_CODE_SECRET"`
 

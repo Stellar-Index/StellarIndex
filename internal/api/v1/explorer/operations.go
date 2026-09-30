@@ -513,7 +513,8 @@ func (h *Handler) Operations(w http.ResponseWriter, r *http.Request) {
 		out.Total = hdr.OpCount
 		out.Truncated = hdr.OpCount > uint32(len(rows))
 	}
-	h.WriteJSON(w, out, false)
+	_, stale, _ := h.lakeTip(ctx)
+	h.WriteJSON(w, out, stale)
 }
 
 // operationsResponseByteBudget is a conservative placeholder ceiling on the
@@ -689,7 +690,8 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	h.WriteJSON(w, out, false)
+	_, stale, _ := h.lakeTip(ctx)
+	h.WriteJSON(w, out, stale)
 }
 
 // opsDirCached serves the cached max-page first-page view. A fresh entry is

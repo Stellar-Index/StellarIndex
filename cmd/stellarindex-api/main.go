@@ -5180,6 +5180,7 @@ func (a *forexAdapter) Latest() *v1.CurrenciesSnapshot {
 			Name:      c.Name,
 			RateUSD:   c.RateUSD,
 			UpdatedAt: c.UpdateAt,
+			Source:    c.Source,
 		}
 		// Join curated monetary-base CSV (lower-case keyed). Market
 		// cap is computed in USD-equivalent: the local-units M2

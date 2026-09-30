@@ -88,7 +88,7 @@ Operational follow-ups:
 
 ## Postmortem
 
-Not yet written. Tracked per `docs/operations/sev-playbook.md` §6.1
-(SEV-2: draft within 5 business days). Once it lands at
-`docs/operations/postmortems/2026-09-02-log-store-credential-pii-exposure.md`,
-link it here.
+Draft:
+[`docs/operations/postmortems/2026-09-02-log-store-credential-pii-exposure.md`](../../../docs/operations/postmortems/2026-09-02-log-store-credential-pii-exposure.md).
+The front-matter `postmortem:` field is set once it is ratified
+(`docs/operations/sev-playbook.md` §6.1).

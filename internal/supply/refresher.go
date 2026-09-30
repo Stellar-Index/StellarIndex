@@ -272,7 +272,7 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 		switch {
 		case errors.Is(err, ErrNoObservation):
 			kind = OutcomeKindNoObservation
-		case errors.Is(err, ErrNegativeTotalMissingBaseline):
+		case errors.Is(err, ErrNegativeTotalMissingBaseline), errors.Is(err, ErrGenesisBaselineNotSeeded):
 			kind = OutcomeKindMissingBaseline
 		}
 		r.logger.Warn("supply refresh: compute failed",
