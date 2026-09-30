@@ -359,6 +359,7 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 		{"LedgersList", "/v1/ledgers", nil, (*Handler).LedgersList},
 		{"LedgerDetail", "/v1/ledgers/42", map[string]string{"seq": "42"}, (*Handler).LedgerDetail},
 		{"LedgerTransactions", "/v1/ledgers/42/transactions", map[string]string{"seq": "42"}, (*Handler).LedgerTransactions},
+		{"LedgerOperations", "/v1/ledgers/42/operations", map[string]string{"seq": "42"}, (*Handler).LedgerOperations},
 		{"TxDetail", "/v1/tx/" + validTestTxHash, map[string]string{"hash": validTestTxHash}, (*Handler).TxDetail},
 		{"ContractDetail", "/v1/contracts/" + validTestContract, map[string]string{"contract_id": validTestContract}, (*Handler).ContractDetail},
 		{"ContractWasm", "/v1/contracts/" + validTestContract + "/wasm", map[string]string{"contract_id": validTestContract}, (*Handler).ContractWasm},

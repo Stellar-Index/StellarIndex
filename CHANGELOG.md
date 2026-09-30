@@ -22,12 +22,16 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [v0.96.0] — 2026-09-30
 
-41 commits since v0.95.0. Operator-visible: SDEX fills with one zero leg are
+58 commits since v0.95.0. Operator-visible: SDEX fills with one zero leg are
 now stored as trades and serve `"price": null` (the field is nullable in
 OpenAPI and `*string` in `pkg/client`); catalogue listing cursors name the
 slugs already served, so an offset cursor from an older release returns 400;
-dashboard sessions idle for over 7 days are revoked; and `verify-lake`
-censuses all seven raw tables on a new daily timer. New migration: 0191 drops
+dashboard sessions idle for over 7 days are revoked; `POST /v1/account/keys`
+is limited to `apikey`/`operator` callers and self-service keys expire when
+idle; `verify-lake` censuses all seven raw tables on a new daily timer; a
+page inhibits only the ticket/info alerts of its own `alert_family`; and the
+unread `idx_lec_asset` skip index leaves the ClickHouse schema (a live host
+reports it as drift until the operator drops it). New migration: 0191 drops
 the two `trades` amount CHECKs — catalog-only DDL that runs with compressed
 chunks in place (no decompress) under the deploy's 5 s `lock_timeout`; its
 commit carries a `Replay-Plan:` trailer (SDEX step 3f re-derives the served
@@ -55,10 +59,38 @@ trades with `ch-rebuild -sdex`).
 - **dashboardauth — idle sessions (#1967, OPERATOR-VISIBLE):** a session
   unused for `SessionIdleTimeout` (default 7 days) is revoked; API-key auth
   is unchanged.
+- **auth — self-service API keys (#1849, OPERATOR-VISIBLE):**
+  `POST /v1/account/keys` returns 403 unless the caller's tier is `apikey`
+  or `operator`, and a self-service child key is stored with
+  `MirroredKeyIdleTTL`, refreshed on every use, so only an abandoned key
+  ages out; operator, admin and signup mints stay persistent.
 - **ops — verify-lake (#1980, OPERATOR-VISIBLE):** a raw-table census checks
   transactions, operations, contract_events, results and participants per
   1M-ledger partition, writes `lake_verify.prom`, and runs daily under
   `run-heavy-job` with stale/failed alerts and a runbook.
+- **alerting — page→ticket inhibition (#1973, OPERATOR-VISIBLE):** the 34
+  family alerts across 11 r1 rule files carry an `alert_family` label and
+  both Alertmanager configs inhibit a ticket/info alert only when it shares
+  the page's `component` *and* `alert_family`, so one page no longer mutes
+  every lower-severity alert on that component; `inhibit-rules-test.sh`
+  runs in CI, `verify.sh` and `lint-changed`.
+- **clickhouse — `idx_lec_asset` (#1990, OPERATOR-VISIBLE):** the bloom
+  index on `ledger_entry_changes.asset` had no reader and leaves the tier-1
+  schema and the retrofit script; a host that still carries it shows
+  live-only drift in `ch-schema-drift` until step 4 of
+  `tier1_skip_indexes.sql` (`DROP INDEX` under `run-heavy-job.sh`) runs.
+- **divergence — CoinGecko reference (#1712):** the divergence price
+  reference authenticates with `external.coingecko.api_key` /
+  `demo_api_key` (Pro key → `pro-api` host) instead of hitting the public
+  host anonymously; a failed batch logs status and path only.
+- **ops — projector-replay (#1891):** the command's help, its run note and
+  the replay decision rule state its generation limit: it writes at
+  `derive_generation` 0, so it cannot correct a row a re-derive already
+  stamped higher — use `projected-rebuild -write` after a decoder fix;
+  `backfill-router`'s comments match what it does.
+- **ci — package docs (#1769):** `lint-docs` fails on an `internal/` or
+  `pkg/` package with no package comment; the Definition of Done asks for a
+  `CAPABILITY-INVENTORY.md` check before new utility code.
 
 ### Added
 
@@ -86,10 +118,17 @@ trades with `ch-rebuild -sdex`).
   `completeness_pct` is emitted (#1944); `/v1/assets` resolves issuer home
   domains in one batched read and counts LCM fallbacks (#1940); SSE
   subscriptions past the topic-map ceiling get a 503 (#1942).
+- **auth:** the API-key index is marked ready only by the build generation
+  that walked it, and the API invalidates the index at start so records
+  written raw become listable and revocable (#1857).
+- **api:** `/v1/ledger/stream` connections share one cursors read per tick
+  instead of each polling the store (#1915).
 - **pricing / divergence:** the synthetic USD cross requires legs from
   independent publishers (#1929).
-- **clickhouse / chops:** the cap67 watermark refuses to advance over missing
-  contract events (#1931); hash-chain rows pair their hashes from one row
+- **clickhouse / chops:** compute-completeness floors its scans at the
+  network's Soroban genesis instead of the pubnet ledger, so the test-net
+  unit no longer scans an inverted range (#1706); the cap67 watermark
+  refuses to advance over missing contract events (#1931); hash-chain rows pair their hashes from one row
   (#1944); gated factory children preseed from the ClickHouse lake and an
   empty seed is an error (#1876); the chunk-restamp report counts clean
   chunks and config-assertions flags a paused `trades` compression policy
@@ -102,7 +141,10 @@ trades with `ch-rebuild -sdex`).
   sorocredit and defindex surfaces (#1984, #1981), the automated stale-deploy
   check (#1976), the monthly archive-trim timer (#1934), the withdrawn
   `drop_chunks` drill item (#1965), the phantom Aquarius router gap (#1971),
-  and the divergence webhook payload (#1908).
+  and the divergence webhook payload (#1908); the WASM audit logs record the
+  Soroswap factory `set_pair_wasm` rotation (#1991), the sorocredit
+  early-window walk (#1997) and the Phoenix WASM lineage captured from the
+  lake, including a 14th pool the registry did not know (#1996).
 
 ## [v0.95.0] — 2026-09-30
 

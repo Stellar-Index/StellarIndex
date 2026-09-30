@@ -349,6 +349,14 @@ var (
 // pools upgrade in place and can change event SHAPE, not just fields).
 var TopicSymbolSwapMap = scval.MustEncodeSymbol(EventActionSwap)
 
+// The Map-schema pool WASM publishes provide_liquidity / withdraw_liquidity
+// the same way: one ScvSymbol topic, ScvMap body. Decoded by
+// decode.go::decodeProvideLiquidityMap / decodeWithdrawLiquidityMap.
+var (
+	TopicSymbolProvideLiquidityMap  = scval.MustEncodeSymbol(EventActionProvideLiquidity)
+	TopicSymbolWithdrawLiquidityMap = scval.MustEncodeSymbol(EventActionWithdrawLiquidity)
+)
+
 // Liquidity-management topic[0] encodings + topic[1] field names.
 // Same ScString-discriminator reasoning as swap above: contracts
 // publish via tuple-literals like
