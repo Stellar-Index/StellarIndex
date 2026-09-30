@@ -189,11 +189,14 @@ func FuzzDecodeClaimAtom(f *testing.F) {
 			t.Fatalf("decodeClaimAtom accepted=%v but sdexclaim.IsRealTrade=%v (err=%v)", got, want, err)
 		}
 		if err != nil {
-			if !errors.Is(err, ErrMalformedClaimAtom) && !errors.Is(err, ErrUnknownClaimAtomType) {
+			if !errors.Is(err, ErrMalformedClaimAtom) && !errors.Is(err, ErrUnknownClaimAtomType) && !errors.Is(err, ErrNoOpClaim) {
 				t.Fatalf("rejection without a documented sentinel: %v", err)
 			}
 			if kind%4 == 3 && !errors.Is(err, ErrUnknownClaimAtomType) {
 				t.Fatalf("unknown atom type rejected with %v, want ErrUnknownClaimAtomType", err)
+			}
+			if got, want := errors.Is(err, ErrNoOpClaim), kind%4 != 3 && soldAmt <= 0 && boughtAmt <= 0; got != want {
+				t.Fatalf("ErrNoOpClaim = %v, want %v for sold=%d bought=%d kind=%d (err=%v)", got, want, soldAmt, boughtAmt, kind, err)
 			}
 			return
 		}
@@ -282,8 +285,14 @@ func FuzzDecodeOperationResultXDR(f *testing.F) {
 		if claims != len(atoms) {
 			t.Fatalf("AuditOp claims = %d, want %d", claims, len(atoms))
 		}
-		if failed != len(drops) || len(events)+failed != len(atoms) {
-			t.Fatalf("events=%d failed=%d drops=%d atoms=%d do not balance", len(events), failed, len(drops), len(atoms))
+		noOps := 0
+		for i := range atoms {
+			if _, derr := decodeClaimAtom(atoms[i], 0, time.Time{}, "", 0, i, ""); errors.Is(derr, ErrNoOpClaim) {
+				noOps++
+			}
+		}
+		if failed+noOps != len(drops) || len(events)+failed+noOps != len(atoms) {
+			t.Fatalf("events=%d failed=%d noOps=%d drops=%d atoms=%d do not balance", len(events), failed, noOps, len(drops), len(atoms))
 		}
 		if realN := sdexclaim.RealTradeCount(atoms); realN != len(events) {
 			t.Fatalf("emitted %d trades, sdexclaim.RealTradeCount = %d", len(events), realN)

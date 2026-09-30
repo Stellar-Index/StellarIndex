@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"context"
 	"errors"
-	"math"
 	"math/big"
 	"slices"
 	"testing"
@@ -1477,6 +1476,32 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 		}
 	})
 
+	t.Run("one 1e-8 unit under a $1B floor: rejected", func(t *testing.T) {
+		// $999,999,999.99999999 at the CEX 1e8 scale sits within half a
+		// float64 ulp of 1e9, so only an exact comparison sees it short.
+		trade := mkFXTrade(big.NewInt(99_999_999_999_999_999), time.Now())
+		trade.Source = "binance"
+		store := &mockStore{trades: []canonical.Trade{trade}}
+		rdb, _ := newTestRedis(t)
+		orch := New(store, rdb, Config{
+			Pairs:        []canonical.Pair{pair},
+			Windows:      []time.Duration{5 * time.Minute},
+			MinUSDVolume: 1e9,
+		})
+
+		before := testutil.ToFloat64(obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume"))
+		if err := orch.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		after := testutil.ToFloat64(obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume"))
+		if after-before != 1 {
+			t.Errorf("min_usd_volume drop counter delta = %v, want 1", after-before)
+		}
+		if orch.Stats().VWAPWrites != 0 {
+			t.Errorf("VWAPWrites = %d, want 0 (window is below the floor)", orch.Stats().VWAPWrites)
+		}
+	})
+
 	t.Run("filter off (MinUSDVolume=0): thin window publishes", func(t *testing.T) {
 		store := &mockStore{trades: []canonical.Trade{mkFXTrade(big.NewInt(100_000), time.Now())}}
 		rdb, mr := newTestRedis(t)
@@ -2375,9 +2400,9 @@ func TestUSDVolumeForPairPerTrade_PerSourceDecimals(t *testing.T) {
 	t.Run("fiat:USD from a 6dp FX source", func(t *testing.T) {
 		// $10,000 at the FX pollers' 1e6 scale.
 		trades := []canonical.Trade{mk(usdPair, "exchangeratesapi", 10_000_000_000, 0)}
-		total, per := usdVolumeForPairPerTrade(usdPair, trades, classicPegs, nil)
-		if math.Abs(total-10_000) > 0.01 {
-			t.Fatalf("total = %.2f, want 10000 — a 1e8 divisor yields %.2f", total, 10_000.0/100)
+		per := usdVolumeForPairPerTrade(usdPair, trades, classicPegs, nil)
+		if total := survivorUSDVolume(trades, per); total.Cmp(big.NewRat(10_000, 1)) != 0 {
+			t.Fatalf("total = %s, want 10000 — a 1e8 divisor yields %.2f", total.FloatString(2), 10_000.0/100)
 		}
 		if got := per[trades[0].ID()]; got.Cmp(big.NewRat(10_000, 1)) != 0 {
 			t.Errorf("per-trade USD = %s, want exactly 10000", got.RatString())
@@ -2386,9 +2411,9 @@ func TestUSDVolumeForPairPerTrade_PerSourceDecimals(t *testing.T) {
 
 	t.Run("fiat:USD from an 8dp CEX source is unchanged", func(t *testing.T) {
 		trades := []canonical.Trade{mk(usdPair, "binance", 3_000_000_000_000, 0)} // $30,000 at 1e8
-		total, _ := usdVolumeForPairPerTrade(usdPair, trades, classicPegs, nil)
-		if math.Abs(total-30_000) > 0.01 {
-			t.Fatalf("total = %.2f, want 30000", total)
+		total := survivorUSDVolume(trades, usdVolumeForPairPerTrade(usdPair, trades, classicPegs, nil))
+		if total.Cmp(big.NewRat(30_000, 1)) != 0 {
+			t.Fatalf("total = %s, want 30000", total.FloatString(2))
 		}
 	})
 
@@ -2397,9 +2422,9 @@ func TestUSDVolumeForPairPerTrade_PerSourceDecimals(t *testing.T) {
 			mk(usdPair, "binance", 3_000_000_000_000, 0),       // $30,000 at 1e8
 			mk(usdPair, "exchangeratesapi", 10_000_000_000, 1), // $10,000 at 1e6
 		}
-		total, _ := usdVolumeForPairPerTrade(usdPair, trades, classicPegs, nil)
-		if math.Abs(total-40_000) > 0.01 {
-			t.Fatalf("total = %.2f, want 40000 ($30k @8dp + $10k @6dp) — one fixed divisor cannot value both", total)
+		total := survivorUSDVolume(trades, usdVolumeForPairPerTrade(usdPair, trades, classicPegs, nil))
+		if total.Cmp(big.NewRat(40_000, 1)) != 0 {
+			t.Fatalf("total = %s, want 40000 ($30k @8dp + $10k @6dp) — one fixed divisor cannot value both", total.FloatString(2))
 		}
 	})
 
@@ -2407,10 +2432,10 @@ func TestUSDVolumeForPairPerTrade_PerSourceDecimals(t *testing.T) {
 		// $10,000 at the Stellar-classic 1e7 scale, reported by a
 		// venue that declares nothing in the registry (fallback 8).
 		trades := []canonical.Trade{mk(classicPair, "test-unregistered-venue", 100_000_000_000, 0)}
-		total, _ := usdVolumeForPairPerTrade(classicPair, trades, classicPegs, nil)
-		if math.Abs(total-10_000) > 0.01 {
-			t.Fatalf("total = %.2f, want 10000 — the classic peg is 7dp by protocol invariant, "+
-				"not by the reporting source's registry entry", total)
+		total := survivorUSDVolume(trades, usdVolumeForPairPerTrade(classicPair, trades, classicPegs, nil))
+		if total.Cmp(big.NewRat(10_000, 1)) != 0 {
+			t.Fatalf("total = %s, want 10000 — the classic peg is 7dp by protocol invariant, "+
+				"not by the reporting source's registry entry", total.FloatString(2))
 		}
 	})
 }

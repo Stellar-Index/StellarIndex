@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // ContractDirectoryEntry is one row of GET /v1/contracts.
@@ -369,16 +373,91 @@ func (h *Handler) ledgerSeqAtCloseTime(ctx context.Context, tipSeq uint32, bound
 	return lo, nil
 }
 
-// contractAttribution loads the contract_id → protocol map (best-effort —
-// a registry read failure degrades to no attribution, never a request error).
+// contractAttributionTTL bounds how stale the contract → protocol map may be.
+// The registry changes only on operator seed runs, while the full-table read
+// would otherwise run on every request to three unauthenticated routes.
+const contractAttributionTTL = time.Minute
+
+// contractAttributionReadTimeout bounds the shared refill. It runs detached
+// so one caller's disconnect cannot fail the others waiting on it.
+const contractAttributionReadTimeout = 5 * time.Second
+
+// contractAttributionCache memoises ProtocolContractIndex. Zero value ready.
+type contractAttributionCache struct {
+	mu       sync.Mutex
+	idx      map[string]string
+	loadedAt time.Time
+	flight   singleflight.Group
+}
+
+func (c *contractAttributionCache) get() (idx map[string]string, fresh bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.idx, c.idx != nil && time.Since(c.loadedAt) < contractAttributionTTL
+}
+
+// contractAttribution returns the contract_id → protocol map (best-effort —
+// a registry read failure serves the last good map, or no attribution,
+// never a request error). The returned map is shared: callers must not mutate it.
 func (h *Handler) contractAttribution(ctx context.Context) map[string]string {
 	if h.ProtocolContracts == nil {
 		return map[string]string{}
 	}
-	idx, err := h.ProtocolContracts.ProtocolContractIndex(ctx)
-	if err != nil {
-		h.Logger.Warn("contract attribution index read failed", "err", err)
-		return map[string]string{}
+	idx, fresh := h.attribution.get()
+	if fresh {
+		return idx
 	}
-	return idx
+	done := make(chan singleflight.Result, 1)
+	go func(dctx context.Context) {
+		// singleflight re-panics here when the read panics; answer on done
+		// so a caller with no deadline is not left blocked.
+		defer func() {
+			if rec := recover(); rec != nil {
+				worker.Report(h.Logger, "explorer-contract-attribution-refresh", rec)
+				done <- singleflight.Result{Err: fmt.Errorf("contract attribution refresh panicked: %v", rec)}
+			}
+		}()
+		v, err, _ := h.attribution.flight.Do("index", func() (any, error) {
+			return h.refillContractAttribution(dctx)
+		})
+		done <- singleflight.Result{Val: v, Err: err}
+	}(context.WithoutCancel(ctx))
+
+	var err error
+	select {
+	case res := <-done:
+		if res.Err == nil {
+			return res.Val.(map[string]string)
+		}
+		err = res.Err
+	case <-ctx.Done():
+		err = ctx.Err()
+	}
+	h.Logger.Warn("contract attribution index read failed", "err", err)
+	if idx != nil {
+		return idx
+	}
+	return map[string]string{}
+}
+
+func (h *Handler) refillContractAttribution(ctx context.Context) (map[string]string, error) {
+	c := &h.attribution
+	// A caller that sampled the cache before the previous flight landed
+	// must not start a second read.
+	if cur, ok := c.get(); ok {
+		return cur, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, contractAttributionReadTimeout)
+	defer cancel()
+	loaded, err := h.ProtocolContracts.ProtocolContractIndex(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if loaded == nil {
+		loaded = map[string]string{}
+	}
+	c.mu.Lock()
+	c.idx, c.loadedAt = loaded, time.Now()
+	c.mu.Unlock()
+	return loaded, nil
 }

@@ -1254,6 +1254,17 @@ jobs:
         # DefaultClient, exempts _test.go, and FAILS on a root with no Go
         # files rather than passing.
         run: ./scripts/ci/lint-http-timeouts-test.sh
+      - name: lint-apikey-scan
+        # A lookup that walks `apikey:*` costs O(every credential in the
+        # deployment) on the Redis that is also the rate limiter, and open
+        # registration makes that keyspace caller-sized. One sanctioned walk
+        # (the apikey-index build) is allowed; this keeps it at one.
+        run: ./scripts/ci/lint-apikey-scan.sh
+      - name: lint-apikey-scan self-test
+        # Pins the gate non-vacuous: catches a scan in internal/auth and the
+        # wildcard anywhere, honours exactly one `apikey-scan-ok:` marker,
+        # fails a stale marker, and FAILS on a tree with no auth files.
+        run: ./scripts/ci/lint-apikey-scan-test.sh
       - name: lint-unbounded-latest-row
         # #594: a DISTINCT ON over a hypertable with no time or ledger floor
         # reads every row of every chunk. It is fast on a fresh database and
