@@ -71,6 +71,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: archive
+          alert_family: archive_completeness_stale
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-completeness-stale.md
           summary: "archive-completeness verify hasn't completed cleanly in {{ $value | humanizeDuration }}"
@@ -89,6 +90,7 @@ groups:
           severity: page
           team: stellarindex
           component: archive
+          alert_family: archive_completeness_stale
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-completeness-stale.md
           summary: "(R1 integrity-leader) archive-completeness verify stale > 48h — SEV-2"
