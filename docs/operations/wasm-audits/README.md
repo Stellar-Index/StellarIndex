@@ -26,6 +26,7 @@ silently produces wrong trades.
 ## Files in this directory
 
 - `README.md` — this file. Procedure + checklist.
+- `internal/ops/chops/audited_wasm.json` — the machine-readable audited set: every hash these logs string-checked, which `stellarindex-ops wasm-drift` checks each gated contract against ([runbook](../runbooks/wasm-drift.md)).
 - `soroswap.md` — Soroswap audit (in progress).
 - (`aquarius.md`, `phoenix.md`, `comet.md`, `reflector-{dex,cex,fx}.md`,
   `redstone.md`, `band.md` — to land per source.)
