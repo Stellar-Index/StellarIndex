@@ -98,16 +98,12 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 	// reads as a bogus delta here and as a silently-empty arm in
 	// ch-rebuild -write (cold audit 2026-08-03). Read-only, idempotent,
 	// and a no-op for the 20+ non-factory sources.
-	//
-	// Caveat carried from the sibling call sites: preseedFactoryChildren
-	// walks the Postgres soroban_events landing zone, which is
-	// decommission-pending (#803); a CH-native preseed is the durable fix
-	// for all four callers.
+	lake := clickhouse.ReconcileEventStreamer{Addr: *chAddr}
 	for _, src := range cat {
 		if len(src.factories) == 0 {
 			continue
 		}
-		pblind, perr := preseedFactoryChildren(ctx, store, src, lo)
+		pblind, perr := preseedFactoryChildren(ctx, lake, src, lo)
 		if perr != nil {
 			return fmt.Errorf("%s: preseed factory children: %w", src.name, perr)
 		}
