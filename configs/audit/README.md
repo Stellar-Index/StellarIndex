@@ -27,12 +27,14 @@ yq '.aquarius.contracts | join(",")' configs/audit/wasm-walk-contracts.yaml \
 
 # Run the walk on r1 (off the curated list)
 ssh root@r1 "set -a; . /etc/default/stellarindex-ops; set +a; \
+  mkdir -p /var/log/wasm-audit; \
   stellarindex-ops wasm-history \
     -config /etc/stellarindex.toml \
     -from 50457424 -to \$(date +%s)-derived-current-tip \
     -contracts \$(cat /tmp/aquarius-input.txt) \
     -parallel 8 \
-    > /var/log/wasm-history-aquarius.json"
+    > /var/log/wasm-audit/aquarius-wasm-history.json \
+    2> /var/log/wasm-audit/aquarius-wasm-history.stderr"
 ```
 
 Or against all sources at once: concatenate the contract lists across
