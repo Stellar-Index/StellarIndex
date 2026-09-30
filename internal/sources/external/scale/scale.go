@@ -246,3 +246,11 @@ func CandleTxHash(symbol string, closeTs int64, granularity time.Duration) (stri
 	sum := sha256.Sum256(fmt.Appendf(nil, "%s-BF-%s-%020d", symbol, granularity, closeTs))
 	return hex.EncodeToString(sum[:]), nil
 }
+
+// CandleClosed reports whether a backfilled candle whose bucket ends
+// (exclusive) at end may be emitted for a window ending at to. A candle
+// still open at now carries partial volume, and one ending past to would
+// be stamped outside the window the caller checks for overlap.
+func CandleClosed(end, to, now time.Time) bool {
+	return !end.After(to) && !end.After(now)
+}

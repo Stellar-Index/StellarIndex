@@ -976,7 +976,7 @@ Subcommands:
                           non-zero on any divergence. soroswap is re-derived
                           without pair seeding, so a range holding pairs
                           created before -from diverges by construction.
-  ch-rebuild -config PATH -from N -to N [-ch-addr H:P] [-sources CSV] [-sdex] [-sep41] [-contract-calls] [-contracts CSV] [-bulk-trades]
+  ch-rebuild -config PATH -from N -to N [-write] [-ch-addr H:P] [-sources CSV] [-sdex] [-sep41] [-contract-calls] [-contracts CSV] [-bulk-trades]
                           Re-derive event-based served tables (Timescale)
                           from the ClickHouse lake for a range by re-running
                           the production decoders — the ADR-0034 lake-replay
