@@ -7,8 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"math/big"
 	"net/http"
+	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -1090,5 +1092,146 @@ func TestChart_CoveredWindowStopsAtTheCountingCondition(t *testing.T) {
 	}
 	if env.Flags.Stale {
 		t.Error("flags.stale = true; stopping because the window is COVERED is not a degradation")
+	}
+}
+
+// spanCostStore prices a read by the range it scans: once the merge holds
+// a series, a source whose reads scan more than twice the window's missing
+// width, or read it unbounded, times out, as a full-window constituent scan
+// at a fine grain does against the walk's budget.
+type spanCostStore struct {
+	*chartOHLCStore
+	missing   time.Duration
+	reads     int
+	laterRows int
+	perSource map[string]*spanCost
+}
+
+type spanCost struct {
+	reads int
+	width time.Duration
+}
+
+func (s *spanCostStore) HistoryPointsInRange(
+	ctx context.Context, pair canonical.Pair, gran string, from, to time.Time, limit int,
+) ([]v1.HistoryPoint, error) {
+	s.reads++
+	if s.reads == 1 {
+		return s.chartOHLCStore.HistoryPointsInRange(ctx, pair, gran, from, to, limit)
+	}
+	c := s.perSource[pair.String()]
+	if c == nil {
+		c = &spanCost{}
+		s.perSource[pair.String()] = c
+	}
+	c.reads++
+	if to.IsZero() {
+		c.width = time.Duration(math.MaxInt64)
+		return nil, context.DeadlineExceeded
+	}
+	// An index-ordered read stops at its limit, so it scans no more buckets.
+	if c.width += min(to.Sub(from), time.Duration(limit)*24*time.Hour); c.width > 2*s.missing {
+		return nil, context.DeadlineExceeded
+	}
+	pts, err := s.chartOHLCStore.HistoryPointsInRange(ctx, pair, gran, from, to, limit)
+	pts = pts[:min(len(pts), limit)]
+	s.laterRows += len(pts)
+	return pts, err
+}
+
+// TestChart_UnfillableHoleDoesNotRunTheWalkToBudget: a window with a
+// bucket no source traded in can never be covered, so every remaining
+// source is read. Each such read must cost only the buckets still
+// missing — never the whole window — so the walk ends by exhausting its
+// list, without flags.stale, and a later source that does hold a missing
+// bucket is still merged.
+//
+// RED before the reads were narrowed: every later read spans the whole
+// window, times out, and the healthy request is served stale. The
+// scattered case is RED while the reads are capped by range count rather
+// than by the missing width: four ranges over 30 spread holes span most
+// of the year.
+func TestChart_UnfillableHoleDoesNotRunTheWalkToBudget(t *testing.T) {
+	var scattered []int
+	for n := 12; n <= 360; n += 12 {
+		scattered = append(scattered, n)
+	}
+	for _, tc := range []struct {
+		name   string
+		holes  []int
+		filled []int // holes the last proxy (the peg's SAC pool) holds
+		// Rows returned by every read after the first. With more than one
+		// span, the dense proxy and the pool each also return one probe row.
+		laterRows int
+	}{
+		{"one hole no source holds", []int{100}, nil, 0},
+		{"three holes, a later source fills one", []int{40, 100, 300}, []int{100}, 1 + 2},
+		// The two one-day gaps fit in the six missing days and are bridged,
+		// so the dense proxy also returns days 21 and 61, which the book holds.
+		{"adjacent hole runs", []int{20, 22, 60, 62, 100, 200}, []int{60, 200}, 2 + 2 + 2},
+		// Eleven-day gaps: only two fit in the 30 (then 28) missing days,
+		// so the dense proxy returns those 22 held days and the pool its two.
+		{"thirty holes spread across the year", scattered, []int{120, 240}, 22 + 2 + 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			usdc := installUSDCSACRegistry(t)
+			book, dense, pool := map[time.Time]string{}, map[time.Time]string{}, map[time.Time]string{}
+			for n := 365; n >= 1; n-- {
+				if !slices.Contains(tc.holes, n) {
+					book[holedDay(n)] = holedCEXPrice
+					dense[holedDay(n)] = holedThinPoolPrice
+				}
+			}
+			for _, n := range tc.filled {
+				pool[holedDay(n)] = holedPoolPrice
+			}
+			series := map[string]map[time.Time]string{
+				"native/fiat:USD":                                  book,
+				"native/" + pegAliasUSDCClassic:                    dense,
+				canonical.XLMSacContractID + "/" + pegAliasUSDCSAC: pool,
+			}
+			store := &spanCostStore{
+				chartOHLCStore: newChartOHLCStore(series),
+				missing:        time.Duration(len(tc.holes)) * 24 * time.Hour,
+				perSource:      map[string]*spanCost{},
+			}
+			ts := httpTestServer(t, v1.New(v1.Options{
+				History:           store,
+				USDPeggedClassics: []canonical.Asset{usdc},
+			}))
+
+			env := getChart(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD&timeframe=1y&granularity=1d")
+			if env.Flags.Stale {
+				t.Errorf("flags.stale = true after %d reads; nothing cut the walk short — a hole "+
+					"no source holds is not a degradation", store.reads)
+			}
+			byDay := map[time.Time]string{}
+			for _, p := range env.Data.Points {
+				byDay[p.T.Time().UTC()] = p.P
+			}
+			for _, n := range tc.holes {
+				got, served := byDay[holedDay(n)]
+				switch {
+				case slices.Contains(tc.filled, n) && got != holedPoolPrice:
+					t.Errorf("day -%d = %q, want the later source's %q", n, got, holedPoolPrice)
+				case !slices.Contains(tc.filled, n) && served:
+					t.Errorf("day -%d served, but no source holds it", n)
+				}
+			}
+			if store.laterRows != tc.laterRows {
+				t.Errorf("reads after the first returned %d rows, want %d — a later source must be "+
+					"read over the missing buckets only", store.laterRows, tc.laterRows)
+			}
+			for src, c := range store.perSource {
+				if c.reads > 1+len(tc.holes) || c.width > 2*store.missing {
+					t.Errorf("%s: %d reads over %v, want at most %d reads over %v — a later "+
+						"source's cost must be bounded by the missing buckets",
+						src, c.reads, c.width, 1+len(tc.holes), 2*store.missing)
+				}
+				if _, holds := series[src]; !holds && c.reads > 1 {
+					t.Errorf("%s holds nothing but was read %d times, want 1", src, c.reads)
+				}
+			}
+		})
 	}
 }

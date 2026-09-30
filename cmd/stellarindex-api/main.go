@@ -4184,7 +4184,10 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	}
 	// decimals=7 matches Stellar's default stroop scale. A future
 	// revision reads per-asset decimals from internal/metadata.
-	snap := v1.LastTradeToSnapshot(trades[0], 7)
+	snap, ok := v1.LastTradeToSnapshot(trades[0], 7)
+	if !ok {
+		return v1.PriceSnapshot{}, nil, false, v1.ErrPriceNotFound
+	}
 	return snap, []string{trades[0].Source}, true, nil
 }
 

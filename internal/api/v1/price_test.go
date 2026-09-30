@@ -1239,7 +1239,10 @@ func TestLastTradeToSnapshot(t *testing.T) {
 		QuoteAmount: canonical.NewAmount(big.NewInt(12_420_000)),
 	}
 
-	snap := v1.LastTradeToSnapshot(tr, 7)
+	snap, ok := v1.LastTradeToSnapshot(tr, 7)
+	if !ok {
+		t.Fatal("priceable trade reported not priceable")
+	}
 	if snap.AssetID != "native" {
 		t.Errorf("asset = %q", snap.AssetID)
 	}
@@ -1265,9 +1268,25 @@ func TestLastTradeToSnapshot_zeroDecimals(t *testing.T) {
 		BaseAmount:  canonical.NewAmount(big.NewInt(1_000)),
 		QuoteAmount: canonical.NewAmount(big.NewInt(12_420)),
 	}
-	snap := v1.LastTradeToSnapshot(tr, 0)
+	snap, _ := v1.LastTradeToSnapshot(tr, 0)
 	if snap.Price != "12" { // 12420 / 1000 = 12 with no decimals
 		t.Errorf("price = %q, want 12", snap.Price)
+	}
+}
+
+// A zero-leg trade has no price: the snapshot is refused, never "0".
+func TestLastTradeToSnapshot_zeroLegNotPriceable(t *testing.T) {
+	for name, legs := range map[string][2]int64{"zero quote": {5_000_000_000, 0}, "zero base": {0, 7_000_000}} {
+		tr := canonical.Trade{
+			Source: "sdex", Ledger: 1, TxHash: "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe",
+			Timestamp:   time.Now(),
+			Pair:        mustPair(canonical.NativeAsset(), mustClassicTest("USDC", testUSDCIssuer)),
+			BaseAmount:  canonical.NewAmount(big.NewInt(legs[0])),
+			QuoteAmount: canonical.NewAmount(big.NewInt(legs[1])),
+		}
+		if snap, ok := v1.LastTradeToSnapshot(tr, 7); ok {
+			t.Errorf("%s: got priceable snapshot %+v, want ok=false", name, snap)
+		}
 	}
 }
 

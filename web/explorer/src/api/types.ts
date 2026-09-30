@@ -10987,8 +10987,8 @@ export interface components {
             base_amount: string;
             /** @description Integer stroops, decimal string. */
             quote_amount: string;
-            /** @description quote/base, 10-digit decimal. */
-            price: string;
+            /** @description quote/base, 10-digit decimal; null (key always present) when one leg is zero, e.g. an SDEX rounding fill. */
+            price: string | null;
             /**
              * @description Smallest-unit scale for `base_amount`: divide by
              *     10^base_decimals for whole-asset units.
