@@ -62,7 +62,7 @@ func TestDefaultPairs_IncludesBothXLMForms(t *testing.T) {
 }
 
 // TestResolveUSDPeggedSorobanAssets — Guard 1 (2026-07-10): the SAC
-// twin of parseUSDPeggedClassicAssets. A SAC contract inherits a USD
+// twin of config.TradesConfig.USDPeggedClassics. A SAC contract inherits a USD
 // peg ONLY when BOTH: its underlying classic ("CODE:ISSUER"/
 // "CODE-ISSUER") is on the operator's usd_pegged_classic_assets list
 // AND it's registered in [supply].sac_wrappers. No new TOML knob —
@@ -573,7 +573,7 @@ func TestBuildDivergenceReferences_AggregatorParity(t *testing.T) {
 		Redstone:  config.DivergenceOracleConfig{Enabled: true},
 		Band:      config.DivergenceOracleConfig{Enabled: true},
 	}
-	refs := buildDivergenceReferences(cfg, nopOracleReaderAgg{}, discardLogger())
+	refs := buildDivergenceReferences(cfg, config.CoinGeckoVenueConfig{}, nopOracleReaderAgg{}, discardLogger())
 	got := make(map[string]bool, len(refs))
 	for _, r := range refs {
 		got[r.Name()] = true
@@ -599,7 +599,7 @@ func TestBuildDivergenceReferences_AggregatorParity(t *testing.T) {
 		Redstone: config.DivergenceOracleConfig{Enabled: true},
 		Band:     config.DivergenceOracleConfig{Enabled: true},
 	}
-	for _, r := range buildDivergenceReferences(cfg, nopOracleReaderAgg{}, discardLogger()) {
+	for _, r := range buildDivergenceReferences(cfg, config.CoinGeckoVenueConfig{}, nopOracleReaderAgg{}, discardLogger()) {
 		if r.Name() == divergence.SyntheticCrossName {
 			t.Fatalf("synthetic cross constructed without an FX leg class")
 		}

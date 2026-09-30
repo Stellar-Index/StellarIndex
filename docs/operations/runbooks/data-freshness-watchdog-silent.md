@@ -11,7 +11,7 @@ severity: P3
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `stellarindex_data_freshness_watchdog_silent` (series absent, `absent_over_time(...[45m])`), `stellarindex_data_freshness_probe_frozen` (series present but the file's mtime stopped advancing, `time() - node_textfile_mtime_seconds{file="data_freshness.prom"} > 2700`) |
+| Alerts | `stellarindex_data_freshness_watchdog_silent` (series absent, `absent_over_time(...[45m])`), `stellarindex_data_freshness_probe_frozen` (series present but the file's mtime stopped advancing, `time() - node_textfile_mtime_seconds{file="data_freshness.prom"} > 2700`), `stellarindex_sep41_supply_freshness_absent` (file publishing but the ClickHouse-probed `sep41_supply` pair missing — see [below](#sep-41-supply-series-absent)) |
 | Severity | **P3** (ticket) |
 | Emitted by | `data-freshness.sh`'s textfile output (`configs/ansible/roles/archival-node/files/data-freshness.sh` → `/usr/local/sbin/data-freshness.sh`) |
 | Typical MTTR | 5–15 min |
@@ -87,6 +87,22 @@ frozen is invisible to this alert). The probe is now best-effort: it runs as an
 sep41_supply gauges skipped this tick` to the journal, and only the two
 `domain="sep41_supply"` gauges are omitted. On a host that has not been
 redeployed since, the old behaviour is still live — check the script on disk.
+
+## SEP-41 supply series absent
+
+`stellarindex_sep41_supply_freshness_absent` fires when a host's
+`data_freshness.prom` is publishing but the `domain="sep41_supply"` pair has
+been missing for over an hour. That pair is skipped on any tick whose
+ClickHouse `supply_flows` probe fails, and neither `watchdog_silent` (whole
+family) nor `stellarindex_data_source_stale` (needs the series) can see it.
+
+```sh
+journalctl -u data-freshness.service --since '2 hours ago' | grep 'supply_flows probe failed'
+curl -sS -f --max-time 15 http://localhost:8123/ --data-binary 'SELECT 1'
+```
+
+Restore ClickHouse HTTP on `:8123`; the pair returns on the next 15-min tick
+and the alert clears. Until then served SEP-41 supply staleness is unmonitored.
 
 ## Known false-positive patterns
 

@@ -238,6 +238,7 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 			Name:              blend_backstop.SourceName,
 			Decoder:           blend_backstop.NewDecoder(),
 			ExcludeTopic0Syms: firehoseExcludeSyms,
+			Genesis:           blend_backstop.BackstopGenesisLedger,
 		}, true, nil
 	case blend_emitter.SourceName:
 		// ADR-0035/0040: contract-gated (curated set — the Emitter has

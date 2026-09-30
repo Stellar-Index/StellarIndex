@@ -103,6 +103,59 @@ func TestPrice_FrozenPairServesLastKnownGoodNotTheMovedBucket(t *testing.T) {
 	}
 }
 
+// heldSincePairs is lkgPairs with a fixed observation stamp, so a test
+// can tell the held value's own observed_at from the read time.
+type heldSincePairs struct {
+	values lkgPairs
+	at     time.Time
+}
+
+func (h heldSincePairs) LookupTriangulatedVWAP(
+	ctx context.Context, base, quote canonical.Asset, window time.Duration,
+) (v1.CachedVWAP, bool, error) {
+	v, ok, err := h.values.LookupTriangulatedVWAP(ctx, base, quote, window)
+	v.ObservedAt = h.at
+	return v, ok, err
+}
+
+// A freeze serves its held value for the whole hold, so the read time
+// can be tens of minutes past the value's observation. Every surface
+// serving a held value must stamp the value's own observed_at, or a
+// client reads a frozen price as current.
+func TestFrozenHeldValueCarriesItsOwnObservedAt(t *testing.T) {
+	heldSince := time.Now().UTC().Add(-40 * time.Minute).Truncate(time.Second)
+	stamp := heldSince.Format(time.RFC3339)
+	for _, tc := range []struct{ url, want string }{
+		{"/v1/price?asset=crypto:XLM&quote=fiat:GBP", `"observed_at":"` + stamp + `"`},
+		{"/v1/price/batch?asset_ids=crypto:XLM&quote=fiat:GBP", `"observed_at":"` + stamp + `"`},
+		{lastPriceURL, `"timestamp":"` + stamp + `"`},
+	} {
+		t.Run(tc.url, func(t *testing.T) {
+			reader := movedBucketReader()
+			reader.snapshots[xlmUSD] = movedUSDBucketReader().snapshots[xlmUSD]
+			srv := v1.New(v1.Options{
+				Prices: reader,
+				Freeze: frozenPairs{xlmGBP: true, xlmUSD: true},
+				Triangulated: heldSincePairs{
+					values: lkgPairs{xlmGBP + "/300": heldLKG, xlmUSD + "/300": heldUSD},
+					at:     heldSince,
+				},
+			})
+			ts := startHTTPTest(t, srv.Handler())
+
+			status, body := getBody(t, ts.URL+tc.url)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", status, body)
+			}
+			for _, want := range []string{tc.want, `"frozen":true`, `"stale":true`} {
+				if !strings.Contains(body, want) {
+					t.Errorf("body missing %s: %s", want, body)
+				}
+			}
+		})
+	}
+}
+
 // The freeze lifecycle is per (pair, window) while the marker is per
 // pair: the 5m key can be cold (a thin window is dropped before the
 // freeze step) while 1h holds the value. The held value is served with

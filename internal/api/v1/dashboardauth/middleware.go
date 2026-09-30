@@ -77,6 +77,9 @@ func Middleware(cfg *Config) func(http.Handler) http.Handler {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if cfg.SessionIdleTimeout == 0 {
+		cfg.SessionIdleTimeout = defaultSessionIdleTimeout
+	}
 	tracker := newTouchTracker(time.Minute)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -139,6 +142,12 @@ func resolveSession(r *http.Request, cfg *Config, tracker *touchTracker) (Sessio
 		// session.
 		return SessionContext{}, false
 	}
+	if sessionIdle(sess, cfg.Now(), cfg.SessionIdleTimeout) {
+		// Revoke so a stolen-but-dormant cookie cannot be revived by
+		// a later clock or config change.
+		_ = cfg.Users.RevokeSession(r.Context(), sess.ID)
+		return SessionContext{}, false
+	}
 
 	user, err := cfg.Users.GetUserByID(r.Context(), sess.UserID)
 	if err != nil {
@@ -188,6 +197,21 @@ func resolveSession(r *http.Request, cfg *Config, tracker *touchTracker) (Sessio
 	}
 
 	return SessionContext{Session: sess, User: user, Account: acct}, true
+}
+
+// defaultSessionIdleTimeout bounds how long an unused session
+// cookie stays valid inside its absolute SessionTTL.
+const defaultSessionIdleTimeout = 7 * 24 * time.Hour
+
+// sessionIdle reports whether sess has gone unused for longer than
+// idle. last_seen_at is touched at most once a minute, so the bound
+// is accurate to about that.
+func sessionIdle(sess platform.Session, now time.Time, idle time.Duration) bool {
+	last := sess.LastSeenAt
+	if last.IsZero() {
+		last = sess.CreatedAt
+	}
+	return idle > 0 && !last.IsZero() && now.Sub(last) > idle
 }
 
 // touchTracker debounces TouchSession DB writes per session.

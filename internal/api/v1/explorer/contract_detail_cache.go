@@ -52,7 +52,28 @@ type contractDetailEntry struct {
 type contractDetailCache struct {
 	mu      sync.Mutex
 	entries map[string]contractDetailEntry
-	flight  perKeyFlight
+	// activity holds the "act:" keys apart, each map bounded on its own:
+	// a random account's activity computes in milliseconds, so sharing one
+	// bound let cheap account misses evict expensive contract entries.
+	activity map[string]contractDetailEntry
+	flight   perKeyFlight
+}
+
+// accountActivityCacheKey is the key prefix of GET /v1/accounts/{g}/activity.
+const accountActivityCacheKey = "act:"
+
+// tableLocked returns (lazily creating) the map holding key. Caller holds c.mu.
+func (c *contractDetailCache) tableLocked(key string) map[string]contractDetailEntry {
+	if strings.HasPrefix(key, accountActivityCacheKey) {
+		if c.activity == nil {
+			c.activity = make(map[string]contractDetailEntry)
+		}
+		return c.activity
+	}
+	if c.entries == nil {
+		c.entries = make(map[string]contractDetailEntry)
+	}
+	return c.entries
 }
 
 // contractCodeHistoryTTL is the "ch:" key class's freshness window
@@ -105,7 +126,7 @@ func detailTTLForKey(key string) time.Duration {
 func (c *contractDetailCache) get(key string) (e contractDetailEntry, ok, fresh bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e, ok = c.entries[key]
+	e, ok = c.tableLocked(key)[key]
 	if !ok {
 		return contractDetailEntry{}, false, false
 	}
@@ -115,13 +136,11 @@ func (c *contractDetailCache) get(key string) (e contractDetailEntry, ok, fresh 
 func (c *contractDetailCache) put(key string, v any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.entries == nil {
-		c.entries = make(map[string]contractDetailEntry)
+	m := c.tableLocked(key)
+	if len(m) >= contractDetailCacheMax {
+		evictOneLocked(m)
 	}
-	if len(c.entries) >= contractDetailCacheMax {
-		c.evictOneLocked()
-	}
-	c.entries[key] = contractDetailEntry{v: v, cachedAt: time.Now()}
+	m[key] = contractDetailEntry{v: v, cachedAt: time.Now()}
 }
 
 // evictOneLocked drops one entry to make room for a new key. It prefers
@@ -131,20 +150,20 @@ func (c *contractDetailCache) put(key string, v any) {
 //
 // Pure global-oldest eviction starves the "ch:" (code-history) class: its
 // 24h TTL means an entry's cachedAt is only ever touched once a day, so
-// next to "ev:"/"ix:" (5 min) and "act:"/"pos:" (1-5 min) entries — which
+// next to "ev:"/"ix:" (5 min) and "pos:" (1 min) entries — which
 // keep resetting cachedAt as ordinary traffic revisits them — a heavily
 // viewed contract's code-history entry is ALWAYS the chronologically
 // oldest in the map and gets evicted first, however hot it is. Attacker-
-// mintable "pos:"/"act:" keys (any checksum-valid strkey is a new cold
+// mintable "pos:" keys (any checksum-valid strkey is a new cold
 // key) make this churn trivial to trigger. Preferring an expired entry
 // means the class actually generating eviction pressure (the short-TTL
 // classes, which exhaust their TTL long before ch: ever could) absorbs
 // it instead. Caller holds c.mu.
-func (c *contractDetailCache) evictOneLocked() {
+func evictOneLocked(entries map[string]contractDetailEntry) {
 	now := time.Now()
 	var oldestExpiredKey, oldestKey string
 	var oldestExpiredAt, oldestAt time.Time
-	for k, e := range c.entries {
+	for k, e := range entries {
 		if oldestKey == "" || e.cachedAt.Before(oldestAt) {
 			oldestKey, oldestAt = k, e.cachedAt
 		}
@@ -156,10 +175,10 @@ func (c *contractDetailCache) evictOneLocked() {
 		}
 	}
 	if oldestExpiredKey != "" {
-		delete(c.entries, oldestExpiredKey)
+		delete(entries, oldestExpiredKey)
 		return
 	}
-	delete(c.entries, oldestKey)
+	delete(entries, oldestKey)
 }
 
 // detachedClassForKey maps a cache key to its refresh-gate CLASS, using

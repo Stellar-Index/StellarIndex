@@ -59,10 +59,10 @@ type Envelope struct {
 //     value with caution. Fires per ADR-0019 anomaly.ActionWarn AND
 //     per future internal/divergence/ cross-reference checks.
 //   - Frozen: anomaly detection refused to publish the new bucket;
-//     this response carries the previous bucket's last-known-good
-//     value (ADR-0019 freeze policy). Fires on /v1/price and the SEP-40
-//     lastprice/x_last_price; the tip + observations surfaces ignore
-//     freeze. FrozenChecked
+//     this response carries the held last-known-good value with its own
+//     observed_at, and Stale set (ADR-0019 freeze policy). Fires on
+//     /v1/price, /v1/price/batch and the SEP-40 lastprice/x_last_price;
+//     the tip + observations surfaces ignore freeze. FrozenChecked
 //     disambiguates "confirmed not frozen" from "the marker read
 //     failed, so this is unknown" — same posture as DivergenceChecked.
 //   - OutsideCoverage: the requested time range ends at or before the
@@ -81,6 +81,9 @@ type Envelope struct {
 //     configured chain leg — the router walked an alternative path
 //     rather than the documented direct chain (R3). Only meaningful on
 //     the /v1/price triangulated serve path; omitted when false.
+//   - PivotUnverified: a TRIANGULATED composite priced a leg only from
+//     stablecoin prints taken at par with USD, with no own-quote prints
+//     to check a de-peg against. Omitted when false.
 type Flags struct {
 	Stale             bool `json:"stale"`
 	ReducedRedundancy bool `json:"reduced_redundancy"`
@@ -145,6 +148,8 @@ type Flags struct {
 	// not the documented direct chain (R3). Surfaced on the /v1/price
 	// triangulated serve path only; omitempty hides it when false.
 	Rerouted bool `json:"rerouted,omitempty"`
+	// PivotUnverified: a composite leg was all stablecoin prints at par, so a de-peg in it went unchecked.
+	PivotUnverified bool `json:"pivot_unverified,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
 	// requested asset's code matches a verified currency's Stellar
 	// ticker but its issuer doesn't match the verified entry — i.e.

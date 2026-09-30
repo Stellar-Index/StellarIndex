@@ -192,3 +192,22 @@ func TestBuildDashboardSender_WithCredential_WiresResendAndNeverLogsIt(t *testin
 		t.Errorf("signupVerifyEmailerOrNil = nil for a configured Resend transport")
 	}
 }
+
+// TestResendKeyDoc_DescribesTheUnconfiguredWiring keeps the operator-facing
+// reference (generated from the doc tag) in step with buildDashboardSender:
+// an empty key is a 503, not a silent log-only sender.
+func TestResendKeyDoc_DescribesTheUnconfiguredWiring(t *testing.T) {
+	for _, f := range config.Describe() {
+		if f.Path != "api.dashboard.resend_api_key_env" {
+			continue
+		}
+		if strings.Contains(f.Doc, "NoopSender") || strings.Contains(f.Doc, "logs only") {
+			t.Errorf("doc still describes the log-only fallback: %q", f.Doc)
+		}
+		if !strings.Contains(f.Doc, "503") {
+			t.Errorf("doc does not say an empty key makes login answer 503: %q", f.Doc)
+		}
+		return
+	}
+	t.Fatal("api.dashboard.resend_api_key_env not found in config.Describe()")
+}

@@ -165,7 +165,11 @@ the check to arm that path:
    `HEALTHCHECKS_ALERT_DELIVERY_URL`.
 3. `bash configs/alertmanager/apply.sh` — it prints
    `optional receiver 'delivery-failure' is wired` when the URL is set
-   and `… is DARK` on every run until it is.
+   and `… is DARK` on every run until it is. It also writes
+   `stellarindex_alertmanager_optional_receiver_dark{receiver}` to the
+   textfile collector, and `stellarindex_alertmanager_optional_receiver_dark`
+   tickets while any optional receiver (`delivery-failure`, or
+   `informational` via `DISCORD_WEBHOOK_URL_INFORMATIONAL`) is dark.
 
 Until step 2 is done the receiver renders as a stub and this alert
 reaches chat only, exactly as before — no worse, but no better.
