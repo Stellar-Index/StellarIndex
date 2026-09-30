@@ -173,7 +173,7 @@ See `events.go` for the typed enum.
   `factory_seed.go` is the only remaining caller and only fires
   once at boot to populate the in-memory pair-token registry.
 
-## ⚠️ Known gap — Router-level topics are entirely undecoded (ROADMAP #89, 2026-07-10)
+## Router-level topics — intentionally undecoded
 
 `classify()` only matches `TopicPrefixPair` / `TopicPrefixFactory`
 topics — the Router `CAG5LRYQ…` is deliberately excluded (documented
@@ -186,12 +186,10 @@ separate from the pair-level `swap`/`sync` this package decodes into
 remove), `init` (1). Also on the factory contracts specifically:
 `init` (4 — factory contract initialization, distinct from
 `new_pair`). None of these route through any decoder or land in any
-table today — they're not silently mis-attributed (Classify simply
+table — they're not silently mis-attributed (Classify simply
 returns "" and the dispatcher skips), but per the EVERY-event
-principle they should be acknowledged with real counts rather than
-just "excluded by design." Whether router `swap`/`add`/`remove`
-duplicate pair-level data (in which case decoding is genuinely
-unneeded) or carry additional router-only fields (aggregate
-multi-hop info, fee data) is unconfirmed — would need real-bytes
-inspection of the router body shape, which is out of scope for this
-pass. Not implemented this session.
+principle they are acknowledged here with real counts. Router
+`swap`/`add`/`remove` duplicate data already served via `trades`,
+`soroswap_router_swaps` and `soroswap_liquidity`, so decoding them
+would double-count; the decision and its double-count check are in
+[`docs/protocols/soroswap.md`](../../../docs/protocols/soroswap.md#router-topics--intentionally-not-projected-redundant-would-double-count).
