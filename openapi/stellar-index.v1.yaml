@@ -5385,6 +5385,7 @@ paths:
                   lake_complete_sources: 15
                   network: pubnet
                   not_applicable_sources: []
+                  lagging_sources: []
                   total_sources: 15
                 as_of: '2026-07-03T22:38:20.564931481Z'
                 flags:
@@ -5400,7 +5401,7 @@ paths:
                     properties:
                       data:
                         type: object
-                        required: [sources, recognition, complete_sources, lake_complete_sources, total_sources, network, not_applicable_sources, unverified_sources]
+                        required: [sources, recognition, complete_sources, lake_complete_sources, total_sources, network, not_applicable_sources, unverified_sources, lagging_sources]
                         properties:
                           sources:
                             type: array
@@ -5591,6 +5592,21 @@ paths:
                               required: [source, reason]
                               properties:
                                 source: { type: string }
+                                reason: { type: string }
+                          lagging_sources:
+                            type: array
+                            description: >-
+                              Sources whose verdict `tip_ledger` is below the newest source verdict's
+                              tip: the latest audit run wrote no verdict for them (it stopped before
+                              reaching them, or they errored), so the totals above combine verdicts
+                              from more than one run. They still count at their earlier verdict.
+                              Empty when one run wrote every source's row.
+                            items:
+                              type: object
+                              required: [source, tip_ledger, reason]
+                              properties:
+                                source: { type: string }
+                                tip_ledger: { type: integer, format: int64 }
                                 reason: { type: string }
         "503":
           description: No completeness reader wired on this deployment.
