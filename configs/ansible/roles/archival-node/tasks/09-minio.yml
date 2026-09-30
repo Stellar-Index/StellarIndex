@@ -408,6 +408,20 @@
   changed_when: false
   failed_when: false   # mc returns non-zero if policy already attached
 
+- name: Configure archivewriter mc alias (galexie-archive-fill's identity)
+  # Persisted for root because galexie-archive-fill.sh mirrors through it;
+  # credentials on stdin, as for the `local` alias above.
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/mc
+      - alias
+      - set
+      - archivewriter
+      - "http://127.0.0.1:9000"
+    stdin: "{{ galexie_archive_s3_access_key }}\n{{ galexie_archive_s3_secret_key }}"
+  changed_when: false
+  no_log: true
+
 # ──── stellarindex-reader (read-only on both buckets) ──────────────
 # Used by stellarindex-ops verify-archive today, and by the indexer +
 # api once they have systemd units. Scoped to BOTH galexie-live and
