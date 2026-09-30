@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"time"
 )
 
@@ -38,6 +39,9 @@ type Outcome struct {
 	Kind     OutcomeKind
 	Snapshot Supply // populated on OutcomeKindOK only
 	Err      error  // populated on every error outcome
+	// BandBreach is "up" or "down" when a written snapshot's total moved
+	// more than [WriteBandFactor]x against the previous one this Refresher wrote.
+	BandBreach string
 }
 
 // OutcomeKind identifies a refresh outcome. Values are stable
@@ -101,6 +105,11 @@ const DefaultStaleComponentLedgers uint32 = 1000
 // or accepts a supply gap rather than a fresh-looking stale number.
 const DefaultMaxDormantComponentLedgers uint32 = 17_280
 
+// WriteBandFactor bounds the tick-over-tick total_supply move the
+// Refresher writes without flagging. Flag-only: a legitimate mint can
+// 10x a young token, so a breach is recorded, never refused.
+const WriteBandFactor = 10
+
 // Refresher runs one supply-snapshot cycle per [Refresher.Tick]
 // call. Composes ledger resolution + computer + inserter; the
 // aggregator drives it via a ticker in its own goroutine,
@@ -133,6 +142,10 @@ type Refresher struct {
 	// to the dormancy horizon; a moved or first-seen lagging value
 	// is rejected. The unchanged case covers a dead producer too.
 	lastComponentLedger map[string]uint32
+
+	// lastWrittenTotal is the total_supply of the last snapshot this
+	// Refresher wrote per asset_key; the write band compares against it.
+	lastWrittenTotal map[string]*big.Int
 }
 
 // RefresherOption tunes a [Refresher].
@@ -230,6 +243,7 @@ func NewRefresher(ledgers LedgerLookup, computer SnapshotComputer, inserter Snap
 		staleComponentLedger:      DefaultStaleComponentLedgers,
 		maxDormantComponentLedger: DefaultMaxDormantComponentLedgers,
 		lastComponentLedger:       make(map[string]uint32),
+		lastWrittenTotal:          make(map[string]*big.Int),
 	}
 	for _, o := range opts {
 		o(r)
@@ -319,19 +333,20 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 			"err", err, "asset", snap.AssetKey, "ledger", snap.LedgerSequence)
 		return Outcome{Kind: OutcomeKindWriteError, Err: err, Snapshot: snap}
 	}
+	breach := r.checkWriteBand(snap)
 
 	if staticReserve {
 		r.logger.Warn("supply refresh: published from the static reserve-balance map, live account observer could not answer",
 			"asset", snap.AssetKey,
 			"ledger", snap.LedgerSequence,
 			"circulating", snap.CirculatingSupply.String())
-		return Outcome{Kind: OutcomeKindStaticReserve, Snapshot: snap}
+		return Outcome{Kind: OutcomeKindStaticReserve, Snapshot: snap, BandBreach: breach}
 	}
 	r.logger.Debug("supply refresh ok",
 		"asset", snap.AssetKey,
 		"ledger", snap.LedgerSequence,
 		"circulating", snap.CirculatingSupply.String())
-	return Outcome{Kind: OutcomeKindOK, Snapshot: snap}
+	return Outcome{Kind: OutcomeKindOK, Snapshot: snap, BandBreach: breach}
 }
 
 // applyStaleComponentGate runs the F-1236 / F-0040 / F-1320
@@ -442,5 +457,38 @@ func (r *Refresher) applyStaleComponentGate(ctx context.Context, snap Supply) (O
 			"err", err, "asset", snap.AssetKey, "ledger", snap.LedgerSequence)
 		return Outcome{Kind: OutcomeKindWriteError, Err: err, Snapshot: snap}, true
 	}
-	return Outcome{Kind: OutcomeKindDormant, Snapshot: snap}, true
+	return Outcome{Kind: OutcomeKindDormant, Snapshot: snap, BandBreach: r.checkWriteBand(snap)}, true
+}
+
+// checkWriteBand compares a just-written snapshot's total against the
+// previous total this Refresher wrote for the asset and returns "up" or
+// "down" when it moved more than [WriteBandFactor]x, else "". A zero or
+// absent previous total has no ratio to test, so it never fires.
+func (r *Refresher) checkWriteBand(snap Supply) string {
+	if snap.TotalSupply == nil {
+		return ""
+	}
+	prev := r.lastWrittenTotal[snap.AssetKey]
+	r.lastWrittenTotal[snap.AssetKey] = new(big.Int).Set(snap.TotalSupply)
+	if prev == nil || prev.Sign() <= 0 {
+		return ""
+	}
+	factor := big.NewInt(WriteBandFactor)
+	var direction string
+	switch {
+	case snap.TotalSupply.Cmp(new(big.Int).Mul(prev, factor)) > 0:
+		direction = "up"
+	case new(big.Int).Mul(snap.TotalSupply, factor).Cmp(prev) < 0:
+		direction = "down"
+	default:
+		return ""
+	}
+	r.logger.Warn("supply refresh: total supply moved outside the write band (row still written)",
+		"asset", snap.AssetKey,
+		"ledger", snap.LedgerSequence,
+		"direction", direction,
+		"previous_total", prev.String(),
+		"total", snap.TotalSupply.String(),
+		"band_factor", WriteBandFactor)
+	return direction
 }
