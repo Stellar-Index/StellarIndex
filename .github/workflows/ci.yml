@@ -2383,6 +2383,12 @@ jobs:
         # Renders the shipped env template with hostile credentials.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-postgres-dsn-test.sh
+      - name: Postgres WAL archiving render test
+        # A rebuilt archival node must render archive_mode/archive_command,
+        # or pgBackRest silently loses point-in-time recovery; hosts without
+        # pgBackRest must not, or a failing archive_command fills pg_wal.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-postgres-archive-test.sh
       - name: nftables per-source SSH rate-limit test
         # Every role that renders /etc/nftables.conf must limit new SSH per
         # source address: a single shared bucket lets one scanner starve the
