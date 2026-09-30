@@ -3164,9 +3164,13 @@ export interface paths {
          * SEP-40 lastprice-equivalent passthrough.
          * @description HTTP mirror of the SEP-40 oracle contract call
          *     `lastprice(asset) -> Option<PriceData>` — for integrators
-         *     that already speak Reflector's on-chain interface and want
-         *     the identical shape over REST. The response is
-         *     deliberately minimal (`price`, `timestamp`); the richer
+         *     that already speak Reflector's on-chain interface. It mirrors
+         *     the method name and semantics, not the wire types: on-chain
+         *     `PriceData` carries `price` as a fixed-point `i128` and
+         *     `timestamp` as `u64` seconds, while this response carries
+         *     `price` as an exact decimal string (already scaled, no
+         *     `decimals()` call needed) and `timestamp` as RFC 3339. The
+         *     response is deliberately minimal (`price`, `timestamp`); the richer
          *     source/confidence view lives on `/v1/oracle/latest` and
          *     `/v1/price`. Quote is fixed at USD, matching the on-chain
          *     contract's fixed-quote semantic — for other quotes use

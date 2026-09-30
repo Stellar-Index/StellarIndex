@@ -442,6 +442,39 @@ func TestBucket_DwellTime_FlapVsSustainedRecovery(t *testing.T) {
 	}
 }
 
+// TestBucket_DwellTime_StaleFailureDoesNotFailClosed pins that an outage long
+// past cannot make the first error of a fresh blip fail closed: a success after
+// a failure-free dwellTime clears the clock even without a sustained streak.
+func TestBucket_DwellTime_StaleFailureDoesNotFailClosed(t *testing.T) {
+	rdb, _ := newRedis(t)
+	fi := &faultInjector{Cmdable: rdb}
+	fakeNow := time.Unix(1_750_000_000, 0)
+	b := ratelimit.New(fi, 3, time.Minute,
+		ratelimit.WithClock(func() time.Time { return fakeNow }),
+		ratelimit.WithDwellTime(30*time.Second),
+	)
+	take := func() error { _, err := b.Take(context.Background(), "k"); return err }
+
+	fi.fail = true
+	if err := take(); err == nil {
+		t.Fatal("arm: want injected err, got nil")
+	}
+	fakeNow = fakeNow.Add(40 * time.Minute)
+	fi.fail = false
+	if err := take(); err != nil {
+		t.Fatalf("lone success: want nil, got %v", err)
+	}
+	fakeNow = fakeNow.Add(time.Second)
+	fi.fail = true
+	err := take()
+	if err == nil {
+		t.Fatal("new blip: want injected err, got nil")
+	}
+	if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
+		t.Fatalf("new blip: a stale failure must not trip the dwell clock — want fail-OPEN, got ErrThrottleUnavailable")
+	}
+}
+
 // TestBucket_DwellTime_CanceledCtxDoesNotArm pins that a caller-cancelled
 // request is neutral: client aborts alone must never walk the throttle into
 // fail-CLOSED.

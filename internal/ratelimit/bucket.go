@@ -47,8 +47,9 @@ var ErrThrottleUnavailable = errors.New("ratelimit: throttle layer unavailable (
 // has been failing continuously for longer than the dwell-time,
 // Take returns [ErrThrottleUnavailable] and callers should switch
 // to fail-CLOSED (HTTP 503 + Retry-After). Only a sustained recovery —
-// a full dwell-time of unbroken successes — resets the clock; a stray
-// success under a flapping Redis does not (see healthySince).
+// a full dwell-time of unbroken successes, or a success after a
+// dwell-time with no failure — resets the clock; a stray success
+// under a flapping Redis does not (see healthySince).
 type Bucket struct {
 	rdb    redis.Cmdable
 	max    int
@@ -83,6 +84,9 @@ type Bucket struct {
 	// brute-force + signup throttles that share this Bucket type — fail-open
 	// indefinitely while Redis is effectively down).
 	healthySince time.Time
+	// lastFailure lets a success that follows a failure-free dwellTime clear
+	// the clock, so a long-ago outage cannot make the next blip fail closed.
+	lastFailure time.Time
 }
 
 // Option configures a Bucket at construction.
@@ -195,6 +199,7 @@ func (b *Bucket) observeRedisFailure() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.healthySince = time.Time{} // any failure breaks the recovery streak
+	b.lastFailure = now
 	if b.redisErrorSince.IsZero() {
 		b.redisErrorSince = now
 		return false
@@ -209,8 +214,9 @@ func (b *Bucket) observeRedisFailure() bool {
 // never reaches dwellTime, redisErrorSince stays armed, and observeRedisFailure
 // trips fail-CLOSED as designed instead of failing open forever. A genuine,
 // sustained recovery (dwellTime of continuous OKs) clears it and fail-open
-// resumes. Operators still get their "first OK after outage" marker from the
-// success-path metric; correctness of the throttle must not hinge on one OK.
+// resumes. A success after dwellTime with no observed failure also clears it:
+// the flap evidence has aged out, and otherwise a sparse-traffic outage long
+// past would make the first error of an unrelated blip fail closed.
 func (b *Bucket) observeRedisSuccess() {
 	now := b.nowFn()
 	b.mu.Lock()
@@ -221,7 +227,7 @@ func (b *Bucket) observeRedisSuccess() {
 	if b.healthySince.IsZero() {
 		b.healthySince = now
 	}
-	if now.Sub(b.healthySince) >= b.dwellTime {
+	if now.Sub(b.healthySince) >= b.dwellTime || now.Sub(b.lastFailure) > b.dwellTime {
 		b.redisErrorSince = time.Time{}
 		b.healthySince = time.Time{}
 	}
