@@ -519,6 +519,34 @@ groups:
             store. If this fires ALONE, suspect the usage-counter key
             namespace or an eviction policy rather than Redis availability.
 
+      # Companion to the fail-open alert above: past the dwell window
+      # (DefaultMonthlyQuotaDwellTime, 30s) of continuous read errors the
+      # gate stops failing open and 429s every metered key instead, so the
+      # fail-open counter goes flat and cannot hold its 10m `for:` through
+      # a sustained outage. `for: 2m` — metered customers are being denied
+      # from the first second.
+      - alert: stellarindex_monthly_quota_fail_closed
+        expr: sum(rate(stellarindex_monthly_quota_fail_closed_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: page
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/monthly-quota-fail-open.md
+          summary: "Monthly quota is FAILING CLOSED — metered keys are being 429'd ({{ $value | humanize }} req/s)"
+          description: |
+            The month-to-date usage counter has been unreadable for longer
+            than the fail-open dwell window, so the monthly-quota gate has
+            flipped to failing CLOSED: every request from a key with a
+            monthly quota now gets a 429 with Retry-After, whether or not
+            the key is anywhere near its cap. Clears once the counter has
+            read without error for the same dwell window.
+
+            Normally moves together with stellarindex_ratelimit_fail_closed
+            — the two share a backing store. If this fires ALONE, suspect
+            the usage-counter key namespace or an eviction policy.
+
       # GH-1277: the write side of the usage meter had no observability
       # at all — a failed Increment/IncrementDetailBy logged at Debug
       # and was otherwise invisible. stellarindex_usage_units_dropped_total

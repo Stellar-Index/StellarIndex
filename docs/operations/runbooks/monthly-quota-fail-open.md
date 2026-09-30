@@ -11,7 +11,7 @@ severity: P3
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_monthly_quota_fail_open` (P3 / ticket) |
+| Alert | `stellarindex_monthly_quota_fail_open` (P3 / ticket); `stellarindex_monthly_quota_fail_closed` (page) |
 | Detected by | Prometheus rule in `deploy/monitoring/rules/api.yml` and the R1 single-host overlay `configs/prometheus/rules.r1/api.yml`. |
 | Typical MTTR | 5–30 min: clears on its own the moment the usage counter is readable again; the fix is whatever made it unreadable. |
 | Impact | **Revenue.** Every metered key is uncapped for the duration. Usage still meters (the customer is still billed) but the agreed monthly ceiling is not enforced, and overage served in this window cannot be reclaimed — the responses went out. |
@@ -40,6 +40,24 @@ This is the exact twin of
 together because they share a backing store. The difference is what the
 open window costs: the rate limiter's is throughput/abuse headroom, this
 one's is money.
+
+## Fail-closed: `stellarindex_monthly_quota_fail_closed`
+
+The fail-open window is bounded. Once the month-to-date read has
+errored continuously for longer than `DefaultMonthlyQuotaDwellTime`
+(30s), the middleware stops serving on trust and rejects every request
+from a key with `monthly_quota > 0` with a 429 + `Retry-After`,
+incrementing `stellarindex_monthly_quota_fail_closed_total` instead of
+the fail-open counter. It returns to normal only after the read has
+succeeded without a break for the same dwell window.
+
+So a sustained counter outage shows up as this page, not as the
+fail-open ticket: the fail-open counter only moves during the first
+dwell window. The page fires on `rate(...[5m]) > 0` for 2 min because
+metered customers are being denied from the first second. Diagnosis and
+remediation are the same as below — the cause is an unreadable usage
+counter; `stellarindex_ratelimit_fail_closed` normally fires alongside
+it on a Redis outage.
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -88,11 +106,12 @@ one's is money.
 
 ## Do NOT
 
-- **Do not "fix" this by failing closed.** Returning 429 on a counter
-  read error converts a Redis blip into a hard denial for every metered
-  customer, including ones nowhere near their cap. The fail-open is
-  deliberate; this alert exists so the window is *observed*, not so the
-  behaviour is removed.
+- **Do not shorten the dwell window to "fix" the fail-open.** Returning
+  429 on a single counter read error converts a Redis blip into a hard
+  denial for every metered customer, including ones nowhere near their
+  cap. The short fail-open is deliberate; the fail-open alert exists so
+  the window is *observed*, and the dwell-bounded fail-closed exists so it
+  cannot run for the whole outage.
 - Do not silence while Redis is down "because we know" — the 10-minute
   `for:` already absorbs failovers, so a firing instance means a genuinely
   sustained uncapped window.
