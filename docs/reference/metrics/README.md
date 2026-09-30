@@ -2061,12 +2061,13 @@ connections with no delivery are clients receiving keepalives only.
 
 ### `stellarindex_api_sse_streams_rejected_total`
 
-Counter, label `reason` (`global_cap` / `per_ip_cap`).
+Counter, label `reason` (`global_cap` / `per_ip_cap` / `topic_cap`).
 
 SSE connections refused with a 503 by the concurrency caps. `global_cap`
 rising means the process-wide ceiling is full (a connection flood, or a
 deployment that has outgrown it); `per_ip_cap` rising means one client
-address is at its own ceiling.
+address is at its own ceiling; `topic_cap` rising means the streaming
+Hub's topic map is full of topics that all hold a live subscriber.
 
 ### `stellarindex_api_stream_hub_topics`
 
