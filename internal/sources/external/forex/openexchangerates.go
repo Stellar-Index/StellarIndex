@@ -97,9 +97,10 @@ func (p OpenExchangeRatesProvider) get(ctx context.Context, url string) ([]byte,
 // board: one bad rate would otherwise reach the snapshot beside good ones.
 func parseOXRBoard(body []byte) (map[string]float64, time.Time, error) {
 	var board struct {
-		Timestamp int64              `json:"timestamp"`
-		Base      string             `json:"base"`
-		Rates     map[string]float64 `json:"rates"`
+		Timestamp int64  `json:"timestamp"`
+		Base      string `json:"base"`
+		//floatmoney:ok known debt (#600) — same float chain as frankfurter DayRates.Rates: RateProvider.LatestUSDRates hands this map to worker.go RateUSD unconverted
+		Rates map[string]float64 `json:"rates"`
 	}
 	if err := json.Unmarshal(body, &board); err != nil {
 		return nil, time.Time{}, fmt.Errorf("%w: decode: %w", ErrOXRBoard, err)
