@@ -380,6 +380,10 @@ stale_patterns=(
                                   # ATH/day-VWAP fix. Bare pattern (not scoped
                                   # to "R-008") so it also catches a citation
                                   # reappearing in the header list alone
+  "#1268\b"                      # coverage-matrix.md's 2026-05-11 entry cited
+                                  # the R-001/R-002 prewarm fix as #1268; that
+                                  # number now resolves to an unrelated item,
+                                  # so the entry cites commit 55b2a9fb3 instead
   "Deferred #1347\b"              # STATUS.md's go-stellar-sdk v0.6 bump cited
                                   # #1347 before it existed (RSWP-146). #1347
                                   # is now the real "retiring a data source"

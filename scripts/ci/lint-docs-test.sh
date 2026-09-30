@@ -168,6 +168,7 @@ stale "'dependabot #1371/#1372' in CHANGELOG.md is caught" 'dependabot #1371/#13
 stale "'#1271' in coverage-matrix.md is caught" '#1271\b' '^ +docs/architecture/coverage-matrix\.md:[0-9]+:\(#1271\)$'
 stale "'R-013 → #1265' in coverage-matrix.md is caught" 'R-013.*#1265' '^ +docs/architecture/coverage-matrix\.md:[0-9]+:R-013 → #1265$'
 stale "a bare '#1263' header citation in coverage-matrix.md is caught" '#1263\b' '^ +docs/architecture/coverage-matrix\.md:[0-9]+:\(PRs #1261'
+stale "a bare '#1268' header citation in coverage-matrix.md is caught" '#1268\b' '^ +docs/architecture/coverage-matrix\.md:[0-9]+:\(PRs #1261'
 stale "'Deferred #1347' in remediation STATUS.md is caught" 'Deferred #1347\b' '^ +docs/remediation-2026-07-01/STATUS\.md:[0-9]+:Deferred #1347 — go-stellar-sdk v0\.5->v0\.6$'
 stale "'#1353' in remediation STATUS.md is caught" '#1353' '^ +docs/remediation-2026-07-01/STATUS\.md:[0-9]+:#1353$'
 stale "'#1369' in remediation STATUS.md is caught" '#1369' '^ +docs/remediation-2026-07-01/STATUS\.md:[0-9]+:#1369$'
