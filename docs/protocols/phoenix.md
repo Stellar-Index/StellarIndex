@@ -83,17 +83,24 @@ activity in our window.
 | `CDQLKNH3725BUP4HPKQKMM7OO62FDVXVTO7RCYPID527MZHJG2F3QBJW` | no lake events |
 | `CBENABXP6C4C7WG6KB7JQOTDS5GIIXF3IX3PIYNZFCDZDWUHITO2HZ4S` | newer pool WASM — single-event **Map-body** swap schema (`decodeSwapMap`); appeared 2026-07-02 (factory "Updated Config" + create in the same window). Seeded via `phoenix.MainnetMapPools` |
 
-## Stake contracts (16 — separate from the pools)
+## Stake contracts (15 — separate from the pools)
 
 `bond` / `unbond` events come from per-pool **stake contracts**, which are
-distinct addresses **not** returned by `query_pools()`. Original 3 (found
+distinct addresses **not** returned by `query_pools()`. Original 2 (found
 active in the 2026-05-01 walk):
 
 ```
 CBRGNWGAC25CPLMOAMR7WBPOF5QTFA5RYXQH4DEJ4K65G2QFLTLMW7RO   bond ×24
 CAF3UJ45ZQJP6USFUIMVMGOUETUTXEC35R2247VJYIVQBGKTKBZKNBJ3   unbond ×21
-CBBUVHCEML7UE46XXZXLTMGKFMKX7KOC2XAKI3TW6WBQBKWMSARMU3YM   bond ×10
 ```
+
+`CBBUVHCEML7UE46XXZXLTMGKFMKX7KOC2XAKI3TW6WBQBKWMSARMU3YM` was listed
+here too and is **not** Phoenix: every event it emits is a Symbol-topic
+`("bond", created|live|settconf|settled|expired)` under a WASM no Phoenix
+contract shares, so it is out of the curated set. A node that already
+warmed it keeps it in `protocol_contracts`; remove that row once:
+`DELETE FROM protocol_contracts WHERE source = 'phoenix' AND contract_id = 'CBBUVHCEML7UE46XXZXLTMGKFMKX7KOC2XAKI3TW6WBQBKWMSARMU3YM' AND factory_id = 'curated';`
+then restart the indexer.
 
 13 more added 2026-08-18 (completeness-gap; all VERIFIED genuine — see the
 update note at the top). The first 11 co-occur in their pool's
@@ -161,10 +168,24 @@ the topic shape.
 | Action (topic[0]) | Where it lands |
 |---|---|
 | `swap` | `trades` (source=phoenix) |
-| `provide_liquidity`, `withdraw_liquidity` | `phoenix_liquidity` |
+| `provide_liquidity`, `withdraw_liquidity` (String multi-event and Symbol Map-body) | `phoenix_liquidity` |
 | `bond`, `unbond`, `withdraw_rewards`, `distribute_rewards` | `phoenix_stake_events` |
+| `create_distribution_flow` (`asset`, no user) | `phoenix_stake_events` (migration 0192) |
+| `Stake: Migration: ` start / query, `Stake` migration-completed (user only) | `phoenix_stake_events` as `migration_started` / `_queried` / `_completed` (migration 0192) |
 | `initialize` (`XYK LP token_a` / `token_b`, once per pool deploy) | `phoenix_initialize` (migration 0131) |
 | admin-rotation topics (`XYK Pool: ` — replace_requested / replace_set / undo / accepted) | `phoenix_admin_events` (migration 0132) |
+| `("Factory","Updated Config")` (Void body, factory only) | `phoenix_admin_events` as `factory_config_updated` (migration 0192) |
+| `blend_pool` set_delegate / set_min_trading_a / _b | `phoenix_admin_events` (`admin_addr`, or the i128 in `value`; migration 0192) |
+
+The earliest stake WASMs publish an unbond's token and amount under the
+`"bond"` topic after the `("unbond","user")` event; the correlation
+buffer folds those into the open unbond rather than a new bond.
+
+**Rollout of 0192.** Existing ledgers need a replay, not just the deploy:
+`stellarindex-ops projector-replay -config PATH -source phoenix -from 51572016 -refresh-caggs=false`
+after decompressing the affected chunks, then `compute-completeness`.
+Expected deltas: `unbond` 6,574 → 7,188, `create_distribution_flow` 13,
+`migration_*` 1,068, `phoenix_admin_events` +5, `phoenix_liquidity` +28.
 
 ## Rewards topics — HANDLED (ROADMAP #89, 2026-07-10)
 
