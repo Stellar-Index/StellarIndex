@@ -358,7 +358,7 @@ jobs:
             exit 1
           fi
           if ! row="$(awk -F'\t' -v r="$REGION" '$1 == r { print; found = 1 } END { exit found ? 0 : 1 }' "$MANIFEST")"; then
-            echo "::error::region '${REGION}' has no row in ${MANIFEST}. Derive one read-only with 'scripts/dev/preflight-deploy.sh --region ${REGION} --version ${VERSION} --refresh-manifest' and commit it."
+            echo "::error::region '${REGION}' has no row in ${MANIFEST}. Add one by hand (region, host, user, jump; columns in its header), derive its binary set read-only with 'scripts/dev/preflight-deploy.sh --region ${REGION} --version ${VERSION} --refresh-manifest', and commit it."
             exit 1
           fi
           IFS=$'\t' read -r _ _ _ _ region_set not_deployable derived_utc <<<"$row"
