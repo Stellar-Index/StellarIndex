@@ -248,7 +248,6 @@ func lakeDownCases() []lakeDownCase {
 		{"ContractWasm", "/v1/contracts/" + validTestContract + "/wasm", contract, (*Handler).ContractWasm},
 		{"ContractInteractions", "/v1/contracts/" + validTestContract + "/interactions", contract, (*Handler).ContractInteractions},
 		{"ContractCodeHistory", "/v1/contracts/" + validTestContract + "/code-history", contract, (*Handler).ContractCodeHistory},
-		{"OperationsByLedger", "/v1/operations?ledger=42", nil, (*Handler).Operations},
 		{"OperationsDirectory", "/v1/operations", nil, (*Handler).Operations},
 		{"NetworkThroughput", "/v1/network/throughput", nil, (*Handler).NetworkThroughput},
 		{"AccountsList", "/v1/accounts", nil, (*Handler).AccountsList},

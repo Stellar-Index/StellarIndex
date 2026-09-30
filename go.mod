@@ -45,6 +45,7 @@ require (
 	github.com/xeipuuv/gojsonschema v1.2.0 // JSON-Schema validation for scripts/ci/lint-golangci-config (offline .golangci.yml check, #317); already in the graph via go-stellar-sdk
 	go.uber.org/goleak v1.3.0
 	golang.org/x/crypto v0.57.0
+	golang.org/x/time v0.16.0 // rate.Limiter pacing in cmd/stellarindex-sla-probe; already in the graph
 	golang.org/x/tools v0.50.0
 	google.golang.org/api v0.299.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -193,7 +194,6 @@ require (
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260908163034-4bcc4b2ee518 // indirect
 	golang.org/x/text v0.42.0 // indirect
-	golang.org/x/time v0.16.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genproto v0.0.0-20260715232425-e75dac1f907d // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260715232425-e75dac1f907d // indirect
