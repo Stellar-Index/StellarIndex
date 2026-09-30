@@ -84,10 +84,11 @@ func TestNoRawCredentialEnvReadsOutsideConfig(t *testing.T) {
 // credentials resolve through.
 func TestCredentialEnvVarsDeclaredInSchema(t *testing.T) {
 	want := map[string]string{
-		"external.coingecko.api_key":      "COINGECKO_API_KEY",
-		"external.coingecko.demo_api_key": "COINGECKO_DEMO_API_KEY",
-		"external.massive.api_key":        "MASSIVE_API_KEY",
-		"external.dune.api_key":           "DUNE_API_KEY",
+		"external.coingecko.api_key":        "COINGECKO_API_KEY",
+		"external.coingecko.demo_api_key":   "COINGECKO_DEMO_API_KEY",
+		"external.massive.api_key":          "MASSIVE_API_KEY",
+		"external.openexchangerates.app_id": "OPENEXCHANGERATES_APP_ID",
+		"external.dune.api_key":             "DUNE_API_KEY",
 	}
 	got := map[string]string{}
 	for _, f := range cfg.Describe() {

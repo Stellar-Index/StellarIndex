@@ -17,9 +17,14 @@
 // network is added to its decoder, which is a code change — the table
 // changes in the same commit. Consumers: the reconciliation catalogue
 // (compute-completeness, internal/ops/chops), the coverage endpoint
-// (internal/api/v1/coverage_verdicts.go), and the per-source gap
-// detector (timescale.ApplicableGapDetectorTargets, wired 2026-09-03 —
-// this doc named it as a consumer for a month before it was; RV1 #5).
+// (internal/api/v1/coverage_verdicts.go), the source catalogue and
+// per-source health endpoints (handleSources, handleSourceHealth), and the
+// per-source gap detector (timescale.ApplicableGapDetectorTargets).
+//
+// The catalogue endpoints pass every external.Registry name, including
+// off-chain CEX / FX / aggregator feeds this table does not classify; the
+// default false excludes them from test nets on purpose, since no test-net
+// deployment runs a price feed.
 //
 // A consumer whose source names are not config.KnownSources — the gap
 // detector keys its targets per TABLE ("aquarius-liquidity") — maps each

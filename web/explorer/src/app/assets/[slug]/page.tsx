@@ -841,8 +841,8 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
   // schema.org Dataset — Google Dataset Search eligibility. contentUrl points
   // at the real /v1/assets/{slug} endpoint backing this page.
   const datasetLD = datasetJsonLd({
-    name: `${coin.code} price & market data — Stellar Index`,
-    description: `Aggregated price (VWAP), market cap, supply, and trading data for ${coin.code}${coin.issuer ? ` (issuer ${coin.issuer})` : ''} on Stellar, computed by Stellar Index.`,
+    name: `${assetSymbol(coin)} price & market data — Stellar Index`,
+    description: `Aggregated price (VWAP), market cap, supply, and trading data for ${assetSymbol(coin)}${coin.issuer ? ` (issuer ${coin.issuer})` : ''} on Stellar, computed by Stellar Index.`,
     url: `${CURRENT_NETWORK.explorerUrl}/assets/${coin.slug}`,
     keywords: [
       assetSymbol(coin),
@@ -891,7 +891,9 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
           ]}
         />
         <div className="flex flex-wrap items-baseline gap-4">
-          <h1 className="text-h1 text-ink font-semibold">{coin.code}</h1>
+          <h1 className="text-h1 text-ink font-semibold">
+            {assetSymbol(coin)}
+          </h1>
           {globalView?.name && globalView.name !== coin.code && (
             <span className="text-ink-muted text-lg">{globalView.name}</span>
           )}
@@ -956,7 +958,9 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             className="border-warn-300 bg-warn-50 text-warn-700 rounded-md border p-3 text-sm"
           >
             <div className="mb-1 flex items-center gap-2">
-              <strong className="font-semibold">Unverified {coin.code}</strong>
+              <strong className="font-semibold">
+                Unverified {assetSymbol(coin)}
+              </strong>
               <Badge tone="warn">Ticker collision</Badge>
             </div>
             <p>

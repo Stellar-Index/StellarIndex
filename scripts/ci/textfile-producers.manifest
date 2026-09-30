@@ -26,6 +26,7 @@
 #                producer quietly.
 
 # ── shell producers ────────────────────────────────────────────────────────
+configs/alertmanager/apply.sh                                             alertmanager_receivers.prom        configs/alertmanager/apply-test.sh
 configs/ansible/roles/archival-node/files/ch-schema-drift.sh              ch_schema_drift.prom               configs/ansible/roles/archival-node/files/ch-schema-drift-test.sh
 configs/ansible/roles/archival-node/files/data-freshness.sh               data_freshness.prom                scripts/ci/data-freshness-test.sh
 configs/ansible/roles/archival-node/files/galexie-archive-contiguity.sh   galexie_archive_contiguity.prom    scripts/ci/galexie-archive-contiguity-test.sh
@@ -63,7 +64,9 @@ configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml              redis_
 cmd/stellarindex-sla-probe/textfile.go                                    operator-supplied                  cmd/stellarindex-sla-probe/textfile_test.go
 internal/archivecompleteness/metrics.go                                   archive_completeness.prom          internal/archivecompleteness/metrics_test.go
 internal/ops/archive/verify_archive_textfile.go                           operator-supplied                  internal/ops/archive/verify_archive_textfile_test.go
+internal/ops/chops/verify_lake.go                                         operator-supplied                  internal/ops/chops/verify_lake_test.go
 internal/ops/chops/verify_served_values.go                                served_values.prom                 internal/ops/chops/verify_served_values_test.go
+internal/ops/chops/wasm_drift.go                                          operator-supplied                  internal/ops/chops/wasm_drift_test.go
 internal/ops/opsutil/job_heartbeat.go                                     operator-supplied                  internal/ops/opsutil/job_heartbeat_test.go
 internal/supply/textfile.go                                               operator-supplied                  internal/supply/textfile_test.go
 internal/ops/ingest/curated_rwa_sync.go                                    operator-supplied                  internal/ops/ingest/curated_rwa_sync_test.go

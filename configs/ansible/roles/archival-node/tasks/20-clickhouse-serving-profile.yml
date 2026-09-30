@@ -6,9 +6,9 @@
 # prerequisite: see ADR-0048's Consequences section), isolated from
 # every OTHER ClickHouse connection this repo makes (the indexer's
 # real-time dual-sink, the aggregator's own explorer reader,
-# stellarindex-ops backfills / ch-rebuild / gates / replays) — all of
-# which keep authenticating as CH's unauthenticated `default` user,
-# unbounded, unchanged by this task.
+# stellarindex-ops backfills / ch-rebuild / gates / replays) — which
+# authenticate as `ops_batch` / `live_daemon` below when those are
+# enabled, and otherwise as CH's unauthenticated `default` user.
 #
 # NOT applied to r1 by the PR that added this file — codify-only, per
 # AGENTS.md's ansible-drift rule ("any config change on r1 lands in
@@ -439,3 +439,109 @@
   # users,profiles — exactly one of each.
   until: ch_ops_batch_profile_live.stdout == '1,1'
   tags: [clickhouse, clickhouse-ops-batch-profile]
+
+# ───── live_daemon: a named identity for the live daemons ──────────────
+#
+# The indexer dual-sink, the aggregator's readers and rollups, and the
+# API/indexer readers with no serving user reach CH as its unauthenticated
+# `default` user. This user gives them a password-backed identity so
+# `default` can be restricted later without cutting them off. It uses the
+# stock `default` settings profile, so priority and limits are exactly
+# what those connections run with today. Gated OFF by default
+# (clickhouse_live_daemon_profile_enabled, defaults/main.yml). Activation,
+# per host: add vault_clickhouse_live_daemon_password to the inventory's
+# secrets, set the flag, then
+#   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+#     --tags clickhouse-live-daemon-profile,stellarindex --check --diff
+# (both tags: the CH user AND /etc/default/stellarindex must move together;
+# the env template only renders the pair once both flag and password are
+# set, and its notify restarts the daemons onto it).
+
+- name: Assert ClickHouse live-daemon password is set
+  ansible.builtin.assert:
+    that:
+      - clickhouse_live_daemon_password | default('') | length > 0
+    fail_msg: >-
+      clickhouse_live_daemon_password is not set. Generate a strong
+      password (`openssl rand -hex 32`), `ansible-vault edit
+      inventory/<region>.secrets.yml` and add
+      `vault_clickhouse_live_daemon_password: "<generated>"`, then re-run
+      with --tags clickhouse-live-daemon-profile,stellarindex. Never commit
+      the plaintext password.
+  when: clickhouse_live_daemon_profile_enabled | bool
+  tags: [clickhouse, clickhouse-live-daemon-profile]
+
+- name: Install the live_daemon ClickHouse user
+  ansible.builtin.copy:
+    dest: /etc/clickhouse-server/users.d/live-daemon.xml
+    owner: clickhouse
+    group: clickhouse
+    mode: "0640"       # password_sha256_hex is a secret at rest
+    content: |
+      <clickhouse>
+          <!-- Managed by ansible (archival-node /
+               20-clickhouse-serving-profile.yml). The identity for the
+               stellarindex-{indexer,aggregator,api} ClickHouse
+               connections that carry no serving user.
+
+               Profile `default`: the settings those connections already
+               run with as CH's `default` user, so switching identity
+               changes no priority or limit.
+               Access is database-scoped, not table-scoped: the live sink
+               runs CREATE TABLE IF NOT EXISTS, the aggregator's rollups
+               TRUNCATE and EXCHANGE TABLES, and the schema checks read
+               system.tables. CH rejects a narrower <grants> beside any
+               other access setting on an XML user.
+
+               Password: SHA-256 hex digest of
+               clickhouse_live_daemon_password (ansible-vault —
+               vault_clickhouse_live_daemon_password). The plaintext is
+               templated ONLY into /etc/default/stellarindex
+               (stellarindex.env.j2, 0640 root:stellarindex). -->
+          <users>
+              <{{ clickhouse_live_daemon_user }}>
+                  <password_sha256_hex>{{ clickhouse_live_daemon_password | hash('sha256') }}</password_sha256_hex>
+                  <networks>
+                      <ip>127.0.0.1</ip>
+                      <ip>::1</ip>
+                  </networks>
+                  <profile>default</profile>
+                  <quota>default</quota>
+                  <access_management>0</access_management>
+                  <allow_databases>
+                      <database>stellar</database>
+                      <database>system</database>
+                  </allow_databases>
+              </{{ clickhouse_live_daemon_user }}>
+          </users>
+      </clickhouse>
+  when: clickhouse_live_daemon_profile_enabled | bool
+  no_log: true   # content embeds the password's SHA-256 digest
+  # No restart notify: users.d is hot-reloaded; the tasks below apply and
+  # verify it (same as api_serving / ops_batch above).
+  tags: [clickhouse, clickhouse-live-daemon-profile]
+
+- name: Reload ClickHouse config so the live_daemon drop-in is live (no restart)
+  when:
+    - clickhouse_live_daemon_profile_enabled | bool
+    - not ansible_check_mode
+  ansible.builtin.command: >-
+    clickhouse-client --port {{ clickhouse_tcp_port | default(9300) }}
+    -q "SYSTEM RELOAD CONFIG"
+  changed_when: false
+  tags: [clickhouse, clickhouse-live-daemon-profile]
+
+- name: Verify the live_daemon user is live in ClickHouse
+  # A rejected drop-in keeps the previous users config and reads as 0.
+  when:
+    - clickhouse_live_daemon_profile_enabled | bool
+    - not ansible_check_mode
+  ansible.builtin.command: >-
+    clickhouse-client --port {{ clickhouse_tcp_port | default(9300) }}
+    -q "SELECT count() FROM system.users WHERE name = '{{ clickhouse_live_daemon_user }}' FORMAT CSV"
+  register: ch_live_daemon_user_live
+  changed_when: false
+  retries: 10
+  delay: 2
+  until: ch_live_daemon_user_live.stdout == '1'
+  tags: [clickhouse, clickhouse-live-daemon-profile]

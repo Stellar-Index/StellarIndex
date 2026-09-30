@@ -6,6 +6,7 @@ package chops
 import (
 	"context"
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -76,5 +77,49 @@ func TestEvaluateEachSource_StopsOnADoneContext(t *testing.T) {
 	}
 	if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "aquarius") {
 		t.Errorf("err = %v, want context.Canceled naming the first unevaluated source", err)
+	}
+	if !strings.Contains(err.Error(), "phoenix") {
+		t.Errorf("err = %v, want every skipped source named, including phoenix", err)
+	}
+}
+
+// TestOrderForPass: in -pass mode a source that re-verifies from genesis runs
+// after every incrementally-resuming source, so its cost cannot exhaust the
+// deadline before the cheap sources publish.
+func TestOrderForPass(t *testing.T) {
+	cat := []reconSource{{name: "soroswap", genesis: 10}, {name: "sdex", genesis: 2}, {name: "aquarius", genesis: 10}, {name: "phoenix", genesis: 10}}
+	names := func(srcs []reconSource) []string {
+		out := make([]string, len(srcs))
+		for i, s := range srcs {
+			out[i] = s.name
+		}
+		return out
+	}
+	allOK := map[string]priorProjection{
+		"soroswap": {known: true, ok: true}, "sdex": {known: true, ok: true},
+		"aquarius": {known: true, ok: true}, "phoenix": {known: true, ok: true},
+	}
+	wm := map[string]uint32{"soroswap": 500, "sdex": 500, "aquarius": 500, "phoenix": 500}
+
+	if got := names(orderForPass(cat, allOK, wm)); !slices.Equal(got, names(cat)) {
+		t.Errorf("all incremental: got %v, want catalogue order %v", got, names(cat))
+	}
+
+	failing := maps.Clone(allOK)
+	failing["sdex"] = priorProjection{known: true, ok: false}
+	if got, want := names(orderForPass(cat, failing, wm)), []string{"soroswap", "aquarius", "phoenix", "sdex"}; !slices.Equal(got, want) {
+		t.Errorf("failing prior: got %v, want %v", got, want)
+	}
+
+	unknown := maps.Clone(allOK)
+	delete(unknown, "soroswap")
+	failing2 := maps.Clone(unknown)
+	failing2["aquarius"] = priorProjection{known: true, ok: false}
+	if got, want := names(orderForPass(cat, failing2, wm)), []string{"sdex", "phoenix", "soroswap", "aquarius"}; !slices.Equal(got, want) {
+		t.Errorf("unknown + failing prior: got %v, want %v (stable within each group)", got, want)
+	}
+
+	if got := names(cat); !slices.Equal(got, []string{"soroswap", "sdex", "aquarius", "phoenix"}) {
+		t.Errorf("orderForPass mutated its input: %v", got)
 	}
 }

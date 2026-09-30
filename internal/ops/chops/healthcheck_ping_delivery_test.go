@@ -4,6 +4,7 @@
 package chops
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 )
@@ -160,6 +162,7 @@ func TestFailedProbeDoesNotPingSuccess(t *testing.T) {
 		"INDEXER_METRICS_PORT="+strconv.Itoa(deadPort),
 		"HEALTHCHECKS_URL_INDEXER="+pingSrv.URL+"/ping",
 		"TEXTFILE_DIR="+dir,
+		"HC_FAIL_AFTER=1",
 	)
 	var errBuf strings.Builder
 	cmd.Stderr = &errBuf
@@ -172,5 +175,91 @@ func TestFailedProbeDoesNotPingSuccess(t *testing.T) {
 	}
 	if !strings.Contains(errBuf.String(), "probe FAILED") {
 		t.Errorf("a down service left no journal line; stderr:\n%s", errBuf.String())
+	}
+}
+
+// pingRecorder is a Healthchecks.io stand-in that records the path of
+// every ping it receives.
+type pingRecorder struct {
+	mu    sync.Mutex
+	paths []string
+}
+
+func (p *pingRecorder) ServeHTTP(_ http.ResponseWriter, r *http.Request) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.paths = append(p.paths, r.URL.Path)
+}
+
+func (p *pingRecorder) got() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.paths...)
+}
+
+// closedPort returns a loopback port with nothing listening on it, so the
+// metrics probe fails with curl rc=7 as it does while a service restarts.
+func closedPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+	return port
+}
+
+// TestFailedProbeDebouncesFailPing: /fail bypasses the check's grace
+// period, so a probe that fails once during a restart must not send it.
+func TestFailedProbeDebouncesFailPing(t *testing.T) {
+	var status atomic.Int32
+	status.Store(http.StatusOK)
+	_, livePort := startPingServer(t, &status)
+	deadPort := closedPort(t)
+	rec := &pingRecorder{}
+	pingSrv := httptest.NewServer(rec)
+	t.Cleanup(pingSrv.Close)
+	pingURL := pingSrv.URL + "/ping"
+	dir := t.TempDir()
+
+	for i := 1; i <= 2; i++ {
+		stderr := runHeartbeat(t, deadPort, dir, pingURL)
+		if got := rec.got(); len(got) != 0 {
+			t.Fatalf("failed probe %d pinged %v, want nothing before the 3rd consecutive failure; stderr:\n%s", i, got, stderr)
+		}
+		if got := readPingMetric(t, dir, "indexer", "stellarindex_healthcheck_consecutive_failures"); got != float64(i) {
+			t.Fatalf("consecutive_failures = %v after %d failed probes, want %d", got, i, i)
+		}
+	}
+	runHeartbeat(t, deadPort, dir, pingURL)
+	if got := rec.got(); len(got) != 1 || got[0] != "/ping/fail" {
+		t.Fatalf("3rd consecutive failure pinged %v, want exactly [/ping/fail]", got)
+	}
+
+	// A pass resets the streak, so the next lone failure is held back again.
+	runHeartbeat(t, livePort, dir, pingURL)
+	if got := readPingMetric(t, dir, "indexer", "stellarindex_healthcheck_consecutive_failures"); got != 0 {
+		t.Errorf("consecutive_failures = %v after a passing probe, want 0", got)
+	}
+	runHeartbeat(t, deadPort, dir, pingURL)
+	want := []string{"/ping/fail", "/ping"}
+	if got := rec.got(); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("pings = %v, want %v — a pass must reset the streak", got, want)
+	}
+}
+
+// TestFailPingNotHeldWithoutState: with no textfile to carry the streak it
+// would restart at 1 every run, so /fail must go out on the first failure.
+func TestFailPingNotHeldWithoutState(t *testing.T) {
+	rec := &pingRecorder{}
+	pingSrv := httptest.NewServer(rec)
+	t.Cleanup(pingSrv.Close)
+
+	runHeartbeat(t, closedPort(t), "/dev/null", pingSrv.URL+"/ping")
+	if got := rec.got(); len(got) != 1 || got[0] != "/ping/fail" {
+		t.Fatalf("stateless failed probe pinged %v, want exactly [/ping/fail]", got)
 	}
 }

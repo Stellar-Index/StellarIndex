@@ -31,7 +31,11 @@ hold (the classifier is `internal/pricelesscoverage.popularPriceless`):
 
 1. **Priceless** — no servable USD/XLM-proxy price
    (`prices_1m` has no non-null VWAP against USDC / its SAC / `fiat:USD`
-   / `native` / the XLM SAC in the last 24 h).
+   / `native` / the XLM SAC in the last 24 h), AND no `asset_price_snapshot`
+   row younger than the listing's staleness bound
+   (`assetPriceSnapshotMaxAge`, 15 min). A fresh snapshot row is priced by
+   definition: it is exactly what `/v1/assets` serves, whatever the quote
+   floors above say.
 2. **Not withheld** — the serving substance gate does not withhold its
    USD price. The tripwire asks the gate itself
    (`pricingguard.AssetSubstanceVerdict`, the verdict the `/v1/assets`

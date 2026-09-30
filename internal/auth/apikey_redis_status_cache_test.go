@@ -215,11 +215,11 @@ func TestRedisAPIKey_AccountStatusCacheEvictsStaleEntries(t *testing.T) {
 	}
 }
 
-// statusCacheLen reads the current statusCache size under its mutex.
+// statusCacheLen reads the current status cache size under its mutex.
 func statusCacheLen(v *RedisAPIKeyValidator) int {
-	v.statusMu.RLock()
-	defer v.statusMu.RUnlock()
-	return len(v.statusCache)
+	v.status.mu.RLock()
+	defer v.status.mu.RUnlock()
+	return len(v.status.cache)
 }
 
 // TestRedisAPIKey_SuspendedRideOutStillRejected pins that the kill
