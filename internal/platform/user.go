@@ -127,4 +127,8 @@ type UserStore interface {
 	// RevokeOtherUserSessions revokes every active session for the user
 	// except keepSessionID. Idempotent.
 	RevokeOtherUserSessions(ctx context.Context, userID, keepSessionID uuid.UUID) error
+
+	// CapUserSessions keeps keepSessionID plus the max-1 most recently
+	// created other live sessions of the user and revokes the rest.
+	CapUserSessions(ctx context.Context, userID, keepSessionID uuid.UUID, maxLive int) error
 }

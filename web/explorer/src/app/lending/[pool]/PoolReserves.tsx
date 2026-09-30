@@ -32,6 +32,7 @@ interface ReserveRow {
 interface ReservesResp {
   pool: string;
   tvl_usd: string | null;
+  lower_bound?: boolean;
   reserves: ReserveRow[];
 }
 
@@ -81,6 +82,14 @@ export function PoolReserves({ pool }: { pool: string }) {
   // only stands in when the pool response omits it.
   const totalUsd =
     q.data?.tvl_usd ?? sumDecimalStrings(priced.map((rv) => rv.supplied_usd));
+  // Either signal makes the total partial: the served flag, or an unpriced
+  // reserve the client-side fallback sum could not include.
+  const unpriced = reserves.filter((rv) => rv.supplied_usd == null);
+  const lowerBound = q.data?.lower_bound === true || unpriced.length > 0;
+  const excluded =
+    unpriced.length > 0
+      ? unpriced.map((rv) => shortAssetText(rv.asset)).join(', ')
+      : 'reserves';
 
   return (
     <Panel
@@ -94,10 +103,22 @@ export function PoolReserves({ pool }: { pool: string }) {
         <div className="text-ink-body text-sm">
           Pool TVL:{' '}
           <span className="text-ink font-mono">
+            {lowerBound && (
+              <span className="text-ink-muted" aria-hidden>
+                ≥{' '}
+              </span>
+            )}
             {usdFmt.format(Number(q.data.tvl_usd))}
           </span>{' '}
           <span className="text-ink-muted">
-            (Σ supplied across priced reserves)
+            {lowerBound ? (
+              <>
+                (<strong>at least</strong> this — Σ supplied across priced
+                reserves; excludes unpriced {excluded})
+              </>
+            ) : (
+              '(Σ supplied across priced reserves)'
+            )}
           </span>
         </div>
       )}
@@ -109,7 +130,7 @@ export function PoolReserves({ pool }: { pool: string }) {
             value: Number(rv.supplied_usd),
             decimal: rv.supplied_usd,
           }))}
-          centerLabel={`$${formatCompactUnits(totalUsd)}`}
+          centerLabel={`${lowerBound ? '≥ ' : ''}$${formatCompactUnits(totalUsd)}`}
           centerSub="TVL"
           formatValue={(n) => usdFmt.format(n)}
         />

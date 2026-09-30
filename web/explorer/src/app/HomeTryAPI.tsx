@@ -1,7 +1,7 @@
 'use client';
 
 import { Play } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { API_BASE_URL } from '@/api/client';
 import { CopyButton } from '@/components/ui';
@@ -111,17 +111,29 @@ export function HomeTryAPI() {
   const [running, setRunning] = useState(false);
   const [response, setResponse] = useState<string | null>(null);
   const [responseTone, setResponseTone] = useState<'ok' | 'err' | null>(null);
+  const inFlight = useRef<AbortController | null>(null);
+
+  useEffect(() => () => inFlight.current?.abort(), []);
 
   const example = EXAMPLES[activeIx]!;
   const cmd = renderSnippet(lang, API_BASE_URL, example.path);
 
   function runLive() {
+    inFlight.current?.abort();
+    const ctrl = new AbortController();
+    inFlight.current = ctrl;
     setRunning(true);
     setResponse(null);
     setResponseTone(null);
-    fetch(`${API_BASE_URL}${example.path}`, { cache: 'no-store' })
+    fetch(`${API_BASE_URL}${example.path}`, {
+      cache: 'no-store',
+      signal: ctrl.signal,
+    })
       .then(async (r) => {
         const body = await r.text();
+        // A response for an example the visitor has since left must not
+        // render under the newly selected one.
+        if (ctrl.signal.aborted) return;
         let pretty = body;
         try {
           pretty = JSON.stringify(JSON.parse(body), null, 2);
@@ -132,13 +144,22 @@ export function HomeTryAPI() {
         setResponseTone(r.ok ? 'ok' : 'err');
       })
       .catch((e) => {
+        if (ctrl.signal.aborted) return;
         setResponse(e instanceof Error ? e.message : 'Network error');
         setResponseTone('err');
       })
-      .finally(() => setRunning(false));
+      .finally(() => {
+        if (inFlight.current === ctrl) {
+          inFlight.current = null;
+          setRunning(false);
+        }
+      });
   }
 
   function pickExample(i: number) {
+    inFlight.current?.abort();
+    inFlight.current = null;
+    setRunning(false);
     setActiveIx(i);
     setResponse(null);
     setResponseTone(null);

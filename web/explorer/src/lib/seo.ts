@@ -1,3 +1,5 @@
+import type { Metadata } from 'next';
+
 import { CURRENT_NETWORK } from '@/lib/networks';
 // Shared SEO helpers — single source of truth for the social-share
 // preview image so every detail page gets the same og:image.
@@ -44,6 +46,36 @@ export const SITE_OG_IMAGES = [
 // Convenience for `twitter.images`, which is a flat string[]. Same
 // asset as openGraph.images, but Twitter expects the URL directly.
 export const SITE_TWITTER_IMAGES = [SITE_OG_IMAGE_PATH];
+
+/**
+ * Metadata for a long-tail shell document that answers for every
+ * /<route>/{id} path: noindex, and nothing inherited from the homepage.
+ */
+export function shellMetadata(title: string, description: string): Metadata {
+  // Metadata merges per top-level key, so any key left out here inherits
+  // the root layout's homepage canonical, og:title and twitter:title.
+  // No og:url: this one document is served under every id.
+  const socialTitle = `${title} · Stellar Index`;
+  return {
+    title,
+    description,
+    robots: { index: false, follow: true },
+    alternates: {},
+    openGraph: {
+      type: 'website',
+      siteName: 'Stellar Index',
+      title: socialTitle,
+      description,
+      images: SITE_OG_IMAGES,
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: socialTitle,
+      description,
+      images: SITE_TWITTER_IMAGES,
+    },
+  };
+}
 
 // serializeJsonLd stringifies a schema.org object for injection into a
 // `<script type="application/ld+json" dangerouslySetInnerHTML>` block —

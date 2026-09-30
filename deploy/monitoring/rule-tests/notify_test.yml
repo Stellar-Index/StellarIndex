@@ -14,6 +14,9 @@
 # 50% ratio threshold) that the ratio rule alone would never catch; case 4
 # proves a template with only occasional, non-sustained failures stays
 # silent.
+#
+# Cases 5-6 prove stellarindex_notify_send_rate_high fires on aggregate sent
+# volume above its ceiling and ignores failed sends.
 
 rule_files:
   - ../rules/notify.yml
@@ -125,4 +128,56 @@ tests:
     alert_rule_test:
       - eval_time: 90m
         alertname: stellarindex_notify_send_failures_sustained
+        exp_alerts: []
+
+  # ── Case 5: aggregate sent volume above the ceiling ────────────────
+  # 4/min per template = 480/h summed, sustained past the 15m dwell. Each
+  # template alone (240/h) is under the ceiling: the rule must sum them.
+  - interval: 1m
+    name: sustained aggregate send volume above 300/h fires the ceiling alert
+    input_series:
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="sent"}'
+        values: '0+4x60'
+      - series: 'stellarindex_notify_sends_total{template="signup-verify",result="sent"}'
+        values: '0+4x60'
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="failed"}'
+        values: '0+0x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_notify_send_rate_high
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: stellarindex_notify_send_rate_high
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: notify
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+              summary: "Transactional email is going out at 480/h (ceiling 300/h)"
+              description: |
+                Successful transactional email sends, summed across every
+                template, have stayed above 300 mails/hour for 15+ minutes. The
+                per-inbox and per-IP login-mail throttles bound each caller, not
+                the total, so this is the only signal that aggregate volume has
+                left its normal range — a send loop, or sign-in links requested
+                for many addresses from many IPs. Sustained high volume spends
+                the sending domain's reputation for every recipient.
+
+                Runbook: docs/operations/runbooks/notify-send-failure.md
+
+  # ── Case 6: failed sends and organic volume stay under the ceiling ─
+  # 2/min sent (120/h) plus 10/min failed: failures deliver nothing, so
+  # they must not count toward the sent ceiling.
+  - interval: 1m
+    name: organic sent volume plus failures does not fire the ceiling alert
+    input_series:
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="sent"}'
+        values: '0+2x60'
+      - series: 'stellarindex_notify_sends_total{template="magic-link",result="failed"}'
+        values: '0+10x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_notify_send_rate_high
         exp_alerts: []

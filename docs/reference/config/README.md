@@ -84,6 +84,9 @@ the `env:` column.
 | `oracle.reflector.dex_contract` | `string` | _(required)_ | — | Reflector DEX contract (C-prefix) on mainnet. |
 | `oracle.reflector.cex_contract` | `string` | _(required)_ | — | Reflector CEX contract (C-prefix) on mainnet. |
 | `oracle.reflector.fx_contract` | `string` | _(required)_ | — | Reflector FX contract (C-prefix) on mainnet. |
+| `oracle.reflector.dex_decimals` | `uint8` | `0` | — | Price scale (power of 10) of the DEX contract's SEP-40 decimals(). 0 keeps the Reflector default of 14. Not read from the contract: confirm decimals() on-chain before re-pointing dex_contract. |
+| `oracle.reflector.cex_decimals` | `uint8` | `0` | — | Price scale (power of 10) of the CEX contract's SEP-40 decimals(). 0 keeps the Reflector default of 14. Not read from the contract: confirm decimals() on-chain before re-pointing cex_contract. |
+| `oracle.reflector.fx_decimals` | `uint8` | `0` | — | Price scale (power of 10) of the FX contract's SEP-40 decimals(). 0 keeps the Reflector default of 14. Not read from the contract: confirm decimals() on-chain before re-pointing fx_contract. |
 | `oracle.redstone.adapter_contract` | `string` | _(required)_ | — | RedStone Adapter contract (C-prefix) on mainnet — CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG. |
 | `oracle.band.standard_reference_contract` | `string` | _(required)_ | — | Band Protocol StandardReference contract (C-prefix) on mainnet — CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3NFBGG5M. |
 | `oracle.soroswap.factory_contract` | `string` | _(required)_ | — | Soroswap factory contract (C-prefix) on mainnet — CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2. |

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -552,8 +553,19 @@ func (h *Handler) mapSEP41RowsToMovements(ctx context.Context, address string, r
 // label when it matches contractID (the topic is influenceable, the
 // deterministic derivation is not). A non-matching claim falls through
 // to the raw contract_id — the spoof renders as itself, never as the
-// asset it impersonated.
+// asset it impersonated. A proven SAC is memoised across requests.
 func (h *Handler) resolveSEP41MovementAsset(ctx context.Context, contractID string) string {
+	if name, ok := h.sacNames.get(contractID); ok {
+		return name
+	}
+	name := h.resolveSEP41AssetUncached(ctx, contractID)
+	if name != contractID {
+		h.sacNames.put(contractID, name)
+	}
+	return name
+}
+
+func (h *Handler) resolveSEP41AssetUncached(ctx context.Context, contractID string) string {
 	if name, ok, err := h.Reader.SACClassicAssetName(ctx, contractID); err == nil && ok {
 		// The instance METADATA name is colon form ("USDC:GA5Z…", exactly
 		// as the CAP-67 topic carries it) — normalize to the canonical
@@ -567,6 +579,35 @@ func (h *Handler) resolveSEP41MovementAsset(ctx context.Context, contractID stri
 		return name // already canonical — asset.String()
 	}
 	return contractID
+}
+
+// sacNameMemoMax bounds the SAC memo; a full memo is emptied, so a flood
+// of distinct SACs costs lake reads (as with no memo), never memory.
+const sacNameMemoMax = 4096
+
+// sacNameMemo remembers contracts proven to be a SAC. A SAC's address is
+// derived from the asset it wraps and its executable cannot be upgraded,
+// so a hit never goes stale; a miss is not kept, since the lake may yet
+// capture the instance. Zero value ready to use.
+type sacNameMemo struct {
+	mu    sync.Mutex
+	names map[string]string
+}
+
+func (m *sacNameMemo) get(contractID string) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	name, ok := m.names[contractID]
+	return name, ok
+}
+
+func (m *sacNameMemo) put(contractID, name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.names == nil || len(m.names) >= sacNameMemoMax {
+		m.names = make(map[string]string)
+	}
+	m.names[contractID] = name
 }
 
 // sep41AssetScope maps a normalized ?asset= value to the one
