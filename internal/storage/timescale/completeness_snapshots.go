@@ -138,7 +138,7 @@ func (s *Store) UpsertCompletenessSnapshot(ctx context.Context, snap Completenes
 
 // DirtyWindowClear identifies the replay-rewind dirty window a verdict has
 // earned the right to clear: the exact row the run read (bounds AND
-// updated_at), matching [Store.ClearProjectionDirtyWindow]'s optimistic
+// updated_at), matching clearProjectionDirtyWindowQuery's optimistic
 // predicate.
 type DirtyWindowClear struct {
 	From, To  uint32
@@ -155,7 +155,7 @@ type VerdictPublication struct {
 	// WindowCleared is true when the dirty window row was deleted. Always
 	// false when Applied is false; may also be false when Applied is true
 	// because a concurrent replay re-recorded the window (see
-	// [Store.ClearProjectionDirtyWindow]).
+	// clearProjectionDirtyWindowQuery).
 	WindowCleared bool
 }
 

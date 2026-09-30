@@ -369,6 +369,7 @@ func registerStorageAndExplorerMetrics() {
 		LedgerstreamStreamPathTotal,
 		LedgerstreamColdReadDurationSeconds,
 		LedgerstreamLiveStartRetriesTotal,
+		LedgerstreamTrailingMissingToleratedTotal,
 
 		DEXTVLRefreshTotal,
 		DEXTVLRefreshDurationSeconds,
@@ -434,6 +435,7 @@ func registerAuthReaperMetrics() {
 		AuthReaperLastSweepUnix,
 		AuthReaperIntervalSeconds,
 
+		RetentionReaperRows,
 		RetentionReaperRowsDeletedTotal,
 		RetentionReaperErrorsTotal,
 	)
@@ -2075,6 +2077,16 @@ var LedgerstreamLiveStartRetriesTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ledgerstream_live_start_retries_total",
 		Help: "Re-attempts of a live-tail stream that failed before delivering any ledger (datastore unreachable / schema unreadable at start). Climbs only while the indexer is up but cannot open the lake.",
+	},
+)
+
+// LedgerstreamTrailingMissingToleratedTotal — bounded walks that ended
+// early because TolerateTrailingMissing turned a missing-ledger error into
+// walk-complete. Every increment is a walk that returned nil short of its To.
+var LedgerstreamTrailingMissingToleratedTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_ledgerstream_trailing_missing_tolerated_total",
+		Help: "Bounded ledgerstream walks whose missing-ledger error was converted to walk-complete by TolerateTrailingMissing (the walk returned nil short of its To).",
 	},
 )
 
@@ -5539,6 +5551,18 @@ var RetentionReaperRowsDeletedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_retention_reaper_rows_deleted_total",
 		Help: "Rows deleted by the platform retention sweeps, by reaper (session|webhook_delivery).",
+	},
+	[]string{"reaper"},
+)
+
+// RetentionReaperRows — current row count of each table an
+// internal/retentionreaper instance bounds, refreshed every sweep. Only
+// reapers with a count seam publish; the rest stay absent rather than
+// reading a false 0.
+var RetentionReaperRows = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_retention_reaper_rows",
+		Help: "Rows in the table a platform retention sweep bounds, by reaper (webhook_delivery). Customer-configured fan-out writes it, so sustained growth means the sweep is not keeping up.",
 	},
 	[]string{"reaper"},
 )

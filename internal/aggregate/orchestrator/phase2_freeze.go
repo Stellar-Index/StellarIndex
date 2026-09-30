@@ -309,7 +309,7 @@ func (o *Orchestrator) stepPhase2Freeze(
 				// does not reset the release streak). Refuted/unavailable
 				// leave Fires exactly as computed.
 				sig.Fires = false
-				obs.AggregatorCompositeFreezeSuppressedTotal.WithLabelValues(pair.String(), window.String()).Inc()
+				obs.AggregatorCompositeFreezeSuppressedTotal.WithLabelValues(pair.String(), windowLabel(window)).Inc()
 				o.logger.Info("phase2 freeze suppressed: composite reference corroborates the move",
 					"pair", pair.String(),
 					"window", window.String(),

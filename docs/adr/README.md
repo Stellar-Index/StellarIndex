@@ -104,6 +104,7 @@ See [_template.md](_template.md) for the boilerplate.
 | [0049](0049-anonymous-access-and-passkey-auth.md) | Proposed | Anonymous access, open self-service registration, and passkey auth (no payment surface) — retroactive record of the shipped auth pivot | 2026-08-14 |
 | [0050](0050-multi-region-ha-architecture.md) | Accepted | Multi-region HA — active/active pricing, R1-authority lake, provider-independent archive DR (supersedes 0016, amends 0008; ratifies [multi-region-ha.md](../architecture/multi-region-ha.md)) | 2026-08-21 |
 | [0051](0051-usd-anchored-fiat-derivation.md) | Accepted | USD-anchored derivation of local-currency prices | 2026-08-31 |
+| [0052](0052-contract-call-tree-routing.md) | Accepted | ContractCallDecoder routing walks the whole auth call tree | 2026-09-29 |
 
 ## Related
 

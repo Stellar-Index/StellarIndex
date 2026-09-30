@@ -15,12 +15,14 @@ export function PoolsTable({
   source: string;
   sourceName: string;
 }) {
+  // Branch on the slug: sourceName is the display name ('SDEX').
+  const orderBook = source === 'sdex';
   return (
     <VenueMarketsTable
       headingLevel={2}
       source={source}
-      title={sourceName === 'sdex' ? 'SDEX markets' : `${sourceName} pools`}
-      rowNoun={sourceName === 'sdex' ? 'pairs' : 'pools'}
+      title={orderBook ? `${sourceName} markets` : `${sourceName} pools`}
+      rowNoun={orderBook ? 'pairs' : 'pools'}
     />
   );
 }

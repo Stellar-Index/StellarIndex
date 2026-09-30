@@ -29,7 +29,9 @@ import (
 // published statement, "basis: stateful", not a delta sum.
 //
 // positionsVenueLimit bounds every fold's venue fan-out per the
-// task's "a user won't have >500 venues" note.
+// task's "a user won't have >500 venues" note. Every fold orders by its
+// venue key before the LIMIT so which venues survive the cap is not
+// plan-dependent.
 const positionsVenueLimit = 500
 
 // queryFold runs one of this file's `WHERE <user_col> = $1 ... LIMIT
@@ -208,6 +210,7 @@ const blendPositionsByUserSQL = `
 		       GREATEST(e.b_ts, m.b_ts), GREATEST(e.b_ledger, m.b_ledger)
 		  FROM ev e
 		  FULL JOIN mv m ON m.pool = e.pool AND m.asset = e.asset
+		 ORDER BY 1, 2
 		 LIMIT $2`
 
 // BlendPositionsByUser folds blend_positions into one row per (pool,
@@ -290,6 +293,7 @@ func (s *Store) BlendBackstopSharesByUser(ctx context.Context, address string) (
 		   AND event_kind IN ('deposit','withdraw')
 		   AND pool IS NOT NULL
 		 GROUP BY pool
+		 ORDER BY pool
 		 LIMIT $2`
 	return queryFold(ctx, s.db, "BlendBackstopSharesByUser", q, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (BlendBackstopFold, error) {
 		var (
@@ -337,6 +341,7 @@ func (s *Store) PhoenixStakeByUser(ctx context.Context, address string) ([]Phoen
 		 WHERE user_addr = $1
 		   AND action IN ('bond','unbond')
 		 GROUP BY stake_contract, lp_token
+		 ORDER BY stake_contract, lp_token
 		 LIMIT $2`
 	return queryFold(ctx, s.db, "PhoenixStakeByUser", q, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (PhoenixStakeFold, error) {
 		var (
@@ -385,6 +390,7 @@ func (s *Store) DefindexVaultSharesByUser(ctx context.Context, address string) (
 		 WHERE actor = $1
 		   AND layer = 'vault'
 		 GROUP BY contract_id
+		 ORDER BY contract_id
 		 LIMIT $2`
 	return queryFold(ctx, s.db, "DefindexVaultSharesByUser", q, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (DefindexVaultFold, error) {
 		var (
@@ -463,6 +469,7 @@ func (s *Store) CreditPositionsByOwner(ctx context.Context, address string) ([]C
 		          LIMIT 1
 		       ) s ON true
 		 WHERE p.owner = $1
+		 ORDER BY p.collateral_contract, p.position_uuid, p.ledger
 		 LIMIT $2`
 	return queryFold(ctx, s.db, "CreditPositionsByOwner", q, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (CreditPositionFold, error) {
 		var (
@@ -527,6 +534,7 @@ func (s *Store) AquariusGaugeByUser(ctx context.Context, address string) ([]Aqua
 		 WHERE user_address = $1
 		   AND event_kind = 'position_update'
 		 GROUP BY contract_id
+		 ORDER BY contract_id
 		 LIMIT $2`
 	return queryFold(ctx, s.db, "AquariusGaugeByUser", q, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (AquariusGaugeFold, error) {
 		var (

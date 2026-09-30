@@ -4,7 +4,9 @@ package integration_test
 
 import (
 	"context"
+	"fmt"
 	"math/big"
+	"slices"
 	"testing"
 	"time"
 
@@ -265,6 +267,138 @@ func TestPositionsFold_AllSixProtocols(t *testing.T) {
 	if len(aquariusFolds) != 1 || aquariusFolds[0].NetDelta != "1300" {
 		t.Errorf("AquariusGaugeByUser = %+v, want NetDelta=1300 (2000 - 700)", aquariusFolds)
 	}
+}
+
+// TestPositionsFold_VenueCapIsDeterministic gives one user more venues
+// than the fold cap (500) in every protocol and pins which venues
+// survive: the lowest 500 by venue key, in key order, on every fold.
+func TestPositionsFold_VenueCapIsDeterministic(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const (
+		user     = "GCAPUSERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+		venueCap = 500
+	)
+	t0 := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	venue := func(i int) string { return fmt.Sprintf("CVENUE%03d", i) }
+	want := make([]string, venueCap)
+	for i := range want {
+		want[i] = venue(i)
+	}
+
+	// Descending insert order so physical row order never matches key order.
+	for i := venueCap; i >= 0; i-- {
+		ledger := uint32(80_000_000 + i) //nolint:gosec // small test index
+		tx := fmt.Sprintf("%064x", i)
+		ts := t0.Add(time.Duration(i) * time.Second)
+		if err := store.InsertBlendPositionEvent(ctx, domain.BlendPositionEvent{
+			Pool: venue(i), Kind: blend.EventSupply, Asset: "CASSET", User: user,
+			TokenAmount: big.NewInt(1), BOrDAmount: big.NewInt(1),
+			Ledger: ledger, TxHash: tx, Timestamp: ts,
+		}); err != nil {
+			t.Fatalf("InsertBlendPositionEvent %d: %v", i, err)
+		}
+		if err := store.InsertBlendBackstopEvent(ctx, timescale.BlendBackstopEvent{
+			ContractID: "CBACKSTOP", Ledger: ledger, TxHash: tx, ObservedAt: ts,
+			EventType: timescale.BackstopDeposit, Pool: venue(i), UserAddress: user,
+			Amount: "1", Amount2: "1",
+		}); err != nil {
+			t.Fatalf("InsertBlendBackstopEvent %d: %v", i, err)
+		}
+		if err := store.InsertPhoenixStakeEvent(ctx, timescale.PhoenixStakeEvent{
+			StakeContract: venue(i), Ledger: ledger, ObservedAt: ts, TxHash: tx,
+			Action: timescale.PhoenixBond, User: user, LPToken: "CLPTOKEN", Amount: "1",
+		}); err != nil {
+			t.Fatalf("InsertPhoenixStakeEvent %d: %v", i, err)
+		}
+		if err := store.InsertDefindexFlow(ctx, timescale.DefindexFlow{
+			Ledger: ledger, LedgerCloseTime: ts, TxHash: tx,
+			ContractID: venue(i), Layer: timescale.DefindexLayerVault, Direction: timescale.DefindexDeposit,
+			Actor: user, AmountsVec: []string{"1"}, DfTokens: "1",
+		}); err != nil {
+			t.Fatalf("InsertDefindexFlow %d: %v", i, err)
+		}
+		if err := store.InsertCreditPosition(ctx, timescale.CreditPosition{
+			CollateralContract: venue(i), PositionUUID: fmt.Sprintf("uuid-%03d", i), PositionName: "Collateral", Owner: user,
+			Ledger: ledger, LedgerCloseTime: ts, TxHash: tx,
+		}); err != nil {
+			t.Fatalf("InsertCreditPosition %d: %v", i, err)
+		}
+		if err := store.InsertAquariusRewardsEvent(ctx, timescale.AquariusRewardsEvent{
+			ContractID: venue(i), Ledger: ledger, LedgerCloseTime: ts, TxHash: tx,
+			Kind: timescale.AquariusRewardsPositionUpdate, UserAddress: user,
+			Attributes: map[string]any{"delta": "1"},
+		}); err != nil {
+			t.Fatalf("InsertAquariusRewardsEvent %d: %v", i, err)
+		}
+	}
+
+	assertVenueCapFolds(ctx, t, "default plan", store, user, want)
+
+	// A hash-aggregate plan emits groups in hash order, so the cap is only
+	// deterministic if each fold sorts before its LIMIT.
+	hashStore, err := timescale.Open(ctx, dsn+"&enable_sort=off")
+	if err != nil {
+		t.Fatalf("store open (enable_sort=off): %v", err)
+	}
+	t.Cleanup(func() { _ = hashStore.Close() })
+	assertVenueCapFolds(ctx, t, "hash-aggregate plan", hashStore, user, want)
+}
+
+// assertVenueCapFolds asserts every positions fold returns exactly want,
+// in order, for user.
+func assertVenueCapFolds(ctx context.Context, t *testing.T, plan string, store *timescale.Store, user string, want []string) {
+	t.Helper()
+	check := func(label string, got []string, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("%s (%s): %v", label, plan, err)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s (%s) returned %d venues, want the lowest %d by key in key order; %s",
+				label, plan, len(got), len(want), firstVenueDiff(got, want))
+		}
+	}
+	keys := func(n int, key func(int) string) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = key(i)
+		}
+		return out
+	}
+
+	blendFolds, err := store.BlendPositionsByUser(ctx, user)
+	check("BlendPositionsByUser", keys(len(blendFolds), func(i int) string { return blendFolds[i].Pool }), err)
+	backstopFolds, err := store.BlendBackstopSharesByUser(ctx, user)
+	check("BlendBackstopSharesByUser", keys(len(backstopFolds), func(i int) string { return backstopFolds[i].Pool }), err)
+	phoenixFolds, err := store.PhoenixStakeByUser(ctx, user)
+	check("PhoenixStakeByUser", keys(len(phoenixFolds), func(i int) string { return phoenixFolds[i].StakeContract }), err)
+	defindexFolds, err := store.DefindexVaultSharesByUser(ctx, user)
+	check("DefindexVaultSharesByUser", keys(len(defindexFolds), func(i int) string { return defindexFolds[i].ContractID }), err)
+	creditFolds, err := store.CreditPositionsByOwner(ctx, user)
+	check("CreditPositionsByOwner", keys(len(creditFolds), func(i int) string { return creditFolds[i].CollateralContract }), err)
+	aquariusFolds, err := store.AquariusGaugeByUser(ctx, user)
+	check("AquariusGaugeByUser", keys(len(aquariusFolds), func(i int) string { return aquariusFolds[i].ContractID }), err)
+}
+
+// firstVenueDiff reports where got first diverges from want.
+func firstVenueDiff(got, want []string) string {
+	for i := range min(len(got), len(want)) {
+		if got[i] != want[i] {
+			return fmt.Sprintf("index %d: got %q want %q", i, got[i], want[i])
+		}
+	}
+	return fmt.Sprintf("length: got %d want %d", len(got), len(want))
 }
 
 // assertBlendFlashLoanFolds pins the flash-loan debt leg through real

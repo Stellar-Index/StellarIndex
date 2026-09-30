@@ -536,7 +536,9 @@ export interface paths {
          *        over it. The same chain fires on `/v1/price/tip`,
          *        `/v1/price/batch`, `/v1/oracle/lastprice`,
          *        `/v1/oracle/x_last_price`, the `/v1/assets/{id}` USD price
-         *        and the `/v1/observations` triangulation hint.
+         *        and the `/v1/observations` triangulation hint — except
+         *        that the two SEP-40 point reads answer 404 instead of the
+         *        declaration, since their shape has no `price_type` to mark it.
          *     4. Fiat-vs-fiat cross-rate from the forex snapshot when both
          *        sides are `fiat:` typed (e.g.
          *        `?asset=fiat:EUR&quote=fiat:USD`). Computed as
@@ -3156,7 +3158,8 @@ export interface paths {
          *     carries `flags.stale=true`, and `flags.triangulated=true`
          *     when it is composed rather than observed — the declared-peg
          *     XLM cross, a triangulated chain, a fiat cross-rate. 404 when
-         *     the chain serves nothing.
+         *     the chain serves nothing, or only a declared peg (SEP-40's
+         *     `None`: a declaration is not a price record).
          */
         get: operations["getOracleLastPrice"];
         put?: never;
@@ -3212,7 +3215,8 @@ export interface paths {
          *     the same fallback chain as `/v1/price` runs; an answer
          *     served that way carries `flags.stale=true`, and
          *     `flags.triangulated=true` when it is composed rather than
-         *     observed. 404 when the chain serves nothing.
+         *     observed. 404 when the chain serves nothing, or only a
+         *     declared peg (SEP-40's `None`).
          */
         get: operations["getOracleCrossPrice"];
         put?: never;
@@ -3351,6 +3355,10 @@ export interface paths {
          *     keys (25 by default, operator-tunable). A mint that would cross
          *     the ceiling returns 409 — revoke a key via
          *     `DELETE /v1/account/keys/{keyID}` and retry.
+         *
+         *     A SEP-10-authenticated caller gets 403 `key-mint-not-available`:
+         *     an `auth_mode = "sep10"` deployment honours only SEP-10 tokens,
+         *     so a minted key would have no use there.
          *
          *     The new key inherits the caller's identifier and tier. An
          *     **operator-tier** caller rotating its own credential here is
@@ -15783,6 +15791,16 @@ export interface operations {
                  *     exclusive with `source`.
                  */
                 asset?: string;
+                /**
+                 * @description Comma-separated opt-in row enrichments, off by default.
+                 *     `sparkline` populates `volume_history_24h` (24 hourly USD
+                 *     buckets, both stored orientations of the pair summed);
+                 *     `inception` populates `first_trade_at` (the pair's first
+                 *     daily bucket). Both are best-effort: a failed enrichment
+                 *     ships the page without the field rather than an error.
+                 * @example sparkline,inception
+                 */
+                include?: string;
             };
             header?: never;
             path?: never;
@@ -18312,13 +18330,17 @@ export interface operations {
                  */
                 class?: "exchange" | "aggregator" | "oracle" | "authority_sanity" | "lending" | "router" | "bridge";
                 /**
-                 * @description Opt-in extras. `stats` populates each row's
-                 *     `trade_count_24h` from a single GROUP BY on the trades
-                 *     hypertable — cheap, but a DB hit so opt-in. Absent the
-                 *     param the response stays the all-static-registry
-                 *     projection.
+                 * @description Comma-separated opt-in extras. `stats` populates each
+                 *     row's `trade_count_24h`, `volume_24h_usd` and
+                 *     `markets_count_24h` from a single GROUP BY on the trades
+                 *     hypertable — cheap, but a DB hit so opt-in. `sparkline`
+                 *     adds `volume_history_24h` (24 hourly buckets) and
+                 *     `sparkline7d` adds `volume_history_7d` (168 hourly
+                 *     buckets); each implies `stats`. Absent the param the
+                 *     response stays the all-static-registry projection.
+                 * @example stats,sparkline
                  */
-                include?: "stats";
+                include?: string;
             };
             header?: never;
             path?: never;
@@ -19416,8 +19438,8 @@ export interface operations {
                  *     (`crypto:XLM`, the XLM SAC), and a `<code>-<G…>` classic
                  *     reads its own `fiat:USD` market first and then the
                  *     fallback chain — a declared USD peg such as
-                 *     `USDC-GA5Z…` is served through its XLM cross, or as the
-                 *     declaration when no market prices it.
+                 *     `USDC-GA5Z…` is served through its XLM cross, and 404s
+                 *     when no market prices it.
                  * @example crypto:XLM
                  */
                 asset: string;
@@ -19829,6 +19851,18 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            /**
+             * @description The caller authenticated with a SEP-10 token; API keys are
+             *     not issued to SEP-10 subjects (`key-mint-not-available`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /**
              * @description Active-key quota reached for this caller identifier. Revoke
              *     an existing key and retry.

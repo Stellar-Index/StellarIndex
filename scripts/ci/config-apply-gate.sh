@@ -90,6 +90,9 @@
 #   [applied]       path prefixes this run applied AND verified live
 #   [refuted]       exact paths this run PROVED unapplied by asking the
 #                   host; [acknowledged] cannot clear these
+#   [unanswered]    exact paths this run tried to check on a host that
+#                   runs ClickHouse but did not answer; [acknowledged]
+#                   cannot clear these either
 #   [baseline-tag]  the version live on the host, if known; defaults to
 #                   the previous release tag by ancestry
 #   [applied]       space-separated surface prefixes this deploy already
@@ -235,6 +238,7 @@ ACK="${2:-false}"
 BASELINE="${3:-}"
 APPLIED="${4:-}"
 REFUTED="${5:-}"
+UNANSWERED="${6:-}"
 
 # Config surfaces a binary deploy does NOT apply. Directory prefixes are
 # git pathspecs: the trailing slash matches everything beneath them.
@@ -388,22 +392,25 @@ fi
 # Matching is exact-path (the evidence step emits whole paths), the
 # mirror of the [applied] exemption's anchored prefix test: a loose
 # match here would refuse surfaces nobody was asked about.
-REFUTED_HERE=""
-if [ -n "$REFUTED" ] && [ -n "$CHANGED" ]; then
+# changed_in <space-separated paths> → the CHANGED paths it names, one per line.
+changed_in() {
+  [ -n "$1" ] || return 0
   while IFS= read -r path; do
     [ -z "$path" ] && continue
-    for r in $REFUTED; do
+    for r in $1; do
       [ "$path" = "$r" ] || continue
-      REFUTED_HERE="${REFUTED_HERE}${path}"$'\n'
+      printf '%s\n' "$path"
       break
     done
   done <<EOF
 $CHANGED
 EOF
-fi
+}
+
+REFUTED_HERE="$(changed_in "$REFUTED")"
 
 if [ -n "$REFUTED_HERE" ]; then
-  n=$(printf '%s' "$REFUTED_HERE" | grep -c . || true)
+  n=$(printf '%s\n' "$REFUTED_HERE" | grep -c . || true)
   {
     echo "## ⛔ Config-apply PROVED outstanding — the host was asked"
     echo ""
@@ -413,11 +420,33 @@ if [ -n "$REFUTED_HERE" ]; then
     echo "answered otherwise in this same run."
     echo ""
     echo '```'
-    printf '%s' "$REFUTED_HERE"
+    printf '%s\n' "$REFUTED_HERE"
     echo '```'
   } >>"$SUMMARY" 2>/dev/null || true
   echo "::error::${n} config surface(s) were PROVED unapplied on ${VERSION}'s target during this run — every object they create is absent from system.tables. config_acknowledged does NOT clear these: an acknowledgement asserts a surface is applied, and the host answered otherwise in this same run. Apply them per docs/operations/deploy-config-apply.md, confirm the objects exist, then re-run the deploy. The binaries are already live, and a feature whose schema half is missing does not degrade quietly — it fails: v0.91.0 shipped with stellar.asset_month_usd_prices absent and every cohort request answered 500."
-  printf '%s' "$REFUTED_HERE" | sed 's/^/    /'
+  printf '%s\n' "$REFUTED_HERE" | sed 's/^/    /'
+  exit 1
+fi
+
+# Surfaces the same step tried to check on a host that runs ClickHouse but
+# did not answer. Silence could be hiding a refutation, so the operator's
+# assertion is held to the same bar: re-run once the host answers.
+UNANSWERED_HERE="$(changed_in "$UNANSWERED")"
+if [ -n "$UNANSWERED_HERE" ]; then
+  n=$(printf '%s\n' "$UNANSWERED_HERE" | grep -c . || true)
+  {
+    echo "## ⛔ Config-apply UNVERIFIED — the host was asked and did not answer"
+    echo ""
+    echo "This deploy tried to ask the host which ClickHouse objects exist and got no"
+    echo "answer, so **${n}** changed surface(s) could be missing. \`config_acknowledged\`"
+    echo "cannot clear these while the host's own evidence is outstanding."
+    echo ""
+    echo '```'
+    printf '%s\n' "$UNANSWERED_HERE"
+    echo '```'
+  } >>"$SUMMARY" 2>/dev/null || true
+  echo "::error::${n} config surface(s) could NOT be checked on ${VERSION}'s target: the host runs ClickHouse but did not answer which objects exist. config_acknowledged does NOT clear these — an unanswered check could be hiding objects the host lacks. Make clickhouse-server reachable on the host, then re-run the deploy so the check can answer."
+  printf '%s\n' "$UNANSWERED_HERE" | sed 's/^/    /'
   exit 1
 fi
 
