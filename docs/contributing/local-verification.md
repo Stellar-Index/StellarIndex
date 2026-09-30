@@ -125,6 +125,7 @@ cheapest first.
 | `configs/ansible/**`, `configs/alertmanager/**` | `lint-ansible-tasks` (0.46 s), `lint-jinja-templates` (0.30 s) — both whole-tree, so the trigger is the type rather than a scope |
 | `scripts/dev/verify.sh`, `.github/workflows/ci.yml` | `check-verify-parity` |
 | `*.md` | `lint-doc-links` scoped to the changed files (link targets still resolve against the whole tree); `lint-docs` takes no file list and stays **deferred** to `scripts/dev/verify.sh` |
+| `*.go`, `*.md`, `scripts/ci/lint-repo-budget.baseline` | `lint-repo-budget` (0.6 s): dated `*.md` filenames and the 2,000-line Go file ratchet over the whole tree, plus dates and ticket ids in the Go comments the diff adds (`--staged` reads the index) |
 
 A missing optional tool (`shellcheck`, `actionlint`, `zizmor`) defers its own
 step, counted in the summary line, and does not fail the run — this is the
