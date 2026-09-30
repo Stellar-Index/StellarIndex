@@ -336,6 +336,7 @@ jobs:
               - 'internal/sources/external/binance/pairs.yaml'
               - 'internal/sources/external/forex/circulation_data.csv'
               - 'internal/currency/data/seed.yaml'
+              - 'internal/ops/chops/audited_wasm.json'
               - 'internal/incidents/data/**'
               # testdata/ is Go's fixture convention; the clickhouse
               # package also go:embeds its .tsv/.wasm fixtures from there.
@@ -933,6 +934,11 @@ jobs:
         # Postgres worker headroom pair and the ClickHouse drop-guard
         # ceiling, including its lockstep with the ansible role default.
         run: bash scripts/ops/config-assertions_test.sh
+      - name: pre-launch-check heartbeat-URL tests
+        # Every Healthchecks.io URL wire-paging.md has the operator create
+        # must FAIL pre-launch-check.sh when missing: "0 failures" is that
+        # runbook's acceptance test. Stubbed host tools; runs anywhere.
+        run: bash scripts/ops/pre-launch-check-test.sh
       - name: lint-migrations back-numbering self-test
         # GH-1164: a new migration numbered into a gap below the head is
         # invisible to `migrate up` on every deployment already past it.
@@ -1659,6 +1665,12 @@ jobs:
         # grandfathered `Coin*` vocabulary and non-canonical
         # constructor shapes. See docs/architecture/lexicon.md.
         run: ./scripts/ci/lint-lexicon.sh
+      - name: check-deprecations
+        # engineering-standards §2.4: every `// Deprecated:` names its
+        # scheduled removal version.
+        run: ./scripts/ci/check-deprecations.sh
+      - name: check-deprecations self-test
+        run: bash scripts/ci/check-deprecations-test.sh
       - name: lint-baseline-growth
         # CS-098: lint baselines/allowlists are shrink-only. Growing
         # scripts/ci/*.baseline or the KNOWN_INERT allowlist in the
@@ -2413,6 +2425,11 @@ jobs:
         # byte; renders the real template with a local ansible run.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-zfs-arc-cap-test.sh
+      - name: postgres log size-cap test
+        # The hourly pg-logrotate run must read a role-owned config that
+        # carries maxsize; the stock postgresql-common conffile has none.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-pg-logrotate-cap-test.sh
       - name: prometheus port var wiring test (SL19)
         # prometheus.yml.j2, prometheus.service.j2 and 06-firewall.yml
         # hardcoded literal 9090/9093 instead of referencing

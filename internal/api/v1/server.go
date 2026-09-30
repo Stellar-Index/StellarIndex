@@ -769,7 +769,8 @@ type Options struct {
 	// Network is the Stellar network this deployment serves
 	// (config [stellar] network: pubnet / testnet / futurenet; empty =
 	// pubnet). /v1/coverage uses it to report which protocol sources do
-	// not exist on this network instead of counting them incomplete (#483).
+	// not exist on this network instead of counting them incomplete (#483);
+	// the reference listings use it to omit pubnet-only entries.
 	Network string
 	// ReadyChecks are polled by /readyz. Order matters only for
 	// log output (first-failed wins).

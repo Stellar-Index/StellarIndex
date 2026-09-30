@@ -234,6 +234,10 @@ type Worker struct {
 	// as before.
 	fallbacks []RateProvider
 
+	// corroborator is held for the FX fixings plan and never consulted
+	// yet; see [Worker.WithCorroborator].
+	corroborator RateProvider
+
 	// activeSource is the feed that produced the CURRENT snapshot. It is
 	// stamped into fx_quotes.source and used as the `source` metric
 	// label, so `stellarindex_external_fx_last_quote_unix{source=...}`
@@ -280,6 +284,18 @@ func (w *Worker) WithFallbacks(providers ...RateProvider) *Worker {
 	w.fallbacks = append(w.fallbacks, providers...)
 	return w
 }
+
+// WithCorroborator registers a provider outside the serving chain. The
+// worker only stores it: it is never fetched, and never serves or stamps a
+// source, until the FX fixings plan wires it in.
+func (w *Worker) WithCorroborator(p RateProvider) *Worker {
+	w.corroborator = p
+	return w
+}
+
+// Corroborator returns the provider registered by [Worker.WithCorroborator],
+// or nil.
+func (w *Worker) Corroborator() RateProvider { return w.corroborator }
 
 // WithWriter attaches a persistent quote writer. When set, every
 // successful refreshOnce also persists the latest rates + history
