@@ -22815,7 +22815,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             ledger?: number;
                             operations?: components["schemas"]["Operation"][];
