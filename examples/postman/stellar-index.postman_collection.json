@@ -3086,7 +3086,7 @@
           "request": {
             "name": "Current aggregated price for one asset.",
             "description": {
-              "content": "Returns the most-recent VWAP (or last-trade fallback) for the\n`asset` / `quote` pair from the closed-bucket cache.\n\nResolution order (handler tries each in turn, takes the first\nnon-empty result):\n\n1. Closed-bucket VWAP from `prices_1m` (the canonical\n   aggregated value).\n2. Triangulated value from the Redis VWAP cache. Covers two\n   sub-cases: (a) implied chains computed by the\n   triangulation worker, surfaced with `flags.triangulated=true`;\n   (b) stablecoin-proxy rewrites the aggregator emits at\n   tick-time (e.g. `XLM/fiat:USD` synthesised from\n   `XLM/USDC-G…`) without a triangulation marker.\n3. Read-time stablecoin proxy for a `fiat:USD` quote, against\n   the operator's declared USD pegs\n   (`[trades].usd_pegged_classic_assets`). An asset that is\n   not itself a declared peg is re-quoted in the first peg it\n   has a live market against (`X/fiat:USD` served from\n   `X/USDC-G…`), `flags.triangulated=true`. An asset that IS a\n   declared peg — asked for by the classic id the operator\n   declared or by the SAC that wraps it\n   (`[supply].sac_wrappers`) — is not walked against its\n   siblings: it is\n   crossed through XLM — `peg/XLM × XLM/fiat:USD`, one exact\n   rational product, `price_type: vwap` with `window_seconds`\n   the wider of the two legs' windows (60 for two closed\n   1-minute buckets), `flags.triangulated=true` — because its\n   own XLM book is the\n   market a depeg prints on. That cross is the one tier that\n   does NOT depend on which spelling was asked for: it reads\n   the peg's whole family — the classic id first, and the SAC\n   wrapper only where the classic id's own book was not found\n   at all — so both spellings compose the same value, with only\n   `asset_id` echoing the request. Step 1 above is unchanged\n   and still literal-first, which means the literal spelling is\n   tried first and the rest of the family after it: where BOTH\n   spellings carry an observed `fiat:USD` bucket each spelling\n   serves its own, and where only ONE does, that bucket is\n   served for both.\n   Only when the cross has nothing\n   to read is the declaration itself served, as\n   `1.000000000000` with `price_type: peg`. The declaration is\n   the last resort, never a short-circuit: any observed market\n   for the pair, including a depegged one, takes precedence\n   over it. The same chain fires on `/v1/price/tip`,\n   `/v1/price/batch`, `/v1/oracle/lastprice`,\n   `/v1/oracle/x_last_price`, the `/v1/assets/{id}` USD price\n   and the `/v1/observations` triangulation hint.\n4. Fiat-vs-fiat cross-rate from the forex snapshot when both\n   sides are `fiat:` typed (e.g.\n   `?asset=fiat:EUR&quote=fiat:USD`). Computed as\n   `rate_usd[Y] / rate_usd[X]`. Returned with\n   `flags.triangulated=true` since the value is derived\n   rather than a direct trade. Same fallback fires on\n   `/v1/price/tip`, `/v1/price/batch`,\n   `/v1/oracle/lastprice`, and `/v1/oracle/x_last_price`.\n\nReturns 404 only when every path above misses — with one\ndeliberate exception: the **thin-market substance gate**. When\nthe pair has an on-chain leg (native / classic / Soroban) and\nits trailing market activity is below the operator's serve\nfloor (default: $1,000 USD volume, 20 distinct 1-minute\nbuckets, and 6 hours of activity span within the trailing 24\nhours, summed across the pair's alias family), the endpoint\nWITHHOLDS the price and returns 404 with the distinct problem\ntype `https://api.stellarindex.io/errors/price-withheld` —\nwithout consulting the fallback chain. On a permissionless DEX\nan asset's entire market can be authored by one participant\nfor pennies, so an aggregated price claim for a substanceless\nmarket would be an attacker-controlled number. Integrators can\nbranch on the problem `type`: `price-not-found` means \"pair\nnever observed\", `price-withheld` means \"pair observed, price\nnot published\". The problem's title and detail name the gate\nthat fired: only a too-thin market points you at\n`/v1/observations`, `/v1/ohlc` or `/v1/history` (which still\nserve the raw market) to apply your own judgement; a\ndirectory-flagged issuer's market is withheld on every price\nsurface and its trades are not a price signal. The same gate protects `/v1/price/tip`,\n`/v1/price/batch` (withheld rows are omitted from `data` but\nnamed in the envelope's `withheld` list, distinct from a\ngenuine miss — see that route's description),\nthe SEP-40 oracle endpoints, and the `price_usd` enrichment on\nasset surfaces.\n",
+              "content": "Returns the most-recent VWAP (or last-trade fallback) for the\n`asset` / `quote` pair from the closed-bucket cache.\n\nResolution order (handler tries each in turn, takes the first\nnon-empty result):\n\n1. Closed-bucket VWAP from `prices_1m` (the canonical\n   aggregated value).\n2. Triangulated value from the Redis VWAP cache. Covers two\n   sub-cases: (a) implied chains computed by the\n   triangulation worker, surfaced with `flags.triangulated=true`;\n   (b) stablecoin-proxy rewrites the aggregator emits at\n   tick-time (e.g. `XLM/fiat:USD` synthesised from\n   `XLM/USDC-G…`) without a triangulation marker.\n3. Read-time stablecoin proxy for a `fiat:USD` quote, against\n   the operator's declared USD pegs\n   (`[trades].usd_pegged_classic_assets`). An asset that is\n   not itself a declared peg is re-quoted in the first peg it\n   has a live market against (`X/fiat:USD` served from\n   `X/USDC-G…`), `flags.triangulated=true`. An asset that IS a\n   declared peg — asked for by the classic id the operator\n   declared or by the SAC that wraps it\n   (`[supply].sac_wrappers`) — is not walked against its\n   siblings: it is\n   crossed through XLM — `peg/XLM × XLM/fiat:USD`, one exact\n   rational product, `price_type: vwap` with `window_seconds`\n   the wider of the two legs' windows (60 for two closed\n   1-minute buckets), `flags.triangulated=true` — because its\n   own XLM book is the\n   market a depeg prints on. That cross is the one tier that\n   does NOT depend on which spelling was asked for: it reads\n   the peg's whole family — the classic id first, and the SAC\n   wrapper only where the classic id's own book was not found\n   at all — so both spellings compose the same value, with only\n   `asset_id` echoing the request. Step 1 above is unchanged\n   and still literal-first, which means the literal spelling is\n   tried first and the rest of the family after it: where BOTH\n   spellings carry an observed `fiat:USD` bucket each spelling\n   serves its own, and where only ONE does, that bucket is\n   served for both.\n   Only when the cross has nothing\n   to read is the declaration itself served, as\n   `1.000000000000` with `price_type: peg`. The declaration is\n   the last resort, never a short-circuit: any observed market\n   for the pair, including a depegged one, takes precedence\n   over it. The same chain fires on `/v1/price/tip`,\n   `/v1/price/batch`, `/v1/oracle/lastprice`,\n   `/v1/oracle/x_last_price`, the `/v1/assets/{id}` USD price\n   and the `/v1/observations` triangulation hint — except\n   that the two SEP-40 point reads answer 404 instead of the\n   declaration, since their shape has no `price_type` to mark it.\n4. Fiat-vs-fiat cross-rate from the forex snapshot when both\n   sides are `fiat:` typed (e.g.\n   `?asset=fiat:EUR&quote=fiat:USD`). Computed as\n   `rate_usd[Y] / rate_usd[X]`. Returned with\n   `flags.triangulated=true` since the value is derived\n   rather than a direct trade. Same fallback fires on\n   `/v1/price/tip`, `/v1/price/batch`,\n   `/v1/oracle/lastprice`, and `/v1/oracle/x_last_price`.\n\nReturns 404 only when every path above misses — with one\ndeliberate exception: the **thin-market substance gate**. When\nthe pair has an on-chain leg (native / classic / Soroban) and\nits trailing market activity is below the operator's serve\nfloor (default: $1,000 USD volume, 20 distinct 1-minute\nbuckets, and 6 hours of activity span within the trailing 24\nhours, summed across the pair's alias family), the endpoint\nWITHHOLDS the price and returns 404 with the distinct problem\ntype `https://api.stellarindex.io/errors/price-withheld` —\nwithout consulting the fallback chain. On a permissionless DEX\nan asset's entire market can be authored by one participant\nfor pennies, so an aggregated price claim for a substanceless\nmarket would be an attacker-controlled number. Integrators can\nbranch on the problem `type`: `price-not-found` means \"pair\nnever observed\", `price-withheld` means \"pair observed, price\nnot published\". The problem's title and detail name the gate\nthat fired: only a too-thin market points you at\n`/v1/observations`, `/v1/ohlc` or `/v1/history` (which still\nserve the raw market) to apply your own judgement; a\ndirectory-flagged issuer's market is withheld on every price\nsurface and its trades are not a price signal. The same gate protects `/v1/price/tip`,\n`/v1/price/batch` (withheld rows are omitted from `data` but\nnamed in the envelope's `withheld` list, distinct from a\ngenuine miss — see that route's description),\nthe SEP-40 oracle endpoints, and the `price_usd` enrichment on\nasset surfaces.\n",
               "type": "text/plain"
             },
             "url": {
@@ -11945,7 +11945,7 @@
               "request": {
                 "name": "SEP-40 lastprice-equivalent passthrough.",
                 "description": {
-                  "content": "HTTP mirror of the SEP-40 oracle contract call\n`lastprice(asset) -> Option<PriceData>` — for integrators\nthat already speak Reflector's on-chain interface and want\nthe identical shape over REST. The response is\ndeliberately minimal (`price`, `timestamp`); the richer\nsource/confidence view lives on `/v1/oracle/latest` and\n`/v1/price`. Quote is fixed at USD, matching the on-chain\ncontract's fixed-quote semantic — for other quotes use\n`/v1/price?asset=&quote=` or `/v1/oracle/x_last_price`.\nWhen the asset's own `fiat:USD` market has no closed bucket\nthe same fallback chain as `/v1/price` runs (its\n**Resolution order**); an answer served that way\ncarries `flags.stale=true`, and `flags.triangulated=true`\nwhen it is composed rather than observed — the declared-peg\nXLM cross, a triangulated chain, a fiat cross-rate. 404 when\nthe chain serves nothing.\n",
+                  "content": "HTTP mirror of the SEP-40 oracle contract call\n`lastprice(asset) -> Option<PriceData>` — for integrators\nthat already speak Reflector's on-chain interface and want\nthe identical shape over REST. The response is\ndeliberately minimal (`price`, `timestamp`); the richer\nsource/confidence view lives on `/v1/oracle/latest` and\n`/v1/price`. Quote is fixed at USD, matching the on-chain\ncontract's fixed-quote semantic — for other quotes use\n`/v1/price?asset=&quote=` or `/v1/oracle/x_last_price`.\nWhen the asset's own `fiat:USD` market has no closed bucket\nthe same fallback chain as `/v1/price` runs (its\n**Resolution order**); an answer served that way\ncarries `flags.stale=true`, and `flags.triangulated=true`\nwhen it is composed rather than observed — the declared-peg\nXLM cross, a triangulated chain, a fiat cross-rate. 404 when\nthe chain serves nothing, or only a declared peg (SEP-40's\n`None`: a declaration is not a price record).\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -11960,7 +11960,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "(Required) SEP-40 oracle key. Reflector contracts publish under\n`crypto:<symbol>` (`crypto:XLM`, `crypto:BTC`,\n`crypto:USDC`, `crypto:ETH`, `crypto:EUROB`). Any\ncanonical asset id is accepted and priced in `fiat:USD`\nexactly as `/v1/price?asset=…&quote=fiat:USD` prices it:\n`native` resolves through XLM's alias forms\n(`crypto:XLM`, the XLM SAC), and a `<code>-<G…>` classic\nreads its own `fiat:USD` market first and then the\nfallback chain — a declared USD peg such as\n`USDC-GA5Z…` is served through its XLM cross, or as the\ndeclaration when no market prices it.\n",
+                        "content": "(Required) SEP-40 oracle key. Reflector contracts publish under\n`crypto:<symbol>` (`crypto:XLM`, `crypto:BTC`,\n`crypto:USDC`, `crypto:ETH`, `crypto:EUROB`). Any\ncanonical asset id is accepted and priced in `fiat:USD`\nexactly as `/v1/price?asset=…&quote=fiat:USD` prices it:\n`native` resolves through XLM's alias forms\n(`crypto:XLM`, the XLM SAC), and a `<code>-<G…>` classic\nreads its own `fiat:USD` market first and then the\nfallback chain — a declared USD peg such as\n`USDC-GA5Z…` is served through its XLM cross, and 404s\nwhen no market prices it.\n",
                         "type": "text/plain"
                       },
                       "key": "asset",
@@ -11995,7 +11995,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "(Required) SEP-40 oracle key. Reflector contracts publish under\n`crypto:<symbol>` (`crypto:XLM`, `crypto:BTC`,\n`crypto:USDC`, `crypto:ETH`, `crypto:EUROB`). Any\ncanonical asset id is accepted and priced in `fiat:USD`\nexactly as `/v1/price?asset=…&quote=fiat:USD` prices it:\n`native` resolves through XLM's alias forms\n(`crypto:XLM`, the XLM SAC), and a `<code>-<G…>` classic\nreads its own `fiat:USD` market first and then the\nfallback chain — a declared USD peg such as\n`USDC-GA5Z…` is served through its XLM cross, or as the\ndeclaration when no market prices it.\n",
+                            "content": "(Required) SEP-40 oracle key. Reflector contracts publish under\n`crypto:<symbol>` (`crypto:XLM`, `crypto:BTC`,\n`crypto:USDC`, `crypto:ETH`, `crypto:EUROB`). Any\ncanonical asset id is accepted and priced in `fiat:USD`\nexactly as `/v1/price?asset=…&quote=fiat:USD` prices it:\n`native` resolves through XLM's alias forms\n(`crypto:XLM`, the XLM SAC), and a `<code>-<G…>` classic\nreads its own `fiat:USD` market first and then the\nfallback chain — a declared USD peg such as\n`USDC-GA5Z…` is served through its XLM cross, and 404s\nwhen no market prices it.\n",
                             "type": "text/plain"
                           },
                           "key": "asset",
@@ -12040,7 +12040,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "(Required) SEP-40 oracle key. Reflector contracts publish under\n`crypto:<symbol>` (`crypto:XLM`, `crypto:BTC`,\n`crypto:USDC`, `crypto:ETH`, `crypto:EUROB`). Any\ncanonical asset id is accepted and priced in `fiat:USD`\nexactly as `/v1/price?asset=…&quote=fiat:USD` prices it:\n`native` resolves through XLM's alias forms\n(`crypto:XLM`, the XLM SAC), and a `<code>-<G…>` classic\nreads its own `fiat:USD` market first and then the\nfallback chain — a declared USD peg such as\n`USDC-GA5Z…` is served through its XLM cross, or as the\ndeclaration when no market prices it.\n",
+                            "content": "(Required) SEP-40 oracle key. Reflector contracts publish under\n`crypto:<symbol>` (`crypto:XLM`, `crypto:BTC`,\n`crypto:USDC`, `crypto:ETH`, `crypto:EUROB`). Any\ncanonical asset id is accepted and priced in `fiat:USD`\nexactly as `/v1/price?asset=…&quote=fiat:USD` prices it:\n`native` resolves through XLM's alias forms\n(`crypto:XLM`, the XLM SAC), and a `<code>-<G…>` classic\nreads its own `fiat:USD` market first and then the\nfallback chain — a declared USD peg such as\n`USDC-GA5Z…` is served through its XLM cross, and 404s\nwhen no market prices it.\n",
                             "type": "text/plain"
                           },
                           "key": "asset",
@@ -12085,7 +12085,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "(Required) SEP-40 oracle key. Reflector contracts publish under\n`crypto:<symbol>` (`crypto:XLM`, `crypto:BTC`,\n`crypto:USDC`, `crypto:ETH`, `crypto:EUROB`). Any\ncanonical asset id is accepted and priced in `fiat:USD`\nexactly as `/v1/price?asset=…&quote=fiat:USD` prices it:\n`native` resolves through XLM's alias forms\n(`crypto:XLM`, the XLM SAC), and a `<code>-<G…>` classic\nreads its own `fiat:USD` market first and then the\nfallback chain — a declared USD peg such as\n`USDC-GA5Z…` is served through its XLM cross, or as the\ndeclaration when no market prices it.\n",
+                            "content": "(Required) SEP-40 oracle key. Reflector contracts publish under\n`crypto:<symbol>` (`crypto:XLM`, `crypto:BTC`,\n`crypto:USDC`, `crypto:ETH`, `crypto:EUROB`). Any\ncanonical asset id is accepted and priced in `fiat:USD`\nexactly as `/v1/price?asset=…&quote=fiat:USD` prices it:\n`native` resolves through XLM's alias forms\n(`crypto:XLM`, the XLM SAC), and a `<code>-<G…>` classic\nreads its own `fiat:USD` market first and then the\nfallback chain — a declared USD peg such as\n`USDC-GA5Z…` is served through its XLM cross, and 404s\nwhen no market prices it.\n",
                             "type": "text/plain"
                           },
                           "key": "asset",
@@ -12130,7 +12130,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "(Required) SEP-40 oracle key. Reflector contracts publish under\n`crypto:<symbol>` (`crypto:XLM`, `crypto:BTC`,\n`crypto:USDC`, `crypto:ETH`, `crypto:EUROB`). Any\ncanonical asset id is accepted and priced in `fiat:USD`\nexactly as `/v1/price?asset=…&quote=fiat:USD` prices it:\n`native` resolves through XLM's alias forms\n(`crypto:XLM`, the XLM SAC), and a `<code>-<G…>` classic\nreads its own `fiat:USD` market first and then the\nfallback chain — a declared USD peg such as\n`USDC-GA5Z…` is served through its XLM cross, or as the\ndeclaration when no market prices it.\n",
+                            "content": "(Required) SEP-40 oracle key. Reflector contracts publish under\n`crypto:<symbol>` (`crypto:XLM`, `crypto:BTC`,\n`crypto:USDC`, `crypto:ETH`, `crypto:EUROB`). Any\ncanonical asset id is accepted and priced in `fiat:USD`\nexactly as `/v1/price?asset=…&quote=fiat:USD` prices it:\n`native` resolves through XLM's alias forms\n(`crypto:XLM`, the XLM SAC), and a `<code>-<G…>` classic\nreads its own `fiat:USD` market first and then the\nfallback chain — a declared USD peg such as\n`USDC-GA5Z…` is served through its XLM cross, and 404s\nwhen no market prices it.\n",
                             "type": "text/plain"
                           },
                           "key": "asset",
@@ -12229,7 +12229,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "(Required) SEP-40 oracle key. Reflector contracts publish under\n`crypto:<symbol>` (`crypto:XLM`, `crypto:BTC`,\n`crypto:USDC`, `crypto:ETH`, `crypto:EUROB`). Any\ncanonical asset id is accepted and priced in `fiat:USD`\nexactly as `/v1/price?asset=…&quote=fiat:USD` prices it:\n`native` resolves through XLM's alias forms\n(`crypto:XLM`, the XLM SAC), and a `<code>-<G…>` classic\nreads its own `fiat:USD` market first and then the\nfallback chain — a declared USD peg such as\n`USDC-GA5Z…` is served through its XLM cross, or as the\ndeclaration when no market prices it.\n",
+                            "content": "(Required) SEP-40 oracle key. Reflector contracts publish under\n`crypto:<symbol>` (`crypto:XLM`, `crypto:BTC`,\n`crypto:USDC`, `crypto:ETH`, `crypto:EUROB`). Any\ncanonical asset id is accepted and priced in `fiat:USD`\nexactly as `/v1/price?asset=…&quote=fiat:USD` prices it:\n`native` resolves through XLM's alias forms\n(`crypto:XLM`, the XLM SAC), and a `<code>-<G…>` classic\nreads its own `fiat:USD` market first and then the\nfallback chain — a declared USD peg such as\n`USDC-GA5Z…` is served through its XLM cross, and 404s\nwhen no market prices it.\n",
                             "type": "text/plain"
                           },
                           "key": "asset",
@@ -12274,7 +12274,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "(Required) SEP-40 oracle key. Reflector contracts publish under\n`crypto:<symbol>` (`crypto:XLM`, `crypto:BTC`,\n`crypto:USDC`, `crypto:ETH`, `crypto:EUROB`). Any\ncanonical asset id is accepted and priced in `fiat:USD`\nexactly as `/v1/price?asset=…&quote=fiat:USD` prices it:\n`native` resolves through XLM's alias forms\n(`crypto:XLM`, the XLM SAC), and a `<code>-<G…>` classic\nreads its own `fiat:USD` market first and then the\nfallback chain — a declared USD peg such as\n`USDC-GA5Z…` is served through its XLM cross, or as the\ndeclaration when no market prices it.\n",
+                            "content": "(Required) SEP-40 oracle key. Reflector contracts publish under\n`crypto:<symbol>` (`crypto:XLM`, `crypto:BTC`,\n`crypto:USDC`, `crypto:ETH`, `crypto:EUROB`). Any\ncanonical asset id is accepted and priced in `fiat:USD`\nexactly as `/v1/price?asset=…&quote=fiat:USD` prices it:\n`native` resolves through XLM's alias forms\n(`crypto:XLM`, the XLM SAC), and a `<code>-<G…>` classic\nreads its own `fiat:USD` market first and then the\nfallback chain — a declared USD peg such as\n`USDC-GA5Z…` is served through its XLM cross, and 404s\nwhen no market prices it.\n",
                             "type": "text/plain"
                           },
                           "key": "asset",
@@ -12706,7 +12706,7 @@
               "request": {
                 "name": "SEP-40 x_last_price-equivalent (cross-pair).",
                 "description": {
-                  "content": "HTTP mirror of the SEP-40 oracle contract call\n`x_last_price(base, quote)` — last observed price of\n`base` denominated in `quote`. The response's `asset`\nfield carries the canonical base identifier so existing\nSEP-40 `lastprice` parsing paths can be reused; the quote\nis implicit from the request. Any canonical asset id is\naccepted on either side. When the pair has no closed bucket\nthe same fallback chain as `/v1/price` runs; an answer\nserved that way carries `flags.stale=true`, and\n`flags.triangulated=true` when it is composed rather than\nobserved. 404 when the chain serves nothing.\n",
+                  "content": "HTTP mirror of the SEP-40 oracle contract call\n`x_last_price(base, quote)` — last observed price of\n`base` denominated in `quote`. The response's `asset`\nfield carries the canonical base identifier so existing\nSEP-40 `lastprice` parsing paths can be reused; the quote\nis implicit from the request. Any canonical asset id is\naccepted on either side. When the pair has no closed bucket\nthe same fallback chain as `/v1/price` runs; an answer\nserved that way carries `flags.stale=true`, and\n`flags.triangulated=true` when it is composed rather than\nobserved. 404 when the chain serves nothing, or only a\ndeclared peg (SEP-40's `None`).\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -26285,7 +26285,7 @@
               "request": {
                 "name": "Create a new API key.",
                 "description": {
-                  "content": "Issues a new API key for the authenticated caller and returns\nthe plaintext exactly once.\n\n`scopes` (optional) confines the new key to route families:\n`read` (public data surfaces), `account` (`/v1/account/*`),\n`dashboard` (`/v1/dashboard/*`), `admin` (`/v1/admin/*`).\nOmitted/empty mints a full-access key — the posture every key\nminted before scopes shipped keeps. Scopes only narrow; they\nnever grant anything the key's tier wouldn't already reach.\n\nOne caller identifier may hold a bounded number of un-revoked\nkeys (25 by default, operator-tunable). A mint that would cross\nthe ceiling returns 409 — revoke a key via\n`DELETE /v1/account/keys/{keyID}` and retry.\n\nThe new key inherits the caller's identifier and tier. An\n**operator-tier** caller rotating its own credential here is\nheld to the admin-write contract: the `X-Reason` header is\nrequired (400 without it) and the mint is recorded as a\n`key.mint` audit row, exactly as `POST /v1/admin/keys`.\nCustomer-tier callers need no header. A `/v1/signup` key's\nemail-verification stamp carries over to the child, so rotated\nkeys keep working under `signup_require_email_verification`.\n",
+                  "content": "Issues a new API key for the authenticated caller and returns\nthe plaintext exactly once.\n\n`scopes` (optional) confines the new key to route families:\n`read` (public data surfaces), `account` (`/v1/account/*`),\n`dashboard` (`/v1/dashboard/*`), `admin` (`/v1/admin/*`).\nOmitted/empty mints a full-access key — the posture every key\nminted before scopes shipped keeps. Scopes only narrow; they\nnever grant anything the key's tier wouldn't already reach.\n\nOne caller identifier may hold a bounded number of un-revoked\nkeys (25 by default, operator-tunable). A mint that would cross\nthe ceiling returns 409 — revoke a key via\n`DELETE /v1/account/keys/{keyID}` and retry.\n\nA SEP-10-authenticated caller gets 403 `key-mint-not-available`:\nan `auth_mode = \"sep10\"` deployment honours only SEP-10 tokens,\nso a minted key would have no use there.\n\nThe new key inherits the caller's identifier and tier. An\n**operator-tier** caller rotating its own credential here is\nheld to the admin-write contract: the `X-Reason` header is\nrequired (400 without it) and the mint is recorded as a\n`key.mint` audit row, exactly as `POST /v1/admin/keys`.\nCustomer-tier callers need no header. A `/v1/signup` key's\nemail-verification stamp carries over to the child, so rotated\nkeys keep working under `signup_require_email_verification`.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -26561,6 +26561,80 @@
                   },
                   "status": "Unauthorized",
                   "code": 401,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "The caller authenticated with a SEP-10 token; API keys are\nnot issued to SEP-10 subjects (`key-mint-not-available`).",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "account",
+                        "keys"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "disabled": false,
+                        "description": {
+                          "content": "Optional client-chosen key (a UUID is ideal) that makes this\ncreate safe to retry. Send the SAME value when retrying a request\nwhose outcome you never saw, such as a client timeout: within ten\nminutes of a successful original, the retry receives the original\nresponse verbatim (marked by an `Idempotency-Replayed: true`\nresponse header) instead of creating a second resource. A retry\nthat arrives while the original is still running gets 409\n`idempotency-key-in-flight` with `Retry-After`. Only 2xx\nresponses are replayed; a failed original may be retried with the\nsame key. Keys are scoped to the caller, and dedup is held per API\nprocess, so it covers the retry window rather than surviving a\nrestart. Longer than 256 bytes returns 400\n`idempotency-key-too-long`.\n",
+                          "type": "text/plain"
+                        },
+                        "key": "Idempotency-Key",
+                        "value": "<string>"
+                      },
+                      {
+                        "disabled": false,
+                        "description": {
+                          "content": "Required from an operator-tier caller (400 `missing-reason`\nwithout it) and captured into the `key.mint` audit row;\nignored for customer tiers.\n",
+                          "type": "text/plain"
+                        },
+                        "key": "X-Reason",
+                        "value": "<string>"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      },
+                      {
+                        "description": {
+                          "content": "Added as a part of security scheme: bearer",
+                          "type": "text/plain"
+                        },
+                        "key": "Authorization",
+                        "value": "Bearer <token>"
+                      }
+                    ],
+                    "method": "POST",
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"label\": \"<string>\",\n  \"scopes\": [\n    \"admin\",\n    \"dashboard\"\n  ]\n}",
+                      "options": {
+                        "raw": {
+                          "headerFamily": "json",
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Forbidden",
+                  "code": 403,
                   "header": [
                     {
                       "key": "Content-Type",

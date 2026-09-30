@@ -302,6 +302,30 @@ func (f *fakeUserStore) RevokeOtherUserSessions(_ context.Context, userID, keepS
 	return nil
 }
 
+func (f *fakeUserStore) CapUserSessions(_ context.Context, userID, keepSessionID uuid.UUID, maxLive int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := time.Now().UTC()
+	var live []platform.Session
+	for id, s := range f.sessions {
+		if s.UserID == userID && id != keepSessionID && s.RevokedAt.IsZero() && s.ExpiresAt.After(now) {
+			live = append(live, s)
+		}
+	}
+	sort.Slice(live, func(i, j int) bool {
+		if !live[i].CreatedAt.Equal(live[j].CreatedAt) {
+			return live[i].CreatedAt.After(live[j].CreatedAt)
+		}
+		return live[i].ID.String() > live[j].ID.String()
+	})
+	for i := maxLive - 1; i >= 0 && i < len(live); i++ {
+		s := live[i]
+		s.RevokedAt = now
+		f.sessions[s.ID] = s
+	}
+	return nil
+}
+
 type fakeTokenStore struct {
 	mu      sync.Mutex
 	tokens  map[string]platform.MagicLinkToken // hex(hash) → row

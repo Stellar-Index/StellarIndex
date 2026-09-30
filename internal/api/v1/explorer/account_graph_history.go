@@ -172,7 +172,8 @@ func (h *Handler) AccountGraphHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.WriteJSON(w, accountGraphHistoryView(g, hist), false)
+	_, stale, _ := h.lakeTip(ctx)
+	h.WriteJSON(w, accountGraphHistoryView(g, hist), stale)
 }
 
 // accountGraphHistoryView renders the reader snapshot onto the wire

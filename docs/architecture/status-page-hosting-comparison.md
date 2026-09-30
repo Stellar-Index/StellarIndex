@@ -176,39 +176,35 @@ Instatus:
    in sev-playbook.md §5.1 explaining "incident posts live as
    markdown in this directory; the status page is a rendering."
 
-## Open questions for the implementer
+## Open questions for the implementer — resolved
 
-1. **Webhook posting from PagerDuty → Instatus**: Instatus
-   supports PagerDuty webhook out-of-the-box but the mapping
-   between PagerDuty severities (SEV-1/2/3) and Instatus
-   states (Operational / Degraded / Partial / Major /
-   Maintenance) needs a one-time config table. Recommend:
-   PagerDuty SEV-1 → Instatus "Major outage"; SEV-2 → "Partial
-   outage"; SEV-3 → "Degraded performance".
+These were written for an Instatus implementer. The shipped
+self-hosted page (see [§Why we ended up at "cstate-shaped"](#why-we-ended-up-at-cstate-shaped))
+answers each of them as follows; the binding operator detail is in
+[`sev-playbook.md §5.1`](../operations/sev-playbook.md#51-status-page).
 
-2. **Subscriber list policy**: Instatus supports email + RSS +
-   Slack subscribers. Public RSS is fine; email subscriber list
-   is GDPR-relevant — should we collect emails from launch, or
-   defer until customer-base demand surfaces? Recommend defer
-   until customers ask — RSS + Slack are zero-PII.
-
-3. **History retention**: Instatus keeps incident history forever
-   on paid tier; free tier may have limits. Confirm before
-   commit; if limited, mirror the markdown in our repo as the
-   long-term record.
-
-4. **Maintenance windows**: should we pre-schedule maintenance
-   announcements for our planned deploys? Recommend yes for
-   anything where the operator silences alerts (per the SEV-1
-   drill scenario's spike-test variant) — public-facing
-   "scheduled maintenance" gives customers warning that's
-   asymmetric with our internal alert silence.
-
-5. **Status page itself going down**: Instatus's own uptime is
-   a vendor commitment, not ours. Document in the runbook that
-   if status.stellarindex.io is unreachable, post to
-   `#stellar-index-public` Discord channel as the fallback
-   communication channel.
+1. **Severity → page state.** There is no PagerDuty leg
+   (`sev-playbook.md §3`) and no webhook posting; the incident's
+   `severity:` frontmatter drives the rendering
+   (`web/explorer/src/app/status/page.tsx`): SEV-1 → major,
+   SEV-2 → minor, SEV-3 → maintenance.
+2. **Subscribers.** No email list is collected — zero PII.
+   Pull subscribers use the Atom feed `GET /v1/incidents.atom`;
+   push subscribers are API customers with `incident.sev1` /
+   `incident.resolved` dashboard webhooks.
+3. **History retention.** Unlimited: the Markdown corpus under
+   `internal/incidents/data/` in git *is* the long-term record.
+4. **Maintenance windows.** Yes for any deploy where the operator
+   silences alerts: post a `severity: maintenance` notice via
+   `POST /v1/admin/status-notices` before the window and resolve it
+   after. Notices have no scheduled start/end; they are live until
+   resolved.
+5. **Status page itself unavailable.** The page is a static route in
+   the explorer's Cloudflare Pages deploy, so an API outage does not
+   take it down, but it can block the build that publishes an update
+   (see the runbook's 2026-09-20 changelog entry). If the page cannot
+   be updated or reached, post in the public Discord as the fallback
+   channel (`sev-playbook.md §7`, step 1).
 
 ## Cost summary
 

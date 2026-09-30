@@ -43,13 +43,15 @@ func fuzzPairs(t *testing.T, assets []canonical.Asset, raw []byte) []canonical.P
 
 // FuzzValidateTriangulationChain checks the chain validator against its
 // structural definition: at least two legs, endpoints matching the target,
-// and every adjacent pair of legs sharing its pivot asset.
+// every adjacent pair of legs sharing its pivot asset, and no fiat/fiat leg
+// without USD.
 func FuzzValidateTriangulationChain(f *testing.F) {
 	f.Add(byte(0), byte(4), []byte{0, 2, 2, 4})
 	f.Add(byte(0), byte(4), []byte{0, 2, 3, 4})
 	f.Add(byte(0), byte(4), []byte{0, 1, 1, 2, 2, 4})
 	f.Add(byte(0), byte(4), []byte{0, 1, 1, 2, 3, 4})
 	f.Add(byte(0), byte(2), []byte{0, 2})
+	f.Add(byte(0), byte(4), []byte{0, 3, 3, 4})
 	f.Fuzz(func(t *testing.T, tb, tq byte, rawLegs []byte) {
 		assets := fuzzAssets(t)
 		target, err := canonical.NewPair(assets[int(tb)%len(assets)], assets[int(tq)%len(assets)])
@@ -62,6 +64,10 @@ func FuzzValidateTriangulationChain(f *testing.F) {
 			legs[len(legs)-1].Quote.Equal(target.Quote)
 		for i := 1; want && i < len(legs); i++ {
 			want = legs[i-1].Quote.Equal(legs[i].Base)
+		}
+		for i := 0; want && i < len(legs); i++ {
+			fiatFiat := legs[i].Base.Type == canonical.AssetFiat && legs[i].Quote.Type == canonical.AssetFiat
+			want = !fiatFiat || legs[i].Base.Code == "USD" || legs[i].Quote.Code == "USD"
 		}
 		got := ValidateTriangulationChain(TriangulationChain{Target: target, Legs: legs}) == nil
 		if got != want {

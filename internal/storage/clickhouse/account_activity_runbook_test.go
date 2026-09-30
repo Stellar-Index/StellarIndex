@@ -296,7 +296,7 @@ func assertRunbookCase(t *testing.T, section, doneLine string, tc runbookCase) {
 }
 
 // TestAccountActivityRunbook_Step2FailsClosed: TIP 4000001 is two windows
-// (2 and 2000002) of three jobs each.
+// (2000002, then 2) of three jobs each.
 func TestAccountActivityRunbook_Step2FailsClosed(t *testing.T) {
 	section := extractRunbookSection(t, accountActivitySQLPath(t),
 		"Step 2: windowed historical backfill", "Step 3: verify")
@@ -305,7 +305,7 @@ func TestAccountActivityRunbook_Step2FailsClosed(t *testing.T) {
 		{name: "complete run", env: []string{tip}, wantOK: true, inserts: 6, want: []string{"6 of 6 jobs ran to success"}},
 		{
 			name: "one job of a window fails", env: []string{tip, "AA_FAIL_MATCH=FROM stellar.transactions"},
-			inserts: 2, want: []string{"tx window 2 FAILED"},
+			inserts: 2, want: []string{"tx window 2000002 FAILED"},
 		},
 		{name: "TIP probe exits non-zero", env: []string{"AA_TIP_RC=210"}, want: []string{"is not a ledger number"}},
 		{name: "TIP probe answers nothing", want: []string{"is not a ledger number"}},
@@ -318,27 +318,50 @@ func TestAccountActivityRunbook_Step2FailsClosed(t *testing.T) {
 		// The shipped wrapper exits 75 here in both branches, without running the payload.
 		{
 			name: "per-job lock held", env: []string{tip, "AA_FLOCK_FAIL_ON=9:2"}, inserts: 1,
-			want: []string{"refusing to start acct-activity-tx-2", "tx window 2 DID NOT RUN (the wrapper exited 75"},
+			want: []string{"refusing to start acct-activity-tx-2000002", "tx window 2000002 DID NOT RUN (the wrapper exited 75"},
 		},
 		{
 			name: "per-job lock held, systemd-launched", env: []string{tip, "AA_FLOCK_FAIL_ON=9:2", "INVOCATION_ID=0123456789abcdef"},
-			inserts: 1, want: []string{"skipping this fire", "tx window 2 DID NOT RUN (the wrapper exited 75"},
+			inserts: 1, want: []string{"skipping this fire", "tx window 2000002 DID NOT RUN (the wrapper exited 75"},
 		},
 		// Another heavy job holds the host-wide lock: refused with 75, payload not run.
 		{
 			name: "host-wide lock held", env: []string{tip, "AA_FLOCK_FAIL_ON=8:2"}, inserts: 1,
 			want: []string{
-				"refusing to start acct-activity-tx-2: another heavy job holds the host-wide lock",
-				"tx window 2 DID NOT RUN (the wrapper exited 75",
+				"refusing to start acct-activity-tx-2000002: another heavy job holds the host-wide lock",
+				"tx window 2000002 DID NOT RUN (the wrapper exited 75",
 			},
 		},
 		{
 			name: "job fails, pasted into a nested shell", nested: true,
-			env: []string{tip, "AA_FAIL_MATCH=GROUP BY source_account"}, inserts: 1, want: []string{"ops window 2 FAILED"},
+			env: []string{tip, "AA_FAIL_MATCH=GROUP BY source_account"}, inserts: 1, want: []string{"ops window 2000002 FAILED"},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) { assertRunbookCase(t, section, step2Done, tc) })
+	}
+}
+
+// TestAccountActivityRunbook_Step2RunsNewestWindowFirst: a run that stops
+// between windows must leave each account with its true max or no row, which
+// only newest-first gives. A stop inside a window is covered by COMPLETE.
+func TestAccountActivityRunbook_Step2RunsNewestWindowFirst(t *testing.T) {
+	section := extractRunbookSection(t, accountActivitySQLPath(t),
+		"Step 2: windowed historical backfill", "Step 3: verify")
+	res := runRunbook(t, section, false, "AA_UID=1000", "AA_TIP_OUT=4000002")
+	if !res.ok || !strings.Contains(res.out, step2Done) {
+		t.Fatalf("complete run did not succeed\n%s", res.out)
+	}
+	windowRE := regexp.MustCompile(`INSERT INTO stellar\.account_activity .*ledger_seq >= (\d+) `)
+	var got []string
+	for _, q := range res.queries {
+		if m := windowRE.FindStringSubmatch(q); m != nil {
+			got = append(got, m[1])
+		}
+	}
+	want := []string{"4000002", "4000002", "4000002", "2000002", "2000002", "2000002", "2", "2", "2"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("backfill window order = %v, want %v (newest first)", got, want)
 	}
 }
 

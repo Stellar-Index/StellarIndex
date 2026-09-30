@@ -77,8 +77,8 @@ Capture for postmortem:
 
 ## Related
 
-- `anomaly-freeze-engaged.md` — the per-tick alert; this runbook covers the escalated/sustained variant. NOTE: the sustained rule's own `runbook_url` (`configs/prometheus/rules.r1/anomaly.yml` + deploy mirror) still points at anomaly-freeze-engaged.md — follow-up: point it here.
-- `stellarindex_anomaly_freeze_escalated` (`configs/prometheus/rules.r1/freeze-lifecycle.yml`) — the companion P1 for the same escalation; its runbook_url links here. Two pages fire per escalation.
+- `anomaly-freeze-engaged.md` — the per-tick alert; this runbook covers the escalated/sustained variant.
+- `stellarindex_anomaly_freeze_escalated` (`configs/prometheus/rules.r1/freeze-lifecycle.yml`) — the single P1 per escalation; its `runbook_url` and description both link here (`scripts/ci/lint-runbook-annotations.py` fails a description link that disagrees with `runbook_url`).
 - `freeze-recovery-stalled.md` — a non-escalated durable row that outlives its marker.
 - `aggregator-outlier-storm.md` — adjacent symptom when the σ-filter goes wide.
 - `divergence-refresh-error-dominant.md` — upstream when references can't be fetched.

@@ -237,21 +237,23 @@ func TestOHLCDustFloor_ServedSeriesReproducesTheWick(t *testing.T) {
 	b := bars[0]
 
 	// The headline: 0.1333333333 was the served low. It must now be 0.1822.
-	const wantLow = 0.18220005 // 1/5.4885
-	if got := mustFloat(t, b.Low); !closeTo(got, wantLow, 1e-6) {
+	// Exact inverses: the serve layer divides in NUMERIC, so a rounded literal
+	// would spend the tolerance instead of measuring the served value.
+	const wantLow = 1 / 5.4885
+	if got := mustFloat(t, b.Low); !closeTo(got, wantLow, 1e-9) {
 		t.Errorf("served low = %s, want ~%.8f (1/5.4885, the real market low).\n"+
 			"0.1333333333 here is the B11-F1 dust wick (1/7.5, a 2↔15-stroop crumb)", b.Low, wantLow)
 	}
-	const wantHigh = 0.18450184 // 1/5.42
-	if got := mustFloat(t, b.High); !closeTo(got, wantHigh, 1e-6) {
+	const wantHigh = 1 / 5.42
+	if got := mustFloat(t, b.High); !closeTo(got, wantHigh, 1e-9) {
 		t.Errorf("served high = %s, want ~%.8f (1/5.42); 1000 here is the 0.001 dust print inverted", b.High, wantHigh)
 	}
-	const wantOpen = 0.18223234 // 1/5.4875
-	if got := mustFloat(t, b.Open); !closeTo(got, wantOpen, 1e-6) {
+	const wantOpen = 1 / 5.4875
+	if got := mustFloat(t, b.Open); !closeTo(got, wantOpen, 1e-9) {
 		t.Errorf("served open = %s, want ~%.8f (1/5.4875) — the first NON-dust trade", b.Open, wantOpen)
 	}
-	const wantClose = 0.18348624 // 1/5.45
-	if got := mustFloat(t, b.Close); !closeTo(got, wantClose, 1e-6) {
+	const wantClose = 1 / 5.45
+	if got := mustFloat(t, b.Close); !closeTo(got, wantClose, 1e-9) {
 		t.Errorf("served close = %s, want ~%.8f (1/5.45) — the last NON-dust trade", b.Close, wantClose)
 	}
 	if b.TradeCount != 6 {

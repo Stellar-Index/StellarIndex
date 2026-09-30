@@ -442,3 +442,37 @@ func TestPolicyForPath_OperationsSharesTheLedgerListBand(t *testing.T) {
 		t.Errorf("policyForPath(%q) = %q, want the conservative default (the case is an exact match by design)", "/v1/operations/something", sub)
 	}
 }
+
+// TestCacheControl_OperationsBandFollowsTheHandlersMode pins the query split
+// on /v1/operations: ?ledger=<seq> reads one closed ledger and takes its
+// /v1/ledgers/{seq}/transactions sibling's band; every value the handler
+// treats as the directory keeps the directory's short band.
+func TestCacheControl_OperationsBandFollowsTheHandlersMode(t *testing.T) {
+	cases := []struct {
+		target string
+		cdn    bool
+		want   string
+	}{
+		{"/v1/operations?ledger=64000000", true, policyForPath("/v1/ledgers/64000000/transactions", true)},
+		{"/v1/operations?ledger=64000000&limit=2000", false, policyForPath("/v1/ledgers/64000000/transactions", false)},
+		{"/v1/operations", true, "public, max-age=10, s-maxage=15"},
+		{"/v1/operations?ledger=", true, "public, max-age=10, s-maxage=15"},
+		{"/v1/operations?ledger=0", true, "public, max-age=10, s-maxage=15"},
+		{"/v1/operations?cursor=63000000.4.7", true, "public, max-age=10, s-maxage=15"},
+		// Malformed values are a 400 whose problem writer sets no-store; the
+		// band must not treat them as a ledger either way.
+		{"/v1/operations?ledger=abc", true, "public, max-age=10, s-maxage=15"},
+		{"/v1/operations?ledger=4294967296", true, "public, max-age=10, s-maxage=15"},
+		{"/v1/ledgers?ledger=64000000", true, "public, max-age=10, s-maxage=15"},
+	}
+	for _, tc := range cases {
+		mw := CacheControlWithCDN(tc.cdn)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		rec := httptest.NewRecorder()
+		mw.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.target, nil))
+		if got := rec.Header().Get("Cache-Control"); got != tc.want {
+			t.Errorf("GET %s (cdn=%v) Cache-Control = %q, want %q", tc.target, tc.cdn, got, tc.want)
+		}
+	}
+}
