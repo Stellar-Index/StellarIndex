@@ -683,7 +683,7 @@ week lands.
 
 - **2026-05-11** — **All five 2026-05-10 ❌ rows have landing
   code fixes on `main`** (PRs #1261,
-  #1268, #1270 across the session). Headline
+  #1270 across the session). Headline
   resolutions:
   R-005 → #1261 (batch shares full /v1/price fallback chain),
   R-007 → OHLC outlier filter, default 4σ (no
@@ -701,7 +701,9 @@ week lands.
   R-021 → handler-timeout helper recognises pq cancel (no
   surviving PR number for this entry; the one previously cited
   here now resolves to an unrelated live issue),
-  R-001/R-002 → #1268 (prewarm covers volume-desc + per-CEX).
+  R-001/R-002 → prewarm covers volume-desc + per-CEX (commit
+  `55b2a9fb3`; the PR number it carried now resolves to an
+  unrelated item).
   R-006 + R-009 remain operator config (#97, #119). The Prod
   cells in this matrix continue to read against rc.39; flip
   them after the next deploy + re-curl. Resolution log in the
