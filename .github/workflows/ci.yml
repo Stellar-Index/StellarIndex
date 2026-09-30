@@ -336,6 +336,7 @@ jobs:
               - 'internal/sources/external/binance/pairs.yaml'
               - 'internal/sources/external/forex/circulation_data.csv'
               - 'internal/currency/data/seed.yaml'
+              - 'internal/ops/chops/audited_wasm.json'
               - 'internal/incidents/data/**'
               # testdata/ is Go's fixture convention; the clickhouse
               # package also go:embeds its .tsv/.wasm fixtures from there.
