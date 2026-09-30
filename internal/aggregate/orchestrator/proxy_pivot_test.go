@@ -31,9 +31,10 @@ func pivotTrade(pair canonical.Pair, source string, base, quote int64, ts time.T
 // [XLM/fiat:USD, USD/GBP 0.79] where the XLM/USD leg is 6 XLM @ 0.40 real
 // USD (coinbase, 8dp) plus 4 XLM quoted in USDC on SDEX (7dp) at
 // usdcPrice, folded in at par by the stablecoin-fiat proxy. The direct
-// XLM/GBP market prints 0.32 real GBP. Returns the served XLM/GBP value,
-// its composite_meta and the proxy_pivot / ok outcome deltas.
-func runProxyPivotTick(t *testing.T, usdcQuote7dp int64) (string, compositeMeta, float64, float64) {
+// XLM/GBP market prints 0.32 real GBP. ownUSD=false drops the real-USD
+// print so the leg is all proxy. Returns the served XLM/GBP value, its
+// composite_meta and the proxy_pivot / ok outcome deltas.
+func runProxyPivotTick(t *testing.T, usdcQuote7dp int64, ownUSD bool) (string, compositeMeta, float64, float64) {
 	t.Helper()
 	now := time.Now()
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
@@ -47,6 +48,9 @@ func runProxyPivotTick(t *testing.T, usdcQuote7dp int64) (string, compositeMeta,
 		xlmUSDC.String(): {pivotTrade(xlmUSDC, "sdex", 40_000_000, usdcQuote7dp, now.Add(-90*time.Second))},
 		xlmGBP.String():  {pivotTrade(xlmGBP, "coinbase", 100_000_000, 32_000_000, now.Add(-time.Minute))},
 	}}
+	if !ownUSD {
+		delete(store.perPair, xlmUSD.String())
+	}
 	rdb, mr := newTestRedis(t)
 	o := New(store, rdb, Config{
 		Pairs:                     []canonical.Pair{xlmUSD, xlmGBP},
@@ -89,7 +93,7 @@ func runProxyPivotTick(t *testing.T, usdcQuote7dp int64) (string, compositeMeta,
 // 0.32 direct print unflagged. The leg's two quote surfaces disagree by
 // ~309 bps, so the composite is refused and the direct print serves.
 func TestTriangulation_ProxyPivotDepegRefusesComposite(t *testing.T) {
-	served, meta, pivotDelta, okDelta := runProxyPivotTick(t, 16_494_800)
+	served, meta, pivotDelta, okDelta := runProxyPivotTick(t, 16_494_800, true)
 
 	if served != "0.320000000000" {
 		t.Errorf("served XLM/GBP = %q, want the direct 0.320000000000 (the par-merged composite is 0.319909…)", served)
@@ -108,7 +112,7 @@ func TestTriangulation_ProxyPivotDepegRefusesComposite(t *testing.T) {
 // USDC at par: the surfaces agree, the composite (0.40 × 0.79 = 0.316)
 // publishes, and its composite_meta still carries the leg's proxy share.
 func TestTriangulation_ProxyPivotAtParPublishesAndStampsShare(t *testing.T) {
-	served, meta, pivotDelta, okDelta := runProxyPivotTick(t, 16_000_000)
+	served, meta, pivotDelta, okDelta := runProxyPivotTick(t, 16_000_000, true)
 
 	if served != "0.316000000000" {
 		t.Errorf("served XLM/GBP = %q, want the composite 0.316000000000", served)
@@ -121,6 +125,29 @@ func TestTriangulation_ProxyPivotAtParPublishesAndStampsShare(t *testing.T) {
 	}
 	if got := meta.PivotProxyShare["crypto:XLM/fiat:USD"]; got != 0.4 {
 		t.Errorf("pivot_proxy_share[XLM/USD] = %v, want 0.4", got)
+	}
+	if meta.PivotUnverified {
+		t.Error("pivot_unverified = true, want false: the leg's own-quote prints verified the par")
+	}
+}
+
+// A leg made only of USDC prints has no own-quote surface to check the
+// par against, so a de-peg there cannot be refused: the composite still
+// publishes, and its composite_meta must say the pivot is unverified.
+func TestTriangulation_ProxyPivotAllProxyLegFlagsUnverified(t *testing.T) {
+	served, meta, pivotDelta, okDelta := runProxyPivotTick(t, 16_000_000, false)
+
+	if served != "0.316000000000" {
+		t.Errorf("served XLM/GBP = %q, want the composite 0.316000000000", served)
+	}
+	if pivotDelta != 0 || okDelta != 1 {
+		t.Errorf("outcome deltas proxy_pivot=%v ok=%v, want 0 and 1", pivotDelta, okDelta)
+	}
+	if got := meta.PivotProxyShare["crypto:XLM/fiat:USD"]; got != 1 {
+		t.Errorf("pivot_proxy_share[XLM/USD] = %v, want 1", got)
+	}
+	if !meta.PivotUnverified {
+		t.Error("pivot_unverified = false, want true: no own-quote prints verified the par")
 	}
 }
 

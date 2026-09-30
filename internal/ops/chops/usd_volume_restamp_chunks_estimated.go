@@ -46,14 +46,20 @@ func (t *estimatedChunkTier) header(from, to time.Time, copts chunkRestampOption
 		t.opts.Generation, t.opts.MaxGeneration, t.opts.FillNull, ratPercent(t.opts.MinRelDelta), t.run.headerFlags)
 }
 
-// probe plans [lo, hi) slice by slice, folding NOTHING into the report,
-// and stops at the first slice that would change a row.
+// probe plans [lo, hi) slice by slice and stops at the first slice that
+// would change a row. A clean probe has counted the whole slice, so it is
+// folded into the report: the window the report names includes skipped
+// chunks. A dirty probe's partial count is dropped; restamp recounts it.
 func (t *estimatedChunkTier) probe(ctx context.Context, lo, hi time.Time) (bool, error) {
 	w, err := t.run.walk(ctx, lo, hi, xlmBaseWalkProbe)
 	if err != nil {
 		return false, err
 	}
-	return w.stats.Changed > 0, nil
+	if w.stats.Changed > 0 {
+		return true, nil
+	}
+	t.run.totals.Merge(w.stats)
+	return false, nil
 }
 
 // preview is the dry run's pass over the chunk as it is.

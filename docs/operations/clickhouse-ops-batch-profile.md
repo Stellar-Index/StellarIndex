@@ -206,8 +206,12 @@ bounds what it can do to ClickHouse's other users. If the wrapper's
 first stderr line says `WARNING ... CH 'default' user`, stop and apply
 the profile before running a multi-hour scan.
 
-Not yet covered: the heavy shell scripts that call `clickhouse-client`
-directly (`scripts/ops/ch-supply-flows-seed.sh`, `ch-live-catchup.sh`,
-`d3-lecur-v2-rebuild.sh`, `d2-ordinal-reproject.sh`) still run as
-`default` — the pair is in their environment, but they do not pass
-`--user/--password` to `clickhouse-client`. Follow-up.
+The heavy shell scripts that call `clickhouse-client` directly
+(`scripts/ops/ch-supply-flows-seed.sh`, `ch-live-catchup.sh`,
+`d3-lecur-v2-rebuild.sh`, and `ch-backfill-monitor.sh` on the far side
+of its ssh) run as the ops-batch user too: when
+`STELLARINDEX_CLICKHOUSE_OPS_USER` is set they export it and its
+password as `CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD`, which
+`clickhouse-client` reads from its environment. They never put the
+password on argv, where `ps` and the journal would show it.
+`scripts/ops/ch-ops-user-test.sh` (CI) holds them to that contract.

@@ -36,7 +36,7 @@ severity: P2
    - `markets` / `asset_markets` — backs `/v1/markets?asset=<x>`
    - `markets` / `all_pools` — backs `/v1/pools`
 2. **Check the prewarm code.** Open `cmd/stellarindex-api/main.go`, function `prewarmCaches` (main.go:5235) — it dispatches two tiers: `prewarmHeavy` (the `sources_stats` family, 5-min cadence) and `prewarmLight` (markets/pools/coins/native, 60 s cadence). Find the call corresponding to the alerted op. Compare every argument against what the handler at `internal/api/v1/markets.go` passes.
-3. **Diff the cache keys.** The cache key is a `fmt.Sprintf` of the args (see `internal/api/v1/markets_cache.go` `fetchPairs` / `fetchPools`). If the prewarm passes `Order=0` and the handler passes `Order=1`, the keys differ. We've shipped 3 of these bugs in 24h (Order dimension, #1194 Sources, Limit dimension) — same family.
+3. **Diff the cache keys.** The cache key is a `fmt.Sprintf` of the args (see `internal/api/v1/markets_cache.go` `fetchPairs` / `fetchPools`). If the prewarm passes `Order=0` and the handler passes `Order=1`, the keys differ. We've shipped 3 of these bugs in 24h (Order dimension, Sources dimension, Limit dimension) — same family.
 4. **Sanity check the cache TTL vs prewarm cadence.** `v1.NewCachedMarketsReader(...)` is constructed with `2*time.Minute`; `prewarmCaches` runs the heavy tier every 5 min and the light tier every 60 s. If a tier's cadence ever exceeds its caches' TTL, the cache expires before the next refresh and looks like a miss-storm.
 
 5. **Rule out key churn before blaming the prewarm.** The `observations`
@@ -64,7 +64,8 @@ severity: P2
 ## Related
 
 - Worked examples of the pattern: the Order dimension drift bug,
-  #1194 (Sources dimension), the Limit dimension (via implicit
+  the Sources dimension (unfiltered `/v1/pools` prewarm, commit
+  `7ad1f74ad`), the Limit dimension (via implicit
   handler-side subtraction). Read these for fix exemplars; all
   three follow the same diff-and-fix shape this runbook describes.
 - [api-latency.md](api-latency.md) — what the user sees when this
@@ -74,6 +75,10 @@ severity: P2
 
 ## Changelog
 
+- 2026-09-30 — dropped the dangling PR citations for the Sources
+  dimension drift bug. The number predates the repository's current
+  issue numbering and now resolves to an unrelated item; the fix is
+  cited by its commit (`7ad1f74ad`) instead.
 - 2026-09-22 — dropped the dangling PR citations for the Limit
   dimension drift bug (RSWP-110). No such PR was ever opened; the
   bare issue number now resolves to an unrelated, real, open issue
@@ -105,4 +110,4 @@ severity: P2
   "≤ 60 s post-deploy" verification scoped to the light tier.
   Status promoted draft → current.
 - 2026-05-09 — initial draft, motivated by the Order-dimension drift
-  bug plus #1194 / the Limit-dimension bug.
+  bug plus the Sources- and Limit-dimension bugs.

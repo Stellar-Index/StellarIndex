@@ -67,8 +67,8 @@ func TestBuildPoolsQuery_FiltersBindAliasSets(t *testing.T) {
 	}
 
 	_, args := buildPoolsQuery(since, PoolsFilter{Base: "native", Quote: usdc}, "", 100, MarketsOrderVolume24hDesc)
-	if len(args) != 7 {
-		t.Fatalf("args = %d, want 7 ($1..$7)", len(args))
+	if len(args) != 9 {
+		t.Fatalf("args = %d, want 9 ($1..$7 + the $8/$9 alias fold)", len(args))
 	}
 	for i, want := range map[int][]string{4: xlmForms, 5: {usdc}, 6: {}} {
 		got, ok := args[i].([]string)

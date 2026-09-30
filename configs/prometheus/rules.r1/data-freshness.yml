@@ -204,6 +204,36 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
 
+      # watchdog_silent is family-wide: it cannot see ONE series vanish while
+      # the rest of the file keeps publishing. The ClickHouse supply_flows
+      # probe is the script's only best-effort producer, so a ClickHouse
+      # outage drops just the sep41_supply pair and data_source_stale has
+      # nothing left to evaluate. Scoped per instance to hosts whose file IS
+      # published, so the whole-file absent/frozen cases keep their owners.
+      - alert: stellarindex_sep41_supply_freshness_absent
+        expr: |
+          group by (instance) (stellarindex_data_freshness_stale)
+            unless on (instance)
+          stellarindex_data_freshness_stale{domain="sep41_supply",source="supply_flows"}
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: data-freshness
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
+          summary: "SEP-41 supply freshness gauge absent on {{ $labels.instance }} — served SEP-41 supply staleness is unmonitored"
+          description: |
+            data_freshness.prom on {{ $labels.instance }} is publishing, but
+            stellarindex_data_freshness_stale{domain="sep41_supply",source="supply_flows"}
+            has been missing for over an hour. data-freshness.sh skips that
+            pair whenever its ClickHouse supply_flows probe fails, so
+            stellarindex_data_source_stale cannot fire for served SEP-41
+            supply while this lasts. Check ClickHouse HTTP on :8123 and
+            `journalctl -u data-freshness.service` for "supply_flows probe failed".
+
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md#sep-41-supply-series-absent
+
       # watchdog_silent above only sees ABSENCE. The script builds the
       # whole textfile in a temp file and swaps it in atomically at the
       # very end, so a run that dies before the swap leaves the PREVIOUS

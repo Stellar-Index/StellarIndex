@@ -77,7 +77,7 @@ check() {
 # the problem+json error type, not just "some 4xx". Behavioural
 # pinning catches regressions that flip a documented 400 into a
 # silent 200-with-empty-body (the class of bug that motivated this
-# helper — see #1135 for context). When STATUS is multi-
+# helper — see commit 813ccde44 for context). When STATUS is multi-
 # valued, the jq-test runs against whatever body came back — keep
 # it generic ('.type? != null') or omit it for those checks.
 expect_status() {

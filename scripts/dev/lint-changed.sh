@@ -491,6 +491,13 @@ if [ "${#ansible_files[@]}" -gt 0 ]; then
     add_step "lint-yaml-duplicate-keys" "" python3 "$ci_dir/lint-yaml-duplicate-keys.py"
 fi
 
+# 7d. Alert families: the rule-file `alert_family` labels and the
+#     Alertmanager inhibit rule are one contract, so a change to either side
+#     re-runs it (about 1 s whole-tree).
+if [ "${#rules_files[@]}" -gt 0 ] || [ "${#ansible_files[@]}" -gt 0 ]; then
+    add_step "inhibit-rules-test" "" bash "$lint_root/configs/alertmanager/inhibit-rules-test.sh"
+fi
+
 # 8. Lake reads.
 if [ "${#lake_files[@]}" -gt 0 ]; then
     add_step "lint-lake-dedup" "whole tree; ${#lake_files[@]} changed file(s) name a duplicate-bearing table" "$ci_dir/lint-lake-dedup.sh"

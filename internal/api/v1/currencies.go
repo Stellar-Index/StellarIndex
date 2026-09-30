@@ -87,6 +87,9 @@ type CurrencyEntry struct {
 	//floatmoney:ok known debt (#600) — dead field: no writer and no reader anywhere in the tree (grep-confirmed), unlike CirculatingSupply/MarketCapUSD below which ARE constructed. Left float64 rather than removed pending a decision on whether a history endpoint is coming back.
 	History7dRates []float64
 	UpdatedAt      time.Time
+	// Source is the feed that published RateUSD; empty reads as the
+	// primary feed (see fxSourceOf).
+	Source string
 	//floatmoney:ok known debt (#600) — IS constructed in production: forexAdapter.Latest (cmd/stellarindex-api/main.go ~5171) sets it from the curated M2 circulation feed on every /v1/price CurrenciesReader.Latest() call. Every sibling CirculatingSupply in internal/api/v1 (assets.go, assets_global.go, rwa.go) is a decimal string; this one is the float outlier, live in the served snapshot, not test-only.
 	CirculatingSupply *float64
 	//floatmoney:ok known debt (#600) — same forexAdapter.Latest (cmd/stellarindex-api/main.go ~5171) construction site as CirculatingSupply above; USD-equivalent market cap derived from a float division, never converted to canonical.Amount.
