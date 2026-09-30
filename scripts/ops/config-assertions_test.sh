@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # config-assertions_test.sh — fixture tests for the Postgres
 # max_worker_processes headroom pair (T615), the continuous-aggregate
-# refresh-policy check and the ClickHouse destructive-DDL size guard's
-# effective value (T616).
+# refresh-policy check, the trades compression-policy scheduled check and
+# the ClickHouse destructive-DDL size guard's effective value (T616).
 #
 # Pins the property T615 was about: max_worker_processes is
 # postmaster-level (postgresql.conf.j2's own comment), so an ansible
@@ -37,6 +37,9 @@ for a in "$@"; do
     *"timescaledb_information.continuous_aggregates"*)
       [ "${FAKE_PG_DOWN:-0}" = 1 ] && exit 2
       echo "${FAKE_PG_CAGGS_WITHOUT_POLICY:-0}"; exit 0 ;;
+    *"hashtext('usd-volume-restamp:trades')"*)
+      [ "${FAKE_PG_DOWN:-0}" = 1 ] && exit 2
+      echo "${FAKE_PG_TRADES_POLICY_OK:-1}"; exit 0 ;;
   esac
 done
 exit 1
@@ -80,6 +83,7 @@ run() {
     FAKE_PG_MAX_WORKER_PROCESSES="$live" \
     FAKE_PG_IDLE_IN_TXN_TIMEOUT="$idle_live" \
     FAKE_PG_CAGGS_WITHOUT_POLICY="${CAGGS_MISSING:-0}" \
+    FAKE_PG_TRADES_POLICY_OK="${TRADES_POLICY_OK:-1}" \
     FAKE_PG_DOWN="${PG_DOWN:-0}" \
     CH_CONFIG_DIR="${CH_DIR:-$TMP/ch-config}" \
     FAKE_CH_DROP_GUARD="${CH_GUARD:-}" \
@@ -153,6 +157,17 @@ CAGGS_MISSING=1 run 32 32
 expect_metric 'one cagg policy dropped -> caught' caggs_have_refresh_policy 0
 PG_DOWN=1 run 32 32
 expect_metric 'postgres unreachable -> fails closed' caggs_have_refresh_policy 0
+
+# ── The trades compression policy is scheduled ──────────────────────
+# The fake answers the count of trades policies that are scheduled, or
+# paused while a restamp run holds its lock. 0 is a policy left paused by
+# a killed run (or no policy at all).
+run 32 32
+expect_metric 'trades policy scheduled or paused by a live run -> ok' trades_compression_policy_scheduled 1
+TRADES_POLICY_OK=0 run 32 32
+expect_metric 'trades policy paused with no run holding the lock -> caught' trades_compression_policy_scheduled 0
+PG_DOWN=1 run 32 32
+expect_metric 'postgres unreachable -> trades policy check fails closed' trades_compression_policy_scheduled 0
 
 # ── ClickHouse drop guard (T616) ────────────────────────────────────
 # The ansible verify task asserts the EFFECTIVE limits once, at apply
