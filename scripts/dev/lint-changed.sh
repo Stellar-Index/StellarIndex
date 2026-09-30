@@ -53,6 +53,8 @@
 #                            reads commit trailers, so it has nothing to say
 #                            about STAGED edits and is deferred there.
 #   verify.sh, ci.yml        check-verify-parity (0.7 s).
+#   *.go, *.md, its baseline lint-repo-budget (whole tree plus the added Go
+#                            comments in the diff; 0.6 s).
 #   *.md                     lint-doc-links, scoped to the changed files
 #                            (source scan only — link targets still resolve
 #                            against the whole tree; ~0.1-0.3 s/file). It
@@ -180,7 +182,7 @@ fi
 # ── Classification ──────────────────────────────────────────────────────────
 sh_files=(); test_scripts=(); go_files=(); go_dirs=(); wf_files=()
 mig_files=(); md_files=(); baseline_files=(); lake_files=(); parity=0; other=()
-rules_files=(); ansible_files=(); ch_files=(); op_corpus=0
+rules_files=(); ansible_files=(); ch_files=(); op_corpus=0; budget=0
 
 add_unique() { # add_unique <value> — appends to go_dirs if absent
     local v="$1" d
@@ -202,6 +204,9 @@ for f in "${changed[@]}"; do
             d="$(dirname "$f")"
             case "$d" in .) add_unique "." ;; *) add_unique "./${d#./}" ;; esac ;;
         *.md) md_files+=("$f"); hit=1 ;;
+    esac
+    case "$f" in
+        *.go|*.md|scripts/ci/lint-repo-budget.baseline|*/scripts/ci/lint-repo-budget.baseline) budget=1 ;;
     esac
     # lint-migration-commands also reads these for a NULL-start refresh.
     case "$f" in docs/*|deploy/*|configs/*|scripts/ops/*|scripts/dev/*) op_corpus=1 ;; esac
@@ -419,6 +424,18 @@ if [ "${#baseline_files[@]}" -gt 0 ]; then
             add_step "lint-baseline-growth" "BASE_SHA=${mb:0:12}" env "BASE_SHA=$mb" "$ci_dir/lint-baseline-growth.sh" ;;
         *)
             defer "lint-baseline-growth" "reads the Baseline-Growth commit trailer, so it runs over a commit range (--base), not over staged edits" ;;
+    esac
+fi
+
+# 6b. Repo budget: dated docs and Go file sizes over the tree, dates and
+#     ticket ids in the Go comments this diff adds.
+if [ "$budget" -eq 1 ]; then
+    case "$mode" in
+        staged) add_step "lint-repo-budget" "--staged" "$ci_dir/lint-repo-budget.sh" --staged ;;
+        base)
+            mb="$(git merge-base "$base_rev" HEAD 2>/dev/null || true)"
+            add_step "lint-repo-budget" "BASE_SHA=${mb:0:12}" env "BASE_SHA=$mb" "$ci_dir/lint-repo-budget.sh" ;;
+        *) add_step "lint-repo-budget" "" "$ci_dir/lint-repo-budget.sh" ;;
     esac
 fi
 

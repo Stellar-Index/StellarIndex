@@ -1,0 +1,37 @@
+# Regenerate with: scripts/ci/lint-repo-budget.sh --write
+# dated-md <path> | go-lines <path> <max-lines>
+dated-md docs/architecture/residual-defi-census-2026-07.md
+dated-md docs/methodology/d7-thin-pool-third-alias-vwap-review-2026-09-04.md
+dated-md docs/operations/incidents/sev-drill-2026-06-13.md
+dated-md docs/operations/lake-dedup-2026-07.md
+dated-md docs/operations/open-fixes-inventory-2026-08-08.md
+dated-md docs/operations/production-readiness-master-plan-2026-07-18.md
+dated-md docs/operations/r1-ansible-drift-2026-07-03.md
+dated-md docs/operations/runbooks/consolidated-deploy-plan-2026-07-18.md
+dated-md docs/operations/runbooks/operator-unblock-2026-05-08.md
+dated-md docs/operations/runbooks/phase-a-capacity-relief-2026-07-18.md
+dated-md docs/operations/sep41-completeness-diagnosis-2026-07-25.md
+dated-md docs/operations/usd-volume-rederive-2026-08.md
+dated-md docs/operations/wash-and-scam-signals-design-2026-08-25.md
+dated-md docs/operations/wasm-audits/evidence/blend_emitter/shape-verification-2026-07-10.md
+dated-md docs/operations/wasm-audits/r1-walk-2026-05-01.md
+dated-md docs/operations/wasm-audits/walker-investigation-2026-05-01.md
+go-lines cmd/stellarindex-aggregator/main.go 2998
+go-lines cmd/stellarindex-api/main.go 6147
+go-lines cmd/stellarindex-indexer/main.go 2753
+go-lines internal/aggregate/orchestrator/orchestrator.go 2750
+go-lines internal/api/v1/assets.go 5224
+go-lines internal/api/v1/chart.go 2260
+go-lines internal/api/v1/price.go 3491
+go-lines internal/api/v1/rwa.go 2628
+go-lines internal/api/v1/server.go 3613
+go-lines internal/config/config.go 2448
+go-lines internal/dispatcher/dispatcher.go 2168
+go-lines internal/obs/metrics.go 5755
+go-lines internal/ops/chops/compute_completeness.go 2582
+go-lines internal/pipeline/sink.go 2601
+go-lines internal/storage/clickhouse/explorer_reader.go 2916
+go-lines internal/storage/timescale/aggregates.go 2631
+go-lines internal/storage/timescale/asset_catalogue.go 2409
+go-lines internal/storage/timescale/trades.go 2535
+go-lines pkg/client/types.go 2240
