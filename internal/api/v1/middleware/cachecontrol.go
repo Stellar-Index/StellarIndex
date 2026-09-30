@@ -414,10 +414,11 @@ func closedLedgerPolicy(cdnEnabled bool) string {
 }
 
 // policyForRequest is policyForPath plus the one route whose band depends on
-// its mode: /v1/operations?ledger=<seq> reads one closed ledger, the same read
-// as /v1/ledgers/{seq}/transactions, while the bare route is the tip-advancing
-// directory. The test mirrors the handler's own mode switch: a non-zero uint32
-// selects the ledger; empty or 0 is the directory; anything else is a 400.
+// its mode: /v1/operations?ledger=<seq> is the deprecated alias of
+// /v1/ledgers/{seq}/operations and keeps that route's closed-ledger band, while
+// the bare route is the tip-advancing directory. The test mirrors the handler's
+// own mode switch: a non-zero uint32 selects the ledger; empty or 0 is the
+// directory; anything else is a 400.
 func policyForRequest(r *http.Request, cdnEnabled bool) string {
 	if r.URL.Path == "/v1/operations" {
 		if seq, err := strconv.ParseUint(r.URL.Query().Get("ledger"), 10, 32); err == nil && seq != 0 {
@@ -533,7 +534,7 @@ func routePolicy(path string, cdnEnabled bool) (string, bool) {
 		return "private, no-cache, must-revalidate", true
 
 	// ─── Status — customer-facing health rollup ─────────────────
-	// /v1/status is what the explorer /status page polls every 10 s
+	// /v1/status is what the explorer /status page polls every 30 s
 	// and what monitoring dashboards (and the smoke timer) poll on a
 	// longer interval. A 10 s cache absorbs the polling fan-out
 	// without delaying alert-state propagation enough to matter —

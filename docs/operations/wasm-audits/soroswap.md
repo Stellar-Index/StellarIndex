@@ -18,11 +18,10 @@ Audit log for the `soroswap` source's `BackfillSafe` flag. See
 > mid-life upgrades observed in the walk window. Per-instance
 > evidence is itemised in `Phase 2 results` below; full hash
 > bytes + disassembly artifacts live under
-> `evidence/r1-walk-2026-05-01/` on r1. The remaining storage-
-> rotation gap (factory `set_pair_wasm` ledger-entry walk) is
-> tracked as a v3 follow-up — it cannot make backfill unsafe at
-> rest because all 194 deployed pairs already share the audited
-> hash.
+> `evidence/r1-walk-2026-05-01/` on r1. The last gap — the factory
+> `set_pair_wasm` storage-rotation walk — closed on 2026-09-30: the
+> factory's `PairWasmHash` entry was written once, at its deploy
+> ledger 50,746,270, and never again (see `Caveats`).
 >
 > **2026-05-01 update.** Hash citations in this file have been
 > cross-checked against the 2026-04-30 r1 walk; see
@@ -349,11 +348,20 @@ The v2 audit follow-up (tracked under L4.x backlog):
    `new_pair` events~ — done in 2026-04-30 walk (194 instances).
 2. ✅ ~Run `wasm-history` against that pair list to confirm none
    self-upgraded~ — done; zero per-pair upgrades observed.
-3. ☐ Walk the factory's `LedgerEntryChange` history for
-   `set_pair_wasm` storage rotations.
+3. ✅ ~Walk the factory's `LedgerEntryChange` history for
+   `set_pair_wasm` storage rotations~ — done 2026-09-30 on r1:
+   `stellarindex-ops wasm-history -bucket galexie-archive -contracts
+   CA4HEQTL…7AW2 -storage-rotations-out …` scanned 14,234,665
+   ledgers (50,457,424 → archive tip, 8 workers, 5 h 55 m) and
+   recorded 655 `ContractData` changes on the factory: 654 are
+   pair-registry entries (`PairAddressesNIndexed`,
+   `PairAddressesByTokens`; 429 `created` + 226 `restored`) and
+   exactly one is `PairWasmHash` — `created` at ledger 50,746,270,
+   the factory's own deploy. No `updated` change to that key exists,
+   so `set_pair_wasm` was never called and every pair the factory
+   ever deployed came from `18051456…0f73e`.
 
-Until step (3) lands, `BackfillSafe: true` is qualified by the
-storage-rotation gap.
+`BackfillSafe: true` is no longer qualified.
 
 ## Decision
 

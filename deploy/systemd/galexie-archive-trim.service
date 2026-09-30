@@ -1,7 +1,7 @@
 # systemd service: monthly galexie-archive trim per ADR-0027 §Trim
 # operator.
 #
-# Once cold-tiering is enabled (storage.cold_tier_enabled=true) and
+# Once cold-tiering is enabled (storage.s3_cold_bucket_archive set) and
 # the operator-triggered bulk trim has freed the bulk of the pool,
 # this timer runs stellarindex-ops trim-galexie-archive monthly to
 # age newly-cold ledgers out of local MinIO into the AWS public

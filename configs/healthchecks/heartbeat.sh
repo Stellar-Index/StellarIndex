@@ -9,6 +9,11 @@
 # URLs come from /etc/default/stellarindex-healthchecks (off-disk
 # in git). Empty URL silently skips the ping — lets the timers
 # install before the operator has provisioned the URLs.
+#
+# A failed probe pings /fail only after HC_FAIL_AFTER (default 3)
+# consecutive failures: /fail bypasses the check's grace period, so
+# one failed probe inside a ~20 s deploy restart cost a down + up
+# email pair. The grace period still covers a heartbeat that stops.
 
 set -uo pipefail
 
@@ -54,16 +59,13 @@ curl -sSf --max-time 5 -o /dev/null "http://localhost:${PORT}/metrics" || PROBE_
 
 if [ "$PROBE_RC" -ne 0 ]; then
   echo "heartbeat: $SERVICE probe FAILED on :${PORT} (rc=$PROBE_RC)" >&2
-  # Healthchecks.io's /fail endpoint records a failure — the check
-  # turns red on the dashboard immediately, no waiting for the grace
-  # period.
-  hc_ping "$SERVICE" "${PING_URL:+${PING_URL}/fail}"
+  hc_ping_verdict "$SERVICE" "$PING_URL" "$PROBE_RC" "${HC_FAIL_AFTER:-3}"
   exit 0
 fi
 
 # Probe succeeded — ping the heartbeat URL. POST body carries a
 # short health summary so the dashboard's "last ping" entry is
 # useful at a glance.
-hc_ping "$SERVICE" "$PING_URL" -d "stellarindex-${SERVICE} ok :${PORT}"
+hc_ping_verdict "$SERVICE" "$PING_URL" 0 "${HC_FAIL_AFTER:-3}" -d "stellarindex-${SERVICE} ok :${PORT}"
 
 exit 0

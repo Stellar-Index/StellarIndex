@@ -77,7 +77,7 @@ EOF
 run_baseline() {
   : > "$TMP/gh_output"
   out="$(DEPLOY_HOST=h DEPLOY_USER=u DEPLOY_JUMP="" GITHUB_OUTPUT="$TMP/gh_output" \
-         bash "$TMP/baseline.sh" 2>&1)"
+         REGION=testnet REGION_SET="${REGION_SET:-}" bash "$TMP/baseline.sh" 2>&1)"
   local rc=$?
   gh="$(cat "$TMP/gh_output")"
   return $rc
@@ -98,29 +98,40 @@ fi
 
 echo "deploy-baseline-test: successful reads"
 
-fake_ssh 0 "v0.57.0
-v0.57.0
-v0.57.0"
+fake_ssh 0 $'stellarindex-api\tv0.57.0\nstellarindex-indexer\tv0.57.0\nstellarindex-ops\tv0.57.0'
 if run_baseline && [ "$gh" = "live=v0.57.0" ]; then
   ok "a uniform fleet reports its version"
 else
   bad "uniform fleet: rc=$? output='$gh' log='$out'"
 fi
 
-fake_ssh 0 "v0.57.0
-v0.44.7
-v0.57.0"
+fake_ssh 0 $'stellarindex-api\tv0.57.0\nstellarindex-indexer\tv0.44.7\nstellarindex-ops\tv0.57.0'
 if run_baseline && [ "$gh" = "live=v0.44.7" ]; then
   ok "a lagging binary drags the baseline down (the gate's whole point)"
 else
   bad "lagging binary: output='$gh' log='$out'"
 fi
 
+# A sidecar left behind by a binary the region no longer ships (testnet's
+# aggregator) must not drag the baseline down; without a manifest set it
+# still counts, so the filter is the manifest set and nothing else.
+fake_ssh 0 $'stellarindex-api\tv0.57.0\nstellarindex-aggregator\tv0.44.7\nstellarindex-indexer\tv0.57.0'
+if REGION_SET="stellarindex-indexer stellarindex-api stellarindex-ops" run_baseline \
+   && [ "$gh" = "live=v0.57.0" ] && grep -q '::notice::ignoring sidecar stellarindex-aggregator=v0.44.7' <<<"$out"; then
+  ok "a sidecar outside the region's manifest set is ignored and named"
+else
+  bad "non-manifest sidecar: rc=$? output='$gh' log='$out'"
+fi
+if run_baseline && [ "$gh" = "live=v0.44.7" ]; then
+  ok "without a manifest set every sidecar counts"
+else
+  bad "no manifest set: output='$gh' log='$out'"
+fi
+
 # The fake ssh cannot honour the remote loop's migrate filter, so the
 # exclusion is asserted structurally above; here we pin that a sidecar
 # list WITHOUT migrate still yields the true minimum.
-fake_ssh 0 "v0.57.0
-v0.57.0"
+fake_ssh 0 $'stellarindex-api\tv0.57.0\nstellarindex-indexer\tv0.57.0'
 if run_baseline && [ "$gh" = "live=v0.57.0" ]; then
   ok "a fleet current except migrate reports current (migrate excluded remotely)"
 else
@@ -139,8 +150,7 @@ else
   bad "absent sidecar: rc=$? output='$gh' log='$out'"
 fi
 
-fake_ssh 0 "not-a-version
-garbage"
+fake_ssh 0 $'stellarindex-api\tnot-a-version\nstellarindex-indexer\tgarbage'
 if run_baseline && [ "$gh" = "live=" ]; then
   ok "unparseable sidecar content falls back rather than passing garbage on"
 else
@@ -172,15 +182,13 @@ printf 'v0.57.0' > "$TMP/sidecars/stellarindex-api"
 printf 'v0.57.0' > "$TMP/sidecars/stellarindex-indexer"
 printf 'v0.11.0' > "$TMP/sidecars/stellarindex-migrate"
 
-run_remote "$TMP/sidecars"
-if [ $? -eq 0 ] && [ "$(printf '%s' "$rout" | grep -c 'v0.57.0')" -eq 2 ] && ! grep -q 'v0.11.0' <<<"$rout"; then
+if run_remote "$TMP/sidecars" && [ "$(printf '%s' "$rout" | grep -c 'v0.57.0')" -eq 2 ] && ! grep -q 'v0.11.0' <<<"$rout"; then
   ok "remote snippet reads the sidecars and excludes migrate"
 else
   bad "remote snippet output wrong: '$rout'"
 fi
 
-run_remote "$TMP/definitely-not-here"
-if [ $? -eq 0 ] && [ -z "$rout" ]; then
+if run_remote "$TMP/definitely-not-here" && [ -z "$rout" ]; then
   ok "absent directory exits 0 with no output (the first-deploy case)"
 else
   bad "absent directory did not exit 0 with empty output: '$rout'"

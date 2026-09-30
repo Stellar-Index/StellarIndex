@@ -121,8 +121,8 @@
 // hypertable. ADR-0048 D2 amended that: the archive is
 // `stellar.account_movements` in ClickHouse, feed-shaped (two rows
 // per movement, one per participant, direction discriminator),
-// populated by the same backfill command above. Migration 0105 stays
-// applied but UNPOPULATED — see migrations/README.md's 0105 row. The
+// populated by the same backfill command above. Migration 0105's table
+// was never populated and migration 0113 drops it. The
 // decode layer this package provides (everything above this section)
 // is unaffected: only the write target moved.
 //

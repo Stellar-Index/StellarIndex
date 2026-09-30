@@ -73,8 +73,8 @@ func TestBuildDistinctPairsQuery_AssetFilterBindsFullAliasSet(t *testing.T) {
 	}
 
 	_, args := buildDistinctPairsQuery(since, "", "native", "", 100, MarketsOrderVolume24hDesc)
-	if len(args) != 5 {
-		t.Fatalf("args = %d, want 5 ($1..$5)", len(args))
+	if len(args) != 7 {
+		t.Fatalf("args = %d, want 7 ($1..$5 + the $6/$7 alias fold)", len(args))
 	}
 	bound := bindArrayValue(t, args[4])
 	// Every alias form (native, crypto:XLM, the SAC C-address) must be
