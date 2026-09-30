@@ -99,6 +99,8 @@ Every 2xx JSON response follows this shape:
 }
 ```
 
+The session-cookie customer-dashboard operations (magic-link and passkey sign-in under `/v1/auth`, `/v1/dashboard/*` and `POST /v1/account/admin/lookup`) are the exception: they return the bare resource documented on each operation, while the API-key `/v1/account/*` operations and SEP-10 are enveloped.
+
 Field semantics:
 
 - `data`: endpoint-specific payload. Always present.
