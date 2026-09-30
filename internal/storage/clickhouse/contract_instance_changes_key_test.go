@@ -197,6 +197,64 @@ func TestContractInstanceIndexedReads_OrderSameLedgerWritesByWalkPosition(t *tes
 	}
 }
 
+// TestContractCodeHistory_SACInIndexSkipsLegacyScan: a SAC's index rows are
+// all is_sac = 1, so its wasm timeline is empty although the index covers it.
+// That empty history is authoritative on both key shapes; the changes-log
+// scan it would otherwise fall into cannot finish within the read budget.
+func TestContractCodeHistory_SACInIndexSkipsLegacyScan(t *testing.T) {
+	noColumn := &clickhouse.Exception{
+		Code: 47, Name: "UNKNOWN_IDENTIFIER",
+		Message: "Missing columns: 'intra_ledger_seq' 'tx_hash'",
+	}
+	for name, keyShapeErr := range map[string]error{"tx-keyed": nil, "old-key": noColumn} {
+		t.Run(name, func(t *testing.T) {
+			var timelineArgs, presenceArgs []any
+			conn := &stubConn{}
+			conn.respond = func(q string) (driver.Rows, error) {
+				switch {
+				case strings.Contains(q, "FROM stellar.ledger_entry_changes"):
+					t.Fatalf("a contract present in the index fell through to the legacy scan: %s", q)
+					return nil, nil
+				case strings.Contains(q, "SELECT tx_hash, intra_ledger_seq FROM stellar.contract_instance_changes LIMIT 1"):
+					if keyShapeErr != nil {
+						return nil, keyShapeErr
+					}
+					return &stubRows{}, nil
+				case strings.Contains(q, "contract_instance_changes LIMIT 1"): // availability probe
+					return &stubRows{data: [][]any{{uint32(1)}}}, nil
+				case strings.Contains(q, "SELECT ledger_seq, close_time, wasm_hash FROM ("):
+					return &stubRows{}, nil // no wasm rows
+				default: // per-contract presence read: the SAC's rows exist
+					return &stubRows{data: [][]any{{uint8(1)}}}, nil
+				}
+			}
+			r := &ExplorerReader{conn: conn}
+
+			got, err := r.ContractCodeHistory(context.Background(), testContractID)
+			if err != nil {
+				t.Fatalf("ContractCodeHistory: %v", err)
+			}
+			if len(got) != 0 {
+				t.Fatalf("versions = %+v, want none for a SAC", got)
+			}
+			for i, q := range conn.queries {
+				switch {
+				case strings.Contains(q, "SELECT ledger_seq, close_time, wasm_hash FROM ("):
+					timelineArgs = conn.args[i]
+				case strings.Contains(q, "WHERE contract_hash = ?"):
+					presenceArgs = conn.args[i]
+					if strings.Contains(q, "is_sac") || strings.Contains(q, "intra_ledger_seq") {
+						t.Fatalf("presence read must name only contract_hash: %s", q)
+					}
+				}
+			}
+			if len(timelineArgs) == 0 || len(presenceArgs) != 1 || presenceArgs[0] != timelineArgs[0] {
+				t.Fatalf("presence read args = %v, want [%v]", presenceArgs, timelineArgs)
+			}
+		})
+	}
+}
+
 // TestContractInstanceIndexedReads_OldKeyTableFallsBack: r1's table predates
 // intra_ledger_seq until its cut-over. The reads must detect that and use the
 // change_index order rather than 500 with "Unknown identifier".

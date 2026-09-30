@@ -210,7 +210,7 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 					fmt.Printf("%-34s %s\n", "sdex (undecodable)", sdexBlind.Detail())
 				}
 				for _, tgt := range src.targets {
-					actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, lo, hi)
+					actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), lo, hi)
 					if aerr != nil {
 						return fmt.Errorf("ch-reproject: %s/%s served counts: %w", src.name, tgt.table, aerr)
 					}
@@ -236,7 +236,7 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 		}
 		for _, tgt := range src.targets {
 			expected := completeness.SumKinds(chBySrc[src.name], tgt.kinds...) // CH-re-derived per ledger, this source only
-			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, lo, hi)
+			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), lo, hi)
 			if aerr != nil {
 				return fmt.Errorf("ch-reproject: %s/%s served counts: %w", src.name, tgt.table, aerr)
 			}
