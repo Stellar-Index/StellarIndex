@@ -20,6 +20,22 @@ superseded_by: null
 > (API consistency surfaces). The decision below is preserved as the
 > original record per the immutability rule.
 
+> **Amendment (2026-09-29, scope of "holds as stated").** The
+> aggregator's cached VWAP is a *rolling* window that still obeys this
+> rule: each tick computes `[bucketEnd − W, bucketEnd)` with `bucketEnd`
+> truncated to the last closed 1-minute boundary (`closedBucket`,
+> `internal/aggregate/orchestrator/orchestrator.go`), so the window
+> slides one closed minute at a time and never includes the filling
+> one. That value lives in Redis only; the orchestrator writes no CAGG
+> row. Its durable Timescale writes are the `price_source_contributions`
+> audit mirror, the ADR-0019 `freeze_events` ladder and the
+> `divergence_observations` mirror (read by the divergence listings, not
+> by a price endpoint); no served price value is read from any of them.
+> `/v1/vwap` and `/v1/twap` do not read that cache —
+> they compute on-query from `trades` and clamp `to` to the last closed
+> boundary (`clamped: true`). The one surface outside this rule is
+> ADR-0018's `/v1/price/tip`, which serves `[now − N, now)` by design.
+
 > **Amendment (2026-09-03, #345).** The Context paragraph below
 > describes a **deployed** three-region topology with Postgres
 > replication. That topology has never existed and is not what runs.
