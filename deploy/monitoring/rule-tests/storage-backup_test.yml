@@ -171,6 +171,7 @@ tests:
               severity: page
               team: stellarindex
               component: storage
+              alert_family: timescale_backup_age/stellarindex
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
               summary: "No successful Postgres backup in > 24 h (SEV-1)"
@@ -185,6 +186,7 @@ tests:
               severity: ticket
               team: stellarindex
               component: storage
+              alert_family: timescale_backup_age/stellarindex
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
               summary: "pgBackRest stanza stellarindex last backup 1d 3h 46m 40s ago"
