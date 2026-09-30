@@ -312,3 +312,21 @@ func TestAuditedWasmManifestMatchesAuditLogs(t *testing.T) {
 		}
 	}
 }
+
+// A gated source with no manifest entry is skipped as unaudited, so none of
+// its contracts would ever be checked for drift.
+func TestAuditedWasmManifestCoversEveryGatedSource(t *testing.T) {
+	m, err := loadAuditedWasm()
+	if err != nil {
+		t.Fatal(err)
+	}
+	audited := make(map[string]bool)
+	for _, e := range m {
+		audited[e.Source] = true
+	}
+	for _, s := range pipeline.GatedSourceNames() {
+		if !audited[s] {
+			t.Errorf("gated source %q has no hash in audited_wasm.json", s)
+		}
+	}
+}
