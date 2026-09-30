@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { Suspense } from 'react';
 
 import { API_BASE_URL } from '@/api/client';
-import { ogImageFor } from '@/lib/seo';
+import { ogImageFor, shellMetadata } from '@/lib/seo';
 import { Breadcrumbs, Callout, Container } from '@/components/ui';
 import { type GlobalAssetView } from '../../../assets/catalogue';
 import { isCIStub } from '@/lib/buildFetch';
@@ -113,17 +113,12 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { slug } = await params;
-  // One baked document answers every unlisted slug: generic, noindex, and
-  // an explicit empty `alternates` so the root layout's canonical is
-  // cleared rather than inherited (F095).
+  // One baked document answers every unlisted /external/assets/* slug.
   if (isShell(slug)) {
-    return {
-      title: 'External asset',
-      description:
-        'Non-Stellar reference asset detail, rendered live from the Stellar Index API.',
-      robots: { index: false, follow: true },
-      alternates: {},
-    };
+    return shellMetadata(
+      'External asset',
+      'Non-Stellar reference asset detail, rendered live from the Stellar Index API.',
+    );
   }
   const res = await fetchExternalAsset(slug);
   const view = res.status === 'ok' ? res.view : null;

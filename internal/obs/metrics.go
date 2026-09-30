@@ -189,7 +189,7 @@ func registerAPIServingMetrics() {
 	for _, reason := range []string{"caller_quota", "global_ceiling"} {
 		APITipProducersRefusedTotal.WithLabelValues(reason)
 	}
-	for _, reason := range []string{"global_cap", "per_ip_cap"} {
+	for _, reason := range []string{"global_cap", "per_ip_cap", "topic_cap"} {
 		APISSEStreamsRejectedTotal.WithLabelValues(reason)
 	}
 }
@@ -435,6 +435,7 @@ func registerAuthReaperMetrics() {
 		AuthReaperLastSweepUnix,
 		AuthReaperIntervalSeconds,
 
+		RetentionReaperRows,
 		RetentionReaperRowsDeletedTotal,
 		RetentionReaperErrorsTotal,
 	)
@@ -3455,11 +3456,12 @@ var APISSEStreamsActive = prometheus.NewGauge(prometheus.GaugeOpts{
 
 // APISSEStreamsRejectedTotal — SSE connections refused with a 503 by
 // the concurrency caps, by reason: global_cap (the process-wide
-// ceiling) or per_ip_cap (one client address at its own ceiling).
+// ceiling), per_ip_cap (one client address at its own ceiling) or
+// topic_cap (the Hub's topic map full of subscribed topics).
 var APISSEStreamsRejectedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_api_sse_streams_rejected_total",
-		Help: "SSE connections refused by the concurrency caps, labelled by reason (global_cap, per_ip_cap).",
+		Help: "SSE connections refused by the concurrency caps, labelled by reason (global_cap, per_ip_cap, topic_cap).",
 	},
 	[]string{"reason"},
 )
@@ -5554,6 +5556,18 @@ var RetentionReaperRowsDeletedTotal = prometheus.NewCounterVec(
 	[]string{"reaper"},
 )
 
+// RetentionReaperRows — current row count of each table an
+// internal/retentionreaper instance bounds, refreshed every sweep. Only
+// reapers with a count seam publish; the rest stay absent rather than
+// reading a false 0.
+var RetentionReaperRows = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_retention_reaper_rows",
+		Help: "Rows in the table a platform retention sweep bounds, by reaper (webhook_delivery). Customer-configured fan-out writes it, so sustained growth means the sweep is not keeping up.",
+	},
+	[]string{"reaper"},
+)
+
 // RetentionReaperErrorsTotal — failed internal/retentionreaper sweeps.
 // Pre-seeded so a never-failed reaper reads 0, not absent.
 var RetentionReaperErrorsTotal = prometheus.NewCounterVec(
@@ -5583,7 +5597,8 @@ var ExplorerSWRRefreshTotal = prometheus.NewCounterVec(
 
 // ExplorerRefreshGateSaturatedTotal — detached refreshes the shared
 // clickhouse.RefreshGate REFUSED, by class and by which bound tripped
-// (`class` = the per-class half-limit, `global` = the pool-wide limit).
+// (`class` = the per-class fairness bound, `global` = the pool-wide limit,
+// which for a client-keyed class excludes the slot reserved for the rest).
 // A refusal never reaches the SWR counter above (that fires only after a
 // slot is held), and at the API it surfaces as a 503 — so this is the only
 // signal separating an unauthenticated key-churn burst from real capacity

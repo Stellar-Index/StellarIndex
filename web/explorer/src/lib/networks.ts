@@ -44,9 +44,9 @@ export interface NetworkInfo {
   /** This network's API origin (grey/DNS-only) for the live-tip probe. */
   apiBaseUrl: string;
   /**
-   * Whether this network's explorer is deployed and reachable. Futurenet is
-   * Phase 2 — listed (so the design is visible) but flagged not-yet-live so
-   * the switcher shows it disabled instead of linking to a dead origin.
+   * Whether this network's explorer is deployed and reachable. The switcher
+   * links and tip-probes live networks; a non-live one is listed but rendered
+   * disabled ("Soon") so it never links to a dead origin.
    */
   live: boolean;
   /**

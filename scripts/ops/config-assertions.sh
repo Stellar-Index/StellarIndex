@@ -20,7 +20,8 @@
 set -u
 
 OUT="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}/config_assertions.prom"
-TMP="$(mktemp)"
+# Temp beside $OUT so the mv is a same-filesystem rename the collector never sees half-written.
+TMP="$(mktemp "$OUT.tmp.XXXXXX")" || exit 1
 fails=0
 
 emit() { # emit <assertion> <ok:0|1>
@@ -171,7 +172,8 @@ assert_cmd galexie_writer_creds_valid bash -c '
 # 0152 (#358) dropped aggregator_exposures / classic_asset_stats_5m /
 # tvl_observations as never-wired scaffolds, and a dropped table has no
 # policy job, so leaving it here would fail this assertion on r1 forever
-# for a table that is gone on purpose.
+# for a table that is gone on purpose. Tables the script excludes for a
+# near-unique segment-by are excluded here too, or this pages for them.
 # Reuses the SAME stellarindex_config_assertion_ok gauge +
 # the existing stellarindex_config_assertion_failed alert every other
 # assertion here uses — no new alert rule needed. Expected to page
@@ -183,12 +185,10 @@ compression_policies_applied() {
   PGPASSWORD="$(cat /etc/stellarindex/postgres-password.txt)" \
     psql -h 127.0.0.1 -U stellarindex -d stellarindex -tAc "
       SELECT count(*) FROM unnest(ARRAY[
-        'account_observations','blend_backstop_events',
-        'cctp_events','claimable_observations',
+        'account_observations','blend_backstop_events','cctp_events',
         'decoder_stats_5m','defindex_flows','divergence_observations',
         'freeze_events','lp_reserve_observations','price_source_contributions',
-        'rozo_events','sac_balance_observations','sdex_offer_events',
-        'sep41_supply_events','soroswap_router_swaps','trustline_observations'
+        'rozo_events','sdex_offer_events','sep41_supply_events'
       ]) AS want(tbl)
       WHERE NOT EXISTS (
         SELECT 1 FROM timescaledb_information.jobs j
@@ -459,7 +459,7 @@ else
   skip minio_prometheus_token_present
 fi
 
+chmod 644 "$TMP"
 mv "$TMP" "$OUT"
-chmod 644 "$OUT"
 echo "config-assertions: $fails failure(s)" >&2
 exit "$fails"

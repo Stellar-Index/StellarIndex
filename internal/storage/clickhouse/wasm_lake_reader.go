@@ -9,6 +9,8 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
+
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // ErrContractWasmUnresolved is returned by ContractWasm when the contract's
@@ -101,26 +103,77 @@ func (r *ExplorerReader) ContractWasm(ctx context.Context, contractID string) (C
 		return ContractWasmInfo{}, ErrContractWasmUnresolved
 	}
 
-	code, ok, err := r.wasmCodeByHash(ctx, wasmHash)
+	info, err := r.wasmModuleView(ctx, wasmHash)
 	if err != nil {
 		return ContractWasmInfo{}, err
 	}
-	if !ok {
-		return ContractWasmInfo{}, ErrContractWasmUnresolved
-	}
+	info.ContractID = contractID
+	return info, nil
+}
 
-	exports, perr := parseWasmExports(code)
+// wasmModuleFlightTimeout bounds one shared per-hash fill: the code read plus
+// both wabt runs (wasmToolTimeout each).
+const wasmModuleFlightTimeout = 30 * time.Second
+
+var errWasmModuleFillPanicked = errors.New("clickhouse: wasm module fill panicked")
+
+// wasmModuleView assembles everything keyed by the wasm hash alone. The
+// contract→hash hop above stays per request because upgrades move it; the
+// hash→bytes→disassembly stage is immutable, so it is memoised and run as one
+// detached flight per hash — waiters keep their own deadline, and a caller
+// that gives up does not cancel the fill for the others.
+func (r *ExplorerReader) wasmModuleView(ctx context.Context, wasmHash xdr.Hash) (ContractWasmInfo, error) {
+	key := hex.EncodeToString(wasmHash[:])
+	//nolint:contextcheck // the fill is shared by every waiter, so no single caller's cancellation may abort it
+	ch := r.wasmFlight.DoChan(key, func() (val any, err error) {
+		// singleflight re-raises a panic on a goroutine nothing can recover.
+		defer func() {
+			if rec := recover(); rec != nil {
+				worker.Report(nil, "explorer-wasm-module-fill", rec)
+				val, err = nil, errWasmModuleFillPanicked
+			}
+		}()
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), wasmModuleFlightTimeout)
+		defer cancel()
+		return r.fillWasmModule(fctx, wasmHash, key)
+	})
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			return ContractWasmInfo{}, res.Err
+		}
+		info, _ := res.Val.(ContractWasmInfo)
+		return info, nil
+	case <-ctx.Done():
+		return ContractWasmInfo{}, ctx.Err()
+	}
+}
+
+func (r *ExplorerReader) fillWasmModule(ctx context.Context, wasmHash xdr.Hash, key string) (ContractWasmInfo, error) {
+	mod, ok := r.moduleCache.get(key)
+	if !ok {
+		code, found, err := r.wasmCodeByHash(ctx, wasmHash)
+		if err != nil {
+			return ContractWasmInfo{}, err
+		}
+		if !found {
+			return ContractWasmInfo{}, ErrContractWasmUnresolved
+		}
+		exports, perr := parseWasmExports(code)
+		mod = wasmModuleEntry{code: code, exports: exports}
+		if perr != nil {
+			// A parse miss is non-fatal: still serve the resolved hash + size.
+			mod.parseNote = "export parse: " + perr.Error() + "; "
+		}
+		r.moduleCache.put(key, mod, time.Now())
+	}
 	info := ContractWasmInfo{
-		ContractID: contractID,
-		WasmHash:   hex.EncodeToString(wasmHash[:]),
-		SizeBytes:  len(code),
-		Exports:    exports,
+		WasmHash:  key,
+		SizeBytes: len(mod.code),
+		Exports:   mod.exports,
+		ToolNote:  mod.parseNote,
 	}
-	if perr != nil {
-		// A parse miss is non-fatal: still serve the resolved hash + size.
-		info.ToolNote = "export parse: " + perr.Error() + "; "
-	}
-	r.buildWasmDisassembly(ctx, &info, code)
+	r.buildWasmDisassembly(ctx, &info, mod.code)
 	return info, nil
 }
 

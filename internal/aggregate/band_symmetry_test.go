@@ -3,13 +3,16 @@ package aggregate_test
 import (
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// MNY-22 direction-symmetry regressions (findings F037, F039, K004,
-// RLT-391).
+// Direction-symmetry regressions for every robust band in this package:
+// [aggregate.FilterOutliers], [aggregate.FilterOutliersLocal],
+// [aggregate.GuardServedVWAP] and the oracle-aggregator band
+// (rejectAggregatorOutliers; its served-price test is global_band_symmetry_test.go).
 //
 // Every robust band in this package used to be ADDITIVE in price space
 // (`|p − centre| > K·scale`), which is one-sided-blind by construction:
@@ -177,6 +180,59 @@ func TestGuardServedVWAP_MADArmStillWidensDownward(t *testing.T) {
 	}
 	if accept, lkg := aggregate.GuardServedVWAP(mustRat(t, "1"), trailing); accept || lkg < 0 {
 		t.Errorf("a 100x crash print must be rejected with a last-known-good (accept=%v lkg=%d)", accept, lkg)
+	}
+}
+
+// TestRejectAggregatorOutliers_SurvivorSetSymmetric is the
+// oracle-aggregator half. Five vendors at 70/85/100/115/130 (relative MAD
+// 15 %, past the 13.5 % at which the additive lower edge goes
+// non-positive) are contaminated once with a decimal-shifted 1.00 quote
+// and once with its ratio mirror about the 92.50 median; the survivor set
+// must be exactly the five honest vendors in both directions.
+func TestRejectAggregatorOutliers_SurvivorSetSymmetric(t *testing.T) {
+	honest := []canonical.OracleUpdate{
+		oracleRow("a", 7000), oracleRow("b", 8500), oracleRow("c", 10000),
+		oracleRow("d", 11500), oracleRow("e", 13000),
+	}
+
+	cases := []struct {
+		name    string
+		outlier int64
+	}{
+		{"crash_quote_below", 100},
+		{"pump_quote_above", 855_625},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rows := append(append([]canonical.OracleUpdate{}, honest...), oracleRow("bad", tc.outlier))
+
+			kept := aggregate.RejectAggregatorOutliers(rows)
+			got := make(map[string]bool, len(kept))
+			for _, r := range kept {
+				got[r.Source] = true
+			}
+			if got["bad"] {
+				t.Errorf("survivors = %v — the %d quote is as outlying as its mirror image", got, tc.outlier)
+			}
+			for _, h := range honest {
+				if !got[h.Source] {
+					t.Errorf("survivors = %v — honest vendor %q was dropped", got, h.Source)
+				}
+			}
+			if len(kept) != len(honest) {
+				t.Errorf("kept %d rows, want exactly the %d honest vendors: %v", len(kept), len(honest), got)
+			}
+		})
+	}
+}
+
+// oracleRow builds an aggregator quote at 2dp fixed-point.
+func oracleRow(source string, priceScaled int64) canonical.OracleUpdate {
+	return canonical.OracleUpdate{
+		Source:    source,
+		Timestamp: time.Now().UTC(),
+		Price:     canonical.NewAmount(big.NewInt(priceScaled)),
+		Decimals:  2,
 	}
 }
 
