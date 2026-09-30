@@ -594,9 +594,9 @@ func (r *ExplorerReader) RecentLedgers(ctx context.Context, limit int, beforeSeq
 		// branch uses — without a lower bound this was the exact
 		// unbounded whole-table FINAL merge the tip branch was rewritten
 		// to avoid (O(table), caller-controlled via public ?before=).
-		// Ledgers are contiguous genesis→tip, so a window ≥ 25× the max
-		// page size can never truncate a legitimate page. Clamp at 0:
-		// uint32 underflow near genesis would wrap and return nothing.
+		// A short page (a lake hole wider than the window) is re-read
+		// wider below. Clamp at 0: uint32 underflow near genesis would
+		// wrap and return nothing.
 		lower := uint32(0)
 		if beforeSeq > uint32(recentLedgersTailWindow) {
 			lower = beforeSeq - uint32(recentLedgersTailWindow)
@@ -619,6 +619,41 @@ func (r *ExplorerReader) RecentLedgers(ctx context.Context, limit int, beforeSeq
 	q += ` ORDER BY ledger_seq DESC LIMIT ?` + explorerScanSettings
 	args = append(args, limit)
 
+	out, err := r.queryLedgers(ctx, q, args, limit)
+	if err != nil || len(out) == limit || (beforeSeq > 0 && beforeSeq <= uint32(recentLedgersTailWindow)) {
+		return out, err
+	}
+	return r.recentLedgersWidened(ctx, limit, beforeSeq)
+}
+
+// recentLedgersWidened re-reads a short RecentLedgers page over geometrically
+// wider windows: the lake is not contiguous (a dropped live extract leaves no
+// ledgers row until gap-scan heals it), so a hole wider than the tail window
+// would otherwise end pagination. The top is clamped to the real tip so the
+// widening spans only a genuine hole, never caller-chosen space above the tip.
+func (r *ExplorerReader) recentLedgersWidened(ctx context.Context, limit int, beforeSeq uint32) ([]LedgerHeader, error) {
+	var hi uint32
+	if err := r.conn.QueryRow(ctx, `SELECT max(ledger_seq) FROM stellar.ledgers`).Scan(&hi); err != nil {
+		return nil, fmt.Errorf("clickhouse: recent ledgers tip: %w", err)
+	}
+	if beforeSeq > 0 && beforeSeq-1 < hi {
+		hi = beforeSeq - 1
+	}
+	q := `SELECT ` + ledgerCols + ` FROM stellar.ledgers FINAL WHERE ledger_seq <= ? AND ledger_seq >= ?` +
+		` ORDER BY ledger_seq DESC LIMIT ?` + explorerScanSettings
+	for window := uint64(4 * recentLedgersTailWindow); ; window *= 4 {
+		lower := uint32(0)
+		if uint64(hi) > window {
+			lower = hi - uint32(window)
+		}
+		out, err := r.queryLedgers(ctx, q, []any{hi, lower, limit}, limit)
+		if err != nil || len(out) == limit || lower == 0 {
+			return out, err
+		}
+	}
+}
+
+func (r *ExplorerReader) queryLedgers(ctx context.Context, q string, args []any, limit int) ([]LedgerHeader, error) {
 	rows, err := r.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: recent ledgers: %w", err)
@@ -1149,8 +1184,8 @@ const ledgersPerDayPruningEstimate = 17280
 
 // recentLedgersTailWindow bounds the tip-page ledger query to a tail slice so
 // its FINAL merge prunes to the newest partition(s) instead of scanning the
-// whole table. 5000 is ~25x the max page size (200) — wide enough that a first
-// page can never be truncated, narrow enough to stay inside one partition.
+// whole table. 5000 is ~25x the max page size (200) — wide enough that a
+// hole-free page fills in one read, narrow enough to stay inside one partition.
 const recentLedgersTailWindow = 5000
 
 // NetworkThroughput returns daily network throughput (ledger / tx / op

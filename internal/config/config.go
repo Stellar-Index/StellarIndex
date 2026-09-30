@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -241,9 +242,8 @@ type TradesConfig struct {
 // min-USD-volume eligibility gate. Failing at load also makes the two
 // downstream parsers consistent: the indexer's
 // `timescale.NewUSDVolumeQuoteSpec` already hard-errors on a non-classic
-// peg, while the aggregator's `parseUSDPeggedClassicAssets` used to
-// SILENTLY skip one — this check makes that soft-skip unreachable for a
-// config that loads.
+// peg, while `TradesConfig.USDPeggedClassics` silently skips one —
+// this check makes that soft-skip unreachable for a config that loads.
 func (tc TradesConfig) validate() error {
 	for i, raw := range tc.USDPeggedClassicAssets {
 		if raw == "" {
@@ -262,6 +262,30 @@ func (tc TradesConfig) validate() error {
 		}
 	}
 	return nil
+}
+
+// USDPeggedClassics parses USDPeggedClassicAssets, logging and skipping any
+// entry validate would reject: a missing peg beats refusing to start.
+func (tc TradesConfig) USDPeggedClassics(logger *slog.Logger) []canonical.Asset {
+	if len(tc.USDPeggedClassicAssets) == 0 {
+		return nil
+	}
+	out := make([]canonical.Asset, 0, len(tc.USDPeggedClassicAssets))
+	for _, raw := range tc.USDPeggedClassicAssets {
+		asset, err := canonical.ParseAsset(raw)
+		if err != nil {
+			logger.Warn("usd_pegged_classic_assets: skipping malformed entry",
+				"raw", raw, "err", err)
+			continue
+		}
+		if asset.Type != canonical.AssetClassic {
+			logger.Warn("usd_pegged_classic_assets: ignoring non-classic asset",
+				"raw", raw, "type", asset.Type)
+			continue
+		}
+		out = append(out, asset)
+	}
+	return out
 }
 
 // PricingGuardConfig configures the serving-side price guards in
