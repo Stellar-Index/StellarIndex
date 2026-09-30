@@ -607,21 +607,34 @@ code state — these were on the "Open" list but had shipped):**
   `docs/architecture/patroni-ansible-role-design-note.md`. Other
   sub-roles (Redis Sentinel, HAProxy, Prometheus, Loki) remain
   open under Task #72.
+- **Public status page** — live at `https://stellarindex.io/status`
+  (`web/explorer/src/app/status/`); `status.stellarindex.io` is a
+  redirect-only stub. Runbook:
+  `docs/operations/status-page-setup.md`.
+- **#20 SEV-1/SEV-2 dry-run** — records in
+  `docs/operations/drills/` (2026-04 SEV-1 and SEV-2 tabletops) and
+  `docs/operations/incidents/sev-drill-2026-06-13.md` (live r1 drill:
+  SEV-1 PASS, detection 90 s against a 15 min target; SEV-2 PASS (bound)).
+- **#22 Public-flip prep** — the repo went public 2026-07-03;
+  `docs/operations/public-flip.md` is marked historical and its
+  residuals live in `docs/operations/v1-launch-plan.md`.
+- **Task #53 Blend Pool Factory walk (audit Phase 2)** — wide-net
+  `wasm-history` walk on r1 over ledgers [50,457,424, 62,249,727]
+  found zero mid-life upgrades across all 11 Blend contracts.
+  Evidence: `docs/operations/wasm-audits/evidence/blend/phase2-2026-05-02/`;
+  verdict in `docs/operations/wasm-audits/blend.md`.
 
 ### Open — implementation pending
 
-Re-baselined 2026-04-30 against current code state. Twenty-one
-items previously listed here have shipped — their evidence is
-now in *Closed since Phase 1* above.
+Re-baselined 2026-09-30 against the repo's artefacts. Four rows
+(status page, SEV dry-run, public flip, Blend factory walk) moved to
+*Closed since Phase 1* above; the two below have no closing artefact.
+Launch-critical tracking lives in `docs/operations/v1-launch-plan.md`.
 
-| Area | Item | Owner | Week | Effort |
-|---|---|---|---|---|
-| Operations | Public status page at `status.stellarindex.io` | infra | 9 | half-day |
-| Validation | S9.2 p95 ≤ 200 ms proof report — k6 suite shipped (#345/#346/#347/#348); operator-side first run + `sla-proof-2026-MM-DD.md` artefact remaining | `docs/operations/sla-proof-template.md` | 9 | ~half-day operator |
-| Validation | #19 Chaos suite Wave 2 (HA-shaped scenarios on staging baremetal — Patroni replica promotion, Sentinel failover, HAProxy VIP flip). Wave 1 (dev-stack smoke) shipped #366 | `test/chaos` | 9 | ~1 day post-launch |
-| Validation | #20 SEV-1/SEV-2 dry-run — playbook exists, dry-run record doesn't | runbooks | 9 | half-day |
-| Finalization | #22 Public-flip prep — `public-flip.md` exists; checklist completion is operator-side | repo strategy | 10 | hour planning |
-| Connectors / Audit | Task #53 Blend Pool Factory walk on r1 (Phase 2 of audit) | `cmd/stellarindex-ops wasm-history` | — | ~5 h operator |
+| Area | Item | Owner | Remaining |
+|---|---|---|---|
+| Validation | S9.2 p95 ≤ 200 ms proof report — the probe-fed generator (`scripts/ops/sla-proof-from-probe.sh`) runs and has written `docs/operations/sla-proof-2026-09-{15,16,20,28}.md`, but every report's verdict is **NOT PROVEN** (at least one endpoint misses its latency or availability target) | `docs/operations/sla-proof-procedure.md` | A report whose verdict reads PROVEN |
+| Validation | #19 Chaos suite Wave 2 (HA-shaped scenarios — Patroni replica promotion, Sentinel failover, HAProxy VIP flip). Wave 1 (dev-stack smoke, `test/chaos/scenarios/01–04`) shipped #366 | `test/chaos` | An HA topology to fail over; r1 is single-node, so this stays post-launch |
 
 ### Watch (post-launch only — explicitly accepted)
 
@@ -727,3 +740,8 @@ week lands.
   `/v1/currencies` surfaces (assets-unification, N-1) and the
   `window=` duration-unit breaking change (N-3); `/v1/coverage` +
   `/v1/protocols` recorded as beyond-spec additions.
+- **2026-09-30** — *Open — implementation pending* re-baselined
+  against repo artefacts: status page, SEV dry-run, public flip and
+  the Blend factory walk moved to *Closed since Phase 1*; S9.2 SLA
+  proof (every report NOT PROVEN) and chaos Wave 2 (no HA topology)
+  stay open.

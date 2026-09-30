@@ -1,7 +1,9 @@
 package v1
 
 import (
+	"encoding/json"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -172,21 +174,49 @@ func TestMustParseAsset_invalidPanics(t *testing.T) {
 }
 
 // priceRatioDecimal computes QuoteAmount / BaseAmount at `decimals`
-// fractional digits. Pin all branch arms: zero-base sentinel,
+// fractional digits. Pin all branch arms: zero-leg not-priceable,
 // decimals<0 clamp, no-padding, padding-needed, decimals=0
 // fast-path.
 
-func TestPriceRatioDecimal_zeroBaseReturnsZero(t *testing.T) {
+func TestPriceRatioDecimal_zeroLegNotPriceable(t *testing.T) {
 	xlm, _ := canonical.ParseAsset("native")
 	usd, _ := canonical.ParseAsset("fiat:USD")
 	pair, _ := canonical.NewPair(xlm, usd)
-	tr := canonical.Trade{
-		Pair:        pair,
-		BaseAmount:  canonical.NewAmount(big.NewInt(0)),
-		QuoteAmount: canonical.NewAmount(big.NewInt(100)),
+	for name, legs := range map[string][2]int64{
+		"zero base":  {0, 100},
+		"zero quote": {100, 0},
+	} {
+		tr := canonical.Trade{
+			Pair:        pair,
+			BaseAmount:  canonical.NewAmount(big.NewInt(legs[0])),
+			QuoteAmount: canonical.NewAmount(big.NewInt(legs[1])),
+		}
+		if got, ok := priceRatioDecimal(tr, 7); ok || got != "" {
+			t.Errorf("%s: got (%q, %v), want (\"\", false): a zero leg has no price", name, got, ok)
+		}
 	}
-	if got := priceRatioDecimal(tr, 7); got != "0" {
-		t.Errorf("got %q, want \"0\" (zero-base sentinel)", got)
+}
+
+// A stored zero-leg trade renders "price": null, never "0" or a missing key.
+func TestTradeRowFrom_zeroLegPriceNull(t *testing.T) {
+	xlm, _ := canonical.ParseAsset("native")
+	usd, _ := canonical.ParseAsset("fiat:USD")
+	pair, _ := canonical.NewPair(xlm, usd)
+	row := tradeRowFrom(canonical.Trade{
+		Source:      "sdex",
+		Pair:        pair,
+		BaseAmount:  canonical.NewAmount(big.NewInt(5_000_000_000)),
+		QuoteAmount: canonical.NewAmount(big.NewInt(0)),
+	}, 7)
+	if row.Price != nil {
+		t.Fatalf("Price = %q, want nil", *row.Price)
+	}
+	b, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"price":null`) {
+		t.Errorf("marshalled row %s lacks \"price\":null", b)
 	}
 }
 
@@ -200,7 +230,7 @@ func TestPriceRatioDecimal_negativeDecimalsClamped(t *testing.T) {
 		QuoteAmount: canonical.NewAmount(big.NewInt(7)),
 	}
 	// decimals<0 must clamp to 0; integer-only output (3 from 7/2).
-	if got := priceRatioDecimal(tr, -3); got != "3" {
+	if got, _ := priceRatioDecimal(tr, -3); got != "3" {
 		t.Errorf("got %q, want \"3\" (clamp negative decimals → 0)", got)
 	}
 }
@@ -214,7 +244,7 @@ func TestPriceRatioDecimal_decimalsZeroFastPath(t *testing.T) {
 		BaseAmount:  canonical.NewAmount(big.NewInt(2)),
 		QuoteAmount: canonical.NewAmount(big.NewInt(11)),
 	}
-	if got := priceRatioDecimal(tr, 0); got != "5" {
+	if got, _ := priceRatioDecimal(tr, 0); got != "5" {
 		t.Errorf("got %q, want \"5\" (decimals=0 fast-path: 11/2 floor=5)", got)
 	}
 }
@@ -231,7 +261,7 @@ func TestPriceRatioDecimal_paddingNeeded(t *testing.T) {
 		BaseAmount:  canonical.NewAmount(big.NewInt(1_000_000_000)),
 		QuoteAmount: canonical.NewAmount(big.NewInt(1)),
 	}
-	got := priceRatioDecimal(tr, 10)
+	got, _ := priceRatioDecimal(tr, 10)
 	// 1 * 10^10 / 1e9 = 10 → "10" → padded to "0000000010" → "0.0000000010"
 	if got != "0.0000000010" {
 		t.Errorf("got %q, want \"0.0000000010\"", got)
@@ -320,15 +350,15 @@ func TestTradeRowFrom_defaultDecimalsOnZero(t *testing.T) {
 	// decimals=0 must trigger the default (10 dp) rather than emit
 	// an integer-only price string.
 	got := tradeRowFrom(tr, 0)
-	if got.Price == "2" || got.Price == "" {
-		t.Errorf("Price = %q on decimals=0; expected default 10-dp formatting (got the integer-only path)",
+	if got.Price == nil || *got.Price == "2" {
+		t.Fatalf("Price = %v on decimals=0; expected default 10-dp formatting (got the integer-only path)",
 			got.Price)
 	}
 	// decimals=-3 (also <= 0) must take the same default path.
 	gotNeg := tradeRowFrom(tr, -3)
-	if gotNeg.Price != got.Price {
-		t.Errorf("decimals<0 (%q) and decimals=0 (%q) should both apply the default",
-			gotNeg.Price, got.Price)
+	if gotNeg.Price == nil || *gotNeg.Price != *got.Price {
+		t.Errorf("decimals<0 (%v) and decimals=0 (%q) should both apply the default",
+			gotNeg.Price, *got.Price)
 	}
 }
 

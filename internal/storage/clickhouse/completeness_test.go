@@ -265,3 +265,44 @@ func TestSubstrateHeadProblem(t *testing.T) {
 		t.Fatalf("empty-lake problem ledger = %d (has=%v); must be ≥ any source genesis so none green (soroswap=50746266)", p, has)
 	}
 }
+
+// queryRecordingConn records every query SubstrateProblem issues.
+type queryRecordingConn struct {
+	substrateProblemFakeConn
+	queries *[]string
+}
+
+func (c queryRecordingConn) QueryRow(ctx context.Context, query string, args ...any) driver.Row {
+	*c.queries = append(*c.queries, query)
+	return c.substrateProblemFakeConn.QueryRow(ctx, query, args...)
+}
+
+// TestSubstrateChainQueryPairsHashesFromOneRow: ledger_hash and prev_hash
+// must come from one tuple argMax; two independent argMax calls can pick
+// different duplicate rows on an ingested_at tie and fake (or mask) a break.
+func TestSubstrateChainQueryPairsHashesFromOneRow(t *testing.T) {
+	var queries []string
+	conn := queryRecordingConn{
+		substrateProblemFakeConn: substrateProblemFakeConn{to: 100, haveMin: 2},
+		queries:                  &queries,
+	}
+	if _, _, _, err := substrateProblemOn(context.Background(), conn, "", 2, 100); err != nil {
+		t.Fatalf("substrateProblemOn: %v", err)
+	}
+	var chain string
+	for _, q := range queries {
+		if strings.Contains(q, "prior_hash") {
+			chain = q
+			break
+		}
+	}
+	if chain == "" {
+		t.Fatal("hash-chain query never issued")
+	}
+	if !strings.Contains(chain, "argMax((ledger_hash, prev_hash), ingested_at) AS hp") {
+		t.Errorf("hash-chain query must take both hashes from one tuple argMax:\n%s", chain)
+	}
+	if strings.Contains(chain, "argMax(ledger_hash,") || strings.Contains(chain, "argMax(prev_hash,") {
+		t.Errorf("hash-chain query still has an independent per-column argMax:\n%s", chain)
+	}
+}

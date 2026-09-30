@@ -1,7 +1,7 @@
 ---
 title: Repo Hygiene & Tech-Debt Prevention Plan
 last_verified: 2026-05-03
-status: ratified, PARTIALLY STALE — §6 (feature flags) and parts of §7/§8 describe machinery that was never built; corrected inline 2026-09-02 (#361)
+status: ratified, PARTIALLY STALE — parts of §7/§8 describe machinery that was never built; corrected inline 2026-09-02 (#361)
 ---
 
 # Repo Hygiene & Tech-Debt Prevention Plan
@@ -229,41 +229,25 @@ accumulate "rubber-stamp" approvals that hide bugs.
 
 ## 6. Feature flags
 
-**Rule:** every feature flag has a scheduled **removal date** at
-creation.
+**Rule:** there is no feature-flag framework. A behaviour that needs
+an off switch is a **config-level kill-switch**: a plain boolean in
+`internal/config` whose `doc:` struct tag states what it gates and
+why it exists, with its default in the `default:` tag (e.g. `aggregate.triangulation_enabled`,
+`storage.clickhouse_projector_source`). The tag feeds
+`docs/reference/config/README.md` via `make docs-config`, so the
+rationale ships with the switch.
 
-> **NOT IMPLEMENTED (verified 2026-09-02).** There is no `internal/flags`
-> package and no `flags.*.Enabled(ctx)` call anywhere in the tree, so the
-> schema, the `Remove-by:` forcing function and the nightly CI job below
-> describe machinery that was never built. What the project actually uses
-> instead is **config-level kill-switches** — plain booleans in
-> `internal/config` with their rationale in the `doc:` struct tag (e.g.
-> `aggregate.triangulation_enabled`, `storage.clickhouse_projector_source`)
-> — which get no automatic expiry. Keep this section as the intended
-> policy, not as a description of the repo.
+- No `internal/flags` package, no per-request `Enabled(ctx)` checks,
+  no `Remove-by:` dates and no expiry job. Do not add one without a
+  second concrete use that a config boolean cannot serve.
+- A kill-switch has no automatic expiry. Once the "on" path is the
+  only one run in production, remove the switch and its "off" branch
+  in an ordinary PR.
 
-**Schema (proposed, not built):**
-
-```go
-// Flag: aggregate_tier_3_sources
-// Purpose: gate the Tier-3 CEX venue integrations (OKX, Bybit, Gate).
-// Created: 2026-05-20
-// Remove-by: 2026-08-20 (3 months)
-// Owner: the maintainer
-if flags.AggregateTier3Sources.Enabled(ctx) {
-    ...
-}
-```
-
-- Flags live in `internal/flags/flags.go`.
-- `Remove-by:` is authoritative. A nightly CI job (post-launch)
-  opens an issue when a flag has passed its date.
-- Once shipped at 100 %, a flag has two weeks to be removed from
-  code entirely. "Flag cleanup PR" is a standard task type.
-
-**Why:** long-lived feature flags become quiet branches of behaviour
-that diverge from the "on" path. The "remove by" date is the forcing
-function.
+**Why:** a long-lived switch becomes a quiet branch of behaviour that
+diverges from the "on" path. Keeping switches in `internal/config`
+makes every one of them visible in the generated config reference,
+where the dead ones are easy to find.
 
 ---
 
@@ -585,7 +569,7 @@ Gates checked weekly by the maintainer as part of the Friday wrap-up.
 - [ ] Zero open `govulncheck` advisories.
 - [ ] Coverage ≥ 70 % per package, ≥ 80 % for `canonical` /
       `aggregate` / `supply`.
-- [ ] All feature flags have valid `Remove-by` ≤ 90 days future.
+- [ ] No dead kill-switch in `docs/reference/config/README.md` (§6).
 - [ ] Dependabot PR backlog ≤ 5.
 - [ ] Every merged PR this week has a CHANGELOG entry.
 
