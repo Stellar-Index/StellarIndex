@@ -28,7 +28,7 @@ status: current
 >   decoder admits the pool each one announces, gated on
 >   `reg.IsFactory(emitter)`. **Stake contracts stay mechanism 2**
 >   (curated set): the factory does not announce them, the POOL deploys
->   them. The **12 String-schema pools + 1 Map-schema pool + 16 stake
+>   them. The **12 String-schema pools + 1 Map-schema pool + 15 stake
 >   contracts** below remain the in-code seed `phoenix.MainnetGatedSet`,
 >   now as the cold-start warm root and the operator override rather than
 >   the sole trust root. Trust extended, stated in
@@ -83,17 +83,20 @@ activity in our window.
 | `CDQLKNH3725BUP4HPKQKMM7OO62FDVXVTO7RCYPID527MZHJG2F3QBJW` | no lake events |
 | `CBENABXP6C4C7WG6KB7JQOTDS5GIIXF3IX3PIYNZFCDZDWUHITO2HZ4S` | newer pool WASM — single-event **Map-body** swap schema (`decodeSwapMap`); appeared 2026-07-02 (factory "Updated Config" + create in the same window). Seeded via `phoenix.MainnetMapPools` |
 
-## Stake contracts (16 — separate from the pools)
+## Stake contracts (15 — separate from the pools)
 
 `bond` / `unbond` events come from per-pool **stake contracts**, which are
-distinct addresses **not** returned by `query_pools()`. Original 3 (found
+distinct addresses **not** returned by `query_pools()`. Original 2 (found
 active in the 2026-05-01 walk):
 
 ```
 CBRGNWGAC25CPLMOAMR7WBPOF5QTFA5RYXQH4DEJ4K65G2QFLTLMW7RO   bond ×24
 CAF3UJ45ZQJP6USFUIMVMGOUETUTXEC35R2247VJYIVQBGKTKBZKNBJ3   unbond ×21
-CBBUVHCEML7UE46XXZXLTMGKFMKX7KOC2XAKI3TW6WBQBKWMSARMU3YM   bond ×10
 ```
+
+A third, `CBBUVHCEML7UE46XXZXLTMGKFMKX7KOC2XAKI3TW6WBQBKWMSARMU3YM` (`bond ×10`), was
+removed: its only WASM carries none of the stake literals and its events are
+`("bond", created|live|settconf|settled|expired)` — a bond instrument, not a Phoenix stake.
 
 13 more added 2026-08-18 (completeness-gap; all VERIFIED genuine — see the
 update note at the top). The first 11 co-occur in their pool's
