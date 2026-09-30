@@ -197,6 +197,15 @@ jobs:
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: ./scripts/ci/lint-baseline-growth.sh
+      # Dated doc filenames, the Go file-size ratchet, and dates or ticket
+      # ids in ADDED Go comments. Here because the comment check diffs
+      # against the PR base, which needs this job's full-history checkout.
+      - name: lint-repo-budget
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: ./scripts/ci/lint-repo-budget.sh
+      - name: lint-repo-budget self-test
+        run: ./scripts/ci/lint-repo-budget-test.sh
       # §D (govulncheck toolchain parity) durability guard: every
       # actions/setup-go step must resolve its Go version from go.mod,
       # never a hardcoded pin — see the script header for why this is a
