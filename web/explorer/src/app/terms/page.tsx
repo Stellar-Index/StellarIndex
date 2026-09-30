@@ -7,8 +7,12 @@ import Link from 'next/link';
 // Each factual paragraph names the file it mirrors in a `source:` comment;
 // correct the text when that file changes.
 
-// The registered entity name is set by the maintainer; both legal pages read it.
-export const LEGAL_ENTITY = 'Stellar Index';
+// The registered entity; both legal pages read these.
+export const LEGAL_ENTITY = 'Loop Finance Ltd';
+export const LEGAL_ENTITY_DETAILS =
+  'Loop Finance Ltd (company no. 16862033), a company registered in England and Wales, trading as Stellar Index';
+export const REGISTERED_OFFICE =
+  'Unit 9 Vinnetrow Business Centre, Vinnetrow Road, Runcton, Chichester, England, PO20 1QH';
 
 export const metadata: Metadata = {
   title: 'Terms of Service — Stellar Index',
@@ -18,6 +22,8 @@ export const metadata: Metadata = {
 };
 
 const LAST_UPDATED = '2026-09-30';
+
+const POLICY_HISTORY = [{ date: '2026-09-30', note: 'first published' }];
 
 export default function TermsPage() {
   return (
@@ -32,10 +38,11 @@ export default function TermsPage() {
         <p className="text-ink-body text-base">
           These terms govern your use of the Stellar Index explorer at
           stellarindex.io and the Stellar Index API at api.stellarindex.io
-          (together, the &ldquo;Service&rdquo;), operated by {LEGAL_ENTITY} (the
-          &ldquo;Operator&rdquo;, &ldquo;we&rdquo;, &ldquo;us&rdquo;). By using
-          the Service — anonymously, or through an account or API key — you
-          agree to them. If you do not agree, do not use the Service.
+          (together, the &ldquo;Service&rdquo;), operated by{' '}
+          {LEGAL_ENTITY_DETAILS} (the &ldquo;Operator&rdquo;, &ldquo;we&rdquo;,
+          &ldquo;us&rdquo;). By using the Service — anonymously, or through an
+          account or API key — you agree to them. If you do not agree, do not
+          use the Service.
         </p>
         <p className="text-ink-muted text-xs">Last updated: {LAST_UPDATED}</p>
       </header>
@@ -47,6 +54,10 @@ export default function TermsPage() {
         title="1. The Service"
         subtitle="What Stellar Index is, and is not"
       >
+        <p>
+          The Service is operated by {LEGAL_ENTITY_DETAILS}. Registered office:{' '}
+          {REGISTERED_OFFICE}.
+        </p>
         {/* source: docs/architecture/ingest-pipeline.md, web/explorer/src/app/methodology */}
         <p>
           Stellar Index is a market-data explorer and API for the Stellar
@@ -84,7 +95,7 @@ export default function TermsPage() {
         title="2. Access tiers, accounts and API keys"
         subtitle="Anonymous, free, and staff-set partner limits"
       >
-        {/* source: docs/adr/0049-anonymous-access-and-passkey-auth.md, configs/ansible/roles/archival-node/templates/stellarindex.toml.j2, internal/api/v1/signup.go */}
+        {/* source: docs/adr/0049-anonymous-access-and-passkey-auth.md, configs/ansible/roles/archival-node/templates/stellarindex.toml.j2, internal/api/v1/middleware/ratelimit.go, internal/api/v1/middleware/usage.go, internal/platform/account.go */}
         <p>
           The Service is free to use. There is no paid plan and no payment
           surface. Access is offered at three levels:
@@ -94,14 +105,17 @@ export default function TermsPage() {
             {
               term: 'Anonymous',
               // Production enforces anon_rate_limit_per_min = 6000 (ansible
-              // stellarindex.toml.j2); the code default is 60.
-              def: 'Every public endpoint may be read without an account or key, rate-limited per IP address (currently 6,000 requests per minute).',
+              // stellarindex.toml.j2); the code default is 60. IPv6 is keyed
+              // on the /64 prefix (ratelimit.go remoteIPPrefixFor).
+              def: 'Every public endpoint may be read without an account or key, rate-limited per IP address (currently 6,000 requests per minute; IPv6 callers share one limit per /64 block).',
             },
             {
               term: 'Free account',
-              // Self-service keys carry an explicit 1,000/min limit
-              // (signupDefaultRateLimitPerMin), which overrides the 6,000 bucket default.
-              def: 'An account (created by magic-link sign-in, or by POST /v1/register, which also issues a first key) lets you mint API keys, each with its own per-key rate limit (currently up to 1,000 requests per minute) and a monthly request quota, plus usage analytics.',
+              // Both budgets are keyed on the ACCOUNT (authenticatedRateLimitKey
+              // and UsageKeyForSubject derive "acct:<slug>"), so every key an
+              // account holds draws on one 1,000/min bucket and one monthly
+              // quota (Tier.MaxMonthlyQuota: 1,000,000 for free).
+              def: 'An account (created by magic-link sign-in, or by POST /v1/register, which also issues a first key) lets you mint API keys and see usage analytics. All keys on an account share one rate limit (currently 1,000 requests per minute) and one monthly request quota (currently 1,000,000 requests); minting more keys does not multiply either.',
             },
             {
               term: 'Partner',
@@ -200,13 +214,15 @@ export default function TermsPage() {
           data publicly, attribute it to Stellar Index with a link to
           stellarindex.io where practical.
         </p>
-        {/* source: docs/contributing/procedures/add-cex-connector.md */}
+        {/* source: docs/contributing/procedures/add-cex-connector.md, internal/api/v1/observations.go */}
         <p>
-          Some data is derived from third-party venues&rsquo; public market-data
-          feeds. We do not redistribute tier-restricted or paid feeds, and we do
-          not grant you any right in the underlying venue data beyond what those
-          venues make public. Your use of any third-party data remains subject
-          to that venue&rsquo;s own terms.
+          Some data is derived from third-party venues&rsquo; market-data feeds.
+          We use venues&rsquo; public market feeds. A venue&rsquo;s own terms
+          may limit your reuse of raw per-venue observations; check them before
+          redistributing <code>/v1/observations</code> data. We do not grant you
+          any right in the underlying venue data beyond what those venues make
+          public, and your use of any third-party data remains subject to that
+          venue&rsquo;s own terms.
         </p>
         <p>
           Ledger data is public information on the Stellar network. We claim no
@@ -280,8 +296,8 @@ export default function TermsPage() {
           You may stop using the Service at any time and may revoke your API
           keys from your account. An account owner can close the account
           entirely with <code>DELETE /v1/dashboard/account</code> while signed
-          in to the dashboard (the explorer has no button for it yet), or by
-          emailing{' '}
+          in to the dashboard — you type the account slug back to confirm (the
+          explorer has no button for it yet) — or by emailing{' '}
           <a
             href="mailto:security@stellarindex.io"
             className="text-brand-600 hover:underline"
@@ -323,14 +339,15 @@ export default function TermsPage() {
           and its Atom feed; we aim to version endpoints rather than break them
           in place, but we do not guarantee backwards compatibility before v1.
         </p>
+        {/* source: internal/notify/templates.go (no bulk sender exists; /v1/register accounts may hold no email) */}
         <p>
           We may revise these terms. Material changes will be posted on this
-          page with a new &ldquo;last updated&rdquo; date, noted in the
-          changelog, and — for account holders — emailed to the address on the
-          account at least 14 days before they take effect, unless the change is
-          required by law or addresses a security issue, in which case it may
-          take effect immediately. Continued use of the Service after a change
-          takes effect is acceptance of it.
+          page with a new &ldquo;last updated&rdquo; date and a row in the
+          policy history below, and, where we hold a verified email address for
+          the account, sent to it. The changelog is not the notice. A change
+          required by law or addressing a security issue may take effect
+          immediately. Continued use of the Service after a change takes effect
+          is acceptance of it.
         </p>
       </Section>
 
@@ -375,6 +392,8 @@ export default function TermsPage() {
           days.
         </p>
       </Section>
+
+      <PolicyHistory />
     </div>
   );
 }
@@ -465,5 +484,22 @@ function Aside({ children }: { children: React.ReactNode }) {
     <p className="border-brand-500 bg-brand-50 text-ink-body rounded-md border-l-2 px-3 py-2 text-xs">
       {children}
     </p>
+  );
+}
+
+function PolicyHistory() {
+  return (
+    <section id="history" className="scroll-mt-24 space-y-2">
+      <h2 className="text-ink-muted text-xs font-semibold tracking-wider uppercase">
+        Policy history
+      </h2>
+      <ul className="text-ink-body space-y-1 text-sm">
+        {POLICY_HISTORY.map((h) => (
+          <li key={h.date}>
+            <span className="font-mono text-xs">{h.date}</span> — {h.note}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { LEGAL_ENTITY } from '../terms/page';
+import { LEGAL_ENTITY_DETAILS, REGISTERED_OFFICE } from '../terms/page';
 
 // States only what the code, migrations and ansible role do; correct it, do
 // not reword it, when they change. Each factual paragraph names its source in
@@ -16,6 +16,8 @@ export const metadata: Metadata = {
 };
 
 const LAST_UPDATED = '2026-09-30';
+
+const POLICY_HISTORY = [{ date: '2026-09-30', note: 'first published' }];
 
 export default function PrivacyPage() {
   return (
@@ -44,28 +46,34 @@ export default function PrivacyPage() {
 
       <Section
         id="controller"
-        title="1. Who is responsible"
+        title="1. Who we are"
         subtitle="The data controller"
       >
-        {/* source: web/explorer/src/app/contact/page.tsx, SECURITY.md */}
+        {/* source: web/explorer/src/app/terms/page.tsx (LEGAL_ENTITY_DETAILS), SECURITY.md */}
         <p>
-          The data controller for the Service is {LEGAL_ENTITY} (the
-          &ldquo;Operator&rdquo;, &ldquo;we&rdquo;, &ldquo;us&rdquo;). Contact
-          for anything in this policy:{' '}
+          The data controller for the Service is {LEGAL_ENTITY_DETAILS} (the
+          &ldquo;Operator&rdquo;, &ldquo;we&rdquo;, &ldquo;us&rdquo;).
+          Registered office: {REGISTERED_OFFICE}. Contact for anything in this
+          policy:{' '}
           <a
             href="mailto:security@stellarindex.io"
             className="text-brand-600 hover:underline"
           >
             security@stellarindex.io
           </a>
-          .
+          . We acknowledge every message within 72 hours.
         </p>
-        {/* source: docs/adr/0015-last-closed-bucket-rate-serving.md */}
         <p>
-          The Service&rsquo;s servers and database are hosted by Hetzner in
-          Falkenstein, Germany, so your personal data is processed in the EU. We
-          apply the UK GDPR as the lead framework, and the EU GDPR applies to
-          that processing as well.
+          We have not appointed an EU representative under Article 27 GDPR; we
+          rely on the Article 27(2) exemption for occasional, low-risk
+          processing. We will appoint one if that changes.
+        </p>
+        {/* source: docs/adr/0015-last-closed-bucket-rate-serving.md, docs/operations/testnet-futurenet-deployment.md */}
+        <p>
+          Our servers and database are hosted by Hetzner in Germany (mainnet)
+          and Finland (test networks). Personal data leaves the EU only for the
+          processors listed in section 5. The UK GDPR and the EU GDPR both apply
+          to this processing.
         </p>
       </Section>
 
@@ -78,38 +86,58 @@ export default function PrivacyPage() {
           You can use the whole explorer and read every public API endpoint
           without an account. When you do, we process:
         </p>
-        {/* source: internal/ratelimit/bucket.go, configs/ansible/roles/archival-node/tasks/10-observability.yml */}
+        {/* source: internal/ratelimit/bucket.go, internal/api/v1/middleware/ratelimit.go (remoteIPPrefixFor), internal/api/v1/middleware/auth.go (takeFailedAuth), internal/api/v1/middleware/logger.go */}
         <DefList
           rows={[
             {
               term: 'IP address',
-              def: 'Used to enforce the anonymous per-IP rate limit: a counter keyed by your IP address is held in our cache (Redis) for the current one-minute window and expires within minutes. It is not written to the account database.',
+              def: 'Used to enforce the anonymous per-IP rate limit: a counter keyed by your IP address (for IPv6, its /64 block) is held in our cache (Redis) for the current one-minute window and expires within minutes. It is not written to the account database.',
+            },
+            {
+              term: 'Invalid API keys',
+              def: 'Requests that present an invalid API key are counted per IP address (IPv6 per /64 block) and per key prefix in our cache (Redis), so that guessing keys can be throttled. These counters expire within minutes.',
             },
             {
               term: 'Request logs',
-              def: 'Standard server logs (request path, status, timing, user agent, IP) for operating and securing the Service.',
+              def: 'Standard server logs (request path, status, timing, user agent, IP) for operating and securing the Service. Query strings, API keys and the Referer are not logged.',
             },
           ]}
         />
-        {/* source: configs/ansible/roles/archival-node/tasks/15-log-discipline.yml (MaxRetentionSec=14d; Loki 720h), configs/loki/loki.r1.yml, configs/ansible/roles/loki/defaults/main.yml */}
+        {/* source: configs/ansible/roles/archival-node/files/pg-logrotate.conf (weekly x rotate 10), files/stellarindex.logrotate (weekly x rotate 8), templates/postgresql.conf.j2 (log_min_duration_statement), tasks/15-log-discipline.yml (MaxRetentionSec=14d), configs/loki/loki.r1.yml (720h) */}
         <p>
           Our server logs, including web-server access logs with client IP
-          addresses, are kept for up to 30 days in our log store and up to 14
-          days in the host system journal, and are used only for operations,
-          security, and abuse investigation.
+          addresses, are kept for up to 30 days in our log store (Loki) and up
+          to 14 days in the host system journal. Application and database log
+          files on the host are rotated weekly and kept for up to 10 weeks; the
+          database logs slow queries in full, which can include the values a
+          query carried. All are used only for operations, security, and abuse
+          investigation.
         </p>
-        {/* source: web/explorer/wrangler.toml */}
+        {/* source: web/explorer/wrangler.toml, web/explorer/functions/client-errors.js, web/explorer/src/components/RouteError.tsx */}
         <p>
-          The explorer web site is served by Cloudflare, which keeps its own
-          request logs under its own privacy policy; we do not set their
-          retention.
+          The explorer web site is served by Cloudflare, a processor acting
+          under its data-processing agreement with us (section 5). Its edge sees
+          your IP address and requests to the site in transit and keeps request
+          logs under Cloudflare&rsquo;s own retention, which we do not set. If a
+          page fails to render, the explorer sends an error report (the error
+          message, a digest, the page section and the page path — no account
+          data) to Cloudflare, where it lands in our function logs.
         </p>
-        {/* source: web/explorer/src/app/layout.tsx, web/explorer/public/_headers */}
+        {/* source: web/explorer/public/_headers (img-src https:) */}
+        <p>
+          Asset icons are served from their issuers&rsquo; own hosts, not from
+          us. When a page shows an icon, your browser fetches it from that host
+          directly, so the host sees your IP address and user agent under its
+          own privacy policy.
+        </p>
+        {/* source: web/explorer/src/app/layout.tsx, web/explorer/public/_headers, web/explorer/src/app/assets/[slug]/AssetClientFallback.tsx */}
         <p>
           We load <strong>no</strong> third-party analytics, advertising, or
-          social-media scripts. The explorer stores some display preferences
-          (for example widget settings) in your browser&rsquo;s local storage;
-          that data never leaves your device.
+          social-media scripts. The explorer writes nothing to your
+          browser&rsquo;s local storage. It sets one sessionStorage flag when it
+          has to recover a failed page load, so the page does not reload itself
+          over and over; the flag is cleared when you close the tab and never
+          leaves your device.
         </p>
       </Section>
 
@@ -154,11 +182,14 @@ export default function PrivacyPage() {
             },
             {
               term: 'Usage counts',
-              def: 'Per-account request counts by day and by endpoint (successful, client-error, server-error and rate-limited) for your quota and the usage chart in your dashboard, plus short-lived per-minute rate-limit counters. These are counts, not request bodies.',
+              def: 'Per-account request counts by day and by endpoint (successful, client-error, server-error and rate-limited) for your quota and the usage chart in your dashboard, plus short-lived per-minute rate-limit counters. All keys on an account share one set of counters. These are counts, not request bodies.',
             },
             {
+              // The API host is not behind Cloudflare (docs/operations/explorer-deployment.md:
+              // api.* is DNS-only), so CF-IPCountry is a client-reachable header that
+              // is empty in production (handlers.go).
               term: 'Sessions',
-              def: "For each dashboard session: creation time, last-seen time, the first and most recent IP address, the user agent, and the country code our CDN attaches to the request (Cloudflare's CF-IPCountry header) when present.",
+              def: 'For each dashboard session: creation time, last-seen time, the first and most recent IP address, the user agent, and a country code where the request carries one (empty in production).',
             },
             {
               term: 'Audit log',
@@ -174,13 +205,15 @@ export default function PrivacyPage() {
             },
           ]}
         />
-        {/* source: internal/api/v1/signup.go */}
+        {/* source: internal/api/v1/signup.go (unsalted SHA-256 of the lowercased address), internal/auth/signup_tracker.go */}
         <p>
           An API key can also be requested without a dashboard account through{' '}
           <code>POST /v1/signup</code>. For that we store a SHA-256 hash of the
           email address you give, with no expiry, so the same address cannot
-          request a second key. Such a key is not part of an account, so the
-          export and erasure in section 8 do not cover it; ask us by email.
+          request a second key. An unsalted hash of an email is still personal
+          data — it can be reversed by guessing the address — and we treat it as
+          such. Such a key is not part of an account, so the export and erasure
+          in section 8 do not cover it; ask us by email.
         </p>
         <p>
           The lawful basis for each purpose (UK GDPR and EU GDPR Art. 6(1)):
@@ -189,18 +222,23 @@ export default function PrivacyPage() {
           rows={[
             {
               term: 'Contract',
-              def: 'Your account, its email address and the messages we send to it: necessary to provide the account you asked for (Art. 6(1)(b)).',
+              def: 'Your account, its email address, API keys and dashboard sessions, and the messages we send to the address: necessary to provide the account you asked for (Art. 6(1)(b)).',
             },
             {
               term: 'Legitimate interests',
-              def: 'API-key usage records, sign-in and session records, and rate-limit counters: our legitimate interest in keeping the Service secure, preventing abuse and protecting your account (Art. 6(1)(f)).',
+              def: 'Our legitimate interest in keeping the Service secure and available, and enforcing fair use (Art. 6(1)(f)): the audit log, anonymous request logs, per-IP rate-limit counters (IPv6 per /64), invalid-API-key counters, the sign-in device cookie, the sign-in request records, the CDN edge logs, client error reports, the POST /v1/signup email hash, and the icon fetches from issuer hosts.',
             },
             {
               term: 'Legal obligation',
-              def: 'The audit log: needed to meet our obligations to secure personal data and to account for breaches (Art. 6(1)(c)), and our legitimate interest in investigating misuse of an account (Art. 6(1)(f)).',
+              def: 'None today: we keep no record because a law requires it (Art. 6(1)(c)). If that changes we will say so here.',
             },
           ]}
         />
+        <p>
+          An email address is needed to sign in to the dashboard; without one
+          you can still use anonymous reads and <code>POST /v1/register</code>{' '}
+          keys.
+        </p>
       </Section>
 
       <Section
@@ -238,39 +276,44 @@ export default function PrivacyPage() {
       >
         <p>
           We do not sell personal data, and we do not share it with anyone
-          except the infrastructure providers below, each acting on our
-          instructions, and where the law requires us to.
+          except the providers below, each acting on our instructions, and where
+          the law requires us to.
         </p>
-        {/* source: internal/notify/resend.go, web/explorer/wrangler.toml, configs/ansible/roles/archival-node/templates/pgbackrest.conf.j2, docs/adr/0015-last-closed-bucket-rate-serving.md */}
+        {/* source: internal/notify/resend.go, docs/operations/dns-email-perimeter.md (SES us-east-1; Google Workspace MX), web/explorer/wrangler.toml, web/explorer/functions/client-errors.js, configs/ansible/roles/archival-node/templates/pgbackrest.conf.j2, docs/operations/off-site-backup-plan.md, docs/adr/0015-last-closed-bucket-rate-serving.md */}
         <DefList
           rows={[
             {
-              term: 'Resend',
-              def: 'Transactional email delivery. Receives your email address and the sign-in, verification and account-security messages we send to it.',
-            },
-            {
               term: 'Cloudflare',
-              def: 'Serves this explorer web site from its edge network, so it sees your IP address and requests to the site in transit.',
+              def: 'Serves this explorer web site from its edge network (CDN), keeps edge request logs, and receives the client error reports described in section 2. United States; data-processing agreement with standard contractual clauses.',
             },
             {
-              term: 'Off-site backup storage',
-              def: 'Off-site copies of the database are encrypted (AES-256) before they leave our servers and are held in S3-compatible object storage separate from the host.',
+              term: 'Resend',
+              def: 'Transactional email delivery, via Amazon SES in the us-east-1 (United States) region. Receives your email address and the sign-in and account-security messages we send to it. Data-processing agreement with standard contractual clauses.',
             },
             {
-              term: 'Hetzner',
-              def: 'Hosts the API servers and the database in which account data lives, in Falkenstein, Germany.',
+              term: 'Google Workspace',
+              def: 'Hosts the security@stellarindex.io mailbox, so it receives anything you email us, including rights requests. United States; data-processing agreement with standard contractual clauses.',
             },
             {
               term: 'GitHub',
-              def: 'If you open an issue or discussion, GitHub processes it under its own privacy policy; we do not run a support inbox for general questions.',
+              def: 'Issue tracker for public reports. If you open an issue or discussion, GitHub processes it under its data-processing agreement and its own privacy policy; we do not run a support inbox for general questions.',
+            },
+            {
+              term: 'Hetzner',
+              def: 'Hosts the API servers and the database in which account data lives, in Germany (mainnet) and Finland (test networks).',
+            },
+            {
+              term: 'Off-site backup storage',
+              def: 'Off-site copies of the database are encrypted (AES-256) before they leave our servers and are held in an S3-compatible object store separate from the host, in the EU or under standard contractual clauses if outside it.',
             },
           ]}
         />
         <p>
-          The account database is hosted in Germany. Where a provider above
-          processes data outside the UK or EEA, the transfer relies on a UK or
-          EU adequacy decision or on the standard contractual clauses in that
-          provider&rsquo;s data-processing terms.
+          The account database is hosted in the EU. Where a provider above
+          processes data in the United States, the transfer relies on the
+          standard contractual clauses in that provider&rsquo;s data-processing
+          terms (or a UK or EU adequacy decision where one applies). You can ask
+          us for a copy of the clauses that apply to your data by email.
         </p>
         {/* source: docs/adr/0049-anonymous-access-and-passkey-auth.md */}
         <Aside>
@@ -284,7 +327,7 @@ export default function PrivacyPage() {
         title="6. How long we keep it"
         subtitle="The retention each record is actually held to"
       >
-        {/* source: internal/magiclinkreaper/reaper.go, internal/logincodereaper/reaper.go, internal/api/v1/dashboardauth/handlers.go (SessionTTL), internal/retentionreaper/reaper.go, migrations/0167_usage_daily_retention.up.sql, migrations/0188_account_erasure.up.sql */}
+        {/* source: internal/magiclinkreaper/reaper.go, internal/logincodereaper/reaper.go, internal/api/v1/dashboardauth/handlers.go (SessionTTL), internal/retentionreaper/reaper.go, internal/platform/postgresstore/webhook_store.go (SweepFinishedDeliveries), migrations/0167_usage_daily_retention.up.sql, migrations/0188_account_erasure.up.sql, internal/auth/signup_tracker.go, configs/ansible/roles/archival-node/defaults/main.yml (ZFS snapshot + pgBackRest retention) */}
         <DefList
           rows={[
             {
@@ -294,6 +337,10 @@ export default function PrivacyPage() {
             {
               term: 'Sign-in lockouts',
               def: 'Records of repeated failed sign-in codes (email address only) are deleted automatically 48 hours after the lockout ends.',
+            },
+            {
+              term: 'Sign-in counters',
+              def: 'The per-IP and per-email counters that limit magic-link requests live in our cache (Redis) for a rolling hour; the invalid-API-key counters in section 2 expire within minutes. Both expire automatically.',
             },
             {
               term: 'Sessions',
@@ -309,7 +356,15 @@ export default function PrivacyPage() {
             },
             {
               term: 'Webhook deliveries',
-              def: 'The delivery log, including payloads, is deleted automatically 30 days after each delivery.',
+              def: 'The delivery log, including payloads, is deleted automatically 30 days after it was queued, once no retry is pending.',
+            },
+            {
+              term: 'Webhooks and alerts',
+              def: 'A webhook or price alert you configure is kept until you delete it or the account is erased.',
+            },
+            {
+              term: 'Signup email hash',
+              def: 'The POST /v1/signup email hash has no expiry; email us to have it deleted.',
             },
             {
               term: 'Audit log',
@@ -318,6 +373,22 @@ export default function PrivacyPage() {
             {
               term: 'Account and email',
               def: 'Kept indefinitely while the account exists; nothing deletes an inactive account. An erasure deletes the account record and pseudonymises the records that are kept (section 8).',
+            },
+            {
+              term: 'Server logs',
+              def: 'Log store (Loki) 30 days; host system journal 14 days; application and database log files on the host up to 10 weeks (section 2).',
+            },
+            {
+              term: 'CDN logs',
+              def: "Cloudflare's edge request logs and the function logs that receive client error reports are held by Cloudflare under its own retention, which we do not set.",
+            },
+            {
+              term: 'Backups',
+              def: 'Backups are encrypted (AES-256) and expire on a rolling schedule of roughly a few weeks: local snapshots after 7 days, off-site full and differential sets after a few weeks.',
+            },
+            {
+              term: 'Correspondence',
+              def: 'Email you send to security@stellarindex.io is kept in that mailbox while your request is open and afterwards as a record of how we handled it; ask us and we will delete it once the request is closed.',
             },
           ]}
         />
@@ -359,8 +430,9 @@ export default function PrivacyPage() {
           ]}
         />
         <p>
-          Anonymous browsing and API use set no cookies at all. Embedded widgets
-          set none either.
+          Anonymous browsing sets none of ours, and embedded widgets set none
+          either. Our CDN may set a strictly-necessary security cookie (for
+          example <code>__cf_bm</code>) during a challenge.
         </p>
       </Section>
 
@@ -368,9 +440,13 @@ export default function PrivacyPage() {
         <p>
           If you are in the UK or the EEA you have the right to access the
           personal data we hold about you, to have it corrected or erased, to
-          restrict or object to its processing, to receive it in a portable
-          form, and to withdraw any consent you have given. Equivalent rights
-          may apply under other laws where you live.
+          restrict its processing, to receive it in a portable form, and to
+          withdraw any consent you have given. You also have the right to
+          object, on grounds relating to your particular situation, to any
+          processing we base on legitimate interests (section 3); if you do, we
+          stop unless we can show compelling legitimate grounds that override
+          your interests. Equivalent rights may apply under other laws where you
+          live.
         </p>
         <p>
           To exercise any of them, email{' '}
@@ -381,7 +457,7 @@ export default function PrivacyPage() {
             security@stellarindex.io
           </a>{' '}
           from the address on your account, so we can verify it is you. We
-          respond within one month. Your{' '}
+          acknowledge within 72 hours and respond within one month. Your{' '}
           <Link href="/dashboard" className="text-brand-600 hover:underline">
             dashboard
           </Link>{' '}
@@ -389,14 +465,19 @@ export default function PrivacyPage() {
           you can revoke keys there yourself; it has no view of your sessions
           other than signing out.
         </p>
-        {/* source: internal/api/v1/dashboardauth/account.go (accountReauthWindow), internal/platform/export.go */}
+        {/* source: internal/api/v1/dashboardauth/account.go (accountReauthWindow, confirm = slug), internal/platform/export.go (field list) */}
         <p>
           An account owner can also act directly through the API, signed in to
           the dashboard (an API key cannot do either) and within 10 minutes of
-          signing in: <code>GET /v1/dashboard/account/export</code> returns
-          everything we hold about the account as a JSON download, and{' '}
-          <code>DELETE /v1/dashboard/account</code> erases it. The explorer has
-          no button for either yet.
+          signing in: <code>GET /v1/dashboard/account/export</code> returns the
+          account&rsquo;s records — the account, its members, sessions,
+          passkeys, API keys, webhooks, price alerts, invitations, usage counts
+          and audit log — as a JSON download, and{' '}
+          <code>DELETE /v1/dashboard/account</code> erases it; you type the
+          account slug back to confirm. The export does not include cache
+          counters, expired sign-in tokens, or the <code>POST /v1/signup</code>{' '}
+          email hash; ask us by email for those. The explorer has no button for
+          either yet.
         </p>
         {/* source: internal/platform/postgresstore/account_erasure.go, internal/accounterasure/eraser.go */}
         <p>
@@ -418,17 +499,19 @@ export default function PrivacyPage() {
           and suspension reasons stripped from their details; daily usage counts
           are re-labelled with a random identifier and age out after 12 months;
           and a hash of the account name is kept so the name cannot be reused.
-          An erasure does not reach database backups and snapshots, which we do
-          not promise to expire on any schedule; server logs, which age out
-          after up to 30 days; or copies of sent email held by our email
-          provider under its own retention. If we restore from a backup, our
-          restore procedure re-applies every erasure before the API serves the
-          restored data.
+          An erasure does not reach database backups and snapshots, which expire
+          on the schedule in section 6; server logs, which age out after up to
+          10 weeks; or copies of sent email held by our email provider under its
+          own retention. Erased accounts are not re-created from a backup
+          restore: our restore runbook is required to re-apply erasures before
+          the API serves; if a restore predates your erasure request, tell us
+          and we will erase again.
         </p>
         <p>
-          You also have the right to complain to a supervisory authority: our
-          lead authority is the UK Information Commissioner&rsquo;s Office; in
-          the EEA you may also complain to the authority in your member state.
+          You also have the right to complain to a supervisory authority. The UK
+          regulator is the Information Commissioner&rsquo;s Office (ICO). If you
+          are in the EEA you may also complain to your national supervisory
+          authority.
         </p>
       </Section>
 
@@ -437,26 +520,26 @@ export default function PrivacyPage() {
         title="9. Changes to this policy"
         subtitle="How you will find out"
       >
+        {/* source: internal/notify/templates.go (no bulk sender exists; /v1/register accounts may hold no email) */}
         <p>
-          We will post changes here with a new &ldquo;last updated&rdquo; date,
-          note material changes in the{' '}
-          <Link href="/changelog" className="text-brand-600 hover:underline">
-            changelog
-          </Link>
-          , and email account holders about any change that affects what we
-          collect or how long we keep it. This policy is part of the{' '}
+          Material changes will be posted on this page with a new &ldquo;last
+          updated&rdquo; date and a row in the policy history below, and, where
+          we hold a verified email address for the account, sent to it. The
+          changelog is not the notice. This policy is part of the{' '}
           <Link href="/terms" className="text-brand-600 hover:underline">
             terms of service
           </Link>
           .
         </p>
       </Section>
+
+      <PolicyHistory />
     </div>
   );
 }
 
 const TOC = [
-  { id: 'controller', label: 'Who is responsible' },
+  { id: 'controller', label: 'Who we are' },
   { id: 'anonymous', label: 'Browsing and anonymous API use' },
   { id: 'accounts', label: 'Accounts, sign-in and API keys' },
   { id: 'ip-addresses', label: 'Why we keep IP addresses at full resolution' },
@@ -541,5 +624,22 @@ function Aside({ children }: { children: React.ReactNode }) {
     <p className="border-brand-500 bg-brand-50 text-ink-body rounded-md border-l-2 px-3 py-2 text-xs">
       {children}
     </p>
+  );
+}
+
+function PolicyHistory() {
+  return (
+    <section id="history" className="scroll-mt-24 space-y-2">
+      <h2 className="text-ink-muted text-xs font-semibold tracking-wider uppercase">
+        Policy history
+      </h2>
+      <ul className="text-ink-body space-y-1 text-sm">
+        {POLICY_HISTORY.map((h) => (
+          <li key={h.date}>
+            <span className="font-mono text-xs">{h.date}</span> — {h.note}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

@@ -47,14 +47,14 @@ const TIERS: Tier[] = [
     name: 'Free account',
     price: '$0',
     priceSubtitle: 'self-service',
-    rateLimit: '1,000 req/min per key',
+    rateLimit: '1,000 req/min per account',
     cta: { label: 'Create account', href: '/signup' },
     description:
       'Register in one curl (POST /v1/register) or sign in with magic-link, mint an API key, get per-key usage analytics and a budget that is yours rather than shared with every client on your IP. Designed for builders and agents shipping to customers.',
     highlight: true,
     features: [
       'Every public endpoint, same data',
-      '1,000 requests / minute per key (a per-key budget, not a raise)',
+      '1,000 requests / minute per account, shared by all its keys (a separate budget, not a raise)',
       'One-curl onboarding: POST /v1/register',
       'Per-key usage history (30d)',
       'Mint & rotate keys at /account',
