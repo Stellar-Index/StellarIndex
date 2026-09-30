@@ -3,6 +3,7 @@
 # alerts added with their counters:
 #
 #   stellarindex_monthly_quota_fail_open      (C3-082)
+#   stellarindex_monthly_quota_fail_closed
 #   stellarindex_admin_audit_write_failing    (C3-067)
 #   stellarindex_usage_write_failing          (GH-1277)
 #
@@ -89,6 +90,52 @@ tests:
     alert_rule_test:
       - eval_time: 35m
         alertname: stellarindex_monthly_quota_fail_open
+        exp_alerts: []
+
+  # ── Sustained counter outage past the dwell window pages ─────────
+  # The gate has flipped to fail-CLOSED: the fail-open counter is flat
+  # and only the fail-closed one moves, so this is the rule that must
+  # carry a sustained outage.
+  - interval: 1m
+    name: a sustained monthly-quota fail-closed pages
+    input_series:
+      - series: 'stellarindex_monthly_quota_fail_open_total{job="stellarindex_api",instance="r1:8080"}'
+        values: '0+0x20'
+      - series: 'stellarindex_monthly_quota_fail_closed_total{job="stellarindex_api",instance="r1:8080"}'
+        values: '0+5x20'
+
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_monthly_quota_fail_open
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: stellarindex_monthly_quota_fail_closed
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/monthly-quota-fail-open.md
+              summary: "Monthly quota is FAILING CLOSED — metered keys are being 429'd"
+              description: |
+                The month-to-date usage counter has been unreadable for longer
+                than the fail-open dwell time, so the monthly-quota gate has
+                flipped to failing CLOSED: every request from a key with a
+                monthly cap now gets a 429 (errors/monthly-quota-unavailable)
+                whether or not the key is anywhere near its cap. Paying
+                customers are denied service until the counter answers
+                without error for the same dwell time.
+
+  - interval: 1m
+    name: a healthy quota path does not page fail-closed
+    input_series:
+      - series: 'stellarindex_monthly_quota_fail_closed_total{job="stellarindex_api",instance="r1:8080"}'
+        values: '0+0x20'
+
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_monthly_quota_fail_closed
         exp_alerts: []
 
   # ── C3-067: ONE lost audit row tickets, labelled by surface ──────
