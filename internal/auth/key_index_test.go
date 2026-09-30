@@ -512,3 +512,88 @@ func TestDeleteKeysForIdentifier_RemovesEveryOwnedRecord(t *testing.T) {
 		})
 	}
 }
+
+// delAfterFirstPipeline deletes the index once the build's first batch
+// lands — an operator DEL, an eviction or a failover losing the hash.
+type delAfterFirstPipeline struct {
+	mr    *miniredis.Miniredis
+	fired atomic.Bool
+}
+
+func (d *delAfterFirstPipeline) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (d *delAfterFirstPipeline) ProcessHook(next redis.ProcessHook) redis.ProcessHook { return next }
+
+func (d *delAfterFirstPipeline) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		err := next(ctx, cmds)
+		if !d.fired.Swap(true) {
+			d.mr.Del(cachekeys.APIKeyIndex().String())
+		}
+		return err
+	}
+}
+
+// TestKeyIndex_HashLostMidBuildIsNeverMarkedReady — `ready` written onto a
+// hash that lost the build's entries would make every lookup trust an
+// index that hides live keys.
+func TestKeyIndex_HashLostMidBuildIsNeverMarkedReady(t *testing.T) {
+	f := newKeyIndexFixture(t)
+	const owner = "account:lost-mid-build"
+	rec, _ := f.mint(t, owner)
+	f.mr.Del(cachekeys.APIKeyIndex().String())
+	f.rdb.AddHook(&delAfterFirstPipeline{mr: f.mr})
+
+	if got := listedKeyIDs(t, f.store, owner); !sameKeyIDs(got, rec.KeyID) {
+		t.Fatalf("list across a mid-build index loss = %v, want [%s]", got, rec.KeyID)
+	}
+	if _, ok := f.indexField(t, keyIndexReadyField); ok {
+		t.Fatal("index marked ready although its hash was lost during the build")
+	}
+	if got := listedKeyIDs(t, f.store, owner); !sameKeyIDs(got, rec.KeyID) {
+		t.Fatalf("list after the rebuild = %v, want [%s]", got, rec.KeyID)
+	}
+	if _, ok := f.indexField(t, keyIndexReadyField); !ok {
+		t.Fatal("a superseded build blocked the next one: index still not ready")
+	}
+}
+
+// TestKeyIndex_InvalidateRecoversRecordsWrittenRaw — a rolled-back binary
+// writes records without index entries while `ready` stays set. After the
+// startup invalidation those records must be listable and revocable.
+func TestKeyIndex_InvalidateRecoversRecordsWrittenRaw(t *testing.T) {
+	f := newKeyIndexFixture(t)
+	ctx := context.Background()
+	const owner = "account:rolled-back"
+	indexed, _ := f.mint(t, owner)
+	_ = listedKeyIDs(t, f.store, owner) // builds
+
+	rawPlain := "sip_" + strings.Repeat("cd", 32)
+	body := fmt.Sprintf(`{"key_id":"kid_raw01","identifier":%q,"tier":"apikey"}`, owner)
+	if err := f.mr.Set(cachekeys.APIKey(hashAPIKey(rawPlain)).String(), body); err != nil {
+		t.Fatalf("seed raw record: %v", err)
+	}
+
+	if err := f.store.InvalidateKeyIndex(ctx); err != nil {
+		t.Fatalf("InvalidateKeyIndex: %v", err)
+	}
+	if got := listedKeyIDs(t, f.store, owner); !sameKeyIDs(got, indexed.KeyID, "kid_raw01") {
+		t.Fatalf("list after invalidation = %v, want both keys", got)
+	}
+	if err := f.store.RevokeKeyByID(ctx, owner, "kid_raw01"); err != nil {
+		t.Fatalf("RevokeKeyByID on the raw record: %v", err)
+	}
+	if f.authenticates(rawPlain) {
+		t.Fatal("raw-written key survived revocation after invalidation")
+	}
+}
+
+// TestKeyIndex_InvalidateUnderDeniedACLIsNotAnError — the API must start
+// on a lockdown Redis that does not admit the index family yet.
+func TestKeyIndex_InvalidateUnderDeniedACLIsNotAnError(t *testing.T) {
+	f := newKeyIndexFixture(t)
+	f.denier.deny.Store(true)
+	if err := f.store.InvalidateKeyIndex(context.Background()); err != nil {
+		t.Fatalf("InvalidateKeyIndex under a denying ACL = %v, want nil", err)
+	}
+}
