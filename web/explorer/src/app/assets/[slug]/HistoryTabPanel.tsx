@@ -155,7 +155,7 @@ export function HistoryTabPanel({
                 {formatStroopAmount(r.quote_amount, r.quote_decimals ?? 7)}
               </td>
               <td className="py-2 pr-3 text-right font-mono text-xs">
-                {r.price ?? deriveAvgPrice(r.base_amount, r.quote_amount)}
+                {r.price ?? '—'}
               </td>
             </tr>
           ))}
@@ -178,13 +178,6 @@ function formatStroopAmount(s: string, decimals = 7): string {
   if (Math.abs(v) >= 1_000) return `${(v / 1_000).toFixed(2)}k`;
   if (Math.abs(v) >= 1) return v.toFixed(2);
   return v.toFixed(4);
-}
-
-function deriveAvgPrice(base: string, quote: string): string {
-  const b = Number(base);
-  const q = Number(quote);
-  if (!b || !q || !Number.isFinite(b) || !Number.isFinite(q)) return '—';
-  return (q / b).toFixed(7);
 }
 
 export type { TradeRow };
