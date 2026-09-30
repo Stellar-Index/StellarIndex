@@ -55,6 +55,8 @@ ssh r1 'journalctl -t stellarindex-tier-d --since "-10 days" --no-pager | tail -
 | Pattern | Cause |
 | ------- | ----- |
 | `PEERS DISAGREE` / mismatch reported | A sampled peer's checkpoint hash disagrees with ours. Escalate as a possible fork — compare the disputed checkpoint against a second peer before concluding which side is wrong. |
+| `SELF DIVERGES FROM PEER CONSENSUS` / `our archive ... diverges` | The peers agree with each other but our `-archive-root` checkpoint JSON differs. Treat as a possible fork or corruption of OUR mirror — same STOP as peers disagreeing. |
+| `our archive ... matched no consensus-verified checkpoint` / `missing from our archive` | Our mirror's `history/` tree lacks the sampled checkpoints (wrong `-archive-root`, or a hole inside the mirror's coverage). Check the mirror before re-running. |
 | `verify-archive: ...` parse or config error | The rendered flags are wrong for this host shape; see `scripts/ci/verify-archive-tier-d-test.sh`. |
 | no log entry at all in the window | The cron entry isn't installed, or `run-heavy-job.sh`'s lock was held by another heavy job for the entire window. Check `verify_archive_tier_d_enabled` in inventory. |
 

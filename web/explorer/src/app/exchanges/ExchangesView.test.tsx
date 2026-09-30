@@ -58,8 +58,51 @@ describe('ExchangesView', () => {
     await waitFor(() =>
       expect(screen.getByText(/No CEX sources reporting/)).toBeInTheDocument(),
     );
-    expect(screen.getByText(/No CEX pairs reporting/)).toBeInTheDocument();
+    // The pair query waits on the registry's venue list, so it settles later.
+    expect(
+      await screen.findByText(/No CEX pairs reporting/),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/unavailable right now/)).not.toBeInTheDocument();
     expect(screen.getByText(/0 centralised exchanges/)).toBeInTheDocument();
+  });
+
+  it('fetches pairs for every registered CEX, not a fixed venue list', async () => {
+    const cex = ['binance', 'coinbase', 'kraken', 'bitstamp', 'okx'];
+    vi.mocked(apiGet).mockReset();
+    vi.mocked(apiGet).mockImplementation(async (path, params) => {
+      if (path === '/v1/sources') {
+        return {
+          data: [
+            ...cex.map((name) => ({
+              name,
+              class: 'exchange',
+              subclass: 'cex',
+            })),
+            { name: 'soroswap', class: 'exchange', subclass: 'amm' },
+          ],
+        };
+      }
+      const source = (params as { source?: string } | undefined)?.source;
+      return {
+        data: [
+          {
+            base: `crypto:${source?.toUpperCase()}COIN`,
+            quote: 'fiat:USD',
+            trade_count_24h: 1,
+          },
+        ],
+      };
+    });
+    renderView();
+    await waitFor(() =>
+      expect(screen.getByText(/5 CEX pairs/)).toBeInTheDocument(),
+    );
+    expect(screen.getByText(/OKXCOIN/)).toBeInTheDocument();
+    const marketSources = vi
+      .mocked(apiGet)
+      .mock.calls.filter(([p]) => p === '/v1/markets')
+      .map(([, q]) => (q as { source: string }).source)
+      .sort();
+    expect(marketSources).toEqual([...cex].sort());
   });
 });

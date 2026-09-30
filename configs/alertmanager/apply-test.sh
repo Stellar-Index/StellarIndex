@@ -31,6 +31,7 @@ run_with() {
   out="$(ALERTMANAGER_SECRETS="$env_file" \
          ALERTMANAGER_SKIP_PROBE="${SKIP_PROBE:-1}" \
          TARGET="$(mktemp)" \
+         TEXTFILE_DIR="${TEXTFILE_DIR:-$(mktemp -d)}" \
          bash "$APPLY" "${CHECK_ONLY_FLAG:-}" 2>&1)"
   RC=$?
   rm -f "$env_file"
@@ -183,6 +184,51 @@ if command -v amtool >/dev/null 2>&1; then
 else
   echo "  skip — amtool not installed; delivery-failure branches not exercised"
 fi
+
+# 11. A completed apply publishes each optional receiver's dark state as a
+#     textfile gauge, so an alert — not just this run's stderr — carries it.
+#     The host-mutating tools are stubbed so the run reaches the install tail.
+STUBS="$(mktemp -d)"
+for t in amtool install systemctl; do printf '#!/bin/sh\nexit 0\n' > "$STUBS/$t"; done
+# The post-reload read-back wants every wired receiver's block in the running config.
+cat > "$STUBS/curl" <<'SH'
+#!/bin/sh
+printf '%s\n' '{"config":{"original":"webhook_configs:\nwebhook_configs:\ndiscord_configs:\ndiscord_configs:\ndiscord_configs:\n"}}'
+SH
+chmod +x "$STUBS"/*
+TF="$(mktemp -d)"
+PROM="$TF/alertmanager_receivers.prom"
+out12="$(PATH="$STUBS:$PATH" TEXTFILE_DIR="$TF" run_with "${FULL[@]}" \
+  'DISCORD_WEBHOOK_URL_INFORMATIONAL=https://discord.com/api/webhooks/3/c')"
+rc12=$?
+gauge="$(cat "$PROM" 2>/dev/null)"
+if [ "$rc12" -eq 0 ] \
+   && [[ "$gauge" == *'stellarindex_alertmanager_optional_receiver_dark{receiver="delivery-failure"} 1'* ]] \
+   && [[ "$gauge" == *'stellarindex_alertmanager_optional_receiver_dark{receiver="informational"} 0'* ]]; then
+  ok "apply publishes the dark receiver as 1 and the wired one as 0"
+else
+  bad "optional-receiver gauge wrong; rc=$rc12 gauge=${gauge:0:300} out=${out12:0:300}"
+fi
+# mktemp creates 0600, which the unprivileged node_exporter cannot read.
+if [ -n "$(find "$PROM" -perm 0644 2>/dev/null)" ] \
+   && [ -z "$(find "$TF" -name 'alertmanager_receivers.prom.*')" ] \
+   && python3 "$SCRIPT_DIR/../../scripts/ci/lint_textfile_exposition.py" --check-file "$PROM" >/dev/null 2>&1; then
+  ok "gauge file is 0644, parseable, with no temp file left behind"
+else
+  bad "gauge file mode, exposition or temp-file cleanup wrong: $(ls -la "$TF")"
+fi
+
+# 12. --check-only installs nothing, so it must publish nothing either.
+TF2="$(mktemp -d)"
+CHECK_ONLY_FLAG=--check-only
+PATH="$STUBS:$PATH" TEXTFILE_DIR="$TF2" run_with "${FULL[@]}" >/dev/null
+unset CHECK_ONLY_FLAG
+if [ ! -e "$TF2/alertmanager_receivers.prom" ]; then
+  ok "--check-only publishes no receiver gauge"
+else
+  bad "--check-only published a gauge for a config it did not install"
+fi
+rm -rf "$STUBS" "$TF" "$TF2"
 
 echo "alertmanager apply-test: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
