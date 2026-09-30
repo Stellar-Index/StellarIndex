@@ -734,7 +734,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// 14-day-window aggregations over the trades hypertable
 	// (~450-500 ms cold), so a 60 s cache absorbs polling fan-out
 	// without delaying new-listing surfacing more than once-a-minute.
-	var assetReader v1.AssetReader = storeAssetReader{s: store, homeDomainLookup: homeDomainLookup.listing, detailHomeDomainLookup: homeDomainLookup.detail}
+	var assetReader v1.AssetReader = storeAssetReader{s: store, listingHomeDomains: homeDomainLookup.listing, detailHomeDomainLookup: homeDomainLookup.detail}
 	var marketsReader v1.MarketsReader = storeMarketsReader{s: store}
 	if rdb != nil {
 		assetReader = cachedAssetReader{
@@ -2917,14 +2917,14 @@ func clickhouseReadyChecks(addr string, er *clickhouse.ExplorerReader, dialErr e
 // the typed boundary: the store returns canonical.Asset; the API
 // layer owns the wire-shape conversion to v1.AssetDetail.
 //
-// homeDomainLookup (listing rows) and detailHomeDomainLookup (GetAsset)
-// are the two surface lookups from newHomeDomainLookups. Each returns
-// ("", false) when no domain is known; the AssetDetail then has
-// HomeDomain==nil and the overlay handler stamps
+// listingHomeDomains (listing page) and detailHomeDomainLookup (GetAsset)
+// are the two surface lookups from newHomeDomainLookups. An issuer with
+// no known domain is absent / returns ("", false); the AssetDetail then
+// has HomeDomain==nil and the overlay handler stamps
 // sep1_status="not_fetched" for that case.
 type storeAssetReader struct {
 	s                      *timescale.Store
-	homeDomainLookup       func(ctx context.Context, issuer string) (string, bool)
+	listingHomeDomains     func(ctx context.Context, issuers []string) map[string]string
 	detailHomeDomainLookup func(ctx context.Context, issuer string) (string, bool)
 }
 
@@ -2935,14 +2935,14 @@ type storeAssetReader struct {
 // static map: detail carries only the observation layer, and static is
 // handed to v1 to consult after that read.
 type homeDomainLookups struct {
-	listing func(ctx context.Context, issuer string) (string, bool)
+	listing func(ctx context.Context, issuers []string) map[string]string
 	detail  func(ctx context.Context, issuer string) (string, bool)
 	static  func(ctx context.Context, issuer string) (string, bool)
 }
 
 func newHomeDomainLookups(live *metadata.LCMHomeDomainResolver, static func(issuer string) (string, bool), warnFn func(msg string, kv ...any)) homeDomainLookups {
 	return homeDomainLookups{
-		listing: metadata.ChainedHomeDomainLookup(live, static, warnFn),
+		listing: metadata.ChainedHomeDomainBatch(live, static, warnFn),
 		detail:  metadata.ObservedHomeDomainLookup(live, warnFn),
 		static:  metadata.StaticHomeDomainFallback(live, static, warnFn),
 	}
@@ -2960,11 +2960,33 @@ func (r storeAssetReader) ListAssets(ctx context.Context, cursor string, limit i
 	if err != nil {
 		return nil, "", err
 	}
+	return assetsToDetails(ctx, assets, r.listingHomeDomains), next, nil
+}
+
+// assetsToDetails resolves a listing page's issuer home domains in one
+// batch read, then maps each asset through assetToDetail.
+func assetsToDetails(ctx context.Context, assets []canonical.Asset, homeDomains func(ctx context.Context, issuers []string) map[string]string) []v1.AssetDetail {
+	var lookup func(ctx context.Context, issuer string) (string, bool)
+	if homeDomains != nil {
+		seen := make(map[string]bool, len(assets))
+		issuers := make([]string, 0, len(assets))
+		for _, a := range assets {
+			if a.Issuer != "" && !seen[a.Issuer] {
+				seen[a.Issuer] = true
+				issuers = append(issuers, a.Issuer)
+			}
+		}
+		domains := homeDomains(ctx, issuers)
+		lookup = func(_ context.Context, issuer string) (string, bool) {
+			d, ok := domains[issuer]
+			return d, ok
+		}
+	}
 	out := make([]v1.AssetDetail, len(assets))
 	for i, a := range assets {
-		out[i] = assetToDetail(ctx, a, r.homeDomainLookup)
+		out[i] = assetToDetail(ctx, a, lookup)
 	}
-	return out, next, nil
+	return out
 }
 
 func (r storeAssetReader) GetAsset(ctx context.Context, a canonical.Asset) (v1.AssetDetail, error) {
@@ -4274,6 +4296,7 @@ type metadataStoreLookup struct{ s accountObservationReader }
 
 type accountObservationReader interface {
 	LatestAccountObservationAtOrBefore(ctx context.Context, accountID string, asOfLedger uint32) (timescale.AccountObservation, error)
+	LatestAccountObservationsAtOrBefore(ctx context.Context, accountIDs []string, asOfLedger uint32) (map[string]timescale.AccountObservation, error)
 }
 
 func (a metadataStoreLookup) HomeDomainAtOrBefore(ctx context.Context, issuer string, asOfLedger uint32) (metadata.IssuerHomeDomain, error) {
@@ -4284,11 +4307,27 @@ func (a metadataStoreLookup) HomeDomainAtOrBefore(ctx context.Context, issuer st
 	if err != nil {
 		return metadata.IssuerHomeDomain{}, err
 	}
+	return observedHomeDomain(row), nil
+}
+
+func (a metadataStoreLookup) HomeDomainsAtOrBefore(ctx context.Context, issuers []string, asOfLedger uint32) (map[string]metadata.IssuerHomeDomain, error) {
+	rows, err := a.s.LatestAccountObservationsAtOrBefore(ctx, issuers, asOfLedger)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]metadata.IssuerHomeDomain, len(rows))
+	for issuer, row := range rows {
+		out[issuer] = observedHomeDomain(row)
+	}
+	return out, nil
+}
+
+func observedHomeDomain(row timescale.AccountObservation) metadata.IssuerHomeDomain {
 	hd := metadata.IssuerHomeDomain{Observed: true}
 	if !row.IsRemoval && row.HomeDomain != nil {
 		hd.Domain = *row.HomeDomain
 	}
-	return hd, nil
+	return hd
 }
 
 // storeVolumeReader adapts *timescale.Store to v1.VolumeReader.

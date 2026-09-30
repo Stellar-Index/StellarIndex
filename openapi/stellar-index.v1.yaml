@@ -690,7 +690,7 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
                 pagination:
-                  next: catalogue:2
+                  next: catalogue:WyJ4bG0iLCJ1c2RjIl0
               schema: { $ref: "#/components/schemas/AssetListEnvelope" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -764,7 +764,7 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
                 pagination:
-                  next: '2'
+                  next: WyJjaGluZXNlLXl1YW4iLCJ1cy1kb2xsYXIiXQ
               schema: { $ref: "#/components/schemas/AssetListEnvelope" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -13336,17 +13336,28 @@ components:
             instance: "/v1/oracle/latest"
             request_id: "e0fca799b0b6d066ed6c928b5cb0d5e6"
     ServiceUnavailable:
-      description: Server is degraded (dependency outage, startup, shutdown).
+      description: Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
-          example:
-            type: "https://api.stellarindex.io/errors/account-store-unavailable"
-            title: "Account store not configured"
-            status: 503
-            detail: "this deployment has no AccountStore wired — typically because Redis is unavailable"
-            instance: "/v1/account/keys"
-            request_id: "70c8017d79651070fd16c2c9f065d846"
+          examples:
+            accountStoreUnavailable:
+              summary: A required dependency is not wired
+              value:
+                type: "https://api.stellarindex.io/errors/account-store-unavailable"
+                title: "Account store not configured"
+                status: 503
+                detail: "this deployment has no AccountStore wired — typically because Redis is unavailable"
+                instance: "/v1/account/keys"
+                request_id: "70c8017d79651070fd16c2c9f065d846"
+            throttleUnavailable:
+              summary: Rate limiter store unreachable past its fail-open dwell window (Retry-After 30)
+              value:
+                type: "https://api.stellarindex.io/errors/throttle-unavailable"
+                title: "Throttle layer unavailable"
+                status: 503
+                detail: "the abuse-prevention layer has been unreachable for an extended period; retry in a moment"
+                instance: "/v1/assets"
 
   schemas:
     PasskeyCredential:
@@ -15052,6 +15063,11 @@ components:
           the composite SUBSTITUTED around a dry configured chain leg
           — the price came via an alternative path, not the documented
           direct chain. Omitted when false.
+        - `pivot_unverified` — set on a TRIANGULATED `/v1/price` response
+          when a leg of the composite was priced only from stablecoin
+          prints taken at par with USD, with no prints in the leg's own
+          quote asset to check a stablecoin de-peg against. Omitted when
+          false.
         - `unverified_ticker_collision` — fires on `/v1/assets/{id}`
           when the asset's code matches a verified currency's
           Stellar ticker but the issuer doesn't. The matching
@@ -15137,6 +15153,14 @@ components:
             substituted around a dry configured chain leg — the price came via
             an alternative path, not the documented direct chain. Omitted when
             false.
+        pivot_unverified:
+          type: boolean
+          default: false
+          description: >
+            Set on a TRIANGULATED /v1/price response when a leg of the
+            composite was priced only from stablecoin prints taken at par with
+            USD, with no prints in the leg's own quote asset to check a
+            stablecoin de-peg against. Omitted when false.
         unverified_ticker_collision: { type: boolean, default: false }
         filters_ignored:
           type: array
@@ -18520,7 +18544,10 @@ components:
             - unreachable:    a fetch WAS attempted and produced nothing
               storable — a 404, a dead name, a TLS failure, or a document
               that would not parse. THEIRS, and the one an issuer can act
-              on.
+              on. Also reported when a held payload is over 30 days old,
+              or of unrecorded age, and the issuer's domain is failing
+              now, so a dead domain's last document is not served as
+              `verified`.
 
             The last two are the distinction worth reading carefully,
             because they were one value until 2026-09-16. An asset

@@ -17,8 +17,9 @@ import (
 )
 
 type fakeObservationReader struct {
-	rows map[string]timescale.AccountObservation
-	err  error
+	rows       map[string]timescale.AccountObservation
+	err        error
+	batchCalls *int
 }
 
 func (f fakeObservationReader) LatestAccountObservationAtOrBefore(_ context.Context, accountID string, _ uint32) (timescale.AccountObservation, error) {
@@ -30,6 +31,24 @@ func (f fakeObservationReader) LatestAccountObservationAtOrBefore(_ context.Cont
 		return timescale.AccountObservation{}, timescale.ErrNotFound
 	}
 	return row, nil
+}
+
+func (f fakeObservationReader) LatestAccountObservationsAtOrBefore(ctx context.Context, accountIDs []string, asOfLedger uint32) (map[string]timescale.AccountObservation, error) {
+	if f.batchCalls != nil {
+		*f.batchCalls++
+	}
+	out := make(map[string]timescale.AccountObservation, len(accountIDs))
+	for _, id := range accountIDs {
+		row, err := f.LatestAccountObservationAtOrBefore(ctx, id, asOfLedger)
+		if errors.Is(err, timescale.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		out[id] = row
+	}
+	return out, nil
 }
 
 // TestHomeDomainLookup_ObservedAbsenceBeatsStatic drives the production
@@ -72,6 +91,48 @@ func TestHomeDomainLookup_ObservedAbsenceBeatsStatic(t *testing.T) {
 		}
 		if got != tc.want {
 			t.Errorf("issuer %s: home_domain=%q, want %q", tc.issuer, got, tc.want)
+		}
+	}
+}
+
+// TestAssetsToDetails_OneBatchReadPerPage drives the production listing
+// wiring (newHomeDomainLookups → assetsToDetails): a page of N assets makes
+// one observation read, and each row gets the same home_domain the
+// per-issuer chain would give it.
+func TestAssetsToDetails_OneBatchReadPerPage(t *testing.T) {
+	const (
+		cleared   = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		live      = "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+		unwatched = "GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55"
+	)
+	onChain := "aqua.network"
+	batchCalls := 0
+	reader := fakeObservationReader{batchCalls: &batchCalls, rows: map[string]timescale.AccountObservation{
+		cleared: {AccountID: cleared, Ledger: 10, Balance: big.NewInt(1)},
+		live:    {AccountID: live, Ledger: 12, Balance: big.NewInt(1), HomeDomain: &onChain},
+	}}
+	static := func(string) (string, bool) { return "operator.example.com", true }
+	hdl := newHomeDomainLookups(metadata.NewLCMHomeDomainResolver(metadataStoreLookup{s: reader}), static, nil)
+
+	assets := []canonical.Asset{
+		{Type: canonical.AssetClassic, Code: "A", Issuer: cleared},
+		{Type: canonical.AssetClassic, Code: "B", Issuer: live},
+		{Type: canonical.AssetClassic, Code: "C", Issuer: live},
+		{Type: canonical.AssetClassic, Code: "D", Issuer: unwatched},
+		{Type: canonical.AssetNative},
+	}
+	want := []string{"", onChain, onChain, "operator.example.com", ""}
+	got := assetsToDetails(context.Background(), assets, hdl.listing)
+	if batchCalls != 1 {
+		t.Fatalf("observation batch reads=%d for %d rows, want 1", batchCalls, len(assets))
+	}
+	for i, d := range got {
+		hd := ""
+		if d.HomeDomain != nil {
+			hd = *d.HomeDomain
+		}
+		if hd != want[i] {
+			t.Errorf("row %d (%s): home_domain=%q, want %q", i, assets[i].String(), hd, want[i])
 		}
 	}
 }
