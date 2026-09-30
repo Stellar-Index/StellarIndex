@@ -1163,8 +1163,8 @@ captive_peer_port_backfill:         11727
 #   r1: writes to local MinIO at 127.0.0.1:9000 (galexie-live +
 #       galexie-archive both local).
 #   r2: galexie-live still local (region-isolated tail); galexie-
-#       archive READS from s3://aws-public-blockchain (override
-#       galexie_archive_endpoint + galexie_archive_bucket below).
+#       archive READS from s3://aws-public-blockchain (set the
+#       stellarindex_s3_cold_* knobs; there is no archive endpoint here).
 #   r3: galexie-live local; galexie-archive on Vultr Object Storage
 #       (S3-compatible, region-local Singapore endpoint).
 # ]
