@@ -10,7 +10,7 @@ import { SourceStatsPanel } from '@/app/dexes/[source]/SourceStatsPanel';
 import { SourceTopChart } from '@/app/dexes/[source]/SourceTopChart';
 import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
 import { formatCompact, formatPairPrice } from '@/lib/format';
-import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
+import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, shellMetadata } from '@/lib/seo';
 import { shortAssetText } from '@/lib/asset-label';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
@@ -75,17 +75,12 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { name } = await params;
-  // One baked document answers every unlisted /sources/* path: generic,
-  // noindex, and an explicit empty `alternates` so the root layout's
-  // canonical is cleared rather than inherited (F095).
+  // One baked document answers every unlisted /sources/* path.
   if (isShell(name)) {
-    return {
-      title: 'Source detail',
-      description:
-        'Per-venue source detail, rendered live from the Stellar Index API.',
-      robots: { index: false, follow: true },
-      alternates: {},
-    };
+    return shellMetadata(
+      'Source detail',
+      'Per-venue source detail, rendered live from the Stellar Index API.',
+    );
   }
   const canonical = `${CURRENT_NETWORK.explorerUrl}/sources/${encodeURIComponent(name)}`;
   const title = `${name} — source detail`;

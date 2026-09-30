@@ -258,6 +258,21 @@ Status-page states (modelled after Atlassian Statuspage):
 - **Major outage** — API unavailable.
 - **Under maintenance** — scheduled; not an incident.
 
+What the shipped page actually renders, and the decisions that replaced
+the Instatus design's open questions
+([`status-page-hosting-comparison.md`](../architecture/status-page-hosting-comparison.md#open-questions-for-the-implementer--resolved)):
+- **Severity → state:** an incident's `severity:` sets its card —
+  SEV-1 → major, SEV-2 → minor, SEV-3 → maintenance. No PagerDuty
+  or vendor webhook is involved.
+- **Subscribers:** no email list (zero PII). Atom feed at
+  `GET /v1/incidents.atom`; dashboard webhooks for push.
+- **Retention:** the git corpus is the permanent record.
+- **Maintenance:** before a deploy that silences alerts, post a
+  `severity: maintenance` notice (`POST /v1/admin/status-notices`)
+  and resolve it when the window closes.
+- **Page unavailable or unpublishable:** post in the public Discord
+  (§7 step 1).
+
 ### 5.2 Update templates
 
 The one-liners below are for the status page. The longer

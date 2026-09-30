@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
 
+import { shellMetadata } from '@/lib/seo';
+
 import { AccountPathView } from './AccountPathView';
 
 // Shell-only for now; richlist + named accounts will be pre-rendered + indexed
@@ -12,12 +14,10 @@ export function generateStaticParams() {
   return [{ g: 'shell' }];
 }
 
-export const metadata: Metadata = {
-  title: 'Account',
-  description:
-    'Stellar account detail: balances, trustlines, signers, and recent activity.',
-  robots: { index: false, follow: true },
-};
+export const metadata: Metadata = shellMetadata(
+  'Account',
+  'Stellar account detail: balances, trustlines, signers, and recent activity.',
+);
 
 export default function AccountDetailPage() {
   return (
