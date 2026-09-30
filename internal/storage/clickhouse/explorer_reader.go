@@ -2347,39 +2347,24 @@ type ContractActivityRow struct {
 	DataDisplay   string
 }
 
-// contractEventsRecentQuery builds ContractEventsRecent's SQL.
+// contractEventsRecentQuery builds ContractEventsRecent's fast-path SQL.
 //
-// LIMIT 1 BY the contract_events primary key (audit W4-storage-1, same class as
-// DAT-10): stellar.contract_events is ReplacingMergeTree(ingested_at), so a
-// re-ingested event (ch-live-catchup heal / ch-rebuild / partial-flush retry —
-// all documented legitimate dup-part states) leaves an un-merged duplicate PART,
-// byte-identical bar ingested_at, until a background merge — and without dedup
-// this per-row activity feed served the SAME event TWICE. LIMIT 1 BY, not FINAL:
-// FINAL would defeat the contract_id bloom skip-index and force ClickHouse to
-// merge every overlapping part for this bloom-probed, no-lower-bound scan — the
-// same O(table) trap recentOperationsQuery documents. LIMIT 1 BY dedups on the
-// table's full ORDER BY tuple (ledger_seq, tx_hash, op_index, event_index) and
-// composes with the existing ORDER BY, so it stays a cheap keyset/tip scan; run
-// BEFORE the page-size LIMIT (ClickHouse clause order) it also stops an un-merged
-// duplicate part from eating a page slot, mirroring the union-arm dedup.
+// It deliberately carries neither FINAL nor `LIMIT 1 BY`: FINAL defeats the
+// contract_id bloom skip-index, and `LIMIT 1 BY` disables ClickHouse's reverse
+// read-in-order early exit, turning a busy contract's first page into an
+// O(all-events-of-contract) sort (16.3s vs 0.16s on a 17.9M-event contract).
+// stellar.contract_events is ReplacingMergeTree(ingested_at), so an un-merged
+// duplicate part can still return the same event twice; contractEventsScan
+// collapses those in Go — the full ORDER BY tuple makes duplicate row-identities
+// adjacent, so adjacent-row collapse is exact. The page over-fetches
+// contractEventsDedupHeadroom rows so dedup can still fill it; a duplicate storm
+// beyond that falls back to contractEventsRecentDedupQuery (in-CH dedup, slow).
 //
 // explorerScanSettings: the contract_id predicate rides a bloom skip-index
 // over the billions-row contract_events table — granule-pruned but
 // scan-shaped, and reading the wide topics_xdr/data_xdr columns per
 // surviving granule is exactly the per-stream-buffer × part-fan-out product
-// the pin bounds (route-sweep 2026-07-29: /v1/contracts/{id} was in the 8s
-// 503 class).
-// contractEventsRecentQuery deliberately carries NO `LIMIT 1 BY`: that
-// clause disables ClickHouse's reverse read-in-order early exit, turning
-// the busy-contract first page into an O(all-events-of-contract) sort —
-// measured 16.3s vs 0.16s (100×) for a 17.9M-event contract on r1
-// (2026-08-06, the CCW5IBJ7… soroswap-router 503). The W4-storage-1 RMT
-// duplicate-part dedup still happens — in Go, in contractEventsScan: the
-// full ORDER BY tuple makes duplicate row-identities ADJACENT in the
-// stream, so adjacent-row collapse is exact. The page over-fetches
-// contractEventsDedupHeadroom rows so dedup can collapse and still fill
-// the page; a duplicate storm beyond that falls back to
-// contractEventsRecentDedupQuery (in-CH dedup, slow, correct).
+// the pin bounds.
 func contractEventsRecentQuery(hasCursor, hasLedgerSet bool) string {
 	q := `SELECT ledger_seq, close_time, tx_hash, op_index, event_index, event_type, topic_0_sym,
 			topics_xdr, data_xdr
