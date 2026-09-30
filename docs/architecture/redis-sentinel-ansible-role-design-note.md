@@ -390,6 +390,9 @@ Patroni test setup.
    debatable. Recommend skip TLS for v1 launch; add TODO for
    Phase-3 multi-region (where Redis would not span regions
    anyway, but the principle of in-flight encryption matters).
+   *Tracked:* the role ships without TLS (TODO in `defaults/main.yml`);
+   the decision is carried by [`multi-region-ha.md`](multi-region-ha.md)
+   §7.5 as part of the multi-host Sentinel build.
 
 3. **`redis_exporter` vs Redis's own `INFO` exposure?** Both
    work. Recommend `redis_exporter` for parity with the rest

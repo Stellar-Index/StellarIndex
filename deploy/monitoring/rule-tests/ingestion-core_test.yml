@@ -49,6 +49,7 @@ tests:
               severity: ticket
               team: stellarindex
               component: ingestion
+              alert_family: ingestion_source_stopped
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
               summary: "Source binance has stopped ingesting"
@@ -118,6 +119,7 @@ tests:
               severity: ticket
               team: stellarindex
               component: ingestion
+              alert_family: ingestion_source_stopped
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
               summary: "Low-volume Soroban DEX phoenix silent 24+ hours"
@@ -158,6 +160,7 @@ tests:
               severity: ticket
               team: stellarindex
               component: ingestion
+              alert_family: ingestion_source_stopped
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
               summary: "Daily publisher band silent 30+ hours"
@@ -213,6 +216,7 @@ tests:
               severity: ticket
               team: stellarindex
               component: ingestion
+              alert_family: ingestion_source_stopped
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
               summary: "Source binance has stopped ingesting"
@@ -309,6 +313,7 @@ tests:
               severity: page
               team: stellarindex
               component: ingestion
+              alert_family: ingestion_source_stopped
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/all-ingestion-down.md
               summary: "All ingestion sources have stopped (SEV-1)"
@@ -344,6 +349,7 @@ tests:
               severity: page
               team: stellarindex
               component: ingestion
+              alert_family: ingestion_source_stopped
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/all-ingestion-down.md
               summary: "All ingestion sources have stopped (SEV-1)"
@@ -797,6 +803,7 @@ tests:
               severity: ticket
               team: stellarindex
               component: ingestion
+              alert_family: ingestion_ch_live_sink_drops
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink-drops.md
               summary: "ClickHouse live-sink is dropping ledger extracts"
@@ -838,6 +845,7 @@ tests:
               severity: page
               team: stellarindex
               component: ingestion
+              alert_family: ingestion_ch_live_sink_drops
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink-drops.md
               summary: "ClickHouse live-sink drops sustained for 1h — heal path losing the race"

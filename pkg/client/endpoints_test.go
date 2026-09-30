@@ -647,6 +647,38 @@ func TestHistory_HappyPath(t *testing.T) {
 	}
 }
 
+// A zero-leg row decodes "price": null to a nil Price, distinct from a
+// priced row; neither decodes to an empty string.
+func TestHistory_NullPriceDecodesToNil(t *testing.T) {
+	_, c := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": [
+				{"source":"sdex","ledger":50000000,"tx_hash":"abc","op_index":0,"ts":"2026-04-28T09:30:00Z","base_asset":"native","quote_asset":"fiat:USD","base_amount":"5000000000","quote_amount":"0","price":null},
+				{"source":"sdex","ledger":50000001,"tx_hash":"def","op_index":0,"ts":"2026-04-28T09:31:00Z","base_asset":"native","quote_asset":"fiat:USD","base_amount":"10000000","quote_amount":"700000","price":"0.0700000000"}
+			],
+			"as_of": "2026-04-28T10:00:00Z",
+			"flags": {}
+		}`))
+	})
+	got, err := c.History(context.Background(), client.HistoryRangeQuery{
+		Base: "native", Quote: "fiat:USD",
+		From: time.Date(2026, 4, 28, 9, 0, 0, 0, time.UTC), To: time.Date(2026, 4, 28, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if len(got.Data) != 2 {
+		t.Fatalf("len(Data) = %d, want 2", len(got.Data))
+	}
+	if got.Data[0].Price != nil {
+		t.Errorf("Data[0].Price = %q, want nil for a null price", *got.Data[0].Price)
+	}
+	if got.Data[1].Price == nil || *got.Data[1].Price != "0.0700000000" {
+		t.Errorf("Data[1].Price = %v, want 0.0700000000", got.Data[1].Price)
+	}
+}
+
 // TestHistory_PaginationCarriesCursor — cursor walks forward.
 // Pinned because the cursor field is the SDK's main value-add
 // over a hand-rolled query string for multi-page exports.

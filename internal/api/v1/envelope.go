@@ -81,6 +81,9 @@ type Envelope struct {
 //     configured chain leg — the router walked an alternative path
 //     rather than the documented direct chain (R3). Only meaningful on
 //     the /v1/price triangulated serve path; omitted when false.
+//   - PivotUnverified: a TRIANGULATED composite priced a leg only from
+//     stablecoin prints taken at par with USD, with no own-quote prints
+//     to check a de-peg against. Omitted when false.
 type Flags struct {
 	Stale             bool `json:"stale"`
 	ReducedRedundancy bool `json:"reduced_redundancy"`
@@ -145,6 +148,8 @@ type Flags struct {
 	// not the documented direct chain (R3). Surfaced on the /v1/price
 	// triangulated serve path only; omitempty hides it when false.
 	Rerouted bool `json:"rerouted,omitempty"`
+	// PivotUnverified: a composite leg was all stablecoin prints at par, so a de-peg in it went unchecked.
+	PivotUnverified bool `json:"pivot_unverified,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
 	// requested asset's code matches a verified currency's Stellar
 	// ticker but its issuer doesn't match the verified entry — i.e.

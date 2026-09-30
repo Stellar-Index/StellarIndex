@@ -690,7 +690,7 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
                 pagination:
-                  next: catalogue:2
+                  next: catalogue:WyJ4bG0iLCJ1c2RjIl0
               schema: { $ref: "#/components/schemas/AssetListEnvelope" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -764,7 +764,7 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
                 pagination:
-                  next: '2'
+                  next: WyJjaGluZXNlLXl1YW4iLCJ1cy1kb2xsYXIiXQ
               schema: { $ref: "#/components/schemas/AssetListEnvelope" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -4877,6 +4877,7 @@ paths:
                                 expected_ledgers: { type: integer, format: int64, description: "Denominator of density_pct — tip - genesis + 1, window-scoped when a coverage snapshot exists. Omitted when zero." }
                                 gap_free_pct:    { type: number,  description: "1 - max_gap_ledgers / expected_ledger. 1.0 when no contiguous gap above the per-target threshold, even for a legitimately sparse source. Omitted when zero." }
                                 coverage_snapshot_at: { type: string, format: date-time, description: "When the gap detector last refreshed this row's data-derived numbers. Absent before its first post-deploy cycle." }
+                                coverage_scan_cadence_s: { type: integer, format: int64, description: "Longest gap-detector scan cadence (seconds) among this row's tables — the interval coverage_snapshot_at is expected to refresh on. Absent with coverage_snapshot_at." }
                                 completeness_pct:        { type: number,  description: "ADR-0033 watermark coverage: (watermark - genesis + 1) / (tip - genesis + 1). No sparsity threshold — a single PROVEN gap pins it. Absent until compute-completeness has run for the source." }
                                 completeness_watermark:  { type: integer, format: int64, description: "Highest fully-verified ledger." }
                                 completeness_complete:   { type: boolean, description: "SERVED/combined axis of the ADR-0033/ADR-0034 two-axis verdict: substrate ∧ recognition ∧ the retention-scoped projection reconcile." }
@@ -8110,6 +8111,8 @@ paths:
         Customer-tier callers need no header. A `/v1/signup` key's
         email-verification stamp carries over to the child, so rotated
         keys keep working under `signup_require_email_verification`.
+        Only `apikey` and `operator` callers may mint; a SEP-10 token
+        gets 403.
       security:
         - APIKeyAuth: []
       parameters:
@@ -8164,8 +8167,9 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
           description: |
-            The caller authenticated with a SEP-10 token; API keys are
-            not issued to SEP-10 subjects (`key-mint-not-available`).
+            Caller is not an account tier (`apikey` or `operator`):
+            a SEP-10 wallet token gets `key-mint-not-available`, any
+            other non-account credential `account-tier-required`.
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -13335,17 +13339,28 @@ components:
             instance: "/v1/oracle/latest"
             request_id: "e0fca799b0b6d066ed6c928b5cb0d5e6"
     ServiceUnavailable:
-      description: Server is degraded (dependency outage, startup, shutdown).
+      description: Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
-          example:
-            type: "https://api.stellarindex.io/errors/account-store-unavailable"
-            title: "Account store not configured"
-            status: 503
-            detail: "this deployment has no AccountStore wired — typically because Redis is unavailable"
-            instance: "/v1/account/keys"
-            request_id: "70c8017d79651070fd16c2c9f065d846"
+          examples:
+            accountStoreUnavailable:
+              summary: A required dependency is not wired
+              value:
+                type: "https://api.stellarindex.io/errors/account-store-unavailable"
+                title: "Account store not configured"
+                status: 503
+                detail: "this deployment has no AccountStore wired — typically because Redis is unavailable"
+                instance: "/v1/account/keys"
+                request_id: "70c8017d79651070fd16c2c9f065d846"
+            throttleUnavailable:
+              summary: Rate limiter store unreachable past its fail-open dwell window (Retry-After 30)
+              value:
+                type: "https://api.stellarindex.io/errors/throttle-unavailable"
+                title: "Throttle layer unavailable"
+                status: 503
+                detail: "the abuse-prevention layer has been unreachable for an extended period; retry in a moment"
+                instance: "/v1/assets"
 
   schemas:
     PasskeyCredential:
@@ -15064,6 +15079,11 @@ components:
           the composite SUBSTITUTED around a dry configured chain leg
           — the price came via an alternative path, not the documented
           direct chain. Omitted when false.
+        - `pivot_unverified` — set on a TRIANGULATED `/v1/price` response
+          when a leg of the composite was priced only from stablecoin
+          prints taken at par with USD, with no prints in the leg's own
+          quote asset to check a stablecoin de-peg against. Omitted when
+          false.
         - `unverified_ticker_collision` — fires on `/v1/assets/{id}`
           when the asset's code matches a verified currency's
           Stellar ticker but the issuer doesn't. The matching
@@ -15149,6 +15169,14 @@ components:
             substituted around a dry configured chain leg — the price came via
             an alternative path, not the documented direct chain. Omitted when
             false.
+        pivot_unverified:
+          type: boolean
+          default: false
+          description: >
+            Set on a TRIANGULATED /v1/price response when a leg of the
+            composite was priced only from stablecoin prints taken at par with
+            USD, with no prints in the leg's own quote asset to check a
+            stablecoin de-peg against. Omitted when false.
         unverified_ticker_collision: { type: boolean, default: false }
         filters_ignored:
           type: array
@@ -18297,6 +18325,8 @@ components:
                 `count((rate(stellarindex_source_events_total[7d]) > 0)
                 and on (source) (stellarindex_source_enabled == 1))`)
                 — a subset of `total_sources` by construction.
+                Absent (not 0) when the freshness query failed; a
+                failed query also rolls `overall` to "degraded".
             total_sources:
               type: integer
               description: |
@@ -18311,7 +18341,7 @@ components:
                 registered=21, active=15 — before the API binary
                 published the `massive` FX worker's own enabled
                 series; with it, enabled and active each read one
-                higher.
+                higher. Absent (not 0) when the freshness query failed.
         incidents:
           type: object
           properties:
@@ -18530,7 +18560,10 @@ components:
             - unreachable:    a fetch WAS attempted and produced nothing
               storable — a 404, a dead name, a TLS failure, or a document
               that would not parse. THEIRS, and the one an issuer can act
-              on.
+              on. Also reported when a held payload is over 30 days old,
+              or of unrecorded age, and the issuer's domain is failing
+              now, so a dead domain's last document is not served as
+              `verified`.
 
             The last two are the distinction worth reading carefully,
             because they were one value until 2026-09-16. An asset
@@ -19501,7 +19534,7 @@ components:
         quote_asset:  { type: string }
         base_amount:  { type: string, description: "Integer stroops, decimal string." }
         quote_amount: { type: string, description: "Integer stroops, decimal string." }
-        price:        { type: string, description: "quote/base, 10-digit decimal." }
+        price:        { type: [string, "null"], description: "quote/base, 10-digit decimal; null (key always present) when one leg is zero, e.g. an SDEX rounding fill." }
         base_decimals:
           type: integer
           description: |
