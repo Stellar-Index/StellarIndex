@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -241,9 +242,8 @@ type TradesConfig struct {
 // min-USD-volume eligibility gate. Failing at load also makes the two
 // downstream parsers consistent: the indexer's
 // `timescale.NewUSDVolumeQuoteSpec` already hard-errors on a non-classic
-// peg, while the aggregator's `parseUSDPeggedClassicAssets` used to
-// SILENTLY skip one — this check makes that soft-skip unreachable for a
-// config that loads.
+// peg, while `TradesConfig.USDPeggedClassics` silently skips one —
+// this check makes that soft-skip unreachable for a config that loads.
 func (tc TradesConfig) validate() error {
 	for i, raw := range tc.USDPeggedClassicAssets {
 		if raw == "" {
@@ -262,6 +262,30 @@ func (tc TradesConfig) validate() error {
 		}
 	}
 	return nil
+}
+
+// USDPeggedClassics parses USDPeggedClassicAssets, logging and skipping any
+// entry validate would reject: a missing peg beats refusing to start.
+func (tc TradesConfig) USDPeggedClassics(logger *slog.Logger) []canonical.Asset {
+	if len(tc.USDPeggedClassicAssets) == 0 {
+		return nil
+	}
+	out := make([]canonical.Asset, 0, len(tc.USDPeggedClassicAssets))
+	for _, raw := range tc.USDPeggedClassicAssets {
+		asset, err := canonical.ParseAsset(raw)
+		if err != nil {
+			logger.Warn("usd_pegged_classic_assets: skipping malformed entry",
+				"raw", raw, "err", err)
+			continue
+		}
+		if asset.Type != canonical.AssetClassic {
+			logger.Warn("usd_pegged_classic_assets: ignoring non-classic asset",
+				"raw", raw, "type", asset.Type)
+			continue
+		}
+		out = append(out, asset)
+	}
+	return out
 }
 
 // PricingGuardConfig configures the serving-side price guards in
@@ -1148,15 +1172,16 @@ type StorageConfig struct {
 	// settings profile (bounded threads/memory/execution-time, CH
 	// query-priority + OS nice edge over merges and backfill inserts —
 	// see configs/ansible/roles/archival-node/tasks/20-clickhouse-serving-profile.yml)
-	// instead of CH's unauthenticated `default` user, which every OTHER
-	// CH connection in this repo (the indexer's dual-sink, the
-	// aggregator's explorer reader, stellarindex-ops backfills/gates)
-	// keeps using unchanged. Both empty (the default) preserves the
-	// pre-D4 behavior exactly: connect as `default`, no password — safe
-	// to leave unset on any deployment that hasn't provisioned the CH
-	// profile yet (docs/operations/self-hosting.md's ClickHouse section
-	// is entirely unaffected either way).
-	ClickHouseServingUser string `toml:"clickhouse_serving_user" doc:"ClickHouse username the API's serving reads (explorer endpoints, incl. GET /v1/accounts/{g}/movements) authenticate as (ADR-0048 D4). Empty (default) uses ClickHouse's default user, unchanged from pre-D4 behavior." default:""`
+	// instead of the identity every OTHER CH connection in this repo
+	// (the indexer's dual-sink, the aggregator's readers, stellarindex-ops
+	// backfills/gates) resolves from the environment: ops_batch, else
+	// live_daemon, else CH's unauthenticated `default` user
+	// (internal/storage/clickhouse/ops_auth.go). Both empty (the default)
+	// makes the API resolve the same way — safe to leave unset on any
+	// deployment that hasn't provisioned the CH profile yet
+	// (docs/operations/self-hosting.md's ClickHouse section is entirely
+	// unaffected either way).
+	ClickHouseServingUser string `toml:"clickhouse_serving_user" doc:"ClickHouse username the API's serving reads (explorer endpoints, incl. GET /v1/accounts/{g}/movements) authenticate as (ADR-0048 D4). Empty (default) uses the environment's identity: STELLARINDEX_CLICKHOUSE_LIVE_USER when set, else ClickHouse's default user." default:""`
 	// ClickHouseServingPassword holds the resolved password, not an
 	// env-var NAME (the direct-value `env:` convention, same as
 	// RedisPassword — see that field's doc comment — NOT the

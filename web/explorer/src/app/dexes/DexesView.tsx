@@ -47,7 +47,7 @@ const PAGE_LIMIT = 100;
 // before the first /v1/pools response lands.
 //
 // scripts/ci/lint-protocol-registry-sync.sh §2 fails on any drift
-// between this list, DEX_INFO in dexes/[source]/page.tsx and the Go
+// between this list, DEX_INFO in dexes/registry.ts and the Go
 // registry, so a new DEX cannot ship with no chip and no page.
 const ALL_DEXES = [
   'aquarius',

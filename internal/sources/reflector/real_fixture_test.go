@@ -1,9 +1,12 @@
 package reflector
 
 import (
+	"bytes"
 	"encoding/json"
+	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,6 +56,10 @@ func TestRealMainnetFixtures(t *testing.T) {
 		t.Skip("no fixtures present — run scripts/dev/capture-reflector-fixtures.sh")
 	}
 }
+
+// updateGolden rewrites each fixture's .golden snapshot from the current
+// decoder; review the diff before committing it.
+var updateGolden = flag.Bool("update", false, "rewrite reflector fixture .golden snapshots")
 
 type fixtureFile struct {
 	ContractID     string   `json:"contract_id"`
@@ -158,6 +165,35 @@ func runOneFixture(t *testing.T, path string) {
 		if u.Asset.IsZero() {
 			t.Errorf("updates[%d].Asset is zero", i)
 		}
+	}
+
+	assertGolden(t, path, updates)
+}
+
+// assertGolden pins the full decoded output beside its fixture, so a
+// decoder change that still yields well-typed positive prices cannot
+// silently alter an asset, price, scale or timestamp.
+func assertGolden(t *testing.T, fixturePath string, updates []canonical.OracleUpdate) {
+	t.Helper()
+	got, err := json.MarshalIndent(updates, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal updates: %v", err)
+	}
+	got = append(got, '\n')
+	goldenPath := strings.TrimSuffix(fixturePath, ".json") + ".golden"
+	if *updateGolden {
+		if err := os.WriteFile(goldenPath, got, 0o600); err != nil {
+			t.Fatalf("write golden: %v", err)
+		}
+		return
+	}
+	want, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatalf("read golden (regenerate with -update): %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("decoded output drifted from %s (regenerate with -update only if the change is intended)\ngot:\n%s\nwant:\n%s",
+			goldenPath, got, want)
 	}
 }
 
