@@ -184,7 +184,7 @@ every inventory had the password. Enable per host, in one PR:
 
    ```
    clickhouse-client --port 9300 --user ops_batch --password "$(sed -n 's/^STELLARINDEX_CLICKHOUSE_OPS_PASSWORD=//p' /etc/default/stellarindex-ops)" -q "SELECT currentUser()"
-   run-heavy-job.sh ops-batch-probe stellarindex-ops ch-gate -ch 127.0.0.1:9300 ...   # any ops read; stderr names the identity
+   run-heavy-job.sh ops-batch-probe stellarindex-ops ch-gate -config /etc/stellarindex.toml -ch-addr 127.0.0.1:9300 -from <n> -to <n>   # any ops read; stderr names the identity
    clickhouse-client --port 9300 -q "SELECT user, priority, query_id FROM system.processes WHERE user = 'ops_batch'"
    ```
 

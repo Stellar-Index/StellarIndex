@@ -102,18 +102,23 @@ func (c *CachedIssuersReader) ListIssuerAssets(ctx context.Context, gStrkey stri
 	return c.upstream.ListIssuerAssets(ctx, gStrkey)
 }
 
-// ListIssuers — cached. Key is just the limit (the only argument);
-// the handler clamps limit to [1, 500] before this call, so we
-// have a bounded key space. Most traffic hits limit=100 (the
-// default) and limit=25 (explorer's home strip).
+// ListIssuers — cached. One entry holds the IssuersListMaxLimit page and
+// every request slices its prefix from it: the aggregate's cost is set by
+// the scan, not by LIMIT, so a per-limit key would let a caller sweeping
+// `?limit=` force one uncollapsed upstream scan per value.
 func (c *CachedIssuersReader) ListIssuers(ctx context.Context, limit int) ([]timescale.IssuerSummary, error) {
 	if c.ttl <= 0 {
 		return c.upstream.ListIssuers(ctx, limit)
 	}
-	key := newCacheKey("ListIssuers").int(limit).build()
-	return c.fetchList(ctx, key, func(ctx context.Context) ([]timescale.IssuerSummary, error) {
-		return c.upstream.ListIssuers(ctx, limit)
+	key := newCacheKey("ListIssuers").int(IssuersListMaxLimit).build()
+	list, err := c.fetchList(ctx, key, func(ctx context.Context) ([]timescale.IssuerSummary, error) {
+		return c.upstream.ListIssuers(ctx, IssuersListMaxLimit)
 	})
+	if err != nil || limit <= 0 || limit >= len(list) {
+		return list, err
+	}
+	// Cap capacity so a caller's append cannot write into the shared entry.
+	return list[:limit:limit], nil
 }
 
 // fetchList is the TTL + single-flight loop. Mirrors

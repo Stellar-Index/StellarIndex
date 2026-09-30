@@ -167,11 +167,11 @@ editAs() {
   )
 }
 
-# runGate <version> [ack] [baseline] [applied] [refuted] → sets RC + OUT.
+# runGate <version> [ack] [baseline] [applied] [refuted] [unanswered] → sets RC + OUT.
 # GITHUB_STEP_SUMMARY is pointed at a scratch file so the summary block
 # does not pollute OUT.
 runGate() {
-  OUT="$(cd "$TMP/repo" && GITHUB_STEP_SUMMARY="$TMP/summary" bash "$GATE" "$1" "${2:-false}" "${3:-}" "${4:-}" "${5:-}" 2>&1)"
+  OUT="$(cd "$TMP/repo" && GITHUB_STEP_SUMMARY="$TMP/summary" bash "$GATE" "$1" "${2:-false}" "${3:-}" "${4:-}" "${5:-}" "${6:-}" 2>&1)"
   RC=$?
 }
 
@@ -1136,6 +1136,7 @@ else
     CH_RC=$?
     CH_APPLIED="$(sed -n -E 's/^applied=//p' "$TMP/chddl_out")"
     CH_REFUTED="$(sed -n -E 's/^refuted=//p' "$TMP/chddl_out")"
+    CH_UNANSWERED="$(sed -n -E 's/^unanswered=//p' "$TMP/chddl_out")"
   }
 
   run_chddl 0 "stellar.account_creators_ops
@@ -1218,6 +1219,52 @@ stellar.ledgers"
     echo "FAIL: unreachable host gave applied='$CH_APPLIED' rc=$CH_RC"
     fail=$((fail + 1))
   fi
+
+  # A host that runs ClickHouse but did not answer is not "nobody asked":
+  # the silence could be hiding exactly the refutation above, so the step
+  # must say which files went unchecked and the gate must not let an
+  # acknowledgement clear them.
+  if [[ "$CH_UNANSWERED" == *"account_creators_rollup.sql"* && "$CH_UNANSWERED" == *"tier1_schema.sql"* && -z "$CH_REFUTED" ]]; then
+    echo "ok: an unanswered host publishes the files it could not check"
+    pass=$((pass + 1))
+  else
+    echo "FAIL: the host did not answer, but the step published unanswered='$CH_UNANSWERED' refuted='$CH_REFUTED': $CH_OUT"
+    fail=$((fail + 1))
+  fi
+  OUT="$(GITHUB_STEP_SUMMARY="$TMP/summary" bash "$GATE" v0.62.0 true v0.61.1 "$CH_APPLIED" "$CH_REFUTED" "$CH_UNANSWERED" 2>&1)"
+  RC=$?
+  expect "an acknowledgement cannot clear a surface the host did not answer for" 1 "did not answer"
+
+  # A running server that answers nothing is as silent as a dead one.
+  run_chddl 0 ""
+  if [[ "$CH_UNANSWERED" == *"tier1_schema.sql"* && "$CH_RC" -eq 0 ]]; then
+    echo "ok: an empty answer counts as no answer"
+    pass=$((pass + 1))
+  else
+    echo "FAIL: an empty system.tables answer gave unanswered='$CH_UNANSWERED' rc=$CH_RC"
+    fail=$((fail + 1))
+  fi
+
+  # No clickhouse-client at all (exit 9) is a host without ClickHouse, where
+  # the schema cannot be checked or refuted — the acknowledgement still decides.
+  run_chddl 9 ""
+  if [[ -z "$CH_UNANSWERED" && -z "$CH_APPLIED" && -z "$CH_REFUTED" && "$CH_RC" -eq 0 ]]; then
+    echo "ok: a host without ClickHouse publishes no evidence either way"
+    pass=$((pass + 1))
+  else
+    echo "FAIL: a host without clickhouse-client gave unanswered='$CH_UNANSWERED' applied='$CH_APPLIED' refuted='$CH_REFUTED' rc=$CH_RC"
+    fail=$((fail + 1))
+  fi
+
+  # An answering host is not reported as silent.
+  run_chddl 0 "stellar.account_creators_ops"
+  if [[ -z "$CH_UNANSWERED" ]]; then
+    echo "ok: an answering host publishes nothing as unanswered"
+    pass=$((pass + 1))
+  else
+    echo "FAIL: the host answered, but the step published unanswered='$CH_UNANSWERED'"
+    fail=$((fail + 1))
+  fi
 fi
 
 # --- 31. a REFUTED surface outranks the acknowledgement ----------------
@@ -1263,6 +1310,26 @@ mkrepo
 release deploy/clickhouse/schema.sql
 runGate v0.2.0 false "" "" "deploy/clickhouse/schema.sql"
 expect "a refuted surface blocks un-acknowledged too" 1 "PROVED unapplied"
+
+# --- 32. an UNANSWERED surface outranks the acknowledgement -------------
+#
+# The 6th argument carries surfaces the evidence step tried to check on a
+# host that runs ClickHouse but did not answer. Same exact-path bar as [refuted].
+mkrepo
+release deploy/clickhouse/schema.sql
+runGate v0.2.0 true "" "" "" "deploy/clickhouse/schema.sql"
+expect "ack does not clear a surface the host did not answer for" 1 "did not answer"
+if [[ "$OUT" == *"deploy/clickhouse/schema.sql"* ]]; then
+  echo "ok: the unanswered refusal names the surface"; pass=$((pass + 1))
+else
+  echo "FAIL: the unanswered refusal did not name the surface"
+  echo "$OUT" | sed -n '1,8s/^/    | /p'; fail=$((fail + 1))
+fi
+
+mkrepo
+release deploy/clickhouse/schema.sql
+runGate v0.2.0 true "" "" "" "deploy/clickhouse/schema.sql.bak deploy/clickhouse/other.sql"
+expect "an unanswered check of other files does not block this one" 0 "config-apply acknowledged"
 
 echo
 echo "config-apply-gate-test: $pass passed, $fail failed, $skipped corroboration(s) skipped (history=$has_history)"

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"time"
 
@@ -78,13 +79,14 @@ func parseArchiveCompletenessVerifyFlags(args []string) (archiveCompletenessVeri
 	if *to == 0 {
 		return archiveCompletenessVerifyOpts{}, fmt.Errorf("-to is required")
 	}
-	if *from > *to {
-		return archiveCompletenessVerifyOpts{}, fmt.Errorf("-from (%d) must be <= -to (%d)", *from, *to)
+	from32, to32, err := ledgerRangeUint32(*from, *to)
+	if err != nil {
+		return archiveCompletenessVerifyOpts{}, err
 	}
 	return archiveCompletenessVerifyOpts{
 		archiveRoot:    *archiveRoot,
-		from:           uint32(*from),
-		to:             uint32(*to),
+		from:           from32,
+		to:             to32,
 		workers:        *workers,
 		ownerUser:      *ownerUser,
 		ownerGroup:     *ownerGroup,
@@ -93,6 +95,18 @@ func parseArchiveCompletenessVerifyFlags(args []string) (archiveCompletenessVeri
 		textfileOutput: *textfileOutput,
 		gate:           gate,
 	}, nil
+}
+
+// ledgerRangeUint32 validates -from/-to and narrows them to ledger sequences;
+// an out-of-range -to would otherwise wrap and scan a different range.
+func ledgerRangeUint32(from, to uint) (uint32, uint32, error) {
+	if from > to {
+		return 0, 0, fmt.Errorf("-from (%d) must be <= -to (%d)", from, to)
+	}
+	if uint64(to) > math.MaxUint32 {
+		return 0, 0, fmt.Errorf("-to (%d) exceeds the maximum ledger sequence (%d)", to, uint32(math.MaxUint32))
+	}
+	return uint32(from), uint32(to), nil
 }
 
 // archiveCompletenessVerify is the daily-cron mode: runs check →
@@ -289,8 +303,9 @@ func archiveCompletenessFix(args []string) error {
 	if *to == 0 {
 		return fmt.Errorf("-to is required (pass the network head ledger sequence)")
 	}
-	if uint64(*from) > uint64(*to) {
-		return fmt.Errorf("-from (%d) must be <= -to (%d)", *from, *to)
+	from32, to32, err := ledgerRangeUint32(*from, *to)
+	if err != nil {
+		return err
 	}
 	write := gate.Banner()
 
@@ -302,12 +317,12 @@ func archiveCompletenessFix(args []string) error {
 
 	// Phase 1 — check: enumerate the missing list.
 	checker := archivecompleteness.NewCrossAnchorChecker(*archiveRoot)
-	res, err := checker.Check(uint32(*from), uint32(*to))
+	res, err := checker.Check(from32, to32)
 	if err != nil {
 		return fmt.Errorf("cross-anchor check: %w", err)
 	}
 
-	report := archivecompleteness.NewReport(uint32(*from), uint32(*to))
+	report := archivecompleteness.NewReport(from32, to32)
 	report.SetCrossAnchor(*archiveRoot, res)
 
 	if report.Vacuous() {
@@ -368,7 +383,7 @@ func archiveCompletenessFix(args []string) error {
 	// reflects post-fix state. The Filler is idempotent (next run
 	// will just skip files now present), so the re-check is the
 	// authoritative measure of what's still missing.
-	postRes, err := checker.Check(uint32(*from), uint32(*to))
+	postRes, err := checker.Check(from32, to32)
 	if err != nil {
 		return fmt.Errorf("post-fix cross-anchor check: %w", err)
 	}
@@ -424,14 +439,15 @@ func archiveCompletenessCheck(args []string) error {
 	if *to == 0 {
 		return fmt.Errorf("-to is required (pass the network head ledger sequence)")
 	}
-	if uint64(*from) > uint64(*to) {
-		return fmt.Errorf("-from (%d) must be <= -to (%d)", *from, *to)
+	from32, to32, err := ledgerRangeUint32(*from, *to)
+	if err != nil {
+		return err
 	}
 
-	report := archivecompleteness.NewReport(uint32(*from), uint32(*to))
+	report := archivecompleteness.NewReport(from32, to32)
 
 	checker := archivecompleteness.NewCrossAnchorChecker(*archiveRoot)
-	res, err := checker.Check(uint32(*from), uint32(*to))
+	res, err := checker.Check(from32, to32)
 	if err != nil {
 		return fmt.Errorf("cross-anchor scan: %w", err)
 	}

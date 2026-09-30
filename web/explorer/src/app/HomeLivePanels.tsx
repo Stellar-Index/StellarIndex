@@ -5,7 +5,12 @@ import { ArrowRight } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
-import { useCursors, useNetworkStats } from '@/api/hooks';
+import {
+  useCoverage,
+  useCursors,
+  useNetworkStats,
+  type CoverageVerdicts,
+} from '@/api/hooks';
 import { isLiveCursorSource } from '@/lib/cursors';
 import { formatCompact } from '@/lib/format';
 
@@ -68,10 +73,12 @@ export function NetworkLivePanel() {
  * indicator: if any live cursor advanced in the last 60s,
  * indexer/aggregator are "ok"; if every live cursor is >10m stale,
  * "degraded". Gives the home page a real-time pulse without needing
- * the still-pending /v1/diagnostics/pulse endpoint.
+ * the still-pending /v1/diagnostics/pulse endpoint. Archive
+ * completeness is the lake axis of /v1/coverage.
  */
 export function SystemHealthLivePanel() {
   const { data, isLoading } = useCursors();
+  const coverage = useCoverage();
 
   if (isLoading || !data) {
     return (
@@ -113,8 +120,12 @@ export function SystemHealthLivePanel() {
         <Health label="indexer" status={indexerStatus} />
         <Health
           label="archive completeness"
-          status="ok"
-          subtext="dual-archive verifier — Tier A daily"
+          status={archiveStatus(coverage.data)}
+          subtext={
+            coverage.data
+              ? `${coverage.data.lake_complete_sources}/${coverage.data.total_sources} sources genesis-complete (/v1/coverage)`
+              : 'verdict unavailable (/v1/coverage)'
+          }
         />
         <div className="text-ink-muted pt-1 text-[11px]">
           {liveRows.length} live cursor{liveRows.length === 1 ? '' : 's'},{' '}
@@ -132,7 +143,15 @@ export function SystemHealthLivePanel() {
   );
 }
 
-type HealthStatus = 'ok' | 'degraded' | 'down';
+type HealthStatus = 'ok' | 'degraded' | 'down' | 'unknown';
+
+// A missing or empty verdict renders unknown, never ok: absence of a
+// completeness result is not evidence of completeness.
+function archiveStatus(v: CoverageVerdicts | undefined): HealthStatus {
+  if (!v || v.total_sources <= 0) return 'unknown';
+  if (v.lake_complete_sources >= v.total_sources) return 'ok';
+  return v.lake_complete_sources > 0 ? 'degraded' : 'down';
+}
 
 function Health({
   label,
@@ -148,7 +167,9 @@ function Health({
       ? 'bg-up'
       : status === 'degraded'
         ? 'bg-warn-500'
-        : 'bg-down';
+        : status === 'down'
+          ? 'bg-down'
+          : 'bg-ink-faint';
   return (
     <div>
       <div className="flex items-center justify-between">

@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
 
+import { shellMetadata } from '@/lib/seo';
+
 import { LedgerPathView } from './LedgerPathView';
 
 // Shell-only (like transactions): one `shell` sentinel page; the CF Function
@@ -13,12 +15,10 @@ export function generateStaticParams() {
   return [{ seq: 'shell' }];
 }
 
-export const metadata: Metadata = {
-  title: 'Ledger',
-  description:
-    'Stellar ledger detail: close time, transaction and operation counts, and the transactions in the ledger.',
-  robots: { index: false, follow: true },
-};
+export const metadata: Metadata = shellMetadata(
+  'Ledger',
+  'Stellar ledger detail: close time, transaction and operation counts, and the transactions in the ledger.',
+);
 
 export default function LedgerDetailPage() {
   return (
