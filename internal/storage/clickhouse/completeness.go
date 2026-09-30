@@ -275,14 +275,19 @@ func substrateProblemOn(ctx context.Context, conn driver.Conn, addr string, from
 			WHERE nxt > ledger_seq + 1
 		)), 0))`
 	// First hash-chain break: prev_hash != the immediately-prior ledger's hash.
+	// One tuple argMax, so on an ingested_at tie between duplicate rows both
+	// hashes still come from the same row rather than being mixed across rows.
 	const chainQ = `
 		SELECT toUInt64(ifNull((SELECT min(ledger_seq) FROM (
 			SELECT ledger_seq, prev_hash,
 			       lagInFrame(ledger_hash) OVER (ORDER BY ledger_seq) AS prior_hash
 			FROM (
-				SELECT ledger_seq, argMax(ledger_hash, ingested_at) AS ledger_hash, argMax(prev_hash, ingested_at) AS prev_hash
-				FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?
-				GROUP BY ledger_seq
+				SELECT ledger_seq, hp.1 AS ledger_hash, hp.2 AS prev_hash
+				FROM (
+					SELECT ledger_seq, argMax((ledger_hash, prev_hash), ingested_at) AS hp
+					FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?
+					GROUP BY ledger_seq
+				)
 			)
 		) WHERE ledger_seq > ? AND prior_hash != '' AND prev_hash != prior_hash), 0))`
 

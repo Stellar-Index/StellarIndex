@@ -239,8 +239,9 @@ type BackfillCoverageRow struct {
 	// signal that supersedes density/gap_free as the headline.
 	// Populated by overlayCompleteness from completeness_snapshots
 	// (written by `stellarindex-ops compute-completeness`); absent when
-	// not yet computed for this source.
-	CompletenessPct float64 `json:"completeness_pct,omitempty"`
+	// not yet computed for this source. A pointer so a computed 0 is
+	// still emitted; the status page reads presence as "the audit ran".
+	CompletenessPct *float64 `json:"completeness_pct,omitempty"`
 	// CompletenessWatermark is the highest fully-verified ledger.
 	CompletenessWatermark int64 `json:"completeness_watermark,omitempty"`
 	// CompletenessComplete is true when the watermark reached tip.
@@ -885,7 +886,8 @@ func (s *Server) overlayCompleteness(ctx context.Context, rows *[]BackfillCovera
 			continue
 		}
 		computedAt := sn.ComputedAt
-		(*rows)[i].CompletenessPct = sn.CoveragePct
+		pct := sn.CoveragePct
+		(*rows)[i].CompletenessPct = &pct
 		(*rows)[i].CompletenessWatermark = int64(sn.Watermark)
 		(*rows)[i].CompletenessComplete = sn.Complete
 		(*rows)[i].CompletenessLakeComplete = sn.LakeComplete
