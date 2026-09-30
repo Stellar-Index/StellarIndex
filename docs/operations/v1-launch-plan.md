@@ -1403,7 +1403,22 @@ land WITH the rebuild.
 **W5.7 — [C]** CEX dust DELETE (#68); monthly galexie trim timer enable.
 
 **W5.8 — [C]** ClickHouse Phase 8 `soroban_events` decommission (#803) —
-destructive, LAST, enumerate live readers first.
+destructive, LAST. Every live Postgres `soroban_events` reader below must be
+moved to the ClickHouse lake or deleted before any TRUNCATE or DROP; a
+TRUNCATE leaves the table present, so each of these reads an empty table as
+"nothing happened" rather than failing. Re-grep before executing
+(`StreamSorobanEvents|FirstSorobanEventLedger|MaxSorobanEventLedger|FindSorobanEventsLedgerGaps|DistinctSorobanTopicSamples|ReDeriveOutputCountsByKind\(`).
+
+| reader | file:line | path |
+|---|---|---|
+| projector legacy branch (`clickhouse_projector_source=false`) | `internal/projector/projector.go:1262` (stream), `:1664` (first-ledger probe) | falls back to PG when `chAddr` is empty |
+| `preseedFactoryChildren` callers | `internal/ops/chops/compute_completeness.go:1951`, `verify_reconciliation.go:127`, `ch_rebuild.go:635`, `ch_reproject.go:105` | **moved to the lake** — streams `contract_events` and errors on zero seeded |
+| projection re-derive, `completeness.ReDeriveOutputCountsByKind` | `internal/completeness/reconcile.go:291`, `:417`; callers `compute_completeness.go:1819` (non-`-ch` mode), `verify_reconciliation.go:131` | PG |
+| `resume-stalled` data-gap gate | `internal/ops/ingest/resume_stalled.go:699` (`FindSorobanEventsLedgerGaps`) | PG |
+| `seed-protocol-contracts` | `internal/ops/ingest/seed_protocol_contracts.go:88` (`MaxSorobanEventLedger`), `:216` (factory walk) | PG |
+| recognition claim, `computeRecognitionGaps` | `internal/ops/chops/compute_completeness.go:2549` (non-`-ch` mode; `-ch` uses `computeRecognitionGapsCH`) | PG |
+| `verify-recognition` | `internal/ops/chops/verify_recognition.go:74` (`DistinctSorobanTopicSamples`) | PG |
+| gap-detector `soroban-events` target | `internal/storage/timescale/per_source_gaps.go:423` | PG; `gapVerdictTrustworthy` (`gap_detector.go:619`) refuses a clean verdict over zero rows — delete the target with the table |
 
 **Sequencing rule (unchanged, still binding):** one heavy job at a time under
 `/usr/local/sbin/run-heavy-job.sh`; decompress before replaying through
