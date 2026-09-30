@@ -17385,6 +17385,7 @@ export interface operations {
                      *         "lake_complete_sources": 15,
                      *         "network": "pubnet",
                      *         "not_applicable_sources": [],
+                     *         "lagging_sources": [],
                      *         "total_sources": 15
                      *       },
                      *       "as_of": "2026-07-03T22:38:20.564931481Z",
@@ -17538,6 +17539,13 @@ export interface operations {
                             /** @description Sources the audit is expected to cover on this network that have no verdict row: their first audit never completed, or the row was cleared. Counted in `total_sources`, never in `complete_sources` or `lake_complete_sources`. Empty when every expected source has a verdict. */
                             unverified_sources: {
                                 source: string;
+                                reason: string;
+                            }[];
+                            /** @description Sources whose verdict `tip_ledger` is below the newest source verdict's tip: the latest audit run wrote no verdict for them (it stopped before reaching them, or they errored), so the totals above combine verdicts from more than one run. They still count at their earlier verdict. Empty when one run wrote every source's row. */
+                            lagging_sources: {
+                                source: string;
+                                /** Format: int64 */
+                                tip_ledger: number;
                                 reason: string;
                             }[];
                         };
