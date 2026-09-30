@@ -54,6 +54,26 @@ func TestPoolTokensCache_RefillsAfterTTLAndKeepsLastGoodOnError(t *testing.T) {
 	}
 }
 
+// Two concurrent readers of one source can interleave so the second misses
+// the entry, then starts its flight only after the first flight stored it
+// and left the group. That late flight must not re-read upstream.
+func TestPoolTokensCache_LateFlightReusesFreshEntry(t *testing.T) {
+	t.Parallel()
+	up := &scriptedPoolTokens{resp: map[string][]string{"CPOOL1": {"CA", "CB"}}}
+	c := newPoolTokensCache(up)
+	if _, err := c.PoolTokens(context.Background(), "blend"); err != nil {
+		t.Fatalf("first read: %v", err)
+	}
+
+	v, err := c.fill("blend")
+	if m, _ := v.(map[string][]string); err != nil || len(m["CPOOL1"]) != 2 {
+		t.Fatalf("late fill = %v, %v; want the stored map", v, err)
+	}
+	if up.calls != 1 {
+		t.Fatalf("upstream calls = %d, want 1: a flight that starts after a fresh store must reuse it", up.calls)
+	}
+}
+
 type panickingPoolTokens struct{}
 
 func (panickingPoolTokens) PoolTokens(context.Context, string) (map[string][]string, error) {

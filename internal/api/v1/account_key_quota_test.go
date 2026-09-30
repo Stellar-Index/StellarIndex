@@ -202,3 +202,41 @@ func TestAccountKeysCreate_QuotaReadFailureFailsClosed(t *testing.T) {
 		t.Errorf("Create calls = %d, want 0 — a mint must not proceed on an unverifiable quota", store.calls)
 	}
 }
+
+// TestAccountKeysCreate_SEP10SubjectRefused: a SEP-10 identifier is a
+// keypair anyone can generate offline, so the per-identifier cap does not
+// bound it, and sep10 mode never honours the minted key anyway. The mint
+// is refused before the store is touched, even with the quota disabled.
+func TestAccountKeysCreate_SEP10SubjectRefused(t *testing.T) {
+	store := &fakeAccountStore{
+		rec:   auth.APIKeyRecord{KeyID: "kid_new"},
+		plain: "sip_shouldnotissue",
+	}
+	ts := newAccountQuotaTestServer(t, auth.Subject{
+		Identifier: "GAB123",
+		Tier:       auth.TierSEP10,
+	}, store, -1)
+
+	resp, err := http.Post(ts.URL+"/v1/account/keys", "application/json",
+		strings.NewReader(`{"label":"x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (SEP-10 subjects are not issued API keys)", resp.StatusCode)
+	}
+	if store.calls != 0 || store.listCalls != 0 {
+		t.Errorf("store Create calls = %d, list calls = %d; want 0 — a refused mint must not reach the store",
+			store.calls, store.listCalls)
+	}
+	var problem struct {
+		Type string `json:"type"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&problem); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if problem.Type != "https://api.stellarindex.io/errors/key-mint-not-available" {
+		t.Errorf("problem type = %q, want .../errors/key-mint-not-available", problem.Type)
+	}
+}

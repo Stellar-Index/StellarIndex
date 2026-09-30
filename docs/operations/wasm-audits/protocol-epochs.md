@@ -244,10 +244,12 @@ Re-run the audit pipeline:
 yq '.[] | (select(.contracts) | .contracts) | .[]' \
   configs/audit/wasm-walk-contracts.yaml | sort -u > /tmp/all-contracts.txt
 ssh r1 "set -a; . /etc/default/stellarindex-ops; set +a; \
+  mkdir -p /var/log/wasm-audit; \
   stellarindex-ops wasm-history -config /etc/stellarindex.toml \
     -from 50457424 -to <current-tip> -parallel 8 \
     -contracts \$(paste -sd, /tmp/all-contracts.txt) \
-    > /var/log/wasm-history-full.json"
+    > /var/log/wasm-audit/full-wasm-history.json \
+    2> /var/log/wasm-audit/full-wasm-history.stderr"
 
 # 2) Pull WASMs (live + TTL-evicted) via Soroban-RPC
 # 3) Re-run evidence/.../build-final.py + this renderer

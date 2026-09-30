@@ -68,7 +68,7 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 	to := fs.Uint("to", 0, "Last ledger to verify (inclusive, 0 = unbounded/live)")
 	tier := fs.String("tier", "chain", "Verification tier: chain (A) | checkpoint (B) | peers (D) | archivist (E) | all")
 	archiveRoot := fs.String("archive-root", "/srv/history-archive",
-		"Path to local rs-stellar-archivist mirror (used by checkpoint/all tier)")
+		"Path to local rs-stellar-archivist mirror (used by checkpoint/peers/all tier; Tier D compares its history/ checkpoints to the peers' consensus)")
 	peerList := fs.String("peers", "",
 		"Comma-separated peer archive URLs for Tier D (empty → built-in tier-1 default set)")
 	peerSamples := fs.Int("peer-samples", 20,
@@ -378,7 +378,7 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 
 	// Tier D (multi-peer checkpoint diff). Independent of LCM walk.
 	if doPeers {
-		if err := verifyArchivePeers(effectiveFrom, uint32(*to), *peerList, *peerSamples); err != nil {
+		if err := verifyArchivePeers(effectiveFrom, uint32(*to), *peerList, *peerSamples, *archiveRoot, *failOnMissed); err != nil {
 			return err
 		}
 	}
@@ -430,8 +430,8 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 
 	// maxRuntime == 0 → no cap (uncancellable parent). Operators
 	// pass 0 for full-archive runs that exceed any single-day
-	// budget; the binary still honours external SIGTERM via the
-	// SDK's signal hooks.
+	// budget. No signal handler is wired on either branch, so SIGTERM
+	// kills the walk outright; chunks already done are in -state-file.
 	var (
 		ctx    context.Context
 		cancel context.CancelFunc
@@ -926,10 +926,14 @@ func peerCheckpointBounds(from, to uint32) (uint32, uint32, error) {
 // consensus-level finding — either one peer has replayed wrong, or
 // a fork was retained somewhere. Either way, loud failure.
 //
+// Our own archive (archiveRoot) is a required participant: every
+// checkpoint the peers agree on is also compared with our local copy,
+// because peers agreeing with each other says nothing about our bytes.
+//
 // sampleN is the target number of checkpoints to verify. Actual
 // count may be less if the range contains fewer checkpoints; always
 // includes the first and last checkpoint for edge coverage.
-func verifyArchivePeers(from, to uint32, peerList string, sampleN int) error { //nolint:funlen,gocognit,gocyclo
+func verifyArchivePeers(from, to uint32, peerList string, sampleN int, archiveRoot string, failOnMissed bool) error { //nolint:funlen,gocognit,gocyclo
 	peers := defaultTier1Peers
 	if peerList != "" {
 		peers = strings.Split(peerList, ",")
@@ -939,6 +943,12 @@ func verifyArchivePeers(from, to uint32, peerList string, sampleN int) error { /
 	}
 	if len(peers) < 2 {
 		return fmt.Errorf("tier peers needs ≥2 archive URLs; got %d", len(peers))
+	}
+	for _, p := range peers {
+		// A non-HTTP peer would fail every fetch and be skipped as merely unreachable.
+		if !strings.HasPrefix(p, "https://") && !strings.HasPrefix(p, "http://") {
+			return fmt.Errorf("tier peers: %q is not an http(s) archive URL — our own archive is read from -archive-root, not listed in -peers", p)
+		}
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -986,6 +996,9 @@ func verifyArchivePeers(from, to uint32, peerList string, sampleN int) error { /
 	for _, p := range peers {
 		fmt.Fprintf(os.Stderr, "  peer: %s\n", p)
 	}
+	selfCov := readArchiveMirrorCoverage(archiveRoot)
+	fmt.Fprintf(os.Stderr, "  self: %s (mirror coverage %s)\n", archiveRoot, selfCov)
+	var self peerSelfTally
 
 	// A majority of the configured peers must respond before "all
 	// responders agree" is reported as network consensus (GH-725): two
@@ -1040,16 +1053,21 @@ func verifyArchivePeers(from, to uint32, peerList string, sampleN int) error { /
 		if allAgree {
 			matches++
 			fmt.Fprintf(os.Stderr, "  ledger %d: %d of %d peers agree ✓\n", seq, len(observed), len(peers))
+			self.compare(archiveRoot, relPath, seq, ref, selfCov)
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "\nverify-archive: peer diff — %d consensus-verified checkpoints, %d disagreements\n",
-		matches, mismatches)
+	fmt.Fprintf(os.Stderr, "\nverify-archive: peer diff — peers_vs_peers: %d consensus-verified checkpoints, %d disagreements; "+
+		"self_vs_peers: %d matched, %d diverged, %d missing, %d unmirrored\n",
+		matches, mismatches, self.matched, self.diverged, self.missed, self.unmirrored)
 	if mismatches > 0 {
 		return fmt.Errorf("peer cross-check FAILED (%d disagreements)", mismatches)
 	}
 	if matches == 0 {
 		return fmt.Errorf("peer cross-check INCONCLUSIVE — no checkpoint verified across ≥2 peers")
+	}
+	if err := self.decision(archiveRoot, failOnMissed); err != nil {
+		return err
 	}
 	fmt.Fprintf(os.Stderr, "verify-archive: peer cross-check OK ✓\n")
 	return nil
@@ -1107,6 +1125,60 @@ func verifyArchiveArchivist(bin, url string, timeout time.Duration) error {
 	return nil
 }
 
+// peerSelfTally counts how our own archive's checkpoint files compared
+// with the peers' consensus across a Tier D run.
+type peerSelfTally struct {
+	matched, diverged, missed, unmirrored int
+}
+
+// compare checks our local history-XXXXXXXX.json for seq against the
+// peers' consensus checkpoint. An absent file above the mirror's
+// high-water is fill lag (unmirrored); inside its span it is missed.
+func (t *peerSelfTally) compare(archiveRoot, relPath string, seq uint32, consensus historyCheckpoint, cov archiveMirrorCoverage) {
+	path := filepath.Join(archiveRoot, filepath.FromSlash(relPath))
+	body, err := os.ReadFile(path) //nolint:gosec // archiveRoot is operator-supplied via flag
+	switch {
+	case errors.Is(err, os.ErrNotExist) && cov.outsideCoverage(seq):
+		t.unmirrored++
+		return
+	case errors.Is(err, os.ErrNotExist):
+		t.missed++
+		fmt.Fprintf(os.Stderr, "  ledger %d: self: %s absent inside the mirror's coverage\n", seq, path)
+		return
+	case err != nil:
+		t.diverged++
+		fmt.Fprintf(os.Stderr, "  ledger %d: self: read %s: %v\n", seq, path, err)
+		return
+	}
+	cp, err := parseHistoryCheckpoint(body, path)
+	if err != nil {
+		t.diverged++
+		fmt.Fprintf(os.Stderr, "  ledger %d: self: %v\n", seq, err)
+		return
+	}
+	if !checkpointsEqual(consensus, cp) {
+		t.diverged++
+		fmt.Fprintf(os.Stderr, "  ledger %d: SELF DIVERGES FROM PEER CONSENSUS (%s)\n", seq, path)
+		return
+	}
+	t.matched++
+}
+
+// decision fails a Tier D run whose peer consensus our own archive
+// contradicts, or never took part in.
+func (t peerSelfTally) decision(archiveRoot string, failOnMissed bool) error {
+	switch {
+	case t.diverged > 0:
+		return fmt.Errorf("peer cross-check FAILED — our archive %s diverges from peer consensus at %d checkpoint(s)", archiveRoot, t.diverged)
+	case t.matched == 0:
+		return fmt.Errorf("peer cross-check INCONCLUSIVE — our archive %s matched no consensus-verified checkpoint (%d missing, %d unmirrored); "+
+			"the peers were verified only against each other", archiveRoot, t.missed, t.unmirrored)
+	case failOnMissed && t.missed > 0:
+		return fmt.Errorf("peer cross-check FAILED — %d consensus-verified checkpoint(s) missing from our archive %s inside its coverage (with -fail-on-missed)", t.missed, archiveRoot)
+	}
+	return nil
+}
+
 // fetchHistoryCheckpoint retrieves and parses one history-XXXXXXXX.json
 // from a peer archive.
 func fetchHistoryCheckpoint(client *http.Client, url string) (historyCheckpoint, error) {
@@ -1129,6 +1201,12 @@ func fetchHistoryCheckpoint(client *http.Client, url string) (historyCheckpoint,
 	if err != nil {
 		return historyCheckpoint{}, err
 	}
+	return parseHistoryCheckpoint(body, url)
+}
+
+// parseHistoryCheckpoint decodes a history-XXXXXXXX.json body read
+// from src (a peer URL or a local path).
+func parseHistoryCheckpoint(body []byte, src string) (historyCheckpoint, error) {
 	var cp historyCheckpoint
 	if err := json.Unmarshal(body, &cp); err != nil {
 		return historyCheckpoint{}, fmt.Errorf("parse: %w", err)
@@ -1136,11 +1214,11 @@ func fetchHistoryCheckpoint(client *http.Client, url string) (historyCheckpoint,
 	// A 200 response that isn't a real checkpoint (an error envelope,
 	// `null`, or a not-yet-uploaded object behind a CDN that 200s on a
 	// miss) decodes to the historyCheckpoint zero value. Reject it here
-	// — the single fetch chokepoint both peerArchiveTip and the
-	// checkpoint-diff sampler go through — rather than letting two
-	// zero checkpoints compare equal downstream (GH-725).
+	// — the single parse chokepoint every peer and local read goes
+	// through — rather than letting two zero checkpoints compare equal
+	// downstream (GH-725).
 	if cp.CurrentLedger == 0 {
-		return historyCheckpoint{}, fmt.Errorf("%s: decoded to CurrentLedger=0 (not a real checkpoint)", url)
+		return historyCheckpoint{}, fmt.Errorf("%s: decoded to CurrentLedger=0 (not a real checkpoint)", src)
 	}
 	return cp, nil
 }

@@ -2,8 +2,8 @@ package timescale
 
 import (
 	"context"
-	"errors"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,8 +37,8 @@ func TestVWAPUSDFXResolver_NilStore(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when store is nil")
 	}
-	if !errors.Is(err, err) {
-		t.Errorf("expected wrapped error, got: %v", err)
+	if !strings.Contains(err.Error(), "store is required") {
+		t.Errorf("error = %v, want the nil-store guard's error", err)
 	}
 }
 
