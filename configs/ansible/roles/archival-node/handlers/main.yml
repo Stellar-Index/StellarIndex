@@ -167,10 +167,7 @@
   ansible.builtin.systemd:
     name: "stellarindex-heartbeat@{{ item }}.timer"
     state: restarted
-  loop:
-    - indexer
-    - aggregator
-    - api
+  loop: "{{ ['indexer', 'api'] + (['aggregator'] if run_aggregator | default(true) | bool else []) }}"
   when: not ansible_check_mode  # role-installed unit; see the note above
 
 - name: Restart stellarindex-smoke timer

@@ -5600,7 +5600,8 @@ var ExplorerSWRRefreshTotal = prometheus.NewCounterVec(
 
 // ExplorerRefreshGateSaturatedTotal — detached refreshes the shared
 // clickhouse.RefreshGate REFUSED, by class and by which bound tripped
-// (`class` = the per-class half-limit, `global` = the pool-wide limit).
+// (`class` = the per-class fairness bound, `global` = the pool-wide limit,
+// which for a client-keyed class excludes the slot reserved for the rest).
 // A refusal never reaches the SWR counter above (that fires only after a
 // slot is held), and at the API it surfaces as a 503 — so this is the only
 // signal separating an unauthenticated key-churn burst from real capacity

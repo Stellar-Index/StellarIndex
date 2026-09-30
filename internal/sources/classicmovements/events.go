@@ -8,9 +8,9 @@ import (
 )
 
 // SourceName is the canonical identifier for classic-movement rows.
-// Stamped as MovementEvent.Source() and as the ClassicMovementRow's
-// implicit writer identity — the classic_movements table itself has
-// no `source` column (unlike `trades`) because it has exactly one
+// Stamped as MovementEvent.Source() and as the implicit writer
+// identity of stellar.account_movements rows — that table has no
+// `source` column (unlike `trades`) because it has exactly one
 // writer (ADR-0031 "one writer per domain"; ADR-0047 D2), so nothing
 // needs to discriminate rows by writer.
 const SourceName = "classic-movements"
@@ -81,7 +81,7 @@ const (
 
 	// ProvenanceCAP67Event is RESERVED (ADR-0047 D1) for a possible
 	// future normalization of post-P23 sep41_transfers 'transfer'
-	// rows into classic_movements. No writer emits it today —
+	// rows into the movement store. No writer emits it today —
 	// present here only so callers building attributes maps have
 	// the exact wire value on hand if that normalization ever
 	// lands.
@@ -99,7 +99,8 @@ func (p Provenance) IsValid() bool {
 }
 
 // Movement is one reconstructed two-party classic-asset movement —
-// the decode-time shape of a classic_movements row (ADR-0047 D1).
+// ADR-0047 D1's decode-time row shape, which now feeds
+// stellar.account_movements (ADR-0048 D2).
 // LegIndex disambiguates multiple rows produced by the SAME op
 // (e.g. a liquidity-pool deposit's two asset legs, Phase 4); Phase
 // 1's two kinds are always single-leg, so it is always 0 there.
@@ -116,10 +117,10 @@ type Movement struct {
 	FromAddress     string
 	ToAddress       string
 
-	// Attributes is the kind-specific remainder, written straight to
-	// migration 0105's `attributes jsonb` column (empty/nil marshals
-	// to '{}', matching the column DEFAULT). Phase 1's two kinds
-	// never populate it. From Phase 2 on: both path_payment legs
+	// Attributes is the kind-specific remainder, shaped for migration
+	// 0105's (since-dropped, 0113) `attributes jsonb` column (empty/nil
+	// marshals to '{}', matching that column's DEFAULT). Phase 1's two
+	// kinds never populate it. From Phase 2 on: both path_payment legs
 	// carry the whole op (send_asset/send_amount, dest_asset/
 	// dest_amount, from/to) since each leg's Asset/Amount holds only
 	// its own side (ADR-0047 Phase 2); claimable
@@ -137,10 +138,11 @@ type Movement struct {
 // shell" pattern as sdex.TradeEvent.
 //
 // This type deliberately has NO persist arm in internal/pipeline/
-// sink.go's HandleEvent: classic_movements is historical-only
-// (ADR-0047 D2) and is written by its own dedicated
-// `stellarindex-ops classic-movements-backfill` batch writer, never
-// through the live dispatcher / pipeline.HandleEvent path. See
+// sink.go's HandleEvent: movements are historical-only and are
+// written to ClickHouse stellar.account_movements (ADR-0048 D2) by the
+// dedicated `stellarindex-ops classic-movements-backfill` batch
+// writer, never through the live dispatcher / pipeline.HandleEvent
+// path (the Postgres classic_movements table was dropped by 0113). See
 // internal/pipeline/lockstep_ast_test.go's notSunkEvents entry for
 // "classicmovements.MovementEvent" — that registration is this
 // design decision made mechanically enforceable.

@@ -23,7 +23,7 @@ API_BASE_URL=http://localhost:3000 bash examples/curl/01-healthz.sh
 | 03 | [`03-account-me.sh`](03-account-me.sh) | `GET /v1/account/me` — your tier + rate limit |
 | 04 | [`04-assets.sh`](04-assets.sh) | `GET /v1/assets?limit=N&order=volume_24h_usd:desc` — top assets by volume |
 | 05 | [`05-price.sh`](05-price.sh) | `GET /v1/price?asset=…&quote=fiat:USD` — VWAP price |
-| 06 | [`06-price-stream.sh`](06-price-stream.sh) | `GET /v1/price/stream` — SSE closed-bucket price ticks |
+| 06 | [`06-price-stream.sh`](06-price-stream.sh) | `GET /v1/price/stream` — SSE closed-bucket price ticks, reconnecting with `Last-Event-ID` |
 | 07 | [`07-ohlc.sh`](07-ohlc.sh) | `GET /v1/ohlc?base=…&quote=…` — single OHLC bar |
 | 08 | [`08-history.sh`](08-history.sh) | `GET /v1/history?base=…&quote=…` — per-trade records |
 | 09 | [`09-oracle-latest.sh`](09-oracle-latest.sh) | `GET /v1/oracle/latest?asset=…` — Reflector/Band/Redstone last update |

@@ -85,6 +85,10 @@ func TestIsStreamingPath(t *testing.T) {
 		"/v1/vwap":                  false,
 		"/v1/assets/native/holders": false,
 		"/v1/streamers":             false, // suffix is "/stream", not substring
+		// Trailing-wildcard routes with the wildcard set to "stream".
+		"/v1/changes/coin/stream": false,
+		"/v1/assets/stream":       false,
+		"/v1/ledger/stream/":      false,
 	}
 	for path, want := range cases {
 		if got := isStreamingPath(path); got != want {

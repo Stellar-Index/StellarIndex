@@ -26,6 +26,7 @@
 #                producer quietly.
 
 # ── shell producers ────────────────────────────────────────────────────────
+configs/alertmanager/apply.sh                                             alertmanager_receivers.prom        configs/alertmanager/apply-test.sh
 configs/ansible/roles/archival-node/files/ch-schema-drift.sh              ch_schema_drift.prom               configs/ansible/roles/archival-node/files/ch-schema-drift-test.sh
 configs/ansible/roles/archival-node/files/data-freshness.sh               data_freshness.prom                scripts/ci/data-freshness-test.sh
 configs/ansible/roles/archival-node/files/galexie-archive-contiguity.sh   galexie_archive_contiguity.prom    scripts/ci/galexie-archive-contiguity-test.sh

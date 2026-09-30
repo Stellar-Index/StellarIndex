@@ -119,9 +119,9 @@ const (
 	// factories, the backstop was REDEPLOYED: V1 is below. Backstop
 	// events (queue_withdrawal/deposit/claim/distribute/donate/
 	// gulp_emissions/rw_zone*…) are a DIFFERENT event surface from the
-	// pools and are NOT yet decoded — known-uncaptured, on the
-	// EVERY-event backlog. Do NOT add backstops to the pool gate
-	// registry: pool decode paths would mis-decode their bodies.
+	// pools, decoded by internal/sources/blend_backstop. Do NOT add
+	// backstops to the pool gate registry: pool decode paths would
+	// mis-decode their bodies.
 	MainnetBackstop = "CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7"
 	// MainnetBackstopV1 — found 2026-06-12 via lake enumeration after a
 	// Dune dashboard (mootz12/blend-v2-events) surfaced the backstop
