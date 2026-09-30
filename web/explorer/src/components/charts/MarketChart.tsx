@@ -1,11 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
 
 import { API_BASE_URL } from '@/api/client';
-import { Segmented } from '@/components/ui';
+import { Button, Segmented } from '@/components/ui';
 import {
   isFrameStale,
   useLedgerFollow,
@@ -14,6 +14,7 @@ import {
 } from '@/lib/live/hooks';
 import type { components } from '@/api/types';
 import { scaleBaseUnits } from '@/lib/format';
+import { downloadText, toCsv } from '@/lib/export';
 
 /** A tip tick drives the chart's live price line while fresher than this
  * (producer window ~5s; 30s of silence = wedged stream / backgrounded tab
@@ -85,6 +86,38 @@ const INTERVAL_SEC: Record<string, number> = {
   '1mo': 2592000,
 };
 const OHLC_CAP = 1000;
+
+const OHLC_CSV_COLUMNS = [
+  't',
+  'o',
+  'h',
+  'l',
+  'c',
+  'v_base',
+  'v_quote',
+  'v_base_decimals',
+  'v_quote_decimals',
+  'n',
+] as const;
+
+/** The served series as CSV, every value verbatim from /v1/ohlc. */
+export function ohlcCsv(bars: readonly OHLCBar[]): string {
+  return toCsv(OHLC_CSV_COLUMNS, bars);
+}
+
+export function ohlcExportName(
+  base: string,
+  quote: string,
+  interval: string,
+  bars: readonly OHLCBar[],
+  ext: 'csv' | 'json',
+): string {
+  // Asset ids carry ':' (code:issuer), which some filesystems reject.
+  const safe = (s: string) => s.replace(/[^A-Za-z0-9._-]+/g, '_');
+  const stamp = (t: string | undefined) => safe((t ?? '').replace(/[-:]/g, ''));
+  const span = `${stamp(bars[0]?.t)}-${stamp(bars[bars.length - 1]?.t)}`;
+  return `stellarindex-ohlc-${safe(base)}-${safe(quote)}-${interval}-${span}.${ext}`;
+}
 
 // Window → the granularities that make sense for it (bar count in [~24, cap]),
 // with a sensible default (the finest that's dense-but-performant). Per the
@@ -200,18 +233,20 @@ export function MarketChart({
   // the forming bar advances instead of freezing at page load. Prefix key
   // matches every grain/limit for this pair.
   useLedgerFollow(['/v1/ohlc', base, quote]);
-  const query = useQuery<Bar[], Error>({
+  const query = useQuery<OHLCBar[], Error>({
     queryKey: ['/v1/ohlc', base, quote, activeGrain, limit],
     queryFn: async ({ signal }) => {
       const url = `${API_BASE_URL}/v1/ohlc?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&interval=${activeGrain}&limit=${limit}`;
       const r = await fetch(url, { signal });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const env = (await r.json()) as { data?: { intervals?: OHLCBar[] } };
-      return (env.data?.intervals ?? []).map(toChartBar);
+      return env.data?.intervals ?? [];
     },
   });
 
-  const data = query.data ?? [];
+  // Chart numbers are lossy doubles; export reads the raw strings instead.
+  const raw = query.data;
+  const data = useMemo(() => (raw ?? []).map(toChartBar), [raw]);
   const loading = query.isLoading;
   const error = query.error ? query.error.message : null;
 
@@ -250,6 +285,40 @@ export function MarketChart({
         <span className="text-ink-faint ml-auto font-mono tracking-wider uppercase">
           {baseLabel} / {quoteLabel}
         </span>
+        {!error && raw && raw.length > 0 && (
+          <div
+            role="group"
+            aria-label="Download chart data"
+            className="flex items-center gap-1"
+          >
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                downloadText(
+                  ohlcExportName(base, quote, activeGrain, raw, 'csv'),
+                  'text/csv;charset=utf-8',
+                  ohlcCsv(raw),
+                )
+              }
+            >
+              CSV
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                downloadText(
+                  ohlcExportName(base, quote, activeGrain, raw, 'json'),
+                  'application/json',
+                  JSON.stringify(raw, null, 2),
+                )
+              }
+            >
+              JSON
+            </Button>
+          </div>
+        )}
       </div>
       {loading && <ChartMessage height={height}>Loading…</ChartMessage>}
       {error && !loading && (

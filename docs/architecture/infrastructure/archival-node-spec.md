@@ -450,10 +450,13 @@ Beyond the per-component security in the HA plan §6:
 | Archive publish failure | any | P2 | [archive-publish](../../operations/runbooks/archive-publish.md) |
 | `stellarindex_ingestion_ledger_stalled` (Galexie export stopped: the lake tip, and so the `ledgerstream` cursor, stops advancing) | flat for 5 m, held 5 m (~10 min) | P1 | [ledger-ingest-stalled](../../operations/runbooks/ledger-ingest-stalled.md) |
 | `stellarindex_galexie_catchup_refused` (captive core inside Galexie refuses to catch up) | > 0 for 10 m | P1 | [galexie-catchup-refused](../../operations/runbooks/galexie-catchup-refused.md) |
-| stellar-rpc SQLite size growth | > 20 %/day | P3 | _runbook tbd_ — stellar-rpc removed from r1 2026-04-23 ([r1-deployment-state.md](../../operations/r1-deployment-state.md)); revisit when Phase-3 validator work brings it back |
 | Host up | any missed scrape × 3 | P1 | [host-down](../../operations/runbooks/host-down.md) |
 
 Runbooks live under `docs/operations/runbooks/` (Week 9).
+
+No stellar-rpc alert or runbook is specified: stellar-rpc is not part of a
+production node (AGENTS.md invariant 6) and runs only for the `rpc-probe`
+diagnostic and fixture capture.
 
 No exporter publishes a Galexie export lag in ledgers, so an export that
 falls behind the network but keeps advancing does not alert; only a stop does.

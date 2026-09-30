@@ -121,13 +121,14 @@ fi
 # stayed on golang:1.25.13-trixie — and nothing caught it, because the
 # container is what `make prepush` runs, so a stale pin silently grades the
 # push with a different compiler than CI and production use.
+DOCKER_DIR="${DOCKER_DIR:-docker}"
 DOCKERFILES=()
 while IFS= read -r df; do
   DOCKERFILES+=("$df")
-done < <(find docker -type f \( -name 'Dockerfile*' -o -name '*.Dockerfile' \) 2>/dev/null | sort)
+done < <(find "$DOCKER_DIR" -type f \( -name 'Dockerfile*' -o -name '*.Dockerfile' \) 2>/dev/null | sort)
 
 if [[ "${#DOCKERFILES[@]}" -eq 0 ]]; then
-  echo "lint-go-toolchain-parity: FAIL — no Dockerfile found under docker/; the container-pin check would be vacuous" >&2
+  echo "lint-go-toolchain-parity: FAIL — no Dockerfile found under $DOCKER_DIR/; the container-pin check would be vacuous" >&2
   exit 1
 fi
 
@@ -146,12 +147,22 @@ for df in "${DOCKERFILES[@]}"; do
     ln="${hit%%:*}"
     tag="${hit#*:}"
     PINS=$((PINS + 1))
+    ver="${tag%%@*}"
     # Compare on major.minor.patch when the tag carries one, else major.minor.
-    case "$tag" in
+    case "$ver" in
       "$want"|"$want"-*)                   ;;
       "${want%.*}"|"${want%.*}"-*)         ;;
       *)
         echo "lint-go-toolchain-parity: $df:$ln pins golang:$tag but go.mod resolves to $want"
+        FAIL=$((FAIL + 1))
+        ;;
+    esac
+    # A minor tag like 1.26-alpine floats across patch releases, so without
+    # a digest the compiler the image builds with is not fixed at all.
+    case "$tag" in
+      *@sha256:*) ;;
+      *)
+        echo "lint-go-toolchain-parity: $df:$ln pins golang:$tag by tag only; pin it as image:tag@sha256:<index digest>"
         FAIL=$((FAIL + 1))
         ;;
     esac
@@ -164,11 +175,11 @@ if [[ "$PINS" -eq 0 ]]; then
 fi
 if [[ "$FAIL" -gt 0 ]]; then
   echo
-  echo "lint-go-toolchain-parity: FAIL — a container Go pin disagrees with go.mod."
+  echo "lint-go-toolchain-parity: FAIL — a container Go pin disagrees with go.mod or is not digest-pinned."
   echo "  The container is what \`make prepush\` runs; a stale pin grades the push"
   echo "  with a different compiler than CI and production use (see F-1240)."
   exit 1
 fi
-echo "lint-go-toolchain-parity: OK — $PINS container Go pin(s) across ${#DOCKERFILES[@]} Dockerfile(s) match go.mod ($want)"
+echo "lint-go-toolchain-parity: OK — $PINS container Go pin(s) across ${#DOCKERFILES[@]} Dockerfile(s) match go.mod ($want), digest-pinned"
 
 echo "lint-go-toolchain-parity: OK — $STEPS actions/setup-go step(s) in ${#FILES[@]} workflow file(s), all resolve from go.mod"
