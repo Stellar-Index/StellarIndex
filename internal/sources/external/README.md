@@ -28,7 +28,7 @@ by default.
 | Connector | Type | Role | Auth | Notes |
 | --- | --- | --- | --- | --- |
 | [`binance`](binance/) | Streamer (WS aggTrade) | Highest-liquidity XLM fiat + crypto pairs | None | `@aggTrade` (not `@trade`) — same-millisecond same-price fills merged for ~5–10× lower throughput, lossless for VWAP |
-| [`kraken`](kraken/) | Streamer (WS v2 trade) | Strongest XLM fiat coverage (USD/EUR/GBP/AUD/CAD/CHF) | None | One-call subscription with array of channels; floats arrive as JSON numbers — decoder uses `json.Number` to bypass float64 on the price path |
+| [`kraken`](kraken/) | Streamer (WS v2 trade) | XLM fiat coverage (USD/EUR/GBP) | None | One-call subscription with array of channels; floats arrive as JSON numbers — decoder uses `json.Number` to bypass float64 on the price path |
 | [`bitstamp`](bitstamp/) | Streamer (WS live_trades) | EUR/GBP depth alongside Kraken; European retail liquidity profile | None | One-subscribe-per-channel; uses `price_str` / `amount_str` (preserves vendor precision); periodic server-initiated reconnect |
 | [`coinbase`](coinbase/) | Streamer (WS matches) | US price discovery for XLM/USD | None for matches | Targets the **Exchange** API (ex-Pro), not Coinbase Advanced Trade |
 | [`exchangeratesapi`](exchangeratesapi/) | Poller (REST, 5-min cadence) | Triangulation source: XLM/USD × USD/EUR = XLM/EUR | API key | Authoritative first-party FX computation (interbank + ECB blend) — `ClassExchange`, not aggregator. Free tier (EUR base, hourly) unusable for prod |

@@ -1,6 +1,7 @@
 package kraken
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -35,5 +36,27 @@ func TestDefaultPairList_matchesDefaultPairs(t *testing.T) {
 	}
 	if len(list) == 0 {
 		t.Error("DefaultPairList returned empty slice")
+	}
+}
+
+// krakenXLMWsnames is the set of XLM pairs Kraken's public AssetPairs
+// endpoint lists by wsname. A symbol outside it is rejected at subscribe
+// time with "Currency pair not supported" and never delivers a trade.
+var krakenXLMWsnames = map[string]bool{
+	"XLM/EUR": true,
+	"XLM/GBP": true,
+	"XLM/USD": true,
+	"XLM/XBT": true,
+}
+
+func TestDefaultPairs_XLMSymbolsAreVenueSupported(t *testing.T) {
+	m, err := DefaultPairs()
+	if err != nil {
+		t.Fatalf("DefaultPairs: %v", err)
+	}
+	for symbol := range m {
+		if strings.HasPrefix(symbol, "XLM/") && !krakenXLMWsnames[symbol] {
+			t.Errorf("DefaultPairs subscribes %q, which Kraken does not list", symbol)
+		}
 	}
 }

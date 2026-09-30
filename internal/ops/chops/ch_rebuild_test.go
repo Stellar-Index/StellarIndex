@@ -231,6 +231,92 @@ func TestDrainAndWriteCountsDroppedTradesSeparately(t *testing.T) {
 	}
 }
 
+// TestReportCHRebuildCountsListsEveryReDerivedSource pins that a re-derived
+// source that produced no row still gets a report row and is named, while a
+// source outside the run stays out of the report.
+func TestReportCHRebuildCountsListsEveryReDerivedSource(t *testing.T) {
+	cat := []reconSource{{name: "aquarius"}, {name: "blend"}, {name: "reflector"}}
+	var out strings.Builder
+	err := reportCHRebuildCounts(&out, cat, []string{"aquarius", "blend"}, nil, true,
+		map[string]int{"aquarius": 5}, map[string]int{}, map[string]int{"aquarius": 1})
+	if err == nil || !strings.Contains(err.Error(), "1 event(s) failed") {
+		t.Errorf("err = %v, want the 1-failed error", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		fmt.Sprintf("%-16s %14d %14d %14d\n", "aquarius", 5, 0, 1),
+		fmt.Sprintf("%-16s %14d %14d %14d\n", "blend", 0, 0, 0),
+		"re-derived NO rows for: blend ",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("report missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "reflector") {
+		t.Errorf("report lists a source outside the run:\n%s", got)
+	}
+}
+
+// TestReportCHRebuildCountsFailsARequiredSourceThatWroteNothing pins the exit
+// gate for an emptied window: a -require-rows source that re-derived no row
+// fails the run, even when all it produced was dropped, while an unrequired
+// quiet source does not.
+func TestReportCHRebuildCountsFailsARequiredSourceThatWroteNothing(t *testing.T) {
+	cat := []reconSource{{name: "aquarius"}, {name: "blend"}, {name: "cctp"}}
+	reDerived := []string{"aquarius", "blend", "cctp"}
+	for _, tc := range []struct {
+		name     string
+		required []string
+		written  map[string]int
+		dropped  map[string]int
+		wantErr  string
+	}{
+		{"required source empty", []string{"aquarius", "blend"}, map[string]int{"aquarius": 3}, map[string]int{}, "wrote no row for blend,"},
+		{"required source only dropped", []string{"aquarius"}, map[string]int{}, map[string]int{"aquarius": 2}, "wrote no row for aquarius,"},
+		{"nothing required, all empty", nil, map[string]int{}, map[string]int{}, ""},
+		{"required sources wrote", []string{"aquarius", "blend"}, map[string]int{"aquarius": 3, "blend": 1}, map[string]int{}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := reportCHRebuildCounts(io.Discard, cat, reDerived, tc.required, false, tc.written, tc.dropped, map[string]int{})
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Errorf("err = %v, want nil — a quiet unrequired source must not fail the run", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Errorf("err = %v, want one containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestReportCHRebuildCountsFailsADroppedTradeUnderWrite pins that a -write
+// run fails when a source other than sdex had a trade dropped as unstorable,
+// even when that source also wrote rows, unless the caller opted out.
+func TestReportCHRebuildCountsFailsADroppedTradeUnderWrite(t *testing.T) {
+	cat := []reconSource{{name: "aquarius"}, {name: "soroswap"}, {name: "sdex"}}
+	reDerived := []string{"aquarius", "soroswap", "sdex"}
+	for _, tc := range []struct {
+		name        string
+		gateDropped bool
+		dropped     map[string]int
+		wantErr     string
+	}{
+		{"required projected source dropped one", true, map[string]int{"aquarius": 1}, "dropped as unstorable for aquarius "},
+		{"sdex one-side-zero fill is expected", true, map[string]int{"sdex": 7}, ""},
+		{"opted out or dry-run", false, map[string]int{"aquarius": 1}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := reportCHRebuildCounts(io.Discard, cat, reDerived, []string{"aquarius"}, tc.gateDropped,
+				map[string]int{"aquarius": 5, "soroswap": 2, "sdex": 9}, tc.dropped, map[string]int{})
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Errorf("err = %v, want nil", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Errorf("err = %v, want one containing %q — a dropped row in an emptied window would exit 0", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 // TestDrainAndWriteCutsTradeBatchesOnLedgerBoundary pins that no ledger's
 // trades are split across two batches. The bulk COPY writer's emptiness probe
 // is `ledger BETWEEN min AND max`; a ledger split across batches N and N+1
