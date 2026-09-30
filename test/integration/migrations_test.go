@@ -127,19 +127,21 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	// migration, this test fails loudly. The canonical.Validate
 	// functions are a first line of defense — the DB CHECKs are
 	// the last. Both matter.
-	assertInsertRejected(t, db, ctx, "negative base_amount", `
-        INSERT INTO trades
-            (source, ledger, tx_hash, op_index, ts,
-             base_asset, quote_asset, base_amount, quote_amount)
-        VALUES ('t', 1, 'aa', 0, now(), 'native', 'native', -1, 1)`)
-	// Zero legs too: a one-side-zero fill has no price, so a CHECK relaxed
-	// to >= 0 would let it reach the price views.
-	assertInsertRejected(t, db, ctx, "zero base_amount", `
+	//
+	// trades.base_amount / quote_amount are the exception: 0191 drops
+	// 0001's `> 0` CHECKs so a one-side-zero SDEX fill can be stored.
+	// At full-up the row invariant (>= 0, not both zero) is Go-only —
+	// canonical.Trade.Validate on every writer — and there is no DB
+	// CHECK rejecting a negative leg. Asserting absence here keeps a
+	// future migration from quietly re-adding a CHECK the writers and
+	// the 0187 priceable filter no longer expect.
+	assertTradesAmountChecksAbsent(t, db, ctx)
+	assertInsertAccepted(t, db, ctx, "zero base_amount (one-side-zero fill)", `
         INSERT INTO trades
             (source, ledger, tx_hash, op_index, ts,
              base_asset, quote_asset, base_amount, quote_amount)
         VALUES ('t', 1, 'ab', 0, now(), 'native', 'native', 0, 1)`)
-	assertInsertRejected(t, db, ctx, "zero quote_amount", `
+	assertInsertAccepted(t, db, ctx, "zero quote_amount (one-side-zero fill)", `
         INSERT INTO trades
             (source, ledger, tx_hash, op_index, ts,
              base_asset, quote_asset, base_amount, quote_amount)
@@ -235,6 +237,11 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	assertColumnType(t, db, ctx, "defindex_fees", "derive_generation", "bigint")
 
 	// ─── Down: roll everything back ─────────────────────────────
+	// 0191's down refuses (LOUD) while any trades row has a zero leg;
+	// the two probe rows accepted above must go first.
+	if _, err := db.ExecContext(ctx, `DELETE FROM trades WHERE base_amount = 0 OR quote_amount = 0`); err != nil {
+		t.Fatalf("delete zero-leg probe rows: %v", err)
+	}
 	if err := migrator.Down(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		t.Fatalf("migrate down: %v", err)
 	}
@@ -605,6 +612,22 @@ func assertPolicyAbsent(t *testing.T, db *sql.DB, ctx context.Context, hypertabl
 	if count != 0 {
 		t.Errorf("expected NO %s policy on hypertable %q (invariant 8: raw history kept forever), got %d jobs",
 			procName, hypertable, count)
+	}
+}
+
+// assertTradesAmountChecksAbsent asserts neither of 0001's inline `> 0`
+// amount CHECKs on trades survives at full-up (0191 dropped them).
+func assertTradesAmountChecksAbsent(t *testing.T, db *sql.DB, ctx context.Context) {
+	t.Helper()
+	var n int
+	if err := db.QueryRowContext(ctx, `
+        SELECT count(*) FROM pg_constraint
+        WHERE conrelid = 'trades'::regclass
+          AND conname IN ('trades_base_amount_check', 'trades_quote_amount_check')`).Scan(&n); err != nil {
+		t.Fatalf("count trades amount CHECKs: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("trades amount CHECKs present = %d, want 0 (0191 drops both; a later migration re-added one)", n)
 	}
 }
 

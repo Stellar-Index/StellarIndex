@@ -1449,6 +1449,7 @@ func (o *Orchestrator) decideBucket(
 			obs.AggregatorDroppedTradesTotal.WithLabelValues("class", pair.String()).Add(float64(dropped))
 		}
 	}
+	trades = dropUnpriceable(pair, trades)
 	// Venue-level view of the set the outlier filter is handed: the
 	// outlier_storm alert reads per-venue DISAGREEMENT from this, not
 	// the trim re-count (2026-08-28).
@@ -2531,6 +2532,22 @@ func (o *Orchestrator) dropForMinUSDVolume(pair canonical.Pair, trades []canonic
 	o.mu.Unlock()
 	obs.AggregatorEmptyWindowsTotal.Inc()
 	return true
+}
+
+// dropUnpriceable removes stored trades with a zero leg before the venue
+// VWAPs and outlier statistics: they have no price, so they must neither
+// count as outliers nor weigh a venue's VWAP with price-less volume.
+func dropUnpriceable(pair canonical.Pair, trades []canonical.Trade) []canonical.Trade {
+	out := make([]canonical.Trade, 0, len(trades))
+	for _, t := range trades {
+		if t.BaseAmount.BigInt().Sign() > 0 && t.QuoteAmount.BigInt().Sign() > 0 {
+			out = append(out, t)
+		}
+	}
+	if dropped := len(trades) - len(out); dropped > 0 {
+		obs.AggregatorDroppedTradesTotal.WithLabelValues("unpriceable", pair.String()).Add(float64(dropped))
+	}
+	return out
 }
 
 // filterForVWAP drops trades whose source is not registered as a
