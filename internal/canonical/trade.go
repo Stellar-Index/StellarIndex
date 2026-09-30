@@ -19,8 +19,8 @@ import (
 // derived price would force a precision choice here that belongs at
 // the display layer.
 //
-// Invariant: BaseAmount > 0 and QuoteAmount > 0. A trade with zero
-// on either side is an ingestion bug.
+// Invariant: BaseAmount >= 0, QuoteAmount >= 0, not both zero. A single
+// zero leg is a real (unpriceable) fill; both zero is an ingestion bug.
 type Trade struct {
 	// Source is the connector name ("sdex", "soroswap", "aquarius",
 	// "binance", …). Must be stable — it's part of the trade ID and
@@ -141,6 +141,11 @@ func (t Trade) ID() string {
 // cost of rejecting valid off-chain inserts; TxHash validation
 // (64-char hex, synthesised deterministically for off-chain) already
 // catches stubs.
+//
+// Amounts must be non-negative and not both zero. Exactly one zero leg
+// is a valid trade: SDEX settles fills whose base or quote rounded to
+// zero stroops, and those are real on-chain effects the served tier
+// stores (unpriceable, so every price path filters them out).
 func (t Trade) Validate() error {
 	if t.Source == "" {
 		return fmt.Errorf("%w: empty source", ErrInvalidTrade)
@@ -154,11 +159,15 @@ func (t Trade) Validate() error {
 	if err := t.Pair.Validate(); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidTrade, err)
 	}
-	if t.BaseAmount.Sign() <= 0 {
-		return fmt.Errorf("%w: base_amount must be positive, got %s", ErrInvalidTrade, t.BaseAmount)
+	bs, qs := t.BaseAmount.Sign(), t.QuoteAmount.Sign()
+	if bs < 0 {
+		return fmt.Errorf("%w: base_amount must be non-negative, got %s", ErrInvalidTrade, t.BaseAmount)
 	}
-	if t.QuoteAmount.Sign() <= 0 {
-		return fmt.Errorf("%w: quote_amount must be positive, got %s", ErrInvalidTrade, t.QuoteAmount)
+	if qs < 0 {
+		return fmt.Errorf("%w: quote_amount must be non-negative, got %s", ErrInvalidTrade, t.QuoteAmount)
+	}
+	if bs == 0 && qs == 0 {
+		return fmt.Errorf("%w: base_amount and quote_amount are both zero", ErrInvalidTrade)
 	}
 	return nil
 }

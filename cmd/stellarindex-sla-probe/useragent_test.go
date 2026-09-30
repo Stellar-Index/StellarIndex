@@ -43,7 +43,7 @@ func TestProbeIdentifiesItselfAsSynthetic(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if _, ok, _ := hit(ctx, client, srv.URL, "", endpoint{Path: "/v1/price"}); !ok {
+	if _, failure, _ := hit(ctx, client, srv.URL, "", endpoint{Path: "/v1/price"}); failure != "" {
 		t.Fatalf("probe request to the stub did not succeed")
 	}
 

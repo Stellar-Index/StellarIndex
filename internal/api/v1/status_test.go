@@ -115,8 +115,8 @@ func TestStatus_WithBackend_HappyPath(t *testing.T) {
 			latency: StatusLatency{P50Ms: 10, P95Ms: 80, P99Ms: 200, WindowSecs: 300},
 			freshness: StatusFreshness{
 				LastAggregatorTick: WireTime(now),
-				ActiveSources:      intPtr(14),
-				TotalSources:       intPtr(18),
+				ActiveSources:      new(14),
+				TotalSources:       new(18),
 			},
 			incidents: StatusIncidents{ActiveCount: 0},
 		},
@@ -173,7 +173,7 @@ func TestStatus_FreshnessCounts_ServedZeroVsFailedQuery(t *testing.T) {
 		{
 			name: "served zero",
 			backend: &fakeStatusBackend{
-				freshness: StatusFreshness{ActiveSources: intPtr(0), TotalSources: intPtr(17)},
+				freshness: StatusFreshness{ActiveSources: new(0), TotalSources: new(17)},
 			},
 			wantStatus: "degraded",
 			wantBody:   []string{`"active_sources":0`, `"total_sources":17`},
@@ -181,7 +181,7 @@ func TestStatus_FreshnessCounts_ServedZeroVsFailedQuery(t *testing.T) {
 		{
 			name: "failed query",
 			backend: &fakeStatusBackend{
-				freshness: StatusFreshness{ActiveSources: intPtr(0), TotalSources: intPtr(17)},
+				freshness: StatusFreshness{ActiveSources: new(0), TotalSources: new(17)},
 				freErr:    errors.New("prometheus: connection refused"),
 			},
 			wantStatus: "unknown",
@@ -190,7 +190,7 @@ func TestStatus_FreshnessCounts_ServedZeroVsFailedQuery(t *testing.T) {
 		{
 			name: "all active",
 			backend: &fakeStatusBackend{
-				freshness: StatusFreshness{ActiveSources: intPtr(17), TotalSources: intPtr(17)},
+				freshness: StatusFreshness{ActiveSources: new(17), TotalSources: new(17)},
 			},
 			wantStatus: "ok",
 			wantBody:   []string{`"active_sources":17`},
@@ -418,6 +418,74 @@ func TestStatus_IncidentsQueryError_ReportsUnknownNotZero(t *testing.T) {
 	}
 }
 
+// A failed freshness probe must publish absent counts, not a measured
+// "0 / 0 active sources", and must degrade overall like any blind panel.
+func TestStatus_FreshnessQueryError_OmitsCounts(t *testing.T) {
+	now := time.Now().UTC()
+	srv := New(Options{
+		RegionName: "r1",
+		StatusBackend: &fakeStatusBackend{
+			heartbeats: map[string]time.Time{"indexer": now, "aggregator": now},
+			freErr:     errors.New("prometheus: connection refused"),
+		},
+	})
+
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/status", nil))
+
+	var env struct {
+		Data struct {
+			Overall   string                     `json:"overall"`
+			Freshness map[string]json.RawMessage `json:"freshness"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	for _, k := range []string{"active_sources", "total_sources"} {
+		if v, ok := env.Data.Freshness[k]; ok {
+			t.Errorf("freshness.%s = %s on a failed query, want absent", k, v)
+		}
+	}
+	if env.Data.Overall != "degraded" {
+		t.Errorf("overall = %q, want degraded when the freshness query fails", env.Data.Overall)
+	}
+}
+
+// TestPrometheusStatusBackend_FreshnessReturnsQueryError pins that every
+// freshness query's failure reaches the caller, and that an empty count()
+// vector is a measured zero rather than a failure.
+func TestPrometheusStatusBackend_FreshnessReturnsQueryError(t *testing.T) {
+	const empty = `{"status":"success","data":{"resultType":"vector","result":[]}}`
+	for _, failing := range []string{activeSourcesQuery, totalSourcesQuery, "vwap_writes_total"} {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.Contains(r.URL.Query().Get("query"), failing) {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			_, _ = w.Write([]byte(empty))
+		}))
+		p := &PrometheusStatusBackend{URL: ts.URL}
+		got, err := p.Freshness(context.Background())
+		ts.Close()
+		if err == nil {
+			t.Errorf("query %q failed but Freshness returned nil error (%+v)", failing, got)
+		}
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(empty))
+	}))
+	defer ts.Close()
+	got, err := (&PrometheusStatusBackend{URL: ts.URL}).Freshness(context.Background())
+	if err != nil {
+		t.Fatalf("Freshness on empty vectors: %v", err)
+	}
+	if got.ActiveSources == nil || *got.ActiveSources != 0 || got.TotalSources == nil || *got.TotalSources != 0 {
+		t.Errorf("empty count() = %v / %v, want measured 0 / 0", got.ActiveSources, got.TotalSources)
+	}
+}
+
 // The two success cases the tri-state also has to get right, so the
 // "unknown" case above can't pass by simply hard-coding "unknown".
 func TestStatus_IncidentsStatus_SuccessCases(t *testing.T) {
@@ -539,44 +607,6 @@ func TestPrometheusStatusBackend_HeartbeatQueryIgnoresFailedScrapes(t *testing.T
 
 	if !strings.Contains(gotQuery, "== 1") {
 		t.Errorf("heartbeat query = %q, want it to filter on up==1 so a failing scrape (up=0) does not refresh the heartbeat timestamp", gotQuery)
-	}
-}
-
-// A failed freshness query must surface as an error so the handler trips
-// backendErr, rather than publishing its count as a measured 0.
-func TestPrometheusStatusBackend_FreshnessQueryErrorIsReturned(t *testing.T) {
-	for _, failing := range []string{
-		activeSourcesQuery,
-		totalSourcesQuery,
-		`max(timestamp(stellarindex_aggregator_vwap_writes_total))`,
-	} {
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Query().Get("query") == failing {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1730000000,"17"]}]}}`))
-		}))
-		p := &PrometheusStatusBackend{URL: ts.URL}
-		if _, err := p.Freshness(context.Background()); err == nil {
-			t.Errorf("Freshness with %q failing: err = nil, want the query error", failing)
-		}
-		ts.Close()
-	}
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1730000000,"0"]}]}}`))
-	}))
-	defer ts.Close()
-	p := &PrometheusStatusBackend{URL: ts.URL}
-	f, err := p.Freshness(context.Background())
-	if err != nil {
-		t.Fatalf("Freshness with a served 0: %v", err)
-	}
-	if f.ActiveSources == nil || *f.ActiveSources != 0 || f.TotalSources == nil || *f.TotalSources != 0 {
-		t.Errorf("Freshness = %+v, want served zeros", f)
 	}
 }
 

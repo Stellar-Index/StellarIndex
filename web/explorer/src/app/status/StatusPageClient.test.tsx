@@ -358,6 +358,50 @@ describe('StatusPageClient honest staleness', () => {
     expect(row!.querySelector('.text-ok-700')).toBeNull();
   });
 
+  it('ages an unverified coverage row against its own scan cadence', async () => {
+    const threeHoursAgo = new Date(Date.now() - 3 * 3_600_000).toISOString();
+    const unverified = (source: string, cadenceS: number) => ({
+      source,
+      applies: true,
+      genesis_ledger: 1,
+      earliest_ledger: 1,
+      latest_ledger: 100,
+      entries: 5,
+      gap_free_pct: 1,
+      coverage_pct: 1,
+      coverage_snapshot_at: threeHoursAgo,
+      coverage_scan_cadence_s: cadenceS,
+    });
+    mockFeeds({
+      status: async () => json({ data: statusPayload({}) }),
+      ingestion: async () =>
+        json({
+          data: ingestionPayload({
+            backfill_coverage_as_of: new Date().toISOString(),
+            backfill_coverage: [
+              unverified('sdex', 6 * 3600),
+              unverified('blend', 30 * 60),
+            ],
+          }),
+          as_of: new Date().toISOString(),
+          flags: { stale: false },
+        }),
+    });
+    renderPageWithClient();
+
+    await waitFor(() => expect(screen.getByText('sdex')).toBeInTheDocument());
+    const ageCell = (source: string) =>
+      screen
+        .getByText(source)
+        .closest('tr')!
+        .querySelector<HTMLElement>('td[title^="When the gap detector"]')!;
+    // 3 h into a 6 h scan cycle is healthy; 3 h on a 30 min cycle is not.
+    expect(ageCell('sdex').className).not.toMatch(/text-warn-700/);
+    expect(ageCell('sdex').title).toMatch(/6h cadence/);
+    expect(ageCell('blend').className).toMatch(/text-warn-700/);
+    expect(ageCell('blend').title).toMatch(/30m cadence/);
+  });
+
   it('states the real coverage refresh cadence in the empty state', async () => {
     mockFeeds({
       status: async () => json({ data: statusPayload({}) }),

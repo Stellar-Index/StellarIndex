@@ -5,11 +5,17 @@ package chops
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"strings"
+	"time"
+
+	"github.com/stellar/go-stellar-sdk/historyarchive"
+	"github.com/stellar/go-stellar-sdk/support/storage"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
@@ -212,18 +218,37 @@ func toLedgerSeq(flagName string, v uint64) (uint32, error) {
 // below this is expected lag, not truncation.
 const independentTipShortfallTolerance = 100
 
-// independentLedgerTip resolves a lake-verifier's -to=0 upper bound from a
-// source OTHER than the ClickHouse table under audit: the live
-// ledgerstream ingestion cursor in Postgres. A verifier that instead took
-// its bound from stellar.ledgers' own max(ledger_seq) (GH-1180) can never
-// observe a restore that died short or a stalled live ingest, because the
-// missing ledgers are also missing from the range it checks.
-func independentLedgerTip(ctx context.Context, cfgPath string) (uint32, error) {
+// independentTip is one reading of the tip from a source OTHER than the
+// ClickHouse table under audit. A verifier that took its bound from
+// stellar.ledgers' own max(ledger_seq) (GH-1180) can never observe a
+// restore that died short or a stalled ingest, because the missing
+// ledgers are also missing from the range it checks.
+type independentTip struct {
+	source string
+	seq    uint32
+	err    error
+}
+
+// independentTips reads both independent tips. The ledgerstream cursor is
+// our own ingest of the same Galexie bucket, so it stalls with the lake when
+// Galexie does; the configured history archive keeps advancing through that.
+func independentTips(ctx context.Context, cfgPath string) []independentTip {
+	cursor := independentTip{source: "ledgerstream cursor"}
+	archive := independentTip{source: "history archive"}
 	cfg, err := config.LoadWithEnv(cfgPath)
 	if err != nil {
-		return 0, fmt.Errorf("load -config for independent tip: %w", err)
+		cursor.err = fmt.Errorf("load -config for independent tip: %w", err)
+		archive.err = cursor.err
+		return []independentTip{cursor, archive}
 	}
-	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
+	cursor.seq, cursor.err = ledgerstreamCursorTip(ctx, cfg.Storage.PostgresDSN)
+	archive.source = "history archive " + cfg.Stellar.HistoryArchiveURL
+	archive.seq, archive.err = historyArchiveTip(ctx, cfg.Stellar.HistoryArchiveURL)
+	return []independentTip{cursor, archive}
+}
+
+func ledgerstreamCursorTip(ctx context.Context, dsn string) (uint32, error) {
+	store, err := timescale.Open(ctx, dsn)
 	if err != nil {
 		return 0, fmt.Errorf("open postgres for independent tip: %w", err)
 	}
@@ -235,25 +260,75 @@ func independentLedgerTip(ctx context.Context, cfgPath string) (uint32, error) {
 	return cur.LastLedger, nil
 }
 
+// historyArchiveTipTimeout bounds the probe so an unreachable archive
+// degrades to the warn-and-continue path instead of hanging the verifier.
+const historyArchiveTipTimeout = 30 * time.Second
+
+// historyArchiveTip reads the archive's root HAS currentLedger. It trails
+// the network tip by up to one checkpoint plus upload latency, so a lake
+// shortfall measured against it understates the real one.
+func historyArchiveTip(ctx context.Context, archiveURL string) (uint32, error) {
+	if archiveURL == "" {
+		return 0, errors.New("stellar.history_archive_url is not set")
+	}
+	ctx, cancel := context.WithTimeout(ctx, historyArchiveTipTimeout)
+	defer cancel()
+	arch, err := historyarchive.Connect(archiveURL, historyarchive.ArchiveOptions{
+		ConnectOptions: storage.ConnectOptions{Context: ctx, UserAgent: "stellarindex-ops/verify-tip"},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("connect history archive: %w", err)
+	}
+	has, err := arch.GetRootHAS()
+	if err != nil {
+		return 0, fmt.Errorf("read history archive root HAS: %w", err)
+	}
+	// A CDN that 200s on a miss decodes to zero, which would read as "no
+	// shortfall" and silently disarm the check.
+	if has.CurrentLedger == 0 {
+		return 0, errors.New("history archive root HAS has currentLedger=0")
+	}
+	return has.CurrentLedger, nil
+}
+
 // resolveVerifyTo decides a verifier's resolved -to given the ClickHouse
-// lake's own max ledger and an independent tip, failing closed rather
+// lake's own max ledger and one independent tip, failing closed rather
 // than silently certifying a truncated lake as PASSED (GH-1180). Pure —
 // no I/O — so it is unit-testable without ClickHouse or Postgres.
-func resolveVerifyTo(toolName string, chMax, independentTip uint32) (uint32, error) {
+func resolveVerifyTo(toolName, tipSource string, chMax, independentTip uint32) (uint32, error) {
 	if independentTip > chMax && independentTip-chMax > independentTipShortfallTolerance {
-		return 0, fmt.Errorf("%s: ClickHouse lake max ledger %d is %d ledger(s) short of the independent tip %d (ledgerstream cursor) — refusing to certify a truncated lake as PASSED; pass -to explicitly to override",
-			toolName, chMax, independentTip-chMax, independentTip)
+		return 0, fmt.Errorf("%s: ClickHouse lake max ledger %d is %d ledger(s) short of the independent tip %d (%s) — refusing to certify a truncated lake as PASSED; pass -to explicitly to override",
+			toolName, chMax, independentTip-chMax, independentTip, tipSource)
+	}
+	return chMax, nil
+}
+
+// resolveVerifyToTips applies resolveVerifyTo against every tip that could
+// be read. An unreadable tip is warned about, never fatal, so offline runs
+// still work; with none readable the bound is ClickHouse's own max.
+func resolveVerifyToTips(toolName string, chMax uint32, tips []independentTip, warn io.Writer) (uint32, error) {
+	checked := 0
+	for _, tip := range tips {
+		if tip.err != nil {
+			_, _ = fmt.Fprintf(warn, "%s: independent tip from %s unavailable (%v)\n", toolName, tip.source, tip.err)
+			continue
+		}
+		checked++
+		if _, err := resolveVerifyTo(toolName, tip.source, chMax, tip.seq); err != nil {
+			return 0, err
+		}
+	}
+	if checked == 0 {
+		_, _ = fmt.Fprintf(warn, "%s: no independent tip available — falling back to ClickHouse's own max ledger %d; a truncated lake cannot be detected this way, pass -to explicitly to be certain\n",
+			toolName, chMax)
 	}
 	return chMax, nil
 }
 
 // resolveToSeq implements "-to 0 means auto", bounding the resolved range
 // to what ClickHouse actually holds while failing closed if that is a
-// real shortfall against an independently-sourced tip (see
-// resolveVerifyTo). The independent tip is best-effort: if -config or
-// Postgres is unavailable, the verifier falls back to the CH-only bound
-// with a stderr warning rather than refusing to run — that is strictly
-// no worse than pre-GH-1180 behaviour, just no longer the ONLY path.
+// real shortfall against any independently-sourced tip (see
+// resolveVerifyToTips).
 func resolveToSeq(ctx context.Context, toolName, cfgPath, addr string, to uint64) (uint32, error) {
 	if to != 0 {
 		return toLedgerSeq("-to", to)
@@ -262,13 +337,7 @@ func resolveToSeq(ctx context.Context, toolName, cfgPath, addr string, to uint64
 	if err != nil {
 		return 0, fmt.Errorf("%s: resolve -to (CH max ledger): %w", toolName, err)
 	}
-	tip, tipErr := independentLedgerTip(ctx, cfgPath)
-	if tipErr != nil {
-		fmt.Fprintf(os.Stderr, "%s: independent tip unavailable (%v) — falling back to ClickHouse's own max ledger %d; a truncated lake cannot be detected this way, pass -to explicitly to be certain\n",
-			toolName, tipErr, chMax)
-		return chMax, nil
-	}
-	return resolveVerifyTo(toolName, chMax, tip)
+	return resolveVerifyToTips(toolName, chMax, independentTips(ctx, cfgPath), os.Stderr)
 }
 
 // checkFieldValue renders one verify-contiguity summary field: "SKIPPED"
