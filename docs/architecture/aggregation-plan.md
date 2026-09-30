@@ -33,7 +33,7 @@ internal/aggregate/orchestrator/ ← tick loop, one (pair, window) per call
 Redis  ← key `vwap:<base>:<quote>:<window-seconds>`, TTL = window
     │
     ▼
-internal/api/v1/  ← /v1/vwap, /v1/twap, /v1/price (cache-first)
+internal/api/v1/  ← /v1/price (after its prices_1m read misses, or as the held value of a frozen pair)
     │
     ▼
 HTTP consumer
@@ -187,9 +187,9 @@ returns zero before there's an hour of history.
 
 | Endpoint | Backed by | Purpose |
 | --- | --- | --- |
-| `GET /v1/vwap?pair=…` | Redis cache (`vwap:<base>:<quote>:<window-seconds>`) | The aggregator's primary product |
+| `GET /v1/vwap?pair=…` | Trades hypertable (on-query) | Volume-weighted average over the request's `from`/`to`, `to` clamped to the last closed minute. Does not read the aggregator's Redis VWAP. |
 | `GET /v1/twap?pair=…` | Trades hypertable (on-query) | Time-weighted average — `internal/aggregate.TWAP` runs against raw trades for the request's window. The orchestrator does not pre-compute TWAP today (TWAP-via-orchestrator path stays out of scope; see Deferred). |
-| `GET /v1/price?pair=…` | Redis cache → trades fallback | Last-trade or VWAP depending on freshness |
+| `GET /v1/price?pair=…` | `prices_1m` closed bucket → aggregator Redis VWAP → last-trade fallback | The aggregator's Redis VWAP is served here for pairs with no `prices_1m` row, and as the held value when the pair is frozen (ADR-0019) even if a row exists (see [Two serving paths](#two-serving-paths--and-the-guard-that-keeps-the-direct-one-honest)) |
 | `GET /v1/sources` | `external.Registry` (static) | Class + IncludeInVWAP metadata for every known venue |
 | `GET /v1/markets` | Timescale `DistinctPairs` | Trade-table coverage; orthogonal to the registry |
 
@@ -208,7 +208,11 @@ API endpoints above (`/v1/price`, `/v1/vwap`, `/v1/twap`,
 window — only the most recent **closed** bucket. The CAGG rows
 (`prices_1m` and its rollups) are materialised by TimescaleDB's
 continuous-aggregate refresh policies, which keep the in-progress
-bucket current too; the orchestrator writes only the Redis VWAP.
+bucket current too; the orchestrator writes no CAGG row. Its VWAP is
+Redis-only, over `[bucketEnd − W, bucketEnd)` with `bucketEnd` the last
+closed 1-minute boundary — a rolling window that still never includes
+the filling minute. `/v1/vwap` and `/v1/twap` clamp `to` the same way.
+`/v1/price/tip` is the deliberate exception (ADR-0018's tip surface).
 Query handlers MUST filter `bucket <= now() - INTERVAL '<granularity>'`
 (a row carries only its start, `bucket`) so clients only ever see
 closed buckets; #689 tracks routing every read through one guard.
@@ -225,13 +229,15 @@ window.
 
 ## Boundaries — what this layer does NOT do
 
-- **No persistent state — but NOT stateless.** Nothing is written to
-  disk, yet the orchestrator carries **load-bearing cross-tick in-memory
-  state**: `prevVWAPs` (the anomaly comparator), `frozenPrevVWAPs` (the
+- **No persistent VWAP state — but NOT stateless.** No VWAP state is
+  persisted; the freeze ladder is (`freeze_events`, ADR-0019, read back
+  on a Redis-marker miss). The orchestrator also carries
+  **load-bearing cross-tick in-memory state**: `prevVWAPs` (the anomaly comparator), `frozenPrevVWAPs` (the
   freeze-ladder shadow comparator), `freezeStates`, `lastComposites` and
   `tickEdgeQuotes` — all documented at
   `internal/aggregate/orchestrator/orchestrator.go:642-679`, together with
-  the incidents that made them necessary. **A restart loses them**, and a
+  the incidents that made them necessary. **A restart loses them** — all
+  but `freezeStates`, which is read back from `freeze_events` — and a
   frozen pair with no `prev` is UNSCORED, which can neither fire nor
   release (observed live as reason `phase2:unscored`). Treat "restart-
   friendly" as "restarts safely", not "restarts free". *(Corrected
@@ -240,9 +246,14 @@ window.
 - **No cross-binary state coupling.** Aggregator → API
   communication is via Redis keys + the static registry. The API
   has no read path into the orchestrator's in-memory `Stats()`.
-- **No write path back to Timescale.** VWAP results live in Redis
-  with TTL; if Redis loses the world, the next tick rebuilds it
-  from raw trades. Continuous-aggregate materialised views (when
+- **Redis-only for VWAP.** The VWAP results live in Redis with a TTL;
+  the orchestrator's Timescale writes are the per-source
+  `price_source_contributions` audit mirror (`ContributionSink`), the
+  ADR-0019 freeze ladder (`freeze_events`, via `FreezeWriter`) and the
+  `divergence_observations` mirror (`DivergenceSink`, read by the
+  divergence listings); no served price value is read from any of them.
+  If Redis loses the world, the next tick
+  rebuilds it from raw trades. Continuous-aggregate materialised views (when
   they ship under [migrations/](../../migrations/)) provide the
   long-tail historical answer; the orchestrator focuses on the
   hot, freshness-sensitive cache.
