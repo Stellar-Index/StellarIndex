@@ -294,11 +294,11 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// defindex_flows (migration 0050). Both layers emit on capital
 	// movement; vault layer mirrors strategy ~1:1 in the same tx so
 	// real "no activity" stretches are scarce but the protocol is
-	// young (genesis 57_056_338) and user-action-triggered so
+	// young (genesis 55_484_403) and user-action-triggered so
 	// multi-hour quiet windows can happen. 100k threshold
 	// (~5.8 days) matches the soroswap-router cadence — past
 	// observed natural sparsity, well below "writer wedged" pages.
-	{Source: "defindex", Table: "defindex_flows", LedgerColumn: "ledger", Genesis: 57_056_338, MinGapSizeOverride: 100000},
+	{Source: "defindex", Table: "defindex_flows", LedgerColumn: "ledger", Genesis: 55_484_403, MinGapSizeOverride: 100000},
 	// defindex-fees: vault-layer dfees protocol-fee distributions
 	// (migration 0146, W5.2) — sparse and conditional (a distribution
 	// only fires when the vault has fees pending; 12,785 events lake-
