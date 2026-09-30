@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -649,6 +650,22 @@ func TestApplyEnvOverrides_ReturnsOverriddenFieldPaths(t *testing.T) {
 	}
 }
 
+func TestApplyEnvOverrides_TiingoKey(t *testing.T) {
+	t.Setenv("TIINGO_API_KEY", "tiingo-from-env")
+	c := cfg.Default()
+	c.External.Tiingo.APIKey = "tiingo-from-toml"
+	got := c.ApplyEnvOverrides()
+	if c.External.Tiingo.APIKey != "tiingo-from-env" {
+		t.Errorf("APIKey = %q, want the env value to win", c.External.Tiingo.APIKey)
+	}
+	if !slices.Contains(got, "external.tiingo.api_key") {
+		t.Errorf("ApplyEnvOverrides() = %v, want external.tiingo.api_key listed", got)
+	}
+	if d := cfg.Default().External.Tiingo; d.Enabled || d.APIKey != "" {
+		t.Errorf("default tiingo config = %+v, want disabled with no key", d)
+	}
+}
+
 // TestApplyEnvOverrides_NoOverridesReturnsEmpty confirms the common
 // case (no relevant env vars set) returns an empty/nil list rather
 // than a slice of empty strings or similar placeholder noise.
@@ -658,7 +675,7 @@ func TestApplyEnvOverrides_NoOverridesReturnsEmpty(t *testing.T) {
 		"STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD", "EXCHANGERATESAPI_KEY",
 		"COINMARKETCAP_API_KEY", "CRYPTOCOMPARE_API_KEY",
 		"COINGECKO_API_KEY", "COINGECKO_DEMO_API_KEY", "MASSIVE_API_KEY",
-		"DUNE_API_KEY", "CHAINLINK_RPC_URL",
+		"DUNE_API_KEY", "CHAINLINK_RPC_URL", "TIINGO_API_KEY",
 	} {
 		t.Setenv(name, "")
 	}
