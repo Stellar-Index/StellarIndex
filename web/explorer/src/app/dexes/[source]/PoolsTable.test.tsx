@@ -77,4 +77,25 @@ describe('PoolsTable', () => {
     expect(screen.queryByText(/Pool list unavailable/)).not.toBeInTheDocument();
     expect(screen.queryByText(/No pools found/)).not.toBeInTheDocument();
   });
+
+  // The page passes the display name ('SDEX'), so the order-book framing
+  // must key on the slug.
+  it('frames SDEX as an order book of pairs, not pools', async () => {
+    vi.mocked(apiGet).mockResolvedValue({ data: [] });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <PoolsTable source="sdex" sourceName="SDEX" />
+      </QueryClientProvider>,
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByText(/No pairs found in the last 14 days/),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByText('SDEX markets')).toBeInTheDocument();
+    expect(screen.queryByText('SDEX pools')).not.toBeInTheDocument();
+  });
 });

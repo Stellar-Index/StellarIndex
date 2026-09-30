@@ -16,6 +16,7 @@ the annotations every Discord/page template renders — summary, description.
 A missing label silently mis-routes a page (drops to the catch-all route or
 loses team ownership); a missing annotation renders a blank page body. These
 are non-empty presence checks; record rules are exempt (they carry neither).
+`severity` must additionally be one of page|ticket|informational.
 """
 import glob, os, re, sys
 try:
@@ -34,6 +35,9 @@ GROUP_LEVEL_RULE_KEYS = {"alert", "record", "expr", "for", "labels", "annotation
 # OBS-1: labels Alertmanager routes on + annotations every page template renders.
 REQUIRED_ALERT_LABELS = ("severity", "team", "component")
 REQUIRED_ALERT_ANNOTATIONS = ("summary", "description")
+# /v1/status publishes `severity` into a closed enum; any other value
+# breaks typed consumers of the public status payload.
+ALERT_SEVERITIES = ("page", "ticket", "informational")
 bad = 0
 
 def err(path, msg):
@@ -86,6 +90,10 @@ for d in DIRS:
                         if val is None or (isinstance(val, str) and not val.strip()):
                             err(path, f"alert '{name}' missing/empty required label `{key}` "
                                       f"(Alertmanager routes on {sorted(REQUIRED_ALERT_LABELS)})")
+                    sev = labels.get("severity")
+                    if isinstance(sev, str) and sev.strip() and sev not in ALERT_SEVERITIES:
+                        err(path, f"alert '{name}' label `severity: {sev}` is not one of "
+                                  f"{list(ALERT_SEVERITIES)} (the /v1/status severity enum)")
                     for key in REQUIRED_ALERT_ANNOTATIONS:
                         val = ann.get(key)
                         if val is None or (isinstance(val, str) and not val.strip()):
