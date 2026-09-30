@@ -941,10 +941,15 @@ export interface paths {
          *       connect time — the same verdict `/v1/price` would answer
          *       404 for. The gate is re-checked on every closed bucket
          *       too: a pair withheld PARTWAY through an open connection is
-         *       not disconnected — its buckets are silently dropped and
-         *       heartbeats continue, so a client must treat prolonged
-         *       silence with no error as "possibly withheld", not "still
-         *       healthy".
+         *       not disconnected — each bucket it would have received is
+         *       replaced by a `price_withheld` event (same `id`), with data
+         *       `{"asset_id","quote","reason","as_of"}` as on
+         *       `/v1/price/tip/stream`; `as_of` is the refused bucket's.
+         *       The 60-second series also publishes one `price_withheld`
+         *       when its pair becomes withheld (or the reason changes),
+         *       and republishes the current bucket as `price_update` once
+         *       the pair is served again. Heartbeats alone therefore never
+         *       mean the price is being withheld.
          */
         get: operations["streamPrices"];
         put?: never;
@@ -14115,7 +14120,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE stream of price_update events. */
+            /** @description SSE stream of price_update (and price_frozen / price_withheld) events. */
             200: {
                 headers: {
                     [name: string]: unknown;
