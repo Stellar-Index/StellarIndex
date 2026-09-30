@@ -1324,6 +1324,10 @@ stellarindex_reader_access_key: "stellarindex-reader"
 # (list/verify) keeps using stellarindex-reader's creds via AWS_*.
 stellarindex_archive_trimmer_access_key: "stellarindex-archive-trimmer"
 # stellarindex_archive_trimmer_secret_key ← vault
+# The trimmer only exists where a cold tier receives what it deletes
+# (ADR-0027, pubnet). A test net has no trimmer identity in its secrets
+# file, so rendering its env file there fails the whole role apply.
+galexie_archive_trim_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
 
 # ───── Firewall ──────────────────────────────────────────────────────
 # Ports open on the public interface. Everything else rejects.
