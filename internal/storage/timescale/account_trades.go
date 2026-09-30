@@ -124,8 +124,10 @@ const accountTradesOuterCols = `source, ledger, tx_hash, op_index, ts,
 //
 // Placeholder layout (hasCursor=true):
 //
-//	$1 address · $2..$5 cursor · $6 limit (arm 1)
-//	$1 address · $2..$5 cursor · $6 limit (arm 2, same params)
+//	$1 address · $2 ts floor · $3..$6 cursor · $7 limit (arm 1)
+//	$1 address · $2 ts floor · $3..$6 cursor · $7 limit (arm 2, same params)
+//
+// Without a cursor the limit moves to $3.
 //
 // Both arms reuse the same numbered placeholders, so the caller passes
 // each value once regardless of arm count.

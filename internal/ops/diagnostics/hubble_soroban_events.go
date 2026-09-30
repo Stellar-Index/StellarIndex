@@ -10,6 +10,7 @@ import (
 	"sort"
 
 	"cloud.google.com/go/bigquery"
+	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 	"google.golang.org/api/iterator"
 
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
@@ -63,9 +64,9 @@ func hubbleSorobanEvents(args []string) error {
 	contractsCSV := fs.String("contracts", "",
 		"comma-separated Soroban contract C-strkey IDs to filter on (required)")
 	topic0 := fs.String("topic0", "",
-		"optional ScVal::Symbol filter for topic[0]; matches contract event payload encoding")
+		"optional topic[0] filter; matches an ScVal Symbol or String with this exact text")
 	topic1 := fs.String("topic1", "",
-		"optional ScVal::Symbol filter for topic[1]")
+		"optional topic[1] filter; matches an ScVal Symbol or String with this exact text")
 	output := fs.String("output", "json",
 		"output format: json (per-ledger counts) | total (single count) | csv")
 	dryRunBytes := fs.Bool("dry-run-bytes", false,
@@ -149,7 +150,10 @@ func fetchHubbleSorobanEventCounts(
 	contracts []string,
 	topic0, topic1 string,
 ) (map[uint32]int, error) {
-	query, params := buildSorobanEventsQuery(from, to, contracts, topic0, topic1)
+	query, params, err := buildSorobanEventsQuery(from, to, contracts, topic0, topic1)
+	if err != nil {
+		return nil, err
+	}
 	q := bq.query(query)
 	q.Parameters = params
 	it, err := q.Read(ctx)
@@ -185,7 +189,10 @@ func hubbleSorobanEventsDryRun(
 	contracts []string,
 	topic0, topic1 string,
 ) (int64, error) {
-	query, params := buildSorobanEventsQuery(from, to, contracts, topic0, topic1)
+	query, params, err := buildSorobanEventsQuery(from, to, contracts, topic0, topic1)
+	if err != nil {
+		return 0, err
+	}
 	q := bq.query(query)
 	q.Parameters = params
 	q.DryRun = true
@@ -209,7 +216,7 @@ func buildSorobanEventsQuery(
 	from, to uint32,
 	contracts []string,
 	topic0, topic1 string,
-) (string, []bigquery.QueryParameter) {
+) (string, []bigquery.QueryParameter, error) {
 	// COUNT(DISTINCT contract_event_xdr): Hubble's history_contract_events can
 	// carry duplicate rows from overlapping batch loads (observed 2× on some
 	// ranges), so a raw COUNT(*) over-reports. Dedup by the event's raw XDR —
@@ -235,16 +242,43 @@ func buildSorobanEventsQuery(
 		{Name: "to", Value: int64(to)},
 		{Name: "contracts", Value: contracts},
 	}
-	if topic0 != "" {
-		q += " AND topic_1 = @topic0 "
-		params = append(params, bigquery.QueryParameter{Name: "topic0", Value: topic0})
-	}
-	if topic1 != "" {
-		q += " AND topic_2 = @topic1 "
-		params = append(params, bigquery.QueryParameter{Name: "topic1", Value: topic1})
+	// `topics` is a JSON array of each topic's base64 ScVal XDR, so an
+	// exact match on the encoding is type-exact and immune to decoder rendering.
+	for i, topic := range []string{topic0, topic1} {
+		if topic == "" {
+			continue
+		}
+		encodings, err := topicFilterEncodings(topic)
+		if err != nil {
+			return "", nil, fmt.Errorf("encode topic%d %q: %w", i, topic, err)
+		}
+		name := fmt.Sprintf("topic%d", i)
+		q += fmt.Sprintf(" AND JSON_VALUE(topics, '$[%d]') IN UNNEST(@%s) ", i, name)
+		params = append(params, bigquery.QueryParameter{Name: name, Value: encodings})
 	}
 	q += " GROUP BY ledger_sequence ORDER BY ledger"
-	return q, params
+	return q, params, nil
+}
+
+// topicFilterEncodings returns the base64 XDR of s as an ScVal String and,
+// when s fits SCSYMBOL_LIMIT, as an ScVal Symbol: protocols use both types
+// for topic names (Soroswap's "SoroswapPair" is a String, most are Symbols).
+func topicFilterEncodings(s string) ([]string, error) {
+	str := sdkxdr.ScString(s)
+	vals := []sdkxdr.ScVal{{Type: sdkxdr.ScValTypeScvString, Str: &str}}
+	if len(s) <= sdkxdr.ScsymbolLimit {
+		sym := sdkxdr.ScSymbol(s)
+		vals = append(vals, sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvSymbol, Sym: &sym})
+	}
+	out := make([]string, 0, len(vals))
+	for _, v := range vals {
+		enc, err := sdkxdr.MarshalBase64(v)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, enc)
+	}
+	return out, nil
 }
 
 // emitHubbleSorobanCounts writes the result in the requested format

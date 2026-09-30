@@ -1160,6 +1160,18 @@ whole-partition fetches. The paired-histogram sibling of
 `stellarindex_ledgerstream_tier_read_total`; same always-registered
 rationale.
 
+### `stellarindex_ledgerstream_trailing_missing_tolerated_total`
+
+Counter, no labels.
+
+Bounded walks whose "ledger object containing sequence X is missing"
+error `TolerateTrailingMissing` converted into a clean walk-complete —
+each increment is a walk that returned nil short of its `To`. Expected
+to move when a backfill races the lake tip; a climb on a walk whose
+`To` is well below the tip means a real hole was tolerated, and the
+caller's coverage check is the only thing standing between it and a
+silently short range.
+
 ### `stellarindex_ledgerstream_live_start_retries_total`
 
 Counter, no labels.
@@ -2562,8 +2574,16 @@ removed. `audit_log` is deliberately not swept.
 ### `stellarindex_retention_reaper_errors_total`
 
 Counter, labelled `reaper` (same values), pre-seeded at 0. Failed
-retention sweeps; each is retried on the next hourly tick. Non-zero and
-rising means the table is growing again.
+retention sweeps or row counts; each is retried on the next hourly tick.
+Non-zero and rising means the table is growing again.
+
+### `stellarindex_retention_reaper_rows`
+
+Gauge, labelled `reaper` ∈ {`webhook_delivery`}. Current row count of the
+table the reaper bounds, refreshed every sweep (including one whose DELETE
+failed). `webhook_deliveries` is written by customer-configured fan-out, so
+sustained growth past the 30-day window means the sweep is not keeping up.
+The `session` reaper publishes no count, so its series is absent.
 
 ### `stellarindex_login_code_lockout_rows_deleted_total`
 

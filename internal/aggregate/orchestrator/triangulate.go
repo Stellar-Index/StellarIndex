@@ -27,7 +27,8 @@ import (
 //
 // Validation: at least 2 legs; Legs[0].Base must equal Target.Base;
 // Legs[N-1].Quote must equal Target.Quote; adjacent legs must share
-// their pivot asset (Legs[i].Quote == Legs[i+1].Base). Caller-side
+// their pivot asset (Legs[i].Quote == Legs[i+1].Base); a fiat/fiat leg
+// must have fiat:USD on one side. Caller-side
 // validation lives in [ValidateTriangulationChain].
 type TriangulationChain struct {
 	Target canonical.Pair
@@ -59,6 +60,14 @@ func ValidateTriangulationChain(chain TriangulationChain) error {
 				chain.Target.String(),
 				i, chain.Legs[i].Quote.String(),
 				i+1, chain.Legs[i+1].Base.String())
+		}
+	}
+	for i, leg := range chain.Legs {
+		// fx_quotes stores one rate_usd per ticker, so EUR/GBP is USD/GBP ÷ USD/EUR:
+		// a route over it shares its data row with the USD pivot yet counts as disjoint.
+		if isFXLeg(leg) && leg.Base.Code != "USD" && leg.Quote.Code != "USD" {
+			return fmt.Errorf("triangulation: chain for %s — leg[%d] %s is a fiat/fiat leg without USD; route it through fiat:USD",
+				chain.Target.String(), i, leg.String())
 		}
 	}
 	return nil
