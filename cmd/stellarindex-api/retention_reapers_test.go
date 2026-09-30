@@ -25,6 +25,9 @@ func TestRetentionReaperTargets_WiredDashboardBoundsSessionsAndDeliveries(t *tes
 			t.Errorf("%s: nil Sweep", o.Name)
 		}
 		got[o.Name] = o.Retention
+		if o.Name == obs.AuthReaperWebhookDelivery && o.Count == nil {
+			t.Errorf("%s: nil Count — the row gauge would never publish", o.Name)
+		}
 	}
 	want := map[string]time.Duration{
 		obs.AuthReaperSession:         90 * 24 * time.Hour,

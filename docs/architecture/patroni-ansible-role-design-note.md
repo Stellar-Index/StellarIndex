@@ -383,10 +383,11 @@ Coverage matrix #11 (Patroni) flips ✅.
 
 5. **etcd's TLS story.** This design ships etcd with
    internal-network-only listening + firewall-restricted ports,
-   no TLS between etcd and Patroni. For Phase-3 multi-region
-   deployments where etcd might span regions, TLS becomes
-   mandatory. Mark TODO in inventory comments; add to
-   `validator-rollout.md` Phase-3 success criteria.
+   no TLS between etcd and Patroni. That holds only while etcd
+   stays inside one region, which ADR-0050 guarantees: it
+   rejects the stretched Patroni cluster, and the role scopes
+   etcd per region (`defaults/main.yml`). An etcd that spans
+   regions would need TLS first.
 
 6. **Patroni REST API is unauthenticated by default.** Role
    gates it behind firewall + Basic Auth via the
