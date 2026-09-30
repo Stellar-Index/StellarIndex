@@ -828,3 +828,47 @@ func TestCompute_NonFiniteBaselineAgeStillEncodes(t *testing.T) {
 		t.Fatalf("Score with NaN baseline age does not encode: %v", err)
 	}
 }
+
+// TestCompute_BootstrapGateHysteresis walks one pair's density down
+// through the band and back up, carrying the gate state between scores
+// the way the orchestrator does. A released pair holds its score until
+// density falls below 27.0; a capped pair releases only at 28.5.
+func TestCompute_BootstrapGateHysteresis(t *testing.T) {
+	if confidence.BootstrapReengageDensityDays != 27.0 {
+		t.Fatalf("re-engage edge = %v, want 27.0 days-equivalent", confidence.BootstrapReengageDensityDays)
+	}
+	steps := []struct {
+		age        float64
+		wantCapped bool
+	}{
+		{28.49, true}, // never released: the upper gate applies
+		{28.5, false}, // clears the upper gate
+		{28.0, false}, // inside the band: stays released
+		{27.0, false}, // at the lower edge: stays released
+		{26.99, true}, // below the band: re-capped
+		{28.0, true},  // inside the band from below: stays capped
+		{28.49, true}, // still under the upper gate
+		{28.5, false}, // released again
+		{-1, true},    // a lost baseline re-caps a released pair
+	}
+	released := false
+	for i, s := range steps {
+		in := healthyInputs()
+		in.BaselineAgeDays = s.age
+		in.BootstrapReleased = released
+		got := confidence.Compute(in, confidence.DefaultWeights())
+		if got.Factors.BootstrapCapped != s.wantCapped {
+			t.Errorf("step %d (age %.2f, released %v): bootstrap_capped = %v, want %v",
+				i, s.age, released, got.Factors.BootstrapCapped, s.wantCapped)
+		}
+		if s.wantCapped && got.Confidence != confidence.BootstrapConfidenceCap {
+			t.Errorf("step %d (age %.2f): capped confidence = %v, want %v",
+				i, s.age, got.Confidence, confidence.BootstrapConfidenceCap)
+		}
+		if !s.wantCapped && got.Confidence <= confidence.BootstrapConfidenceCap {
+			t.Errorf("step %d (age %.2f): released confidence = %v, want above %v",
+				i, s.age, got.Confidence, confidence.BootstrapConfidenceCap)
+		}
+		released = !got.Factors.BootstrapCapped
+	}
+}

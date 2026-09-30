@@ -3458,15 +3458,15 @@ Gauge, label `pair`. 1 when the pair's last computed confidence was
 bounded by the ADR-0019 bootstrap ceiling (0.5), 0 when it was served
 uncapped. Mirrors `confidence_factors.bootstrap_capped` on `/v1/price`.
 Set only when a confidence is computed, so a pair on `baseline_missing`
-or `baseline_stale` keeps its last value. A pair alternating between 0
-and 1 is one whose baseline density sits at the gate.
+or `baseline_stale` keeps its last value. A released pair returns to 1
+only once its density falls below 27 (the gate's hysteresis edge).
 
 ### `stellarindex_aggregator_baseline_density_days`
 
 Gauge, label `pair`. The 30-day baseline density the bootstrap cap
 gates on: 1-minute buckets behind the window divided by 1440, at most
 30, negative when the pair has no 30-day baseline. The cap releases at
-28.5. This is sample density, not calendar age — a pair trading in 200
+28.5 and, once released, re-engages below 27. This is sample density, not calendar age — a pair trading in 200
 minutes a day reads about 4.2 however long it has existed. Mirrors
 `confidence_factors.baseline_age_days`.
 

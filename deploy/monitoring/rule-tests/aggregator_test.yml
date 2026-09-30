@@ -551,3 +551,160 @@ tests:
       - eval_time: 70m
         alertname: stellarindex_decimals_guard_sweep_stale
         exp_alerts: []
+
+  # ── Bootstrap cap re-engaged across the population ──
+  # Three released pairs re-cap together at t=90m, the shape a baseline-window
+  # gap produces. Pending at 95m, firing at 105m, and resolved once the last
+  # sample an hour back is itself capped.
+  - interval: 1m
+    name: three released pairs re-capping together tickets
+    input_series:
+      - series: 'stellarindex_aggregator_bootstrap_capped{pair="crypto:XLM/fiat:USD"}'
+        values: '0x89 1x70'
+      - series: 'stellarindex_aggregator_bootstrap_capped{pair="crypto:BTC/fiat:USD"}'
+        values: '0x89 1x70'
+      - series: 'stellarindex_aggregator_bootstrap_capped{pair="crypto:ETH/fiat:USD"}'
+        values: '0x89 1x70'
+    alert_rule_test:
+      - eval_time: 95m
+        alertname: stellarindex_aggregator_bootstrap_cap_reengaged
+        exp_alerts: []
+      - eval_time: 105m
+        alertname: stellarindex_aggregator_bootstrap_cap_reengaged
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-bootstrap-cap-reengaged.md
+              summary: "3 pairs re-entered the bootstrap confidence cap within 1h (P3)"
+              description: |
+                3 pairs whose last state before the past hour was
+                released from the ADR-0019 bootstrap cap are capped at 0.5 again
+                (stellarindex_aggregator_bootstrap_capped 0 -> 1): their 30-day
+                1-minute bucket density fell below the density gate (27
+                days-equivalent for a pair released since the aggregator started,
+                28.5 after a restart). A
+                simultaneous drop across pairs means a shared gap in the
+                baseline window, not one thin pair. Served confidence stays at
+                0.5 for them until the gap is repaired or rolls out of the
+                30-day window.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-bootstrap-cap-reengaged.md
+      - eval_time: 155m
+        alertname: stellarindex_aggregator_bootstrap_cap_reengaged
+        exp_alerts: []
+
+  # One pair re-capping on its own is a thin pair, not a shared gap; that
+  # alone must stay silent.
+  - interval: 1m
+    name: a single pair re-capping at the gate never tickets
+    input_series:
+      - series: 'stellarindex_aggregator_bootstrap_capped{pair="crypto:XLM/fiat:USD"}'
+        values: '0x89 1x70'
+      - series: 'stellarindex_aggregator_bootstrap_capped{pair="crypto:BTC/fiat:USD"}'
+        values: '0x160'
+      - series: 'stellarindex_aggregator_bootstrap_capped{pair="crypto:ETH/fiat:USD"}'
+        values: '0x160'
+    alert_rule_test:
+      - eval_time: 105m
+        alertname: stellarindex_aggregator_bootstrap_cap_reengaged
+        exp_alerts: []
+
+  # Pairs that were never released (new listings, sparse flow) are capped by
+  # design and are not a re-engagement.
+  - interval: 1m
+    name: pairs capped throughout never ticket
+    input_series:
+      - series: 'stellarindex_aggregator_bootstrap_capped{pair="crypto:XLM/fiat:USD"}'
+        values: '1x160'
+      - series: 'stellarindex_aggregator_bootstrap_capped{pair="crypto:BTC/fiat:USD"}'
+        values: '1x160'
+      - series: 'stellarindex_aggregator_bootstrap_capped{pair="crypto:ETH/fiat:USD"}'
+        values: '1x160'
+    alert_rule_test:
+      - eval_time: 105m
+        alertname: stellarindex_aggregator_bootstrap_cap_reengaged
+        exp_alerts: []
+
+  # An outage longer than the 1h offset leaves no sample an hour back; the
+  # pairs come back capped. The pre-outage state must still count.
+  - interval: 1m
+    name: released pairs re-capping after a 2h scrape outage ticket
+    input_series:
+      - series: 'stellarindex_aggregator_bootstrap_capped{pair="crypto:XLM/fiat:USD"}'
+        values: '0x60 _x120 1x90'
+      - series: 'stellarindex_aggregator_bootstrap_capped{pair="crypto:BTC/fiat:USD"}'
+        values: '0x60 _x120 1x90'
+      - series: 'stellarindex_aggregator_bootstrap_capped{pair="crypto:ETH/fiat:USD"}'
+        values: '0x60 _x120 1x90'
+    alert_rule_test:
+      - eval_time: 186m
+        alertname: stellarindex_aggregator_bootstrap_cap_reengaged
+        exp_alerts: []
+      - eval_time: 192m
+        alertname: stellarindex_aggregator_bootstrap_cap_reengaged
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-bootstrap-cap-reengaged.md
+              summary: "3 pairs re-entered the bootstrap confidence cap within 1h (P3)"
+              description: |
+                3 pairs whose last state before the past hour was
+                released from the ADR-0019 bootstrap cap are capped at 0.5 again
+                (stellarindex_aggregator_bootstrap_capped 0 -> 1): their 30-day
+                1-minute bucket density fell below the density gate (27
+                days-equivalent for a pair released since the aggregator started,
+                28.5 after a restart). A
+                simultaneous drop across pairs means a shared gap in the
+                baseline window, not one thin pair. Served confidence stays at
+                0.5 for them until the gap is repaired or rolls out of the
+                30-day window.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-bootstrap-cap-reengaged.md
+      - eval_time: 256m
+        alertname: stellarindex_aggregator_bootstrap_cap_reengaged
+        exp_alerts: []
+
+  # A 31h outage, the gap that pulls a fully-dense pair near the gate:
+  # restart re-caps every pair (gate state is in memory), and it tickets.
+  - interval: 1m
+    name: released pairs re-capping after a 31h aggregator outage ticket
+    input_series:
+      - series: 'stellarindex_aggregator_bootstrap_capped{pair="crypto:XLM/fiat:USD"}'
+        values: '0x60 _x1860 1x90'
+      - series: 'stellarindex_aggregator_bootstrap_capped{pair="crypto:BTC/fiat:USD"}'
+        values: '0x60 _x1860 1x90'
+      - series: 'stellarindex_aggregator_bootstrap_capped{pair="crypto:ETH/fiat:USD"}'
+        values: '0x60 _x1860 1x90'
+    alert_rule_test:
+      - eval_time: 1926m
+        alertname: stellarindex_aggregator_bootstrap_cap_reengaged
+        exp_alerts: []
+      - eval_time: 1932m
+        alertname: stellarindex_aggregator_bootstrap_cap_reengaged
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-bootstrap-cap-reengaged.md
+              summary: "3 pairs re-entered the bootstrap confidence cap within 1h (P3)"
+              description: |
+                3 pairs whose last state before the past hour was
+                released from the ADR-0019 bootstrap cap are capped at 0.5 again
+                (stellarindex_aggregator_bootstrap_capped 0 -> 1): their 30-day
+                1-minute bucket density fell below the density gate (27
+                days-equivalent for a pair released since the aggregator started,
+                28.5 after a restart). A
+                simultaneous drop across pairs means a shared gap in the
+                baseline window, not one thin pair. Served confidence stays at
+                0.5 for them until the gap is repaired or rolls out of the
+                30-day window.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-bootstrap-cap-reengaged.md
+      - eval_time: 1996m
+        alertname: stellarindex_aggregator_bootstrap_cap_reengaged
+        exp_alerts: []
