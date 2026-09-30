@@ -619,29 +619,6 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		return fmt.Errorf("ch-rebuild: %w", cerr)
 	}
 
-	// Factory-anchored sources (ADR-0035): seed each gate registry from
-	// the factory's creation events in [genesis, lo) BEFORE the
-	// re-derive, exactly as verify-reconciliation and
-	// compute-completeness already do. Without it a source whose
-	// decoder carries no in-code curated set — blend is the only one —
-	// re-derives 0 rows for any window above its factory deploys, which
-	// reads as a bogus delta here and as a silently-empty arm in
-	// ch-rebuild -write (cold audit 2026-08-03). Read-only, idempotent,
-	// and a no-op for the 20+ non-factory sources.
-	for _, src := range cat {
-		if len(src.factories) == 0 {
-			continue
-		}
-		pblind, perr := preseedFactoryChildren(ctx, clickhouse.ReconcileEventStreamer{Addr: *chAddr}, src, lo)
-		if perr != nil {
-			return fmt.Errorf("%s: preseed factory children: %w", src.name, perr)
-		}
-		// A writer must not rebuild over a registry missing a child whose
-		// creation event its decoder could not evaluate.
-		if pblind.Any() {
-			return fmt.Errorf("%s: preseed factory children: %s", src.name, pblind.Detail())
-		}
-	}
 	// ch-rebuild manages sep41_transfers/sep41_supply itself via the
 	// dedicated -sep41 pass below (its own contract-prefiltered CH read,
 	// its own decoder instances, its own written-count bookkeeping) rather
@@ -778,6 +755,30 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	// run below would then refuse to rewrite (RLT-381).
 	if *preflight {
 		return reportCHRebuildPreflight(os.Stdout, lo, hi, reDerivedSourcesInRun(cat, sep41Cat, passes, enabled))
+	}
+	// Factory-anchored sources (ADR-0035): seed each gate registry from
+	// the factory's creation events in [genesis, lo) BEFORE the
+	// re-derive, exactly as verify-reconciliation and
+	// compute-completeness already do. Without it a source whose
+	// decoder carries no in-code curated set — blend is the only one —
+	// re-derives 0 rows for any window above its factory deploys, which
+	// reads as a bogus delta here and as a silently-empty arm in
+	// ch-rebuild -write (cold audit 2026-08-03). Read-only, idempotent,
+	// and a no-op for the 20+ non-factory sources. It reads the lake, so it
+	// sits below the -preflight stop: a preflight answers without ClickHouse.
+	for _, src := range cat {
+		if len(src.factories) == 0 {
+			continue
+		}
+		pblind, perr := preseedFactoryChildren(ctx, clickhouse.ReconcileEventStreamer{Addr: *chAddr}, src, lo)
+		if perr != nil {
+			return fmt.Errorf("%s: preseed factory children: %w", src.name, perr)
+		}
+		// A writer must not rebuild over a registry missing a child whose
+		// creation event its decoder could not evaluate.
+		if pblind.Any() {
+			return fmt.Errorf("%s: preseed factory children: %s", src.name, pblind.Detail())
+		}
 	}
 
 	fmt.Fprintf(os.Stderr, "ch-rebuild: [%d,%d] mode=%s sources=%q sdex=%v contract-calls=%v sep41=%v ch=%s\n",
