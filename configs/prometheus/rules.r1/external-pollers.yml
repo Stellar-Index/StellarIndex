@@ -215,6 +215,63 @@ groups:
             the API logs for "forex: rejected upstream rate" (or
             "pending confirmation refuted") to get the ticker(s).
 
+      # fx_fixings binds every closed fiat-cross bucket to a vendor-time
+      # bar; a bucket whose bar is missing is withheld, not converted at a
+      # later rate. The appender stamps last_refresh every cycle, even an
+      # empty one, so a stale stamp means the appender itself stopped.
+      - alert: stellarindex_fx_fixings_refresh_stale
+        expr: |
+          (time() - max(stellarindex_fx_fixings_last_refresh_unix)) > 10800
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: external-poller
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-feed-stale.md
+          summary: "fx_fixings appender has not completed a cycle in 3+ h"
+          description: |
+            The forex worker has not finished an fx_fixings append cycle
+            for over 3 h. Closed fiat-cross buckets past the newest stored
+            bar will be withheld with fx_leg_unavailable.
+
+      # The newest stored bar is judged only while the FX market trades
+      # (Mon 02:00 to Fri 22:00 UTC); a weekend without bars is normal.
+      - alert: stellarindex_fx_fixings_series_stale
+        expr: |
+          (time() - max(stellarindex_fx_fixings_newest_bar_end_unix)) > 14400
+            and on() ((day_of_week() >= 2 and day_of_week() <= 5) or (day_of_week() == 1 and hour() >= 2))
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: external-poller
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-feed-stale.md
+          summary: "newest fx_fixings bar is 4+ h old on a trading day"
+          description: |
+            The appender runs but has stored no bar newer than 4 h on a
+            trading day. Closed fiat-cross buckets are being withheld or
+            reported fx_stale.
+
+      # A gated bar outside [0.5, 1.5] of the guarded daily rate for its day
+      # means the hourly and daily series disagree about the same currency.
+      - alert: stellarindex_fx_fixings_quote_disagreement
+        expr: |
+          max by (ticker) (stellarindex_fx_fixings_quote_disagrees) == 1
+        for: 2h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: external-poller
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-rate-rejected.md
+          summary: "fx_fixings bars for {{ $labels.ticker }} disagree with the guarded daily rate"
+          description: |
+            An hourly fixing for {{ $labels.ticker }} sits outside [0.5, 1.5]
+            of the guarded daily rate for its day. Grep the API logs for
+            "fx_fixings bar disagrees" to find the bar.
+
       # Sustained error rate over 15 min — catches the case where
       # the poller is hitting the venue successfully sometimes but
       # >50% of attempts return non-nil err. Lower severity than

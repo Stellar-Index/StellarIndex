@@ -113,6 +113,14 @@ below the surface's documented baseline contract"**.
 Customers gating on `flags.stale = true` for "should I worry / retry"
 behaviour get the right signal automatically across all surfaces.
 
+> **Amendment (2026-09-30).** A fiat cross `/v1/price` derives (fiat/fiat,
+> or a non-fiat asset through its USD leg) is not a last-trade fallback:
+> its `flags.stale` is the USD leg's stale OR the FX fixing's, where an
+> hourly fixing is stale when it trails `E − 3h` by more than 4 h outside
+> the weekend close `[Fri 22:00Z, Mon 02:00Z)`. A daily fixing carries the
+> USD leg's stale only. `observed_at` is the USD leg's bucket end; the
+> fixing's own close is `fx_as_of`.
+
 ### Forex factor handling for chained rates
 
 For rates that chain via USD pivot (`XLM/EUR = XLM/USD × USD/EUR`,
@@ -133,6 +141,21 @@ where `USD/EUR` comes from a forex source per ADR-0010):
 - **`/v1/price/tip`**: forex factor is the freshest FX quote
   available at request time. Lives within the tip's
   no-cross-region-consistency contract.
+
+> **Amendment (2026-09-30).** The API's own fiat crosses on the closed
+> surfaces (`/v1/price`, `/v1/price/batch`, the SEP-40 reads) used the
+> in-memory live FX snapshot, so a closed answer moved on every forex
+> refresh and differed by region. They now bind the vendor's time series
+> (`fx_fixings`, migration 0192): the bar with the greatest `bar_end ≤
+> E − 3h` (hourly over daily, then the highest generation) within
+> `pricing_guard.fx_cross_max_age_hours`, where E is the USD leg's bucket
+> end (fiat/fiat: the current minute; a frozen leg: the held value's
+> bucket end). Before a currency's hourly series begins, the daily
+> `fx_quotes` close at `E − 3h − 24h` binds instead. No binding withholds
+> with reason `fx_leg_unavailable`; the live rate is never a substitute.
+> `FXQuoteAtOrBefore` reads the same fixings first. `/v1/price/tip` keeps
+> the live rate. The bound fixing is on the wire as `fx_rate`, `fx_as_of`,
+> `fx_source`, `fx_resolution` and `usd_leg`.
 - **`/v1/observations`**: per-source observations don't get FX
   conversion — surface returns the raw observed trade. Customer
   applies their own conversion if they want EUR-denominated.
