@@ -1,4 +1,10 @@
 {
+  "003710b383f9da7d650a7f719a7be479110266427817ebbed61d924505fcd7c7": {
+    "source": "sushiswap_v3",
+    "role": "pool",
+    "audited": "2026-09-30",
+    "doc": "docs/operations/wasm-audits/sushiswap_v3.md"
+  },
   "11329c2469455f5a3815af1383c0cdddb69215b1668a17ef097516cde85da988": {
     "source": "defindex",
     "role": "strategy",
@@ -47,11 +53,29 @@
     "audited": "2026-04-22",
     "doc": "docs/operations/wasm-audits/blend.md"
   },
+  "41ae735d2312f50975f5b7c70c3f71c2a0785113014dc24e474c3f3688e6224f": {
+    "source": "sushiswap_v3",
+    "role": "pool",
+    "audited": "2026-09-30",
+    "doc": "docs/operations/wasm-audits/sushiswap_v3.md"
+  },
   "438a5528cff17ede6fe515f095c43c5f15727af17d006971485e52462e7e7b89": {
     "source": "blend_emitter",
     "role": "emitter",
     "audited": "2026-07-10",
     "doc": "docs/operations/wasm-audits/blend_emitter.md"
+  },
+  "48b28121451497952c1c35d58d4556f315a5b468ccde9fcd03f510aefa07c117": {
+    "source": "sushiswap_v3",
+    "role": "pool",
+    "audited": "2026-09-30",
+    "doc": "docs/operations/wasm-audits/sushiswap_v3.md"
+  },
+  "4b3d9f6b09f7127b0ce81b0ce9d8428f3f960e4e3ce13c11c1cbb446cccc9e73": {
+    "source": "upshift",
+    "role": "vault",
+    "audited": "2026-09-30",
+    "doc": "docs/operations/wasm-audits/upshift.md"
   },
   "4f080d249700b9a30ca2e1bb828ecb29e47357cd36b122c7744593cef30b7a08": {
     "source": "aquarius",
@@ -130,6 +154,12 @@
     "role": "factory",
     "audited": "2026-09-30",
     "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "9f94c577ea24c2f71cbb0c964c9c9d321e02448d1fe946020afb18974b1c2602": {
+    "source": "sushiswap_v3",
+    "role": "factory",
+    "audited": "2026-09-30",
+    "doc": "docs/operations/wasm-audits/sushiswap_v3.md"
   },
   "a1629dcdf9192727296124ca4ef0f5cc5829086073b4cf5b4f42e27331b22ce0": {
     "source": "aquarius",
