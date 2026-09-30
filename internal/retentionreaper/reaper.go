@@ -48,12 +48,17 @@ const (
 // count removed. It must never delete a row that is still live.
 type SweepFunc func(ctx context.Context, olderThan time.Time) (int64, error)
 
+// CountFunc returns the table's current row count.
+type CountFunc func(ctx context.Context) (int64, error)
+
 // Options configures one Reaper.
 type Options struct {
 	// Name is the `reaper` metric label (obs.AuthReaperSession,
 	// obs.AuthReaperWebhookDelivery).
 	Name  string
 	Sweep SweepFunc
+	// Count, when set, feeds obs.RetentionReaperRows after every sweep.
+	Count CountFunc
 	// Retention is the terminal-row age threshold. Required: a table's
 	// retention is a policy decision, not something to default.
 	Retention time.Duration
@@ -68,6 +73,7 @@ type Options struct {
 type Reaper struct {
 	name      string
 	sweep     SweepFunc
+	count     CountFunc
 	interval  time.Duration
 	retention time.Duration
 	logger    *slog.Logger
@@ -83,6 +89,7 @@ func New(opts Options) *Reaper {
 	r := &Reaper{
 		name:      opts.Name,
 		sweep:     opts.Sweep,
+		count:     opts.Count,
 		interval:  opts.Interval,
 		retention: opts.Retention,
 		logger:    opts.Logger,
@@ -118,8 +125,9 @@ func (r *Reaper) Run(ctx context.Context) error {
 	}
 }
 
-// Sweep runs one retention pass. Errors are counted and swallowed: a
-// failed pass is retried next tick.
+// Sweep runs one retention pass and refreshes the row gauge. Errors are
+// counted and swallowed: a failed pass is retried next tick. The gauge is
+// refreshed even after a failed DELETE, when the row count matters most.
 func (r *Reaper) Sweep(ctx context.Context) {
 	deleted, err := r.sweep(ctx, r.now().Add(-r.retention))
 	switch {
@@ -132,5 +140,22 @@ func (r *Reaper) Sweep(ctx context.Context) {
 		obs.RetentionReaperRowsDeletedTotal.WithLabelValues(r.name).Add(float64(deleted))
 		r.logger.Info("retention reaper: deleted rows", "reaper", r.name, "deleted", deleted)
 	}
+	r.refreshRows(ctx)
 	obs.AuthReaperLastSweepUnix.WithLabelValues(r.name).Set(float64(r.now().Unix()))
+}
+
+func (r *Reaper) refreshRows(ctx context.Context) {
+	if r.count == nil {
+		return
+	}
+	n, err := r.count(ctx)
+	switch {
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return
+	case err != nil:
+		obs.RetentionReaperErrorsTotal.WithLabelValues(r.name).Inc()
+		r.logger.Warn("retention reaper: count failed", "reaper", r.name, "err", err)
+		return
+	}
+	obs.RetentionReaperRows.WithLabelValues(r.name).Set(float64(n))
 }

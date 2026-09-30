@@ -1,6 +1,11 @@
 package clickhouse
 
 import (
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -44,6 +49,81 @@ func TestTopic0Predicate_MatchesBothTopicEncodings(t *testing.T) {
 	}
 	if !strings.Contains(pred, " OR ") {
 		t.Errorf("predicate must accept EITHER encoding: %s", pred)
+	}
+}
+
+// rawTopic0SymInclude matches an INCLUDE predicate on topic_0_sym (`IN (` or
+// `= <non-empty value>`). NOT IN, != and the empty-string test only widen a
+// scan or single out the String case, so they cannot hide a String-topic row.
+var rawTopic0SymInclude = regexp.MustCompile(`topic_0_sym\s+(?i:in)\s*\(|topic_0_sym\s*=\s*('[^']|\?|\$|%)`)
+
+// TestTopic0SymIncludePredicates_OnlyReviewedSites keeps a new lake query from
+// filtering on topic_0_sym alone, which silently drops every String-topic event
+// (phoenix, soroswap, defindex topic[0]). Route through topic0Predicate, or add
+// the site here with why a Symbol-only match is complete for it.
+func TestTopic0SymIncludePredicates_OnlyReviewedSites(t *testing.T) {
+	t.Parallel()
+	allowed := map[string]int{
+		// topic0Predicate itself.
+		"internal/storage/clickhouse/event_reader.go": 1,
+		// Watched-SEP41 census: the complement of the global scan's Symbol-only
+		// NOT IN, which already keeps every String-topic shape.
+		"internal/storage/clickhouse/recognition.go": 1,
+		// sep41_supply's decoder matches mint/burn/clawback as Symbols only.
+		"internal/storage/clickhouse/supply_reader.go": 1,
+	}
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
+		t.Fatalf("repo root %s has no go.mod: %v", root, err)
+	}
+	got := map[string]int{}
+	for _, top := range []string{"internal", "cmd", "pkg"} {
+		err := filepath.WalkDir(filepath.Join(root, top), func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			rel, _ := filepath.Rel(root, path)
+			rel = filepath.ToSlash(rel)
+			if d.IsDir() {
+				// The Postgres landing zone fills topic_0_sym for Symbol OR String.
+				if d.Name() == "testdata" || rel == "internal/storage/timescale" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			for _, line := range strings.Split(string(b), "\n") {
+				if strings.HasPrefix(strings.TrimSpace(line), "//") {
+					continue
+				}
+				if n := len(rawTopic0SymInclude.FindAllString(line, -1)); n > 0 {
+					got[rel] += n
+				}
+			}
+			return nil
+		})
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("walk %s: %v", top, err)
+		}
+	}
+	for rel, n := range got {
+		if n != allowed[rel] {
+			t.Errorf("%s: %d topic_0_sym include predicate(s), %d reviewed; use topic0Predicate so String-topic rows still match", rel, n, allowed[rel])
+		}
+	}
+	for rel, n := range allowed {
+		if got[rel] != n {
+			t.Errorf("%s: reviewed %d topic_0_sym include predicate(s), found %d; update the allow-list", rel, n, got[rel])
+		}
 	}
 }
 

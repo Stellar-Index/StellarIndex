@@ -349,6 +349,7 @@ echo "=== ClickHouse Prometheus endpoint self-test ===" && ./scripts/ci/clickhou
 # used to hard-fail the whole role. Runs the role's own main.yml locally
 # (~12s, --check for the log-discipline arms) — no hosts, no ClickHouse.
 echo "=== Ansible ClickHouse host-gate self-test ===" && ./scripts/ci/ansible-clickhouse-host-gate-test.sh
+echo "=== Ansible listing-sync pubnet gate ===" && ./scripts/ci/ansible-listing-sync-gate-test.sh
 echo "=== Alertmanager apply-path parity ===" && ./scripts/ci/check-alertmanager-parity.sh
 echo "=== Alertmanager apply-path parity self-test ===" && ./scripts/ci/check-alertmanager-parity-test.sh
 echo "=== pgBackRest backup wrapper self-test ===" && ./scripts/ci/pgbackrest-backup-test.sh

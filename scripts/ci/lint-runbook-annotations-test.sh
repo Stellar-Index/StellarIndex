@@ -39,5 +39,14 @@ rm -f "${FIXTURE}.tmp"
 check "bare repo-relative runbook_url is rejected" red
 restore
 
+# Point only the description's Runbook: line at a different (existing)
+# runbook; runbook_url stays correct.
+sed -i.tmp \
+  's#^\( *\)Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md#\1Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md#' \
+  "$FIXTURE"
+rm -f "${FIXTURE}.tmp"
+check "description Runbook: link disagreeing with runbook_url is rejected" red
+restore
+
 echo "lint-runbook-annotations-test: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

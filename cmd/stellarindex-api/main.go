@@ -3637,18 +3637,17 @@ func (g globalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical
 	// when the latest bucket is grossly off its recent trailing baseline,
 	// and is a byte-identical pass-through on a healthy bucket. The
 	// headline has no stale flag to carry an unvalidated bucket (no
-	// trailing baseline), so that reads as "no data" and the caller falls
-	// through to its other tiers — the point-in-time guard's rule.
-	served, lowConfidence, _ := pricingguard.GuardServedVWAP1mConfidence(ctx, g.s, g.logger, pair, row)
-	if lowConfidence {
+	// trailing baseline) or a held last-known-good one, so either reads as
+	// "no data" and the caller falls through to its other tiers, where the
+	// change shows in price_authority instead of a silently frozen vwap_native.
+	served, lowConfidence, substituted := pricingguard.GuardServedVWAP1mConfidence(ctx, g.s, g.logger, pair, row)
+	if lowConfidence || substituted {
 		return "", time.Time{}, 0, nil, false, nil
 	}
 	// row.Bucket is the bucket's *start*; the closed-bucket contract
 	// (ADR-0015) means the bucket's served observation_at is the
 	// bucket end. Add one minute to surface the consumer-facing
-	// timestamp matching every other closed-bucket surface. Applied to the
-	// bucket we actually serve (candidate, or the older last-known-good on a
-	// guard rejection — which is naturally staler).
+	// timestamp matching every other closed-bucket surface.
 	asOf := served.Bucket.Add(time.Minute)
 	return served.VWAP, asOf, served.TradeCount, served.Sources, true, nil
 }
@@ -4072,6 +4071,39 @@ func (r storePriceReader) bucketIsStale(bucket time.Time, lowConfidence bool) bo
 	return lowConfidence || r.clock().Sub(bucket.Add(time.Minute)) > r.freshnessWindow()
 }
 
+// guardedSnapshot builds the snapshot /v1/price serves from the
+// serving-sanity guard's verdict on the latest closed bucket.
+func (r storePriceReader) guardedSnapshot(
+	asset, quote canonical.Asset,
+	served timescale.Vwap1mRow,
+	lowConfidence, substituted bool,
+) (v1.PriceSnapshot, bool) {
+	// CS-017: the bucket closes at Bucket+1min; flag stale when that
+	// close is older than the freshness window, so a dormant pair's
+	// months-old VWAP is no longer served as stale=false. Applied to the
+	// bucket we actually serve (candidate, or the older last-known-good
+	// on a guard rejection).
+	//
+	// W6-fresh-1: a pair's first-ever served minute has NO trailing
+	// baseline, so the guard fails OPEN (accepts any value, even a lone
+	// manipulated/fat-finger print). lowConfidence marks that unvalidated
+	// case; serve the value but as stale, never as a confident price.
+	//
+	// A substituted bucket is a held value standing in for the current
+	// minute, as a frozen serve is, so it is stale however recent it is.
+	stale := r.bucketIsStale(served.Bucket, lowConfidence || substituted)
+	snap := v1.VWAP1mToSnapshot(asset.String(), quote.String(), served.VWAP, served.Bucket)
+	// RNC27: substituted means the guard swapped in an older
+	// last-known-good bucket for `row`. The handler's confidence/
+	// composite-flags staples are looked up from a SEPARATE cache keyed
+	// by (pair, window) with no as-of of their own, so they answer for
+	// the current tick, not for this older bucket — snap.Substituted
+	// tells the handler to withhold them rather than mis-attribute a
+	// live read to the substituted value.
+	snap.Substituted = substituted
+	return snap, stale
+}
+
 func (r storePriceReader) clock() time.Time {
 	if r.now != nil {
 		return r.now()
@@ -4124,26 +4156,7 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 			return v1.PriceSnapshot{}, nil, false, v1.PriceWithheldError(withheld)
 		}
 		served, lowConfidence, substituted := pricingguard.GuardServedVWAP1mConfidence(ctx, r.s, r.logger, pair, row)
-		// CS-017: the bucket closes at Bucket+1min; flag stale when that
-		// close is older than the freshness window, so a dormant pair's
-		// months-old VWAP is no longer served as stale=false. Applied to the
-		// bucket we actually serve (candidate, or the older last-known-good
-		// on a guard rejection — which is naturally staler).
-		//
-		// W6-fresh-1: a pair's first-ever served minute has NO trailing
-		// baseline, so the guard fails OPEN (accepts any value, even a lone
-		// manipulated/fat-finger print). lowConfidence marks that unvalidated
-		// case; serve the value but as stale, never as a confident price.
-		stale := r.bucketIsStale(served.Bucket, lowConfidence)
-		snap := v1.VWAP1mToSnapshot(asset.String(), quote.String(), served.VWAP, served.Bucket)
-		// RNC27: substituted means the guard swapped in an older
-		// last-known-good bucket for `row`. The handler's confidence/
-		// composite-flags staples are looked up from a SEPARATE cache keyed
-		// by (pair, window) with no as-of of their own, so they answer for
-		// the current tick, not for this older bucket — snap.Substituted
-		// tells the handler to withhold them rather than mis-attribute a
-		// live read to the substituted value.
-		snap.Substituted = substituted
+		snap, stale := r.guardedSnapshot(asset, quote, served, lowConfidence, substituted)
 		return snap, served.Sources, stale, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -5851,11 +5864,11 @@ func prewarmClassicLakeSupply(ctx context.Context, srv *v1.Server) {
 
 // prewarmIssuerLimits are the /v1/issuers limits worth keeping warm.
 //
-// The cache key is per-limit (newCacheKey("ListIssuers").int(limit)), so
-// warming a limit nobody requests is a phantom slot that costs a query
-// and helps no one — the /v1/pools lesson in [prewarmLight], where a
-// mismatched key left every user request paying 10-30s against a cache
-// that looked warm.
+// CachedIssuersReader serves every limit from one ceiling-sized entry, so
+// the first of these fills it and the rest are hits; the list stays so the
+// guard test can prove each real caller's limit lands warm — the /v1/pools
+// lesson in [prewarmLight], where a mismatched key left every user request
+// paying 10-30s against a cache that looked warm.
 //
 // These are the limits real callers actually send:
 //   - 1 and 100 — the explorer.

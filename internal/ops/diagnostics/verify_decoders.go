@@ -365,19 +365,22 @@ func buildVerifyDispatcher(oracle config.OracleConfig, protocolContractSeeds map
 
 	// Oracle variants: only register if their contract address is set.
 	if oracle.Reflector.DEXContract != "" {
-		decoders = append(decoders, reflector.NewDecoder(reflector.VariantDEX, oracle.Reflector.DEXContract))
+		decoders = append(decoders, reflector.NewDecoder(reflector.VariantDEX, oracle.Reflector.DEXContract,
+			reflector.WithDecoderDecimals(oracle.Reflector.DEXDecimals)))
 		registered = append(registered, reflector.SourceDEX)
 	} else {
 		fmt.Fprintln(os.Stderr, "verify-decoders: skip reflector-dex — oracle.reflector.dex_contract empty")
 	}
 	if oracle.Reflector.CEXContract != "" {
-		decoders = append(decoders, reflector.NewDecoder(reflector.VariantCEX, oracle.Reflector.CEXContract))
+		decoders = append(decoders, reflector.NewDecoder(reflector.VariantCEX, oracle.Reflector.CEXContract,
+			reflector.WithDecoderDecimals(oracle.Reflector.CEXDecimals)))
 		registered = append(registered, reflector.SourceCEX)
 	} else {
 		fmt.Fprintln(os.Stderr, "verify-decoders: skip reflector-cex — oracle.reflector.cex_contract empty")
 	}
 	if oracle.Reflector.FXContract != "" {
-		decoders = append(decoders, reflector.NewDecoder(reflector.VariantFX, oracle.Reflector.FXContract))
+		decoders = append(decoders, reflector.NewDecoder(reflector.VariantFX, oracle.Reflector.FXContract,
+			reflector.WithDecoderDecimals(oracle.Reflector.FXDecimals)))
 		registered = append(registered, reflector.SourceFX)
 	} else {
 		fmt.Fprintln(os.Stderr, "verify-decoders: skip reflector-fx — oracle.reflector.fx_contract empty")

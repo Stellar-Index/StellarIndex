@@ -356,6 +356,27 @@ func (r *UserStore) RevokeOtherUserSessions(ctx context.Context, userID, keepSes
 	return nil
 }
 
+// CapUserSessions revokes the user's oldest live sessions beyond maxLive,
+// never keepSessionID. Idempotent.
+func (r *UserStore) CapUserSessions(ctx context.Context, userID, keepSessionID uuid.UUID, maxLive int) error {
+	if maxLive < 1 {
+		return fmt.Errorf("cap user sessions: maxLive %d < 1", maxLive)
+	}
+	const q = `
+		UPDATE sessions SET revoked_at = now()
+		WHERE id IN (
+			SELECT id FROM sessions
+			WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL AND expires_at > now()
+			ORDER BY created_at DESC, id DESC
+			OFFSET $3
+		)
+	`
+	if _, err := r.s.db.ExecContext(ctx, q, userID, keepSessionID, maxLive-1); err != nil {
+		return fmt.Errorf("cap user sessions: %w", err)
+	}
+	return nil
+}
+
 // errNilClientIP is returned by ipString when ip is nil.
 var errNilClientIP = errors.New("postgresstore: nil client IP")
 

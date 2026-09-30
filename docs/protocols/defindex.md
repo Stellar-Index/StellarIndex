@@ -260,6 +260,16 @@ emitter list.
 **101 of 110 emitters carry at least one proof → gated.** The 7
 strategies named in `mainnet.contracts.json` are all in the gated set.
 
+> **Proof B alone admits two of the 101.** `CAHXQWU2…` (103 events)
+> and `CBTX63BX…` (3 events) are strategies whose only evidence is proof
+> B, and both are seeded in `MainnetStrategies`. The other 99 each carry
+> at least one of A, C or D. Proof B is the weakest proof: the factory is
+> permissionless, so the strategy addresses a `create` body names are
+> supplied by the caller (see "Resolved 2026-07-10 — BlendStrategy
+> factory-anchoring" below). For these two, the only evidence is that a
+> vault creator named them. Treat their membership as uncorroborated
+> until the team confirms them.
+
 ### ⚠️ Flagged — the 9 no-proof emitters (excluded, NOT silently dropped)
 
 155 events total (0.13% of the source's lake activity). The five 1-event

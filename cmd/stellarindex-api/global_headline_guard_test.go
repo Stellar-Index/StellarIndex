@@ -59,25 +59,43 @@ func TestGlobalPriceReader_UnvalidatedBucketIsNoHeadline(t *testing.T) {
 	}
 }
 
-// A validated substitution still serves, at the substituted bucket's own
-// (older) time, so the headline's price_as_of never claims the rejected
-// minute's freshness.
-func TestGlobalPriceReader_OutlierServesLastKnownGoodAtItsOwnTime(t *testing.T) {
-	base, quote := canonical.NativeAsset(), mustFiatUSD(t)
-	trailing := []timescale.Vwap1mRow{headlineRow(3, "1.0"), headlineRow(4, "1.0"), headlineRow(5, "1.0")}
-	for i := 6; i < 16; i++ {
+func headlineTrailing() []timescale.Vwap1mRow {
+	var trailing []timescale.Vwap1mRow
+	for i := 3; i < 16; i++ {
 		trailing = append(trailing, headlineRow(i, "1.0"))
 	}
-	reader := headlineReader(headlineVWAPStore{latest: headlineRow(0, "100.0"), trailing: trailing})
+	return trailing
+}
+
+// The headline has no marker for a guard-held bucket either, so an outlier
+// the guard replaces with last-known-good must not be served as vwap_native
+// with a frozen price_as_of: the reader reports no data and the headline
+// falls through to its other tiers.
+func TestGlobalPriceReader_OutlierIsNoHeadline(t *testing.T) {
+	base, quote := canonical.NativeAsset(), mustFiatUSD(t)
+	reader := headlineReader(headlineVWAPStore{latest: headlineRow(0, "100.0"), trailing: headlineTrailing()})
+	vwap, _, _, _, ok, err := reader.LatestVWAP(context.Background(), base, quote)
+	if err != nil {
+		t.Fatalf("LatestVWAP: %v", err)
+	}
+	if ok {
+		t.Fatalf("headline served held value %q for an outlier minute; want ok=false", vwap)
+	}
+}
+
+// An in-band candidate still serves, at its own bucket close.
+func TestGlobalPriceReader_InBandBucketServesAtItsClose(t *testing.T) {
+	base, quote := canonical.NativeAsset(), mustFiatUSD(t)
+	reader := headlineReader(headlineVWAPStore{latest: headlineRow(0, "1.1"), trailing: headlineTrailing()})
 	vwap, asOf, _, _, ok, err := reader.LatestVWAP(context.Background(), base, quote)
 	if err != nil || !ok {
-		t.Fatalf("LatestVWAP: ok=%v err=%v, want the last-known-good bucket", ok, err)
+		t.Fatalf("LatestVWAP: ok=%v err=%v, want the candidate bucket", ok, err)
 	}
-	if vwap != "1.0" {
-		t.Fatalf("vwap = %s, want last-known-good 1.0", vwap)
+	if vwap != "1.1" {
+		t.Fatalf("vwap = %s, want candidate 1.1", vwap)
 	}
-	if want := headlineRow(3, "1.0").Bucket.Add(time.Minute); !asOf.Equal(want) {
-		t.Fatalf("asOf = %v, want the substituted bucket's close %v", asOf, want)
+	if want := headlineRow(0, "1.1").Bucket.Add(time.Minute); !asOf.Equal(want) {
+		t.Fatalf("asOf = %v, want the candidate bucket's close %v", asOf, want)
 	}
 }
 
