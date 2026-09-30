@@ -18,6 +18,13 @@ import (
 // context, which [ResendSender.Send] detaches from.
 const sendTimeout = 10 * time.Second
 
+// sendAttempts and retryBaseDelay bound the retry of a transient
+// failure so a provider outage cannot pin a handler goroutine.
+const (
+	sendAttempts   = 3
+	retryBaseDelay = 200 * time.Millisecond
+)
+
 // ResendSender ships transactional email through Resend's REST
 // API (https://resend.com/docs/api-reference/emails/send-email).
 //
@@ -83,7 +90,9 @@ type resendErrorResp struct {
 
 // Send POSTs to /emails. Validates first so misconfigured
 // callers get a structured error before we burn a Resend API
-// call; maps 4xx → ErrProviderRejected, 5xx + network → ErrTransient.
+// call; maps 4xx → ErrProviderRejected, 429 + 5xx + network → ErrTransient.
+// An ErrTransient attempt is retried up to [sendAttempts] times with
+// doubling backoff; a cancelled ctx stops further retries.
 //
 // A sender with no key (a struct literal that bypassed
 // NewResendSender) fails with ErrNotConfigured before the wire: a
@@ -118,6 +127,23 @@ func (r *ResendSender) Send(ctx context.Context, msg Message) error {
 		return fmt.Errorf("notify: marshal: %w", err)
 	}
 
+	delay := retryBaseDelay
+	for attempt := 1; ; attempt++ {
+		err = r.post(ctx, body)
+		if err == nil || !errors.Is(err, ErrTransient) || attempt == sendAttempts {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(delay):
+		}
+		delay *= 2
+	}
+}
+
+// post makes one delivery attempt and classifies its outcome.
+func (r *ResendSender) post(ctx context.Context, body []byte) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sendTimeout)
 	defer cancel()
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
@@ -148,7 +174,8 @@ func (r *ResendSender) Send(ctx context.Context, msg Message) error {
 		detail = string(raw)
 	}
 
-	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+	// 429 is the provider's rate limit, not a verdict on the message.
+	if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
 		return fmt.Errorf("%w: HTTP %d: %s", ErrProviderRejected, resp.StatusCode, detail)
 	}
 	return fmt.Errorf("%w: HTTP %d: %s", ErrTransient, resp.StatusCode, detail)
