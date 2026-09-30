@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -99,13 +100,22 @@ func (i *RedisKeyCacheInvalidator) InvalidateCachedKey(ctx context.Context, hexH
 	return evictCachedKey(ctx, i.cache, hexHash)
 }
 
+// apiKeyCacheTombstoneTTL outlives any in-flight cache-miss Lookup: the
+// default request timeout is 15s and the server write timeout 30s.
+const apiKeyCacheTombstoneTTL = 60 * time.Second
+
 // evictCachedKey DELs both records the postgres-backend validator can
 // serve a key from: the `apikey-cache:` row and the canonical `apikey:`
-// record it reads first. Two DELs, not one multi-key DEL, so a Redis ACL
-// that does not yet admit `apikey-cache:*` cannot also fail the
+// record it reads first. Separate commands, not one multi-key DEL, so a
+// Redis ACL that does not yet admit `apikey-cache:*` cannot also fail the
 // canonical eviction.
+//
+// The tombstone is written first: a cache-miss Lookup that read Postgres
+// before the change being evicted for would otherwise re-cache the stale
+// row after the DELs, for the full cache TTL (see cacheStore).
 func evictCachedKey(ctx context.Context, rdb redis.Cmdable, hexHash string) error {
 	return errors.Join(
+		rdb.Set(ctx, cachekeys.APIKeyCacheEvicted(hexHash).String(), "1", apiKeyCacheTombstoneTTL).Err(),
 		rdb.Del(ctx, cachekeys.APIKey(hexHash).String()).Err(),
 		rdb.Del(ctx, cachekeys.APIKeyCache(hexHash).String()).Err(),
 	)

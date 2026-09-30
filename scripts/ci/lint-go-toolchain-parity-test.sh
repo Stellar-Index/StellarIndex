@@ -112,6 +112,17 @@ check "workflow with no setup-go step at all -> FAIL (vacuous)" 1 "$TMP/nosetup"
 # ── the repo's own workflow tree is clean ────────────────────────────
 check "repo's own .github/workflows/ passes" 0 ".github/workflows"
 
+# ── container Go pin must carry a digest, not just a (floating) tag ──
+want_go="$(awk '/^toolchain[ \t]+go/ { sub(/^go/, "", $2); print $2; exit }' go.mod)"
+mkdir -p "$TMP/dock_tag" "$TMP/dock_digest"
+printf 'FROM golang:%s-alpine AS builder\n' "${want_go%.*}" > "$TMP/dock_tag/x.Dockerfile"
+printf 'FROM golang:%s-alpine@sha256:%s AS builder\n' "${want_go%.*}" "$(printf 'a%.0s' {1..64})" > "$TMP/dock_digest/x.Dockerfile"
+DOCKER_DIR="$TMP/dock_tag" check "tag-only golang FROM -> FAIL" 1 ".github/workflows"
+DOCKER_DIR="$TMP/dock_digest" check "digest-pinned golang FROM -> pass" 0 ".github/workflows"
+mkdir -p "$TMP/dock_bare_digest"
+printf 'FROM golang:%s@sha256:%s AS builder\n' "${want_go%.*}" "$(printf 'b%.0s' {1..64})" > "$TMP/dock_bare_digest/x.Dockerfile"
+DOCKER_DIR="$TMP/dock_bare_digest" check "digest-pinned bare-minor golang FROM -> pass" 0 ".github/workflows"
+
 # ── container Dockerfile glob must see suffix-style names too. The
 # repo's docker/ has one prefix-style Dockerfile (docker/verify/Dockerfile)
 # and six suffix-style ones (docker/stellarindex-*.Dockerfile). A glob
@@ -133,7 +144,7 @@ fi
 
 echo
 echo "lint-go-toolchain-parity-test: ${pass} passed, ${fail} failed, ${asserts} assertions requested"
-if [ "$asserts" -lt 9 ]; then
+if [ "$asserts" -lt 12 ]; then
   echo "lint-go-toolchain-parity-test: FAIL — only ${asserts} assertions ran; cases have been lost" >&2
   exit 1
 fi

@@ -149,6 +149,7 @@ groups:
           severity: page
           team: stellarindex
           component: api
+          alert_family: slo_latency_burn
           slo: api_latency_p95_under_200ms
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
@@ -175,6 +176,7 @@ groups:
           severity: page
           team: stellarindex
           component: api
+          alert_family: slo_latency_burn
           slo: api_latency_p95_under_200ms
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
@@ -199,6 +201,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
+          alert_family: slo_latency_burn
           slo: api_latency_p95_under_200ms
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
@@ -271,6 +274,7 @@ groups:
           severity: page
           team: stellarindex
           component: api
+          alert_family: slo_availability_burn
           slo: api_availability_3_nines
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
@@ -290,6 +294,7 @@ groups:
           severity: page
           team: stellarindex
           component: api
+          alert_family: slo_availability_burn
           slo: api_availability_3_nines
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
@@ -309,6 +314,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
+          alert_family: slo_availability_burn
           slo: api_availability_3_nines
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md

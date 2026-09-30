@@ -60,8 +60,8 @@ const classicMovementsWindowDeadline = 20 * time.Minute
 // classicMovementsBackfill is the ADR-0047 write path for ALL FOUR
 // phases, RETARGETED by ADR-0048 D2 to write ClickHouse's
 // stellar.account_movements instead of Postgres' classic_movements
-// (migration 0105 stays applied but UNPOPULATED — see
-// migrations/README.md's 0105 row): stellarindex-ops
+// (migration 0105, never populated, dropped by migration 0113):
+// stellarindex-ops
 // classic-movements-backfill -ch-addr ADDR -from N -to N [-window N]
 // [-resume] [-write] [-verify]. Lake-in, lake-out — no Postgres
 // anywhere in this command's loop (ADR-0048 D2's explicit

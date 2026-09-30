@@ -172,7 +172,8 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 		h.writeJSONAt(w, out, degraded, asOf)
 		return
 	}
-	h.WriteJSON(w, out, false)
+	_, stale, _ := h.lakeTip(ctx)
+	h.WriteJSON(w, out, stale)
 }
 
 // contractActivityCard is the 30-day liveness card, nil when the activity

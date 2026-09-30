@@ -131,7 +131,7 @@ backfilled rows.
 - Storage: `blend_backstop_events` hypertable, migration
   [`0063_create_blend_backstop_events`](../../../migrations/0063_create_blend_backstop_events.up.sql).
 - `internal/storage/timescale/per_source_gaps.go` — gap target
-  (`blend-backstop`, Genesis ≈ 56,627,571).
+  (`blend-backstop`, Genesis 51,499,546 = `BackstopGenesisLedger`).
 - `internal/storage/timescale/protocol_stats.go` — `blend_backstop`
   leg in the trailing-24h event census.
 
