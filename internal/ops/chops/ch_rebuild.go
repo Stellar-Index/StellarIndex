@@ -805,36 +805,9 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	}
 	if hasEventSource {
 		evStart := time.Now()
-		// Exclude the CAP-67 classic-token firehose — none of the projected DEX/
-		// lending sources consume it, and it's 99.99% of contract_events. Use
-		// FirehoseExcludeSyms (NOT ClassicTokenTopic0Syms): set_admin must be
-		// RETAINED because Blend/Comet emit a pool set_admin sharing that topic —
-		// excluding it wholesale dropped blend_admin's set_admin rows from the
-		// re-derive (matches the projector's firehoseExcludeSyms).
-		cherr := clickhouse.StreamContractEvents(ctx, *chAddr, lo, hi, clickhouse.FirehoseExcludeSyms, func(ev events.Event) error {
-			if !contractAllowed(contractsOverride, ev.ContractID) {
-				return nil // -contracts scope: skip events outside the subset
-			}
-			for _, src := range cat {
-				if src.dec == nil || !enabled(src.name) {
-					continue
-				}
-				if len(src.contractIDs) > 0 && !containsStr(src.contractIDs, ev.ContractID) {
-					continue
-				}
-				if !src.dec.Matches(ev) {
-					continue
-				}
-				outs, derr := src.dec.Decode(ev)
-				if derr != nil {
-					continue // soft-fail, mirroring the projector + live path
-				}
-				buf = append(buf, outs...)
-			}
-			return nil
-		})
-		if cherr != nil {
-			return fmt.Errorf("ch-rebuild: event stream: %w", cherr)
+		var everr error
+		if buf, everr = runCHRebuildEventPass(ctx, chRebuildLakeReads(*chAddr), lo, hi, cat, enabled, contractsOverride); everr != nil {
+			return everr
 		}
 		fmt.Fprintf(os.Stderr, "ch-rebuild: event read done in %s (%d events buffered)\n",
 			time.Since(evStart).Round(time.Second), len(buf))
@@ -1477,6 +1450,100 @@ func dropReconSources(cat []reconSource, names ...string) []reconSource {
 		out = append(out, src)
 	}
 	return out
+}
+
+// chRebuildEventReads is the pair of lake reads the event pass issues; tests
+// substitute fakes for ClickHouse.
+type chRebuildEventReads struct {
+	firehose func(ctx context.Context, from, to uint32, excludeTopic0 []string, fn func(events.Event) error) error
+	scoped   func(ctx context.Context, from, to uint32, contractIDs []string, withOpArgs bool, fn func(events.Event) error) error
+}
+
+func chRebuildLakeReads(addr string) chRebuildEventReads {
+	return chRebuildEventReads{
+		firehose: func(ctx context.Context, from, to uint32, excludeTopic0 []string, fn func(events.Event) error) error {
+			return clickhouse.StreamContractEvents(ctx, addr, from, to, excludeTopic0, fn)
+		},
+		scoped: func(ctx context.Context, from, to uint32, contractIDs []string, withOpArgs bool, fn func(events.Event) error) error {
+			// FINAL: the dry-run counts, so un-merged duplicate parts must collapse.
+			return clickhouse.StreamContractEventsFiltered(ctx, addr, from, to, contractIDs, nil, nil, true, withOpArgs, false, fn)
+		},
+	}
+}
+
+// runCHRebuildEventPass decodes [lo,hi] through every enabled event-decoder
+// source and returns the decoded outputs in read order.
+func runCHRebuildEventPass(ctx context.Context, reads chRebuildEventReads, lo, hi uint32, cat []reconSource, enabled func(string) bool, contractsOverride []string) ([]consumer.Event, error) {
+	firehoseSrcs, scopedSrcs, err := splitCHRebuildEventSources(cat, enabled)
+	if err != nil {
+		return nil, err
+	}
+	var buf []consumer.Event
+	if len(firehoseSrcs) > 0 {
+		// Exclude the CAP-67 classic-token firehose (99.99% of contract_events);
+		// sources whose decoders consume those topics take the scoped read below.
+		// FirehoseExcludeSyms, not ClassicTokenTopic0Syms: Blend and Comet emit a
+		// pool set_admin sharing the token topic.
+		if err := reads.firehose(ctx, lo, hi, clickhouse.FirehoseExcludeSyms, decodeCHRebuildEvents(firehoseSrcs, contractsOverride, &buf)); err != nil {
+			return nil, fmt.Errorf("ch-rebuild: event stream: %w", err)
+		}
+	}
+	if len(scopedSrcs) > 0 {
+		var ids []string
+		withOpArgs := false
+		for _, src := range scopedSrcs {
+			ids = append(ids, src.contractIDs...)
+			withOpArgs = withOpArgs || src.needsOpArgs
+		}
+		if err := reads.scoped(ctx, lo, hi, ids, withOpArgs, decodeCHRebuildEvents(scopedSrcs, contractsOverride, &buf)); err != nil {
+			return nil, fmt.Errorf("ch-rebuild: contract-scoped event stream: %w", err)
+		}
+	}
+	return buf, nil
+}
+
+// splitCHRebuildEventSources partitions the enabled event-decoder sources into
+// those read from the topic-excluded firehose and those read by contract id.
+func splitCHRebuildEventSources(cat []reconSource, enabled func(string) bool) (firehose, scoped []reconSource, err error) {
+	for _, src := range cat {
+		if src.dec == nil || !enabled(src.name) {
+			continue
+		}
+		if !src.firehoseTopics {
+			firehose = append(firehose, src)
+			continue
+		}
+		// An unscoped read without the exclusion would stream the whole CAP-67 firehose.
+		if len(src.contractIDs) == 0 {
+			return nil, nil, fmt.Errorf("ch-rebuild: %s consumes firehose topics but has no contract prefilter", src.name)
+		}
+		scoped = append(scoped, src)
+	}
+	return firehose, scoped, nil
+}
+
+// decodeCHRebuildEvents returns the stream callback that runs each event
+// through srcs' decoders and appends the outputs to buf.
+func decodeCHRebuildEvents(srcs []reconSource, contractsOverride []string, buf *[]consumer.Event) func(events.Event) error {
+	return func(ev events.Event) error {
+		if !contractAllowed(contractsOverride, ev.ContractID) {
+			return nil // -contracts scope: skip events outside the subset
+		}
+		for _, src := range srcs {
+			if len(src.contractIDs) > 0 && !containsStr(src.contractIDs, ev.ContractID) {
+				continue
+			}
+			if !src.dec.Matches(ev) {
+				continue
+			}
+			outs, derr := src.dec.Decode(ev)
+			if derr != nil {
+				continue // soft-fail, mirroring the projector + live path
+			}
+			*buf = append(*buf, outs...)
+		}
+		return nil
+	}
 }
 
 // chRebuildBuffers reports whether any pass of this invocation appends to
