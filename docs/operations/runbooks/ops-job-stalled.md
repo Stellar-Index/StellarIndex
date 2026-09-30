@@ -215,6 +215,33 @@ None of this is visible from outside the wrapper, so it is stated here:
   hours must not be given a long bound; the wrapper's own default stays
   at `5min` for exactly that reason.
 
+### A ClickHouse merge outlives its client
+
+`scripts/ops/recompress-lec.sh`, `scripts/ops/recompress-others.sh` and
+[phase-a-capacity-relief-2026-07-18.md](phase-a-capacity-relief-2026-07-18.md)
+Step 3 issue `OPTIMIZE TABLE … PARTITION … FINAL` from a client (`curl`
+on `:8123`, `clickhouse-client`). The merge runs inside the ClickHouse
+server, so stopping the scope kills the client and returns while the
+partition rewrite — and its transient, up to one partition (≤ 424 GiB
+on `ledger_entry_changes`), above the 300 GiB the pool guard preserves
+— carries on. No value of `TimeoutStopSec` changes that: the process
+being timed is not the one holding the space. After the scope stop,
+cancel the merge itself (substitute the table the stopped job was on):
+
+```sh
+clickhouse-client --port 9300 -q "SELECT partition_id, elapsed, progress FROM system.merges WHERE database='stellar' AND table='ledger_entry_changes'"
+clickhouse-client --port 9300 -q "SYSTEM STOP MERGES stellar.ledger_entry_changes"   # cancels running merges on the table
+# re-run the system.merges SELECT until it returns no rows, then:
+clickhouse-client --port 9300 -q "SYSTEM START MERGES stellar.ledger_entry_changes"
+```
+
+`KILL QUERY` on the `OPTIMIZE` is not a substitute — the merge is not
+reliably bound to the query's cancellation. **Never leave merges stopped:**
+the table takes live inserts, and with merges off its part count climbs
+until ClickHouse rejects inserts (`TOO_MANY_PARTS`). A cancelled merge
+discards its temporary parts and keeps the originals, so re-running the
+script redoes that partition from scratch.
+
 ### Before applying it: prove systemd takes the property
 
 `TimeoutStopSec` on a transient scope is a systemd-version question, and
@@ -316,43 +343,12 @@ record why, because the range is then knowingly un-backfilled.
   Step 6, chunk mode — the job whose SIGTERM cleanup sized the stop
   bound, and the state to repair when a run is killed through it.
 
-## Follow-ups (measured, not fixed here)
-
-Two things an enumeration of the wrapper's payloads turned up on
-2026-09-04 while sizing the stop bound. Neither is caused by the bound;
-both bear on what a stop actually achieves.
-
-- **`internal/ops/archive/verify_archive.go:432-435` documents a signal
-  path that does not exist.** The comment on the `maxRuntime == 0`
-  branch says the binary "still honours external SIGTERM via the SDK's
-  signal hooks". That file imports no `os/signal`, and no package it
-  reaches registers a handler for the archive-verify path — the
-  uncancellable-parent branch builds its context from
-  `context.Background()` with nothing wired to a signal. A SIGTERM to
-  that job is therefore the default disposition (immediate death), not
-  a cancellation the walk observes. The behaviour is safe for a
-  read-only walk; the comment is what is wrong, and it describes exactly
-  the semantics the stop bound is documented against, so it will
-  mislead the next reader who checks how a stop lands.
-- **A ClickHouse `OPTIMIZE … FINAL` cannot be stopped by killing its
-  client.** `scripts/ops/recompress-lec.sh` issues `OPTIMIZE TABLE
-  stellar.ledger_entry_changes PARTITION ID '<p>' FINAL` over the HTTP
-  interface (`curl` on `:8123`), and
-  [phase-a-capacity-relief-2026-07-18.md](phase-a-capacity-relief-2026-07-18.md)
-  Step 3 issues the same statement through `clickhouse-client
-  --receive_timeout 36000`. The merge runs server-side; dropping the
-  client connection does not cancel it (only `KILL MUTATION` /
-  `system.merges` intervention does). That runbook launches the script
-  under `run-heavy-job.sh` and tells an operator to abort with
-  `systemctl stop heavy-recompress-lec.scope`, so the stop returns while
-  the partition rewrite keeps running — and its transient is up to one
-  partition, ≤ 424 GiB, above the 300 GiB the wrapper's pool guard
-  preserves. A pre-existing hole in the pool guard, independent of the
-  stop bound: no value of `TimeoutStopSec` closes it, because the
-  process being timed is not the one holding the space.
-
 ## Changelog
 
+- 2026-09-30 — resolved the two follow-ups: added "A ClickHouse merge
+  outlives its client" (cancel an `OPTIMIZE … FINAL` with `SYSTEM STOP
+  MERGES` after the scope stop), and corrected the `verify-archive`
+  comment that claimed a SIGTERM handler the job does not install.
 - 2026-09-22 (T578) — added `stellarindex_ops_job_run_failed`: the
   `last_exit_ok` gauge had been emitted since C6-020 with no rule
   selecting it in either tree, so a job that ran to completion and

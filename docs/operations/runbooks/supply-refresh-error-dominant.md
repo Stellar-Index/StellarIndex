@@ -50,8 +50,10 @@ curl -s http://aggregator:9464/metrics | \
 # fault is per-asset (config drift on watched_classic_assets, missing
 # locked-set member, SAC wrapper map gap) rather than fleet-wide.
 #
-# NOTE: outcome="dormant" is NOT an error — it means the asset is quiet and
-# its last observation was (correctly) re-stamped as current (F-1320). It
+# NOTE: outcome="dormant" is NOT an error — it means the component anchor did
+# not move since the last tick, so the last observation was re-stamped as
+# current (F-1320). That is also what a dead observer looks like: "dormant"
+# is not evidence the producer is alive; the 24h horizon below bounds it. It
 # does NOT count toward the error fraction; do not chase it — PROVIDED the
 # component anchor (MinComponentLedger) last moved within ~24h (17,280
 # ledgers, DefaultMaxDormantComponentLedgers, R-002 audit-2026-07-23).

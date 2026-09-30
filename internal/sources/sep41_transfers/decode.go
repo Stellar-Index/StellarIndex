@@ -78,6 +78,7 @@ func decodeTransferAmount(ev *events.Event) (*big.Int, error) {
 		if perr != nil {
 			return nil, fmt.Errorf("sep41_transfers: transfer.amount map: %w", perr)
 		}
+		// to_muxed_id is deliberately ignored; see Event's godoc.
 		amtVal, ok := scval.MapField(entries, "amount")
 		if !ok {
 			return nil, fmt.Errorf("%w: transfer map missing `amount` field", ErrBadValue)
@@ -162,12 +163,21 @@ func decodeSetAdmin(ev *events.Event) (string, string, error) {
 	return from, newAdmin, nil
 }
 
-// decodeSetAuthorized parses ("set_authorized", id, asset?) + bool.
+// decodeSetAuthorized parses ("set_authorized", id[, sep0011_asset]) + bool,
+// and the legacy SAC ("set_authorized", admin, id, sep0011_asset) that
+// CAP-67 replaced. Topic count does not disambiguate, so the legacy form is
+// recognised by topic[2] being an Address, as sep41_supply does for mint.
 func decodeSetAuthorized(ev *events.Event) (string, bool, error) {
 	if len(ev.Topic) < 2 {
 		return "", false, fmt.Errorf("%w: set_authorized expects >=2 topics, got %d", ErrShortTopic, len(ev.Topic))
 	}
-	id, err := decodeAddrTopic(ev, 1)
+	idIdx := 1
+	if len(ev.Topic) >= 3 {
+		if sv, err := scval.Parse(ev.Topic[2]); err == nil && sv.Type == xdr.ScValTypeScvAddress {
+			idIdx = 2
+		}
+	}
+	id, err := decodeAddrTopic(ev, idIdx)
 	if err != nil {
 		return "", false, fmt.Errorf("sep41_transfers: set_authorized.id: %w", err)
 	}

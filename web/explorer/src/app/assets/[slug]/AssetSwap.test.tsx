@@ -201,3 +201,36 @@ describe('AssetSwap token picker dialog contract', () => {
     expect(notCancelled).toBe(false);
   });
 });
+
+describe('AssetSwap token picker crypto rows', () => {
+  it("labels a crypto row with the catalogue's asset name", async () => {
+    stubApi();
+    const base = vi.mocked(apiGet).getMockImplementation()!;
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path.startsWith('/v1/assets')) {
+        return {
+          data: [
+            {
+              asset_id:
+                'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+              slug: 'usdc',
+              code: 'USDC',
+              issuer:
+                'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+              name: 'USD Coin',
+              price_usd: '1.0001',
+            },
+          ],
+          pagination: { next: '' },
+        };
+      }
+      return base(path);
+    });
+    renderSwap();
+    fireEvent.click(await screen.findByRole('button', { name: /USD/ }));
+
+    const row = await screen.findByRole('button', { name: /USDC/ });
+    expect(row).toHaveTextContent('USD Coin');
+    expect(row).not.toHaveTextContent('Stellar asset');
+  });
+});

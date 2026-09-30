@@ -77,6 +77,15 @@ if [ -e "$ARCHIVE_HOT_FLOOR_FILE" ]; then
 fi
 PARTIAL_CHECK_WINDOW="${PARTIAL_CHECK_WINDOW:-4}"
 
+# Destination as <mc-alias>/<bucket>[/<prefix>], e.g. a regional node filling
+# a remote object store. It prefixes `mc rm --recursive --force`, so a value
+# that could resolve to an alias or bucket root is refused before any mc call.
+ARCHIVE_DEST="${ARCHIVE_DEST:-local/galexie-archive}"
+if ! [[ "$ARCHIVE_DEST" =~ ^[A-Za-z0-9_-]+(/[A-Za-z0-9_.-]+)+$ ]] || [[ "/$ARCHIVE_DEST/" == */../* || "/$ARCHIVE_DEST/" == */./* ]]; then
+  echo "galexie-archive-fill: FATAL — ARCHIVE_DEST='$ARCHIVE_DEST' is not <mc-alias>/<bucket>[/<prefix>]" >&2
+  exit 1
+fi
+
 # Known partials: pass via env var (newline- or space-separated), e.g.
 #   PARTIALS=$'FC49CDFF--62272000-62335999\nXYZ--...' galexie-archive-fill
 # Partition names should NOT have trailing slashes.
@@ -146,7 +155,7 @@ if [ -n "$PARTIALS_INPUT" ]; then
   report_rejected
   while read -r p; do
     echo "  rm: $p" | tee -a "$LOG"
-    mc rm --recursive --force "local/galexie-archive/$p/" >/dev/null 2>&1 || true
+    mc rm --recursive --force "$ARCHIVE_DEST/$p/" >/dev/null 2>&1 || true
   done < "$WORK/partials.txt"
 fi
 
@@ -183,7 +192,7 @@ if [ "$PARTIAL_CHECK_WINDOW" -gt 0 ]; then
   while read -r p; do
     [ -z "$p" ] && continue
     aws_n=$(aws_ls "aws-public-blockchain/v1.1/stellar/ledgers/pubnet/$p/" --recursive | wc -l)
-    local_n=$(mc ls --recursive "local/galexie-archive/$p/" 2>/dev/null | wc -l)
+    local_n=$(mc ls --recursive "$ARCHIVE_DEST/$p/" 2>/dev/null | wc -l)
     if [ "$local_n" -gt 0 ] && [ "$local_n" -lt "$aws_n" ]; then
       # Queue it for Phase 3 instead of DELETING it. `mc mirror` is
       # already incremental — it copies only the objects absent from the
@@ -211,7 +220,7 @@ fi
 
 echo "=== $(date -Iseconds) Phase 2: build needs-work list ===" | tee -a "$LOG"
 aws_partitions > "$WORK/aws.txt"
-mc ls local/galexie-archive/ \
+mc ls "$ARCHIVE_DEST/" \
   | awk '{print $NF}' | sed 's:/$::' | sort > "$WORK/local.txt"
 comm -23 "$WORK/aws.txt" "$WORK/local.txt" \
   > "$WORK/missing.txt"
@@ -248,14 +257,14 @@ echo "=== $(date -Iseconds) Phase 3: mirror per-partition (parallel=$PARALLEL) =
 # objects rather than a full re-download. --skip-errors is belt-and-braces.
 # Parallel=8 is conservative — 100 MB/s observed link saturation, so
 # more workers won't help.
-# The partition reaches the worker as "$3", never as script text: `xargs -I
+# The partition reaches the worker as "$4", never as script text: `xargs -I
 # {}` splices it into the source bash then parses. -r: an empty list makes
 # no call, where one call with no partition would mirror the whole bucket.
 # The worker re-checks the name so an empty or malformed one can never
 # become a bucket-root path.
 # shellcheck disable=SC2016  # expanded by the per-partition bash
 xargs -r -a "$WORK/needs-work.txt" -d '\n' -P "$PARALLEL" -n 1 bash -c '
-  log=$1 re=$2 p=$3
+  log=$1 re=$2 dest=$3 p=$4
   if ! [[ "$p" =~ $re ]]; then
     echo "galexie-archive-fill: refusing to mirror non-partition name: ${p@Q}" >&2
     exit 1
@@ -263,9 +272,9 @@ xargs -r -a "$WORK/needs-work.txt" -d '\n' -P "$PARALLEL" -n 1 bash -c '
   echo "==> $(date -Iseconds) $p" >> "$log"
   mc mirror --skip-errors \
     "aws-public/aws-public-blockchain/v1.1/stellar/ledgers/pubnet/$p/" \
-    "local/galexie-archive/$p/" >> "$log" 2>&1
+    "$dest/$p/" >> "$log" 2>&1
   echo "<== $(date -Iseconds) $p" >> "$log"
-' mirror-partition "$LOG" "$PARTITION_RE"
+' mirror-partition "$LOG" "$PARTITION_RE" "$ARCHIVE_DEST"
 
 report_rejected
 
