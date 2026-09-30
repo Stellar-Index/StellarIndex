@@ -9959,6 +9959,8 @@ export interface components {
                  *     `count((rate(stellarindex_source_events_total[7d]) > 0)
                  *     and on (source) (stellarindex_source_enabled == 1))`)
                  *     — a subset of `total_sources` by construction.
+                 *     Absent (not 0) when the freshness query failed; a
+                 *     failed query also rolls `overall` to "degraded".
                  */
                 active_sources?: number;
                 /**
@@ -9973,7 +9975,7 @@ export interface components {
                  *     registered=21, active=15 — before the API binary
                  *     published the `massive` FX worker's own enabled
                  *     series; with it, enabled and active each read one
-                 *     higher.
+                 *     higher. Absent (not 0) when the freshness query failed.
                  */
                 total_sources?: number;
             };
@@ -16815,6 +16817,11 @@ export interface operations {
                                  * @description When the gap detector last refreshed this row's data-derived numbers. Absent before its first post-deploy cycle.
                                  */
                                 coverage_snapshot_at?: string;
+                                /**
+                                 * Format: int64
+                                 * @description Longest gap-detector scan cadence (seconds) among this row's tables — the interval coverage_snapshot_at is expected to refresh on. Absent with coverage_snapshot_at.
+                                 */
+                                coverage_scan_cadence_s?: number;
                                 /** @description ADR-0033 watermark coverage: (watermark - genesis + 1) / (tip - genesis + 1). No sparsity threshold — a single PROVEN gap pins it. Absent until compute-completeness has run for the source. */
                                 completeness_pct?: number;
                                 /**

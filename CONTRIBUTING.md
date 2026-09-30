@@ -213,7 +213,8 @@ checks are enforced by CI; the judgement checks by your reviewer.
 - [ ] If it's a bugfix, there's a regression test.
 - [ ] If it's an architectural change, there's an ADR.
 - [ ] Every new alert has a runbook.
-- [ ] New feature flags have a scheduled removal date.
+- [ ] A new kill-switch is an `internal/config` boolean whose `doc:` tag
+      says what it gates and why ([repo-hygiene-plan.md §6](docs/architecture/repo-hygiene-plan.md#6-feature-flags)).
 
 Full rules: [engineering-standards.md §2.1](docs/engineering-standards.md).
 

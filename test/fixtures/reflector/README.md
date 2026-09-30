@@ -68,23 +68,22 @@ All `topics[]` + `value` are base64-encoded XDR, as
 
 ## Replaying fixtures in tests
 
-`internal/sources/reflector/decode_test.go` today uses SDK-encoded
-fixtures built programmatically. Once a `<wasm_hash>` subdirectory
-has captures, add an `integration`-tagged test file that globs
-`<wasm_hash>/*.json` and runs each through `decodeUpdate`. The
-test must:
+`internal/sources/reflector/real_fixture_test.go`
+(`TestRealMainnetFixtures`) globs every `<wasm_hash>/*.json` and runs
+each through `decodeUpdate`. It:
 
-- Assert the decoded `[]OracleUpdate` is non-empty.
-- Assert each update's `Asset` matches either a Soroban
-  (C-strkey) address or an ADR-0010 fiat symbol — no malformed
-  slips through.
-- Snapshot the decoded output (ideally via
-  `github.com/google/go-cmp`); regressions against a WASM-hash-pinned
-  fixture indicate either the contract upgraded without our notice
-  or the decoder broke.
+- Asserts the decoded `[]OracleUpdate` is non-empty.
+- Asserts each update's `Asset` type matches its variant (Soroban
+  C-strkey for DEX, crypto for CEX, ADR-0010 fiat for FX) — no
+  malformed slips through.
+- Compares the decoded output to the `<fixture>.golden` snapshot
+  beside it; a diff against a WASM-hash-pinned fixture means either
+  the contract upgraded without our notice or the decoder broke.
+  After an intended decoder change, regenerate with
+  `go test ./internal/sources/reflector -run TestRealMainnetFixtures -update`
+  and review the snapshot diff.
 
 TODO tracking:
-- [ ] First real captures (blocked on operator running the capture
-      script against r1 — network access required).
-- [ ] Replay test harness.
+- [x] First real captures (`v6-2026-04-23/`).
+- [x] Replay test harness.
 - [ ] `stellarindex-ops resolve-wasm` subcommand.
