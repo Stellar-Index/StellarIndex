@@ -26,7 +26,7 @@ func TestDecoder_DecodeCounted_ReportsPerClaimFailures(t *testing.T) {
 
 	claims := []xdr.ClaimAtom{
 		mkOrderBookClaim(t, 0x21, 1, xlm, usdc, 100_000_000, 1_200_000), // valid
-		mkOrderBookClaim(t, 0x22, 2, xlm, usdc, 0, 0),                   // both-zero no-op: decodeClaimAtom errors
+		{Type: xdr.ClaimAtomType(99)},                                   // unknown atom type: decodeClaimAtom errors
 	}
 	op, result := mkManageSellOfferOp(claims)
 	taker, _ := mkAccount(t, 0x01)
@@ -53,6 +53,36 @@ func TestDecoder_DecodeCounted_ReportsPerClaimFailures(t *testing.T) {
 	}
 	if len(dOuts) != len(outs) {
 		t.Fatalf("Decode outs = %d, DecodeCounted outs = %d — must agree", len(dOuts), len(outs))
+	}
+}
+
+// TestDecoder_DecodeCounted_NoOpClaimIsNotAFailure — a both-zero no-op claim
+// is dropped by the decoder and the census counters alike, so counting it
+// would mark every ledger that carries one blind.
+func TestDecoder_DecodeCounted_NoOpClaimIsNotAFailure(t *testing.T) {
+	xlm := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	usdc := mkAlphanum4Asset(t, "USDC", 0x10)
+	claims := []xdr.ClaimAtom{
+		mkOrderBookClaim(t, 0x21, 1, xlm, usdc, 100_000_000, 1_200_000),
+		mkOrderBookClaim(t, 0x22, 2, xlm, usdc, 0, 0),
+	}
+	op, result := mkManageSellOfferOp(claims)
+	taker, _ := mkAccount(t, 0x01)
+
+	outs, failed := NewDecoder().DecodeCounted(dispatcher.OpContext{
+		Ledger: 1, TxHash: "hash", OpIndex: 0,
+		ClosedAt: time.Now(),
+		TxSource: taker,
+		Op:       op, OpResult: result,
+	})
+	if failed != 0 {
+		t.Errorf("failed = %d, want 0: a both-zero no-op claim is a documented drop, not a decode failure", failed)
+	}
+	if len(outs) != 1 {
+		t.Fatalf("outs = %d, want 1 (the no-op claim is still dropped)", len(outs))
+	}
+	if tr := outs[0].(TradeEvent).Trade; tr.Maker == "" || tr.BaseAmount.BigInt().Int64() != 100_000_000 {
+		t.Errorf("emitted trade = %+v, want the valid claim's fill", tr)
 	}
 }
 
