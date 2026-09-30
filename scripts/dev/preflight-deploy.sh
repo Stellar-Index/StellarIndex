@@ -190,7 +190,9 @@ manifest_row() { awk -F'\t' -v r="$1" '$1 == r { print; rows++ } END { exit rows
 
 row="$(manifest_row "$REGION")"
 if [ -z "$row" ]; then
-    echo "preflight-deploy: region '$REGION' has no row in $MANIFEST — re-derive it with --refresh-manifest" >&2
+    # --refresh-manifest cannot add a row: host, user and jump are only ever
+    # read from the row itself, so a new region's coordinates are hand-entered.
+    echo "preflight-deploy: region '$REGION' has no row in $MANIFEST — add one by hand (region, host, user, jump; columns in its header), then derive its binary set with --refresh-manifest" >&2
     exit 2
 fi
 IFS=$'\t' read -r _ HOST SSH_USER JUMP DEPLOY_SET EXCLUDED DERIVED_UTC <<<"$row"
