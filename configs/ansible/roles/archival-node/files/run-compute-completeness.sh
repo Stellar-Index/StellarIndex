@@ -79,9 +79,13 @@ fi
 # mismatched ledgers" that were simply not drained yet).
 TIP=$(( TIP - 100 ))
 
-echo "compute-completeness: whole-pass refresh to tip=$TIP"
+# PASS_TIMEOUT (EnvironmentFile) grants a one-off larger budget, e.g. for a
+# from-genesis re-verify; it must stay below the unit's TimeoutStartSec=180min.
+PASS_TIMEOUT="${PASS_TIMEOUT:-120m}"
+
+echo "compute-completeness: whole-pass refresh to tip=$TIP timeout=$PASS_TIMEOUT"
 if ! "$OPS" compute-completeness -config "$CONFIG" -ch -ch-addr "$CH_ADDR" \
-     -pass -to "$TIP" </dev/null; then
+     -pass -to "$TIP" -timeout "$PASS_TIMEOUT" </dev/null; then
   echo "compute-completeness: pass FAILED (tip=$TIP)" >&2
   exit 1
 fi

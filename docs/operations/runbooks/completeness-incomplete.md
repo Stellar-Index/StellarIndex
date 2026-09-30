@@ -71,6 +71,16 @@ Re-derive the flagged source from the certified lake, then re-verify:
   never re-saw the failing range, and carried the red forward every night — a
   repaired source stayed red until someone ran the command above by hand.
 
+  That re-verify can outlast the pass's deadline (`-timeout`, default `120m`):
+  on r1, sdex's served range from 61249957 is ~3.44M ledgers at ~200
+  ledgers/s ≈ 4.8 h. The pass therefore runs every from-genesis source LAST and
+  publishes the `recognition` row before the per-source loop, so only the
+  re-verifying tail is left unevaluated (named in the pass's error). To grant a
+  one-off larger budget, set `PASS_TIMEOUT` (e.g. `PASS_TIMEOUT=300m`) in the
+  `/etc/default/compute-completeness` AND raise `TimeoutStartSec` (180min) above it in
+  `compute-completeness.service`, or systemd kills the pass first — or clear
+  the source by hand with the chunked `-source` re-run above.
+
 ## Root cause analysis
 
 A served<>lake divergence: dropped rows (a decoder bug fixed forward-only, e.g.
@@ -112,6 +122,8 @@ The `detail` column names the per-target Δ and window.
 
 ## Changelog
 
+- 2026-09-30 — the nightly `-pass` orders from-genesis re-verifies last,
+  writes the `recognition` row first, and takes `-timeout` / `PASS_TIMEOUT`.
 - 2026-09-09 — CS-095: the nightly `-pass` now re-verifies a source whose prior
   projection verdict was failing, instead of resuming it from the lake
   watermark and carrying the red forward forever. Mitigation section updated:
