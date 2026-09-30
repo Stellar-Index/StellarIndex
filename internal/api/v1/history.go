@@ -840,8 +840,9 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 	// first-hit gate, so `native/fiat:USD` since-inception served the
 	// identical 1,070-point series with the identical 1,919-day hole
 	// measured on /v1/chart. One definition cannot drift from itself.
-	read := func(rc context.Context, p canonical.Pair) ([]HistoryPoint, error) {
-		return s.history.HistoryPoints(rc, p, gran, historyMaxPoints)
+	// A window unbounded below is never narrowed, so the walk passes no bounds here.
+	read := func(rc context.Context, p canonical.Pair, _, _ time.Time, limit int) ([]HistoryPoint, error) {
+		return s.history.HistoryPoints(rc, p, gran, limit)
 	}
 	points, walk, err := s.chartSeriesPoints(hCtx, pair, chartWindow{gran: gran}, read)
 	if errors.Is(err, ErrUnknownGranularity) {
