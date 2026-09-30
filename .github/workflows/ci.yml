@@ -754,6 +754,12 @@ jobs:
       - name: lint-agents-file self-test
         # Proves each of those five assertions can still go red.
         run: ./scripts/ci/lint-agents-file-test.sh
+      - name: lint-remote-tmp-staging
+        # No workflow may scp to a fixed /tmp path on a remote host; a
+        # predictable name there can be pre-planted before a privileged run.
+        run: ./scripts/ci/lint-remote-tmp-staging.sh
+      - name: lint-remote-tmp-staging self-test
+        run: ./scripts/ci/lint-remote-tmp-staging-test.sh
       - name: lint-doc-links
         # Every relative markdown link must resolve. A broken link in a
         # runbook is an operational defect: the operator follows the
@@ -768,6 +774,8 @@ jobs:
         # verify.sh: a gate wired into one surface and not its mirror is the
         # defect this repository has shipped twice.
         run: ./scripts/dev/lint-changed-test.sh
+      - name: doctor self-test
+        run: ./scripts/dev/doctor-test.sh
       - name: lint-external-channels
         # A repository setting or DNS name that is switched off cannot be
         # seen from inside the tree, so three published channels shipped
@@ -1252,6 +1260,17 @@ jobs:
         # DefaultClient, exempts _test.go, and FAILS on a root with no Go
         # files rather than passing.
         run: ./scripts/ci/lint-http-timeouts-test.sh
+      - name: lint-apikey-scan
+        # A lookup that walks `apikey:*` costs O(every credential in the
+        # deployment) on the Redis that is also the rate limiter, and open
+        # registration makes that keyspace caller-sized. One sanctioned walk
+        # (the apikey-index build) is allowed; this keeps it at one.
+        run: ./scripts/ci/lint-apikey-scan.sh
+      - name: lint-apikey-scan self-test
+        # Pins the gate non-vacuous: catches a scan in internal/auth and the
+        # wildcard anywhere, honours exactly one `apikey-scan-ok:` marker,
+        # fails a stale marker, and FAILS on a tree with no auth files.
+        run: ./scripts/ci/lint-apikey-scan-test.sh
       - name: lint-unbounded-latest-row
         # #594: a DISTINCT ON over a hypertable with no time or ledger floor
         # reads every row of every chunk. It is fast on a fresh database and
@@ -1827,6 +1846,7 @@ jobs:
           python3 -m pip install --quiet 'Jinja2==3.1.6' 'PyYAML==6.0.2'
           ./scripts/ci/check-alertmanager-parity.sh
           ./scripts/ci/check-alertmanager-parity-test.sh
+          bash configs/alertmanager/inhibit-rules-test.sh
       - name: validate the rules-apply script (and that it still counts alerts)
         # apply-rules.sh verifies a deploy by asserting every alert it
         # extracted from the repo actually loaded on the host. That check

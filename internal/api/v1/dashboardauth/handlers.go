@@ -143,6 +143,9 @@ type Config struct {
 	// days, fixed: TouchSession records activity but never extends
 	// expires_at.
 	SessionTTL time.Duration
+	// SessionIdleTimeout — a session unused for this long is revoked
+	// before SessionTTL. Default [defaultSessionIdleTimeout].
+	SessionIdleTimeout time.Duration
 	// CookieSecure — Secure flag on the session-presence hint.
 	// Credential cookies are always Secure (see [credentialCookie]).
 	CookieSecure bool
@@ -243,6 +246,9 @@ func (c *Config) validate() error {
 	}
 	if c.SessionTTL == 0 {
 		c.SessionTTL = 30 * 24 * time.Hour
+	}
+	if c.SessionIdleTimeout == 0 {
+		c.SessionIdleTimeout = defaultSessionIdleTimeout
 	}
 	if c.accountActions == nil {
 		c.accountActions = ratelimit.NewLocalFixedWindowCounter(accountActionWindow, c.Now)

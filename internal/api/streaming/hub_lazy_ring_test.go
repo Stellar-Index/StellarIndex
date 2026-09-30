@@ -12,10 +12,9 @@ import (
 // Replay rings are allocated on first PUBLISH, not on subscribe
 // (audit-2026-09-02 F058 / K010).
 //
-// DefaultMaxTopics was never a ceiling: getOrCreateTopic inserts
-// unconditionally and the reaper evicts only SUBSCRIBER-LESS topics, so
-// a caller holding subscriptions grows the map past it by design. With
-// the ring allocated eagerly, that made resident memory scale with
+// The reaper evicts only SUBSCRIBER-LESS topics, so the map can hold up
+// to maxTopics subscribed-but-silent topics. With the ring allocated
+// eagerly, that made resident memory scale with
 // concurrent streams × alias fan-out — /v1/price/stream subscribes one
 // connection to assetAliases(base) × assetAliases(quote), up to 9
 // topics, of which the aggregator publishes to at most a few — so the
@@ -41,6 +40,8 @@ const lazyRingBudgetBytes = 2048
 
 func TestHub_SubscribedButUnpublishedTopicsAllocateNoRing(t *testing.T) {
 	hub := streaming.NewHub(0)
+	// Admit the whole measured set; the ceiling itself is pinned elsewhere.
+	hub.SetMaxTopics(subscriberOnlyTopics)
 
 	topics := make([]string, 0, subscriberOnlyTopics)
 	for i := range subscriberOnlyTopics {
@@ -50,7 +51,10 @@ func TestHub_SubscribedButUnpublishedTopicsAllocateNoRing(t *testing.T) {
 	}
 
 	before := heapInUse()
-	_, cancel := hub.Subscribe(topics, "")
+	_, cancel, err := hub.Subscribe(topics, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancel()
 	after := heapInUse()
 
@@ -80,7 +84,10 @@ func TestHub_SubscribedButUnpublishedTopicsAllocateNoRing(t *testing.T) {
 func TestHub_PublishAllocatesTheRingAndReplayStillWorks(t *testing.T) {
 	hub := streaming.NewHub(0)
 
-	quiet, cancelQuiet := hub.Subscribe([]string{"closed:native/fiat:USD/7"}, "")
+	quiet, cancelQuiet, err := hub.Subscribe([]string{"closed:native/fiat:USD/7"}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancelQuiet()
 	if got := hub.BufferedTopicCount(); got != 0 {
 		t.Fatalf("BufferedTopicCount() = %d before any publish, want 0", got)
@@ -98,7 +105,10 @@ func TestHub_PublishAllocatesTheRingAndReplayStillWorks(t *testing.T) {
 	}
 
 	// Resume from the first event: the second must replay.
-	sub, cancel := hub.Subscribe([]string{"tip:native/fiat:USD/5"}, first)
+	sub, cancel, err := hub.Subscribe([]string{"tip:native/fiat:USD/5"}, first)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancel()
 	select {
 	case ev := <-sub:
@@ -122,7 +132,10 @@ func TestHub_NeverPublishedTopicStillReapsOnLastUnsubscribe(t *testing.T) {
 	// 1 makes the next creation trigger a pass deterministically.
 	hub.SetMaxTopics(1)
 
-	_, cancel := hub.Subscribe([]string{"closed:native/fiat:USD/11"}, "")
+	_, cancel, err := hub.Subscribe([]string{"closed:native/fiat:USD/11"}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	if got := hub.TopicCount(); got != 1 {
 		t.Fatalf("TopicCount() = %d, want 1", got)
 	}

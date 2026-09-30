@@ -393,8 +393,9 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// blend-backstop: the Backstop insurance module's event surface.
 	// Sparse (deposit/withdraw/draw/distribute are episodic, not
 	// per-ledger), so a wide override avoids paging on natural quiet.
-	// Genesis ≈ first backstop activity observed in the lake.
-	{Source: "blend-backstop", CanonicalSource: "blend_backstop", Table: "blend_backstop_events", LedgerColumn: "ledger", Genesis: 56_627_571, MinGapSizeOverride: 100000},
+	// Genesis = blend_backstop.BackstopGenesisLedger; V1 backstop events
+	// appear from 51_499_926, so a later floor hides that era.
+	{Source: "blend-backstop", CanonicalSource: "blend_backstop", Table: "blend_backstop_events", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 100000},
 	// sorocredit — consumer-USDC credit / CDP protocol (single main
 	// contract). Four tables. Genesis = the main contract's first event
 	// (2026-03-12). Wide override: live ingest starts at deploy and the

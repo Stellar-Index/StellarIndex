@@ -11,6 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sdex"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // sdexServedPK is the served trades primary key minus its per-ledger
@@ -23,17 +24,20 @@ type sdexServedPK struct {
 	op uint32
 }
 
-// sdexServedCensus is the per-ledger set of SDEX trades the served tier can
-// hold: decoder output that passes canonical.Trade.Validate (the writer drops
-// one-side-zero fills, CHECK base_amount > 0) keyed by the served primary key.
-// It is the only SDEX projection oracle; the ledger_ingest_log census keeps
-// one-side-zero fills and so is not one.
+// sdexServedCensus is the per-ledger set of priceable SDEX trades: decoder
+// output that passes canonical.Trade.Validate and is not a one-side-zero fill,
+// keyed by the served primary key. The served side counts with the matching
+// sdexPriceableFilter (reconTarget.countFilter). It is the only SDEX
+// projection oracle; the ledger_ingest_log census keeps one-side-zero fills
+// and so is not one.
 type sdexServedCensus map[uint32]map[sdexServedPK]struct{}
 
 func (c sdexServedCensus) add(outs []consumer.Event) {
 	for _, ev := range outs {
 		te, ok := ev.(sdex.TradeEvent)
-		if !ok || te.Trade.Validate() != nil {
+		// One-side-zero fills are stored, but ledgers written before they were
+		// admitted hold none; a full-history ch-rebuild -sdex retires this arm.
+		if !ok || te.Trade.Validate() != nil || timescale.IsOneSideZeroFill(te.Trade) {
 			continue
 		}
 		s := c[te.Trade.Ledger]

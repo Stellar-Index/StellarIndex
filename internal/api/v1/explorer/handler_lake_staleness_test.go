@@ -64,6 +64,7 @@ func TestLakeBackedHandlers_ReflectLakeStaleness(t *testing.T) {
 		path   map[string]string
 	}{
 		{"ledger operations", nil, (*Handler).Operations, "/v1/operations?ledger=5", nil},
+		{"ledger operations route", nil, (*Handler).LedgerOperations, "/v1/ledgers/5/operations", map[string]string{"seq": "5"}},
 		{"operations cursor page", nil, (*Handler).Operations, "/v1/operations?cursor=63000000.1.0", nil},
 		{
 			"contract events cursor page", nil, (*Handler).ContractDetail,
