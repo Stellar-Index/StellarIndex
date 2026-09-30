@@ -56,7 +56,7 @@ case "$1" in
   ls)
     case "$target" in
       aws-public/*/pubnet/) cat "$STUB_AWS_LIST" ;;
-      local/galexie-archive/) cat "$STUB_LOCAL_LIST" ;;
+      "${STUB_DEST:-local/galexie-archive}/") cat "$STUB_LOCAL_LIST" ;;
     esac ;;
   mirror) echo "$target" >> "$STUB_MIRRORED" ;;
 esac
@@ -333,6 +333,63 @@ func TestFillRefusesBadPartialsBeforeDeleting(t *testing.T) {
 	want := []string{"rm --recursive --force local/galexie-archive/" + good + "/"}
 	if calls := mcCallsWithPrefix(t, h, "rm "); !slices.Equal(calls, want) {
 		t.Fatalf("fill deleted %v, want %v", calls, want)
+	}
+}
+
+// TestFillHonoursArchiveDest: a node filling a remote object store sets
+// ARCHIVE_DEST; every listing, delete and mirror must target it, and none
+// may fall back to the local MinIO bucket.
+func TestFillHonoursArchiveDest(t *testing.T) {
+	t.Parallel()
+	h := newFillHarness(t)
+
+	const (
+		dest    = "vultr-objstor/galexie-archive"
+		present = "FFFFFFFF--0-63999"
+		missing = "FFD5FFFF--2688000-2751999"
+	)
+	aws := h.writeList(t, "aws.list", present, missing)
+	local := h.writeList(t, "local.list", present)
+	out, err := h.run(t, fillScript, "STUB_AWS_LIST="+aws, "STUB_LOCAL_LIST="+local,
+		"STUB_DEST="+dest, "ARCHIVE_DEST="+dest, "PARTIALS="+present)
+	if err != nil {
+		t.Fatalf("galexie-archive-fill: %v\n%s", err, out)
+	}
+	// The stub's delete is a no-op, so `present` stays listed and only
+	// `missing` is mirrored.
+	if got := readLines(t, h.mirrored); !slices.Equal(got, []string{dest + "/" + missing + "/"}) {
+		t.Fatalf("fill mirrored %v, want only %s/%s/", got, dest, missing)
+	}
+	want := []string{"rm --recursive --force " + dest + "/" + present + "/"}
+	if calls := mcCallsWithPrefix(t, h, "rm "); !slices.Equal(calls, want) {
+		t.Fatalf("fill deleted %v, want %v", calls, want)
+	}
+	for _, c := range mcCallsWithPrefix(t, h, "") {
+		if strings.Contains(c, "local/") {
+			t.Fatalf("fill with ARCHIVE_DEST=%s still called mc on the local bucket: %q", dest, c)
+		}
+	}
+}
+
+// TestFillRefusesMalformedArchiveDest: ARCHIVE_DEST prefixes a recursive
+// force-delete, so a value naming an alias root, a bucket root with a
+// trailing slash, or a relative segment stops the run before any mc call.
+func TestFillRefusesMalformedArchiveDest(t *testing.T) {
+	t.Parallel()
+	const good = "FFD5FFFF--2688000-2751999"
+	for _, dest := range []string{"local", "local/", "/galexie-archive", "local/galexie-archive/", "local/../x", "local/./x", "local/a b"} {
+		h := newFillHarness(t)
+		aws := h.writeList(t, "aws.list", good)
+		local := h.writeList(t, "local.list", good)
+		out, err := h.run(t, fillScript, "STUB_AWS_LIST="+aws, "STUB_LOCAL_LIST="+local,
+			"ARCHIVE_DEST="+dest, "PARTIALS="+good)
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+			t.Fatalf("ARCHIVE_DEST=%q: err=%v, want exit 1\n%s", dest, err, out)
+		}
+		if calls := mcCallsWithPrefix(t, h, ""); len(calls) != 0 {
+			t.Fatalf("ARCHIVE_DEST=%q: fill called mc before refusing: %v", dest, calls)
+		}
 	}
 }
 

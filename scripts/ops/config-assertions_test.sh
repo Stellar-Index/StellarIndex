@@ -204,6 +204,31 @@ else
   fail=$((fail + 1))
 fi
 
+# The textfile must reach the collector whole and readable: at the rename
+# it is already mode 644 and sits in the target's directory (a same-fs
+# rename, not a cross-fs copy). A shimmed mv records both at that moment.
+MVBIN="$TMP/mvbin"
+mkdir -p "$MVBIN"
+cat > "$MVBIN/mv" <<'EOF'
+#!/usr/bin/env bash
+src="${@: -2:1}" dst="${@: -1}"
+if [ -n "$(find "$src" -perm 644 2>/dev/null)" ] && [ "$(dirname "$src")" = "$(dirname "$dst")" ]; then
+  echo ok >> "$MV_LOG"
+else
+  echo bad >> "$MV_LOG"
+fi
+exec /bin/mv "$@"
+EOF
+chmod +x "$MVBIN/mv"
+: > "$TMP/mv.log"
+guard "$GIB50" "$GIB50"; PATH="$MVBIN:$PATH" MV_LOG="$TMP/mv.log" run 32 32
+if [ "$(cat "$TMP/mv.log")" = "ok" ] && [ "$(ls -A "$TMP/out")" = "config_assertions.prom" ]; then
+  echo "ok: textfile renamed into place already 644, from TEXTFILE_DIR"; pass=$((pass + 1))
+else
+  echo "FAIL: textfile rename not atomic+readable (mv: $(cat "$TMP/mv.log"); out: $(ls -A "$TMP/out"))" >&2
+  fail=$((fail + 1))
+fi
+
 # Lockstep: the script's default ceiling IS the role's pinned value. A
 # role change without the script (or vice versa) either fails every
 # host forever or silently accepts a raised limit.

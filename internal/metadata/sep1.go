@@ -272,8 +272,14 @@ var ErrTOMLTooDeep = errors.New("sep1: TOML nests tables deeper than the parse b
 // string defeats it. The guarantee is the string-aware scans ending
 // every string and comment where the decoder's lexer does, which
 // TestSkipTOMLStringMatchesDecoder checks exhaustively over short
-// strings. A document trips the raw bound only with 256 unclosed
-// brackets of literal text; at that depth the decoder allocates ~8 MiB.
+// strings. At the raw bound the decoder allocates ~8 MiB.
+//
+// The raw scans cannot tell data from structure, so literal text alone
+// trips them: 256 unclosed brackets in a string, or 256 dots on one line
+// of one (a long single-line ORG_DESCRIPTION), refuses the document and
+// that issuer's SEP-1 metadata is not refreshed. This is an accepted
+// cost. Resetting the raw count at string edges would blind it to the
+// one case it exists for, a string the string-aware scan misreads.
 //
 // Both bounds also apply to table nesting spelled with dots, which
 // brackets never see: every segment of `a.b.c = 1` or `[a.b.c]` is a
