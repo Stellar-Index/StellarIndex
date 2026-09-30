@@ -560,7 +560,7 @@ const cohortFlowsFallbackSQL = `
 // readCohortFlows serves every month for the CohortFlowAssetsLimit assets it
 // moved most, plus the all-assets row. Assets past the cap are not
 // summed into an "other" bucket — their units differ — so the view says
-// how many were left out. Each row carries the month's own USD price
+// that the cap applied (assets_truncated). Each row carries the month's own USD price
 // where the served tier had a USD-quoted market for the asset that
 // month (a LEFT JOIN on (asset, month); the empty string is the miss,
 // read as nil).

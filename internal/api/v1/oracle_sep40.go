@@ -128,7 +128,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		// /v1/price does this; the SEP-40 surfaces used to force
 		// stale=false here, shipping stale data with stale=false.
 		stale = ok
-		if !ok {
+		if !ok || isDeclaredPeg(snapshot) {
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/price-not-found",
 				"No price data for asset", http.StatusNotFound,
@@ -169,6 +169,11 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	}, held)
 	writeJSON(w, out, flags, sources...)
 }
+
+// isDeclaredPeg reports a fallback answer that is the operator's peg
+// declaration rather than an observation. SEP40Price carries no
+// price_type to mark it, so the point reads answer SEP-40's None (404).
+func isDeclaredPeg(s PriceSnapshot) bool { return s.PriceType == "peg" }
 
 // sep40Read is what a SEP-40 single-price handler read, before the
 // freeze verdict is applied.
@@ -491,7 +496,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		// — the chain itself is the staleness signal (F-1254). The
 		// SEP-40 surface used to force stale=false here.
 		stale = ok
-		if !ok {
+		if !ok || isDeclaredPeg(snapshot) {
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/price-not-found",
 				"No price data for pair", http.StatusNotFound,

@@ -72,6 +72,7 @@ func TestSessionByTokenHash_RejectsExpired(t *testing.T) {
 // TestRevokeOtherUserSessions_KeepsOnlyTheNamedSession pins the store half of
 // "adding a passkey ends every other session": the kept session and other
 // users' sessions stay live, every other session of the user is revoked.
+// It then exercises CapUserSessions on the same fixture.
 func TestRevokeOtherUserSessions_KeepsOnlyTheNamedSession(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -133,5 +134,32 @@ func TestRevokeOtherUserSessions_KeepsOnlyTheNamedSession(t *testing.T) {
 	}
 	if _, err := users.GetSessionByTokenHash(ctx, memberHash); err != nil {
 		t.Errorf("another user's session must be untouched: %v", err)
+	}
+
+	// CapUserSessions: with the kept session plus three newer others live,
+	// a cap of 3 keeps the kept one and the two newest, revoking the oldest.
+	var hashes [][]byte
+	for _, tok := range []string{"cap-a", "cap-b", "cap-c"} {
+		_, h := mint(owner, tok)
+		hashes = append(hashes, h)
+	}
+	for range 2 { // idempotent
+		if err := users.CapUserSessions(ctx, owner.ID, kept.ID, 3); err != nil {
+			t.Fatalf("CapUserSessions: %v", err)
+		}
+	}
+	if _, err := users.GetSessionByTokenHash(ctx, keptHash); err != nil {
+		t.Errorf("kept session must survive the cap: %v", err)
+	}
+	if _, err := users.GetSessionByTokenHash(ctx, hashes[0]); !errors.Is(err, platform.ErrNotFound) {
+		t.Errorf("oldest session beyond the cap still resolves: err=%v", err)
+	}
+	for _, h := range hashes[1:] {
+		if _, err := users.GetSessionByTokenHash(ctx, h); err != nil {
+			t.Errorf("newest sessions within the cap must survive: %v", err)
+		}
+	}
+	if _, err := users.GetSessionByTokenHash(ctx, memberHash); err != nil {
+		t.Errorf("another user's session must be untouched by the cap: %v", err)
 	}
 }
