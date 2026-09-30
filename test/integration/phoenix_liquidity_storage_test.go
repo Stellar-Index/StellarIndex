@@ -282,3 +282,125 @@ func TestPhoenixStakeEventsRoundTrip(t *testing.T) {
 		t.Errorf("unbond tally = %+v, want {unbond 2 400001}", ts[1])
 	}
 }
+
+// TestPhoenixLifecycleAndConfigEventsRoundTrip lands every action
+// migration 0191 admits: a create_distribution_flow row with no user, the
+// migration_* rows with no token, and the factory / blend-pool admin rows,
+// with the i128 minimum-trading value round-tripping through NUMERIC.
+func TestPhoenixLifecycleAndConfigEventsRoundTrip(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const (
+		stakeContract = "CDSTAKE0000000000000000000000000000000000000000000000A"
+		user          = "GUSER000000000000000000000000000000000000000000000000B"
+		asset         = "CDASSET0000000000000000000000000000000000000000000000C"
+		pool          = "CDPHXPOOL00000000000000000000000000000000000000000000A"
+		maxI128       = "170141183460469231731687303715884105727"
+		tx            = "5500000000000000000000000000000000000000000000000000000000000001"
+	)
+	t0 := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+
+	stake := []timescale.PhoenixStakeEvent{
+		{Action: timescale.PhoenixCreateDistributionFlow, LPToken: asset},
+		{Action: timescale.PhoenixMigrationStarted, User: user},
+		{Action: timescale.PhoenixMigrationQueried, User: user},
+		{Action: timescale.PhoenixMigrationCompleted, User: user},
+	}
+	for i, e := range stake {
+		e.StakeContract, e.Ledger, e.ObservedAt, e.TxHash, e.EventIndex = stakeContract, 63_000_000, t0, tx, uint32(i) //nolint:gosec // small test index
+		if err := store.InsertPhoenixStakeEvent(ctx, e); err != nil {
+			t.Fatalf("InsertPhoenixStakeEvent (%s): %v", e.Action, err)
+		}
+	}
+	if err := store.InsertPhoenixStakeEvent(ctx, timescale.PhoenixStakeEvent{
+		StakeContract: stakeContract, Ledger: 63_000_000, ObservedAt: t0, TxHash: tx, EventIndex: 9,
+		Action: timescale.PhoenixMigrationStarted,
+	}); err == nil {
+		t.Error("a migration_started row with no user was accepted")
+	}
+
+	rs, err := store.DB().QueryContext(ctx, `
+        SELECT action, user_addr, lp_token, amount::text
+          FROM phoenix_stake_events
+         WHERE stake_contract = $1
+         ORDER BY event_index`, stakeContract)
+	if err != nil {
+		t.Fatalf("stake query: %v", err)
+	}
+	defer rs.Close()
+	n := 0
+	for rs.Next() {
+		var action string
+		var userAddr, lpToken, amount *string
+		if err := rs.Scan(&action, &userAddr, &lpToken, &amount); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		want := stake[n]
+		if action != string(want.Action) || (userAddr != nil) != (want.User != "") ||
+			(lpToken != nil) != (want.LPToken != "") || amount != nil {
+			t.Errorf("row %d = %s user=%v lp_token=%v amount=%v, want %+v", n, action, userAddr, lpToken, amount, want)
+		}
+		n++
+	}
+	if err := rs.Err(); err != nil {
+		t.Fatalf("rows.Err: %v", err)
+	}
+	if n != len(stake) {
+		t.Fatalf("got %d stake rows, want %d", n, len(stake))
+	}
+
+	admin := []timescale.PhoenixAdminEvent{
+		{Pool: pool, AdminAction: "factory_config_updated"},
+		{Pool: pool, AdminAction: "blend_set_delegate", Admin: asset},
+		{Pool: pool, AdminAction: "blend_set_min_trading_a", Value: "0"},
+		{Pool: pool, AdminAction: "blend_set_min_trading_b", Value: maxI128},
+	}
+	for i, e := range admin {
+		e.Ledger, e.LedgerCloseTime, e.TxHash, e.EventIndex = 63_000_001, t0, tx, uint32(i) //nolint:gosec // small test index
+		if err := store.InsertPhoenixAdmin(ctx, e); err != nil {
+			t.Fatalf("InsertPhoenixAdmin (%s): %v", e.AdminAction, err)
+		}
+	}
+	ar, err := store.DB().QueryContext(ctx, `
+        SELECT admin_action, admin, value::text
+          FROM phoenix_admin_events
+         WHERE pool = $1
+         ORDER BY event_index`, pool)
+	if err != nil {
+		t.Fatalf("admin query: %v", err)
+	}
+	defer ar.Close()
+	n = 0
+	for ar.Next() {
+		var action string
+		var adminAddr, value *string
+		if err := ar.Scan(&action, &adminAddr, &value); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		want := admin[n]
+		gotValue := ""
+		if value != nil {
+			gotValue = *value
+		}
+		if action != want.AdminAction || (adminAddr != nil) != (want.Admin != "") || gotValue != want.Value {
+			t.Errorf("row %d = %s admin=%v value=%q, want %+v", n, action, adminAddr, gotValue, want)
+		}
+		n++
+	}
+	if err := ar.Err(); err != nil {
+		t.Fatalf("rows.Err: %v", err)
+	}
+	if n != len(admin) {
+		t.Fatalf("got %d admin rows, want %d", n, len(admin))
+	}
+}

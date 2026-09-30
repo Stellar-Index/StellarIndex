@@ -318,13 +318,13 @@ buffer) and gated via `MainnetMapPools`. Real fixture: ledger
 63307899, tx `3cb06db3…`, event_index 3 (golden test
 `internal/sources/phoenix/mapswap_test.go`).
 
-**WASM hash: PENDING operator capture.** Run
-`stellar contract fetch --id CBENABXP…` + sha256 against mainnet RPC
-and record it here. The decode is field-name driven (safe against the
-exact hash), but the BackfillSafe audit trail needs the hash before
-this pool contributes to any historical backfill range. This audit
-could not capture it from the lake — `contract_events` stores events,
-not the ContractInstance WASM reference.
+**WASM hashes** (from the contract instance's executable history):
+`f74d87d72381b4a5c787eb8b16a2b861aed6c3146583703ceb003d5befe9d338` from
+creation at 63,293,708, upgraded in place to
+`6fe099b64855bcba2b7fc6f4cd9b0d8e6cc98743eac6cd44042fc7ef0c22e3f7` at
+63,343,141. The first hash also emits the Map-body `provide_liquidity` /
+`withdraw_liquidity` and the `blend_pool` settings events (see the
+event-shapes addendum below).
 
 ### QuoteAmount field-mapping correction (ALL pools)
 
@@ -525,6 +525,30 @@ empty `topic_0_sym`, so they are a single shape. Whenever its exemplar
 is a create event, a decoder that matched it and dropped it would report
 the factory as recognised while admitting nothing — muting the one audit
 that can surface a new pool today, with the control still inert.
+
+## Event shapes beyond swap and liquidity
+
+A per-WASM census of every event the gated set emits found shapes the
+decoder did not classify; all are decoded now and pinned by real rows in
+`test/fixtures/phoenix/event-shapes/`:
+
+- stake `create_distribution_flow` → `asset` (Address, no user);
+- stake migration steps `("Stake: Migration: ", "Start of migration for user: " | "Query for user completed: ")`
+  and `("Stake", "Migration for user completed and stored: ")` → user Address;
+- factory `("Factory","Updated Config")` → Void, gated on the factory only;
+- pool `("blend_pool", set_delegate | set_min_trading_a | set_min_trading_b)`
+  → Address or i128;
+- Map-body `provide_liquidity` / `withdraw_liquidity` (Symbol topic, one event).
+
+The earliest stake WASMs (`9e398ab7ca651b4277df9ed390f4e012465c21447bad21ed6a0e9c6b975fd532`
+from 51,572,026, then `a757fd97e5a67f586c5aadf6ba8d17a9d3df872ccae093e564c2b3de143c05f3`)
+publish an unbond as `("unbond","user")` followed by `("bond","token")` and
+`("bond","amount")`. The correlation buffer continues the open unbond with
+those two fields instead of opening a bond.
+
+`CBBUVHCE…` was dropped from the curated stake list: its only events are
+Symbol-topic `("bond", created|live|settconf|settled|expired)` under a WASM
+no Phoenix contract shares.
 
 ## Decision
 

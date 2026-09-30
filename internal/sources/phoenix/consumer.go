@@ -178,11 +178,10 @@ func (InitializeEvent) Source() string { return SourceName }
 // Compile-time check.
 var _ consumer.Event = InitializeEvent{}
 
-// AdminEvent is a pool admin-rotation governance event — one of the
-// four ("XYK Pool: ", <phrase>) steps. The sink lands it in
-// phoenix_admin_events (migration 0132). Self-contained (one event →
-// one row). Admin is the address the body carries when present (0
-// occurrences on mainnet to date — built defensively).
+// AdminEvent is a pool admin-rotation step ("XYK Pool: ", <phrase>), a
+// factory config update, or a blend-pool setting change. The sink lands
+// it in phoenix_admin_events (migrations 0132, 0191). Self-contained (one
+// event → one row). Admin is the address the body carries when present.
 type AdminEvent struct {
 	Pool        string // emitting pool contract C-strkey
 	Ledger      uint32
@@ -190,8 +189,9 @@ type AdminEvent struct {
 	OpIndex     uint32
 	EventIndex  uint32
 	ObservedAt  time.Time
-	AdminAction string // AdminAction* slug (from topic[1])
-	Admin       string // admin address from the body; "" if absent
+	AdminAction string           // AdminAction* slug (from topic[1])
+	Admin       string           // admin address from the body; "" if absent
+	Value       canonical.Amount // i128 body of blend_set_min_trading_a/_b; zero otherwise
 }
 
 // EventKind implements [consumer.Event].
@@ -397,7 +397,7 @@ func (b *buffer) absorbStake(e *events.Event, fieldTopic string, closedAt time.T
 	evicted := b.sweepStaleAll(closedAt)
 	k := keyOf(e)
 	target := b.unbond
-	if isBond {
+	if isBond && !b.continuesEarlyUnbond(k, fieldTopic) {
 		target = b.bond
 	}
 	r, ok := target[k]
@@ -417,6 +417,26 @@ func (b *buffer) absorbStake(e *events.Event, fieldTopic string, closedAt time.T
 		return r, evicted, nil
 	}
 	return nil, evicted, nil
+}
+
+// continuesEarlyUnbond reports a "bond"-topic token/amount field that
+// belongs to an open unbond: the earliest stake WASMs published unbond as
+// ("unbond","user") then ("bond","token"), ("bond","amount").
+func (b *buffer) continuesEarlyUnbond(k groupKey, fieldTopic string) bool {
+	if _, open := b.bond[k]; open {
+		return false
+	}
+	u, open := b.unbond[k]
+	if !open || u.User == nil {
+		return false
+	}
+	switch fieldTopic {
+	case TopicSymbolStakeToken:
+		return u.Token == nil
+	case TopicSymbolStakeAmount:
+		return u.Amount == nil
+	}
+	return false
 }
 
 func (b *buffer) absorbWithdrawRewards(e *events.Event, fieldTopic string, closedAt time.Time) (*RawWithdrawRewards, int, error) {
