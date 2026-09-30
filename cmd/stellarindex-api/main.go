@@ -282,6 +282,14 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			if err != nil {
 				return fmt.Errorf("redis: ping (%s mode): %w", mode, err)
 			}
+		} else {
+			// A rolled-back binary writes key records without indexing them;
+			// dropping `ready` makes the first lookup rebuild from the records.
+			invCtx, cancelInv := context.WithTimeout(rootCtx, 5*time.Second)
+			if err := auth.NewRedisAPIKeyStore(rdb).InvalidateKeyIndex(invCtx); err != nil {
+				logger.Warn("api-key index not invalidated at startup; lookups trust the existing index", "err", err)
+			}
+			cancelInv()
 		}
 		logger.Info("redis configured", "mode", mode)
 	}
