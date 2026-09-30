@@ -354,7 +354,7 @@ func TestRealMainnetFixtures_comet(t *testing.T) {
 	}
 }
 
-func runCometRealFixture(t *testing.T, path string) {
+func loadCometFixtureEvent(t *testing.T, path string) (cometSwapFixture, events.Event) {
 	t.Helper()
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -364,12 +364,7 @@ func runCometRealFixture(t *testing.T, path string) {
 	if err := json.Unmarshal(raw, &fx); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	closedAt, err := time.Parse(time.RFC3339, fx.LedgerClosedAt)
-	if err != nil {
-		t.Fatalf("parse ledger_closed_at: %v", err)
-	}
-
-	ev := events.Event{
+	return fx, events.Event{
 		Ledger:         fx.Ledger,
 		ContractID:     fx.ContractID,
 		OperationIndex: fx.OpIndex,
@@ -377,6 +372,15 @@ func runCometRealFixture(t *testing.T, path string) {
 		Topic:          fx.Topics,
 		Value:          fx.Value,
 		LedgerClosedAt: fx.LedgerClosedAt,
+	}
+}
+
+func runCometRealFixture(t *testing.T, path string) {
+	t.Helper()
+	fx, ev := loadCometFixtureEvent(t, path)
+	closedAt, err := time.Parse(time.RFC3339, fx.LedgerClosedAt)
+	if err != nil {
+		t.Fatalf("parse ledger_closed_at: %v", err)
 	}
 
 	d := NewDecoder()
@@ -418,5 +422,42 @@ func runCometRealFixture(t *testing.T, path string) {
 	}
 	if err := tr.Validate(); err != nil {
 		t.Errorf("Validate() = %v, want nil", err)
+	}
+}
+
+// TestRealMainnetFixtures_cometSelfPair replays real self-pair swaps
+// (token_in == token_out) from the curated pool through Matches + Decode.
+// Production drops them to zero rows with no error so the completeness
+// re-derive counts them as expected=0 rather than as undecodable.
+func TestRealMainnetFixtures_cometSelfPair(t *testing.T) {
+	dir := filepath.Join("..", "..", "..", "test", "fixtures", "comet",
+		"8abc28913035c07411ed5d134e6bfeab4723d97ddd4d1a22a0605d35c94d1a36", "self_pair")
+	files, err := filepath.Glob(filepath.Join(dir, "swap_*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("got %d self-pair fixtures in %s, want 2", len(files), dir)
+	}
+	for _, path := range files {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			_, ev := loadCometFixtureEvent(t, path)
+			d := NewDecoder()
+			if !d.Matches(ev) {
+				t.Fatal("Matches() = false for a real event from the curated allowlisted pool")
+			}
+			outs, err := d.Decode(ev)
+			if err != nil || len(outs) != 0 {
+				t.Fatalf("Decode = (%d events, %v), want (0 events, nil)", len(outs), err)
+			}
+			// Pin the zero rows to the self-pair branch, not the non-positive-amounts one.
+			closedAt, err := ev.EventClosedAt()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := decodeSwap(&ev, closedAt); !errors.Is(err, canonical.ErrPairMismatch) {
+				t.Fatalf("decodeSwap err = %v, want canonical.ErrPairMismatch", err)
+			}
+		})
 	}
 }

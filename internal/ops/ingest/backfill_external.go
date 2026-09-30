@@ -502,7 +502,14 @@ func windowStopError(start, end time.Time, written int, causes []error) error {
 // with a fake, without a live Postgres.
 type tradeInserter interface {
 	InsertTrade(ctx context.Context, t canonical.Trade) error
+	BatchInsertTrades(ctx context.Context, trades []canonical.Trade) error
 }
+
+// backfillInsertChunk is the rows per BatchInsertTrades call: well under the
+// store's one-statement cap, so a chunk commits or fails as a whole.
+const backfillInsertChunk = 1000
+
+type insertTally struct{ inserted, skipped int }
 
 // insertBackfilledTrades is the DB-seamed core of the insert loop: an
 // infra fault (DB unreachable/restarting/out of capacity) affects every
@@ -514,28 +521,72 @@ type tradeInserter interface {
 // makes the command return a non-nil error: a dropped row has no
 // dead-letter, so "some rows didn't make it" must never exit 0.
 func insertBackfilledTrades(ctx context.Context, store tradeInserter, trades []canonical.Trade, progressEvery int, log io.Writer, t0 time.Time) error {
-	inserted, skipped := 0, 0
-	for i, tr := range trades {
-		if err := store.InsertTrade(ctx, tr); err != nil {
-			if timescale.IsInfraError(err) {
-				return fmt.Errorf("backfill-external: aborting at trade %d/%d (%s) after infra fault — %d inserted, %d skipped so far, %d not attempted: %w",
-					i, len(trades), tr.TxHash, inserted, skipped, len(trades)-i, err)
-			}
-			skipped++
-			_, _ = fmt.Fprintf(log, "insert trade %d (%s): %v\n", i, tr.TxHash, err)
-			continue
+	var n insertTally
+	for start := 0; start < len(trades); start += backfillInsertChunk {
+		end := min(start+backfillInsertChunk, len(trades))
+		before := n.inserted
+		if err := insertBackfillChunk(ctx, store, trades, start, end, &n, log); err != nil {
+			return err
 		}
-		inserted++
-		if progressEvery > 0 && inserted%progressEvery == 0 {
-			_, _ = fmt.Fprintf(log, "  ... %d inserted, %d skipped\n", inserted, skipped)
+		if progressEvery > 0 && n.inserted/progressEvery > before/progressEvery {
+			_, _ = fmt.Fprintf(log, "  ... %d inserted, %d skipped\n", n.inserted, n.skipped)
 		}
 	}
 	_, _ = fmt.Fprintf(log, "backfill-external: done — %d inserted, %d skipped in %v\n",
-		inserted, skipped, time.Since(t0).Round(time.Millisecond))
+		n.inserted, n.skipped, time.Since(t0).Round(time.Millisecond))
 	return opsutil.RunOutcome{
 		Verb: "backfill-external", Noun: "trade",
-		Attempted: len(trades), Written: inserted, Failed: skipped,
+		Attempted: len(trades), Written: n.inserted, Failed: n.skipped,
 	}.Err()
+}
+
+// insertBackfillChunk writes trades[start:end] in one batch. Rows Validate
+// rejects go through InsertTrade instead: BatchInsertTrades drops them
+// without an error, and a dropped row must fail the run. A non-infra batch
+// fault is retried row by row to isolate the bad row; the inserts are
+// idempotent on their conflict key, so the retry cannot double-write.
+func insertBackfillChunk(ctx context.Context, store tradeInserter, trades []canonical.Trade, start, end int, n *insertTally, log io.Writer) error {
+	valid := make([]canonical.Trade, 0, end-start)
+	var rowByRow []int
+	for i := start; i < end; i++ {
+		if trades[i].Validate() != nil {
+			rowByRow = append(rowByRow, i)
+			continue
+		}
+		valid = append(valid, trades[i])
+	}
+	if len(valid) > 0 {
+		err := store.BatchInsertTrades(ctx, valid)
+		switch {
+		case err == nil:
+			n.inserted += len(valid)
+		case timescale.IsInfraError(err):
+			return infraAbortError(trades, start, *n, err)
+		default:
+			_, _ = fmt.Fprintf(log, "insert batch of trades %d-%d failed, isolating row by row: %v\n", start, end-1, err)
+			rowByRow = rowByRow[:0]
+			for i := start; i < end; i++ {
+				rowByRow = append(rowByRow, i)
+			}
+		}
+	}
+	for _, i := range rowByRow {
+		if err := store.InsertTrade(ctx, trades[i]); err != nil {
+			if timescale.IsInfraError(err) {
+				return infraAbortError(trades, i, *n, err)
+			}
+			n.skipped++
+			_, _ = fmt.Fprintf(log, "insert trade %d (%s): %v\n", i, trades[i].TxHash, err)
+			continue
+		}
+		n.inserted++
+	}
+	return nil
+}
+
+func infraAbortError(trades []canonical.Trade, i int, n insertTally, err error) error {
+	return fmt.Errorf("backfill-external: aborting at trade %d/%d (%s) after infra fault — %d inserted, %d skipped so far, %d not attempted: %w",
+		i, len(trades), trades[i].TxHash, n.inserted, n.skipped, len(trades)-i, err)
 }
 
 // buildBackfiller maps the -source flag to the venue's Backfiller

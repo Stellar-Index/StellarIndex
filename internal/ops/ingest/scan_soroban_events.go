@@ -99,6 +99,10 @@ func scanSorobanEvents(args []string) error { //nolint:funlen,gocognit,gocyclo /
 	fmt.Fprintf(os.Stderr,
 		"scan-soroban-events: scanned %d ledgers, %d matching events emitted\n",
 		totalLedgers, col.matched)
+	// Reaching -limit stops the walk on purpose; only an unfilled scan owes the whole range.
+	if col.matched < col.limit {
+		return rangeWalkCoverage("scan-soroban-events", uint32(*from), uint32(*to), totalLedgers, bucket)
+	}
 	return nil
 }
 

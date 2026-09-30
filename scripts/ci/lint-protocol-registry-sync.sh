@@ -13,16 +13,12 @@
 # §2 DEX pages. internal/sources/external/registry.go is authoritative for
 # which sources are Class=Exchange Subclass=DEX. TWO frontend maps mirror
 # that set by hand, and BOTH are load-bearing:
-#   - DEX_INFO in dexes/[source]/page.tsx feeds generateStaticParams, so a
-#     missing key means /dexes/<source> is not pre-rendered and 404s;
+#   - DEX_INFO in dexes/registry.ts feeds generateStaticParams (and the
+#     sitemap's /dexes/<source> entries), so a missing key means
+#     /dexes/<source> is not pre-rendered and the venue has no page;
 #   - ALL_DEXES in dexes/DexesView.tsx is the source-filter chip row, so a
 #     missing entry means the venue cannot be filtered for.
-# The 404 is not contained to a click, either: sitemap.ts emits
-# /dexes/<name> for EVERY subclass=dex source straight off the API, so a
-# Go-registered DEX with no DEX_INFO key publishes a known-broken URL in
-# the sitemap — the exact failure that map's own comment was written to
-# stop. sushiswap_v3 shipped that way (#350): registered, serving trades,
-# listed in the live sitemap, 404 on the page.
+# sushiswap_v3 once shipped registered and serving trades with no page (#350).
 #
 # Fails if any pair of sets disagrees.
 #
@@ -79,7 +75,7 @@ diff_sets "$GO_REG" "$go_names" "$TS_REG" "$ts_names" \
 
 # ─── §2 DEX pages ───────────────────────────────────────────────────
 SRC_REG=internal/sources/external/registry.go
-DEX_PAGE='web/explorer/src/app/dexes/[source]/page.tsx'
+DEX_PAGE=web/explorer/src/app/dexes/registry.ts
 DEX_VIEW=web/explorer/src/app/dexes/DexesView.tsx
 
 for f in "$SRC_REG" "$DEX_PAGE" "$DEX_VIEW"; do
@@ -97,7 +93,7 @@ dex_go=$(grep -oE '"[a-z0-9_-]+":[[:space:]]*\{Class: ClassExchange, Subclass: S
 # Range-scoped so an unrelated object literal elsewhere in the file cannot
 # contribute a key: DEX_INFO's entries are the only 2-space-indented
 # `<name>: {` lines between its declaration and the closing `};`.
-dex_info=$(awk '/^const DEX_INFO/{inblock=1} inblock && /^};/{exit} inblock' "$DEX_PAGE" |
+dex_info=$(awk '/^export const DEX_INFO/{inblock=1} inblock && /^};/{exit} inblock' "$DEX_PAGE" |
 	grep -oE '^  [a-z0-9_-]+: \{' | grep -oE '[a-z0-9_-]+' | sort -u)
 
 # ALL_DEXES is a single array literal; prettier may wrap it over several
@@ -114,7 +110,7 @@ for names in "$dex_go" "$dex_info" "$all_dexes"; do
 done
 
 diff_sets "$SRC_REG (Subclass=DEX)" "$dex_go" "$DEX_PAGE (DEX_INFO)" "$dex_info" \
-	"generateStaticParams won't pre-render /dexes/<source>, so the page 404s while sitemap.ts still publishes the URL" \
+	"generateStaticParams won't pre-render /dexes/<source>, so the venue has no page" \
 	"stale slug — no such DEX source"
 
 diff_sets "$SRC_REG (Subclass=DEX)" "$dex_go" "$DEX_VIEW (ALL_DEXES)" "$all_dexes" \

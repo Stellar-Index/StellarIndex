@@ -38,8 +38,10 @@ if (!apiKey) {
     'API key (mint from vault) before running k6.',
   );
 }
+// Hostnames are case-insensitive, so API.StellarIndex.io still reaches production.
+const target = baseUrl.toLowerCase();
 for (const h of PROD_HOSTS) {
-  if (baseUrl.includes(h)) {
+  if (target.includes(h)) {
     throw new Error(
       `Refusing to load-test production target ${baseUrl}. ` +
       'Point K6_TARGET at a staging host.',

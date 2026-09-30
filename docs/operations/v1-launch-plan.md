@@ -831,7 +831,7 @@ call): **3.5–4.5 wk** if external review is post-launch (signed off as such);
 #### Afternoon addendum — 2026-08-28 (executed after the refresh above)
 - [V] **Testnet archive re-export live on the new schema.** Wipe of 1,555,392 objects finished 11:02Z; `galexie-backfill` restarted 11:58Z under `Restart=on-failure` with backfill-only vars (#230: `galexie_backfill_ledgers_per_file=64`, `files_per_partition=1000`); bucket manifest confirms `ledgersPerBatch:64, batchesPerPartition:1000`; reader-compat probe `ch-backfill 2..1025 -parallel 1` passed (785 ledgers/s, 111 MB RSS). tip-lag/contiguity/tier-a timers PAUSED for the window (tier-a state reset); re-enable after export + the tip-lag parser fix (#234).
 - [V] **issuer-flags backlog drained** in one bounded run: 48,981/59,192 flagged (383 auth_required, 2,202 clawback); 10,211 absent = outside the lake's captured window.
-- [V] **NEEDS-DATA closures:** 13b `account_activity` watermark at lake tip (30.7M rows); 14b already codified (`04-users.yml` sets `/srv/history-archive` 0755); 1c explained — the network page's `total_coins` (~105B, includes the 2019 burn account) vs `/v1/assets/native` 50.0018B (burn-excluded) = the 2.11× — a captioning fix, not a data bug. 8c/8d have no definitions in-repo (private mirror) — the maintainer to supply or drop.
+- [V] **NEEDS-DATA closures:** 13b `account_activity` watermark at lake tip (30.7M rows); 14b already codified (`04-users.yml` sets `/srv/history-archive` 0755); 1c explained — the network page's `total_coins` (~105B, includes the 2019 burn account) vs `/v1/assets/native` 50.0018B (burn-excluded) = the 2.11× — a captioning fix, not a data bug. 8c/8d have no definitions in-repo (private mirror) — dropped as WONT-FIX; no NEEDS-DATA entry remains open.
 - [V] **W5.3 is build work** (no `usd-volume-restamp` tool exists yet) → engineering wave. **W5.4 precondition holds** (9 burn>mint contracts, all within the 39 watched) but the runbook's 2M-ledger `ch-rebuild` dry-run drove r1 load to 12.9 and starved the aggregator's supply refresher (39-contract `supply_refresh_error_dominant`, cleared once killed). Root mechanism: the heavy-job wrapper's CPU/IO weights do not reach inside ClickHouse; ops readers connect as the default CH user with no priority profile (only the API has ADR-0048's `api_serving`). Retry requires an `ops_batch` CH profile + client option, smaller windows, off-peak.
 - [V] **CVE items were stale:** CVE-2026-56865/-56864/-17106 were bumped in f319060d (#169, 2026-08-25); `govulncheck` 0; `security.yml` dispatched and green.
 - [V] **New defect found via main CI:** `TestAsyncSink_StopDrainsPendingRows_NoChannelClose` flaked on the ansible-only #230 merge; reading the sink shows an in-flight steady-state flush is aborted (rows counted lost) when `Stop()` races it — shutdown data-loss in the raw `soroban_events` landing zone on every indexer restart. Fix in flight with a stress-proven test.
@@ -1403,7 +1403,22 @@ land WITH the rebuild.
 **W5.7 — [C]** CEX dust DELETE (#68); monthly galexie trim timer enable.
 
 **W5.8 — [C]** ClickHouse Phase 8 `soroban_events` decommission (#803) —
-destructive, LAST, enumerate live readers first.
+destructive, LAST. Every live Postgres `soroban_events` reader below must be
+moved to the ClickHouse lake or deleted before any TRUNCATE or DROP; a
+TRUNCATE leaves the table present, so each of these reads an empty table as
+"nothing happened" rather than failing. Re-grep before executing
+(`StreamSorobanEvents|FirstSorobanEventLedger|MaxSorobanEventLedger|FindSorobanEventsLedgerGaps|DistinctSorobanTopicSamples|ReDeriveOutputCountsByKind\(`).
+
+| reader | file:line | path |
+|---|---|---|
+| projector legacy branch (`clickhouse_projector_source=false`) | `internal/projector/projector.go:1262` (stream), `:1664` (first-ledger probe) | falls back to PG when `chAddr` is empty |
+| `preseedFactoryChildren` callers | `internal/ops/chops/compute_completeness.go:1951`, `verify_reconciliation.go:127`, `ch_rebuild.go:635`, `ch_reproject.go:105` | **moved to the lake** — streams `contract_events` and errors on zero seeded |
+| projection re-derive, `completeness.ReDeriveOutputCountsByKind` | `internal/completeness/reconcile.go:291`, `:417`; callers `compute_completeness.go:1819` (non-`-ch` mode), `verify_reconciliation.go:131` | PG |
+| `resume-stalled` data-gap gate | `internal/ops/ingest/resume_stalled.go:699` (`FindSorobanEventsLedgerGaps`) | PG |
+| `seed-protocol-contracts` | `internal/ops/ingest/seed_protocol_contracts.go:88` (`MaxSorobanEventLedger`), `:216` (factory walk) | PG |
+| recognition claim, `computeRecognitionGaps` | `internal/ops/chops/compute_completeness.go:2549` (non-`-ch` mode; `-ch` uses `computeRecognitionGapsCH`) | PG |
+| `verify-recognition` | `internal/ops/chops/verify_recognition.go:74` (`DistinctSorobanTopicSamples`) | PG |
+| gap-detector `soroban-events` target | `internal/storage/timescale/per_source_gaps.go:423` | PG; `gapVerdictTrustworthy` (`gap_detector.go:619`) refuses a clean verdict over zero rows — delete the target with the table |
 
 **Sequencing rule (unchanged, still binding):** one heavy job at a time under
 `/usr/local/sbin/run-heavy-job.sh`; decompress before replaying through
@@ -1575,12 +1590,11 @@ reach are in `runbooks/account-erasure.md`.
 >   bug, a captioning one — and the caption shipped in #250, pinned by
 >   `LedgerView.test.tsx` asserting "ledger header · includes the 2019 burn".
 >   Closed.
-> - **8c / 8d confidence data-halves — BLOCKED ON THE OWNER.** These two have **no
->   definition anywhere in the repo**; they exist only in the private audit
->   mirror. They cannot be measured, reproduced or closed by anyone working
->   from this repository. the maintainer to supply the definitions or drop the items —
->   they are the only NEEDS-DATA entries still open, and the only thing
->   standing between W8 and fully closed.
+> - **8c / 8d confidence data-halves — DROPPED (WONT-FIX).** These two have
+>   **no definition anywhere in the repo**; they exist only in the private
+>   audit mirror and cannot be measured, reproduced or closed from this
+>   repository, so they are dropped rather than carried as open. With this,
+>   no W8 NEEDS-DATA entry remains open.
 
 > **✅ RECONCILED 2026-08-25 (autonomous run, two independent read-only
 > passes over HEAD ~7ce2d213 — full table in the private audit mirror

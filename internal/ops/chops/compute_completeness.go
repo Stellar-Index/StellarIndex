@@ -1869,7 +1869,7 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 	if lo > hi {
 		return 0, completeness.BlindSpots{}, "", nil // every target's scope is empty
 	}
-	expectedFor, blind, eerr := expectedProjection(ctx, store, chStreamer, chAddr, src, lo, hi)
+	expectedFor, blind, eerr := expectedProjection(ctx, chStreamer, chAddr, src, lo, hi)
 	if eerr != nil {
 		return 0, completeness.BlindSpots{}, "", eerr
 	}
@@ -1908,7 +1908,7 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 // decoder soft-fails inside a single op's claim list and still emits the op,
 // so a malformed claim cannot remove a whole row from the expected side
 // without also removing it from served.
-func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, chAddr string, src reconSource, lo, hi uint32) (func(reconTarget) map[uint32]int, completeness.BlindSpots, error) {
+func expectedProjection(ctx context.Context, chStreamer completeness.EventStreamer, chAddr string, src reconSource, lo, hi uint32) (func(reconTarget) map[uint32]int, completeness.BlindSpots, error) {
 	switch {
 	case src.callDec != nil:
 		// Event-less ContractCall source (band, soroswap-router): re-derive the
@@ -1945,12 +1945,10 @@ func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer 
 		// went STALE as new pools deployed: blend reported complete=false
 		// (expected=0) on windows whose activity was on pools missing from the seed,
 		// while the live decoder (which self-seeds from deploy events) captured them.
-		// Adding it here makes the watchdog self-maintaining. (Reads the Postgres
-		// soroban_events landing zone for the rare, indexed creation events; a
-		// CH-native preseed for full -ch purity is a follow-up.)
+		// Adding it here makes the watchdog self-maintaining.
 		var walkBlind completeness.BlindSpots
 		if len(src.factories) > 0 {
-			pb, err := preseedFactoryChildren(ctx, store, src, lo)
+			pb, err := preseedFactoryChildren(ctx, chStreamer, src, lo)
 			if err != nil {
 				return nil, completeness.BlindSpots{}, fmt.Errorf("%s preseed: %w", src.name, err)
 			}
@@ -1999,7 +1997,7 @@ func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer 
 // ever missed and no undercount (false red) is possible:
 //
 //   - (a) src.dec's gate AFTER its preseed-to-lo = the curated in-code seed ∪
-//     every child preseeded from the Postgres landing zone — i.e. the registry
+//     every child preseeded from the lake's creation events — i.e. the registry
 //     state the stream STARTS from. Read via GatedContractSet().
 //   - (b) every child the SAME certified lake announces through hi, walked from
 //     the factory's creation events on a THROWAWAY decoder — a superset of the
@@ -2128,6 +2126,7 @@ func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to u
 			// DecodeCounted additionally reports how many claim atoms in
 			// this op failed to decode, so a failure marks the ledger
 			// BLIND (C4-059) instead of silently reading as zero trades.
+			// Both-zero no-op claims are a symmetric drop, not a failure.
 			var outs []consumer.Event
 			var failed int
 			if perr := completeness.Guard(func() {
