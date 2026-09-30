@@ -326,6 +326,55 @@ func TestSEP41_Compute_GenesisBaselineGuardMatrix(t *testing.T) {
 	}
 }
 
+// TestSEP41_Compute_UnseededClassicWrapperWithheld — a classic asset's SAC
+// with no seeded baseline must not publish its Soroban-era-only total even
+// when that total is positive; once seeded, the same components publish.
+func TestSEP41_Compute_UnseededClassicWrapperWithheld(t *testing.T) {
+	classic, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+	sacID, err := classic.SacContractID()
+	if err != nil {
+		t.Fatalf("SacContractID: %v", err)
+	}
+	reg, err := canonical.NewAliasRegistry(canonical.NetworkPassphrase(), map[string]string{sacID: "USDC:" + classic.Issuer})
+	if err != nil {
+		t.Fatalf("NewAliasRegistry: %v", err)
+	}
+	canonical.InstallAliasRegistry(reg)
+	t.Cleanup(func() { canonical.InstallAliasRegistry(nil) })
+
+	for _, seeded := range []bool{false, true} {
+		reader := &stubSEP41Reader{comps: supply.SEP41SupplyComponents{
+			MintTotal:              bigInt(1_000_000_000),
+			BurnTotal:              bigInt(0),
+			ClawbackTotal:          bigInt(0),
+			AdminBalance:           bigInt(0),
+			LockedAccountBalances:  bigInt(0),
+			LockedContractBalances: bigInt(0),
+			GenesisBaselineSeeded:  seeded,
+		}}
+		c, _ := supply.NewSEP41Computer(supply.Policy{}, reader)
+		got, err := c.Compute(context.Background(), mustSoroban(t, sacID), 60_000_000, time.Now())
+		if !seeded {
+			if !errors.Is(err, supply.ErrGenesisBaselineNotSeeded) {
+				t.Fatalf("unseeded: err = %v, want ErrGenesisBaselineNotSeeded", err)
+			}
+			if errors.Is(err, supply.ErrNegativeTotalSupply) {
+				t.Errorf("unseeded: must not match the paging sentinel: %v", err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("seeded: Compute: %v", err)
+		}
+		if got.TotalSupply.Cmp(bigInt(1_000_000_000)) != 0 {
+			t.Errorf("seeded: TotalSupply = %s, want 1000000000", got.TotalSupply)
+		}
+	}
+}
+
 // TestSEP41_Compute_LockedSetForwarded — operator-extended locked-set
 // is passed to the reader so it can compute the LockedAccount /
 // LockedContract sums in a single query. Basis upgrades to Override.

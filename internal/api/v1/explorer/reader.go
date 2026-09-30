@@ -513,6 +513,15 @@ func (h *Handler) writeJSONAt(w http.ResponseWriter, data any, stale bool, asOf 
 	h.WriteJSON(w, data, stale)
 }
 
+// lakeTip is LakeWatermark with an unwired func reading as no lake to judge
+// (not stale, no ledger), the same verdict the server gives an unwired reader.
+func (h *Handler) lakeTip(ctx context.Context) (ledger uint32, stale, ok bool) {
+	if h.LakeWatermark == nil {
+		return 0, false, false
+	}
+	return h.LakeWatermark(ctx)
+}
+
 // unavailable writes the standard 503 when no explorer reader is wired
 // (deployment without ClickHouse, or ClickHouse unreachable at startup).
 // Mirrors v1's Server.explorerUnavailable, which stays in package v1 —
