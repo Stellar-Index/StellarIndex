@@ -19,6 +19,9 @@ type Currency struct {
 	// is. It trails [Snapshot.PublishedAt] when the worker is HOLDING the
 	// ticker's last guarded rate (see servedSnapshot in worker.go).
 	UpdateAt time.Time
+	// Source is the feed that published RateUSD. A held entry keeps its
+	// original feed, so one snapshot can mix the primary and a standby.
+	Source string
 }
 
 // Snapshot is the immutable rates+metadata bundle the Cache holds.

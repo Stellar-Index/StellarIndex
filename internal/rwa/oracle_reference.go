@@ -282,3 +282,61 @@ func InstrumentBindings() []InstrumentBinding {
 	})
 	return out
 }
+
+// fundNAVBinding binds one Stellar (code, issuer) to the ticker of the
+// registered fund whose published daily NAV is the value of one token.
+type fundNAVBinding struct {
+	Code, Issuer, Ticker string
+}
+
+// fundNAVBindings are the WisdomTree digital funds: one token is one fund
+// share, so the fund's SEC-reported NAV is the token's value. Each fund
+// has its own issuer, and stellar.wisdomtree.com's SEP-1 declares every
+// (code, issuer) below with anchor_asset set to the ticker.
+//
+// Keyed on the pair for the same reason as [instrumentBindings]: a token
+// merely named TIPS or SPXU is not a WisdomTree fund share.
+var fundNAVBindings = []fundNAVBinding{
+	{Code: "WTTS", Issuer: "GBBV5CF7UPA2PYRPA632URLB55BWML7X4H33ZRCDWMTULOXDGPHJR5VI", Ticker: "WTTSX"},
+	{Code: "WTST", Issuer: "GDEBI5X7J4IDXCSVV3KPFZIHQRCBVF3DAZMS5H7KYOBK45T6XYGDE77P", Ticker: "WTSTX"},
+	{Code: "FLTT", Issuer: "GBTZKH3RNKW46XEZNCGZEBAGJISKDZKQXKSQ2N5G5SFX36TLWKKR6QJ6", Ticker: "FLTTX"},
+	{Code: "WTLG", Issuer: "GAK7PE7DD4ZRJQN3VBCQFBKFV53JGUM2SQATQAKLFK6MVONPGNYK34XH", Ticker: "WTLGX"},
+	{Code: "WTSI", Issuer: "GAD22PDBRFEMXAKPFDP4JGDFWKKD6VPXWUWEAXBS6ZYJYFFQDUN7HAFG", Ticker: "WTSIX"},
+	{Code: "WTSY", Issuer: "GB3ZUC7FGDEEBXY3BDEJWMPNGBFA66YRI4QQT6PBO3ZT6F33S7RL36VF", Ticker: "WTSYX"},
+	{Code: "TIPS", Issuer: "GAJ4KSYLVBJKQ4UBPKJJXPYWVIRZWVTIYRMHBXTHGCDS4XJXXYEUALVD", Ticker: "TIPSX"},
+	{Code: "EQTY", Issuer: "GAKODZFS4MV36JGDTULJACWJKBJCO33CJTVTWSQFSUV7XLZJNXTDH6D6", Ticker: "EQTYX"},
+	{Code: "LNGV", Issuer: "GAHOGWBAWNIKESGNNW7Y7JU5KL54HIEHJGY6Y5QLY6YR3J7WZIDHLC6D", Ticker: "LNGVX"},
+	{Code: "MODR", Issuer: "GANULT25TFO6V6BFWSEG4VSCR4QXBNHV5T344R2AFZEPE6B324LVLOOJ", Ticker: "MODRX"},
+	{Code: "SPXU", Issuer: "GDJBVX3QA5HJPBSAU5VIX2W6MC37NU4UFXPKEGK42SJCYN6AEQ4Z6COM", Ticker: "SPXUX"},
+	{Code: "TECH", Issuer: "GDSAW27GPR7EWKPTFDPGN2WWZYUHBFKVDBLOUUEKSNKHID4ZWUVOBF5R", Ticker: "TECHX"},
+}
+
+var fundNAVIndex = func() map[instrumentKey]string {
+	m := make(map[instrumentKey]string, len(fundNAVBindings))
+	for _, b := range fundNAVBindings {
+		m[instrumentKey{code: b.Code, issuer: b.Issuer}] = b.Ticker
+	}
+	return m
+}()
+
+// FundNAVTicker returns the fund ticker bound to this exact (code,
+// issuer), and whether any binding exists. Exact on both halves, as
+// [InstrumentFeed] is.
+func FundNAVTicker(code, issuer string) (string, bool) {
+	t, ok := fundNAVIndex[instrumentKey{
+		code:   strings.TrimSpace(code),
+		issuer: strings.TrimSpace(issuer),
+	}]
+	return t, ok
+}
+
+// FundNAVTickers lists the bound tickers, sorted — the set the NAV poller
+// fetches.
+func FundNAVTickers() []string {
+	out := make([]string, 0, len(fundNAVBindings))
+	for _, b := range fundNAVBindings {
+		out = append(out, b.Ticker)
+	}
+	sort.Strings(out)
+	return out
+}

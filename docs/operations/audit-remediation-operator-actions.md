@@ -92,10 +92,10 @@ did each step):
    (root ones), `daemon-reload`, start — the chowns are backwards-compatible
    (root reads everything).
 
-Note: `archive-completeness.service` intentionally stays `User=root` for now —
-its `ExecStartPre` writes `/run/archive-completeness.env` and its report lands
-in the galexie-owned `/var/lib/galexie`; follow-up is `RuntimeDirectory=` +
-report relocation (see the unit template comment).
+Note: `archive-completeness.service` intentionally stays `User=root`. Its
+`ExecStart` runs under `run-heavy-job.sh`, which creates the `MemoryMax=20G`
+scope and the disk watchdog only for a root caller; as a non-root unit the job
+would run with neither (see the unit template comment).
 
 ## Classic supply under-read (found 2026-07-02 by verify-served-values)
 The trustline/claimable/LP observers matched their watched set in

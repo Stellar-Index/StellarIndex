@@ -167,6 +167,12 @@ Contract removals) are within-scope additions to a wider
 walker. Implementing them would be a single PR adding new
 cases to `scanLedgerEntryChange`.
 
+**Status:** all three ship in `wasm-history`
+(`internal/ops/archive/wasm_history.go`). Storage rotations write to
+`-storage-rotations-out` and code uploads write to `-code-uploads-out`. An
+instance-entry removal on a watched contract closes its hash range and
+opens a `removed` range in the main timeline.
+
 The fourth (events emitted) would be a much bigger effort —
 essentially building a generic "contract event archive" — and is
 out of scope for the wide-net walk unless we explicitly want it.

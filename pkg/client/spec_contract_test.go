@@ -131,6 +131,7 @@ var uncoveredOperations = map[string]string{
 	"GET /ledgers":                              "explorer surface — SDK is pricing-first",
 	"GET /ledgers/{seq}":                        "explorer surface — SDK is pricing-first",
 	"GET /ledgers/{seq}/transactions":           "explorer surface — SDK is pricing-first",
+	"GET /ledgers/{seq}/operations":             "explorer surface — SDK is pricing-first",
 	"GET /tx/{hash}":                            "explorer surface — SDK is pricing-first",
 	"GET /operations":                           "explorer surface — SDK is pricing-first",
 	"GET /contracts":                            "explorer surface — SDK is pricing-first",

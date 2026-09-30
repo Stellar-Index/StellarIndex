@@ -12,7 +12,12 @@ import {
   scaleBaseUnits,
   sumDecimalStrings,
 } from '@/lib/format';
-import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
+import {
+  serializeJsonLd,
+  datasetJsonLd,
+  ogImageFor,
+  shellMetadata,
+} from '@/lib/seo';
 import { Container, Breadcrumbs } from '@/components/ui';
 import { EntityNotFoundShell } from '@/components/EntityNotFoundShell';
 import { Sparkline } from '@/components/primitives';
@@ -26,6 +31,7 @@ import { SourceBreakdown } from './SourceBreakdown';
 import { shortAssetText } from '@/lib/asset-label';
 import { assetHref, assetHrefFor } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
+import type { TradeRow } from '@/api/hooks';
 
 type Params = Promise<{ pair: string }>;
 
@@ -90,24 +96,6 @@ interface OhlcResp {
   quote_volume_decimals?: number;
   trade_count: number;
   truncated: boolean;
-}
-
-interface HistoryTrade {
-  source: string;
-  ledger?: number;
-  tx_hash?: string;
-  op_index?: number;
-  ts: string;
-  base_asset: string;
-  quote_asset: string;
-  base_amount?: string;
-  quote_amount?: string;
-  price: string;
-  // Smallest-unit scale per side (divisor 10^n). /v1/history resolves
-  // the Soroban token's declared decimals(); omitted (→ fall back to 7)
-  // for native/classic/fiat.
-  base_decimals?: number;
-  quote_decimals?: number;
 }
 
 const PAIR_SEPARATOR = '~';
@@ -185,27 +173,14 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { pair } = await params;
-  // The runtime-fallback shell answers 200 for EVERY unmatched
-  // /markets/* path, and a slug carrying no `~` separator names no pair
-  // at all — one baked document standing in for arbitrary URLs. Indexing
-  // it files a soft-404 under whatever the crawler tried, so both cases
-  // are noindex, the posture the other long-tail shells take route-wide
-  // (/accounts, /contracts, /ledgers, /transactions). follow stays on so
-  // the crawler still walks out through the nav.
+  // The runtime-fallback shell, and any slug without a `~` separator, is
+  // one baked document standing in for arbitrary /markets/* URLs.
   const decoded = pair === 'shell' ? null : decodePairSlug(pair);
   if (!decoded) {
-    // Metadata merges shallowly per top-level key, so omitting
-    // `alternates` here inherits the root layout's
-    // `alternates: { canonical: '/' }` verbatim — every one of these
-    // arbitrary long-tail URLs baked a rel=canonical pointing at the
-    // homepage. noindex only kept it out of the index under that tag,
-    // it didn't remove the tag. Override with an empty object so no
-    // canonical is emitted.
-    return {
-      title: 'Pair',
-      robots: { index: false, follow: true },
-      alternates: {},
-    };
+    return shellMetadata(
+      'Pair',
+      'Stellar market pair detail, rendered live from the Stellar Index API.',
+    );
   }
   const baseLabel = shortAssetText(decoded.base);
   const quoteLabel = shortAssetText(decoded.quote);
@@ -309,11 +284,8 @@ function fetchOhlc(base: string, quote: string): Promise<OhlcResp | null> {
   );
 }
 
-async function fetchHistory(
-  base: string,
-  quote: string,
-): Promise<HistoryTrade[]> {
-  const rows = await buildFetchData<HistoryTrade[]>(
+async function fetchHistory(base: string, quote: string): Promise<TradeRow[]> {
+  const rows = await buildFetchData<TradeRow[]>(
     `/v1/history?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&limit=50`,
   );
   return rows ?? [];
@@ -603,7 +575,7 @@ export default async function PairPage({ params }: { params: Params }) {
                       </Link>
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
-                      {t.price}
+                      {t.price ?? '—'}
                     </td>
                     {/* AM-02: amounts arrive as smallest-unit scaled
                         integers; render in asset units using the per-side

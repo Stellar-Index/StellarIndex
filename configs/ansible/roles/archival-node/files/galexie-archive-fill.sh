@@ -30,11 +30,11 @@
 # See docs/operations/galexie-backfill.md "mc mirror gotcha" for the
 # failure mode this script works around.
 #
-# Identity: every read and the mirror go through ARCHIVE_ALIAS, the
-# bucket-scoped galexie-archive-writer (no delete), so the hourly run holds
-# no MinIO admin credential. Only the operator-run PARTIALS delete uses a
-# second alias, ARCHIVE_DELETE_ALIAS, named explicitly because it must
-# carry delete authority the writer deliberately lacks.
+# Identity: every read and the mirror go through ARCHIVE_DEST's alias, which
+# ansible sets to the bucket-scoped galexie-archive-writer (no delete), so the
+# hourly run holds no MinIO admin credential. Only the operator-run PARTIALS
+# delete uses ARCHIVE_DELETE_ALIAS, named separately because it must carry
+# delete authority the writer deliberately lacks.
 set -euo pipefail
 
 LOG=/var/log/galexie-mirror.log
@@ -66,7 +66,7 @@ trap 'rm -rf "$WORK"' EXIT
 # trim itself last used, which compute-trim-cutoff.sh persists to
 # ARCHIVE_HOT_FLOOR_FILE before every trim — so the floor rolls
 # forward with the trim instead of trailing it.
-# shellcheck source=/dev/null  # ansible-rendered ARCHIVE_HOT_FLOOR=<int>
+# shellcheck source=/dev/null  # ansible-rendered hot floor and mc aliases
 [ -f /etc/default/galexie-archive-fill ] && . /etc/default/galexie-archive-fill
 ARCHIVE_HOT_FLOOR="${ARCHIVE_HOT_FLOOR:-0}"
 ARCHIVE_HOT_FLOOR_FILE=/var/lib/galexie-archive/hot-floor
@@ -82,8 +82,21 @@ if [ -e "$ARCHIVE_HOT_FLOOR_FILE" ]; then
   fi
 fi
 PARTIAL_CHECK_WINDOW="${PARTIAL_CHECK_WINDOW:-4}"
-ARCHIVE_ALIAS="${ARCHIVE_ALIAS:-archivewriter}"
-ARCHIVE_DELETE_ALIAS="${ARCHIVE_DELETE_ALIAS:-local}"
+
+# Destination as <mc-alias>/<bucket>[/<prefix>], e.g. a regional node filling
+# a remote object store. It prefixes `mc rm --recursive --force`, so a value
+# that could resolve to an alias or bucket root is refused before any mc call.
+ARCHIVE_DEST="${ARCHIVE_DEST:-local/galexie-archive}"
+if ! [[ "$ARCHIVE_DEST" =~ ^[A-Za-z0-9_-]+(/[A-Za-z0-9_.-]+)+$ ]] || [[ "/$ARCHIVE_DEST/" == */../* || "/$ARCHIVE_DEST/" == */./* ]]; then
+  echo "galexie-archive-fill: FATAL — ARCHIVE_DEST='$ARCHIVE_DEST' is not <mc-alias>/<bucket>[/<prefix>]" >&2
+  exit 1
+fi
+# The PARTIALS delete reaches the same bucket path through this alias.
+ARCHIVE_DELETE_ALIAS="${ARCHIVE_DELETE_ALIAS:-${ARCHIVE_DEST%%/*}}"
+if ! [[ "$ARCHIVE_DELETE_ALIAS" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  echo "galexie-archive-fill: FATAL — ARCHIVE_DELETE_ALIAS='$ARCHIVE_DELETE_ALIAS' is not an mc alias name" >&2
+  exit 1
+fi
 
 # Known partials: pass via env var (newline- or space-separated), e.g.
 #   PARTIALS=$'FC49CDFF--62272000-62335999\nXYZ--...' galexie-archive-fill
@@ -149,8 +162,8 @@ report_rejected() {
 
 # A broken writer alias must fail the run: Phase 1b discards listing
 # errors and would count every partition as empty.
-if ! mc ls "$ARCHIVE_ALIAS/galexie-archive/" >/dev/null 2>&1; then
-  echo "galexie-archive-fill: FATAL — mc alias '$ARCHIVE_ALIAS' cannot list galexie-archive (unset, wrong secret, or no policy)" | tee -a "$LOG" >&2
+if ! mc ls "$ARCHIVE_DEST/" >/dev/null 2>&1; then
+  echo "galexie-archive-fill: FATAL — cannot list '$ARCHIVE_DEST' (alias unset, wrong secret, or no policy)" | tee -a "$LOG" >&2
   exit 1
 fi
 
@@ -166,7 +179,7 @@ if [ -n "$PARTIALS_INPUT" ]; then
   fi
   while read -r p; do
     echo "  rm: $p" | tee -a "$LOG"
-    mc rm --recursive --force "$ARCHIVE_DELETE_ALIAS/galexie-archive/$p/" >/dev/null 2>&1 || true
+    mc rm --recursive --force "$ARCHIVE_DELETE_ALIAS/${ARCHIVE_DEST#*/}/$p/" >/dev/null 2>&1 || true
   done < "$WORK/partials.txt"
 fi
 
@@ -203,7 +216,7 @@ if [ "$PARTIAL_CHECK_WINDOW" -gt 0 ]; then
   while read -r p; do
     [ -z "$p" ] && continue
     aws_n=$(aws_ls "aws-public-blockchain/v1.1/stellar/ledgers/pubnet/$p/" --recursive | wc -l)
-    local_n=$(mc ls --recursive "$ARCHIVE_ALIAS/galexie-archive/$p/" 2>/dev/null | wc -l)
+    local_n=$(mc ls --recursive "$ARCHIVE_DEST/$p/" 2>/dev/null | wc -l)
     if [ "$local_n" -gt 0 ] && [ "$local_n" -lt "$aws_n" ]; then
       # Queue it for Phase 3 instead of DELETING it. `mc mirror` is
       # already incremental — it copies only the objects absent from the
@@ -231,7 +244,7 @@ fi
 
 echo "=== $(date -Iseconds) Phase 2: build needs-work list ===" | tee -a "$LOG"
 aws_partitions > "$WORK/aws.txt"
-mc ls "$ARCHIVE_ALIAS/galexie-archive/" \
+mc ls "$ARCHIVE_DEST/" \
   | awk '{print $NF}' | sed 's:/$::' | sort > "$WORK/local.txt"
 comm -23 "$WORK/aws.txt" "$WORK/local.txt" \
   > "$WORK/missing.txt"
@@ -275,7 +288,7 @@ echo "=== $(date -Iseconds) Phase 3: mirror per-partition (parallel=$PARALLEL) =
 # become a bucket-root path.
 # shellcheck disable=SC2016  # expanded by the per-partition bash
 xargs -r -a "$WORK/needs-work.txt" -d '\n' -P "$PARALLEL" -n 1 bash -c '
-  log=$1 re=$2 alias=$3 p=$4
+  log=$1 re=$2 dest=$3 p=$4
   if ! [[ "$p" =~ $re ]]; then
     echo "galexie-archive-fill: refusing to mirror non-partition name: ${p@Q}" >&2
     exit 1
@@ -283,9 +296,9 @@ xargs -r -a "$WORK/needs-work.txt" -d '\n' -P "$PARALLEL" -n 1 bash -c '
   echo "==> $(date -Iseconds) $p" >> "$log"
   mc mirror --skip-errors \
     "aws-public/aws-public-blockchain/v1.1/stellar/ledgers/pubnet/$p/" \
-    "$alias/galexie-archive/$p/" >> "$log" 2>&1
+    "$dest/$p/" >> "$log" 2>&1
   echo "<== $(date -Iseconds) $p" >> "$log"
-' mirror-partition "$LOG" "$PARTITION_RE" "$ARCHIVE_ALIAS"
+' mirror-partition "$LOG" "$PARTITION_RE" "$ARCHIVE_DEST"
 
 report_rejected
 

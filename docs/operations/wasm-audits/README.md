@@ -26,7 +26,10 @@ silently produces wrong trades.
 ## Files in this directory
 
 - `README.md` — this file. Procedure + checklist.
+- `internal/ops/chops/audited_wasm.json` — the machine-readable audited set: every hash these logs string-checked, which `stellarindex-ops wasm-drift` checks each gated contract against ([runbook](../runbooks/wasm-drift.md)).
 - `soroswap.md` — Soroswap audit (in progress).
+- `sushiswap_v3.md` — SushiSwap V3 factory + 58 pools, four hashes string-checked from the lake's instance lineage.
+- `upshift.md` — Upshift earnUSDC / earnXLM vaults, one hash string-checked from the lake's instance lineage.
 - (`aquarius.md`, `phoenix.md`, `comet.md`, `reflector-{dex,cex,fx}.md`,
   `redstone.md`, `band.md` — to land per source.)
 
@@ -52,13 +55,16 @@ constants in `internal/sources/<source>/events.go`.
 ### 2. Collect the WASM-version timeline
 
 Run `stellarindex-ops wasm-history` against a galexie data store that
-covers the replay range:
+covers the replay range (output location: see "Where walk output
+goes" below):
 
+    mkdir -p /var/log/wasm-audit
     stellarindex-ops wasm-history \
       -config /etc/stellarindex.toml \
       -from 2 -to <r1-archive-tip> \
       -contracts <factory>,<router>,<pair-instance-A>,<pair-instance-B>... \
-      > /tmp/<source>-wasm-history.json
+      > /var/log/wasm-audit/<source>-wasm-history.json \
+      2> /var/log/wasm-audit/<source>-wasm-history.stderr
 
 > **`-to` upper bound on r1.** Use the verified tip of
 > `galexie-archive`, NOT the network tip. As of 2026-05-01 the
@@ -94,15 +100,29 @@ volume are sufficient; full coverage is the v2 upgrade.
   bandwidth (Hetzner-out → AWS-in is free, AWS-out → home is the
   paid leg) but doesn't compete with r1's other workloads.
 
-**Crash-resilience for long walks.** Pass `-checkpoint-dir DIR`
-on every multi-hour walk:
+**Where walk output goes.** Every walk artefact — the JSON on
+stdout, the stderr progress log, and the `-checkpoint-dir` JSONL —
+goes under `/var/log/wasm-audit/`, never loose
+in `/var/log/` or `/tmp/`. A multi-hour walk's stderr alone runs to
+gigabytes on the root filesystem, and one dedicated dir keeps the
+cleanup a single, unambiguous target. Once the audit log records the
+timeline (and any JSON worth keeping is committed under
+[`evidence/`](evidence/)), delete the walk's files:
 
+    rm -rf /var/log/wasm-audit/<source>-*
+
+**Crash-resilience for long walks.** Pass `-checkpoint-dir DIR`
+on every multi-hour walk. The walker refuses a checkpoint dir that
+does not exist, so create it (and the parent) first:
+
+    mkdir -p /var/log/wasm-audit/<source>-checkpoint
     stellarindex-ops wasm-history \
       -config /etc/stellarindex.toml \
       -from 50457424 -to 62249727 \
       -parallel 8 \
-      -checkpoint-dir /tmp/walk-checkpoint \
-      -contracts ... > /tmp/wasm-history.json
+      -checkpoint-dir /var/log/wasm-audit/<source>-checkpoint \
+      -contracts ... > /var/log/wasm-audit/<source>-wasm-history.json \
+      2> /var/log/wasm-audit/<source>-wasm-history.stderr
 
 Each parallel worker writes its observed transitions to
 `<DIR>/wasm-history-w<i>.jsonl` as it sees them. If the walk dies
@@ -112,9 +132,9 @@ reboot, missing ledger in the archive — see
 canonical JSON from the partial transitions:
 
     stellarindex-ops wasm-history-merge-jsonl \
-      -checkpoint-dir /tmp/walk-checkpoint \
+      -checkpoint-dir /var/log/wasm-audit/<source>-checkpoint \
       -to 62249727 \
-      -output /tmp/wasm-history-recovered.json
+      -output /var/log/wasm-audit/<source>-wasm-history-recovered.json
 
 `-to` MUST match the original walk's `-to` so the last open range
 per contract closes correctly. The merge tool tolerates a half-

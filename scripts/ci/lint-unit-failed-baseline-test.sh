@@ -26,8 +26,17 @@ RULES=configs/prometheus/rules.r1
 pass=0; fail=0
 ok()  { printf '  ok   %s\n' "$1"; pass=$((pass+1)); }
 bad() { printf '  FAIL %s\n' "$1"; fail=$((fail+1)); }
+# Whole-line membership: a substring test lets a regex entry `supply.service`
+# pass on the strength of the baseline's `ch-supply.service`.
+has_entry() { grep -Fxq -- "$2" <<< "$1"; }
 
 echo "lint-unit-failed-baseline-test: catch-all exclusion list"
+
+if has_entry "ch-supply.service" "supply.service" || ! has_entry "ch-supply.service" "ch-supply.service"; then
+  bad "has_entry is not exact-entry matching — check 3 would accept a unit that only shares a suffix with a baseline entry"
+else
+  ok "baseline membership is exact-entry, not substring"
+fi
 
 [ -f "$BASELINE" ] || { echo "  FAIL baseline missing: $BASELINE"; exit 1; }
 
@@ -84,7 +93,7 @@ else
     | sed 's/\\\\\./\./g' | sort -u)
   while IFS= read -r u; do
     [ -z "$u" ] && continue
-    case "$units" in *"$u"*) ;; *) bad "unit '$u' is excluded by the rule's regex but has NO baseline entry — it is exempt from the catch-all and unwatched"; extra=1 ;; esac
+    has_entry "$units" "$u" || { bad "unit '$u' is excluded by the rule's regex but has NO baseline entry — it is exempt from the catch-all and unwatched"; extra=1; }
   done <<< "$regex_units"
   [ "$extra" -eq 0 ] && ok "every unit in the exclusion regex has a baseline entry"
 fi

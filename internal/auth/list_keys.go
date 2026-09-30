@@ -32,9 +32,13 @@ import (
 // yet (NOPERM), it was never built — means "walk the keyspace", which
 // is always correct. A reader that finds the index absent tries to
 // build it, so the walk is the transitional path, not the steady one.
+// A build marks `ready` only if its generation survived the walk, and
+// the API drops both at startup, so neither a hash lost mid-build nor
+// records written raw by a rolled-back binary leave a trusted gap.
 
 const (
 	keyIndexReadyField  = "ready"
+	keyIndexGenField    = "gen"
 	keyIndexKeyIDPrefix = "k:"
 	keyIndexOwnerPrefix = "o:"
 
@@ -54,6 +58,20 @@ const (
 // ErrKeyIndexBuildBusy is returned by [RedisAPIKeyStore.BuildKeyIndex]
 // when another process holds the build lock.
 var ErrKeyIndexBuildBusy = errors.New("auth: api-key index build already in progress")
+
+// errKeyIndexSuperseded means the build's generation vanished before
+// `ready` was written: the hash was deleted, evicted or invalidated.
+var errKeyIndexSuperseded = errors.New("api-key index changed under the build; not marked ready")
+
+// markKeyIndexReadyScript sets `ready` only while the build's generation
+// is still in the hash. KEYS: index. ARGV: generation.
+var markKeyIndexReadyScript = redis.NewScript(`
+if redis.call('HGET', KEYS[1], 'gen') ~= ARGV[1] then
+	return 0
+end
+redis.call('HSET', KEYS[1], 'ready', '1')
+return 1
+`)
 
 // keyIndexAddLua adds one record to the index. Idempotent: re-adding
 // a record rewrites the same pointer and leaves the owner list alone.
@@ -235,7 +253,8 @@ func (s *RedisAPIKeyStore) indexLookup(ctx context.Context, field string) (value
 // is idempotent, issuance indexes its own records atomically, and an
 // entry left behind for a record deleted mid-build is a dangling
 // pointer that readers skip and prune. `ready` is written only after
-// a walk that completed with every index write acknowledged.
+// a walk that completed with every index write acknowledged, and only
+// while the generation the build stamped first is still in the hash.
 //
 // Returns the number of records indexed, [ErrKeyIndexBuildBusy] when
 // another process is building, or the first Redis error — including
@@ -256,17 +275,24 @@ func (s *RedisAPIKeyStore) BuildKeyIndex(ctx context.Context) (int, error) {
 
 	bctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), keyIndexBuildTimeout)
 	defer cancel()
-	n, err := s.buildKeyIndexLocked(bctx)
+	n, err := s.buildKeyIndexLocked(bctx, token)
 	if err != nil {
-		// Keep the lock: see keyIndexBuildLockTTL.
+		// A superseded build can succeed on the next attempt; any other
+		// failure keeps the lock (see keyIndexBuildLockTTL).
+		if errors.Is(err, errKeyIndexSuperseded) {
+			_ = releaseLockScript.Run(bctx, s.rdb, []string{lock}, token).Err()
+		}
 		return n, fmt.Errorf("auth: BuildKeyIndex: %w", err)
 	}
 	_ = releaseLockScript.Run(bctx, s.rdb, []string{lock}, token).Err()
 	return n, nil
 }
 
-func (s *RedisAPIKeyStore) buildKeyIndexLocked(ctx context.Context) (int, error) {
+func (s *RedisAPIKeyStore) buildKeyIndexLocked(ctx context.Context, gen string) (int, error) {
 	index := cachekeys.APIKeyIndex().String()
+	if err := s.rdb.HSet(ctx, index, keyIndexGenField, gen).Err(); err != nil {
+		return 0, err
+	}
 	pipe := s.rdb.Pipeline()
 	indexed := 0
 	err := s.walkAPIKeyRecords(ctx, func(hash string, rec APIKeyRecord) (bool, error) {
@@ -289,10 +315,26 @@ func (s *RedisAPIKeyStore) buildKeyIndexLocked(ctx context.Context) (int, error)
 			return indexed, err
 		}
 	}
-	if err := s.rdb.HSet(ctx, index, keyIndexReadyField, "1").Err(); err != nil {
+	marked, err := markKeyIndexReadyScript.Run(ctx, s.rdb, []string{index}, gen).Int()
+	if err != nil {
 		return indexed, err
 	}
+	if marked == 0 {
+		return indexed, errKeyIndexSuperseded
+	}
 	return indexed, nil
+}
+
+// InvalidateKeyIndex drops `ready` and any in-flight build's generation,
+// so the next lookup rebuilds from the records themselves. The API calls
+// it at startup because a rolled-back binary writes records it never
+// indexes. NOPERM is not an error: readers walk while the ACL denies the family.
+func (s *RedisAPIKeyStore) InvalidateKeyIndex(ctx context.Context) error {
+	err := s.rdb.HDel(ctx, cachekeys.APIKeyIndex().String(), keyIndexReadyField, keyIndexGenField).Err()
+	if err != nil && !isRedisNoPerm(err) {
+		return fmt.Errorf("auth: InvalidateKeyIndex: %w", err)
+	}
+	return nil
 }
 
 // pruneIndex drops index entries that point at a record that is gone —

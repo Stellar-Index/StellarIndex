@@ -145,7 +145,8 @@ var Registry = map[string]Metadata{
 	// polls hourly but writes one row per ticker per UTC day to the
 	// `fx_quotes` table — every write buckets to Truncate(24 * time.Hour),
 	// so the table never holds anything finer than daily — the USD-anchor
-	// reference behind /v1/currencies + per-trade usd_volume. It is an
+	// reference behind per-trade usd_volume, fiat pricing on /v1/assets and
+	// the fiat series on /v1/chart. It is an
 	// off-chain vendor feed (not a Stellar source), hence registered here so
 	// /v1/sources classifies it as external FX (SubclassFX → IsOnChain=false)
 	// instead of fail-closing through Lookup's unknown-source fallback.
@@ -156,6 +157,8 @@ var Registry = map[string]Metadata{
 	// The snap's only fallback is the forex worker's in-process ECB standby
 	// (forex.ECBProvider), which writes fx_quotes with source "ecb" — not
 	// the "ecb" sanity connector below.
+	// forex.OpenExchangeRatesProvider has no row: it writes nothing until
+	// wired, and wiring it must add one or the FX-snap class check refuses it.
 	// FX pollers stamp amounts at 1e6 (DefaultDecimals=6), NOT the CEX 1e8;
 	// AmountDecimals:6 records that for the USD-volume gate (CS-040).
 	// OracleResolution is a trading day: an FX rate legitimately holds
@@ -185,6 +188,12 @@ var Registry = map[string]Metadata{
 	// OracleResolution is 24 h: Timestamp is the round's updatedAt, and
 	// the slowest feeds (FX) heartbeat daily and pause over the weekend.
 	"chainlink": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false /* Alchemy free tier covers 516-feed scale */, BackfillAvailable: true, BackfillSafe: true, OracleResolution: 24 * time.Hour},
+
+	// Tiingo publishes registered funds' daily NAV. Rows are `raw:<TICKER>`,
+	// read only by the RWA reference surface through the curated fund
+	// bindings in internal/rwa — never a VWAP input or a pair leg, hence
+	// weight 0. OracleResolution is 24 h: one NAV per business day.
+	"tiingo": {Class: ClassOracle, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: false, BackfillSafe: true, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 }
 
 // Lookup returns metadata for a source, with a safe fallback for
@@ -328,8 +337,8 @@ func IsFXSource(source string) bool {
 // DEXes), the Soroban oracles (reflector-*, band, redstone), lending
 // (blend), routers (defindex, soroswap-router), and bridges (cctp,
 // rozo). Off-chain: CEX + FX venues, aggregators, sovereign FX
-// anchors, and Chainlink — an Ethereum-mainnet oracle read over
-// JSON-RPC, the one ClassOracle source that is NOT on Stellar.
+// anchors, Chainlink — an Ethereum-mainnet oracle read over JSON-RPC —
+// and Tiingo's fund NAVs, the two ClassOracle sources NOT on Stellar.
 //
 // The explorer's Stellar-network surfaces (the /network page, the
 // /sources directory) filter on this so reference-pricing feeds don't
@@ -353,10 +362,9 @@ func IsOnChain(source string) bool {
 	case ClassAggregator, ClassAuthoritySanity:
 		return false
 	}
-	// Chainlink is on Ethereum mainnet, read via JSON-RPC against
-	// AggregatorV3 contracts — see its registry entry. It is the lone
-	// off-chain ClassOracle, so it can't be separated by class alone.
-	if source == "chainlink" {
+	// Chainlink (Ethereum mainnet via JSON-RPC) and Tiingo (a vendor REST
+	// API) are the off-chain ClassOracle sources; class alone can't separate them.
+	if source == "chainlink" || source == "tiingo" {
 		return false
 	}
 	return true
