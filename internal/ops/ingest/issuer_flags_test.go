@@ -1,10 +1,13 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -372,5 +375,100 @@ func TestRunIssuerFlags_FallbackErrorIsFatal(t *testing.T) {
 	}
 	if len(store.persisted) != 0 {
 		t.Errorf("persisted %d batch(es) after a failed read, want 0", len(store.persisted))
+	}
+}
+
+// deadlineIssuerFlagsReader answers the first `answer` live reads, then blocks
+// every later one until its context ends and fails with the context's error,
+// as a ClickHouse query cut off by -timeout does.
+type deadlineIssuerFlagsReader struct {
+	stubIssuerFlagsReader
+	answer int
+}
+
+func (r *deadlineIssuerFlagsReader) BulkAccountAuthFlags(ctx context.Context, gs []string) (map[string]clickhouse.AccountAuthFlags, error) {
+	if len(r.liveCalls) < r.answer {
+		return r.stubIssuerFlagsReader.BulkAccountAuthFlags(ctx, gs)
+	}
+	r.liveCalls = append(r.liveCalls, append([]string(nil), gs...))
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestRunIssuerFlags_DeadlineMidReadIsAGracefulStop — the timeout usually
+// lands inside a lake read rather than between batches. That is the same
+// resumable stop: the run keeps the batches it wrote and exits cleanly.
+func TestRunIssuerFlags_DeadlineMidReadIsAGracefulStop(t *testing.T) {
+	store := &stubIssuerFlagsStore{needFlags: []string{liveIssuer, mergedIssuerA}}
+	reader := &deadlineIssuerFlagsReader{stubIssuerFlagsReader{
+		live: map[string]clickhouse.AccountAuthFlags{liveIssuer: liveReading(liveIssuerLedger, 0, "")},
+	}, 1}
+	out := runUntilDeadline(t, store, reader)
+	if got := store.allPersisted(); len(got) != 1 || got[liveIssuer].GStrkey != liveIssuer {
+		t.Errorf("persisted %v, want only the batch read before the deadline", got)
+	}
+	if !strings.Contains(out, "stopping early (queue is resumable)") {
+		t.Errorf("output does not report the early stop:\n%s", out)
+	}
+}
+
+// TestRunIssuerFlags_CancelMidReadIsFatal — only the run's own deadline is a
+// graceful stop; a cancelled context is not swallowed.
+func TestRunIssuerFlags_CancelMidReadIsFatal(t *testing.T) {
+	store := &stubIssuerFlagsStore{needFlags: []string{liveIssuer, mergedIssuerA}}
+	reader := &deadlineIssuerFlagsReader{}
+	o := runOpts()
+	o.batch = 1
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(10 * time.Millisecond); cancel() }()
+	if err := runIssuerFlags(ctx, store, reader, o); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+// runUntilDeadline runs the drain with batch 1 under a short deadline and
+// returns its output; the deadline must be a graceful stop.
+func runUntilDeadline(t *testing.T, store *stubIssuerFlagsStore, reader issuerFlagsReader) string {
+	t.Helper()
+	var out bytes.Buffer
+	o := runOpts()
+	o.batch = 1
+	o.out = &out
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := runIssuerFlags(ctx, store, reader, o); err != nil {
+		t.Fatalf("runIssuerFlags: %v — a deadline mid-read must stop the run gracefully", err)
+	}
+	return out.String()
+}
+
+// TestRunIssuerFlags_DeadlineMidRecheckCountsOnlyReadRows — the summary is
+// self-accounting, so a batch the deadline cut off must not be reported as
+// examined (it would read as still_merged without ever being read).
+func TestRunIssuerFlags_DeadlineMidRecheckCountsOnlyReadRows(t *testing.T) {
+	store := &stubIssuerFlagsStore{needRecheck: []string{mergedIssuerA, mergedIssuerB}}
+	out := runUntilDeadline(t, store, &deadlineIssuerFlagsReader{answer: 1})
+
+	want := "re-check processed 1 of 2 last-known row(s) — revived_to_live=0 still_merged=1"
+	if !strings.Contains(out, want) {
+		t.Errorf("output lacks %q:\n%s", want, out)
+	}
+}
+
+// TestRunIssuerFlags_DeadlineMidChainRecheckCountsOnlyReadRows — every
+// examined row must land in exactly one of corrected/agreed/unread, including
+// on a run the deadline cut off mid-read.
+func TestRunIssuerFlags_DeadlineMidChainRecheckCountsOnlyReadRows(t *testing.T) {
+	store := &stubIssuerFlagsStore{needChainRead: []timescale.IssuerAuthFlagsOnRecord{
+		onRecord(absentIssuer, 0, "somewhere.example", timescale.AuthFlagsSourceLive, 64100000),
+		onRecord(mergedIssuerA, 0, "stellarbrunch.com", timescale.AuthFlagsSourceLive, 50000000),
+	}}
+	out := runUntilDeadline(t, store, &deadlineIssuerFlagsReader{answer: 1})
+
+	want := "chain re-check processed 1 of 2 filled row(s) — corrected=0 agreed=0 unread=1"
+	if !strings.Contains(out, want) {
+		t.Errorf("output lacks %q:\n%s", want, out)
 	}
 }
