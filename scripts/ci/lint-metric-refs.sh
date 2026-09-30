@@ -63,7 +63,8 @@ SCRAPE_CONFIGS=(
 # Directories scanned for emitters (Go Name: fields + textfile .prom + shell).
 # configs/ansible/.../files holds the textfile-collector emitter scripts
 # (data-freshness.sh, galexie-archive-tip-lag.sh, …) that write .prom gauges.
-EMITTER_PATHS=(internal cmd scripts configs/healthchecks configs/ansible/roles/archival-node/files)
+# apply.sh is named as a file so its self-test cannot stand in for an emitter.
+EMITTER_PATHS=(internal cmd scripts configs/healthchecks configs/ansible/roles/archival-node/files configs/alertmanager/apply.sh)
 
 # ANSIBLE_TASK_PATHS holds emitters that live as INLINE `content:` blocks
 # inside task YAML rather than as checked-in .sh files — the

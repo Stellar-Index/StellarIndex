@@ -1,11 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
 
 import { API_BASE_URL } from '@/api/client';
-import { Segmented } from '@/components/ui';
+import { Button, Segmented } from '@/components/ui';
 import {
   isFrameStale,
   useLedgerFollow,
@@ -14,6 +14,8 @@ import {
 } from '@/lib/live/hooks';
 import type { components } from '@/api/types';
 import { scaleBaseUnits } from '@/lib/format';
+import { downloadText, toCsv } from '@/lib/export';
+import { trailingEnvelope } from './envelope';
 
 /** A tip tick drives the chart's live price line while fresher than this
  * (producer window ~5s; 30s of silence = wedged stream / backgrounded tab
@@ -86,6 +88,38 @@ const INTERVAL_SEC: Record<string, number> = {
 };
 const OHLC_CAP = 1000;
 
+const OHLC_CSV_COLUMNS = [
+  't',
+  'o',
+  'h',
+  'l',
+  'c',
+  'v_base',
+  'v_quote',
+  'v_base_decimals',
+  'v_quote_decimals',
+  'n',
+] as const;
+
+/** The served series as CSV, every value verbatim from /v1/ohlc. */
+export function ohlcCsv(bars: readonly OHLCBar[]): string {
+  return toCsv(OHLC_CSV_COLUMNS, bars);
+}
+
+export function ohlcExportName(
+  base: string,
+  quote: string,
+  interval: string,
+  bars: readonly OHLCBar[],
+  ext: 'csv' | 'json',
+): string {
+  // Asset ids carry ':' (code:issuer), which some filesystems reject.
+  const safe = (s: string) => s.replace(/[^A-Za-z0-9._-]+/g, '_');
+  const stamp = (t: string | undefined) => safe((t ?? '').replace(/[-:]/g, ''));
+  const span = `${stamp(bars[0]?.t)}-${stamp(bars[bars.length - 1]?.t)}`;
+  return `stellarindex-ohlc-${safe(base)}-${safe(quote)}-${interval}-${span}.${ext}`;
+}
+
 // Window → the granularities that make sense for it (bar count in [~24, cap]),
 // with a sensible default (the finest that's dense-but-performant). Per the
 // chart-data recon: the API accepts any grain for any window, so this offer set
@@ -146,6 +180,14 @@ const WINDOWS: {
   },
 ];
 
+// Trailing high/low envelope windows. Only windows longer than the candle are
+// offered: a one-candle envelope is just that candle's wicks.
+const BAND_WINDOWS = [
+  { key: '1h', sec: 3600 },
+  { key: '4h', sec: 14_400 },
+  { key: '24h', sec: 86_400 },
+];
+
 function limitFor(spanSec: number, interval: string): number {
   const isec = INTERVAL_SEC[interval] ?? 3600;
   return Math.min(OHLC_CAP, Math.ceil(spanSec / isec) + 2);
@@ -167,6 +209,7 @@ export function MarketChart({
   height = 380,
   defaultTimeframe = '7d',
   liveTip = false,
+  volatilityBand = false,
 }: {
   base: string;
   quote: string;
@@ -181,6 +224,8 @@ export function MarketChart({
    * open an SSE tip connection — turn it on for single-pair/asset pages.
    */
   liveTip?: boolean;
+  /** Offer a trailing high/low envelope (1h/4h/24h) over the candles. */
+  volatilityBand?: boolean;
 }) {
   const [winKey, setWinKey] = useState<Win>(defaultTimeframe);
   const win = WINDOWS.find((w) => w.key === winKey) ?? WINDOWS[1];
@@ -189,6 +234,17 @@ export function MarketChart({
   // to the window default (keeps the two controls consistent).
   const activeGrain = win.grains.includes(grain) ? grain : win.def;
   const limit = limitFor(win.spanSec, activeGrain);
+  const grainSec = INTERVAL_SEC[activeGrain] ?? 3600;
+  const bandOptions = volatilityBand
+    ? BAND_WINDOWS.filter((b) => b.sec > grainSec)
+    : [];
+  const [bandKey, setBandKey] = useState('off');
+  // Looked up in the module constant, not bandOptions, so the band memo below
+  // depends on a value the compiler knows is never mutated.
+  const activeBand =
+    (volatilityBand &&
+      BAND_WINDOWS.find((b) => b.key === bandKey && b.sec > grainSec)) ||
+    null;
 
   const selectWindow = (key: Win) => {
     const next = WINDOWS.find((w) => w.key === key);
@@ -200,18 +256,35 @@ export function MarketChart({
   // the forming bar advances instead of freezing at page load. Prefix key
   // matches every grain/limit for this pair.
   useLedgerFollow(['/v1/ohlc', base, quote]);
-  const query = useQuery<Bar[], Error>({
+  const query = useQuery<OHLCBar[], Error>({
     queryKey: ['/v1/ohlc', base, quote, activeGrain, limit],
     queryFn: async ({ signal }) => {
       const url = `${API_BASE_URL}/v1/ohlc?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&interval=${activeGrain}&limit=${limit}`;
       const r = await fetch(url, { signal });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const env = (await r.json()) as { data?: { intervals?: OHLCBar[] } };
-      return (env.data?.intervals ?? []).map(toChartBar);
+      return env.data?.intervals ?? [];
     },
   });
 
-  const data = query.data ?? [];
+  // Chart numbers are lossy doubles; export reads the raw strings instead.
+  const raw = query.data;
+  const data = useMemo(() => (raw ?? []).map(toChartBar), [raw]);
+  // Envelope selection runs over the served strings; only the plotted
+  // edges become doubles. Memoized: a new array would make CandleChart re-fit
+  // and reset the user's zoom on every clock tick.
+  const bandSec = activeBand?.sec;
+  const band = useMemo(
+    () =>
+      raw && bandSec
+        ? trailingEnvelope(raw, bandSec, grainSec).map((p) => ({
+            time: p.time,
+            upper: Number(p.upper),
+            lower: Number(p.lower),
+          }))
+        : null,
+    [raw, bandSec, grainSec],
+  );
   const loading = query.isLoading;
   const error = query.error ? query.error.message : null;
 
@@ -247,9 +320,57 @@ export function MarketChart({
           value={activeGrain}
           onChange={setGrain}
         />
+        {bandOptions.length > 0 && (
+          <Segmented
+            ariaLabel="Volatility band"
+            options={[
+              { label: 'No band', value: 'off' },
+              ...bandOptions.map((b) => ({
+                label: `${b.key} band`,
+                value: b.key,
+              })),
+            ]}
+            value={activeBand?.key ?? 'off'}
+            onChange={setBandKey}
+          />
+        )}
         <span className="text-ink-faint ml-auto font-mono tracking-wider uppercase">
           {baseLabel} / {quoteLabel}
         </span>
+        {!error && raw && raw.length > 0 && (
+          <div
+            role="group"
+            aria-label="Download chart data"
+            className="flex items-center gap-1"
+          >
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                downloadText(
+                  ohlcExportName(base, quote, activeGrain, raw, 'csv'),
+                  'text/csv;charset=utf-8',
+                  ohlcCsv(raw),
+                )
+              }
+            >
+              CSV
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                downloadText(
+                  ohlcExportName(base, quote, activeGrain, raw, 'json'),
+                  'application/json',
+                  JSON.stringify(raw, null, 2),
+                )
+              }
+            >
+              JSON
+            </Button>
+          </div>
+        )}
       </div>
       {loading && <ChartMessage height={height}>Loading…</ChartMessage>}
       {error && !loading && (
@@ -270,7 +391,8 @@ export function MarketChart({
             data={data}
             height={height}
             livePrice={livePrice}
-            ariaLabel={`${baseLabel}/${quoteLabel} OHLC candlestick chart with volume, ${activeGrain} candles`}
+            band={band}
+            ariaLabel={`${baseLabel}/${quoteLabel} OHLC candlestick chart with volume, ${activeGrain} candles${activeBand ? `, ${activeBand.key} high/low band` : ''}`}
           />
           {coverageNote && (
             <p className="text-ink-faint font-mono text-[11px]">

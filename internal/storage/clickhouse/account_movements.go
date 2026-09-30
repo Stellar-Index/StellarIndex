@@ -30,9 +30,7 @@ const (
 // classicmovements.Movement's fields rather than importing that type:
 // internal/storage/ sits BELOW internal/sources/ in the repo's import
 // direction (scripts/ci/lint-imports.sh's L/storage-below-compute
-// rule forbids new storage->sources edges), the same reason
-// timescale.ClassicMovementRow (the table this replaces, ADR-0048)
-// doesn't import classicmovements either. The caller
+// rule forbids new storage->sources edges). The caller
 // (stellarindex-ops classic-movements-backfill) converts.
 type AccountMovement struct {
 	MovementKind    string
@@ -52,9 +50,8 @@ type AccountMovement struct {
 	FromAddress string
 	ToAddress   string
 
-	// Attributes is the kind-specific remainder, written straight to
-	// migration 0105's `attributes` shape (as a JSON string here) —
-	// same convention as timescale.ClassicMovementRow.Attributes.
+	// Attributes is the kind-specific remainder in migration 0105's
+	// (since-dropped, 0113) `attributes` shape, as a JSON string here.
 	Attributes map[string]any
 }
 
@@ -370,9 +367,8 @@ func sortAccountMovementRowsForInsert(rows []AccountMovementRow) {
 // per-writer-file convention (participant_backfill.go, sink.go each
 // define their own).
 func openAccountMovementsWrite(ctx context.Context, addr string) (driver.Conn, error) {
-	// Ops-batch identity from the environment (2026-08-28 r1 incident;
-	// see ops_auth.go) — CH `default` user when unset.
-	auth, err := opsAuth()
+	// Identity from the environment; see ops_auth.go.
+	auth, err := chAuth()
 	if err != nil {
 		return nil, err
 	}

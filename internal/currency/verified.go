@@ -265,6 +265,11 @@ func validateRawEntry(i int, rc rawCurrency) error {
 		// other class is a browseable Stellar asset and MUST carry its
 		// Stellar network entry.
 		return fmt.Errorf("currency: entry %d (%s): a Stellar network entry is required (non-fiat, non-reference_only)", i, rc.Ticker)
+	case len(rc.KnownAnchors) > 0 && (rc.Class != string(ClassFiat) || len(rc.Issuance) > 0):
+		// Only FiatCodeAnchor reads known_anchors; anywhere else it would look
+		// like an impersonation allowlist while StellarCollision ignores it.
+		return fmt.Errorf("currency: entry %d (%s): known_anchors is only valid on a fiat entry with no networks; "+
+			"vet a genuine Stellar issuance as a `network: stellar` entry instead", i, rc.Ticker)
 	}
 	return nil
 }

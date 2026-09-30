@@ -71,6 +71,10 @@ if [[ "$profile" == "native" ]]; then
   if [[ "$node_major" == "22" ]]; then ok "node-version" "major 22"; else warn "node-version" "CI uses major 22; found ${node_major:-unknown}"; fi
   pnpm_version="$(pnpm --version 2>/dev/null || true)"
   if [[ "$pnpm_version" == "10.33.0" ]]; then ok "pnpm-version" "$pnpm_version"; else warn "pnpm-version" "want 10.33.0; found ${pnpm_version:-unknown}"; fi
+  # Newer gitleaks releases add rules, so a local run can report findings CI's pinned binary does not.
+  gitleaks_pin="$(sed -nE 's/^  GITLEAKS_VERSION: *v?([0-9][0-9.]*).*/\1/p' .github/workflows/ci.yml)"
+  gitleaks_version="$(gitleaks version 2>/dev/null | sed -E 's/^v//' || true)"
+  if [[ -n "$gitleaks_pin" && "$gitleaks_version" == "$gitleaks_pin" ]]; then ok "gitleaks-version" "$gitleaks_version"; else warn "gitleaks-version" "CI pins ${gitleaks_pin:-unknown}; found ${gitleaks_version:-unknown}"; fi
 fi
 
 if [[ "$profile" == "container" || "$profile" == "full" ]]; then

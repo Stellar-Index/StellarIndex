@@ -79,3 +79,56 @@ func TestOpsAuthFrom(t *testing.T) {
 		}
 	})
 }
+
+// The live-daemon pair is consulted only when the ops pair is absent, and
+// every pair unset stays CH `default` so a binary can ship before the CH
+// user and env file exist.
+func TestChAuthFrom(t *testing.T) {
+	env := func(m map[string]string) func(string) string {
+		return func(k string) string { return m[k] }
+	}
+	live := map[string]string{LiveUserEnv: "live_daemon", LivePasswordEnv: "l1ve"}
+	both := map[string]string{LiveUserEnv: "live_daemon", LivePasswordEnv: "l1ve", OpsUserEnv: "ops_batch", OpsPasswordEnv: "0ps"}
+	cases := []struct {
+		name string
+		env  map[string]string
+		want clickhouse.Auth
+	}{
+		{"nothing set is the CH default user", nil, clickhouse.Auth{Database: "stellar"}},
+		{"live pair alone is live_daemon", live, clickhouse.Auth{Database: "stellar", Username: "live_daemon", Password: "l1ve"}},
+		{"ops pair wins over the live pair", both, clickhouse.Auth{Database: "stellar", Username: "ops_batch", Password: "0ps"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := chAuthFrom(env(tc.env))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("chAuthFrom = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("live password without user is refused, naming both vars", func(t *testing.T) {
+		_, err := chAuthFrom(env(map[string]string{LivePasswordEnv: "l1ve"}))
+		if err == nil {
+			t.Fatal("expected an error for a live password without a username")
+		}
+		for _, want := range []string{LiveUserEnv, LivePasswordEnv} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not name %s", err, want)
+			}
+		}
+		if strings.Contains(err.Error(), "l1ve") {
+			t.Errorf("error %q leaks the password", err)
+		}
+	})
+
+	t.Run("live env var names are the documented ones", func(t *testing.T) {
+		// stellarindex.env.j2 spells these out by hand.
+		if LiveUserEnv != "STELLARINDEX_CLICKHOUSE_LIVE_USER" || LivePasswordEnv != "STELLARINDEX_CLICKHOUSE_LIVE_PASSWORD" {
+			t.Fatalf("env var names drifted: %q / %q", LiveUserEnv, LivePasswordEnv)
+		}
+	})
+}

@@ -98,6 +98,28 @@ run '{"workflow_runs":[
 ]}' 2 216
 expect 'ansible-drift-shaped chronic-red fixture → RED' 1 'RED —'
 
+# ── Cancelled-dominated windows: rapid merges cancel most runs on main,
+#    so the signal can sit past the first API page. ─────────────────
+
+# cancelled <n> — n comma-joined cancelled runs (no health signal).
+cancelled() { jq -nr --argjson n "$1" '[range(0; $n) | {conclusion: "cancelled", created_at: "2026-01-01T00:00:00Z", html_url: "c", head_sha: "ccccccc"}] | map(tojson) | join(",")'; }
+# one <conclusion> <hours-ago> <url>
+one() { printf '{"conclusion":"%s","created_at":"%s","html_url":"%s","head_sha":"aaaaaaa"}' "$1" "$(now_iso "$2")" "$3"; }
+runs_json() { local IFS=,; printf '{"workflow_runs":[%s]}' "$*"; }
+
+run "$(runs_json "$(one success 1 s1)" "$(cancelled 28)" "$(one failure 30 f1)")" 3 6
+expect '28 cancelled between a newest green and an old red → healthy' 0 'HEALTHY'
+
+run "$(runs_json "$(one failure 1 f1)" "$(one failure 2 f2)" "$(cancelled 28)")" 3 6
+expect '2 recent reds then 28 cancelled, FAIL_RUNS=3 → not faulting yet' 0 'not faulting yet'
+
+run "$(runs_json "$(cancelled 130)" "$(one failure 1 f1)" "$(one failure 2 f2)" "$(one failure 3 f3)")" 3 6
+expect 'red streak behind a full page of cancelled runs → RED' 1 'RED —'
+
+run "$(runs_json "$(cancelled 150)" "$(one success 1 s1)" "$(one failure 30 f1)")" 3 6
+expect 'green run behind a full page of cancelled runs → healthy' 0 'HEALTHY'
+expect 'report counts the dropped cancelled runs' 0 '150 dropped as cancelled'
+
 echo
 echo "check-main-ci-health-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ] || exit 1

@@ -18,14 +18,13 @@ var ErrNoTrades = errors.New("aggregate: no trades in window")
 // Definition: VWAP = Σ(QuoteAmount_i) / Σ(BaseAmount_i). Trades
 // whose base OR quote is non-positive are skipped — they can't
 // contribute to a meaningful weighted price. canonical.Trade.Validate
-// already enforces both > 0, but VWAP is defensive because callers
-// occasionally construct Trade values bypassing Validate (tests,
-// future aggregator rollups).
+// admits one zero leg (a stored SDEX rounding fill), so this skip is
+// load-bearing, not merely defensive.
 //
 // Returns [ErrNoTrades] when the sum of base volumes is zero (either
 // an empty input or every trade skipped). The returned *big.Rat is
-// always strictly positive under the canonical.Trade invariants
-// (base > 0, quote > 0).
+// always strictly positive: only priceable trades (base > 0 AND
+// quote > 0) contribute.
 func VWAP(trades []canonical.Trade) (*big.Rat, error) {
 	if len(trades) == 0 {
 		return nil, ErrNoTrades

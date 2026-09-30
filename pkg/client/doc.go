@@ -81,16 +81,17 @@
 //
 // # Coverage
 //
-// The SDK covers the pricing/read surface with ~36 typed methods:
+// The SDK covers the pricing/read surface with 40-plus typed methods:
 // pricing (Price, PriceAt, PriceChanges, PriceTip, PriceBatch, Chart, History,
-// HistorySinceInception, OHLC, VWAP, TWAP, Observations), market
+// HistorySinceInception, OHLC, OHLCSeries, VWAP, TWAP, Observations), market
 // data (Markets, Pair, Pools, LendingPools), the asset catalogue
 // (Assets, Asset, AssetMetadata, Issuers, Issuer, SACWrappers),
-// aggregate snapshots (NetworkStats, Sources, Methodology,
+// real-world assets (RWAAssets, RWAHistory, RWAPremiumHistory),
+// aggregate snapshots (NetworkStats, Sources, Aggregators, Methodology,
 // ChangeSummary), incidents + status surfaces (Incidents, Status,
 // Cursors, Healthz, Readyz, Version), and account/auth (Me, Usage,
-// Keys, CreateKey, RevokeKey). Browse the godoc for the full list
-// with runnable examples on each.
+// Keys, CreateKey, RevokeKey, AdminCreateKey). Browse the godoc for
+// runnable examples on each.
 //
 // NOT every server endpoint has a method. The exclusions are
 // deliberate, each registered with its reason in
