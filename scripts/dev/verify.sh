@@ -177,6 +177,8 @@ defer_check() {
 # The self-test runs first (the gate is only as trustworthy as its fixtures).
 echo "=== verify↔CI parity self-test ===" && ./scripts/ci/check-verify-parity-test.sh
 echo "=== verify.sh ↔ CI import-checks parity ===" && ./scripts/ci/check-verify-parity.sh
+echo "=== self-test runners self-test ===" && ./scripts/ci/check-selftest-runners-test.sh
+echo "=== every scripts/ci self-test has a runner ===" && ./scripts/ci/check-selftest-runners.sh
 echo "=== CI meta-gate coverage ===" && ./scripts/ci/ci-meta-gate-coverage-test.sh
 echo "=== deploy checkout ref ===" && ./scripts/ci/deploy-checkout-ref-test.sh
 echo "=== deploy migration gate coverage ===" && ./scripts/ci/deploy-migration-gate-coverage-test.sh
