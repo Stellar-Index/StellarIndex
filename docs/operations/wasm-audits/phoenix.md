@@ -1,7 +1,7 @@
 ---
 title: Phoenix WASM-history audit
 last_verified: 2026-09-30
-status: ratified — v2 per-instance walk complete; 2026-07-07 Map-schema addendum; 2026-09-30 lake lineage (14th pool, 3 unaudited pool hashes)
+status: ratified — v2 per-instance walk complete; 2026-07-07 Map-schema addendum; 2026-09-30 lake lineage (14th pool; all 64 hashes string-checked)
 source: phoenix
 backfill_safe: true
 ---
@@ -659,13 +659,54 @@ What this changes:
    deploy precondition from "What shipped" above; the dry run walks the
    Postgres landing zone, whose retained window holds both recent
    creates as `topic_0_sym = 'create'`.
-2. `d54d01e0…` (and `6fe099b6…`, `f74d87d7…`) need the same string
+2. `d54d01e0…` (and `6fe099b6…`, `f74d87d7…`) needed the same string
    check as the two audited pool hashes before phoenix's next
-   `projected-rebuild -write` covers their ledgers.
+   `projected-rebuild -write` covers their ledgers — done in the next
+   section, all three pass.
 3. The durable form of item 1 in "Still owed" is now a lake query, not
    an RPC fetch: a registry contract whose newest
    `contract_instance_changes.wasm_hash` is not in its audit log is
    drift, and that check can run on a timer.
+
+### Per-hash string check — all 64 hashes, 2026-09-30
+
+The bytes for every hash above (and every stake hash) came from the
+lake too: `stellar.ledger_entries_current` keeps every `contract_code`
+entry ever uploaded (the same query `GET /v1/contracts/{id}/wasm`
+serves), so `SELECT entry_xdr … WHERE entry_type = 'contract_code' AND
+key_xdr IN (<LedgerKey CONTRACT_CODE + hash, base64>)` returned all 64
+in one call, 2.2 MB. Each blob was byte-searched for the literals the
+decoder watches (`internal/sources/phoenix/events.go`), per role:
+
+| role | hashes | all literals present | exceptions |
+| --- | --- | --- | --- |
+| pool (String schema) | 15 | 12, incl. `18e40185…`, `167ab414…`, `13b15865…` and the unread `d54d01e0…` (CCPPPTDW…) | `ac63334c…` (51,572,026 – 53,134,1xx, every first-era pool) lacks `actual received amount` — the known 7-of-8 era; `df98000b…` (23 KB) and `e5563daf…` (17.7 KB) lack every swap and liquidity literal — retirement stubs (CAZ6W4WH…) |
+| pool (Map schema) | 2 | 2 — `f74d87d7…`, `6fe099b6…` carry all 8 underscore keys + `provide_liquidity`/`withdraw_liquidity` | — |
+| stake | 34 | 32 — `bond`, `unbond`, `user`, `token`, `amount`, `withdraw_rewards`, `distribute_rewards`, `reward_token`, `asset` | `753c2154…` is **364 bytes** (CABWEFVX…, CAIR3UPW…, CB2S5X4H… since 63,770,079 – 63,770,103; no event since) — tombstone; `78bee632…` (6.7 KB, CBBUVHCE…'s only hash) has `bond` and nothing else — see below |
+| factory | 8 | 8 — `create` + `liquidity_pool` in every build | `create_liquidity_pool_v2`/`remove_pool` exist only in `2bbb91c5…` and `721badb8…`; `update_config`/`Updated Config` from `c54ba54b…` on; `update_whitelisted_accounts` gone from `c54ba54b…` on — all three as the 2026-09-19 disassembly said |
+| multihop | 5 | n/a (no expected topics) | — |
+
+Consequences:
+
+- Every pool hash that has ever carried a swap decodes with the current
+  decoder, including the three that were unread this morning. The
+  BackfillSafe trail now covers `CBENABXP…` and `CCPPPTDW…` for their
+  whole lives.
+- **`CBBUVHCE…` is not a Phoenix stake contract.** It entered
+  `MainnetStakeContracts` from the 2026-05-01 lake-activity snapshot
+  ("bond ×10"), but its one and only WASM has none of the stake field
+  names and its lake events are `("bond","created"/"live"/"settconf"/
+  "settled"/"expired")` (10 events, 61,356,019 – 61,375,797) — a bond
+  instrument, not `("bond", user|token|amount)`. It fail-closes today
+  (0 served `phoenix_stake_events` rows for it, `actionUnknown`), so
+  the data is right, but the trust root is wrong: remove it from the
+  curated set and from `protocol_contracts` (the 2026-09-30 seed
+  upserted it from the curated list).
+- Three stakes are tombstoned at 63,770,079 – 63,770,103 and one pool +
+  stake at 63,767,534/536. They stay in the registry — history is
+  history — but a re-audit that finds a new hash on them should expect
+  a stub, not a schema.
+
 
 ## Decision
 
