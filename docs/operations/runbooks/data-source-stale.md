@@ -108,6 +108,9 @@ crashed timer, or a connector outage.
   `scripts/ci/data-freshness-test.sh` now pins the two together, so changing
   either without the other fails CI. A feed genuinely dead on a Tuesday still
   trips this within the day.
+- **FX `frankfurter-historical`** is not watched. It is the provenance label the
+  one-off `scripts/ops/fx-history-backfill` writes; its newest row never
+  advances, so the watchdog excludes it by exact name.
 - **`domain="supply"` measures the WHOLE table's `max(time)`**, so it proves
   only that SOME asset is publishing. On 2026-07-28 it read green while 37 of 48
   watched assets had frozen. The per-asset shape it cannot express is the

@@ -143,6 +143,48 @@ func TestScanLedgerEntryChange_CapturesWatchedUpgrade(t *testing.T) {
 	}
 }
 
+// TestScanLedgerEntryChange_RecordsInstanceRemoval — deleting a watched
+// contract's instance entry closes its hash range; unwatched contracts and
+// non-instance keys are ignored.
+func TestScanLedgerEntryChange_RecordsInstanceRemoval(t *testing.T) {
+	var watched, other sdkxdr.Hash
+	watched[0] = 0xAA
+	other[0] = 0xBB
+
+	watch := map[sdkxdr.Hash]string{watched: "CDLZ_watched"}
+	state := map[sdkxdr.Hash]*wasmContractState{}
+
+	upgrade := makeUpdateChange(t, watched, [32]byte{0xDE, 0xAD})
+	scanLedgerEntryChange(&upgrade, watch, state, 100, nil)
+
+	for _, c := range []sdkxdr.LedgerEntryChange{
+		makeRemovedChange(t, other, sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvLedgerKeyContractInstance}),
+		makeRemovedChange(t, watched, sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvVoid}),
+	} {
+		scanLedgerEntryChange(&c, watch, state, 150, nil)
+	}
+	if _, ok := state[other]; ok {
+		t.Errorf("state populated for unwatched contract removal")
+	}
+	if n := len(state[watched].ranges); n != 1 {
+		t.Fatalf("non-instance removal changed ranges: len = %d, want 1", n)
+	}
+
+	removal := makeRemovedChange(t, watched, sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvLedgerKeyContractInstance})
+	scanLedgerEntryChange(&removal, watch, state, 200, nil)
+
+	got := state[watched].ranges
+	if len(got) != 2 {
+		t.Fatalf("ranges len = %d, want 2: %+v", len(got), got)
+	}
+	if got[0].ToLedger != 199 {
+		t.Errorf("pre-removal range to = %d, want 199", got[0].ToLedger)
+	}
+	if got[1].WasmHash != instanceRemovedMarker || got[1].FromLedger != 200 {
+		t.Errorf("removal range = %+v, want {%s from 200}", got[1], instanceRemovedMarker)
+	}
+}
+
 // TestScanLCMForWasmChanges_V2LedgerCloseMeta is the P23 regression:
 // pubnet emits LedgerCloseMetaV2 (TransactionMeta V4) after the P23
 // boundary, and the scanner must not silently skip it the way a
@@ -237,6 +279,27 @@ func makeUpdateChange(t *testing.T, contract sdkxdr.Hash, wasmHash [32]byte) sdk
 	return sdkxdr.LedgerEntryChange{
 		Type:    sdkxdr.LedgerEntryChangeTypeLedgerEntryUpdated,
 		Updated: entry,
+	}
+}
+
+// makeRemovedChange constructs a synthetic Removed LedgerEntryChange for
+// the given contract's ContractData entry under key.
+func makeRemovedChange(t *testing.T, contract sdkxdr.Hash, key sdkxdr.ScVal) sdkxdr.LedgerEntryChange {
+	t.Helper()
+	contractID := sdkxdr.ContractId(contract)
+	return sdkxdr.LedgerEntryChange{
+		Type: sdkxdr.LedgerEntryChangeTypeLedgerEntryRemoved,
+		Removed: &sdkxdr.LedgerKey{
+			Type: sdkxdr.LedgerEntryTypeContractData,
+			ContractData: &sdkxdr.LedgerKeyContractData{
+				Contract: sdkxdr.ScAddress{
+					Type:       sdkxdr.ScAddressTypeScAddressTypeContract,
+					ContractId: &contractID,
+				},
+				Key:        key,
+				Durability: sdkxdr.ContractDataDurabilityPersistent,
+			},
+		},
 	}
 }
 

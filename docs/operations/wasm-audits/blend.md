@@ -271,10 +271,11 @@ proceeds identically to phoenix / aquarius.
 For each pool address from Phase 1:
 
 ```sh
+mkdir -p /var/log/wasm-audit/blend-checkpoint
 stellarindex-ops wasm-history \
   -config /etc/stellarindex.toml \
   -from 51499546 -to <r1-tip> -parallel 8 \
-  -checkpoint-dir /var/log/wasm-history-blend-pools \
+  -checkpoint-dir /var/log/wasm-audit/blend-checkpoint \
   -contracts <pool-1>,<pool-2>,...
 ```
 

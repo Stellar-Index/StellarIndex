@@ -213,6 +213,19 @@ func parseSource(name, raw string) (Incident, error) {
 		return Incident{}, fmt.Errorf("status: %q is not one of %s/%s/%s/%s",
 			fm.Status, StatusInvestigating, StatusIdentified, StatusMonitoring, StatusResolved)
 	}
+	// The webhook contract requires a non-empty array; a blank key would
+	// otherwise fan out as null or [] to every subscriber.
+	components := make([]string, 0, len(fm.AffectedComponents))
+	for _, c := range fm.AffectedComponents {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			return Incident{}, fmt.Errorf("affected_components: blank entry")
+		}
+		components = append(components, c)
+	}
+	if len(components) == 0 {
+		return Incident{}, fmt.Errorf("affected_components: at least one component is required")
+	}
 
 	slug := strings.TrimSuffix(name, ".md")
 	return Incident{
@@ -222,7 +235,7 @@ func parseSource(name, raw string) (Incident, error) {
 		Status:             status,
 		StartedAt:          startedAt,
 		ResolvedAt:         resolvedAt,
-		AffectedComponents: fm.AffectedComponents,
+		AffectedComponents: components,
 		PostmortemRef:      strings.TrimSpace(fm.Postmortem),
 		BodyMarkdown:       strings.TrimSpace(body),
 	}, nil
