@@ -14,6 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
@@ -654,6 +655,7 @@ var packageGenesis = map[string]uint32{
 	"sorocredit":     sorocredit.GenesisLedger,
 	"sushiswap_v3":   sushiswap_v3.FactoryGenesisLedger,
 	"upshift":        upshift.GenesisLedger,
+	"defindex":       defindex.GenesisLedger,
 }
 
 // TestCatalogueGenesisLocksStepWithGapDetectorTargets pins every
