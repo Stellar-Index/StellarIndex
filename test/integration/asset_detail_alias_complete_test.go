@@ -17,7 +17,8 @@ import (
 // crypto:XLM / SAC split), not the single `native` spelling the caller
 // passes after normalizeXLMAliases collapses XLM.
 //
-// Fixture (all in one closed 1-minute bucket ~2h back):
+// Fixture (the 24h readers see one closed 1-minute bucket ~2h back; the
+// ATH additionally reads a prior day of the same two pairs):
 //   - native/USDC   (soroswap, USDC recognised as a USD peg) → on-chain
 //     SDEX leg, base_asset='native',      usd_volume = 50
 //   - crypto:XLM/USD (binance, fiat:USD)                     → CEX leg,
@@ -73,6 +74,17 @@ func TestAssetDetail_AliasCompleteVolumeAndCount(t *testing.T) {
 		mkIntegrationTrade("soroswap", 1, ts, nativeUSDC, 1_000_000_000, 500_000_000),
 		// crypto:XLM/fiat:USD (binance CEX): 100 XLM base, 30 USD quote.
 		mkIntegrationTrade("binance", 2, ts, cexXLMUSD, 100_000_000, 300_000_000),
+	}
+	// A prior day on each leg with enough trades and dollar volume to clear
+	// the ATH substance floor; outside every 24h reader's window.
+	prior := ts.Add(-72 * time.Hour)
+	for i := range 3 {
+		trades = append(trades,
+			// native/USDC: 100 XLM for 50 USDC → day-VWAP 0.5, $150 over 3 trades.
+			mkIntegrationTrade("soroswap", 10+i, prior, nativeUSDC, 1_000_000_000, 500_000_000),
+			// crypto:XLM/fiat:USD: 20 XLM for 60 USD → day-VWAP 3.0, $180 over 3 trades.
+			mkIntegrationTrade("binance", 10+i, prior, cexXLMUSD, 2_000_000_000, 6_000_000_000),
+		)
 	}
 	for _, tr := range trades {
 		if err := store.InsertTrade(ctx, tr); err != nil {
@@ -182,8 +194,8 @@ func TestAssetDetail_AliasCompleteVolumeAndCount(t *testing.T) {
 		return store.GetAssetPriceHistory7d(ctx, native.String())
 	})
 
-	// ATH reads prices_1d as MAX(day-VWAP) across ALL forms. The crypto:XLM
-	// (CEX) leg's day-VWAP is 3.0 (30 USD / 10 XLM) and the native/USDC leg
+	// ATH reads prices_1d as MAX(day-VWAP) across ALL forms. On the prior
+	// day the crypto:XLM (CEX) leg's day-VWAP is 3.0 and the native/USDC leg
 	// is 0.5; the alias-complete high is therefore 3.0. Pre-fix (base =
 	// 'native' only) would report 0.5 — omitting the CEX high entirely.
 	ath, err := store.GetAssetATH(ctx, native.String())
@@ -230,4 +242,122 @@ func scanVolSum(t *testing.T, ctx context.Context, store *timescale.Store, forms
 		t.Fatalf("scanVolSum(%v): %v", forms, err)
 	}
 	return mustFloat(t, out)
+}
+
+// TestAssetATH_SubstanceFloor proves a USD day-bucket only sets an ATH when
+// its pair cleared the per-day volume and trade-count floor: a lone print at
+// an absurd price, or a handful of dust prints, must not become the high.
+func TestAssetATH_SubstanceFloor(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const usdcIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	spec, err := timescale.NewUSDVolumeQuoteSpec([]string{"USDC-" + usdcIssuer}, nil)
+	if err != nil {
+		t.Fatalf("spec: %v", err)
+	}
+	store.SetUSDVolumeQuoteSpec(spec)
+
+	usdc, err := c.NewClassicAsset("USDC", usdcIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	liquid, err := c.NewClassicAsset("FOO", usdcIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	thin, err := c.NewClassicAsset("BAR", usdcIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	liquidUSDC, _ := c.NewPair(liquid, usdc)
+	thinUSDC, _ := c.NewPair(thin, usdc)
+
+	day := time.Now().UTC().Truncate(24 * time.Hour).Add(-5 * 24 * time.Hour).Add(time.Hour)
+	var trades []c.Trade
+	nonce := 0
+	add := func(ts time.Time, pair c.Pair, base, quote int64) {
+		nonce++
+		trades = append(trades, mkIntegrationTrade("soroswap", nonce, ts, pair, base, quote))
+	}
+	// Normal day: 3 trades of 50 FOO for 50 USDC → VWAP 1.0, $150.
+	for range 3 {
+		add(day, liquidUSDC, 500_000_000, 500_000_000)
+	}
+	// One trade at $5,000,000/FOO carrying $5M of volume: clears the volume
+	// floor alone, fails the trade-count floor.
+	add(day.Add(24*time.Hour), liquidUSDC, 10_000_000, 50_000_000_000_000)
+	// Three dust prints at $1,000/FOO worth $0.10 each: fails the volume floor.
+	for range 3 {
+		add(day.Add(48*time.Hour), liquidUSDC, 1_000, 1_000_000)
+	}
+	// The thin asset only ever trades dust.
+	for range 3 {
+		add(day, thinUSDC, 1_000, 1_000_000)
+	}
+	for _, tr := range trades {
+		if err := store.InsertTrade(ctx, tr); err != nil {
+			t.Fatalf("InsertTrade: %v", err)
+		}
+	}
+	for _, v := range []string{"prices_1m", "prices_1d"} {
+		if _, err := store.DB().ExecContext(ctx,
+			`CALL refresh_continuous_aggregate('`+v+`', NULL, NULL)`); err != nil {
+			t.Fatalf("refresh %s: %v", v, err)
+		}
+	}
+
+	// Fixture sanity: the rejected days exist in prices_1d with a higher VWAP,
+	// otherwise the floor assertions below would be vacuous.
+	var above int
+	if err := store.DB().QueryRowContext(ctx,
+		`SELECT count(*) FROM prices_1d WHERE base_asset = ANY($1) AND vwap > 1`,
+		[]string{liquid.String(), thin.String()}).Scan(&above); err != nil {
+		t.Fatalf("fixture sanity: %v", err)
+	}
+	if above != 3 {
+		t.Fatalf("fixture sanity: %d prices_1d rows priced above $1, want 3", above)
+	}
+
+	ath, err := store.GetAssetATH(ctx, liquid.String())
+	if err != nil {
+		t.Fatalf("GetAssetATH(FOO): %v", err)
+	}
+	if ath == nil {
+		t.Fatal("GetAssetATH(FOO) = nil, want the normal day's VWAP")
+	}
+	if v := mustFloat(t, ath.USD); v < 0.99 || v > 1.01 {
+		t.Errorf("GetAssetATH(FOO).USD = %s, want ~1.0 (the only day above the substance floor)", ath.USD)
+	}
+	if want := day.Truncate(24 * time.Hour).Format("2006-01-02T15:04:05Z"); ath.At != want {
+		t.Errorf("GetAssetATH(FOO).At = %s, want %s", ath.At, want)
+	}
+
+	athThin, err := store.GetAssetATH(ctx, thin.String())
+	if err != nil {
+		t.Fatalf("GetAssetATH(BAR): %v", err)
+	}
+	if athThin != nil {
+		t.Errorf("GetAssetATH(BAR) = %+v, want nil (only dust days)", *athThin)
+	}
+
+	batch, err := store.GetAssetsATHBatch(ctx, []string{liquid.String(), thin.String()})
+	if err != nil {
+		t.Fatalf("GetAssetsATHBatch: %v", err)
+	}
+	if got, ok := batch[liquid.String()]; !ok || mustFloat(t, got.USD) < 0.99 || mustFloat(t, got.USD) > 1.01 {
+		t.Errorf("GetAssetsATHBatch[FOO] = %+v (present=%v), want ~1.0", got, ok)
+	}
+	if got, ok := batch[thin.String()]; ok {
+		t.Errorf("GetAssetsATHBatch[BAR] = %+v, want absent (only dust days)", got)
+	}
 }
