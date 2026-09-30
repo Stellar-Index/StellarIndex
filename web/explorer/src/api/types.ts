@@ -4581,10 +4581,8 @@ export interface paths {
          *     multi-billion-row lake made the directory ~10× slower. Fetch the full
          *     decoded op from `/v1/ledgers/{seq}/operations` or `/v1/tx/{hash}`.
          *
-         *     **Deprecated:** `?ledger=<seq>` is an alias of
-         *     `GET /v1/ledgers/{seq}/operations`, served unchanged until a breaking
-         *     release removes it. A query parameter must not change a surface's
-         *     consistency contract (ADR-0018).
+         *     A `ledger` query parameter is refused with 400: one ledger's
+         *     operations are `GET /v1/ledgers/{seq}/operations` (ADR-0018).
          */
         get: operations["listOperations"];
         put?: never;
@@ -22891,14 +22889,9 @@ export interface operations {
     listOperations: {
         parameters: {
             query?: {
-                /**
-                 * @deprecated
-                 * @description Deprecated alias of GET /v1/ledgers/{seq}/operations. Omit for the network-wide recent directory.
-                 */
-                ledger?: number;
-                /** @description Opaque keyset cursor (directory mode only). */
+                /** @description Opaque keyset cursor for the next older page. */
                 cursor?: string;
-                /** @description Page size. Directory: default 50, cap 200 (400 above); deprecated `?ledger=` alias: default 500, cap 2000. */
+                /** @description Page size: default 50, cap 200 (400 above). */
                 limit?: number;
             };
             header?: never;
@@ -22907,7 +22900,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Decoded operations (ledger-scoped or the recent directory). */
+            /** @description The recent-operations directory page. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -22916,22 +22909,8 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
-                     *         "ledger": 63316166,
+                     *         "ledger": 0,
                      *         "operations": [
-                     *           {
-                     *             "ledger": 63316166,
-                     *             "close_time": "2026-07-03T22:37:01Z",
-                     *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
-                     *             "tx_index": 0,
-                     *             "op_index": 0,
-                     *             "type": "payment",
-                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
-                     *             "fields": {
-                     *               "amount": "26000000000000",
-                     *               "asset": "XLM26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
-                     *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
-                     *             }
-                     *           },
                      *           {
                      *             "ledger": 63316166,
                      *             "close_time": "2026-07-03T22:37:01Z",
@@ -22939,14 +22918,19 @@ export interface operations {
                      *             "tx_index": 0,
                      *             "op_index": 1,
                      *             "type": "payment",
-                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
-                     *             "fields": {
-                     *               "amount": "2600000000000",
-                     *               "asset": "XRP26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
-                     *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
-                     *             }
+                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP"
+                     *           },
+                     *           {
+                     *             "ledger": 63316166,
+                     *             "close_time": "2026-07-03T22:37:01Z",
+                     *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
+                     *             "tx_index": 0,
+                     *             "op_index": 0,
+                     *             "type": "payment",
+                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP"
                      *           }
-                     *         ]
+                     *         ],
+                     *         "next_cursor": "63316166.0.0"
                      *       },
                      *       "as_of": "2026-07-03T22:40:10.560512468Z",
                      *       "flags": {
@@ -22960,12 +22944,12 @@ export interface operations {
                      */
                     "application/json": {
                         data?: {
-                            /** @description The ledger (deprecated ?ledger= alias); 0 for the directory. */
+                            /** @description Always 0: the directory spans ledgers. */
                             ledger?: number;
                             operations?: components["schemas"]["Operation"][];
-                            /** @description Directory mode: opaque cursor for the next older page; absent on the last page. */
+                            /** @description Opaque cursor for the next older page; absent on the last page. */
                             next_cursor?: string;
-                            /** @description Directory mode, first page only: per-op-type counts over the trailing ~24h. */
+                            /** @description First page only: per-op-type counts over the trailing ~24h. */
                             op_type_stats?: {
                                 type?: string;
                                 /** Format: int64 */
@@ -22979,10 +22963,6 @@ export interface operations {
                              *     transaction outcome.
                              */
                             coverage_note?: string;
-                            /** @description Ledger-scoped mode only: the ledger's exact operation count from its header. Absent in directory mode, which pages instead. */
-                            total?: number;
-                            /** @description Ledger-scoped mode only: true when total exceeds len(operations) — the page was cut at ?limit= with no cursor to continue. Absent in directory mode. */
-                            truncated?: boolean;
                         };
                     };
                 };
