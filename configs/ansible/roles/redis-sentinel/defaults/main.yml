@@ -56,7 +56,8 @@ redis_acl_lockdown: false
 redis_maxmemory: "4gb"
 redis_maxmemory_policy: volatile-lru
 
-# Persistence (ha-plan §3.4: AOF every-second + RDB nightly).
+# Persistence: AOF every-second + RDB snapshots per redis_save_rules.
+# Both stay local to redis_data_dir; nothing copies them off-host.
 redis_appendonly: "yes"
 redis_aof_appendfsync: everysec
 redis_save_rules:
