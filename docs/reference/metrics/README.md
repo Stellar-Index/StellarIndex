@@ -90,7 +90,7 @@ goroutine in the aggregator binary
 disambiguates the sources that share one hypertable (e.g. the
 trades-table sources `sdex` / `soroswap` / `phoenix` / `comet` /
 `aquarius`, or the `oracle_updates` sources `band` / `redstone` /
-`reflector-*`). 26 targets are registered today
+`reflector-*`). The registered set is `DefaultGapDetectorTargets`
 (`internal/storage/timescale/per_source_gaps.go`), spanning the
 Soroban projections, the classic SDEX path, and the off-chain
 oracle tables — NOT `soroban-events` alone.
