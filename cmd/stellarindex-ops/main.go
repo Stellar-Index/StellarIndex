@@ -880,10 +880,11 @@ Subcommands:
                           range by replaying the soroswap-router
                           ContractCallDecoder over raw Galexie ledger
                           metadata (the router emits no Soroban events, so
-                          the projector cannot rebuild it). Idempotent
-                          (ON CONFLICT DO NOTHING); checkpoints into
-                          ingestion_cursors for resume. Superseded on the
-                          lake path by ch-rebuild -contract-calls.
+                          the projector cannot rebuild it). Idempotent;
+                          stamps a derive_generation so a re-walk corrects
+                          stored rows; checkpoints into ingestion_cursors
+                          for resume. Superseded on the lake path by
+                          ch-rebuild -contract-calls.
   resume-stalled -config PATH [-min-lag DUR] [-max-resumes N] [-source-filter S] [-parallel N] [-write]
                           Resume every stalled backfill cursor that still
                           has a remaining range, marching each toward the
@@ -905,7 +906,7 @@ Subcommands:
                           persisted soroswap_router_swaps row (migration
                           0025 Phase B). SQL-only join — no Galexie walk;
                           run AFTER the router record itself is complete
-                          (backfill-router / ch-rebuild -contract-calls).
+                          (ch-rebuild -contract-calls or backfill-router).
                           Defaults to the full extent of
                           soroswap_router_swaps; windowed by ledger
                           (default 500k) so each UPDATE prunes trades
@@ -1111,8 +1112,9 @@ Subcommands:
                           historical range from soroban_events (ADR-0032
                           Phase 5 replacement for the retired *-backfill
                           subcommands). One-shot cursor SQL — the running
-                          indexer does the work; idempotent per-source
-                          ON CONFLICT DO NOTHING. -source names: see
+                          indexer does the work at derive_generation 0,
+                          so rows a re-derive stamped higher are NOT
+                          corrected (use projected-rebuild). -source names: see
                           internal/projector/registry.go. Referenced by the
                           migration 0137/0139 operator follow-ups.
   projected-rebuild -config PATH -source NAME -from N [-to N] [-workers K] [-window N] [-resume] [-write] [-ch-addr H:P] [-heartbeat PATH] [-allow-live-overlap]

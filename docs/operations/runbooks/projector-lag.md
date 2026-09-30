@@ -106,8 +106,10 @@ own once the watermark moves. Do not rewind the projector cursor for this.
 
       This is a one-shot cursor rewind, not a heavy job — the projector
       goroutine in `stellarindex-indexer` does the actual re-projection on its
-      next cycle, and every per-source table writes `ON CONFLICT DO NOTHING`,
-      so it is idempotent. An unknown `-source` fails loudly rather than
+      next cycle, and every per-source writer's generation-guarded upsert
+      makes it idempotent. The projector writes at `derive_generation` 0, so
+      a replay cannot correct a row a re-derive stamped higher — use
+      `projected-rebuild -write` for that. An unknown `-source` fails loudly rather than
       reporting "no action". A whole-history re-derive is a different tool
       (`projected-rebuild`, run under `run-heavy-job.sh`). See
       [projector-replay](projector-replay.md) for the full procedure.

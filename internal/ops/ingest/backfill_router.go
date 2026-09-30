@@ -22,7 +22,7 @@ import (
 // soroswap-router ContractCallDecoder against every InvokeContract
 // op. The decoder is pure (no state), so this is safe to re-run; the
 // destination table's PK on (ledger_close_time, ledger, tx_hash,
-// op_index) + ON CONFLICT DO NOTHING make every replay idempotent.
+// op_index) + the generation-guarded upsert make every replay idempotent.
 //
 // Why this exists despite ADR-0032's "no per-source backfill"
 // invariant: that ADR's projector path reads from the
