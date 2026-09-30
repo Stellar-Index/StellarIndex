@@ -84,13 +84,15 @@ type AssetVolumeCharacter struct {
 //   - volumeCharacterMakerSQL keeps maker only when it is an account and
 //     flags the pool fill, so a pool never counts as a distinct maker, a
 //     self-cross or an issuer-side leg.
-//   - a pool fill is keyed on its lone taker, the rule the priceless-coverage
-//     tripwire applies to AMM fills (popularPricelessCandidatesSQL): one
-//     account round-tripping through pools is one concentrated actor.
+//   - a row with one known account (a classic pool fill, or a Soroban AMM
+//     swap, which records no maker at all) is keyed on that account, the rule
+//     the priceless-coverage tripwire applies (popularPricelessCandidatesSQL):
+//     one account round-tripping through pools is one concentrated actor.
+//     Only rows with no account on either side stay out of the numerator.
 const (
 	volumeCharacterMakerSQL = `CASE WHEN maker ~ '^G[A-Z2-7]{55}$' THEN maker END AS maker,
     (maker IS NOT NULL AND maker !~ '^G[A-Z2-7]{55}$') AS pool_fill`
-	volumeCharacterPairFilterSQL = `taker IS NOT NULL AND (maker IS NOT NULL OR pool_fill)`
+	volumeCharacterPairFilterSQL = `(maker IS NOT NULL OR taker IS NOT NULL)`
 	volumeCharacterPairKeySQL    = `LEAST(COALESCE(maker, taker), taker), GREATEST(COALESCE(maker, taker), taker)`
 )
 
