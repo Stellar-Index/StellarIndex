@@ -41,3 +41,25 @@ func TestContractDetailCache_PutProtectsUnexpiredCodeHistory(t *testing.T) {
 		t.Fatalf("code-history entry %s was evicted ahead of an already-expired churn entry", chKey)
 	}
 }
+
+// TestContractDetailCache_ActivityKeysCannotEvictContractEntries: a stream
+// of distinct account-activity keys — cheap to compute for any minted
+// G-address — must stay inside its own bound and leave a full, unexpired
+// set of contract entries untouched.
+func TestContractDetailCache_ActivityKeysCannotEvictContractEntries(t *testing.T) {
+	c := &contractDetailCache{}
+	for i := range contractDetailCacheMax {
+		c.put("ev:C"+strconv.Itoa(i), i)
+	}
+	for i := range contractDetailCacheMax + 1 {
+		c.put(accountActivityCacheKey+"G"+strconv.Itoa(i), i)
+	}
+	for i := range contractDetailCacheMax {
+		if _, ok, _ := c.get("ev:C" + strconv.Itoa(i)); !ok {
+			t.Fatalf("contract entry ev:C%d evicted by account-activity keys", i)
+		}
+	}
+	if got := len(c.activity); got != contractDetailCacheMax {
+		t.Fatalf("account-activity map holds %d entries, want its bound %d", got, contractDetailCacheMax)
+	}
+}

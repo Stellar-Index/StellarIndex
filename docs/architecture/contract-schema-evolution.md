@@ -252,13 +252,18 @@ Concretely:
       stamped column. Adding the column is a future hardening
       for backfill where we want explicit per-row variant
       tagging.
-- [ ] Extend this doc with per-connector schema notes for
-      Comet, SDEX (classic, mostly out of scope), Blend,
-      Redstone, Band. Status: the per-source decoders cite
-      their own README + the audit log; this doc captures the
-      generic strategy. Per-connector schema-evolution prose
-      lives in their respective `internal/sources/<venue>/
-      README.md` and the audit-evidence directories.
+- [x] Per-connector schema notes: kept out of this doc, which
+      holds only the generic strategy. Each Soroban connector's
+      WASM inventory and decoder-shape evidence is its audit log
+      ([`comet.md`](../operations/wasm-audits/comet.md),
+      [`blend.md`](../operations/wasm-audits/blend.md),
+      [`redstone.md`](../operations/wasm-audits/redstone.md),
+      [`band.md`](../operations/wasm-audits/band.md)), cross-checked
+      per WASM in
+      [`decoder-wasm-matrix.md`](../operations/wasm-audits/decoder-wasm-matrix.md);
+      decoder-side upgrade notes live in
+      `internal/sources/<venue>/README.md`. SDEX is classic
+      (no WASM), so this concern does not apply to it.
 
 ## Why this is an architecture doc, not an ADR
 

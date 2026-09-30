@@ -67,14 +67,14 @@ func TestRequestTimeout_BoundsThePreHandlerStack(t *testing.T) {
 
 // TestRequestTimeout_StreamingStaysExempt — SSE routes are long-lived by
 // design; moving the timeout outward must not start severing them. The
-// exemption is path-suffix based, so an unmounted `/stream` path
-// exercises it without registering a route.
+// probe sits in Auth, ahead of the mux, so the SSE handler itself is not
+// exercised.
 func TestRequestTimeout_StreamingStaysExempt(t *testing.T) {
 	probe := &deadlineProbe{}
 	srv := New(Options{Auth: probe.middleware, RequestTimeout: 3 * time.Second})
 
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/anything/stream", nil))
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/ledger/stream", nil))
 	if probe.saw {
 		t.Error("an SSE path inherited a request deadline — a real stream would be severed mid-flight")
 	}

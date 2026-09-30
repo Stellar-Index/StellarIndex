@@ -130,6 +130,14 @@ var ErrNegativeTotalSupply = errors.New("supply: SEP-41 mint − burn − clawba
 // outcome so it doesn't page.
 var ErrNegativeTotalMissingBaseline = errors.New("supply: SEP-41 total negative and pre-Soroban genesis baseline not seeded — run `stellarindex-ops supply seed-sep41-genesis`")
 
+// ErrGenesisBaselineNotSeeded is returned for a classic asset's SAC wrapper
+// whose pre-Soroban genesis baseline has not been seeded, whatever the sign
+// of its total: the Soroban-era-only sum omits every pre-Soroban mint and
+// burn, so publishing it would misstate lifetime supply. Benign like
+// [ErrNegativeTotalMissingBaseline] — the refresher maps it to
+// `missing_baseline` so it prompts a seed instead of paging.
+var ErrGenesisBaselineNotSeeded = errors.New("supply: SEP-41 SAC wrapper's pre-Soroban genesis baseline not seeded — run `stellarindex-ops supply seed-sep41-genesis`")
+
 // Compute returns the [Supply] for a SEP-41 Soroban token at the
 // supplied ledger. Per Algorithm 3:
 //
@@ -188,6 +196,12 @@ func (c *SEP41Computer) Compute(ctx context.Context, asset canonical.Asset, ledg
 			sentinel,
 			comps.MintTotal, comps.BurnTotal, comps.ClawbackTotal,
 			key, ledger)
+	}
+	// A native SEP-41 token has no pre-Soroban history and native XLM has no
+	// issuer mints; only a classic credit asset's SAC needs the seeded baseline.
+	if wraps := canonical.CanonicalAsset(asset); !comps.GenesisBaselineSeeded && wraps.Type == canonical.AssetClassic {
+		return Supply{}, fmt.Errorf("%w: %s wraps %s at ledger %d",
+			ErrGenesisBaselineNotSeeded, key, wraps, ledger)
 	}
 
 	// circulating = total − admin_balance − locked_account_balances − locked_contract_balances
