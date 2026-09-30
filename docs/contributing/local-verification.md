@@ -41,6 +41,11 @@ A missing capability fails a clearance profile. `make verify` remains the
 underlying sequential gate, but it reports `VERIFY INCOMPLETE` if any check is
 deferred; only its literal `ALL CHECKS PASSED` line is a pass.
 
+The native doctor warns when the local `gitleaks` differs from the
+`GITLEAKS_VERSION` CI pins in `.github/workflows/ci.yml`. A newer release ships
+new rules, so it can flag fixtures the pinned binary does not; the container
+profile installs the pinned version.
+
 ## macOS and other machines
 
 On macOS, `VERIFY_PROFILE=auto` normally selects Docker. The verifier image is

@@ -9,6 +9,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
@@ -416,6 +417,12 @@ type ExplorerReader struct {
 	// per request (Q203). Non-nil for every reader built by the
 	// constructors; nil-safe for test-built readers (permanent miss).
 	disasmCache *wasmDisasmCache
+
+	// moduleCache and wasmFlight back ContractWasm's per-hash stage: the
+	// blob read + export parse is memoised, and concurrent cold requests for
+	// one hash share a single read and a single wabt run.
+	moduleCache *wasmModuleCache
+	wasmFlight  singleflight.Group
 }
 
 // SetWealthRefreshErrorHandler installs a callback for background
@@ -513,6 +520,7 @@ func newExplorerReader(conn driver.Conn) *ExplorerReader {
 		stateFlight:              newPerKeyFlight(),
 		refreshGate:              NewRefreshGate(DefaultDetachedRefreshLimit),
 		disasmCache:              newWasmDisasmCache(),
+		moduleCache:              newWasmModuleCache(),
 		ttlVerdicts: newTTLLivenessCache(func(ctx context.Context, keys []string) (map[string]TTLLiveness, error) {
 			// Verdicts are judged at the lake's tip AS OF compute time —
 			// "current" means current relative to what the lake holds now.
@@ -593,9 +601,9 @@ func (r *ExplorerReader) RecentLedgers(ctx context.Context, limit int, beforeSeq
 		// branch uses — without a lower bound this was the exact
 		// unbounded whole-table FINAL merge the tip branch was rewritten
 		// to avoid (O(table), caller-controlled via public ?before=).
-		// Ledgers are contiguous genesis→tip, so a window ≥ 25× the max
-		// page size can never truncate a legitimate page. Clamp at 0:
-		// uint32 underflow near genesis would wrap and return nothing.
+		// A short page (a lake hole wider than the window) is re-read
+		// wider below. Clamp at 0: uint32 underflow near genesis would
+		// wrap and return nothing.
 		lower := uint32(0)
 		if beforeSeq > uint32(recentLedgersTailWindow) {
 			lower = beforeSeq - uint32(recentLedgersTailWindow)
@@ -618,6 +626,41 @@ func (r *ExplorerReader) RecentLedgers(ctx context.Context, limit int, beforeSeq
 	q += ` ORDER BY ledger_seq DESC LIMIT ?` + explorerScanSettings
 	args = append(args, limit)
 
+	out, err := r.queryLedgers(ctx, q, args, limit)
+	if err != nil || len(out) == limit || (beforeSeq > 0 && beforeSeq <= uint32(recentLedgersTailWindow)) {
+		return out, err
+	}
+	return r.recentLedgersWidened(ctx, limit, beforeSeq)
+}
+
+// recentLedgersWidened re-reads a short RecentLedgers page over geometrically
+// wider windows: the lake is not contiguous (a dropped live extract leaves no
+// ledgers row until gap-scan heals it), so a hole wider than the tail window
+// would otherwise end pagination. The top is clamped to the real tip so the
+// widening spans only a genuine hole, never caller-chosen space above the tip.
+func (r *ExplorerReader) recentLedgersWidened(ctx context.Context, limit int, beforeSeq uint32) ([]LedgerHeader, error) {
+	var hi uint32
+	if err := r.conn.QueryRow(ctx, `SELECT max(ledger_seq) FROM stellar.ledgers`).Scan(&hi); err != nil {
+		return nil, fmt.Errorf("clickhouse: recent ledgers tip: %w", err)
+	}
+	if beforeSeq > 0 && beforeSeq-1 < hi {
+		hi = beforeSeq - 1
+	}
+	q := `SELECT ` + ledgerCols + ` FROM stellar.ledgers FINAL WHERE ledger_seq <= ? AND ledger_seq >= ?` +
+		` ORDER BY ledger_seq DESC LIMIT ?` + explorerScanSettings
+	for window := uint64(4 * recentLedgersTailWindow); ; window *= 4 {
+		lower := uint32(0)
+		if uint64(hi) > window {
+			lower = hi - uint32(window)
+		}
+		out, err := r.queryLedgers(ctx, q, []any{hi, lower, limit}, limit)
+		if err != nil || len(out) == limit || lower == 0 {
+			return out, err
+		}
+	}
+}
+
+func (r *ExplorerReader) queryLedgers(ctx context.Context, q string, args []any, limit int) ([]LedgerHeader, error) {
 	rows, err := r.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: recent ledgers: %w", err)
@@ -1148,8 +1191,8 @@ const ledgersPerDayPruningEstimate = 17280
 
 // recentLedgersTailWindow bounds the tip-page ledger query to a tail slice so
 // its FINAL merge prunes to the newest partition(s) instead of scanning the
-// whole table. 5000 is ~25x the max page size (200) — wide enough that a first
-// page can never be truncated, narrow enough to stay inside one partition.
+// whole table. 5000 is ~25x the max page size (200) — wide enough that a
+// hole-free page fills in one read, narrow enough to stay inside one partition.
 const recentLedgersTailWindow = 5000
 
 // NetworkThroughput returns daily network throughput (ledger / tx / op
@@ -2339,39 +2382,24 @@ type ContractActivityRow struct {
 	DataDisplay   string
 }
 
-// contractEventsRecentQuery builds ContractEventsRecent's SQL.
+// contractEventsRecentQuery builds ContractEventsRecent's fast-path SQL.
 //
-// LIMIT 1 BY the contract_events primary key (audit W4-storage-1, same class as
-// DAT-10): stellar.contract_events is ReplacingMergeTree(ingested_at), so a
-// re-ingested event (ch-live-catchup heal / ch-rebuild / partial-flush retry —
-// all documented legitimate dup-part states) leaves an un-merged duplicate PART,
-// byte-identical bar ingested_at, until a background merge — and without dedup
-// this per-row activity feed served the SAME event TWICE. LIMIT 1 BY, not FINAL:
-// FINAL would defeat the contract_id bloom skip-index and force ClickHouse to
-// merge every overlapping part for this bloom-probed, no-lower-bound scan — the
-// same O(table) trap recentOperationsQuery documents. LIMIT 1 BY dedups on the
-// table's full ORDER BY tuple (ledger_seq, tx_hash, op_index, event_index) and
-// composes with the existing ORDER BY, so it stays a cheap keyset/tip scan; run
-// BEFORE the page-size LIMIT (ClickHouse clause order) it also stops an un-merged
-// duplicate part from eating a page slot, mirroring the union-arm dedup.
+// It deliberately carries neither FINAL nor `LIMIT 1 BY`: FINAL defeats the
+// contract_id bloom skip-index, and `LIMIT 1 BY` disables ClickHouse's reverse
+// read-in-order early exit, turning a busy contract's first page into an
+// O(all-events-of-contract) sort (16.3s vs 0.16s on a 17.9M-event contract).
+// stellar.contract_events is ReplacingMergeTree(ingested_at), so an un-merged
+// duplicate part can still return the same event twice; contractEventsScan
+// collapses those in Go — the full ORDER BY tuple makes duplicate row-identities
+// adjacent, so adjacent-row collapse is exact. The page over-fetches
+// contractEventsDedupHeadroom rows so dedup can still fill it; a duplicate storm
+// beyond that falls back to contractEventsRecentDedupQuery (in-CH dedup, slow).
 //
 // explorerScanSettings: the contract_id predicate rides a bloom skip-index
 // over the billions-row contract_events table — granule-pruned but
 // scan-shaped, and reading the wide topics_xdr/data_xdr columns per
 // surviving granule is exactly the per-stream-buffer × part-fan-out product
-// the pin bounds (route-sweep 2026-07-29: /v1/contracts/{id} was in the 8s
-// 503 class).
-// contractEventsRecentQuery deliberately carries NO `LIMIT 1 BY`: that
-// clause disables ClickHouse's reverse read-in-order early exit, turning
-// the busy-contract first page into an O(all-events-of-contract) sort —
-// measured 16.3s vs 0.16s (100×) for a 17.9M-event contract on r1
-// (2026-08-06, the CCW5IBJ7… soroswap-router 503). The W4-storage-1 RMT
-// duplicate-part dedup still happens — in Go, in contractEventsScan: the
-// full ORDER BY tuple makes duplicate row-identities ADJACENT in the
-// stream, so adjacent-row collapse is exact. The page over-fetches
-// contractEventsDedupHeadroom rows so dedup can collapse and still fill
-// the page; a duplicate storm beyond that falls back to
-// contractEventsRecentDedupQuery (in-CH dedup, slow, correct).
+// the pin bounds.
 func contractEventsRecentQuery(hasCursor, hasLedgerSet bool) string {
 	q := `SELECT ledger_seq, close_time, tx_hash, op_index, event_index, event_type, topic_0_sym,
 			topics_xdr, data_xdr

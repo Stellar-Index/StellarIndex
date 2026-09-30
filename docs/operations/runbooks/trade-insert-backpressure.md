@@ -37,7 +37,7 @@ rather than losing data (ADR-0041).
   advancing — `stellarindex_ingestion_cursor_stuck` may also fire.
 - `stellarindex_trade_insert_buffer_depth` climbing (external CEX/FX
   trades queuing in the bounded retry buffer).
-- Indexer journal: repeated `infrastructure fault on trade insert —
+- Indexer journal: repeated `infrastructure fault on sink write —
   retrying with backpressure`.
 
 ## Quick diagnosis (≤ 5 min)

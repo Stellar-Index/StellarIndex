@@ -1,7 +1,6 @@
 // Package kraken streams live trades from Kraken's public WebSocket
-// v2 trade channel. Strongest XLM fiat coverage of any venue we
-// integrate — XLM/USD, XLM/EUR, XLM/GBP, XLM/AUD, XLM/CAD, XLM/CHF
-// are all natively quoted (no stablecoin proxy).
+// v2 trade channel. XLM/USD, XLM/EUR and XLM/GBP are all natively
+// quoted (no stablecoin proxy).
 //
 // Architectural contrast with Binance:
 //

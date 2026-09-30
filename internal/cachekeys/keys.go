@@ -380,10 +380,10 @@ const OHLCClosedTTL = time.Duration(0)
 
 // ─── Rate-limit counters — one per (key, window) ──────────────────
 //
-// The rl: family is OWNED by internal/ratelimit, which writes keys
-// atomically via a Lua script. The functions below are mirrors of
-// that shape for read-only access (e.g. admin dashboards showing
-// current usage) and CI consistency checks.
+// The rl: family is OWNED by internal/ratelimit, which builds and
+// writes keys itself. No production code reads them through this
+// package: the builders below pin the wire shape, and the parity test
+// diffs them against a real Bucket write so a writer change is caught.
 //
 // Wire shape: `rl:<subject>:<window-bucket>` where subject is an
 // API-key hash or IP address.
@@ -397,16 +397,10 @@ type RateLimitCounterKey string
 // String returns the wire-format key.
 func (k RateLimitCounterKey) String() string { return string(k) }
 
-// RateLimitKey returns the cache key for a rate-limit counter.
-// Deliberately named "...Key" not just "RateLimit" because callers
-// are usually reading this for display, not as the write-path.
-// window is the fixed-window size (typically 60 s).
-//
-// Subject is url.QueryEscape'd for parity with the writer in
-// internal/ratelimit/bucket.go — IPv6 addresses contain `:` and
-// without escaping two distinct subjects could land on the same
-// Redis slot. Keep this in lock-step with the writer; the tests
-// round-trip a sample subject to detect drift.
+// RateLimitKey returns the cache key for a rate-limit counter; window
+// is the fixed-window size (typically 60 s). Subject is
+// url.QueryEscape'd as internal/ratelimit/bucket.go does, because IPv6
+// subjects contain `:` and would otherwise collide across subjects.
 func RateLimitKey(subject string, now time.Time, window time.Duration) RateLimitCounterKey {
 	bucket := now.Unix() / int64(window.Seconds())
 	return RateLimitCounterKey(fmt.Sprintf("rl:%s:%d", url.QueryEscape(subject), bucket))
@@ -433,31 +427,6 @@ func Metadata(asset canonical.Asset) MetadataKey {
 
 // MetadataTTL is the expiry for meta: keys.
 const MetadataTTL = 5 * time.Minute
-
-// ─── SSE subscriber registry ──────────────────────────────────────
-//
-// Wire shape: `sub:<channel>:<subscriber-id>`
-// Value: "1" (presence marker).
-// TTL: renewed by the subscriber's heartbeat every 60 s; key expires
-// 60 s after the last heartbeat.
-
-// SubscriberKey is the typed Redis key for the
-// `sub:<channel>:<subscriber-id>` family.
-type SubscriberKey string
-
-// String returns the wire-format key.
-func (k SubscriberKey) String() string { return string(k) }
-
-// Subscriber returns the cache key for an SSE subscriber presence
-// marker. channel is typically a price-stream channel name; subID
-// is the opaque subscriber identifier.
-func Subscriber(channel, subID string) SubscriberKey {
-	return SubscriberKey(fmt.Sprintf("sub:%s:%s", channel, subID))
-}
-
-// SubscriberTTL is the expiry for sub: keys — matches the
-// heartbeat cadence with headroom.
-const SubscriberTTL = 60 * time.Second
 
 // ─── Divergence detector output ───────────────────────────────────
 //
@@ -650,6 +619,13 @@ func (k APIKeyCacheKey) String() string { return string(k) }
 // hex-encoded SHA-256 of the plaintext key.
 func APIKeyCache(keyHash string) APIKeyCacheKey {
 	return APIKeyCacheKey("apikey-cache:" + keyHash)
+}
+
+// APIKeyCacheEvicted returns the short-lived tombstone an eviction writes
+// for keyHash; while it lives the validator does not re-populate
+// [APIKeyCache]. Kept under `apikey-cache:` so the same ACL rule admits it.
+func APIKeyCacheEvicted(keyHash string) APIKeyCacheKey {
+	return APIKeyCacheKey("apikey-cache:" + keyHash + ":evicted")
 }
 
 // ─── API-key lookup index ─────────────────────────────────────────

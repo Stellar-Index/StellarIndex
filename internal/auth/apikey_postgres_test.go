@@ -581,7 +581,14 @@ func (s *stubAccountStore) Get(_ context.Context, id uuid.UUID) (platform.Accoun
 	return a, nil
 }
 
-func (s *stubAccountStore) GetBySlug(_ context.Context, _ string) (platform.Account, error) {
+func (s *stubAccountStore) GetBySlug(_ context.Context, slug string) (platform.Account, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, a := range s.byID {
+		if a.Slug == slug {
+			return a, nil
+		}
+	}
 	return platform.Account{}, platform.ErrNotFound
 }
 

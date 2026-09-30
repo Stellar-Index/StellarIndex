@@ -79,7 +79,7 @@ If this fires more than once a quarter, the disk-usage trend has a leak. Capture
 
 ## Known false-positive patterns
 
-- **One-time large captures**: manual debug captures and one-shot operator log dumps can take 5–10 GB transiently (historical example: the 2026-05-10 `/var/log/wasm-history-*.stderr` captures, 2.2 GB — no repo mechanism produces these today, so their presence is itself a finding). If the trigger is identifiable and the data is needed, leave it; otherwise clean up.
+- **One-time large captures**: manual debug captures and one-shot operator log dumps can take 5–10 GB transiently (historical example: the 2026-05-10 `/var/log/wasm-history-*.stderr` captures, 2.2 GB). WASM-audit walks now write under `/var/log/wasm-audit/` and are deleted once recorded (`docs/operations/wasm-audits/README.md` §2); anything left there with no walk running is a missed cleanup, and loose `/var/log/wasm-history-*` files are a finding. If the trigger is identifiable and the data is needed, leave it; otherwise clean up.
 
 ## Related
 

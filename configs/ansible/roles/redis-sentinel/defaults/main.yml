@@ -23,6 +23,9 @@ redis_group: redis
 
 # Auth — set redis_password from vault. masterauth is set to the
 # same value so replicas authenticate to the primary.
+# TODO: no TLS — AUTH, replication and Sentinel traffic are cleartext
+# on the in-region network. Decide tls-port/tls-replication at the
+# multi-host build (docs/architecture/multi-region-ha.md §7.5).
 redis_password: ""
 
 # F-1213 (audit-2026-05-12): when true, the role also renders
@@ -53,7 +56,8 @@ redis_acl_lockdown: false
 redis_maxmemory: "4gb"
 redis_maxmemory_policy: volatile-lru
 
-# Persistence (ha-plan §3.4: AOF every-second + RDB nightly).
+# Persistence: AOF every-second + RDB snapshots per redis_save_rules.
+# Both stay local to redis_data_dir; nothing copies them off-host.
 redis_appendonly: "yes"
 redis_aof_appendfsync: everysec
 redis_save_rules:

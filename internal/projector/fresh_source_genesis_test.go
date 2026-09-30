@@ -10,6 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/sourcenet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
+	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
@@ -83,7 +84,6 @@ var crawlsFromLakeFloor = map[string]string{
 	"aquarius":        "no package genesis constant",
 	"phoenix":         "no package genesis constant",
 	"comet":           "no package genesis constant",
-	"blend_backstop":  "BackstopGenesisLedger postdates the V1 backstop it also gates",
 	"blend_emitter":   "no package genesis constant",
 	"cctp":            "no package genesis constant",
 	"rozo":            "no package genesis constant",
@@ -102,10 +102,11 @@ var crawlsFromLakeFloor = map[string]string{
 // pubnet-only source may carry one.
 func TestProjectedSourcesDeclareGenesis(t *testing.T) {
 	wantGenesis := map[string]uint32{
-		upshift.SourceName:      upshift.GenesisLedger,
-		sushiswap_v3.SourceName: sushiswap_v3.FactoryGenesisLedger,
-		sorocredit.SourceName:   sorocredit.GenesisLedger,
-		blend.SourceName:        blend.FactoryGenesisLedger,
+		upshift.SourceName:        upshift.GenesisLedger,
+		sushiswap_v3.SourceName:   sushiswap_v3.FactoryGenesisLedger,
+		sorocredit.SourceName:     sorocredit.GenesisLedger,
+		blend.SourceName:          blend.FactoryGenesisLedger,
+		blend_backstop.SourceName: blend_backstop.BackstopGenesisLedger,
 	}
 	contractID := sorocredit.MainnetContract
 	oracle := config.OracleConfig{}

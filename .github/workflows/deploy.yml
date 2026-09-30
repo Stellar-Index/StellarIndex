@@ -358,7 +358,7 @@ jobs:
             exit 1
           fi
           if ! row="$(awk -F'\t' -v r="$REGION" '$1 == r { print; found = 1 } END { exit found ? 0 : 1 }' "$MANIFEST")"; then
-            echo "::error::region '${REGION}' has no row in ${MANIFEST}. Derive one read-only with 'scripts/dev/preflight-deploy.sh --region ${REGION} --version ${VERSION} --refresh-manifest' and commit it."
+            echo "::error::region '${REGION}' has no row in ${MANIFEST}. Add one by hand (region, host, user, jump; columns in its header), derive its binary set read-only with 'scripts/dev/preflight-deploy.sh --region ${REGION} --version ${VERSION} --refresh-manifest', and commit it."
             exit 1
           fi
           IFS=$'\t' read -r _ _ _ _ region_set not_deployable derived_utc <<<"$row"
@@ -1338,8 +1338,16 @@ jobs:
             "command -v clickhouse-client >/dev/null 2>&1 || exit 9; clickhouse-client --port \"\${CH_PORT:-9300}\" -q \"SELECT concat(database, '.', name) FROM system.tables\"")
           rc=$?
           set -e
+          if [ "$rc" -eq 9 ]; then
+            echo "  ${DEPLOY_HOST} has no clickhouse-client; certifying nothing. The changed schema surfaces stay in the config-apply gate."
+            exit 0
+          fi
           if [ "$rc" -ne 0 ] || [ -z "$existing" ]; then
-            echo "::warning::could not ask ${DEPLOY_HOST} which ClickHouse objects exist (ssh/client exit ${rc}); certifying nothing. The changed schema surfaces stay in the config-apply gate."
+            echo "::warning::${DEPLOY_HOST} runs ClickHouse but did not answer which objects exist (ssh/client exit ${rc}); certifying nothing, and the gate will not let an acknowledgement clear these files until the host answers."
+            # A silent host could be hiding a refutation, so publish what went
+            # unchecked: unlike applied/refuted, empty here would be the lenient side.
+            unanswered="$(sed -n 's/=.*//p' <<<"$plan" | tr '\n' ' ')"
+            echo "unanswered=${unanswered% }" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -1371,10 +1379,8 @@ jobs:
           # 2026-09-18: files this host PROVED it does not carry. The gate
           # refuses these even when the operator acknowledged, because an
           # acknowledgement asserts a surface is applied and the host just
-          # said otherwise. Its empty direction is the SAME as applied's —
-          # a fault above publishes nothing and the gate falls back to
-          # asking the operator — so this adds a refusal where there is
-          # evidence and changes nothing where there is none.
+          # said otherwise. A host that did not answer is published above as
+          # `unanswered`, which the gate refuses the same way.
           if [ -n "$refuted" ]; then
             echo "refuted=${refuted% }" >> "$GITHUB_OUTPUT"
           fi
@@ -1410,8 +1416,11 @@ jobs:
           # comment. Nothing else produces a refutation: a surface no
           # step could check simply never appears here.
           REFUTED: ${{ steps.ch_ddl.outputs.refuted }}
+          # Surfaces the ClickHouse step tried to check on a host that runs
+          # ClickHouse but did not answer; CONFIG_ACK cannot clear these either.
+          UNANSWERED: ${{ steps.ch_ddl.outputs.unanswered }}
         run: |
-          bash scripts/ci/config-apply-gate.sh "$VERSION" "$CONFIG_ACK" "$BASELINE" "$APPLIED" "$REFUTED"
+          bash scripts/ci/config-apply-gate.sh "$VERSION" "$CONFIG_ACK" "$BASELINE" "$APPLIED" "$REFUTED" "$UNANSWERED"
 
       - name: Served-path smoke
         # Runs AFTER the config-apply gate, i.e. after every deploy
