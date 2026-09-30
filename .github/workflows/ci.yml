@@ -2402,6 +2402,11 @@ jobs:
         # it) and group-write must stay tied to its group writers.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-textfile-dir-mode-test.sh
+      - name: ZFS ARC cap render test
+        # A rebuilt ZFS host must get r1's ARC bounds, rendered byte for
+        # byte; renders the real template with a local ansible run.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-zfs-arc-cap-test.sh
       - name: prometheus port var wiring test (SL19)
         # prometheus.yml.j2, prometheus.service.j2 and 06-firewall.yml
         # hardcoded literal 9090/9093 instead of referencing
