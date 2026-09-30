@@ -1060,8 +1060,8 @@ Subcommands:
                           deploy/clickhouse/tier1_schema.sql for the full
                           row-cardinality table). No Postgres connection —
                           the Postgres classic_movements hypertable
-                          (migration 0105) stays applied but UNPOPULATED;
-                          see migrations/README.md's 0105 row. Op-only
+                          (migration 0105) was never populated and is
+                          dropped by migration 0113. Op-only
                           surface (stellar.operations join
                           operation_results): Payment, CreateAccount,
                           PathPaymentStrictReceive/Send,
@@ -1267,36 +1267,38 @@ Subcommands:
                           Healthchecks.io can consume it directly. Example:
                             stellarindex-ops verify-hashchain \
                               -ch-addr 127.0.0.1:9300 -from 2 -to 60000000
-  verify-lake [-config PATH] [-ch-addr H:P] [-from N] [-to N] [-ec-floor N] [-checks contiguity,entrychanges,hashchain]
-                          Composes verify-contiguity's two checks and
-                          verify-hashchain's one check into a SINGLE
-                          "is the lake sound?" invocation with one
-                          unified verdict + exit code, for a cron/
-                          Healthchecks.io timer that wants one call
-                          instead of three. Calls the exact same
-                          check funcs verify-contiguity and
-                          verify-hashchain themselves call (no
-                          duplicated logic), over one resolved
-                          [-from,-to] range (default 2..CH max,
-                          -ec-floor default 0 = auto, as in
-                          verify-contiguity): (1) ledger
+  verify-lake [-config PATH] [-ch-addr H:P] [-from N] [-to N] [-ec-floor N] [-checks contiguity,entrychanges,hashchain,rawcensus] [-textfile PATH]
+                          Single "is the lake sound?" invocation with one
+                          unified verdict + exit code; run daily by
+                          verify-lake.timer and used as the restore
+                          acceptance gate. Over one resolved [-from,-to]
+                          range (default 2..CH max, -ec-floor default
+                          0 = auto, as in verify-contiguity): (1) ledger
                           substrate contiguity, (2)
                           stellar.ledger_entry_changes coverage
                           (floor-gated — below -ec-floor is
                           backfill-pending, informational only, and
                           the exempted range is printed), (3)
                           hash-chain integrity (in-window + boundary
-                          links). -checks restricts to a comma-
-                          separated subset (contiguity|entrychanges|
-                          hashchain), default all. Prints each
-                          check's own report section plus a final
-                          unified summary block. Read-only; touches
-                          ClickHouse only, never Postgres. Exit code
-                          = ledger gaps + entry-change deficiencies
-                          at/above -ec-floor + hash-chain broken
-                          links (capped at 255), mirroring the
-                          sibling verify-* tools' convention so cron/
-                          Healthchecks.io can consume it directly.
+                          links), (4) raw-table census: transactions,
+                          operations and contract_events rows per 1M-
+                          ledger partition vs the ledger headers'
+                          tx/op/soroban_event counts, operation_results
+                          and operation_participants presence-only
+                          (active-part rows, so duplicates can mask a
+                          partial loss; confirm a suspect range with
+                          ch-gate). Checks 1-3 call the same funcs
+                          verify-contiguity and verify-hashchain call.
+                          -checks restricts to a comma-separated subset
+                          (contiguity|entrychanges|hashchain|rawcensus),
+                          default all. -textfile writes per-check
+                          failure gauges + last-run time for
+                          node_exporter once every requested check
+                          completed. Read-only; touches ClickHouse
+                          only, never Postgres. Exit code = ledger
+                          gaps + entry-change deficiencies at/above
+                          -ec-floor + hash-chain broken links + short
+                          raw-table partitions (capped at 255).
                           reconcile-balances (the ADR-0033 external-
                           Horizon balance check) is NOT composed in —
                           it's network-bound and account-sampled, a

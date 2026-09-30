@@ -20,6 +20,154 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.95.0] — 2026-09-30
+
+175 commits since v0.94.0: the inventory-closure waves. Three operator-visible
+behaviour changes (`verify-archive -fail-on-missed` now defaults on, SSE streams
+end after a bounded lifetime with a `:reconnect` hint, and `galexie-archive-fill`
+reads its destination from `ARCHIVE_DEST`), a dashboard sign-out-everywhere
+feature, and a long tail of read-path honesty fixes across the API, explorer,
+ops tooling and Ansible roles. No new migration.
+
+### Changed
+
+- **ops — verify-archive (#1691, #1868, OPERATOR-VISIBLE):** `-fail-on-missed`
+  defaults to on; a checkpoint-tier run that tolerates scattered misses must
+  now pass `-fail-on-missed=false` (the deployed Tier B units already pass the
+  flag). Tier D (`-tier peers`) compares every checkpoint the peers agree on
+  with the local `history/` copy under `-archive-root` and fails if ours
+  diverges or matched none of them; a `file://` peer that fails every fetch
+  no longer passes as "unreachable".
+- **api — SSE (#1882, #1854, #1738):** every stream gets
+  `StreamOptions.MaxLifetime` (default 30 min + up to 10 % jitter); at expiry
+  the server writes a `:reconnect` comment and ends the response cleanly, so a
+  client that keeps its socket open but stops reading no longer holds a
+  goroutine, connection and stream slot for days. A billable tick re-reads
+  month-to-date usage and ends the stream once the subject's `MonthlyQuota` is
+  spent (the reconnect gets the 429). Only the exact SSE routes are exempt
+  from `RequestTimeout`.
+- **ops — galexie-archive-fill (#1778):** the destination is read from
+  `ARCHIVE_DEST` (default `local/galexie-archive`, so existing hosts are
+  unchanged); anything that is not `<alias>/<bucket>[/<prefix>]` is refused
+  before the first `mc` call.
+- **ansible (#1672, #1701, #1667, #1669, #1710, #1696, #1851):** the test-net
+  inventories are untracked like `r1.yml` (only `*.example.yml` stays in the
+  tree) and both SSH hops verify against an untracked `inventory/known_hosts`
+  instead of trust-on-first-use; `listing-sync` installs on pubnet only
+  (`listing_sync_enabled`), with a retire block on the other networks; the
+  textfile-collector directory mode is pinned; the redis-sentinel ACL file is
+  loadable by redis-server; exporter binds are asserted after restart; the
+  rollup units and `cap67-movements` can write their lock file and ops
+  heartbeat textfile.
+- **deploy (#1727, #1735):** `config_acknowledged` cannot clear a ClickHouse
+  DDL surface the host did not answer for (the step publishes `unanswered`);
+  `--refresh-manifest` is no longer offered as the missing-row remedy.
+- **oracle — reflector (#1687):** `oracle.reflector.{dex,cex,fx}_decimals`
+  make each contract's SEP-40 price scale configurable (0 keeps 14; values
+  above 38 are rejected at config load).
+- **external — kraken (#1729):** XLM/AUD, XLM/CAD and XLM/CHF leave the
+  default pairs; Kraken never listed them and the subscription-rejected alert
+  fired on every connect.
+- **dashboardauth (#1655, #1666):** sign-out-everywhere; enrolling a passkey
+  ends the user's other sessions; live sessions are capped at 10 per user,
+  oldest revoked first.
+- **monitoring (#1671, #1690, #1714, #1718, #1761, #1902, #1755):** an
+  aggregate transactional-mail send-rate alert; a `webhook_deliveries`
+  row-count gauge from the retention reaper; an alert for an optional
+  Alertmanager receiver installed with no URL; the weekly Tier D textfile is
+  excluded from the 24 h staleness rule; the escalated-freeze page links its
+  own runbook; Healthchecks `/fail` pings are debounced and the aggregator
+  heartbeat is skipped when it is off; incidents require
+  `affected_components` and alert severity values are linted.
+- **ci (#1719, #1740, #1837, #1862, #1794, #1785, #1804):** the unit-test job
+  enforces the coverage floor (65.1 % total against a 54.0 % floor);
+  `lint-apikey-scan` runs in CI and `verify.sh`; migration money columns are
+  gated on resolved catalog types; the main-CI health check pages past
+  cancelled runs; `lint-metric-refs` scans folded and chomped expr blocks;
+  histogram fixtures are checked for label realism.
+
+### Fixed
+
+- **api:** `/v1/assets/fiat:USD` serves the identity `price_usd` (#1682); the
+  SEP-40 point reads refuse a declared peg (#1661); served-price guard
+  substitutions are surfaced on price and headline (#1670); one gate verdict
+  is shared across queued price-stream buckets (#1665);
+  `POST /v1/account/keys` is refused for SEP-10 subjects (#1668);
+  `/v1/operations?ledger=` gets the closed-ledger cache band (#1709); every
+  `/v1/issuers` limit is served from one ceiling-sized entry (#1760); a late
+  pool-tokens flight no longer re-reads a fresh entry (#1798); `/v1/status`
+  freshness query failures surface as absent counts (#1741);
+  `?include=` on `/v1/markets` and `/v1/sources` is documented (#1834).
+- **pricing / aggregation:** each pair's VWAP is read once per sweep (#1664);
+  triangulation rejects fiat/fiat legs without USD (#1676); the
+  `MinUSDVolume` floor compares as an exact `big.Rat` (#1853); the FX feed
+  that published each fiat-cross rate is credited (#1836); a served snapshot
+  price counts as priced in the tripwire (#1888); composite-reference metrics
+  carry `windowLabel` (#1662); `known_anchors` outside an issuance-free fiat
+  entry are rejected (#1736).
+- **sources:** SEP-41 decodes the legacy admin-prefixed `set_authorized` id
+  (#1846); unseeded SAC-wrapper supply is withheld at any total sign (#1852);
+  sorocredit refuses negative amounts and counts unpromoted debt legs (#1886);
+  blend_backstop genesis starts before the V1 backstop era (#1692); the SDEX
+  decoder stops counting both-zero no-op claims as failures (#1878); MEV
+  arbitrage cycle and venue guards run per connected component (#1839);
+  metadata TOML closes strings and skips BOMs where the decoder does (#1657);
+  `issuer-flags` stops gracefully when the timeout hits a read (#1812); the
+  external `GetBody` read cap rejects non-positive values (#1802);
+  backfill-external trade inserts are batched (#1884).
+- **timescale / clickhouse:** positions folds are ordered before their venue
+  cap (#1783); the batch-upsert decompression cap is lifted only on
+  re-derives (#1864); per-source 24 h breakdown orders by USD volume
+  (#1810); `account_activity` backfills the newest window first (#1694); the
+  per-hash contract WASM fill is memoised and coalesced (#1746);
+  near-unique segment-by tables stay off the compression list (#1856).
+- **ops / chops:** `ch-rebuild -write` fails on lost rows and empty
+  re-derives (#1723); the local statfs pre-flight is refused when the DSN
+  host is remote (#1866); `projector-replay` records the ledger it actually
+  rewound from (#1693); `archive-completeness -to` beyond the uint32 range is
+  refused and `rehydratePaths` no longer wraps near `MaxUint32` (#1703,
+  #1704); `ingestion_cursors` is captured in the CH schema snapshot (#1684);
+  hubble-soroban-events filters on the real topics column (#1713); the
+  config-assertions textfile is written atomically (#1702); watched contract
+  instance removals are recorded in wasm-history (#1775); the fx backfill
+  provenance label is skipped in data-freshness (#1711); RPC-failed batches
+  are accounted in `fetch-wasm-rpc.py` (#1698).
+- **ratelimit / streaming:** per-/48 key inserts are capped in the in-process
+  limiter (#1659); caller cancellations stay off the fail-closed clock (#1686);
+  a missing object below the datastore tip is refused and tolerated missing
+  ledgers count as walk-complete (#1872, #1685).
+- **explorer:** a partial lending-pool TVL renders as a lower bound (#1675);
+  sub-cap dust prices render as a signed bound, not "0" (#1720); negative
+  decimals scale on the string (#1674); the home archive-completeness light
+  derives from `/v1/coverage` (#1699); lake staleness is stamped on the
+  remaining lake-backed routes (#1869); `/exchanges` pair-table venues derive
+  from the registry (#1792); asset page title and JSON-LD use `assetSymbol`
+  (#1784); a failed `/v1/sources` fetch is distinguished from zero activity
+  (#1700); the refresh-gate classes are bounded so client keys cannot fill
+  them (#1892); proven SAC labels and the contract attribution registry map
+  are cached (#1708, #1748); prev-ledger navigation is disabled at genesis
+  (#1819); the recent-trades merge comparator is consistent on ties (#1807);
+  stale Try-the-API responses are dropped after switching example (#1789);
+  `crypto:`/`fiat:` ids match in the asset markets side label (#1788);
+  SourceBreakdown shows its error state on a failed first load (#1790);
+  venue pages are listed in the sitemap (#1796); long-tail shell pages no
+  longer inherit homepage social tags (#1782); `/dexes/sdex` is framed as an
+  order book of pairs (#1774); paged operations no longer flash page 1 on
+  return (#1817); swap-picker crypto rows show the asset name (#1823); a
+  mixed RWA reference total no longer claims oracle provenance (#1833).
+- **load / chaos / dev:** the SSE scenario gates on subscribe success and is
+  dropped from the mixed SLA scenario (#1813, #1779); the k6 production-target
+  guard matches case-insensitively (#1787); chaos scenarios 02 and 04 measure
+  what they claim (#1861); `verify-cdn.sh` no longer aborts on a zero-valued
+  counter bump (#1786); `bootstrap-worktree` reinstalls a stale web
+  `node_modules` (#1772).
+- **docs:** runbooks, ADRs, README files and the launch plan corrected to
+  match the code at HEAD — among them the phantom `make test-alerts` (#1907),
+  the ch-gate and verify-archive invocations that could not run (#1732), the
+  real trade-sink backpressure log line (#1818), the 8M claimable-balance
+  index cap (#1800), the postmortem draft for the 2026-09-02 log-store
+  exposure (#1855), and the reused pre-migration PR citations (#1896, #1899).
+
 ## [v0.94.0] — 2026-09-29
 
 30 commits since v0.93.0: the cohort DeFi amounts now sum exactly in
@@ -658,122 +806,3 @@ pass and is called out first.
   rewrite; record when the cached SEP-1 payload was fetched; one webhook
   per (account, url); delete sandwich/oracle-sandwich accusations whose
   stored evidence doesn't prove opposite-direction brackets.
-
-## [v0.91.0] — 2026-09-18
-
-### Added
-
-- **ops:** `verify-served-values` now diffs `supply.sdf_reserve_accounts`
-  against the reserve list SDF publishes — the `accounts` table plus the
-  network-upgrade reserve in stellar/dashboard's `common/lumens.js`, the
-  source of `dashboard.stellar.org`'s `circulatingSupply` (its API exposes
-  program sums only, never the accounts) — on the same daily timer as the
-  2% value cross-check, and emits
-  `stellarindex_sdf_reserve_list_drift{kind="missing"|"extra"}`.
-  `stellarindex_sdf_reserve_list_drift` (ticket, 26 h) alerts on any
-  verified difference in both rule trees; a dark or reshaped source is a
-  skip (`served_value_skipped{check="sdf_reserve_list"}`), never a verdict.
-  Closes tail-triage C4-069: one account SDF adds or retires moves
-  circulating supply by well under the value check's 2% tolerance, so a
-  stale list was undetectable. New `-config` flag (default
-  `/etc/stellarindex.toml`; empty skips the check), passed by the systemd
-  unit. Runbook section in `served-value-drift.md`; catalogue row.
-
-- **explorer:** the sponsor / creator cohort pages' flows panel now
-  values each month's movement at THAT month's USD price beside the
-  live-price figure — "USD then" beside "USD today", as a toggle on the
-  value-moved chart. `GET /v1/accounts/{g}/graph/cohort` gains
-  `flows.points[].by_asset[].{inflow_usd_then,outflow_usd_then,price_usd_then}`
-  and the month point's `inflow_usd_then` / `outflow_usd_then` (the priced
-  assets' exact sum, rounded once); every one is omitted — never zero —
-  where no USD-quoted market priced the asset that month. "Then" is the
-  month's volume-weighted USD price on this index's own markets:
-  `timescale.Store.MonthlyUSDVWAPs` folds `prices_1mo`'s USD-proxy-quoted
-  rows onto ONE row per (canonical asset, month) across every alias
-  spelling (XLM's three forms land under `native`, a registered SAC under
-  its classic id) with exact arithmetic; `ch-cohort-rollup` loads it each
-  cycle into the new `stellar.asset_month_usd_prices` (+ `_staging`,
-  swapped with the cohort tables — `deploy/clickhouse/tier1_schema.sql`
-  and the operator mirror `account_cohort_rollup.sql`), and the flows read
-  LEFT JOINs it on (asset, month). XLM's own monthly USD row is in the
-  table so an asset quoted only in XLM can be priced through it later.
-  Operators on an existing deployment re-run step 1 of the
-  `account_cohort_rollup.sql` runbook (idempotent DDL) before the next
-  cycle; the cycle now installs the `[supply].sac_wrappers` alias
-  registry so SAC-quoted months fold onto the classic id the flows carry.
-
-### Changed
-
-- **docs:** `docs/methodology/rwa-definition.md` R4 names all three of
-  its bases — it said "one of two" while the code had carried
-  `sep1_isin_declaration` since 2026-09-15 — and describes the ISIN arm
-  as the code applies it (form-checked `anchor_asset`, admits without a
-  class, runs last, sits below R2 and R3). It also states the pre-filter
-  contract `rwa.CouldQualify` is under (every asset-side input of every
-  R4 arm, never a decision, pinned by a test) and points the
-  sibling-recognition assumption at the R3 section that carries it. The
-  `curated-rwa-sync.service.j2` header now describes the sync as it is
-  — two public Dune query results read by GET, no SQL execution,
-  billed by datapoint (`stellarindex_curated_rwa_sync_datapoints_read`),
-  stamping `executed_at_unix`, writing `curated_rwa_published_series` —
-  in place of the execute-and-poll design it replaced; directives are
-  untouched. The alerts catalog and the `curated-rwa-sync-stale`
-  runbook were checked for the same leftovers and carried none.
-- **explorer/api:** the three follow-ups the #515 verifier listed. The
-  creator and sponsor league tables under `/insights` read their board
-  shapes from one `src/api/relationTypes.ts`, derived from the generated
-  `operations['getAccountCreators']` / `['getAccountSponsors']` types
-  alongside the standing panel that already did — the two hand-written
-  copies are gone, and deriving them exposed that the spec never listed
-  `totals.*`, `coverage.*` or a row's `first_/last_ledger` and
-  timestamps as required although the handler emits every one
-  unconditionally; the spec now says so. The explorer's `Coin` is the
-  generated `Asset` schema outright — every field the hand-typed
-  intersection carried has been spec'd since board #33, and the copy had
-  drifted the other way, declaring `slug`, `first_seen_ledger`,
-  `last_seen_ledger` and `observation_count` required while the handler
-  serves each `omitempty`; the consumers that dereferenced `slug` now go
-  through `coinSlug()` (falls back to `asset_id`, which `/assets/{id}`
-  resolves), the home table draws an absent `observation_count` as a
-  dash rather than `0`, and the sparklines take the wire's own nullable
-  shape. `sep1ImagesReader` (the SEP-1 logo overlay) and
-  `Sep1BoundCurrencyReader` (RWA classic membership) carry the
-  compile-time `*timescale.Store` assertion the other optional seams
-  have, so a reader that stops satisfying either is a build failure
-  rather than a silent opt-out.
-
-### Fixed
-
-- **timescale:** `BatchInsertTrades` lifts TimescaleDB's per-transaction
-  decompression cap (`SET LOCAL … = 0`, scoped to the batch's own
-  transaction) before its upsert. It is the fallback writer for every
-  range whose `trades` chunks are compressed, and an upsert into a
-  compressed chunk decompresses whole segments per conflict: on
-  2026-09-18 every 5,000-row sub-batch of a Soroban-era SDEX re-derive
-  failed with `SQLSTATE 53400 tuple decompression limit exceeded` and the
-  writer dropped to one INSERT per row again. The restamp and COPY writers
-  already lifted the cap the same way.
-
-- **api/aggregator:** token decimals are resolved from ONE source of truth,
-  and a market cap is never computed across two scales (C1-050). The
-  aggregator normalised VWAP through `nonstandard_decimals_assets` while
-  `GET /v1/assets/{asset_id}` scaled supply by the lake's on-chain
-  `decimals()`, and `market_cap_usd` / `fdv_usd` were computed regardless
-  of whether the two agreed — a lake read that failed or timed out fell
-  back to 7 while the price stayed normalised on the projection's value,
-  so an 18-dp token's cap came out 10^11× too large on every lake blip.
-  The lake is now the source of truth and the projection its materialised
-  view: the aggregator's decimals-guard re-reads every persisted row
-  against the lake on each sweep tick and repairs drift
-  (`decimalsguard.Guard.Reconcile` — upsert the lake's value, or delete
-  the row when the lake confirms 7 dp; a row the lake cannot read is left
-  alone). The detail endpoint refuses the cap with a new
-  `market_cap_decimals_mismatch: true` reason flag when the two disagree
-  at request time, and falls back to the projection's value when the lake
-  is unreadable so supply and price stay on one scale. New counter
-  `stellarindex_nonstandard_decimals_lockstep_mismatch_total{site,asset}`
-  is a third arm of `stellarindex_nonstandard_decimals_correction_failing`.
-  Measured on r1 before the change: 9 projection rows, the 6 with an asset
-  row all equal to the lake, 0 disagreeing — the defect was structural, not
-  a live divergence. Runbook: `docs/operations/runbooks/dex-nonstandard-decimals.md`
-  ("Decimals lockstep").

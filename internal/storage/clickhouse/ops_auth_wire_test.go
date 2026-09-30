@@ -63,53 +63,102 @@ func TestOpsOpenersAuthenticateFromEnv(t *testing.T) {
 			_, err := InsertEntryChanges(ctx, addr, []LedgerEntryChangeRow{{}}, 0)
 			return err
 		}},
+		// The live-daemon openers: the indexer's dual-sink, the MEV
+		// worker's tx-index reader, and the API/indexer readers when no
+		// serving user is configured.
+		{"NewLiveSink", func(ctx context.Context, addr string) error {
+			_, err := NewLiveSink(ctx, addr, LiveSinkOptions{})
+			return err
+		}},
+		{"NewTxIndexReader", func(ctx context.Context, addr string) error {
+			_, err := NewTxIndexReader(ctx, addr)
+			return err
+		}},
+		{"NewExplorerReaderAuth without credentials", func(ctx context.Context, addr string) error {
+			_, err := NewExplorerReaderAuth(ctx, addr, "", "")
+			return err
+		}},
+		{"NewSupplyReaderAuth without credentials", func(ctx context.Context, addr string) error {
+			_, err := NewSupplyReaderAuth(ctx, addr, "", "")
+			return err
+		}},
 	}
 
 	cases := []struct {
-		name         string
-		user, pass   string
-		wantUser     string
-		wantPassword string
+		name               string
+		user, pass         string
+		liveUser, livePass string
+		wantUser           string
+		wantPassword       string
 	}{
 		// The password deliberately carries the characters
 		// run-heavy-job.sh must hand through verbatim (see
 		// scripts/ci/run-heavy-job-test.sh): the Go side is byte-exact too.
-		{"pair set → ops_batch on the wire", "ops_batch", `p=a$s"s w0rd'#x=`, "ops_batch", `p=a$s"s w0rd'#x=`},
+		{"pair set → ops_batch on the wire", "ops_batch", `p=a$s"s w0rd'#x=`, "", "", "ops_batch", `p=a$s"s w0rd'#x=`},
 		// clickhouse-go substitutes CH's literal `default` user for an
 		// empty Auth.Username, so that is what the server sees.
-		{"pair unset → CH default user (pre-fix behaviour)", "", "", "default", ""},
+		{"pair unset → CH default user (pre-fix behaviour)", "", "", "", "", "default", ""},
+		{"live pair set → live_daemon on the wire", "", "", "live_daemon", "l1ve-pw", "live_daemon", "l1ve-pw"},
+		// Batch units source both env files; the batch tier must win.
+		{"both pairs set → ops_batch on the wire", "ops_batch", "ops-pw", "live_daemon", "l1ve-pw", "ops_batch", "ops-pw"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(OpsUserEnv, tc.user)
 			t.Setenv(OpsPasswordEnv, tc.pass)
+			t.Setenv(LiveUserEnv, tc.liveUser)
+			t.Setenv(LivePasswordEnv, tc.livePass)
 			for _, op := range openers {
 				t.Run(op.name, func(t *testing.T) {
-					addr, hellos := listenForClientHello(t)
-					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					defer cancel()
-					if err := op.open(ctx, addr); err == nil {
-						t.Fatalf("%s succeeded against a listener that never answers — the test is not observing the dial", op.name)
-					}
-					var got clientHello
-					select {
-					case got = <-hellos:
-					case <-time.After(5 * time.Second):
-						t.Fatalf("%s: no client hello reached the listener", op.name)
-					}
-					if got.Database != "stellar" {
-						t.Errorf("%s: database on the wire = %q, want %q", op.name, got.Database, "stellar")
-					}
-					if got.Username != tc.wantUser {
-						t.Errorf("%s: username on the wire = %q, want %q", op.name, got.Username, tc.wantUser)
-					}
-					if got.Password != tc.wantPassword {
-						t.Errorf("%s: password on the wire = %q, want %q", op.name, got.Password, tc.wantPassword)
-					}
+					requireHelloIdentity(t, op.name, op.open, tc.wantUser, tc.wantPassword)
 				})
 			}
 		})
+	}
+}
+
+// Explicit serving credentials are what the API configured and must not
+// be displaced by either environment pair.
+func TestAuthOpenersPreferExplicitCredentials(t *testing.T) {
+	t.Setenv(OpsUserEnv, "ops_batch")
+	t.Setenv(OpsPasswordEnv, "ops-pw")
+	t.Setenv(LiveUserEnv, "live_daemon")
+	t.Setenv(LivePasswordEnv, "l1ve-pw")
+	requireHelloIdentity(t, "NewExplorerReaderAuth", func(ctx context.Context, addr string) error {
+		_, err := NewExplorerReaderAuth(ctx, addr, "api_serving", "serving-pw")
+		return err
+	}, "api_serving", "serving-pw")
+	requireHelloIdentity(t, "NewSupplyReaderAuth", func(ctx context.Context, addr string) error {
+		_, err := NewSupplyReaderAuth(ctx, addr, "api_serving", "serving-pw")
+		return err
+	}, "api_serving", "serving-pw")
+}
+
+// requireHelloIdentity runs open against a fake listener and asserts the
+// identity its client hello carried.
+func requireHelloIdentity(t *testing.T, name string, open func(ctx context.Context, addr string) error, wantUser, wantPassword string) {
+	t.Helper()
+	addr, hellos := listenForClientHello(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := open(ctx, addr); err == nil {
+		t.Fatalf("%s succeeded against a listener that never answers — the test is not observing the dial", name)
+	}
+	var got clientHello
+	select {
+	case got = <-hellos:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("%s: no client hello reached the listener", name)
+	}
+	if got.Database != "stellar" {
+		t.Errorf("%s: database on the wire = %q, want %q", name, got.Database, "stellar")
+	}
+	if got.Username != wantUser {
+		t.Errorf("%s: username on the wire = %q, want %q", name, got.Username, wantUser)
+	}
+	if got.Password != wantPassword {
+		t.Errorf("%s: password on the wire = %q, want %q", name, got.Password, wantPassword)
 	}
 }
 

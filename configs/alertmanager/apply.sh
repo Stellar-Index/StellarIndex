@@ -276,6 +276,31 @@ install -m 0640 -o root -g "${AM_GROUP:-prometheus}" "$RENDERED" "$TARGET"
 systemctl reload prometheus-alertmanager
 echo "alertmanager: applied $TARGET, reload OK"
 
+# ── publish which optional receivers were installed dark ───────────
+# The DARK line above scrolls past; this gauge lets an alert carry it.
+# It describes the installed config, so it is rewritten only by an apply.
+TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
+AM_PROM="$TEXTFILE_DIR/alertmanager_receivers.prom"
+write_receiver_gauge() {
+  local tmp r dark
+  tmp="$(mktemp "${AM_PROM}.XXXXXX")" || return 1
+  {
+    echo '# HELP stellarindex_alertmanager_optional_receiver_dark 1 when configs/alertmanager/apply.sh installed an optional receiver with no URL, so it delivers to nobody.'
+    echo '# TYPE stellarindex_alertmanager_optional_receiver_dark gauge'
+    for r in $AM_OPTIONAL_RECEIVERS; do
+      dark=1
+      [ -n "$(am_url_for "$r")" ] && dark=0
+      echo "stellarindex_alertmanager_optional_receiver_dark{receiver=\"$r\"} $dark"
+    done
+  } >"$tmp" && chmod 0644 "$tmp" && mv "$tmp" "$AM_PROM" && return 0
+  rm -f "$tmp"
+  return 1
+}
+# The config is already live, so a failed write must not fail the apply.
+if ! write_receiver_gauge; then
+  echo "alertmanager: WARNING — could not write $AM_PROM; dark optional receivers are unalarmed." >&2
+fi
+
 # ── assert what Alertmanager actually LOADED still delivers ────────
 # A successful reload is not evidence of delivery: the 31-day outage
 # reloaded successfully every time. Read the running config back and

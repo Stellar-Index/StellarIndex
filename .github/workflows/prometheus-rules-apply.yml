@@ -105,11 +105,8 @@ jobs:
           USER="${R1_USER:-root}"
           TARGET="${USER}@${R1_HOST}"
           SSH_OPTS=(-i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=20)
-          scp "${SSH_OPTS[@]}" -q configs/prometheus/apply-rules.sh \
-            "${TARGET}:/tmp/apply-rules.sh"
-          ssh "${SSH_OPTS[@]}" "$TARGET" \
-            'rm -rf /tmp/rules.r1.incoming && mkdir -p /tmp/rules.r1.incoming'
-          scp "${SSH_OPTS[@]}" -q configs/prometheus/rules.r1/*.yml \
-            "${TARGET}:/tmp/rules.r1.incoming/"
-          ssh "${SSH_OPTS[@]}" "$TARGET" 'bash /tmp/apply-rules.sh /tmp/rules.r1.incoming'
-          ssh "${SSH_OPTS[@]}" "$TARGET" 'rm -rf /tmp/rules.r1.incoming /tmp/apply-rules.sh' || true
+          # One session into a fresh mktemp -d (0700, unguessable): nothing is
+          # staged at a predictable path another host user could pre-plant.
+          (cd configs/prometheus && tar -cf - apply-rules.sh rules.r1/*.yml) |
+            ssh "${SSH_OPTS[@]}" "$TARGET" \
+              'set -eu; d=$(mktemp -d); trap "rm -rf -- \"\$d\"" EXIT; tar -xf - -C "$d"; bash "$d/apply-rules.sh" "$d/rules.r1"'

@@ -245,3 +245,64 @@ func TestTouchTracker_EvictsAgedEntries(t *testing.T) {
 			"aged-out entries were not evicted (REL-05: unbounded growth)", got)
 	}
 }
+
+func TestMiddleware_IdleSessionRejectedAndRevoked(t *testing.T) {
+	now := time.Now().UTC()
+	cases := []struct {
+		name        string
+		lastSeen    time.Time
+		created     time.Time
+		wantResolve bool
+	}{
+		{"idle 8 days", now.Add(-8 * 24 * time.Hour), now.Add(-10 * 24 * time.Hour), false},
+		{"active 1 hour ago", now.Add(-time.Hour), now.Add(-10 * 24 * time.Hour), true},
+		{"zero last-seen, fresh create", time.Time{}, now.Add(-time.Minute), true},
+		{"zero last-seen, stale create", time.Time{}, now.Add(-8 * 24 * time.Hour), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			accounts := newFakeAccountStore()
+			users := newFakeUserStore()
+			acct, err := accounts.Create(context.Background(), platform.Account{
+				Name: "tester", Slug: "tester", Status: platform.AccountActive,
+			})
+			if err != nil {
+				t.Fatalf("create account: %v", err)
+			}
+			user, err := users.CreateUser(context.Background(), platform.User{
+				AccountID: acct.ID, Email: "tester@example.com", Role: platform.RoleOwner,
+			})
+			if err != nil {
+				t.Fatalf("create user: %v", err)
+			}
+			sess, token := mintTestSession(t, users, platform.Session{
+				UserID:    user.ID,
+				ExpiresAt: now.Add(20 * 24 * time.Hour),
+			})
+			users.mu.Lock()
+			s := users.sessions[sess.ID]
+			s.LastSeenAt, s.CreatedAt = tc.lastSeen, tc.created
+			users.sessions[sess.ID] = s
+			users.mu.Unlock()
+
+			cfg := &Config{Accounts: accounts, Users: users, Now: func() time.Time { return now }}
+			var resolved bool
+			h := Middleware(cfg)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				_, resolved = SessionFromContext(r.Context())
+			}))
+			req := httptest.NewRequest(http.MethodGet, "/v1/account/me", nil)
+			req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
+			h.ServeHTTP(httptest.NewRecorder(), req)
+
+			if resolved != tc.wantResolve {
+				t.Fatalf("resolved = %v, want %v", resolved, tc.wantResolve)
+			}
+			users.mu.Lock()
+			revoked := !users.sessions[sess.ID].RevokedAt.IsZero()
+			users.mu.Unlock()
+			if revoked == tc.wantResolve {
+				t.Fatalf("revoked = %v, want %v", revoked, !tc.wantResolve)
+			}
+		})
+	}
+}

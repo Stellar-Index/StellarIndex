@@ -222,15 +222,31 @@ in real-time.
 into hot. Idempotent (`PutFileIfNotExists`). Fail-closed: without
 `-write` it only lists the would-copy files.
 
-## Step 5 — monthly trim cadence (deferred)
+## Step 5 — monthly trim cadence (installed, not enabled)
 
-A `trim-galexie-archive.timer` that fires monthly is documented
-in ADR-0027 but **not yet shipped**. It requires the operator
-to add a `--older-than-duration 90d` mode to the trim subcommand
-(currently only `--older-than-ledger` is supported); that needs
-a way to resolve the current tip at execution time (read from
-`ingestion_cursors`) plus the time-to-ledger conversion. Until
-that lands, operators re-run Step 4's chunked invocation manually
+`galexie-archive-trim.timer` fires at `*-*-01 03:17:00 UTC` and starts
+`galexie-archive-trim.service`. Its `ExecStartPre`,
+`compute-trim-cutoff.sh`, reads the tip from `ingestion_cursors`,
+subtracts the 90-day hot window (1,555,200 ledgers), persists the
+result as the fill's hot floor and writes `TRIM_CUTOFF` for
+`trim-galexie-archive -older-than-ledger ${TRIM_CUTOFF} -commit`. No
+duration flag is needed.
+
+The archival-node role installs both units but deliberately does not
+enable the timer (ADR-0027 §3 + §4 ship as one step). Enable it only
+once `s3_cold_bucket_archive` is set in the indexer/API TOML **and** a
+cold read has been proven on this host:
+`stellarindex_ledgerstream_tier_read_total{outcome="cold"}` > 0 after
+Step 4's cold-read sanity test. A non-empty bucket key alone proves
+nothing: a reader that never goes through the tiered store never
+increments the metric. Then:
+
+```sh
+systemctl enable --now galexie-archive-trim.timer
+systemctl list-timers galexie-archive-trim.timer
+```
+
+Until it is enabled, re-run Step 4's chunked invocation manually
 once per month.
 
 ## Common failure modes

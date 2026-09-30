@@ -1,6 +1,7 @@
 package sdex
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -279,6 +280,8 @@ func TestDecodeClaimAtom_zeroAmountPolicy(t *testing.T) {
 	// both-zero no-op → dropped.
 	if _, err := decodeClaimAtom(mkOrderBookClaim(t, 0x22, 3, xlm, usdc, 0, 0), 1, time.Now(), "tx", 0, 0, "GT"); err == nil {
 		t.Error("both-zero no-op claim should be dropped, got nil error")
+	} else if !errors.Is(err, ErrNoOpClaim) {
+		t.Errorf("both-zero no-op claim dropped with %v, want ErrNoOpClaim", err)
 	}
 }
 
