@@ -1508,7 +1508,7 @@ type AssetListingValuation struct {
 }
 
 // VerifiedCurrencyListItem is one row in the response to
-// [Client.AssetsVerified] (`GET /v1/assets/verified`) — a directory
+// `GET /v1/assets/verified` (no Client method yet) — a directory
 // entry from the verified-currency catalogue. Identity-only;
 // pricing requires a per-row fetch via [Client.Asset] with the
 // `Slug` value.
