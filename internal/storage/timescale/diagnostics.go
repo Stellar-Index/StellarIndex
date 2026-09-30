@@ -716,6 +716,9 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 //	                                 entries (migration 0146); literal
 //	                                 source 'defindex' (summed WITH
 //	                                 defindex_flows).
+//	defindex_admin_events          — defindex vault admin events
+//	                                 (migration 0192); literal source
+//	                                 'defindex' (summed WITH the above).
 //	comet_liquidity                — Comet join/exit/deposit/withdraw;
 //	                                 literal source 'comet' (summed WITH
 //	                                 the comet swaps from `trades`).
@@ -830,6 +833,10 @@ const seedSourceEntryCountsSQL = `
             -- handler -> one table), so folding it keeps the seed's 'defindex'
             -- total equal to the full bump total (the outer GROUP BY sums both).
             SELECT 'defindex'           AS source, count(*) AS c FROM defindex_fees
+            UNION ALL
+            -- One row per bumped defindex AdminEvent (migration 0192), disjoint
+            -- from the flow and fee tables like defindex_fees above.
+            SELECT 'defindex'           AS source, count(*) AS c FROM defindex_admin_events
             UNION ALL
             -- Per-source non-'trades' sinks whose 'entries' tally is bumped
             -- 1/event via pipeline/sink.go::bumpEntryCount — a NON-idempotent

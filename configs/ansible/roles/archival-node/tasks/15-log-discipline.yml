@@ -614,26 +614,34 @@
 # 170x.
 #
 # WHY THE EXISTING CAP DID NOT SAVE IT — the same trap this file already
-# documents for syslog, one section down. /etc/logrotate.d/postgresql-
-# common ALREADY says `maxsize 500M`, and the file still reached 2.86 GB,
-# because `maxsize` is only evaluated when logrotate RUNS and Ubuntu's
-# logrotate.timer is `OnCalendar=daily`. A daily cap cannot bound a file
-# that gains 2.8 GB in a day. The cap was never wrong; it was never
-# consulted.
+# documents for syslog, one section down. r1's /etc/logrotate.d/
+# postgresql-common carried a hand-added `maxsize 500M`, and the file still
+# reached 2.86 GB, because `maxsize` is only evaluated when logrotate RUNS
+# and Ubuntu's logrotate.timer is `OnCalendar=daily`. A daily cap cannot
+# bound a file that gains 2.8 GB in a day.
 #
-# SO THE FIX IS CADENCE, NOT POLICY, and this deliberately ships NO
-# logrotate config. The distro policy (rotate 10, copytruncate, maxsize
-# 500M, compress+delaycompress) is already correct. Overriding
-# /etc/logrotate.d/postgresql-common would take ownership of a dpkg
-# conffile and start a prompt-on-upgrade fight for no gain, and shipping
-# a SECOND config matching the same glob makes logrotate refuse both
-# with "duplicate log entry". Run the existing config more often instead.
+# SO THE FIX IS CADENCE PLUS A CAP THE ROLE OWNS. The stock dpkg conffile
+# has no `maxsize` at all (weekly, rotate 10, copytruncate, compress +
+# delaycompress), so a rebuilt host running it hourly would enforce
+# nothing. The hourly unit reads its own config, installed OUTSIDE
+# /etc/logrotate.d: overriding the conffile starts a prompt-on-upgrade
+# fight, and a second config there matching the same glob makes logrotate
+# refuse both with "duplicate log entry".
 #
 # copytruncate is what makes this safe against a running server: it
 # copies then truncates in place, so postgres keeps writing to the same
 # inode and needs no reopen, no HUP and no restart. Verified live on
 # 2026-09-10 — inode unchanged across two forced rotations, and the
 # server was still appending 25 s later.
+- name: Install the size-capped Postgres logrotate policy
+  ansible.builtin.copy:
+    src: pg-logrotate.conf
+    dest: /etc/stellarindex-pg-logrotate.conf
+    owner: root
+    group: root
+    mode: "0644"
+  tags: [log-discipline, pg-logrotate]
+
 - name: Install hourly Postgres log rotation units
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../../deploy/systemd/{{ item }}"

@@ -1,64 +1,62 @@
 # defindex source
 
-Decoder for the **Blend autocompound strategy** contracts that back
-paltalabs' [DeFindex](https://github.com/paltalabs/defindex) vaults
-on Stellar mainnet.
-
-> **Corrected 2026-05-19.** This package previously targeted a
-> fictional `("DeFindexVault", …){depositor, amounts:Vec<i128>,
-> df_tokens_minted}` schema taken from paltalabs/defindex tag
-> `1.0.0`. **Mainnet never deployed that.** The contract addresses
-> we watch run Blend *strategy* code (deployed WASM `11329c24…988`)
-> and emit a much simpler schema, verified from real on-chain LCM
-> via `stellarindex-ops scan-soroban-events`. See
-> `docs/operations/wasm-audits/defindex.md` "Audit result" for the
-> full evidence trail (#28).
+Decoder for paltalabs' [DeFindex](https://github.com/paltalabs/defindex)
+protocol on Stellar mainnet. It covers three contract layers — the
+Blend autocompound **strategy** contracts (WASM `11329c24…988`), the
+**vault** wrappers users deposit into, and the vault **factory** — so
+`defindex` names the whole protocol, not the strategy layer alone.
 
 ## What it decodes (verified on-chain)
 
-| topic | body | example |
+| topic | body | output |
 |---|---|---|
-| `("BlendStrategy","deposit")` | `ScvMap{ from: Address, amount: i128 }` | L57,056,389 |
-| `("BlendStrategy","withdraw")` | `ScvMap{ from: Address, amount: i128 }` | recent live |
+| `("BlendStrategy","deposit"\|"withdraw")` | `Map{ from: Address, amount: i128 }` | `Event{StrategyFlow}` |
+| `("BlendStrategy","harvest")` | `Map{ from, amount: i128, price_per_share: i128 }` | `Event{StrategyFlow}`, direction `harvest` |
+| `("DeFindexVault","deposit")` | `Map{ depositor, amounts: Vec<i128>, df_tokens_minted: i128 }` | `VaultEvent{VaultFlow}` |
+| `("DeFindexVault","withdraw")` | `Map{ withdrawer, amounts_withdrawn: Vec<i128>, df_tokens_burned: i128 }` | `VaultEvent{VaultFlow}` |
+| `("DeFindexVault","dfees")` | `Map{ distributed_fees: Vec[(token, amount i128)] }` | one `DFeesEvent` per entry (see below) |
+| `("DeFindexVault", rescue\|paused\|unpaused\|nreceiver\|nmanager\|nemanager\|rbmanager)` | per-kind `Map` (see below) | `AdminEvent{VaultAdmin}` |
+| `("DeFindexVault", rebalance\|n_wasm)` | — | recognised, not modelled |
+| `("DeFindexFactory","create"\|"n_fee")` | — | recognised, body never decoded (see below) |
 
-- `topic[0]` is `ScvString("BlendStrategy")` (13 chars > the 9-char
-  `symbol_short!` cap → String, same pattern as `"SoroswapPair"`).
-- `from` is the caller moving capital — usually the vault/router
-  **contract** (a C-strkey), occasionally a plain account
-  (G-strkey). `scval.AsAddressStrkey` renders both.
-- `amount` is the underlying-asset delta (`i128`, never truncated —
-  ADR-0003).
+- `topic[0]` is an `ScvString` on every layer (each prefix exceeds
+  the 9-char `symbol_short!` cap, same pattern as `"SoroswapPair"`).
+- The strategy layer's `from` is the vault contract moving capital,
+  not the end user; the vault layer's `depositor` / `withdrawer` is
+  the end user (`VaultFlow.User`).
+- Fields are read by map name, never by position; every amount is an
+  `i128` carried as `canonical.Amount` (never truncated — ADR-0003).
+- `harvest` is strategy yield realised into the vault, not a user
+  flow: position sums exclude it, NAV must include it.
 
-These are **flow-attribution** events, not price discovery — a
-strategy deposit/withdraw moves capital at NAV, it doesn't set a
-market price. Registered `Class: ClassRouter`; never a VWAP
-contributor.
+These are **flow-attribution** events, not price discovery — they move
+capital at NAV and never set a market price. Registered
+`Class: ClassRouter`; never a VWAP contributor.
 
-## Why a separate decoder
+## Dispatch
 
-Standard event-based dispatcher (`Decoder` interface, like
-`soroswap` / `aquarius` / `comet`). The topic classifies an event;
-a match additionally requires **contract identity** (ADR-0035/0040):
-strategy and vault flows match only from a registered child (the
-curated `MainnetGatedSet()` plus `protocol_contracts` rows), and
-factory `create` / `n_fee` only from `MainnetFactories`. An
-unregistered emitter of the same topic fails closed into a
-recognition gap rather than landing rows; admitting a new vault or
-strategy is an operator seed after its provenance is verified.
+Standard event-based `dispatcher.Decoder`. `Matches` gates on
+**contract identity** (ADR-0035): a strategy or vault topic matches
+only when the emitter is registered (`MainnetStrategies` /
+`MainnetVaults` plus the `protocol_contracts` warm), and a factory
+topic only when the emitter is one of `MainnetFactories`. An
+unregistered emitter fail-closes into an ADR-0033 recognition gap.
 
 ## Files
 
 ```
-events.go              — source name, topic prefix bytes, event symbols, StrategyFlow
-decode.go              — classify() + decodeFlow() → StrategyFlow (factory `create` bodies are recognised but NOT decoded/trusted — see below)
+events.go              — source name, topic prefixes/symbols, StrategyFlow / VaultFlow / DFee / VaultAdmin and their Event wrappers, curated contract sets
+decode.go              — classify / classifyVault / classifyFactory, decodeFlow / decodeVaultFlow / decodeDFees / decodeVaultAdmin, DecodeRebalanceMethod
 dispatcher_adapter.go  — implements dispatcher.Decoder (topic-matched + contract-identity gated)
 README.md              — this file
 ```
 
-Persistence is owned by `internal/pipeline/sink.go`, which type-
-switches on the dispatched `Event` / `VaultEvent` and writes
-`defindex_flows` (migration 0050) at the `strategy` and `vault`
-layers.
+`defindex` is a projected source (ADR-0031/0032): `internal/projector`
+is its only writer, through the `defindex.Event` / `VaultEvent` /
+`DFeesEvent` / `AdminEvent` cases in `internal/pipeline/sink.go`. Flows
+land in `defindex_flows` (migration 0050) at the `strategy` and `vault`
+layers; `dfees` entries land in `defindex_fees` (migration 0146); admin
+events land in `defindex_admin_events` (migration 0192).
 
 ## Current scope (shipped)
 
@@ -93,21 +91,27 @@ layers.
   posture vaults already had (no create body carries the vault's own
   address either).
 
-## Phase B follow-ups
+## Settled follow-ups
 
-1. **`trades.routed_via` tagging.** When the same tx contains a
-   Blend (`("Pool","supply")`) or Soroswap leg, tag those trades
-   with the strategy attribution.
-2. **Exposure ticker.** Periodic worker writing
-   `aggregator_exposures` rows from per-strategy on-chain state.
-3. **`harvest` / keeper-admin events.** Decode the autocompound
-   `harvest` event (yield realisation) for APY attribution.
-4. **End-user attribution.** When `from` is a vault contract,
-   correlate with the same-tx vault event to recover the end-user.
-5. **Source rename.** `defindex` → e.g. `blend-strategy` (more
-   honest; distinct from the existing `blend` pool source). A
-   product-taxonomy decision deferred so registry / genesis /
-   status-page keys stay stable for now.
+None of the follow-ups once listed here is open work.
+
+1. **`trades.routed_via` tagging** — not applicable. DeFindex vaults
+   hold persistent capital and do not take part in per-tx
+   `routed_via` tagging; their state lives in `defindex_flows`, not
+   `trades` (migration 0072). `internal/pipeline/routedvia.go` tags
+   Soroswap router legs only.
+2. **Exposure ticker** — dropped. The `aggregator_exposures` table it
+   would have written was never wired and migration 0152 removed it.
+3. **`harvest`** — modelled as `DirectionHarvest` in `defindex_flows`
+   (migration 0138 admits the direction).
+4. **End-user attribution** — served by the vault layer, which names
+   the end user directly: `VaultFlow.User` is the `defindex_flows`
+   vault-layer `actor` that `DefindexVaultSharesByUser`
+   (`internal/storage/timescale/positions.go`) folds. No same-tx
+   correlation with the strategy layer is needed.
+5. **Source rename** — not pursued. The source decodes the vault,
+   factory and fee layers as well as `BlendStrategy`, so `defindex`
+   is the accurate registry key.
 
 ## `dfees` — MODELLED (W5.2, 2026-08)
 
@@ -131,6 +135,28 @@ of a third `defindex_flows` layer. The decoder (`decodeDFees`) emits
 ONE `DFeesEvent` per Vec entry so the ADR-0033 projection reconcile
 counts 1:1; kind `defindex.vault.dfees`. Historical fill:
 `stellarindex-ops projector-replay -source defindex` (ADR-0034).
+
+## Vault admin events — MODELLED
+
+Seven vault-layer admin topics decode by field name into one
+`AdminEvent` each (kind `defindex.vault.admin`, table
+`defindex_admin_events`):
+
+| topic[1] | body fields | columns |
+|---|---|---|
+| `rescue` | `caller`, `strategy_address`, `amount_withdrawn: i128` | caller, strategy, amount |
+| `paused` / `unpaused` | `caller`, `strategy_address` | caller, strategy |
+| `nreceiver` | `caller`, `new_fee_receiver` | caller, new_address |
+| `nmanager` | `new_manager` | new_address |
+| `nemanager` | `new_emergency_manager` | new_address |
+| `rbmanager` | `new_rebalance_manager` | new_address |
+
+Every listed field is required: a body missing one is
+`ErrMalformedPayload`, never a row with a hole. `rescue`'s amount is in
+the strategy's underlying-asset base units. Shapes are pinned by
+`golden_admin_test.go` against the lake rows in
+`test/fixtures/defindex/vault-admin-2026-09-30/`. `rebalance` stays
+unmodelled: only the `invest` method has a sample.
 
 ## `n_wasm` — HANDLED as classify-only (ROADMAP #89, 2026-07-10)
 

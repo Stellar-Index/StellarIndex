@@ -55,6 +55,27 @@ type reconTarget struct {
 	kinds       []string // EventKind() values routing here; nil for census (sdex)
 }
 
+// sdexTradesFilter is the sdex target's whereFilter. It is also the persisted
+// completeness_target_floors key (timescale.TargetFloorKey), so it never changes.
+const sdexTradesFilter = "source = 'sdex'"
+
+// sdexPriceableFilter scopes the sdex served COUNT to the rows the census
+// counts: the census still excludes one-side-zero fills, because ledgers
+// written before they were admitted hold none. Once a full-history
+// ch-rebuild -sdex lands them, this filter goes with the census one.
+const sdexPriceableFilter = "base_amount > 0 AND quote_amount > 0"
+
+// countFilter is the predicate for the served-side row COUNT. It equals
+// whereFilter except for the sdex target, where it adds sdexPriceableFilter.
+// Use it only for CountRowsByLedger; floor identity (TargetFloorKey, MinLedger,
+// the floor upsert) stays on whereFilter.
+func (t reconTarget) countFilter() string {
+	if t.table == "trades" && t.whereFilter == sdexTradesFilter {
+		return t.whereFilter + " AND " + sdexPriceableFilter
+	}
+	return t.whereFilter
+}
+
 // reconSource is one source's reconciliation spec (ADR-0033 Claim 2b).
 type reconSource struct {
 	name        string
@@ -546,6 +567,9 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			// empty distributed_fees Vec (real, observed) emits zero
 			// events and zero rows — count-consistent by construction.
 			{"defindex_fees", "", []string{"defindex.vault.dfees"}},
+			// Vault admin topics (rescue / pause toggles / role rotations):
+			// one AdminEvent per on-chain event, one row each.
+			{"defindex_admin_events", "", []string{"defindex.vault.admin"}},
 		}},
 		{
 			name: "blend", genesis: blend.FactoryGenesisLedger, dec: blend.NewDecoder(),
@@ -558,7 +582,7 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			},
 		},
 		{name: "sdex", genesis: 2, census: true, targets: []reconTarget{
-			{"trades", "source = 'sdex'", nil},
+			{"trades", sdexTradesFilter, nil},
 		}},
 	}
 
@@ -876,6 +900,7 @@ func validateSourceFilter(only string, cat []reconSource) error {
 // ever hitting this by checking non-emptiness itself first.
 func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 	watched := cfg.Supply.WatchedSEP41Contracts
+	floor := sorobanEraFloor(cfg)
 	tdec, err := sep41transfers.NewDecoder(watched)
 	if err != nil {
 		return nil, fmt.Errorf("sep41_transfers decoder: %w", err)
@@ -911,7 +936,7 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 	// ~35 of the full verify's ~37 minutes (measured 2026-07-27).
 	return []reconSource{
 		{
-			name: sep41transfers.SourceName, genesis: sorobanEraGenesis,
+			name: sep41transfers.SourceName, genesis: floor,
 			dec: tdec, contractIDs: watched,
 			topic0Syms: []string{
 				sep41transfers.SymbolTransfer,
@@ -922,7 +947,7 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 			targets: []reconTarget{{"sep41_transfers", filter, []string{sep41transfers.EventKind}}},
 		},
 		{
-			name: sep41supply.SourceName, genesis: sorobanEraGenesis,
+			name: sep41supply.SourceName, genesis: floor,
 			dec: sdec, contractIDs: watched,
 			topic0Syms: []string{
 				sep41supply.SymbolMint,

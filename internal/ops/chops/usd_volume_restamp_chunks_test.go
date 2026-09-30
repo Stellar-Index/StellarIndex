@@ -578,6 +578,34 @@ func TestXLMBaseChunkRestamp_RerunSkipsChunksAlreadyAtGeneration(t *testing.T) {
 	}
 }
 
+// A chunk skipped as clean is still inside the window the closing report
+// names, so its rows must be counted there — as the day walk and the dry
+// run count them.
+func TestXLMBaseChunkRestamp_ReportCountsTheRowsOfASkippedChunk(t *testing.T) {
+	chunks, from, to := threeChunks()
+	clean := from.AddDate(0, 0, 4) // Jan 9, inside chunk 2
+	store := newFakeChunkStore(chunks, from.Add(3*time.Hour), clean)
+	store.done[clean] = true
+	opts, copts, out := chunkTestOptions(true)
+	run := newXLMBaseRestampRun(store, opts)
+	run.batch = copts.Batch
+	inChunk := func(ctx context.Context, c timescale.TradeChunk, plan *timescale.RestampPlan, generation int64, batch int) (int64, error) {
+		return store.ApplyXLMBaseUSDVolumeRestampInChunk(ctx, c, plan, generation, batch)
+	}
+	tier := &estimatedChunkTier{run: run, opts: opts, inChunk: inChunk}
+	if err := runChunkRestamp(context.Background(), store, "/etc/stellarindex.toml", from, to, copts, tier); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "chunk 2/3 _timescaledb_internal._hyper_1_2_chunk") ||
+		!strings.Contains(out.String(), "nothing to change — skipped") {
+		t.Fatalf("chunk 2 was not skipped as clean:\n%s", out.String())
+	}
+	if s := run.totals; s.Scanned != 2 || s.Changed != 1 || s.Unchanged != 1 || s.Residual() != 0 {
+		t.Errorf("report totals: scanned %d changed %d already-correct %d residual %d; want 2/1/1/0 (the skipped chunk's row counted)",
+			s.Scanned, s.Changed, s.Unchanged, s.Residual())
+	}
+}
+
 func TestXLMBaseChunkRestamp_FailureStopsAfterTheFailingChunk(t *testing.T) {
 	chunks, from, to := threeChunks()
 	store := newFakeChunkStore(chunks, from.Add(3*time.Hour), from.AddDate(0, 0, 5), to.Add(2*time.Hour))
@@ -1081,6 +1109,27 @@ func TestValidateRestampGeneration(t *testing.T) {
 	}
 }
 
+// ─── -max-generation cannot exceed the run's generation ─────────────────
+
+func TestResolveRestampMaxGeneration(t *testing.T) {
+	t.Parallel()
+	const gen = int64(1_758_000_000)
+	for _, tc := range []struct{ flag, want int64 }{
+		{-1, gen}, {0, 0}, {gen - 1, gen - 1}, {gen, gen},
+	} {
+		got, err := resolveRestampMaxGeneration(tc.flag, gen)
+		if err != nil || got != tc.want {
+			t.Errorf("-max-generation %d: got (%d, %v), want (%d, nil)", tc.flag, got, err, tc.want)
+		}
+	}
+	for _, bad := range []int64{gen + 1, 17_580_000_000} {
+		_, err := resolveRestampMaxGeneration(bad, gen)
+		if err == nil || !strings.Contains(err.Error(), "above the run's generation") {
+			t.Errorf("-max-generation %d: err = %v, want a refusal", bad, err)
+		}
+	}
+}
+
 // ─── one run at a time: the run lock ─────────────────────────────────────
 //
 // run-heavy-job.sh's lock is per job NAME, so the wrapper does not stop a
@@ -1455,5 +1504,57 @@ func TestStatfsHostMismatchErr_ClassifiesErrno(t *testing.T) {
 				t.Errorf("statfsHostMismatchErr(%v) = %q, want it to contain %q", c.err, got, c.wantSubstr)
 			}
 		})
+	}
+}
+
+// A data_directory path that merely EXISTS on an ops host (postgresql-client
+// creates /var/lib/postgresql) must not let a local statfs stand in for the
+// database host's free space when the DSN dials another machine.
+func TestChunkRestampPreflight_RefusesLocalStatfsForRemoteDSN(t *testing.T) {
+	t.Setenv("HEAVY_MIN_DATA_KB", "0")
+	store := fakeVolumePathStore{path: "/var/lib/postgresql/16/main"}
+	measured := false
+	copts := chunkRestampOptions{
+		RemoteDBHost: "db.internal",
+		FreeBytes: func(string) (uint64, error) {
+			measured = true
+			return 5 << 40, nil // 5 TiB free on THIS host
+		},
+	}
+
+	p := chunkRestampPreflight(context.Background(), store, 1<<30, copts)
+	if p.Err == nil || !strings.Contains(p.Err.Error(), "db.internal") {
+		t.Fatalf("pre-flight err = %v, want a refusal naming the remote DSN host", p.Err)
+	}
+	if measured || p.MeasuredOK {
+		t.Errorf("statfs ran on this host for a remote DSN (MeasuredOK=%v); want it skipped", p.MeasuredOK)
+	}
+	if got := p.render(); !strings.Contains(got, "free space UNKNOWN") || !strings.Contains(got, "REFUSED") {
+		t.Errorf("render() = %q, want UNKNOWN free space and REFUSED", got)
+	}
+
+	copts.MinFreeBytes = 4 << 30
+	if p := chunkRestampPreflight(context.Background(), store, 1<<30, copts); p.Err != nil {
+		t.Errorf("-min-free-bytes 4 GiB for a 1 GiB chunk refused for a remote DSN: %v", p.Err)
+	}
+}
+
+func TestRemoteDSNHost(t *testing.T) {
+	cases := []struct {
+		dsn, want string
+	}{
+		{"postgres://u:p@localhost:5432/db", ""},
+		{"postgres://u:p@127.0.0.1:5432/db", ""},
+		{"postgres://u:p@[::1]:5432/db", ""},
+		{"host=/var/run/postgresql dbname=db", ""},
+		{"host=10.0.0.5 dbname=db", "10.0.0.5"},
+		{"postgres://u:p@db.internal:5432/db", "db.internal"},
+		{"postgres://u:p@localhost:5432,db.internal:5433/db", "db.internal"},
+		{"postgres://u:p@local host/db", "(unparseable DSN)"},
+	}
+	for _, c := range cases {
+		if got := remoteDSNHost(c.dsn); got != c.want {
+			t.Errorf("remoteDSNHost(%q) = %q, want %q", c.dsn, got, c.want)
+		}
 	}
 }

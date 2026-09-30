@@ -291,11 +291,11 @@ Same as S7. No additional requirement.
 
 | # | Field | Spec ref | Week | Owner | ADR | Verified by | Status | Conf | Prod |
 | - | ----- | -------- | ---- | ----- | --- | ----------- | ------ | ---- | ---- |
-| F2.1 | Market Cap = `circulating × price` | §V2 (addendum) | 6 | `internal/api/v1/assets_f2.go populateMarketCap` + supply pipeline | [ADR-0011](../adr/0011-supply-algorithm.md), [ADR-0021](../adr/0021-account-entry-observer.md), [ADR-0022](../adr/0022-classic-supply-observers.md), [ADR-0023](../adr/0023-sep41-supply-observer.md) | Source review | ✅ verified — read path (#277) + writer end-to-end across all three asset classes: XLM (#285), classic credits (#303-#307), SEP-41 (#309-#312). The aggregator-resident refresher (#301) populates `asset_supply_history` per watched asset on the configured cadence. `market_cap_usd` populates when both supply + USD price exist. **Scope: XLM + watched classic + watched SEP-41 (operator config).** | 4 | ✅ 2026-06-12 probe — R-006 closed (operator gap #97): `/v1/assets/native.market_cap_usd = 9429715369.12`, `supply_basis=xlm_sdf_reserve_exclusion`; USDC also populates (`market_cap_usd=40594088.52`). ⚠ F-A: the same surface's `ath` field is wrong (`native.ath=$4.78`) — fix in-tree commit `6e5c435d`, awaiting deploy. |
+| F2.1 | Market Cap = `circulating × price` | §V2 (addendum) | 6 | `internal/api/v1/assets_f2.go populateMarketCap` + supply pipeline | [ADR-0011](../adr/0011-supply-algorithm.md), [ADR-0021](../adr/0021-account-entry-observer.md), [ADR-0022](../adr/0022-classic-supply-observers.md), [ADR-0023](../adr/0023-sep41-supply-observer.md) | Source review | ✅ verified — read path (#277) + writer end-to-end across all three asset classes: XLM (#285), classic credits (#303-#307), SEP-41 (`sep41_supply` observer, #310-#312). The aggregator-resident refresher (#301) populates `asset_supply_history` per watched asset on the configured cadence. `market_cap_usd` populates when both supply + USD price exist. **Scope: XLM + watched classic + watched SEP-41 (operator config).** | 4 | ✅ 2026-06-12 probe — R-006 closed (operator gap #97): `/v1/assets/native.market_cap_usd = 9429715369.12`, `supply_basis=xlm_sdf_reserve_exclusion`; USDC also populates (`market_cap_usd=40594088.52`). ⚠ F-A: the same surface's `ath` field is wrong (`native.ath=$4.78`) — fix in-tree commit `6e5c435d`, awaiting deploy. |
 | F2.2 | FDV = `max_supply × price` | §V2 | 6 | `internal/api/v1/assets_f2.go populateMarketCap` + supply pipeline | [ADR-0011](../adr/0011-supply-algorithm.md) | Source review | ✅ verified — same pipeline as F2.1; `fdv_usd` populates when `max_supply` is non-null (uncapped issuers without SEP-1 declaration leave it null per ADR-0011 "we don't fabricate"). | 4 | ✅ 2026-06-12 probe — `fdv_usd` set on `/v1/assets/native` (the `/v1/coins/*` surface is gone — N-1). |
 | F2.3 | 24h Trading Volume (USD) | §V2 | 6 | `internal/storage/timescale.Volume24hUSDForAsset` + `internal/api/v1/assets.go` | ADR-0007 | `volume_24h_usd` field on `/v1/assets/{id}` (#278). Reads from `prices_1m` CAGG. | ✅ verified | 4 | ✅ 2026-05-10, re-confirmed 2026-06-12 probe — `volume_24h_usd` populated on `/v1/assets/{id}` (plus markets/pools/network-stats; 24h network volume ≈ $3.08B). Citation updated: `/v1/coins/*` removed by assets-unification (N-1). |
 | F2.4 | Circulating Supply (provider-supplied) | §V2 | 6 | `internal/supply/{xlm,classic,sep41}.go` + observers + `cmd/stellarindex-aggregator/main.go::buildSupplyRefreshers` | [ADR-0011](../adr/0011-supply-algorithm.md), [ADR-0021](../adr/0021-account-entry-observer.md), [ADR-0022](../adr/0022-classic-supply-observers.md), [ADR-0023](../adr/0023-sep41-supply-observer.md) | Source review | ✅ verified — XLM (Algorithm 1), classic credit (Algorithm 2), SEP-41 (Algorithm 3) all live. Operator-locked-set subtraction supported per asset via `supply.Policy.PerAsset`. | 4 | ✅ 2026-06-12 probe — `/v1/assets/native.circulating_supply = 500018068120000000` (E7-scaled XLM, `supply_basis=xlm_sdf_reserve_exclusion`); watched-set populated on r1 (#97 closed). |
-| F2.5 | Total Supply (mint − burn − clawback) | §V2 | 6 | `internal/sources/sep41_supply` observer + `internal/supply/storage_sep41_reader.go` | [ADR-0011](../adr/0011-supply-algorithm.md), [ADR-0023](../adr/0023-sep41-supply-observer.md) | Source review + decoder tests | ✅ verified — SEP-41 mint/burn/clawback events accumulate into `sep41_supply_events` (#309); the reader composes per-kind sums via `Σ FILTER (WHERE ...)` (#311) and the aggregator refreshes one snapshot per watched contract per cycle (#312). Classic + XLM totals via the same algorithm-correct path. | 4 | ✅ 2026-06-12 probe — `total_supply`/`max_supply` populate on `/v1/assets/native` (= `500018068120000000`); same #97 closure as F2.4. |
+| F2.5 | Total Supply (mint − burn − clawback) | §V2 | 6 | `internal/sources/sep41_supply` observer + `internal/supply/storage_sep41_reader.go` | [ADR-0011](../adr/0011-supply-algorithm.md), [ADR-0023](../adr/0023-sep41-supply-observer.md) | Source review + decoder tests | ✅ verified — SEP-41 mint/burn/clawback events accumulate into `sep41_supply_events` via the `sep41_supply` observer; the reader composes per-kind sums via `Σ FILTER (WHERE ...)` (#311) and the aggregator refreshes one snapshot per watched contract per cycle (#312). Classic + XLM totals via the same algorithm-correct path. | 4 | ✅ 2026-06-12 probe — `total_supply`/`max_supply` populate on `/v1/assets/native` (= `500018068120000000`); same #97 closure as F2.4. |
 | F2.6 | Max Supply (nullable, off-chain metadata) | §V2 | 6 | `internal/supply/overlay.go` + `internal/metadata` | [ADR-0011](../adr/0011-supply-algorithm.md) | Source review | ✅ verified — overlay policy implemented + integrated end-to-end. Per ADR-0011, `max_supply` stays null for uncapped issuers without SEP-1 declaration / operator override; consumers handle null explicitly. | 4 | ✅ 2026-06-12 probe — `total_supply`/`max_supply` populate on `/v1/assets/native` (= `500018068120000000`); same #97 closure as F2.4. |
 
 ## Performance SLAs
@@ -314,7 +314,7 @@ Same as S7. No additional requirement.
 | # | Requirement | Spec ref | Week | Owner | Verified by | Status | Conf | Prod |
 | - | ----------- | -------- | ---- | ----- | ----------- | ------ | ---- | ---- |
 | F4.1 | Lookup classic + Soroban by contract address | §Asset Identification | 4 | `internal/canonical.ParseAsset` + `internal/api/v1/assets.go` | cross-cutting | `/v1/assets/{id}` accepts native, classic (code:issuer), fiat:CODE, soroban:C-strkey, raw C-strkey. | ✅ verified | 5 | ✅ 2026-05-10 — `GET /v1/assets/CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75` (USDC SAC) → 200 with `type=soroban` |
-| F4.2 | Historical retention ≥ 1 year (ideally since inception) | §Historical Data | 2 (scaffold), post-launch (fill) | Timescale + Galexie backfill + `/v1/history/since-inception` | Source review | Migration 0002 sets retention; `/v1/history/since-inception` shipped against the prices_1mo CAGG. | ✅ verified | 4 | ✅ 2026-06-12 probe — history reaches **2021-02-01** (5+ years of daily data); the "≥ 1 year" requirement is met on this surface. ⚠ N-6 on the "ideally since inception" stretch (this surface starts 2021-02-01, not 2015 — see S6.1). |
+| F4.2 | Historical retention ≥ 1 year (ideally since inception) | §Historical Data | 2 (scaffold), post-launch (fill) | Timescale + Galexie backfill + `/v1/history/since-inception` | Source review | Retention is indefinite, not policy-bounded: migration 0031 removed the policies 0002 had set, and AGENTS.md invariant 8 keeps raw `trades` and every price CAGG (the one exception, 0156's 90-day `prices_1m` policy, ships disabled — see S6.5/S7.2); `/v1/history/since-inception` shipped against the prices_1mo CAGG. | ✅ verified | 4 | ✅ 2026-06-12 probe — history reaches **2021-02-01** (5+ years of daily data); the "≥ 1 year" requirement is met on this surface. ⚠ N-6 on the "ideally since inception" stretch (this surface starts 2021-02-01, not 2015 — see S6.1). |
 
 ## API characteristics
 
@@ -607,21 +607,34 @@ code state — these were on the "Open" list but had shipped):**
   `docs/architecture/patroni-ansible-role-design-note.md`. Other
   sub-roles (Redis Sentinel, HAProxy, Prometheus, Loki) remain
   open under Task #72.
+- **Public status page** — live at `https://stellarindex.io/status`
+  (`web/explorer/src/app/status/`); `status.stellarindex.io` is a
+  redirect-only stub. Runbook:
+  `docs/operations/status-page-setup.md`.
+- **#20 SEV-1/SEV-2 dry-run** — records in
+  `docs/operations/drills/` (2026-04 SEV-1 and SEV-2 tabletops) and
+  `docs/operations/incidents/sev-drill-2026-06-13.md` (live r1 drill:
+  SEV-1 PASS, detection 90 s against a 15 min target; SEV-2 PASS (bound)).
+- **#22 Public-flip prep** — the repo went public 2026-07-03;
+  `docs/operations/public-flip.md` is marked historical and its
+  residuals live in `docs/operations/v1-launch-plan.md`.
+- **Task #53 Blend Pool Factory walk (audit Phase 2)** — wide-net
+  `wasm-history` walk on r1 over ledgers [50,457,424, 62,249,727]
+  found zero mid-life upgrades across all 11 Blend contracts.
+  Evidence: `docs/operations/wasm-audits/evidence/blend/phase2-2026-05-02/`;
+  verdict in `docs/operations/wasm-audits/blend.md`.
 
 ### Open — implementation pending
 
-Re-baselined 2026-04-30 against current code state. Twenty-one
-items previously listed here have shipped — their evidence is
-now in *Closed since Phase 1* above.
+Re-baselined 2026-09-30 against the repo's artefacts. Four rows
+(status page, SEV dry-run, public flip, Blend factory walk) moved to
+*Closed since Phase 1* above; the two below have no closing artefact.
+Launch-critical tracking lives in `docs/operations/v1-launch-plan.md`.
 
-| Area | Item | Owner | Week | Effort |
-|---|---|---|---|---|
-| Operations | Public status page at `status.stellarindex.io` | infra | 9 | half-day |
-| Validation | S9.2 p95 ≤ 200 ms proof report — k6 suite shipped (#345/#346/#347/#348); operator-side first run + `sla-proof-2026-MM-DD.md` artefact remaining | `docs/operations/sla-proof-template.md` | 9 | ~half-day operator |
-| Validation | #19 Chaos suite Wave 2 (HA-shaped scenarios on staging baremetal — Patroni replica promotion, Sentinel failover, HAProxy VIP flip). Wave 1 (dev-stack smoke) shipped #366 | `test/chaos` | 9 | ~1 day post-launch |
-| Validation | #20 SEV-1/SEV-2 dry-run — playbook exists, dry-run record doesn't | runbooks | 9 | half-day |
-| Finalization | #22 Public-flip prep — `public-flip.md` exists; checklist completion is operator-side | repo strategy | 10 | hour planning |
-| Connectors / Audit | Task #53 Blend Pool Factory walk on r1 (Phase 2 of audit) | `cmd/stellarindex-ops wasm-history` | — | ~5 h operator |
+| Area | Item | Owner | Remaining |
+|---|---|---|---|
+| Validation | S9.2 p95 ≤ 200 ms proof report — the probe-fed generator (`scripts/ops/sla-proof-from-probe.sh`) runs and has written `docs/operations/sla-proof-2026-09-{15,16,20,28}.md`, but every report's verdict is **NOT PROVEN** (at least one endpoint misses its latency or availability target) | `docs/operations/sla-proof-procedure.md` | A report whose verdict reads PROVEN |
+| Validation | #19 Chaos suite Wave 2 (HA-shaped scenarios — Patroni replica promotion, Sentinel failover, HAProxy VIP flip). Wave 1 (dev-stack smoke, `test/chaos/scenarios/01–04`) shipped #366 | `test/chaos` | An HA topology to fail over; r1 is single-node, so this stays post-launch |
 
 ### Watch (post-launch only — explicitly accepted)
 
@@ -682,10 +695,11 @@ week lands.
   config gap.
 
 - **2026-05-11** — **All five 2026-05-10 ❌ rows have landing
-  code fixes on `main`** (PRs #1261,
-  #1268, #1270 across the session). Headline
-  resolutions:
-  R-005 → #1261 (batch shares full /v1/price fallback chain),
+  code fixes on `main`** (PR #1270 across the session).
+  Headline resolutions:
+  R-005 → batch shares full /v1/price fallback chain (no
+  surviving PR number for this entry; the one previously cited
+  here never existed),
   R-007 → OHLC outlier filter, default 4σ (no
   surviving PR number for this entry; the one previously cited
   here now resolves to an unrelated live issue),
@@ -701,7 +715,9 @@ week lands.
   R-021 → handler-timeout helper recognises pq cancel (no
   surviving PR number for this entry; the one previously cited
   here now resolves to an unrelated live issue),
-  R-001/R-002 → #1268 (prewarm covers volume-desc + per-CEX).
+  R-001/R-002 → prewarm covers volume-desc + per-CEX (commit
+  `55b2a9fb3`; the PR number it carried now resolves to an
+  unrelated item).
   R-006 + R-009 remain operator config (#97, #119). The Prod
   cells in this matrix continue to read against rc.39; flip
   them after the next deploy + re-curl. Resolution log in the
@@ -726,3 +742,8 @@ week lands.
   `/v1/currencies` surfaces (assets-unification, N-1) and the
   `window=` duration-unit breaking change (N-3); `/v1/coverage` +
   `/v1/protocols` recorded as beyond-spec additions.
+- **2026-09-30** — *Open — implementation pending* re-baselined
+  against repo artefacts: status page, SEV dry-run, public flip and
+  the Blend factory walk moved to *Closed since Phase 1*; S9.2 SLA
+  proof (every report NOT PROVEN) and chaos Wave 2 (no HA topology)
+  stay open.

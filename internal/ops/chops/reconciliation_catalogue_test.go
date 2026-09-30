@@ -199,6 +199,23 @@ func TestBuildSEP41ReconSources_OptIn(t *testing.T) {
 	}
 }
 
+// TestBuildSEP41ReconSources_TestNetGenesis — on a test net the sep41
+// sources' genesis is the configured Soroban floor, not the pubnet boundary.
+func TestBuildSEP41ReconSources_TestNetGenesis(t *testing.T) {
+	cfg := config.Default()
+	cfg.Stellar.SorobanGenesisLedger = 1
+	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
+	cat, err := buildSEP41ReconSources(cfg)
+	if err != nil {
+		t.Fatalf("buildSEP41ReconSources: %v", err)
+	}
+	for _, src := range cat {
+		if src.genesis != 1 {
+			t.Errorf("%s: genesis = %d, want 1 (soroban_genesis_ledger)", src.name, src.genesis)
+		}
+	}
+}
+
 // TestBuildSEP41ReconSources_EmptyWatchedSetErrors — -sep41 with no
 // configured watched set is an operator error, not a silent no-op.
 func TestBuildSEP41ReconSources_EmptyWatchedSetErrors(t *testing.T) {
@@ -688,5 +705,38 @@ func TestCatalogueGenesisLocksStepWithGapDetectorTargets(t *testing.T) {
 	}
 	if checked < 20 || constants != len(packageGenesis) {
 		t.Fatalf("checked %d catalogued sources (want >= 20) and %d of %d package constants — the guard no longer covers the catalogue", checked, constants, len(packageGenesis))
+	}
+}
+
+// TestReconTargetCountFilter_PriceableOnlyForSDEX pins the served/census
+// asymmetry: only the sdex trades target counts with the priceable filter, and
+// its whereFilter (the persisted completeness_target_floors key) is unchanged.
+func TestReconTargetCountFilter_PriceableOnlyForSDEX(t *testing.T) {
+	cfg := testConfigWithAllSources()
+	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
+	cat, _, err := buildReconciliationCatalogue(cfg)
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+	var sawSDEX bool
+	for _, src := range cat {
+		for _, tgt := range src.targets {
+			if src.name == "sdex" {
+				sawSDEX = true
+				if tgt.whereFilter != "source = 'sdex'" {
+					t.Errorf("sdex whereFilter = %q; it is the persisted floor key and must stay \"source = 'sdex'\"", tgt.whereFilter)
+				}
+				if got, want := tgt.countFilter(), "source = 'sdex' AND base_amount > 0 AND quote_amount > 0"; got != want {
+					t.Errorf("sdex countFilter = %q, want %q", got, want)
+				}
+				continue
+			}
+			if got := tgt.countFilter(); got != tgt.whereFilter {
+				t.Errorf("%s/%s countFilter = %q, want its whereFilter %q", src.name, tgt.table, got, tgt.whereFilter)
+			}
+		}
+	}
+	if !sawSDEX {
+		t.Fatal("catalogue has no sdex target")
 	}
 }

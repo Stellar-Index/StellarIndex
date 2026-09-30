@@ -21,7 +21,7 @@ func TestCountRecentEventsQuery_labelsEveryLeg(t *testing.T) {
 		"trades", "blend_positions", "blend_emissions", "blend_admin",
 		"blend_auctions", "phoenix_liquidity", "phoenix_stake_events",
 		"comet_liquidity", "soroswap_skim_events", "defindex_flows",
-		"defindex_fees",
+		"defindex_fees", "defindex_admin_events",
 		"cctp_events", "rozo_events", "soroswap_router_swaps",
 		"oracle_updates",
 	} {

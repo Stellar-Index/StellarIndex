@@ -51,8 +51,8 @@ const (
 // back-compat). Canonical() folds them into the three-level model.
 //
 // Deprecated: use TierFree / TierPartner; these exist only for the
-// legacy-string mapping and will be removed once the stored rows are
-// rewritten.
+// legacy-string mapping until the stored rows are rewritten. Will be
+// removed in v2.0.0.
 const (
 	TierStarter    Tier = "starter"    // → free (identical numbers)
 	TierPro        Tier = "pro"        // → partner

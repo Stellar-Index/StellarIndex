@@ -61,6 +61,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: supply
+          alert_family: supply_snapshot_stale
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-snapshot-stale.md
           summary: "supply snapshot for {{ $labels.asset_key }} has been stale {{ $value | humanizeDuration }} (cadence 24h, threshold 36h)"
@@ -80,6 +81,7 @@ groups:
           severity: page
           team: stellarindex
           component: supply
+          alert_family: supply_snapshot_stale
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-snapshot-stale.md
           summary: "supply snapshot for {{ $labels.asset_key }} stale > 72h — escalate"
