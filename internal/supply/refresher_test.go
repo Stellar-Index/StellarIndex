@@ -466,6 +466,21 @@ func TestRefresher_NoObservation(t *testing.T) {
 	}
 }
 
+// TestRefresher_GenesisBaselineNotSeeded — an unseeded SAC wrapper routes to
+// the benign missing_baseline outcome, not the paging compute_error.
+func TestRefresher_GenesisBaselineNotSeeded(t *testing.T) {
+	r := NewRefresher(
+		stubLedgers{ledger: 1, observedAt: time.Now()},
+		stubComputer{err: ErrGenesisBaselineNotSeeded},
+		&stubInserter{},
+		discardLogger(),
+	)
+	out := r.Tick(context.Background())
+	if out.Kind != OutcomeKindMissingBaseline {
+		t.Errorf("kind=%s want %s", out.Kind, OutcomeKindMissingBaseline)
+	}
+}
+
 // TestRefresher_GenericComputeError — non-observation errors map
 // to compute_error.
 func TestRefresher_GenericComputeError(t *testing.T) {

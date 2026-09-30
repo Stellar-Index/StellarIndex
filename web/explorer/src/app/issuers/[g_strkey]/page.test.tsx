@@ -139,5 +139,8 @@ describe('IssuerDetailPage generateMetadata', () => {
     expect(meta.alternates?.canonical).toBeUndefined();
     expect(meta.openGraph?.url).toBeUndefined();
     expect(meta.title).not.toMatch(/shell/i);
+    // An omitted openGraph key would inherit the homepage og:title.
+    expect(meta.openGraph?.title).toContain('Issuer');
+    expect(meta.twitter?.title).toContain('Issuer');
   });
 });
