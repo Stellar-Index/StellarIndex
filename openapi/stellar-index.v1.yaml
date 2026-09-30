@@ -4877,6 +4877,7 @@ paths:
                                 expected_ledgers: { type: integer, format: int64, description: "Denominator of density_pct — tip - genesis + 1, window-scoped when a coverage snapshot exists. Omitted when zero." }
                                 gap_free_pct:    { type: number,  description: "1 - max_gap_ledgers / expected_ledger. 1.0 when no contiguous gap above the per-target threshold, even for a legitimately sparse source. Omitted when zero." }
                                 coverage_snapshot_at: { type: string, format: date-time, description: "When the gap detector last refreshed this row's data-derived numbers. Absent before its first post-deploy cycle." }
+                                coverage_scan_cadence_s: { type: integer, format: int64, description: "Longest gap-detector scan cadence (seconds) among this row's tables — the interval coverage_snapshot_at is expected to refresh on. Absent with coverage_snapshot_at." }
                                 completeness_pct:        { type: number,  description: "ADR-0033 watermark coverage: (watermark - genesis + 1) / (tip - genesis + 1). No sparsity threshold — a single PROVEN gap pins it. Absent until compute-completeness has run for the source." }
                                 completeness_watermark:  { type: integer, format: int64, description: "Highest fully-verified ledger." }
                                 completeness_complete:   { type: boolean, description: "SERVED/combined axis of the ADR-0033/ADR-0034 two-axis verdict: substrate ∧ recognition ∧ the retention-scoped projection reconcile." }
@@ -13335,17 +13336,28 @@ components:
             instance: "/v1/oracle/latest"
             request_id: "e0fca799b0b6d066ed6c928b5cb0d5e6"
     ServiceUnavailable:
-      description: Server is degraded (dependency outage, startup, shutdown).
+      description: Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
-          example:
-            type: "https://api.stellarindex.io/errors/account-store-unavailable"
-            title: "Account store not configured"
-            status: 503
-            detail: "this deployment has no AccountStore wired — typically because Redis is unavailable"
-            instance: "/v1/account/keys"
-            request_id: "70c8017d79651070fd16c2c9f065d846"
+          examples:
+            accountStoreUnavailable:
+              summary: A required dependency is not wired
+              value:
+                type: "https://api.stellarindex.io/errors/account-store-unavailable"
+                title: "Account store not configured"
+                status: 503
+                detail: "this deployment has no AccountStore wired — typically because Redis is unavailable"
+                instance: "/v1/account/keys"
+                request_id: "70c8017d79651070fd16c2c9f065d846"
+            throttleUnavailable:
+              summary: Rate limiter store unreachable past its fail-open dwell window (Retry-After 30)
+              value:
+                type: "https://api.stellarindex.io/errors/throttle-unavailable"
+                title: "Throttle layer unavailable"
+                status: 503
+                detail: "the abuse-prevention layer has been unreachable for an extended period; retry in a moment"
+                instance: "/v1/assets"
 
   schemas:
     PasskeyCredential:
