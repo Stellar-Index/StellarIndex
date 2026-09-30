@@ -168,7 +168,7 @@ groups:
             key disappear, concludes the pair is released, and closes
             the page while the price stays pinned. (This annotation
             told you to do exactly that until 2026-08-04.)
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
 
       # ─── P3: freezes are climbing the ladder ───────────────────
       #
