@@ -281,18 +281,17 @@ func TestStoreRoundTrip(t *testing.T) {
 }
 
 // TestCursorFirstLedgerBackfillMigration verifies migration 0046's
-// UPDATE statement — for every existing backfill cursor at the time
-// the migration ran, first_ledger should equal the `from` integer
-// parsed out of sub_source. We simulate the "row predates migration
-// 0046" case by inserting a row directly via SQL (bypassing
-// UpsertCursor's INSERT-time first_ledger capture), leaving its
-// first_ledger NULL, then re-applying the migration UPDATE logic.
+// backfill — for every existing backfill cursor at the time the
+// migration ran, first_ledger should equal the `from` integer parsed
+// out of sub_source. The rows are seeded at schema version 45 and the
+// real 0046 up file is then applied, so the test cannot drift from
+// the migration's SQL.
 func TestCursorFirstLedgerBackfillMigration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	dsn := startTimescale(t, ctx)
-	applyMigrations(t, dsn)
+	applyMigrationsUpTo(t, dsn, 45)
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -300,41 +299,36 @@ func TestCursorFirstLedgerBackfillMigration(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	// Simulate a pre-migration-0046 row: insert directly with NULL
-	// first_ledger. (Post-migration the production path always
-	// writes via UpsertCursor which captures first_ledger.)
 	_, err = db.ExecContext(ctx,
 		// 51000000 written without the PG16 underscore digit separator —
 		// the pinned image is timescale/timescaledb:…-pg15, where
-		// `51_000_000` is a syntax error (F-1334).
-		`INSERT INTO ingestion_cursors (source, sub_source, first_ledger, last_ledger)
-		   VALUES ('backfill', '50500000-53174999:soroswap', NULL, 51000000)`,
+		// `51_000_000` is a syntax error.
+		`INSERT INTO ingestion_cursors (source, sub_source, last_ledger)
+		   VALUES ('backfill', '50500000-53174999:soroswap', 51000000)`,
 	)
 	if err != nil {
 		t.Fatalf("insert pre-migration row: %v", err)
 	}
 	_, err = db.ExecContext(ctx,
-		`INSERT INTO ingestion_cursors (source, sub_source, first_ledger, last_ledger)
-		   VALUES ('backfill', 'malformed-no-decoder', NULL, 1)`,
+		`INSERT INTO ingestion_cursors (source, sub_source, last_ledger)
+		   VALUES ('backfill', 'malformed-no-decoder', 1)`,
 	)
 	if err != nil {
 		t.Fatalf("insert malformed row: %v", err)
 	}
 
-	// Re-apply migration 0046's UPDATE logic.
-	res, err := db.ExecContext(ctx, `
-		UPDATE ingestion_cursors
-		   SET first_ledger = split_part(sub_source, '-', 1)::integer
-		 WHERE source = 'backfill'
-		   AND sub_source ~ '^[0-9]+-[0-9]+:.+$'
-		   AND first_ledger IS NULL
-	`)
+	applyMigrationsUpTo(t, dsn, 46)
+
+	var affected int64
+	err = db.QueryRowContext(ctx,
+		`SELECT count(*) FROM ingestion_cursors
+		  WHERE source = 'backfill' AND first_ledger IS NOT NULL`,
+	).Scan(&affected)
 	if err != nil {
-		t.Fatalf("re-apply migration UPDATE: %v", err)
+		t.Fatalf("count backfilled rows: %v", err)
 	}
-	affected, _ := res.RowsAffected()
 	if affected != 1 {
-		t.Errorf("UPDATE affected %d rows, want 1 (only the soroswap range matches the regex)", affected)
+		t.Errorf("migration backfilled %d rows, want 1 (only the soroswap range matches the regex)", affected)
 	}
 
 	// Verify the soroswap range got 50500000.

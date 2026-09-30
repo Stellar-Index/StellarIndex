@@ -46,12 +46,44 @@ JQ_FILTER='.workflow_runs[]
   | [.conclusion, .created_at, .html_url, (.head_sha[0:7])]
   | @tsv'
 
-if [ -n "${CI_HEALTH_FIXTURE:-}" ]; then
-  api_json="$(cat "$CI_HEALTH_FIXTURE")"
-else
-  api_json="$(gh api \
-    "repos/${GH_REPO}/actions/workflows/${CI_WORKFLOW_FILE}/runs?branch=${CI_HEALTH_BRANCH}&status=completed&per_page=30")"
-fi
+PER_PAGE=100
+MAX_PAGES=5
+NL=$'\n'
+
+# fetch_page <n> — one page of completed runs, newest first. The fixture
+# holds the whole history and is sliced the same way the API pages it.
+fetch_page() {
+  if [ -n "${CI_HEALTH_FIXTURE:-}" ]; then
+    jq --argjson p "$1" --argjson n "$PER_PAGE" \
+      '{workflow_runs: .workflow_runs[($p - 1) * $n : $p * $n]}' "$CI_HEALTH_FIXTURE"
+  else
+    gh api \
+      "repos/${GH_REPO}/actions/workflows/${CI_WORKFLOW_FILE}/runs?branch=${CI_HEALTH_BRANCH}&status=completed&per_page=${PER_PAGE}&page=$1"
+  fi
+}
+
+# Rapid merges cancel most runs on main (cancel-in-progress), so one page
+# can hold little or no signal. Page on until the tip streak is settled:
+# a green run is seen, or more reds than FAIL_RUNS, or history runs out.
+raw_count=0
+runs=""
+page=1
+while [ "$page" -le "$MAX_PAGES" ]; do
+  api_json="$(fetch_page "$page")"
+  page_count="$(jq -r '.workflow_runs | length' <<<"$api_json")"
+  raw_count=$((raw_count + page_count))
+  page_runs="$(jq -r "$JQ_FILTER" <<<"$api_json")"
+  if [ -n "$page_runs" ]; then
+    runs="${runs:+${runs}${NL}}${page_runs}"
+  fi
+  signal_count="$(grep -c . <<<"$runs" || true)"
+  if grep -q '^success' <<<"$runs" || [ "$signal_count" -gt "$FAIL_RUNS" ] \
+      || [ "$page_count" -lt "$PER_PAGE" ]; then
+    break
+  fi
+  page=$((page + 1))
+done
+dropped=$((raw_count - signal_count))
 
 # Raw count BEFORE the health-signal filter. A 200 response with a
 # genuinely empty `workflow_runs` array is indistinguishable, from the
@@ -62,9 +94,6 @@ fi
 # handed back SOME completed runs (just none with an actionable
 # conclusion — e.g. cancelled-only) is an empty `runs` a genuine "no
 # signal yet, not faulted".
-raw_count="$(jq -r '.workflow_runs | length' <<<"$api_json")"
-runs="$(jq -r "$JQ_FILTER" <<<"$api_json")"
-
 if [ -z "$runs" ]; then
   if [ "$raw_count" -eq 0 ]; then
     echo "ci-health: UNKNOWN — zero '${CI_WORKFLOW_FILE}' runs at all came back for '${CI_HEALTH_BRANCH}'. This is indistinguishable from a misconfigured CI_WORKFLOW_FILE/CI_HEALTH_BRANCH and is NOT treated as healthy."
@@ -73,6 +102,7 @@ if [ -z "$runs" ]; then
   echo "ci-health: no completed '${CI_WORKFLOW_FILE}' runs on '${CI_HEALTH_BRANCH}' with a health signal (found ${raw_count} completed run(s), none actionable) — nothing to assess."
   exit 0
 fi
+echo "ci-health: '${CI_WORKFLOW_FILE}' on '${CI_HEALTH_BRANCH}': scanned ${raw_count} completed run(s), ${dropped} dropped as cancelled/skipped/neutral."
 
 # ── Walk newest→oldest, measure the red streak at the tip ──
 newest_conclusion=""
@@ -115,7 +145,7 @@ else
   age_hours=0
 fi
 
-echo "ci-health: main '${CI_HEALTH_BRANCH}' red streak = ${streak} run(s), oldest-in-streak ${streak_oldest_created} (~${age_hours}h ago)."
+echo "ci-health: '${CI_WORKFLOW_FILE}' on '${CI_HEALTH_BRANCH}' red streak = ${streak} run(s), oldest-in-streak ${streak_oldest_created} (~${age_hours}h ago)."
 echo "ci-health: thresholds FAIL_RUNS=${FAIL_RUNS} FAIL_HOURS=${FAIL_HOURS}."
 if [ -n "$first_red_url" ]; then
   echo "ci-health: most recent failing run: ${first_red_url}"
@@ -127,7 +157,7 @@ else
 fi
 
 if [ "$streak" -ge "$FAIL_RUNS" ] || [ "$age_hours" -ge "$FAIL_HOURS" ]; then
-  echo "ci-health: RED — main has been red for ${streak} run(s) / ~${age_hours}h, past threshold."
+  echo "ci-health: RED — '${CI_WORKFLOW_FILE}' on '${CI_HEALTH_BRANCH}' has been red for ${streak} run(s) / ~${age_hours}h, past threshold."
   exit 1
 fi
 
