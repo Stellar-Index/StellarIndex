@@ -7237,6 +7237,11 @@ export interface components {
          *       the composite SUBSTITUTED around a dry configured chain leg
          *       — the price came via an alternative path, not the documented
          *       direct chain. Omitted when false.
+         *     - `pivot_unverified` — set on a TRIANGULATED `/v1/price` response
+         *       when a leg of the composite was priced only from stablecoin
+         *       prints taken at par with USD, with no prints in the leg's own
+         *       quote asset to check a stablecoin de-peg against. Omitted when
+         *       false.
          *     - `unverified_ticker_collision` — fires on `/v1/assets/{id}`
          *       when the asset's code matches a verified currency's
          *       Stellar ticker but the issuer doesn't. The matching
@@ -7292,6 +7297,11 @@ export interface components {
              * @default false
              */
             rerouted: boolean;
+            /**
+             * @description Set on a TRIANGULATED /v1/price response when a leg of the composite was priced only from stablecoin prints taken at par with USD, with no prints in the leg's own quote asset to check a stablecoin de-peg against. Omitted when false.
+             * @default false
+             */
+            pivot_unverified: boolean;
             /** @default false */
             unverified_ticker_collision: boolean;
             /** @description Names of the row-narrowing query parameters this response did NOT apply, spelled as the caller sent them (`type`, `code`, `issuer`, `q`). Absent when the response applied every filter it was given — an ignored filter and a matched one otherwise produce the same 200 over the same shape, so a client re-filtering the page has nothing else to key on. Set by `/v1/assets` on the listings whose rows come from a source that cannot narrow: the class-scoped catalogue listings (`asset_class=fiat|stablecoin|crypto`), and the lean asset-catalog fallback served when no listing store is configured. */
@@ -9945,6 +9955,8 @@ export interface components {
                  *     `count((rate(stellarindex_source_events_total[7d]) > 0)
                  *     and on (source) (stellarindex_source_enabled == 1))`)
                  *     — a subset of `total_sources` by construction.
+                 *     Absent (not 0) when the freshness query failed; a
+                 *     failed query also rolls `overall` to "degraded".
                  */
                 active_sources?: number;
                 /**
@@ -9959,7 +9971,7 @@ export interface components {
                  *     registered=21, active=15 — before the API binary
                  *     published the `massive` FX worker's own enabled
                  *     series; with it, enabled and active each read one
-                 *     higher.
+                 *     higher. Absent (not 0) when the freshness query failed.
                  */
                 total_sources?: number;
             };
@@ -12090,22 +12102,12 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
-        /** @description Server is degraded (dependency outage, startup, shutdown). */
+        /** @description Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown). */
         ServiceUnavailable: {
             headers: {
                 [name: string]: unknown;
             };
             content: {
-                /**
-                 * @example {
-                 *       "type": "https://api.stellarindex.io/errors/account-store-unavailable",
-                 *       "title": "Account store not configured",
-                 *       "status": 503,
-                 *       "detail": "this deployment has no AccountStore wired — typically because Redis is unavailable",
-                 *       "instance": "/v1/account/keys",
-                 *       "request_id": "70c8017d79651070fd16c2c9f065d846"
-                 *     }
-                 */
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
@@ -15791,6 +15793,16 @@ export interface operations {
                  *     exclusive with `source`.
                  */
                 asset?: string;
+                /**
+                 * @description Comma-separated opt-in row enrichments, off by default.
+                 *     `sparkline` populates `volume_history_24h` (24 hourly USD
+                 *     buckets, both stored orientations of the pair summed);
+                 *     `inception` populates `first_trade_at` (the pair's first
+                 *     daily bucket). Both are best-effort: a failed enrichment
+                 *     ships the page without the field rather than an error.
+                 * @example sparkline,inception
+                 */
+                include?: string;
             };
             header?: never;
             path?: never;
@@ -16788,6 +16800,11 @@ export interface operations {
                                  * @description When the gap detector last refreshed this row's data-derived numbers. Absent before its first post-deploy cycle.
                                  */
                                 coverage_snapshot_at?: string;
+                                /**
+                                 * Format: int64
+                                 * @description Longest gap-detector scan cadence (seconds) among this row's tables — the interval coverage_snapshot_at is expected to refresh on. Absent with coverage_snapshot_at.
+                                 */
+                                coverage_scan_cadence_s?: number;
                                 /** @description ADR-0033 watermark coverage: (watermark - genesis + 1) / (tip - genesis + 1). No sparsity threshold — a single PROVEN gap pins it. Absent until compute-completeness has run for the source. */
                                 completeness_pct?: number;
                                 /**
@@ -18320,13 +18337,17 @@ export interface operations {
                  */
                 class?: "exchange" | "aggregator" | "oracle" | "authority_sanity" | "lending" | "router" | "bridge";
                 /**
-                 * @description Opt-in extras. `stats` populates each row's
-                 *     `trade_count_24h` from a single GROUP BY on the trades
-                 *     hypertable — cheap, but a DB hit so opt-in. Absent the
-                 *     param the response stays the all-static-registry
-                 *     projection.
+                 * @description Comma-separated opt-in extras. `stats` populates each
+                 *     row's `trade_count_24h`, `volume_24h_usd` and
+                 *     `markets_count_24h` from a single GROUP BY on the trades
+                 *     hypertable — cheap, but a DB hit so opt-in. `sparkline`
+                 *     adds `volume_history_24h` (24 hourly buckets) and
+                 *     `sparkline7d` adds `volume_history_7d` (168 hourly
+                 *     buckets); each implies `stats`. Absent the param the
+                 *     response stays the all-static-registry projection.
+                 * @example stats,sparkline
                  */
-                include?: "stats";
+                include?: string;
             };
             header?: never;
             path?: never;

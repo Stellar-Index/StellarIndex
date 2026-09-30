@@ -134,3 +134,79 @@ func assertPairSourceStatsBothOrientations(t *testing.T, ctx context.Context, st
 		}
 	}
 }
+
+// TestSourceStats_OrderedByVolume pins the per-source breakdown to USD
+// volume order, underivable volume last, on a fixture where trade-count
+// order disagrees: sdex out-trades soroswap at a fraction of its volume,
+// and aquarius trades most but has no USD path.
+func TestSourceStats_OrderedByVolume(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const issuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	native := c.NativeAsset()
+	usdc, err := c.NewClassicAsset("USDC", issuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eurc, err := c.NewClassicAsset("EURC", issuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	xlmUSDC, _ := c.NewPair(native, usdc)
+	usdcEURC, _ := c.NewPair(usdc, eurc)
+
+	ts := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Minute)
+	trades := []c.Trade{mkIntegrationTrade("soroswap", 1, ts, xlmUSDC, 10_000_000_000, 5_000_000_000)}
+	for i := range 3 {
+		trades = append(trades, mkIntegrationTrade("sdex", 10+i, ts, xlmUSDC, 10_000_000, 5_000_000))
+	}
+	for i := range 5 {
+		trades = append(trades, mkIntegrationTrade("aquarius", 20+i, ts, usdcEURC, 10_000_000, 9_000_000))
+	}
+	for _, tr := range trades {
+		if err := store.InsertTrade(ctx, tr); err != nil {
+			t.Fatalf("InsertTrade %s: %v", tr.Source, err)
+		}
+	}
+	if _, err := store.DB().ExecContext(ctx,
+		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh prices_1m: %v", err)
+	}
+
+	pairRows, err := store.PairSourceStats(ctx, c.AssetAliasStrings(native), c.AssetAliasStrings(usdc))
+	if err != nil {
+		t.Fatalf("PairSourceStats: %v", err)
+	}
+	assertSourceOrder(t, "PairSourceStats(XLM/USDC)", pairRows, "soroswap", "sdex")
+
+	assetRows, err := store.AssetSourceStats(ctx, c.AssetAliasStrings(usdc))
+	if err != nil {
+		t.Fatalf("AssetSourceStats: %v", err)
+	}
+	assertSourceOrder(t, "AssetSourceStats(USDC)", assetRows, "soroswap", "sdex", "aquarius")
+}
+
+func assertSourceOrder(t *testing.T, name string, rows []timescale.SourceStats, want ...string) {
+	t.Helper()
+	got := make([]string, 0, len(rows))
+	for _, r := range rows {
+		got = append(got, r.Source+"="+r.VolumeUSD24h.String)
+	}
+	if len(rows) != len(want) {
+		t.Fatalf("%s returned %d sources, want %d: %v", name, len(rows), len(want), got)
+	}
+	for i, src := range want {
+		if rows[i].Source != src {
+			t.Fatalf("%s order = %v, want %v (USD volume desc, underivable last)", name, got, want)
+		}
+	}
+}

@@ -166,10 +166,12 @@ without truncation.
 | File | Role |
 | --- | --- |
 | [`events.go`](events.go) | Topic / function-name constants, error sentinels |
-| [`decode.go`](decode.go) | Pure decode-from-event → `[]canonical.OracleUpdate`; OpArgs zip |
-| [`decode_test.go`](decode_test.go) | Decoder unit tests with synthetic event bodies |
-| [`consumer.go`](consumer.go) | Dispatcher-side adapter glue |
-| [`dispatcher_adapter.go`](dispatcher_adapter.go) | Topic-match registration |
+| [`decode.go`](decode.go) | Pure decode-from-event → `[]canonical.OracleUpdate`; OpArgs zip, state-write corroboration |
+| [`feeds.go`](feeds.go) | `feedRegistry`: `feed_id` → canonical `(base, quote)` pair, inverse-orientation flag |
+| [`payload.go`](payload.go) | Signed-payload parser; attributes subset-filtered batches by per-feed signer medians |
+| [`consumer.go`](consumer.go) | `UpdateEvent`, the `consumer.Event` the decoder emits |
+| [`dispatcher_adapter.go`](dispatcher_adapter.go) | `Decoder`: contract-ID + topic match, state-write contract declaration |
+| `*_test.go` | Unit, fuzz, fixture-regression and README/doc parity tests |
 
 ## Operational notes
 

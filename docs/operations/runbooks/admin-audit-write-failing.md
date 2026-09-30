@@ -18,7 +18,7 @@ severity: P3
 
 ## What this fires on
 
-Every privileged mutation on the admin + Stripe surfaces appends its
+Every privileged mutation on the admin surfaces appends its
 audit row **best-effort**: by the time the append runs, the mutation has
 already committed, so a failure is logged and swallowed rather than
 propagated. Un-doing a committed tier change because the audit store
@@ -39,8 +39,6 @@ Before C3-067 (audit-2026-07-23) the only trace was one
 | `passkey_clone_warning` | Refused passkey sign-in (**refusal**) | Which credential tripped the clone check; the [passkey-clone-warning](passkey-clone-warning.md) alert still fires from the metric |
 | `passkey_login_replay` | Refused passkey sign-in (**refusal**) | Which credential a replayed finish-login request presented |
 | `status_notice` | `POST /v1/admin/status-notices` (+ resolve) | A change to the **public** status page |
-| `stripe_plan_upgrade` | Stripe webhook plan change | The link between a paid Stripe event and the plan it granted |
-| `stripe_dead_letter` | Stripe dead-letter conclusion | The record that money landed and nothing was provisioned |
 | `staff_customer_lookup` | `GET /v1/account/admin/lookup` (**read**) | That a staff member read a customer's billing email, tier/status and every user's email + last-login |
 | `admin_account_read` | `GET /v1/admin/accounts/{id}` (**read**) | That an operator credential read an account's billing email, tier/status and overrides |
 
@@ -101,16 +99,10 @@ these are rare, bursty events and the required response is triggered by a
   only its record is missing. Reverting a tier override or revoking a
   minted key to "clean up" would be an unaudited mutation of its own.
 - **Do not make the audit append blocking** to "fix" this. That turns an
-  audit-store blip into a failed admin operation and — on the Stripe path
-  — into a webhook retry storm that re-applies the same plan change.
+  audit-store blip into a failed admin operation.
   Best-effort is deliberate; this alert exists so the gap is *visible*.
 
 ## Related
 
 - [monthly-quota-fail-open](monthly-quota-fail-open.md) — the other
   best-effort path whose silence the same audit wave closed.
-- `stripe-dead-letter` (runbook not yet written) — fires when a paid Stripe
-  event provisioned nothing; `surface="stripe_dead_letter"` here means
-  even *that* conclusion went unrecorded.
-- `stripe-platform-sync-errors` (runbook not yet written) — the
-  adjacent Stripe-bridge degradation signal.

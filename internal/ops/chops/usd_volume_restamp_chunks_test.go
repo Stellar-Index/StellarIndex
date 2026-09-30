@@ -1506,3 +1506,55 @@ func TestStatfsHostMismatchErr_ClassifiesErrno(t *testing.T) {
 		})
 	}
 }
+
+// A data_directory path that merely EXISTS on an ops host (postgresql-client
+// creates /var/lib/postgresql) must not let a local statfs stand in for the
+// database host's free space when the DSN dials another machine.
+func TestChunkRestampPreflight_RefusesLocalStatfsForRemoteDSN(t *testing.T) {
+	t.Setenv("HEAVY_MIN_DATA_KB", "0")
+	store := fakeVolumePathStore{path: "/var/lib/postgresql/16/main"}
+	measured := false
+	copts := chunkRestampOptions{
+		RemoteDBHost: "db.internal",
+		FreeBytes: func(string) (uint64, error) {
+			measured = true
+			return 5 << 40, nil // 5 TiB free on THIS host
+		},
+	}
+
+	p := chunkRestampPreflight(context.Background(), store, 1<<30, copts)
+	if p.Err == nil || !strings.Contains(p.Err.Error(), "db.internal") {
+		t.Fatalf("pre-flight err = %v, want a refusal naming the remote DSN host", p.Err)
+	}
+	if measured || p.MeasuredOK {
+		t.Errorf("statfs ran on this host for a remote DSN (MeasuredOK=%v); want it skipped", p.MeasuredOK)
+	}
+	if got := p.render(); !strings.Contains(got, "free space UNKNOWN") || !strings.Contains(got, "REFUSED") {
+		t.Errorf("render() = %q, want UNKNOWN free space and REFUSED", got)
+	}
+
+	copts.MinFreeBytes = 4 << 30
+	if p := chunkRestampPreflight(context.Background(), store, 1<<30, copts); p.Err != nil {
+		t.Errorf("-min-free-bytes 4 GiB for a 1 GiB chunk refused for a remote DSN: %v", p.Err)
+	}
+}
+
+func TestRemoteDSNHost(t *testing.T) {
+	cases := []struct {
+		dsn, want string
+	}{
+		{"postgres://u:p@localhost:5432/db", ""},
+		{"postgres://u:p@127.0.0.1:5432/db", ""},
+		{"postgres://u:p@[::1]:5432/db", ""},
+		{"host=/var/run/postgresql dbname=db", ""},
+		{"host=10.0.0.5 dbname=db", "10.0.0.5"},
+		{"postgres://u:p@db.internal:5432/db", "db.internal"},
+		{"postgres://u:p@localhost:5432,db.internal:5433/db", "db.internal"},
+		{"postgres://u:p@local host/db", "(unparseable DSN)"},
+	}
+	for _, c := range cases {
+		if got := remoteDSNHost(c.dsn); got != c.want {
+			t.Errorf("remoteDSNHost(%q) = %q, want %q", c.dsn, got, c.want)
+		}
+	}
+}

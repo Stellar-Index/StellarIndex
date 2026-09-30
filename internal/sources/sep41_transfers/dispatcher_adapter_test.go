@@ -231,6 +231,9 @@ func TestDecoder_DecodeTransferMapBody(t *testing.T) {
 	if out.Amount == nil || out.Amount.Int64() != 2_000_000 {
 		t.Errorf("Amount = %v, want 2_000_000 (extracted from map.amount)", out.Amount)
 	}
+	if out.ToAddr != gTo {
+		t.Errorf("ToAddr = %q, want base account %q (to_muxed_id is not captured)", out.ToAddr, gTo)
+	}
 }
 
 func TestDecoder_DecodeApprove(t *testing.T) {
@@ -309,6 +312,36 @@ func TestDecoder_DecodeSetAuthorized(t *testing.T) {
 		}
 		if out.Authorized == nil || *out.Authorized != authorize {
 			t.Errorf("Authorized = %v, want &%v", out.Authorized, authorize)
+		}
+	}
+}
+
+// TestDecoder_DecodeSetAuthorizedTopicShapes: the id is topic[1] in the bare
+// and CAP-67 shapes but topic[2] in the legacy admin-prefixed SAC shape; the
+// admin must never be recorded as the account whose authorization changed.
+func TestDecoder_DecodeSetAuthorizedTopicShapes(t *testing.T) {
+	d, _ := NewDecoder([]string{cWatched})
+	s := xdr.ScString("USDC:" + gSpender)
+	asset := encScVal(t, xdr.ScVal{Type: xdr.ScValTypeScvString, Str: &s})
+	symTopic := encScVal(t, sym("set_authorized"))
+	cases := map[string][]string{
+		"bare":   {symTopic, encScVal(t, addr(t, gTo))},
+		"cap67":  {symTopic, encScVal(t, addr(t, gTo)), asset},
+		"legacy": {symTopic, encScVal(t, addr(t, gFrom)), encScVal(t, addr(t, gTo)), asset},
+	}
+	for name, topic := range cases {
+		ev := setAuthorizedEvent(t, cWatched, false)
+		ev.Topic = topic
+		outs, err := d.Decode(ev)
+		if err != nil {
+			t.Fatalf("%s: Decode: %v", name, err)
+		}
+		out := outs[0].(Event)
+		if out.ToAddr != gTo {
+			t.Errorf("%s: ToAddr (id) = %q, want %q", name, out.ToAddr, gTo)
+		}
+		if out.Authorized == nil || *out.Authorized {
+			t.Errorf("%s: Authorized = %v, want &false", name, out.Authorized)
 		}
 	}
 }

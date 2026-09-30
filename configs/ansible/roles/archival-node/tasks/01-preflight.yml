@@ -164,6 +164,8 @@
       clickhouse_serving_password: "{{ clickhouse_serving_password | default('') }}"
       clickhouse_ops_batch_user: "{{ clickhouse_ops_batch_user | default('') }}"
       clickhouse_ops_batch_password: "{{ clickhouse_ops_batch_password | default('') }}"
+      clickhouse_live_daemon_user: "{{ clickhouse_live_daemon_user | default('') }}"
+      clickhouse_live_daemon_password: "{{ clickhouse_live_daemon_password | default('') }}"
       # /etc/default/galexie (07-galexie.yml) — sourced by config-assertions.sh
       galexie_s3_access_key: "{{ galexie_s3_access_key | default('') }}"
       galexie_s3_secret_key: "{{ galexie_s3_secret_key | default('') }}"
