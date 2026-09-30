@@ -270,6 +270,9 @@ export interface paths {
          *     Same wire shape as the catalogue rows on `/assets` (GlobalAssetView:
          *     `asset_id` = slug, `type` = "global", no issuer/contract_id).
          *     `market_cap_usd` is populated for fiat (fxHistory-backed).
+         *
+         *     Empty on testnet and futurenet, which run none of the off-chain
+         *     feeds these rows are priced from.
          */
         get: operations["listExternalAssets"];
         put?: never;
@@ -294,7 +297,8 @@ export interface paths {
          *     counterpart lives on `/assets/{asset_id}`; a Stellar-issued slug
          *     (usdc, aqua, …) returns **404** here, and a non-Stellar slug
          *     returns 404 on `/assets/{asset_id}` — each asset resolves on
-         *     exactly one path (LC-001, no redirect).
+         *     exactly one path (LC-001, no redirect). Every slug 404s on
+         *     testnet and futurenet, matching the empty `/external/assets`.
          */
         get: operations["getExternalAsset"];
         put?: never;
@@ -324,7 +328,8 @@ export interface paths {
          *     no price block — so it's a cheap directory call suitable for
          *     building a verified-currencies section on a listing page.
          *
-         *     Order matches the seed-file order (deterministic).
+         *     Order matches the seed-file order (deterministic). Empty on
+         *     testnet and futurenet: the catalogue names pubnet issuers.
          */
         get: operations["listVerifiedAssets"];
         put?: never;
@@ -2715,6 +2720,11 @@ export interface paths {
          *     `source_classes`. Operators consult this endpoint to confirm a
          *     venue is recognised before debugging an absence in /v1/markets
          *     or /v1/vwap.
+         *
+         *     Scoped to the running network: on testnet and futurenet only
+         *     sources that exist there are listed (the pubnet-anchored
+         *     protocol decoders and the off-chain price feeds are omitted).
+         *     Pubnet lists the whole registry.
          */
         get: operations["listSources"];
         put?: never;
@@ -2756,8 +2766,9 @@ export interface paths {
          *
          *     Served from a 15-second background-refreshed snapshot;
          *     `Cache-Control` is `private, no-cache` accordingly. Unknown
-         *     source names 404 (the registry is static per deploy — see
-         *     `/v1/sources` for the catalogue).
+         *     source names, and sources `/v1/sources` omits on this network,
+         *     404 (the registry is static per deploy — see `/v1/sources` for
+         *     the catalogue).
          */
         get: operations["getSourceHealth"];
         put?: never;
@@ -2790,6 +2801,9 @@ export interface paths {
          *     `kind=router` entries only — vault entries always report
          *     zero routed trades (their capital state lives on the
          *     protocol surfaces, not per-tx flow).
+         *
+         *     Empty on testnet and futurenet: every registry entry is a
+         *     pubnet contract.
          *
          *     A router call observed as a SUB-INVOCATION (some other
          *     contract called the router as part of its own authorized
@@ -10396,7 +10410,9 @@ export interface components {
              *
              *     Null for the verified asset itself, for non-classic
              *     assets (native / Soroban / fiat), and for any code that
-             *     no verified currency claims on Stellar. See R-018 /
+             *     no verified currency claims on Stellar. Always null on
+             *     testnet and futurenet, where the verified issuers (pubnet
+             *     accounts) do not exist. See R-018 /
              *     docs/architecture/multi-network-assets-migration.md
              *     Phase 1.1.
              */
@@ -10413,7 +10429,8 @@ export interface components {
              *     so only the real verified row (which carries this false)
              *     keeps the badge. The detail path stamps the richer
              *     `unverified_warning` body instead. Omitted (false) for the
-             *     verified asset and codes no verified currency claims.
+             *     verified asset, codes no verified currency claims, and every
+             *     row on testnet and futurenet.
              * @default false
              */
             unverified_ticker_collision: boolean;

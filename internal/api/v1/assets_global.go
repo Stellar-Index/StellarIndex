@@ -509,8 +509,13 @@ type VerifiedCurrencyListItem struct {
 // /assets page (R-018 Phase 1.5d).
 //
 // Order matches the seed-file order (deterministic; the catalogue
-// loader preserves entry order). 503 when no catalogue is wired.
+// loader preserves entry order). 503 when no catalogue is wired; an
+// empty list on a test net, where no catalogue issuer exists.
 func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
+	if !s.servesPubnetReference() {
+		writeJSON(w, []VerifiedCurrencyListItem{}, Flags{})
+		return
+	}
 	if s.verifiedCurrencies == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/verified-currencies-unavailable",
