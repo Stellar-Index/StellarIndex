@@ -107,8 +107,9 @@ func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 //     (actionSwap) and the newer single-event ScvSymbol("swap") +
 //     ScvMap body schema (actionSwapMap, Q5). classifyAny picks the
 //     shape from the topic; both reconstruct into the same TradeEvent.
-//   - provide_liquidity / withdraw_liquidity (String schema)
-//   - bond / unbond (per-pool stake contracts)
+//   - provide_liquidity / withdraw_liquidity (String and Map schemas)
+//   - bond / unbond and the other stake-contract events
+//   - the factory's create and config-update events, gated on IsFactory
 //
 // Each action's per-field correlation is independent.
 func (d *Decoder) Matches(ev events.Event) bool {
@@ -116,9 +117,9 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	if a == actionUnknown {
 		return false
 	}
-	if a == actionCreatePool {
-		// The factory's pool announcement is gated on the FACTORY trust
-		// root, never on reg.Has: only a genuine factory may admit a
+	if a == actionCreatePool || a == actionFactoryConfig {
+		// The factory's events are gated on the FACTORY trust root, never
+		// on reg.Has: only a genuine factory may admit a
 		// child. A curated pool republishing the identical topics — the
 		// strongest forger available, since it already passes reg.Has —
 		// must not be able to inject one (aquarius add_pool, same shape).
@@ -195,6 +196,18 @@ func (d *Decoder) decodeAction(a action, ev *events.Event, fieldTopic string, cl
 		return decodeInitializeEvent(ev, fieldTopic, closedAt)
 	case actionAdmin:
 		return decodeAdminEvent(ev, fieldTopic, closedAt)
+	case actionCreateDistributionFlow:
+		return decodeCreateDistributionFlowEvent(ev, closedAt)
+	case actionStakeMigration:
+		return decodeStakeMigrationEvent(ev, fieldTopic, closedAt)
+	case actionFactoryConfig:
+		return decodeFactoryConfigEvent(ev, closedAt)
+	case actionBlendPoolAdmin:
+		return decodeBlendPoolAdminEvent(ev, fieldTopic, closedAt)
+	case actionProvideLiquidityMap:
+		return decodeProvideLiquidityMapEvent(ev, closedAt)
+	case actionWithdrawLiquidityMap:
+		return decodeWithdrawLiquidityMapEvent(ev, closedAt)
 	case actionCreatePool:
 		// Handled above, before the lock. Enumerated so `exhaustive`
 		// keeps covering the action enum.
