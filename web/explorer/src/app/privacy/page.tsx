@@ -99,7 +99,7 @@ export default function PrivacyPage() {
             },
             {
               term: 'Request logs',
-              def: 'Standard server logs (request path, status, timing, user agent, IP) for operating and securing the Service. Query strings, API keys and the Referer are not logged; for a slow request we log only the shape of the query — which parameters it used, from an allow-list — never their values.',
+              def: 'Standard server logs (request path, status, timing, user agent, IP) for operating and securing the Service. Query strings, API keys and the Referer are not logged; for a slow request we also log the query shape: the names of the parameters it used, and the values of a fixed list of enumerated or numeric ones (for example limit and order_by); any other parameter is reduced to its name, so free-text and identifying values are never logged.',
             },
           ]}
         />

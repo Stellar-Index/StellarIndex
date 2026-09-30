@@ -159,7 +159,7 @@ describe('legal pages', () => {
     expect(body).toMatch(/sends an error report/);
     expect(body).toMatch(/your browser fetches it from that host directly/);
     expect(body).toMatch(
-      /for a slow request we log only the shape of the query — which parameters it used, from an allow-list — never their values/,
+      /the names of the parameters it used, and the values of a fixed list of enumerated or numeric ones \(for example limit and order_by\); any other parameter is reduced to its name, so free-text and identifying values are never logged/,
     );
     // Processors with country + safeguard (dns-email-perimeter.md).
     expect(body).toMatch(
