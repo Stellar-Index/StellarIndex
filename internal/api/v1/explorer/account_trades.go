@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -75,21 +77,48 @@ type AccountTradesView struct {
 	Note       string              `json:"note"`
 }
 
-// encodeAccountTradesCursor renders the keyset position of the last
-// served row as the opaque `?cursor=` value:
-// "<ts unixnano>.<ledger>.<tx_hash>.<op_index>" — dotted with the
-// tx_hash segment third (safe: tx_hash is fixed 64-char hex, never
-// contains '.'), mirroring the movements cursor convention.
 // accountTradesGate caps concurrent ListAccountTrades reads. Four of the
 // 25-connection serving pool: enough that a handful of genuine callers
 // proceed in parallel, small enough that this route cannot starve every
 // other Postgres-backed endpoint. See the rationale at the acquire site.
-var accountTradesGate = make(chan struct{}, 4)
+// accountTradesCallers holds each caller to one of those slots, so a
+// single caller issuing parallel slow scans cannot shed everyone else.
+var (
+	accountTradesGate    = make(chan struct{}, 4)
+	accountTradesCallers = callerSlots{held: map[string]struct{}{}}
+)
 
 // accountTradesGateWait is how long a request waits for a slot before
 // shedding. Short by design — the point is to shed, not to queue.
 const accountTradesGateWait = 750 * time.Millisecond
 
+// callerSlots admits at most one in-flight request per caller key.
+type callerSlots struct {
+	mu   sync.Mutex
+	held map[string]struct{}
+}
+
+func (c *callerSlots) acquire(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, busy := c.held[key]; busy {
+		return false
+	}
+	c.held[key] = struct{}{}
+	return true
+}
+
+func (c *callerSlots) release(key string) {
+	c.mu.Lock()
+	delete(c.held, key)
+	c.mu.Unlock()
+}
+
+// encodeAccountTradesCursor renders the keyset position of the last
+// served row as the opaque `?cursor=` value:
+// "<ts unixnano>.<ledger>.<tx_hash>.<op_index>" — dotted with the
+// tx_hash segment third (safe: tx_hash is fixed 64-char hex, never
+// contains '.'), mirroring the movements cursor convention.
 func encodeAccountTradesCursor(r timescale.AccountTradeRow) string {
 	return strconv.FormatInt(r.Ts.UTC().UnixNano(), 10) + "." +
 		strconv.FormatUint(uint64(r.Ledger), 10) + "." +
@@ -155,8 +184,8 @@ func (h *Handler) tradesBusy(w http.ResponseWriter, r *http.Request) {
 	h.WriteProblem(w, r,
 		"https://api.stellarindex.io/errors/account-trades-timeout",
 		"Account trades busy", http.StatusServiceUnavailable,
-		"too many per-account trades scans are already in flight; this scan was NOT "+
-			"started on this request — retry in a moment")
+		"too many per-account trades scans are already in flight (at most one per caller); "+
+			"this scan was NOT started on this request — retry in a moment")
 }
 
 // AccountTrades serves GET /v1/accounts/{g_strkey}/trades — the
@@ -186,6 +215,12 @@ func (h *Handler) AccountTrades(w http.ResponseWriter, r *http.Request) {
 	// pool below the rate limiter's floor and starve every other
 	// Postgres-backed endpoint. Acquire a gate slot or shed a retryable 503 —
 	// shed, don't queue past the read budget. See accountTradesGate above.
+	caller := middleware.RateLimitCallerKey(r)
+	if !accountTradesCallers.acquire(caller) {
+		h.tradesBusy(w, r)
+		return
+	}
+	defer accountTradesCallers.release(caller)
 	select {
 	case accountTradesGate <- struct{}{}:
 		defer func() { <-accountTradesGate }()

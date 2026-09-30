@@ -141,6 +141,34 @@ func krakenBackfillHour(t *testing.T, hourStart int64, g time.Duration) []canoni
 	return trades
 }
 
+// Kraken's last OHLC row is the still-open frame, and a candle that closes
+// after -to would be stamped outside the requested window; neither may be
+// written as a settled trade.
+func TestKrakenBackfill_SkipsCandleNotClosedByToOrNow(t *testing.T) {
+	const hourSec = int64(3_600)
+	openNow := time.Now().Truncate(time.Hour).Unix() - 2*hourSec
+	for name, c := range map[string]struct{ startSec, toSec int64 }{
+		"open at now":   {openNow, openNow + 24*hourSec},
+		"straddles -to": {1_745_000_000, 1_745_000_000 + 2*hourSec + hourSec/2},
+	} {
+		srv := newTestKrakenREST(t, "XLMUSD", synthesiseKrakenCandles(3, c.startSec, hourSec), c.startSec+2*hourSec)
+		pair, err := canonical.NewPair(mustAsset(t, "crypto:XLM"), mustAsset(t, "fiat:USD"))
+		if err != nil {
+			t.Fatalf("NewPair: %v", err)
+		}
+		s := NewStreamer(map[string]canonical.Pair{"XLMUSD": pair})
+		s.Endpoint = srv.URL
+		trades, err := s.Backfill(context.Background(), pair, time.Unix(c.startSec, 0), time.Unix(c.toSec, 0), time.Hour)
+		srv.Close()
+		if err != nil {
+			t.Fatalf("%s: Backfill: %v", name, err)
+		}
+		if len(trades) != 2 {
+			t.Errorf("%s: got %d trades, want 2 (unclosed candle dropped)", name, len(trades))
+		}
+	}
+}
+
 // The 1h candle and the hour's last 1m candle close at the same instant.
 // If they share (tx_hash, ts) they share the whole trades PK, and a 1m
 // run followed by a 1h run upserts the hour's volume onto the :59 minute

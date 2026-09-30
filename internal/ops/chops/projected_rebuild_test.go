@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
@@ -458,5 +459,39 @@ func TestCollectEvictedOrphans_ReachesResultSummaryAndLog(t *testing.T) {
 	}
 	if got := projectedRebuildLossLines(ProjectedRebuildResult{}); len(got) != 0 {
 		t.Errorf("clean run loss lines = %q, want none", got)
+	}
+}
+
+// TestSelectProjectedSource_WatchedSEP41DoesNotCaptureOtherNames pins that a
+// non-projected -source is refused even though BuildRegistry appends the sep41
+// sources whenever contracts are watched.
+func TestSelectProjectedSource_WatchedSEP41DoesNotCaptureOtherNames(t *testing.T) {
+	watched := []string{"CWATCHEDCONTRACT0000000000000000000000000000000000000000"}
+	for _, name := range []string{"sdex", "band", "soroswap-router"} {
+		reg, err := projector.BuildRegistry([]string{name}, config.OracleConfig{}, watched, nil)
+		if err != nil {
+			t.Fatalf("BuildRegistry(%q): %v", name, err)
+		}
+		if len(reg.Sources) == 0 {
+			t.Fatalf("BuildRegistry(%q) with watched contracts: want the auto-included sep41 sources, got none", name)
+		}
+		if src, err := selectProjectedSource(reg, name); err == nil {
+			t.Errorf("selectProjectedSource(%q) = %q, want a not-a-projector-source error", name, src.Name)
+		} else if !strings.Contains(err.Error(), "is not a projector source") {
+			t.Errorf("selectProjectedSource(%q) error = %v", name, err)
+		}
+	}
+	for _, name := range []string{"sep41_transfers", "sep41_supply", "comet", "  Comet  "} {
+		reg, err := projector.BuildRegistry([]string{name}, config.OracleConfig{}, watched, nil)
+		if err != nil {
+			t.Fatalf("BuildRegistry(%q): %v", name, err)
+		}
+		src, err := selectProjectedSource(reg, name)
+		if err != nil {
+			t.Fatalf("selectProjectedSource(%q): %v", name, err)
+		}
+		if want := strings.ToLower(strings.TrimSpace(name)); src.Name != want {
+			t.Errorf("selectProjectedSource(%q) = %q, want %q", name, src.Name, want)
+		}
 	}
 }
