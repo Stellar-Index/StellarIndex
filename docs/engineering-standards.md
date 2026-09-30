@@ -60,6 +60,8 @@ the mechanical ones; reviewers enforce the judgement ones.
 
 **Judgement (reviewer-enforced):**
 
+- [ ] Checked `CAPABILITY-INVENTORY.md` before writing new utility
+      code.
 - [ ] New public API accompanied by usage doc (`docs/reference/` or
       `pkg/client/README.md`).
 - [ ] Bug fix accompanied by a regression test.
@@ -979,7 +981,9 @@ under `internal/sources/<venue>/` carry the six-file convention's
 comments (`childgate`, `forex`, `frankfurter`) are grandfathered.
 *Why:* one predictable place to read "what is this package".
 Examples: `internal/canonical/doc.go`,
-`internal/sources/soroswap/README.md`. **Review-enforced.**
+`internal/sources/soroswap/README.md`. **Lint-enforced** (`lint-docs.sh`:
+every `internal/` and `pkg/` package has a package comment; source
+packages keep a one-paragraph one beside their `README.md`).
 
 ### 14.11. Interfaces: consumer-side, narrow, `-er`-named
 
