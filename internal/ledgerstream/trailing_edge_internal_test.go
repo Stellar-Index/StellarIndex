@@ -3,6 +3,10 @@ package ledgerstream
 import (
 	"errors"
 	"testing"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // TestParseTrailingMissingSeq covers the SDK error-message parse —
@@ -73,5 +77,45 @@ func TestParseTrailingMissingSeq(t *testing.T) {
 					gotSeq, gotOK, tc.wantSeq, tc.wantOK)
 			}
 		})
+	}
+}
+
+// TestMaybeTolerateTrailingMissing_CountsOnlyTolerated pins that a
+// tolerated miss is visible as a counter, and that an error passed
+// through is not counted. Not parallel: the counter is process-global.
+func TestMaybeTolerateTrailingMissing_CountsOnlyTolerated(t *testing.T) {
+	missing := func(seq string) error {
+		return errors.New("ledger object containing sequence " + seq + " is missing: file does not exist")
+	}
+	tipAt := func(tip uint32) func() (uint32, error) {
+		return func() (uint32, error) { return tip, nil }
+	}
+	tol := Config{TolerateTrailingMissing: true, TrailingMissingWindow: 10}
+	cases := []struct {
+		name      string
+		cfg       Config
+		err       error
+		tip       func() (uint32, error)
+		wantNil   bool
+		wantDelta float64
+	}{
+		{"tolerated trailing miss", tol, missing("195"), tipAt(194), true, 1},
+		{"miss beyond window", tol, missing("150"), tipAt(194), false, 0},
+		{"flag off", Config{}, missing("195"), tipAt(194), false, 0},
+		{"unrelated error", Config{TolerateTrailingMissing: true}, errors.New("boom"), tipAt(194), false, 0},
+		{"miss near a chunk's To but far below the store tip", tol, missing("195"), tipAt(5_000), false, 0},
+		{"miss within the window of the store tip", tol, missing("195"), tipAt(205), true, 1},
+		{"store tip unresolvable", tol, missing("195"), func() (uint32, error) { return 0, errors.New("list denied") }, false, 0},
+	}
+	for _, tc := range cases {
+		before := testutil.ToFloat64(obs.LedgerstreamTrailingMissingToleratedTotal)
+		got := maybeTolerateTrailingMissing(tc.cfg, 100, 200, 5, tc.err, tc.tip)
+		delta := testutil.ToFloat64(obs.LedgerstreamTrailingMissingToleratedTotal) - before
+		if (got == nil) != tc.wantNil {
+			t.Errorf("%s: err = %v, wantNil %v", tc.name, got, tc.wantNil)
+		}
+		if delta != tc.wantDelta {
+			t.Errorf("%s: tolerated counter delta = %v, want %v", tc.name, delta, tc.wantDelta)
+		}
 	}
 }

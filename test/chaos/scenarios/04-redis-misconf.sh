@@ -27,11 +27,15 @@
 # Redis enters MISCONF when `stop-writes-on-bgsave-error yes` is set
 # (it is by default in our dev compose, mirroring r1) AND a BGSAVE
 # call subsequently fails. The cheapest way to provoke a BGSAVE
-# failure without filling the disk is to point `dir` at an unwritable
-# path and trigger BGSAVE — Redis returns `MISCONF Redis is configured
-# to save RDB snapshots, but it's currently unable to persist to disk`
-# on every subsequent write until BGSAVE succeeds again. Recovery is
-# symmetric: CONFIG SET dir /data + BGSAVE.
+# failure without filling the disk is to make the snapshot `dir`
+# unwritable (chmod 000 via `docker exec`, which runs as root while
+# redis-server runs as the `redis` user) and trigger BGSAVE — Redis
+# returns `MISCONF Redis is configured to save RDB snapshots, but it's
+# currently unable to persist to disk` on every subsequent write until
+# BGSAVE succeeds again. `CONFIG SET dir` is not usable: Redis 7 refuses
+# it as a protected config. Recovery is symmetric: restore the mode +
+# BGSAVE. The already-open AOF file keeps accepting appends; only new
+# file creation (the RDB temp file) fails.
 #
 # Pass criteria + invariants
 # ──────────────────────────
@@ -66,6 +70,10 @@ VWAP_URL="$CHAOS_TARGET/v1/vwap?base=native&quote=fiat:USD"
 TWAP_URL="$CHAOS_TARGET/v1/twap?base=native&quote=fiat:USD"
 LENDING_URL="$CHAOS_TARGET/v1/lending/pools"
 SIGNUP_URL="$CHAOS_TARGET/v1/signup"
+# Set by force_redis_misconf once the snapshot dir's mode is known, so
+# the EXIT trap only restores a mode it actually changed.
+REDIS_DIR=""
+REDIS_DIR_MODE=""
 
 chaos_setup
 
@@ -79,11 +87,13 @@ cleanup() {
         # Redis stuck in MISCONF (read-only) for every later scenario
         # in the run, so warn loudly per-step instead of swallowing it.
         local heal_failed=0
-        docker exec "$REDIS_CONTAINER" redis-cli CONFIG SET dir /data >/dev/null 2>&1 \
-            || { warn "cleanup: failed to reset Redis dir to /data"; heal_failed=1; }
+        if [ -n "$REDIS_DIR_MODE" ]; then
+            docker exec "$REDIS_CONTAINER" chmod "$REDIS_DIR_MODE" "$REDIS_DIR" >/dev/null 2>&1 \
+                || { warn "cleanup: failed to restore mode $REDIS_DIR_MODE on $REDIS_DIR"; heal_failed=1; }
+        fi
         docker exec "$REDIS_CONTAINER" redis-cli BGSAVE >/dev/null 2>&1 \
             || { warn "cleanup: BGSAVE failed while restoring Redis"; heal_failed=1; }
-        docker exec "$REDIS_CONTAINER" redis-cli CONFIG SET stop-writes-on-bgsave-error no >/dev/null 2>&1 \
+        redis_config_set stop-writes-on-bgsave-error no \
             || { warn "cleanup: failed to clear stop-writes-on-bgsave-error"; heal_failed=1; }
         if [ "$heal_failed" -eq 1 ]; then
             warn "cleanup: Redis may still be in MISCONF / read-only state — verify manually: docker exec $REDIS_CONTAINER redis-cli INFO persistence"
@@ -147,51 +157,75 @@ assert_price_stale() {
     log "/v1/price: ✓ 200 (read path tolerates MISCONF)"
 }
 
+# redis_config_set NAME VALUE — returns non-zero with Redis's reply on
+# stderr unless it answers OK. redis-cli's exit status on an error reply
+# is not dependable across versions, so a refused config is read from
+# the reply itself.
+redis_config_set() {
+    local out
+    out="$(docker exec "$REDIS_CONTAINER" redis-cli CONFIG SET "$1" "$2" 2>&1)" || true
+    if [ "$out" != "OK" ]; then
+        printf 'redis-cli CONFIG SET %s %s: %s\n' "$1" "$2" "$out" >&2
+        return 1
+    fi
+}
+
+# wait_for_bgsave_status ok|err — re-issues BGSAVE each tick (one may
+# already be in flight and refuse the first) until rdb_last_bgsave_status
+# matches or 10s pass.
+wait_for_bgsave_status() {
+    local want="$1"
+    local deadline info
+    deadline="$(($(date -u +%s) + 10))"
+    while [ "$(date -u +%s)" -lt "$deadline" ]; do
+        docker exec "$REDIS_CONTAINER" redis-cli BGSAVE >/dev/null 2>&1 || true
+        sleep 1
+        info="$(docker exec "$REDIS_CONTAINER" redis-cli INFO persistence 2>&1)" || true
+        if grep -q "rdb_last_bgsave_status:$want" <<<"$info"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Force Redis into MISCONF. After this returns, every Redis write
 # will fail with the MISCONF prefix until heal_redis_misconf runs.
 force_redis_misconf() {
-    log "forcing Redis MISCONF: dir=/nonexistent + BGSAVE"
+    local dir
+    dir="$(docker exec "$REDIS_CONTAINER" redis-cli CONFIG GET dir | tail -1)"
+    [ -n "$dir" ] || die "could not read Redis snapshot dir (CONFIG GET dir)"
+    REDIS_DIR_MODE="$(docker exec "$REDIS_CONTAINER" stat -c %a "$dir")" \
+        || die "could not stat Redis snapshot dir $dir"
+    REDIS_DIR="$dir"
+    log "forcing Redis MISCONF: chmod 000 $REDIS_DIR (was $REDIS_DIR_MODE) + BGSAVE"
     # Ensure the safety net is active. Dev compose already has this on,
     # but pin it explicitly so the scenario is portable.
-    docker exec "$REDIS_CONTAINER" redis-cli CONFIG SET stop-writes-on-bgsave-error yes >/dev/null
-    # Point the snapshot dir at an unwritable path and trigger BGSAVE.
+    redis_config_set stop-writes-on-bgsave-error yes \
+        || die "could not enable stop-writes-on-bgsave-error"
+    docker exec "$REDIS_CONTAINER" chmod 000 "$REDIS_DIR" \
+        || die "could not chmod 000 $REDIS_DIR in $REDIS_CONTAINER"
     # BGSAVE is async; Redis only flips into "writes blocked" mode
-    # AFTER the background fork fails. Poll INFO Persistence until
-    # rdb_last_bgsave_status reports "err".
-    docker exec "$REDIS_CONTAINER" redis-cli CONFIG SET dir /nonexistent >/dev/null
-    docker exec "$REDIS_CONTAINER" redis-cli BGSAVE >/dev/null 2>&1 || true
-    local deadline
-    deadline="$(($(date -u +%s) + 10))"
-    while [ "$(date -u +%s)" -lt "$deadline" ]; do
-        if docker exec "$REDIS_CONTAINER" redis-cli INFO persistence \
-            | grep -q "rdb_last_bgsave_status:err"; then
-            log "MISCONF active (rdb_last_bgsave_status:err)"
-            return 0
-        fi
-        sleep 1
-    done
+    # AFTER the background save fails.
+    if wait_for_bgsave_status err; then
+        log "MISCONF active (rdb_last_bgsave_status:err)"
+        return 0
+    fi
     die "Redis did not enter MISCONF within 10s"
 }
 
 heal_redis_misconf() {
-    log "healing Redis: dir=/data + BGSAVE + stop-writes=no"
-    docker exec "$REDIS_CONTAINER" redis-cli CONFIG SET dir /data >/dev/null
-    docker exec "$REDIS_CONTAINER" redis-cli BGSAVE >/dev/null 2>&1 || true
+    log "healing Redis: chmod $REDIS_DIR_MODE $REDIS_DIR + BGSAVE + stop-writes=no"
+    docker exec "$REDIS_CONTAINER" chmod "$REDIS_DIR_MODE" "$REDIS_DIR" \
+        || die "could not restore mode $REDIS_DIR_MODE on $REDIS_DIR"
     # Wait for BGSAVE to actually succeed before declaring the heal
     # complete; INFO persistence is the authoritative source.
-    local deadline
-    deadline="$(($(date -u +%s) + 10))"
-    while [ "$(date -u +%s)" -lt "$deadline" ]; do
-        if docker exec "$REDIS_CONTAINER" redis-cli INFO persistence \
-            | grep -q "rdb_last_bgsave_status:ok"; then
-            log "Redis writes restored (rdb_last_bgsave_status:ok)"
-            docker exec "$REDIS_CONTAINER" redis-cli CONFIG SET stop-writes-on-bgsave-error no >/dev/null
-            return 0
-        fi
-        sleep 1
-    done
-    warn "BGSAVE didn't report ok within 10s; clearing stop-writes anyway"
-    docker exec "$REDIS_CONTAINER" redis-cli CONFIG SET stop-writes-on-bgsave-error no >/dev/null
+    if wait_for_bgsave_status ok; then
+        log "Redis writes restored (rdb_last_bgsave_status:ok)"
+    else
+        warn "BGSAVE didn't report ok within 10s; clearing stop-writes anyway"
+    fi
+    redis_config_set stop-writes-on-bgsave-error no \
+        || die "could not clear stop-writes-on-bgsave-error"
 }
 
 # ─── 1. baseline ───────────────────────────────────────────────────

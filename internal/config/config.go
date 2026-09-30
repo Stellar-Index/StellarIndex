@@ -883,6 +883,9 @@ type ReflectorOracleConfig struct {
 	DEXContract string `toml:"dex_contract" doc:"Reflector DEX contract (C-prefix) on mainnet."`
 	CEXContract string `toml:"cex_contract" doc:"Reflector CEX contract (C-prefix) on mainnet."`
 	FXContract  string `toml:"fx_contract"  doc:"Reflector FX contract (C-prefix) on mainnet."`
+	DEXDecimals uint8  `toml:"dex_decimals" doc:"Price scale (power of 10) of the DEX contract's SEP-40 decimals(). 0 keeps the Reflector default of 14. Not read from the contract: confirm decimals() on-chain before re-pointing dex_contract." default:"0"`
+	CEXDecimals uint8  `toml:"cex_decimals" doc:"Price scale (power of 10) of the CEX contract's SEP-40 decimals(). 0 keeps the Reflector default of 14. Not read from the contract: confirm decimals() on-chain before re-pointing cex_contract." default:"0"`
+	FXDecimals  uint8  `toml:"fx_decimals"  doc:"Price scale (power of 10) of the FX contract's SEP-40 decimals(). 0 keeps the Reflector default of 14. Not read from the contract: confirm decimals() on-chain before re-pointing fx_contract." default:"0"`
 }
 
 // RedstoneOracleConfig carries the mainnet RedStone Adapter address.

@@ -65,13 +65,13 @@ chmod +x "$TMP/bin/curl"
 # run_snapshot <case-name> — one isolated invocation.
 run_snapshot() {
   local name="$1"
-  rm -rf "$TMP/$name"
+  rm -rf "${TMP:?}/$name"
   mkdir -p "$TMP/$name/out" "$TMP/$name/textfile"
   PATH="$TMP/bin:$PATH" \
   OUT_DIR="$TMP/$name/out" \
   TEXTFILE_DIR="$TMP/$name/textfile" \
   BACKFILL_STATE="$TMP/$name/nonexistent-state" \
-  STELLARINDEX_POSTGRES_DSN="" \
+  STELLARINDEX_POSTGRES_DSN="${MOCK_PG_DSN:-}" \
   SNAPSHOT_MC_TARGET="${MOCK_MC_TARGET:-}" \
   bash "$SCRIPT" >"$TMP/$name/stdout" 2>"$TMP/$name/stderr"
   echo "$?"
@@ -84,34 +84,46 @@ export MOCK_TABLES="ledgers transactions contract_events"
 export MOCK_SHOW_CREATE_FAILS=""
 rc="$(run_snapshot full)"
 
-[[ "$rc" == "0" ]] \
-  && ok "full capture exits 0" \
-  || bad "full capture exited $rc (stderr: $(tail -2 "$TMP/full/stderr"))"
+if [[ "$rc" == "0" ]]; then
+  ok "full capture exits 0"
+else
+  bad "full capture exited $rc (stderr: $(tail -2 "$TMP/full/stderr"))"
+fi
 
 got_creates="$(grep -c '^CREATE TABLE' <<<"$(schema_of full)")"
-[[ "$got_creates" == "3" ]] \
-  && ok "full capture wrote DDL for all 3 tables" \
-  || bad "full capture wrote $got_creates CREATE statements, want 3"
+if [[ "$got_creates" == "3" ]]; then
+  ok "full capture wrote DDL for all 3 tables"
+else
+  bad "full capture wrote $got_creates CREATE statements, want 3"
+fi
 
-grep -q 'CREATE DATABASE IF NOT EXISTS stellar;' <<<"$(schema_of full)" \
-  && ok "schema.sql is replayable from scratch (CREATE DATABASE first)" \
-  || bad "schema.sql has no CREATE DATABASE — replaying it onto a bare server fails"
+if grep -q 'CREATE DATABASE IF NOT EXISTS stellar;' <<<"$(schema_of full)"; then
+  ok "schema.sql is replayable from scratch (CREATE DATABASE first)"
+else
+  bad "schema.sql has no CREATE DATABASE — replaying it onto a bare server fails"
+fi
 
-grep -q '^stellarindex_ch_schema_snapshot_last_success_unix [0-9]' <<<"$(prom full)" \
-  && ok "full capture stamps last_success_unix (the staleness alert's only input)" \
-  || bad "full capture did not stamp last_success_unix"
+if grep -q '^stellarindex_ch_schema_snapshot_last_success_unix [0-9]' <<<"$(prom full)"; then
+  ok "full capture stamps last_success_unix (the staleness alert's only input)"
+else
+  bad "full capture did not stamp last_success_unix"
+fi
 
-grep -q '^stellarindex_ch_schema_snapshot_tables 3$' <<<"$(prom full)" \
-  && ok "full capture reports the table count it actually captured" \
-  || bad "table-count gauge wrong: $(grep snapshot_tables <<<"$(prom full)")"
+if grep -q '^stellarindex_ch_schema_snapshot_tables 3$' <<<"$(prom full)"; then
+  ok "full capture reports the table count it actually captured"
+else
+  bad "table-count gauge wrong: $(grep snapshot_tables <<<"$(prom full)")"
+fi
 
 # ─── 2. zero tables is REFUSED ──────────────────────────────────────
 export MOCK_TABLES=""
 rc="$(run_snapshot empty)"
 
-[[ "$rc" != "0" ]] \
-  && ok "a zero-table answer exits non-zero ($rc)" \
-  || bad "a zero-table answer exited 0 — an empty snapshot would be banked as a backup"
+if [[ "$rc" != "0" ]]; then
+  ok "a zero-table answer exits non-zero ($rc)"
+else
+  bad "a zero-table answer exited 0 — an empty snapshot would be banked as a backup"
+fi
 
 if grep -q 'last_success_unix' <<<"$(prom empty)"; then
   bad "a zero-table answer stamped success — the staleness alert would read a
@@ -126,9 +138,11 @@ export MOCK_TABLES="ledgers transactions contract_events"
 export MOCK_SHOW_CREATE_FAILS="transactions"
 rc="$(run_snapshot partial)"
 
-[[ "$rc" != "0" ]] \
-  && ok "a failed SHOW CREATE exits non-zero ($rc)" \
-  || bad "a failed SHOW CREATE exited 0 — a schema missing a table would look complete"
+if [[ "$rc" != "0" ]]; then
+  ok "a failed SHOW CREATE exits non-zero ($rc)"
+else
+  bad "a failed SHOW CREATE exited 0 — a schema missing a table would look complete"
+fi
 
 if grep -q 'last_success_unix' <<<"$(prom partial)"; then
   bad "a partial capture stamped success — the lake would be 'protected' by a
@@ -142,27 +156,66 @@ fi
 # gated on offsite_configured, so it MUST be emitted every run (1 iff a
 # target is set) — a push that never succeeded fires; an acked
 # local-only host stays silent.
-grep -q '^stellarindex_ch_schema_snapshot_offsite_configured 0$' <<<"$(prom full)" \
-  && ok "no offsite target → offsite_configured 0 (acked local-only stays silent)" \
-  || bad "no offsite target but offsite_configured != 0: $(grep offsite <<<"$(prom full)")"
+if grep -q '^stellarindex_ch_schema_snapshot_offsite_configured 0$' <<<"$(prom full)"; then
+  ok "no offsite target → offsite_configured 0 (acked local-only stays silent)"
+else
+  bad "no offsite target but offsite_configured != 0: $(grep offsite <<<"$(prom full)")"
+fi
 
 export MOCK_TABLES="ledgers transactions contract_events"
 export MOCK_SHOW_CREATE_FAILS=""
 # $TMP/bin has no `mc`, so the push fails deterministically (exit 2).
 rc="$(MOCK_MC_TARGET="offsite/stellarindex-backups/ch-schema" run_snapshot offsite)"
 
-[[ "$rc" == "2" ]] \
-  && ok "configured target + failed push exits 2" \
-  || bad "configured target + failed push exited $rc, want 2"
+if [[ "$rc" == "2" ]]; then
+  ok "configured target + failed push exits 2"
+else
+  bad "configured target + failed push exited $rc, want 2"
+fi
 
-grep -q '^stellarindex_ch_schema_snapshot_offsite_configured 1$' <<<"$(prom offsite)" \
-  && ok "offsite target set → offsite_configured 1 even though the push failed" \
-  || bad "offsite_configured missing/wrong with a target set: $(grep offsite <<<"$(prom offsite)")"
+if grep -q '^stellarindex_ch_schema_snapshot_offsite_configured 1$' <<<"$(prom offsite)"; then
+  ok "offsite target set → offsite_configured 1 even though the push failed"
+else
+  bad "offsite_configured missing/wrong with a target set: $(grep offsite <<<"$(prom offsite)")"
+fi
 
 if grep -q 'offsite_last_success_unix [0-9]' <<<"$(prom offsite)"; then
   bad "a failed push stamped offsite_last_success — the offsite alert would read it as delivered"
 else
   ok "a failed push does NOT stamp offsite_last_success (absent branch fires)"
+fi
+
+# ─── 5. cursor capture selects only columns the schema declares ─────
+# The psql read's failure is swallowed by design, so a query naming a
+# non-existent column silently drops the cursor half of the backup.
+pg_cols="$(awk '/^CREATE TABLE ingestion_cursors/{f=1; next} f&&/^\);/{exit}
+  f&&/^    [a-z_]+ /{print $1}' migrations/0001_create_trades_hypertable.up.sql | tr '\n' ' ')"
+cat > "$TMP/bin/psql" <<'STUB'
+#!/usr/bin/env bash
+# Fake Postgres: fails like 42703 when the SELECT list names a column
+# outside MOCK_PG_COLUMNS, else answers with one cursor row.
+q="${!#}"
+sel="${q#SELECT }"; sel="${sel%% FROM *}"
+IFS=', ' read -r -a cols <<<"$sel"
+for c in "${cols[@]}"; do
+  [[ " $MOCK_PG_COLUMNS " == *" $c "* ]] || { echo "ERROR: column \"$c\" does not exist" >&2; exit 1; }
+done
+printf 'sdex\t\t100\t2026-01-01 00:00:00+00\n'
+STUB
+chmod +x "$TMP/bin/psql"
+
+if [[ "$pg_cols" == *last_ledger* ]]; then
+  ok "read ingestion_cursors columns from migration 0001 ($pg_cols)"
+else
+  bad "could not read ingestion_cursors columns from migration 0001"
+fi
+
+export MOCK_TABLES="ledgers" MOCK_SHOW_CREATE_FAILS="" MOCK_PG_COLUMNS="$pg_cols"
+rc="$(MOCK_PG_DSN="postgres://stub" run_snapshot cursors)"
+if ls "$TMP/cursors/out"/*/ingestion-cursors.tsv >/dev/null 2>&1; then
+  ok "ingestion-cursors.tsv captured (query matches the schema)"
+else
+  bad "ingestion-cursors.tsv missing (rc $rc): $(grep -h ingestion_cursors "$TMP/cursors/stderr")"
 fi
 
 echo "ch-schema-snapshot-test: $pass passed, $fail failed"

@@ -80,6 +80,21 @@ ssh <api-host> 'journalctl -u stellarindex-api --since "30 min ago" --no-pager \
   failure in an otherwise-empty window can briefly spike the ratio. The
   `for: 15m` dwell absorbs one-off blips — a sustained firing is real.
 
+## `stellarindex_notify_send_rate_high` — sent volume above 300/h
+
+The opposite failure: mail is going out, too much of it. The login throttles
+cap each inbox and each IP, not the total, so this aggregate ceiling is the
+only signal for volume spread across many addresses and IPs.
+
+- [ ] Break the volume down: `sum by (template) (rate(stellarindex_notify_sends_total{result="sent"}[15m])) * 3600`.
+- [ ] `magic-link` dominating: look for many `/v1/auth/login` requests from
+  many IPs in the API log; tighten the edge rate limit on that route if the
+  pattern is abusive.
+- [ ] `signup-verify` / other template dominating with no matching request
+  volume: suspect a send loop in our code; roll back the recent change.
+- [ ] A genuine traffic spike (launch, press) is a valid cause: silence for
+  its duration rather than raising the ceiling.
+
 ## Related
 
 - `internal/notify` — the Resend client and its `ErrProviderRejected` /

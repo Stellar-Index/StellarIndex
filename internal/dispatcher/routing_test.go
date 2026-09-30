@@ -12,20 +12,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/reflector"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
-// TestEndToEndRouting_withRealFixtures wires all four source
-// Decoders into one Dispatcher, then feeds every captured mainnet
-// fixture through Dispatcher.Route and verifies the right
-// decoder claimed each event.
-//
-// This is the integration test for PR 165b — proves the
-// Decoder interface + per-source adapters correctly route real
-// bytes without duplication or loss. End-to-end ledger-meta →
-// dispatcher wiring is in PR 165d.
+// TestEndToEndRouting_withRealFixtures wires every source with captured
+// mainnet fixtures into one Dispatcher, feeds each fixture through
+// Dispatcher.Route, and verifies the right decoder claimed each event
+// without duplication or loss.
 func TestEndToEndRouting_withRealFixtures(t *testing.T) {
 	disp := dispatcher.New(
 		reflector.NewDecoder(reflector.VariantDEX,
@@ -37,15 +33,17 @@ func TestEndToEndRouting_withRealFixtures(t *testing.T) {
 		soroswapDecoderWithStubbedTokens(t),
 		aquarius.NewDecoder(),
 		phoenix.NewDecoder(),
+		comet.NewDecoder().WithoutMetrics(),
 	)
 
 	// Per-source expectations:
 	//   reflector/DEX  → AssetSoroban in the update asset slot.
 	//   reflector/CEX  → AssetCrypto (per PR 164e).
 	//   reflector/FX   → AssetFiat.
-	//   soroswap       → stubbed tokens → Trade with native base / classic quote.
+	//   soroswap       → stubbed SAC tokens → one Trade per swap+sync.
 	//   aquarius       → one Trade per event.
 	//   phoenix        → 8 events → one Trade on the 8th, nil on 1-7.
+	//   comet          → one Trade per swap event.
 	// Accounting: events-seen-per-source, outputs-emitted-per-
 	// source. Sources with correlation state (soroswap, phoenix)
 	// emit FEWER outputs than events seen — that's the point of
@@ -54,7 +52,7 @@ func TestEndToEndRouting_withRealFixtures(t *testing.T) {
 	eventsSeen := map[string]int{}    // by fixture dir
 	outputsByName := map[string]int{} // by emitted canonical.*.Source
 
-	for _, source := range []string{"reflector", "aquarius", "soroswap", "phoenix"} {
+	for _, source := range []string{"reflector", "aquarius", "soroswap", "phoenix", "comet"} {
 		files := orderedFixturesForReplay(t, source, findFixtures(t, source))
 		for _, fixPath := range files {
 			evs := loadEventsFromFixture(t, source, fixPath)
@@ -99,6 +97,10 @@ func TestEndToEndRouting_withRealFixtures(t *testing.T) {
 		t.Errorf("phoenix: got %d outputs for %d events; want %d (8-event groups)",
 			got, eventsSeen["phoenix"], want)
 	}
+	if got := outputsByName["comet"]; got != eventsSeen["comet"] {
+		t.Errorf("comet: got %d outputs for %d events; want 1:1",
+			got, eventsSeen["comet"])
+	}
 	// Reflector: at least one update per fixture event (could be
 	// many more — one per asset in the price vector).
 	totalReflector := outputsByName["reflector-dex"] +
@@ -109,7 +111,7 @@ func TestEndToEndRouting_withRealFixtures(t *testing.T) {
 	}
 
 	// Dispatch statistics sanity: UnmatchedHits should be zero.
-	// Every fixture comes from one of the four sources we registered;
+	// Every fixture comes from one of the sources we registered;
 	// none should fall through unclaimed.
 	if got := disp.Stats().UnmatchedHits; got != 0 {
 		t.Errorf("UnmatchedHits = %d, want 0 — some real fixture didn't match any decoder", got)
@@ -135,14 +137,22 @@ func validateOutput(o interface{}) error {
 		if e.Trade.Ledger == 0 {
 			return missing("Trade.Ledger", e.Trade.Ledger)
 		}
+		return sorobanLegs(e.Trade)
 	case aquarius.TradeEvent:
 		if e.Trade.Source != aquarius.SourceName {
 			return missing("Trade.Source", e.Trade.Source)
 		}
+		return sorobanLegs(e.Trade)
 	case phoenix.TradeEvent:
 		if e.Trade.Source != phoenix.SourceName {
 			return missing("Trade.Source", e.Trade.Source)
 		}
+		return sorobanLegs(e.Trade)
+	case comet.TradeEvent:
+		if e.Trade.Source != comet.SourceName {
+			return missing("Trade.Source", e.Trade.Source)
+		}
+		return sorobanLegs(e.Trade)
 	case reflector.UpdateEvent:
 		if !strings.HasPrefix(e.Update.Source, "reflector-") {
 			return missing("Update.Source", e.Update.Source)
@@ -152,6 +162,19 @@ func validateOutput(o interface{}) error {
 		}
 	default:
 		return &mismatch{what: "unknown output type"}
+	}
+	return nil
+}
+
+// sorobanLegs pins the contract form on both legs of a Soroban venue's
+// trade. The alias-aware price reads assume a pool never shares a pair key
+// with a classic book, so a decoder folding a SAC leg onto its classic
+// asset would leak pool prints into classic-quoted reads.
+func sorobanLegs(tr canonical.Trade) error {
+	for _, leg := range []canonical.Asset{tr.Pair.Base, tr.Pair.Quote} {
+		if leg.Type != canonical.AssetSoroban {
+			return &mismatch{what: tr.Source + " trade leg " + leg.String() + " is " + string(leg.Type) + ", want soroban"}
+		}
 	}
 	return nil
 }
@@ -173,12 +196,15 @@ func fmtAny(v any) string {
 // soroswapDecoderWithStubbedTokens pre-seeds a Soroswap Decoder's
 // pair registry with stub tokens for every Soroswap fixture. The
 // real decoder flow learns these from factory new_pair events;
-// fixtures don't include those, so we seed directly.
+// fixtures don't include those, so we seed directly. The stubs are SAC
+// contract assets because every production seed path yields that form.
 func soroswapDecoderWithStubbedTokens(t *testing.T) *soroswap.Decoder {
 	t.Helper()
-	xlm := canonical.NativeAsset()
-	usdc, err := canonical.NewClassicAsset("USDC",
-		"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	xlm, err := canonical.NewSorobanAsset(canonical.XLMSacContractID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usdc, err := canonical.NewSorobanAsset("CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,8 +311,8 @@ func findFixtures(t *testing.T, source string) []string {
 	return out
 }
 
-// loadEventsFromFixture normalizes the four sources' JSON schemas
-// into events.Event values. Reflector / Aquarius / Soroswap are
+// loadEventsFromFixture normalizes the sources' JSON schemas into
+// events.Event values. Reflector / Aquarius / Soroswap / Comet are
 // one-event-per-file; Phoenix is an 8-event group.
 func loadEventsFromFixture(t *testing.T, source, path string) []events.Event {
 	t.Helper()

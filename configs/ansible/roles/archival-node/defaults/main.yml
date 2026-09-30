@@ -951,6 +951,11 @@ archive_completeness_enabled: "{{ (stellar_network | default('pubnet')) == 'pubn
 # correct before anyone writes an inventory line.
 verify_served_values_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
 
+# listing-sync caches CoinGecko's Stellar platform→address map, and every
+# address in it is a PUBNET asset: on a test net the table can corroborate
+# nothing, and the keyless fetch is answered 403 from a datacenter address.
+listing_sync_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
+
 # supply-verify-rollup — daily SEP-41 supply-rollup reconciliation. Only
 # meaningful where the SEP-41 supply pipeline runs, i.e. where contracts are
 # watched; elsewhere it would fail "checked 0" nightly.

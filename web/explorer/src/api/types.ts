@@ -3356,6 +3356,10 @@ export interface paths {
          *     the ceiling returns 409 — revoke a key via
          *     `DELETE /v1/account/keys/{keyID}` and retry.
          *
+         *     A SEP-10-authenticated caller gets 403 `key-mint-not-available`:
+         *     an `auth_mode = "sep10"` deployment honours only SEP-10 tokens,
+         *     so a minted key would have no use there.
+         *
          *     The new key inherits the caller's identifier and tier. An
          *     **operator-tier** caller rotating its own credential here is
          *     held to the admin-write contract: the `X-Reason` header is
@@ -15787,6 +15791,16 @@ export interface operations {
                  *     exclusive with `source`.
                  */
                 asset?: string;
+                /**
+                 * @description Comma-separated opt-in row enrichments, off by default.
+                 *     `sparkline` populates `volume_history_24h` (24 hourly USD
+                 *     buckets, both stored orientations of the pair summed);
+                 *     `inception` populates `first_trade_at` (the pair's first
+                 *     daily bucket). Both are best-effort: a failed enrichment
+                 *     ships the page without the field rather than an error.
+                 * @example sparkline,inception
+                 */
+                include?: string;
             };
             header?: never;
             path?: never;
@@ -18316,13 +18330,17 @@ export interface operations {
                  */
                 class?: "exchange" | "aggregator" | "oracle" | "authority_sanity" | "lending" | "router" | "bridge";
                 /**
-                 * @description Opt-in extras. `stats` populates each row's
-                 *     `trade_count_24h` from a single GROUP BY on the trades
-                 *     hypertable — cheap, but a DB hit so opt-in. Absent the
-                 *     param the response stays the all-static-registry
-                 *     projection.
+                 * @description Comma-separated opt-in extras. `stats` populates each
+                 *     row's `trade_count_24h`, `volume_24h_usd` and
+                 *     `markets_count_24h` from a single GROUP BY on the trades
+                 *     hypertable — cheap, but a DB hit so opt-in. `sparkline`
+                 *     adds `volume_history_24h` (24 hourly buckets) and
+                 *     `sparkline7d` adds `volume_history_7d` (168 hourly
+                 *     buckets); each implies `stats`. Absent the param the
+                 *     response stays the all-static-registry projection.
+                 * @example stats,sparkline
                  */
-                include?: "stats";
+                include?: string;
             };
             header?: never;
             path?: never;
@@ -19833,6 +19851,18 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            /**
+             * @description The caller authenticated with a SEP-10 token; API keys are
+             *     not issued to SEP-10 subjects (`key-mint-not-available`).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /**
              * @description Active-key quota reached for this caller identifier. Revoke
              *     an existing key and retry.
