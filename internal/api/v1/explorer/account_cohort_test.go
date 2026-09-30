@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math/big"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -146,6 +147,49 @@ func TestAccountCohortView_LabelsTokenContractsTheRosterDoesNotClaim(t *testing.
 	}
 	if v.Contracts[1].Label != "" || v.Contracts[1].Protocol != "" {
 		t.Errorf("unknown contract = %+v, want neither label nor protocol", v.Contracts[1])
+	}
+}
+
+type countingNamingReader struct {
+	namingReader
+	mu    sync.Mutex
+	calls map[string]int
+}
+
+func (r *countingNamingReader) SACClassicAssetName(ctx context.Context, id string) (string, bool, error) {
+	r.mu.Lock()
+	r.calls[id]++
+	r.mu.Unlock()
+	return r.namingReader.SACClassicAssetName(ctx, id)
+}
+
+// A proven SAC is read from the lake once across requests; a contract
+// that is not (yet) a SAC is re-read, since the lake may still capture it.
+func TestAccountCohortView_MemoisesSACLabelsAcrossRequests(t *testing.T) {
+	reader := &countingNamingReader{namingReader: namingReader{capReader{probe: &deadlineProbe{}}}, calls: map[string]int{}}
+	h := &Handler{
+		Reader:           reader,
+		ContractProtocol: func(context.Context, string) (string, bool) { return "", false },
+	}
+	at := time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)
+	snap := clickhouse.AccountCohort{
+		Root: "GROOT", Relation: "created", Covered: true, Cycle: clickhouse.AccountCohortCycle{ComputedAt: at, TipLedger: 1},
+		Contracts: []clickhouse.AccountCohortContract{
+			{ContractID: "CSACUSDC", Movements: 3, ActiveAccounts: 2, FirstAt: at, LastAt: at},
+			{ContractID: "CUNKNOWN", Movements: 1, ActiveAccounts: 1, FirstAt: at, LastAt: at},
+		},
+	}
+	for i := 0; i < 3; i++ {
+		v := h.accountCohortView(context.Background(), snap)
+		if v.Contracts[0].Label != "token USDC" || v.Contracts[1].Label != "" {
+			t.Fatalf("request %d: contracts = %+v, want the SAC labelled and the unknown not", i, v.Contracts)
+		}
+	}
+	if got := reader.calls["CSACUSDC"]; got != 1 {
+		t.Errorf("SAC contract lake reads = %d over 3 requests, want 1", got)
+	}
+	if got := reader.calls["CUNKNOWN"]; got != 3 {
+		t.Errorf("unresolved contract lake reads = %d over 3 requests, want 3 (a miss is not memoised)", got)
 	}
 }
 

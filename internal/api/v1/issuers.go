@@ -110,6 +110,9 @@ type IssuedAsset struct {
 // instead of a second, driftable copy.
 const IssuersListDefaultLimit = 100
 
+// IssuersListMaxLimit is the largest `?limit=` handleIssuersList accepts.
+const IssuersListMaxLimit = 500
+
 // handleIssuersList serves GET /v1/issuers.
 //
 // Returns the issuer directory ordered by total observation count
@@ -127,7 +130,7 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 	limit := IssuersListDefaultLimit
 	if v := r.URL.Query().Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 || n > 500 {
+		if err != nil || n < 1 || n > IssuersListMaxLimit {
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/invalid-limit",
 				"Invalid limit", http.StatusBadRequest,

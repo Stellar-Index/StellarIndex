@@ -112,6 +112,50 @@ describe('LedgerView count basis captions', () => {
   });
 });
 
+describe('LedgerView prev navigation', () => {
+  function renderSeq(seq: number) {
+    apiGet.mockImplementation(async (path: string) => {
+      if (path === `/v1/ledgers/${seq}`)
+        return {
+          data: { ...LEDGER, sequence: seq, prev_hash: '0'.repeat(64) },
+        };
+      if (path === `/v1/ledgers/${seq}/transactions`)
+        return { data: { transactions: [] } };
+      throw new Error(`unexpected ${path}`);
+    });
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    return render(
+      <QueryClientProvider client={qc}>
+        <LedgerView seq={String(seq)} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('disables Prev at genesis and never links to ledger 0', async () => {
+    const { container } = renderSeq(1);
+    await screen.findByText('#1', { selector: 'dd' });
+    const prev = screen.getByText('← Prev ledger');
+    expect(prev.closest('a')).toBeNull();
+    expect(prev).toHaveAttribute('aria-disabled', 'true');
+    expect(container.querySelector('a[href^="/ledgers/0"]')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Next ledger →' })).toHaveAttribute(
+      'href',
+      '/ledgers/2/',
+    );
+  });
+
+  it('links Prev to the preceding ledger after genesis', async () => {
+    renderSeq(2);
+    await screen.findByText('#2', { selector: 'dd' });
+    expect(screen.getByRole('link', { name: '← Prev ledger' })).toHaveAttribute(
+      'href',
+      '/ledgers/1/',
+    );
+  });
+});
+
 describe('LedgerView stroop fields', () => {
   it('renders the string base_fee and base_reserve the API serves', async () => {
     routeApi();

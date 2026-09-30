@@ -172,19 +172,28 @@ fi
 # This is the pair that cost the two runs. The check is for the executable
 # each gate actually invokes, not for the directory: a half-finished install
 # leaves node_modules present and the binary absent.
+#
+# A present install can still be stale: verify.sh fails when pnpm-lock.yaml is
+# newer than node_modules/.modules.yaml, and points here to fix it.
+web_app_stale() { # web_app_stale <dir>
+    [ -f "$1/node_modules/.modules.yaml" ] && [ "$1/pnpm-lock.yaml" -nt "$1/node_modules/.modules.yaml" ]
+}
 survey_web_app() { # survey_web_app <dir> <bin-name> <gate>
     app="$1"; bin="$2"; gate="$3"
     if [ ! -f "${app}/pnpm-lock.yaml" ]; then
         ok "${app}" "no pnpm-lock.yaml — verify.sh skips this app entirely"
         return
     fi
-    if [ -x "${app}/node_modules/.bin/${bin}" ]; then
-        ok "${app}" "node_modules/.bin/${bin} present"
-    else
+    if [ ! -x "${app}/node_modules/.bin/${bin}" ]; then
         miss "${app}" "node_modules/.bin/${bin} absent — ${gate} fails with '${bin}: command not found'"
-        blocking_missing+=("${app}/node_modules")
-        install_apps="${install_apps} ${app}"
+    elif web_app_stale "$app"; then
+        miss "${app}" "node_modules is STALE — pnpm-lock.yaml is newer than the last install; verify.sh fails on it"
+    else
+        ok "${app}" "node_modules/.bin/${bin} present"
+        return
     fi
+    blocking_missing+=("${app}/node_modules")
+    install_apps="${install_apps} ${app}"
 }
 survey_web_app web/explorer openapi-typescript "make web-generate-api (generated-artifact drift)"
 survey_web_app web/status   tsc                "make status-typecheck"
@@ -239,8 +248,11 @@ for app in $WEB_APPS; do
         web/explorer) bin=openapi-typescript ;;
         *)            bin=tsc ;;
     esac
-    if [ -x "${app}/node_modules/.bin/${bin}" ]; then ok "$app" "node_modules/.bin/${bin} present"
-    else miss "$app" "node_modules/.bin/${bin} still absent"; remaining=$((remaining + 1)); fi
+    if [ ! -x "${app}/node_modules/.bin/${bin}" ]; then
+        miss "$app" "node_modules/.bin/${bin} still absent"; remaining=$((remaining + 1))
+    elif web_app_stale "$app"; then
+        miss "$app" "node_modules still older than pnpm-lock.yaml"; remaining=$((remaining + 1))
+    else ok "$app" "node_modules/.bin/${bin} present"; fi
 done
 for tool in git make go python3 tar; do
     command -v "$tool" >/dev/null 2>&1 || { miss "$tool" "not on PATH — install it before running verify.sh"; remaining=$((remaining + 1)); }
