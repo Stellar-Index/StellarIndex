@@ -75,11 +75,10 @@ worse than no tab.
 Security-tab form in `SECURITY.md` as the private route, and drop the
 contactless-issue fallback standing in for it today. This is the sharper
 of the two, because it is the only private route that does not depend on
-mail delivery — and `security@stellarindex.io` is undeliverable until
-the Cloudflare Email Routing destination is verified (see
-[dns-email-perimeter.md](dns-email-perimeter.md), "Open: two things only
-the account owner can finish"). Enabling this setting closes the
-disclosure gap on its own, ahead of the mailbox.
+mail delivery. `security@stellarindex.io` was confirmed delivering on
+2026-09-30 ([dns-email-perimeter.md](dns-email-perimeter.md)), so this
+setting is now a second route beside a working one rather than the only
+one.
 
 ---
 

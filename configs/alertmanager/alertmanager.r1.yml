@@ -118,26 +118,18 @@ route:
 
 # ─── Inhibit rules ───────────────────────────────────────────────
 inhibit_rules:
-  # If a page-severity alert fires for a component, mute the ticket +
-  # informational variants on that SAME component to avoid stacking.
+  # A page mutes only the ticket/informational alerts in its own
+  # `alert_family` (the same signal at a milder threshold) on the same
+  # component. `alert_family != ""` is load-bearing: Alertmanager equates a
+  # missing label with an empty one, so without it an unlabelled page would
+  # mute every unlabelled ticket in its component. The family map lives in
+  # the rule files and is pinned by configs/alertmanager/inhibit-rules-test.sh.
   #
-  # `equal` is [component] ONLY — NOT [alertname, component]. A page and
-  # its paired lower-severity alert are DIFFERENT alerts with different
-  # alertnames (e.g. `..._tip_lag_severe` [page] escalates
-  # `..._tip_lag_high` [ticket]), so requiring alertname equality made
-  # the inhibition never fire — the source page and target ticket could
-  # never have the same alertname. Matching on `component` alone lets the
-  # page suppress the ticket/informational variants for that component.
-  #
-  # `alertname != stellarindex_deadmansswitch` on the target is load-bearing
-  # (GH-900): `component` is coarse (13 subsystems share it across every
-  # severity), so without this exclusion any page in component=meta —
-  # e.g. stellarindex_alertmanager_down — silences the heartbeat whose
-  # entire purpose is to catch Prometheus/Alertmanager being down. A
-  # dead-man's switch must never be a target of its own watchdog's outage.
-  - source_matchers: [severity = "page"]
+  # The deadmansswitch has no family, so it is already never a target; the
+  # explicit exclusion keeps the heartbeat safe if a family is ever added.
+  - source_matchers: [severity = "page", alert_family != ""]
     target_matchers: [severity =~ "ticket|informational", alertname != "stellarindex_deadmansswitch"]
-    equal: [component]
+    equal: [component, alert_family]
 
 # ─── Receivers ───────────────────────────────────────────────────
 receivers:

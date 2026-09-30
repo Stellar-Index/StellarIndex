@@ -18,11 +18,10 @@
 // standing ledger-substrate + entry_changes-coverage lake verification,
 // verify-hashchain's standing hash-chain verification (the "hash-chained
 // to genesis" half of ADR-0034's provable-100% claim that verify-contiguity
-// doesn't cover), and verify-lake's composition of all three of the above
-// into a single "is the lake sound?" invocation for cron/Healthchecks.io
-// (verify_lake.go calls no check logic of its own — it orchestrates the
+// doesn't cover), and verify-lake's four-check "is the lake sound?"
+// invocation run daily by verify-lake.timer (the three checks above, via the
 // same package-private run* funcs verify-contiguity and verify-hashchain
-// call), which is why reconciliation_catalogue.go and gated_recon_seed.go
+// call, plus a raw-table census of the other five raw tables), which is why reconciliation_catalogue.go and gated_recon_seed.go
 // (shared re-derivation source-set + factory-child preseed helpers used
 // by ch-rebuild, ch-reproject, compute-completeness, and
 // verify-reconciliation) live here too rather than in a 7th package.
@@ -137,6 +136,8 @@ func verifierVerb(verb string) (func([]string) error, bool) {
 		return verifyHashChain, true
 	case "verify-lake":
 		return verifyLake, true
+	case "wasm-drift":
+		return wasmDrift, true
 	default:
 		return nil, false
 	}

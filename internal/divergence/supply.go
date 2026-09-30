@@ -699,7 +699,7 @@ func NewCoinGeckoSupplyReference(opts CoinGeckoSupplyOptions) *CoinGeckoSupplyRe
 		nowFn = time.Now
 	}
 	return &CoinGeckoSupplyReference{
-		httpClient: keyedSupplyClient(opts.HTTPClient),
+		httpClient: keyedCoinGeckoClient("coingecko-supply", opts.HTTPClient),
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		apiKey:     opts.APIKey,
 		idMap:      idMap,
@@ -708,11 +708,10 @@ func NewCoinGeckoSupplyReference(opts CoinGeckoSupplyOptions) *CoinGeckoSupplyRe
 	}
 }
 
-// keyedSupplyClient gives the CoinGecko reference a client whose redirect
+// keyedCoinGeckoClient gives a CoinGecko reference a client whose redirect
 // policy keeps the key on the origin; an injected client without its own
 // CheckRedirect is copied rather than trusted to follow any Location.
-func keyedSupplyClient(injected *http.Client) (keyed *http.Client) {
-	const tag = "coingecko-supply"
+func keyedCoinGeckoClient(tag string, injected *http.Client) (keyed *http.Client) {
 	if injected == nil {
 		return httpx.NewKeyedClient(tag, 10*time.Second)
 	}

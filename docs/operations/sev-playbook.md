@@ -422,9 +422,10 @@ API usage events, and credentials stored only as SHA-256 hashes
 (`api_keys.key_hash`, `magic_link_tokens.token_hash`, MFA recovery
 codes). Logs can hold whatever a request carried; see §6.5.
 
-**Jurisdiction.** Our governing jurisdiction is not yet settled; the
-draft terms still carry unresolved jurisdiction placeholders. Sign-up
-is open worldwide. Until that changes, assess every breach against
+**Jurisdiction.** Our terms are governed by the laws of England and
+Wales (`/terms` §9), and the privacy policy names the ICO as lead
+authority. Personal data is processed on Hetzner in Germany and
+sign-up is open worldwide, so assess every breach against
 both **UK GDPR** (regulator: the ICO) and **EU GDPR** (the
 supervisory authority of each member state where affected people
 live, since we have no EU establishment to give us a lead

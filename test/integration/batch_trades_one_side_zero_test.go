@@ -9,30 +9,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestBatchInsertTrades_OneSideZeroFillDoesNotSinkBatch is the W1-defi-1
-// proof. The SDEX decoder KEEPS one-side-zero fills (a leg that rounded to 0
-// is still a real on-chain trade effect the ADR-0033 census counts and the
-// ClickHouse substrate retains — internal/sources/sdex/decode.go), but the
-// served `trades` tier's CHECK (base_amount > 0 AND quote_amount > 0, INV-6 /
-// migration 0001) cannot hold a zero leg.
-//
-// BatchInsertTrades issues ONE all-or-nothing multi-row INSERT, so before the
-// fix a single one-side-zero row aborted the whole statement: BatchInsertTrades
-// returned a CHECK-violation error, the entire batch of otherwise-good trades
-// rolled back (0 rows landed), and the downstream per-row isolation counted the
-// expected fill as an insert error — tripping stellarindex_source_insert_errors_total
-// (the spurious alert).
-//
-// Post-fix, filterStorableTrades drops the unstorable row up front: the batch
-// commits, every good trade lands in ONE round-trip, and the zero-leg row is
-// simply absent from the served tier (consistent with the single-row
-// InsertTrade Validate gate AND the authoritative completeness reconcile's
-// own Validate gate, reDeriveSDEXCensusViaDecoder).
-func TestBatchInsertTrades_OneSideZeroFillDoesNotSinkBatch(t *testing.T) {
+// TestBatchInsertTrades_OneSideZeroFillIsStored pins that an SDEX
+// one-side-zero fill (a leg that rounded to 0 stroops) is stored by the batch
+// writer, one row each, beside the good trades of its batch, and counted on
+// stellarindex_trades_zero_leg_admitted_total. A both-zero row is still
+// malformed: it is dropped before the all-or-nothing INSERT (so it cannot
+// sink the batch) and counted as an insert error.
+func TestBatchInsertTrades_OneSideZeroFillIsStored(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -69,36 +59,46 @@ func TestBatchInsertTrades_OneSideZeroFillDoesNotSinkBatch(t *testing.T) {
 		}
 	}
 
-	// Three ordinary trades PLUS one one-side-zero fill (quote leg rounded to
-	// 0), interleaved so the unstorable row is not conveniently first or last.
+	// Three ordinary trades, a zero-quote and a zero-base fill, and one
+	// both-zero row, interleaved so no special row is conveniently first or last.
 	good := []c.Trade{
 		mkTrade(60_000_000, 1_000_000_000, 12_000_000),
 		mkTrade(60_000_001, 2_000_000_000, 24_000_000),
 		mkTrade(60_000_002, 3_000_000_000, 36_000_000),
 	}
-	zeroLeg := mkTrade(60_000_003, 5_000_000_000, 0)
-	batch := []c.Trade{good[0], zeroLeg, good[1], good[2]}
+	zeroQuote := mkTrade(60_000_003, 5_000_000_000, 0)
+	zeroBase := mkTrade(60_000_004, 0, 7_000_000)
+	bothZero := mkTrade(60_000_005, 0, 0)
+	batch := []c.Trade{good[0], zeroQuote, good[1], bothZero, zeroBase, good[2]}
 
-	// Pre-fix: this returns a CHECK-violation error and NOTHING lands.
+	errKind := obs.InsertErrorKindTradeDropped
+	zeroBefore := testutil.ToFloat64(obs.TradesZeroLegAdmittedTotal.WithLabelValues("sdex"))
+	errBefore := testutil.ToFloat64(obs.SourceInsertErrorsTotal.WithLabelValues("sdex", errKind))
+
 	if err := store.BatchInsertTrades(ctx, batch); err != nil {
-		t.Fatalf("BatchInsertTrades returned error on a batch containing a one-side-zero fill: %v\n"+
-			"the zero-leg row must be filtered before the all-or-nothing INSERT, not abort it", err)
+		t.Fatalf("BatchInsertTrades: %v", err)
 	}
 
-	// Every GOOD trade landed in the single batch round-trip.
-	if n := countTradesForSource(t, store, "sdex"); n != len(good) {
-		t.Fatalf("stored sdex trades = %d, want %d — a one-side-zero fill rolled back the whole batch", n, len(good))
+	stored := append(append([]c.Trade{}, good...), zeroQuote, zeroBase)
+	if n := countTradesForSource(t, store, "sdex"); n != len(stored) {
+		t.Fatalf("stored sdex trades = %d, want %d (3 good + 2 one-side-zero)", n, len(stored))
 	}
-	for _, g := range good {
+	for _, g := range stored {
 		if !tradeExists(t, store, g.Source, g.TxHash, g.OpIndex) {
-			t.Errorf("good trade ledger=%d tx=%s missing — batch-wide failure dropped it", g.Ledger, g.TxHash)
+			t.Errorf("trade ledger=%d base=%s quote=%s missing", g.Ledger, g.BaseAmount, g.QuoteAmount)
 		}
 	}
+	if tradeExists(t, store, bothZero.Source, bothZero.TxHash, bothZero.OpIndex) {
+		t.Errorf("both-zero row tx=%s was stored; Validate must reject it", bothZero.TxHash)
+	}
 
-	// The one-side-zero row is intentionally NOT stored (served tier holds no
-	// price for it; it lives on in the CH substrate and is census-counted).
-	if tradeExists(t, store, zeroLeg.Source, zeroLeg.TxHash, zeroLeg.OpIndex) {
-		t.Errorf("one-side-zero fill tx=%s was stored — the served CHECK (base/quote > 0) must not hold it", zeroLeg.TxHash)
+	zeroDelta := testutil.ToFloat64(obs.TradesZeroLegAdmittedTotal.WithLabelValues("sdex")) - zeroBefore
+	if zeroDelta != 2 {
+		t.Errorf("TradesZeroLegAdmittedTotal{sdex} delta = %v, want 2 (one per stored one-side-zero fill)", zeroDelta)
+	}
+	t.Logf("TradesZeroLegAdmittedTotal{sdex} delta = %v", zeroDelta)
+	if d := testutil.ToFloat64(obs.SourceInsertErrorsTotal.WithLabelValues("sdex", errKind)) - errBefore; d != 1 {
+		t.Errorf("SourceInsertErrorsTotal{sdex,%s} delta = %v, want 1 (the both-zero row only)", errKind, d)
 	}
 }
 

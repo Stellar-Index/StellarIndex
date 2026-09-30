@@ -77,12 +77,12 @@ func sdexTestDecode(t *testing.T, ledger uint32, opIndex int, claims []xdr.Claim
 }
 
 // GH-933: the SDEX decoder keeps one-side-zero fills and fans claims out on a
-// 1024 op_index stride, but the served trades table holds neither a zero leg
-// (CHECK base_amount > 0, Validate) nor a duplicate primary key (ON CONFLICT
-// DO NOTHING). The served-tier projection must count exactly what the writer
-// can land, so a ledger whose only activity is a one-side-zero fill expects 0
-// rows, not 1.
-func TestSDEXServedCensus_CountsOnlyWhatTheWriterCanStore(t *testing.T) {
+// 1024 op_index stride. The served tier holds no duplicate primary key (ON
+// CONFLICT DO NOTHING), and the census counts only priceable fills: one-side-
+// zero fills are stored, but ledgers written before they were admitted hold
+// none, so the served COUNT carries the same sdexPriceableFilter.
+// A ledger whose only activity is a one-side-zero fill expects 0 rows, not 1.
+func TestSDEXServedCensus_CountsOnlyPriceableFills(t *testing.T) {
 	t.Parallel()
 	const zeroOnly, mixed, fanout = 100, 101, 102
 
@@ -119,7 +119,7 @@ func TestSDEXServedCensus_CountsOnlyWhatTheWriterCanStore(t *testing.T) {
 		}
 	}
 	if n, ok := got[zeroOnly]; ok {
-		t.Errorf("ledger %d (one-side-zero only) expects %d served rows; the writer can store none", zeroOnly, n)
+		t.Errorf("ledger %d (one-side-zero only) expects %d served rows; the census excludes it", zeroOnly, n)
 	}
 }
 

@@ -549,24 +549,31 @@ type OracleDayPoint struct {
 // value on a day the oracle was silent has to report the silence, not
 // fill it.
 //
-// An empty `assets` returns (nil, nil): no keys is not a query.
+// Unmapped `raw:` assets are dropped from `assets`, and the SQL refuses
+// raw: rows too (an unvalidated Asset can still stringify to "raw:…"): the
+// CAGG carries them, but they are record-layer only and must not reach a
+// price surface.
+// An empty `assets` (after that drop) returns (nil, nil): no keys is not a query.
 func (s *Store) DailyOraclePrices(
 	ctx context.Context,
 	assets []canonical.Asset,
 	quote canonical.Asset,
 	from, to time.Time,
 ) ([]OracleDayPoint, error) {
-	if len(assets) == 0 {
-		return nil, nil
+	keys := make([]string, 0, len(assets))
+	for _, a := range assets {
+		if a.IsMapped() {
+			keys = append(keys, a.String())
+		}
 	}
-	keys := make([]string, len(assets))
-	for i, a := range assets {
-		keys[i] = a.String()
+	if len(keys) == 0 {
+		return nil, nil
 	}
 	const q = `
         SELECT bucket, source, asset, last_price::text, last_decimals, observation_count
           FROM oracle_prices_1d
          WHERE asset = ANY($1)
+           AND asset NOT LIKE 'raw:%'
            AND quote = $2
            AND bucket >= $3
            AND bucket <= $4

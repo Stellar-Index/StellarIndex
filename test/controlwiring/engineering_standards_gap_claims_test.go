@@ -78,14 +78,12 @@ func TestEngineeringStandardsDoesNotClaimUnbuiltEnforcement(t *testing.T) {
 
 // TestEngineeringStandardsSection6DoesNotClaimUnbuiltEnforcement is the
 // companion to the test above, scoped to section 6's "Enforcement
-// mechanisms" table. The prose subsections (§2.4, §2.6) are only half the
-// doc's claim surface — a reader skimming the table sees "Deprecation
-// policy | CI scan on `Deprecated:` | scripts/ci/check-deprecations.sh"
-// and "Feature flag hygiene | CI scan of flag registry |
-// scripts/ci/check-flag-age.sh" as flatly enforced, independent of whatever
-// the prose says. Neither script exists. This pins each row separately so
-// a doc edit that fixes the prose but forgets the table (the failure mode
-// an earlier attempt at this fix left behind) still fails loudly.
+// mechanisms" table. The prose subsections (§2.6) are only half the doc's
+// claim surface — a reader skimming the table would see "Feature flag
+// hygiene | CI scan of flag registry | scripts/ci/check-flag-age.sh" as
+// flatly enforced, independent of whatever the prose says. The script does
+// not exist. This pins the row separately so a doc edit that fixes the
+// prose but forgets the table still fails loudly.
 func TestEngineeringStandardsSection6DoesNotClaimUnbuiltEnforcement(t *testing.T) {
 	root := repoRoot(t)
 	doc := readEngineeringStandardsDoc(t, root)
@@ -95,11 +93,6 @@ func TestEngineeringStandardsSection6DoesNotClaimUnbuiltEnforcement(t *testing.T
 		artifact         string // repo-relative script the row claims enforces it
 		unfixedMechanism string // the mechanism cell text asserted while the artifact didn't exist
 	}{
-		{
-			label:            "Deprecation policy",
-			artifact:         "scripts/ci/check-deprecations.sh",
-			unfixedMechanism: "CI scan on `Deprecated:`",
-		},
 		{
 			label:            "Feature flag hygiene",
 			artifact:         "scripts/ci/check-flag-age.sh",
@@ -128,6 +121,23 @@ func TestEngineeringStandardsSection6DoesNotClaimUnbuiltEnforcement(t *testing.T
 			t.Errorf("section 6 table row for %q no longer marks the missing %s mechanism as a gap:\n%s",
 				c.label, c.artifact, row)
 		}
+	}
+}
+
+// TestEngineeringStandardsSection6DeprecationScanIsReal pins the other
+// direction: the table names check-deprecations.sh as the deprecation
+// policy's mechanism, so the script must exist and be the one named.
+func TestEngineeringStandardsSection6DeprecationScanIsReal(t *testing.T) {
+	root := repoRoot(t)
+	doc := readEngineeringStandardsDoc(t, root)
+	const artifact = "scripts/ci/check-deprecations.sh"
+
+	row := regexp.MustCompile(`(?m)^\|\s*Deprecation policy\s*\|.*$`).FindString(doc)
+	if !strings.Contains(row, "`"+artifact+"`") {
+		t.Errorf("section 6 Deprecation policy row does not name %s:\n%s", artifact, row)
+	}
+	if _, err := os.Stat(filepath.Join(root, artifact)); err != nil {
+		t.Errorf("section 6 names %s as the deprecation policy's enforcement, but it is missing: %v", artifact, err)
 	}
 }
 
