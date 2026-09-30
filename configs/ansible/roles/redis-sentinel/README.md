@@ -9,7 +9,8 @@ in
 
 - 1 primary + 2 replicas across `cache-01` / `cache-02` / `cache-03`.
 - 3 Sentinels co-located on the same hosts; quorum = 2.
-- AOF every-second + RDB nightly persistence.
+- AOF every-second + RDB snapshot persistence (`redis_save_rules`),
+  local to each host; the role makes no off-host backup copy.
 - Failover RTO target 15–30 s (Sentinel's
   `down-after-milliseconds=5000` + `failover-timeout=60000`).
 

@@ -19,6 +19,7 @@ type sessionSweeper interface {
 
 type deliverySweeper interface {
 	SweepFinishedDeliveries(ctx context.Context, olderThan time.Time) (int64, error)
+	CountDeliveries(ctx context.Context) (int64, error)
 }
 
 // retentionReaperTargets returns one reaper per platform table the
@@ -38,6 +39,7 @@ func retentionReaperTargets(b dashboardBundle, logger *slog.Logger) []retentionr
 		out = append(out, retentionreaper.Options{
 			Name:      obs.AuthReaperWebhookDelivery,
 			Sweep:     d.SweepFinishedDeliveries,
+			Count:     d.CountDeliveries,
 			Retention: retentionreaper.WebhookDeliveryRetention,
 			Logger:    logger.With("component", "webhook-delivery-reaper"),
 		})
