@@ -47,8 +47,9 @@ these wait for you.
 - [ ] **Buy CoinGecko Pro** → set `COINGECKO_API_KEY` on r1 + restart indexer (P0-3).
 - [ ] **Create Healthchecks.io account + Discord webhooks** → paste `DISCORD_WEBHOOK_URL_PAGES`/
   `_ALERTS` + the 4× `HEALTHCHECKS_URL_*` into r1 env files; rerun `pre-launch-check.sh`.
-- [ ] **Rotate the postgres_exporter DSN password** (leaked in earlier session output;
-  in `/etc/default/prometheus-postgres-exporter`).
+- [x] **Rotate the postgres_exporter DSN password — DONE 2026-09-29.** The DSN in
+  `/etc/default/prometheus-postgres-exporter` now carries no password: the exporter
+  connects over the local socket with peer auth as user `postgres_exporter`.
 - [ ] **Relocate + rotate the GCP service-account key** (CS-001) — `rates-engine-data-
   validation-*.json` sits in the repo working tree (gitignored, not committed). Move it
   out of the repo dir; rotate if it was ever shared; confirm the SA is still used.
@@ -217,30 +218,27 @@ exactly that rather than looking like drift.
   transcript on 2026-07-25. Rotating restarts MinIO and **invalidates the Prometheus
   bearer token** (the 2026-07-03 incident); regenerate it in the same window. Steps:
   [credential-rotation.md §MinIO identity inventory](credential-rotation.md).
-- [ ] **Apply `--tags minio` to repair the `galexie-archive-writer` identity** — its
-  vault var and `/etc/default/galexie-backfill` always existed but the MinIO user,
-  policy, and attach never did, so the `archivewriter` alias fails
-  `SignatureDoesNotMatch`. `09-minio.yml` now creates it (write-only on
-  `galexie-archive`, no delete); `mc admin user add` re-syncs the secret from vault.
-  Then re-point the alias and prove `mc ls archivewriter/galexie-archive/` lists.
-- [ ] **Verify the `stellarindex-reader` live policy** — the codified policy grants no
-  `s3:DeleteObject` but the 2026-07-25 live test observed it deleting from
-  `galexie-archive`. `mc admin policy info local stellarindex-reader`; re-apply if the
-  live policy is wider than the codified one.
+- [x] **Repair the `galexie-archive-writer` identity — DONE 2026-09-30.** Its vault
+  var and `/etc/default/galexie-backfill` always existed but the MinIO user, policy,
+  and attach never did, so the `archivewriter` alias failed `SignatureDoesNotMatch`.
+  The MinIO user `galexie-archive-writer` now exists with policy
+  `galexie-archive-writer` (Put/Get/List/multipart on `galexie-archive` only, no
+  `s3:DeleteObject`), and `mc ls archivewriter/galexie-archive/` lists.
+- [x] **Verify the `stellarindex-reader` live policy — DONE 2026-09-30.** The live
+  policy grants no `s3:DeleteObject`, matching the codified one.
 - [ ] **Move `galexie-archive-fill` off the root (`local`) alias** — the hourly mirror,
   including its `mc rm --recursive --force` sweep, authenticates as MinIO root. Needs
   the archive-writer identity live first, and the delete sweep separated from the
   mirror (the writer policy grants no delete). Confirm one full timer cycle after.
 
 ## Supply cross-check P3 on BLND / EURC / KALE / PHO (E4/N-F3)
-- [ ] **Run `supply seed-sac-balances -full-history`** under `run-heavy-job.sh`
-  (`-dry-run` first). The alert is CORRECT and the served `total_supply` /
-  `market_cap_usd` for those four assets are understated until this runs: Algorithm 2's
-  `SACWrapped` addend misses dormant pool-held balances last written below the ~62M
-  `ledger_entries_current` MV floor. The reader that closes it
-  (`StreamSACBalanceSeedsFullHistory`) shipped 2026-07-10; only the run is missing.
-  Verify per-asset via `sac_balance_seed_provenance` (`source='full_history'` **and**
-  `min_ledger_seen` well below 62,000,000), then confirm the gauge drops.
+- [x] **Run `supply seed-sac-balances -full-history` — DONE 2026-07-29 (38/38
+  assets).** Algorithm 2's `SACWrapped` addend missed dormant pool-held balances last
+  written below the ~62M `ledger_entries_current` MV floor; the reader that closes it
+  (`StreamSACBalanceSeedsFullHistory`) shipped 2026-07-10. Verify per-asset via
+  `sac_balance_seed_provenance` (`source='full_history'`). `min_ledger_seen` is not a
+  success signal: archived balances are tombstoned, so the floor it reports is tip −
+  2,073,600 ledgers, not a ledger well below 62,000,000.
   Triage + queries: [runbooks/supply-cross-check-divergence.md](runbooks/supply-cross-check-divergence.md).
 
 ## Multi-region / HA (gated on hosts existing — P3)
