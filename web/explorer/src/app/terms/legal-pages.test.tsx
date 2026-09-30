@@ -126,9 +126,10 @@ describe('legal pages', () => {
     );
     // Loki 720h, journald MaxRetentionSec=14d, logrotate weekly x rotate 10.
     expect(body).toMatch(
-      /up to 30 days in our log store \(Loki\) and up to 14 days in the host system journal\. Application and database log files on the host are rotated weekly and kept for up to 10 weeks/,
+      /up to 30 days in our log store \(Loki\) and up to 14 days in the host system journal\. Application and database log files on the host are rotated weekly and kept for about ten weeks/,
     );
-    expect(body).toMatch(/server logs, which age out after up to 10 weeks/);
+    expect(body).toMatch(/server logs, which age out after about ten weeks/);
+    expect(body).not.toMatch(/10 weeks/);
     // Nothing reaps or archives audit_log; erasure pseudonymises it.
     expect(
       screen.getByText(/Nothing deletes or archives audit-log entries/),
@@ -157,6 +158,9 @@ describe('legal pages', () => {
     // Client error beacon (functions/client-errors.js) and issuer icon hosts.
     expect(body).toMatch(/sends an error report/);
     expect(body).toMatch(/your browser fetches it from that host directly/);
+    expect(body).toMatch(
+      /for a slow request we log only the shape of the query — which parameters it used, from an allow-list — never their values/,
+    );
     // Processors with country + safeguard (dns-email-perimeter.md).
     expect(body).toMatch(
       /Amazon SES in the us-east-1 \(United States\) region/,
@@ -187,11 +191,16 @@ describe('legal pages', () => {
     );
     expect(body).not.toMatch(/everything we hold/);
     expect(body).toMatch(/you type the account slug back to confirm/);
-    // Backups: the real bound (ZFS 7 d, pgBackRest full+diff sets), and the
-    // restore hedge (account-erasure.md is a manual runbook step).
+    // Backups: repo1 is unencrypted on r1 (pgbackrest-encryption.md), only
+    // the off-site repo2 copy is AES-256; ZFS 7 d; restore hedge
+    // (account-erasure.md is a manual runbook step).
     expect(body).toMatch(
-      /Backups are encrypted \(AES-256\) and expire on a rolling schedule of roughly a few weeks/,
+      /sits on the database host and is not separately encrypted\. Local snapshots are kept for 7 days/,
     );
+    expect(body).toMatch(
+      /The off-site copy is AES-256 encrypted and expires on a rolling schedule of a few weeks/,
+    );
+    expect(body).not.toMatch(/Backups are encrypted/);
     expect(body).toMatch(
       /if a restore predates your erasure request, tell us and we will erase again/,
     );

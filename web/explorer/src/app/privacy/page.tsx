@@ -99,7 +99,7 @@ export default function PrivacyPage() {
             },
             {
               term: 'Request logs',
-              def: 'Standard server logs (request path, status, timing, user agent, IP) for operating and securing the Service. Query strings, API keys and the Referer are not logged.',
+              def: 'Standard server logs (request path, status, timing, user agent, IP) for operating and securing the Service. Query strings, API keys and the Referer are not logged; for a slow request we log only the shape of the query — which parameters it used, from an allow-list — never their values.',
             },
           ]}
         />
@@ -108,7 +108,7 @@ export default function PrivacyPage() {
           Our server logs, including web-server access logs with client IP
           addresses, are kept for up to 30 days in our log store (Loki) and up
           to 14 days in the host system journal. Application and database log
-          files on the host are rotated weekly and kept for up to 10 weeks; the
+          files on the host are rotated weekly and kept for about ten weeks; the
           database logs slow queries in full, which can include the values a
           query carried. All are used only for operations, security, and abuse
           investigation.
@@ -376,7 +376,7 @@ export default function PrivacyPage() {
             },
             {
               term: 'Server logs',
-              def: 'Log store (Loki) 30 days; host system journal 14 days; application and database log files on the host up to 10 weeks (section 2).',
+              def: 'Log store (Loki) 30 days; host system journal 14 days; application and database log files on the host about ten weeks (section 2).',
             },
             {
               term: 'CDN logs',
@@ -384,7 +384,7 @@ export default function PrivacyPage() {
             },
             {
               term: 'Backups',
-              def: 'Backups are encrypted (AES-256) and expire on a rolling schedule of roughly a few weeks: local snapshots after 7 days, off-site full and differential sets after a few weeks.',
+              def: 'The local backup repository (a weekly full backup, kept for up to about three weeks) sits on the database host and is not separately encrypted. Local snapshots are kept for 7 days, except one an operator pins by hand, which is deleted by hand. The off-site copy is AES-256 encrypted and expires on a rolling schedule of a few weeks (one full plus seven differential sets).',
             },
             {
               term: 'Correspondence',
@@ -499,13 +499,13 @@ export default function PrivacyPage() {
           and suspension reasons stripped from their details; daily usage counts
           are re-labelled with a random identifier and age out after 12 months;
           and a hash of the account name is kept so the name cannot be reused.
-          An erasure does not reach database backups and snapshots, which expire
-          on the schedule in section 6; server logs, which age out after up to
-          10 weeks; or copies of sent email held by our email provider under its
-          own retention. Erased accounts are not re-created from a backup
-          restore: our restore runbook is required to re-apply erasures before
-          the API serves; if a restore predates your erasure request, tell us
-          and we will erase again.
+          An erasure does not reach database backups and snapshots, which are
+          kept for the periods in section 6; server logs, which age out after
+          about ten weeks; or copies of sent email held by our email provider
+          under its own retention. Erased accounts are not re-created from a
+          backup restore: our restore runbook is required to re-apply erasures
+          before the API serves; if a restore predates your erasure request,
+          tell us and we will erase again.
         </p>
         <p>
           You also have the right to complain to a supervisory authority. The UK

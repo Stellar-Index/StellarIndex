@@ -6,7 +6,7 @@ import { Badge, ButtonLink, Card, CardBody, Container } from '@/components/ui';
 export const metadata: Metadata = {
   title: 'Pricing — free access, quotas, SLAs',
   description:
-    'Stellar Index is free. Anonymous public reads at 6,000 req/min per IP, plus free registered accounts for per-key attribution and usage analytics — no payments, no card. Need more per-key throughput? Talk to us about a partner limit.',
+    'Stellar Index is free. Anonymous public reads at 6,000 req/min per IP, plus free registered accounts for per-account attribution and usage analytics — no payments, no card. Need more per-account throughput? Talk to us about a partner limit.',
   alternates: { canonical: '/pricing' },
 };
 
@@ -38,7 +38,7 @@ const TIERS: Tier[] = [
       '6,000 requests / minute per source IP',
     ],
     notFeatures: [
-      'Per-key attribution',
+      'Per-account attribution',
       'Usage history (30d)',
       'Dedicated SLA',
     ],
@@ -50,13 +50,13 @@ const TIERS: Tier[] = [
     rateLimit: '1,000 req/min per account',
     cta: { label: 'Create account', href: '/signup' },
     description:
-      'Register in one curl (POST /v1/register) or sign in with magic-link, mint an API key, get per-key usage analytics and a budget that is yours rather than shared with every client on your IP. Designed for builders and agents shipping to customers.',
+      'Register in one curl (POST /v1/register) or sign in with magic-link, mint an API key, get per-account usage analytics and a budget that is yours rather than shared with every client on your IP. Designed for builders and agents shipping to customers.',
     highlight: true,
     features: [
       'Every public endpoint, same data',
       '1,000 requests / minute per account, shared by all its keys (a separate budget, not a raise)',
       'One-curl onboarding: POST /v1/register',
-      'Per-key usage history (30d)',
+      'Per-account usage history (30d)',
       'Mint & rotate keys at /account',
       'Email support',
     ],
@@ -77,11 +77,11 @@ export default function PricingPage() {
         <p className="text-ink-muted text-lg leading-relaxed">
           Stellar Index is free — there are no paid plans. Anonymous reads work
           without an account; a free account (one curl: POST /v1/register) adds
-          per-key usage analytics and a budget that is yours alone rather than
-          shared with everything else on your IP. It is not a throughput upgrade
-          — on the hosted deployment an anonymous IP&apos;s limit deliberately
-          exceeds a single free key&apos;s. Higher partner limits are set by our
-          staff on request.
+          per-account usage analytics and a budget that is yours alone rather
+          than shared with everything else on your IP. It is not a throughput
+          upgrade — on the hosted deployment an anonymous IP&apos;s limit
+          deliberately exceeds a single free key&apos;s. Higher partner limits
+          are set by our staff on request.
         </p>
       </header>
 
@@ -96,7 +96,7 @@ export default function PricingPage() {
           <div className="space-y-2.5">
             <Badge tone="brand">Partner limits</Badge>
             <h2 className="text-h3 text-ink font-semibold">
-              Need a bigger per-key budget?
+              Need a bigger per-account budget?
             </h2>
             <p className="text-ink-muted max-w-2xl text-sm">
               A free key is stamped at 1,000 req/min. Wallets, exchanges, and
