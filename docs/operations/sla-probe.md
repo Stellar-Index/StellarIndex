@@ -117,8 +117,8 @@ STELLARINDEX_PROBE_API_KEY=sip_…              # vault-minted key; required (se
 
 Without `STELLARINDEX_PROBE_API_KEY` set, the probe hits the
 anonymous-tier rate limit — `[api].anon_rate_limit_per_min`, whose
-shipped default is 60/min (R1 sets 6,000). Even the default single
-worker issues requests back to back for the whole 30 s window, so
+shipped default is 60/min (R1 sets 6,000). Even paced at the default
+100 req/s the probe issues far more than 60 requests a minute, so
 every non-`/healthz` endpoint reads as mostly unavailable and the
 verdict comes back `fail` for reasons unrelated to actual SLA
 compliance. Mint a load-test API key from the operator vault (same
@@ -126,6 +126,19 @@ class as `STELLARINDEX_LOAD_API_KEY` for the k6 weekly) and set it
 in `/etc/default/stellarindex-healthchecks` before enabling the timer. The probe
 sends it as `Authorization: Bearer <key>` on every request — the
 key never appears on the systemd unit's command line.
+
+The key does not lift the limit where `[api].key_rate_limit_per_min`
+equals the anonymous limit (R1: both 6,000). What keeps a run under it
+is the binary's `-max-rps` pacing, shared by all workers: the default
+100 req/s × 30 s = 3,000 requests, half of a 6,000/min budget, leaving
+room for the smoke runner on the same limit. `-max-rps 0` removes the
+cap; unpaced, a fast API answers ~35 req/s per endpoint and a 30 s run
+crosses 6,000 requests, so the 429s fail availability. The wrapper does
+not pass `-max-rps`, so the binary default applies. A rate-limited run
+names the cause: each endpoint's `failed_by_status` counts failures by
+`429`, `4xx`, `5xx`, `timeout`, `conn` or `body` (a 2xx that broke the
+response contract), and the availability reason carries the dominant
+one, e.g. `price: availability=51.80% < target 99.90% (429 x 848)`.
 
 The defaults exercise XLM/USD as the smoke-test pair. The wrapper
 probes exactly one pair (`SLA_PROBE_PAIR`); to track additional
@@ -209,6 +222,7 @@ Key fields:
   "started_at": "2026-04-30T12:00:00Z",
   "duration_sec": 30.0,
   "concurrency": 1,
+  "max_rps": 100,
   "sla": {
     "p95_ms": 200,
     "p99_ms": 500,

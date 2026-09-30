@@ -60,6 +60,8 @@ the mechanical ones; reviewers enforce the judgement ones.
 
 **Judgement (reviewer-enforced):**
 
+- [ ] Checked `CAPABILITY-INVENTORY.md` before writing new utility
+      code.
 - [ ] New public API accompanied by usage doc (`docs/reference/` or
       `pkg/client/README.md`).
 - [ ] Bug fix accompanied by a regression test.
@@ -647,7 +649,7 @@ mechanism in the codebase.
 | Definition of Done | CI + PR template | `.github/` |
 | Forbidden patterns | `golangci-lint` custom rules | `.golangci.yml` |
 | TODO discipline | CI regex check | `scripts/ci/check-todo-tracking.sh` |
-| Deprecation policy | **Gap:** no CI scan implemented | — (see §2.4) |
+| Deprecation policy | CI scan: every `// Deprecated:` names a removal version | `scripts/ci/check-deprecations.sh` |
 | Dependency minimalism | `go mod tidy` + `govulncheck` | `security.yml` |
 | Feature flag hygiene | **Gap** by design: no flag registry or age scan; kill-switches are config booleans, and CI checks each key is in the config reference | `scripts/ci/lint-docs.sh` (see §2.6) |
 | SLOs as code | `internal/obs/slo.go` struct + Prometheus derivation | `docker/prometheus/` |
@@ -984,7 +986,9 @@ under `internal/sources/<venue>/` carry the six-file convention's
 comments (`childgate`, `forex`, `frankfurter`) are grandfathered.
 *Why:* one predictable place to read "what is this package".
 Examples: `internal/canonical/doc.go`,
-`internal/sources/soroswap/README.md`. **Review-enforced.**
+`internal/sources/soroswap/README.md`. **Lint-enforced** (`lint-docs.sh`:
+every `internal/` and `pkg/` package has a package comment; source
+packages keep a one-paragraph one beside their `README.md`).
 
 ### 14.11. Interfaces: consumer-side, narrow, `-er`-named
 

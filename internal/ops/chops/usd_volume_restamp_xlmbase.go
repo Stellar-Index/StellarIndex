@@ -388,7 +388,8 @@ const (
 	// decompressed chunk.
 	xlmBaseWalkFull xlmBaseWalkMode = iota
 	// xlmBaseWalkProbe is the chunk walk's read-only pre-check: plan slice
-	// by slice, fold NOTHING into the report, and stop at the first slice
+	// by slice, fold nothing into the report itself (the caller folds a
+	// clean probe's count), and stop at the first slice
 	// that would change a row. A chunk whose rows all already hold the
 	// anchor's value is probed to its end and then skipped without ever
 	// being decompressed; a chunk that needs work is found out after its

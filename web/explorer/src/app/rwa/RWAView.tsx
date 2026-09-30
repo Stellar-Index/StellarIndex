@@ -1022,10 +1022,11 @@ function oracleOnly(provenances: ReferenceProvenances): boolean {
 
 /** The value-of-backing definition once the total mixes provenances. */
 const MIXED_REFERENCE_PROSE =
-  "the published reference value of one unit — an oracle's valuation of the underlying instrument, a listing platform's price for the token, or the NAV the fund's prospectus fixes, depending on the row";
+  "the published reference value of one unit — an oracle's valuation of the underlying instrument, the fund's own published NAV per share, a listing platform's price for the token, or the NAV the fund's prospectus fixes, depending on the row";
 
 const PROVENANCE_SOURCE_PROSE: Record<string, string> = {
   oracle_instrument_nav: 'oracle feeds',
+  fund_nav: 'fund NAVs published to the cent',
   listing_platform_price: 'listing-platform prices for the token',
   prospectus_constant_nav: 'constant NAV fixed by the fund’s prospectus',
 };
@@ -1682,6 +1683,8 @@ function referenceValueWhose(ref: RWAAsset['reference']): string {
   switch (ref?.provenance) {
     case 'prospectus_constant_nav':
       return 'the NAV fixed by the fund’s prospectus';
+    case 'fund_nav':
+      return `the fund’s published NAV per share (via ${ref.source})`;
     case 'listing_platform_price':
       return `${ref.source}’s price for the token`;
     default:

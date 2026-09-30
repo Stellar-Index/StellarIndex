@@ -29,7 +29,7 @@ enforces it); any per-alert detail page follows it.
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 66 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 234 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 239 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -51,8 +51,12 @@ enforces it); any per-alert detail page follows it.
   `severity: informational` but is routed by ALERTNAME to
   Healthchecks.io ahead of the severity matchers, with
   `continue: false`, so it never reaches `silent` — see its runbook.)
-  A `page` inhibits the `ticket`/`informational` alerts sharing its
-  `component` label. Routing:
+  A `page` inhibits only the `ticket`/`informational` alerts sharing
+  both its `component` and its `alert_family` label (the same signal at
+  a milder threshold); a page without a family inhibits nothing. The
+  family map is pinned by
+  [`configs/alertmanager/inhibit-rules-test.sh`](../../configs/alertmanager/inhibit-rules-test.sh).
+  Routing:
   [`configs/alertmanager/alertmanager.r1.yml`](../../configs/alertmanager/alertmanager.r1.yml).
 - **Runbook** — what the responder does (link).
 
@@ -177,6 +181,10 @@ signal lands.
 | `stellarindex_ch_schema_snapshot_stale` | `time() - stellarindex_ch_schema_snapshot_last_success_unix` (or `absent_over_time(...[36h])` — never / every-run-failed) | > 36 h, or series absent 36 h, for ≥ 30 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 | `stellarindex_ch_schema_snapshot_offsite_stale` | `time() - stellarindex_ch_schema_snapshot_offsite_last_success_unix` (or, per host, `stellarindex_ch_schema_snapshot_last_success_unix unless on (instance) max_over_time(…offsite_last_success_unix[72h])` — ungated: a never-configured off-site is as loud as a failing push, and the alert names the host) | > 72 h since the last push, or no push inside 72 h on a host that has a local snapshot (never pushed / no target ever configured there), for ≥ 30 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 | `stellarindex_ch_lake_backup_stale` | `time() - stellarindex_ch_lake_backup_last_success_unix` (or, per host, `stellarindex_ch_schema_snapshot_last_success_unix unless on (instance) max_over_time(…lake_backup_last_success_unix[96h])` — a host with a lake and no data backup, including one with no backup disk configured) | > 96 h since the last successful lake backup, or none inside 96 h, for ≥ 1 h | ticket | [ch-lake-backup](runbooks/ch-lake-backup.md) |
+| `stellarindex_lake_verify_stale` | `time() - stellarindex_lake_verify_last_run_unix` (or, per host, `stellarindex_ch_schema_snapshot_last_success_unix unless on (instance) max_over_time(…lake_verify_last_run_unix[2d])` — a lake host whose timer never produced a verdict) | > 48 h since the last completed run, or none inside 48 h, for ≥ 1 h | ticket | [lake-verify](runbooks/lake-verify.md) |
+| `stellarindex_lake_verify_failed` | `max by (instance, check) (stellarindex_lake_verify_failures)` | > 0 on the last completed run (contiguity, entry_changes, hash_chain or raw_census) | ticket | [lake-verify](runbooks/lake-verify.md) |
+| `stellarindex_wasm_drift` | `max by (source, contract) (stellarindex_wasm_drift)` | > 0 for ≥ 1 h — a gated contract of an audited source runs a WASM hash absent from `audited_wasm.json` | ticket | [wasm-drift](runbooks/wasm-drift.md) |
+| `stellarindex_wasm_drift_stale` | `time() - stellarindex_wasm_drift_last_run_unix` | > 48 h since the last completed run, for ≥ 1 h | ticket | [wasm-drift](runbooks/wasm-drift.md) |
 | `stellarindex_galexie_archive_mirror_stale` | `time() - stellarindex_galexie_archive_mirror_last_success_timestamp` (or, per host, `stellarindex_galexie_archive_mirror_configured unless on (instance) max_over_time(…mirror_last_success_timestamp[48h])` — a host with no verified off-site mirror, including one with no target configured) | > 48 h since the last verified-clean mirror, or none inside 48 h, for ≥ 1 h | ticket | [galexie-archive-mirror](runbooks/galexie-archive-mirror.md) |
 | `stellarindex_ch_schema_snapshot_unit_failed` | `node_systemd_unit_state{name="ch-schema-snapshot.service",state="failed"}` | == 1 for 5 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 | `stellarindex_ch_schema_drift_detected` | `stellarindex_ch_schema_drift_divergent` | > 0 for ≥ 30 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
@@ -267,9 +275,9 @@ documented 4xx that regressed into a silent 200. Until 2026-09-03 its
 only sink was `HEALTHCHECKS_URL_SMOKE`, empty on r1 since install, so
 the check ran into the journal and nowhere else: no textfile, no series,
 no rule. Both rows below are `ticket` rather than `page` deliberately —
-a `page` on component `api` inhibits every `ticket` sharing that
-component, so a smoke that paged while the API was healthy would mute
-the api-plane tickets it exists to complement.
+a smoke failure while the API is healthy is not SEV-1. A `page` inhibits
+only the tickets in its own `alert_family`; the smoke rows carry none, so
+they neither inhibit nor are inhibited by the api-plane alerts.
 
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
@@ -649,6 +657,7 @@ auto-unfreeze at all. Rules in
 | `stellarindex_supply_verify_rollup_never_initialized` | `absent_over_time(stellarindex_supply_verify_rollup_last_success_timestamp[36h])` | == 1 for ≥ 5 min | ticket | [supply-verify-rollup-stale](runbooks/supply-verify-rollup-stale.md) |
 | `stellarindex_aggregator_supply_refresh_stalled` | `time() - max(timestamp(stellarindex_aggregator_supply_refresh_total{outcome="ok"}))` | > 30 min for ≥ 5 min | page | [supply-refresh-stalled](runbooks/supply-refresh-stalled.md) |
 | `stellarindex_aggregator_supply_refresh_error_dominant` | error-outcome rate / total-rate | > 50% for ≥ 30 min | ticket | [supply-refresh-error-dominant](runbooks/supply-refresh-error-dominant.md) |
+| `stellarindex_aggregator_supply_refresh_dormant_fleet` | count of assets with a non-zero `outcome="dormant"` rate | > 1 for ≥ 30 min | ticket | [supply-refresh-error-dominant](runbooks/supply-refresh-error-dominant.md) |
 | `stellarindex_aggregator_supply_refresh_never_initialized` | `absent_over_time(stellarindex_aggregator_supply_refresh_total{outcome="ok"}[36h])` | == 1 for ≥ 5 min | ticket | [supply-snapshot-never-initialized](runbooks/supply-snapshot-never-initialized.md) + per-alert detail [aggregator-supply-refresh-never-initialized](runbooks/aggregator-supply-refresh-never-initialized.md) |
 | `stellarindex_sep41_supply_rollup_no_cursor` | `sum by (contract_id) (increase(stellarindex_sep41_supply_rollup_advances_total{outcome="no_cursor"}[15m]))` | > 0 for ≥ 30 min | ticket | [sep41-supply-rollup-no-cursor](runbooks/sep41-supply-rollup-no-cursor.md) |
 | `stellarindex_ch_supply_gapfill_failed` | `node_systemd_unit_state{name="ch-supply.service",state="failed"}` | == 1 for ≥ 10 min | ticket | [ch-supply-gapfill-failed](runbooks/ch-supply-gapfill-failed.md) |
