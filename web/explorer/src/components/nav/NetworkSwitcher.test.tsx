@@ -6,7 +6,7 @@ import type { LiveLedger, StreamFrame } from '@/lib/live/hooks';
 import { NetworkSwitcher } from './NetworkSwitcher';
 
 // Default build env → CURRENT_NETWORK is mainnet, so the siblings are
-// testnet (live) + futurenet (Phase 2, not live).
+// testnet + futurenet, both live and linked out.
 const useLedgerStream = vi.hoisted(() =>
   vi.fn<() => StreamFrame<LiveLedger> | null>(),
 );
@@ -45,7 +45,7 @@ describe('NetworkSwitcher', () => {
     ).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('opens to list every network; siblings link out, futurenet is disabled', async () => {
+  it('opens to list every network; siblings link out (testnet, futurenet)', async () => {
     useLedgerStream.mockReturnValue(freshFrame(4_350_000));
     vi.stubGlobal(
       'fetch',

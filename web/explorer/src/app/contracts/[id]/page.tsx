@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
 
+import { shellMetadata } from '@/lib/seo';
+
 import { ContractPathView } from './ContractPathView';
 
 // Shell-only for now; active contracts (top by event activity) will be
@@ -12,12 +14,10 @@ export function generateStaticParams() {
   return [{ id: 'shell' }];
 }
 
-export const metadata: Metadata = {
-  title: 'Contract',
-  description:
-    'Soroban contract detail: WASM, exports, events, and state for a Stellar smart contract.',
-  robots: { index: false, follow: true },
-};
+export const metadata: Metadata = shellMetadata(
+  'Contract',
+  'Soroban contract detail: WASM, exports, events, and state for a Stellar smart contract.',
+);
 
 export default function ContractDetailPage() {
   return (
