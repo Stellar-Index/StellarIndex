@@ -60,8 +60,8 @@ permissions:
   # F-1296 (codex audit-2026-05-13): `id-token: write` was removed
   # here when nothing consumed the OIDC JWT. It is now granted —
   # but only at JOB level on the `release` job (see its
-  # `permissions:` block), whose "Sign SHA256SUMS" step is the
-  # sole OIDC consumer (cosign keyless signing). The build matrix
+  # `permissions:` block), whose "Sign SHA256SUMS" and "Attest build
+  # provenance" steps are the only OIDC consumers. The build matrix
   # + resolve-tag jobs still cannot mint an OIDC token.
 
 jobs:
@@ -260,11 +260,12 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write      # gh release create + upload assets
-      # Consumed ONLY by the "Sign SHA256SUMS (cosign keyless)"
-      # step below: cosign trades the GitHub OIDC JWT for a
-      # short-lived Fulcio certificate. Scoped to this job per
-      # F-1296 — the other jobs never see an OIDC token.
+      # Consumed ONLY by the "Sign SHA256SUMS (cosign keyless)" and
+      # "Attest build provenance" steps below: each trades the GitHub
+      # OIDC JWT for a short-lived Fulcio certificate. Scoped to this
+      # job per F-1296 — the other jobs never see an OIDC token.
       id-token: write
+      attestations: write  # store the provenance attestation on the repo
     steps:
       - name: Checkout at tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -399,6 +400,14 @@ jobs:
           # --- END transition dual-publish. ---
 
           ls -la SHA256SUMS*
+
+      # SLSA build provenance for every artifact listed in SHA256SUMS (the
+      # binaries + migrations.tar.gz, not the signature files). Fail-closed and
+      # before `gh release create`, so no release ships without provenance.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
 
       # Pull just this version's CHANGELOG block. The release-notes
       # workflow assumes the CHANGELOG section header matches

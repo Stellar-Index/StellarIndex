@@ -7,6 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 // ─── consumer.go ──────────────────────────────────────────────────
@@ -311,6 +312,35 @@ func TestGatedSet_SeedsVerifiedCompletenessContracts(t *testing.T) {
 	// gate, not a decoder that attributes every bond-shaped event.
 	if d.Matches(events.Event{ContractID: "CFOREIGNNOTSEEDED000000000000000000000000000000000000000", Topic: []string{TopicSymbolBond, TopicSymbolStakeUser}}) {
 		t.Fatal("gate matched an unseeded contract — the membership assertions would be vacuous")
+	}
+}
+
+// TestGatedSet_ExcludesBondInstrumentContract: CBBUVHCE… emits
+// ("bond", created|live|…) from a non-stake WASM. It must stay out of the
+// curated set so a stake-shaped event from it is never attributed to phoenix.
+func TestGatedSet_ExcludesBondInstrumentContract(t *testing.T) {
+	const bondInstrument = "CBBUVHCEML7UE46XXZXLTMGKFMKX7KOC2XAKI3TW6WBQBKWMSARMU3YM"
+	for _, c := range MainnetGatedSet() {
+		if c == bondInstrument {
+			t.Fatalf("%s is in MainnetGatedSet() but is not a phoenix stake contract", bondInstrument)
+		}
+	}
+
+	d := NewDecoder()
+	for _, c := range d.GatedContractSet() {
+		if c == bondInstrument {
+			t.Fatalf("%s is in the production decoder's gate", bondInstrument)
+		}
+	}
+	if d.Matches(events.Event{ContractID: bondInstrument, Topic: []string{TopicSymbolBond, TopicSymbolStakeUser}}) {
+		t.Errorf("production gate attributes a stake-shaped bond event from %s to phoenix", bondInstrument)
+	}
+
+	created := events.Event{ContractID: bondInstrument, Topic: []string{TopicSymbolBond, scval.MustEncodeString("created")}}
+	// classifyAny maps any ("bond", *) to actionBond, so only the gate keeps
+	// this event from reaching Decode as an ErrUnknownField decode error.
+	if d.Matches(created) {
+		t.Errorf(`production gate matched ("bond","created") from %s`, bondInstrument)
 	}
 }
 

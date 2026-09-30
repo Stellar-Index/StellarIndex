@@ -7244,12 +7244,25 @@ export interface components {
          *     - `divergence_warning` — anomaly check or cross-reference
          *       observed a meaningful divergence; treat with caution.
          *     - `frozen` — anomaly detection refused to publish the new
-         *       bucket; this response carries the previous bucket's
-         *       last-known-good value (ADR-0019). Only fires on `/v1/price`,
-         *       on `/v1/oracle/lastprice` + `/v1/oracle/x_last_price`, and on
-         *       the 60-second `/v1/price/stream` series' `price_frozen` event
-         *       (which carries no value); tip + observations surfaces ignore
-         *       freeze.
+         *       bucket; this response carries the value the freeze is
+         *       holding — the aggregator's last-known-good VWAP (ADR-0019),
+         *       never the refused bucket. A held value is served with its
+         *       own `observed_at` (when it was observed, not when it was
+         *       read, so it ages through the hold), the aggregator window
+         *       it was held at (`window_seconds` 300, 3600 or 86400, not
+         *       60), empty `sources` (on a fiat quote derived through the
+         *       USD leg per ADR-0051, the FX feed alone, and `observed_at`
+         *       is the older of the held value's and the FX rate's), and
+         *       `stale: true`, since it is below
+         *       the closed-1-minute-bucket baseline. When a pair is frozen
+         *       and no value is held, `/v1/price` and the SEP-40 point reads
+         *       answer 503 `price-unavailable` and `/v1/price/batch` omits
+         *       the row, rather than publish the refused bucket. Only fires
+         *       on `/v1/price`, `/v1/price/batch`, `/v1/oracle/lastprice` +
+         *       `/v1/oracle/x_last_price`, and on the 60-second
+         *       `/v1/price/stream` series' `price_frozen` event (which
+         *       carries no value); tip, observations and the `/v1/assets`
+         *       price columns ignore freeze.
          *     - `frozen_checked` — true only when the freeze marker was
          *       actually read (looker wired and the read succeeded). When
          *       false, `frozen` is NOT meaningful — the check never ran, so
