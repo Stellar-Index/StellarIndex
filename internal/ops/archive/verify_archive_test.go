@@ -409,6 +409,8 @@ func TestVerifyArchive_PeersTier_HonoursFromLastVerified(t *testing.T) {
 	peerA, peerB := newPeer(), newPeer()
 	archiveRoot := t.TempDir()
 	writeSelfCheckpointJSON(t, archiveRoot, 60_000_063, `{"currentLedger":60000063,"currentBuckets":[]}`)
+	// Tier D samples the last checkpoint in range even at -peer-samples 1.
+	writeSelfCheckpointJSON(t, archiveRoot, 60_000_191, `{"currentLedger":60000191,"currentBuckets":[]}`)
 
 	// Prior state: Tier D already verified up to ledger 60,000,000.
 	// -from-last-verified with -safety-overlap 0 must therefore start
