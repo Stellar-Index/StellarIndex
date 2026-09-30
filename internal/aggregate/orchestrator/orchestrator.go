@@ -2253,22 +2253,7 @@ func (o *Orchestrator) fetchForTarget(
 	return merged, sumUSD, tradeUSD, proxied, nil
 }
 
-// usdVolumeForPair was the F-1213 entry point that returned only
-// the windowed total. Superseded by [usdVolumeForPairPerTrade]
-// which exposes the per-trade map needed for F-1242 post-filter
-// per-source attribution. Kept here as a documentation pointer;
-// the implementation lives in usdVolumeForPairPerTrade.
-func usdVolumeForPair(pair canonical.Pair, batch []canonical.Trade, classicUSDPegs, sorobanUSDPegs []canonical.Asset) float64 {
-	total, _ := usdVolumeForPairPerTrade(pair, batch, classicUSDPegs, sorobanUSDPegs)
-	return total
-}
-
-// _ = usdVolumeForPair retains the function as a stable seam in
-// case future code wants the just-the-total signature back.
-var _ = usdVolumeForPair
-
-// usdVolumeForPairPerTrade is the F-1242 (codex audit-2026-05-12)
-// extension of [usdVolumeForPair] — it returns the same total plus
+// usdVolumeForPairPerTrade returns the windowed USD volume total plus
 // a per-trade.ID() → USD-value map. The map is keyed before
 // `fetchForTarget` rewrites Pair to the target, so the
 // per-source filter chain can drop trades by index without losing
