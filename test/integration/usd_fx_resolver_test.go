@@ -283,6 +283,83 @@ func trimTrailingZeros(s string) string {
 	return strings.TrimSuffix(s, ".")
 }
 
+// TestVWAPUSDFXResolver_OutcomeSplitsUnpriceableFromMiss executes the
+// unwindowed usd-path probe behind USDPriceOutcomeAt. Every asset below
+// misses USDPriceAt at `now`; the probe must call a stale or anchorless
+// market a Miss and only a never-marketed asset Unpriceable.
+func TestVWAPUSDFXResolver_OutcomeSplitsUnpriceableFromMiss(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const (
+		usdcIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		otherIss   = "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2"
+		selfIssuer = "GBGRBCUB6L7LH4JQ6EPDP7REH2DDACMCUQI76M3P6DM52QWU2Z5LIEVW"
+	)
+	usdc, _ := c.NewClassicAsset("USDC", usdcIssuer)
+	eurc, _ := c.NewClassicAsset("EURC", otherIss)  // stale peg market only
+	tokA, _ := c.NewClassicAsset("TOKA", otherIss)  // TOKA/XLM, no XLM/USD anchor
+	tokB, _ := c.NewClassicAsset("TOKB", otherIss)  // XLM/TOKB (inverted), no anchor
+	h1, _ := c.NewClassicAsset("H1", selfIssuer)    // trades only against H2
+	h2, _ := c.NewClassicAsset("H2", selfIssuer)    // trades only against H1
+	never, _ := c.NewClassicAsset("NEVR", otherIss) // no rows at all
+
+	// Three hours back: outside the 1h direct-leg freshness window.
+	t0 := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Minute)
+	for i, p := range [][2]c.Asset{{eurc, usdc}, {tokA, c.NativeAsset()}, {c.NativeAsset(), tokB}, {h1, h2}} {
+		pair, err := c.NewPair(p[0], p[1])
+		if err != nil {
+			t.Fatalf("NewPair: %v", err)
+		}
+		if err := store.InsertTrade(ctx, mkIntegrationTrade("sdex", i+1, t0, pair, 1_000_000_000, 1_085_000_000)); err != nil {
+			t.Fatalf("InsertTrade %d: %v", i, err)
+		}
+	}
+	if _, err := store.DB().ExecContext(ctx,
+		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`,
+	); err != nil {
+		t.Fatalf("refresh prices_1m: %v", err)
+	}
+
+	resolver, err := timescale.NewVWAPUSDFXResolver(store, timescale.VWAPUSDFXResolverOptions{
+		USDPegs: []string{"USDC-" + usdcIssuer},
+	})
+	if err != nil {
+		t.Fatalf("NewVWAPUSDFXResolver: %v", err)
+	}
+	now := time.Now().UTC()
+	for _, tc := range []struct {
+		name  string
+		asset c.Asset
+		want  timescale.USDPriceOutcome
+	}{
+		{"stale peg market", eurc, timescale.USDPriceMiss},
+		{"XLM market without an XLM/USD anchor", tokA, timescale.USDPriceMiss},
+		{"inverted XLM market without an anchor", tokB, timescale.USDPriceMiss},
+		{"self-pair base leg", h1, timescale.USDPriceUnpriceable},
+		{"self-pair quote leg", h2, timescale.USDPriceUnpriceable},
+		{"never traded", never, timescale.USDPriceUnpriceable},
+		{"fiat absent from fx_quotes", c.Asset{Type: c.AssetFiat, Code: "ZZZ"}, timescale.USDPriceUnpriceable},
+	} {
+		rate, outcome, err := resolver.USDPriceOutcomeAt(ctx, tc.asset, now)
+		if err != nil {
+			t.Fatalf("%s: USDPriceOutcomeAt: %v", tc.name, err)
+		}
+		if rate != "" || outcome != tc.want {
+			t.Errorf("%s: got (%q, %d), want ('', %d)", tc.name, rate, outcome, tc.want)
+		}
+	}
+}
+
 // TestVWAPUSDFXResolver_NoMatchReturnsOk False — asset with no
 // against-peg row produces (`""`, ok=false, nil err). Pre-Phase-2
 // behaviour preserved for assets we don't cover yet.

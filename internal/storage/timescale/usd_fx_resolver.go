@@ -107,11 +107,35 @@ type VWAPUSDFXResolver struct {
 
 	mu    sync.RWMutex
 	cache map[fxCacheKey]fxCacheEntry
+	// pathCache is keyed per asset, not per minute: whether an asset has
+	// ever had a USD path does not vary by trade minute. Same TTL as cache.
+	pathCache map[string]usdPathCacheEntry
 	// sweepAt is the cache size that triggers the next sweep; it doubles
 	// past the survivors so a resident set of fresh entries is not rescanned
 	// on every insert.
 	sweepAt int
 }
+
+type usdPathCacheEntry struct {
+	unpriceable bool
+	cachedAt    time.Time
+}
+
+// USDPriceOutcome classifies a [VWAPUSDFXResolver.USDPriceOutcomeAt]
+// answer. The zero value is [USDPriceMiss], so an unset outcome never
+// reads as by-design.
+type USDPriceOutcome uint8
+
+const (
+	// USDPriceMiss: no usable rate, though the asset has a USD path the
+	// resolver could use (stale market, absent XLM/USD leg, I/O error).
+	USDPriceMiss USDPriceOutcome = iota
+	// USDPricePriced: a rate was returned.
+	USDPricePriced
+	// USDPriceUnpriceable: no USD path exists for the asset at all — see
+	// [VWAPUSDFXResolver.hasNoUSDPath].
+	USDPriceUnpriceable
+)
 
 // fxCacheSweepThreshold bounds the resolver's in-memory cache. The
 // key space is (asset, 1-minute bucket) including negative results,
@@ -235,6 +259,7 @@ func NewVWAPUSDFXResolver(store *Store, opts VWAPUSDFXResolverOptions) (*VWAPUSD
 		cacheTTL:        opts.CacheTTL,
 		clock:           opts.Clock,
 		cache:           make(map[fxCacheKey]fxCacheEntry),
+		pathCache:       make(map[string]usdPathCacheEntry),
 	}, nil
 }
 
@@ -373,6 +398,101 @@ func (r *VWAPUSDFXResolver) USDPriceAt(ctx context.Context, asset canonical.Asse
 	rate = trimNumericText(rate)
 	r.storeCache(key, fxCacheEntry{rate: rate, cachedAt: r.clock()})
 	return rate, true, nil
+}
+
+// USDPriceOutcomeAt is [VWAPUSDFXResolver.USDPriceAt] plus a
+// classification of a miss, so the insert-path coverage metric can tell
+// an asset with no USD path at all from a lookup that failed. The rate
+// and its validity are exactly USDPriceAt's; only a miss costs extra, one
+// cached existence probe per asset.
+func (r *VWAPUSDFXResolver) USDPriceOutcomeAt(ctx context.Context, asset canonical.Asset, at time.Time) (string, USDPriceOutcome, error) {
+	rate, ok, err := r.USDPriceAt(ctx, asset, at)
+	if err != nil {
+		return "", USDPriceMiss, err
+	}
+	if ok {
+		return rate, USDPricePriced, nil
+	}
+	// A resolver with no pegs prices nothing on-chain; that is a
+	// configuration gap, never a property of the asset.
+	if asset.Type != canonical.AssetFiat && len(r.usdPegs) == 0 {
+		return "", USDPriceMiss, nil
+	}
+	unpriceable, err := r.hasNoUSDPath(ctx, asset)
+	if err != nil {
+		return "", USDPriceMiss, err
+	}
+	if unpriceable {
+		return "", USDPriceUnpriceable, nil
+	}
+	return "", USDPriceMiss, nil
+}
+
+// hasNoUSDPath reports whether no route USDPriceAt reads could EVER price
+// the asset: for fiat, no fx_quotes row for its ticker; otherwise no
+// prices_1m row pairing any alias form with a peg form or an XLM form, in
+// either orientation.
+//
+// Invariant: a stalled or stale price source must read as a miss, never
+// as unpriceable. So the probe carries no freshness window, no dust floor
+// and no upper time bound — any row ever materialised makes the asset
+// priceable. Omitting the `bucket <= at` bound is also what makes the
+// per-asset cache sound: the answer does not depend on the trade's time.
+func (r *VWAPUSDFXResolver) hasNoUSDPath(ctx context.Context, asset canonical.Asset) (bool, error) {
+	key := asset.String()
+	if v, ok := r.lookupPathCache(key); ok {
+		return v, nil
+	}
+	var (
+		q    string
+		args []any
+	)
+	if asset.Type == canonical.AssetFiat {
+		q = `SELECT NOT EXISTS (SELECT 1 FROM fx_quotes WHERE ticker = $1)`
+		args = []any{asset.Code}
+	} else {
+		quoteForms := make([]string, 0, len(r.pegForms)+len(xlmBridgeForms))
+		quoteForms = append(quoteForms, r.pegForms...)
+		quoteForms = append(quoteForms, xlmBridgeForms...)
+		q = `
+			SELECT NOT EXISTS (SELECT 1 FROM prices_1m
+			                    WHERE base_asset  = ANY($1)
+			                      AND quote_asset = ANY($2))
+			   AND NOT EXISTS (SELECT 1 FROM prices_1m
+			                    WHERE base_asset  = ANY($3)
+			                      AND quote_asset = ANY($1))`
+		args = []any{canonical.AssetAliasStrings(asset), quoteForms, xlmBridgeForms}
+	}
+	var unpriceable bool
+	if err := r.store.db.QueryRowContext(ctx, q, args...).Scan(&unpriceable); err != nil {
+		return false, fmt.Errorf("timescale: VWAPUSDFXResolver usd-path probe: %w", err)
+	}
+	r.storePathCache(key, unpriceable)
+	return unpriceable, nil
+}
+
+func (r *VWAPUSDFXResolver) lookupPathCache(key string) (bool, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	entry, ok := r.pathCache[key]
+	if !ok || r.clock().Sub(entry.cachedAt) > r.cacheTTL {
+		return false, false
+	}
+	return entry.unpriceable, true
+}
+
+func (r *VWAPUSDFXResolver) storePathCache(key string, unpriceable bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.clock()
+	if len(r.pathCache) >= fxCacheSweepThreshold {
+		for k, e := range r.pathCache {
+			if now.Sub(e.cachedAt) > r.cacheTTL {
+				delete(r.pathCache, k)
+			}
+		}
+	}
+	r.pathCache[key] = usdPathCacheEntry{unpriceable: unpriceable, cachedAt: now}
 }
 
 // fiatUSDRateScale is the decimal scale used to render a fiat→USD
@@ -665,6 +785,10 @@ func rateScaleFor(r *big.Rat, sig int) int {
 	return scale
 }
 
+// xlmBridgeForms is both on-chain wire forms of XLM — the classic `native`
+// type and the SAC wrapper a Soroban pool holds. Mirrors [isXLMAsset].
+var xlmBridgeForms = []string{canonical.NativeAsset().String(), nativeXLMSAC}
+
 // xlmLegRate turns a prices_1m VWAP row into XLM-per-asset, inverting
 // when the pair is stored XLM-first. Split out for testability: the
 // inversion is the one place an orientation bug would silently produce
@@ -698,12 +822,9 @@ func xlmLegRate(vwapText string, inverted bool) (*big.Rat, bool) {
 // G11-06 rationale on queryDB: without it a miss walks prices_1m back
 // to genesis before returning a row the caller would discard anyway.
 func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Asset, at time.Time) (*big.Rat, error) {
-	// Both on-chain wire forms of XLM — the classic `native` type and
-	// the SAC wrapper a Soroban pool holds. Mirrors [isXLMAsset].
-	xlmForms := []string{canonical.NativeAsset().String(), nativeXLMSAC}
 	args := []any{
 		asset.String(),
-		xlmForms,
+		xlmBridgeForms,
 		at.UTC(),
 		bridgeLegMinUSDVolume,
 	}
