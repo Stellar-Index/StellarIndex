@@ -274,7 +274,7 @@ take.
 | `/protocols/{name}/tvl` | Per-protocol TVL with per-leg reserves and pricing basis. Live: soroswap returned 125 pools, $1.25 M TVL, **11 priced / 114 unpriced**. That priced-vs-unpriced split is a real completeness signal nothing surfaces. | Small — `/protocols/[name]` already exists. Returns a typed 404 (`protocol-tvl-not-derived`) for lending protocols like blend; handle that, don't treat it as an error. |
 | `/pairs` | Per-pair trade stats (`trade_count_24h`, `volume_24h_usd`) for an explicit base/quote. Both params required. | Small — overlaps what `/markets` already gives; likely redundant rather than missing. |
 | `/directory` | Curated address labels with tags and provenance (`source: stellar-expert`). `src/components/DirectoryLabel.tsx` exists and renders the `directory` field that comes back *embedded in other responses* — but the standalone bulk endpoint is never called. | Small. The rendering component is already built. |
-| `/ledgers/{seq}/operations` | One ledger's operations, fully decoded, with `total`/`truncated` from the header. The canonical form of the deprecated `/operations?ledger=`; not in the 2026-09-09 probe. The ledger page lists transactions but never the decoded operations. | Small — a tab on `/ledgers/[seq]`. |
+| `/ledgers/{seq}/operations` | One ledger's operations, fully decoded, with `total`/`truncated` from the header. The only per-ledger operations read (`/operations` refuses `?ledger=`); not in the 2026-09-09 probe. The ledger page lists transactions but never the decoded operations. | Small — a tab on `/ledgers/[seq]`. |
 
 ### `/methodology` — the one with a page that ignores it
 

@@ -189,10 +189,6 @@ func TestExplorerReads_DeadlineMapsTo503(t *testing.T) {
 			"https://api.stellarindex.io/errors/operations-timeout",
 		},
 		{
-			"OperationsByLedger", "/v1/operations?ledger=42", nil, (*Handler).Operations,
-			"https://api.stellarindex.io/errors/operations-timeout",
-		},
-		{
 			"OperationsDirectory", "/v1/operations", nil, (*Handler).Operations,
 			"https://api.stellarindex.io/errors/operations-timeout",
 		},
