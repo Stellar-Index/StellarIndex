@@ -160,10 +160,10 @@ func readCacheCounter(t *testing.T, cache, op, result string) float64 {
 // AllPools' miss-on-first-call + hit-on-repeat-call increments the
 // stellarindex_api_cache_ops_total counter on the right label set.
 // Detection target: a future refactor that drops the metric inc on
-// either branch. Three earlier session bugs (the Order dimension,
-// #1194, the Limit dimension) were prewarm-key drifts; this test
-// guards the OBSERVABILITY of future drifts by ensuring the counter
-// actually moves.
+// either branch. Three earlier session bugs (the Order, Sources and
+// Limit dimensions) were prewarm-key drifts; this test guards the
+// OBSERVABILITY of future drifts by ensuring the counter actually
+// moves.
 func TestCachedMarketsReader_HitMissCounter(t *testing.T) {
 	up := &fakeMarketsReader{}
 	c := NewCachedMarketsReader(up, 60*time.Second)
@@ -505,6 +505,27 @@ func TestNoDanglingPR1195Citation(t *testing.T) {
 		}
 		if strings.Contains(string(b), stale) {
 			t.Errorf("%s still cites the dangling %q reference; it now resolves to an unrelated issue, not the Limit-dimension prewarm/handler cache-key drift bug", f, stale)
+		}
+	}
+}
+
+// TestNoDanglingPR1194Citation keeps "#1194" out of the Sources-dimension
+// drift citations: that number now resolves to an unrelated item.
+func TestNoDanglingPR1194Citation(t *testing.T) {
+	const stale = "#1194"
+	root := repoRoot(t)
+	files := []string{
+		filepath.Join(root, "docs", "operations", "runbooks", "cache-miss-rate-high.md"),
+		filepath.Join(root, "configs", "prometheus", "rules.r1", "api.yml"),
+		filepath.Join(root, "CHANGELOG.md"),
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f) //nolint:gosec // repo-relative path resolved above
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		if strings.Contains(string(b), stale) {
+			t.Errorf("%s still cites the dangling %q reference; it now resolves to an unrelated item, not the Sources-dimension prewarm/handler cache-key drift fix", f, stale)
 		}
 	}
 }
