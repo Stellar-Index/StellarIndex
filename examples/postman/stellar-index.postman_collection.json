@@ -16081,7 +16081,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Restrict the listing to markets a single source\nobserved in the recency window. Must match a\nregistered source name (see `/v1/sources`); an\nunknown name returns 400 `unknown-source` rather\nthan an empty 200 (avoids the silent-empty-page\nanti-pattern). Mutually exclusive with `asset`.\n",
+                    "content": "Restrict the listing to markets a single source\nobserved in the recency window. Must match a\nregistered source name (see `/v1/sources`); an\nunknown name returns 400 `unknown-source` rather\nthan an empty 200 (avoids the silent-empty-page\nanti-pattern). Mutually exclusive with `asset`.\nEach row's volume, trade count and last price are\nthat source's own; the pair-wide `sparkline` and\n`inception` enrichments are omitted.\n",
                     "type": "text/plain"
                   },
                   "key": "source",
@@ -16160,7 +16160,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Restrict the listing to markets a single source\nobserved in the recency window. Must match a\nregistered source name (see `/v1/sources`); an\nunknown name returns 400 `unknown-source` rather\nthan an empty 200 (avoids the silent-empty-page\nanti-pattern). Mutually exclusive with `asset`.\n",
+                        "content": "Restrict the listing to markets a single source\nobserved in the recency window. Must match a\nregistered source name (see `/v1/sources`); an\nunknown name returns 400 `unknown-source` rather\nthan an empty 200 (avoids the silent-empty-page\nanti-pattern). Mutually exclusive with `asset`.\nEach row's volume, trade count and last price are\nthat source's own; the pair-wide `sparkline` and\n`inception` enrichments are omitted.\n",
                         "type": "text/plain"
                       },
                       "key": "source",
@@ -16249,7 +16249,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Restrict the listing to markets a single source\nobserved in the recency window. Must match a\nregistered source name (see `/v1/sources`); an\nunknown name returns 400 `unknown-source` rather\nthan an empty 200 (avoids the silent-empty-page\nanti-pattern). Mutually exclusive with `asset`.\n",
+                        "content": "Restrict the listing to markets a single source\nobserved in the recency window. Must match a\nregistered source name (see `/v1/sources`); an\nunknown name returns 400 `unknown-source` rather\nthan an empty 200 (avoids the silent-empty-page\nanti-pattern). Mutually exclusive with `asset`.\nEach row's volume, trade count and last price are\nthat source's own; the pair-wide `sparkline` and\n`inception` enrichments are omitted.\n",
                         "type": "text/plain"
                       },
                       "key": "source",
@@ -16338,7 +16338,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Restrict the listing to markets a single source\nobserved in the recency window. Must match a\nregistered source name (see `/v1/sources`); an\nunknown name returns 400 `unknown-source` rather\nthan an empty 200 (avoids the silent-empty-page\nanti-pattern). Mutually exclusive with `asset`.\n",
+                        "content": "Restrict the listing to markets a single source\nobserved in the recency window. Must match a\nregistered source name (see `/v1/sources`); an\nunknown name returns 400 `unknown-source` rather\nthan an empty 200 (avoids the silent-empty-page\nanti-pattern). Mutually exclusive with `asset`.\nEach row's volume, trade count and last price are\nthat source's own; the pair-wide `sparkline` and\n`inception` enrichments are omitted.\n",
                         "type": "text/plain"
                       },
                       "key": "source",
@@ -16481,7 +16481,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Restrict the listing to markets a single source\nobserved in the recency window. Must match a\nregistered source name (see `/v1/sources`); an\nunknown name returns 400 `unknown-source` rather\nthan an empty 200 (avoids the silent-empty-page\nanti-pattern). Mutually exclusive with `asset`.\n",
+                        "content": "Restrict the listing to markets a single source\nobserved in the recency window. Must match a\nregistered source name (see `/v1/sources`); an\nunknown name returns 400 `unknown-source` rather\nthan an empty 200 (avoids the silent-empty-page\nanti-pattern). Mutually exclusive with `asset`.\nEach row's volume, trade count and last price are\nthat source's own; the pair-wide `sparkline` and\n`inception` enrichments are omitted.\n",
                         "type": "text/plain"
                       },
                       "key": "source",
@@ -16570,7 +16570,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Restrict the listing to markets a single source\nobserved in the recency window. Must match a\nregistered source name (see `/v1/sources`); an\nunknown name returns 400 `unknown-source` rather\nthan an empty 200 (avoids the silent-empty-page\nanti-pattern). Mutually exclusive with `asset`.\n",
+                        "content": "Restrict the listing to markets a single source\nobserved in the recency window. Must match a\nregistered source name (see `/v1/sources`); an\nunknown name returns 400 `unknown-source` rather\nthan an empty 200 (avoids the silent-empty-page\nanti-pattern). Mutually exclusive with `asset`.\nEach row's volume, trade count and last price are\nthat source's own; the pair-wide `sparkline` and\n`inception` enrichments are omitted.\n",
                         "type": "text/plain"
                       },
                       "key": "source",
