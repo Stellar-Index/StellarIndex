@@ -8088,6 +8088,8 @@ paths:
         Customer-tier callers need no header. A `/v1/signup` key's
         email-verification stamp carries over to the child, so rotated
         keys keep working under `signup_require_email_verification`.
+        Only `apikey` and `operator` callers may mint; a SEP-10 token
+        gets 403.
       security:
         - APIKeyAuth: []
       parameters:
@@ -8140,6 +8142,13 @@ paths:
               schema: { $ref: "#/components/schemas/KeyCreatedEnvelope" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: |
+            Caller is not an account tier (`apikey` or `operator`) —
+            a SEP-10 wallet token cannot mint API keys.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "409":
           description: |
             Active-key quota reached for this caller identifier. Revoke

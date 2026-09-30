@@ -26285,7 +26285,7 @@
               "request": {
                 "name": "Create a new API key.",
                 "description": {
-                  "content": "Issues a new API key for the authenticated caller and returns\nthe plaintext exactly once.\n\n`scopes` (optional) confines the new key to route families:\n`read` (public data surfaces), `account` (`/v1/account/*`),\n`dashboard` (`/v1/dashboard/*`), `admin` (`/v1/admin/*`).\nOmitted/empty mints a full-access key — the posture every key\nminted before scopes shipped keeps. Scopes only narrow; they\nnever grant anything the key's tier wouldn't already reach.\n\nOne caller identifier may hold a bounded number of un-revoked\nkeys (25 by default, operator-tunable). A mint that would cross\nthe ceiling returns 409 — revoke a key via\n`DELETE /v1/account/keys/{keyID}` and retry.\n\nThe new key inherits the caller's identifier and tier. An\n**operator-tier** caller rotating its own credential here is\nheld to the admin-write contract: the `X-Reason` header is\nrequired (400 without it) and the mint is recorded as a\n`key.mint` audit row, exactly as `POST /v1/admin/keys`.\nCustomer-tier callers need no header. A `/v1/signup` key's\nemail-verification stamp carries over to the child, so rotated\nkeys keep working under `signup_require_email_verification`.\n",
+                  "content": "Issues a new API key for the authenticated caller and returns\nthe plaintext exactly once.\n\n`scopes` (optional) confines the new key to route families:\n`read` (public data surfaces), `account` (`/v1/account/*`),\n`dashboard` (`/v1/dashboard/*`), `admin` (`/v1/admin/*`).\nOmitted/empty mints a full-access key — the posture every key\nminted before scopes shipped keeps. Scopes only narrow; they\nnever grant anything the key's tier wouldn't already reach.\n\nOne caller identifier may hold a bounded number of un-revoked\nkeys (25 by default, operator-tunable). A mint that would cross\nthe ceiling returns 409 — revoke a key via\n`DELETE /v1/account/keys/{keyID}` and retry.\n\nThe new key inherits the caller's identifier and tier. An\n**operator-tier** caller rotating its own credential here is\nheld to the admin-write contract: the `X-Reason` header is\nrequired (400 without it) and the mint is recorded as a\n`key.mint` audit row, exactly as `POST /v1/admin/keys`.\nCustomer-tier callers need no header. A `/v1/signup` key's\nemail-verification stamp carries over to the child, so rotated\nkeys keep working under `signup_require_email_verification`.\nOnly `apikey` and `operator` callers may mint; a SEP-10 token\ngets 403.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -26561,6 +26561,80 @@
                   },
                   "status": "Unauthorized",
                   "code": 401,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Caller is not an account tier (`apikey` or `operator`) —\na SEP-10 wallet token cannot mint API keys.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "account",
+                        "keys"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "disabled": false,
+                        "description": {
+                          "content": "Optional client-chosen key (a UUID is ideal) that makes this\ncreate safe to retry. Send the SAME value when retrying a request\nwhose outcome you never saw, such as a client timeout: within ten\nminutes of a successful original, the retry receives the original\nresponse verbatim (marked by an `Idempotency-Replayed: true`\nresponse header) instead of creating a second resource. A retry\nthat arrives while the original is still running gets 409\n`idempotency-key-in-flight` with `Retry-After`. Only 2xx\nresponses are replayed; a failed original may be retried with the\nsame key. Keys are scoped to the caller, and dedup is held per API\nprocess, so it covers the retry window rather than surviving a\nrestart. Longer than 256 bytes returns 400\n`idempotency-key-too-long`.\n",
+                          "type": "text/plain"
+                        },
+                        "key": "Idempotency-Key",
+                        "value": "<string>"
+                      },
+                      {
+                        "disabled": false,
+                        "description": {
+                          "content": "Required from an operator-tier caller (400 `missing-reason`\nwithout it) and captured into the `key.mint` audit row;\nignored for customer tiers.\n",
+                          "type": "text/plain"
+                        },
+                        "key": "X-Reason",
+                        "value": "<string>"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      },
+                      {
+                        "description": {
+                          "content": "Added as a part of security scheme: bearer",
+                          "type": "text/plain"
+                        },
+                        "key": "Authorization",
+                        "value": "Bearer <token>"
+                      }
+                    ],
+                    "method": "POST",
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"label\": \"<string>\",\n  \"scopes\": [\n    \"admin\",\n    \"dashboard\"\n  ]\n}",
+                      "options": {
+                        "raw": {
+                          "headerFamily": "json",
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Forbidden",
+                  "code": 403,
                   "header": [
                     {
                       "key": "Content-Type",

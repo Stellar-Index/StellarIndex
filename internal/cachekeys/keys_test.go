@@ -328,7 +328,7 @@ func TestAPIKey(t *testing.T) {
 		t.Errorf("APIKey = %q, want %q", got.String(), want)
 	}
 	if cachekeys.APIKeyTTL != 0 {
-		t.Errorf("APIKeyTTL = %v, want 0 (revocation in payload, not Redis TTL)",
+		t.Errorf("APIKeyTTL = %v, want 0 (operator-issued keys are persistent; revocation in payload, not Redis TTL)",
 			cachekeys.APIKeyTTL)
 	}
 }

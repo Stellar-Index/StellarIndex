@@ -3364,6 +3364,8 @@ export interface paths {
          *     Customer-tier callers need no header. A `/v1/signup` key's
          *     email-verification stamp carries over to the child, so rotated
          *     keys keep working under `signup_require_email_verification`.
+         *     Only `apikey` and `operator` callers may mint; a SEP-10 token
+         *     gets 403.
          */
         post: operations["createAccountKey"];
         delete?: never;
@@ -19833,6 +19835,18 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            /**
+             * @description Caller is not an account tier (`apikey` or `operator`) —
+             *     a SEP-10 wallet token cannot mint API keys.
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /**
              * @description Active-key quota reached for this caller identifier. Revoke
              *     an existing key and retry.
