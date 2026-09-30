@@ -170,12 +170,12 @@ the topic shape.
 | `swap` | `trades` (source=phoenix) |
 | `provide_liquidity`, `withdraw_liquidity` (String multi-event and Symbol Map-body) | `phoenix_liquidity` |
 | `bond`, `unbond`, `withdraw_rewards`, `distribute_rewards` | `phoenix_stake_events` |
-| `create_distribution_flow` (`asset`, no user) | `phoenix_stake_events` (migration 0192) |
-| `Stake: Migration: ` start / query, `Stake` migration-completed (user only) | `phoenix_stake_events` as `migration_started` / `_queried` / `_completed` (migration 0192) |
+| `create_distribution_flow` (`asset`, no user) | `phoenix_stake_events` (migration 0191) |
+| `Stake: Migration: ` start / query, `Stake` migration-completed (user only) | `phoenix_stake_events` as `migration_started` / `_queried` / `_completed` (migration 0191) |
 | `initialize` (`XYK LP token_a` / `token_b`, once per pool deploy) | `phoenix_initialize` (migration 0131) |
 | admin-rotation topics (`XYK Pool: ` — replace_requested / replace_set / undo / accepted) | `phoenix_admin_events` (migration 0132) |
-| `("Factory","Updated Config")` (Void body, factory only) | `phoenix_admin_events` as `factory_config_updated` (migration 0192) |
-| `blend_pool` set_delegate / set_min_trading_a / _b | `phoenix_admin_events` (`admin_addr`, or the i128 in `value`; migration 0192) |
+| `("Factory","Updated Config")` (Void body, factory only) | `phoenix_admin_events` as `factory_config_updated` (migration 0191) |
+| `blend_pool` set_delegate / set_min_trading_a / _b | `phoenix_admin_events` (`admin_addr`, or the i128 in `value`; migration 0191) |
 
 The earliest stake WASMs publish an unbond's token and amount under the
 `"bond"` topic after the `("unbond","user")` event; the correlation

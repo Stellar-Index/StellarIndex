@@ -1,4 +1,4 @@
--- 0192 up — admit the Phoenix stake-lifecycle, factory-config and
+-- 0191 up — admit the Phoenix stake-lifecycle, factory-config and
 -- blend-pool events that have a decoder but no storage slot.
 --
 -- phoenix_stake_events.action gains:

@@ -180,7 +180,7 @@ var _ consumer.Event = InitializeEvent{}
 
 // AdminEvent is a pool admin-rotation step ("XYK Pool: ", <phrase>), a
 // factory config update, or a blend-pool setting change. The sink lands
-// it in phoenix_admin_events (migrations 0132, 0192). Self-contained (one
+// it in phoenix_admin_events (migrations 0132, 0191). Self-contained (one
 // event → one row). Admin is the address the body carries when present.
 type AdminEvent struct {
 	Pool        string // emitting pool contract C-strkey

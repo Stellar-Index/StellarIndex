@@ -27,7 +27,7 @@ const (
 	// pool-wide and carries no user either.
 	PhoenixWithdrawRewards   PhoenixStakeAction = "withdraw_rewards"
 	PhoenixDistributeRewards PhoenixStakeAction = "distribute_rewards"
-	// Stake-contract lifecycle (migration 0192): a reward flow opened for
+	// Stake-contract lifecycle (migration 0191): a reward flow opened for
 	// an asset (no user), and the three steps of a per-user stake
 	// migration (no token).
 	PhoenixCreateDistributionFlow PhoenixStakeAction = "create_distribution_flow"

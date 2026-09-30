@@ -201,13 +201,13 @@ const (
 	EventActionBlendPool              = "blend_pool"
 
 	// StakeAction* are the phoenix_stake_events.action slugs for the
-	// stake-contract lifecycle events (migration 0192).
+	// stake-contract lifecycle events (migration 0191).
 	StakeActionMigrationStarted   = "migration_started"
 	StakeActionMigrationQueried   = "migration_queried"
 	StakeActionMigrationCompleted = "migration_completed"
 
 	// AdminAction* for the factory and blend-pool configuration events
-	// (phoenix_admin_events.admin_action, migration 0192).
+	// (phoenix_admin_events.admin_action, migration 0191).
 	AdminActionFactoryConfigUpdated = "factory_config_updated"
 	AdminActionBlendSetDelegate     = "blend_set_delegate"
 	AdminActionBlendSetMinTradingA  = "blend_set_min_trading_a"

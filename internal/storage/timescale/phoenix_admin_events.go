@@ -9,7 +9,7 @@ import (
 )
 
 // validPhoenixAdminActions is the closed set the admin_action CHECK
-// enforces (migrations 0132, 0192).
+// enforces (migrations 0132, 0191).
 var validPhoenixAdminActions = map[string]bool{
 	"replace_requested": true, "replace_set": true,
 	"undo": true, "accepted": true,
@@ -18,7 +18,7 @@ var validPhoenixAdminActions = map[string]bool{
 }
 
 // PhoenixAdminEvent is one observed Phoenix admin/config event
-// (migrations 0132, 0192). Admin is the address the body carries when
+// (migrations 0132, 0191). Admin is the address the body carries when
 // present, empty otherwise (stored NULL).
 type PhoenixAdminEvent struct {
 	Pool            string

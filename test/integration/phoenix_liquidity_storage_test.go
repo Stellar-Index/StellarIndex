@@ -284,7 +284,7 @@ func TestPhoenixStakeEventsRoundTrip(t *testing.T) {
 }
 
 // TestPhoenixLifecycleAndConfigEventsRoundTrip lands every action
-// migration 0192 admits: a create_distribution_flow row with no user, the
+// migration 0191 admits: a create_distribution_flow row with no user, the
 // migration_* rows with no token, and the factory / blend-pool admin rows,
 // with the i128 minimum-trading value round-tripping through NUMERIC.
 func TestPhoenixLifecycleAndConfigEventsRoundTrip(t *testing.T) {
