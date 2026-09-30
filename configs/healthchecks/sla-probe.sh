@@ -105,11 +105,10 @@ if [ -z "${STELLARINDEX_PROBE_API_KEY:-}" ]; then
   echo "sla-probe: WARNING no STELLARINDEX_PROBE_API_KEY — this run measured the anonymous rate limit, not the SLA" >&2
 fi
 
-if [ "$RC" -eq 0 ]; then
-  hc_ping sla-probe "$URL" --data-binary "$OUT"
-else
-  hc_ping sla-probe "${URL:+${URL}/fail}" --data-binary "$OUT"
-fi
+# A failing run pings /fail only after HC_FAIL_AFTER (default 2)
+# consecutive failing runs; /fail bypasses the check's grace period,
+# so a single run caught by a restart would otherwise email twice.
+hc_ping_verdict sla-probe "$URL" "$RC" "${HC_FAIL_AFTER:-2}" --data-binary "$OUT"
 
 # Always exit 0 from the timer's perspective — failures route
 # via the /fail webhook + journalctl, same contract as the other

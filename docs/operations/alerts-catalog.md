@@ -28,8 +28,8 @@ enforces it); any per-alert detail page follows it.
 
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
-  | `page` | 65 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 233 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `page` | 66 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
+  | `ticket` | 234 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -154,7 +154,7 @@ signal lands.
 | `stellarindex_config_assertion_failed` | a load-bearing guard config (rsyslog suppress / journald cap / CH-logs-on-ZFS / nft 443 / redis cap / supply reserves) is missing or reverted — hourly config-assertions.sh producer | ==0 for 65m | ticket | [config-assertion-failed](runbooks/config-assertion-failed.md) |
 | `stellarindex_config_assertions_stale` | the config-assertions producer itself went silent (>2h without fresh textfile output) | for 30m | ticket | [config-assertion-failed](runbooks/config-assertion-failed.md) |
 | `stellarindex_patroni_textfile_stale` | `time() - node_textfile_mtime_seconds{file="patroni.prom"}` — patroni-textfile-scraper.timer (30s) went silent | > 10 min, for 5 min | ticket | [patroni-textfile-stale](runbooks/patroni-textfile-stale.md) |
-| `stellarindex_textfile_producer_stale` | `time() - node_textfile_mtime_seconds` (no `file=` selector — catch-all for every textfile-collector producer with no dedicated staleness alert, GH-899; excludes `ops_job_*.pid<N>.prom` orphans, the one-off `ops_job_backfill.prom`/`ops_job_usd_volume_restamp.prom` jobs and `restore_drill*.prom`, each false-firing on this 24h threshold) | > 24 h, for 30 min | ticket | [textfile-producer-stale](runbooks/textfile-producer-stale.md) |
+| `stellarindex_textfile_producer_stale` | `time() - node_textfile_mtime_seconds` (no `file=` selector — catch-all for every textfile-collector producer with no dedicated staleness alert, GH-899; excludes `ops_job_*.pid<N>.prom` orphans, the one-off `ops_job_backfill.prom`/`ops_job_usd_volume_restamp.prom` jobs, `restore_drill*.prom` and the apply-time `alertmanager_receivers.prom`, each false-firing on this 24h threshold) | > 24 h, for 30 min | ticket | [textfile-producer-stale](runbooks/textfile-producer-stale.md) |
 | `stellarindex_node_root_disk_filling_fast` | predict_linear 10m trend on root avail reaching 0 within 30 min (AND avail < 50%) — the log-flood early warning (the 2026-06-11 class fills root in ~5 min, faster than the static page can be acted on) | trend < 0 for 2m | page | [node-root-disk-filling-fast](runbooks/node-root-disk-filling-fast.md) |
 | `stellarindex_node_root_disk_full` | same expr on `mountpoint="/"` (distinct from DB vol — root FS holds /var/log + /tmp + /var/cache) | < 10 % | page | [node-root-disk-full](runbooks/node-root-disk-full.md) |
 | `stellarindex_node_root_disk_warning` | same | < 20 % | ticket | [node-root-disk-warning](runbooks/node-root-disk-warning.md) |
@@ -488,7 +488,7 @@ Per [ADR-0027](../adr/0027-lcm-cache-tiering.md). R1's
 `TieredDataStore` (`internal/ledgerstream/tiered.go`) reads each LCM
 from the local `galexie-archive` MinIO bucket (hot) and falls back
 on `NoSuchKey` to the AWS public bucket (cold). Pre-§3 of the
-rollout (`storage.cold_tier_enabled = false`) the cold path never
+rollout (`storage.s3_cold_bucket_archive` empty) the cold path never
 runs and these alerts stay silent.
 
 | Name | Metric | Condition | Severity | Runbook |
@@ -620,6 +620,7 @@ auto-unfreeze at all. Rules in
 | `stellarindex_ratelimit_fail_open` | `sum(increase(stellarindex_ratelimit_fail_open_total[15m]))` | > 100 in 15 min (rate limiter bypassing on a Redis error; the prior `rate(...) > 0 for 10m` form could never fire — the fail-open window is capped at the 30s dwell time, so the rate never sustains for 10 straight minutes) | ticket | [ratelimit-fail-open](runbooks/ratelimit-fail-open.md) |
 | `stellarindex_ratelimit_fail_closed` | `sum(rate(stellarindex_ratelimit_fail_closed_total[5m]))` | > 0 for ≥ 2 min (past the fail-open dwell time, the limiter is now failing CLOSED — every request in the bucket gets a 503; 2026-09-16: 2.03M 503s over 2h53m) | page | [ratelimit-fail-open](runbooks/ratelimit-fail-open.md) |
 | `stellarindex_monthly_quota_fail_open` | `sum(rate(stellarindex_monthly_quota_fail_open_total[5m]))` | > 0 for ≥ 10 min (metered-spend ceiling bypassing on a counter read error) | ticket | [monthly-quota-fail-open](runbooks/monthly-quota-fail-open.md) |
+| `stellarindex_monthly_quota_fail_closed` | `sum(rate(stellarindex_monthly_quota_fail_closed_total[5m]))` | > 0 for ≥ 2 min (past the fail-open dwell time, the gate is failing CLOSED — every metered request gets a 429 `monthly-quota-unavailable`) | page | [monthly-quota-fail-open](runbooks/monthly-quota-fail-open.md) |
 | `stellarindex_usage_write_failing` | `sum(rate(stellarindex_usage_units_dropped_total{counter="billable"}[5m]))` | > 0 for ≥ 10 min (write-side twin of the fail-open above — a failed counter INCR/HINCRBY drops metered units silently, with no read error to trip the quota gate) | ticket | [usage-write-failing](runbooks/usage-write-failing.md) |
 | `stellarindex_after_response_tasks_dropping` | `sum(rate(stellarindex_after_response_tasks_dropped_total[5m]))` | > 0 for ≥ 10 min (GH-627: the shared post-response worker pool — usage-counter writes, `TouchUsage` last-seen — dropped a task because its queue was full) | ticket | [after-response-tasks-dropping](runbooks/after-response-tasks-dropping.md) |
 | `stellarindex_scam_gate_fail_open` | `sum by (surface) (rate(stellarindex_scam_gate_lookup_failures_total[5m]))` | > 0 for ≥ 5 min (scam-pricing gate serving directory-flagged issuers' prices on an `account_directory` lookup error) | ticket | [scam-gate-fail-open](runbooks/scam-gate-fail-open.md) |
@@ -688,6 +689,7 @@ auto-unfreeze at all. Rules in
 | `stellarindex_alertmanager_down` | `up{job="alertmanager"}` | == 0 for > 5 min OR series absent for 10 min | page | [alertmanager-down](runbooks/alertmanager-down.md) |
 | `stellarindex_alertmanager_not_notifying` | `alertmanager_notifications_total{integration="webhook"}` | no increase over 15 min (the deadman alone should give ~30/h) | page | [alertmanager-not-notifying](runbooks/alertmanager-not-notifying.md) |
 | `stellarindex_alertmanager_notifications_failing` | `alertmanager_notifications_failed_total` | increase > 0 over 15 min | ticket | [alertmanager-notifications-failing](runbooks/alertmanager-notifications-failing.md) |
+| `stellarindex_alertmanager_optional_receiver_dark` | `stellarindex_alertmanager_optional_receiver_dark{receiver}` (textfile, written by `configs/alertmanager/apply.sh`) | == 1 for 1 h (optional receiver installed with no URL, delivers to nobody) | ticket | [alertmanager-notifications-failing](runbooks/alertmanager-notifications-failing.md) |
 | `prometheus_down` (TSDB corruption) | systemd `prometheus.service` failed | exit-code != 0; runs ad-hoc, not a rule | **P1** | [prometheus-tsdb-corruption](runbooks/prometheus-tsdb-corruption.md) |
 | `stellarindex_redis_exporter_down` | `up{job="redis_exporter"}` | == 0 for > 2 min OR series absent for 5 min | page | [exporter-down](runbooks/exporter-down.md) |
 | `stellarindex_postgres_exporter_down` | `up{job="postgres_exporter"}` | == 0 for > 2 min OR series absent for 5 min | page | [exporter-down](runbooks/exporter-down.md) |
@@ -817,9 +819,14 @@ register; see #485.
 - **Duplicate alerts are a smell.** If two rules fire on the same
   root cause, consolidate. Oncall shouldn't be paged twice for the
   same incident.
-- **Every alert has a test.** Synthetic fixture → AlertManager →
-  stub receiver → assert the right page fires. CI target
-  `make test-alerts` (TBD) exercises this.
+- **Every alert should have a test.** A promtool unit test in
+  `deploy/monitoring/rule-tests/<area>_test.yml` feeds synthetic
+  series and asserts the alert fires on the state it claims to
+  catch and stays silent otherwise; `make monitoring-check` runs
+  them in CI. Not every rule has one yet and no gate requires it.
+  Routing is checked separately: CI validates the rendered
+  Alertmanager config with amtool, but no test drives a fired
+  alert through Alertmanager to a receiver.
 
 ---
 
@@ -832,17 +839,16 @@ register; see #485.
 3. Write the runbook at `docs/operations/runbooks/<name>.md` —
    copy `_template.md`.
 4. Add a row to this catalogue.
-5. Write an alert-firing test at `test/monitoring/<name>_test.yml`.
+5. Write an alert-firing test in
+   `deploy/monitoring/rule-tests/<area>_test.yml`.
 
 All five in one PR. The lint enforces the most-load-bearing
 piece (`scripts/ci/lint-docs.sh` §9 — every rule's
 `runbook_url` must point at an existing runbook file); the
 metric-doc and catalogue-row checks catch the two next-most
-common drifts. The alert-firing test at
-`test/monitoring/<name>_test.yml` is not yet machine-checked
-(`test/monitoring/` doesn't exist as a directory today) — write
-it anyway as part of the same PR; the convention precedes the
-enforcement.
+common drifts. `make monitoring-check` runs every test in
+`deploy/monitoring/rule-tests/`, but nothing fails a rule that
+has none — write it anyway as part of the same PR.
 
 ---
 

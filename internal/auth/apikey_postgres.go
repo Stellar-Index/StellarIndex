@@ -46,6 +46,10 @@ type PostgresAPIKeyValidator struct {
 	// fails (rare), the row eventually rolls off rather than
 	// authenticating a revoked key indefinitely.
 	cacheTTL time.Duration
+	// status re-checks account status on a cache hit. The cached row
+	// cannot carry a later suspension, and a canonical `apikey:` record
+	// may have no api_keys row for a PATCH eviction to find.
+	status accountStatusGate
 }
 
 // PostgresValidatorOptions configures a [PostgresAPIKeyValidator].
@@ -78,13 +82,16 @@ func NewPostgresAPIKeyValidator(opts PostgresValidatorOptions) (*PostgresAPIKeyV
 	if ttl == 0 {
 		ttl = 1 * time.Hour
 	}
-	return &PostgresAPIKeyValidator{
+	v := &PostgresAPIKeyValidator{
 		keys:     opts.Keys,
 		accounts: opts.Accounts,
 		cache:    opts.Cache,
 		now:      now,
 		cacheTTL: ttl,
-	}, nil
+	}
+	v.status.init(DefaultAccountStatusCacheTTL)
+	v.status.accounts = opts.Accounts
+	return v, nil
 }
 
 // Lookup implements [APIKeyValidator]. Cache → Postgres → 401.
@@ -234,6 +241,9 @@ func (v *PostgresAPIKeyValidator) cacheLookup(ctx context.Context, hexHash strin
 	if !rec.ExpiresAt.IsZero() && !v.now().Before(rec.ExpiresAt) {
 		return Subject{}, true, ErrTokenExpired
 	}
+	if _, _, err := v.status.check(ctx, rec.Identifier, v.now()); err != nil {
+		return Subject{}, true, err
+	}
 	sub, err := subjectFromRecord(rec)
 	if err != nil {
 		// Corrupt cache entry — same degrade-not-fail rationale as
@@ -290,14 +300,28 @@ func encodeIPAllowlist(prefixes []netip.Prefix) []string {
 	return out
 }
 
+// cacheStoreScript SETs the cache row (KEYS[1]) unless an eviction
+// tombstone (KEYS[2]) is live. ARGV: body, TTL in ms.
+var cacheStoreScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[2]) == 1 then
+	return 0
+end
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+return 1
+`)
+
 // cacheStore writes the Postgres-derived Subject into Redis with the
 // configured TTL, as the exact record [subjectFromRecord] reads back.
+// The write is skipped while an eviction tombstone lives, so a revoke or
+// suspension that commits mid-lookup is not overwritten by this lookup's
+// older Postgres read (see [evictCachedKey]).
 func (v *PostgresAPIKeyValidator) cacheStore(ctx context.Context, hexHash string, sub Subject) {
 	body, err := json.Marshal(recordFromSubject(sub))
 	if err != nil {
 		return
 	}
-	_ = v.cache.Set(ctx, cachekeys.APIKeyCache(hexHash).String(), body, v.cacheTTL).Err()
+	keys := []string{cachekeys.APIKeyCache(hexHash).String(), cachekeys.APIKeyCacheEvicted(hexHash).String()}
+	_ = cacheStoreScript.Run(ctx, v.cache, keys, body, v.cacheTTL.Milliseconds()).Err()
 }
 
 // convertPermissionEntries maps platform.KeyPermissionEntry into

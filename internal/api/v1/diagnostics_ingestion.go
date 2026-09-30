@@ -230,6 +230,11 @@ type BackfillCoverageRow struct {
 	// post-deploy before the detector's first cycle).
 	CoverageSnapshotAt *WireTime `json:"coverage_snapshot_at,omitempty"`
 
+	// CoverageScanCadenceS is the longest gap-detector scan cadence
+	// (seconds) among this row's tables, so a reader ages
+	// CoverageSnapshotAt against the cadence that actually refreshes it.
+	CoverageScanCadenceS int64 `json:"coverage_scan_cadence_s,omitempty"`
+
 	// CompletenessPct is the ADR-0033 Phase 6 watermark coverage:
 	// (watermark - genesis + 1) / (tip - genesis + 1), where the
 	// watermark is the highest ledger with substrate continuity +
@@ -795,9 +800,13 @@ func (s *Server) overlaySourceCoverageV2(ctx context.Context, rows *[]BackfillCo
 		return
 	}
 	bySource := make(map[string][]timescale.SourceCoverage, len(snaps))
+	cadence := make(map[string]time.Duration, len(snaps))
 	for _, sn := range snaps {
 		key := sourceFromTargetSource(sn.Source)
 		bySource[key] = append(bySource[key], sn)
+		if c := targetScanCadence(sn.Source); c > cadence[key] {
+			cadence[key] = c
+		}
 	}
 	for i := range *rows {
 		src := (*rows)[i].Source
@@ -830,6 +839,7 @@ func (s *Server) overlaySourceCoverageV2(ctx context.Context, rows *[]BackfillCo
 		(*rows)[i].CoveredLedgers = covered
 		(*rows)[i].GapFreePct = gapFree
 		(*rows)[i].CoverageSnapshotAt = wireTimePtr(&oldest)
+		(*rows)[i].CoverageScanCadenceS = int64(cadence[src] / time.Second)
 		// Window-scope the denominator so covered/expected stays
 		// coherent with density_pct (see godoc). Guarded: never zero a
 		// populated row if a snapshot somehow carries expected=0.
@@ -891,6 +901,17 @@ func (s *Server) overlayCompleteness(ctx context.Context, rows *[]BackfillCovera
 		(*rows)[i].CompletenessLakeComplete = sn.LakeComplete
 		(*rows)[i].CompletenessComputedAt = wireTimePtr(&computedAt)
 	}
+}
+
+// targetScanCadence returns the scan cadence of the named gap-detector
+// target, falling back to the default interval for an unregistered name.
+func targetScanCadence(targetSource string) time.Duration {
+	for _, t := range timescale.DefaultGapDetectorTargets {
+		if t.Source == targetSource {
+			return t.EffectiveScanCadence()
+		}
+	}
+	return timescale.GapDetectorInterval
 }
 
 // sourceFromTargetSource maps the gap-detector target name

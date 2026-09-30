@@ -2,8 +2,8 @@ package timescale
 
 import (
 	"context"
-	"errors"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,8 +37,8 @@ func TestVWAPUSDFXResolver_NilStore(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when store is nil")
 	}
-	if !errors.Is(err, err) {
-		t.Errorf("expected wrapped error, got: %v", err)
+	if !strings.Contains(err.Error(), "store is required") {
+		t.Errorf("error = %v, want the nil-store guard's error", err)
 	}
 }
 
@@ -582,6 +582,56 @@ func TestBridgeViaXLM_XLMIsBaseCase(t *testing.T) {
 		}
 		if rate != "" {
 			t.Errorf("%s: bridge returned %q, want a decline (would be circular)", name, rate)
+		}
+	}
+}
+
+// TestStoreCache_SweepIsAmortised — a resident set of fresh entries above
+// the sweep threshold must not be rescanned on every insert (the sweep is
+// the only storeCache path that reads the clock).
+func TestStoreCache_SweepIsAmortised(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1_700_000_000, 0)
+	clockReads := 0
+	r, err := NewVWAPUSDFXResolver(&Store{}, VWAPUSDFXResolverOptions{
+		Clock: func() time.Time { clockReads++; return now },
+	})
+	if err != nil {
+		t.Fatalf("NewVWAPUSDFXResolver: %v", err)
+	}
+	const inserts = 3 * fxCacheSweepThreshold
+	for i := range inserts {
+		r.storeCache(fxCacheKey{asset: "A", bucketMs: int64(i)}, fxCacheEntry{cachedAt: now})
+	}
+	if got := len(r.cache); got != inserts {
+		t.Fatalf("cache size = %d, want %d (every entry is fresh)", got, inserts)
+	}
+	if clockReads > 2 {
+		t.Errorf("storeCache swept %d times over %d fresh inserts, want at most 2", clockReads, inserts)
+	}
+}
+
+// TestStoreCache_SweepEvictsExpired — the amortised trigger still bounds
+// the map: once entries age past the TTL the next sweep drops them.
+func TestStoreCache_SweepEvictsExpired(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1_700_000_000, 0)
+	r, err := NewVWAPUSDFXResolver(&Store{}, VWAPUSDFXResolverOptions{
+		Clock: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewVWAPUSDFXResolver: %v", err)
+	}
+	for i := range 3 * fxCacheSweepThreshold {
+		r.storeCache(fxCacheKey{asset: "A", bucketMs: int64(i)}, fxCacheEntry{cachedAt: now})
+	}
+	now = now.Add(r.cacheTTL + time.Second)
+	for i := range 3 * fxCacheSweepThreshold {
+		r.storeCache(fxCacheKey{asset: "B", bucketMs: int64(i)}, fxCacheEntry{cachedAt: now})
+	}
+	for k := range r.cache {
+		if k.asset == "A" {
+			t.Fatal("expired entries survived a full refill; the sweep never ran")
 		}
 	}
 }

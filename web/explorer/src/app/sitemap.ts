@@ -11,6 +11,8 @@ import { loadIncidents } from '@/lib/incidents';
 import { fiatSlugFor } from '@/lib/fiat-slugs';
 import { PROTOCOLS } from './protocols/registry';
 import { buildConvertParams } from '@/lib/convert-params';
+import { CEX_INFO } from './exchanges/registry';
+import { DEX_INFO } from './dexes/registry';
 
 // Required for `output: 'export'` — sitemap is generated at build
 // time and emitted as a static file. Same applies to robots.ts.
@@ -251,44 +253,21 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     changeFrequency: 'daily',
     priority: 0.6,
   }));
-  // Per-source / per-exchange / per-dex detail pages. Every
-  // source registry entry has a /sources/{name} page; only
-  // ClassExchange entries with subclass=cex|dex have user-facing
-  // /exchanges/{name} or /dexes/{source} pages.
-  //
-  // Pre-fix the sitemap emitted /exchanges/{name} AND /dexes/{name}
-  // for *every* source — including aggregators (coingecko, cmc),
-  // oracles (band, redstone, reflector-*), authority-sanity (ecb)
-  // and lending (blend) — which produced ~33 sitemap entries that
-  // 404'd at the page level. Google penalises sitemaps that
-  // contain known-broken URLs, so we now gate emission on the
-  // source's class+subclass to match the page's
-  // generateStaticParams (CEX_INFO / DEX_INFO maps).
-  const sourcePages: MetadataRoute.Sitemap = [];
-  for (const s of sources) {
-    sourcePages.push({
-      url: siteURL(`/sources/${s.name}`),
+  // /exchanges/<name> and /dexes/<source> are pre-rendered from the static
+  // CEX_INFO / DEX_INFO maps, so they are listed from the same maps: an API
+  // source outside them has no page, and a mapped venue the API omits still has one.
+  const sourcePages: MetadataRoute.Sitemap = [
+    ...sources.map((s) => `/sources/${s.name}`),
+    ...Object.keys(CEX_INFO).map((name) => `/exchanges/${name}`),
+    ...Object.keys(DEX_INFO).map((source) => `/dexes/${source}`),
+  ]
+    .filter((path) => routeAvailable(path))
+    .map((path) => ({
+      url: siteURL(path),
       lastModified: now,
       changeFrequency: 'weekly',
       priority: 0.5,
-    });
-    if (s.class === 'exchange' && s.subclass === 'cex') {
-      sourcePages.push({
-        url: siteURL(`/exchanges/${s.name}`),
-        lastModified: now,
-        changeFrequency: 'weekly',
-        priority: 0.5,
-      });
-    }
-    if (s.class === 'exchange' && s.subclass === 'dex') {
-      sourcePages.push({
-        url: siteURL(`/dexes/${s.name}`),
-        lastModified: now,
-        changeFrequency: 'weekly',
-        priority: 0.5,
-      });
-    }
-  }
+    }));
   // Lending pools — Blend pool detail pages. Small set today
   // (~9 pools), so list every one at priority 0.5.
   const lendingPages: MetadataRoute.Sitemap = lendingPools.map((id) => ({
@@ -316,11 +295,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ];
 }
 
-type SitemapSource = {
-  name: string;
-  class: string;
-  subclass: string;
-};
+type SitemapSource = { name: string };
 
 // All six listings below go through buildFetch (src/lib/buildFetch.ts):
 // bounded retry with backoff instead of one 5s shot, and — except where
@@ -333,16 +308,10 @@ type SitemapSource = {
 
 async function fetchSources(): Promise<SitemapSource[]> {
   const rows = requireRows(
-    await buildFetchData<{ name: string; class?: string; subclass?: string }[]>(
-      '/v1/sources',
-    ),
+    await buildFetchData<SitemapSource[]>('/v1/sources'),
     '/v1/sources listing for sitemap',
   );
-  return rows.map((s) => ({
-    name: s.name,
-    class: s.class ?? '',
-    subclass: s.subclass ?? '',
-  }));
+  return rows.map((s) => ({ name: s.name }));
 }
 
 async function fetchLendingPools(): Promise<string[]> {
