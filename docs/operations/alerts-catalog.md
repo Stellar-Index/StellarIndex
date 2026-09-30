@@ -832,17 +832,19 @@ register; see #485.
 3. Write the runbook at `docs/operations/runbooks/<name>.md` —
    copy `_template.md`.
 4. Add a row to this catalogue.
-5. Write an alert-firing test at `test/monitoring/<name>_test.yml`.
+5. Write an alert-firing test at `deploy/monitoring/rule-tests/<area>_test.yml`.
 
 All five in one PR. The lint enforces the most-load-bearing
 piece (`scripts/ci/lint-docs.sh` §9 — every rule's
 `runbook_url` must point at an existing runbook file); the
 metric-doc and catalogue-row checks catch the two next-most
-common drifts. The alert-firing test at
-`test/monitoring/<name>_test.yml` is not yet machine-checked
-(`test/monitoring/` doesn't exist as a directory today) — write
-it anyway as part of the same PR; the convention precedes the
-enforcement.
+common drifts. The alert-firing test runs in CI:
+`make monitoring-check` executes
+`promtool test rules deploy/monitoring/rule-tests/*.yml`, and
+`scripts/ci/lint-rule-structure.py` checks each fixture's labels
+against the emitter's declared set. A test placed anywhere else
+is never executed. Per-alert test presence is not enforced, so
+writing the test is on the author.
 
 ---
 
