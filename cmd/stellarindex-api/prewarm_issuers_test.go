@@ -62,27 +62,28 @@ func (r *recordingIssuersReader) seen() []int {
 }
 
 // TestPrewarmIssuersWarmsTheLimitsRealCallersUse is the guard. A warmed
-// limit nobody requests is a phantom slot: it costs a query and leaves
-// the actual caller on the cold path anyway. That exact mistake is
-// recorded in prewarmLight for /v1/pools, where a mismatched cache key
-// left every user request paying 10-30s against a cache that looked
-// warm.
+// slot no caller lands on costs a query and leaves the actual caller on
+// the cold path anyway. That exact mistake is recorded in prewarmLight
+// for /v1/pools, where a mismatched cache key left every user request
+// paying 10-30s against a cache that looked warm.
 func TestPrewarmIssuersWarmsTheLimitsRealCallersUse(t *testing.T) {
 	rec := &recordingIssuersReader{}
 	cached := v1.NewCachedIssuersReader(rec, 5*time.Minute)
 
 	prewarmIssuers(context.Background(), discardLogger(), cached)
-
-	got := rec.seen()
-	want := append([]int(nil), prewarmIssuerLimits...)
-	sort.Ints(want)
-	if len(got) != len(want) {
-		t.Fatalf("prewarmed limits = %v, want %v", got, want)
+	warmed := rec.seen()
+	if len(warmed) == 0 {
+		t.Fatal("prewarm made no upstream call")
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("prewarmed limits = %v, want %v", got, want)
+
+	for _, lim := range prewarmIssuerLimits {
+		if _, err := cached.ListIssuers(context.Background(), lim); err != nil {
+			t.Fatal(err)
 		}
+	}
+	if got := rec.seen(); len(got) != len(warmed) {
+		t.Fatalf("real-caller limits %v reached upstream after prewarm: calls %v -> %v",
+			prewarmIssuerLimits, warmed, got)
 	}
 }
 

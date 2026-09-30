@@ -199,6 +199,64 @@ func TestUsageTracker_StreamTickCountBounded(t *testing.T) {
 	}
 }
 
+// TestUsageTracker_StreamEndedAtMonthlyQuota: MonthlyQuota admits a stream
+// only while the account is under its cap, so a stream opened just under it
+// must be ended by the tick that finds the cap reached, never billed past it.
+func TestUsageTracker_StreamEndedAtMonthlyQuota(t *testing.T) {
+	const interval = 20 * time.Millisecond
+	t.Cleanup(middleware.SetStreamMeterIntervalForTest(interval))
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	counter := usage.New(rdb)
+	const quota = 3
+	subject := auth.Subject{Tier: auth.TierAPIKey, KeyID: "kid_stream_quota", Identifier: "acct:stream_quota", MonthlyQuota: quota}
+	id := middleware.UsageKeyForSubject(subject)
+
+	unblock := make(chan struct{})
+	t.Cleanup(func() { close(unblock) })
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/price/tip/stream", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		select {
+		case <-r.Context().Done():
+		case <-unblock:
+		}
+	})
+	stamp := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(auth.WithSubject(r.Context(), subject)))
+		})
+	}
+	h := middleware.Chain(mux, stamp, middleware.UsageTracker(counter, nil))
+	ended := make(chan struct{})
+	go func() {
+		defer close(ended)
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/price/tip/stream", nil))
+	}()
+
+	select {
+	case <-ended:
+	case <-time.After(100 * interval):
+		got, _ := counter.MonthToDate(context.Background(), id)
+		t.Fatalf("stream still open after ~100 meter intervals with usage %d against quota %d — "+
+			"a tick at the monthly cap must end the stream", got, quota)
+	}
+	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+		t.Fatal("after-response pool did not drain in time")
+	}
+	got, err := counter.MonthToDate(context.Background(), id)
+	if err != nil {
+		t.Fatalf("MonthToDate: %v", err)
+	}
+	if got != quota {
+		t.Fatalf("usage total for a stream ended at its monthly quota = %d, want exactly %d "+
+			"(below: ended before the cap; above: a tick billed past it)", got, quota)
+	}
+}
+
 // TestUsageTracker_StreamNoTicksAfterClose guards meterOpenStream's
 // shutdown: once a stream's handler has returned, no further tick may
 // land, however many meter intervals later something looks again.

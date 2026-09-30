@@ -13,14 +13,17 @@
 //   - sustained 10 min minimum
 //
 // Traffic shape (per design note):
-//   60% /v1/price (single)
+//   61% /v1/price (single)
 //   15% /v1/price/batch
 //   10% /v1/price/tip
 //    6% /v1/vwap
 //    4% /v1/history
 //    3% /v1/twap
-//    1% /v1/observations/stream (SSE)
 //    1% /v1/oracle/lastprice (SEP-40)
+//
+// SSE is NOT in this mix: a stream response never completes, so every
+// open here would time out, count as failed and pin the p99. The design
+// note's 1 % SSE share folds into /v1/price; 05-streaming.js owns SSE.
 //
 // After this run passes, the operator generates the SLA proof
 // markdown at docs/operations/sla-proof-<YYYY-MM-DD>.md from the
@@ -71,13 +74,12 @@ export function setup() {
 
 function pickEndpoint() {
   const r = Math.random() * 100;
-  if (r < 60)  return 'price';
-  if (r < 75)  return 'batch';
-  if (r < 85)  return 'price-tip';
-  if (r < 91)  return 'vwap';
-  if (r < 95)  return 'history';
-  if (r < 98)  return 'twap';
-  if (r < 99)  return 'stream';
+  if (r < 61)  return 'price';
+  if (r < 76)  return 'batch';
+  if (r < 86)  return 'price-tip';
+  if (r < 92)  return 'vwap';
+  if (r < 96)  return 'history';
+  if (r < 99)  return 'twap';
   return 'oracle-lastprice';
 }
 
@@ -143,21 +145,6 @@ export default function () {
       );
       break;
     }
-
-    case 'stream':
-      // SSE is sampled in the mix at 1 % but only as a connection
-      // open — the soak quickly accumulates lingering clients.
-      // Holding open inside this iteration would block all VUs;
-      // instead we measure the connection-accept latency only.
-      r = http.get(
-        `${baseUrl}/observations/stream?asset=${enc(pair.asset)}&quote=${enc(pair.quote)}`,
-        {
-          headers: Object.assign({}, headers, { 'Accept': 'text/event-stream' }),
-          tags: { endpoint: 'stream' },
-          timeout: '5s',
-        },
-      );
-      break;
 
     case 'oracle-lastprice':
       // /v1/oracle/lastprice (SEP-40) reads `asset` only; quote is

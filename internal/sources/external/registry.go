@@ -145,7 +145,8 @@ var Registry = map[string]Metadata{
 	// polls hourly but writes one row per ticker per UTC day to the
 	// `fx_quotes` table — every write buckets to Truncate(24 * time.Hour),
 	// so the table never holds anything finer than daily — the USD-anchor
-	// reference behind /v1/currencies + per-trade usd_volume. It is an
+	// reference behind per-trade usd_volume, fiat pricing on /v1/assets and
+	// the fiat series on /v1/chart. It is an
 	// off-chain vendor feed (not a Stellar source), hence registered here so
 	// /v1/sources classifies it as external FX (SubclassFX → IsOnChain=false)
 	// instead of fail-closing through Lookup's unknown-source fallback.

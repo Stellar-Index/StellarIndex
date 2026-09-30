@@ -17,7 +17,7 @@ flips — those need infrastructure beyond `make dev`.
 | File | Stresses | Pass criteria |
 |---|---|---|
 | `scenarios/01-redis-down.sh` | rate-limit fail-open + Redis-fed read paths | API `/v1/healthz` returns 200/503 throughout; recovers within 30s |
-| `scenarios/02-timescale-down.sh` | DB-backed read paths fail loudly | `/v1/markets` 5xx OR Redis-cached body; never silent-empty 200 |
+| `scenarios/02-timescale-down.sh` | DB-backed read paths fail loudly | uncached `/v1/markets?limit=97` 5xx; default `/v1/markets` 5xx OR cached body, never an empty 200 over a non-empty baseline |
 | `scenarios/03-redis-network-partition.sh` | go-redis cold-conn timeout vs connection-refused | ≤ 1 transient sample failure during 30s partition; clean recovery |
 | `scenarios/04-redis-misconf.sh` | Redis MISCONF (stop-writes-on-bgsave-error) → F-0039 cascade | cache-write GET routes 503 + Retry-After:30 (NOT 500); `/v1/price` stays 200 stale; signup fail-CLOSED post-30s-dwell; all routes recover within 30s of heal |
 

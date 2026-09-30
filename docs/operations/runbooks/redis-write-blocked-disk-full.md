@@ -91,8 +91,12 @@ journalctl --vacuum-size=200M
 truncate -s 0 /var/log/syslog.1
 # (also syslog.2.gz, .3.gz etc if present)
 
-# Remove one-time WASM-audit stderr captures (multi-GB each)
-rm -f /var/log/wasm-history-*.stderr
+# Remove WASM-audit stderr captures (multi-GB per walk). The walk JSON and
+# checkpoint JSONL are small and may not be committed yet, so they stay.
+# -f is required: the kernel comm is truncated to 15 chars, so a bare
+# `pgrep stellarindex-ops` never matches. Empty output = no walk running.
+pgrep -af 'stellarindex-ops wasm-history'
+rm -f /var/log/wasm-audit/*.stderr /var/log/wasm-history-*.stderr
 
 # Postgres logs — only truncate if confirmed safe (not actively in use)
 # Prefer `logrotate -f /etc/logrotate.d/postgresql-common` first
@@ -177,12 +181,14 @@ happen the change is one `CONFIG SET` away.
   `maxsize 100M` with 7 gzip-compressed rotations, plus a journald
   `SystemMaxUse=500M` cap. The 8.6 GB syslog.1 class (rotate-14,
   no compress) can't recur on an ansible-applied host.
-- **Still open**: WASM-audit one-time captures should land in
-  `/var/log/wasm-audit/` (a dedicated dir excluded from
-  operator-default backups), not the root log dir — the
-  `/var/log/wasm-history-*.stderr` pattern in the free-disk step
-  above is still where they land today. TODO(maintainer): codify the
-  dedicated dir (or a cleanup timer) in the wasm-audit procedure.
+- ~~Dedicated dir for WASM-audit captures~~ — **CLOSED**: the
+  wasm-audit procedure
+  ([`../wasm-audits/README.md`](../wasm-audits/README.md) §2, "Where
+  walk output goes") writes every walk's JSON, stderr and checkpoint
+  JSONL under `/var/log/wasm-audit/` and deletes them once the audit
+  log records the timeline, so the free-disk step above targets that
+  dir's stderr captures (plus any legacy loose
+  `/var/log/wasm-history-*.stderr`).
 
 ## Related runbooks
 
@@ -204,6 +210,10 @@ happen the change is one `CONFIG SET` away.
 
 ## Changelog
 
+- 2026-09-30 — closed the wasm-audit log-dir Prevention item: the
+  procedure now writes walk captures under `/var/log/wasm-audit/`;
+  the free-disk step removes that dir's stderr captures after a
+  `pgrep -af` running-walk check.
 - 2026-09-27 — corrected "Detected by" / Alert: led with
   `stellarindex_redis_writes_blocked` (fires on Redis's own bgsave
   status) rather than `stellarindex_aggregator_cache_write_errors`
