@@ -26678,7 +26678,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"label\": \"<string>\",\n  \"scopes\": [\n    \"admin\",\n    \"dashboard\"\n  ]\n}",
+                      "raw": "{\n  \"label\": \"<string>\",\n  \"scopes\": [\n    \"account\",\n    \"account\"\n  ]\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
