@@ -356,6 +356,7 @@ echo "=== Ansible ClickHouse host-gate self-test ===" && ./scripts/ci/ansible-cl
 echo "=== Ansible listing-sync pubnet gate ===" && ./scripts/ci/ansible-listing-sync-gate-test.sh
 echo "=== Alertmanager apply-path parity ===" && ./scripts/ci/check-alertmanager-parity.sh
 echo "=== Alertmanager apply-path parity self-test ===" && ./scripts/ci/check-alertmanager-parity-test.sh
+echo "=== Alertmanager inhibit-rule families ===" && bash configs/alertmanager/inhibit-rules-test.sh
 echo "=== pgBackRest backup wrapper self-test ===" && ./scripts/ci/pgbackrest-backup-test.sh
 echo "=== API-smoke textfile self-test ===" && ./scripts/ci/smoke-textfile-test.sh
 echo "=== Served-value harness scheduling + cadence ===" && ./scripts/ci/lint-served-value-cadence.sh
