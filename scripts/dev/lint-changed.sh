@@ -26,8 +26,9 @@
 #                            lint-git-fixture-isolation scoped; shellcheck -x
 #                            (0.5 s/file). A *-test.sh is also RUN, last.
 #   *.go                     gofumpt -l, goimports -l (0.1 s/file); then
-#                            lint-lexicon, lint-i128, lint-imports (whole
-#                            tree, ~1 s each — they take no file list),
+#                            lint-lexicon, check-deprecations, lint-i128,
+#                            lint-imports (whole tree, ~1 s each — they
+#                            take no file list),
 #                            lint-go-typographic-quotes (whole tree, 0.55 s),
 #                            lint-unbounded-latest-row (whole tree, 0.8 s)
 #                            and lint-http-timeouts scoped to the package
@@ -426,6 +427,7 @@ fi
 #    lint, then vet and build on the touched packages.
 if [ "${#go_files[@]}" -gt 0 ]; then
     add_step "lint-lexicon" "whole tree (takes no file list)" "$ci_dir/lint-lexicon.sh"
+    add_step "check-deprecations" "whole tree (takes no file list)" "$ci_dir/check-deprecations.sh"
     add_step "lint-i128" "whole tree (takes no file list)" "$ci_dir/lint-i128.sh"
     add_step "lint-imports" "whole tree (takes no file list)" "$ci_dir/lint-imports.sh"
     # The typographic-quote scan, whole tree even though it ACCEPTS a file
