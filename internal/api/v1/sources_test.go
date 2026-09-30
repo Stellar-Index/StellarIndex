@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"slices"
 	"sort"
 	"testing"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/sourcenet"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 func TestSources_ReturnsRegistry(t *testing.T) {
@@ -153,5 +156,69 @@ func TestSources_SortedByName(t *testing.T) {
 	}
 	if !sort.StringsAreSorted(names) {
 		t.Errorf("sources not sorted: %v", names)
+	}
+}
+
+// TestSources_NetworkScoped pins that a test net lists only the sources that
+// exist on it, while pubnet (and the empty default) keeps the full registry.
+func TestSources_NetworkScoped(t *testing.T) {
+	names := func(network string) []string {
+		t.Helper()
+		ts := httpTestServer(t, v1.New(v1.Options{Network: network}))
+		resp := mustGet(t, ts.URL+"/v1/sources")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("network %q: status = %d, want 200", network, resp.StatusCode)
+		}
+		var env struct {
+			Data []v1.Source `json:"data"`
+		}
+		mustDecode(t, resp, &env)
+		out := make([]string, 0, len(env.Data))
+		for _, s := range env.Data {
+			out = append(out, s.Name)
+		}
+		return out
+	}
+
+	def, pub := names(""), names("pubnet")
+	if len(def) != len(external.Registry) || len(pub) != len(external.Registry) {
+		t.Fatalf("pubnet must serve the full registry: default=%d pubnet=%d registry=%d",
+			len(def), len(pub), len(external.Registry))
+	}
+
+	for _, network := range []string{"testnet", "futurenet"} {
+		got := names(network)
+		for _, n := range got {
+			if ok, _ := sourcenet.Applicable(n, network); !ok {
+				t.Errorf("%s: /v1/sources lists pubnet-only source %q", network, n)
+			}
+		}
+		for _, n := range []string{"binance", "soroswap", "chainlink"} {
+			if slices.Contains(got, n) {
+				t.Errorf("%s: /v1/sources lists %q", network, n)
+			}
+		}
+		if !slices.Contains(got, "sdex") {
+			t.Errorf("%s: /v1/sources omits sdex", network)
+		}
+	}
+}
+
+// TestSources_EveryRegistryNameClassified guards the network gate's failure
+// direction: sourcenet.Applicable answers false for any name it does not
+// classify, so a new on-chain registry entry that runs on every network would
+// silently vanish from test nets. Only off-chain feeds may rely on that default.
+func TestSources_EveryRegistryNameClassified(t *testing.T) {
+	offChain := map[string]bool{
+		"binance": true, "kraken": true, "bitstamp": true, "coinbase": true, // CEX
+		"massive": true, "exchangeratesapi": true, "ecb": true, // FX
+		"coingecko": true, "coinmarketcap": true, "cryptocompare": true, // aggregators
+		"chainlink": true, // EVM oracle, read off-chain
+		"tiingo":    true, // fund NAV vendor
+	}
+	for name := range external.Registry {
+		if !sourcenet.Known(name) && !offChain[name] {
+			t.Errorf("external.Registry[%q] is neither classified in sourcenet nor listed as an off-chain feed", name)
+		}
 	}
 }

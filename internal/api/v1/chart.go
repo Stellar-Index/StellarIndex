@@ -279,7 +279,7 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 	chartCtx, chartCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer chartCancel()
 	points, walk, err := s.chartSeriesPoints(chartCtx, pair,
-		chartWindow{from: from, gran: gran}, s.chartVWAPReader(gran, from))
+		chartWindow{from: from, gran: gran}, s.chartVWAPReader(gran))
 	if errors.Is(err, ErrUnknownGranularity) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-granularity",
@@ -551,8 +551,8 @@ func (s *Server) handleChartTWAP(
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
-	read := func(rc context.Context, p canonical.Pair) ([]HistoryPoint, error) {
-		return s.history.TWAPPointsInRange(rc, p, twapGran, from, time.Time{}, historyMaxPoints)
+	read := func(rc context.Context, p canonical.Pair, lo, hi time.Time, limit int) ([]HistoryPoint, error) {
+		return s.history.TWAPPointsInRange(rc, p, twapGran, lo, hi, limit)
 	}
 
 	points, walk, err := s.chartSeriesPoints(ctx, pair,
@@ -1112,21 +1112,95 @@ type chartWalkResult struct {
 	degraded bool
 }
 
+// chartRead fetches up to `limit` of one source pair's closed buckets in
+// [from, to), oldest first; a zero bound is unbounded on that side.
+type chartRead func(ctx context.Context, p canonical.Pair, from, to time.Time, limit int) ([]HistoryPoint, error)
+
+// chartSpan is a half-open bucket range [from, to) of a [chartRead].
+type chartSpan struct{ from, to time.Time }
+
+// missingSpans returns the window's readable buckets `m` does not hold, as
+// ranges on the grid [chartWindow.covered] counts. A later source can only
+// claim a bucket no earlier one did, so reading it over these ranges merges
+// exactly what a full-window read would, while its reads and the width they
+// scan stay bounded by the missing buckets however they are spread.
+// nil when the window is unbounded below or the grain unknown.
+func (w chartWindow) missingSpans(m *chartBucketMerge, now time.Time) []chartSpan {
+	if w.from.IsZero() || m.empty() || chartBucketStep(m.earliest(), w.gran).IsZero() {
+		return nil
+	}
+	b := m.earliest()
+	for p := chartBucketPrev(b, w.gran); !p.Before(w.from); p = chartBucketPrev(p, w.gran) {
+		b = p
+	}
+	for b.Before(w.from) {
+		b = chartBucketStep(b, w.gran)
+	}
+	start := b
+	var runs []chartSpan
+	for next := chartBucketStep(b, w.gran); !next.After(now); b, next = next, chartBucketStep(next, w.gran) {
+		if _, held := m.byBucket[b]; held {
+			continue
+		}
+		if n := len(runs); n > 0 && runs[n-1].to.Equal(b) {
+			runs[n-1].to = next
+			continue
+		}
+		runs = append(runs, chartSpan{from: b, to: next})
+	}
+	if len(runs) > 0 && runs[0].from.Equal(start) {
+		runs[0].from = w.from // the store reads buckets at or after the window's own bound
+	}
+	return coalesceChartSpans(runs)
+}
+
+// coalesceChartSpans bridges ascending, disjoint runs across their narrowest
+// gaps while the bridged width stays within the runs' own, so the spans scan
+// at most twice the missing width in at most len(runs) reads.
+func coalesceChartSpans(runs []chartSpan) []chartSpan {
+	if len(runs) < 2 {
+		return runs
+	}
+	var slack time.Duration
+	for _, r := range runs {
+		slack += r.to.Sub(r.from)
+	}
+	gap := func(i int) time.Duration { return runs[i+1].from.Sub(runs[i].to) }
+	order := make([]int, len(runs)-1) // gap i sits between runs[i] and runs[i+1]
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool { return gap(order[a]) < gap(order[b]) })
+	bridged := make([]bool, len(order))
+	for _, i := range order {
+		if slack -= gap(i); slack < 0 {
+			break
+		}
+		bridged[i] = true
+	}
+	out := []chartSpan{runs[0]}
+	for i, r := range runs[1:] {
+		if bridged[i] {
+			out[len(out)-1].to = r.to
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
 // chartWalk is the state one source walk shares across its reads.
 type chartWalk struct {
 	s     *Server
 	pair  canonical.Pair
 	win   chartWindow
-	read  func(context.Context, canonical.Pair) ([]HistoryPoint, error)
+	read  chartRead
 	merge *chartBucketMerge
 	res   chartWalkResult
 	spent time.Duration // time spent on reads taken after the merge filled
 }
 
-func (s *Server) newChartWalk(
-	pair canonical.Pair, win chartWindow,
-	read func(context.Context, canonical.Pair) ([]HistoryPoint, error),
-) *chartWalk {
+func (s *Server) newChartWalk(pair canonical.Pair, win chartWindow, read chartRead) *chartWalk {
 	return &chartWalk{s: s, pair: pair, win: win, read: read, merge: newChartBucketMerge()}
 }
 
@@ -1183,7 +1257,7 @@ func (w *chartWalk) step(ctx context.Context, sp canonical.Pair, class chartSour
 		// Nothing merged yet: this read can still be the answer, so it
 		// keeps the handler's ceiling and, for an alias source, its
 		// error handling.
-		points, err := w.read(ctx, sp)
+		points, err := w.read(ctx, sp, w.win.from, time.Time{}, historyMaxPoints)
 		if err != nil {
 			if class == chartSourceAlias {
 				return false, err
@@ -1194,17 +1268,52 @@ func (w *chartWalk) step(ctx context.Context, sp canonical.Pair, class chartSour
 		w.claim(sp, points)
 		return true, nil
 	}
-	if w.win.covered(w.merge, time.Now().UTC()) {
+	now := time.Now().UTC()
+	if w.win.covered(w.merge, now) {
 		return false, nil // every readable bucket is already claimed
 	}
+	spans := w.win.missingSpans(w.merge, now)
+	if len(spans) == 0 {
+		spans = []chartSpan{{from: w.win.from}}
+	}
+	return w.fill(ctx, sp, spans), nil
+}
+
+// fill reads one source over `spans` inside [chartWalkBudget], reporting
+// whether the walk may continue. flags.stale is set exactly when a read
+// failed or the budget cut the walk short.
+func (w *chartWalk) fill(ctx context.Context, sp canonical.Pair, spans []chartSpan) bool {
+	if len(spans) > 1 {
+		// A one-bucket read over the spans' hull shows whether this source
+		// holds anything they could claim, so an empty one costs one read.
+		probe, cont, ok := w.readSpan(ctx, sp, chartSpan{from: spans[0].from, to: spans[len(spans)-1].to}, 1)
+		if !ok || len(probe) == 0 {
+			return cont
+		}
+	}
+	for _, span := range spans {
+		points, cont, ok := w.readSpan(ctx, sp, span, historyMaxPoints)
+		if !ok {
+			return cont
+		}
+		w.claim(sp, points)
+	}
+	return true
+}
+
+// readSpan is one budgeted read of [chartWalk.fill]. ok is false when the
+// read failed or the budget is spent, and cont whether the walk may go on.
+func (w *chartWalk) readSpan(
+	ctx context.Context, sp canonical.Pair, span chartSpan, limit int,
+) (points []HistoryPoint, cont, ok bool) {
 	remaining := chartWalkBudget - w.spent
 	if remaining <= 0 {
 		w.res.degraded = true
-		return false, nil
+		return nil, false, false
 	}
 	rctx, cancel := context.WithTimeout(ctx, remaining)
 	started := time.Now()
-	points, err := w.read(rctx, sp)
+	points, err := w.read(rctx, sp, span.from, span.to, limit)
 	cancel()
 	w.spent += time.Since(started)
 	if err != nil {
@@ -1218,10 +1327,9 @@ func (w *chartWalk) step(ctx context.Context, sp canonical.Pair, class chartSour
 		// walk continues; the budget check above ends it when the
 		// failure was the budget itself.
 		w.res.degraded = true
-		return true, nil //nolint:nilerr // degrade the response, never fail it — see above
+		return nil, true, false
 	}
-	w.claim(sp, points)
-	return true, nil
+	return points, true, true
 }
 
 // claim normalises one source's points to true prices and offers them
@@ -1273,7 +1381,7 @@ func (s *Server) chartSeriesPoints(
 	ctx context.Context,
 	pair canonical.Pair,
 	win chartWindow,
-	read func(context.Context, canonical.Pair) ([]HistoryPoint, error),
+	read chartRead,
 ) ([]HistoryPoint, chartWalkResult, error) {
 	points, res, err := s.chartObservedPoints(ctx, pair, win, read)
 	if err != nil {
@@ -1304,7 +1412,7 @@ func (s *Server) chartObservedPoints(
 	ctx context.Context,
 	pair canonical.Pair,
 	win chartWindow,
-	read func(context.Context, canonical.Pair) ([]HistoryPoint, error),
+	read chartRead,
 ) ([]HistoryPoint, chartWalkResult, error) {
 	w := s.newChartWalk(pair, win, read)
 	if err := s.chartMergeAliasPairs(ctx, w); err != nil {
@@ -1553,10 +1661,10 @@ func (s *Server) chartMergeAliasPairs(ctx context.Context, w *chartWalk) error {
 }
 
 // chartVWAPReader returns a [chartStablecoinFallback] read closure that
-// fetches a pair's closed prices_<gran> series over [from, now).
-func (s *Server) chartVWAPReader(gran string, from time.Time) func(context.Context, canonical.Pair) ([]HistoryPoint, error) {
-	return func(ctx context.Context, p canonical.Pair) ([]HistoryPoint, error) {
-		return s.history.HistoryPointsInRange(ctx, p, gran, from, time.Time{}, historyMaxPoints)
+// fetches a pair's closed prices_<gran> series over [from, to).
+func (s *Server) chartVWAPReader(gran string) chartRead {
+	return func(ctx context.Context, p canonical.Pair, from, to time.Time, limit int) ([]HistoryPoint, error) {
+		return s.history.HistoryPointsInRange(ctx, p, gran, from, to, limit)
 	}
 }
 
@@ -1608,7 +1716,7 @@ func (s *Server) chartVWAPReader(gran string, from time.Time) func(context.Conte
 // pair: swallowing it would serve a failed read as an empty series.
 func (s *Server) fiatSeriesThroughXLM(
 	ctx context.Context, pair canonical.Pair, win chartWindow,
-	read func(context.Context, canonical.Pair) ([]HistoryPoint, error),
+	read chartRead,
 ) ([]HistoryPoint, chartWalkResult, error) {
 	legs, ok := fiatCrossLegsThroughXLM(pair)
 	if !ok {
@@ -2080,7 +2188,7 @@ func (s *Server) handleChartMarketCapCrypto(
 	// USD price series (daily), with the stablecoin-USD proxy fallback
 	// the normal chart uses when nothing trades directly in fiat:USD.
 	pricePts, walk, err := s.chartSeriesPoints(ctx, pair,
-		chartWindow{from: from, gran: gran}, s.chartVWAPReader(gran, from))
+		chartWindow{from: from, gran: gran}, s.chartVWAPReader(gran))
 	if err != nil {
 		if clientAborted(r, err) {
 			return

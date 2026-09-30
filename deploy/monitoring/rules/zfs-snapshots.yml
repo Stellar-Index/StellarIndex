@@ -28,6 +28,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: storage
+          alert_family: "zfs_pool_free/{{ $labels.pool }}"
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-snapshots.md
           summary: "ZFS pool {{ $labels.pool }} free space {{ $value | humanize1024 }}B < 2.5 TiB — snapshot guard will start pruning"
@@ -47,6 +48,7 @@ groups:
           severity: page
           team: stellarindex
           component: storage
+          alert_family: "zfs_pool_free/{{ $labels.pool }}"
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-snapshots.md
           summary: "ZFS pool {{ $labels.pool }} free space {{ $value | humanize1024 }}B < 1.5 TiB — below the snapshot guard floor"

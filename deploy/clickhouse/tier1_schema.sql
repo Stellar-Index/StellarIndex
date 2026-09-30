@@ -232,9 +232,10 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     -- Queryable owner + asset (ADR-0038 Phase C account-state / asset-holder
     -- reads). account_id = owning G-strkey for account-owned entries (account
     -- / trustline / offer / data); asset = canonical "CODE-ISSUER" / "native"
-    -- / "pool:<hex>" for trustlines. Empty otherwise. Bloom skip-indexes so a
-    -- WHERE account_id=? / asset=? prunes parts — the sort key is
-    -- (ledger_seq, tx_hash, …), so these predicates would otherwise full-scan.
+    -- / "pool:<hex>" for trustlines. Empty otherwise. account_id carries a
+    -- bloom skip-index so WHERE account_id=? prunes parts — the sort key is
+    -- (ledger_seq, tx_hash, …). asset has none: asset-holder reads use
+    -- ledger_entries_current's idx_lecur_asset; WHERE asset=? here scans every part.
     -- Existing rows backfill to '' until a ch re-derive repopulates them.
     account_id   String DEFAULT '',
     asset        String DEFAULT '',
@@ -272,7 +273,6 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     -- migrations/0120 and docs/operations/runbooks/entry-walk-renumbering.md.
     intra_ledger_seq UInt32 DEFAULT 0,
     INDEX idx_lec_account_id account_id TYPE bloom_filter(0.01) GRANULARITY 1,
-    INDEX idx_lec_asset asset TYPE bloom_filter(0.01) GRANULARITY 1,
     -- key_xdr is not in the sort key; the bloom prunes point lookups.
     -- 0.01 as live on r1: a probe reads the whole index, so a tighter FP
     -- (bigger index) is slower, and no production reader needs it.

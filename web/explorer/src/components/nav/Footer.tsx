@@ -68,6 +68,9 @@ export function Footer() {
               // the commitment behind /pricing, so it belongs next to
               // the status page a reader checks it against.
               { label: 'Service level', href: '/sla' },
+              // Network-agnostic, so deliberately NOT in LEAN_HIDDEN_HREFS.
+              { label: 'Terms of service', href: '/terms' },
+              { label: 'Privacy policy', href: '/privacy' },
             ]}
           />
           <FooterColumn

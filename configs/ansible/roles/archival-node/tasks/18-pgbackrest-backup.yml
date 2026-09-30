@@ -1,8 +1,8 @@
 ---
 # Scheduled pgBackRest backups for the stellarindex stanza.
 #
-# pgBackRest itself (stanza, repo, WAL archiving, retention=2) is
-# configured out-of-band; this task only installs the recurring backup
+# pgBackRest itself (stanza, repo, retention=2) is configured out-of-band
+# (WAL archiving is in postgresql.conf.j2); this task only installs the recurring backup
 # *schedule* — which was missing, so the single bootstrap full backup
 # aged past 24h and tripped `stellarindex_timescale_backup_none_24h`
 # (page) on the status page. Cadence: differential Mon–Sat + a full on

@@ -41,6 +41,25 @@ func TestTrade_Validate_happy(t *testing.T) {
 	}
 }
 
+// A single zero leg is a real SDEX fill (one side rounded to zero stroops)
+// and must pass so the served tier can store it; only both-zero and
+// negative legs are rejected.
+func TestTrade_Validate_oneZeroLegIsValid(t *testing.T) {
+	cases := map[string]func(*c.Trade){
+		"zero base amount":  func(t *c.Trade) { t.BaseAmount = c.NewAmount(big.NewInt(0)) },
+		"zero quote amount": func(t *c.Trade) { t.QuoteAmount = c.NewAmount(big.NewInt(0)) },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			tr := validTrade()
+			mutate(&tr)
+			if err := tr.Validate(); err != nil {
+				t.Fatalf("Validate() = %v, want nil for a one-side-zero fill", err)
+			}
+		})
+	}
+}
+
 func TestTrade_Validate_errors(t *testing.T) {
 	cases := map[string]func(*c.Trade){
 		"empty source": func(t *c.Trade) { t.Source = "" },
@@ -57,11 +76,17 @@ func TestTrade_Validate_errors(t *testing.T) {
 		"uppercase tx hash":  func(t *c.Trade) { t.TxHash = "CAFEBABECAFEBABECAFEBABECAFEBABECAFEBABECAFEBABECAFEBABECAFEBABE" },
 		"mixed case tx hash": func(t *c.Trade) { t.TxHash = "CafeBabe" + goodTxHash[8:] },
 		"zero timestamp":     func(t *c.Trade) { t.Timestamp = time.Time{} },
-		"zero base amount":   func(t *c.Trade) { t.BaseAmount = c.NewAmount(big.NewInt(0)) },
 		"neg quote amount":   func(t *c.Trade) { t.QuoteAmount = c.NewAmount(big.NewInt(-1)) },
-		"zero quote amount":  func(t *c.Trade) { t.QuoteAmount = c.NewAmount(big.NewInt(0)) },
 		"neg base amount":    func(t *c.Trade) { t.BaseAmount = c.NewAmount(big.NewInt(-1)) },
-		"self-pair":          func(t *c.Trade) { t.Pair = c.Pair{Base: c.NativeAsset(), Quote: c.NativeAsset()} },
+		"both amounts zero": func(t *c.Trade) {
+			t.BaseAmount = c.NewAmount(big.NewInt(0))
+			t.QuoteAmount = c.NewAmount(big.NewInt(0))
+		},
+		"neg base, zero quote": func(t *c.Trade) {
+			t.BaseAmount = c.NewAmount(big.NewInt(-1))
+			t.QuoteAmount = c.NewAmount(big.NewInt(0))
+		},
+		"self-pair": func(t *c.Trade) { t.Pair = c.Pair{Base: c.NativeAsset(), Quote: c.NativeAsset()} },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
