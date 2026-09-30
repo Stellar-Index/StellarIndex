@@ -927,6 +927,11 @@ jobs:
         # Postgres worker headroom pair and the ClickHouse drop-guard
         # ceiling, including its lockstep with the ansible role default.
         run: bash scripts/ops/config-assertions_test.sh
+      - name: pre-launch-check heartbeat-URL tests
+        # Every Healthchecks.io URL wire-paging.md has the operator create
+        # must FAIL pre-launch-check.sh when missing: "0 failures" is that
+        # runbook's acceptance test. Stubbed host tools; runs anywhere.
+        run: bash scripts/ops/pre-launch-check-test.sh
       - name: lint-migrations back-numbering self-test
         # GH-1164: a new migration numbered into a gap below the head is
         # invisible to `migrate up` on every deployment already past it.
