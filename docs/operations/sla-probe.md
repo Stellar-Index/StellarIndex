@@ -84,21 +84,22 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now stellarindex-sla-probe.timer
 ```
 
-Override defaults via `/etc/default/stellarindex-healthchecks`:
+Override defaults via `/etc/default/stellarindex-healthchecks`. These
+are the only variables `configs/healthchecks/sla-probe.sh` reads; the
+wrapper always requests a JSON report and passes no other flags:
 
 ```sh
 SLA_PROBE_BASE_URL=http://localhost:3000/v1  # default (see the note below)
-DURATION=30s                                 # default
-CONCURRENCY=4                                # default
-PAIRS="-pair native,fiat:USD -pair USDC-G…,fiat:USD"
-REPORT_FORMAT=json                           # default; text also valid
+SLA_PROBE_DURATION=30s                       # default; 120s smooths percentiles on a memory-pressured single-instance host
+SLA_PROBE_CONCURRENCY=1                      # default
+SLA_PROBE_PAIR=native,fiat:USD               # default; exactly one asset,quote pair
+SLA_PROBE_TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/sla_probe.prom  # default; empty disables the metrics
 STELLARINDEX_PROBE_API_KEY=sip_…              # vault-minted key; required (see below)
-EXTRA_FLAGS=""                               # default
 ```
 
 > **What the default target means.** `SLA_PROBE_BASE_URL` defaults to
 > `http://localhost:3000/v1` — both in
-> `configs/healthchecks/sla-probe.sh:21` and in the binary's own
+> `configs/healthchecks/sla-probe.sh` and in the binary's own
 > `-base-url` flag — and R1 runs it unset. The probe therefore measures
 > the API process's **own listener**, bypassing Caddy, TLS, DNS and the
 > network. That is the right scope for latency (it isolates application
@@ -116,9 +117,9 @@ EXTRA_FLAGS=""                               # default
 
 Without `STELLARINDEX_PROBE_API_KEY` set, the probe hits the
 anonymous-tier rate limit — `[api].anon_rate_limit_per_min`, whose
-shipped default is 60/min (R1 sets 6,000). At the documented 4
-workers × 30 s window that's ~1000 requests/sec/worker — every
-non-`/healthz` endpoint reads as `availability < 0.1 %` and the
+shipped default is 60/min (R1 sets 6,000). Even the default single
+worker issues requests back to back for the whole 30 s window, so
+every non-`/healthz` endpoint reads as mostly unavailable and the
 verdict comes back `fail` for reasons unrelated to actual SLA
 compliance. Mint a load-test API key from the operator vault (same
 class as `STELLARINDEX_LOAD_API_KEY` for the k6 weekly) and set it
@@ -126,9 +127,10 @@ in `/etc/default/stellarindex-healthchecks` before enabling the timer. The probe
 sends it as `Authorization: Bearer <key>` on every request — the
 key never appears on the systemd unit's command line.
 
-The defaults exercise XLM/USD as the smoke-test pair. Add `-pair`
-entries to track additional asset/quote combinations the operator
-cares about — each repeats the per-endpoint probe across the
+The defaults exercise XLM/USD as the smoke-test pair. The wrapper
+probes exactly one pair (`SLA_PROBE_PAIR`); to track additional
+asset/quote combinations, run the binary directly with repeated
+`-pair` flags — each repeats the per-endpoint probe across the
 chart, price, and oracle-latest surfaces for that pair.
 
 ## Which number is the latency SLO
@@ -206,7 +208,7 @@ Key fields:
   "base_url": "http://localhost:3000/v1",
   "started_at": "2026-04-30T12:00:00Z",
   "duration_sec": 30.0,
-  "concurrency": 4,
+  "concurrency": 1,
   "sla": {
     "p95_ms": 200,
     "p99_ms": 500,
@@ -257,7 +259,7 @@ Before enabling the timer, run a single probe directly:
 stellarindex-sla-probe \
   -base-url https://api.stellarindex.io/v1 \
   -duration 10s \
-  -concurrency 2 \
+  -concurrency 1 \
   -report-format text
 ```
 

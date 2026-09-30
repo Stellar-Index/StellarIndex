@@ -8,11 +8,9 @@
 #
 # Report-only by default
 # ----------------------
-# A coverage THRESHOLD that fails the build on day one is a threshold
-# people route around — they lower it, or they write a test that
-# executes lines without asserting on them. So the verdict starts as a
-# WARNING (exit 0). Flip it by setting COVERAGE_ENFORCE=1, once the
-# number has been observed to be stable across a few weeks of PRs.
+# Without COVERAGE_ENFORCE=1 a total under the floor is a WARNING
+# (exit 0), which is what a local `make` run gets. CI's unit-test job
+# sets COVERAGE_ENFORCE=1, so there a drop under the floor fails the PR.
 #
 # What is NOT report-only
 # -----------------------

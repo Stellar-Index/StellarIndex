@@ -166,7 +166,8 @@ expr_lines() {
       sub(/#.*/, "", s)
       return s
     }
-    /^[[:space:]]*expr:[[:space:]]*\|?[[:space:]]*$/ { inexpr=1; next }
+    # A block scalar may be literal (`|`) or folded (`>`), with an optional chomping indicator.
+    /^[[:space:]]*expr:[[:space:]]*([|>][-+]?)?[[:space:]]*$/ { inexpr=1; next }
     /^[[:space:]]*expr:/ { print strip_hash(substr($0, index($0,"expr:")+5)); next }
     inexpr {
       if ($0 ~ /^[[:space:]]*(for|labels|annotations):/ || $0 ~ /^[[:space:]]*-[[:space:]]+(alert|record):/) { inexpr=0; next }

@@ -52,6 +52,8 @@ func TestDataFreshnessSurvivesADeadFeed(t *testing.T) {
 	seedOracleUpdate(t, ctx, db, 2, "coingecko", longDead)
 	// One FX source, dead for 40 days.
 	seedFXQuote(t, ctx, db, "massive", "EUR", longDead)
+	// A backfill provenance label: historical rows that never advance.
+	seedFXQuote(t, ctx, db, "frankfurter-historical", "GBP", now.AddDate(0, 0, -150))
 	// Every watched supply asset frozen 40 days ago.
 	for i, asset := range []string{"USDC-GA5Z", "EURC-GB3Q", "BENJI-GBHN"} {
 		seedSupplyRow(t, ctx, db, asset, frozen.Add(time.Duration(i)*time.Minute))
@@ -98,6 +100,17 @@ func TestDataFreshnessSurvivesADeadFeed(t *testing.T) {
 			t.Errorf("%s is ABSENT — a sep1 refresh that has never succeeded leaves max(sep1_payload_fetched_at) NULL, and an unknown age must not read as no alarm", key)
 		} else if v != "1" {
 			t.Errorf("%s = %s, want 1 — nothing was ever resolved, which is the most stale this domain can be", key, v)
+		}
+	})
+
+	t.Run("a backfill provenance label is not a feed", func(t *testing.T) {
+		for _, key := range []string{
+			`stellarindex_data_freshness_stale{domain="fx",source="frankfurter-historical"}`,
+			`stellarindex_data_freshness_age_seconds{domain="fx",source="frankfurter-historical"}`,
+		} {
+			if v, ok := samples[key]; ok {
+				t.Errorf("%s = %s, want no series — the fx-history-backfill label never advances, so any series for it is a permanent false alarm", key, v)
+			}
 		}
 	})
 

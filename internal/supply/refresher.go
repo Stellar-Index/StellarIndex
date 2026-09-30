@@ -49,10 +49,10 @@ const (
 	OutcomeKindNoLedger         OutcomeKind = "no_ledger"         // LedgerLookup error
 	OutcomeKindNoObservation    OutcomeKind = "no_observation"    // ChainReader fell through with no static fallback either
 	OutcomeKindComputeError     OutcomeKind = "compute_error"     // computer failed for non-observation reasons
-	OutcomeKindStaleComponent   OutcomeKind = "stale_component"   // F-1236: a component observation lags the snapshot ledger past the configured threshold (and the observation is itself advancing past the gate — a genuinely stalled producer, not a dormant asset; see F-1320)
+	OutcomeKindStaleComponent   OutcomeKind = "stale_component"   // F-1236: a component observation lags the snapshot ledger past the configured threshold AND either moved since the last tick (or this is the first lagging tick), or has been frozen past [DefaultMaxDormantComponentLedgers]. Says nothing about producer liveness inside the horizon: a producer that dies with a frozen anchor reports dormant until then.
 	OutcomeKindMissingFreshness OutcomeKind = "missing_freshness" // F-1236 wave 60 (codex audit-2026-05-13): strict mode + MinComponentLedger==0 (no signal); reject rather than publish without a freshness anchor
 	OutcomeKindMissingBaseline  OutcomeKind = "missing_baseline"  // incident 2026-07-06 / migration 0088: SEP-41 total negative because the pre-Soroban genesis baseline hasn't been seeded yet — a range-scoped-baseline-missing condition (needs `stellarindex-ops supply seed-sep41-genesis`), NOT indexer corruption. Benign: excluded from error_dominant.
-	OutcomeKindDormant          OutcomeKind = "dormant"           // F-1320: MinComponentLedger lags past threshold but is UNCHANGED tick-over-tick — the asset simply had no balance change, so its last observation IS the current supply; accepted (snapshot inserted). BOUNDED by [DefaultMaxDormantComponentLedgers] since R-002 — past that horizon the same signal is indistinguishable from a dead observer and we fail closed to stale_component instead.
+	OutcomeKindDormant          OutcomeKind = "dormant"           // F-1320: MinComponentLedger lags past threshold but is UNCHANGED tick-over-tick; the last observation is re-stamped as current (snapshot inserted). NOT evidence the producer is alive: a quiet asset and a dead observer both freeze the anchor, so [DefaultMaxDormantComponentLedgers] is what bounds the dead-observer case — past it the gate fails closed to stale_component.
 	OutcomeKindWriteError       OutcomeKind = "write_error"       // InsertSupply failed
 	OutcomeKindStaticReserve    OutcomeKind = "static_reserve"    // snapshot inserted, but its reserve balances came from the dated static map (BasisXLMSDFReserveExclusionStatic), not the live observer. Not benign: counted by the error_dominant alert so a sustained fallback pages.
 )
@@ -128,12 +128,10 @@ type Refresher struct {
 	// which for a DORMANT asset (no balance changes) freezes — so
 	// the gap grows past the threshold and stays there forever,
 	// permanently rejecting every future tick and silently
-	// freezing the asset's supply row. We break that by
-	// distinguishing "producer stalled" (MinComponentLedger keeps
-	// changing / first seen already-lagging) from "asset dormant"
-	// (MinComponentLedger UNCHANGED tick-over-tick — the last
-	// observation IS the current supply). Dormant snapshots are
-	// accepted (OutcomeKindDormant) rather than rejected.
+	// freezing the asset's supply row. An UNCHANGED value
+	// tick-over-tick is therefore accepted (OutcomeKindDormant) up
+	// to the dormancy horizon; a moved or first-seen lagging value
+	// is rejected. The unchanged case covers a dead producer too.
 	lastComponentLedger map[string]uint32
 }
 
@@ -349,20 +347,20 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 // change-driven MinComponentLedger, so a DORMANT asset (no balance
 // change → MinComponentLedger frozen) would otherwise be rejected
 // forever and its supply row would silently, permanently stale (live
-// PHO: gap grew 1017 → 1324 and kept climbing). We distinguish:
-//   - PRODUCER STALLED — MinComponentLedger changed since the last tick
-//     (or first-ever tick already lagging): genuine staleness, reject.
-//   - ASSET DORMANT — MinComponentLedger UNCHANGED tick-over-tick: the
-//     last observation IS the current supply, re-stamp it (accept,
-//     OutcomeKindDormant). Operators who want a quiet asset to stay
-//     strict raise its per-asset threshold so the gap never trips.
+// PHO: gap grew 1017 → 1324 and kept climbing). Past the threshold the
+// gate decides on the watermark alone:
+//   - MinComponentLedger CHANGED since the last tick (or first-ever tick
+//     already lagging): reject, OutcomeKindStaleComponent.
+//   - MinComponentLedger UNCHANGED tick-over-tick: re-stamp the last
+//     observation as current (accept, OutcomeKindDormant) while the
+//     frozen gap is within the dormancy horizon; reject past it.
 //
-// R-002 (audit-2026-07-23): that dormant/stalled split is only valid
-// for a bounded stretch — a STALLED observer also freezes
-// MinComponentLedger, so beyond [DefaultMaxDormantComponentLedgers]
-// the "dormant" reading is no longer defensible and the gate fails
-// closed with OutcomeKindStaleComponent instead of republishing a
-// frozen supply at the current ledger.
+// MinComponentLedger is change-driven, so "no balance change" and "no
+// observer" are the same signal: a producer that dies after a healthy
+// window is accepted as dormant until [DefaultMaxDormantComponentLedgers]
+// is crossed. The horizon, not the unchanged/changed split, is what
+// bounds a dead producer. Operators who want a quiet asset to stay
+// strict raise its per-asset threshold so the gap never trips.
 func (r *Refresher) applyStaleComponentGate(ctx context.Context, snap Supply) (Outcome, bool) {
 	threshold := r.staleComponentLedger
 	thresholdSource := "default"
