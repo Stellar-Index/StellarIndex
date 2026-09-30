@@ -34,6 +34,10 @@ var (
 //	approve        -> FromAddr (from), ToAddr (spender), Amount, LiveUntilLedger populated
 //	set_admin      -> FromAddr (admin, optional), ToAddr (new_admin) populated
 //	set_authorized -> ToAddr (id), Authorized populated
+//
+// A transfer's ToAddr is always its topic[2] Address. The CAP-67 map body's
+// to_muxed_id is not captured: the row keys the holder's account, so a muxed
+// payment and a plain one to the same account stay on one ?to= history.
 type Event struct {
 	ContractID      string
 	Ledger          uint32

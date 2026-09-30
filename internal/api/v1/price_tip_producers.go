@@ -723,24 +723,6 @@ func (r *tipProducerRegistry) mintedFor(caller string) int {
 	return r.minted[caller]
 }
 
-// TipProducersRunning reports the number of live shared tip producers.
-// Operators read the same quantity as stellarindex_api_tip_producers — a
-// producer count that climbs while connections do not is the signature
-// of the abort-loop flood the ceiling exists to stop.
-func (s *Server) TipProducersRunning() int { return s.tipProducers.running() }
-
-// TipProducersRefused reports the cumulative count of tip producers
-// refused by either bound.
-func (s *Server) TipProducersRefused() uint64 { return s.tipProducers.refusedCount() }
-
-// TipProducersRefusedPerCaller reports the cumulative count of tip
-// producers refused because one caller was already at its quota — the
-// shape that distinguishes "a client is enumerating the key space" from
-// "the deployment has outgrown its ceiling".
-func (s *Server) TipProducersRefusedPerCaller() uint64 {
-	return s.tipProducers.refusedPerCallerCount()
-}
-
 // SetMaxTipProducers overrides the shared-tip-producer ceiling. Pass a
 // negative value to disable it. Call once at startup.
 func (s *Server) SetMaxTipProducers(n int) {

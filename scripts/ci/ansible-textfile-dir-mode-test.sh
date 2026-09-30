@@ -60,15 +60,38 @@ writers="$(grep -lE '^SupplementaryGroups=(.* )?stellarindex( |$)' \
 if [ -z "$writers" ]; then
   bad "no unit under $UNIT_DIRS joins group stellarindex — the 0775 mode has no group writer left; re-derive it in both declaring tasks together"
 fi
+strict_without_rw() {
+  grep -qE '^ProtectSystem=strict$' "$1" &&
+    ! grep -qE "^ReadWritePaths=(.* )?$DIR/?( |$)" "$1"
+}
 while IFS= read -r unit; do
   [ -n "$unit" ] || continue
-  if grep -qE '^ProtectSystem=strict$' "$unit" &&
-    ! grep -qE "^ReadWritePaths=(.* )?$DIR/?( |$)" "$unit"; then
+  if strict_without_rw "$unit"; then
     bad "$unit: SupplementaryGroups=stellarindex under ProtectSystem=strict without ReadWritePaths=$DIR"
   else
     ok "group writer (needs 0775): $unit"
   fi
 done <<<"$writers"
+
+# An ops subcommand built on opsutil.JobHeartbeat writes its .prom into $DIR
+# by default. Under ProtectSystem=strict the dir still stats, so the job
+# believes it publishes while every write fails EROFS and the series is never born.
+hb_jobs="$(grep -rhoE 'NewJobHeartbeat\("[a-z0-9-]+",' internal |
+  sed -E 's/.*\("([a-z0-9-]+)",/\1/' | sort -u)"
+if [ -z "$hb_jobs" ]; then
+  bad "no literal opsutil.NewJobHeartbeat(\"<job>\", …) call under internal/ — re-derive the heartbeat publisher set"
+fi
+while IFS= read -r job; do
+  [ -n "$job" ] || continue
+  for unit in "$ROLE"/templates/systemd/*.service*; do
+    grep -qE "^[^#]*stellarindex-ops $job( |\\\\|$)" "$unit" || continue
+    if strict_without_rw "$unit"; then
+      bad "$unit: runs heartbeat publisher '$job' under ProtectSystem=strict without ReadWritePaths=$DIR"
+    else
+      ok "heartbeat publisher '$job' can write $DIR: $unit"
+    fi
+  done
+done <<<"$hb_jobs"
 
 echo "ansible-textfile-dir-mode-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
