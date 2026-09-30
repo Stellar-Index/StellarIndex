@@ -194,10 +194,10 @@ Capture for the postmortem:
 
 - `aggregator-silent.md` — frequently co-fires when the storm
   filters out *every* row.
-- ADR (TBD) σ-vs-MAD outlier filter — long-term migration plan if
-  σ-threshold turns out to be too brittle on small windows. Until
-  the ADR lands the σ default lives at
-  `aggregate.outlier_sigma_threshold = 4.0` in TOML.
+- `aggregate.outlier_sigma_threshold` (default `4.0`) is the N in
+  median + N·1.4826·MAD — the MAD form is what ships, not mean+stdev;
+  see the "Deferred" section of
+  [`aggregation-plan.md`](../../architecture/aggregation-plan.md).
 - `internal/aggregate/outliers_local.go` — the orchestrator's
   anchored time-local filter; `internal/aggregate/outliers.go` — the
   whole-window form still used by `/v1/vwap` + `/v1/ohlc`. Any
@@ -239,3 +239,5 @@ Capture for the postmortem:
   new `window_base_volume{stage}` gauge: a withheld 5m or 1h window, or
   a single-venue wash burst, is visible where the 24h count rule and the
   ≥ 2-venue storm rule are not.
+- 2026-09-30 — Related: replaced the stale σ-vs-MAD "ADR (TBD)" bullet;
+  the MAD filter has shipped behind `outlier_sigma_threshold`.

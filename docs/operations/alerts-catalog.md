@@ -488,7 +488,7 @@ Per [ADR-0027](../adr/0027-lcm-cache-tiering.md). R1's
 `TieredDataStore` (`internal/ledgerstream/tiered.go`) reads each LCM
 from the local `galexie-archive` MinIO bucket (hot) and falls back
 on `NoSuchKey` to the AWS public bucket (cold). Pre-§3 of the
-rollout (`storage.cold_tier_enabled = false`) the cold path never
+rollout (`storage.s3_cold_bucket_archive` empty) the cold path never
 runs and these alerts stay silent.
 
 | Name | Metric | Condition | Severity | Runbook |
