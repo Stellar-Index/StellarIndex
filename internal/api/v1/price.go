@@ -2655,6 +2655,7 @@ func (s *Server) attachCompositeFlags(r *http.Request, flags *Flags, asset, quot
 	}
 	flags.Diverged = meta.Diverged
 	flags.Rerouted = meta.Rerouted
+	flags.PivotUnverified = meta.PivotUnverified
 }
 
 // lookupFrozen consults the FrozenLooker (when wired) for the

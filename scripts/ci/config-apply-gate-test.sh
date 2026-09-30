@@ -673,6 +673,24 @@ else
   else
     check_caller "deploy.yml's version filter is end-anchored (a '^'-only anchor matches a concatenation like v0.1.0v0.2.0)" "no"
   fi
+
+  # The minimum runs over the REGION'S MANIFEST SET, not every sidecar on
+  # disk. A binary the manifest excludes at a region (testnet's
+  # aggregator: unit disabled, sidecar frozen at v0.63.0) is deployed by
+  # nothing, so its sidecar can only drag the baseline back — on
+  # 2026-09-30 it made the gate diff 32 releases and refute a cut-over
+  # DDL the host had finished. The filter must live in the baseline step
+  # and read the manifest set the binset step publishes.
+  bl_end=$(awk -v s="${bl_line:-0}" 'NR > s && /^      - name:/ { print NR; exit }' "$WF")
+  bl_step=""
+  [[ -n "$bl_line" && -n "$bl_end" ]] && bl_step=$(sed -n "${bl_line},${bl_end}p" "$WF")
+  if [[ -n "$bl_step" ]] \
+     && grep -q 'REGION_SET: .*steps\.binset\.outputs\.region_set' <<<"$bl_step" \
+     && grep -q 'ignoring sidecar .*manifest set' <<<"$bl_step"; then
+    check_caller "deploy.yml's baseline ignores sidecars outside the region's manifest set" "ok"
+  else
+    check_caller "deploy.yml's baseline ignores sidecars outside the region's manifest set (the baseline step must take steps.binset.outputs.region_set and filter the sidecars by it — a binary no deploy touches at this region otherwise drags the baseline back)" "no"
+  fi
 fi
 
 # ═══ deploy.yml's per-region binary manifest ═════════════════════════

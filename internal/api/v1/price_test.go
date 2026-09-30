@@ -423,6 +423,35 @@ func TestPrice_TriangulatedCompositeFlags(t *testing.T) {
 		}
 	})
 
+	t.Run("pivot_unverified surfaces, omitted when false", func(t *testing.T) {
+		for _, tc := range []struct {
+			meta string
+			want bool
+		}{
+			{`{"pivot_proxy_share":{"crypto:XLM/fiat:USD":1},"pivot_unverified":true}`, true},
+			{`{"pivot_proxy_share":{"crypto:XLM/fiat:USD":0.4}}`, false},
+		} {
+			looker := &stubCompositeMetaLooker{
+				value: "0.5500", isTriangulated: true, found: true,
+				metaRaw: []byte(tc.meta), metaFound: true,
+			}
+			srv := v1.New(v1.Options{Prices: &stubPriceReader{err: v1.ErrPriceNotFound}, Triangulated: looker})
+			ts := startHTTPTest(t, srv.Handler())
+
+			resp := mustGet(t, ts.URL+"/v1/price?asset=crypto:XLM&quote=fiat:EUR")
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			body, _ := readAll(resp)
+			if got := strings.Contains(body, `"pivot_unverified":true`); got != tc.want {
+				t.Errorf("meta %s: pivot_unverified present = %v, want %v: %s", tc.meta, got, tc.want, body)
+			}
+			if !tc.want && strings.Contains(body, `"pivot_unverified"`) {
+				t.Errorf("pivot_unverified must be omitted when false: %s", body)
+			}
+		}
+	})
+
 	t.Run("no meta — both flags omitted", func(t *testing.T) {
 		reader := &stubPriceReader{err: v1.ErrPriceNotFound}
 		looker := &stubCompositeMetaLooker{

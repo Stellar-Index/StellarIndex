@@ -17,6 +17,8 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TestMigrationsRoundTrip spins up a throwaway TimescaleDB,
@@ -680,7 +682,7 @@ func assertPrices1mHasRow(t *testing.T, db *sql.DB, ctx context.Context) {
 // policy must be counted (1 uncovered). The timescale-jobs probe keys on
 // the job, so this query is the only thing that sees the dropped policy.
 func TestCAGGRefreshPolicyAssertionSQL(t *testing.T) {
-	query := caggRefreshPolicyAssertionSQL(t)
+	query := configAssertionSQL(t, "CAGGS_WITHOUT_REFRESH_POLICY_SQL", "continuous_aggregates")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -729,10 +731,69 @@ func TestCAGGRefreshPolicyAssertionSQL(t *testing.T) {
 	}
 }
 
-// caggRefreshPolicyAssertionSQL returns the SQL config-assertions.sh
-// runs for caggs_have_refresh_policy, so the test executes the shipped
-// bytes rather than a copy.
-func caggRefreshPolicyAssertionSQL(t *testing.T) string {
+// TestTradesCompressionScheduledAssertionSQL executes config-assertions.sh's
+// trades_compression_policy_scheduled query against a migrated TimescaleDB:
+// a scheduled policy passes, a paused one fails, and a paused one passes
+// again only while a session holds the restamp run's advisory lock — the
+// lock a killed run's connection drops.
+func TestTradesCompressionScheduledAssertionSQL(t *testing.T) {
+	query := configAssertionSQL(t, "TRADES_COMPRESSION_SCHEDULED_SQL", "hashtext('"+timescale.USDVolumeRestampLockName+"')")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	ok := func() int {
+		t.Helper()
+		var n int
+		if err := db.QueryRowContext(ctx, query).Scan(&n); err != nil {
+			t.Fatalf("run trades_compression_policy_scheduled SQL: %v", err)
+		}
+		return n
+	}
+	p, err := store.TradesCompressionPolicy(ctx)
+	if err != nil {
+		t.Fatalf("resolve trades policy: %v", err)
+	}
+	if got := ok(); got != 1 {
+		t.Fatalf("scheduled policy: check = %d, want 1", got)
+	}
+	if err := store.SetJobScheduled(ctx, p.JobID, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := ok(); got != 0 {
+		t.Errorf("paused policy, no run holding the lock: check = %d, want 0", got)
+	}
+	release, err := store.TryUSDVolumeRestampLock(ctx)
+	if err != nil {
+		t.Fatalf("take the restamp lock: %v", err)
+	}
+	if got := ok(); got != 1 {
+		t.Errorf("paused policy under a live run's lock: check = %d, want 1", got)
+	}
+	if err := release(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := ok(); got != 0 {
+		t.Errorf("paused policy after the lock is released: check = %d, want 0", got)
+	}
+}
+
+// configAssertionSQL returns the SQL config-assertions.sh assigns to
+// the shell variable name, so a test executes the shipped bytes rather
+// than a copy. marker is a fragment the query must contain.
+func configAssertionSQL(t *testing.T, name, marker string) string {
 	t.Helper()
 	_, thisFile, _, _ := runtime.Caller(0)
 	path := filepath.Join(filepath.Dir(thisFile), "..", "..", "scripts", "ops", "config-assertions.sh")
@@ -740,14 +801,13 @@ func caggRefreshPolicyAssertionSQL(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	const open = `CAGGS_WITHOUT_REFRESH_POLICY_SQL="`
-	_, rest, ok := strings.Cut(string(src), open)
+	_, rest, ok := strings.Cut(string(src), name+`="`)
 	if !ok {
-		t.Fatalf("%s defines no CAGGS_WITHOUT_REFRESH_POLICY_SQL", path)
+		t.Fatalf("%s defines no %s", path, name)
 	}
 	query, _, ok := strings.Cut(rest, `"`)
-	if !ok || !strings.Contains(query, "continuous_aggregates") {
-		t.Fatalf("CAGGS_WITHOUT_REFRESH_POLICY_SQL in %s is unterminated or not the aggregate census: %q", path, query)
+	if !ok || !strings.Contains(query, marker) {
+		t.Fatalf("%s in %s is unterminated or lacks %q: %q", name, path, marker, query)
 	}
 	return query
 }
