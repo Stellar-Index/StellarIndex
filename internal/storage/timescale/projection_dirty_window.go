@@ -25,14 +25,15 @@ type ProjectionDirtyWindow struct {
 	// From is the replay's rewind target (inclusive) — the first ledger
 	// whose served rows the projector re-wrote.
 	From uint32
-	// To is the projector cursor at rewind time (inclusive). Ground above
+	// To is the projector cursor at rewind time (inclusive), as returned by
+	// [Store.RewindCursor] rather than an earlier read. Ground above
 	// it is new forward projection covered by the normal watermark-forward
 	// reconcile; only the below-cursor range needs the forced re-check.
 	To     uint32
 	Reason string
 	// UpdatedAt is the row's last-write time, carried so a clear can
 	// prove it is deleting the SAME row it read. See
-	// [Store.ClearProjectionDirtyWindow].
+	// clearProjectionDirtyWindowQuery.
 	UpdatedAt time.Time
 }
 
@@ -163,39 +164,17 @@ func (s *Store) ProjectionDirtyWindows(ctx context.Context) (map[string]Projecti
 	return out, nil
 }
 
-// clearProjectionDirtyWindowQuery is package-level so its predicate can
-// be asserted without a database — the guard it carries is the whole
-// point of [Store.ClearProjectionDirtyWindow].
+// clearProjectionDirtyWindowQuery deletes a source's dirty window, but ONLY
+// if the stored row is still the one the caller verified; run inside
+// [Store.PublishCompletenessVerdict]'s transaction. Package-level so its
+// predicate can be asserted without a database.
+//
+// The bounds catch a WIDENED window: a concurrent replay that grew the
+// range leaves a row outside [from,to], which survives. They do NOT catch
+// a same-or-narrower re-record, so `updated_at = $4` is the load-bearing
+// conjunct: any re-record bumps updated_at and the delete matches nothing,
+// leaving the window pending for the next run.
 const clearProjectionDirtyWindowQuery = `
         DELETE FROM projection_dirty_windows
         WHERE source = $1 AND from_ledger >= $2 AND to_ledger <= $3
           AND updated_at = $4`
-
-// ClearProjectionDirtyWindow deletes a source's dirty window, but ONLY if
-// the stored row is still within the [from, to] range the caller verified —
-// the guard makes the clear race-safe against a concurrent replay: if
-// another replay WIDENED the window between this run's read and its clear,
-// the widened row no longer satisfies the bounds and survives, so the next
-// run still sees the new obligation. Clearing unconditionally would let a
-// clean verdict over the OLD window erase evidence of the NEW rewind.
-func (s *Store) ClearProjectionDirtyWindow(ctx context.Context, source string, from, to uint32, updatedAt time.Time) error {
-	// `updated_at = $4` is the load-bearing conjunct, not the bounds.
-	//
-	// The bounds alone catch a WIDENED window — a concurrent replay that
-	// grew the range leaves a row outside [from,to], which survives. They
-	// do NOT catch a SUBSET RE-RECORD: a replay that re-records the same
-	// or a narrower range leaves both bounds satisfying the predicate, so
-	// the delete removes evidence of a rewind this run never verified,
-	// and the next verdict carries a clean claim over it (wave-D CV-6).
-	//
-	// Comparing the row's last-write time makes this optimistic
-	// concurrency: the clear succeeds only if the row is byte-for-byte
-	// the one whose obligation this run actually discharged. Any
-	// re-record — wider, narrower or identical — bumps updated_at and the
-	// delete matches nothing, leaving the window pending for the next
-	// run. Fail-closed, costing at most one extra reconcile.
-	if _, err := s.db.ExecContext(ctx, clearProjectionDirtyWindowQuery, source, int64(from), int64(to), updatedAt); err != nil {
-		return fmt.Errorf("timescale: ClearProjectionDirtyWindow (%s): %w", source, err)
-	}
-	return nil
-}

@@ -161,7 +161,7 @@ fi
 # had got to.
 if [[ -n "$PG_DSN" ]] && command -v psql >/dev/null 2>&1; then
   psql "$PG_DSN" -tAF$'\t' -c \
-    "SELECT source, sub_source, last_ledger, updated_at FROM ingestion_cursors ORDER BY source, sub_source" \
+    "SELECT source, sub_source, last_ledger, last_updated FROM ingestion_cursors ORDER BY source, sub_source" \
     > "$work/ingestion-cursors.tsv" 2>/dev/null || {
       note "ingestion_cursors read failed — continuing (pgBackRest covers this table)"
       rm -f "$work/ingestion-cursors.tsv"

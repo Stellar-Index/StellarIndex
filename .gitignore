@@ -87,9 +87,11 @@ service-account*.json
 # see docs/operations/credential-rotation.md.
 #
 # Never commit an UNENCRYPTED secrets file — gitleaks (CI) backstops.
-/configs/ansible/inventory/r*.yml
+/configs/ansible/inventory/*.yml
+/configs/ansible/inventory/known_hosts*
 /configs/ansible/inventory/*.plaintext*
-!/configs/ansible/inventory/r*.example.yml
+!/configs/ansible/inventory/*.example.yml
+!/configs/ansible/inventory/no-default-inventory.yml
 
 # Docs build output
 /docs/_site/

@@ -1,7 +1,7 @@
 """Fetch WASM bytes via Soroban-RPC. Skip XDR parsing — just find
 the WASM magic header (00 61 73 6d 01 00 00 00) and read until the
 end (XDR padding may add 0-3 trailing zeros)."""
-import base64, json, os, struct, urllib.request, hashlib
+import base64, json, os, struct, sys, urllib.request, hashlib
 from pathlib import Path
 
 DATA_DIR = Path('/tmp/r1-wasm-walk')
@@ -53,10 +53,11 @@ for i in range(0, len(keys), 50):
     try:
         resp = call('getLedgerEntries', {'keys': batch})
     except Exception as e:
-        print(f"  RPC error: {e}")
-        continue
+        resp = {'error': str(e)}
     if 'error' in resp:
-        print(f"  rpc error: {resp['error']}")
+        # Every hash must land in exactly one bucket, or the summary under-counts what was never checked.
+        print(f"  RPC error: {resp['error']}")
+        errors.extend((hash_for_key[k], f"rpc: {resp['error']}") for k in batch)
         continue
     entries = resp.get('result', {}).get('entries', [])
     returned = {e['key']: e for e in entries}
@@ -72,10 +73,11 @@ for i in range(0, len(keys), 50):
         except Exception as e:
             errors.append((h, str(e)))
 
-print(f"\nFound {len(found)} / {len(hashes)}; not_found={len(not_found)}; parse_errors={len(errors)}")
+print(f"\nFound {len(found)} / {len(hashes)}; not_found={len(not_found)}; errors={len(errors)}")
 for h, size in sorted(found):
     print(f"  OK    {h}  {size:>8d} bytes")
 for h, err in errors:
     print(f"  ERR   {h}  {err}")
 for h in not_found:
     print(f"  MISS  {h}")
+sys.exit(1 if errors else 0)
