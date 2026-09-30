@@ -23,11 +23,16 @@ type TxIndexReader struct {
 	conn driver.Conn
 }
 
-// NewTxIndexReader dials ClickHouse with a small pool and pings it.
+// NewTxIndexReader dials ClickHouse with a small pool and pings it,
+// authenticating as the environment's identity ([chAuth]).
 func NewTxIndexReader(ctx context.Context, addr string) (*TxIndexReader, error) {
+	auth, err := chAuth()
+	if err != nil {
+		return nil, err
+	}
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr:            []string{addr},
-		Auth:            clickhouse.Auth{Database: "stellar"},
+		Auth:            auth,
 		Settings:        clickhouse.Settings{"max_execution_time": 30},
 		DialTimeout:     10 * time.Second,
 		ReadTimeout:     30 * time.Second,

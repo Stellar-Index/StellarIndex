@@ -62,7 +62,7 @@ func TestDefaultPairs_IncludesBothXLMForms(t *testing.T) {
 }
 
 // TestResolveUSDPeggedSorobanAssets — Guard 1 (2026-07-10): the SAC
-// twin of parseUSDPeggedClassicAssets. A SAC contract inherits a USD
+// twin of config.TradesConfig.USDPeggedClassics. A SAC contract inherits a USD
 // peg ONLY when BOTH: its underlying classic ("CODE:ISSUER"/
 // "CODE-ISSUER") is on the operator's usd_pegged_classic_assets list
 // AND it's registered in [supply].sac_wrappers. No new TOML knob —

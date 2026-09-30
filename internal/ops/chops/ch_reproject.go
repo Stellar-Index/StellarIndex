@@ -98,16 +98,11 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 	// reads as a bogus delta here and as a silently-empty arm in
 	// ch-rebuild -write (cold audit 2026-08-03). Read-only, idempotent,
 	// and a no-op for the 20+ non-factory sources.
-	//
-	// Caveat carried from the sibling call sites: preseedFactoryChildren
-	// walks the Postgres soroban_events landing zone, which is
-	// decommission-pending (#803); a CH-native preseed is the durable fix
-	// for all four callers.
 	for _, src := range cat {
 		if len(src.factories) == 0 {
 			continue
 		}
-		pblind, perr := preseedFactoryChildren(ctx, store, src, lo)
+		pblind, perr := preseedFactoryChildren(ctx, clickhouse.ReconcileEventStreamer{Addr: *chAddr}, src, lo)
 		if perr != nil {
 			return fmt.Errorf("%s: preseed factory children: %w", src.name, perr)
 		}
@@ -215,7 +210,7 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 					fmt.Printf("%-34s %s\n", "sdex (undecodable)", sdexBlind.Detail())
 				}
 				for _, tgt := range src.targets {
-					actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, lo, hi)
+					actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), lo, hi)
 					if aerr != nil {
 						return fmt.Errorf("ch-reproject: %s/%s served counts: %w", src.name, tgt.table, aerr)
 					}
@@ -241,7 +236,7 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 		}
 		for _, tgt := range src.targets {
 			expected := completeness.SumKinds(chBySrc[src.name], tgt.kinds...) // CH-re-derived per ledger, this source only
-			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, lo, hi)
+			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), lo, hi)
 			if aerr != nil {
 				return fmt.Errorf("ch-reproject: %s/%s served counts: %w", src.name, tgt.table, aerr)
 			}

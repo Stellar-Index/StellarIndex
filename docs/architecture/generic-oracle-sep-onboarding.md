@@ -63,8 +63,8 @@ support a contract claiming to implement any specific interface") —
 this is the same failure mode AGENTS.md already documents twice from
 direct experience: Reflector v3 lacking the documented `twap`/`x_*`
 methods, and DeFindex's decoder originally targeting a schema
-(`paltalabs/defindex` tag `1.0.0`) that "mainnet never deployed"
-(`internal/sources/defindex/README.md`). **Standardization of method
+(`paltalabs/defindex` tag `1.0.0`) that mainnet never deployed
+(`docs/operations/wasm-audits/defindex.md`, "Audit result"). **Standardization of method
 names does not imply standardization of deployed behavior** — every
 generic-interface design below has to route around that fact, not
 around it.
@@ -365,9 +365,8 @@ it deliberately does not shortcut *how carefully we onboard*.
 - `internal/sources/{reflector,redstone,band}/README.md` — the three
   oracle ingests; Band is the load-bearing precedent for event-less
   on-chain sources.
-- `internal/sources/defindex/README.md` — "mainnet never deployed
-  that" — the DeFindex tag-1.0.0-vs-mainnet lesson cited against
-  option (c).
+- `docs/operations/wasm-audits/defindex.md` "Audit result" — the
+  DeFindex tag-1.0.0-vs-mainnet lesson cited against option (c).
 - `docs/operations/wasm-audits/README.md` — the per-WASM-hash audit
   procedure a discovered candidate ultimately still needs before
   `BackfillSafe` flips true.

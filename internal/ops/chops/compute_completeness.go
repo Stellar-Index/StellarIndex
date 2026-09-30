@@ -31,9 +31,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// sorobanEraGenesis is the first pubnet ledger with Soroban — the lower
-// bound for the global recognition scan.
-const sorobanEraGenesis = 50_457_424
+// sorobanEraFloor is the network's first Soroban ledger — the lower bound for
+// the global recognition scan and event census. A test net starts at 1, so the
+// pubnet boundary would invert the range; zero (no defaults applied) is pubnet.
+func sorobanEraFloor(cfg config.Config) uint32 {
+	if cfg.Stellar.SorobanGenesisLedger == 0 {
+		return clickhouse.SorobanGenesisLedger
+	}
+	return cfg.Stellar.SorobanGenesisLedger
+}
 
 // sourceSubstrateOK is the per-source Claim-1 verdict from a whole-range
 // SubstrateProblem result: a source is substrate-OK iff there is no problem, or
@@ -188,6 +194,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		return fmt.Errorf("tip resolved to 0 — pass -to")
 	}
 	fmt.Fprintf(os.Stderr, "compute-completeness: tip=%d\n", tip)
+	sorobanFloor := sorobanEraFloor(cfg)
 	if *pass {
 		fmt.Fprintln(os.Stderr, "compute-completeness: -pass — recognition + substrate proven once at full range; projection reconciled per source from its own watermark")
 	}
@@ -308,9 +315,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			// cap once P23/CAP-67 grew the distinct set), so always scan from
 			// genesis regardless of -from — which correctly scopes only the
 			// expensive row-by-row projection reconcile below.
-			return computeRecognitionGapsCH(ctx, cfg, *chAddr, gatedOpts, uint32(sorobanEraGenesis), tip, soroswapOpts...)
+			return computeRecognitionGapsCH(ctx, cfg, *chAddr, gatedOpts, sorobanFloor, tip, soroswapOpts...)
 		}
-		return computeRecognitionGaps(ctx, store, cfg, gatedOpts, tip, soroswapOpts...)
+		return computeRecognitionGaps(ctx, store, cfg, gatedOpts, sorobanFloor, tip, soroswapOpts...)
 	})
 	if recErr != nil {
 		return recErr
@@ -370,7 +377,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	// hides (eventCensusLoss).
 	var evCensus []clickhouse.EventCensusShortfall
 	if *useCH {
-		if evCensus, err = clickhouse.EventCensusShortfalls(ctx, *chAddr, sorobanEraGenesis, tip); err != nil {
+		if evCensus, err = clickhouse.EventCensusShortfalls(ctx, *chAddr, sorobanFloor, tip); err != nil {
 			return fmt.Errorf("contract_events census (failing closed — cannot certify the event table recognition and projection read): %w", err)
 		}
 	}
@@ -760,10 +767,10 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			contracts[g.ContractID] = struct{}{}
 		}
 		census.Contracts = len(contracts)
-		recW := completeness.ComputeWatermark(sorobanEraGenesis, tip, nilOrOne(census.EarliestLedger))
+		recW := completeness.ComputeWatermark(sorobanFloor, tip, nilOrOne(census.EarliestLedger))
 		detail := completeness.FormatRecognitionDetail(census)
 		if err := store.UpsertCompletenessSnapshot(ctx, timescale.CompletenessSnapshot{
-			Source: completeness.SystemRecognitionSource, Genesis: sorobanEraGenesis, Tip: tip,
+			Source: completeness.SystemRecognitionSource, Genesis: sorobanFloor, Tip: tip,
 			Watermark: recW.Ledger, CoveragePct: recW.CoveragePct, Complete: recW.Complete,
 			LakeComplete: recW.Complete, // no projection axis on this system snapshot
 			FirstProblem: recW.FirstProblem, SubstrateOK: true, RecognitionOK: census.Shapes == 0, ProjectionOK: true,
@@ -1797,7 +1804,7 @@ func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chAd
 			return nil, completeness.BlindSpots{}, eerr
 		}
 		for _, tgt := range src.targets {
-			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, genesis, hi)
+			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), genesis, hi)
 			if aerr != nil {
 				return nil, completeness.BlindSpots{}, aerr
 			}
@@ -1828,7 +1835,7 @@ func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chAd
 	// findings and the caller's verdict names them apart.
 	for _, tgt := range src.targets {
 		expected := completeness.SumKinds(byKind, tgt.kinds...)
-		actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, genesis, hi)
+		actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), genesis, hi)
 		if aerr != nil {
 			return nil, completeness.BlindSpots{}, aerr
 		}
@@ -1869,7 +1876,7 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 	if lo > hi {
 		return 0, completeness.BlindSpots{}, "", nil // every target's scope is empty
 	}
-	expectedFor, blind, eerr := expectedProjection(ctx, store, chStreamer, chAddr, src, lo, hi)
+	expectedFor, blind, eerr := expectedProjection(ctx, chStreamer, chAddr, src, lo, hi)
 	if eerr != nil {
 		return 0, completeness.BlindSpots{}, "", eerr
 	}
@@ -1908,7 +1915,7 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 // decoder soft-fails inside a single op's claim list and still emits the op,
 // so a malformed claim cannot remove a whole row from the expected side
 // without also removing it from served.
-func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, chAddr string, src reconSource, lo, hi uint32) (func(reconTarget) map[uint32]int, completeness.BlindSpots, error) {
+func expectedProjection(ctx context.Context, chStreamer completeness.EventStreamer, chAddr string, src reconSource, lo, hi uint32) (func(reconTarget) map[uint32]int, completeness.BlindSpots, error) {
 	switch {
 	case src.callDec != nil:
 		// Event-less ContractCall source (band, soroswap-router): re-derive the
@@ -1945,12 +1952,10 @@ func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer 
 		// went STALE as new pools deployed: blend reported complete=false
 		// (expected=0) on windows whose activity was on pools missing from the seed,
 		// while the live decoder (which self-seeds from deploy events) captured them.
-		// Adding it here makes the watchdog self-maintaining. (Reads the Postgres
-		// soroban_events landing zone for the rare, indexed creation events; a
-		// CH-native preseed for full -ch purity is a follow-up.)
+		// Adding it here makes the watchdog self-maintaining.
 		var walkBlind completeness.BlindSpots
 		if len(src.factories) > 0 {
-			pb, err := preseedFactoryChildren(ctx, store, src, lo)
+			pb, err := preseedFactoryChildren(ctx, chStreamer, src, lo)
 			if err != nil {
 				return nil, completeness.BlindSpots{}, fmt.Errorf("%s preseed: %w", src.name, err)
 			}
@@ -1999,7 +2004,7 @@ func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer 
 // ever missed and no undercount (false red) is possible:
 //
 //   - (a) src.dec's gate AFTER its preseed-to-lo = the curated in-code seed ∪
-//     every child preseeded from the Postgres landing zone — i.e. the registry
+//     every child preseeded from the lake's creation events — i.e. the registry
 //     state the stream STARTS from. Read via GatedContractSet().
 //   - (b) every child the SAME certified lake announces through hi, walked from
 //     the factory's creation events on a THROWAWAY decoder — a superset of the
@@ -2088,7 +2093,7 @@ func reconcileTarget(ctx context.Context, store *timescale.Store, src reconSourc
 	if sc.From > sc.To {
 		return 0, "", nil
 	}
-	actual, err := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, sc.From, sc.To)
+	actual, err := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), sc.From, sc.To)
 	if err != nil {
 		return 0, "", err
 	}
@@ -2098,15 +2103,14 @@ func reconcileTarget(ctx context.Context, store *timescale.Store, src reconSourc
 
 // reDeriveSDEXCensusViaDecoder re-derives the expected SDEX trade count per
 // ledger by running the SDEX decoder over the certified CH operations and
-// counting the DISTINCT, Validate-passing trades it emits — mirroring exactly
-// what InsertTrade lands in the served tier (the Validate gate; the served
-// PK has been an ON CONFLICT DO UPDATE since migration 0109, not a de-dup —
-// a colliding op_index overwrites rather than drops). This is the honest
-// projection oracle:
-// census == served by identical write logic, so the residual is exactly the
-// ops the served tier dropped (real coverage gaps) — not a methodology
-// artifact (one-side-zero fills or op_index fanout collisions, both of which
-// the served can't hold but the CH substrate retains) — see sdexServedCensus.
+// counting the DISTINCT, Validate-passing, priceable trades it emits (the
+// served PK has been an ON CONFLICT DO UPDATE since migration 0109, so a
+// colliding op_index overwrites rather than drops). One-side-zero fills are
+// stored by the writer but excluded here AND from the served COUNT
+// (reconTarget.countFilter), because ledgers written before they were
+// admitted hold none; a full-history ch-rebuild -sdex retires both exclusions.
+// The residual is then exactly the ops the served tier dropped (real coverage
+// gaps), not a methodology artifact — see sdexServedCensus.
 // Read-only; windowed so the operations⋈results join stays under the CH
 // memory cap.
 func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to uint32) (map[uint32]int, completeness.BlindSpots, error) {
@@ -2128,6 +2132,7 @@ func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to u
 			// DecodeCounted additionally reports how many claim atoms in
 			// this op failed to decode, so a failure marks the ledger
 			// BLIND (C4-059) instead of silently reading as zero trades.
+			// Both-zero no-op claims are a symmetric drop, not a failure.
 			var outs []consumer.Event
 			var failed int
 			if perr := completeness.Guard(func() {
@@ -2541,18 +2546,18 @@ func watchedSep41RecognitionShapes(ctx context.Context, cfg config.Config, chAdd
 	return clickhouse.DistinctTopicShapesForWatchedContracts(ctx, chAddr, from, tip, clickhouse.FirehoseExcludeSyms, watched)
 }
 
-// computeRecognitionGaps runs the global recognition audit over the
-// Soroban era and returns every unrecognized event shape.
-func computeRecognitionGaps(ctx context.Context, store *timescale.Store, cfg config.Config, gated map[string][]contractid.Option, tip uint32, soroswapOpts ...soroswap.DecoderOption) ([]completeness.RecognitionGap, error) {
+// computeRecognitionGaps runs the global recognition audit over [from, tip]
+// and returns every unrecognized event shape.
+func computeRecognitionGaps(ctx context.Context, store *timescale.Store, cfg config.Config, gated map[string][]contractid.Option, from, tip uint32, soroswapOpts ...soroswap.DecoderOption) ([]completeness.RecognitionGap, error) {
 	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gated, soroswapOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("build dispatcher: %w", err)
 	}
-	samples, err := store.DistinctSorobanTopicSamples(ctx, sorobanEraGenesis, tip)
+	samples, err := store.DistinctSorobanTopicSamples(ctx, from, tip)
 	if err != nil {
 		return nil, err
 	}
-	if verr := recognitionScanEmptyErr(len(samples), sorobanEraGenesis, tip); verr != nil {
+	if verr := recognitionScanEmptyErr(len(samples), from, tip); verr != nil {
 		return nil, verr
 	}
 	return completeness.AuditRecognition(samples, disp), nil

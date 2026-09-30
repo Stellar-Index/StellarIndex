@@ -126,15 +126,14 @@ not silently dropped:
   pair + desired/min amounts, no hop path) does not fit
   `soroswap_router_swaps`' columns (`path` cardinality ≥ 2,
   `function_name` CHECK). The lake counts the router's own emitted
-  `add` (1,057) / `remove` (219) events — a liquidity surface would
-  be its own table + decoder arm. Tracked with ROADMAP #89's router
-  follow-up.
+  `add` (1,057) / `remove` (219) events. LP flow is served from the
+  pair `deposit` / `withdraw` events in `soroswap_liquidity`.
 - **The router's own emitted contract events** (`swap` 168,557 /
   `add` / `remove` / `init` — router topics, distinct from pair
-  events): not yet decoded by any source; see
-  `internal/sources/soroswap/README.md` census notes (2026-07-10)
-  and `docs/protocols/soroswap.md`. This ContractCall source is
-  intent-side; the event side is the #89 follow-up.
+  events): intentionally not decoded. They duplicate the pair events,
+  `soroswap_router_swaps` and `soroswap_liquidity`, so decoding them
+  would double-count; see
+  [`soroswap/README.md`](../soroswap/README.md#router-level-topics--intentionally-not-decoded).
 - **Admin / read-only functions** (`initialize`, `set_pair_fee`,
   `router_pair_for`, quotes, …): move no tokens; out of scope for
   trade attribution.

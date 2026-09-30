@@ -192,18 +192,10 @@ type SupplyReader struct {
 }
 
 // NewSupplyReader dials ClickHouse with a request-sized pool and pings it,
-// authenticating as the ops-batch user when STELLARINDEX_CLICKHOUSE_OPS_USER/
-// _PASSWORD are set (ops_auth.go) and otherwise as CH's unauthenticated
-// `default` user — the pre-ADR-0048-D4 behavior. Non-API callers keep using
-// this constructor unchanged.
+// authenticating as the environment's identity ([chAuth]). Non-API callers
+// use this constructor.
 func NewSupplyReader(ctx context.Context, addr string) (*SupplyReader, error) {
-	// Ops-batch identity from the environment (2026-08-28 r1 incident;
-	// see ops_auth.go) — CH `default` user when unset.
-	auth, err := opsAuth()
-	if err != nil {
-		return nil, err
-	}
-	return NewSupplyReaderAuth(ctx, addr, auth.Username, auth.Password)
+	return NewSupplyReaderAuth(ctx, addr, "", "")
 }
 
 // NewSupplyReaderAuth is [NewSupplyReader] with an explicit CH
@@ -211,11 +203,16 @@ func NewSupplyReader(ctx context.Context, addr string) (*SupplyReader, error) {
 // rationale as clickhouse.NewExplorerReaderAuth (see that function's doc
 // comment). The API binary wires GET /v1/assets/{id}/supply's reader through
 // this constructor with `storage.clickhouse_serving_user` /
-// `clickhouse_serving_password`.
+// `clickhouse_serving_password`. Both empty resolves the environment's
+// identity, exactly as [NewSupplyReader] does.
 func NewSupplyReaderAuth(ctx context.Context, addr, username, password string) (*SupplyReader, error) {
+	auth, err := authOrEnv(username, password)
+	if err != nil {
+		return nil, err
+	}
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr:            []string{addr},
-		Auth:            clickhouse.Auth{Database: "stellar", Username: username, Password: password},
+		Auth:            auth,
 		Settings:        clickhouse.Settings{"max_execution_time": 30},
 		DialTimeout:     10 * time.Second,
 		ReadTimeout:     30 * time.Second,

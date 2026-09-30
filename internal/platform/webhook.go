@@ -35,7 +35,7 @@ const (
 	WebhookEventAnomalyFreeze WebhookEventType = "anomaly.freeze"
 
 	// WebhookEventDivergenceFiring fires when a price-divergence
-	// warning starts or clears. Body carries `firing: true|false`.
+	// warning starts; a clear sends nothing. Body is DivergenceFiringWebhookPayload.
 	WebhookEventDivergenceFiring WebhookEventType = "divergence.firing"
 
 	// WebhookEventPriceAlert fires when one of the account's

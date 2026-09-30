@@ -47,8 +47,10 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - Issuer home_domain, latest observed (watched issuers only) → `metadata.NewLCMHomeDomainResolver`, `ChainedHomeDomainLookup`
 - Verified currency → `currency.LoadEmbedded().LookupBySlug/LookupByTicker/LookupByStellarAssetID`, `.Browseable`, `.ByClass`, `.CoinGeckoIDs` (never auto-populate seed.yaml)
 
-## SSRF-guarded outbound fetch — ⚠ **DUPLICATED, needs extraction (D4 M0-2)**
-- Today: two private impls — `metadata/sep1.go` (`ssrfDialer`, `isBlocked`) AND `customerwebhook/ssrf.go` (`ssrfGuardedDialContext`, `isInternalIP`, exported `IsReservedTLD`). **Target:** a shared `internal/safehttp.GuardedTransport()`; until then reuse `customerwebhook.IsReservedTLD` — do NOT write a third copy.
+## SSRF-guarded outbound fetch — `internal/nettools`
+- Blocklist (the one list; add a range there, never at a call site) → `nettools.IsBlockedIP(ip)`, `nettools.IsReservedTLD(host)`
+- Dial pre-resolved, vetted IPs in order → `nettools.DialFirstReachable(ctx, dialer, network, ips, port)`
+- ⚠ No shared guarded `http.Transport` exists (no `internal/safehttp`). Two private `DialContext` wrappers compose the primitives above: `metadata/sep1.go` (`ssrfDialer`) and `customerwebhook/ssrf.go` (`ssrfGuardedDialContext`); `dashboardwebhooks/handlers.go` vets at registration. A new outbound fetcher builds on `nettools` — do NOT write a third wrapper without extracting one.
 
 ## Webhooks — `internal/customerwebhook`
 - Fan a domain event to customer webhooks → `NewFanout(store, logger).Publish(...)`, `MarshalPayload`
