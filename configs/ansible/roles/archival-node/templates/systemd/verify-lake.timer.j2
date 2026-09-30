@@ -1,0 +1,22 @@
+# systemd timer: daily verify-lake run.
+#
+# Rendered by Ansible. Companion to verify-lake.service.
+#
+# Time slot: 08:17 UTC + up to 10 min jitter — after the 02:00–06:53 daily
+# cluster (ch-lake-backup 04:10, compute-completeness 05:30), so two
+# genesis-to-tip scans of stellar.ledgers do not overlap. Daily matches the
+# 48h threshold of stellarindex_lake_verify_stale.
+# Persistent=true: if the box was off at 08:17, fire on next boot.
+
+[Unit]
+Description=Daily verify-lake raw-lake soundness run
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/lake-verify.md
+
+[Timer]
+OnCalendar=*-*-* 08:17:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+Unit=verify-lake.service
+
+[Install]
+WantedBy=timers.target

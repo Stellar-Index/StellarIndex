@@ -85,6 +85,54 @@ tests:
         alertname: stellarindex_aggregator_supply_refresh_stalled
         exp_alerts: []
 
+  # ── a stalled producer: every asset it feeds reports dormant ─────
+  # The anchor is producer-wide, so a dead observer freezes it for all
+  # its assets on the same tick. Two dormant assets held past the 30m
+  # `for` fire, even though neither is error-dominant.
+  - interval: 1m
+    name: two assets dormant together trip dormant_fleet
+    input_series:
+      - series: 'stellarindex_aggregator_supply_refresh_total{asset_key="aaa",outcome="dormant"}'
+        values: '0+1x90'
+      - series: 'stellarindex_aggregator_supply_refresh_total{asset_key="bbb",outcome="dormant"}'
+        values: '0+1x90'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_aggregator_supply_refresh_dormant_fleet
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: supply
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh-error-dominant.md
+              summary: "supply refresher: 2 assets reporting dormant together for ≥ 30m — a component observer has likely stalled"
+              description: |
+                2 watched assets are reporting outcome `dormant`
+                at once. The supply freshness anchor is a producer-wide
+                watermark (classic: the slowest of the four component
+                observers; SEP-41: sep41_supply_events), so assets share a
+                frozen anchor only when that producer stops advancing. Each
+                tick still re-stamps the last observation as current, so
+                served supply goes stale silently until the 24h dormancy
+                horizon. Runbook: section "Several assets dormant at once" —
+                check each component observer is advancing.
+
+  # ── one dormant asset beside healthy siblings stays quiet ────────
+  - interval: 1m
+    name: one dormant asset with siblings ok never trips dormant_fleet
+    input_series:
+      - series: 'stellarindex_aggregator_supply_refresh_total{asset_key="aaa",outcome="dormant"}'
+        values: '0+1x90'
+      - series: 'stellarindex_aggregator_supply_refresh_total{asset_key="bbb",outcome="ok"}'
+        values: '0+1x90'
+      - series: 'stellarindex_aggregator_supply_refresh_total{asset_key="ccc",outcome="ok"}'
+        values: '0+1x90'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_aggregator_supply_refresh_dormant_fleet
+        exp_alerts: []
+
   # ── sep41 rollup pinned by an absent projector cursor (GH-1153) ──
   # Rollup cadence 5m. Every pass for CPINNED reports no_cursor, so its
   # fold never moves and supply reads run the full-history scan.

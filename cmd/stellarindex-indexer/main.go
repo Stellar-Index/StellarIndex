@@ -68,6 +68,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/projector"
 	"github.com/Stellar-Index/StellarIndex/internal/redact"
+	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	externalbinance "github.com/Stellar-Index/StellarIndex/internal/sources/external/binance"
 	externalbitstamp "github.com/Stellar-Index/StellarIndex/internal/sources/external/bitstamp"
@@ -79,6 +80,7 @@ import (
 	externalecb "github.com/Stellar-Index/StellarIndex/internal/sources/external/ecb"
 	externalexchangerates "github.com/Stellar-Index/StellarIndex/internal/sources/external/exchangeratesapi"
 	externalkraken "github.com/Stellar-Index/StellarIndex/internal/sources/external/kraken"
+	externaltiingo "github.com/Stellar-Index/StellarIndex/internal/sources/external/tiingo"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
@@ -1134,6 +1136,19 @@ func newECBPoller(cfg config.ExternalVenueConfig) *externalecb.Poller {
 	return p
 }
 
+// newTiingoPoller builds the fund-NAV poller over the curated fund
+// bindings' tickers, applying the operator's poll_interval override.
+func newTiingoPoller(cfg config.TiingoVenueConfig) (*externaltiingo.Poller, error) {
+	p, err := externaltiingo.NewPoller(cfg.APIKey, rwa.FundNAVTickers())
+	if err != nil {
+		return nil, err
+	}
+	if cfg.PollInterval > 0 {
+		p.Interval = cfg.PollInterval
+	}
+	return p, nil
+}
+
 func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitting would reduce linearity
 	ctx context.Context,
 	cfg config.ExternalConfig,
@@ -1393,6 +1408,22 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 			"pairs", len(pairs),
 			"poll_interval", p.PollInterval())
 		enabled = append(enabled, externalecb.SourceName)
+	}
+
+	if cfg.Tiingo.Enabled {
+		// APIKey is resolved via env override at config load time
+		// (see config.ApplyEnvOverrides → TIINGO_API_KEY).
+		p, err := newTiingoPoller(cfg.Tiingo)
+		if err != nil {
+			return nil, nil, fmt.Errorf("tiingo: %w", err)
+		}
+		p.Logger = logger
+		pollers = append(pollers, external.PollerSpec{Poller: p})
+		logger.Info("external poller enabled",
+			"source", externaltiingo.SourceName,
+			"tickers", len(p.Tickers),
+			"poll_interval", p.PollInterval())
+		enabled = append(enabled, externaltiingo.SourceName)
 	}
 
 	if len(streamers) == 0 && len(pollers) == 0 {

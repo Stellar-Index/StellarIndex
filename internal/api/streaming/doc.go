@@ -9,7 +9,8 @@
 //     to broadcast an event on a topic.
 //   - HTTP handlers call [Stream] which subscribes to one or more
 //     topics, replays buffered events from the client's
-//     `Last-Event-ID` (RFC 8895 §9), and forwards live events as SSE
+//     `Last-Event-ID` (WHATWG HTML Living Standard, Server-sent events),
+//     and forwards live events as SSE
 //     frames until the request context cancels.
 //
 // Consumers MUST treat IDs as opaque time-sortable strings (16
@@ -47,11 +48,11 @@
 // unauthenticated memory-exhaustion lever (REL-05). A topic with no
 // subscribers is dropped once it has nothing left to offer — right
 // away if it was never published to, or after [DefaultTopicIdleTTL]
-// if it still holds a replay buffer. [DefaultMaxTopics] is a reap
-// threshold, not a hard ceiling: over it the reaper evicts
-// subscriber-less topics oldest-first, but a topic with a live
-// subscriber is never reaped, so the topic count is bounded by
-// max(DefaultMaxTopics, concurrent subscribers × their topics).
+// if it still holds a replay buffer. [DefaultMaxTopics] is the
+// ceiling: over it the reaper evicts subscriber-less topics
+// oldest-first, and since a topic with a live subscriber is never
+// reaped, a Subscribe that would mint a topic into a map full of
+// subscribed ones is refused with [ErrTopicCapacity] (a 503).
 // Connections are admitted against the concurrency caps BEFORE they
 // can allocate a topic (see [Stream]), so a refused client never
 // leaves one behind. [Hub.TopicCount], [Hub.BufferedTopicCount],
