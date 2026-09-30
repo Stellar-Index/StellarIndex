@@ -3,7 +3,7 @@ package explorer
 import (
 	"net/http"
 	"net/http/httptest"
-	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,24 +55,36 @@ func TestLedgerOperations_SignalsTruncation(t *testing.T) {
 	}
 }
 
-// The deprecated ?ledger= alias and the canonical route must stay one surface:
-// a divergence here means the alias no longer shares the route's code path.
-func TestLedgerOperations_MatchesDeprecatedQueryAlias(t *testing.T) {
-	reader := &ledgerOpsTotalReader{
-		capReader: &capReader{probe: &deadlineProbe{}},
-		rows: []clickhouse.OpRow{
-			{Seq: 42, CloseTime: time.Unix(1700000000, 0).UTC(), TxHash: "h0"},
-			{Seq: 42, CloseTime: time.Unix(1700000000, 0).UTC(), TxHash: "h1", OpIndex: 1},
-		},
-		hdr: clickhouse.LedgerHeader{OpCount: 3},
-	}
-	route := serveLedgerOps(t, reader, (*Handler).LedgerOperations, "/v1/ledgers/42/operations", "42")
-	alias := serveLedgerOps(t, reader, (*Handler).Operations, "/v1/operations?ledger=42", "")
-	if route.Ledger != 42 || len(route.Operations) != 2 {
-		t.Fatalf("route served ledger=%d with %d operations, want 42 with 2", route.Ledger, len(route.Operations))
-	}
-	if !reflect.DeepEqual(route, alias) {
-		t.Errorf("/v1/ledgers/42/operations = %+v\n/v1/operations?ledger=42 = %+v\nwant identical", route, alias)
+// /v1/operations is the directory only: any ?ledger= form, including the
+// empty and zero values, must be refused with a pointer to the per-ledger
+// route rather than served as a directory page.
+func TestOperations_LedgerParamRejected(t *testing.T) {
+	for _, q := range []string{"42", "", "0", "abc"} {
+		probe := &deadlineProbe{}
+		h := newProbeHandler(&capReader{probe: probe}, nil)
+		var problemType, detail string
+		h.WriteProblem = func(w http.ResponseWriter, _ *http.Request, typ, _ string, status int, d string) {
+			problemType, detail = typ, d
+			w.WriteHeader(status)
+		}
+		h.WriteJSON = func(w http.ResponseWriter, _ any, _ bool) {
+			t.Errorf("ledger=%q: served a 200 body", q)
+			w.WriteHeader(http.StatusOK)
+		}
+		rec := httptest.NewRecorder()
+		h.Operations(rec, httptest.NewRequest(http.MethodGet, "/v1/operations?ledger="+q, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("ledger=%q: status = %d, want 400", q, rec.Code)
+		}
+		if problemType != "https://api.stellarindex.io/errors/invalid-parameter" {
+			t.Errorf("ledger=%q: problem type = %q, want invalid-parameter", q, problemType)
+		}
+		if !strings.Contains(detail, "/v1/ledgers/{seq}/operations") {
+			t.Errorf("ledger=%q: detail = %q, want a pointer to /v1/ledgers/{seq}/operations", q, detail)
+		}
+		if probe.sawCall {
+			t.Errorf("ledger=%q: reached the lake before refusing", q)
+		}
 	}
 }
 

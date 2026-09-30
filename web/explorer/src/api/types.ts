@@ -270,6 +270,9 @@ export interface paths {
          *     Same wire shape as the catalogue rows on `/assets` (GlobalAssetView:
          *     `asset_id` = slug, `type` = "global", no issuer/contract_id).
          *     `market_cap_usd` is populated for fiat (fxHistory-backed).
+         *
+         *     Empty on testnet and futurenet, which run none of the off-chain
+         *     feeds these rows are priced from.
          */
         get: operations["listExternalAssets"];
         put?: never;
@@ -294,7 +297,8 @@ export interface paths {
          *     counterpart lives on `/assets/{asset_id}`; a Stellar-issued slug
          *     (usdc, aqua, …) returns **404** here, and a non-Stellar slug
          *     returns 404 on `/assets/{asset_id}` — each asset resolves on
-         *     exactly one path (LC-001, no redirect).
+         *     exactly one path (LC-001, no redirect). Every slug 404s on
+         *     testnet and futurenet, matching the empty `/external/assets`.
          */
         get: operations["getExternalAsset"];
         put?: never;
@@ -324,7 +328,8 @@ export interface paths {
          *     no price block — so it's a cheap directory call suitable for
          *     building a verified-currencies section on a listing page.
          *
-         *     Order matches the seed-file order (deterministic).
+         *     Order matches the seed-file order (deterministic). Empty on
+         *     testnet and futurenet: the catalogue names pubnet issuers.
          */
         get: operations["listVerifiedAssets"];
         put?: never;
@@ -2715,6 +2720,11 @@ export interface paths {
          *     `source_classes`. Operators consult this endpoint to confirm a
          *     venue is recognised before debugging an absence in /v1/markets
          *     or /v1/vwap.
+         *
+         *     Scoped to the running network: on testnet and futurenet only
+         *     sources that exist there are listed (the pubnet-anchored
+         *     protocol decoders and the off-chain price feeds are omitted).
+         *     Pubnet lists the whole registry.
          */
         get: operations["listSources"];
         put?: never;
@@ -2756,8 +2766,9 @@ export interface paths {
          *
          *     Served from a 15-second background-refreshed snapshot;
          *     `Cache-Control` is `private, no-cache` accordingly. Unknown
-         *     source names 404 (the registry is static per deploy — see
-         *     `/v1/sources` for the catalogue).
+         *     source names, and sources `/v1/sources` omits on this network,
+         *     404 (the registry is static per deploy — see `/v1/sources` for
+         *     the catalogue).
          */
         get: operations["getSourceHealth"];
         put?: never;
@@ -2790,6 +2801,9 @@ export interface paths {
          *     `kind=router` entries only — vault entries always report
          *     zero routed trades (their capital state lives on the
          *     protocol surfaces, not per-tx flow).
+         *
+         *     Empty on testnet and futurenet: every registry entry is a
+         *     pubnet contract.
          *
          *     A router call observed as a SUB-INVOCATION (some other
          *     contract called the router as part of its own authorized
@@ -4567,10 +4581,8 @@ export interface paths {
          *     multi-billion-row lake made the directory ~10× slower. Fetch the full
          *     decoded op from `/v1/ledgers/{seq}/operations` or `/v1/tx/{hash}`.
          *
-         *     **Deprecated:** `?ledger=<seq>` is an alias of
-         *     `GET /v1/ledgers/{seq}/operations`, served unchanged until a breaking
-         *     release removes it. A query parameter must not change a surface's
-         *     consistency contract (ADR-0018).
+         *     A `ledger` query parameter is refused with 400: one ledger's
+         *     operations are `GET /v1/ledgers/{seq}/operations` (ADR-0018).
          */
         get: operations["listOperations"];
         put?: never;
@@ -7240,12 +7252,25 @@ export interface components {
          *     - `divergence_warning` — anomaly check or cross-reference
          *       observed a meaningful divergence; treat with caution.
          *     - `frozen` — anomaly detection refused to publish the new
-         *       bucket; this response carries the previous bucket's
-         *       last-known-good value (ADR-0019). Only fires on `/v1/price`,
-         *       on `/v1/oracle/lastprice` + `/v1/oracle/x_last_price`, and on
-         *       the 60-second `/v1/price/stream` series' `price_frozen` event
-         *       (which carries no value); tip + observations surfaces ignore
-         *       freeze.
+         *       bucket; this response carries the value the freeze is
+         *       holding — the aggregator's last-known-good VWAP (ADR-0019),
+         *       never the refused bucket. A held value is served with its
+         *       own `observed_at` (when it was observed, not when it was
+         *       read, so it ages through the hold), the aggregator window
+         *       it was held at (`window_seconds` 300, 3600 or 86400, not
+         *       60), empty `sources` (on a fiat quote derived through the
+         *       USD leg per ADR-0051, the FX feed alone, and `observed_at`
+         *       is the older of the held value's and the FX rate's), and
+         *       `stale: true`, since it is below
+         *       the closed-1-minute-bucket baseline. When a pair is frozen
+         *       and no value is held, `/v1/price` and the SEP-40 point reads
+         *       answer 503 `price-unavailable` and `/v1/price/batch` omits
+         *       the row, rather than publish the refused bucket. Only fires
+         *       on `/v1/price`, `/v1/price/batch`, `/v1/oracle/lastprice` +
+         *       `/v1/oracle/x_last_price`, and on the 60-second
+         *       `/v1/price/stream` series' `price_frozen` event (which
+         *       carries no value); tip, observations and the `/v1/assets`
+         *       price columns ignore freeze.
          *     - `frozen_checked` — true only when the freeze marker was
          *       actually read (looker wired and the read succeeded). When
          *       false, `frozen` is NOT meaningful — the check never ran, so
@@ -10436,7 +10461,9 @@ export interface components {
              *
              *     Null for the verified asset itself, for non-classic
              *     assets (native / Soroban / fiat), and for any code that
-             *     no verified currency claims on Stellar. See R-018 /
+             *     no verified currency claims on Stellar. Always null on
+             *     testnet and futurenet, where the verified issuers (pubnet
+             *     accounts) do not exist. See R-018 /
              *     docs/architecture/multi-network-assets-migration.md
              *     Phase 1.1.
              */
@@ -10453,7 +10480,8 @@ export interface components {
              *     so only the real verified row (which carries this false)
              *     keeps the badge. The detail path stamps the richer
              *     `unverified_warning` body instead. Omitted (false) for the
-             *     verified asset and codes no verified currency claims.
+             *     verified asset, codes no verified currency claims, and every
+             *     row on testnet and futurenet.
              * @default false
              */
             unverified_ticker_collision: boolean;
@@ -22861,14 +22889,9 @@ export interface operations {
     listOperations: {
         parameters: {
             query?: {
-                /**
-                 * @deprecated
-                 * @description Deprecated alias of GET /v1/ledgers/{seq}/operations. Omit for the network-wide recent directory.
-                 */
-                ledger?: number;
-                /** @description Opaque keyset cursor (directory mode only). */
+                /** @description Opaque keyset cursor for the next older page. */
                 cursor?: string;
-                /** @description Page size. Directory: default 50, cap 200 (400 above); deprecated `?ledger=` alias: default 500, cap 2000. */
+                /** @description Page size: default 50, cap 200 (400 above). */
                 limit?: number;
             };
             header?: never;
@@ -22877,7 +22900,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Decoded operations (ledger-scoped or the recent directory). */
+            /** @description The recent-operations directory page. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -22886,22 +22909,8 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
-                     *         "ledger": 63316166,
+                     *         "ledger": 0,
                      *         "operations": [
-                     *           {
-                     *             "ledger": 63316166,
-                     *             "close_time": "2026-07-03T22:37:01Z",
-                     *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
-                     *             "tx_index": 0,
-                     *             "op_index": 0,
-                     *             "type": "payment",
-                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
-                     *             "fields": {
-                     *               "amount": "26000000000000",
-                     *               "asset": "XLM26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
-                     *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
-                     *             }
-                     *           },
                      *           {
                      *             "ledger": 63316166,
                      *             "close_time": "2026-07-03T22:37:01Z",
@@ -22909,14 +22918,19 @@ export interface operations {
                      *             "tx_index": 0,
                      *             "op_index": 1,
                      *             "type": "payment",
-                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
-                     *             "fields": {
-                     *               "amount": "2600000000000",
-                     *               "asset": "XRP26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
-                     *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
-                     *             }
+                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP"
+                     *           },
+                     *           {
+                     *             "ledger": 63316166,
+                     *             "close_time": "2026-07-03T22:37:01Z",
+                     *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
+                     *             "tx_index": 0,
+                     *             "op_index": 0,
+                     *             "type": "payment",
+                     *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP"
                      *           }
-                     *         ]
+                     *         ],
+                     *         "next_cursor": "63316166.0.0"
                      *       },
                      *       "as_of": "2026-07-03T22:40:10.560512468Z",
                      *       "flags": {
@@ -22930,12 +22944,12 @@ export interface operations {
                      */
                     "application/json": {
                         data?: {
-                            /** @description The ledger (deprecated ?ledger= alias); 0 for the directory. */
+                            /** @description Always 0: the directory spans ledgers. */
                             ledger?: number;
                             operations?: components["schemas"]["Operation"][];
-                            /** @description Directory mode: opaque cursor for the next older page; absent on the last page. */
+                            /** @description Opaque cursor for the next older page; absent on the last page. */
                             next_cursor?: string;
-                            /** @description Directory mode, first page only: per-op-type counts over the trailing ~24h. */
+                            /** @description First page only: per-op-type counts over the trailing ~24h. */
                             op_type_stats?: {
                                 type?: string;
                                 /** Format: int64 */
@@ -22949,10 +22963,6 @@ export interface operations {
                              *     transaction outcome.
                              */
                             coverage_note?: string;
-                            /** @description Ledger-scoped mode only: the ledger's exact operation count from its header. Absent in directory mode, which pages instead. */
-                            total?: number;
-                            /** @description Ledger-scoped mode only: true when total exceeds len(operations) — the page was cut at ?limit= with no cursor to continue. Absent in directory mode. */
-                            truncated?: boolean;
                         };
                     };
                 };
