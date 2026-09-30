@@ -3,6 +3,7 @@
 # alerts added with their counters:
 #
 #   stellarindex_monthly_quota_fail_open      (C3-082)
+#   stellarindex_monthly_quota_fail_closed
 #   stellarindex_admin_audit_write_failing    (C3-067)
 #   stellarindex_usage_write_failing          (GH-1277)
 #
@@ -89,6 +90,56 @@ tests:
     alert_rule_test:
       - eval_time: 35m
         alertname: stellarindex_monthly_quota_fail_open
+        exp_alerts: []
+
+  # ── a sustained fail-closed state pages ──────────────────────────
+  # Past the dwell window the gate stops counting fail-open and 429s
+  # every metered request instead; fail-open reads flat zero throughout.
+  - interval: 1m
+    name: a sustained monthly-quota fail-closed pages
+    input_series:
+      - series: 'stellarindex_monthly_quota_fail_closed_total{job="stellarindex_api",instance="r1:8080"}'
+        values: '0+60x30'
+      - series: 'stellarindex_monthly_quota_fail_open_total{job="stellarindex_api",instance="r1:8080"}'
+        values: '0+0x30'
+
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_monthly_quota_fail_closed
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/monthly-quota-fail-open.md
+              summary: "Monthly quota is FAILING CLOSED — metered keys are being 429'd (1 req/s)"
+              description: |
+                The per-key month-to-date counter has been unreadable for
+                longer than the fail-open dwell window, so the monthly-quota
+                gate has flipped to failing CLOSED: every request from a key
+                with a monthly quota now gets a 429 regardless of its real
+                usage. This is customer-visible unavailability for paying
+                keys, not a billing leak. Clears once the counter has read
+                without error for the same dwell window.
+
+                Normally moves with the Redis readyz probe and with
+                stellarindex_ratelimit_fail_closed. If this fires ALONE,
+                suspect the usage-counter key namespace or an eviction policy.
+      - eval_time: 20m
+        alertname: stellarindex_monthly_quota_fail_open
+        exp_alerts: []
+
+  # ── fail-closed: the zero-seeded healthy state is silent ─────────
+  - interval: 1m
+    name: a healthy quota path raises no fail-closed page
+    input_series:
+      - series: 'stellarindex_monthly_quota_fail_closed_total{job="stellarindex_api",instance="r1:8080"}'
+        values: '0+0x30'
+
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_monthly_quota_fail_closed
         exp_alerts: []
 
   # ── C3-067: ONE lost audit row tickets, labelled by surface ──────

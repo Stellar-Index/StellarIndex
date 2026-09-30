@@ -11,7 +11,7 @@ severity: P3
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_monthly_quota_fail_open` (P3 / ticket) |
+| Alert | `stellarindex_monthly_quota_fail_open` (P3 / ticket) — bypassing the cap. `stellarindex_monthly_quota_fail_closed` (page) — the companion below: past the dwell window, the gate 429s metered keys instead. |
 | Detected by | Prometheus rule in `deploy/monitoring/rules/api.yml` and the R1 single-host overlay `configs/prometheus/rules.r1/api.yml`. |
 | Typical MTTR | 5–30 min: clears on its own the moment the usage counter is readable again; the fix is whatever made it unreadable. |
 | Impact | **Revenue.** Every metered key is uncapped for the duration. Usage still meters (the customer is still billed) but the agreed monthly ceiling is not enforced, and overage served in this window cannot be reclaimed — the responses went out. |
@@ -40,6 +40,22 @@ This is the exact twin of
 together because they share a backing store. The difference is what the
 open window costs: the rate limiter's is throughput/abuse headroom, this
 one's is money.
+
+## `stellarindex_monthly_quota_fail_closed`
+
+Past the dwell window (`DefaultMonthlyQuotaDwellTime`, 30s, tunable via
+`api.monthly_quota_dwell`) of *continuous* read errors, the gate stops
+failing open and fails **closed**: every request from a key with a
+monthly quota gets a 429 + `Retry-After`, whatever its real usage, and
+`stellarindex_monthly_quota_fail_closed_total` counts each one. The
+fail-open counter stops moving at that point, so a sustained outage
+shows up here, not on the ticket above. It clears once the counter has
+read without error for the same dwell window.
+
+`expr: sum(rate(stellarindex_monthly_quota_fail_closed_total[5m])) > 0`,
+`for: 2m`, `severity: page` — paying keys are being refused, which is an
+outage from the first second. Diagnose exactly as below; the cause is
+the same unreadable counter, held for longer.
 
 ## Quick diagnosis (≤ 5 min)
 
