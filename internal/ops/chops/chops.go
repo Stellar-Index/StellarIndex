@@ -136,6 +136,8 @@ func verifierVerb(verb string) (func([]string) error, bool) {
 		return verifyHashChain, true
 	case "verify-lake":
 		return verifyLake, true
+	case "wasm-drift":
+		return wasmDrift, true
 	default:
 		return nil, false
 	}
