@@ -19592,7 +19592,7 @@ components:
         quote_asset:  { type: string }
         base_amount:  { type: string, description: "Integer stroops, decimal string." }
         quote_amount: { type: string, description: "Integer stroops, decimal string." }
-        price:        { type: string, description: "quote/base, 10-digit decimal." }
+        price:        { type: [string, "null"], description: "quote/base, 10-digit decimal; null (key always present) when one leg is zero, e.g. an SDEX rounding fill." }
         base_decimals:
           type: integer
           description: |

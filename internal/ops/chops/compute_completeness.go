@@ -1797,7 +1797,7 @@ func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chAd
 			return nil, completeness.BlindSpots{}, eerr
 		}
 		for _, tgt := range src.targets {
-			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, genesis, hi)
+			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), genesis, hi)
 			if aerr != nil {
 				return nil, completeness.BlindSpots{}, aerr
 			}
@@ -1828,7 +1828,7 @@ func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chAd
 	// findings and the caller's verdict names them apart.
 	for _, tgt := range src.targets {
 		expected := completeness.SumKinds(byKind, tgt.kinds...)
-		actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, genesis, hi)
+		actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), genesis, hi)
 		if aerr != nil {
 			return nil, completeness.BlindSpots{}, aerr
 		}
@@ -2086,7 +2086,7 @@ func reconcileTarget(ctx context.Context, store *timescale.Store, src reconSourc
 	if sc.From > sc.To {
 		return 0, "", nil
 	}
-	actual, err := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, sc.From, sc.To)
+	actual, err := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), sc.From, sc.To)
 	if err != nil {
 		return 0, "", err
 	}
@@ -2096,15 +2096,14 @@ func reconcileTarget(ctx context.Context, store *timescale.Store, src reconSourc
 
 // reDeriveSDEXCensusViaDecoder re-derives the expected SDEX trade count per
 // ledger by running the SDEX decoder over the certified CH operations and
-// counting the DISTINCT, Validate-passing trades it emits — mirroring exactly
-// what InsertTrade lands in the served tier (the Validate gate; the served
-// PK has been an ON CONFLICT DO UPDATE since migration 0109, not a de-dup —
-// a colliding op_index overwrites rather than drops). This is the honest
-// projection oracle:
-// census == served by identical write logic, so the residual is exactly the
-// ops the served tier dropped (real coverage gaps) — not a methodology
-// artifact (one-side-zero fills or op_index fanout collisions, both of which
-// the served can't hold but the CH substrate retains) — see sdexServedCensus.
+// counting the DISTINCT, Validate-passing, priceable trades it emits (the
+// served PK has been an ON CONFLICT DO UPDATE since migration 0109, so a
+// colliding op_index overwrites rather than drops). One-side-zero fills are
+// stored by the writer but excluded here AND from the served COUNT
+// (reconTarget.countFilter), because ledgers written before they were
+// admitted hold none; a full-history ch-rebuild -sdex retires both exclusions.
+// The residual is then exactly the ops the served tier dropped (real coverage
+// gaps), not a methodology artifact — see sdexServedCensus.
 // Read-only; windowed so the operations⋈results join stays under the CH
 // memory cap.
 func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to uint32) (map[uint32]int, completeness.BlindSpots, error) {
