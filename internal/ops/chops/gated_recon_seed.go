@@ -6,8 +6,8 @@ import (
 	"os"
 
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
-	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // preseedFactoryChildren seeds a factory-anchored reconcile source's
@@ -27,21 +27,22 @@ import (
 // drop every pre-N child's events and report a false "missing rows"
 // delta — the exact false-coverage signal the gate must not introduce.
 //
-// The walk is cheap: factory creation events are rare and the
-// (contract_id, topic_0_sym) index on soroban_events serves the filter.
+// The walk reads `es`, which should be the event source the re-derive itself
+// reads, so a lake-backed (-ch) run needs no Postgres landing zone. It is
+// cheap: factory creation events are rare and contract + topic filtered.
 //
 // The decoder runs under completeness.Guard: a creation event whose decoder
 // panics leaves that child unseeded, so it is returned as a blind spot (the
 // child's rows are missing from the expected side) instead of crashing the
 // caller. Each caller decides what a blind preseed means for it.
-func preseedFactoryChildren(ctx context.Context, store *timescale.Store, src reconSource, to uint32) (completeness.BlindSpots, error) {
+func preseedFactoryChildren(ctx context.Context, es completeness.EventStreamer, src reconSource, to uint32) (completeness.BlindSpots, error) {
 	if len(src.factories) == 0 || src.dec == nil {
 		return completeness.BlindSpots{}, nil
 	}
 	// A factory whose own genesis is at/after `to` deployed no children
 	// BEFORE `to`, so the [genesis, to) preseed window holds nothing to
-	// seed — and when genesis > to the window is inverted, which
-	// StreamSorobanEvents rejects outright ("to < from"). This is exactly the
+	// seed — and when genesis > to the window is inverted, which the
+	// landing-zone reader rejects outright ("to < from"). This is exactly the
 	// case a sub-range re-derive whose -from sits below a later-deploying
 	// factory's genesis hits (e.g. a whole-lake ch-reproject -from below
 	// defindex's genesis). Skip the empty walk; the re-derive over [to, hi]
@@ -51,13 +52,9 @@ func preseedFactoryChildren(ctx context.Context, store *timescale.Store, src rec
 	}
 	seeded := 0
 	blind := completeness.NewBlindTracker()
-	err := store.StreamSorobanEvents(ctx, src.genesis, to,
-		src.factories, []string{src.creationSym}, nil,
-		func(row sorobanevents.Row) error {
-			ev, rerr := sorobanevents.Reconstruct(row)
-			if rerr != nil {
-				return nil //nolint:nilerr // skip a broken row like the projector does
-			}
+	err := es.StreamContractEvents(ctx, src.genesis, to,
+		src.factories, []string{src.creationSym},
+		func(ev events.Event) error {
 			if perr := completeness.Guard(func() {
 				if src.dec.Matches(ev) {
 					if _, derr := src.dec.Decode(ev); derr == nil {
@@ -90,4 +87,21 @@ func preseedResultMessage(name string, seeded int) string {
 		return fmt.Sprintf("verify-reconciliation: pre-seeded %d %s factory children (gate registry)\n", seeded, name)
 	}
 	return fmt.Sprintf("verify-reconciliation: WARNING %s factory preseed walk found 0 children in a non-empty window — gate registry stays empty; any pre-existing pool's events will be undercounted as missing, not attributed, for the rest of this re-derive\n", name)
+}
+
+// landingZoneEvents adapts the Postgres soroban_events landing zone to
+// completeness.EventStreamer for a caller whose re-derive reads Postgres too.
+type landingZoneEvents struct {
+	s completeness.SorobanEventStreamer
+}
+
+func (l landingZoneEvents) StreamContractEvents(ctx context.Context, from, to uint32, contractIDs, topic0Syms []string, fn func(events.Event) error) error {
+	return l.s.StreamSorobanEvents(ctx, from, to, contractIDs, topic0Syms, nil,
+		func(row sorobanevents.Row) error {
+			ev, rerr := sorobanevents.Reconstruct(row)
+			if rerr != nil {
+				return nil //nolint:nilerr // skip a broken row like the projector does
+			}
+			return fn(ev)
+		})
 }

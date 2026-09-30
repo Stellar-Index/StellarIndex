@@ -123,7 +123,7 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 			// from the factory's creation events [genesis, lo) before the
 			// re-derive, so a custom -from sub-range doesn't drop the events
 			// of children deployed before the range (false-delta guard).
-			pblind, perr := preseedFactoryChildren(ctx, store, src, lo)
+			pblind, perr := preseedFactoryChildren(ctx, landingZoneEvents{s: store}, src, lo)
 			if perr != nil {
 				return fmt.Errorf("%s: %w", src.name, perr)
 			}
