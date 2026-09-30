@@ -193,7 +193,7 @@ func (s *Store) PlanCEXFiatUSDVolumeRestamp(ctx context.Context, p RestampScanPa
 			if err != nil || !ok {
 				return nil, err
 			}
-			return tradeUSDVolumeViaFiatQuoteFor(ctx, t, s.usdVolumeFXResolver), nil
+			return tradeUSDVolumeViaFiatQuoteFor(ctx, t, s.usdVolumeFXResolver)
 		},
 	})
 	if err != nil {
