@@ -245,6 +245,26 @@ gap alone — you must look at whether `MinComponentLedger` is
      raising that one asset's per-asset `stale_component_ledgers`
      threshold instead when only one asset needs it.
 
+### Several assets dormant at once (`_dormant_fleet`)
+
+`stellarindex_aggregator_supply_refresh_dormant_fleet` fires when two
+or more assets report `outcome="dormant"` together for ≥ 30 min.
+`MinComponentLedger` is not a per-asset age: classic assets share the
+slowest of the four component observers' `MAX(ledger)`, SEP-41
+contracts share `MAX(ledger)` of `sep41_supply_events`. A quiet asset
+cannot freeze that watermark on its own, so shared dormancy means the
+producer stopped advancing, and every tick is re-stamping a frozen
+observation as current until the 24h horizon.
+
+- Signal: the dormant `asset_key`s are all classic (or all SEP-41),
+  and their WARN/DEBUG logs carry the same `min_component_ledger`.
+- Mitigation: check each classic component observer is advancing —
+  `MAX(ledger)` of `trustline_observations`, `claimable_observations`,
+  `lp_reserve_observations` and `sac_balance_observations` (or
+  `sep41_supply_events`) against the chain tip. The lowest one is the
+  stalled producer; route to the ingest-pipeline runbooks as in case
+  (1) above. Do not raise per-asset thresholds to silence it.
+
 ### `outcome="missing_freshness"`
 
 Strict-freshness mode (`[supply] strict_freshness_required = true`)

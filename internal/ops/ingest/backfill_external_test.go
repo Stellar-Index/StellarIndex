@@ -161,7 +161,9 @@ func TestInsertBackfilledTrades_Batches(t *testing.T) {
 // still count such a row as skipped and exit non-zero.
 func TestInsertBackfilledTrades_InvalidRowIsNotSilentlyDropped(t *testing.T) {
 	trades := storableTrades(t, 3)
+	// One zero leg is an admitted fill since 0191; both zero is still invalid.
 	trades[1].BaseAmount = canonical.NewAmount(big.NewInt(0))
+	trades[1].QuoteAmount = canonical.NewAmount(big.NewInt(0))
 	store := &fakeTradeInserter{fail: map[string]error{trades[1].TxHash: canonical.ErrInvalidTrade}}
 
 	err := insertBackfilledTrades(context.Background(), store, trades, 0, io.Discard, time.Now())

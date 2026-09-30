@@ -127,6 +127,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
+          alert_family: api_error_rate
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
           summary: "API 5xx rate {{ $value | humanizePercentage }}"
@@ -143,6 +144,7 @@ groups:
           severity: page
           team: stellarindex
           component: api
+          alert_family: api_error_rate
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
           summary: "API 5xx rate {{ $value | humanizePercentage }} (SEV-1)"
@@ -518,6 +520,29 @@ groups:
             stellarindex_ratelimit_fail_open — the two share a backing
             store. If this fires ALONE, suspect the usage-counter key
             namespace or an eviction policy rather than Redis availability.
+
+      # Companion to the fail-open alert above: past the same dwell time
+      # (DefaultMonthlyQuotaDwellTime, 30s) the gate fails CLOSED and 429s
+      # metered keys instead, so the fail-open counter goes flat and only
+      # this counter moves for a sustained outage.
+      - alert: stellarindex_monthly_quota_fail_closed
+        expr: sum(rate(stellarindex_monthly_quota_fail_closed_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: page
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/monthly-quota-fail-open.md
+          summary: "Monthly quota is FAILING CLOSED — metered keys are being 429'd"
+          description: |
+            The month-to-date usage counter has been unreadable for longer
+            than the fail-open dwell time, so the monthly-quota gate has
+            flipped to failing CLOSED: every request from a key with a
+            monthly cap now gets a 429 (errors/monthly-quota-unavailable)
+            whether or not the key is anywhere near its cap. Paying
+            customers are denied service until the counter answers
+            without error for the same dwell time.
 
       # GH-1277: the write side of the usage meter had no observability
       # at all — a failed Increment/IncrementDetailBy logged at Debug

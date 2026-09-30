@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -91,5 +92,21 @@ func TestRewindRecordingDirtyWindow_RefusesToRewindWithoutARecord(t *testing.T) 
 	}
 	if f.rewound {
 		t.Error("cursor was rewound although the dirty window was never recorded")
+	}
+}
+
+// The live projector writes at derive_generation 0, so a replay cannot
+// overwrite a row a re-derive stamped higher; the operator must be told
+// which tool corrects those rows.
+func TestRewindRecordingDirtyWindow_StatesTheGenerationLimit(t *testing.T) {
+	f := &fakeReplayRewinder{cursorAtRewind: 500}
+	var out strings.Builder
+	if _, err := rewindRecordingDirtyWindow(context.Background(), &out, f, "cctp", 100, 500); err != nil {
+		t.Fatalf("rewind: %v", err)
+	}
+	for _, want := range []string{"derive_generation 0", "projected-rebuild -write"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("rewind output lacks %q:\n%s", want, out.String())
+		}
 	}
 }

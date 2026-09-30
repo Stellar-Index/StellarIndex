@@ -89,6 +89,19 @@ func TestOracleCAGGsRefreshOverABackfilledRange(t *testing.T) {
 			t.Fatalf("InsertOracleUpdate: %v", err)
 		}
 	}
+	// A raw: row lands in the CAGG too; the day read must never serve it.
+	raw, err := c.NewOracleRawAsset("USDT0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertOracleUpdate(ctx, c.OracleUpdate{
+		Source: "reflector-dex", Ledger: 50_000_003,
+		TxHash:    "4444444444444444444444444444444444444444444444444444444444444444",
+		Timestamp: day1, Asset: raw, Quote: usdc,
+		Price: c.NewAmount(big.NewInt(1_000_000)), Decimals: 14,
+	}); err != nil {
+		t.Fatalf("InsertOracleUpdate raw: %v", err)
+	}
 	if _, _, err := store.LedgerRangeToOracleTimeRange(ctx, 1, 2); !errors.Is(err, timescale.ErrNotFound) {
 		t.Fatalf("empty ledger range: err = %v, want ErrNotFound", err)
 	}
@@ -102,10 +115,15 @@ func TestOracleCAGGsRefreshOverABackfilledRange(t *testing.T) {
 
 	readDays := func() int {
 		t.Helper()
-		pts, err := store.DailyOraclePrices(ctx, []c.Asset{c.NativeAsset()}, usdc,
+		pts, err := store.DailyOraclePrices(ctx, []c.Asset{c.NativeAsset(), raw}, usdc,
 			day1.Truncate(24*time.Hour), day1.Add(48*time.Hour))
 		if err != nil {
 			t.Fatalf("DailyOraclePrices: %v", err)
+		}
+		for _, p := range pts {
+			if !p.Asset.IsMapped() {
+				t.Fatalf("DailyOraclePrices served unmapped asset %s", p.Asset)
+			}
 		}
 		return len(pts)
 	}

@@ -26,9 +26,15 @@ func TestHub_SlowSubscriberDropIsMetered(t *testing.T) {
 	hub := streaming.NewHub(0)
 	before := testutil.ToFloat64(obs.APIStreamSubscriberDropsTotal)
 
-	slow, cancelSlow := hub.Subscribe([]string{"a", "b"}, "")
+	slow, cancelSlow, err := hub.Subscribe([]string{"a", "b"}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancelSlow()
-	_, cancelQuiet := hub.Subscribe([]string{"c"}, "")
+	_, cancelQuiet, err := hub.Subscribe([]string{"c"}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	cancelQuiet()
 
 	for i := 0; i < 64; i++ {
@@ -50,7 +56,7 @@ func TestHub_TopicMetricsTrackReaping(t *testing.T) {
 	hub := streaming.NewHub(0)
 	before := testutil.ToFloat64(obs.APIStreamHubTopicsReapedTotal)
 
-	churnTopics(hub, 300)
+	churnTopics(t, hub, 300)
 
 	if got := testutil.ToFloat64(obs.APIStreamHubTopicsReapedTotal) - before; got != float64(hub.TopicsReaped()) || got == 0 {
 		t.Fatalf("reaped counter delta = %v, want TopicsReaped() = %d (> 0)", got, hub.TopicsReaped())
@@ -141,9 +147,15 @@ func drainNonblocking(t *testing.T, ch <-chan streaming.Event, want int, timeout
 // every published event in order, with monotonically increasing IDs.
 func TestHub_Fanout(t *testing.T) {
 	hub := streaming.NewHub(0)
-	subA, cancelA := hub.Subscribe([]string{"price:XLM/USD"}, "")
+	subA, cancelA, err := hub.Subscribe([]string{"price:XLM/USD"}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancelA()
-	subB, cancelB := hub.Subscribe([]string{"price:XLM/USD"}, "")
+	subB, cancelB, err := hub.Subscribe([]string{"price:XLM/USD"}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancelB()
 
 	for _, p := range []string{"0.10", "0.11", "0.12"} {
@@ -168,9 +180,15 @@ func TestHub_Fanout(t *testing.T) {
 // subscriber on topic B.
 func TestHub_TopicIsolation(t *testing.T) {
 	hub := streaming.NewHub(0)
-	subA, cancelA := hub.Subscribe([]string{"topicA"}, "")
+	subA, cancelA, err := hub.Subscribe([]string{"topicA"}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancelA()
-	subB, cancelB := hub.Subscribe([]string{"topicB"}, "")
+	subB, cancelB, err := hub.Subscribe([]string{"topicB"}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancelB()
 
 	hub.Publish("topicA", "x", []byte("hello"))
@@ -189,7 +207,10 @@ func TestHub_TopicIsolation(t *testing.T) {
 // topics receives events from both.
 func TestHub_MultiTopicSubscription(t *testing.T) {
 	hub := streaming.NewHub(0)
-	sub, cancel := hub.Subscribe([]string{"topicA", "topicB"}, "")
+	sub, cancel, err := hub.Subscribe([]string{"topicA", "topicB"}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancel()
 
 	hub.Publish("topicA", "x", []byte("a"))
@@ -221,7 +242,10 @@ func TestHub_LastEventIDReplayFromBuffer(t *testing.T) {
 
 	// Subscribe with Last-Event-ID == id1 → should replay the
 	// "second" + "third" events that came after.
-	sub, cancel := hub.Subscribe([]string{"topic"}, id1)
+	sub, cancel, err := hub.Subscribe([]string{"topic"}, id1)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancel()
 
 	got := drainNonblocking(t, sub, 2, time.Second)
@@ -241,7 +265,10 @@ func TestHub_EmptyLastEventIDSkipsReplay(t *testing.T) {
 	hub.Publish("topic", "x", []byte("buffered-1"))
 	hub.Publish("topic", "x", []byte("buffered-2"))
 
-	sub, cancel := hub.Subscribe([]string{"topic"}, "")
+	sub, cancel, err := hub.Subscribe([]string{"topic"}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancel()
 
 	// Nothing should arrive from replay — only the live event below.
@@ -266,7 +293,10 @@ func TestHub_BufferEvictsOldest(t *testing.T) {
 	hub.Publish("topic", "x", []byte("e2"))
 	hub.Publish("topic", "x", []byte("e3")) // evicts e1
 
-	sub, cancel := hub.Subscribe([]string{"topic"}, id1)
+	sub, cancel, err := hub.Subscribe([]string{"topic"}, id1)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancel()
 
 	got := drainNonblocking(t, sub, 2, time.Second)
@@ -288,10 +318,16 @@ func TestHub_BufferEvictsOldest(t *testing.T) {
 func TestHub_SlowSubscriberDropped(t *testing.T) {
 	hub := streaming.NewHub(0)
 	// Slow sub: never reads. Its 32-deep queue will fill.
-	slow, cancelSlow := hub.Subscribe([]string{"topic"}, "")
+	slow, cancelSlow, err := hub.Subscribe([]string{"topic"}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancelSlow()
 
-	fast, cancelFast := hub.Subscribe([]string{"topic"}, "")
+	fast, cancelFast, err := hub.Subscribe([]string{"topic"}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancelFast()
 
 	// Publish 64 events — twice the per-subscriber queue depth.
@@ -399,7 +435,11 @@ func TestHub_PublishVsCancelRace(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < iters; j++ {
-				ch, cancel := hub.Subscribe([]string{"race:topic"}, "")
+				ch, cancel, err := hub.Subscribe([]string{"race:topic"}, "")
+				if err != nil {
+					t.Errorf("Subscribe: %v", err)
+					return
+				}
 				// Read a couple so the queue can fill on some iterations.
 				select {
 				case <-ch:
@@ -475,7 +515,10 @@ func TestHub_SubscribeKeepsEventsPublishedDuringSubscribe(t *testing.T) {
 			}
 		}()
 
-		ch, cancel := hub.Subscribe(topics, resumeFrom)
+		ch, cancel, err := hub.Subscribe(topics, resumeFrom)
+		if err != nil {
+			t.Fatalf("Subscribe: %v", err)
+		}
 		wg.Wait() // every Publish has returned → every delivery is done
 
 		got := make(map[string]bool, perIteration)
@@ -532,7 +575,10 @@ func TestHub_ReplayBeyondQueueDepthKeepsConnection(t *testing.T) {
 	}
 	_ = lastID
 
-	ch, cancel := h.Subscribe([]string{"t"}, "0")
+	ch, cancel, err := h.Subscribe([]string{"t"}, "0")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancel()
 
 	const wantReplay = 16 // subscriberQueueDepth/2, single topic
@@ -590,7 +636,10 @@ func TestHub_ResumeReplayLeavesHeadroom(t *testing.T) {
 		for i := 0; i < 64; i++ {
 			h.Publish("t", "price_update", []byte("seed"))
 		}
-		ch, cancel := h.Subscribe([]string{"t"}, "0")
+		ch, cancel, err := h.Subscribe([]string{"t"}, "0")
+		if err != nil {
+			t.Fatalf("Subscribe: %v", err)
+		}
 		defer cancel()
 
 		// Drain nothing — check queue occupancy against capacity right
@@ -610,7 +659,10 @@ func TestHub_ResumeReplayLeavesHeadroom(t *testing.T) {
 			h.Publish("a", "price_update", []byte("seed-a"))
 		}
 		h.Publish("b", "price_update", []byte("seed-b"))
-		ch, cancel := h.Subscribe([]string{"a", "b"}, "0")
+		ch, cancel, err := h.Subscribe([]string{"a", "b"}, "0")
+		if err != nil {
+			t.Fatalf("Subscribe: %v", err)
+		}
 		defer cancel()
 
 		if len(ch) >= cap(ch) {
@@ -649,7 +701,10 @@ func TestHub_ReconnectIDsAreMonotonic(t *testing.T) {
 		resumeFrom = h.Publish("t", "price_update", []byte("seed"))
 	}
 
-	ch, cancel := h.Subscribe([]string{"t"}, resumeFrom)
+	ch, cancel, err := h.Subscribe([]string{"t"}, resumeFrom)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancel()
 
 	liveID := h.Publish("t", "price_update", []byte("live"))
@@ -688,7 +743,10 @@ func TestHub_MultiTopicReplayIsMergedByID(t *testing.T) {
 	idA2 := hub.Publish("topicA", "x", []byte("a2"))
 	idB2 := hub.Publish("topicB", "x", []byte("b2"))
 
-	sub, cancel := hub.Subscribe([]string{"topicA", "topicB"}, cursor)
+	sub, cancel, err := hub.Subscribe([]string{"topicA", "topicB"}, cursor)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancel()
 
 	got := drainNonblocking(t, sub, 4, time.Second)
@@ -725,7 +783,10 @@ func TestHub_ReplayGapEmitsStreamGapMarker(t *testing.T) {
 	idSecond := hub.Publish("topic", "x", []byte("second"))
 	hub.Publish("topic", "x", []byte("third"))
 
-	sub, cancel := hub.Subscribe([]string{"topic"}, cursor)
+	sub, cancel, err := hub.Subscribe([]string{"topic"}, cursor)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancel()
 
 	got := drainNonblocking(t, sub, 3, time.Second)

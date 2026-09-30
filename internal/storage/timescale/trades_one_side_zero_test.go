@@ -64,13 +64,13 @@ func TestIsOneSideZeroFill(t *testing.T) {
 	}
 }
 
-// TestFilterStorableTrades proves the batch pre-filter that stops a
-// one-side-zero fill from sinking the whole all-or-nothing INSERT
-// (W1-defi-1):
+// TestFilterStorableTrades proves the batch pre-filter that keeps one bad
+// row from sinking the whole all-or-nothing INSERT:
 //
 //   - valid rows pass through, order preserved;
-//   - a one-side-zero fill is dropped as a BENIGN no-op — it must NOT bump
-//     SourceInsertErrorsTotal (the counter behind
+//   - a one-side-zero fill passes Validate and is ADMITTED (the served tier
+//     stores it unpriceable) and counted on TradesZeroLegAdmittedTotal; it
+//     must NOT bump SourceInsertErrorsTotal (the counter behind
 //     stellarindex_source_insert_errors_total, the spurious alert);
 //   - any OTHER Validate failure (here: a malformed tx_hash) is dropped AND
 //     counted loudly, exactly as the single-row InsertTrade path surfaces it.
@@ -88,33 +88,66 @@ func TestFilterStorableTrades(t *testing.T) {
 	valid2 := valid(osztHash(2))
 
 	oneSideZero := valid(osztHash(3))
-	oneSideZero.QuoteAmount = osztAmt(0) // quote leg rounded to 0 — a real fill the served tier can't hold
+	oneSideZero.QuoteAmount = osztAmt(0) // quote leg rounded to 0 — a real fill, stored unpriceable
 
 	badHash := valid("not-a-hash") // Validate fails for a NON-amount reason → must stay loud
 
 	s := &Store{}
 	const src, kind = "sdex", "trade"
-	before := testutil.ToFloat64(obs.SourceInsertErrorsTotal.WithLabelValues(src, kind))
+	errBefore := testutil.ToFloat64(obs.SourceInsertErrorsTotal.WithLabelValues(src, kind))
+	zeroBefore := testutil.ToFloat64(obs.TradesZeroLegAdmittedTotal.WithLabelValues(src))
 
 	got := s.filterStorableTrades([]canonical.Trade{valid1, oneSideZero, valid2, badHash})
 
-	if len(got) != 2 {
-		t.Fatalf("storable count = %d, want 2 (the two valid trades; the zero-leg + bad-hash rows must be filtered)", len(got))
+	if len(got) != 3 {
+		t.Fatalf("storable count = %d, want 3 (two valid trades + the one-side-zero fill; only the bad-hash row is filtered)", len(got))
 	}
-	if got[0].TxHash != valid1.TxHash || got[1].TxHash != valid2.TxHash {
-		t.Errorf("storable order/content = [%s, %s], want [%s, %s]",
-			got[0].TxHash, got[1].TxHash, valid1.TxHash, valid2.TxHash)
+	if got[0].TxHash != valid1.TxHash || got[1].TxHash != oneSideZero.TxHash || got[2].TxHash != valid2.TxHash {
+		t.Errorf("storable order/content = [%s, %s, %s], want [%s, %s, %s]",
+			got[0].TxHash, got[1].TxHash, got[2].TxHash, valid1.TxHash, oneSideZero.TxHash, valid2.TxHash)
 	}
 
-	after := testutil.ToFloat64(obs.SourceInsertErrorsTotal.WithLabelValues(src, kind))
-	if delta := after - before; delta != 1 {
+	errAfter := testutil.ToFloat64(obs.SourceInsertErrorsTotal.WithLabelValues(src, kind))
+	if delta := errAfter - errBefore; delta != 1 {
 		t.Errorf("SourceInsertErrorsTotal{sdex,trade} delta = %v, want 1 "+
-			"(ONLY the malformed-tx_hash row is an error; the one-side-zero fill must be a benign skip)", delta)
+			"(ONLY the malformed-tx_hash row is an error; the one-side-zero fill is admitted)", delta)
+	}
+	zeroAfter := testutil.ToFloat64(obs.TradesZeroLegAdmittedTotal.WithLabelValues(src))
+	if delta := zeroAfter - zeroBefore; delta != 1 {
+		t.Errorf("TradesZeroLegAdmittedTotal{sdex} delta = %v, want 1 (exactly the one-side-zero fill)", delta)
+	}
+}
+
+// TestFilterStorableTrades_BothZeroStaysLoud pins that the relaxation is
+// exactly one zero leg: a both-zero row still fails Validate, is dropped and
+// counted as an insert error, and never reaches TradesZeroLegAdmittedTotal.
+func TestFilterStorableTrades_BothZeroStaysLoud(t *testing.T) {
+	pair := osztPair(t)
+	bothZero := canonical.Trade{
+		Source: "sdex", Ledger: 60_000_000, TxHash: osztHash(4), OpIndex: 0,
+		Timestamp: time.Now().UTC().Add(-time.Hour), Pair: pair,
+		BaseAmount: osztAmt(0), QuoteAmount: osztAmt(0),
+	}
+	s := &Store{}
+	errBefore := testutil.ToFloat64(obs.SourceInsertErrorsTotal.WithLabelValues("sdex", "trade"))
+	zeroBefore := testutil.ToFloat64(obs.TradesZeroLegAdmittedTotal.WithLabelValues("sdex"))
+
+	got := s.filterStorableTrades([]canonical.Trade{bothZero})
+
+	if len(got) != 0 {
+		t.Fatalf("storable count = %d, want 0 (both-zero is not a trade)", len(got))
+	}
+	if delta := testutil.ToFloat64(obs.SourceInsertErrorsTotal.WithLabelValues("sdex", "trade")) - errBefore; delta != 1 {
+		t.Errorf("SourceInsertErrorsTotal{sdex,trade} delta = %v, want 1", delta)
+	}
+	if delta := testutil.ToFloat64(obs.TradesZeroLegAdmittedTotal.WithLabelValues("sdex")) - zeroBefore; delta != 0 {
+		t.Errorf("TradesZeroLegAdmittedTotal{sdex} delta = %v, want 0", delta)
 	}
 }
 
 // TestFilterStorableTrades_AllValidFastPath proves the common case returns the
-// input untouched with no metric noise.
+// input untouched with no error-metric noise, and that a one-side-zero fill in
+// an all-valid batch is still counted on the fast path.
 func TestFilterStorableTrades_AllValidFastPath(t *testing.T) {
 	pair := osztPair(t)
 	ts := time.Now().UTC().Add(-time.Hour)
@@ -125,17 +158,24 @@ func TestFilterStorableTrades_AllValidFastPath(t *testing.T) {
 			BaseAmount: osztAmt(1_000), QuoteAmount: osztAmt(25),
 		}
 	}
-	in := []canonical.Trade{mk(osztHash(10)), mk(osztHash(11))}
+	zeroBase := mk(osztHash(12))
+	zeroBase.BaseAmount = osztAmt(0)
+	in := []canonical.Trade{mk(osztHash(10)), mk(osztHash(11)), zeroBase}
 	s := &Store{}
 
-	before := testutil.ToFloat64(obs.SourceInsertErrorsTotal.WithLabelValues("sdex", "trade"))
+	errBefore := testutil.ToFloat64(obs.SourceInsertErrorsTotal.WithLabelValues("sdex", "trade"))
+	zeroBefore := testutil.ToFloat64(obs.TradesZeroLegAdmittedTotal.WithLabelValues("sdex"))
 	got := s.filterStorableTrades(in)
-	after := testutil.ToFloat64(obs.SourceInsertErrorsTotal.WithLabelValues("sdex", "trade"))
+	errAfter := testutil.ToFloat64(obs.SourceInsertErrorsTotal.WithLabelValues("sdex", "trade"))
+	zeroAfter := testutil.ToFloat64(obs.TradesZeroLegAdmittedTotal.WithLabelValues("sdex"))
 
 	if len(got) != len(in) {
 		t.Fatalf("all-valid storable count = %d, want %d", len(got), len(in))
 	}
-	if after != before {
-		t.Errorf("all-valid batch bumped SourceInsertErrorsTotal by %v, want 0", after-before)
+	if errAfter != errBefore {
+		t.Errorf("all-valid batch bumped SourceInsertErrorsTotal by %v, want 0", errAfter-errBefore)
+	}
+	if delta := zeroAfter - zeroBefore; delta != 1 {
+		t.Errorf("TradesZeroLegAdmittedTotal{sdex} delta = %v, want 1 (the zero-base fill on the fast path)", delta)
 	}
 }

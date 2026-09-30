@@ -140,6 +140,21 @@ firing alert therefore means the standby is not serving either.
       path in `internal/storage/timescale/trades.go`
       (`FXQuoteAtOrBefore`), not a config flip.
 
+### `openexchangerates` — built, not yet serving
+
+`forex.OpenExchangeRatesProvider`
+(`internal/sources/external/forex/openexchangerates.go`) reads Open
+Exchange Rates' hourly USD-base board. With
+`[external.openexchangerates] enabled = true` the API builds it and
+hands it to the worker through `WithCorroborator`, which only stores it:
+it is never fetched, writes no `fx_quotes` row and carries no
+`source` label, so enabling it neither spends quota nor mitigates this
+alert. Its app id comes from `OPENEXCHANGERATES_APP_ID` and is sent only
+as `Authorization: Token …`. The Free plan allows 1,000 requests a month
+with hourly updates and refuses the `base`/`symbols` parameters; once it
+is wired, one request per `[external.massive] refresh_interval` poll
+spends 720–744 a month at the 1h default.
+
 ### Worker not running at all (`absent` alert)
 
 - [ ] Confirm the API binary is up and NOT in dry-run mode (dry-run
@@ -186,6 +201,8 @@ per ticker (`SELECT ticker, MAX(bucket) FROM fx_quotes GROUP BY ticker`).
 
 ## Changelog
 
+- 2026-09-30 — added the `openexchangerates` provider section: built
+  behind a flag, held outside the serving chain.
 - 2026-09-24 — the dry-`massive` section now names the in-worker ECB
   standby (`forex.ECBProvider`), which writes `fx_quotes` and does serve
   the forex-snap, and how to tell whether it is serving.
