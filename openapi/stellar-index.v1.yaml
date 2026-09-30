@@ -13336,17 +13336,28 @@ components:
             instance: "/v1/oracle/latest"
             request_id: "e0fca799b0b6d066ed6c928b5cb0d5e6"
     ServiceUnavailable:
-      description: Server is degraded (dependency outage, startup, shutdown).
+      description: Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
-          example:
-            type: "https://api.stellarindex.io/errors/account-store-unavailable"
-            title: "Account store not configured"
-            status: 503
-            detail: "this deployment has no AccountStore wired — typically because Redis is unavailable"
-            instance: "/v1/account/keys"
-            request_id: "70c8017d79651070fd16c2c9f065d846"
+          examples:
+            accountStoreUnavailable:
+              summary: A required dependency is not wired
+              value:
+                type: "https://api.stellarindex.io/errors/account-store-unavailable"
+                title: "Account store not configured"
+                status: 503
+                detail: "this deployment has no AccountStore wired — typically because Redis is unavailable"
+                instance: "/v1/account/keys"
+                request_id: "70c8017d79651070fd16c2c9f065d846"
+            throttleUnavailable:
+              summary: Rate limiter store unreachable past its fail-open dwell window (Retry-After 30)
+              value:
+                type: "https://api.stellarindex.io/errors/throttle-unavailable"
+                title: "Throttle layer unavailable"
+                status: 503
+                detail: "the abuse-prevention layer has been unreachable for an extended period; retry in a moment"
+                instance: "/v1/assets"
 
   schemas:
     PasskeyCredential:
