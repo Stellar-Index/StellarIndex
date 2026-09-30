@@ -37,18 +37,24 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 
 	"github.com/Stellar-Index/StellarIndex/internal/version"
 )
@@ -79,6 +85,12 @@ const (
 	// duration so a request that never answers times out, and is counted
 	// as a failure, within the run it started in.
 	maxRequestTimeout = 10 * time.Second
+
+	// defaultMaxRPS paces the whole run so it stays under the API's
+	// per-key rate limit: 100 rps x 30 s = 3,000 requests, half of a
+	// 6,000/min limit, leaving room for the smoke runner sharing it. An
+	// unpaced run on a fast API issues 8,000+ and the 429s read as an outage.
+	defaultMaxRPS = 100.0
 )
 
 // endpoint captures one API surface to probe. Path is the URL
@@ -187,6 +199,9 @@ type stats struct {
 	Successes       int     `json:"successes"`
 	Errors          int     `json:"errors"`
 	AvailabilityPct float64 `json:"availability_pct"`
+	// FailedByStatus counts failed samples by cause ("429", "5xx",
+	// "timeout", "conn", "body", ...) so a failing run names why it failed.
+	FailedByStatus map[string]int `json:"failed_by_status,omitempty"`
 	// LatencyMS is computed over successful responses only, and is nil
 	// when there were none: a failed request has no response latency.
 	LatencyMS *latencyStats `json:"latency_ms,omitempty"`
@@ -225,6 +240,7 @@ type report struct {
 	StartedAt     time.Time  `json:"started_at"`
 	DurationSec   float64    `json:"duration_sec"`
 	Concurrency   int        `json:"concurrency"`
+	MaxRPS        float64    `json:"max_rps"`
 	SLA           slaTargets `json:"sla"`
 	PerEndpoint   []stats    `json:"per_endpoint"`
 	Verdict       string     `json:"verdict"` // "pass" | "fail"
@@ -254,7 +270,7 @@ func validateConcurrency(c int) error {
 type probeFlags struct {
 	concurrency                          int
 	duration, p95, p99, fresh, closedFsh time.Duration
-	availability                         float64
+	availability, maxRPS                 float64
 }
 
 // validateProbeFlags rejects numeric flags that would still produce a
@@ -283,6 +299,9 @@ func validateProbeFlags(f probeFlags) error {
 	if !(f.availability > 0 && f.availability <= 100) {
 		return fmt.Errorf("-availability-target must be in (0, 100], got %v", f.availability)
 	}
+	if !(f.maxRPS >= 0) {
+		return fmt.Errorf("-max-rps must be >= 0, got %v", f.maxRPS)
+	}
 	return nil
 }
 
@@ -301,6 +320,7 @@ func main() {
 		baseURL      = flag.String("base-url", "http://localhost:3000/v1", "API base URL (required)")
 		duration     = flag.Duration("duration", 30*time.Second, "Test duration")
 		concurrency  = flag.Int("concurrency", 4, "Concurrent request workers")
+		maxRPS       = flag.Float64("max-rps", defaultMaxRPS, "Request rate cap shared by all workers; keep a run under the API key's per-minute rate limit. 0 = unpaced")
 		pairFlag     = stringSliceFlag{}
 		reportFormat = flag.String("report-format", "text", "Output format: text | json")
 		p95Target    = flag.Duration("p95-target", defaultP95Target, "p95 latency SLA target")
@@ -327,7 +347,7 @@ func main() {
 	}
 
 	if err := validateProbeFlags(probeFlags{
-		concurrency: *concurrency, duration: *duration, availability: *availTarget,
+		concurrency: *concurrency, duration: *duration, availability: *availTarget, maxRPS: *maxRPS,
 		p95: *p95Target, p99: *p99Target, fresh: *freshTarget, closedFsh: *closedFresh,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "stellarindex-sla-probe: %v\n", err)
@@ -350,7 +370,7 @@ func main() {
 		endpoints = append(endpoints, pairEndpoints(parts[0], parts[1], *closedFresh)...)
 	}
 
-	rep := runProbe(*baseURL, resolveAPIKey(*apiKey), endpoints, *duration, *concurrency, slaTargets{
+	rep := runProbe(*baseURL, resolveAPIKey(*apiKey), endpoints, *duration, *concurrency, *maxRPS, slaTargets{
 		P95MS:           durationMS(*p95Target),
 		P99MS:           durationMS(*p99Target),
 		FreshnessSec:    freshTarget.Seconds(),
@@ -392,8 +412,10 @@ func main() {
 // memory-pressured hosts it would have read ~60 s and paged forever
 // on a perfectly healthy tip.
 type probeSample struct {
-	latency    time.Duration
-	ok         bool
+	latency time.Duration
+	ok      bool
+	// failure classifies a failed sample (see hit); empty when ok.
+	failure    string
 	observedAt time.Time
 	receivedAt time.Time
 }
@@ -403,19 +425,25 @@ type probeSample struct {
 // pass/fail report. apiKey, when non-empty, is sent as
 // `Authorization: Bearer <key>` on every request — without one the
 // probe hits the anonymous-tier rate limit and the verdict reads as
-// fail for reasons unrelated to actual SLA compliance.
-func runProbe(baseURL, apiKey string, endpoints []endpoint, duration time.Duration, concurrency int, sla slaTargets) report {
+// fail for reasons unrelated to actual SLA compliance. maxRPS > 0 caps
+// the request rate across all workers; 0 leaves them unpaced.
+func runProbe(baseURL, apiKey string, endpoints []endpoint, duration time.Duration, concurrency int, maxRPS float64, sla slaTargets) report {
 	started := time.Now().UTC()
 	ctx, cancel := context.WithTimeout(context.Background(), duration)
 	defer cancel()
 
-	samples := collectSamples(ctx, baseURL, apiKey, endpoints, concurrency, min(duration, maxRequestTimeout))
+	var limiter *rate.Limiter
+	if maxRPS > 0 {
+		limiter = rate.NewLimiter(rate.Limit(maxRPS), concurrency)
+	}
+	samples := collectSamples(ctx, baseURL, apiKey, endpoints, concurrency, limiter, min(duration, maxRequestTimeout))
 
 	rep := report{
 		BaseURL:     baseURL,
 		StartedAt:   started,
 		DurationSec: time.Since(started).Seconds(),
 		Concurrency: concurrency,
+		MaxRPS:      maxRPS,
 		SLA:         sla,
 	}
 	for _, ep := range endpoints {
@@ -433,8 +461,10 @@ func runProbe(baseURL, apiKey string, endpoints []endpoint, duration time.Durati
 // in flight. Each request instead runs to completion or to its own
 // reqTimeout and is counted either way. Cancelling it at the deadline
 // and discarding it made a request the API accepted and never answered
-// invisible: the run straddling a hang read 100 %.
-func collectSamples(ctx context.Context, baseURL, apiKey string, endpoints []endpoint, concurrency int, reqTimeout time.Duration) map[string][]probeSample {
+// invisible: the run straddling a hang read 100 %. A non-nil limiter
+// gates every request start; its Wait fails once the next token would
+// land past ctx's deadline, which ends the worker like ctx.Done does.
+func collectSamples(ctx context.Context, baseURL, apiKey string, endpoints []endpoint, concurrency int, limiter *rate.Limiter, reqTimeout time.Duration) map[string][]probeSample {
 	var mu sync.Mutex
 	samples := make(map[string][]probeSample)
 
@@ -461,9 +491,12 @@ func collectSamples(ctx context.Context, baseURL, apiKey string, endpoints []end
 					return
 				default:
 				}
+				if limiter != nil && limiter.Wait(ctx) != nil {
+					return
+				}
 				ep := endpoints[i]
 				i = (i + 1) % len(endpoints)
-				lat, ok, observedAt := hit(reqCtx, httpClient, baseURL, apiKey, ep)
+				lat, failure, observedAt := hit(reqCtx, httpClient, baseURL, apiKey, ep)
 				// Stamp the receipt instant here, before the mutex: this
 				// is the clock reading freshness is measured against, and
 				// it must be the sample's own instant rather than anything
@@ -473,7 +506,8 @@ func collectSamples(ctx context.Context, baseURL, apiKey string, endpoints []end
 				key := sampleKey(ep)
 				samples[key] = append(samples[key], probeSample{
 					latency:    lat,
-					ok:         ok,
+					ok:         failure == "",
+					failure:    failure,
 					observedAt: observedAt,
 					receivedAt: receivedAt,
 				})
@@ -496,9 +530,15 @@ func aggregateEndpointStats(ep endpoint, ss []probeSample) stats {
 	// refused connection "takes" ~0 ms, so pooling it would report a hard
 	// outage as a fast API. Failures are counted by availability instead.
 	var latencies, freshSamples []float64
+	var failedBy map[string]int
 	for _, s := range ss {
 		if s.ok {
 			latencies = append(latencies, float64(s.latency.Milliseconds()))
+		} else {
+			if failedBy == nil {
+				failedBy = make(map[string]int)
+			}
+			failedBy[cmp.Or(s.failure, "unknown")]++
 		}
 		// Anchored to the sample's own receipt instant, not to now():
 		// aggregation runs after the whole run, so time.Since() here
@@ -518,6 +558,7 @@ func aggregateEndpointStats(ep endpoint, ss []probeSample) stats {
 		Successes:          successes,
 		Errors:             len(ss) - successes,
 		AvailabilityPct:    100.0 * float64(successes) / float64(len(ss)),
+		FailedByStatus:     failedBy,
 		Critical:           ep.Critical,
 	}
 	if successes > 0 {
@@ -582,7 +623,7 @@ func endpointFailures(st stats, sla slaTargets) []string {
 		out = append(out, fmt.Sprintf("%s: p99=%.1fms > target %.1fms", label, st.LatencyMS.P99, sla.P99MS))
 	}
 	if st.AvailabilityPct < sla.AvailabilityPct {
-		out = append(out, fmt.Sprintf("%s: availability=%.2f%% < target %.2f%%", label, st.AvailabilityPct, sla.AvailabilityPct))
+		out = append(out, fmt.Sprintf("%s: availability=%.2f%% < target %.2f%%%s", label, st.AvailabilityPct, sla.AvailabilityPct, dominantFailure(st.FailedByStatus)))
 	}
 	freshTarget := sla.FreshnessSec
 	if st.FreshnessTargetSec > 0 {
@@ -594,11 +635,44 @@ func endpointFailures(st stats, sla slaTargets) []string {
 	return out
 }
 
+// dominantFailure renders the most frequent failure cause as
+// " (429 x 848)", or "" when there is none; ties break by key order.
+func dominantFailure(byStatus map[string]int) string {
+	best, bestN := "", 0
+	for k, n := range byStatus {
+		if n > bestN || (n == bestN && k < best) {
+			best, bestN = k, n
+		}
+	}
+	if bestN == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (%s x %d)", best, bestN)
+}
+
+// failureClass names a non-2xx status: 429 on its own, since a rate-limited
+// probe is a probe fault rather than an outage, every other code by class.
+func failureClass(code int) string {
+	if code == http.StatusTooManyRequests {
+		return strconv.Itoa(code)
+	}
+	return fmt.Sprintf("%dxx", code/100)
+}
+
+// transportFailure names a request that got no HTTP response.
+func transportFailure(err error) string {
+	var ne net.Error
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()) {
+		return "timeout"
+	}
+	return "conn"
+}
+
 // hit issues one GET to `<baseURL><path>?<query>` and returns the
-// wall-clock latency, success boolean (2xx), and the parsed
-// observed_at timestamp from the response body when present. apiKey,
-// when non-empty, is sent as `Authorization: Bearer <key>`.
-func hit(ctx context.Context, c *http.Client, baseURL, apiKey string, ep endpoint) (time.Duration, bool, time.Time) {
+// wall-clock latency, the failure cause ("" on a 2xx meeting ep's body
+// contract), and the parsed observed_at timestamp from the response body
+// when present. apiKey, when non-empty, is sent as `Authorization: Bearer <key>`.
+func hit(ctx context.Context, c *http.Client, baseURL, apiKey string, ep endpoint) (time.Duration, string, time.Time) {
 	u := baseURL + ep.Path
 	if len(ep.Query) > 0 {
 		var parts []string
@@ -610,13 +684,13 @@ func hit(ctx context.Context, c *http.Client, baseURL, apiKey string, ep endpoin
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
-		return 0, false, time.Time{}
+		return 0, "request", time.Time{}
 	}
 	// The API keeps synthetic traffic out of the customer-facing SLO and
 	// out of the access log by User-Agent prefix, and `stellarindex-probe/`
 	// is the prefix it reserves for operator probes
 	// (internal/obs.IsSyntheticUA). Sending none meant Go's default
-	// `Go-http-client/1.1`, so this probe's load — ~800 requests per
+	// `Go-http-client/1.1`, so this probe's load — hundreds of requests per
 	// endpoint per run, every 15 minutes — was counted as customer
 	// traffic in the availability ratio and in the latency histogram, and
 	// it cleared the burn alerts' own 5 req/s "don't burn on synthetic
@@ -631,16 +705,18 @@ func hit(ctx context.Context, c *http.Client, baseURL, apiKey string, ep endpoin
 	resp, err := c.Do(req)
 	lat := time.Since(start)
 	if err != nil {
-		return lat, false, time.Time{}
+		return lat, transportFailure(err), time.Time{}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
-	ok := resp.StatusCode >= 200 && resp.StatusCode < 300
-	if !ok {
-		return lat, false, time.Time{}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return lat, failureClass(resp.StatusCode), time.Time{}
 	}
 	observedAt, ok := checkBody(ep, body)
-	return lat, ok, observedAt
+	if !ok {
+		return lat, "body", observedAt
+	}
+	return lat, "", observedAt
 }
 
 // checkBody parses data.observed_at from a 2xx body (zero when absent)

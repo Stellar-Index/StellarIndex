@@ -1006,3 +1006,12 @@ trace_exporter  = "none"          # only "none" is wired in this build;
                                   # it until an exporter is implemented.
 trace_sample    = 0.1             # 0.0 – 1.0; ignored in this build,
                                   # read by the future tracing rollout.
+
+# Tiingo end-of-day NAV for the bound tokenized funds (tickers come from
+# internal/rwa's fund bindings, not from config). Off by default. Free
+# tier: 50 req/h, 1,000 req/day; hourly polling of 12 tickers is 288/day.
+# The key is sent as an Authorization header; set it via TIINGO_API_KEY.
+# [external.tiingo]
+# enabled = false
+# poll_interval = "1h"
+# api_key = ""
