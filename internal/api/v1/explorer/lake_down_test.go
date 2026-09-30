@@ -241,6 +241,7 @@ func lakeDownCases() []lakeDownCase {
 		{"LedgersList", "/v1/ledgers", nil, (*Handler).LedgersList},
 		{"LedgerDetail", "/v1/ledgers/42", map[string]string{"seq": "42"}, (*Handler).LedgerDetail},
 		{"LedgerTransactions", "/v1/ledgers/42/transactions", map[string]string{"seq": "42"}, (*Handler).LedgerTransactions},
+		{"LedgerOperations", "/v1/ledgers/42/operations", map[string]string{"seq": "42"}, (*Handler).LedgerOperations},
 		{"TxDetail", "/v1/tx/" + validTestTxHash, map[string]string{"hash": validTestTxHash}, (*Handler).TxDetail},
 		{"ContractsList", "/v1/contracts", nil, (*Handler).ContractsList},
 		{"ContractDetail", "/v1/contracts/" + validTestContract, contract, (*Handler).ContractDetail},
