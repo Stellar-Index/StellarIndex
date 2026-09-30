@@ -5,15 +5,15 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellarindex_projector_decode_error_rate_high`
+# Runbook — `stellarindex_projector_decode_error_rate_high` / `stellarindex_projector_decode_error_ratio_high`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_projector_decode_error_rate_high` |
+| Alert | `stellarindex_projector_decode_error_rate_high`, `stellarindex_projector_decode_error_ratio_high` |
 | Severity | P3 (ticket) |
-| Detected by | `deploy/monitoring/rules/projector.yml` + `configs/prometheus/rules.r1/projector.yml` — `sum by (source) (rate(stellarindex_projector_events_decoded_total{outcome="decode_error"}[10m])) > 0.1` for 15m |
+| Detected by | `deploy/monitoring/rules/projector.yml` + `configs/prometheus/rules.r1/projector.yml` — rate: `sum by (source) (rate(stellarindex_projector_events_decoded_total{outcome=~"decode_error\|reconstruct_error"}[10m])) > 0.1` for 15m; ratio: failures / (`ok` + failures) over 1h `> 0.1` with ≥ 10 failed events in the hour, for 15m |
 | Typical MTTR | minutes to confirm the regression; a decoder fix + re-drive to fully recover |
 | Impact | Every event of the affected class is SILENTLY dropped from the served per-source tier while the cursor advances past it. Not data loss (the raw events still live in the ClickHouse lake), but a real, growing gap in projected/served data until the decoder is fixed and the range is re-driven. |
 
@@ -38,6 +38,20 @@ still advances by design. This alert is the defence that distinguishes a
 regression (a **sustained** decode_error rate) from the odd poison row
 (below threshold) and pages before a reconcile notices months later.
 
+The rate rule is blind to a quiet source: a source that emits a few dozen
+events an hour (`blend_emitter`, `rozo`, `cctp`) can lose every one of them
+and still sit far below 0.1/s. The ratio rule compares each source's
+failures to its own volume, so a whole-class loss on a quiet source
+tickets; its 10-events-per-hour floor keeps the odd poison row quiet.
+
+Two outcomes count as failures:
+
+- `decode_error` — the decoder returned an error or panicked on the event.
+- `reconstruct_error` — the landing-zone row itself could not be rebuilt
+  into an event (e.g. a missing or unparseable `topic_0_xdr`), so no
+  decoder ever saw it. A spike here points at the lake writer or a
+  landing-zone schema change, not a decoder.
+
 ## Symptoms
 
 - `rate(stellarindex_projector_events_decoded_total{source="X",outcome="decode_error"}[10m])`
@@ -45,8 +59,11 @@ regression (a **sustained** decode_error rate) from the odd poison row
 - `stellarindex_projector_runs_total{source="X",outcome="decode_degraded"}`
   is incrementing (cycles that advanced the cursor while dropping rows).
 - Indexer journal: `decode failed; row SKIPPED` (carries `err`) or
-  `decoder panicked; row SKIPPED` (carries `stack`) per row, and/or the
-  cycle summary log line shows a nonzero `decode_errors` for the source.
+  `decoder panicked; row SKIPPED` (carries `stack`) per row, or
+  `malformed landing-zone row — skipped` (carries ledger/tx/op_index/
+  event_index/contract/err; logged for the first and every 20th failure
+  per cycle), and/or the cycle summary log line shows a nonzero
+  `decode_errors` or `reconstruct_errors` for the source.
 - Projector lag (`stellarindex_projector_lag_ledgers`) may look HEALTHY —
   the cursor is advancing normally; that is exactly the trap this alert
   closes.
@@ -55,11 +72,11 @@ regression (a **sustained** decode_error rate) from the odd poison row
 
 ```sh
 # Which sources are spiking, and how fast?
-curl -s http://indexer:9464/metrics | grep 'stellarindex_projector_events_decoded_total{.*decode_error'
+curl -s http://indexer:9464/metrics | grep -E 'stellarindex_projector_events_decoded_total\{.*(decode|reconstruct)_error'
 
 # The decode failures themselves — panic stacks name the offending decoder.
 journalctl -u stellarindex-indexer --since -1h \
-  | grep -iE "row SKIPPED|decode_errors=[1-9]"
+  | grep -iE "row SKIPPED|malformed landing-zone row|(decode|reconstruct)_errors=[1-9]"
 ```
 
 A single source spiking right after a deploy that changed a decoder is the
