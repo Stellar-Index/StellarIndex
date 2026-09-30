@@ -26572,7 +26572,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Caller is not an account tier (`apikey` or `operator`) —\na SEP-10 wallet token cannot mint API keys\n(`key-mint-not-available`).",
+                  "name": "Caller is not an account tier (`apikey` or `operator`):\na SEP-10 wallet token gets `key-mint-not-available`, any\nother non-account credential `account-tier-required`.",
                   "originalRequest": {
                     "url": {
                       "path": [

@@ -8148,9 +8148,9 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
           description: |
-            Caller is not an account tier (`apikey` or `operator`) —
-            a SEP-10 wallet token cannot mint API keys
-            (`key-mint-not-available`).
+            Caller is not an account tier (`apikey` or `operator`):
+            a SEP-10 wallet token gets `key-mint-not-available`, any
+            other non-account credential `account-tier-required`.
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }

@@ -19840,9 +19840,9 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             /**
-             * @description Caller is not an account tier (`apikey` or `operator`) —
-             *     a SEP-10 wallet token cannot mint API keys
-             *     (`key-mint-not-available`).
+             * @description Caller is not an account tier (`apikey` or `operator`):
+             *     a SEP-10 wallet token gets `key-mint-not-available`, any
+             *     other non-account credential `account-tier-required`.
              */
             403: {
                 headers: {

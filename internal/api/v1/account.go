@@ -510,15 +510,6 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 			"/v1/account/keys requires an API key")
 		return
 	}
-	// Only account tiers may mint: a SEP-10 identity costs one keypair, and
-	// its child would be a key that sep10 mode never accepts.
-	if subject.Tier != auth.TierAPIKey && subject.Tier != auth.TierOperator {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/account-tier-required",
-			"Account credential required", http.StatusForbidden,
-			"POST /v1/account/keys mints keys for API-key accounts only; a SEP-10 wallet authenticates with its own token and has no keys to mint")
-		return
-	}
 	// sep10 mode honours only JWTs, so a key minted here has no consumer;
 	// and a SEP-10 identifier is a free keypair, so a per-identifier cap bounds nothing.
 	if subject.Tier == auth.TierSEP10 {
@@ -526,6 +517,14 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 			"https://api.stellarindex.io/errors/key-mint-not-available",
 			"API keys not issued to SEP-10 subjects", http.StatusForbidden,
 			"a deployment running auth_mode=sep10 accepts only SEP-10 tokens; authenticate with a fresh SEP-10 challenge instead of minting an API key")
+		return
+	}
+	// Only account tiers may mint: any other credential has no key quota to charge.
+	if subject.Tier != auth.TierAPIKey && subject.Tier != auth.TierOperator {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/account-tier-required",
+			"Account credential required", http.StatusForbidden,
+			"POST /v1/account/keys mints keys for API-key accounts only")
 		return
 	}
 	if s.accounts == nil {
