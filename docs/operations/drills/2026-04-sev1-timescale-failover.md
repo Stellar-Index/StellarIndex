@@ -118,9 +118,11 @@ solo drill. A real 3-person drill should file these under the
 - [ ] **Quarterly chaos drill that actually runs `drop_chunks` on
       staging** — owner the maintainer, due 2026-Q3 (post-launch chaos
       Wave 2).
-- [ ] **Add Patroni-driven failover scenario script as a
+- [x] **Add Patroni-driven failover scenario script as a
       successor to `sev1-timescale-primary-failover.md`** —
-      owner the maintainer, due 2026-Q3.
+      owner the maintainer, due 2026-Q3. Drafted as
+      [`scenarios/sev1-patroni-failover.md`](scenarios/sev1-patroni-failover.md);
+      unvalidated until a Patroni cluster exists.
 - [ ] **3-person tabletop after launch with the next on-call
       hire** — owner the maintainer, due 2026-Q3.
 

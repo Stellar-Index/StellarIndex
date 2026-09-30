@@ -162,6 +162,35 @@ func TestCheckTOMLNestingRawBoundHoldsWithoutTheLexer(t *testing.T) {
 	}
 }
 
+// TestCheckTOMLNestingRawBoundsRefuseLiteralText pins the accepted cost
+// of the raw backstop (see [maxRawTOMLNestingDepth]): literal text alone
+// trips it at the bound while the string-aware scans see no nesting, and
+// admits it one step below.
+func TestCheckTOMLNestingRawBoundsRefuseLiteralText(t *testing.T) {
+	cases := map[string]string{
+		"unclosed brackets": "[",
+		"dots on one line":  "Sentence. ",
+	}
+	for name, unit := range cases {
+		t.Run(name, func(t *testing.T) {
+			doc := func(n int) []byte {
+				return []byte("ORG_DESCRIPTION = '" + strings.Repeat(unit, n) + "'\nORG_NAME = \"x\"\n")
+			}
+			below := doc(maxRawTOMLNestingDepth - 1)
+			if _, err := parseSEP1(below); err != nil {
+				t.Errorf("parseSEP1 one below the raw bound = %v; want nil", err)
+			}
+			at := doc(maxRawTOMLNestingDepth)
+			if d, p := tomlNestingDepth(at), tomlKeyPathDepth(at); d != 0 || p != 1 {
+				t.Fatalf("precondition: string-aware depth %d, path %d; want 0, 1", d, p)
+			}
+			if err := checkTOMLNesting(at); !errors.Is(err, ErrTOMLTooDeep) {
+				t.Errorf("checkTOMLNesting at the raw bound = %v; want ErrTOMLTooDeep", err)
+			}
+		})
+	}
+}
+
 func TestTOMLNestingDepth(t *testing.T) {
 	cases := []struct {
 		name string

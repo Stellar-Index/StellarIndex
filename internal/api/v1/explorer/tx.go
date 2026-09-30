@@ -2,6 +2,7 @@ package explorer
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"regexp"
 
@@ -69,10 +70,10 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
+	tip, stale, tipOK := h.lakeTip(ctx)
 	if !found {
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/tx-not-found",
-			"Transaction not found", http.StatusNotFound,
-			"no transaction with that hash in the indexed range")
+			"Transaction not found", http.StatusNotFound, txNotFoundDetail(tip, stale, tipOK))
 		return
 	}
 	// A fee bump found by its inner hash: its rows are keyed on the outer one.
@@ -120,7 +121,21 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 		Operations:    buildTxOpViews(ops, results, tx.Successful, tx.ResultCode),
 		Events:        buildTxEventViews(events),
 		CoverageNote:  txCoverageNote(resultsPartial, eventsPartial),
-	}, false)
+	}, stale)
+}
+
+// txNotFoundDetail keeps a behind-the-network lake from making a recent
+// transaction's 404 indistinguishable from a hash that never existed.
+func txNotFoundDetail(tip uint32, stale, tipOK bool) string {
+	const base = "no transaction with that hash in the indexed range"
+	switch {
+	case !stale:
+		return base
+	case tipOK:
+		return fmt.Sprintf("%s, which ends at ledger %d and is behind the network; a recent transaction may not be indexed yet", base, tip)
+	default:
+		return base + "; the index's freshness is unknown, so a recent transaction may not be indexed yet"
+	}
 }
 
 // txCoverageNote is the tx-detail feed's honest-degrade statement (mirrors

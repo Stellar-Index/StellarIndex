@@ -1,9 +1,13 @@
 package redstone
 
 import (
+	"bytes"
+	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -30,5 +34,26 @@ func TestReadmeFeedCountMatchesRegistry(t *testing.T) {
 
 	if got := len(feedRegistry); got != documented {
 		t.Errorf("README.md says %d mainnet feeds, feedRegistry has %d — update README.md", documented, got)
+	}
+}
+
+// TestReadmeFilesTableListsEverySourceFile keeps README.md's Files table
+// from silently falling behind the package as files are added.
+func TestReadmeFilesTableListsEverySourceFile(t *testing.T) {
+	raw, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		if row := fmt.Sprintf("| [`%s`](%s) |", f, f); !bytes.Contains(raw, []byte(row)) {
+			t.Errorf("README.md Files table has no row for %s — add one", f)
+		}
 	}
 }

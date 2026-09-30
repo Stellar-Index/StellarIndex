@@ -350,13 +350,13 @@ func TestRefresher_DormantAssetNotPermanentlyRejected(t *testing.T) {
 	}
 }
 
-// TestRefresher_StalledProducerStillRejected pins the OTHER side
-// of the F-1320 dormant/stalled split: when MinComponentLedger is
-// still CHANGING tick-over-tick but remains past the threshold
-// (an observer that is progressing yet far behind, or one that
-// regressed), the gate still rejects — we only accept when the
-// component ledger is demonstrably frozen (dormant).
-func TestRefresher_StalledProducerStillRejected(t *testing.T) {
+// TestRefresher_AdvancingLaggingWatermarkRejected pins the changed-
+// watermark branch of the gate: when MinComponentLedger is still
+// CHANGING tick-over-tick but remains past the threshold (an observer
+// that is progressing yet far behind, or one that regressed), the gate
+// rejects. A producer that dies with a frozen watermark does not reach
+// this branch; see TestRefresher_DormantAfterHealthyWindow.
+func TestRefresher_AdvancingLaggingWatermarkRejected(t *testing.T) {
 	ledgers := &mutableLedgers{
 		ledger:     50_002_000,
 		observedAt: time.Unix(1_770_000_000, 0).UTC(),
@@ -390,6 +390,10 @@ func TestRefresher_StalledProducerStillRejected(t *testing.T) {
 // in-threshold ticks already recorded the (unchanged)
 // MinComponentLedger, so the cross is recognised as "unchanged →
 // dormant", NOT as a first-observation cold start.
+//
+// A producer that dies after a healthy window emits the same input, so
+// the only thing that stops it is the dormancy horizon: once the frozen
+// gap crosses it the same input must reach stale_component.
 func TestRefresher_DormantAfterHealthyWindow(t *testing.T) {
 	const minComp = 50_000_000
 	ledgers := &mutableLedgers{
@@ -418,6 +422,15 @@ func TestRefresher_DormantAfterHealthyWindow(t *testing.T) {
 	}
 	if inserter.calls != 2 {
 		t.Errorf("inserter.calls=%d want 2 (both the fresh tick and the dormant tick insert)", inserter.calls)
+	}
+	// Tick 3: same frozen watermark, now past the default dormancy
+	// horizon — a dead producer looks exactly like this, so reject.
+	ledgers.ledger = minComp + DefaultMaxDormantComponentLedgers + 1
+	if out := r.Tick(context.Background()); out.Kind != OutcomeKindStaleComponent {
+		t.Fatalf("tick3 kind=%s want %s (a watermark frozen past the dormancy horizon must fail closed)", out.Kind, OutcomeKindStaleComponent)
+	}
+	if inserter.calls != 2 {
+		t.Errorf("inserter.calls=%d want 2 (the past-horizon tick must not insert)", inserter.calls)
 	}
 }
 
@@ -450,6 +463,21 @@ func TestRefresher_NoObservation(t *testing.T) {
 	out := r.Tick(context.Background())
 	if out.Kind != OutcomeKindNoObservation {
 		t.Errorf("kind=%s want %s", out.Kind, OutcomeKindNoObservation)
+	}
+}
+
+// TestRefresher_GenesisBaselineNotSeeded — an unseeded SAC wrapper routes to
+// the benign missing_baseline outcome, not the paging compute_error.
+func TestRefresher_GenesisBaselineNotSeeded(t *testing.T) {
+	r := NewRefresher(
+		stubLedgers{ledger: 1, observedAt: time.Now()},
+		stubComputer{err: ErrGenesisBaselineNotSeeded},
+		&stubInserter{},
+		discardLogger(),
+	)
+	out := r.Tick(context.Background())
+	if out.Kind != OutcomeKindMissingBaseline {
+		t.Errorf("kind=%s want %s", out.Kind, OutcomeKindMissingBaseline)
 	}
 }
 

@@ -127,5 +127,6 @@ func (h *Handler) AccountsStats(w http.ResponseWriter, r *http.Request) {
 	for _, a := range s.TopHeldAssets {
 		out.TopHeldAssets = append(out.TopHeldAssets, HeldAssetV(a))
 	}
-	h.WriteJSON(w, out, false)
+	_, stale, _ := h.lakeTip(ctx)
+	h.WriteJSON(w, out, stale)
 }

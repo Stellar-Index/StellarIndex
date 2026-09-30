@@ -84,6 +84,46 @@ func TestSweepCancelledIsNotAFailure(t *testing.T) {
 	}
 }
 
+func TestSweepRefreshesRowGaugeEvenWhenDeleteFails(t *testing.T) {
+	obs.RetentionReaperRows.WithLabelValues(obs.AuthReaperWebhookDelivery).Set(0)
+	r := retentionreaper.New(retentionreaper.Options{
+		Name:      obs.AuthReaperWebhookDelivery,
+		Sweep:     func(context.Context, time.Time) (int64, error) { return 0, errors.New("boom") },
+		Count:     func(context.Context) (int64, error) { return 250, nil },
+		Retention: retentionreaper.WebhookDeliveryRetention,
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Clock:     func() time.Time { return fixedNow },
+	})
+
+	r.Sweep(context.Background())
+
+	if got := testutil.ToFloat64(obs.RetentionReaperRows.WithLabelValues(obs.AuthReaperWebhookDelivery)); got != 250 {
+		t.Errorf("rows gauge = %v, want 250", got)
+	}
+}
+
+func TestSweepCountFailureIsCounted(t *testing.T) {
+	obs.RetentionReaperRows.WithLabelValues(obs.AuthReaperWebhookDelivery).Set(9)
+	r := retentionreaper.New(retentionreaper.Options{
+		Name:      obs.AuthReaperWebhookDelivery,
+		Sweep:     func(context.Context, time.Time) (int64, error) { return 0, nil },
+		Count:     func(context.Context) (int64, error) { return 0, errors.New("boom") },
+		Retention: retentionreaper.WebhookDeliveryRetention,
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Clock:     func() time.Time { return fixedNow },
+	})
+	errsBefore := testutil.ToFloat64(obs.RetentionReaperErrorsTotal.WithLabelValues(obs.AuthReaperWebhookDelivery))
+
+	r.Sweep(context.Background())
+
+	if d := testutil.ToFloat64(obs.RetentionReaperErrorsTotal.WithLabelValues(obs.AuthReaperWebhookDelivery)) - errsBefore; d != 1 {
+		t.Errorf("errors delta = %v, want 1", d)
+	}
+	if got := testutil.ToFloat64(obs.RetentionReaperRows.WithLabelValues(obs.AuthReaperWebhookDelivery)); got != 9 {
+		t.Errorf("rows gauge = %v, want the last good count (9) kept", got)
+	}
+}
+
 func TestNewRejectsMissingRetention(t *testing.T) {
 	defer func() {
 		if recover() == nil {

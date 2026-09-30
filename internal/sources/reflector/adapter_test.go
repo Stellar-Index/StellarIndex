@@ -89,6 +89,14 @@ func TestWithDecoderObserver_setsObserver(t *testing.T) {
 	}
 }
 
+func TestWithDecoderDecimals(t *testing.T) {
+	for _, tc := range []struct{ opt, want uint8 }{{0, DefaultDecimals}, {7, 7}} {
+		if got := NewDecoder(VariantFX, adapterContract, WithDecoderDecimals(tc.opt)).decimals; got != tc.want {
+			t.Errorf("WithDecoderDecimals(%d): decimals = %d, want %d", tc.opt, got, tc.want)
+		}
+	}
+}
+
 func TestDecoder_Decode_emitsUpdatesForKnownSymbol(t *testing.T) {
 	// Build a fixture with one fiat:USD entry — decodes via the
 	// CEX/FX symbol path and surfaces as a single UpdateEvent.
