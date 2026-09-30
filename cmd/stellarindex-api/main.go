@@ -788,7 +788,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	}
 
 	// Forex shim — periodic fetch of fiat rates from massive.com.
-	// Cache is in-memory; worker installs a snapshot once per hour.
+	// Cache is in-memory; worker installs a snapshot every
+	// [external.massive] refresh_interval (default 1h).
 	// Backs /v1/currencies. Worker survives upstream failures
 	// (logs at warn) — the cache holds the prior snapshot.
 	//
@@ -798,11 +799,16 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// returns 401; a stale cache stays in place and /v1/currencies
 	// serves "warming up" until the key is provided.
 	forexCache := forex.NewCache()
+	forexInterval, clamped := cfg.External.Massive.EffectiveRefreshInterval()
+	if clamped {
+		logger.Warn("forex: external.massive.refresh_interval below floor — clamped",
+			"configured", cfg.External.Massive.RefreshInterval, "using", forexInterval)
+	}
 	forexWorker := forex.NewWorker(
 		forex.NewClient(cfg.External.Massive.APIKey),
 		forexCache,
 		logger.With("component", "forex"),
-		time.Hour,
+		forexInterval,
 	)
 	// Wire fx_quotes persistence — every refresh tick writes the
 	// latest rates + 7d history to the hypertable so /v1/currencies
@@ -817,6 +823,11 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// working days only) but rates rather than none. Only consulted when
 	// the primary fails; the source label follows the feed that served.
 	forexWorker = forexWorker.WithFallbacks(forex.ECBProvider{})
+	// Held outside the serving chain: the worker stores it and never
+	// fetches it, so enabling it spends no quota and changes no served rate.
+	if oxr := cfg.External.OpenExchangeRates; oxr.Enabled {
+		forexWorker = forexWorker.WithCorroborator(forex.OpenExchangeRatesProvider{AppID: oxr.AppID, Endpoint: oxr.Endpoint})
+	}
 
 	// F-1350: dry-run exits HERE — before the first `go` statement and
 	// before the heavy background SQL (backfill-coverage refresh,

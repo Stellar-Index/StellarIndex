@@ -130,6 +130,10 @@ the `env:` column.
 | `external.tiingo.poll_interval` | `duration` | `` | — | Override the connector's hourly default. One request per bound ticker per poll, so a shorter interval can exceed the free tier's 50 req/h. |
 | `external.tiingo.api_key` | `string` | `` | `TIINGO_API_KEY` | Tiingo API token, sent as 'Authorization: Token <key>', never in the URL. Required when enabled. Prefer env var. |
 | `external.massive.api_key` | `string` | `` | `MASSIVE_API_KEY` | massive.com API key. Empty still starts the forex worker, but every fetch 401s and /v1/currencies serves warming-up. Prefer env var. |
+| `external.massive.refresh_interval` | `duration` | `1h` | — | Forex worker poll cadence. One poll is one request to massive, plus one to each standby it falls through to. Zero uses 1h; values under 10m are raised to 10m and logged. Budget a metered feed against it: the Open Exchange Rates Free plan (1,000 requests/month, hourly updates) spends 720-744/month at 1h. |
+| `external.openexchangerates.enabled` | `bool` | `false` | — | Construct the Open Exchange Rates provider in stellarindex-api. Off by default; not yet consulted for serving. |
+| `external.openexchangerates.app_id` | `string` | `` | `OPENEXCHANGERATES_APP_ID` | Open Exchange Rates app id, sent only in the Authorization header. Free plan: 1,000 requests/month, hourly updates, USD base only. Prefer env var. |
+| `external.openexchangerates.endpoint` | `string` | `` | — | API root override. Empty uses https://openexchangerates.org/api. |
 | `external.dune.api_key` | `string` | `` | `DUNE_API_KEY` | Dune API key, sent as X-Dune-API-Key. Empty makes curated-rwa-sync refuse the run and stamp its refused gauge. Prefer env var. |
 
 ### `[aggregate]`
