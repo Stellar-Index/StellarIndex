@@ -94,8 +94,11 @@ export async function generateMetadata({
   const info = DEX_INFO[source];
   if (!info) return { title: 'DEX not found' };
   const canonical = `${CURRENT_NETWORK.explorerUrl}/dexes/${encodeURIComponent(source)}`;
-  const title = `${info.name} — every pool, live`;
-  const description = `All ${info.name} pools observed in the last 14 days, with per-pool 24h trade count + last trade. Source: /v1/markets?source=${source}.`;
+  // SDEX is an order book: its rows are traded pairs, not pools.
+  const [noun, unit] =
+    source === 'sdex' ? ['market', 'pair'] : ['pool', 'pool'];
+  const title = `${info.name} — every ${noun}, live`;
+  const description = `All ${info.name} ${noun}s observed in the last 14 days, with per-${unit} 24h trade count + last trade. Source: /v1/markets?source=${source}.`;
   return {
     title,
     description,
@@ -143,7 +146,10 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
         <p className="text-ink-body max-w-3xl text-sm">{info.blurb}</p>
       </header>
 
-      <SourceStatsPanel source={source} />
+      <SourceStatsPanel
+        source={source}
+        unitsLabel={source === 'sdex' ? 'pairs' : 'pools'}
+      />
 
       {/* Per-DEX bespoke analytics suite (KPIs, trades/traders series,
           top-pairs multi-line, volume-by-pair donut) — the same

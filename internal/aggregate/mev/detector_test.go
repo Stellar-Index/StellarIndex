@@ -195,3 +195,56 @@ func TestDetectArbitrage_NotionalSum(t *testing.T) {
 		t.Fatalf("notional = %q (want 19.75): %+v", got[0].NotionalUSD, got)
 	}
 }
+
+const (
+	btc = "BTC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	eth = "ETH-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	sol = "SOL-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+)
+
+// A single-venue component the venue guard rejects on its own must not
+// pass because a disjoint leg on another venue shares its (tx, taker).
+func TestDetectArbitrage_DisjointLegCannotLendVenue(t *testing.T) {
+	trades := []canonical.Trade{
+		trade(t, "soroswap", 1, "GUSER", "native", usdc),
+		trade(t, "soroswap", 2, "GUSER", usdc, aqua),
+		trade(t, "soroswap", 3, "GUSER", aqua, btc),
+		trade(t, "soroswap", 4, "GUSER", btc, "native"),
+		trade(t, "soroswap", 5, "GUSER", "native", aqua),
+		trade(t, "phoenix", 6, "GUSER", eth, sol),
+	}
+	if got := DetectArbitrage(trades, nil); len(got) != 0 {
+		t.Errorf("single-venue component flagged via a disjoint venue: %+v", got)
+	}
+}
+
+// Two disjoint single-venue round trips in one (tx, taker) are not a cycle.
+func TestDetectArbitrage_DisjointSameVenueRoundTrips(t *testing.T) {
+	trades := []canonical.Trade{
+		trade(t, "soroswap", 1, "GUSER", "native", usdc),
+		trade(t, "soroswap", 2, "GUSER", usdc, "native"),
+		trade(t, "soroswap", 3, "GUSER", eth, sol),
+		trade(t, "soroswap", 4, "GUSER", sol, eth),
+	}
+	if got := DetectArbitrage(trades, nil); len(got) != 0 {
+		t.Errorf("disjoint same-venue round trips flagged: %+v", got)
+	}
+}
+
+// A qualifying cycle beside an unrelated swap in the same tx is still
+// detected, and the candidate carries only the cycle's legs and notional.
+func TestDetectArbitrage_UnrelatedLegExcluded(t *testing.T) {
+	trades := []canonical.Trade{
+		trade(t, "soroswap", 1, "GARB", "native", usdc),
+		trade(t, "phoenix", 2, "GARB", usdc, "native"),
+		trade(t, "soroswap", 3, "GARB", eth, sol),
+	}
+	got := DetectArbitrage(trades, []string{"10.50", "9.25", "1000"})
+	if len(got) != 1 {
+		t.Fatalf("got %d candidates, want 1: %+v", len(got), got)
+	}
+	c := got[0]
+	if len(c.Legs) != 2 || len(c.Assets) != 2 || c.NotionalUSD != "19.75" {
+		t.Errorf("candidate carries non-cycle legs: legs=%d assets=%v notional=%q", len(c.Legs), c.Assets, c.NotionalUSD)
+	}
+}

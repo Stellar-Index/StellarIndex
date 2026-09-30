@@ -188,8 +188,11 @@ Possible explanations, in rough order of likelihood:
    contract? Re-enumerate from on-chain history and re-run.
 2. **Topic-filter typo.** topic[0] / topic[1] strings need exact
    case-sensitive match. Most Soroban events use `ScvSymbol`
-   identifiers (no spaces); Phoenix uses `ScvString` including
-   the space-bearing `actual received amount` (Q2).
+   identifiers (no spaces); Soroswap's `SoroswapPair` and Phoenix
+   use `ScvString`, including the space-bearing
+   `actual received amount` (Q2). The filter matches the topic's
+   raw XDR in Hubble's `topics` column as either type, so a topic
+   of any other type (an address, a number) never matches.
 3. **Range edge effects.** Ledger boundaries can clip events
    across `from` / `to`. Re-run with a wider range.
 4. **Decoder bug.** This is the case the cross-check exists to

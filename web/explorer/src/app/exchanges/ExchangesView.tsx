@@ -251,7 +251,10 @@ export function ExchangesView() {
         </div>
       </Panel>
 
-      <AllCEXMarkets />
+      <AllCEXMarkets
+        venues={registryAvailable ? rows.map((r) => r.name) : undefined}
+        registryLoading={q.isLoading}
+      />
 
       <p className="text-ink-muted text-xs">
         Sources are pulled from the static venue registry; per-venue 24h
@@ -268,7 +271,7 @@ export function ExchangesView() {
 
 // /v1/markets row (MarketRow via the hooks Market alias) plus the
 // client-side `source` tag AllCEXMarkets stamps on each row when it
-// merges the four per-venue fetches.
+// merges the per-venue fetches.
 type CEXMarket = Market & {
   // Client-side: which venue the row was fetched for (the /v1/markets
   // wire row itself carries no source column).
@@ -276,16 +279,24 @@ type CEXMarket = Market & {
 };
 
 // AllCEXMarkets surfaces every CEX pair we observed in the last
-// 14 days, sorted by 24h USD volume. The four venue-scoped fetches
-// run concurrently and merge client-side — no new API endpoint
-// required, and matches the volume-sort across venues.
-function AllCEXMarkets() {
-  const venues = ['binance', 'coinbase', 'kraken', 'bitstamp'];
+// 14 days, sorted by 24h USD volume. The venue-scoped fetches run
+// concurrently and merge client-side — no new API endpoint required,
+// and matches the volume-sort across venues. `venues` is the registry
+// table's CEX list, so a newly registered venue appears in both tables.
+function AllCEXMarkets({
+  venues,
+  registryLoading,
+}: {
+  // undefined = registry fetch failed; the pair list is then unknowable.
+  venues: string[] | undefined;
+  registryLoading: boolean;
+}) {
   const queries = useQuery<CEXMarket[]>({
-    queryKey: ['/v1/markets', 'all-cex'],
+    queryKey: ['/v1/markets', 'all-cex', venues],
+    enabled: venues != null,
     queryFn: async () => {
       const all = await Promise.all(
-        venues.map(async (v) => {
+        (venues ?? []).map(async (v) => {
           const env = await apiGet<{ data: CEXMarket[] }>('/v1/markets', {
             source: v,
             limit: 200,
@@ -303,12 +314,13 @@ function AllCEXMarkets() {
     },
   });
 
-  // The queryFn is a Promise.all over four venue-scoped /v1/markets
+  // The queryFn is a Promise.all over the venue-scoped /v1/markets
   // calls — ONE 503 rejects the whole query. `queries.data` is then
   // undefined, and `?? []` would headline "0 CEX pairs" plus "No CEX
   // pairs reporting.". Keep the absence.
   const markets = queries.data ?? [];
   const marketsAvailable = queries.data != null;
+  const loading = registryLoading || queries.isLoading;
 
   return (
     <Panel
@@ -318,7 +330,7 @@ function AllCEXMarkets() {
           ? `${markets.length} CEX pairs · sorted by 24h volume`
           : 'CEX pairs · sorted by 24h volume'
       }
-      hint="One row per (venue, base, quote) tuple — every pair we observed across all four CEXes in the last 14 days"
+      hint="One row per (venue, base, quote) tuple — every pair we observed across all registered CEXes in the last 14 days"
       source={asExample('/v1/markets', { source: 'binance', limit: 200 })}
       bodyClassName="-mx-4"
     >
@@ -335,7 +347,7 @@ function AllCEXMarkets() {
             </tr>
           </THead>
           <TBody>
-            {queries.isLoading && (
+            {loading && (
               <tr>
                 <td
                   colSpan={6}
@@ -345,18 +357,18 @@ function AllCEXMarkets() {
                 </td>
               </tr>
             )}
-            {!queries.isLoading && !marketsAvailable && (
+            {!loading && !marketsAvailable && (
               <tr>
                 <td
                   colSpan={6}
                   className="text-ink-muted px-4 py-6 text-center text-sm"
                 >
-                  Pair list unavailable right now — at least one venue query
-                  didn&apos;t return. Retry shortly.
+                  Pair list unavailable right now — the venue registry or at
+                  least one venue query didn&apos;t return. Retry shortly.
                 </td>
               </tr>
             )}
-            {!queries.isLoading && marketsAvailable && markets.length === 0 && (
+            {!loading && marketsAvailable && markets.length === 0 && (
               <tr>
                 <td
                   colSpan={6}
