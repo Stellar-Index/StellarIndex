@@ -27,6 +27,7 @@ RUNBOOK="docs/operations/runbooks/aggregator-class-drop-spike.md"
 SPEC="openapi/stellar-index.v1.yaml"
 EXPLORER_README="web/explorer/README.md"
 COMMS_README="deploy/comms/README.md"
+NODOC_PKG="internal/zzlintdocsfixture"
 EDITED=(CHANGELOG.md docs/architecture/coverage-matrix.md docs/remediation-2026-07-01/STATUS.md
         docs/adr/README.md docs/protocols/README.md "$RUNBOOK" "$SPEC" "$EXPLORER_README" "$COMMS_README")
 BACKUP=$(mktemp -d); OUT=$(mktemp)
@@ -39,7 +40,7 @@ cleanup() {
     if [ -f "$BACKUP/$f" ]; then cp -p "$BACKUP/$f" "$f"; fi
   done
   rm -f "$ADR_NOROW" "$ADR_STALE" "$INC_PROSE" "$INC_BOX" "$DESIGN" "$OPS_STALE" "$OPS_WARN"
-  rm -rf "$(dirname "$UNTRACKED_README")" "$BACKUP" "$OUT"
+  rm -rf "$(dirname "$UNTRACKED_README")" "$NODOC_PKG" "$BACKUP" "$OUT"
 }
 trap cleanup EXIT
 
@@ -123,6 +124,11 @@ sed -e 's/asset:           { type: string, description: Reserve underlying token
 # shellcheck disable=SC1003  # a literal trailing backslash, not an escape
 printf '%s\n' 'sudo /usr/local/sbin/run-heavy-job.sh zz -- \' '  stellarindex-ops supply snapshot -asset native' >> "$RUNBOOK"
 
+# Documented make targets: an inline and a fenced target the Makefile lacks
+# are caught; "no `make X`" documents an absence and stays exempt.
+# shellcheck disable=SC2016  # literal Markdown backticks, not a substitution
+printf '%s\n' '' 'Run `make zz-inline-target` first.' 'There is no `make zz-absent-target`.' '```sh' 'make zz-fenced-target' '```' >> "$RUNBOOK"
+
 # §6: a living procedure past 180 days is red; past only 90 days it warns.
 printf -- '---\nlast_verified: %s\n---\n\n# fixture\n' "$(days_ago 181)" > "$OPS_STALE"
 printf -- '---\nlast_verified: %s\n---\n\n# fixture\n' "$(days_ago 100)" > "$OPS_WARN"
@@ -141,6 +147,12 @@ printf '\n```sh\npnpm lint               # next lint\n```\n\nMDX via `@next/mdx`
 # §22: a comms README claiming a runbook calls a template it never links.
 # shellcheck disable=SC2016  # literal Markdown backticks, not a substitution
 printf -- '- [`docs/operations/sev-playbook.md`](../../docs/operations/sev-playbook.md)\n  — calls `maintenance-window.md`.\n' >> "$COMMS_README"
+
+# A package whose only comment is a build directive has no package doc;
+# its test file's doc must not count either.
+mkdir -p "$NODOC_PKG"
+printf '//go:build !zz\npackage zzlintdocsfixture\n' > "$NODOC_PKG/a.go"
+printf '// Package zzlintdocsfixture is documented only in a test file.\npackage zzlintdocsfixture\n' > "$NODOC_PKG/a_test.go"
 
 bash "$GATE" > "$OUT" 2>&1; rc=$?
 red=1; [ "$rc" -gt 0 ] && red=0
@@ -165,6 +177,9 @@ present "an aged incident's '- [ ]' action item is caught" "incident '$INC_BOX' 
 present "an unquoted comma in a flow-mapping description is caught" "bogus null-valued key 'C-strkey\.'"
 present "an undocumented /account/admin/lookup route is caught" "Route '/account/admin/lookup' is registered in handlers but missing"
 present "a continued heavy-job 'supply snapshot' without -write is caught" "$RUNBOOK: heavy-job command runs write-gated 'supply snapshot' without -write"
+present "an inline 'make' target absent from the Makefile is caught" "$RUNBOOK:[0-9]+ documents 'make zz-inline-target'"
+present "a fenced 'make' target absent from the Makefile is caught" "$RUNBOOK:[0-9]+ documents 'make zz-fenced-target'"
+absent  "\"no \`make X\`\" documenting an absence is exempt" "zz-absent-target"
 present "a docs/operations page verified 181 days ago is caught" "ERROR: Doc '$OPS_STALE' is STALE"
 present "a docs/operations page verified 100 days ago warns" "WARN: doc '$OPS_WARN'"
 absent  "a docs/operations page verified 100 days ago is not an error" "ERROR: .*$OPS_WARN"
@@ -175,6 +190,8 @@ present "an explorer README naming an undeclared package is caught" "names packa
 present "an explorer README naming a missing route is caught" "names route '/account/\*' but web/explorer/src/app/account/"
 present "a comms README naming a caller that never links the template is caught" "says docs/operations/sev-playbook\.md calls 'maintenance-window\.md' but"
 absent  "rollback.md links the rollback-update template it is said to call" "calls 'rollback-update\.md'"
+present "a package with no package doc comment is caught" "Package '$NODOC_PKG' has no package doc comment"
+absent  "a documented package is not flagged" "Package 'internal/canonical' has no"
 
 if [ "$FAIL" -gt 0 ]; then echo "--- lint output ---"; grep -E 'ERROR|WARN: doc .docs/operations/zz' "$OUT"; fi
 cleanup; trap - EXIT

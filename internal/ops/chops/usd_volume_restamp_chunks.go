@@ -9,11 +9,14 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"os"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -123,7 +126,8 @@ import (
 //     the same figure is checked again before EVERY decompress against
 //     that chunk's own size. Free space is MEASURED by statfs on the
 //     directory the database reports for `trades` — which is only
-//     meaningful on the database host — or, when it cannot be measured,
+//     meaningful on the database host, so a DSN dialling a non-loopback
+//     host skips it — or, when it cannot be measured,
 //     taken from an explicit -min-free-bytes with a loud warning.
 //   - LIVE-ADJACENT REFUSAL: a window whose right edge reaches into the
 //     policy's lag (to + 1 day > now - compress_after) is refused unless
@@ -183,7 +187,8 @@ type chunkRestampTier interface {
 	// probe answers, READ-ONLY, whether [lo, hi) still holds a row this run
 	// would change. A chunk that probes clean is skipped without being
 	// decompressed — what makes a rerun resume at the first unfinished
-	// chunk (INV-3: at the run's own generation).
+	// chunk (INV-3: at the run's own generation). A clean probe still
+	// counts toward the closing report, which names the whole window.
 	probe(ctx context.Context, lo, hi time.Time) (bool, error)
 	// preview is the dry run's read-only pass over [lo, hi): it folds the
 	// slice into the run's totals and returns the operator-facing
@@ -233,6 +238,10 @@ type chunkRestampOptions struct {
 	// MinFreeBytes is -min-free-bytes: the operator's assertion of free
 	// space on the data volume, used INSTEAD of a measurement. 0 = measure.
 	MinFreeBytes int64
+	// RemoteDBHost is the first non-loopback host the Postgres DSN dials
+	// ("" = every host is a Unix socket or loopback). Set, a local statfs
+	// measures THIS host's filesystem, so the pre-flight refuses to use it.
+	RemoteDBHost string
 	// AllowLiveAdjacent is -allow-live-adjacent: walk a window whose right
 	// edge reaches into the compression policy's lag anyway.
 	AllowLiveAdjacent bool
@@ -946,8 +955,8 @@ type chunkPreflight struct {
 //
 // The figure compared is, in order of preference: -min-free-bytes when
 // the operator gave one (trusted as stated, warned about loudly);
-// otherwise statfs on the directory the database reports for `trades`.
-// Neither available is a refusal, not a guess.
+// otherwise statfs on the directory the database reports for `trades`,
+// only when the DSN dials this host. Neither available is a refusal, not a guess.
 func chunkRestampPreflight(ctx context.Context, store interface {
 	TradesDataVolumePath(context.Context) (string, error)
 }, largest int64, copts chunkRestampOptions,
@@ -969,7 +978,7 @@ func chunkRestampPreflight(ctx context.Context, store interface {
 		p.Required = sum
 	}
 	p.Path, p.PathErr = store.TradesDataVolumePath(ctx)
-	if p.PathErr == nil {
+	if p.PathErr == nil && copts.RemoteDBHost == "" {
 		free := copts.FreeBytes
 		if free == nil {
 			free = freeBytesOnPath
@@ -984,6 +993,10 @@ func chunkRestampPreflight(ctx context.Context, store interface {
 		have = uint64(p.Override)
 	case p.MeasuredOK:
 		have = p.Measured
+	case copts.RemoteDBHost != "":
+		p.Err = fmt.Errorf("the database DSN dials %s, not this host, so statfs here would measure the wrong filesystem; "+
+			"run on the database host over a Unix socket or loopback, or check free space there yourself and pass -min-free-bytes N", copts.RemoteDBHost)
+		return p
 	case p.PathErr != nil:
 		p.Err = fmt.Errorf("cannot resolve the data volume (%v); run on the database host as a role that can read data_directory, "+
 			"or check free space there yourself and pass -min-free-bytes N", p.PathErr)
@@ -1052,6 +1065,30 @@ func (p chunkPreflight) render() string {
 	return b.String()
 }
 
+// remoteDSNHost returns the first host the DSN would dial that is neither a
+// Unix socket directory nor loopback, "" when there is none. It resolves the
+// DSN exactly as the driver does (URL or key=value form, PGHOST, multi-host).
+func remoteDSNHost(dsn string) string {
+	cfg, err := pgconn.ParseConfig(dsn)
+	if err != nil {
+		return "(unparseable DSN)"
+	}
+	hosts := []string{cfg.Host}
+	for _, f := range cfg.Fallbacks {
+		hosts = append(hosts, f.Host)
+	}
+	for _, h := range hosts {
+		if strings.HasPrefix(h, "/") || strings.EqualFold(h, "localhost") {
+			continue
+		}
+		if ip := net.ParseIP(h); ip != nil && ip.IsLoopback() {
+			continue
+		}
+		return h
+	}
+	return ""
+}
+
 // freeBytesOnPath is statfs: the bytes an unprivileged writer could still
 // put on the filesystem holding path.
 func freeBytesOnPath(path string) (uint64, error) {
@@ -1076,6 +1113,22 @@ func validateRestampGeneration(gen int64, now time.Time) error {
 			"-max-generation and could never be re-derived again — pass the generation a previous run printed, or nothing", gen, nowUnix)
 	}
 	return nil
+}
+
+// resolveRestampMaxGeneration turns -max-generation into the scan's read
+// bound: negative means the run's own generation. A bound above the
+// generation is refused — the scan would select rows the UPDATE's
+// `derive_generation <= generation` guard can never write, so every run
+// would re-plan them, write nothing, and report them as a concurrent writer.
+func resolveRestampMaxGeneration(maxGen, generation int64) (int64, error) {
+	if maxGen < 0 {
+		return generation, nil
+	}
+	if maxGen > generation {
+		return 0, fmt.Errorf("usd-volume-restamp: -max-generation %d is above the run's generation %d: rows stamped in between are candidates "+
+			"this run can never write — pass a value <= %d, or omit it to target everything this run can re-derive", maxGen, generation, generation)
+	}
+	return maxGen, nil
 }
 
 // fmtBytes renders a byte count the way pg_size_pretty does (1024-based,

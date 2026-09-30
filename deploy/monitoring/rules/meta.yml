@@ -143,6 +143,26 @@ groups:
             not_notifying, the pipeline is alive — the far end is
             rejecting it.
 
+      # apply.sh installs an optional receiver with an empty URL rather than
+      # refusing, so its dark state has to reach an alert, not only stderr.
+      - alert: stellarindex_alertmanager_optional_receiver_dark
+        expr: stellarindex_alertmanager_optional_receiver_dark == 1
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: meta
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/alertmanager-notifications-failing.md
+          summary: "Alertmanager optional receiver {{ $labels.receiver }} delivers to nobody"
+          description: |
+            configs/alertmanager/apply.sh last installed receiver
+            {{ $labels.receiver }} with no URL, so its *_configs block was
+            dropped and whatever it routes is accepted and discarded.
+            For delivery-failure that means a refused chat delivery has no
+            out-of-band alarm. Set its URL in
+            /etc/default/alertmanager-secrets and re-run apply.sh.
+
       # ─── F-0085 (audit-2026-05-26): exporter-down meta-alerts ─────
       # The 2026-05-10 SEV-2 cascade exposed a blindness pattern: the
       # `stellarindex_redis_writes_blocked` alert watches

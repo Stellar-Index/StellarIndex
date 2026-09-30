@@ -1,0 +1,91 @@
+---
+# promtool unit tests for stellarindex_sep41_supply_freshness_absent, which
+# lives in data-freshness.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/data-freshness-sep41-absent_test.yml
+#
+# data-freshness.sh omits the sep41_supply pair whenever its ClickHouse
+# supply_flows probe fails, while every Postgres-derived gauge in the same
+# file keeps publishing. watchdog_silent's absent_over_time over the whole
+# family stays false in that state, so this per-instance rule is the only
+# thing that notices served SEP-41 supply staleness has gone unmonitored.
+
+rule_files:
+  - ../rules/data-freshness.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── ClickHouse down: the sep41 pair vanishes, the rest keeps publishing ──
+  - interval: 1m
+    name: a vanished sep41_supply series fires while the rest of the file is live
+    input_series:
+      - series: 'stellarindex_data_freshness_stale{domain="pricing",source="coingecko",instance="r1:9100",job="node_exporter"}'
+        values: '0x180'
+      - series: 'stellarindex_data_freshness_stale{domain="sep41_supply",source="supply_flows",instance="r1:9100",job="node_exporter"}'
+        values: '0x30 stale'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: stellarindex_sep41_supply_freshness_absent
+        exp_alerts:
+          - exp_labels:
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: data-freshness
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
+              summary: "SEP-41 supply freshness gauge absent on r1:9100 — served SEP-41 supply staleness is unmonitored"
+              description: |
+                data_freshness.prom on r1:9100 is publishing, but
+                stellarindex_data_freshness_stale{domain="sep41_supply",source="supply_flows"}
+                has been missing for over an hour. data-freshness.sh skips that
+                pair whenever its ClickHouse supply_flows probe fails, so
+                stellarindex_data_source_stale cannot fire for served SEP-41
+                supply while this lasts. Check ClickHouse HTTP on :8123 and
+                `journalctl -u data-freshness.service` for "supply_flows probe failed".
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md#sep-41-supply-series-absent
+      # The family-wide meta-alert is structurally blind to this state.
+      - eval_time: 150m
+        alertname: stellarindex_data_freshness_watchdog_silent
+        exp_alerts: []
+
+  # ── a single skipped probe tick is absorbed by the for-gate ─────────
+  - interval: 1m
+    name: a short sep41_supply gap under the 1h for-gate does not fire
+    input_series:
+      - series: 'stellarindex_data_freshness_stale{domain="pricing",source="coingecko",instance="r1:9100",job="node_exporter"}'
+        values: '0x180'
+      - series: 'stellarindex_data_freshness_stale{domain="sep41_supply",source="supply_flows",instance="r1:9100",job="node_exporter"}'
+        values: '0x30 stale _x20 0x129'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: stellarindex_sep41_supply_freshness_absent
+        exp_alerts: []
+
+  # ── healthy: every series present ──────────────────────────────────
+  - interval: 1m
+    name: a published sep41_supply series never fires
+    input_series:
+      - series: 'stellarindex_data_freshness_stale{domain="pricing",source="coingecko",instance="r1:9100",job="node_exporter"}'
+        values: '0x180'
+      - series: 'stellarindex_data_freshness_stale{domain="sep41_supply",source="supply_flows",instance="r1:9100",job="node_exporter"}'
+        values: '0x180'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: stellarindex_sep41_supply_freshness_absent
+        exp_alerts: []
+
+  # ── the whole file is gone: watchdog_silent owns it, not this rule ──
+  - interval: 1m
+    name: a wholly absent data_freshness file leaves this rule silent
+    input_series:
+      - series: 'stellarindex_data_freshness_stale{domain="pricing",source="coingecko",instance="r1:9100",job="node_exporter"}'
+        values: '0x30 stale'
+      - series: 'stellarindex_data_freshness_stale{domain="sep41_supply",source="supply_flows",instance="r1:9100",job="node_exporter"}'
+        values: '0x30 stale'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: stellarindex_sep41_supply_freshness_absent
+        exp_alerts: []

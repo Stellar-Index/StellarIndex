@@ -22,7 +22,7 @@ import (
 // soroswap-router ContractCallDecoder against every InvokeContract
 // op. The decoder is pure (no state), so this is safe to re-run; the
 // destination table's PK on (ledger_close_time, ledger, tx_hash,
-// op_index) + ON CONFLICT DO NOTHING make every replay idempotent.
+// op_index) + the generation-guarded upsert make every replay idempotent.
 //
 // Why this exists despite ADR-0032's "no per-source backfill"
 // invariant: that ADR's projector path reads from the
@@ -259,16 +259,9 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 		return fmt.Errorf("stream: %w (cursor left at the last clean checkpoint; re-run to continue)", streamErr)
 	}
 
-	// Same guard backfill carries (F-0159): a walk that delivered zero
-	// ledgers is almost always the wrong bucket, and TolerateTrailingMissing
-	// swallows the underlying missing-file error, so without this the
-	// operator reads "0 ledgers, 0 rows" as a completed backfill.
-	if totalLedgers == 0 {
-		return fmt.Errorf(
-			"backfill-router walked 0 of %d ledgers in range [%d,%d] from bucket %q — "+
-				"the bucket likely has no files there; historical ranges need the archive bucket, "+
-				"and the archive's hourly mirror of live may not yet hold a -to near the tip",
-			uint32(*to)-startLedger+1, startLedger, uint32(*to), streamBucket)
+	// Charged against startLedger: a resumed run only owes the ledgers above its cursor.
+	if err := rangeWalkCoverage("backfill-router", startLedger, uint32(*to), totalLedgers, streamBucket); err != nil {
+		return err
 	}
 
 	fmt.Fprintf(os.Stderr, "backfill-router: done. %d ledgers, %d rows %s (%d insert failures)\n",
@@ -288,4 +281,31 @@ func insertRouterSwap(ctx context.Context, store *timescale.Store, write bool, r
 		return nil
 	}
 	return store.InsertSoroswapRouterSwap(ctx, row)
+}
+
+// rangeWalkCoverage fails a bounded walk whose delivered count is not exactly
+// the ledgers [from, to] holds. TolerateTrailingMissing ends a walk at a missing object
+// with a nil error, so the delivered count is the only sign the range was cut short.
+func rangeWalkCoverage(cmd string, from, to uint32, walked int, bucket string) error {
+	requested := uint64(to) - uint64(from) + 1
+	switch {
+	case walked == 0:
+		return fmt.Errorf(
+			"%s walked 0 of %d ledgers in range [%d,%d] from bucket %q — "+
+				"the bucket likely has no files there; historical ranges need the archive bucket, "+
+				"and the archive's hourly mirror of live may not yet hold a -to near the tip",
+			cmd, requested, from, to, bucket)
+	case uint64(walked) < requested:
+		return fmt.Errorf(
+			"%s walked only %d of %d ledgers in range [%d,%d] from bucket %q — %d trailing ledgers were NOT walked: "+
+				"an object is missing and the trailing-missing tolerance ended the walk early (see the ledgerstream "+
+				"WARN above). The range is NOT complete; re-run once the objects exist",
+			cmd, walked, requested, from, to, bucket, requested-uint64(walked))
+	case uint64(walked) > requested:
+		return fmt.Errorf(
+			"%s walked %d ledgers but range [%d,%d] holds only %d — the delivered count is untrustworthy; "+
+				"refusing to report the range complete",
+			cmd, walked, from, to, requested)
+	}
+	return nil
 }

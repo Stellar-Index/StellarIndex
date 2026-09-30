@@ -72,23 +72,96 @@ var (
 	createRe     = regexp.MustCompile(`(?i)CREATE TABLE\s+(?:IF NOT EXISTS\s+)?([a-z0-9_]+)`)
 	alterRe      = regexp.MustCompile(`(?i)ALTER TABLE\s+(?:ONLY\s+)?([a-z0-9_]+)`)
 	pkRe         = regexp.MustCompile(`(?i)PRIMARY KEY\s*\(([^)]+)\)`)
+	// An ALTER adding event_index with a DEFAULT: every existing row gets
+	// that constant instead of its true index.
+	backfillRe = regexp.MustCompile(`(?i)^ALTER TABLE\s+(?:ONLY\s+)?([a-z0-9_]+)\b.*\bADD COLUMN\s+(?:IF NOT EXISTS\s+)?event_index\b[^,]*\bDEFAULT\b`)
+	// A whole-table wipe; a DELETE with a WHERE clause does not match.
+	wipeRe = regexp.MustCompile(`(?i)^(?:DELETE\s+FROM|TRUNCATE(?:\s+TABLE)?)\s+(?:ONLY\s+)?([a-z0-9_]+)$`)
 )
+
+// legacyBackfill maps a protocol-row table whose event_index was added by
+// ALTER … ADD COLUMN … DEFAULT over already-populated rows, and never
+// disarmed by a later whole-table DELETE/TRUNCATE, to why that is still
+// tolerated. The writer stamps each event's TRUE in-op index, so a replay
+// writes the same event under a new PK beside its legacy default-index row
+// (0137 comet, 0164 cctp/rozo). A new backfill must ship its own disarm;
+// only a "TODO:" entry naming the pending disarm may wave it through.
+var legacyBackfill = map[string]string{
+	"blend_emissions":      "TODO: 0053 left legacy event_index=0 rows; its DELETE + re-derive is an operator-runbook step no migration enforces",
+	"blend_admin":          "TODO: 0053 left legacy event_index=0 rows; its DELETE + re-derive is an operator-runbook step no migration enforces",
+	"blend_positions":      "TODO: 0054 left legacy event_index=0 rows; its DELETE + re-derive is an operator-runbook step no migration enforces",
+	"defindex_flows":       "TODO: 0055 left legacy event_index=0 rows; its DELETE + re-derive is an operator-runbook step no migration enforces",
+	"sep41_supply_events":  "TODO: 0057 left legacy event_index=0 rows; its DELETE + re-derive is an operator-runbook step no migration enforces",
+	"blend_auctions":       "TODO: 0058 left legacy event_index=0 rows; its own header makes the DELETE + re-derive optional",
+	"phoenix_liquidity":    "TODO: 0060 left legacy event_index=0 rows and a projector-replay doubles them (CA2-A34); whole-table disarm migration pending",
+	"phoenix_stake_events": "TODO: 0060 left legacy event_index=0 rows and a projector-replay doubles them (CA2-A34); whole-table disarm migration pending",
+}
+
+// statements returns f's SQL statements with comments stripped and
+// whitespace collapsed.
+func statements(f string) ([]string, error) {
+	b, err := os.ReadFile(f) //nolint:gosec // f comes from a fixed Glob of migrations/, not user input
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", f, err)
+	}
+	// Strip comments first — a `;` inside a comment would otherwise split a
+	// CREATE statement away from its PRIMARY KEY clause.
+	content := blockComment.ReplaceAllString(string(b), "")
+	content = lineComment.ReplaceAllString(content, "")
+	parts := stmtSplit.Split(content, -1)
+	out := make([]string, 0, len(parts))
+	for _, stmt := range parts {
+		out = append(out, strings.TrimSpace(ws.ReplaceAllString(stmt, " ")))
+	}
+	return out, nil
+}
+
+// legacyBackfillViolations fails every table whose latest event_index DEFAULT
+// backfill is not followed, in the same or a later migration, by a whole-table
+// DELETE/TRUNCATE, unless allowed carries a TODO for it. Entries that no
+// longer apply come back as non-fatal drift.
+func legacyBackfillViolations(entries, tables []string, allowed map[string]string) (failures, stale []string, err error) {
+	lastBackfill, lastWipe := map[string]int{}, map[string]int{}
+	for i, f := range entries {
+		stmts, serr := statements(f)
+		if serr != nil {
+			return nil, nil, serr
+		}
+		for _, norm := range stmts {
+			if m := backfillRe.FindStringSubmatch(norm); m != nil {
+				lastBackfill[strings.ToLower(m[1])] = i + 1
+			}
+			if m := wipeRe.FindStringSubmatch(norm); m != nil {
+				lastWipe[strings.ToLower(m[1])] = i + 1
+			}
+		}
+	}
+	for _, t := range tables {
+		b := lastBackfill[t]
+		armed := b > 0 && lastWipe[t] < b
+		reason, listed := allowed[t]
+		switch {
+		case armed && listed && strings.HasPrefix(reason, "TODO"):
+			// known and tracked
+		case armed:
+			failures = append(failures, fmt.Sprintf("%-22s %s adds event_index with a DEFAULT over existing rows and no later migration wipes the table — a replay re-writes every legacy event under its true event_index; ship a whole-table DELETE (decompress first) and the projector-replay follow-up", t, filepath.Base(entries[b-1])))
+		case listed:
+			stale = append(stale, fmt.Sprintf("%-22s has no un-disarmed event_index backfill — remove its legacyBackfill entry", t))
+		}
+	}
+	return failures, stale, nil
+}
 
 // parsePKs returns the latest PRIMARY KEY column list per table across the
 // given migration files (sorted ascending so later definitions win).
 func parsePKs(entries []string) (map[string]string, error) {
 	pk := map[string]string{}
 	for _, f := range entries {
-		b, rerr := os.ReadFile(f) //nolint:gosec // f comes from a fixed Glob of migrations/, not user input
-		if rerr != nil {
-			return nil, fmt.Errorf("read %s: %w", f, rerr)
+		stmts, serr := statements(f)
+		if serr != nil {
+			return nil, serr
 		}
-		// Strip comments first — a `;` inside a comment would otherwise split a
-		// CREATE statement away from its PRIMARY KEY clause.
-		content := blockComment.ReplaceAllString(string(b), "")
-		content = lineComment.ReplaceAllString(content, "")
-		for _, stmt := range stmtSplit.Split(content, -1) {
-			norm := ws.ReplaceAllString(stmt, " ")
+		for _, norm := range stmts {
 			m := pkRe.FindStringSubmatch(norm)
 			if m == nil {
 				continue
@@ -144,6 +217,14 @@ func main() {
 		}
 	}
 
+	bfFail, bfStale, berr := legacyBackfillViolations(entries, protocolRowTables, legacyBackfill)
+	if berr != nil {
+		fmt.Fprintf(os.Stderr, "lint-pk-discriminators: %v\n", berr)
+		os.Exit(2)
+	}
+	failures = append(failures, bfFail...)
+	stale = append(stale, bfStale...)
+
 	if len(stale) > 0 {
 		fmt.Println("lint-pk-discriminators: allowlist drift (non-fatal):")
 		for _, s := range stale {
@@ -151,12 +232,13 @@ func main() {
 		}
 	}
 	if len(failures) > 0 {
-		fmt.Fprintln(os.Stderr, "lint-pk-discriminators: FAIL — protocol-row tables without a per-event PK discriminator:")
+		fmt.Fprintln(os.Stderr, "lint-pk-discriminators: FAIL — protocol-row tables without a per-event PK discriminator, or with an un-disarmed event_index backfill:")
 		for _, f := range failures {
 			fmt.Fprintln(os.Stderr, "  ✗", f)
 		}
 		fmt.Fprintln(os.Stderr, "\nSee ADR-0033 / the coarse-PK data-loss class. Either add event_index to the PK")
 		fmt.Fprintln(os.Stderr, "or, if the PK is genuinely collision-free, add the table to `allow` with an OK: reason.")
+		fmt.Fprintln(os.Stderr, "A backfill finding is cleared by a whole-table DELETE migration (0137 / 0164), not by `allow`.")
 		os.Exit(1)
 	}
 	fmt.Printf("lint-pk-discriminators: OK — %d protocol-row tables checked; all key on a per-event discriminator (or justified)\n", len(protocolRowTables))

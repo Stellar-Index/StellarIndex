@@ -558,6 +558,7 @@ var OracleSourceNames = map[string]struct{}{
 	"cryptocompare":    {},
 	"ecb":              {},
 	"exchangeratesapi": {},
+	"tiingo":           {},
 }
 
 // validateStalenessOverrides rejects the ways a per-asset staleness

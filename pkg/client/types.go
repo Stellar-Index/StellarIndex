@@ -97,6 +97,8 @@ type Flags struct {
 	// chain. Mirrors the server's envelope flag; omitempty hides it
 	// when false.
 	Rerouted bool `json:"rerouted,omitempty"`
+	// PivotUnverified: a composite leg was all stablecoin prints at par, so a de-peg in it went unchecked.
+	PivotUnverified bool `json:"pivot_unverified,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
 	// requested asset's code matches a verified currency's Stellar
 	// ticker but its issuer doesn't match the verified entry — i.e.
@@ -590,7 +592,8 @@ type FiatCodeAnchor struct {
 // are decimal strings (ADR-0003); `Price` is the pre-computed
 // quote/base ratio at 10 fractional digits for consumer
 // convenience (the storage layer never persists a derived price,
-// so the server computes it at response time).
+// so the server computes it at response time). Price is nil when one
+// leg is zero (an SDEX rounding fill): such a trade has no price.
 type TradeRow struct {
 	Source      string    `json:"source"`
 	Ledger      uint32    `json:"ledger"`
@@ -601,7 +604,7 @@ type TradeRow struct {
 	QuoteAsset  string    `json:"quote_asset"`
 	BaseAmount  string    `json:"base_amount"`
 	QuoteAmount string    `json:"quote_amount"`
-	Price       string    `json:"price"`
+	Price       *string   `json:"price"`
 	// BaseDecimals / QuoteDecimals are the smallest-unit scale for each
 	// side: divide BaseAmount by 10^BaseDecimals (QuoteAmount by
 	// 10^QuoteDecimals) for whole-asset units.
@@ -1508,7 +1511,7 @@ type AssetListingValuation struct {
 }
 
 // VerifiedCurrencyListItem is one row in the response to
-// [Client.AssetsVerified] (`GET /v1/assets/verified`) — a directory
+// `GET /v1/assets/verified` (no Client method yet) — a directory
 // entry from the verified-currency catalogue. Identity-only;
 // pricing requires a per-row fetch via [Client.Asset] with the
 // `Slug` value.
@@ -2129,10 +2132,16 @@ type RWAReference struct {
 	// Stale marks a reference older than 72h — labelled, not withheld.
 	Stale bool `json:"stale,omitempty"`
 	// Provenance names what kind of figure PriceUSD is:
-	// "oracle_instrument_nav", "listing_platform_price",
+	// "oracle_instrument_nav", "fund_nav", "listing_platform_price",
 	// "prospectus_constant_nav" or "curator_uploaded_price". Only the
 	// first is a statement about the backing instrument.
 	Provenance string `json:"provenance"`
+	// DecimalsPublished is the publisher's stated precision; 2 on a
+	// "fund_nav" reference.
+	DecimalsPublished *int `json:"decimals_published,omitempty"`
+	// NAVDisagreement marks an oracle reference that the fund's own
+	// fresh NAV differs from by more than half a cent.
+	NAVDisagreement bool `json:"nav_disagreement,omitempty"`
 }
 
 // RWAPremium is the token's market price measured against the oracle's
