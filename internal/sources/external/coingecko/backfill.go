@@ -134,16 +134,7 @@ func timeMillisString(t time.Time) string {
 // transport concerns nor the conversion loop has to be read through the
 // other.
 func (p *Poller) fetchMarketChartRange(ctx context.Context, id, currency string, from, to time.Time) ([][2]float64, error) {
-	endpoint := p.Endpoint
-	if endpoint == "" {
-		endpoint = DefaultEndpoint
-	}
-	// Same auto-switch as the live path: a Pro key only authenticates
-	// against pro-api.coingecko.com, so an operator who sets
-	// COINGECKO_API_KEY does not also have to know the host changes.
-	if p.APIKey != "" && endpoint == DefaultEndpoint {
-		endpoint = ProEndpoint
-	}
+	endpoint := ResolveEndpoint(p.Endpoint, p.APIKey)
 	u := endpoint + fmt.Sprintf(marketChartRangePath, id) +
 		"?vs_currency=" + currency +
 		"&from=" + strconv.FormatInt(from.Unix(), 10) +
@@ -154,14 +145,7 @@ func (p *Poller) fetchMarketChartRange(ctx context.Context, id, currency string,
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	// Key in a HEADER, never the query string: a transport error's
-	// *url.Error embeds the request URL, so a key in the query would leak
-	// into logs (G10-04, same reasoning as the live path).
-	if p.APIKey != "" {
-		req.Header.Set("x-cg-pro-api-key", p.APIKey)
-	} else if p.DemoAPIKey != "" {
-		req.Header.Set("x-cg-demo-api-key", p.DemoAPIKey)
-	}
+	SetAuthHeader(req.Header, p.APIKey, p.DemoAPIKey)
 
 	client := httpx.NewKeyedClient("coingecko", 60*time.Second)
 	resp, err := client.Do(req)

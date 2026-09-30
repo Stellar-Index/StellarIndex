@@ -11,7 +11,7 @@ severity: launch-blocking
 
 | | |
 |---|---|
-| **Symptom** | Alerts fire in the Alertmanager UI but nobody is notified. `pre-launch-check.sh` reports 4 FAILs on `HEALTHCHECKS_URL_*`. |
+| **Symptom** | Alerts fire in the Alertmanager UI but nobody is notified. `pre-launch-check.sh` reports 5 FAILs on `HEALTHCHECKS_URL_*`. |
 | **Impact** | The first-24h launch watch is blind. A dead pipeline looks identical to a healthy one. |
 | **Who** | Operator only — needs accounts + secrets deliberately absent from the repo. |
 | **Time** | ~20 min, fully reversible. |
@@ -97,7 +97,7 @@ to close.
 ssh root@136.243.90.96 'bash -s' < scripts/ops/pre-launch-check.sh
 ```
 
-Before wiring, this reports **4 FAILs** (the four `HEALTHCHECKS_URL_*`)
+Before wiring, this reports **5 FAILs** (the five `HEALTHCHECKS_URL_*`)
 and warns on the deadmansswitch and both Discord URLs. After wiring it
 should report **0 failures**. That transition is the acceptance test.
 

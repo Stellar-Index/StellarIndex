@@ -379,7 +379,7 @@ Multi-tab. Tabs are first-class URL state (`?tab=chart`).
 |---|---|---|---|
 | **TradingView chart** | OHLC, granularity (1m/15m/1h/4h/1d/1w/1mo), timeframe (1h/24h/7d/30d/1y/all), price-type (vwap/twap), volume bars | `GET /v1/chart?asset={slug}&quote={quote}&timeframe=…&granularity=…&price_type=…` | ⚠️ TWAP deferred |
 | **Per-source overlay toggle** | Layer trades from one source | `GET /v1/history?...&sources={name}&from=…&to=…` | ❌ source filter on history |
-| **Volatility band overlay** | 1h/4h/24h volatility envelope | `GET /v1/volatility?...` | ❌ new |
+| **Volatility band overlay** | 1h/4h/24h trailing high/low envelope, computed client-side from the chart's bars | `GET /v1/ohlc` (no extra call) | ✅ |
 | **Annotation markers** | WASM upgrades, anomaly events, big flows | `GET /v1/coins/{slug}/events?from=…&to=…` | ❌ new |
 | **Multi-asset overlay** | Compare against other assets normalized | `?compare=stellar,blnd,aqua` (URL state) | ❌ requires compose |
 

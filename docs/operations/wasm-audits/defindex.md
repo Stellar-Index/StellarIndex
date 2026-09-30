@@ -72,11 +72,13 @@ topic[1] = ScvSymbol(event_name)
   — Phase-A decodes:
     "deposit"   → user-facing flow into the vault
     "withdraw"  → user-facing flow out of the vault
-  — Phase-B follow-ups (not yet decoded):
+    "dfees"     → per-token fee distribution (defindex_fees)
     "rescue", "paused", "unpaused", "nreceiver",
-    "nmanager", "nemanager", "rbmanager", "dfees",
+    "nmanager", "nemanager", "rbmanager"
+                → admin events (defindex_admin_events)
+  — Recognised, not decoded:
     "rebalance" (multiplexed body — discriminate by
-                 `rebalance_method` Symbol field inside body)
+                 `rebalance_method` field inside body)
 ```
 
 ### Body shapes
@@ -90,6 +92,20 @@ only the user-facing dimensions:
 | --- | --- |
 | `deposit` | `depositor: Address`, `amounts: Vec<i128>`, `df_tokens_minted: i128` |
 | `withdraw` | `withdrawer: Address`, `amounts_withdrawn: Vec<i128>`, `df_tokens_burned: i128` |
+| `rescue` | `caller: Address`, `strategy_address: Address`, `amount_withdrawn: i128` |
+| `paused` / `unpaused` | `caller: Address`, `strategy_address: Address` |
+| `nreceiver` | `caller: Address`, `new_fee_receiver: Address` |
+| `nmanager` | `new_manager: Address` |
+| `nemanager` | `new_emergency_manager: Address` |
+| `rbmanager` | `new_rebalance_manager: Address` |
+
+The admin shapes come from lake samples pinned in
+`test/fixtures/defindex/vault-admin-2026-09-30/`; every listed field
+is required, so a new WASM that renames one fails loudly as malformed.
+Those samples do not record each emitter's WASM hash. Before a
+`projector-replay -source defindex` over admin history, decode every
+admin event in the lake with this decoder and require zero malformed;
+record the vault WASM hashes seen here.
 
 The body also carries `total_supply_before` and
 `total_managed_funds_before` (for accurate NAV reconstruction);
@@ -311,13 +327,10 @@ per-method payloads are still unmodelled (see below).
 - Per-method payload decode for `("DeFindexVault","rebalance")` — the
   `rebalance_method` discriminator is now read
   (`DecodeRebalanceMethod`), but the four per-method bodies (`unwind`
-  / `invest` / `SwapExactIn` / `SwapExactOut`) are unmodelled: the r1
-  lake has **zero** rebalance emits as of 2026-07-06, so the exact
-  wire spelling of the method Symbols and their body layouts are
-  unconfirmed. Blocked until a real sample lands.
-- Body decode for `("DeFindexVault", rescue|paused|unpaused|nreceiver|
-  nmanager|nemanager|rbmanager|dfees)` admin events — bodies not
-  documented / not observed. Recognised + clean-dropped today.
+  / `invest` / `SwapExactIn` / `SwapExactOut`) are unmodelled. Lake
+  samples now exist and carry `rebalance_method = "invest"` with
+  `asset_investments` and `report` fields; the other three methods
+  have no sample yet, so the payload is still not modelled.
 - Body decode for `("DeFindexFactory","create"|"n_fee")` vault-spawn
   events (topic now classified per EVERY-event policy — F-0018 closed
   2026-05-28 — `Decode` returns `(nil, nil)` on a factory match

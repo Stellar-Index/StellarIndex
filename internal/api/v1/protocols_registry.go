@@ -188,6 +188,9 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 			// decoded event per distributed_fees entry, persisted to
 			// defindex_fees (migration 0146).
 			"defindex.vault.dfees",
+			// vault.admin — rescue / pause toggles / role rotations,
+			// persisted to defindex_admin_events (migration 0192).
+			"defindex.vault.admin",
 		},
 	},
 	{

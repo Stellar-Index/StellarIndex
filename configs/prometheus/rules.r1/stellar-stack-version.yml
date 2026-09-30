@@ -36,7 +36,7 @@ groups:
       - alert: stellarindex_stellar_stack_lagging
         # label_replace: the probe metric carries its OWN `component` label
         # (core / galexie / archivist) and every alert in this tree sets a
-        # static `component:` for alertmanager's inhibit `equal: [component]`.
+        # static `component:` for alertmanager's inhibit `equal: [component, alert_family]`.
         # Without the rename the static label overwrote the metric's and two
         # lagging components collapsed to ONE labelset — Prometheus refused
         # the rule ("vector contains metrics with the same labelset after
@@ -48,6 +48,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: stellar-stack
+          alert_family: "stellar_stack_version_lag/{{ $labels.stack_component }}"
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
           summary: "{{ $labels.stack_component }} is lagging upstream (lag={{ $value }}, sustained 2d)"
@@ -72,7 +73,7 @@ groups:
         # the next activation vote, not after ingest freezes/crash-loops.
         # label_replace: the probe metric carries its OWN `component` label
         # (core / galexie / archivist) and every alert in this tree sets a
-        # static `component:` for alertmanager's inhibit `equal: [component]`.
+        # static `component:` for alertmanager's inhibit `equal: [component, alert_family]`.
         # Without the rename the static label overwrote the metric's and two
         # lagging components collapsed to ONE labelset — Prometheus refused
         # the rule ("vector contains metrics with the same labelset after
@@ -84,6 +85,7 @@ groups:
           severity: page
           team: stellarindex
           component: stellar-stack
+          alert_family: "stellar_stack_version_lag/{{ $labels.stack_component }}"
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
           summary: "{{ $labels.stack_component }} is a PROTOCOL-MAJOR version behind upstream (P1)"

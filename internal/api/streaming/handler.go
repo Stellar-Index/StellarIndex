@@ -2,6 +2,7 @@ package streaming
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,15 +15,25 @@ import (
 
 // streamWriteDeadline bounds a single SSE write. It's rolled forward
 // before every write, so a healthy stream (which writes a heartbeat every
-// HeartbeatInterval < this) never trips it, but a STALLED write — a
-// non-reading or zero-window client — fails after this long, letting the
-// handler return and free its goroutine/conn/FD (CS-013). Must be > the
-// heartbeat interval so a slow-but-alive client isn't killed.
+// HeartbeatInterval < this) never trips it. It only fails a write that
+// BLOCKS — a wedged socket whose send buffer is full. A client that stops
+// reading but keeps the socket open absorbs heartbeats into the kernel
+// buffer for days without blocking; [DefaultMaxStreamLifetime] bounds that
+// one. Must be > the heartbeat interval so a slow-but-alive client isn't
+// killed.
 const streamWriteDeadline = 25 * time.Second
+
+// DefaultMaxStreamLifetime is how long one SSE connection is served before
+// the server ends it and the client reconnects (resuming via Last-Event-ID
+// where the endpoint supports it). It is the bound on a TCP-alive client
+// that never reads, which neither the write deadline nor TCP keepalive
+// reclaims. Each stream adds up to 10% jitter so a cohort that connected
+// together (after a deploy) does not reconnect together.
+const DefaultMaxStreamLifetime = 30 * time.Minute
 
 // drainWriteDeadline bounds the single courtesy frame written when the
 // SERVER ends a stream at shutdown. Deliberately far shorter than
-// streamWriteDeadline: see endStreamForDrain.
+// streamWriteDeadline: see endStreamByServer.
 const drainWriteDeadline = time.Second
 
 // maxConcurrentStreams caps simultaneous SSE connections across all stream
@@ -170,6 +181,10 @@ type StreamOptions struct {
 	// keeps streaming until the client leaves. Nil means no re-check;
 	// v1's Server.streamOptions supplies it for every stream endpoint.
 	Revalidate func(*http.Request) bool
+
+	// MaxLifetime ends the stream after this long (plus jitter). Zero =
+	// DefaultMaxStreamLifetime.
+	MaxLifetime time.Duration
 }
 
 // Stream wires an http.ResponseWriter into the Hub for the supplied
@@ -200,9 +215,21 @@ func Stream(w http.ResponseWriter, r *http.Request, hub *Hub, topics []string, o
 	}
 	defer release()
 
-	ch, cancel := hub.Subscribe(topics, LastEventIDFrom(r))
+	ch, cancel, err := hub.Subscribe(topics, LastEventIDFrom(r))
+	if err != nil {
+		WriteSubscribeRefused(w)
+		return
+	}
 	defer cancel()
 	writeStream(w, r, ch, opts)
+}
+
+// WriteSubscribeRefused answers a connection whose [Hub.Subscribe]
+// failed with [ErrTopicCapacity]. Call it before any SSE header is sent.
+func WriteSubscribeRefused(w http.ResponseWriter) {
+	atomic.AddInt64(&rejectedStreams, 1)
+	obs.APISSEStreamsRejectedTotal.WithLabelValues("topic_cap").Inc()
+	http.Error(w, "too many concurrent stream topics", http.StatusServiceUnavailable)
 }
 
 // StreamFromChannel is the lower-level SSE writer: given any
@@ -248,15 +275,13 @@ func writeStream(w http.ResponseWriter, r *http.Request, ch <-chan Event, opts S
 		return
 	}
 
-	// F-1228 + CS-013: the API's http.Server sets `WriteTimeout: 30s` to
-	// keep short handlers honest, but that fixed deadline would reset an
-	// SSE stream at 30s. The old fix cleared the deadline entirely
-	// (`SetWriteDeadline(zero)`), which let a stalled write block FOREVER
-	// — a non-reading client leaked its goroutine/conn/FD indefinitely.
-	// Instead we ROLL a per-write deadline forward before every write
-	// (see setWriteDeadline). A healthy stream heartbeats within the
-	// window and never trips it; a stalled write fails after
-	// streamWriteDeadline and the handler returns + cleans up.
+	// The API's http.Server sets `WriteTimeout: 30s` to keep short
+	// handlers honest, but that fixed deadline would reset an SSE stream
+	// at 30s, and clearing it would let a blocked write hang forever. So
+	// we ROLL a per-write deadline forward before every write (see
+	// setWriteDeadline): a blocked write fails after streamWriteDeadline
+	// and the handler returns + cleans up. A non-reading client whose
+	// writes never block is bounded by the stream lifetime instead.
 	//
 	// On transports that don't expose SetWriteDeadline (httptest writers,
 	// wrappers without Unwrap) the call returns http.ErrNotSupported,
@@ -285,6 +310,8 @@ func writeStream(w http.ResponseWriter, r *http.Request, ch <-chan Event, opts S
 	draining := opts.Drain.Done()
 	ticker := time.NewTicker(heartbeat)
 	defer ticker.Stop()
+	expiry := time.NewTimer(streamLifetime(opts.MaxLifetime))
+	defer expiry.Stop()
 
 	// Initial flush so the client sees the response start
 	// immediately rather than waiting for the first event. Some
@@ -305,7 +332,10 @@ func writeStream(w http.ResponseWriter, r *http.Request, ch <-chan Event, opts S
 		case <-ctx.Done():
 			return
 		case <-draining:
-			endStreamForDrain(w, flusher, rc)
+			endStreamByServer(w, flusher, rc, ":draining\n\n")
+			return
+		case <-expiry.C:
+			endStreamByServer(w, flusher, rc, ":reconnect\n\n")
 			return
 		case ev, ok := <-ch:
 			if !ok {
@@ -353,7 +383,7 @@ func setSSEHeaders(h http.Header) {
 
 // endStreamForRevocation ends a stream whose credential, key policy or
 // quota no longer admits it. The last frame is an SSE comment, as in
-// [endStreamForDrain]; the client's reconnect then gets the 401 / 403 /
+// [endStreamByServer]; the client's reconnect then gets the 401 / 403 /
 // 429 problem response from the middleware, which is the in-band
 // signal, and a conforming EventSource stops on that non-200.
 func endStreamForRevocation(w http.ResponseWriter, flusher http.Flusher, setWriteDeadline func()) {
@@ -364,8 +394,21 @@ func endStreamForRevocation(w http.ResponseWriter, flusher http.Flusher, setWrit
 	flusher.Flush()
 }
 
-// endStreamForDrain closes a stream the SERVER is ending, as cleanly as
-// SSE allows one to be ended.
+// streamLifetime returns maxLifetime (DefaultMaxStreamLifetime when zero) plus up
+// to 10% random jitter.
+func streamLifetime(maxLifetime time.Duration) time.Duration {
+	if maxLifetime <= 0 {
+		maxLifetime = DefaultMaxStreamLifetime
+	}
+	if jitter := maxLifetime / 10; jitter > 0 {
+		maxLifetime += rand.N(jitter)
+	}
+	return maxLifetime
+}
+
+// endStreamByServer closes a stream the SERVER is ending — at shutdown
+// drain or at the end of its lifetime — as cleanly as SSE allows one to
+// be ended, after writing the given comment frame.
 //
 // SSE has no end-of-stream frame, so "clean" here means the HTTP
 // response body is terminated properly: writeStream returns, the
@@ -389,15 +432,16 @@ func endStreamForRevocation(w http.ResponseWriter, flusher http.Flusher, setWrit
 // reason the drain is slow: a stalled or zero-window client whose
 // socket buffer is full would otherwise block this write for the full
 // 25s stream deadline, which is most of the shutdown budget this
-// function exists to protect. Each connection blocks only its own
-// goroutine, so the cost across many stalled streams is the maximum,
-// not the sum.
+// function exists to protect; a lifetime expiry aimed at a non-reading
+// client must not hold its slot 25s longer either. Each connection
+// blocks only its own goroutine, so the cost across many stalled
+// streams is the maximum, not the sum.
 //
 // A failed write here is deliberately ignored: the connection is going
 // away either way, and the caller returns next regardless.
-func endStreamForDrain(w http.ResponseWriter, flusher http.Flusher, rc *http.ResponseController) {
+func endStreamByServer(w http.ResponseWriter, flusher http.Flusher, rc *http.ResponseController, frame string) {
 	_ = rc.SetWriteDeadline(time.Now().Add(drainWriteDeadline))
-	if _, err := fmt.Fprint(w, ":draining\n\n"); err != nil {
+	if _, err := fmt.Fprint(w, frame); err != nil {
 		return
 	}
 	flusher.Flush()
