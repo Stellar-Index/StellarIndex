@@ -144,10 +144,10 @@ func klinesToTrades(candles []kline, symbol string, pair canonical.Pair, granula
 	return out
 }
 
-// advanceBackfillCursor computes the next page's startTime: 1ms past
-// the last candle's open time. Binance returns candles with openTime <
-// endTime so we won't double-emit; the +1 is belt-and-braces in case
-// of tick repetition. done=true means the page carried no parseable
+// advanceBackfillCursor computes the next page's startTime: one
+// granularity past the last candle's open time. Binance's endTime is inclusive on open
+// time, so the last page can carry a bar past -to; the ops caller drops
+// it. done=true means the page carried no parseable
 // open time and the caller should stop paginating (not an error — the
 // data collected so far is still returned). An error means the cursor
 // did not advance (a caching proxy, a venue ignoring startTime), which
