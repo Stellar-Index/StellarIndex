@@ -9,7 +9,8 @@
 //     to broadcast an event on a topic.
 //   - HTTP handlers call [Stream] which subscribes to one or more
 //     topics, replays buffered events from the client's
-//     `Last-Event-ID` (RFC 8895 §9), and forwards live events as SSE
+//     `Last-Event-ID` (WHATWG HTML Living Standard, Server-sent events),
+//     and forwards live events as SSE
 //     frames until the request context cancels.
 //
 // Consumers MUST treat IDs as opaque time-sortable strings (16
