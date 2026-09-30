@@ -7242,6 +7242,11 @@ export interface components {
          *       the composite SUBSTITUTED around a dry configured chain leg
          *       — the price came via an alternative path, not the documented
          *       direct chain. Omitted when false.
+         *     - `pivot_unverified` — set on a TRIANGULATED `/v1/price` response
+         *       when a leg of the composite was priced only from stablecoin
+         *       prints taken at par with USD, with no prints in the leg's own
+         *       quote asset to check a stablecoin de-peg against. Omitted when
+         *       false.
          *     - `unverified_ticker_collision` — fires on `/v1/assets/{id}`
          *       when the asset's code matches a verified currency's
          *       Stellar ticker but the issuer doesn't. The matching
@@ -7297,6 +7302,11 @@ export interface components {
              * @default false
              */
             rerouted: boolean;
+            /**
+             * @description Set on a TRIANGULATED /v1/price response when a leg of the composite was priced only from stablecoin prints taken at par with USD, with no prints in the leg's own quote asset to check a stablecoin de-peg against. Omitted when false.
+             * @default false
+             */
+            pivot_unverified: boolean;
             /** @default false */
             unverified_ticker_collision: boolean;
             /** @description Names of the row-narrowing query parameters this response did NOT apply, spelled as the caller sent them (`type`, `code`, `issuer`, `q`). Absent when the response applied every filter it was given — an ignored filter and a matched one otherwise produce the same 200 over the same shape, so a client re-filtering the page has nothing else to key on. Set by `/v1/assets` on the listings whose rows come from a source that cannot narrow: the class-scoped catalogue listings (`asset_class=fiat|stablecoin|crypto`), and the lean asset-catalog fallback served when no listing store is configured. */
@@ -12097,22 +12107,12 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
-        /** @description Server is degraded (dependency outage, startup, shutdown). */
+        /** @description Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown). */
         ServiceUnavailable: {
             headers: {
                 [name: string]: unknown;
             };
             content: {
-                /**
-                 * @example {
-                 *       "type": "https://api.stellarindex.io/errors/account-store-unavailable",
-                 *       "title": "Account store not configured",
-                 *       "status": 503,
-                 *       "detail": "this deployment has no AccountStore wired — typically because Redis is unavailable",
-                 *       "instance": "/v1/account/keys",
-                 *       "request_id": "70c8017d79651070fd16c2c9f065d846"
-                 *     }
-                 */
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
