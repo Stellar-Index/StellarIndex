@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -138,5 +139,67 @@ func TestApplySep1OverlayStillSaysNotFetchedForOurBacklog(t *testing.T) {
 
 	if detail.Sep1Status != "not_fetched" {
 		t.Errorf("sep1_status = %q, want \"not_fetched\"", detail.Sep1Status)
+	}
+}
+
+// sep1HeldPayloadStub holds a payload matching sep1TestIssuer's WTGX entry,
+// flagged as outlived-domain or not by the store.
+type sep1HeldPayloadStub struct{ outlived bool }
+
+func (s *sep1HeldPayloadStub) GetIssuerSep1Cached(context.Context, string) (*timescale.IssuerSep1Cached, error) {
+	return &timescale.IssuerSep1Cached{
+		OrgName: "Example Anchor",
+		Currencies: []timescale.IssuerSep1Currency{{
+			Code: "WTGX", Issuer: sep1TestIssuer, Image: "https://anchor.example/wtgx.png",
+		}},
+		OutlivedDomain: s.outlived,
+	}, nil
+}
+
+// TestApplySep1OverlayAgesOutADeadDomainsPayload — a failed fetch never clears
+// the held payload, so a payload the store reports as outliving its failing
+// domain must not be served as `verified`, nor its org_name. The age/failure
+// truth table itself is SQL: TestSep1PayloadOutlivedDomain (integration).
+func TestApplySep1OverlayAgesOutADeadDomainsPayload(t *testing.T) {
+	asset, err := canonical.ParseAsset("WTGX-" + sep1TestIssuer)
+	if err != nil {
+		t.Fatalf("parse asset: %v", err)
+	}
+	for _, tt := range []struct {
+		outlived bool
+		want     string
+	}{
+		{true, "unreachable"},
+		{false, "verified"},
+	} {
+		s := &Server{logger: discardLogger(), sep1Cache: &sep1HeldPayloadStub{outlived: tt.outlived}}
+		var detail AssetDetail
+
+		s.applySep1Overlay(context.Background(), &detail, asset)
+
+		if detail.Sep1Status != tt.want {
+			t.Fatalf("outlived=%v: sep1_status = %q, want %q", tt.outlived, detail.Sep1Status, tt.want)
+		}
+		if tt.outlived && detail.OrgName != nil {
+			t.Errorf("org_name = %q served from an outlived payload", *detail.OrgName)
+		}
+	}
+}
+
+// TestAttachVerifiedImagesSkipsAnOutlivedPayload — the verified-currency list
+// reads the same held payload, so it must drop the logo the detail overlay does.
+func TestAttachVerifiedImagesSkipsAnOutlivedPayload(t *testing.T) {
+	entries := []*currency.VerifiedCurrency{{
+		Issuance: []currency.IssuanceEntry{{Network: "stellar", Code: "WTGX", Issuer: sep1TestIssuer}},
+	}}
+	for _, outlived := range []bool{true, false} {
+		s := &Server{logger: discardLogger(), sep1Cache: &sep1HeldPayloadStub{outlived: outlived}}
+		out := make([]VerifiedCurrencyListItem, 1)
+
+		s.attachVerifiedImages(context.Background(), entries, out)
+
+		if got := out[0].Image != ""; got == outlived {
+			t.Errorf("outlived=%v: image attached = %v, want %v", outlived, got, !outlived)
+		}
 	}
 }

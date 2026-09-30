@@ -127,6 +127,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
+          alert_family: api_error_rate
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
           summary: "API 5xx rate {{ $value | humanizePercentage }}"
@@ -143,6 +144,7 @@ groups:
           severity: page
           team: stellarindex
           component: api
+          alert_family: api_error_rate
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
           summary: "API 5xx rate {{ $value | humanizePercentage }} (SEV-1)"

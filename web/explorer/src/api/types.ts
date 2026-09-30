@@ -3368,6 +3368,8 @@ export interface paths {
          *     Customer-tier callers need no header. A `/v1/signup` key's
          *     email-verification stamp carries over to the child, so rotated
          *     keys keep working under `signup_require_email_verification`.
+         *     Only `apikey` and `operator` callers may mint; a SEP-10 token
+         *     gets 403.
          */
         post: operations["createAccountKey"];
         delete?: never;
@@ -7237,6 +7239,11 @@ export interface components {
          *       the composite SUBSTITUTED around a dry configured chain leg
          *       — the price came via an alternative path, not the documented
          *       direct chain. Omitted when false.
+         *     - `pivot_unverified` — set on a TRIANGULATED `/v1/price` response
+         *       when a leg of the composite was priced only from stablecoin
+         *       prints taken at par with USD, with no prints in the leg's own
+         *       quote asset to check a stablecoin de-peg against. Omitted when
+         *       false.
          *     - `unverified_ticker_collision` — fires on `/v1/assets/{id}`
          *       when the asset's code matches a verified currency's
          *       Stellar ticker but the issuer doesn't. The matching
@@ -7292,6 +7299,11 @@ export interface components {
              * @default false
              */
             rerouted: boolean;
+            /**
+             * @description Set on a TRIANGULATED /v1/price response when a leg of the composite was priced only from stablecoin prints taken at par with USD, with no prints in the leg's own quote asset to check a stablecoin de-peg against. Omitted when false.
+             * @default false
+             */
+            pivot_unverified: boolean;
             /** @default false */
             unverified_ticker_collision: boolean;
             /** @description Names of the row-narrowing query parameters this response did NOT apply, spelled as the caller sent them (`type`, `code`, `issuer`, `q`). Absent when the response applied every filter it was given — an ignored filter and a matched one otherwise produce the same 200 over the same shape, so a client re-filtering the page has nothing else to key on. Set by `/v1/assets` on the listings whose rows come from a source that cannot narrow: the class-scoped catalogue listings (`asset_class=fiat|stablecoin|crypto`), and the lean asset-catalog fallback served when no listing store is configured. */
@@ -10113,7 +10125,10 @@ export interface components {
              *     - unreachable:    a fetch WAS attempted and produced nothing
              *       storable — a 404, a dead name, a TLS failure, or a document
              *       that would not parse. THEIRS, and the one an issuer can act
-             *       on.
+             *       on. Also reported when a held payload is over 30 days old,
+             *       or of unrecorded age, and the issuer's domain is failing
+             *       now, so a dead domain's last document is not served as
+             *       `verified`.
              *
              *     The last two are the distinction worth reading carefully,
              *     because they were one value until 2026-09-16. An asset
@@ -10974,8 +10989,8 @@ export interface components {
             base_amount: string;
             /** @description Integer stroops, decimal string. */
             quote_amount: string;
-            /** @description quote/base, 10-digit decimal. */
-            price: string;
+            /** @description quote/base, 10-digit decimal; null (key always present) when one leg is zero, e.g. an SDEX rounding fill. */
+            price: string | null;
             /**
              * @description Smallest-unit scale for `base_amount`: divide by
              *     10^base_decimals for whole-asset units.
@@ -12862,7 +12877,7 @@ export interface operations {
                      *         "divergence_checked": false
                      *       },
                      *       "pagination": {
-                     *         "next": "catalogue:2"
+                     *         "next": "catalogue:WyJ4bG0iLCJ1c2RjIl0"
                      *       }
                      *     }
                      */
@@ -12955,7 +12970,7 @@ export interface operations {
                      *         "divergence_checked": false
                      *       },
                      *       "pagination": {
-                     *         "next": "2"
+                     *         "next": "WyJjaGluZXNlLXl1YW4iLCJ1cy1kb2xsYXIiXQ"
                      *       }
                      *     }
                      */
@@ -19849,8 +19864,9 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             /**
-             * @description The caller authenticated with a SEP-10 token; API keys are
-             *     not issued to SEP-10 subjects (`key-mint-not-available`).
+             * @description Caller is not an account tier (`apikey` or `operator`):
+             *     a SEP-10 wallet token gets `key-mint-not-available`, any
+             *     other non-account credential `account-tier-required`.
              */
             403: {
                 headers: {

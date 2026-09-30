@@ -115,6 +115,10 @@ func TestContractCodeHistory_PartialIndexMissFallsBackToLegacy(t *testing.T) {
 			// been backfilled yet -> zero rows (a PARTIAL-coverage miss,
 			// invisible to the probe).
 			return &stubRows{}, nil
+		case strings.Contains(q, "SELECT 1 FROM stellar.contract_instance_changes"):
+			// Per-contract presence read: no row, the backfill has not
+			// reached this contract.
+			return &stubRows{}, nil
 		case strings.Contains(q, "FROM stellar.ledger_entry_changes"):
 			// Legacy changes-log scan resolves the real upgrade history.
 			legacyRead = true

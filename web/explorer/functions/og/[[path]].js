@@ -304,7 +304,10 @@ export async function liveSubline(type, rawId, apiOrigin) {
           n >= 1
             ? n.toLocaleString('en-US', { maximumFractionDigits: 2 })
             : formatSubPriceDecimal(n);
-        return { sub: `1 ${code(base)} = ${fmt} ${code(quote)}`, degraded: false };
+        return {
+          sub: `1 ${code(base)} = ${fmt} ${code(quote)}`,
+          degraded: false,
+        };
       }
       return { sub: null, degraded: true };
     }
@@ -325,6 +328,10 @@ export async function liveSubline(type, rawId, apiOrigin) {
 // re-running the gate on every repeat hit — same amplification risk the 200
 // path's cache-control already guards against.
 const NOT_FOUND_CACHE_CONTROL = 'public, max-age=60, s-maxage=3600';
+
+// Short so downstream caches absorb repeats while the kill-switch is on, yet
+// clearing OG_DISABLED restores cards within a minute.
+const DISABLED_CACHE_CONTROL = 'public, max-age=60, s-maxage=60';
 
 function notFound() {
   return new Response('Not found', {
@@ -352,6 +359,7 @@ export async function onRequest(context) {
   if (env?.OG_DISABLED === '1') {
     return new Response('OG image generation is temporarily disabled.', {
       status: 503,
+      headers: { 'cache-control': DISABLED_CACHE_CONTROL },
     });
   }
 
