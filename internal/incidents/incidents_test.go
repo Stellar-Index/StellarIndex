@@ -200,6 +200,7 @@ title: Test
 severity: SEV-1
 status: investigating
 started_at: 2026-05-06T10:00:00Z
+affected_components: [api]
 ---
 body
 `
@@ -217,7 +218,7 @@ body
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			src := "---\ntitle: Test\n" + frontmatter + "\nstarted_at: 2026-05-06T10:00:00Z\n---\nbody\n"
+			src := "---\ntitle: Test\n" + frontmatter + "\nstarted_at: 2026-05-06T10:00:00Z\naffected_components: [api]\n---\nbody\n"
 			if _, err := parseSource("2026-05-06-x.md", src); err == nil {
 				t.Errorf("accepted an out-of-enum post — it would publish with a green badge")
 			}
@@ -320,10 +321,41 @@ severity: SEV-2
 status: resolved
 started_at: 2026-05-06T10:00:00Z
 resolved_at: not-a-date
+affected_components: [api]
 ---
 body
 `
 	if _, err := parseSource("2026-05-06-x.md", src); err == nil {
 		t.Error("accepted a malformed resolved_at — the incident publishes as never-resolved")
+	}
+}
+
+// A blank affected_components must fail: the webhook contract requires a
+// non-empty array, and a post without one would fan out as null or [].
+func TestParseSource_RequiresAffectedComponents(t *testing.T) {
+	t.Parallel()
+
+	const head = "---\ntitle: Test\nseverity: SEV-1\nstatus: investigating\nstarted_at: 2026-05-06T10:00:00Z\n"
+	got, err := parseSource("2026-05-06-x.md", head+"affected_components:\n  - \" api \"\n---\nbody\n")
+	if err != nil {
+		t.Fatalf("valid post rejected: %v", err)
+	}
+	if len(got.AffectedComponents) != 1 || got.AffectedComponents[0] != "api" {
+		t.Errorf("AffectedComponents = %q, want [api]", got.AffectedComponents)
+	}
+
+	for name, line := range map[string]string{
+		"missing key": "",
+		"blank key":   "affected_components:\n",
+		"empty list":  "affected_components: []\n",
+		"blank entry": "affected_components:\n  - api\n  - \"  \"\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := parseSource("2026-05-06-x.md", head+line+"---\nbody\n")
+			if err == nil || !strings.Contains(err.Error(), "affected_components") {
+				t.Errorf("err = %v, want an affected_components rejection", err)
+			}
+		})
 	}
 }

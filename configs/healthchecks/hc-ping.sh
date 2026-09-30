@@ -28,6 +28,11 @@
 # The metric is what makes the distinction actionable: when the counter
 # moves, the next Healthchecks.io email is about our egress, not about
 # the service under the check.
+#
+# hc_ping_verdict debounces the /fail ping: an explicit /fail bypasses
+# the check's grace period, so a single failed probe during a routine
+# restart cost a down + up email pair. It sends /fail only after
+# <fail-after> consecutive failures, tracked in the same textfile.
 
 # TEXTFILE_DIR is shared with smoke.sh's emit_metric. Callers may set it
 # to /dev/null to opt out (the test harness does); a caller that cannot
@@ -48,13 +53,16 @@ hc_ping_counter_read() {
     "$file" 2>/dev/null || echo 0
 }
 
-# hc_ping_emit <check> <failures-total> <last-success-unix>
+# hc_ping_emit <check> <failures-total> <last-success-unix> <consecutive-failures>
+#
+# Returns non-zero when nothing was written, so a caller relying on the
+# file as state knows that state did not persist.
 hc_ping_emit() {
-  local check="$1" failures="$2" last_ok="$3" out tmp
-  [ "$HC_PING_TEXTFILE_DIR" != "/dev/null" ] || return 0
+  local check="$1" failures="$2" last_ok="$3" streak="$4" out tmp
+  [ "$HC_PING_TEXTFILE_DIR" != "/dev/null" ] || return 1
   out="$HC_PING_TEXTFILE_DIR/hc_ping_${check}.prom"
-  mkdir -p "$HC_PING_TEXTFILE_DIR" 2>/dev/null || return 0
-  tmp="$(mktemp "$out.tmp.XXXXXX" 2>/dev/null)" || return 0
+  mkdir -p "$HC_PING_TEXTFILE_DIR" 2>/dev/null || return 1
+  tmp="$(mktemp "$out.tmp.XXXXXX" 2>/dev/null)" || return 1
   # Written whole to a sibling temp file and renamed, so node_exporter
   # never reads a half-written exposition. Any failure along the way
   # leaves the previous file in place and takes the temp with it.
@@ -65,10 +73,14 @@ hc_ping_emit() {
     echo "# HELP stellarindex_healthcheck_ping_last_success_unix Unix time the last ping for this check was accepted."
     echo "# TYPE stellarindex_healthcheck_ping_last_success_unix gauge"
     echo "stellarindex_healthcheck_ping_last_success_unix{check=\"$check\"} $last_ok"
+    echo "# HELP stellarindex_healthcheck_consecutive_failures Consecutive failed probes/runs behind this check (0 = the last one passed)."
+    echo "# TYPE stellarindex_healthcheck_consecutive_failures gauge"
+    echo "stellarindex_healthcheck_consecutive_failures{check=\"$check\"} $streak"
   } > "$tmp" && chmod 644 "$tmp"; then
-    mv "$tmp" "$out" || rm -f "$tmp"
+    mv "$tmp" "$out" || { rm -f "$tmp"; return 1; }
   else
     rm -f "$tmp"
+    return 1
   fi
 }
 
@@ -87,10 +99,11 @@ hc_ping() {
   shift 2 || true
   [ -n "$url" ] || return 0
 
-  local file failures last_ok rc=0
+  local file failures last_ok streak rc=0
   file="$HC_PING_TEXTFILE_DIR/hc_ping_${check}.prom"
   failures="$(hc_ping_counter_read "$file" stellarindex_healthcheck_ping_failures_total)"
   last_ok="$(hc_ping_counter_read "$file" stellarindex_healthcheck_ping_last_success_unix)"
+  streak="$(hc_ping_counter_read "$file" stellarindex_healthcheck_consecutive_failures)"
 
   curl -fsS --max-time 10 -o /dev/null --retry 2 "$@" "$url" || rc=$?
 
@@ -102,6 +115,40 @@ hc_ping() {
     # name and curl's exit code and nothing else.
     echo "hc-ping: WARN $check ping NOT DELIVERED (curl rc=$rc) — a Healthchecks.io 'down' notice for this check may be about egress, not the service" >&2
   fi
-  hc_ping_emit "$check" "$failures" "$last_ok"
+  hc_ping_emit "$check" "$failures" "$last_ok" "$streak"
+  return 0
+}
+
+# hc_ping_verdict <check> <url> <probe-rc> <fail-after> [curl-arg...]
+#
+# Reports one probe/run verdict. A pass resets the streak and pings <url>;
+# a failure pings <url>/fail only once the streak reaches <fail-after>.
+# A non-numeric <fail-after> means 1, so a typo never silences /fail.
+hc_ping_verdict() {
+  local check="$1" url="$2" probe_rc="$3" after="$4"
+  shift 4 || true
+  [ -n "$url" ] || return 0
+  case "$after" in '' | *[!0-9]*) after=1 ;; esac
+
+  local file streak
+  file="$HC_PING_TEXTFILE_DIR/hc_ping_${check}.prom"
+  streak=0
+  if [ "$probe_rc" -ne 0 ]; then
+    streak=$(($(hc_ping_counter_read "$file" stellarindex_healthcheck_consecutive_failures) + 1))
+  fi
+  # A streak that cannot persist would restart at 1 every run and hold
+  # /fail back forever; without the file, report every failure at once.
+  hc_ping_emit "$check" \
+    "$(hc_ping_counter_read "$file" stellarindex_healthcheck_ping_failures_total)" \
+    "$(hc_ping_counter_read "$file" stellarindex_healthcheck_ping_last_success_unix)" \
+    "$streak" || after=1
+
+  if [ "$probe_rc" -eq 0 ]; then
+    hc_ping "$check" "$url" "$@"
+  elif [ "$streak" -ge "$after" ]; then
+    hc_ping "$check" "$url/fail" "$@"
+  else
+    echo "hc-ping: $check failure $streak of $after before /fail — ping held back" >&2
+  fi
   return 0
 }

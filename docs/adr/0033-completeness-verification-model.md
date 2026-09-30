@@ -23,6 +23,17 @@ superseded_by: null
 > the repository (`notes/` is gitignored); this paragraph is its in-tree
 > record.
 
+> **Correction (2026-09-29).** "The reconciliation oracle is the
+> ClickHouse lake" holds for the deployed verdict only.
+> `compute-completeness.service` runs `compute-completeness -ch -pass`
+> (via `run-compute-completeness.sh`).
+> The tools' defaults are narrower. `compute-completeness` defaults to
+> `-ch=false`, which re-derives Soroban projections from Postgres
+> `soroban_events`; only SDEX re-derives from the lake either way.
+> `verify-reconciliation` has no lake path for Soroban sources. It always
+> re-derives them from Postgres `soroban_events`, and uses the lake only
+> for SDEX (`internal/ops/chops/verify_reconciliation.go`).
+
 > **Reality note (2026-06-12, F-1354 / D2-04).** Where this ADR
 > describes `hashdb` as a **feeder** of `ledger_ingest_log`, note that
 > `internal/hashdb` is currently an **unwired library** — it has zero

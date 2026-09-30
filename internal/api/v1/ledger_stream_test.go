@@ -278,6 +278,40 @@ func TestLedgerStream_CapRejectsBeforePreflightCompute(t *testing.T) {
 	}
 }
 
+// Open connections share one cursors read per interval: the poll's DB
+// cost must not scale with the number of connected clients.
+func TestLedgerStream_ConnectionsShareCursorsRead(t *testing.T) {
+	const conns = 20
+	reader := &capOrderingCursorsReader{}
+	srv := v1.New(v1.Options{Cursors: reader})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for i := 0; i < conns; i++ {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/v1/ledger/stream", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("connection %d: %v", i, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("connection %d status = %d, want 200", i, resp.StatusCode)
+		}
+	}
+
+	atomic.StoreInt32(&reader.calls, 0)
+	const window = 2 * time.Second
+	time.Sleep(window)
+	// Per-connection polling makes conns × 4 reads in this window; a
+	// shared read makes about window / ledgerStreamTipTTL (250ms) = 8.
+	if got := atomic.LoadInt32(&reader.calls); got > 16 {
+		t.Errorf("ListCursors called %d times in %s by %d connections — "+
+			"each connection is polling the cursors table itself", got, window, conns)
+	}
+}
+
 // decodeLedgerEvent parses one ledger_update SSE data payload and
 // returns the embedded LedgerTipView, failing the test on a
 // malformed payload.

@@ -73,6 +73,15 @@ groups:
           # this expr mentions stellarindex_fixture_exprcomment_total in a
           # comment only; it must NOT be enforced as a live reference.
           increase(stellarindex_fixture_real_total[5m]) == 0
+      - alert: FoldedDead
+        expr: >
+          increase(stellarindex_fixture_folded_total[5m]) == 0
+      - alert: FoldedStripDead
+        expr: >-
+          increase(stellarindex_fixture_foldedstrip_total[5m]) == 0
+      - alert: LiteralStripDead
+        expr: |-
+          increase(stellarindex_fixture_literalstrip_total[5m]) == 0
 YML
 
 # Go emitter: emits the "real" metric via a Name: literal, but mentions
@@ -113,6 +122,10 @@ expect_absent 'real Name: literal is live' 'stellarindex_fixture_real_total'
 # 3. A token that appears only in a `#` comment within the expr region is
 #    not enforced at all → never flagged.
 expect_absent 'expr hash-comment token is ignored' 'stellarindex_fixture_exprcomment_total'
+# 3b. Folded and chomped block-scalar exprs are scanned like `expr: |`.
+expect_present 'folded expr body is scanned' 'stellarindex_fixture_folded_total'
+expect_present 'folded-strip expr body is scanned' 'stellarindex_fixture_foldedstrip_total'
+expect_present 'literal-strip expr body is scanned' 'stellarindex_fixture_literalstrip_total'
 
 # 4. A .prom HELP/TYPE header (`# ...`) is a comment, not an emitter, but
 #    the bare metric line IS. Add a .prom under an emitter path and a rule

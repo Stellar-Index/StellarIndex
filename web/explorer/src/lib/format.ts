@@ -47,7 +47,8 @@ export function formatCompactUnits(
   // From 1,000 up, compact notation rounds at the tens place or coarser,
   // where the truncated fraction cannot move the result; Intl formats a
   // BigInt exactly.
-  if (intPart >= 1000n || intPart <= -1000n) return COMPACT_FORMATTER.format(intPart);
+  if (intPart >= 1000n || intPart <= -1000n)
+    return COMPACT_FORMATTER.format(intPart);
   // Below that it shows at most two places: round exactly to hundredths
   // (half away from zero, Intl's default) before the value becomes a float.
   const hundredths = units * 100n;
@@ -69,6 +70,8 @@ export function decimalOrNull(raw: string | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+const SUBUNIT_MAX_DECIMALS = 20;
+
 // formatSubunitPrice — a tiny positive (or bad-data negative) value as
 // a PLAIN DECIMAL with `sig` significant digits and no exponent:
 // 3.353e-4 renders "0.0003353", never "$3.353e-4" (operator call,
@@ -76,14 +79,19 @@ export function decimalOrNull(raw: string | null | undefined): number | null {
 // decimal is no less accurate). Trailing zeros are trimmed. Decimals
 // are capped at 20 places, which keeps 1e-18 honest (its first
 // significant digit is place 18) while bounding the column width.
+// A non-zero value that rounds away under the cap renders as a signed
+// "<" bound, so dust (or a tiny bad-data negative) never reads as "0".
 export function formatSubunitPrice(n: number, sig = 4): string {
   const abs = Math.abs(n);
   if (abs === 0) return '0';
   const leadingZeros = Math.max(0, -Math.floor(Math.log10(abs)) - 1);
-  const decimals = Math.min(leadingZeros + sig, 20);
+  const decimals = Math.min(leadingZeros + sig, SUBUNIT_MAX_DECIMALS);
   let out = n.toFixed(decimals);
   if (out.includes('.')) {
     out = out.replace(/0+$/, '').replace(/\.$/, '');
+  }
+  if (out === '0' || out === '-0') {
+    return `${n < 0 ? '-' : ''}<0.${'0'.repeat(SUBUNIT_MAX_DECIMALS - 1)}1`;
   }
   return out;
 }
@@ -356,6 +364,19 @@ export function changePct(
   const scale = Math.max(f.frac, t.frac);
   const base = rescale(f, scale);
   return pctOf(rescale(t, scale) - base, base, places);
+}
+
+/**
+ * compareDecimalStrings — exact sign of `a − b` (-1, 0, 1) over two decimal
+ * strings. Null for a non-decimal input.
+ */
+export function compareDecimalStrings(a: string, b: string): number | null {
+  const x = parseDecimal(a);
+  const y = parseDecimal(b);
+  if (!x || !y) return null;
+  const scale = Math.max(x.frac, y.frac);
+  const d = rescale(x, scale) - rescale(y, scale);
+  return d < 0n ? -1 : d > 0n ? 1 : 0;
 }
 
 interface Decimal {

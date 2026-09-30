@@ -115,6 +115,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
+          alert_family: api_error_rate
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
           summary: "API 5xx rate {{ $value | humanizePercentage }}"
@@ -131,6 +132,7 @@ groups:
           severity: page
           team: stellarindex
           component: api
+          alert_family: api_error_rate
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
           summary: "API 5xx rate {{ $value | humanizePercentage }} (SEV-1)"
@@ -173,8 +175,8 @@ groups:
       # cache wrappers (`v1.CachedMarketsReader`, etc) — when miss
       # rate stays > 50 % for 10 min on a hot op, the prewarm key
       # has drifted from what the handler looks up. We've shipped
-      # three of these bugs in 24 h (the Order dimension, #1194,
-      # the Limit dimension); the alert is the cheapest detector. Deliberate that we
+      # three of these bugs in 24 h (the Order, Sources and Limit
+      # dimensions); the alert is the cheapest detector. Deliberate that we
       # threshold on RATIO not absolute miss count: a cache that
       # serves 1 req/s with 100 % miss is fine, a cache that
       # serves 1000 req/s with 50 % miss is a phantom-key drift.
@@ -499,6 +501,29 @@ groups:
             stellarindex_ratelimit_fail_open — the two share a backing
             store. If this fires ALONE, suspect the usage-counter key
             namespace or an eviction policy rather than Redis availability.
+
+      # Companion to the fail-open alert above: past the same dwell time
+      # (DefaultMonthlyQuotaDwellTime, 30s) the gate fails CLOSED and 429s
+      # metered keys instead, so the fail-open counter goes flat and only
+      # this counter moves for a sustained outage.
+      - alert: stellarindex_monthly_quota_fail_closed
+        expr: sum(rate(stellarindex_monthly_quota_fail_closed_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: page
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/monthly-quota-fail-open.md
+          summary: "Monthly quota is FAILING CLOSED — metered keys are being 429'd"
+          description: |
+            The month-to-date usage counter has been unreadable for longer
+            than the fail-open dwell time, so the monthly-quota gate has
+            flipped to failing CLOSED: every request from a key with a
+            monthly cap now gets a 429 (errors/monthly-quota-unavailable)
+            whether or not the key is anywhere near its cap. Paying
+            customers are denied service until the counter answers
+            without error for the same dwell time.
 
       # GH-1277: the write side of the usage meter had no observability
       # at all — a failed Increment/IncrementDetailBy logged at Debug

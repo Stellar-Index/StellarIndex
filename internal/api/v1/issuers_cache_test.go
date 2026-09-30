@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -16,6 +17,7 @@ import (
 // behaviour without poking the Prometheus counter.
 type fakeIssuersUpstream struct {
 	listCalls   atomic.Int64
+	lastLimit   atomic.Int64
 	getCalls    atomic.Int64
 	assetsCalls atomic.Int64
 
@@ -37,6 +39,7 @@ func (f *fakeIssuersUpstream) ListIssuerAssets(_ context.Context, _ string) ([]t
 
 func (f *fakeIssuersUpstream) ListIssuers(ctx context.Context, limit int) ([]timescale.IssuerSummary, error) {
 	f.listCalls.Add(1)
+	f.lastLimit.Store(int64(limit))
 	if f.listDelay > 0 {
 		select {
 		case <-time.After(f.listDelay):
@@ -48,7 +51,7 @@ func (f *fakeIssuersUpstream) ListIssuers(ctx context.Context, limit int) ([]tim
 		return nil, f.listErr
 	}
 	if f.rows != nil {
-		return f.rows, nil
+		return f.rows[:min(limit, len(f.rows))], nil
 	}
 	return []timescale.IssuerSummary{
 		{GStrkey: "GA1", HomeDomain: "centre.io", AssetCount: 1, TotalObservationCount: 100},
@@ -114,25 +117,38 @@ func TestCachedIssuersReader_SingleFlight(t *testing.T) {
 	}
 }
 
-// TestCachedIssuersReader_DistinctLimitsCacheSeparately — limit is
-// part of the cache key, so two different limits are independent
-// slots and each pays one upstream call.
-func TestCachedIssuersReader_DistinctLimitsCacheSeparately(t *testing.T) {
-	up := &fakeIssuersUpstream{}
+// TestCachedIssuersReader_LimitSweepSharesOneFill — every limit the
+// handler accepts is served from one ceiling-sized fill, so sweeping
+// `?limit=` cannot turn the cache into one upstream scan per value.
+func TestCachedIssuersReader_LimitSweepSharesOneFill(t *testing.T) {
+	rows := make([]timescale.IssuerSummary, IssuersListMaxLimit)
+	for i := range rows {
+		rows[i] = timescale.IssuerSummary{GStrkey: fmt.Sprintf("G%03d", i)}
+	}
+	up := &fakeIssuersUpstream{rows: rows}
 	c := NewCachedIssuersReader(up, 5*time.Minute)
 
-	if _, err := c.ListIssuers(context.Background(), 25); err != nil {
-		t.Fatal(err)
+	for limit := 1; limit <= IssuersListMaxLimit; limit++ {
+		got, err := c.ListIssuers(context.Background(), limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != limit || got[0].GStrkey != "G000" || got[limit-1].GStrkey != rows[limit-1].GStrkey {
+			t.Fatalf("limit=%d: got %d rows, want the first %d of the ceiling page", limit, len(got), limit)
+		}
 	}
-	if _, err := c.ListIssuers(context.Background(), 100); err != nil {
-		t.Fatal(err)
+	if got := up.listCalls.Load(); got != 1 {
+		t.Errorf("upstream called %d times across a 1..%d limit sweep; want 1", got, IssuersListMaxLimit)
 	}
-	// Same key twice → still cached.
-	if _, err := c.ListIssuers(context.Background(), 100); err != nil {
-		t.Fatal(err)
+	if got := up.lastLimit.Load(); got != IssuersListMaxLimit {
+		t.Errorf("upstream asked for limit=%d; want the ceiling %d", got, IssuersListMaxLimit)
 	}
-	if got := up.listCalls.Load(); got != 2 {
-		t.Errorf("upstream called %d times; want 2 (one per distinct limit)", got)
+
+	// A caller appending to its slice must not corrupt the shared entry.
+	short, _ := c.ListIssuers(context.Background(), 1)
+	_ = append(short, timescale.IssuerSummary{GStrkey: "INJECTED"})
+	if again, _ := c.ListIssuers(context.Background(), 2); again[1].GStrkey != "G001" {
+		t.Errorf("cached entry mutated through a caller's append: row 1 = %q", again[1].GStrkey)
 	}
 }
 

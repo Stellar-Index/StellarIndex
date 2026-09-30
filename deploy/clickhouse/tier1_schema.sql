@@ -232,9 +232,10 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     -- Queryable owner + asset (ADR-0038 Phase C account-state / asset-holder
     -- reads). account_id = owning G-strkey for account-owned entries (account
     -- / trustline / offer / data); asset = canonical "CODE-ISSUER" / "native"
-    -- / "pool:<hex>" for trustlines. Empty otherwise. Bloom skip-indexes so a
-    -- WHERE account_id=? / asset=? prunes parts — the sort key is
-    -- (ledger_seq, tx_hash, …), so these predicates would otherwise full-scan.
+    -- / "pool:<hex>" for trustlines. Empty otherwise. account_id carries a
+    -- bloom skip-index so WHERE account_id=? prunes parts — the sort key is
+    -- (ledger_seq, tx_hash, …). asset has none: asset-holder reads use
+    -- ledger_entries_current's idx_lecur_asset; WHERE asset=? here scans every part.
     -- Existing rows backfill to '' until a ch re-derive repopulates them.
     account_id   String DEFAULT '',
     asset        String DEFAULT '',
@@ -272,7 +273,6 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     -- migrations/0120 and docs/operations/runbooks/entry-walk-renumbering.md.
     intra_ledger_seq UInt32 DEFAULT 0,
     INDEX idx_lec_account_id account_id TYPE bloom_filter(0.01) GRANULARITY 1,
-    INDEX idx_lec_asset asset TYPE bloom_filter(0.01) GRANULARITY 1,
     -- key_xdr is not in the sort key; the bloom prunes point lookups.
     -- 0.01 as live on r1: a probe reads the whole index, so a tighter FP
     -- (bigger index) is slower, and no production reader needs it.
@@ -579,8 +579,9 @@ WHERE inner_tx_hash != '';
 
 -- ── account_movements — ADR-0048 D2 feed-shaped account-activity archive ──
 -- Amends ADR-0047 D1 (which planned a Postgres `classic_movements` hypertable,
--- migration 0105 — applied but left UNPOPULATED, see that migration's row in
--- migrations/README.md): "serve by query shape, not by data age." The one
+-- migration 0105 — never populated and dropped by migration 0113; see those
+-- migrations' rows in migrations/README.md): "serve by query shape, not by
+-- data age." The one
 -- genuinely archive-scale story here — "enter an address, see everything it
 -- has ever done" — is `WHERE address = X ORDER BY ledger` over what will
 -- become 10-20B immutable rows; that is a ClickHouse-shaped read, not a
@@ -740,8 +741,13 @@ WHERE source_account != '';
 -- least its own ledger. A too-HIGH watermark only costs scan range; a
 -- too-LOW one HIDES DATA. Never narrow the MV set below the readers'
 -- account-role set. Readers take max() across un-merged RMT rows and fall
--- back to the UNBOUNDED scan when an account has no row (pre-backfill
--- accounts degrade to the old perf, never to missing rows).
+-- back to the UNBOUNDED scan when an account has no row.
+--
+-- A fresh host gets these MVs before any ingest, so they see every row and
+-- the invariant holds from the start. A host whose lake PREDATES the MVs
+-- must run account_activity.sql's Step-2 backfill before deploying a reader:
+-- until then a re-ingest of old ledgers can create an account's ONLY row
+-- below its true last activity — a too-LOW bound (see the HAZARD there).
 CREATE TABLE IF NOT EXISTS stellar.account_activity
 (
     account_id  String,

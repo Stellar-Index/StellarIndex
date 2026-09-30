@@ -379,7 +379,7 @@ Multi-tab. Tabs are first-class URL state (`?tab=chart`).
 |---|---|---|---|
 | **TradingView chart** | OHLC, granularity (1m/15m/1h/4h/1d/1w/1mo), timeframe (1h/24h/7d/30d/1y/all), price-type (vwap/twap), volume bars | `GET /v1/chart?asset={slug}&quote={quote}&timeframe=…&granularity=…&price_type=…` | ⚠️ TWAP deferred |
 | **Per-source overlay toggle** | Layer trades from one source | `GET /v1/history?...&sources={name}&from=…&to=…` | ❌ source filter on history |
-| **Volatility band overlay** | 1h/4h/24h volatility envelope | `GET /v1/volatility?...` | ❌ new |
+| **Volatility band overlay** | 1h/4h/24h trailing high/low envelope, computed client-side from the chart's bars | `GET /v1/ohlc` (no extra call) | ✅ |
 | **Annotation markers** | WASM upgrades, anomaly events, big flows | `GET /v1/coins/{slug}/events?from=…&to=…` | ❌ new |
 | **Multi-asset overlay** | Compare against other assets normalized | `?compare=stellar,blnd,aqua` (URL state) | ❌ requires compose |
 
@@ -1571,18 +1571,30 @@ All closed-bucket endpoints already return identical results across regions (ADR
 
 ## 20. Open questions
 
-To answer before frontend scaffolding starts:
+These were the questions to answer before frontend scaffolding started. The
+explorer now exists, so each is recorded below as **Resolved** (with where the
+answer lives) or **Open** (not needed for v1).
 
 1. **Hosting:** static + CDN with ISR (Vercel/Netlify), or self-hosted Next.js on r1? Static covers everything except SSE which clients hit directly.
+   **Resolved:** Next.js static export (`output: 'export'` in `web/explorer/next.config.mjs`) on Cloudflare Pages, with Pages Functions for dynamic shells; the move to edge SSR is planned in [ADR-0044](../adr/0044-explorer-edge-rendering.md).
 2. **Wallet UX:** Freighter only at v1 vs Freighter + Albedo + Lobstr? Freighter has 80%+ market share.
+   **Open, post-v1:** the explorer is read-only and has no wallet dependency (`web/explorer/package.json`). Decide when a signing feature is scoped.
 3. **Repo layout:** monorepo (`web/explorer/`) or separate repo? Monorepo simpler for typed API client sharing.
+   **Resolved:** monorepo. `web/explorer/` generates its typed client from the OpenAPI spec (`make web-generate-api` → `web/explorer/src/api/types.ts`).
 4. **MDX content repo:** in-tree (`posts/*.md`) or sibling repo?
+   **Resolved:** in-tree Markdown at `docs/blog/YYYY-MM-DD-<slug>.md`, loaded by `web/explorer/src/lib/blog.ts`.
 5. **Brand:** colour palette, logo, typography — needs a brief design pass.
+   **Resolved:** [design-system.md](design-system.md) (palette and tokens); fonts are set in `web/explorer/src/app/layout.tsx`.
 6. **Embeds:** allow arbitrary domains, or whitelist? Whitelist for v1.
+   **Resolved: arbitrary domains.** `/embed/*` sends `frame-ancestors *` (`web/explorer/public/_headers`), because the widgets are made to be framed on third-party sites.
 7. **Slug ownership:** when two issuers issue assets with the same code (USDC-Circle vs USDC-Anchor), which gets the bare `/coins/usdc`? Volume-weighted dominant by default; admin-overridable in `classic_assets.slug`.
+   **Resolved:** the bare code slug belongs to the hand-vetted `internal/currency` catalogue entry (`internal/currency/data/seed.yaml`), never to a volume pick; `/assets/{slug}` checks that catalogue first. Every other classic asset gets a per-`(code, issuer)` slug in `classic_assets.slug` (populated by migration 0134; UNIQUE per 0023), which is the fallback.
 8. **MEV detection thresholds:** sandwich detection has a high false-positive rate. Curated allowlist of known MEV bots vs algorithmic? Probably algorithmic with a confidence score.
+   **Resolved: algorithmic, with no allowlist and no score.** `internal/aggregate/mev/sandwich.go` requires opposite-direction brackets on the same pair within one ledger. It publishes each match as an unverified candidate, not as an accusation.
 9. **OG image generator:** Vercel `@vercel/og` (best DX), Satori, or pure server-side Canvas? Decide once we're picking the framework.
+   **Resolved:** Satori via `workers-og` in a Cloudflare Pages Function (`web/explorer/functions/og/[[path]].js`), linked through `ogImageFor` in `web/explorer/src/lib/seo.ts`. The site-wide fallback is the static `/og.png`.
 10. **`as_of_ledger` UX:** is the off-tone styling enough to prevent confusion, or do we also disable certain panels (live tape, "currently firing")? Probably disable.
+    **Open, post-v1:** neither the API nor the explorer has a point-in-time (`as_of_ledger`) query mode; `as_of_ledger` appears only as a response freshness stamp. Decide when that mode is built.
 
 ---
 
