@@ -851,7 +851,8 @@ rules, summarised:
 - **Renames ride other changes** — no rename-only PRs. Existing
   deviations are frozen in `scripts/ci/lint-lexicon.baseline`
   (shrink-only, CS-098 growth-tripwire-protected). The bulk
-  `Coin*`→`Asset*` rename is pending, deferred to the maintainer.
+  `Coin*`→`Asset*` rename has landed; the remaining `coin` entries are
+  the permanent wire/proper-name uses listed in `lexicon.md`.
 
 Enforcement: `scripts/ci/lint-lexicon.sh` (verify.sh + CI) for the
 grep-able subset; reviewers cite lexicon.md rows for the rest.

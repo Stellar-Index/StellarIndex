@@ -151,12 +151,22 @@ func assertDeliverySweep(
 		}
 	}
 
+	rowsBefore, err := webhooks.CountDeliveries(ctx)
+	if err != nil {
+		t.Fatalf("CountDeliveries: %v", err)
+	}
 	deleted, err := webhooks.SweepFinishedDeliveries(ctx, time.Now().UTC().Add(-30*24*time.Hour))
 	if err != nil {
 		t.Fatalf("SweepFinishedDeliveries: %v", err)
 	}
 	if deleted != 2 {
 		t.Errorf("deleted = %d, want 2 (the two finished deliveries beyond retention)", deleted)
+	}
+	if rowsAfter, err := webhooks.CountDeliveries(ctx); err != nil {
+		t.Fatalf("CountDeliveries: %v", err)
+	} else if rowsBefore < int64(len(seeds)) || rowsAfter != rowsBefore-deleted {
+		t.Errorf("CountDeliveries = %d before, %d after deleting %d; want >= %d then before-deleted",
+			rowsBefore, rowsAfter, deleted, len(seeds))
 	}
 	fixtures := make([]retentionFixture, 0, len(seeds))
 	for _, s := range seeds {

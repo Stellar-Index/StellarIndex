@@ -52,13 +52,15 @@
 // anchor_asset_type, 128 carry the `malicious` tag — the declarations
 // come overwhelmingly from lookalike domains impersonating real
 // exchanges. R3 is the requirement a party other than the issuer
-// vouched for that specific account.
+// vouched for that specific account, or for an unflagged sibling
+// account the same issuer-bound SEP-1 declares ([RecognitionDomainSibling]).
 //
 // R4 — REAL-WORLD INSTRUMENT. The asset is a real-world instrument
-// rather than one of the issuer's other tokens, established either by
-// [BasisSep1Anchor] or by [BasisOracleFeed]. R4 classifies within an
-// issuer R3 has already vouched for; it is never load-bearing on its
-// own, which is what keeps the code-keyed oracle basis safe.
+// rather than one of the issuer's other tokens, established by
+// [BasisSep1Anchor], [BasisOracleFeed] or [BasisSep1ISIN], tried in
+// that order. R4 classifies within an issuer R3 has already vouched
+// for; it is never load-bearing on its own, which is what keeps the
+// code-keyed oracle basis safe.
 //
 // # What a failing asset gets
 //

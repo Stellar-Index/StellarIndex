@@ -17,7 +17,9 @@ This check PARSES each rule and asserts, per alert:
   * `runbook_url` (or the legacy `runbook`) is NOT sitting in `labels`;
   * `annotations` doesn't use the inconsistent bare `runbook` key;
   * a runbook_url that points at a local docs/operations/runbooks/*.md
-    file resolves to a file that exists (subsumes the old §9 grep).
+    file resolves to a file that exists (subsumes the old §9 grep);
+  * a `Runbook:` link in the description names the same local runbook
+    as `runbook_url`.
 
 It FAILS if a runbook_url regresses back into `labels`. Pure-Python
 (PyYAML); mirrors lint-rule-structure.py so it runs anywhere verify.sh
@@ -25,6 +27,7 @@ does. Invoked from lint-docs.sh §9 and alongside lint-rule-structure.py.
 """
 import glob
 import os
+import re
 import sys
 
 try:
@@ -48,6 +51,7 @@ except ImportError:
 
 DIRS = ["deploy/monitoring/rules", "configs/prometheus/rules.r1"]
 RUNBOOKS_MARKER = "docs/operations/runbooks/"
+DESC_RUNBOOK_RE = re.compile(r"Runbook:\s*(https://\S+?\.md)")
 bad = 0
 
 
@@ -136,6 +140,16 @@ for d in DIRS:
                 local = resolve_local_runbook(value)
                 if local is not None and not os.path.isfile(local):
                     err(path, name, f"runbook_url points to missing file: {local}")
+
+                # Discord renders both links; a description that names a
+                # different runbook sends the responder to the wrong page.
+                want = resolve_local_runbook(value.split("#", 1)[0])
+                desc = ann.get("description") or ""
+                for link in DESC_RUNBOOK_RE.findall(desc if isinstance(desc, str) else ""):
+                    got = resolve_local_runbook(link.split("#", 1)[0])
+                    if got is not None and got != want:
+                        err(path, name, f"description links runbook {got} but "
+                            f"runbook_url points at {want or value}")
 
 if _seen == 0:
     print(

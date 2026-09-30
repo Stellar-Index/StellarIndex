@@ -109,11 +109,12 @@ ssh root@136.243.90.96 "amtool check-config /etc/prometheus/alertmanager.yml"
       config change lands in the repo in the same PR.
 - [ ] Step 4 — manual reload if needed:
       `systemctl reload prometheus-alertmanager` (what `apply.sh`
-      does). The classic `curl -XPOST http://localhost:9093/-/reload`
-      assumes the unit runs with `--web.enable-lifecycle`, which
-      is unverified on the apt unit — prefer systemctl.
-      `TODO(maintainer): check whether r1's prometheus-alertmanager unit
-      passes --web.enable-lifecycle; drop this note either way.`
+      does). Do not `curl -XPOST http://localhost:9093/-/reload`:
+      r1's apt unit runs without `--web.enable-lifecycle`
+      (`/etc/default/prometheus-alertmanager` carries only
+      `ARGS="--cluster.listen-address="`, set by the operator install
+      in `configs/prometheus/README.md`), so the HTTP lifecycle
+      endpoint is off.
 - [ ] Verification:
       `alertmanager_config_last_reload_successful == 1`; the alert
       clears after one evaluation interval.
@@ -159,6 +160,9 @@ OBS-02 is resolved, none of this applies to r1.
 
 ## Changelog
 
+- 2026-09-29 — Step 4: r1's unit was checked and runs without
+  `--web.enable-lifecycle`; the `/-/reload` curl is now ruled out
+  rather than flagged unverified.
 - 2026-08-29 — re-verified against HEAD. R1 DEPLOYMENT REALITY
   banner added: mon-01/mon-02 don't exist and the prometheus
   role/playbook is not runnable against r1 (OBS-02); r1's AM is
@@ -174,7 +178,7 @@ OBS-02 is resolved, none of this applies to r1.
   apply.sh --check-only on both render branches). Secret-resolution
   root cause refined: an unset secret degrades the receiver to a
   no-op stub (silent no-fanout), it does not fail the load. The
-  /-/reload curl flagged as unverified on the apt unit (TODO(maintainer)).
+  /-/reload curl flagged as unverified on the apt unit.
   Rule citation → `rules.r1/meta.yml`.
 - 2026-04-23 — initial draft.
 - 2026-05-02 — diagnosis converted from kubectl ConfigMap +
