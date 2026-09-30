@@ -530,7 +530,7 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				{"blend_backstop_events", "", []string{"blend_backstop.event"}},
 			},
 		},
-		{name: "defindex", genesis: 57_056_338, dec: defindex.NewDecoder(), targets: []reconTarget{
+		{name: "defindex", genesis: defindex.GenesisLedger, dec: defindex.NewDecoder(), targets: []reconTarget{
 			// ADR-0035/0040 contract-gated (curated set): the bare
 			// NewDecoder() carries the in-code evidence-verified seed
 			// (defindex.MainnetGatedSet), which is the trust root — the

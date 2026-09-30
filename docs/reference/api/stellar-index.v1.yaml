@@ -67,8 +67,11 @@ tags:
       Per-source oracle observations (reflector-dex / -cex / -fx,
       redstone, band) plus SEP-40-shaped passthroughs
       (/oracle/lastprice, /oracle/prices, /oracle/x_last_price)
-      that mirror Reflector's contract surface for client SDKs that
-      already speak SEP-40.
+      that mirror those three SEP-40 method names for client SDKs
+      that already speak SEP-40. The other SEP-40 methods (`twap`,
+      `x_prices`, `x_twap`, …) are not served, and prices are
+      decimal strings with RFC 3339 timestamps rather than the
+      contract's `i128` / `u64` wire types.
   - name: account
     description: Self-service for API-key holders.
   - name: admin
@@ -1960,10 +1963,15 @@ paths:
           connect time — the same verdict `/v1/price` would answer
           404 for. The gate is re-checked on every closed bucket
           too: a pair withheld PARTWAY through an open connection is
-          not disconnected — its buckets are silently dropped and
-          heartbeats continue, so a client must treat prolonged
-          silence with no error as "possibly withheld", not "still
-          healthy".
+          not disconnected — each bucket it would have received is
+          replaced by a `price_withheld` event (same `id`), with data
+          `{"asset_id","quote","reason","as_of"}` as on
+          `/v1/price/tip/stream`; `as_of` is the refused bucket's.
+          The 60-second series also publishes one `price_withheld`
+          when its pair becomes withheld (or the reason changes),
+          and republishes the current bucket as `price_update` once
+          the pair is served again. Heartbeats alone therefore never
+          mean the price is being withheld.
       parameters:
         - { $ref: "#/components/parameters/AssetQuery" }
         - { $ref: "#/components/parameters/Quote" }
@@ -1983,7 +1991,7 @@ paths:
           description: Opaque ID for resuming a previously-broken stream.
       responses:
         "200":
-          description: SSE stream of price_update events.
+          description: SSE stream of price_update (and price_frozen / price_withheld) events.
           content:
             text/event-stream:
               schema: { type: string }
@@ -7784,9 +7792,13 @@ paths:
       description: |
         HTTP mirror of the SEP-40 oracle contract call
         `lastprice(asset) -> Option<PriceData>` — for integrators
-        that already speak Reflector's on-chain interface and want
-        the identical shape over REST. The response is
-        deliberately minimal (`price`, `timestamp`); the richer
+        that already speak Reflector's on-chain interface. It mirrors
+        the method name and semantics, not the wire types: on-chain
+        `PriceData` carries `price` as a fixed-point `i128` and
+        `timestamp` as `u64` seconds, while this response carries
+        `price` as an exact decimal string (already scaled, no
+        `decimals()` call needed) and `timestamp` as RFC 3339. The
+        response is deliberately minimal (`price`, `timestamp`); the richer
         source/confidence view lives on `/v1/oracle/latest` and
         `/v1/price`. Quote is fixed at USD, matching the on-chain
         contract's fixed-quote semantic — for other quotes use

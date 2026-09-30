@@ -190,10 +190,10 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	if err != nil {
 		return fmt.Errorf("build projector registry: %w", err)
 	}
-	if len(registry.Sources) == 0 {
-		return fmt.Errorf("projected-rebuild: %q is not a projector source (see internal/projector/registry.go) — non-projected sources (sdex, band, soroswap-router, external CEX/FX) have their own catch-up paths, and a sep41 source name also resolves empty here when no contracts are watched (cfg.Supply.WatchedSEP41Contracts)", *sourceName)
+	src, err := selectProjectedSource(registry, *sourceName)
+	if err != nil {
+		return err
 	}
-	src := registry.Sources[0]
 
 	// ─── ADR-0048 D3 one-writer contract: the live-cursor guard ─────────
 	liveCursor, gerr := store.GetCursor(ctx, "projector", *sourceName)
@@ -725,6 +725,19 @@ func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (Pro
 	result.KindCounts = counters.kindCounts
 	result.Elapsed = time.Since(start)
 	return result, runErr
+}
+
+// selectProjectedSource returns the registry entry named by -source.
+// BuildRegistry always appends the sep41 sources when contracts are watched,
+// so a non-projected name must not fall through to whatever entry is first.
+func selectProjectedSource(registry projector.Registry, name string) (projector.Source, error) {
+	want := strings.TrimSpace(name)
+	for _, s := range registry.Sources {
+		if strings.EqualFold(s.Name, want) {
+			return s, nil
+		}
+	}
+	return projector.Source{}, fmt.Errorf("projected-rebuild: %q is not a projector source (see internal/projector/registry.go) — non-projected sources (sdex, band, soroswap-router, external CEX/FX) have their own catch-up paths, and a sep41 source name also resolves empty here when no contracts are watched (cfg.Supply.WatchedSEP41Contracts)", name)
 }
 
 // collectEvictedOrphans must run after every worker has exited; the decoder
