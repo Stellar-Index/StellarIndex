@@ -45,6 +45,7 @@ type stubOracleHistory struct {
 	rows  []timescale.OracleDayPoint
 	err   error
 	asked []string
+	froms []time.Time
 }
 
 func (s *stubOracleHistory) DailyOraclePrices(
@@ -53,6 +54,7 @@ func (s *stubOracleHistory) DailyOraclePrices(
 	for _, a := range assets {
 		s.asked = append(s.asked, a.String())
 	}
+	s.froms = append(s.froms, from)
 	if s.err != nil {
 		return nil, s.err
 	}
