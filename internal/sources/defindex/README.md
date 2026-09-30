@@ -37,12 +37,14 @@ contributor.
 ## Why a separate decoder
 
 Standard event-based dispatcher (`Decoder` interface, like
-`soroswap` / `aquarius` / `comet`). Dispatch is **by topic**: any
-contract emitting the `("BlendStrategy",deposit|withdraw)` topic is
-matched — the comet/aquarius shared-emitter topology — so we cover
-*every* Blend autocompound strategy instance, not a hand-curated
-set. (The previous revision filtered on a mislabeled 3-contract
-"vault" set.)
+`soroswap` / `aquarius` / `comet`). The topic classifies an event;
+a match additionally requires **contract identity** (ADR-0035/0040):
+strategy and vault flows match only from a registered child (the
+curated `MainnetGatedSet()` plus `protocol_contracts` rows), and
+factory `create` / `n_fee` only from `MainnetFactories`. An
+unregistered emitter of the same topic fails closed into a
+recognition gap rather than landing rows; admitting a new vault or
+strategy is an operator seed after its provenance is verified.
 
 ## Files
 

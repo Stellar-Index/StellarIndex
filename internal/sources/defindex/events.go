@@ -26,12 +26,11 @@
 // is what the 2026-05-21 cross-check vs Soroban RPC revealed
 // (~27% coverage in a 12-hour sample; pre-rc.63 walker only 14%).
 //
-// Phase B (this revision, 2026-05-21) adds the DeFindexVault
-// topic-match. Dispatch is still PURELY by topic — we don't
-// hardcode any contract addresses — so any current or future
-// DeFindex vault wrapper, whether listed in mainnet.contracts.json
-// or spawned later, gets decoded automatically. This mirrors the
-// comet/aquarius shared-emitter topology elsewhere in the codebase.
+// Phase B (2026-05-21) adds the DeFindexVault topic-match. Topic
+// only classifies an event; a match additionally requires contract
+// identity (ADR-0035/0040): flows only from a registered vault or
+// strategy (MainnetGatedSet + protocol_contracts), factory events only
+// from MainnetFactories. An unregistered emitter fails closed.
 //
 // We surface vault + strategy deposit/withdraw events for flow
 // attribution only — they are NOT price-discovery events and never
@@ -399,6 +398,11 @@ var MainnetFactories = []string{
 	"CAVP2QLPIG7FQNHI57KXF7KS6NIAAUQKHZZDM3AGVADE64WHFBC5YURX", // earliest (3 creates, 55.48M → 55.51M)
 	"CDOIC7245ONYVOTEDLGKUM263EQ7SEEQ74ZQCN4SSH4TSYXOCMU6254O", // 2 creates, 56.89M → 56.93M
 }
+
+// GenesisLedger is the earliest ledger any routed defindex contract has
+// data: CAVP2QLP…'s first factory `create`. It is the density denominator
+// (ADR-0031) and gap-detector floor; a later value hides early-history gaps.
+const GenesisLedger uint32 = 55_484_403
 
 // MainnetVaults is the curated gated vault-wrapper set (ADR-0040
 // §1 mechanism 2 — curated-set registry). The factory `create`
