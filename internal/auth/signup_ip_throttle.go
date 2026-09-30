@@ -48,8 +48,8 @@ const signupThrottleIncrTimeout = 5 * time.Second
 // 6000 accounts/min × 60 min = 360,000/hr of email→key_id pairs.
 // The default 5/hour cap here closes that vector while still
 // letting a legitimate operator onboarding a small team through a
-// single shared egress complete normally; operators tune up via
-// `signup_ip_max_per_window` in the API config.
+// single shared egress complete normally. The cap is set only through
+// [SignupIPThrottleOptions]; there is no config key for it.
 //
 // F-1232 (audit-2026-05-12).
 //
