@@ -79,6 +79,9 @@ NoNewPrivileges=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
+# The -heartbeat default publishes the ops_job liveness/progress gauges here;
+# without it every write fails EROFS and the staleness alerts never arm.
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
 
 # Memory ceiling — streams + decodes lake events in 50k-ledger windows
 # with 50k-row insert batches; 4G is far above a healthy run (incl. the

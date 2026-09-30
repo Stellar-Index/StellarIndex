@@ -22,10 +22,11 @@ import (
 // UNAUTH-DOS-4 regression, and it derives its own subject set from the
 // router so future routes are covered without a second edit.
 //
-// RequestTimeout exempts SSE endpoints by the `/stream` path suffix.
-// It used to test that suffix against r.URL.Path — the DECODED path —
-// while Go's mux routes on the ESCAPED form. Those disagree exactly
-// when a wildcard segment contains a percent-encoded slash:
+// RequestTimeout exempts SSE endpoints by path, and a path test can be
+// forged two ways. A `/stream` suffix match is met by setting a trailing
+// wildcard to "stream". And r.URL.Path is DECODED while Go's mux routes on
+// the ESCAPED form; those disagree exactly when a wildcard segment
+// contains a percent-encoded slash:
 //
 //	GET /v1/assets/native%2Fstream
 //	  → routes to "GET /v1/assets/{asset_id}", asset_id="native/stream"
@@ -80,6 +81,13 @@ func TestRequestTimeout_StreamExemptionCannotBeForged(t *testing.T) {
 					"set to x%%2Fstream — the SSE exemption was forged by a "+
 					"percent-encoded slash. Key the exemption on r.URL.EscapedPath(), "+
 					"which is what the mux itself routes on.", route.method, path)
+			}
+			// The plain value needs no encoding at all.
+			plain := strings.TrimSuffix(anyWildcard.ReplaceAllString(route.path, "x"), "/x") + "/stream"
+			if probe := requestDeadlineAt(t, route.method, plain); !probe.saw {
+				t.Errorf("%s %s served with NO request deadline when its wildcard was "+
+					"set to \"stream\" — the SSE exemption must be the exact set of "+
+					"SSE routes, not a path-suffix match.", route.method, plain)
 			}
 		})
 	}
