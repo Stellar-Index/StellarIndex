@@ -5,10 +5,12 @@ package integration_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -111,6 +113,26 @@ func TestChRebuildProjectedScript_DeleteSQLOnRealPostgres(t *testing.T) {
 	}
 	if cctpRows(t) != 1 {
 		t.Fatal("fixture: the cctp row did not land")
+	}
+
+	// ── 0. the occupancy probe names exactly the sources holding rows ──
+	var occupied []string
+	for _, stmt := range strings.Split(emittedDeleteSQL(t, ""), ";\n") {
+		if stmt = strings.TrimSpace(stmt); !strings.HasPrefix(stmt, "SELECT 'occupied=") {
+			continue
+		}
+		var tag string
+		switch err := store.DB().QueryRowContext(ctx, stmt).Scan(&tag); {
+		case errors.Is(err, sql.ErrNoRows):
+		case err != nil:
+			t.Fatalf("%q: %v", stmt, err)
+		default:
+			occupied = append(occupied, strings.TrimPrefix(tag, "occupied="))
+		}
+	}
+	sort.Strings(occupied)
+	if got, want := strings.Join(occupied, ","), "aquarius,cctp,soroswap"; got != want {
+		t.Errorf("occupancy probe = %q, want %q — the -write would not be required to restore what the DELETE removes", got, want)
 	}
 
 	// ── 1. the narrowed run ───────────────────────────────────────────

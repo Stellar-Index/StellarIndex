@@ -508,6 +508,8 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	bulkTrades := fs.Bool("bulk-trades", false, "with -write: land trade rows through the BULK backfill writer (timescale.Store.BulkBackfillTrades) instead of the per-batch upsert. Opt-in and BACKFILL-ONLY. It proves - per source, scoped by ledger AND ts - that the target range holds no stored rows, then resolves usd_volume for the whole buffer through a worker pool and streams the rows in over parallel binary COPY connections. Rows are identical to the upsert path's (same storability gate, same intra-batch PK dedupe, same tradeUSDVolume waterfall, same derive_generation, same source_entry_counts / registry / sentinel side effects); the difference is that a latency-bound workload stops being serial. If the range is NOT empty - or a COPY hits a unique violation because something wrote underneath it - the buffer is handed to the ordinary generation-guarded upsert instead and the run says so. Worth it for a historical re-derive below the source's floor; pointless (and it will just fall back) for a recovery into populated ledgers.")
 	allowLiveOverlap := fs.Bool("allow-live-overlap", false, "DANGEROUS: bypass the live-cursor guard and -write a range the live projector's cursor for a PROJECTED source is still inside. Only pass this if you have independently verified the live projector will not process this range concurrently — see the ADR-0048 D3 one-writer contract on checkCHRebuildLiveOverlap.")
 	preflight := fs.Bool("preflight", false, "with -write: run the refusals this exact -write invocation would hit BEFORE it reads the lake — the BackfillSafe gate (both legs), the live-cursor one-writer guard, and the buffered-range ceiling — then print one line naming the sources it would re-derive (`"+chRebuildPreflightPrefix+" [from,to] rederive=a,b,c`) on stdout and exit 0 WITHOUT reading ClickHouse or writing a row. A refusal exits non-zero exactly as the real run would. It exists for a caller that must do something destructive before the re-derive (scripts/ops/ch-rebuild-projected.sh DELETEs the window first): ask here, and delete only what this prints. Runtime failures (a lake stream error, a failed write) are by nature not covered.")
+	requireRows := fs.String("require-rows", "", "comma-separated sources that must write at least one row: the run fails when one of them re-derives none. scripts/ops/ch-rebuild-projected.sh passes every source whose window its DELETE found occupied, so an emptied window whose re-derive came back empty (an empty gate registry, a lake gap) exits non-zero and stays dirty instead of being marked done. A source absent here may legitimately be quiet over the range.")
+	allowDropped := fs.Bool("allow-dropped", false, "with -write: exit 0 even when a source other than sdex had trades dropped as unstorable (the 'dropped' column). Only the SDEX one-side-zero fill is an expected drop; from any other source it means a decoder emitted a row the served tier refuses, which in a window a caller emptied first is a loss, so by default the run fails. scripts/ops/ch-rebuild-projected.sh never passes this.")
 	recordDirty := fs.Bool("record-dirty-window", false, "record [from,to] as a pending ADR-0033 projection dirty window for every source named in -sources (each must be a reconciliation-catalogue source; the list is REQUIRED), then exit 0 WITHOUT reading ClickHouse or writing a row. The next compute-completeness re-reconciles that range instead of carrying its prior clean projection claim over it, and clears the obligation only with the verdict that discharges it. This is the RECORD, not a re-derive, so it takes neither -write nor -preflight. It exists for the operator (and scripts/ops/ch-rebuild-projected.sh's TELL THE VERDICT line) after a clean-slate DELETE whose re-derive did not complete: the window is then EMPTY and /v1/coverage must stop certifying it complete (F075). An ordinary -write run deliberately records nothing — see the -write warning and #408.")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -1130,30 +1132,60 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 
 	// ─── report ──────────────────────────────────────────────────────────
 	fmt.Printf("\n=== ch-rebuild [%d,%d] %s ===\n", lo, hi, mode)
-	fmt.Printf("%-16s %14s %14s %14s\n", "source", "written", "dropped", "failed")
+	rerr := reportCHRebuildCounts(os.Stdout, cat, reDerivedSourcesInRun(cat, sep41Cat, passes, enabled), parseCSVList(*requireRows), *write && !*allowDropped, written, dropped, failed)
+	if !*write {
+		fmt.Printf("\n(dry-run — re-run with -write to persist to Postgres)\n")
+	}
+	return rerr
+}
+
+// reportCHRebuildCounts prints one row per source that wrote, dropped or failed
+// anything, and one per re-derived source even at all-zero: a re-derive that
+// produced nothing for a source whose window was cleared must show as a row,
+// not as absence. It returns the error that gates the exit code: any failed
+// write, a trade dropped from any source but sdex when gateDropped, or a
+// required source that wrote no row.
+func reportCHRebuildCounts(w io.Writer, cat []reconSource, reDerived, required []string, gateDropped bool, written, dropped, failed map[string]int) error {
+	_, _ = fmt.Fprintf(w, "%-16s %14s %14s %14s\n", "source", "written", "dropped", "failed")
 	var total, totalDropped, totalFailed int
+	var empty []string
 	for _, src := range cat {
 		n, okW := written[src.name]
 		d, okD := dropped[src.name]
 		f, okF := failed[src.name]
 		if !okW && !okD && !okF {
-			continue
+			if !containsStr(reDerived, src.name) {
+				continue
+			}
+			empty = append(empty, src.name)
 		}
-		fmt.Printf("%-16s %14d %14d %14d\n", src.name, n, d, f)
+		_, _ = fmt.Fprintf(w, "%-16s %14d %14d %14d\n", src.name, n, d, f)
 		total += n
 		totalDropped += d
 		totalFailed += f
 	}
-	fmt.Printf("%-16s %14d %14d %14d\n", "TOTAL", total, totalDropped, totalFailed)
-	if !*write {
-		fmt.Printf("\n(dry-run — re-run with -write to persist to Postgres)\n")
+	_, _ = fmt.Fprintf(w, "%-16s %14d %14d %14d\n", "TOTAL", total, totalDropped, totalFailed)
+	if len(empty) > 0 {
+		_, _ = fmt.Fprintf(w, "\nre-derived NO rows for: %s — confirm the range had no activity for them before treating it as rebuilt\n", strings.Join(empty, ","))
 	}
-	// RA-1: a partially-failed write must NOT present as complete (exit 0). If
-	// any batch/per-row/HandleEvent insert failed, the corresponding rows were
-	// excluded from written[] above and counted in failed[]; return a non-nil
-	// error so the process exits non-zero and the operator re-runs to recover.
+	// RA-1: a partially-failed write must NOT present as complete (exit 0);
+	// failed rows were excluded from written[] and the operator re-runs.
 	if totalFailed > 0 {
 		return fmt.Errorf("ch-rebuild: %d event(s) failed to write (rows missing) — see the 'failed' column and re-run to recover", totalFailed)
+	}
+	if gateDropped {
+		if lost := unexpectedDrops(cat, dropped); len(lost) > 0 {
+			return fmt.Errorf("ch-rebuild: trades dropped as unstorable for %s (rows missing) — only the SDEX one-side-zero fill is an expected drop; fix the decoder, or pass -allow-dropped if the rows are known to be unstorable", strings.Join(lost, ","))
+		}
+	}
+	var missing []string
+	for _, name := range required {
+		if written[name] == 0 {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("ch-rebuild: wrote no row for %s, which -require-rows says held rows in this range (rows missing) — the range is not rebuilt", strings.Join(missing, ","))
 	}
 	return nil
 }
@@ -1208,6 +1240,19 @@ func writeTradeBatch(ctx context.Context, logger *slog.Logger, w eventWriter, ba
 			"n", len(batch), "reason", res.FallbackReason)
 	}
 	return nil
+}
+
+// unexpectedDrops names, in catalogue order, the sources other than sdex that
+// had a trade dropped: IsOneSideZeroFill describes an SDEX rounding artifact,
+// so the same shape from a Soroban AMM decoder is a lost swap, not noise.
+func unexpectedDrops(cat []reconSource, dropped map[string]int) []string {
+	var lost []string
+	for _, src := range cat {
+		if src.name != sdex.SourceName && dropped[src.name] > 0 {
+			lost = append(lost, src.name)
+		}
+	}
+	return lost
 }
 
 // tallyTrade counts a trade the batch writer accepted: the served tier drops
