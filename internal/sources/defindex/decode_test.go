@@ -916,25 +916,18 @@ func TestDecode_strategyHarvestDecodes(t *testing.T) {
 	}
 }
 
-// TestDecode_vaultRebalanceAndAdminRecognisedEmit0Events pins the
-// vault-layer clean-drop contract across the rebalance topic and the
-// seven remaining admin topics: each is recognised (Matches true) and
-// emits nothing without erroring. Their bodies are unmodelled (blocked
-// on real on-chain samples), so they must not count as decode errors.
-// `dfees` graduated OUT of this set (W5.2 — body shape proven from
-// real lake blobs, now fully modelled; see TestDecode_dfees*).
-func TestDecode_vaultRebalanceAndAdminRecognisedEmit0Events(t *testing.T) {
+// TestDecode_vaultUnmodelledRecognisedEmit0Events pins the vault-layer
+// clean-drop contract for the unmodelled topics: each is recognised
+// (Matches true) and emits nothing without erroring, so it never counts
+// as a decode error. `dfees` and the seven admin topics graduated OUT of
+// this set once their bodies were proven from real lake rows (see
+// TestDecode_dfees* and TestGolden_defindexVaultAdmin).
+func TestDecode_vaultUnmodelledRecognisedEmit0Events(t *testing.T) {
 	t.Parallel()
 	d := NewDecoder()
 	symbols := map[string]string{
 		"rebalance": TopicSymbolRebalance,
-		"rescue":    TopicSymbolRescue,
-		"paused":    TopicSymbolPaused,
-		"unpaused":  TopicSymbolUnpaused,
-		"nreceiver": TopicSymbolNReceiver,
-		"nmanager":  TopicSymbolNManager,
-		"nemanager": TopicSymbolNEManager,
-		"rbmanager": TopicSymbolRBManager,
+		"n_wasm":    TopicSymbolNWasm,
 	}
 	for name, sym := range symbols {
 		t.Run(name, func(t *testing.T) {
