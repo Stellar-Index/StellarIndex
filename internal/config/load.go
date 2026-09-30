@@ -229,6 +229,10 @@ func (c *Config) ApplyEnvOverrides() []string {
 		c.External.Massive.APIKey = v
 		overridden = append(overridden, "external.massive.api_key")
 	}
+	if v := os.Getenv("OPENEXCHANGERATES_APP_ID"); v != "" {
+		c.External.OpenExchangeRates.AppID = v
+		overridden = append(overridden, "external.openexchangerates.app_id")
+	}
 	if v := os.Getenv("DUNE_API_KEY"); v != "" {
 		c.External.Dune.APIKey = v
 		overridden = append(overridden, "external.dune.api_key")

@@ -339,11 +339,22 @@ backfill_from_ledger  = 0                # 0 = resume from persisted cursor
   #                     # Older rounds are refused and counted, never written as current.
   #                     # Omit for the pair's default (built-in budget, else 76 fiat/fiat, else 3).
 
-  # massive.com forex rates behind /v1/currencies, fetched hourly by
-  # stellarindex-api. An empty key still starts the worker, but every
-  # fetch 401s and /v1/currencies serves warming-up.
+  # massive.com forex rates behind /v1/currencies, fetched every
+  # refresh_interval by stellarindex-api. An empty key still starts the
+  # worker, but every fetch 401s and /v1/currencies serves warming-up.
   [external.massive]
   # api_key = ""    # prefer env: MASSIVE_API_KEY
+  # refresh_interval = "1h"   # forex worker poll cadence; floor 10m (clamped + logged).
+  #                           # One poll = one request to massive, plus one per standby it falls through to.
+
+  # Open Exchange Rates hourly USD-base board. Built by stellarindex-api
+  # when enabled, but NOT in the serving chain yet: the worker holds it and
+  # never fetches it. Free plan: 1,000 requests/month, hourly updates, USD
+  # base only (base/symbols params refused) — 720-744/month at a 1h poll.
+  [external.openexchangerates]
+  enabled = false
+  # app_id = ""     # prefer env: OPENEXCHANGERATES_APP_ID (sent as Authorization: Token)
+  # endpoint = ""   # empty = https://openexchangerates.org/api
 
   # Dune API, read only by the curated-rwa-sync ops command, which
   # refuses to run without a key.

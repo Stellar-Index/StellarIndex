@@ -157,6 +157,8 @@ var Registry = map[string]Metadata{
 	// The snap's only fallback is the forex worker's in-process ECB standby
 	// (forex.ECBProvider), which writes fx_quotes with source "ecb" — not
 	// the "ecb" sanity connector below.
+	// forex.OpenExchangeRatesProvider has no row: it writes nothing until
+	// wired, and wiring it must add one or the FX-snap class check refuses it.
 	// FX pollers stamp amounts at 1e6 (DefaultDecimals=6), NOT the CEX 1e8;
 	// AmountDecimals:6 records that for the USD-volume gate (CS-040).
 	// OracleResolution is a trading day: an FX rate legitimately holds

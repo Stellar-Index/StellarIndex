@@ -127,6 +127,10 @@ the `env:` column.
 | `external.chainlink.feed_map.<key>.invert` | `bool` | `false` | — | If true, the canonical pair is the reciprocal of the feed's natural quote — e.g. operator wants USD/EUR but the feed publishes EUR/USD. price → 1/price after scaling. |
 | `external.chainlink.feed_map.<key>.max_age_hours` | `int` | `0` | — | Staleness budget in hours, set from the feed's heartbeat: a latestRoundData round whose updatedAt is older is refused (not written) and counted on stellarindex_chainlink_feed_polls_total{outcome="stale"}. 0 = the default: the built-in feed's budget for a built-in pair (3h for the 1h-heartbeat crypto feeds, 76h for the 24h-heartbeat FX feeds, which pause over market closes), 76h for any other fiat/fiat pair, else 3h. Negative is rejected at startup. Backfill is not subject to it. |
 | `external.massive.api_key` | `string` | `` | `MASSIVE_API_KEY` | massive.com API key. Empty still starts the forex worker, but every fetch 401s and /v1/currencies serves warming-up. Prefer env var. |
+| `external.massive.refresh_interval` | `duration` | `1h` | — | Forex worker poll cadence. One poll is one request to massive, plus one to each standby it falls through to. Zero uses 1h; values under 10m are raised to 10m and logged. Budget a metered feed against it: the Open Exchange Rates Free plan (1,000 requests/month, hourly updates) spends 720-744/month at 1h. |
+| `external.openexchangerates.enabled` | `bool` | `false` | — | Construct the Open Exchange Rates provider in stellarindex-api. Off by default; not yet consulted for serving. |
+| `external.openexchangerates.app_id` | `string` | `` | `OPENEXCHANGERATES_APP_ID` | Open Exchange Rates app id, sent only in the Authorization header. Free plan: 1,000 requests/month, hourly updates, USD base only. Prefer env var. |
+| `external.openexchangerates.endpoint` | `string` | `` | — | API root override. Empty uses https://openexchangerates.org/api. |
 | `external.dune.api_key` | `string` | `` | `DUNE_API_KEY` | Dune API key, sent as X-Dune-API-Key. Empty makes curated-rwa-sync refuse the run and stamp its refused gauge. Prefer env var. |
 
 ### `[aggregate]`
