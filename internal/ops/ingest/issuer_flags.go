@@ -184,14 +184,23 @@ func runIssuerFlags(ctx context.Context, store issuerFlagsStore, reader issuerFl
 	c.candidates = len(candidates)
 	_, _ = fmt.Fprintf(o.out, "issuer-flags: %d issuer(s) with unresolved flags\n", c.candidates)
 
-	if err := issuerFlagsResolvePass(ctx, store, reader, o, candidates, &c); err != nil {
-		return err
+	passes := []func() error{
+		func() error { return issuerFlagsResolvePass(ctx, store, reader, o, candidates, &c) },
+		func() error { return issuerFlagsRecheckPass(ctx, store, reader, o, &c) },
+		func() error { return issuerFlagsChainRecheckPass(ctx, store, reader, o, &c) },
 	}
-	if err := issuerFlagsRecheckPass(ctx, store, reader, o, &c); err != nil {
-		return err
-	}
-	if err := issuerFlagsChainRecheckPass(ctx, store, reader, o, &c); err != nil {
-		return err
+	for _, pass := range passes {
+		err := pass()
+		if err == nil {
+			continue
+		}
+		// The deadline usually expires inside a lake read or the next pass's
+		// queue query, not between batches; that is the same resumable stop.
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return err
+		}
+		_, _ = fmt.Fprintf(o.out, "issuer-flags: timeout reached mid-read — stopping early (queue is resumable): %v\n", err)
+		break
 	}
 
 	// Self-accounting: every candidate lands in exactly one bucket, so an
@@ -336,12 +345,12 @@ func issuerFlagsRecheckChunk(
 	ctx context.Context, store issuerFlagsStore, reader issuerFlagsReader,
 	o issuerFlagsOpts, chunk []string, c *issuerFlagsCounts,
 ) error {
-	c.recheckSeen += len(chunk)
-
 	live, err := reader.BulkAccountAuthFlags(ctx, chunk)
 	if err != nil {
 		return err
 	}
+	// Counted only once read, so a run cut off mid-read reports what it examined.
+	c.recheckSeen += len(chunk)
 	rows := make([]timescale.IssuerAuthFlags, 0, len(live))
 	for _, g := range chunk {
 		f, ok := live[g]
@@ -438,8 +447,6 @@ func issuerFlagsChainRecheckChunk(
 	ctx context.Context, store issuerFlagsStore, reader issuerFlagsReader,
 	o issuerFlagsOpts, chunk []timescale.IssuerAuthFlagsOnRecord, c *issuerFlagsCounts,
 ) error {
-	c.chainSeen += len(chunk)
-
 	keys := make([]string, 0, len(chunk))
 	for _, rec := range chunk {
 		keys = append(keys, rec.GStrkey)
@@ -454,6 +461,8 @@ func issuerFlagsChainRecheckChunk(
 			return err
 		}
 	}
+	// Counted only once both reads answered, keeping seen = corrected+agreed+unread.
+	c.chainSeen += len(chunk)
 
 	rows := make([]timescale.IssuerAuthFlags, 0, len(live)+len(lastKnown))
 	for _, rec := range chunk {
