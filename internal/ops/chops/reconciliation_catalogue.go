@@ -567,6 +567,9 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			// empty distributed_fees Vec (real, observed) emits zero
 			// events and zero rows — count-consistent by construction.
 			{"defindex_fees", "", []string{"defindex.vault.dfees"}},
+			// Vault admin topics (rescue / pause toggles / role rotations):
+			// one AdminEvent per on-chain event, one row each.
+			{"defindex_admin_events", "", []string{"defindex.vault.admin"}},
 		}},
 		{
 			name: "blend", genesis: blend.FactoryGenesisLedger, dec: blend.NewDecoder(),
