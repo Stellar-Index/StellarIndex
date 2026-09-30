@@ -87,6 +87,7 @@ tests:
               team: stellarindex
               component: infra
               process: clickhouse
+              alert_family: process_mappings/clickhouse
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
               summary: "clickhouse holds 30% of vm.max_map_count — 5x its normal mapping count"
@@ -140,6 +141,7 @@ tests:
               team: stellarindex
               component: infra
               process: clickhouse
+              alert_family: process_mappings/clickhouse
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
               summary: "clickhouse holds 60% of vm.max_map_count (SEV-1 risk)"

@@ -31,9 +31,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// sorobanEraGenesis is the first pubnet ledger with Soroban — the lower
-// bound for the global recognition scan.
-const sorobanEraGenesis = 50_457_424
+// sorobanEraFloor is the network's first Soroban ledger — the lower bound for
+// the global recognition scan and event census. A test net starts at 1, so the
+// pubnet boundary would invert the range; zero (no defaults applied) is pubnet.
+func sorobanEraFloor(cfg config.Config) uint32 {
+	if cfg.Stellar.SorobanGenesisLedger == 0 {
+		return clickhouse.SorobanGenesisLedger
+	}
+	return cfg.Stellar.SorobanGenesisLedger
+}
 
 // sourceSubstrateOK is the per-source Claim-1 verdict from a whole-range
 // SubstrateProblem result: a source is substrate-OK iff there is no problem, or
@@ -188,6 +194,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		return fmt.Errorf("tip resolved to 0 — pass -to")
 	}
 	fmt.Fprintf(os.Stderr, "compute-completeness: tip=%d\n", tip)
+	sorobanFloor := sorobanEraFloor(cfg)
 	if *pass {
 		fmt.Fprintln(os.Stderr, "compute-completeness: -pass — recognition + substrate proven once at full range; projection reconciled per source from its own watermark")
 	}
@@ -308,9 +315,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			// cap once P23/CAP-67 grew the distinct set), so always scan from
 			// genesis regardless of -from — which correctly scopes only the
 			// expensive row-by-row projection reconcile below.
-			return computeRecognitionGapsCH(ctx, cfg, *chAddr, gatedOpts, uint32(sorobanEraGenesis), tip, soroswapOpts...)
+			return computeRecognitionGapsCH(ctx, cfg, *chAddr, gatedOpts, sorobanFloor, tip, soroswapOpts...)
 		}
-		return computeRecognitionGaps(ctx, store, cfg, gatedOpts, tip, soroswapOpts...)
+		return computeRecognitionGaps(ctx, store, cfg, gatedOpts, sorobanFloor, tip, soroswapOpts...)
 	})
 	if recErr != nil {
 		return recErr
@@ -370,7 +377,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	// hides (eventCensusLoss).
 	var evCensus []clickhouse.EventCensusShortfall
 	if *useCH {
-		if evCensus, err = clickhouse.EventCensusShortfalls(ctx, *chAddr, sorobanEraGenesis, tip); err != nil {
+		if evCensus, err = clickhouse.EventCensusShortfalls(ctx, *chAddr, sorobanFloor, tip); err != nil {
 			return fmt.Errorf("contract_events census (failing closed — cannot certify the event table recognition and projection read): %w", err)
 		}
 	}
@@ -760,10 +767,10 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			contracts[g.ContractID] = struct{}{}
 		}
 		census.Contracts = len(contracts)
-		recW := completeness.ComputeWatermark(sorobanEraGenesis, tip, nilOrOne(census.EarliestLedger))
+		recW := completeness.ComputeWatermark(sorobanFloor, tip, nilOrOne(census.EarliestLedger))
 		detail := completeness.FormatRecognitionDetail(census)
 		if err := store.UpsertCompletenessSnapshot(ctx, timescale.CompletenessSnapshot{
-			Source: completeness.SystemRecognitionSource, Genesis: sorobanEraGenesis, Tip: tip,
+			Source: completeness.SystemRecognitionSource, Genesis: sorobanFloor, Tip: tip,
 			Watermark: recW.Ledger, CoveragePct: recW.CoveragePct, Complete: recW.Complete,
 			LakeComplete: recW.Complete, // no projection axis on this system snapshot
 			FirstProblem: recW.FirstProblem, SubstrateOK: true, RecognitionOK: census.Shapes == 0, ProjectionOK: true,
@@ -2539,18 +2546,18 @@ func watchedSep41RecognitionShapes(ctx context.Context, cfg config.Config, chAdd
 	return clickhouse.DistinctTopicShapesForWatchedContracts(ctx, chAddr, from, tip, clickhouse.FirehoseExcludeSyms, watched)
 }
 
-// computeRecognitionGaps runs the global recognition audit over the
-// Soroban era and returns every unrecognized event shape.
-func computeRecognitionGaps(ctx context.Context, store *timescale.Store, cfg config.Config, gated map[string][]contractid.Option, tip uint32, soroswapOpts ...soroswap.DecoderOption) ([]completeness.RecognitionGap, error) {
+// computeRecognitionGaps runs the global recognition audit over [from, tip]
+// and returns every unrecognized event shape.
+func computeRecognitionGaps(ctx context.Context, store *timescale.Store, cfg config.Config, gated map[string][]contractid.Option, from, tip uint32, soroswapOpts ...soroswap.DecoderOption) ([]completeness.RecognitionGap, error) {
 	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gated, soroswapOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("build dispatcher: %w", err)
 	}
-	samples, err := store.DistinctSorobanTopicSamples(ctx, sorobanEraGenesis, tip)
+	samples, err := store.DistinctSorobanTopicSamples(ctx, from, tip)
 	if err != nil {
 		return nil, err
 	}
-	if verr := recognitionScanEmptyErr(len(samples), sorobanEraGenesis, tip); verr != nil {
+	if verr := recognitionScanEmptyErr(len(samples), from, tip); verr != nil {
 		return nil, verr
 	}
 	return completeness.AuditRecognition(samples, disp), nil

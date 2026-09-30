@@ -897,6 +897,7 @@ func validateSourceFilter(only string, cat []reconSource) error {
 // ever hitting this by checking non-emptiness itself first.
 func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 	watched := cfg.Supply.WatchedSEP41Contracts
+	floor := sorobanEraFloor(cfg)
 	tdec, err := sep41transfers.NewDecoder(watched)
 	if err != nil {
 		return nil, fmt.Errorf("sep41_transfers decoder: %w", err)
@@ -932,7 +933,7 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 	// ~35 of the full verify's ~37 minutes (measured 2026-07-27).
 	return []reconSource{
 		{
-			name: sep41transfers.SourceName, genesis: sorobanEraGenesis,
+			name: sep41transfers.SourceName, genesis: floor,
 			dec: tdec, contractIDs: watched,
 			topic0Syms: []string{
 				sep41transfers.SymbolTransfer,
@@ -943,7 +944,7 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 			targets: []reconTarget{{"sep41_transfers", filter, []string{sep41transfers.EventKind}}},
 		},
 		{
-			name: sep41supply.SourceName, genesis: sorobanEraGenesis,
+			name: sep41supply.SourceName, genesis: floor,
 			dec: sdec, contractIDs: watched,
 			topic0Syms: []string{
 				sep41supply.SymbolMint,

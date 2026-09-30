@@ -198,6 +198,23 @@ func TestBuildSEP41ReconSources_OptIn(t *testing.T) {
 	}
 }
 
+// TestBuildSEP41ReconSources_TestNetGenesis — on a test net the sep41
+// sources' genesis is the configured Soroban floor, not the pubnet boundary.
+func TestBuildSEP41ReconSources_TestNetGenesis(t *testing.T) {
+	cfg := config.Default()
+	cfg.Stellar.SorobanGenesisLedger = 1
+	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
+	cat, err := buildSEP41ReconSources(cfg)
+	if err != nil {
+		t.Fatalf("buildSEP41ReconSources: %v", err)
+	}
+	for _, src := range cat {
+		if src.genesis != 1 {
+			t.Errorf("%s: genesis = %d, want 1 (soroban_genesis_ledger)", src.name, src.genesis)
+		}
+	}
+}
+
 // TestBuildSEP41ReconSources_EmptyWatchedSetErrors — -sep41 with no
 // configured watched set is an operator error, not a silent no-op.
 func TestBuildSEP41ReconSources_EmptyWatchedSetErrors(t *testing.T) {
