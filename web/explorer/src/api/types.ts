@@ -7376,7 +7376,7 @@ export interface components {
              */
             next?: string;
         };
-        /** @description Every 2xx response carries these. */
+        /** @description Every 2xx JSON response carries these, except the session-cookie customer-dashboard operations: magic-link and passkey sign-in under /auth, the /dashboard operations, and POST /account/admin/lookup. Those return the bare resource object documented on each operation. The API-key /account/* operations and SEP-10 are enveloped. */
         EnvelopeMeta: {
             /** Format: date-time */
             as_of: string;
@@ -11465,14 +11465,14 @@ export interface components {
             trade_count_24h: number;
             /** @description Trailing-24h USD volume summed from prices_1m. Decimal string. Null when no USD-equivalent trades. */
             volume_24h_usd?: string | null;
-            /** @description Most recent quote-per-base price observed for this pair (cross-source) within the trailing 24h. Decimal string. Null when no recent prices_1m bucket has a non-null last_price. */
+            /** @description Most recent quote-per-base price observed for this pair within the trailing 24h: across every source, or that source's own when the request sets `?source=`. Decimal string. Null when none was observed. */
             last_price?: string | null;
             /**
              * Format: date-time
-             * @description The pair's first recorded daily bucket — "since inception = first recorded trade" (RFP), queryable per market. Present only with `?include=inception`; day precision.
+             * @description The pair's first recorded daily bucket — "since inception = first recorded trade" (RFP), queryable per market, across every source. Present only with `?include=inception` and absent when the request sets `?source=`; day precision.
              */
             first_trade_at?: string | null;
-            /** @description Per-hour USD-volume buckets for the trailing 24h, oldest → newest, zero-filled server-side (always 24 entries when present). Populated only when the request sets `?include=sparkline`; absent otherwise. */
+            /** @description Per-hour USD-volume buckets for the trailing 24h, oldest → newest, zero-filled server-side (always 24 entries when present). Summed across every source. Populated only when the request sets `?include=sparkline`; absent otherwise, and absent when the request sets `?source=`. */
             volume_history_24h?: {
                 /** Format: date-time */
                 hour: string;
@@ -13409,7 +13409,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             asset?: string;
                             /** Format: int64 */
@@ -15275,7 +15275,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             protocol?: string;
                             pool?: string;
@@ -15363,7 +15363,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             pool?: string;
                             /** @description Σ supplied_usd across priced reserves; null when none priced. A lower bound when `lower_bound` is true. */
@@ -15469,7 +15469,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             /** Format: uuid */
                             event_id?: string;
@@ -15538,7 +15538,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             firing_count?: number;
                             reason_tally?: {
@@ -15650,7 +15650,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             observations?: {
                                 asset_id?: string;
@@ -15736,7 +15736,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             asset_id?: string;
                             quote_id?: string;
@@ -15862,6 +15862,9 @@ export interface operations {
                  *     unknown name returns 400 `unknown-source` rather
                  *     than an empty 200 (avoids the silent-empty-page
                  *     anti-pattern). Mutually exclusive with `asset`.
+                 *     Each row's volume, trade count and last price are
+                 *     that source's own; the pair-wide `sparkline` and
+                 *     `inception` enrichments are omitted.
                  */
                 source?: string;
                 /**
@@ -18310,7 +18313,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             window_days?: number;
                             buckets?: {
@@ -18669,7 +18672,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         /** @description SAC C-strkey → "CODE-ISSUER" or "native". */
                         data?: {
                             [key: string]: string;
@@ -19220,7 +19223,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data: components["schemas"]["RWAAssetsView"];
                     };
                 };
@@ -19311,7 +19314,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data: components["schemas"]["RWAHistoryView"];
                     };
                 };
@@ -19442,7 +19445,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data: components["schemas"]["RWAPremiumHistoryView"];
                     };
                 };
@@ -22614,7 +22617,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             ledgers?: components["schemas"]["Ledger"][];
                             next_before?: number;
@@ -22669,7 +22672,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["Ledger"];
                     };
                 };
@@ -22738,7 +22741,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             ledger?: number;
                             transactions?: components["schemas"]["TxSummary"][];
@@ -22821,7 +22824,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             ledger?: number;
                             operations?: components["schemas"]["Operation"][];
@@ -22905,7 +22908,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["TxDetail"];
                     };
                 };
@@ -22977,7 +22980,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             /** @description Always 0: the directory spans ledgers. */
                             ledger?: number;
@@ -23059,7 +23062,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             window_days?: number;
                             /** Format: int64 */
@@ -23142,7 +23145,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             contract_id?: string;
                             /** @description Registry protocol this contract belongs to (blend, soroswap, …) when attribution is known; absent otherwise. */
@@ -23243,7 +23246,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             /** @description C-strkey contract id (echoed). */
                             contract_id: string;
@@ -23326,7 +23329,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             contract_id?: string;
                             window_days?: number;
@@ -23386,7 +23389,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             contract_id?: string;
                             versions?: {
@@ -23454,7 +23457,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             /** @description Number of assets that contributed a USD price. 0 on the native_xlm basis. */
                             priced_assets?: number;
@@ -23531,7 +23534,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             /** @description Address → label, present addresses only; always an object, never null. */
                             entries: {
@@ -23614,7 +23617,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             totals: {
                                 /** Format: int64 */
@@ -23747,7 +23750,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             creators: {
                                 /** @description 1-based position on the board, by accounts_created descending. */
@@ -23892,7 +23895,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             sponsors: {
                                 /** @description 1-based position, by sponsorships_started descending. */
@@ -24045,7 +24048,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             account_id?: string;
                             exists?: boolean;
@@ -24175,7 +24178,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountTransactions"];
                     };
                 };
@@ -24240,7 +24243,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountOperations"];
                     };
                 };
@@ -24309,7 +24312,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountMovements"];
                     };
                 };
@@ -24389,7 +24392,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountPositions"];
                     };
                 };
@@ -24453,7 +24456,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountTrades"];
                     };
                 };
@@ -24566,7 +24569,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountGraph"];
                     };
                 };
@@ -24685,7 +24688,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountGraphHistory"];
                     };
                 };
@@ -24831,12 +24834,16 @@ export interface operations {
                      *         "note": "Every figure is the cohort's own ledger footprint as of cycle.computed_at, never the root's. …"
                      *       },
                      *       "as_of": "2026-09-17T09:00:00Z",
-                     *       "stale": false,
-                     *       "divergence_warning": false,
-                     *       "divergence_checked": false
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountCohort"];
                     };
                 };
@@ -24908,7 +24915,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["AccountActivity"];
                     };
                 };
@@ -24954,7 +24961,7 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             query?: string;
                             /** @enum {string} */
