@@ -1879,6 +1879,9 @@ backend has been down long enough that metered customers are now being
 worth a distinct signal. Pre-seeded at zero so "quiet" is
 distinguishable from "dead".
 
+Alert: `stellarindex_monthly_quota_fail_closed` (`> 0` for 2m, page) → runbook
+[monthly-quota-fail-open](../../operations/runbooks/monthly-quota-fail-open.md).
+
 ### `stellarindex_admin_audit_write_failures_total`
 
 Counter, label `surface` (`account_override` / `key_mint` /

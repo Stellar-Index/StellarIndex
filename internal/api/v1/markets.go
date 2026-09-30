@@ -394,18 +394,18 @@ type Market struct {
 	TradeCount24h int64    `json:"trade_count_24h"`
 	Volume24hUSD  *string  `json:"volume_24h_usd,omitempty"`
 	// LastPrice is the most recent quote-per-base price observed
-	// for this pair (cross-source) within the trailing 24h. Null
-	// when no recent prices_1m bucket has a non-null last_price.
+	// for this pair within the trailing 24h: across every source, or
+	// that source's own with `?source=`. Null when none was observed.
 	LastPrice *string `json:"last_price,omitempty"`
 	// VolumeHistory24h — per-hour USD-volume buckets for the
 	// trailing 24h. Populated only when the request sets
-	// `?include=sparkline`. 24 entries oldest → newest, zero-
-	// filled server-side so the wire array length is stable.
+	// `?include=sparkline` without `?source=`. 24 entries oldest →
+	// newest, zero-filled server-side so the wire array length is stable.
 	VolumeHistory24h []MarketVolumeBucket `json:"volume_history_24h,omitempty"`
 	// FirstTradeAt is the pair's first recorded daily bucket — the
 	// RFP's "since inception = first recorded trade", queryable per
-	// market (board #44). Populated only with `?include=inception`;
-	// day precision.
+	// market (board #44). Populated only with `?include=inception`
+	// without `?source=`; day precision.
 	FirstTradeAt *WireTime `json:"first_trade_at,omitempty"`
 }
 
@@ -644,7 +644,10 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 			includeInception = true
 		}
 	}
-	if includeInception && len(rows) > 0 {
+	// Both enrichment readers are pair-wide (every venue). Beside a
+	// ?source= row's single-venue headline they would contradict it, so omit them.
+	pairWide := source == ""
+	if includeInception && pairWide && len(rows) > 0 {
 		pairs := make([][2]string, len(rows))
 		for i, m := range rows {
 			pairs[i] = [2]string{m.Base, m.Quote}
@@ -662,7 +665,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 			}
 		}
 	}
-	if includeSparkline && len(rows) > 0 {
+	if includeSparkline && pairWide && len(rows) > 0 {
 		pairs := make([][2]string, len(rows))
 		for i, m := range rows {
 			pairs[i] = [2]string{m.Base, m.Quote}
