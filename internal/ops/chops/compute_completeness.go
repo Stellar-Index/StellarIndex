@@ -1585,7 +1585,7 @@ type verdictPublisher interface {
 // must then survive: the stored verdict is still the pre-rewind one, and
 // the window is the only thing forcing the next full-range run to
 // re-reconcile the rewritten rows rather than carry that stale claim. The
-// clear keeps [timescale.Store.ClearProjectionDirtyWindow]'s optimistic
+// clear keeps [timescale.Store.PublishCompletenessVerdict]'s optimistic
 // predicate, so a concurrent replay's re-record also survives.
 func publishSourceVerdict(ctx context.Context, store verdictPublisher, snap timescale.CompletenessSnapshot, win timescale.ProjectionDirtyWindow, earned bool) (timescale.VerdictPublication, error) {
 	var clearWindow *timescale.DirtyWindowClear

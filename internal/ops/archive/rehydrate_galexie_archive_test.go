@@ -6,7 +6,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
 	"testing"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 )
@@ -137,6 +139,33 @@ func TestRehydratePaths_SingleLedgerFile_DefaultCase(t *testing.T) {
 	paths := rehydratePaths(schema, 50000000, 50000010)
 	if len(paths) != 11 {
 		t.Errorf("expected 11 paths for an 11-ledger range at LPF=1; got %d", len(paths))
+	}
+}
+
+// TestRehydratePaths_TerminatesAtUint32Max pins termination when the
+// step past -to would overflow uint32.
+func TestRehydratePaths_TerminatesAtUint32Max(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		lpf, from, to uint32
+		want          int
+	}{
+		{lpf: 1, from: math.MaxUint32, to: math.MaxUint32, want: 1},
+		{lpf: 64, from: math.MaxUint32 - 1, to: math.MaxUint32 - 1, want: 1},
+		{lpf: 64, from: math.MaxUint32 - 200, to: math.MaxUint32, want: 4},
+		{lpf: 64, from: 200, to: 100, want: 0},
+	} {
+		schema := datastore.DataStoreSchema{LedgersPerFile: tc.lpf, FilesPerPartition: 64}
+		done := make(chan []string, 1)
+		go func() { done <- rehydratePaths(schema, tc.from, tc.to) }()
+		select {
+		case paths := <-done:
+			if len(paths) != tc.want {
+				t.Errorf("LPF=%d to=%d: got %d paths, want %d", tc.lpf, tc.to, len(paths), tc.want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("LPF=%d to=%d: rehydratePaths did not terminate", tc.lpf, tc.to)
+		}
 	}
 }
 

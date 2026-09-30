@@ -32,6 +32,7 @@ const projectedScriptPath = "../../../scripts/ops/ch-rebuild-projected.sh"
 
 const stubPsql = `#!/usr/bin/env bash
 { printf 'PSQL %s\n' "$*"; cat; printf 'PSQL-END\n'; } >> "$STUB_CALLS"
+[ -z "${STUB_PSQL_OUT:-}" ] || printf '%s\n' "$STUB_PSQL_OUT"
 exit "${STUB_PSQL_RC:-0}"
 `
 
@@ -94,6 +95,11 @@ if [ "$pre" = 1 ]; then
 fi
 if [ -n "${STUB_FAIL_WRITE_FROM:-}" ] && [ "$from" = "$STUB_FAIL_WRITE_FROM" ]; then
   echo "ch-rebuild: event stream: read timeout" >&2
+  exit 1
+fi
+# The binary's failed-write gate: a trade the store refuses fails the -write.
+if [ -n "${STUB_REFUSED_FROM:-}" ] && [ "$from" = "$STUB_REFUSED_FROM" ]; then
+  echo "ch-rebuild: 1 event(s) failed to write (rows missing) — see the 'failed' column and re-run to recover" >&2
   exit 1
 fi
 printf '\n=== ch-rebuild [%s] WRITE ===\n' "$from"
@@ -478,6 +484,78 @@ func TestChRebuildProjectedScript_DeleteBatchIsOneTransaction(t *testing.T) {
 	}
 	if !strings.Contains(dels[0].args, "ON_ERROR_STOP=1") {
 		t.Errorf("psql runs without ON_ERROR_STOP=1 (%q) — it would carry on to COMMIT past a failed statement", dels[0].args)
+	}
+}
+
+// The DELETE batch probes each source before emptying it; the -write that
+// follows must be told which sources held rows, so a re-derive that brings
+// none back fails instead of marking an emptied window done.
+func TestChRebuildProjectedScript_RequiresRowsForEveryOccupiedSource(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, psqlOut, want string
+	}{
+		{"occupied", "BEGIN\noccupied=soroswap\nDELETE 4\noccupied=cctp\noccupied=soroswap\nDELETE 1\nCOMMIT", "-require-rows=cctp,soroswap"},
+		{"quiet window", "BEGIN\nDELETE 0\nCOMMIT", "-require-rows="},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			run := runProjectedScript(t, "", map[string]string{"SRC": "soroswap,cctp", "STUB_PSQL_OUT": tc.psqlOut})
+			dels, writes := run.deletes(), run.writes()
+			if len(dels) != 1 || len(writes) != 1 {
+				t.Fatalf("want one DELETE and one -write, got %d/%d\n%s", len(dels), len(writes), run.log)
+			}
+			for _, s := range []string{"soroswap", "cctp"} {
+				if !strings.Contains(dels[0].stdin, "SELECT 'occupied="+s+"' WHERE ") {
+					t.Errorf("the DELETE batch does not probe %s before emptying it\n%s", s, dels[0].stdin)
+				}
+			}
+			if !writes[0].has(tc.want) {
+				t.Errorf("-write args %q lack %s", writes[0].args, tc.want)
+			}
+		})
+	}
+}
+
+// A trade the store refused is a row the DELETE removed and nothing put
+// back: the binary's failed-write exit must leave the window dirty instead of
+// marking it done.
+func TestChRebuildProjectedScript_RefusedTradeLeavesWindowDirty(t *testing.T) {
+	t.Parallel()
+	run := runProjectedScript(t, "", map[string]string{"SRC": "aquarius", "STUB_REFUSED_FROM": "61000000"})
+	if run.exit == 0 || run.dirty == "" {
+		t.Fatalf("a refused trade must fail the run and leave the window dirty (exit %d, dirty %q)\n%s", run.exit, run.dirty, run.log)
+	}
+	if strings.Contains(run.state, "61000000") {
+		t.Errorf("the window with a refused trade was marked done:\n%s", run.state)
+	}
+}
+
+// A recovery's DELETE probes a window the earlier run already emptied, so
+// it finds nothing: what that earlier DELETE removed must still be required.
+func TestChRebuildProjectedScript_RecoveryKeepsTheRowRequirement(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	first := runProjectedScript(t, dir, map[string]string{
+		"SRC": "blend", "STUB_FAIL_WRITE_FROM": "61000000",
+		"STUB_PSQL_OUT": "BEGIN\noccupied=blend\nDELETE 3\nCOMMIT",
+	})
+	if first.exit == 0 || first.dirty == "" {
+		t.Fatalf("fixture: the first -write must fail and leave the window dirty (exit %d, dirty %q)\n%s", first.exit, first.dirty, first.log)
+	}
+	second := runProjectedScript(t, dir, map[string]string{"SRC": "blend", "STUB_PSQL_OUT": "BEGIN\nDELETE 0\nCOMMIT"})
+	writes := second.writes()
+	if len(writes) != 1 {
+		t.Fatalf("want one recovery -write, got %d\n%s", len(writes), second.log)
+	}
+	if !writes[0].has("-require-rows=blend") {
+		t.Errorf("recovery -write args %q lack -require-rows=blend — an empty re-derive would mark the emptied window done", writes[0].args)
+	}
+	if second.exit != 0 || second.dirty != "" {
+		t.Fatalf("fixture: the recovery should succeed (exit %d, dirty %q)\n%s", second.exit, second.dirty, second.log)
+	}
+	if req := readIfExists(t, filepath.Join(dir, "state", "rebuild-done-windows.txt.required")); req != "" {
+		t.Errorf("a rebuilt window's row requirement outlived it: %q", req)
 	}
 }
 

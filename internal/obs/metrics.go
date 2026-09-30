@@ -370,6 +370,7 @@ func registerStorageAndExplorerMetrics() {
 		LedgerstreamStreamPathTotal,
 		LedgerstreamColdReadDurationSeconds,
 		LedgerstreamLiveStartRetriesTotal,
+		LedgerstreamTrailingMissingToleratedTotal,
 
 		DEXTVLRefreshTotal,
 		DEXTVLRefreshDurationSeconds,
@@ -2079,6 +2080,16 @@ var LedgerstreamLiveStartRetriesTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ledgerstream_live_start_retries_total",
 		Help: "Re-attempts of a live-tail stream that failed before delivering any ledger (datastore unreachable / schema unreadable at start). Climbs only while the indexer is up but cannot open the lake.",
+	},
+)
+
+// LedgerstreamTrailingMissingToleratedTotal — bounded walks that ended
+// early because TolerateTrailingMissing turned a missing-ledger error into
+// walk-complete. Every increment is a walk that returned nil short of its To.
+var LedgerstreamTrailingMissingToleratedTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_ledgerstream_trailing_missing_tolerated_total",
+		Help: "Bounded ledgerstream walks whose missing-ledger error was converted to walk-complete by TolerateTrailingMissing (the walk returned nil short of its To).",
 	},
 )
 
