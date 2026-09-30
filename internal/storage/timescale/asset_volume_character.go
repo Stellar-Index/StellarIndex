@@ -87,6 +87,9 @@ type AssetVolumeCharacter struct {
 //   - a pool fill is keyed on its lone taker, the rule the priceless-coverage
 //     tripwire applies to AMM fills (popularPricelessCandidatesSQL): one
 //     account round-tripping through pools is one concentrated actor.
+//
+// taker is not always a wallet: on a Soroban swap it is the recipient/caller
+// address and may be a contract (C...), so distinct_takers counts addresses.
 const (
 	volumeCharacterMakerSQL = `CASE WHEN maker ~ '^G[A-Z2-7]{55}$' THEN maker END AS maker,
     (maker IS NOT NULL AND maker !~ '^G[A-Z2-7]{55}$') AS pool_fill`
