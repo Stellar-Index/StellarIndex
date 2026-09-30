@@ -161,6 +161,8 @@ type AssetDetail struct {
 	//   - "unreachable"    — a fetch WAS attempted and produced nothing
 	//     storable: a 404, a dead name, a TLS failure, or a document
 	//     that would not parse. THEIRS, and the one an issuer can act on.
+	//     Also a held payload past its attestation age whose domain is
+	//     failing now.
 	Sep1Status string `json:"sep1_status"`
 
 	// ─── SEP-1 overlay fields (populated when Sep1Status=="verified") ─
@@ -4236,6 +4238,10 @@ func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asse
 	}
 	if sep == nil {
 		detail.Sep1Status = s.sep1StatusForNoPayload(ctx, asset.Issuer)
+		return
+	}
+	if sep.OutlivedDomain {
+		detail.Sep1Status = "unreachable"
 		return
 	}
 

@@ -10123,7 +10123,10 @@ export interface components {
              *     - unreachable:    a fetch WAS attempted and produced nothing
              *       storable — a 404, a dead name, a TLS failure, or a document
              *       that would not parse. THEIRS, and the one an issuer can act
-             *       on.
+             *       on. Also reported when a held payload is over 30 days old,
+             *       or of unrecorded age, and the issuer's domain is failing
+             *       now, so a dead domain's last document is not served as
+             *       `verified`.
              *
              *     The last two are the distinction worth reading carefully,
              *     because they were one value until 2026-09-16. An asset
@@ -10984,8 +10987,8 @@ export interface components {
             base_amount: string;
             /** @description Integer stroops, decimal string. */
             quote_amount: string;
-            /** @description quote/base, 10-digit decimal. */
-            price: string;
+            /** @description quote/base, 10-digit decimal; null (key always present) when one leg is zero, e.g. an SDEX rounding fill. */
+            price: string | null;
             /**
              * @description Smallest-unit scale for `base_amount`: divide by
              *     10^base_decimals for whole-asset units.

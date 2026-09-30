@@ -26,18 +26,15 @@ import (
 //   - ClassicTradeEffectCount counts ClaimAtoms exactly the way
 //     internal/sources/sdex produces one trade per atom.
 //
-//     CORRECTION (cold audit 2026-08-04): this used to say it "MUST
-//     equal COUNT(trades WHERE source='sdex' AND ledger=seq)". It does
-//     not, and cannot. The decoder deliberately emits one-side-zero
-//     fills (099d6fcf, "capture them for completeness" — ~60/day), and
-//     the trades table's CHECK (base_amount > 0) forbids them, so
-//     filterStorableTrades drops each one before the INSERT. The
-//     census counts an atom the served tier is structurally incapable
-//     of holding, so census-minus-COUNT is a permanent non-zero for
-//     this benign class. No projection oracle reads it: every SDEX
-//     reconcile in internal/ops/chops re-derives through the same
-//     decoder AND the same Validate() + primary-key filter
-//     (sdexServedCensus), so both sides drop the atom together.
+//     It does NOT equal COUNT(trades WHERE source='sdex' AND
+//     ledger=seq). The decoder deliberately emits one-side-zero fills
+//     (one leg rounded to 0 stroops, ~55-60/day). The writer stores them
+//     (unpriceable), but ledgers written before they were admitted
+//     hold none, so the SDEX reconcile in internal/ops/chops compares
+//     priceable fills only: the decoder re-derive drops them
+//     (sdexServedCensus) and the served COUNT carries the matching
+//     priceable filter (reconTarget.countFilter). Both filters go once a
+//     full-history `ch-rebuild -sdex` has landed the historic fills. No projection oracle reads this counter.
 //
 //     Note the lockstep test that guards this comment compares the
 //     counter to the DECODER, never to the writer — which is why the

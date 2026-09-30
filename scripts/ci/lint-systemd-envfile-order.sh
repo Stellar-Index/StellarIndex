@@ -22,7 +22,8 @@ if [ "$#" -gt 0 ]; then
   FILES=("$@")
 else
   FILES=("configs/ansible/roles/archival-node/templates/systemd/supply-snapshot.service.j2"
-         "configs/ansible/roles/archival-node/templates/systemd/supply-verify-rollup.service.j2")
+         "configs/ansible/roles/archival-node/templates/systemd/supply-verify-rollup.service.j2"
+         "configs/ansible/roles/archival-node/templates/systemd/verify-lake.service.j2")
 fi
 
 fail=0

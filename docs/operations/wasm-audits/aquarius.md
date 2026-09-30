@@ -250,16 +250,12 @@ are present in every WASM's data section. The shared-emitter
 argument extends transitively: any pool WASM compiled from the
 aquarius-amm tree emits the audited topic + body shape.
 
-**Aquarius router (`CAVLP5DH…`)** was in the walk's input list
-but its instance entry was TTL-evicted at RPC query time and the
-walker never observed a transition either. The router is
-operationally live (we ingest events through it daily) and the
-decoder doesn't depend on its WASM hash — the load-bearing
-target is per-pool `Symbol("trade")` events. To capture the
-router's WASM hash we'd need either (a) extend the entry's TTL
-via an invocation and re-query, or (b) walk the archive for the
-contract's deploy ledger entry. Tracked as a v3 follow-up;
-backfill safety is unaffected.
+**`CAVLP5DH…` is not the Aquarius router.** The walk's input list
+mislabelled it; it is a Reflector testnet oracle, absent on mainnet
+(hence `ranges: null`), per
+[walker-investigation-2026-05-01.md §2](walker-investigation-2026-05-01.md).
+The real router (`CBQDHNBF…`) is walked under [WASM timeline](#wasm-timeline);
+nothing is outstanding.
 
 ## Per-hash review findings
 

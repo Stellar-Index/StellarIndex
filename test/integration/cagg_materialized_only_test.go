@@ -94,7 +94,44 @@ func TestCAGGMaterializedOnlyPinned(t *testing.T) {
 		t.Errorf("real-time CAGGs = %v, want exactly %v", realtime, wantRealtimeCAGGs)
 	}
 
+	assertZeroLegOnlyCountsInPrices(t, ctx, db)
 	assertClosedBucketReadiness(t, ctx, dsn, db)
+}
+
+// assertZeroLegOnlyCountsInPrices inserts a zero-quote fill through the
+// migrated schema (no CHECK left to reject it) beside a real one: until a
+// refresh neither reaches materialized-only prices_1m, and after it the
+// zero-leg row adds to trade_count but never to a price.
+func assertZeroLegOnlyCountsInPrices(t *testing.T, ctx context.Context, db *sql.DB) {
+	t.Helper()
+	t0 := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Minute)
+	p := ohlcDustPair{base: "MOZL-" + priceableIssuer, quote: "native"}
+	seed(t, db, ctx, p, []seedTrade{
+		{off: 5 * time.Second, base: "10000000", quote: "50000000", usd: "1000"},
+		{off: 50 * time.Second, base: "5000000000", quote: "0", usd: "1000"},
+	}, t0)
+
+	var n int
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM prices_1m WHERE base_asset = $1 AND quote_asset = $2`,
+		p.base, p.quote).Scan(&n); err != nil {
+		t.Fatalf("count prices_1m before refresh: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("prices_1m holds %d row(s) for an unrefreshed bucket; materialized_only is not in effect", n)
+	}
+	if _, err := db.ExecContext(ctx,
+		`CALL refresh_continuous_aggregate('prices_1m', $1::timestamptz, $2::timestamptz)`,
+		t0.Add(-time.Hour), t0.Add(time.Hour)); err != nil {
+		t.Fatalf("refresh prices_1m over a zero-leg row: %v", err)
+	}
+	got := readPriceableRow(t, ctx, db, "1m", p, t0)
+	assertNumeric(t, "vwap", got.vwap, "5")
+	assertNumeric(t, "last_price", got.last, "5")
+	assertNumeric(t, "low_price", got.low, "5")
+	if got.tradeCount != 2 {
+		t.Errorf("trade_count = %d, want 2 — the zero-leg row counts as a trade", got.tradeCount)
+	}
 }
 
 // assertClosedBucketReadiness drives the runtime chokepoint against the

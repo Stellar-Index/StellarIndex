@@ -1075,6 +1075,44 @@ groups:
             the role), 1 = configured but failing —
             `journalctl -u ch-lake-backup.service -n 100`.
 
+      # The unit also exits non-zero on a failed verdict, so stellarindex_systemd_unit_failed
+      # tickets beside _failed; that catch-all also covers a run that crashed before its textfile.
+      - alert: stellarindex_lake_verify_stale
+        expr: |
+          (time() - stellarindex_lake_verify_last_run_unix) > 172800
+          or
+          (
+            stellarindex_ch_schema_snapshot_last_success_unix
+            unless on (instance)
+            max_over_time(stellarindex_lake_verify_last_run_unix[2d])
+          )
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/lake-verify.md
+          summary: "verify-lake has not completed a run on {{ $labels.instance }} in 2 days"
+          description: |
+            Timer not running, or every run crashed before its verdict —
+            `systemctl status verify-lake.timer verify-lake.service`,
+            `journalctl -u verify-lake --since -50h`.
+
+      - alert: stellarindex_lake_verify_failed
+        expr: max by (instance, check) (stellarindex_lake_verify_failures) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/lake-verify.md
+          summary: "verify-lake found {{ $value }} {{ $labels.check }} failure(s) on {{ $labels.instance }}"
+          description: |
+            Per-check triage is in the runbook; `journalctl -u verify-lake -n 300`
+            holds the gap / deficiency / SHORT lines of the last run.
+
       # off-site-backup-plan.md §1 (NS03) — same inert-mechanism-first
       # shape as ch_lake_backup_stale above: the `configured` gauge is
       # emitted on every run (0 or 1), so it anchors "never had a verified
