@@ -2,6 +2,7 @@ package ledgerstream_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -100,6 +101,85 @@ func TestStream_TolerateTrailingMissing_MidRangeStillErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "is missing") {
 		t.Errorf("err = %v; expected to contain SDK 'is missing' message", err)
+	}
+}
+
+// A chunked walker passes a chunk boundary as To, so a hole just below it
+// sits inside the To-relative window; later ledgers on disk prove it is not the tip.
+func TestStream_TolerateTrailingMissing_ChunkedWalkRefusesHoleBelowTip(t *testing.T) {
+	tmp := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cfg, store := tolerateTrailingEdgeStore(t, tmp)
+	t.Cleanup(func() { _ = store.Close() })
+	if _, _, err := datastore.PublishConfig(ctx, store, cfg); err != nil {
+		t.Fatalf("publish config: %v", err)
+	}
+	// Ledger 8 is a hole; the store holds 5..7 and 9..40.
+	for seq := uint32(5); seq <= 40; seq++ {
+		if seq != 8 {
+			writeLedgerFixture(t, ctx, store, cfg.Schema, seq)
+		}
+	}
+
+	lsCfg := ledgerstream.Config{
+		DataStore:               cfg,
+		TolerateTrailingMissing: true,
+		TrailingMissingWindow:   16,
+	}
+	err := ledgerstream.Stream(ctx, lsCfg, 5, 10, func(_ xdr.LedgerCloseMeta) error { return nil })
+	if err == nil {
+		t.Fatal("Stream over chunk [5,10] with ledger 8 missing and the store at 40 returned nil — " +
+			"a mid-archive hole was tolerated as a trailing edge")
+	}
+	for _, want := range []string{"is missing", "below the datastore tip 40"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v; want it to contain %q", err, want)
+		}
+	}
+
+	// The same chunk at the real tip is still tolerated.
+	if err := ledgerstream.Stream(ctx, lsCfg, 38, 45, func(_ xdr.LedgerCloseMeta) error { return nil }); err != nil {
+		t.Errorf("Stream [38,45] past the store tip 40: err = %v, want nil (trailing edge)", err)
+	}
+}
+
+// A hole in both tiers must surface as ErrBothTiersMissing through the SDK's wrap.
+func TestStream_TieredHoleBelowTipIsErrBothTiersMissing(t *testing.T) {
+	hotDir, coldDir := t.TempDir(), t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	hotCfg, hot := tolerateTrailingEdgeStore(t, hotDir)
+	t.Cleanup(func() { _ = hot.Close() })
+	coldCfg, cold := tolerateTrailingEdgeStore(t, coldDir)
+	t.Cleanup(func() { _ = cold.Close() })
+	for _, p := range []struct {
+		store datastore.DataStore
+		cfg   datastore.DataStoreConfig
+	}{{hot, hotCfg}, {cold, coldCfg}} {
+		if _, _, err := datastore.PublishConfig(ctx, p.store, p.cfg); err != nil {
+			t.Fatalf("publish config: %v", err)
+		}
+	}
+	for seq := uint32(5); seq <= 40; seq++ {
+		if seq != 8 {
+			writeLedgerFixture(t, ctx, hot, hotCfg.Schema, seq)
+		}
+	}
+	// LoadSchema infers the file extension from an existing object, so cold needs one.
+	writeLedgerFixture(t, ctx, cold, coldCfg.Schema, 7)
+
+	lsCfg := ledgerstream.Config{
+		DataStore:               hotCfg,
+		ColdDataStore:           coldCfg,
+		TolerateTrailingMissing: true,
+		TrailingMissingWindow:   16,
+	}
+	err := ledgerstream.Stream(ctx, lsCfg, 5, 10, func(_ xdr.LedgerCloseMeta) error { return nil })
+	if !errors.Is(err, ledgerstream.ErrBothTiersMissing) {
+		t.Fatalf("Stream over a hole missing from both tiers: err = %v, want errors.Is ErrBothTiersMissing", err)
 	}
 }
 

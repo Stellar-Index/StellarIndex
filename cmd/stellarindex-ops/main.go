@@ -501,11 +501,9 @@ Subcommands:
                             all        run all four.
                           -fail-on-missed: per ADR-0017 X1.7, treat
                                        checkpointsMissed > 0 as a hard
-                                       failure. Default off for the
-                                       pre-bootstrap workflow; flip on
-                                       after archive-completeness has
-                                       been run and the cross-anchor
-                                       archive is provably complete.
+                                       failure. Default on; pass
+                                       -fail-on-missed=false to tolerate
+                                       scattered in-coverage misses.
                           -textfile-output: write the per-reason mismatch
                                        counter into node_exporter's
                                        textfile_collector dir (cumulative

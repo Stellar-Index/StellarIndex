@@ -70,11 +70,11 @@ check "/v1/account/me sends no-store" "no-store" "$(echo "$H" | grep -i cache-co
 edge=$(echo "$H" | grep -iE "cf-cache-status|x-cache" | head -1 || echo "")
 if [ -z "$edge" ] || [[ "$edge" == *"BYPASS"* ]] || [[ "$edge" == *"DYNAMIC"* ]]; then
     green "  ✓ Edge bypasses /v1/account/* (or no edge in front)"
-    ((PASS++))
+    PASS=$((PASS + 1))
 else
     red "  ✗ Edge appears to cache /v1/account/* — fix Page Rule"
     red "    saw: $edge"
-    ((FAIL++))
+    FAIL=$((FAIL + 1))
 fi
 echo
 

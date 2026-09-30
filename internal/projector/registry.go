@@ -326,8 +326,9 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 			return Source{}, false, missingConfigErr(name)
 		}
 		return Source{
-			Name:        reflector.SourceDEX,
-			Decoder:     reflector.NewDecoder(reflector.VariantDEX, oracle.Reflector.DEXContract),
+			Name: reflector.SourceDEX,
+			Decoder: reflector.NewDecoder(reflector.VariantDEX, oracle.Reflector.DEXContract,
+				reflector.WithDecoderDecimals(oracle.Reflector.DEXDecimals)),
 			ContractIDs: []string{oracle.Reflector.DEXContract},
 		}, true, nil
 	case reflector.SourceCEX:
@@ -335,8 +336,9 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 			return Source{}, false, missingConfigErr(name)
 		}
 		return Source{
-			Name:        reflector.SourceCEX,
-			Decoder:     reflector.NewDecoder(reflector.VariantCEX, oracle.Reflector.CEXContract),
+			Name: reflector.SourceCEX,
+			Decoder: reflector.NewDecoder(reflector.VariantCEX, oracle.Reflector.CEXContract,
+				reflector.WithDecoderDecimals(oracle.Reflector.CEXDecimals)),
 			ContractIDs: []string{oracle.Reflector.CEXContract},
 		}, true, nil
 	case reflector.SourceFX:
@@ -344,8 +346,9 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 			return Source{}, false, missingConfigErr(name)
 		}
 		return Source{
-			Name:        reflector.SourceFX,
-			Decoder:     reflector.NewDecoder(reflector.VariantFX, oracle.Reflector.FXContract),
+			Name: reflector.SourceFX,
+			Decoder: reflector.NewDecoder(reflector.VariantFX, oracle.Reflector.FXContract,
+				reflector.WithDecoderDecimals(oracle.Reflector.FXDecimals)),
 			ContractIDs: []string{oracle.Reflector.FXContract},
 		}, true, nil
 	case redstone.SourceName:

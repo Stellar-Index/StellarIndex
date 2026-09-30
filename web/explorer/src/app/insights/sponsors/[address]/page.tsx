@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 
 import { NetworkUnavailable } from '@/components/NetworkUnavailable';
 import { routeAvailable } from '@/lib/network-routes';
+import { shellMetadata } from '@/lib/seo';
 import { Container } from '@/components/ui';
 
 import { SponsorDetailPathView } from './SponsorDetailPathView';
@@ -37,12 +38,10 @@ export function generateStaticParams() {
   return [{ address: 'shell' }];
 }
 
-export const metadata: Metadata = {
-  title: 'Sponsor detail — accounts sponsored over time',
-  description:
-    'Every account this address has sponsored, the monthly history of its sponsorship activity, its standing on the sponsor board, and the assets it holds.',
-  robots: { index: false, follow: true },
-};
+export const metadata: Metadata = shellMetadata(
+  'Sponsor detail — accounts sponsored over time',
+  'Every account this address has sponsored, the monthly history of its sponsorship activity, its standing on the sponsor board, and the assets it holds.',
+);
 
 export default function SponsorDetailPage() {
   // Inherits the /insights hub's `pricing` capability by longest-prefix
