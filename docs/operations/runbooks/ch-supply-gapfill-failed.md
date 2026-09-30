@@ -48,7 +48,7 @@ Classify the failure:
 
 - [ ] If ClickHouse pressure (Phase-0 window): re-run off-peak — `systemctl start ch-supply.service`; the memory-guard (`CHSUPPLY_MEMGUARD`) throttles it. It is idempotent (ReplacingMergeTree key), so a re-run is safe.
 - [ ] If tip-unresolved: confirm the indexer is advancing (`ledgerstream` cursor in `ingestion_cursors`); fix upstream, then re-run.
-- [ ] **Verification:** a clean run flips `node_systemd_unit_state{...,state="failed"}` to 0; the alert clears within ~1 min of the next scrape. Confirm `SELECT max(ledger_seq) FROM stellar.supply_flows` advanced toward tip.
+- [ ] **Verification:** a clean run flips `node_systemd_unit_state{...,state="failed"}` to 0; the alert clears within ~1 min of the next scrape. Confirm the `supply_flows` watermark advanced toward tip: `ssh root@r1 'clickhouse-client --port 9300 -q "SELECT max(ledger_seq) FROM stellar.supply_flows"'`.
 
 ## Known false-positive patterns
 

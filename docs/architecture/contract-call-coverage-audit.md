@@ -123,7 +123,7 @@ For dispatcher purposes, **diagnostic events are the right source**. They reflec
 
 ### ADR
 
-Needed: this widens the dispatcher contract. ContractCallDecoder.Matches() will be called for every call in the tree, not just top-level. Need to document the semantics and the dedup expectation (decoders should be idempotent in `Decode()` since the same (contract, function) signature might match nested context).
+Recorded as [ADR-0052](../adr/0052-contract-call-tree-routing.md). It documents that `ContractCallDecoder.Matches()` runs on every call in the auth tree, not only the top-level call, and how decoders must deduplicate. The shipped walk routes over the auth tree rather than the diagnostic-event trace planned above, and rows are keyed on call content plus `AuthOccurrence`, not on `CallPath`.
 
 ### Backfill replay
 
