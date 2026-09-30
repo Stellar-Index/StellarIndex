@@ -367,3 +367,36 @@ tests:
       - eval_time: 10m
         alertname: stellarindex_alertmanager_notifications_failing
         exp_alerts: []
+
+  # ── stellarindex_alertmanager_optional_receiver_dark ────────────────
+  - interval: 1m
+    name: an optional receiver installed dark fires after 1h, a wired one stays silent
+    input_series:
+      - series: 'stellarindex_alertmanager_optional_receiver_dark{job="node_exporter",instance="r1:9100",receiver="delivery-failure"}'
+        values: '1x90'
+      - series: 'stellarindex_alertmanager_optional_receiver_dark{job="node_exporter",instance="r1:9100",receiver="informational"}'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_alertmanager_optional_receiver_dark
+        exp_alerts: []
+      - eval_time: 70m
+        alertname: stellarindex_alertmanager_optional_receiver_dark
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              receiver: delivery-failure
+              severity: ticket
+              team: stellarindex
+              component: meta
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/alertmanager-notifications-failing.md
+              summary: "Alertmanager optional receiver delivery-failure delivers to nobody"
+              description: |
+                configs/alertmanager/apply.sh last installed receiver
+                delivery-failure with no URL, so its *_configs block was
+                dropped and whatever it routes is accepted and discarded.
+                For delivery-failure that means a refused chat delivery has no
+                out-of-band alarm. Set its URL in
+                /etc/default/alertmanager-secrets and re-run apply.sh.

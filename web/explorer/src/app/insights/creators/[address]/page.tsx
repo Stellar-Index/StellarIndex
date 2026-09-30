@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 
 import { NetworkUnavailable } from '@/components/NetworkUnavailable';
 import { routeAvailable } from '@/lib/network-routes';
+import { shellMetadata } from '@/lib/seo';
 import { Container } from '@/components/ui';
 
 import { CreatorDetailPathView } from './CreatorDetailPathView';
@@ -34,12 +35,10 @@ export function generateStaticParams() {
   return [{ address: 'shell' }];
 }
 
-export const metadata: Metadata = {
-  title: 'Creator detail — accounts created over time',
-  description:
-    'Every account this address has created, the monthly history of its funding activity, its standing on the creator board, and the assets it holds.',
-  robots: { index: false, follow: true },
-};
+export const metadata: Metadata = shellMetadata(
+  'Creator detail — accounts created over time',
+  'Every account this address has created, the monthly history of its funding activity, its standing on the creator board, and the assets it holds.',
+);
 
 export default function CreatorDetailPage() {
   // Inherits the /insights hub's `pricing` capability by longest-prefix

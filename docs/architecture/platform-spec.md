@@ -1,7 +1,7 @@
 ---
 title: Platform spec — customer + staff dashboards, billing, full lifecycle
 last_verified: 2026-07-26
-status: design proposal — §7.2 admin endpoints split into SHIPPED vs proposed; §1.5, §2.1, §2.2, §3.1, §7 and §8.3 marked NOT BUILT against code 2026-09-02 (#363), §8.3 added 2026-09-22 (T297) and rewritten as BUILT 2026-09-28 (#809). Sections without a re-verification note were NOT re-verified
+status: design proposal — §7.2 admin endpoints split into SHIPPED vs proposed; §1.5, §2.1, §2.2, §3.1, §7 and §8.3 marked NOT BUILT against code 2026-09-02 (#363), §8.3 added 2026-09-22 (T297) and rewritten as BUILT 2026-09-28 (#809); §11 open questions each marked decided/deferred/moot 2026-09-30. Sections without a re-verification note were NOT re-verified
 ---
 
 # Platform spec — customer + staff dashboards, billing, full lifecycle
@@ -926,36 +926,65 @@ key is leaked" in under 5 minutes.
 
 ---
 
-## 11. Open questions
+## 11. Open questions — **all five resolved or deferred (reconciled against code 2026-09-30)**
 
-These need design-decision pass before implementation, not
-before this spec ships:
+None of these blocks v1. Each carries its state; the original
+question text is kept below the state line.
 
 1. **Single-org vs multi-org users.** v1 = one account per user.
    v2 = a user can be member of N accounts. Affects every
    permission check. Decision: v1 single, design v2 migration
    path now (account_id + role moves to a `memberships` table).
+   - **State: decided (v1 single); v2 path kept as a note.**
+     `users.account_id` is NOT NULL and there is no `memberships`
+     table; the migration path is recorded at
+     `migrations/0027_platform_v1_schema.up.sql:78`,
+     `internal/platform/user.go:23` and `internal/platform/account.go:250`.
 
 2. **Key-format compatibility.** Existing `sip_…` keys stay
    valid forever. New format extensions (e.g. environment
    prefix `sip_live_…` / `sip_test_…`) apply only to newly-minted
    keys.
+   - **State: decided (`sip_` only); prefix variants deferred post-v1.**
+     All three mint paths emit `sip_` + hex
+     (`internal/auth/store.go:298`, `internal/api/v1/register.go:226`,
+     `internal/api/v1/dashboardkeys/handlers.go:792`). The
+     compatibility rule above binds any future variant.
 
 3. **Free-tier abuse vector.** Current anonymous tier is
    IP-bucket 60 r/min. If we open self-service signup at 1k r/min
    per key, attackers can register 1000 emails. Mitigations:
    email verification gate before key issuance, no key issuance
    without payment method on file for >Starter.
+   - **State: decided by [ADR-0049](../adr/0049-anonymous-access-and-passkey-auth.md),
+     with different mitigations.** Neither listed mitigation applies:
+     `/v1/register` is open and its email is contact-only, never
+     verified (`internal/api/v1/register.go:47`), and there is no
+     payment surface. The bound is the JSON Content-Type gate, the
+     signup IP throttle, the free-tier `MonthlyQuota` and the
+     `signupreaper`. Ratifying that risk envelope rides with ADR-0049
+     (status: Proposed).
 
 4. **Multi-region session pinning.** v1 sticky to R1; v2 (R2/R3)
    needs Redis-replicated sessions or JWT sessions. Probably JWT
    when we cross that bridge — opaque sessions don't multi-region
    without a global Redis.
+   - **State: deferred to [ADR-0050](../adr/0050-multi-region-ha-architecture.md)'s
+     control-plane replication workstream.** Sessions stay opaque
+     server-side tokens (§1.2). ADR-0050 (Accepted) gives
+     control-plane state (accounts, keys, sessions, passkeys) real
+     cross-region replication; until it lands only anonymous traffic
+     fails over. JWT sessions were not chosen.
 
 5. **Usage event sampling.** At sustained 100k req/s, even Redis
    stream → worker → Timescale has cost. v1 = full fidelity;
    when volume warrants, head-sample 1:N for the high-volume
    anonymous tier.
+   - **State: moot for v1.** There is no per-request event stream
+     (§3.1 is dead schema). `internal/usage` bumps per-subject and
+     per-`endpoint×outcome` Redis counters rolled up every 5 minutes,
+     so cost scales with counters, not requests, and there is nothing
+     to sample. Revisit only if §3.1 event ingestion is built.
 
 ---
 

@@ -60,26 +60,7 @@ func (c *poolTokensCache) PoolTokens(ctx context.Context, source string) (map[st
 	}
 
 	//nolint:contextcheck // the fill is shared by every waiter, so no single caller's cancellation may abort it
-	ch := c.flight.DoChan(source, func() (val any, err error) {
-		// singleflight re-raises a panic on a fresh goroutine nothing can
-		// recover, so it must be turned into an error here.
-		defer func() {
-			if rec := recover(); rec != nil {
-				worker.Report(nil, "api-pool-tokens-fill", rec)
-				val, err = nil, errPoolTokensFillPanicked
-			}
-		}()
-		fillCtx, cancel := context.WithTimeout(context.Background(), poolTokensFillTimeout)
-		defer cancel()
-		m, err := c.upstream.PoolTokens(fillCtx, source)
-		if err != nil {
-			return nil, err
-		}
-		c.mu.Lock()
-		c.entries[source] = poolTokensEntry{tokens: m, at: c.now()}
-		c.mu.Unlock()
-		return m, nil
-	})
+	ch := c.flight.DoChan(source, func() (any, error) { return c.fill(source) })
 
 	select {
 	case res := <-ch:
@@ -97,4 +78,34 @@ func (c *poolTokensCache) PoolTokens(ctx context.Context, source string) (map[st
 		}
 		return nil, ctx.Err()
 	}
+}
+
+// fill runs one detached upstream read for source. It re-checks the entry
+// first: a caller that missed just before another flight stored it would
+// otherwise start a second flight once that one has left the group.
+func (c *poolTokensCache) fill(source string) (val any, err error) {
+	c.mu.Lock()
+	cur, have := c.entries[source]
+	c.mu.Unlock()
+	if have && c.now().Sub(cur.at) < poolTokensTTL {
+		return cur.tokens, nil
+	}
+	// singleflight re-raises a panic on a fresh goroutine nothing can
+	// recover, so it must be turned into an error here.
+	defer func() {
+		if rec := recover(); rec != nil {
+			worker.Report(nil, "api-pool-tokens-fill", rec)
+			val, err = nil, errPoolTokensFillPanicked
+		}
+	}()
+	fillCtx, cancel := context.WithTimeout(context.Background(), poolTokensFillTimeout)
+	defer cancel()
+	m, err := c.upstream.PoolTokens(fillCtx, source)
+	if err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	c.entries[source] = poolTokensEntry{tokens: m, at: c.now()}
+	c.mu.Unlock()
+	return m, nil
 }

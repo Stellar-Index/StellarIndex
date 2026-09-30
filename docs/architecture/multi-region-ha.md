@@ -137,7 +137,7 @@ all stand as the design for when it resumes.
 | Pricing SLO today | p95 **68 ms** / p99 **98 ms** (k6) — ~3–5× under budget | slos-and-guarantees.md |
 | CH on `/readyz` | **non-critical** — CH down ⇒ `degraded` (200), pricing serves, ~21 lake routes 503 | `clickhouseChecker.Critical()=false` |
 | Explorer | separate Next.js app, **migrating to edge SSR** (ADR-0044, accepted) | `web/explorer/` |
-| Off-site backup | **none** — pgBackRest 920 GiB on the *same* ZFS pool; no CH data backup | `pgbackrest.conf`, ADR-0043 |
+| Off-site backup | **none** at measurement — pgBackRest 920 GiB on the *same* ZFS pool; no CH data backup. Postgres `repo2` has since shipped; current state in §7 | `pgbackrest.conf`, ADR-0043 |
 | Pool headroom | 13.2 TiB used / 5.16 TiB free (~72%) | `zfs list` |
 
 ## 2. The model decision — Model B (independent per-region ingest)
@@ -222,10 +222,10 @@ wanted.
 
 ## 5. Data durability & recovery — the raw archive is the crown jewel
 
-- **Source of truth = the 2.49 TiB raw galexie-archive** (genesis→tip). The 14.6 TiB
-  ClickHouse lake and the pricing DB are **derived projections** — reproducible from
-  the archive by re-ingest. This is exactly why ADR-0043 rejects backing up the
-  derived lake.
+- **Source of truth = the raw galexie-archive** (≈ 3.1 TB / 2.8 TiB on R1 today; ~5 TiB
+  genesis→tip once the middle-range pull below lands). The 14.6 TiB ClickHouse lake and
+  the pricing DB are **derived projections** — re-derivable from the archive by
+  re-ingest. ADR-0043 §2.4 still backs the lake up, for RTO rather than durability.
 - **⚠️ CORRECTED (2026-08-21 gap-scan): our local archive is NOT full-history.** R1's
   MinIO holds the genesis chunk + `[49984000, tip]` (~14M ledgers); the middle
   `[64000, 49983999]` (~50M ledgers, ~2.3 TiB) was deliberately capacity-trimmed and is
@@ -234,25 +234,26 @@ wanted.
   built **including a one-time pull of that middle range**, deep-history recovery DOES
   depend on AWS's Open Data program — the exact exposure this section exists to close.
 - **The gap:** our archive sits on R1's single ZFS pool (SPOF). **Fix: replicate it
-  off-site to provider-independent storage (Cloudflare R2 / Backblaze B2)** — ~$500–900/yr
-  because it's the 2.49 TiB *input*, not the 14.6 TiB output. This makes us independent
+  off-site to provider-independent storage (Backblaze B2, decided 2026-09-27)** — cheap
+  because it's the ≈ 3.1 TB *input*, not the 14.6 TiB (≈ 16.1 TB) output. This makes us independent
   of both AWS's Open Data program and R1's survival.
 - **Two off-site artifacts, two RTOs** — this reconciles ADR-0043 (which rejected a full
   CH backup as the *primary* strategy) with `off-site-backup-plan.md` (which correctly
   argued the re-derive RTO is too slow for a production API):
-  1. **Raw galexie-archive, FULL genesis→tip (~5 TiB, Cloudflare R2)** — the ultimate,
+  1. **Raw galexie-archive, FULL genesis→tip (~5 TiB, Backblaze B2)** — the ultimate,
      provider-independent source of truth. Built from R1's local archive (genesis chunk +
-     [49984000, tip], ~2.49 TiB) **plus a one-time pull of the capacity-trimmed middle
+     [49984000, tip], ≈ 2.8 TiB) **plus a one-time pull of the capacity-trimmed middle
      [64000, 49983999] (~2.3 TiB) from `aws-public-blockchain`**, integrity-checkable
      against SDF checkpoints. Until that pull lands, we are NOT AWS-independent for deep
      history (gap-scan 2026-08-21). Re-ingest from it (~1–2 week walk) is the
      **last-resort** recovery and the region-bootstrap path.
-  2. **Derived cold-lake copy (~11.6 TiB, Cloudflare R2)** — *the same copy that backs the
-     §3b serving fallback*. It doubles as a **fast-RTO restore source**: restoring CH parts
-     is hours, not the weeks a full re-ingest takes. We keep it justified primarily by the
-     serving-fallback need; it satisfies the RTO argument as a bonus. (This is more than
-     ADR-0043's raw-archive-only posture, and it closes `off-site-backup-plan.md`'s P1
-     concern.)
+  2. **Derived lake backup (14.6 TiB ≈ 16.1 TB, Hetzner Storage Box BX41, decided
+     2026-09-27)** — the ADR-0043 §2.4 `ch-lake-backup` chain, a **fast-RTO restore
+     source**: restoring CH parts is hours, not the weeks a full re-ingest takes. A Storage
+     Box is not queryable object storage, so this copy does **not** double as the §3b
+     serving fallback; that needs its own S3-compatible copy when multi-region resumes.
+     Wiring constraints (no S3 API, 20 TB vs a rolling full) and the full sizing are in
+     [`off-site-backup-plan.md`](../operations/off-site-backup-plan.md#provider).
 - **Prerequisite verification:** run a completeness/gap scan on the archive
   (genesis→tip, no missing ledger ranges) before trusting it as the sole rebuild source.
 
@@ -278,13 +279,15 @@ wanted.
 
 ## 7. Prerequisite workstreams (nothing multi-region lands before these)
 
-1. **Off-site raw-archive DR** (§5) — the crown-jewel copy on Cloudflare R2. Also the
+1. **Off-site raw-archive DR** (§5) — the crown-jewel copy on Backblaze B2. Also the
    region-bootstrap source. Fold into ADR-0043's offsite-repo2 work.
    **Partly shipped (2026-08-29):** the *Postgres* half is done — pgBackRest `repo2` is an
    encrypted off-site S3 repo, backed up nightly per repo and alerted on staleness
    (`deploy/monitoring/rules/backup-offsite.yml` → `stellarindex_backup_offsite_stale`;
    the repo2 gate is `configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:132`).
-   The *raw-archive / lake* half is still open — ClickHouse has no data backup.
+   The *raw-archive / lake* half is still open: `galexie-archive-mirror` (→ B2) and
+   `ch-lake-backup` (→ BX41) are committed but back nothing up until their targets exist,
+   so ClickHouse still has no data backup.
 2. **Determinism hardening** (audit §13-A) — make the served answer actually
    byte-identical where it isn't:
    - OHLC `open`/`close` — **SHIPPED**: `migrations/0147_ohlc_deterministic_tiebreak.up.sql`
@@ -347,7 +350,7 @@ promise, so a future change can't silently route pricing over a WAN.
 | R1 (Hetzner, existing) | primary + lake authority | ~$5,000 |
 | R2 (Vultr-US bare metal) | pricing + explorer proxy (bigger NVMe if local hot lake) | ~$4,200 (–$7,000) |
 | R3 (Vultr-SG bare metal) | pricing + thin lake proxy | ~$4,500 |
-| Off-site raw-archive DR | ~2.49 TiB on Cloudflare R2 (free egress) | ~$700 |
+| Off-site backups | archive + repo2 ≈ 3.6 TB on B2; lake ≈ 16.1 TB on a BX41 (flat rate) | B2 ≈ $300 + BX41 |
 | **Fleet total (single box per region)** | | **~$15,000–18,000** |
 
 Anchors verified 2026-08-21: r7i.4xlarge $1.0584/hr (the AWS option we rejected for R2);

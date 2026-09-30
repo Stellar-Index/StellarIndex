@@ -583,7 +583,7 @@ function TokenPicker({
           return {
             key: c.asset_id ?? c.slug,
             symbol: c.code ?? coinSlug(c),
-            name: c.issuer ? undefined : undefined,
+            name: c.name,
             image: c.image,
             usdPrice: price != null && price > 0 ? price : null,
             kind: 'crypto',
