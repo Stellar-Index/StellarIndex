@@ -97,6 +97,8 @@ type Flags struct {
 	// chain. Mirrors the server's envelope flag; omitempty hides it
 	// when false.
 	Rerouted bool `json:"rerouted,omitempty"`
+	// PivotUnverified: a composite leg was all stablecoin prints at par, so a de-peg in it went unchecked.
+	PivotUnverified bool `json:"pivot_unverified,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
 	// requested asset's code matches a verified currency's Stellar
 	// ticker but its issuer doesn't match the verified entry — i.e.

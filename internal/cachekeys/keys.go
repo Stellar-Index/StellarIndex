@@ -278,7 +278,7 @@ func VWAPCompositeMeta(base, quote canonical.Asset, window time.Duration) VWAPCo
 }
 
 // CompositeMeta is the read-side view of the JSON blob the aggregator
-// writes to a [VWAPCompositeMeta] key. It models only the two
+// writes to a [VWAPCompositeMeta] key. It models only the
 // consumer-facing quality signals the /v1/price handler surfaces —
 // path_count / combined_confidence / low_confidence are written by the
 // aggregator but not read on this path, so they are intentionally
@@ -292,6 +292,9 @@ type CompositeMeta struct {
 	// Rerouted is true when the composite substituted around a dry
 	// configured chain leg (R3 leg-substitution).
 	Rerouted bool `json:"rerouted"`
+	// PivotUnverified is true when a priced leg was all stablecoin-proxy
+	// prints, so its par-to-USD assumption went unchecked.
+	PivotUnverified bool `json:"pivot_unverified"`
 }
 
 // DecodeCompositeMeta parses the JSON blob stored under a
