@@ -29,7 +29,7 @@ enforces it); any per-alert detail page follows it.
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 66 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 233 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 234 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -479,6 +479,7 @@ coingecko rot 11 days and sep1 metadata never populate, both unnoticed.
 | `stellarindex_twap_history_missing` | `stellarindex_twap_history_missing{view}` | == 1 for > 2h — a TWAP CAGG recreated WITH NO DATA (0081/0115/0126) whose manual `refresh_continuous_aggregate` follow-up was never run; the refresh policy re-fills only a recent sliver so newest-bar freshness reads green while back-history serves empty. Not visible to the ADR-0033 verdict (twap_* are derived CAGGs, not reconcile targets) | ticket | [twap-history-missing](runbooks/twap-history-missing.md) |
 | `stellarindex_data_freshness_watchdog_silent` | `absent_over_time(stellarindex_data_freshness_stale[45m])` | for > 15m | ticket | [data-freshness-watchdog-silent](runbooks/data-freshness-watchdog-silent.md) |
 | `stellarindex_data_freshness_probe_frozen` | `time() - node_textfile_mtime_seconds{file="data_freshness.prom"}` | > 2700 s (45 min) for > 15m — series present but frozen, the case watchdog_silent's absent_over_time cannot see | ticket | [data-freshness-watchdog-silent](runbooks/data-freshness-watchdog-silent.md) |
+| `stellarindex_sep41_supply_freshness_absent` | `group by (instance) (stellarindex_data_freshness_stale) unless on (instance) stellarindex_data_freshness_stale{domain="sep41_supply"}` | for > 1h — the file is publishing but the ClickHouse-probed sep41_supply pair is missing, the per-series case watchdog_silent's family-wide absent_over_time cannot see | ticket | [data-freshness-watchdog-silent](runbooks/data-freshness-watchdog-silent.md) |
 | `stellarindex_serving_insert_frozen` | `time() - max(stellarindex_source_last_insert_unix)` | > 1800 s (no insert from ANY source) for 10 min | ticket | [data-source-stale](runbooks/data-source-stale.md) |
 | `stellarindex_serving_insert_absent` | `absent(stellarindex_source_last_insert_unix)` | series missing for 15 min | ticket | [data-source-stale](runbooks/data-source-stale.md) |
 
