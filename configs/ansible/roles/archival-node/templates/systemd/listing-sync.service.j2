@@ -21,9 +21,11 @@
 # its own. The host follows the key: a Pro key authenticates ONLY against
 # pro-api.coingecko.com and the public host rejects it, so the command
 # selects the matching host rather than making an operator know they move
-# together. With no key set the run still works against the public host,
-# unauthenticated and rate-limited; the mode is printed on the first line
-# of every run (auth_mode=pro|demo|none).
+# together. With no key set the run targets the public host
+# unauthenticated, which answers 403 from a datacenter address, so a
+# deployed host needs a key; the mode is printed on the first line of
+# every run (auth_mode=pro|demo|none). Installed on pubnet only
+# (listing_sync_enabled).
 
 [Unit]
 Description=Stellar Index — independent listing-directory sync (hourly)

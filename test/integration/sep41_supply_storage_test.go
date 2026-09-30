@@ -55,9 +55,9 @@ func (a sep41StoreAdapter) SEP41GenesisBaselineSeeded(ctx context.Context, contr
 // Per ADR-0023 + ADR-0011 Algorithm 3, the running net mint
 // (mint - burn - clawback) IS the SEP-41 total supply; if the
 // SQL CASE-WHEN sign-flip or DISTINCT ON / FILTER aggregations
-// regress, total supply silently goes wrong. The unit tests
-// (#309) cover defensive guards but can't validate the SQL —
-// this test does.
+// regress, total supply silently goes wrong. The decoder unit
+// tests cover defensive guards but can't validate the SQL — this
+// test does.
 func TestSEP41SupplyEventsRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

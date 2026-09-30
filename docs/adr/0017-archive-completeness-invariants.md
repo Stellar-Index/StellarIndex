@@ -69,6 +69,9 @@ superseded_by: null
 > recorded in CHANGELOG ("flipping the code default is a separate
 > decision, deliberately not taken here") is respected, not superseded;
 > this amendment changes the units, not the default.
+> The code default has since been flipped to `true`, so a manual run
+> that omits the flag fails on an in-coverage miss too;
+> `-fail-on-missed=false` is the explicit opt-out.
 >
 > **What a failure costs, stated rather than assumed:** the run returns
 > before the state write, so the checkpoint tier's high-water FREEZES

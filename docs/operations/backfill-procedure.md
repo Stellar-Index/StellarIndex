@@ -403,8 +403,10 @@ wall-clock on a single R1 box at `-parallel 4`.
    in scope. Confirm no gaps:
 
    ```sh
-   stellarindex-ops verify-archive \
-     -from <year-ago> -to <today> \
+   # -from / -to are ledger sequences, not dates: step 1's ledger
+   # and the current network tip.
+   stellarindex-ops verify-archive -config /etc/stellarindex.toml \
+     -from <year-ago-ledger> -to <tip-ledger> \
      -bucket galexie-archive
    ```
 

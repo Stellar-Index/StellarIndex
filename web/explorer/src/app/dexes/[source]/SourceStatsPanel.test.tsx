@@ -19,7 +19,47 @@ vi.mock('@/api/client', async () => {
 
 import { apiGet } from '@/api/client';
 
+function renderPanel() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <SourceStatsPanel source="soroswap" />
+    </QueryClientProvider>,
+  );
+}
+
 describe('SourceStatsPanel', () => {
+  it('renders an unavailable state, not zero activity, when /v1/sources fails', async () => {
+    vi.mocked(apiGet).mockRejectedValue(new Error('503'));
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        '24h activity unavailable right now.',
+      ),
+    );
+    expect(screen.queryByText('0')).not.toBeInTheDocument();
+    expect(screen.queryByText('$0')).not.toBeInTheDocument();
+  });
+
+  it('renders a genuine zero the API returned as 0, without an error', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: [
+        {
+          name: 'soroswap',
+          trade_count_24h: 0,
+          volume_24h_usd: '0',
+          markets_count_24h: 0,
+        },
+      ],
+    });
+    renderPanel();
+    await waitFor(() => expect(screen.getByText('$0')).toBeInTheDocument());
+    expect(screen.getAllByText('0')).toHaveLength(2);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('formats 24h volume with the shared formatCompact (rolls 999999 up to $1M)', async () => {
     // vitest.config.ts sets `restoreMocks: true` (vi.restoreAllMocks()
     // before every test), which wipes any mockResolvedValue set at

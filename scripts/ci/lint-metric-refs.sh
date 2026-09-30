@@ -63,7 +63,8 @@ SCRAPE_CONFIGS=(
 # Directories scanned for emitters (Go Name: fields + textfile .prom + shell).
 # configs/ansible/.../files holds the textfile-collector emitter scripts
 # (data-freshness.sh, galexie-archive-tip-lag.sh, …) that write .prom gauges.
-EMITTER_PATHS=(internal cmd scripts configs/healthchecks configs/ansible/roles/archival-node/files)
+# apply.sh is named as a file so its self-test cannot stand in for an emitter.
+EMITTER_PATHS=(internal cmd scripts configs/healthchecks configs/ansible/roles/archival-node/files configs/alertmanager/apply.sh)
 
 # ANSIBLE_TASK_PATHS holds emitters that live as INLINE `content:` blocks
 # inside task YAML rather than as checked-in .sh files — the
@@ -166,7 +167,8 @@ expr_lines() {
       sub(/#.*/, "", s)
       return s
     }
-    /^[[:space:]]*expr:[[:space:]]*\|?[[:space:]]*$/ { inexpr=1; next }
+    # A block scalar may be literal (`|`) or folded (`>`), with an optional chomping indicator.
+    /^[[:space:]]*expr:[[:space:]]*([|>][-+]?)?[[:space:]]*$/ { inexpr=1; next }
     /^[[:space:]]*expr:/ { print strip_hash(substr($0, index($0,"expr:")+5)); next }
     inexpr {
       if ($0 ~ /^[[:space:]]*(for|labels|annotations):/ || $0 ~ /^[[:space:]]*-[[:space:]]+(alert|record):/) { inexpr=0; next }
