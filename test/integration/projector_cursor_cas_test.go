@@ -135,8 +135,15 @@ func TestAdvanceCursorFrom_RewindHeldOpenWinsTheRace(t *testing.T) {
 		"projector", casSource, int64(commitTo), int64(readAt)); err != nil {
 		t.Fatalf("racer advance: %v", err)
 	}
-	rdone := make(chan error, 1)
-	go func() { rdone <- store.RewindCursor(ctx, "projector", casSource, rewindTo) }()
+	type rewound struct {
+		prior uint32
+		err   error
+	}
+	rdone := make(chan rewound, 1)
+	go func() {
+		prior, err := store.RewindCursor(ctx, "projector", casSource, rewindTo)
+		rdone <- rewound{prior, err}
+	}()
 	parked = waitForVerdictLockWait(t, ctx, racer.DB(), done2finished(rdone))
 	if !strings.Contains(parked, "UPDATE ingestion_cursors") || !strings.Contains(parked, "last_ledger > $3") {
 		t.Fatalf("rewind parked in the wrong statement — interleave not armed.\nparked in: %s", parked)
@@ -145,9 +152,14 @@ func TestAdvanceCursorFrom_RewindHeldOpenWinsTheRace(t *testing.T) {
 		t.Fatalf("racer commit 2: %v", err)
 	}
 	select {
-	case rerr := <-rdone:
-		if rerr != nil {
-			t.Fatalf("rewind behind an in-flight advance: %v", rerr)
+	case r := <-rdone:
+		if r.err != nil {
+			t.Fatalf("rewind behind an in-flight advance: %v", r.err)
+		}
+		// projector-replay widens its dirty window to this value; the
+		// snapshot's readAt would under-record the re-walked range.
+		if r.prior != commitTo {
+			t.Errorf("rewind reported prior ledger %d, want the advanced %d it actually rewound from", r.prior, commitTo)
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatalf("rewind did not return within 30s of the advance's commit")
@@ -315,7 +327,7 @@ func TestProjectorReplayRewind_SurvivesAnInFlightCycle(t *testing.T) {
 	}
 
 	// projector-replay -from rewoundLedger.
-	if err := replay.RewindCursor(ctx, "projector", casSource, rewoundLedger-1); err != nil {
+	if _, err := replay.RewindCursor(ctx, "projector", casSource, rewoundLedger-1); err != nil {
 		t.Fatalf("rewind: %v", err)
 	}
 	releaseSink() // the in-flight cycle now runs to its commit

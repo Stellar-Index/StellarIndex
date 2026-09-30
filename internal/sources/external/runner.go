@@ -69,8 +69,8 @@ const externalQuoteScale = 100_000_000
 // It stays one number anyway. A real FX table would be false
 // precision for an order-of-magnitude dust threshold and would rot —
 // and the exposure is bounded at compile time: every fiat quote leg a
-// streamer can see is hard-coded (kraken USD/EUR/GBP/AUD/CAD/CHF,
-// bitstamp + coinbase USD/EUR/GBP, binance EUR/GBP), all ≤ ~$1.35.
+// streamer can see is hard-coded (kraken + bitstamp + coinbase
+// USD/EUR/GBP, binance EUR/GBP), all ≤ ~$1.35.
 // ExternalVenueConfig exposes only `enabled` and `poll_interval`, so
 // reaching a KWD leg takes a reviewed Go/YAML edit, a rebuild and a
 // redeploy — not a config change.

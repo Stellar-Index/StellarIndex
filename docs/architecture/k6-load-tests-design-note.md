@@ -149,13 +149,13 @@ hangs on. Per-endpoint share informed by expected traffic
 
 | Endpoint | Share | Rationale |
 |---|---|---|
-| `/v1/price` (single) | 60 % | Wallet hot path |
+| `/v1/price` (single) | 61 % | Wallet hot path (absorbs the SSE share below) |
 | `/v1/price/batch` | 15 % | Wallet portfolio refresh |
 | `/v1/price/tip` | 10 % | Trading-side latency-sensitive |
 | `/v1/vwap` | 6 % | Analytics / charts |
 | `/v1/twap` | 3 % | Analytics |
 | `/v1/history` | 4 % | Charts (paged) |
-| `/v1/observations/stream` (SSE) | 1 % | Long-lived clients |
+| `/v1/observations/stream` (SSE) | — | Measured by `05-streaming`, not here: a stream never completes, so it would time out against this scenario's latency and error thresholds |
 | `/v1/oracle/lastprice` (SEP-40) | 1 % | Other oracles consuming us |
 
 These match neither *exactly* the launch traffic (we don't have

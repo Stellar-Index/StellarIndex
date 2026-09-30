@@ -14,9 +14,14 @@
 # Pass criteria:
 #   1. While Timescale is down, /v1/healthz returns 200 OR 503 (the
 #      latter is correct when readyz checks DB connectivity).
-#   2. While Timescale is down, /v1/markets returns either a 200
-#      (Redis cache hit) or 5xx — NOT 200 with empty data.
-#   3. After Timescale restart, /v1/healthz returns 200 within 60s.
+#   2. While Timescale is down, a /v1/markets variant that no cache
+#      holds (?limit=97) returns 5xx — the handler cannot answer it
+#      without Postgres, so a 200 there is a silent fall-through.
+#   3. While Timescale is down, the default /v1/markets returns either
+#      a 200 (cache hit) or 5xx — and a 200 with empty data fails
+#      unless the pre-outage answer was empty too (a stack with no
+#      trades legitimately caches `data: []`).
+#   4. After Timescale restart, /v1/healthz returns 200 within 60s.
 #
 # Runbook: docs/operations/runbooks/timescale-primary-down.md
 # (covers production HA case; this scenario verifies the dev stack's
@@ -31,6 +36,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 TIMESCALE_CONTAINER="${TIMESCALE_CONTAINER:-stellarindex-timescale}"
 HEALTH_URL="$CHAOS_TARGET/v1/healthz"
+MARKETS_URL="$CHAOS_TARGET/v1/markets"
+# Both markets caches (Redis list cache, in-process SWR) key on
+# (cursor, limit, order) and store only successes; 97 is outside the
+# prewarm set, so this request must reach Postgres.
+MARKETS_UNCACHED_URL="$CHAOS_TARGET/v1/markets?limit=97"
+
+markets_data_empty() {
+    grep -qE '"data":[[:space:]]*\[\]' <<<"$1"
+}
 
 chaos_setup
 
@@ -49,8 +63,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# 1. Baseline.
+# 1. Baseline, including whether /v1/markets is empty before the outage.
 assert_status "$HEALTH_URL" "200"
+pre_markets_body="$(curl -fsS --max-time 15 "$MARKETS_URL")" \
+    || die "baseline GET $MARKETS_URL failed before the outage"
+pre_markets_empty=0
+if markets_data_empty "$pre_markets_body"; then
+    pre_markets_empty=1
+    log "baseline /v1/markets has empty data (no trades on this stack)"
+fi
 
 # 2. Stop Timescale.
 stop_container "$TIMESCALE_CONTAINER"
@@ -75,18 +96,31 @@ esac
 
 # Hit a path that we KNOW reaches the DB. /v1/markets (per
 # internal/api/v1/markets.go) does a DistinctPairs query.
-markets_status="$(http_status "$CHAOS_TARGET/v1/markets")"
+uncached_status="$(http_status "$MARKETS_UNCACHED_URL" 15)"
+case "$uncached_status" in
+    5*)
+        log "API /v1/markets?limit=97 (uncached) correctly 5xx while Timescale is down ($uncached_status)"
+        ;;
+    *)
+        die "API /v1/markets?limit=97 (uncached) returned $uncached_status while Timescale is down — should be 5xx"
+        ;;
+esac
+
+markets_out="$(curl --silent --max-time 15 --write-out '\n%{http_code}' "$MARKETS_URL" || true)"
+markets_status="${markets_out##*$'\n'}"
+body="${markets_out%$'\n'*}"
 case "$markets_status" in
     5*)
         log "API /v1/markets correctly 5xx while Timescale is down ($markets_status)"
         ;;
     200)
-        log "API /v1/markets returned 200 — verifying it's not a fake-empty payload"
-        body="$(curl -fsS --max-time 5 "$CHAOS_TARGET/v1/markets" || true)"
-        if echo "$body" | grep -qE '"data":\s*\[\]' ; then
-            die "API /v1/markets returned 200 with empty data while DB is down — should be 5xx"
+        if ! markets_data_empty "$body"; then
+            log "API /v1/markets returned 200 with non-empty data — cache path looks healthy"
+        elif [ "$pre_markets_empty" -eq 1 ]; then
+            log "API /v1/markets returned 200 with empty data — same as the pre-outage answer (cache hit)"
+        else
+            die "API /v1/markets returned 200 with empty data while DB is down (non-empty before) — should be 5xx or the cached rows"
         fi
-        log "non-empty body — Redis-fed cache path looks healthy"
         ;;
     *)
         die "API /v1/markets returned $markets_status while Timescale is down (unexpected)"

@@ -28,7 +28,8 @@ aclfile /etc/redis/users.acl
 masteruser {{ redis_replication_auth_user }}
 {% endif %}
 
-# Persistence (ha-plan §3.4: AOF every-second + RDB nightly)
+# Persistence: AOF every-second + RDB snapshots per the save rules.
+# Both stay local to redis_data_dir; nothing copies them off-host.
 appendonly {{ redis_appendonly }}
 appendfsync {{ redis_aof_appendfsync }}
 {% for rule in redis_save_rules %}
