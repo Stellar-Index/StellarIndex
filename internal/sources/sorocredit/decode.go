@@ -169,7 +169,7 @@ func decodeStatement(e *events.Event, closedAt time.Time) (decoded, error) {
 	if len(vec) < 3 {
 		return decoded{}, fmt.Errorf("%w: StatementPublished body not a 3-Vec (len=%d)", ErrMalformedPayload, len(vec))
 	}
-	amount, err := scval.AsAmountFromI128(vec[0])
+	amount, err := nonNegAmount(vec[0])
 	if err != nil {
 		return decoded{}, fmt.Errorf("%w: StatementPublished amount: %w", ErrMalformedPayload, err)
 	}
@@ -282,6 +282,12 @@ func settlementLeg(assetsSV, amountsSV scval.ScVal, attrs map[string]any) (asset
 		obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount").Inc()
 		return "", ""
 	}
+	// Only leg 0 is promoted, so the served volume omits any further leg;
+	// record and count it rather than serve the row as a complete total.
+	if assetsOK && len(assets) > 1 {
+		attrs["debt_legs"] = len(assets)
+		obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount_extra_legs").Inc()
+	}
 	if !assetsOK {
 		attrs["debt_asset_error"] = "not a non-empty Vec"
 	} else if a, err := scval.AsAddressStrkey(assets[0]); err == nil {
@@ -292,13 +298,27 @@ func settlementLeg(assetsSV, amountsSV scval.ScVal, attrs map[string]any) (asset
 	if !amountsOK {
 		attrs["settled_amount_error"] = "not a non-empty Vec"
 		obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount").Inc()
-	} else if amt, err := scval.AsAmountFromI128(amounts[0]); err == nil {
+	} else if amt, err := nonNegAmount(amounts[0]); err == nil {
 		amount = amt.String()
 	} else {
 		attrs["settled_amount_error"] = err.Error()
 		obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount").Inc()
 	}
 	return asset, amount
+}
+
+// nonNegAmount decodes an i128 amount and refuses a negative one: every
+// sorocredit amount column CHECKs >= 0, so a negative value would be
+// refused by the database on every replay instead of as a counted decode.
+func nonNegAmount(sv scval.ScVal) (canonical.Amount, error) {
+	amt, err := scval.AsAmountFromI128(sv)
+	if err != nil {
+		return canonical.Amount{}, err
+	}
+	if amt.Sign() < 0 {
+		return canonical.Amount{}, fmt.Errorf("negative i128 amount %s", amt)
+	}
+	return amt, nil
 }
 
 // decodeWithdrawal:
@@ -332,7 +352,7 @@ func decodeWithdrawal(e *events.Event) (decoded, error) {
 	if err != nil {
 		return decoded{}, fmt.Errorf("%w: Withdrawal recipient: %w", ErrMalformedPayload, err)
 	}
-	amount, err := scval.AsAmountFromI128(vec[2])
+	amount, err := nonNegAmount(vec[2])
 	if err != nil {
 		return decoded{}, fmt.Errorf("%w: Withdrawal amount: %w", ErrMalformedPayload, err)
 	}

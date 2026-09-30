@@ -17,9 +17,8 @@ import (
 // Why a Go test wraps a shell gate: a script under scripts/ci runs only
 // where something names it, and a control that exists but is never
 // invoked is its own finding class (K023). `go test ./...` runs in
-// every gate this repo has, so the ban holds from the commit that adds
-// it, whether or not verify.sh and ci.yml have been taught the script's
-// name yet.
+// every gate this repo has, so the ban holds even where verify.sh and
+// ci.yml's import-checks job are not run.
 //
 // It does not skip when bash is missing: a skipped control reports
 // green over nothing.

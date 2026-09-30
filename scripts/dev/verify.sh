@@ -303,6 +303,8 @@ echo "=== YAML duplicate keys ===" && python3 ./scripts/ci/lint-yaml-duplicate-k
 echo "=== Memory-mappings probe self-test ===" && ./scripts/ci/memory-mappings-test.sh
 echo "=== HTTP timeouts ===" && ./scripts/ci/lint-http-timeouts.sh
 echo "=== HTTP timeouts self-test ===" && ./scripts/ci/lint-http-timeouts-test.sh
+echo "=== API-key keyspace walk ===" && ./scripts/ci/lint-apikey-scan.sh
+echo "=== API-key keyspace walk self-test ===" && ./scripts/ci/lint-apikey-scan-test.sh
 echo "=== Unbounded latest-row reads ===" && python3 ./scripts/ci/lint-unbounded-latest-row.py
 echo "=== Unbounded latest-row reads self-test ===" && ./scripts/ci/lint-unbounded-latest-row-test.sh
 echo "=== Healthcheck oneshot start/runtime bound ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout.sh
@@ -416,6 +418,7 @@ echo "=== ClickHouse ops-user contract self-test ===" && ./scripts/ops/ch-ops-us
 # enforces the CI-\>verify direction for scripts/ci, so it could not have
 # caught this. Run it here explicitly.
 echo "=== Changed-file dispatcher self-test ===" && ./scripts/dev/lint-changed-test.sh
+echo "=== Doctor self-test ===" && ./scripts/dev/doctor-test.sh
 # GH-775: pins commit-identity-range.sh's new-branch/tag fallback (a
 # detached-HEAD checkout with the branch's own commit also present as a
 # remote-tracking ref) against the exact regression that made the range

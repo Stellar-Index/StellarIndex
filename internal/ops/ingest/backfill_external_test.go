@@ -6,6 +6,8 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"io"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +24,29 @@ type fakeTradeInserter struct {
 	fail  map[string]error
 	infra bool // if true, every failing insert returns an infra error
 
-	got []string
+	got     []string
+	batches [][]string
+}
+
+// BatchInsertTrades mirrors the store: rows Validate rejects are dropped
+// without an error, and any failing row fails the whole batch unwritten.
+func (f *fakeTradeInserter) BatchInsertTrades(_ context.Context, trades []canonical.Trade) error {
+	var batch []string
+	for _, t := range trades {
+		if t.Validate() != nil {
+			continue
+		}
+		if err, bad := f.fail[t.TxHash]; bad {
+			if f.infra {
+				return fmt.Errorf("sub-batch: %w", driver.ErrBadConn)
+			}
+			return fmt.Errorf("sub-batch: %w", err)
+		}
+		batch = append(batch, t.TxHash)
+	}
+	f.batches = append(f.batches, batch)
+	f.got = append(f.got, batch...)
+	return nil
 }
 
 func (f *fakeTradeInserter) InsertTrade(_ context.Context, t canonical.Trade) error {
@@ -93,6 +117,103 @@ func TestInsertBackfilledTrades_InfraFaultAborts(t *testing.T) {
 	if len(store.got) != 2 {
 		t.Fatalf("expected abort after 2 attempts (a, b) on infra fault, got %v", store.got)
 	}
+}
+
+// storableTrade is a fill that passes canonical.Trade.Validate, so it
+// takes the batch path.
+func storableTrade(t *testing.T, i int) canonical.Trade {
+	t.Helper()
+	one := canonical.NewAmount(big.NewInt(1))
+	return canonical.Trade{
+		Source: "kraken", TxHash: fmt.Sprintf("%064x", i), Timestamp: time.Unix(int64(1_600_000_000+i), 0),
+		Pair: xlmUSD(t), BaseAmount: one, QuoteAmount: one,
+	}
+}
+
+func storableTrades(t *testing.T, n int) []canonical.Trade {
+	t.Helper()
+	out := make([]canonical.Trade, n)
+	for i := range out {
+		out[i] = storableTrade(t, i)
+	}
+	return out
+}
+
+// TestInsertBackfilledTrades_Batches: valid fills are written in
+// backfillInsertChunk-sized batches, not one statement per row.
+func TestInsertBackfilledTrades_Batches(t *testing.T) {
+	trades := storableTrades(t, backfillInsertChunk+5)
+	store := &fakeTradeInserter{}
+
+	if err := insertBackfilledTrades(context.Background(), store, trades, 0, io.Discard, time.Now()); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(store.batches) != 2 || len(store.batches[0]) != backfillInsertChunk || len(store.batches[1]) != 5 {
+		t.Fatalf("batch sizes = %v, want [%d 5]", batchSizes(store.batches), backfillInsertChunk)
+	}
+	if len(store.got) != len(trades) {
+		t.Fatalf("%d written, want %d", len(store.got), len(trades))
+	}
+}
+
+// TestInsertBackfilledTrades_InvalidRowIsNotSilentlyDropped: the batch
+// path drops rows Validate rejects without an error, so the run must
+// still count such a row as skipped and exit non-zero.
+func TestInsertBackfilledTrades_InvalidRowIsNotSilentlyDropped(t *testing.T) {
+	trades := storableTrades(t, 3)
+	trades[1].BaseAmount = canonical.NewAmount(big.NewInt(0))
+	store := &fakeTradeInserter{fail: map[string]error{trades[1].TxHash: canonical.ErrInvalidTrade}}
+
+	err := insertBackfilledTrades(context.Background(), store, trades, 0, io.Discard, time.Now())
+	if err == nil {
+		t.Fatal("expected a non-nil error when a row failed validation, got nil")
+	}
+	if len(store.batches) != 1 || len(store.batches[0]) != 2 {
+		t.Fatalf("batches = %v, want one batch of the 2 valid rows", store.batches)
+	}
+}
+
+// TestInsertBackfilledTrades_BatchDataFaultIsolatesRow: a data fault fails
+// the whole batch; the chunk is retried row by row so only the bad row is
+// skipped and the run exits non-zero.
+func TestInsertBackfilledTrades_BatchDataFaultIsolatesRow(t *testing.T) {
+	trades := storableTrades(t, 3)
+	store := &fakeTradeInserter{fail: map[string]error{trades[1].TxHash: errors.New("check violation")}}
+	var log bytes.Buffer
+
+	err := insertBackfilledTrades(context.Background(), store, trades, 0, &log, time.Now())
+	if err == nil {
+		t.Fatal("expected a non-nil error when a row failed to insert, got nil")
+	}
+	if len(store.got) != 3 {
+		t.Fatalf("expected all 3 rows retried row by row, got %v", store.got)
+	}
+	if !strings.Contains(log.String(), "1 skipped") || !strings.Contains(log.String(), "2 inserted") {
+		t.Fatalf("log = %q, want 2 inserted and 1 skipped", log.String())
+	}
+}
+
+// TestInsertBackfilledTrades_BatchInfraFaultAborts: an infra fault on a
+// batch aborts without a row-by-row retry against a dead database.
+func TestInsertBackfilledTrades_BatchInfraFaultAborts(t *testing.T) {
+	trades := storableTrades(t, 3)
+	store := &fakeTradeInserter{fail: map[string]error{trades[1].TxHash: driver.ErrBadConn}, infra: true}
+
+	err := insertBackfilledTrades(context.Background(), store, trades, 0, io.Discard, time.Now())
+	if !errors.Is(err, driver.ErrBadConn) {
+		t.Fatalf("err = %v, want ErrBadConn", err)
+	}
+	if len(store.got) != 0 {
+		t.Fatalf("expected no row-by-row retry after an infra fault, got %v", store.got)
+	}
+}
+
+func batchSizes(batches [][]string) []int {
+	out := make([]int, len(batches))
+	for i, b := range batches {
+		out[i] = len(b)
+	}
+	return out
 }
 
 // tradeAt is a fill with an explicit venue timestamp — the field the

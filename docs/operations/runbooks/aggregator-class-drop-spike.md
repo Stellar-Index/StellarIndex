@@ -107,11 +107,15 @@ Capture for the postmortem:
 - `aggregator-outlier-storm.md` — sibling per-reason drop alert.
 - `internal/sources/external/registry.go` — single-source-of-truth
   for class assignments. Adding a venue is a one-line amendment.
-- ADR (TBD) — operator-facing per-source weighting once the
-  registry outgrows a hand-curated map.
+- Per-source weighted VWAP — deferred until an operator needs it;
+  every VWAP-eligible source weights at 100 today. See "Per-source
+  weighted VWAP" under Deferred in
+  [`aggregation-plan.md`](../../architecture/aggregation-plan.md).
 
 ## Changelog
 
+- 2026-09-30 — Related: per-source weighting now points at the
+  aggregation-plan deferral instead of an unwritten ADR.
 - 2026-08-28 — re-verified against HEAD. Rule citation →
   `rules.r1/aggregator.yml` with the `for: 15m` hold now stated;
   diagnosis annotated with the :9464-indexer / :9465-aggregator port
