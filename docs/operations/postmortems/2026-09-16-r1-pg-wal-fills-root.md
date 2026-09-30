@@ -209,7 +209,8 @@ outage. The revert landed after the tag.
   counter write directly, with `stellarindex_usage_write_failing` (ticket
   severity) alerting on the billable class.
 - **The 16 GB swapfile** holds 24 MB on a 188 GB host with 131 GB available. It
-  is a third of the root filesystem doing nothing.
+  is a third of the root filesystem doing nothing. (Resized to 4 GB on
+  2026-09-29; root usage 70% → 40%.)
 
 ## The lesson, stated so it transfers
 

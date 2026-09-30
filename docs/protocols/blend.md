@@ -111,9 +111,10 @@ Migration 0097 widened `blend_emissions.event_kind` /
 `internal/sources/blend/README.md` + `v1_pool_factory_test.go`.
 Historical replay from the source genesis (`blend.FactoryGenesisLedger`,
 51,499,546 — 369 ledgers before the V1 factory's first deploy at
-51,499,915, so no V1 pool's events are skipped) is a
-`projector-replay -source blend -from 51499546` follow-up, not done
-this pass.
+51,499,915, so no V1 pool's events are skipped) has run
+(`projector-replay -source blend -from 51499546`): the daily ADR-0033
+pass reports `blend` `complete=true` with substrate verified over
+[51,499,546, 64,688,438] (r1, 2026-09-30).
 
 ## Backstop singletons (2 — decoded by the `blend_backstop` source)
 
