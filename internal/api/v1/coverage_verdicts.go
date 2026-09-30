@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -213,6 +214,40 @@ type CoverageVerdictsView struct {
 	// TotalSources, so a source whose first audit failed shrinks the
 	// numerator rather than vanishing from both sides of the headline.
 	UnverifiedSources []UnverifiedSourceView `json:"unverified_sources"`
+	// LaggingSources names the sources whose verdict tip is below the newest
+	// source verdict's tip: the latest audit run wrote no verdict for them, so
+	// the headline sums verdicts from more than one run. Empty when one run
+	// wrote every source's row.
+	LaggingSources []LaggingSourceView `json:"lagging_sources"`
+}
+
+// LaggingSourceView is one source still carrying an earlier run's verdict.
+type LaggingSourceView struct {
+	Source    string `json:"source"`
+	TipLedger uint32 `json:"tip_ledger"`
+	Reason    string `json:"reason"`
+}
+
+// laggingSources lists, in sources' order, every verdict whose tip is below
+// the newest tip among sources. Every source a run evaluates is stamped with
+// that run's one tip, so a lower tip is a row the newest run did not rewrite.
+func laggingSources(sources []CoverageVerdictView) []LaggingSourceView {
+	var newest uint32
+	for _, v := range sources {
+		newest = max(newest, v.TipLedger)
+	}
+	out := make([]LaggingSourceView, 0)
+	for _, v := range sources {
+		if v.TipLedger < newest {
+			out = append(out, LaggingSourceView{
+				Source:    v.Source,
+				TipLedger: v.TipLedger,
+				Reason: fmt.Sprintf("verdict computed at tip %d, below the newest source verdict's tip %d: "+
+					"the latest audit run did not refresh it, so it is counted at its earlier tip", v.TipLedger, newest),
+			})
+		}
+	}
+	return out
 }
 
 // UnverifiedSourceView is one audited source with no verdict row.
@@ -358,6 +393,7 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 	}
 	view.UnverifiedSources = unverifiedSources(s.auditedSources, snaps, network)
 	view.TotalSources = len(view.Sources) + len(view.UnverifiedSources)
+	view.LaggingSources = laggingSources(view.Sources)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	writeJSON(w, view, Flags{Stale: verdictsStale})
