@@ -41470,7 +41470,7 @@
           "request": {
             "name": "Operations — the network-wide recent directory.",
             "description": {
-              "content": "The network-wide recent-operations DIRECTORY: newest first,\nkeyset-paged via `?cursor=<opaque>` (echo back `next_cursor`;\ncomposite `ledger.tx_index.op_index`), plus `op_type_stats` — the\nper-op-type counts over the trailing ~24h of ledgers (first page\nonly). `?limit=` up to 200, default 50. This is a **summary** shape:\neach op carries its identity + `type` but NOT the decoded body\n(`fields` / `raw_xdr` are omitted) — decoding every op's body over the\nmulti-billion-row lake made the directory ~10× slower. Fetch the full\ndecoded op from `/v1/ledgers/{seq}/operations` or `/v1/tx/{hash}`.\n\n**Deprecated:** `?ledger=<seq>` is an alias of\n`GET /v1/ledgers/{seq}/operations`, served unchanged until a breaking\nrelease removes it. A query parameter must not change a surface's\nconsistency contract (ADR-0018).\n",
+              "content": "The network-wide recent-operations DIRECTORY: newest first,\nkeyset-paged via `?cursor=<opaque>` (echo back `next_cursor`;\ncomposite `ledger.tx_index.op_index`), plus `op_type_stats` — the\nper-op-type counts over the trailing ~24h of ledgers (first page\nonly). `?limit=` up to 200, default 50. This is a **summary** shape:\neach op carries its identity + `type` but NOT the decoded body\n(`fields` / `raw_xdr` are omitted) — decoding every op's body over the\nmulti-billion-row lake made the directory ~10× slower. Fetch the full\ndecoded op from `/v1/ledgers/{seq}/operations` or `/v1/tx/{hash}`.\n\nA `ledger` query parameter is refused with 400: one ledger's\noperations are `GET /v1/ledgers/{seq}/operations` (ADR-0018).\n",
               "type": "text/plain"
             },
             "url": {
@@ -41484,16 +41484,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Deprecated alias of GET /v1/ledgers/{seq}/operations. Omit for the network-wide recent directory.",
-                    "type": "text/plain"
-                  },
-                  "key": "ledger",
-                  "value": "<integer>"
-                },
-                {
-                  "disabled": false,
-                  "description": {
-                    "content": "Opaque keyset cursor (directory mode only).",
+                    "content": "Opaque keyset cursor for the next older page.",
                     "type": "text/plain"
                   },
                   "key": "cursor",
@@ -41502,11 +41493,11 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Page size. Directory: default 50, cap 200 (400 above); deprecated `?ledger=` alias: default 500, cap 2000.",
+                    "content": "Page size: default 50, cap 200 (400 above).",
                     "type": "text/plain"
                   },
                   "key": "limit",
-                  "value": "<integer>"
+                  "value": "50"
                 }
               ],
               "variable": []
@@ -41523,7 +41514,7 @@
           },
           "response": [
             {
-              "name": "Decoded operations (ledger-scoped or the recent directory).",
+              "name": "The recent-operations directory page.",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -41536,16 +41527,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Deprecated alias of GET /v1/ledgers/{seq}/operations. Omit for the network-wide recent directory.",
-                        "type": "text/plain"
-                      },
-                      "key": "ledger",
-                      "value": "<integer>"
-                    },
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "Opaque keyset cursor (directory mode only).",
+                        "content": "Opaque keyset cursor for the next older page.",
                         "type": "text/plain"
                       },
                       "key": "cursor",
@@ -41554,11 +41536,11 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Page size. Directory: default 50, cap 200 (400 above); deprecated `?ledger=` alias: default 500, cap 2000.",
+                        "content": "Page size: default 50, cap 200 (400 above).",
                         "type": "text/plain"
                       },
                       "key": "limit",
-                      "value": "<integer>"
+                      "value": "50"
                     }
                   ],
                   "variable": []
@@ -41580,7 +41562,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"ledger\": \"<integer>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 8622.11869796738\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": true,\n          \"key_1\": 2386\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"op_type_stats\": [\n      {\n        \"type\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"type\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"coverage_note\": \"<string>\",\n    \"total\": \"<integer>\",\n    \"truncated\": \"<boolean>\"\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"ledger\": \"<integer>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": \"string\",\n          \"key_1\": true\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": false,\n          \"key_1\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"op_type_stats\": [\n      {\n        \"type\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"type\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"coverage_note\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -41598,16 +41580,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Deprecated alias of GET /v1/ledgers/{seq}/operations. Omit for the network-wide recent directory.",
-                        "type": "text/plain"
-                      },
-                      "key": "ledger",
-                      "value": "<integer>"
-                    },
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "Opaque keyset cursor (directory mode only).",
+                        "content": "Opaque keyset cursor for the next older page.",
                         "type": "text/plain"
                       },
                       "key": "cursor",
@@ -41616,11 +41589,11 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Page size. Directory: default 50, cap 200 (400 above); deprecated `?ledger=` alias: default 500, cap 2000.",
+                        "content": "Page size: default 50, cap 200 (400 above).",
                         "type": "text/plain"
                       },
                       "key": "limit",
-                      "value": "<integer>"
+                      "value": "50"
                     }
                   ],
                   "variable": []
@@ -41660,16 +41633,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Deprecated alias of GET /v1/ledgers/{seq}/operations. Omit for the network-wide recent directory.",
-                        "type": "text/plain"
-                      },
-                      "key": "ledger",
-                      "value": "<integer>"
-                    },
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "Opaque keyset cursor (directory mode only).",
+                        "content": "Opaque keyset cursor for the next older page.",
                         "type": "text/plain"
                       },
                       "key": "cursor",
@@ -41678,11 +41642,11 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Page size. Directory: default 50, cap 200 (400 above); deprecated `?ledger=` alias: default 500, cap 2000.",
+                        "content": "Page size: default 50, cap 200 (400 above).",
                         "type": "text/plain"
                       },
                       "key": "limit",
-                      "value": "<integer>"
+                      "value": "50"
                     }
                   ],
                   "variable": []
