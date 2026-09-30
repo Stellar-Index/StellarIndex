@@ -240,12 +240,13 @@ usually explain both symptoms together.
 - `docs/adr/0043-backup-and-restore-strategy.md`.
 - HA plan §3.3 "Backup" reality check + §8: `docs/architecture/ha-plan.md`.
 
-> TODO(maintainer): the archival-node role templates no `archive_mode` /
-> `archive_command` (WAL archiving is configured out-of-band on r1 per
-> `18-pgbackrest-backup.yml`); the live `pgbackrest.conf` is hand-managed
-> (`pgbackrest_manage_conf` defaults false). Confirm on r1 that
-> `SHOW archive_command` is `pgbackrest ... archive-push %p` and that
-> repo1 is still `/var/lib/pgbackrest`, then delete this note.
+WAL archiving (`archive_mode`, `archive_command`, `archive_timeout`) is rendered by the
+archival-node role's `postgresql.conf.j2` wherever `pgbackrest_backup_enabled` is true;
+`scripts/ci/ansible-postgres-archive-test.sh` pins the values.
+
+> TODO(maintainer): the live `pgbackrest.conf` is hand-managed
+> (`pgbackrest_manage_conf` defaults false). Confirm on r1 that repo1 is
+> still `/var/lib/pgbackrest`, then delete this note.
 
 ## Changelog
 

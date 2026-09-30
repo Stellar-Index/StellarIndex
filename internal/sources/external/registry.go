@@ -186,6 +186,12 @@ var Registry = map[string]Metadata{
 	// OracleResolution is 24 h: Timestamp is the round's updatedAt, and
 	// the slowest feeds (FX) heartbeat daily and pause over the weekend.
 	"chainlink": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false /* Alchemy free tier covers 516-feed scale */, BackfillAvailable: true, BackfillSafe: true, OracleResolution: 24 * time.Hour},
+
+	// Tiingo publishes registered funds' daily NAV. Rows are `raw:<TICKER>`,
+	// read only by the RWA reference surface through the curated fund
+	// bindings in internal/rwa — never a VWAP input or a pair leg, hence
+	// weight 0. OracleResolution is 24 h: one NAV per business day.
+	"tiingo": {Class: ClassOracle, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: false, BackfillSafe: true, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 }
 
 // Lookup returns metadata for a source, with a safe fallback for
@@ -329,8 +335,8 @@ func IsFXSource(source string) bool {
 // DEXes), the Soroban oracles (reflector-*, band, redstone), lending
 // (blend), routers (defindex, soroswap-router), and bridges (cctp,
 // rozo). Off-chain: CEX + FX venues, aggregators, sovereign FX
-// anchors, and Chainlink — an Ethereum-mainnet oracle read over
-// JSON-RPC, the one ClassOracle source that is NOT on Stellar.
+// anchors, Chainlink — an Ethereum-mainnet oracle read over JSON-RPC —
+// and Tiingo's fund NAVs, the two ClassOracle sources NOT on Stellar.
 //
 // The explorer's Stellar-network surfaces (the /network page, the
 // /sources directory) filter on this so reference-pricing feeds don't
@@ -354,10 +360,9 @@ func IsOnChain(source string) bool {
 	case ClassAggregator, ClassAuthoritySanity:
 		return false
 	}
-	// Chainlink is on Ethereum mainnet, read via JSON-RPC against
-	// AggregatorV3 contracts — see its registry entry. It is the lone
-	// off-chain ClassOracle, so it can't be separated by class alone.
-	if source == "chainlink" {
+	// Chainlink (Ethereum mainnet via JSON-RPC) and Tiingo (a vendor REST
+	// API) are the off-chain ClassOracle sources; class alone can't separate them.
+	if source == "chainlink" || source == "tiingo" {
 		return false
 	}
 	return true

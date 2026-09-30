@@ -612,7 +612,7 @@ type DivergenceOracleConfig struct {
 // set covering XLM + the major stablecoins we curate.
 type DivergenceCoinGeckoConfig struct {
 	Enabled bool              `toml:"enabled" doc:"Whether the CoinGecko reference is wired into the divergence service." default:"true"`
-	BaseURL string            `toml:"base_url" doc:"CoinGecko API base URL. Empty defaults to https://api.coingecko.com/api/v3." default:""`
+	BaseURL string            `toml:"base_url" doc:"CoinGecko API base URL. Empty defaults to https://api.coingecko.com/api/v3, or https://pro-api.coingecko.com/api/v3 when external.coingecko.api_key is set. The reference authenticates with the external.coingecko keys." default:""`
 	IDMap   map[string]string `toml:"id_map" doc:"Maps canonical asset_id → CoinGecko slug. Operator-curated; empty falls back to the built-in default covering XLM + major stables." default:"{}"`
 	// MaxAgeMinutes is the CS-089 staleness ceiling: a /simple/price
 	// quote whose upstream last_updated_at is older than this (relative
@@ -749,11 +749,12 @@ type ExternalConfig struct {
 	Bitstamp         ExternalStreamerConfig      `toml:"bitstamp"         doc:"Bitstamp v2 WebSocket live_trades streamer. Pair list: internal/sources/external/bitstamp/pairs.go."`
 	Coinbase         ExternalStreamerConfig      `toml:"coinbase"         doc:"Coinbase Exchange WebSocket matches streamer. Pair list: internal/sources/external/coinbase/pairs.go."`
 	ExchangeRatesApi ExchangeRatesApiVenueConfig `toml:"exchangeratesapi" doc:"ExchangeRatesApi.io REST poller for fiat cross-rates (Professional tier required for USD base + 1-min cadence + redistribution)."`
-	CoinGecko        CoinGeckoVenueConfig        `toml:"coingecko"        doc:"CoinGecko /simple/price poller. Class=aggregator (divergence-only). Its keys are also used by the backfill-index and listing-sync ops commands."`
+	CoinGecko        CoinGeckoVenueConfig        `toml:"coingecko"        doc:"CoinGecko /simple/price poller. Class=aggregator (divergence-only). Its keys are also used by the divergence price reference and the backfill-index and listing-sync ops commands."`
 	CoinMarketCap    CoinMarketCapVenueConfig    `toml:"coinmarketcap"    doc:"CoinMarketCap /v2 quotes poller. Class=aggregator. Paid API key; Standard tier ($79/mo+) for commercial redistribution."`
 	CryptoCompare    CryptoCompareVenueConfig    `toml:"cryptocompare"    doc:"CryptoCompare /data/pricemultifull poller (rows stamped with upstream LASTUPDATE). Class=aggregator. Paid API key via Authorization header."`
 	ECB              ExternalVenueConfig         `toml:"ecb"              doc:"European Central Bank daily FX reference rates. Class=authority_sanity (daily anchor, not VWAP). Free, no auth."`
 	Chainlink        ChainlinkVenueConfig        `toml:"chainlink"        doc:"Chainlink Data Feeds via EVM JSON-RPC (Alchemy / Infura / public). Class=oracle (no VWAP contribution). Lives parallel to internal/divergence/chainlink.go which is the synchronous cross-check."`
+	Tiingo           TiingoVenueConfig           `toml:"tiingo"           doc:"Tiingo end-of-day poller for the published daily NAV of the bound tokenized funds (tickers come from internal/rwa's fund bindings). Class=oracle, off-chain, no VWAP contribution; read only by the RWA reference surface. Free tier: 50 req/h, 1,000 req/day; hourly polling of 12 tickers is 288/day, 8,928/month."`
 	Massive          MassiveConfig               `toml:"massive"          doc:"massive.com forex rates behind /v1/currencies, fetched hourly by stellarindex-api."`
 	Dune             DuneConfig                  `toml:"dune"             doc:"Dune API read by the curated-rwa-sync ops command."`
 }
@@ -795,6 +796,13 @@ type ExchangeRatesApiVenueConfig struct {
 	Enabled bool   `toml:"enabled" doc:"Whether this connector runs. Off by default." default:"false"`
 	APIKey  string `toml:"api_key" doc:"ExchangeRatesApi access key. Prefer env var; TOML fallback exists for local-dev convenience." env:"EXCHANGERATESAPI_KEY" default:""`
 	Base    string `toml:"base" doc:"Base currency (USD, EUR, GBP, …). Defaults to USD. Free tier locked to EUR; paid tier accepts any allow-listed fiat." default:"USD"`
+}
+
+// TiingoVenueConfig is [ExternalVenueConfig] plus the Tiingo API key.
+type TiingoVenueConfig struct {
+	Enabled      bool          `toml:"enabled" doc:"Whether this connector runs. Off by default — no network egress until operator opts in." default:"false"`
+	PollInterval time.Duration `toml:"poll_interval" doc:"Override the connector's hourly default. One request per bound ticker per poll, so a shorter interval can exceed the free tier's 50 req/h." default:""`
+	APIKey       string        `toml:"api_key" doc:"Tiingo API token, sent as 'Authorization: Token <key>', never in the URL. Required when enabled. Prefer env var." env:"TIINGO_API_KEY" default:""`
 }
 
 // CoinGeckoVenueConfig is [ExternalVenueConfig] plus CoinGecko's two key
@@ -2445,5 +2453,6 @@ func defaultExternalConfig() ExternalConfig {
 		CryptoCompare:    CryptoCompareVenueConfig{Enabled: false},
 		ECB:              ExternalVenueConfig{Enabled: false},
 		Chainlink:        ChainlinkVenueConfig{Enabled: false, FeedMap: map[string]ChainlinkFeedSetting{}},
+		Tiingo:           TiingoVenueConfig{Enabled: false},
 	}
 }
