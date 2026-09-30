@@ -214,6 +214,7 @@ func TestSources_EveryRegistryNameClassified(t *testing.T) {
 		"massive": true, "exchangeratesapi": true, "ecb": true, // FX
 		"coingecko": true, "coinmarketcap": true, "cryptocompare": true, // aggregators
 		"chainlink": true, // EVM oracle, read off-chain
+		"tiingo":    true, // fund NAV vendor
 	}
 	for name := range external.Registry {
 		if !sourcenet.Known(name) && !offChain[name] {
