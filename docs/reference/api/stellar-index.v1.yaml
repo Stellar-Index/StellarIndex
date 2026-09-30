@@ -10935,34 +10935,20 @@ paths:
         multi-billion-row lake made the directory ~10× slower. Fetch the full
         decoded op from `/v1/ledgers/{seq}/operations` or `/v1/tx/{hash}`.
 
-        **Deprecated:** `?ledger=<seq>` is an alias of
-        `GET /v1/ledgers/{seq}/operations`, served unchanged until a breaking
-        release removes it. A query parameter must not change a surface's
-        consistency contract (ADR-0018).
+        A `ledger` query parameter is refused with 400: one ledger's
+        operations are `GET /v1/ledgers/{seq}/operations` (ADR-0018).
       parameters:
-        - { name: ledger, in: query, deprecated: true, description: "Deprecated alias of GET /v1/ledgers/{seq}/operations. Omit for the network-wide recent directory.", schema: { type: integer } }
-        - { name: cursor, in: query, description: Opaque keyset cursor (directory mode only)., schema: { type: string } }
-        - { name: limit, in: query, description: "Page size. Directory: default 50, cap 200 (400 above); deprecated `?ledger=` alias: default 500, cap 2000.", schema: { type: integer, minimum: 1, maximum: 2000 } }
+        - { name: cursor, in: query, description: Opaque keyset cursor for the next older page., schema: { type: string } }
+        - { name: limit, in: query, description: "Page size: default 50, cap 200 (400 above).", schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
       responses:
         "200":
-          description: Decoded operations (ledger-scoped or the recent directory).
+          description: The recent-operations directory page.
           content:
             application/json:
               example:
                 data:
-                  ledger: 63316166
+                  ledger: 0
                   operations:
-                  - ledger: 63316166
-                    close_time: '2026-07-03T22:37:01Z'
-                    tx_hash: 5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a
-                    tx_index: 0
-                    op_index: 0
-                    type: payment
-                    source_account: GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP
-                    fields:
-                      amount: '26000000000000'
-                      asset: XLM26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL
-                      destination: GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV
                   - ledger: 63316166
                     close_time: '2026-07-03T22:37:01Z'
                     tx_hash: 5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a
@@ -10970,10 +10956,14 @@ paths:
                     op_index: 1
                     type: payment
                     source_account: GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP
-                    fields:
-                      amount: '2600000000000'
-                      asset: XRP26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL
-                      destination: GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV
+                  - ledger: 63316166
+                    close_time: '2026-07-03T22:37:01Z'
+                    tx_hash: 5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a
+                    tx_index: 0
+                    op_index: 0
+                    type: payment
+                    source_account: GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP
+                  next_cursor: '63316166.0.0'
                 as_of: '2026-07-03T22:40:10.560512468Z'
                 flags:
                   stale: false
@@ -10987,12 +10977,12 @@ paths:
                   data:
                     type: object
                     properties:
-                      ledger: { type: integer, description: "The ledger (deprecated ?ledger= alias); 0 for the directory." }
+                      ledger: { type: integer, description: "Always 0: the directory spans ledgers." }
                       operations: { type: array, items: { $ref: "#/components/schemas/Operation" } }
-                      next_cursor: { type: string, description: "Directory mode: opaque cursor for the next older page; absent on the last page." }
+                      next_cursor: { type: string, description: "Opaque cursor for the next older page; absent on the last page." }
                       op_type_stats:
                         type: array
-                        description: "Directory mode, first page only: per-op-type counts over the trailing ~24h."
+                        description: "First page only: per-op-type counts over the trailing ~24h."
                         items:
                           type: object
                           properties:
@@ -11006,12 +10996,6 @@ paths:
                           then of UNKNOWN outcome (possibly a FAILED transaction),
                           not applied. Absent = every operation carries its true
                           transaction outcome.
-                      total:
-                        type: integer
-                        description: "Ledger-scoped mode only: the ledger's exact operation count from its header. Absent in directory mode, which pages instead."
-                      truncated:
-                        type: boolean
-                        description: "Ledger-scoped mode only: true when total exceeds len(operations) — the page was cut at ?limit= with no cursor to continue. Absent in directory mode."
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 

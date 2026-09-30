@@ -415,9 +415,9 @@ func (h *Handler) refreshOpTypeStats() {
 // GET /v1/ledgers/{seq}/operations.
 //
 // Two shapes: the per-ledger form (Ledger set, no cursor/stats) is served by
-// /v1/ledgers/{seq}/operations and its deprecated alias /v1/operations?ledger=;
-// the network-wide recent-operations directory (Ledger 0, NextCursor for
-// paging, and OpTypeStats — the trailing-24h per-type breakdown) by /v1/operations.
+// /v1/ledgers/{seq}/operations; the network-wide recent-operations directory
+// (Ledger 0, NextCursor for paging, and OpTypeStats — the trailing-24h
+// per-type breakdown) by /v1/operations.
 type OperationsView struct {
 	Ledger      uint32        `json:"ledger"`
 	Operations  []OpView      `json:"operations"`
@@ -441,27 +441,24 @@ type OpTypeStatV struct {
 	Count int64  `json:"count"`
 }
 
-// Operations serves GET /v1/operations.
-//
-//   - ?ledger=<seq>: deprecated alias of GET /v1/ledgers/{seq}/operations.
-//   - no ?ledger: the network-wide recent-operations DIRECTORY — newest
-//     first, keyset-paged via ?cursor=<opaque> (echo back next_cursor;
-//     composite ledger.tx_index.op_index), plus op_type_stats (per-type
-//     counts over the trailing ~24h of ledgers).
+// Operations serves GET /v1/operations: the network-wide recent-operations
+// DIRECTORY — newest first, keyset-paged via ?cursor=<opaque> (echo back
+// next_cursor; composite ledger.tx_index.op_index), plus op_type_stats
+// (per-type counts over the trailing ~24h of ledgers).
 func (h *Handler) Operations(w http.ResponseWriter, r *http.Request) {
+	// A ledger-scoped read has its own route and consistency contract
+	// (ADR-0018); serving it here as a directory page would answer the wrong question.
+	if r.URL.Query().Has("ledger") {
+		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-parameter",
+			"Invalid parameter", http.StatusBadRequest,
+			"ledger is not a /v1/operations parameter; use GET /v1/ledgers/{seq}/operations")
+		return
+	}
 	if h.Reader == nil {
 		h.unavailable(w, r)
 		return
 	}
-	seq, ok := h.parseUint32Query(w, r, "ledger")
-	if !ok {
-		return
-	}
-	if seq == 0 {
-		h.operationsDirectory(w, r)
-		return
-	}
-	h.ledgerOperations(w, r, seq)
+	h.operationsDirectory(w, r)
 }
 
 // LedgerOperations serves GET /v1/ledgers/{seq}/operations.
@@ -537,7 +534,7 @@ func (h *Handler) ledgerOperations(w http.ResponseWriter, r *http.Request, seq u
 }
 
 // operationsResponseByteBudget is a conservative placeholder ceiling on the
-// total raw XDR bytes GET /v1/operations?ledger=N will fully decode into a
+// total raw XDR bytes GET /v1/ledgers/{seq}/operations will fully decode into a
 // single response (Q207). It is deliberately conservative and fail-closed;
 // the exact number depends on infra (reverse proxy / load-balancer response
 // limits) not visible from this repo, so treat it as a placeholder pending
@@ -636,7 +633,7 @@ func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 	h.writeJSONAt(w, out, degraded, asOf)
 }
 
-// operationsDirectory serves the no-ledger path: network-wide
+// operationsDirectory serves GET /v1/operations: network-wide
 // recent operations (keyset-paged) + the trailing-24h op-type stats.
 func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 	limit, ok := h.ParseLimit(w, r, 50, 200)
