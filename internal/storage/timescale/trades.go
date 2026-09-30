@@ -951,11 +951,64 @@ func recordDexTradeUnitRatio(t canonical.Trade) {
 // the sink called WouldPopulateUSDVolume purely for this label, which
 // ran the whole waterfall a second time per trade (2 PG round-trips
 // per row on the re-derive path, as ch_rebuild.go notes).
-func usdPopulatedLabel(populated bool) string {
-	if populated {
+//
+// "unpriceable" is a NULL by design (see [tradeUSDVolumeWithOutcome]); the
+// coverage alerts exclude it so one actor's self-pair volume cannot mask
+// or mimic a resolver outage.
+func usdPopulatedLabel(v *string, unpriceable bool) string {
+	switch {
+	case v != nil:
 		return "yes"
+	case unpriceable:
+		return "unpriceable"
+	default:
+		return "no"
 	}
-	return "no"
+}
+
+// usdPriceOutcomeResolver is the optional extension [VWAPUSDFXResolver]
+// implements beside [USDVolumeFXResolver]. Kept out of that interface so
+// its other implementations need not change.
+type usdPriceOutcomeResolver interface {
+	USDPriceOutcomeAt(ctx context.Context, asset canonical.Asset, at time.Time) (string, USDPriceOutcome, error)
+}
+
+// outcomeRecordingResolver sits between one trade's waterfall and the real
+// resolver, returning exactly what the resolver says while noting whether
+// every consultation was [USDPriceUnpriceable]. One per trade; not shared.
+type outcomeRecordingResolver struct {
+	inner      USDVolumeFXResolver
+	outcomes   usdPriceOutcomeResolver // nil: inner cannot classify a miss
+	consulted  bool
+	resolvable bool
+}
+
+func (o *outcomeRecordingResolver) USDPriceAt(ctx context.Context, asset canonical.Asset, at time.Time) (string, bool, error) {
+	o.consulted = true
+	if o.outcomes == nil {
+		o.resolvable = true
+		return o.inner.USDPriceAt(ctx, asset, at)
+	}
+	rate, outcome, err := o.outcomes.USDPriceOutcomeAt(ctx, asset, at)
+	if outcome != USDPriceUnpriceable {
+		o.resolvable = true
+	}
+	return rate, outcome == USDPricePriced, err
+}
+
+// tradeUSDVolumeWithOutcome is [tradeUSDVolume] plus whether a nil result
+// is by design: true only when the waterfall consulted the resolver at
+// least once and every consultation answered [USDPriceUnpriceable]. Any
+// miss, any priced leg refused by a bound, or no consultation at all
+// leaves it false, so the conservative reading is always "no".
+func tradeUSDVolumeWithOutcome(ctx context.Context, t canonical.Trade, quoteSpec *USDVolumeQuoteSpec, fxResolver USDVolumeFXResolver) (*string, bool) {
+	if fxResolver == nil {
+		return tradeUSDVolume(ctx, t, quoteSpec, nil), false
+	}
+	rec := &outcomeRecordingResolver{inner: fxResolver}
+	rec.outcomes, _ = fxResolver.(usdPriceOutcomeResolver)
+	v := tradeUSDVolume(ctx, t, quoteSpec, rec)
+	return v, v == nil && rec.consulted && !rec.resolvable
 }
 
 // InsertTrade writes one trade. Returns nil for a successful insert
@@ -1061,14 +1114,14 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
         SELECT count(*) FILTER (WHERE inserted) FROM ins
     `
 	var usdVolume any // sql NULL when nil; pq accepts the *string form too
-	v := tradeUSDVolume(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
+	v, unpriceable := tradeUSDVolumeWithOutcome(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
 	if err := s.reDeriveNullVolumeGuard(t, v); err != nil {
 		return err
 	}
 	if v != nil {
 		usdVolume = *v
 	}
-	obs.TradeInsertsTotal.WithLabelValues(t.Source, usdPopulatedLabel(v != nil)).Inc()
+	obs.TradeInsertsTotal.WithLabelValues(t.Source, usdPopulatedLabel(v, unpriceable)).Inc()
 	var rowsInserted int64
 	if err := s.db.QueryRowContext(ctx, q,
 		t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
@@ -1156,14 +1209,14 @@ func (s *Store) tradeBatchValues(ctx context.Context, insertRows []canonical.Tra
 			base, base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12,
 		))
 		var usdVolume any
-		v := tradeUSDVolume(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
+		v, unpriceable := tradeUSDVolumeWithOutcome(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
 		if err := s.reDeriveNullVolumeGuard(t, v); err != nil {
 			return nil, nil, err
 		}
 		if v != nil {
 			usdVolume = *v
 		}
-		obs.TradeInsertsTotal.WithLabelValues(t.Source, usdPopulatedLabel(v != nil)).Inc()
+		obs.TradeInsertsTotal.WithLabelValues(t.Source, usdPopulatedLabel(v, unpriceable)).Inc()
 		args = append(args,
 			t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
 			t.Pair.Base.String(), t.Pair.Quote.String(),
