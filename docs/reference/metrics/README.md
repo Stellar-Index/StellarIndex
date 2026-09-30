@@ -90,7 +90,7 @@ goroutine in the aggregator binary
 disambiguates the sources that share one hypertable (e.g. the
 trades-table sources `sdex` / `soroswap` / `phoenix` / `comet` /
 `aquarius`, or the `oracle_updates` sources `band` / `redstone` /
-`reflector-*`). 26 targets are registered today
+`reflector-*`). The registered set is `DefaultGapDetectorTargets`
 (`internal/storage/timescale/per_source_gaps.go`), spanning the
 Soroban projections, the classic SDEX path, and the off-chain
 oracle tables — NOT `soroban-events` alone.
@@ -441,6 +441,21 @@ A sustained non-zero `evicted` rate means the cache is being
 key-enumerated rather than warmed — a caller minting distinct pairs to
 force reads, the same signature the `evicted` result carries on
 `stellarindex_api_cache_ops_total`.
+
+### `stellarindex_api_lcm_home_domain_fallback_total`
+
+Counter, no labels.
+
+One increment per failed read of the issuer home-domain observations
+(`account_observations`, ADR-0021) — a storage error or the 100 ms read
+bound expiring. The failed read is served as "unobserved", so the
+operator-static `[metadata.issuer_home_domains]` map (or, on asset
+detail, the live on-chain read) answers instead, and an issuer that
+cleared its home_domain on chain can briefly show its static value
+again. An `/v1/assets` listing page is one read, however many rows it
+holds. It should sit at zero on a healthy database; a
+sustained non-zero rate means served home domains are coming from
+operator config rather than the chain.
 
 ## Ingestion (indexer binary)
 
@@ -1370,6 +1385,24 @@ NOT counted here — they land on
 [`stellarindex_source_insert_errors_total`](#stellarindex_source_insert_errors_total)
 (`kind=trade` / `kind=dropped`).
 
+### `stellarindex_trades_zero_leg_admitted_total`
+
+Counter, label `source`. Seeded at zero for `sdex`.
+
+Trades admitted to the served `trades` table with exactly one zero leg:
+an SDEX fill whose base or quote amount rounded to zero stroops. The row
+is stored (migration 0191 dropped the `> 0` CHECKs) but has no price, so
+every price path — the 0187 CAGGs, VWAP/TWAP, `/v1/price` — filters it
+out. Incremented at the Go write gates (`InsertTrade`,
+`filterStorableTrades`) when `canonical.Trade.Validate` admits the row,
+before the INSERT — so a batch that fails and is retried row by row
+counts the same fill twice, and the counter is an upper bound on rows
+stored. A both-zero or negative leg still fails Validate and lands on
+`stellarindex_source_insert_errors_total{kind="trade"}`. `sdex` is the
+only known producer — every other decoder and CEX parser drops zero legs
+upstream — so a series for any other source means an upstream parser
+changed. Detection only; no alert.
+
 ### `stellarindex_trade_insert_buffer_depth`
 
 Gauge (no labels).
@@ -2058,12 +2091,13 @@ connections with no delivery are clients receiving keepalives only.
 
 ### `stellarindex_api_sse_streams_rejected_total`
 
-Counter, label `reason` (`global_cap` / `per_ip_cap`).
+Counter, label `reason` (`global_cap` / `per_ip_cap` / `topic_cap`).
 
 SSE connections refused with a 503 by the concurrency caps. `global_cap`
 rising means the process-wide ceiling is full (a connection flood, or a
 deployment that has outgrown it); `per_ip_cap` rising means one client
-address is at its own ceiling.
+address is at its own ceiling; `topic_cap` rising means the streaming
+Hub's topic map is full of topics that all hold a live subscriber.
 
 ### `stellarindex_api_stream_hub_topics`
 
@@ -4403,7 +4437,10 @@ Counter. Labels: `class` (the refresh class passed to
 `contracts_dir` | `network_throughput` | `ops_directory` |
 `protocol_bespoke` | `contract_detail` / `contract_detail_<key prefix>`;
 `unclassed` for a bare `TryAcquire`), `bound` (`class` = the per-class
-half-of-global cap refused, `global` = the pool-wide limit refused).
+cap refused — a quarter of the global limit for a client-keyed class,
+half for a server-keyed one — `global` = the pool-wide limit refused,
+which for a client-keyed class excludes the one slot reserved for the
+server-keyed prewarm classes).
 
 Detached explorer refreshes the shared `clickhouse.RefreshGate` SKIPPED
 because it was saturated. The gate bounds lake scans that

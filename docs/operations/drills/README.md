@@ -26,7 +26,7 @@ playbook + relevant runbooks.
 
 | Date | Tier | Scenario | Outcome | Open action items |
 | --- | --- | --- | --- | --- |
-| 2026-04-30 | SEV-1 tabletop | Timescale primary failover ([writeup](2026-04-sev1-timescale-failover.md)) | ran solo (1 participant, not the 3-person minimum) | Quarterly chaos drill running `drop_chunks` on staging; 3-person tabletop after launch |
+| 2026-04-30 | SEV-1 tabletop | Timescale primary failover ([writeup](2026-04-sev1-timescale-failover.md)) | ran solo (1 participant, not the 3-person minimum) | 3-person tabletop after launch |
 | 2026-04-30 | SEV-2 tabletop | Soroswap decoder regression ([writeup](2026-04-sev2-soroswap-decode-regression.md)) | ran solo (1 participant, not the 3-person minimum) | Per-source decode-error ratio alert; stellar-core release-notes watcher; wire `stellarindex-ops backfill -source` end-to-end + integration test; 3-person tabletop with state-transition rehearsal |
 
 The two writeups above stay in this directory until their open

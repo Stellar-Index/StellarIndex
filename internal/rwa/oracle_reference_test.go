@@ -1,8 +1,11 @@
 package rwa
 
 import (
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stellar/go-stellar-sdk/strkey"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -138,5 +141,47 @@ func TestSpotGoldIsNotComparableToAToken(t *testing.T) {
 	}
 	if OffChainReferenceCode("NOTANRWA") || OffChainReferenceCode("") {
 		t.Error("an unrecognised code is not an off-chain reference")
+	}
+}
+
+// TestFundNAVBindings_AllTwelveResolve pins the WisdomTree fund table to
+// the pairs the issuer's SEP-1 declares: each resolves to its ticker on
+// the exact (code, issuer) and on nothing looser.
+func TestFundNAVBindings_AllTwelveResolve(t *testing.T) {
+	want := map[string]string{
+		"WTTS-GBBV5CF7UPA2PYRPA632URLB55BWML7X4H33ZRCDWMTULOXDGPHJR5VI": "WTTSX",
+		"WTST-GDEBI5X7J4IDXCSVV3KPFZIHQRCBVF3DAZMS5H7KYOBK45T6XYGDE77P": "WTSTX",
+		"FLTT-GBTZKH3RNKW46XEZNCGZEBAGJISKDZKQXKSQ2N5G5SFX36TLWKKR6QJ6": "FLTTX",
+		"WTLG-GAK7PE7DD4ZRJQN3VBCQFBKFV53JGUM2SQATQAKLFK6MVONPGNYK34XH": "WTLGX",
+		"WTSI-GAD22PDBRFEMXAKPFDP4JGDFWKKD6VPXWUWEAXBS6ZYJYFFQDUN7HAFG": "WTSIX",
+		"WTSY-GB3ZUC7FGDEEBXY3BDEJWMPNGBFA66YRI4QQT6PBO3ZT6F33S7RL36VF": "WTSYX",
+		"TIPS-GAJ4KSYLVBJKQ4UBPKJJXPYWVIRZWVTIYRMHBXTHGCDS4XJXXYEUALVD": "TIPSX",
+		"EQTY-GAKODZFS4MV36JGDTULJACWJKBJCO33CJTVTWSQFSUV7XLZJNXTDH6D6": "EQTYX",
+		"LNGV-GAHOGWBAWNIKESGNNW7Y7JU5KL54HIEHJGY6Y5QLY6YR3J7WZIDHLC6D": "LNGVX",
+		"MODR-GANULT25TFO6V6BFWSEG4VSCR4QXBNHV5T344R2AFZEPE6B324LVLOOJ": "MODRX",
+		"SPXU-GDJBVX3QA5HJPBSAU5VIX2W6MC37NU4UFXPKEGK42SJCYN6AEQ4Z6COM": "SPXUX",
+		"TECH-GDSAW27GPR7EWKPTFDPGN2WWZYUHBFKVDBLOUUEKSNKHID4ZWUVOBF5R": "TECHX",
+	}
+	if len(fundNAVBindings) != len(want) || len(fundNAVIndex) != len(want) {
+		t.Fatalf("fund table holds %d bindings (index %d), want %d", len(fundNAVBindings), len(fundNAVIndex), len(want))
+	}
+	for id, ticker := range want {
+		code, issuer, _ := strings.Cut(id, "-")
+		if !strkey.IsValidEd25519PublicKey(issuer) {
+			t.Errorf("%s: issuer is not a valid G-strkey", id)
+		}
+		if got, ok := FundNAVTicker(code, " "+issuer+" "); !ok || got != ticker {
+			t.Errorf("FundNAVTicker(%s) = %q, %v; want %q", id, got, ok, ticker)
+		}
+		if _, ok := FundNAVTicker(code, "GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6"); ok {
+			t.Errorf("%s resolves under a foreign issuer", code)
+		}
+		if _, ok := FundNAVTicker(strings.ToLower(code), issuer); ok {
+			t.Errorf("%s resolves case-folded", code)
+		}
+	}
+	tickers := FundNAVTickers()
+	if !slices.IsSorted(tickers) || len(tickers) != len(want) {
+		t.Errorf("FundNAVTickers() = %v; want %d sorted tickers", tickers, len(want))
 	}
 }

@@ -90,7 +90,7 @@ type ReadyChecker interface {
 // This constant MUST equal the head under migrations/; the parity test
 // TestExpectedSchemaVersionMatchesMigrationsHead fails CI if a migration
 // is added without bumping it.
-const ExpectedSchemaVersion uint = 190
+const ExpectedSchemaVersion uint = 191
 
 // nonAtomicMigrationVersions lists migration numbers whose up.sql commits
 // mid-file, breaking golang-migrate's one-transaction-per-file guarantee
@@ -288,6 +288,12 @@ type Server struct {
 	lakeWMFetched  time.Time
 	lakeWMNextTry  time.Time
 	lakeWMFlight   singleflight.Group
+	// Shared /v1/ledger/stream tip read — see ledgerStreamTip.
+	ledgerStreamMu     sync.Mutex
+	ledgerStreamView   LedgerTipView
+	ledgerStreamOK     bool
+	ledgerStreamAt     time.Time
+	ledgerStreamFlight singleflight.Group
 	// priceReadFlight coalesces concurrent readPriceWithAliasesServed
 	// calls for the same (asset, quote) pair onto one upstream read —
 	// HO-344: /v1/price, /v1/oracle/lastprice and /v1/oracle/x_last_price
@@ -763,7 +769,8 @@ type Options struct {
 	// Network is the Stellar network this deployment serves
 	// (config [stellar] network: pubnet / testnet / futurenet; empty =
 	// pubnet). /v1/coverage uses it to report which protocol sources do
-	// not exist on this network instead of counting them incomplete (#483).
+	// not exist on this network instead of counting them incomplete (#483);
+	// the reference listings use it to omit pubnet-only entries.
 	Network string
 	// ReadyChecks are polled by /readyz. Order matters only for
 	// log output (first-failed wins).
@@ -2417,6 +2424,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/ledgers", s.explorerHandler.LedgersList)
 	s.mux.HandleFunc("GET /v1/ledgers/{seq}", s.explorerHandler.LedgerDetail)
 	s.mux.HandleFunc("GET /v1/ledgers/{seq}/transactions", s.explorerHandler.LedgerTransactions)
+	s.mux.HandleFunc("GET /v1/ledgers/{seq}/operations", s.explorerHandler.LedgerOperations)
 	s.mux.HandleFunc("GET /v1/operations", s.explorerHandler.Operations)
 	s.mux.HandleFunc("GET /v1/tx/{hash}", s.explorerHandler.TxDetail)
 	s.mux.HandleFunc("GET /v1/search", s.explorerHandler.Search)

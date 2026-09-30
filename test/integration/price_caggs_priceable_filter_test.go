@@ -61,8 +61,8 @@ func TestPriceCAGGsPriceableFilter(t *testing.T) {
 	assertPriceableSchema(t, ctx, db, true)
 
 	for _, stmt := range []string{
-		`ALTER TABLE trades DROP CONSTRAINT trades_base_amount_check`,
-		`ALTER TABLE trades DROP CONSTRAINT trades_quote_amount_check`,
+		`ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_base_amount_check`,
+		`ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_quote_amount_check`,
 	} {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			t.Fatalf("%s: %v", stmt, err)
@@ -165,9 +165,13 @@ func TestPriceCAGGsPriceableFilter(t *testing.T) {
 		assertNumeric(t, "real-time bucket_last_price", readPoolsLastPrice(t, ctx, db, mixed, t0), "6")
 	})
 
-	// Down then up again. The down restores the unfiltered views, which
-	// cannot be refreshed over zero-leg rows, so they are removed before its
-	// recipe runs and stored again before the second up is refreshed.
+	// Down then up again. 0191's down refuses zero-leg rows and 0187's
+	// restores views that cannot be refreshed over them, so they are removed
+	// before the down and stored again before the second up is refreshed.
+	if _, err := db.ExecContext(ctx,
+		`DELETE FROM trades WHERE base_amount = 0 OR quote_amount = 0`); err != nil {
+		t.Fatalf("delete zero-leg rows: %v", err)
+	}
 	_, thisFile, _, _ := runtime.Caller(0)
 	m, err := migrate.New("file://"+filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations"), dsn)
 	if err != nil {
@@ -179,10 +183,6 @@ func TestPriceCAGGsPriceableFilter(t *testing.T) {
 	}
 	quiesceCAGGRefreshPolicies(t, ctx, db)
 	assertPriceableSchema(t, ctx, db, false)
-	if _, err := db.ExecContext(ctx,
-		`DELETE FROM trades WHERE base_amount = 0 OR quote_amount = 0`); err != nil {
-		t.Fatalf("delete zero-leg rows: %v", err)
-	}
 	refreshAll(t)
 	if err := m.Up(); err != nil {
 		t.Fatalf("migrate up 0187 again: %v", err)

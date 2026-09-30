@@ -210,6 +210,14 @@ func getHistoryPage(t *testing.T, ts *testServer, query string) historyPage {
 	return page
 }
 
+// priceString renders a nullable wire price for comparison and messages.
+func priceString(p *string) string {
+	if p == nil {
+		return "null"
+	}
+	return *p
+}
+
 // orientationQuery is the request window every test below reads over.
 func orientationQuery(base, quote canonical.Asset, limit int) string {
 	return url.Values{
@@ -262,9 +270,9 @@ func TestHistory_ReverseStoredMarketServesInvertedRows(t *testing.T) {
 			t.Errorf("row %d amounts = %s/%s, want %s/%s — the two legs swap with the pair",
 				i, got.BaseAmount, got.QuoteAmount, want.base, want.quote)
 		}
-		if got.Price != want.price {
+		if priceString(got.Price) != want.price {
 			t.Errorf("row %d price = %s, want %s — the flipped price is the exact reciprocal",
-				i, got.Price, want.price)
+				i, priceString(got.Price), want.price)
 		}
 	}
 	// Both directions were asked for, in the requested-first order.
@@ -295,8 +303,8 @@ func TestHistory_StoredOrientationIsUntouched(t *testing.T) {
 	if got.BaseAsset != aqua.String() || got.QuoteAsset != usdc.String() {
 		t.Errorf("pair = %s/%s, want %s/%s", got.BaseAsset, got.QuoteAsset, aqua, usdc)
 	}
-	if got.BaseAmount != "7" || got.QuoteAmount != "1" || got.Price != "0.1428571428" {
-		t.Errorf("row = %s/%s @ %s, want 7/1 @ 0.1428571428", got.BaseAmount, got.QuoteAmount, got.Price)
+	if got.BaseAmount != "7" || got.QuoteAmount != "1" || priceString(got.Price) != "0.1428571428" {
+		t.Errorf("row = %s/%s @ %s, want 7/1 @ 0.1428571428", got.BaseAmount, got.QuoteAmount, priceString(got.Price))
 	}
 }
 
@@ -496,14 +504,11 @@ func TestHistory_PageIsNotCutThroughATieGroup(t *testing.T) {
 	}
 }
 
-// TestHistory_FlippedRowWithZeroAmountRendersZeroPrice pins what a
-// flipped row does when the amount that becomes its denominator is
-// zero. The column carries a positive CHECK, so this is a row the
-// database should not hold — the point is that the fold performs no
-// division of its own, so a degenerate row renders the endpoint's
-// existing zero-denominator answer instead of panicking or poisoning
-// the page.
-func TestHistory_FlippedRowWithZeroAmountRendersZeroPrice(t *testing.T) {
+// TestHistory_FlippedRowWithZeroAmountRendersNullPrice pins a flipped
+// one-side-zero row (stored SDEX rounding fill): the zero leg becomes the
+// denominator, and the row renders "price": null without dropping or
+// poisoning the page.
+func TestHistory_FlippedRowWithZeroAmountRendersNullPrice(t *testing.T) {
 	t.Parallel()
 	usdc := mustParseAsset(t, usdcClassicID)
 	aqua := mustParseAsset(t, aquaClassicID)
@@ -520,13 +525,13 @@ func TestHistory_FlippedRowWithZeroAmountRendersZeroPrice(t *testing.T) {
 	if len(page.Data) != 2 {
 		t.Fatalf("rows = %d, want 2 — a degenerate row must not drop the page", len(page.Data))
 	}
-	if page.Data[0].BaseAmount != "0" || page.Data[0].QuoteAmount != "5" || page.Data[0].Price != "0" {
-		t.Errorf("degenerate row = %s/%s @ %s, want 0/5 @ 0",
-			page.Data[0].BaseAmount, page.Data[0].QuoteAmount, page.Data[0].Price)
+	if page.Data[0].BaseAmount != "0" || page.Data[0].QuoteAmount != "5" || page.Data[0].Price != nil {
+		t.Errorf("degenerate row = %s/%s @ %s, want 0/5 @ null",
+			page.Data[0].BaseAmount, page.Data[0].QuoteAmount, priceString(page.Data[0].Price))
 	}
-	if page.Data[1].Price != "5.0000000000" {
+	if priceString(page.Data[1].Price) != "5.0000000000" {
 		t.Errorf("neighbour price = %s, want 5.0000000000 — one degenerate row must not poison the rest",
-			page.Data[1].Price)
+			priceString(page.Data[1].Price))
 	}
 }
 
@@ -716,8 +721,8 @@ func TestHistory_FlippedRowNonstandardDecimals(t *testing.T) {
 	if got.BaseAmount != "100000000000" || got.QuoteAmount != "2500000000" {
 		t.Errorf("amounts = %s/%s, want 100000000000/2500000000", got.BaseAmount, got.QuoteAmount)
 	}
-	if got.Price != "2.5000000000" {
-		t.Errorf("price = %s, want 2.5000000000 — 250 USD over 100 tokens, corrected for a 9dp base against a 7dp quote", got.Price)
+	if priceString(got.Price) != "2.5000000000" {
+		t.Errorf("price = %s, want 2.5000000000 — 250 USD over 100 tokens, corrected for a 9dp base against a 7dp quote", priceString(got.Price))
 	}
 }
 
@@ -751,9 +756,9 @@ func TestHistory_FlippedInversionIsExactAtScale(t *testing.T) {
 		{"3", "1", "0.3333333333"},
 	} {
 		got := page.Data[i]
-		if got.BaseAmount != want.base || got.QuoteAmount != want.quote || got.Price != want.price {
+		if got.BaseAmount != want.base || got.QuoteAmount != want.quote || priceString(got.Price) != want.price {
 			t.Errorf("row %d = %s/%s @ %s, want %s/%s @ %s",
-				i, got.BaseAmount, got.QuoteAmount, got.Price, want.base, want.quote, want.price)
+				i, got.BaseAmount, got.QuoteAmount, priceString(got.Price), want.base, want.quote, want.price)
 		}
 	}
 }
