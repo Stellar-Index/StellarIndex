@@ -90,7 +90,7 @@ goroutine in the aggregator binary
 disambiguates the sources that share one hypertable (e.g. the
 trades-table sources `sdex` / `soroswap` / `phoenix` / `comet` /
 `aquarius`, or the `oracle_updates` sources `band` / `redstone` /
-`reflector-*`). 26 targets are registered today
+`reflector-*`). The registered set is `DefaultGapDetectorTargets`
 (`internal/storage/timescale/per_source_gaps.go`), spanning the
 Soroban projections, the classic SDEX path, and the off-chain
 oracle tables — NOT `soroban-events` alone.
@@ -2058,12 +2058,13 @@ connections with no delivery are clients receiving keepalives only.
 
 ### `stellarindex_api_sse_streams_rejected_total`
 
-Counter, label `reason` (`global_cap` / `per_ip_cap`).
+Counter, label `reason` (`global_cap` / `per_ip_cap` / `topic_cap`).
 
 SSE connections refused with a 503 by the concurrency caps. `global_cap`
 rising means the process-wide ceiling is full (a connection flood, or a
 deployment that has outgrown it); `per_ip_cap` rising means one client
-address is at its own ceiling.
+address is at its own ceiling; `topic_cap` rising means the streaming
+Hub's topic map is full of topics that all hold a live subscriber.
 
 ### `stellarindex_api_stream_hub_topics`
 

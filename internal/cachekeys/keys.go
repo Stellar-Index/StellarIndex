@@ -621,6 +621,13 @@ func APIKeyCache(keyHash string) APIKeyCacheKey {
 	return APIKeyCacheKey("apikey-cache:" + keyHash)
 }
 
+// APIKeyCacheEvicted returns the short-lived tombstone an eviction writes
+// for keyHash; while it lives the validator does not re-populate
+// [APIKeyCache]. Kept under `apikey-cache:` so the same ACL rule admits it.
+func APIKeyCacheEvicted(keyHash string) APIKeyCacheKey {
+	return APIKeyCacheKey("apikey-cache:" + keyHash + ":evicted")
+}
+
 // ─── API-key lookup index ─────────────────────────────────────────
 //
 // Wire shape: `apikey-index:v1` — ONE Redis HASH, fields:
