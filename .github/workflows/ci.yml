@@ -883,6 +883,12 @@ jobs:
         run: |
           ./scripts/ci/check-verify-parity-test.sh
           ./scripts/ci/check-verify-parity.sh
+      - name: every scripts/ci self-test has a runner (+ self-test)
+        # A *-test.sh that no workflow or verify.sh executes stays green while
+        # the gate it covers regresses; pre-existing orphans are baselined.
+        run: |
+          ./scripts/ci/check-selftest-runners-test.sh
+          ./scripts/ci/check-selftest-runners.sh
       - name: verifier image pins (+ self-test)
         # GH-1257: check-verify-image-pins.sh only ran via scripts/dev/
         # verify.sh, so the Dockerfile ARG and docs-postman.sh's
