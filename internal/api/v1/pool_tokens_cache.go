@@ -69,6 +69,14 @@ func (c *poolTokensCache) PoolTokens(ctx context.Context, source string) (map[st
 				val, err = nil, errPoolTokensFillPanicked
 			}
 		}()
+		// A fill that finished between this caller's miss and DoChan has
+		// already been forgotten by singleflight; serve its entry instead.
+		c.mu.Lock()
+		cur, ok := c.entries[source]
+		c.mu.Unlock()
+		if ok && c.now().Sub(cur.at) < poolTokensTTL {
+			return cur.tokens, nil
+		}
 		fillCtx, cancel := context.WithTimeout(context.Background(), poolTokensFillTimeout)
 		defer cancel()
 		m, err := c.upstream.PoolTokens(fillCtx, source)

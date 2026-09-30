@@ -54,6 +54,39 @@ func TestPoolTokensCache_RefillsAfterTTLAndKeepsLastGoodOnError(t *testing.T) {
 	}
 }
 
+// Two concurrent readers of one source (the positions folds read "blend"
+// in parallel) can both miss; if the first fill completes before the second
+// reaches DoChan, the second must not start another full-table fill.
+func TestPoolTokensCache_FillCompletedAfterMissIsNotRepeated(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	up := &scriptedPoolTokens{resp: map[string][]string{"CPOOL1": {"CA", "CB"}}}
+	c := newPoolTokensCache(up)
+	c.entries["blend"] = poolTokensEntry{tokens: map[string][]string{}, at: now.Add(-poolTokensTTL)}
+	ctx := context.Background()
+
+	// The outer caller's freshness check is the first now(); run a whole
+	// competing read there, after the miss is decided and before DoChan.
+	raced := false
+	c.now = func() time.Time {
+		if !raced {
+			raced = true
+			if _, err := c.PoolTokens(ctx, "blend"); err != nil {
+				t.Errorf("competing read: %v", err)
+			}
+		}
+		return now
+	}
+
+	m, err := c.PoolTokens(ctx, "blend")
+	if err != nil || len(m["CPOOL1"]) != 2 {
+		t.Fatalf("PoolTokens = %v, %v; want the competing fill's map", m, err)
+	}
+	if up.calls != 1 {
+		t.Fatalf("upstream calls = %d, want 1", up.calls)
+	}
+}
+
 type panickingPoolTokens struct{}
 
 func (panickingPoolTokens) PoolTokens(context.Context, string) (map[string][]string, error) {
