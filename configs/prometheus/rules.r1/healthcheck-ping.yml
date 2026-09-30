@@ -21,9 +21,7 @@
 # about the thing under the check, and the runbooks for THAT check apply.
 #
 # Severity is `ticket`, not `page`: a lost ping degrades the fidelity of
-# an external notifier, it does not degrade the service. Escalating it to
-# `page` on component `api` would also inhibit the api-plane tickets it
-# is meant to sit beside (configs/alertmanager/alertmanager.r1.yml).
+# an external notifier, it does not degrade the service.
 
 groups:
   - name: stellarindex.healthcheck_ping

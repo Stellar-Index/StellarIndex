@@ -3,8 +3,11 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
@@ -22,9 +25,8 @@ const (
 	// (was 2s) surfaces each new ledger within ~500ms of it landing —
 	// this poll drives the explorer's useLedgerFollow refetch (the
 	// "watch your transaction land" nudge), so it's on the real-time
-	// latency path. It's a light indexed cursor read; at real connection
-	// counts an event-driven Hub push would scale better (a documented
-	// follow-up), but 500ms captures the latency win with no new wiring.
+	// latency path. The read behind it is shared across connections
+	// (see ledgerStreamTip), so its cost does not scale with clients.
 	ledgerStreamPollInterval = 500 * time.Millisecond
 
 	// ledgerStreamRefreshInterval forces an emit even when the ledger
@@ -43,7 +45,67 @@ const (
 	// observationsScanTimeout's 8s ceiling, the same fix already
 	// applied to the observations-stream producer.
 	ledgerStreamTickTimeout = 8 * time.Second
+
+	// ledgerStreamTipTTL is how long one cursors read serves every open
+	// connection, so the DB cost of the poll is flat in connection count.
+	ledgerStreamTipTTL = ledgerStreamPollInterval / 2
 )
+
+// ledgerStreamTip is ledgerTip shared across every /v1/ledger/stream
+// connection: concurrent callers join one in-flight read, and a
+// successful result is reused for ledgerStreamTipTTL. The caller's ctx
+// bounds only its own wait.
+func (s *Server) ledgerStreamTip(ctx context.Context) (LedgerTipView, bool, error) {
+	s.ledgerStreamMu.Lock()
+	if !s.ledgerStreamAt.IsZero() && time.Since(s.ledgerStreamAt) < ledgerStreamTipTTL {
+		view, ok := s.ledgerStreamView, s.ledgerStreamOK
+		s.ledgerStreamMu.Unlock()
+		return view, ok, nil
+	}
+	s.ledgerStreamMu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		return LedgerTipView{}, false, ctx.Err()
+	case r := <-s.refreshLedgerStreamTip(): //nolint:contextcheck // shared read must not die with whichever client started it
+		if r.Err != nil {
+			return LedgerTipView{}, false, r.Err
+		}
+		res, ok := r.Val.(ledgerStreamTipResult)
+		if !ok {
+			return LedgerTipView{}, false, errLedgerStreamTipPanicked
+		}
+		return res.view, res.ok, nil
+	}
+}
+
+// refreshLedgerStreamTip starts or joins the one in-flight cursors read.
+// It runs on its own bounded context: tied to the first caller's, one
+// client disconnecting would fail the read for every other waiter.
+func (s *Server) refreshLedgerStreamTip() <-chan singleflight.Result {
+	return s.ledgerStreamFlight.DoChan("tip", func() (any, error) {
+		// A panic here would otherwise be re-raised on a bare goroutine and
+		// take down the process; recovered, waiters see a nil Val.
+		defer worker.Recover(s.logger, "api-ledger-stream-tip")
+		ctx, cancel := context.WithTimeout(context.Background(), ledgerStreamTickTimeout)
+		defer cancel()
+		view, ok, err := s.ledgerTip(ctx)
+		if err != nil {
+			return nil, err
+		}
+		s.ledgerStreamMu.Lock()
+		s.ledgerStreamView, s.ledgerStreamOK, s.ledgerStreamAt = view, ok, time.Now()
+		s.ledgerStreamMu.Unlock()
+		return ledgerStreamTipResult{view: view, ok: ok}, nil
+	})
+}
+
+var errLedgerStreamTipPanicked = errors.New("ledger tip read panicked")
+
+type ledgerStreamTipResult struct {
+	view LedgerTipView
+	ok   bool
+}
 
 // handleLedgerStream serves GET /v1/ledger/stream — the SSE
 // counterpart of /v1/ledger/tip. It pushes a `ledger_update` event
@@ -96,7 +158,7 @@ func (s *Server) handleLedgerStream(w http.ResponseWriter, r *http.Request) {
 	// the client stayed connected (cold audit 2026-08-04).
 	preflightCtx, cancelPreflight := context.WithTimeout(r.Context(), ledgerStreamTickTimeout)
 	defer cancelPreflight()
-	first, ok, err := s.ledgerTip(preflightCtx)
+	first, ok, err := s.ledgerStreamTip(preflightCtx)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -192,7 +254,7 @@ func (s *Server) nextLedgerEvent(
 ) (streaming.Event, LedgerTipView, bool) {
 	tickCtx, cancel := context.WithTimeout(ctx, ledgerStreamTickTimeout)
 	defer cancel()
-	view, ok, err := s.ledgerTip(tickCtx)
+	view, ok, err := s.ledgerStreamTip(tickCtx)
 	if err != nil {
 		if ctx.Err() == nil {
 			s.logger.Warn("ledgerTip failed (stream tick) — skipping emit", "err", err)

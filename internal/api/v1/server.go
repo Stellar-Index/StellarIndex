@@ -288,6 +288,12 @@ type Server struct {
 	lakeWMFetched  time.Time
 	lakeWMNextTry  time.Time
 	lakeWMFlight   singleflight.Group
+	// Shared /v1/ledger/stream tip read — see ledgerStreamTip.
+	ledgerStreamMu     sync.Mutex
+	ledgerStreamView   LedgerTipView
+	ledgerStreamOK     bool
+	ledgerStreamAt     time.Time
+	ledgerStreamFlight singleflight.Group
 	// priceReadFlight coalesces concurrent readPriceWithAliasesServed
 	// calls for the same (asset, quote) pair onto one upstream read —
 	// HO-344: /v1/price, /v1/oracle/lastprice and /v1/oracle/x_last_price
