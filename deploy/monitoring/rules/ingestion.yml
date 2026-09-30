@@ -39,6 +39,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: ingestion
+          alert_family: ingestion_source_stopped
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
           summary: "Source {{ $labels.source }} has stopped ingesting"
@@ -63,6 +64,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: ingestion
+          alert_family: ingestion_source_stopped
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
           summary: "Low-volume Soroban DEX {{ $labels.source }} silent 24+ hours"
@@ -85,6 +87,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: ingestion
+          alert_family: ingestion_source_stopped
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
           summary: "Daily publisher {{ $labels.source }} silent 30+ hours"
@@ -127,6 +130,7 @@ groups:
           severity: page
           team: stellarindex
           component: ingestion
+          alert_family: ingestion_source_stopped
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/all-ingestion-down.md
           summary: "All ingestion sources have stopped (SEV-1)"
@@ -526,6 +530,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: ingestion
+          alert_family: ingestion_ch_live_sink_drops
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink-drops.md
           summary: "ClickHouse live-sink is dropping ledger extracts"
@@ -547,6 +552,7 @@ groups:
           severity: page
           team: stellarindex
           component: ingestion
+          alert_family: ingestion_ch_live_sink_drops
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink-drops.md
           summary: "ClickHouse live-sink drops sustained for 1h — heal path losing the race"
