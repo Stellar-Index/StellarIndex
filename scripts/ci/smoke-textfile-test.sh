@@ -134,6 +134,12 @@ else
   bad "wrapper exited $rc on a failing smoke, want 0"
 fi
 if grep -qF '/fail' "$WORK/pings" 2>/dev/null; then
+  bad "a single failing run pinged /fail — /fail bypasses the check's grace period, so it must wait for a 2nd consecutive failure"
+else
+  ok "a single failing run holds the /fail ping back"
+fi
+run_smoke 3 "$DIR" >/dev/null
+if grep -qF '/fail' "$WORK/pings" 2>/dev/null; then
   ok "failing run still pings the Healthchecks /fail endpoint"
 else
   bad "failing run did not ping \${URL}/fail — the pre-existing sink regressed"

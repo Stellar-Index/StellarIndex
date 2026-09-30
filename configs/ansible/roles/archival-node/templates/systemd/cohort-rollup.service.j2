@@ -36,6 +36,10 @@ NoNewPrivileges=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
+# The rollup takes an exclusive flock under /var/lib/stellarindex before
+# it touches ClickHouse; ProtectSystem=strict leaves that directory
+# read-only unless it is listed here, and the run then fails at the open.
+ReadWritePaths=/var/lib/stellarindex
 # The movements walk is the long step: the whole archive, one 1M-ledger
 # window at a time, joined to the membership. Budgeted well past the
 # board rollups' ~15 min; the per-statement max_execution_time inside

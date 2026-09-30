@@ -19,8 +19,8 @@ type AssetCoverageSignals struct {
 	AssetID string
 	// HasPriceUSD reports whether a servable USD/XLM-proxy price exists for
 	// the asset in the substance window (a non-null prices_1m VWAP against
-	// a USD proxy or native/XLM-SAC quote). When true the asset is priced,
-	// not a coverage gap.
+	// a USD proxy or native/XLM-SAC quote) or the listing serves one from
+	// asset_price_snapshot. When true the asset is priced, not a coverage gap.
 	HasPriceUSD bool
 	// Volume7dUSD / Trades7d are the trailing-7d RAW priced volume + trade
 	// count, before any wash discount. The classifier subtracts
@@ -298,6 +298,10 @@ const pricelessPricedCTEs = `priced_direct AS (
 -- Grouped per (asset, hop) rather than per asset, because the resolver
 -- gates each candidate hop on its own — aggregating across every priced counterparty
 -- would clear the floors on combined depth no single market has.
+--
+-- The listing's snapshot derivation applies none of these floors, so these
+-- arms alone can call an asset the listing prices "unpriced"; priced
+-- therefore also takes every asset with a servable snapshot row.
 one_hop AS (
   SELECT CASE WHEN p.base_asset = d.asset_id THEN p.quote_asset ELSE p.base_asset END AS asset_id,
          d.asset_id                                                    AS hop,
@@ -321,8 +325,17 @@ priced AS (
      AND vol_usd >= 1000    -- pricingguard DefaultSubstanceMinVolumeUSD
      AND buckets >= 20      -- pricingguard DefaultSubstanceMinBuckets
      AND span_s >= 21600    -- pricingguard DefaultSubstanceMinSpan (6h)
+  UNION
+  ` + pricelessServedArm + `
 )
 `
+
+// pricelessServedArm is the served-price arm of the tripwire's priced set:
+// an asset /v1/assets serves a price for is not a coverage gap. Same join
+// bound as listAssetsBaseSelect, so it tracks exactly what the listing serves.
+const pricelessServedArm = `SELECT asset_id
+    FROM asset_price_snapshot
+   WHERE computed_at > now() - INTERVAL '` + assetPriceSnapshotMaxAge + `'`
 
 // assetIsPricedSQL asks the sweep's own priced set about one asset id.
 const assetIsPricedSQL = `

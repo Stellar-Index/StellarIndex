@@ -248,6 +248,7 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	copts := chunkRestampOptions{
 		Batch: *chunkBatch, MinFreeBytes: *minFreeBytes, AllowLiveAdjacent: *allowLiveAdjacent,
 		ResumePausedPolicy: *resumePausedPolicy,
+		RemoteDBHost:       remoteDSNHost(cfg.Storage.PostgresDSN),
 	}
 
 	if restampTierIsEstimated(*tier) {
