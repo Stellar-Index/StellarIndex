@@ -228,9 +228,9 @@ exactly that rather than looking like drift.
   `galexie-archive`. `mc admin policy info local stellarindex-reader`; re-apply if the
   live policy is wider than the codified one.
 - [ ] **Deploy `galexie-archive-fill` off the root (`local`) alias** — done in code: the
-  fill reads and mirrors as `ARCHIVE_ALIAS` (`archivewriter`, set by `--tags minio`)
-  and fails fast if that alias cannot list the bucket; only an operator run with
-  `PARTIALS=…` deletes, via `ARCHIVE_DELETE_ALIAS` (default `local`). Remaining: apply
+  fill reads and mirrors through `ARCHIVE_DEST` (`archivewriter/galexie-archive`, alias
+  set by `--tags minio`) and fails fast if it cannot list it; only an operator run with
+  `PARTIALS=…` deletes, via `ARCHIVE_DELETE_ALIAS` (`local`). Remaining: apply
   `--tags minio,archive-fill` and confirm one full timer cycle succeeds.
 
 ## Supply cross-check P3 on BLND / EURC / KALE / PHO (E4/N-F3)

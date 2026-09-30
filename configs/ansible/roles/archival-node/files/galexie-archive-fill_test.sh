@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # galexie-archive-fill_test.sh — pins which MinIO identity each phase of
-# galexie-archive-fill.sh uses: reads and the mirror go through the
-# bucket-scoped writer alias (no delete), only the operator PARTIALS delete
-# uses the separately named delete alias, and an unresolvable alias fails the
-# run before it mirrors or deletes anything.
+# galexie-archive-fill.sh uses under ansible's /etc/default: reads and the
+# mirror go through the bucket-scoped writer alias (no delete), only the
+# operator PARTIALS delete uses the separately named delete alias, an
+# operator-set ARCHIVE_DEST keeps its own alias for both, and an unresolvable
+# alias fails the run before it mirrors or deletes anything.
 #
 # Runs a copy of the real script with its root-owned paths and lock rewritten
-# into a temp dir, against a stub mc (and a GNU-xargs shim where the host's
-# xargs lacks -a/-d), so it needs no root, MinIO or network.
+# into a temp dir, beside the defaults file 07-galexie.yml renders, against a
+# stub mc (and a GNU-xargs shim where the host's xargs lacks -a/-d), so it
+# needs no root, MinIO or network.
 #
 # Run: bash configs/ansible/roles/archival-node/files/galexie-archive-fill_test.sh
 set -uo pipefail
@@ -38,6 +40,15 @@ sed -e "s#/var/log/galexie-mirror.log#$TMP/mirror.log#" \
 for want in "$TMP/mirror.log" "$TMP/fill.lock" "$TMP/default" "$TMP/hot-floor" '^:$' '^if false; then$'; do
   grep -q -- "$want" "$TMP/fill.sh" || { echo "FAIL: rewrite of the script copy missed '$want' — update this test"; exit 1; }
 done
+
+# /etc/default/galexie-archive-fill as ansible renders it (hot floor 0).
+awk '/^- name: Template \/etc\/default\/galexie-archive-fill/ { t = 1 }
+     t && /content: \|/ { c = 1; next }
+     c && /^  [a-z]/ { exit }
+     c { sub(/^      /, ""); print }' ../tasks/07-galexie.yml \
+  | sed 's/{{ stellarindex_archive_hot_floor }}/0/' > "$TMP/default"
+grep -q 'ARCHIVE_DEST=archivewriter/galexie-archive' "$TMP/default" \
+  || { echo "FAIL: rendered defaults lack the writer ARCHIVE_DEST — update this test"; exit 1; }
 
 # Stub mc: logs every call; an alias outside $MC_ALIASES does not resolve.
 # The AWS bucket holds one partition of 3 objects; the archive holds none.
@@ -117,6 +128,14 @@ if grep -q "^rm --recursive --force local/galexie-archive/$PART/\$" "$TMP/calls"
 else bad "no rm via local/galexie-archive/$PART/"; fi
 if grep -q "^mirror .* archivewriter/galexie-archive/$PART/\$" "$TMP/calls"; then ok "mirror via archivewriter"
 else bad "no mirror to archivewriter"; fi
+
+echo "5. operator-set ARCHIVE_DEST: delete and mirror both stay on that store"
+run "aws-public local archivewriter other" PARTIALS="$PART" ARCHIVE_DEST=other/galexie-archive
+if [ "$rc" -eq 0 ]; then ok "exit 0"; else bad "exit $rc: $(tail -3 "$TMP/stderr")"; fi
+if grep -q "^rm --recursive --force other/galexie-archive/$PART/\$" "$TMP/calls"; then ok "rm via other"
+else bad "no rm via other/galexie-archive/$PART/"; fi
+if grep -qE '(local|archivewriter)/' "$TMP/calls"; then bad "left the operator's store: $(grep -m1 -E '(local|archivewriter)/' "$TMP/calls")"
+else ok "no call outside other/"; fi
 
 echo
 echo "passed: $pass  failed: $fail"

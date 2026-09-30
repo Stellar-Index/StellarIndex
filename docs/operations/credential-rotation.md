@@ -314,12 +314,12 @@ mc ls archivewriter/galexie-archive/ | head        # must list, not 403
 ```
 
 **3. The hourly fill job writes as `galexie-archive-writer`.**
-`galexie-archive-fill.sh` lists and mirrors through `ARCHIVE_ALIAS`
-(`archivewriter`, set in `/etc/default/galexie-archive-fill`; `--tags
-minio` persists the alias for root) and exits 1 if that alias cannot
-list the bucket. The writer grants no delete, so the only delete — the
+`galexie-archive-fill.sh` lists and mirrors through `ARCHIVE_DEST`
+(`archivewriter/galexie-archive`, set in `/etc/default/galexie-archive-fill`;
+`--tags minio` persists the alias for root) and exits 1 if it cannot
+list it. The writer grants no delete, so the only delete — the
 operator-run `PARTIALS=…` sweep — goes through `ARCHIVE_DELETE_ALIAS`
-(default `local`), and the run stops before deleting if that alias is
+(`local`, same file), and the run stops before deleting if that alias is
 not configured. After deploying, confirm one full timer cycle.
 
 ## Related
