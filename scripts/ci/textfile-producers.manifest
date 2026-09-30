@@ -64,6 +64,7 @@ configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml              redis_
 cmd/stellarindex-sla-probe/textfile.go                                    operator-supplied                  cmd/stellarindex-sla-probe/textfile_test.go
 internal/archivecompleteness/metrics.go                                   archive_completeness.prom          internal/archivecompleteness/metrics_test.go
 internal/ops/archive/verify_archive_textfile.go                           operator-supplied                  internal/ops/archive/verify_archive_textfile_test.go
+internal/ops/chops/verify_lake.go                                         operator-supplied                  internal/ops/chops/verify_lake_test.go
 internal/ops/chops/verify_served_values.go                                served_values.prom                 internal/ops/chops/verify_served_values_test.go
 internal/ops/opsutil/job_heartbeat.go                                     operator-supplied                  internal/ops/opsutil/job_heartbeat_test.go
 internal/supply/textfile.go                                               operator-supplied                  internal/supply/textfile_test.go
