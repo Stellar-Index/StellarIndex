@@ -111,6 +111,10 @@ func backfillExternal(args []string) error {
 
 	t0 := time.Now()
 	trades, err := backfiller.Backfill(ctx, pair, from, to, granularity)
+	trades, dropped := dropUnsettledCandles(trades, to, time.Now())
+	if dropped > 0 {
+		fmt.Fprintf(os.Stderr, "backfill-external: dropped %d candle(s) not closed by min(-to, now)\n", dropped)
+	}
 	resumeFrom, partial := partialFetchResume(trades, err)
 	if err != nil && !partial {
 		return fmt.Errorf("backfill: %w", err)
@@ -185,6 +189,26 @@ func openBackfillStore(ctx context.Context, cfgPath string) (*timescale.Store, e
 		return nil, err
 	}
 	return store, nil
+}
+
+// dropUnsettledCandles keeps only candle trades whose bar closed before
+// min(to, now): venues return their still-open bar and bars straddling
+// -to, and each connector stamps a candle at its last instant (close-1s,
+// or close-1ms for binance). Truncating the cutoff to the second makes
+// "stamp < cutoff" mean "bar end <= cutoff" at either resolution.
+func dropUnsettledCandles(trades []canonical.Trade, to, now time.Time) ([]canonical.Trade, int) {
+	cutoff := to
+	if now.Before(cutoff) {
+		cutoff = now
+	}
+	cutoff = cutoff.Truncate(time.Second)
+	kept := trades[:0]
+	for _, tr := range trades {
+		if tr.Timestamp.Before(cutoff) {
+			kept = append(kept, tr)
+		}
+	}
+	return kept, len(trades) - len(kept)
 }
 
 // partialFetchResume reports whether a venue walk that ended early —
