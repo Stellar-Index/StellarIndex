@@ -901,7 +901,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// request path; the trailing-24h figures don't move materially in 30s.
 	cachedNetworkStats := v1.NewCachedNetworkStatsReader(store, 30*time.Second)
 
-	usdPegs := parseUSDPeggedClassics(cfg.Trades.USDPeggedClassicAssets, logger)
+	usdPegs := cfg.Trades.USDPeggedClassics(logger)
 	fiatPegs := parseFiatPeggedClassics(cfg.PricingGuard.FiatPeggedClassicAssets, logger)
 
 	// Load the verified-currency catalogue (R-018 Phase 1.1).
@@ -1021,25 +1021,10 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// Initial population — block-with-timeout so the first
 		// status-page poll after restart sees data sooner than the
 		// next ticker boundary.
-		initCtx, initCancel := context.WithTimeout(rootCtx, coverageRefreshTimeout)
-		defer initCancel()
-		if err := backfillCoverageCache.Refresh(initCtx); err != nil {
-			logger.Warn("backfill coverage initial refresh", "err", err)
-		}
-		tick := time.NewTicker(v1.CoverageRefreshInterval)
-		defer tick.Stop()
-		for {
-			select {
-			case <-rootCtx.Done():
-				return
-			case <-tick.C:
-				refreshCtx, cancel := context.WithTimeout(rootCtx, coverageRefreshTimeout)
-				if err := backfillCoverageCache.Refresh(refreshCtx); err != nil {
-					logger.Warn("backfill coverage periodic refresh", "err", err)
-				}
-				cancel()
-			}
-		}
+		refreshWithTimeout(rootCtx, backfillCoverageCache.Refresh, coverageRefreshTimeout, logger,
+			"backfill coverage initial refresh")
+		runRefreshLoop(rootCtx, backfillCoverageCache.Refresh, v1.CoverageRefreshInterval, coverageRefreshTimeout, logger,
+			"backfill coverage periodic refresh")
 	}()
 
 	// Read-time dex-nonstandard-decimals serving guard (confirmed
@@ -1064,20 +1049,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	go func() {
 		defer bgWG.Done()
 		defer recoverBackgroundWorker(logger, "nonstandard-decimals-cache")
-		tick := time.NewTicker(v1.NonstandardDecimalsRefreshInterval)
-		defer tick.Stop()
-		for {
-			select {
-			case <-rootCtx.Done():
-				return
-			case <-tick.C:
-				refreshCtx, cancel := context.WithTimeout(rootCtx, nonstandardDecimalsRefreshTimeout)
-				if err := nonstandardDecimalsCache.Refresh(refreshCtx); err != nil {
-					logger.Warn("nonstandard-decimals cache periodic refresh", "err", err)
-				}
-				cancel()
-			}
-		}
+		runRefreshLoop(rootCtx, nonstandardDecimalsCache.Refresh, v1.NonstandardDecimalsRefreshInterval,
+			nonstandardDecimalsRefreshTimeout, logger, "nonstandard-decimals cache periodic refresh")
 	}()
 
 	// Live per-token supply from the decode-at-ingest supply_flows lake
@@ -1245,25 +1218,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// refreshes never stack; a refresh is one lake lookup + one
 		// served-tier scan + a bounded set of prices_1m point reads.
 		const dexTVLRefreshTimeout = 3 * time.Minute
-		initCtx, initCancel := context.WithTimeout(rootCtx, dexTVLRefreshTimeout)
-		defer initCancel()
-		if err := dexTVLCache.Refresh(initCtx); err != nil {
-			logger.Warn("dex tvl initial refresh", "err", err)
-		}
-		tick := time.NewTicker(v1.DEXTVLRefreshInterval)
-		defer tick.Stop()
-		for {
-			select {
-			case <-rootCtx.Done():
-				return
-			case <-tick.C:
-				refreshCtx, cancel := context.WithTimeout(rootCtx, dexTVLRefreshTimeout)
-				if err := dexTVLCache.Refresh(refreshCtx); err != nil {
-					logger.Warn("dex tvl periodic refresh", "err", err)
-				}
-				cancel()
-			}
-		}
+		refreshWithTimeout(rootCtx, dexTVLCache.Refresh, dexTVLRefreshTimeout, logger, "dex tvl initial refresh")
+		runRefreshLoop(rootCtx, dexTVLCache.Refresh, v1.DEXTVLRefreshInterval, dexTVLRefreshTimeout, logger,
+			"dex tvl periodic refresh")
 	}()
 
 	// SDEX live order book (/v1/sdex/orderbook). The initial load
@@ -4780,41 +4737,12 @@ func authModeAdmitsAnonymous(mode string) bool {
 // Default config ships AllowedOrigins=[] (same-origin only, SEC-14
 // audit-2026-07-23); this warning only fires once an operator has
 // explicitly opted into the wildcard.
-// parseUSDPeggedClassics resolves the operator's
-// trades.usd_pegged_classic_assets strings into canonical Assets so
-// /v1/chart can use them as fallback quotes when the literal
-// X/fiat:USD pair has zero points. Mirrors the aggregator's
-// parseUSDPeggedClassicAssets — soft-fails on malformed entries,
-// same rationale (a missing peg is a smaller failure than refusing
-// to start).
-func parseUSDPeggedClassics(raws []string, logger *slog.Logger) []canonical.Asset {
-	if len(raws) == 0 {
-		return nil
-	}
-	out := make([]canonical.Asset, 0, len(raws))
-	for _, raw := range raws {
-		a, err := canonical.ParseAsset(raw)
-		if err != nil {
-			logger.Warn("usd_pegged_classic_assets: skipping malformed entry",
-				"raw", raw, "err", err)
-			continue
-		}
-		if a.Type != canonical.AssetClassic {
-			logger.Warn("usd_pegged_classic_assets: ignoring non-classic asset",
-				"raw", raw, "type", a.Type)
-			continue
-		}
-		out = append(out, a)
-	}
-	return out
-}
-
 // parseFiatPeggedClassics resolves the operator's
 // pricing_guard.fiat_pegged_classic_assets map (classic asset_key →
 // ISO-4217 ticker) into the asset_id → canonical fiat Asset map the
 // declared-peg price fill consumes. Config.Validate already hard-fails
 // malformed entries at load; the soft-fail here is belt-and-braces for
-// non-Validate construction paths, mirroring parseUSDPeggedClassics
+// non-Validate construction paths, mirroring TradesConfig.USDPeggedClassics
 // (a missing peg is a smaller failure than refusing to start). Keys
 // are re-canonicalised via Asset.String() so lookup never depends on
 // the operator's exact spelling.
@@ -5172,6 +5100,7 @@ func (a *forexAdapter) Latest() *v1.CurrenciesSnapshot {
 			Name:      c.Name,
 			RateUSD:   c.RateUSD,
 			UpdatedAt: c.UpdateAt,
+			Source:    c.Source,
 		}
 		// Join curated monetary-base CSV (lower-case keyed). Market
 		// cap is computed in USD-equivalent: the local-units M2

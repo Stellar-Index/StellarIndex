@@ -104,8 +104,11 @@ func TestCHRebuildPreflight_AnswersWithoutTouchingTheLakeOrTheServedTier(t *test
 	}
 
 	// ── 2. control: the real run reaches the lake, and the lake is dead ─
+	// The first lake read is the factory-children preseed (soroswap is
+	// factory-anchored), so the failure names the dead address, not the
+	// event stream.
 	before := servedRows(t)
-	if _, err = captureStdout(t, func() error { return chops.Run(args()) }); err == nil || !strings.Contains(err.Error(), "event stream") {
+	if _, err = captureStdout(t, func() error { return chops.Run(args()) }); err == nil || !strings.Contains(err.Error(), "clickhouse: ping "+deadLake) {
 		t.Fatalf("control: the un-preflighted run should fail on the unreachable lake; got err=%v — "+
 			"without this, a passing preflight proves nothing about WHERE it stopped", err)
 	}

@@ -472,6 +472,10 @@ type Handler struct {
 	// value ready; see network_throughput_cache.go.
 	throughput networkThroughputCache
 
+	// attribution memoises the contract → protocol registry map read by the
+	// contracts directory, interactions and detail routes. Zero value ready.
+	attribution contractAttributionCache
+
 	// refreshGate bounds this handler's DETACHED cache refreshes globally
 	// across keys AND cache kinds (audit 2026-07-31): per-key
 	// single-flight alone leaves the key space attacker-chosen on these
