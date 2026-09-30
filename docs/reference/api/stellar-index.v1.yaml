@@ -690,7 +690,7 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
                 pagination:
-                  next: catalogue:2
+                  next: catalogue:WyJ4bG0iLCJ1c2RjIl0
               schema: { $ref: "#/components/schemas/AssetListEnvelope" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -764,7 +764,7 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
                 pagination:
-                  next: '2'
+                  next: WyJjaGluZXNlLXl1YW4iLCJ1cy1kb2xsYXIiXQ
               schema: { $ref: "#/components/schemas/AssetListEnvelope" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "429": { $ref: "#/components/responses/RateLimited" }

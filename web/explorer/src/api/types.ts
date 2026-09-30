@@ -12872,7 +12872,7 @@ export interface operations {
                      *         "divergence_checked": false
                      *       },
                      *       "pagination": {
-                     *         "next": "catalogue:2"
+                     *         "next": "catalogue:WyJ4bG0iLCJ1c2RjIl0"
                      *       }
                      *     }
                      */
@@ -12965,7 +12965,7 @@ export interface operations {
                      *         "divergence_checked": false
                      *       },
                      *       "pagination": {
-                     *         "next": "2"
+                     *         "next": "WyJjaGluZXNlLXl1YW4iLCJ1cy1kb2xsYXIiXQ"
                      *       }
                      *     }
                      */
