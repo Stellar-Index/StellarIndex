@@ -688,3 +688,36 @@ func TestCatalogueGenesisLocksStepWithGapDetectorTargets(t *testing.T) {
 		t.Fatalf("checked %d catalogued sources (want >= 20) and %d of %d package constants — the guard no longer covers the catalogue", checked, constants, len(packageGenesis))
 	}
 }
+
+// TestReconTargetCountFilter_PriceableOnlyForSDEX pins the served/census
+// asymmetry: only the sdex trades target counts with the priceable filter, and
+// its whereFilter (the persisted completeness_target_floors key) is unchanged.
+func TestReconTargetCountFilter_PriceableOnlyForSDEX(t *testing.T) {
+	cfg := testConfigWithAllSources()
+	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
+	cat, _, err := buildReconciliationCatalogue(cfg)
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+	var sawSDEX bool
+	for _, src := range cat {
+		for _, tgt := range src.targets {
+			if src.name == "sdex" {
+				sawSDEX = true
+				if tgt.whereFilter != "source = 'sdex'" {
+					t.Errorf("sdex whereFilter = %q; it is the persisted floor key and must stay \"source = 'sdex'\"", tgt.whereFilter)
+				}
+				if got, want := tgt.countFilter(), "source = 'sdex' AND base_amount > 0 AND quote_amount > 0"; got != want {
+					t.Errorf("sdex countFilter = %q, want %q", got, want)
+				}
+				continue
+			}
+			if got := tgt.countFilter(); got != tgt.whereFilter {
+				t.Errorf("%s/%s countFilter = %q, want its whereFilter %q", src.name, tgt.table, got, tgt.whereFilter)
+			}
+		}
+	}
+	if !sawSDEX {
+		t.Fatal("catalogue has no sdex target")
+	}
+}

@@ -170,7 +170,8 @@ var ErrUnknownGranularity = fmt.Errorf("unknown granularity")
 //
 // Numeric amounts ship as decimal strings (ADR-0003). Price is a
 // pre-computed decimal for consumer convenience — the storage layer
-// never persists a derived price, so we compute at response time.
+// never persists a derived price, so we compute at response time. Price
+// is null (always present) for a stored trade with a zero leg.
 type TradeRow struct {
 	Source      string   `json:"source"`
 	Ledger      uint32   `json:"ledger"`
@@ -181,7 +182,7 @@ type TradeRow struct {
 	QuoteAsset  string   `json:"quote_asset"`
 	BaseAmount  string   `json:"base_amount"`
 	QuoteAmount string   `json:"quote_amount"`
-	Price       string   `json:"price"` // quote/base as decimal
+	Price       *string  `json:"price"` // quote/base as decimal; nil when a leg is zero
 	// BaseDecimals / QuoteDecimals are the smallest-unit scale for each
 	// side's amount: divide base_amount by 10^base_decimals (and quote by
 	// 10^quote_decimals) to get whole-asset units.
@@ -219,7 +220,7 @@ func tradeRowFrom(t canonical.Trade, decimals int) TradeRow {
 	if decimals <= 0 {
 		decimals = 10
 	}
-	return TradeRow{
+	row := TradeRow{
 		Source:      t.Source,
 		Ledger:      t.Ledger,
 		TxHash:      t.TxHash,
@@ -229,9 +230,12 @@ func tradeRowFrom(t canonical.Trade, decimals int) TradeRow {
 		QuoteAsset:  t.Pair.Quote.String(),
 		BaseAmount:  t.BaseAmount.String(),
 		QuoteAmount: t.QuoteAmount.String(),
-		Price:       priceRatioDecimal(t, decimals),
 		RoutedVia:   t.RoutedVia,
 	}
+	if p, ok := priceRatioDecimal(t, decimals); ok {
+		row.Price = &p
+	}
+	return row
 }
 
 // normalizeTradeRowPrices rewrites each row's Price from the RAW
@@ -254,12 +258,12 @@ func (s *Server) normalizeTradeRowPrices(rows []TradeRow, trades []canonical.Tra
 		return
 	}
 	for i := range rows {
-		b := trades[i].BaseAmount.BigInt()
-		if b.Sign() == 0 {
+		b, q := trades[i].BaseAmount.BigInt(), trades[i].QuoteAmount.BigInt()
+		if b.Sign() <= 0 || q.Sign() <= 0 {
 			continue
 		}
-		raw := new(big.Rat).SetFrac(trades[i].QuoteAmount.BigInt(), b)
-		rows[i].Price = ratToDecimal(aggregate.AdjustPrice(raw, baseDec, quoteDec), 10)
+		p := ratToDecimal(aggregate.AdjustPrice(new(big.Rat).SetFrac(q, b), baseDec, quoteDec), 10)
+		rows[i].Price = &p
 	}
 }
 

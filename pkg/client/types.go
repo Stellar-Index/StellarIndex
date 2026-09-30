@@ -592,7 +592,8 @@ type FiatCodeAnchor struct {
 // are decimal strings (ADR-0003); `Price` is the pre-computed
 // quote/base ratio at 10 fractional digits for consumer
 // convenience (the storage layer never persists a derived price,
-// so the server computes it at response time).
+// so the server computes it at response time). Price is nil when one
+// leg is zero (an SDEX rounding fill): such a trade has no price.
 type TradeRow struct {
 	Source      string    `json:"source"`
 	Ledger      uint32    `json:"ledger"`
@@ -603,7 +604,7 @@ type TradeRow struct {
 	QuoteAsset  string    `json:"quote_asset"`
 	BaseAmount  string    `json:"base_amount"`
 	QuoteAmount string    `json:"quote_amount"`
-	Price       string    `json:"price"`
+	Price       *string   `json:"price"`
 	// BaseDecimals / QuoteDecimals are the smallest-unit scale for each
 	// side: divide BaseAmount by 10^BaseDecimals (QuoteAmount by
 	// 10^QuoteDecimals) for whole-asset units.
