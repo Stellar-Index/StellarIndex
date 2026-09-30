@@ -15063,6 +15063,11 @@ components:
           the composite SUBSTITUTED around a dry configured chain leg
           — the price came via an alternative path, not the documented
           direct chain. Omitted when false.
+        - `pivot_unverified` — set on a TRIANGULATED `/v1/price` response
+          when a leg of the composite was priced only from stablecoin
+          prints taken at par with USD, with no prints in the leg's own
+          quote asset to check a stablecoin de-peg against. Omitted when
+          false.
         - `unverified_ticker_collision` — fires on `/v1/assets/{id}`
           when the asset's code matches a verified currency's
           Stellar ticker but the issuer doesn't. The matching
@@ -15148,6 +15153,14 @@ components:
             substituted around a dry configured chain leg — the price came via
             an alternative path, not the documented direct chain. Omitted when
             false.
+        pivot_unverified:
+          type: boolean
+          default: false
+          description: >
+            Set on a TRIANGULATED /v1/price response when a leg of the
+            composite was priced only from stablecoin prints taken at par with
+            USD, with no prints in the leg's own quote asset to check a
+            stablecoin de-peg against. Omitted when false.
         unverified_ticker_collision: { type: boolean, default: false }
         filters_ignored:
           type: array
