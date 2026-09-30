@@ -123,6 +123,22 @@ expect "cmd/**/*.go triggers the go class" 0
 run go "go.sum"
 expect "go.sum triggers the go class" 0
 
+# The trigger-class guard runs only in the go-gated test job and reads these.
+run go "Makefile"
+expect "a Makefile-only diff (INT_TEST_PKGS edit) triggers the go class" 0
+
+run go ".github/workflows/ci.yml"
+expect "a ci.yml-only diff triggers the go class" 0
+
+run go "scripts/ci/check-change-class.sh"
+expect "a check-change-class.sh-only diff triggers the go class" 0
+
+run go "scripts/ci/prepush-integration-required.sh"
+expect "a prepush-integration-required.sh-only diff triggers the go class" 0
+
+run go "scripts/ci/lint-docs.sh"
+expect "another scripts/ci script does NOT trigger the go class" 1
+
 run go "docs/architecture/lexicon.md"
 expect "a markdown file does NOT trigger the go class" 1
 
