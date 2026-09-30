@@ -2611,7 +2611,8 @@ func (s *Server) handleExternalAssetList(w http.ResponseWriter, r *http.Request)
 		limit = parsed
 	}
 
-	if s.verifiedCurrencies == nil {
+	// Every external row is priced by an off-chain feed no test net runs.
+	if s.verifiedCurrencies == nil || !s.servesPubnetReference() {
 		writeJSON(w, []AssetDetail{}, Flags{})
 		return
 	}
@@ -3912,6 +3913,13 @@ func (s *Server) lookupCatalogue(raw string) *currency.VerifiedCurrency {
 // Stellar asset 404s here (its detail lives on /v1/assets/{slug}); LC-001.
 func (s *Server) handleExternalAssetGet(w http.ResponseWriter, r *http.Request) {
 	raw := normaliseAssetIDInput(r.PathValue("slug"))
+	if !s.servesPubnetReference() {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/asset-not-found",
+			"Asset not found", http.StatusNotFound,
+			fmt.Sprintf("external assets are not served on network %s", s.network))
+		return
+	}
 	vc := s.lookupCatalogue(raw)
 	if vc == nil {
 		writeProblem(w, r,
@@ -3935,7 +3943,9 @@ func (s *Server) handleExternalAssetGet(w http.ResponseWriter, r *http.Request) 
 // from handleAssetGet so the latter stays linear-readable.
 func (s *Server) verifiedCurrencyFlags(detail *AssetDetail, asset canonical.Asset) Flags {
 	flags := Flags{}
-	if applyUnverifiedWarning(detail, asset, s.verifiedCurrencies) {
+	// The catalogue's verified issuers are pubnet accounts; on a test net
+	// every look-alike stamp would point at an asset that does not exist.
+	if s.servesPubnetReference() && applyUnverifiedWarning(detail, asset, s.verifiedCurrencies) {
 		flags.UnverifiedTickerCollision = true
 	}
 	applyFiatCodeAnchorNote(detail, asset, s.verifiedCurrencies)
@@ -3978,11 +3988,11 @@ func applyFiatCodeAnchorNote(detail *AssetDetail, asset canonical.Asset, cat *cu
 // withhold the badge from impersonators while the real verified row
 // (StellarCollision → false) keeps it.
 //
-// No-op when no catalogue is wired. Catalogue rows on the unified
-// listing carry no issuer (type=global) and are skipped — they ARE the
-// verified identities.
+// No-op when no catalogue is wired or on a test net. Catalogue rows on
+// the unified listing carry no issuer (type=global) and are skipped —
+// they ARE the verified identities.
 func (s *Server) stampListingCollisions(rows []AssetDetail) {
-	if s.verifiedCurrencies == nil {
+	if s.verifiedCurrencies == nil || !s.servesPubnetReference() {
 		return
 	}
 	for i := range rows {
