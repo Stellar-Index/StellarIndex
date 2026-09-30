@@ -1,0 +1,52 @@
+# systemd unit: daily raw-lake soundness verification (verify-lake).
+#
+# Rendered by Ansible. verify-lake is the documented restore acceptance gate;
+# compute-completeness proves ledger contiguity + hash chain daily, but nothing
+# else scheduled proves ledger_entry_changes coverage or the other five raw
+# tables. Verdict lands in lake_verify.prom (stellarindex_lake_verify_*).
+
+[Unit]
+Description=Stellar Index — verify-lake: raw-lake soundness over all seven tables (daily)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/lake-verify.md
+After=network-online.target clickhouse-server.service postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+# Defaults. Operators override via /etc/default/verify-lake (FROM for a lake
+# that legitimately starts above genesis).
+Environment=CONFIG_PATH=/etc/stellarindex.toml
+Environment=CH_ADDR=127.0.0.1:9300
+Environment=FROM=2
+Environment=TEXTFILE=/var/lib/node_exporter/textfile_collector/lake_verify.prom
+# 75 = run-heavy-job lock skip; a real failure count is carried by lake_verify.prom and `stellarindex_lake_verify_failed`, not the exit code.
+SuccessExitStatus=75
+Environment=HEAVY_JOB_CLASS=scheduled
+EnvironmentFile=-/etc/default/verify-lake
+EnvironmentFile=-/etc/default/stellarindex
+EnvironmentFile=-/etc/default/stellarindex-ops
+
+# -to stays auto: resolveVerifyTo refuses to certify a truncated lake.
+ExecStart=/usr/local/sbin/run-heavy-job.sh verify-lake /usr/local/bin/stellarindex-ops verify-lake \
+  -config ${CONFIG_PATH} \
+  -ch-addr ${CH_ADDR} \
+  -from ${FROM} \
+  -textfile ${TEXTFILE}
+
+User=stellarindex
+Group=stellarindex
+
+# Read-only ClickHouse queries over the loopback; the only write is the textfile.
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Genesis-to-tip in 1M-ledger windows, same order of work as compute-completeness's substrate pass.
+TimeoutStartSec=4h
+
+[Install]
+WantedBy=multi-user.target

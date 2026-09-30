@@ -6819,7 +6819,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"source\": \"<string>\",\n      \"ledger\": \"<integer>\",\n      \"tx_hash\": \"<string>\",\n      \"op_index\": \"<integer>\",\n      \"ts\": \"<dateTime>\",\n      \"base_asset\": \"<string>\",\n      \"quote_asset\": \"<string>\",\n      \"base_amount\": \"<string>\",\n      \"quote_amount\": \"<string>\",\n      \"price\": \"<string>\",\n      \"base_decimals\": \"<integer>\",\n      \"quote_decimals\": \"<integer>\",\n      \"routed_via\": \"<string>\"\n    },\n    {\n      \"source\": \"<string>\",\n      \"ledger\": \"<integer>\",\n      \"tx_hash\": \"<string>\",\n      \"op_index\": \"<integer>\",\n      \"ts\": \"<dateTime>\",\n      \"base_asset\": \"<string>\",\n      \"quote_asset\": \"<string>\",\n      \"base_amount\": \"<string>\",\n      \"quote_amount\": \"<string>\",\n      \"price\": \"<string>\",\n      \"base_decimals\": \"<integer>\",\n      \"quote_decimals\": \"<integer>\",\n      \"routed_via\": \"<string>\"\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"source\": \"<string>\",\n      \"ledger\": \"<integer>\",\n      \"tx_hash\": \"<string>\",\n      \"op_index\": \"<integer>\",\n      \"ts\": \"<dateTime>\",\n      \"base_asset\": \"<string>\",\n      \"quote_asset\": \"<string>\",\n      \"base_amount\": \"<string>\",\n      \"quote_amount\": \"<string>\",\n      \"price\": \"<string,null>\",\n      \"base_decimals\": \"<integer>\",\n      \"quote_decimals\": \"<integer>\",\n      \"routed_via\": \"<string>\"\n    },\n    {\n      \"source\": \"<string>\",\n      \"ledger\": \"<integer>\",\n      \"tx_hash\": \"<string>\",\n      \"op_index\": \"<integer>\",\n      \"ts\": \"<dateTime>\",\n      \"base_asset\": \"<string>\",\n      \"quote_asset\": \"<string>\",\n      \"base_amount\": \"<string>\",\n      \"quote_amount\": \"<string>\",\n      \"price\": \"<string,null>\",\n      \"base_decimals\": \"<integer>\",\n      \"quote_decimals\": \"<integer>\",\n      \"routed_via\": \"<string>\"\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -7629,7 +7629,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"source\": \"<string>\",\n      \"ledger\": \"<integer>\",\n      \"tx_hash\": \"<string>\",\n      \"op_index\": \"<integer>\",\n      \"ts\": \"<dateTime>\",\n      \"base_asset\": \"<string>\",\n      \"quote_asset\": \"<string>\",\n      \"base_amount\": \"<string>\",\n      \"quote_amount\": \"<string>\",\n      \"price\": \"<string>\",\n      \"base_decimals\": \"<integer>\",\n      \"quote_decimals\": \"<integer>\",\n      \"routed_via\": \"<string>\"\n    },\n    {\n      \"source\": \"<string>\",\n      \"ledger\": \"<integer>\",\n      \"tx_hash\": \"<string>\",\n      \"op_index\": \"<integer>\",\n      \"ts\": \"<dateTime>\",\n      \"base_asset\": \"<string>\",\n      \"quote_asset\": \"<string>\",\n      \"base_amount\": \"<string>\",\n      \"quote_amount\": \"<string>\",\n      \"price\": \"<string>\",\n      \"base_decimals\": \"<integer>\",\n      \"quote_decimals\": \"<integer>\",\n      \"routed_via\": \"<string>\"\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"pagination\": {\n    \"next\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"source\": \"<string>\",\n      \"ledger\": \"<integer>\",\n      \"tx_hash\": \"<string>\",\n      \"op_index\": \"<integer>\",\n      \"ts\": \"<dateTime>\",\n      \"base_asset\": \"<string>\",\n      \"quote_asset\": \"<string>\",\n      \"base_amount\": \"<string>\",\n      \"quote_amount\": \"<string>\",\n      \"price\": \"<string,null>\",\n      \"base_decimals\": \"<integer>\",\n      \"quote_decimals\": \"<integer>\",\n      \"routed_via\": \"<string>\"\n    },\n    {\n      \"source\": \"<string>\",\n      \"ledger\": \"<integer>\",\n      \"tx_hash\": \"<string>\",\n      \"op_index\": \"<integer>\",\n      \"ts\": \"<dateTime>\",\n      \"base_asset\": \"<string>\",\n      \"quote_asset\": \"<string>\",\n      \"base_amount\": \"<string>\",\n      \"quote_amount\": \"<string>\",\n      \"price\": \"<string,null>\",\n      \"base_decimals\": \"<integer>\",\n      \"quote_decimals\": \"<integer>\",\n      \"routed_via\": \"<string>\"\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"pagination\": {\n    \"next\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -26339,7 +26339,7 @@
               "request": {
                 "name": "Create a new API key.",
                 "description": {
-                  "content": "Issues a new API key for the authenticated caller and returns\nthe plaintext exactly once.\n\n`scopes` (optional) confines the new key to route families:\n`read` (public data surfaces), `account` (`/v1/account/*`),\n`dashboard` (`/v1/dashboard/*`), `admin` (`/v1/admin/*`).\nOmitted/empty mints a full-access key — the posture every key\nminted before scopes shipped keeps. Scopes only narrow; they\nnever grant anything the key's tier wouldn't already reach.\n\nOne caller identifier may hold a bounded number of un-revoked\nkeys (25 by default, operator-tunable). A mint that would cross\nthe ceiling returns 409 — revoke a key via\n`DELETE /v1/account/keys/{keyID}` and retry.\n\nA SEP-10-authenticated caller gets 403 `key-mint-not-available`:\nan `auth_mode = \"sep10\"` deployment honours only SEP-10 tokens,\nso a minted key would have no use there.\n\nThe new key inherits the caller's identifier and tier. An\n**operator-tier** caller rotating its own credential here is\nheld to the admin-write contract: the `X-Reason` header is\nrequired (400 without it) and the mint is recorded as a\n`key.mint` audit row, exactly as `POST /v1/admin/keys`.\nCustomer-tier callers need no header. A `/v1/signup` key's\nemail-verification stamp carries over to the child, so rotated\nkeys keep working under `signup_require_email_verification`.\n",
+                  "content": "Issues a new API key for the authenticated caller and returns\nthe plaintext exactly once.\n\n`scopes` (optional) confines the new key to route families:\n`read` (public data surfaces), `account` (`/v1/account/*`),\n`dashboard` (`/v1/dashboard/*`), `admin` (`/v1/admin/*`).\nOmitted/empty mints a full-access key — the posture every key\nminted before scopes shipped keeps. Scopes only narrow; they\nnever grant anything the key's tier wouldn't already reach.\n\nOne caller identifier may hold a bounded number of un-revoked\nkeys (25 by default, operator-tunable). A mint that would cross\nthe ceiling returns 409 — revoke a key via\n`DELETE /v1/account/keys/{keyID}` and retry.\n\nA SEP-10-authenticated caller gets 403 `key-mint-not-available`:\nan `auth_mode = \"sep10\"` deployment honours only SEP-10 tokens,\nso a minted key would have no use there.\n\nThe new key inherits the caller's identifier and tier. An\n**operator-tier** caller rotating its own credential here is\nheld to the admin-write contract: the `X-Reason` header is\nrequired (400 without it) and the mint is recorded as a\n`key.mint` audit row, exactly as `POST /v1/admin/keys`.\nCustomer-tier callers need no header. A `/v1/signup` key's\nemail-verification stamp carries over to the child, so rotated\nkeys keep working under `signup_require_email_verification`.\nOnly `apikey` and `operator` callers may mint; a SEP-10 token\ngets 403.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -26626,7 +26626,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "The caller authenticated with a SEP-10 token; API keys are\nnot issued to SEP-10 subjects (`key-mint-not-available`).",
+                  "name": "Caller is not an account tier (`apikey` or `operator`):\na SEP-10 wallet token gets `key-mint-not-available`, any\nother non-account credential `account-tier-required`.",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -40822,7 +40822,7 @@
                   "request": {
                     "name": "Transactions in a ledger.",
                     "description": {
-                      "content": "Every transaction applied in ledger `seq`, in apply order:\nhash, source account, operation count, fee charged, and\nsuccess flag. Summary rows only — fetch `/v1/tx/{hash}`\nfor the decoded operations + events of one transaction.\nA valid but empty ledger returns an empty array. `total` is the\nledger's exact transaction count from its header; `truncated` is\ntrue when `total` exceeds the returned page (raise `limit` or\nfetch `/v1/operations?ledger=` for the rest).\n",
+                      "content": "Every transaction applied in ledger `seq`, in apply order:\nhash, source account, operation count, fee charged, and\nsuccess flag. Summary rows only — fetch `/v1/tx/{hash}`\nfor the decoded operations + events of one transaction.\nA valid but empty ledger returns an empty array. `total` is the\nledger's exact transaction count from its header; `truncated` is\ntrue when `total` exceeds the returned page (raise `limit` or\nfetch `/v1/ledgers/{seq}/operations` for the rest).\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -40990,6 +40990,241 @@
                   }
                 }
               ]
+            },
+            {
+              "name": "operations",
+              "description": "",
+              "item": [
+                {
+                  "name": "Operations in a ledger, decoded.",
+                  "request": {
+                    "name": "Operations in a ledger, decoded.",
+                    "description": {
+                      "content": "Every operation applied in ledger `seq`, each decoded from XDR\n(partition-pruned). Includes the decoded body (`fields` / `raw_xdr`).\n`total` is the ledger's exact operation count from its header;\n`truncated` is true when `total` exceeds the returned page (raise\n`limit` for the rest).\n",
+                      "type": "text/plain"
+                    },
+                    "url": {
+                      "path": [
+                        "ledgers",
+                        ":seq",
+                        "operations"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Maximum operations to return (1-2000, default 500).",
+                            "type": "text/plain"
+                          },
+                          "key": "limit",
+                          "value": "500"
+                        }
+                      ],
+                      "variable": [
+                        {
+                          "type": "any",
+                          "value": "<integer>",
+                          "key": "seq",
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) ",
+                            "type": "text/plain"
+                          }
+                        }
+                      ]
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {},
+                    "auth": null
+                  },
+                  "response": [
+                    {
+                      "name": "The ledger's operations.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "ledgers",
+                            ":seq",
+                            "operations"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Maximum operations to return (1-2000, default 500).",
+                                "type": "text/plain"
+                              },
+                              "key": "limit",
+                              "value": "500"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<integer>",
+                              "key": "seq"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "OK",
+                      "code": 200,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/json"
+                        }
+                      ],
+                      "body": "{\n  \"data\": {\n    \"ledger\": \"<integer>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 6297,\n          \"key_1\": 667,\n          \"key_2\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 2583.0885930918157,\n          \"key_1\": 9705,\n          \"key_2\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      }\n    ],\n    \"coverage_note\": \"<string>\",\n    \"total\": \"<integer>\",\n    \"truncated\": \"<boolean>\"\n  }\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Client-supplied parameters didn't validate.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "ledgers",
+                            ":seq",
+                            "operations"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Maximum operations to return (1-2000, default 500).",
+                                "type": "text/plain"
+                              },
+                              "key": "limit",
+                              "value": "500"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<integer>",
+                              "key": "seq"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "Bad Request",
+                      "code": 400,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "ledgers",
+                            ":seq",
+                            "operations"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Maximum operations to return (1-2000, default 500).",
+                                "type": "text/plain"
+                              },
+                              "key": "limit",
+                              "value": "500"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<integer>",
+                              "key": "seq"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "Service Unavailable",
+                      "code": 503,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    }
+                  ],
+                  "event": [],
+                  "protocolProfileBehavior": {
+                    "disableBodyPruning": true
+                  }
+                }
+              ]
             }
           ]
         }
@@ -41086,7 +41321,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"data\": {\n    \"close_time\": \"<dateTime>\",\n    \"fee_charged\": \"<string>\",\n    \"hash\": \"<string>\",\n    \"index\": \"<integer>\",\n    \"ledger\": \"<integer>\",\n    \"max_fee\": \"<string>\",\n    \"operation_count\": \"<integer>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": true\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 2583.0885930918157,\n          \"key_1\": 9705,\n          \"key_2\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      }\n    ],\n    \"result\": \"<string>\",\n    \"result_code\": \"<integer>\",\n    \"source_account\": \"<string>\",\n    \"successful\": \"<boolean>\",\n    \"memo_type\": \"<string>\",\n    \"memo\": \"<string>\",\n    \"memo_base64\": \"<string>\",\n    \"fee_bump\": {\n      \"fee_account\": \"<string>\",\n      \"inner_max_fee\": \"<string>\",\n      \"inner_hash\": \"<string>\",\n      \"inner_result_code\": \"<integer>\",\n      \"inner_result\": \"<string>\"\n    },\n    \"events\": [\n      {\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"contract_id\": \"<string>\",\n        \"event_type\": \"<string>\",\n        \"topic_0\": \"<string>\"\n      },\n      {\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"contract_id\": \"<string>\",\n        \"event_type\": \"<string>\",\n        \"topic_0\": \"<string>\"\n      }\n    ],\n    \"coverage_note\": \"<string>\"\n  }\n}",
+                  "body": "{\n  \"data\": {\n    \"close_time\": \"<dateTime>\",\n    \"fee_charged\": \"<string>\",\n    \"hash\": \"<string>\",\n    \"index\": \"<integer>\",\n    \"ledger\": \"<integer>\",\n    \"max_fee\": \"<string>\",\n    \"operation_count\": \"<integer>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": false,\n          \"key_1\": true,\n          \"key_2\": 3938.768438529223\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": false,\n          \"key_1\": \"string\",\n          \"key_2\": false\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      }\n    ],\n    \"result\": \"<string>\",\n    \"result_code\": \"<integer>\",\n    \"source_account\": \"<string>\",\n    \"successful\": \"<boolean>\",\n    \"memo_type\": \"<string>\",\n    \"memo\": \"<string>\",\n    \"memo_base64\": \"<string>\",\n    \"fee_bump\": {\n      \"fee_account\": \"<string>\",\n      \"inner_max_fee\": \"<string>\",\n      \"inner_hash\": \"<string>\",\n      \"inner_result_code\": \"<integer>\",\n      \"inner_result\": \"<string>\"\n    },\n    \"events\": [\n      {\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"contract_id\": \"<string>\",\n        \"event_type\": \"<string>\",\n        \"topic_0\": \"<string>\"\n      },\n      {\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"contract_id\": \"<string>\",\n        \"event_type\": \"<string>\",\n        \"topic_0\": \"<string>\"\n      }\n    ],\n    \"coverage_note\": \"<string>\"\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -41231,11 +41466,11 @@
       "description": "",
       "item": [
         {
-          "name": "Operations — a ledger's ops, or the network-wide recent directory.",
+          "name": "Operations — the network-wide recent directory.",
           "request": {
-            "name": "Operations — a ledger's ops, or the network-wide recent directory.",
+            "name": "Operations — the network-wide recent directory.",
             "description": {
-              "content": "Two shapes on one route:\n\n- **`?ledger=<seq>`** — that ledger's operations, each decoded from XDR\n  (partition-pruned; `?limit=` up to 2000, default 500). Includes the\n  decoded body (`fields` / `raw_xdr`).\n- **no `?ledger`** — the network-wide recent-operations DIRECTORY:\n  newest first, keyset-paged via `?cursor=<opaque>` (echo back\n  `next_cursor`; composite `ledger.tx_index.op_index`), plus\n  `op_type_stats` — the per-op-type counts over the trailing ~24h of\n  ledgers (first page only). `?limit=` up to 200, default 50. This is a\n  **summary** shape: each op carries its identity + `type` but NOT the\n  decoded body (`fields` / `raw_xdr` are omitted) — decoding every op's\n  body over the multi-billion-row lake made the directory ~10× slower.\n  Fetch the full decoded op from the per-ledger form above or\n  `/v1/tx/{hash}`.\n",
+              "content": "The network-wide recent-operations DIRECTORY: newest first,\nkeyset-paged via `?cursor=<opaque>` (echo back `next_cursor`;\ncomposite `ledger.tx_index.op_index`), plus `op_type_stats` — the\nper-op-type counts over the trailing ~24h of ledgers (first page\nonly). `?limit=` up to 200, default 50. This is a **summary** shape:\neach op carries its identity + `type` but NOT the decoded body\n(`fields` / `raw_xdr` are omitted) — decoding every op's body over the\nmulti-billion-row lake made the directory ~10× slower. Fetch the full\ndecoded op from `/v1/ledgers/{seq}/operations` or `/v1/tx/{hash}`.\n\n**Deprecated:** `?ledger=<seq>` is an alias of\n`GET /v1/ledgers/{seq}/operations`, served unchanged until a breaking\nrelease removes it. A query parameter must not change a surface's\nconsistency contract (ADR-0018).\n",
               "type": "text/plain"
             },
             "url": {
@@ -41249,7 +41484,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Ledger sequence. Omit for the network-wide recent directory.",
+                    "content": "Deprecated alias of GET /v1/ledgers/{seq}/operations. Omit for the network-wide recent directory.",
                     "type": "text/plain"
                   },
                   "key": "ledger",
@@ -41267,7 +41502,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Page size. Mode-dependent bounds — per-ledger mode: default 500, cap 2000; directory mode: default 50, cap 200.",
+                    "content": "Page size. Directory: default 50, cap 200 (400 above); deprecated `?ledger=` alias: default 500, cap 2000.",
                     "type": "text/plain"
                   },
                   "key": "limit",
@@ -41301,7 +41536,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Ledger sequence. Omit for the network-wide recent directory.",
+                        "content": "Deprecated alias of GET /v1/ledgers/{seq}/operations. Omit for the network-wide recent directory.",
                         "type": "text/plain"
                       },
                       "key": "ledger",
@@ -41319,7 +41554,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Page size. Mode-dependent bounds — per-ledger mode: default 500, cap 2000; directory mode: default 50, cap 200.",
+                        "content": "Page size. Directory: default 50, cap 200 (400 above); deprecated `?ledger=` alias: default 500, cap 2000.",
                         "type": "text/plain"
                       },
                       "key": "limit",
@@ -41345,7 +41580,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"ledger\": \"<integer>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": \"string\",\n          \"key_1\": 7241.33481271565\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 7833.613769616932\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"op_type_stats\": [\n      {\n        \"type\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"type\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"coverage_note\": \"<string>\",\n    \"total\": \"<integer>\",\n    \"truncated\": \"<boolean>\"\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"ledger\": \"<integer>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 8622.11869796738\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": true,\n          \"key_1\": 2386\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"op_type_stats\": [\n      {\n        \"type\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"type\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"coverage_note\": \"<string>\",\n    \"total\": \"<integer>\",\n    \"truncated\": \"<boolean>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -41363,7 +41598,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Ledger sequence. Omit for the network-wide recent directory.",
+                        "content": "Deprecated alias of GET /v1/ledgers/{seq}/operations. Omit for the network-wide recent directory.",
                         "type": "text/plain"
                       },
                       "key": "ledger",
@@ -41381,7 +41616,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Page size. Mode-dependent bounds — per-ledger mode: default 500, cap 2000; directory mode: default 50, cap 200.",
+                        "content": "Page size. Directory: default 50, cap 200 (400 above); deprecated `?ledger=` alias: default 500, cap 2000.",
                         "type": "text/plain"
                       },
                       "key": "limit",
@@ -41425,7 +41660,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Ledger sequence. Omit for the network-wide recent directory.",
+                        "content": "Deprecated alias of GET /v1/ledgers/{seq}/operations. Omit for the network-wide recent directory.",
                         "type": "text/plain"
                       },
                       "key": "ledger",
@@ -41443,7 +41678,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Page size. Mode-dependent bounds — per-ledger mode: default 500, cap 2000; directory mode: default 50, cap 200.",
+                        "content": "Page size. Directory: default 50, cap 200 (400 above); deprecated `?ledger=` alias: default 500, cap 2000.",
                         "type": "text/plain"
                       },
                       "key": "limit",
@@ -42263,7 +42498,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"data\": {\n    \"account_id\": \"<string>\",\n    \"exists\": \"<boolean>\",\n    \"balance\": \"<string>\",\n    \"seq_num\": \"<string>\",\n    \"num_subentries\": \"<integer>\",\n    \"flags\": \"<integer>\",\n    \"num_sponsoring\": \"<integer>\",\n    \"num_sponsored\": \"<integer>\",\n    \"buying_liabilities\": \"<string>\",\n    \"selling_liabilities\": \"<string>\",\n    \"home_domain\": \"<string>\",\n    \"thresholds\": {\n      \"master\": \"<integer>\",\n      \"low\": \"<integer>\",\n      \"med\": \"<integer>\",\n      \"high\": \"<integer>\"\n    },\n    \"signers\": [\n      {\n        \"key\": \"<string>\",\n        \"weight\": \"<integer>\"\n      },\n      {\n        \"key\": \"<string>\",\n        \"weight\": \"<integer>\"\n      }\n    ],\n    \"trustlines\": [\n      {\n        \"asset\": \"<string>\",\n        \"kind\": \"pool_share\",\n        \"balance\": \"<string>\",\n        \"limit\": \"<string>\",\n        \"flags\": \"<integer>\",\n        \"buying_liabilities\": \"<string>\",\n        \"selling_liabilities\": \"<string>\"\n      },\n      {\n        \"asset\": \"<string>\",\n        \"kind\": \"pool_share\",\n        \"balance\": \"<string>\",\n        \"limit\": \"<string>\",\n        \"flags\": \"<integer>\",\n        \"buying_liabilities\": \"<string>\",\n        \"selling_liabilities\": \"<string>\"\n      }\n    ],\n    \"offers\": [\n      {\n        \"offer_id\": \"<long>\",\n        \"selling\": \"<string>\",\n        \"buying\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"price_n\": \"<integer>\",\n        \"price_d\": \"<integer>\"\n      },\n      {\n        \"offer_id\": \"<long>\",\n        \"selling\": \"<string>\",\n        \"buying\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"price_n\": \"<integer>\",\n        \"price_d\": \"<integer>\"\n      }\n    ],\n    \"last_modified_ledger\": \"<long>\",\n    \"as_of_ledger\": \"<long>\",\n    \"directory\": {\n      \"name\": \"<string>\",\n      \"tags\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"source\": \"<string>\",\n      \"domain\": \"<string>\"\n    },\n    \"coverage_note\": \"<string>\",\n    \"directory_unavailable\": \"<boolean>\"\n  }\n}",
+                  "body": "{\n  \"data\": {\n    \"account_id\": \"<string>\",\n    \"exists\": \"<boolean>\",\n    \"balance\": \"<string>\",\n    \"seq_num\": \"<string>\",\n    \"num_subentries\": \"<integer>\",\n    \"flags\": \"<integer>\",\n    \"num_sponsoring\": \"<integer>\",\n    \"num_sponsored\": \"<integer>\",\n    \"buying_liabilities\": \"<string>\",\n    \"selling_liabilities\": \"<string>\",\n    \"home_domain\": \"<string>\",\n    \"thresholds\": {\n      \"master\": \"<integer>\",\n      \"low\": \"<integer>\",\n      \"med\": \"<integer>\",\n      \"high\": \"<integer>\"\n    },\n    \"signers\": [\n      {\n        \"key\": \"<string>\",\n        \"weight\": \"<integer>\"\n      },\n      {\n        \"key\": \"<string>\",\n        \"weight\": \"<integer>\"\n      }\n    ],\n    \"trustlines\": [\n      {\n        \"asset\": \"<string>\",\n        \"kind\": \"pool_share\",\n        \"balance\": \"<string>\",\n        \"limit\": \"<string>\",\n        \"flags\": \"<integer>\",\n        \"buying_liabilities\": \"<string>\",\n        \"selling_liabilities\": \"<string>\"\n      },\n      {\n        \"asset\": \"<string>\",\n        \"kind\": \"asset\",\n        \"balance\": \"<string>\",\n        \"limit\": \"<string>\",\n        \"flags\": \"<integer>\",\n        \"buying_liabilities\": \"<string>\",\n        \"selling_liabilities\": \"<string>\"\n      }\n    ],\n    \"offers\": [\n      {\n        \"offer_id\": \"<long>\",\n        \"selling\": \"<string>\",\n        \"buying\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"price_n\": \"<integer>\",\n        \"price_d\": \"<integer>\"\n      },\n      {\n        \"offer_id\": \"<long>\",\n        \"selling\": \"<string>\",\n        \"buying\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"price_n\": \"<integer>\",\n        \"price_d\": \"<integer>\"\n      }\n    ],\n    \"last_modified_ledger\": \"<long>\",\n    \"as_of_ledger\": \"<long>\",\n    \"directory\": {\n      \"name\": \"<string>\",\n      \"tags\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"source\": \"<string>\",\n      \"domain\": \"<string>\"\n    },\n    \"coverage_note\": \"<string>\",\n    \"directory_unavailable\": \"<boolean>\"\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -42763,7 +42998,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": false,\n          \"key_1\": 6444\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 2009,\n          \"key_1\": true,\n          \"key_2\": 6288.514137268066\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      }\n    ],\n    \"scope\": \"all\",\n    \"next_cursor\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
+                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 357,\n          \"key_1\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": false,\n          \"key_1\": 866.5389567613602,\n          \"key_2\": 5288.322863634676\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\",\n        \"inner_result\": \"<string>\"\n      }\n    ],\n    \"scope\": \"all\",\n    \"next_cursor\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -43088,7 +43323,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"movements\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"leg_index\": \"<integer>\",\n        \"movement_kind\": \"<string>\",\n        \"direction\": \"sent\",\n        \"asset\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"provenance\": \"cap67_derived\",\n        \"decimals\": \"<integer>\",\n        \"counterparty\": \"<string>\",\n        \"attributes\": {\n          \"key_0\": 7035,\n          \"key_1\": 3660.280865151435\n        }\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"leg_index\": \"<integer>\",\n        \"movement_kind\": \"<string>\",\n        \"direction\": \"self\",\n        \"asset\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"provenance\": \"cap67_event\",\n        \"decimals\": \"<integer>\",\n        \"counterparty\": \"<string>\",\n        \"attributes\": {\n          \"key_0\": false,\n          \"key_1\": 9306,\n          \"key_2\": true\n        }\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
+                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"movements\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"leg_index\": \"<integer>\",\n        \"movement_kind\": \"<string>\",\n        \"direction\": \"received\",\n        \"asset\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"provenance\": \"cap67_derived\",\n        \"decimals\": \"<integer>\",\n        \"counterparty\": \"<string>\",\n        \"attributes\": {\n          \"key_0\": false,\n          \"key_1\": 3527.7937538921833\n        }\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"leg_index\": \"<integer>\",\n        \"movement_kind\": \"<string>\",\n        \"direction\": \"self\",\n        \"asset\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"provenance\": \"classic_derived\",\n        \"decimals\": \"<integer>\",\n        \"counterparty\": \"<string>\",\n        \"attributes\": {\n          \"key_0\": 5843.205561395735,\n          \"key_1\": \"string\"\n        }\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -43395,7 +43630,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"positions\": [\n      {\n        \"protocol\": \"sorocredit\",\n        \"position_kind\": \"gauge\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"not_yet_published\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"stateful\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ]\n      },\n      {\n        \"protocol\": \"sorocredit\",\n        \"position_kind\": \"stake\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"net_underlying_at_event_time\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"event_derived\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ]\n      }\n    ],\n    \"include_closed\": \"<boolean>\",\n    \"note\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
+                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"positions\": [\n      {\n        \"protocol\": \"aquarius\",\n        \"position_kind\": \"lending_borrow\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"stateful_current\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"stateful\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ]\n      },\n      {\n        \"protocol\": \"sorocredit\",\n        \"position_kind\": \"gauge\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"shares\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"event_derived\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ]\n      }\n    ],\n    \"include_closed\": \"<boolean>\",\n    \"note\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -43648,7 +43883,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"trades\": [\n      {\n        \"ts\": \"<dateTime>\",\n        \"source\": \"<string>\",\n        \"base_asset\": \"<string>\",\n        \"quote_asset\": \"<string>\",\n        \"base_amount\": \"<string>\",\n        \"quote_amount\": \"<string>\",\n        \"tx_hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"role\": \"maker\",\n        \"usd_volume\": \"<string>\",\n        \"counterparty\": \"<string>\",\n        \"routed_via\": \"<string>\",\n        \"signer\": \"<string>\"\n      },\n      {\n        \"ts\": \"<dateTime>\",\n        \"source\": \"<string>\",\n        \"base_asset\": \"<string>\",\n        \"quote_asset\": \"<string>\",\n        \"base_amount\": \"<string>\",\n        \"quote_amount\": \"<string>\",\n        \"tx_hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"role\": \"taker\",\n        \"usd_volume\": \"<string>\",\n        \"counterparty\": \"<string>\",\n        \"routed_via\": \"<string>\",\n        \"signer\": \"<string>\"\n      }\n    ],\n    \"note\": \"<string>\",\n    \"next_cursor\": \"<string>\"\n  }\n}",
+                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"trades\": [\n      {\n        \"ts\": \"<dateTime>\",\n        \"source\": \"<string>\",\n        \"base_asset\": \"<string>\",\n        \"quote_asset\": \"<string>\",\n        \"base_amount\": \"<string>\",\n        \"quote_amount\": \"<string>\",\n        \"tx_hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"role\": \"taker\",\n        \"usd_volume\": \"<string>\",\n        \"counterparty\": \"<string>\",\n        \"routed_via\": \"<string>\",\n        \"signer\": \"<string>\"\n      },\n      {\n        \"ts\": \"<dateTime>\",\n        \"source\": \"<string>\",\n        \"base_asset\": \"<string>\",\n        \"quote_asset\": \"<string>\",\n        \"base_amount\": \"<string>\",\n        \"quote_amount\": \"<string>\",\n        \"tx_hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"role\": \"maker\",\n        \"usd_volume\": \"<string>\",\n        \"counterparty\": \"<string>\",\n        \"routed_via\": \"<string>\",\n        \"signer\": \"<string>\"\n      }\n    ],\n    \"note\": \"<string>\",\n    \"next_cursor\": \"<string>\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -44407,7 +44642,7 @@
                               "value": "application/json"
                             }
                           ],
-                          "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"relation\": \"created\",\n    \"covered\": \"<boolean>\",\n    \"holdings\": [\n      {\n        \"asset\": \"<string>\",\n        \"kind\": \"contract\",\n        \"holders\": \"<long>\",\n        \"balance\": \"<string>\",\n        \"price_usd\": \"<string>\",\n        \"value_usd\": \"<string>\"\n      },\n      {\n        \"asset\": \"<string>\",\n        \"kind\": \"classic\",\n        \"holders\": \"<long>\",\n        \"balance\": \"<string>\",\n        \"price_usd\": \"<string>\",\n        \"value_usd\": \"<string>\"\n      }\n    ],\n    \"holdings_truncated\": \"<boolean>\",\n    \"valuation\": {\n      \"priced_holdings\": \"<integer>\",\n      \"unpriced_holdings\": \"<integer>\",\n      \"price_cap\": \"<integer>\",\n      \"unpriced_over_cap\": \"<integer>\",\n      \"basis\": \"live_vwap_current\",\n      \"total_usd\": \"<string>\",\n      \"degraded\": \"<boolean>\"\n    },\n    \"flows\": {\n      \"granularity\": \"1M\",\n      \"assets\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"assets_truncated\": \"<boolean>\",\n      \"points\": [\n        {\n          \"period\": \"<string>\",\n          \"period_start\": \"<dateTime>\",\n          \"movements\": \"<long>\",\n          \"active_accounts\": \"<long>\",\n          \"priced_assets\": \"<long>\",\n          \"by_asset\": [\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            },\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            }\n          ],\n          \"inflow_usd\": \"<string>\",\n          \"outflow_usd\": \"<string>\",\n          \"inflow_usd_then\": \"<string>\",\n          \"outflow_usd_then\": \"<string>\"\n        },\n        {\n          \"period\": \"<string>\",\n          \"period_start\": \"<dateTime>\",\n          \"movements\": \"<long>\",\n          \"active_accounts\": \"<long>\",\n          \"priced_assets\": \"<long>\",\n          \"by_asset\": [\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            },\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            }\n          ],\n          \"inflow_usd\": \"<string>\",\n          \"outflow_usd\": \"<string>\",\n          \"inflow_usd_then\": \"<string>\",\n          \"outflow_usd_then\": \"<string>\"\n        }\n      ]\n    },\n    \"contracts\": [\n      {\n        \"contract_id\": \"<string>\",\n        \"movements\": \"<long>\",\n        \"active_accounts\": \"<long>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"protocol\": \"<string>\",\n        \"label\": \"<string>\"\n      },\n      {\n        \"contract_id\": \"<string>\",\n        \"movements\": \"<long>\",\n        \"active_accounts\": \"<long>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"protocol\": \"<string>\",\n        \"label\": \"<string>\"\n      }\n    ],\n    \"positions\": [\n      {\n        \"protocol\": \"<string>\",\n        \"position_kind\": \"<string>\",\n        \"venue\": \"<string>\",\n        \"holders\": \"<long>\",\n        \"amount\": \"<string>\",\n        \"asset\": \"<string>\",\n        \"asset_label\": \"<string>\"\n      },\n      {\n        \"protocol\": \"<string>\",\n        \"position_kind\": \"<string>\",\n        \"venue\": \"<string>\",\n        \"holders\": \"<long>\",\n        \"amount\": \"<string>\",\n        \"asset\": \"<string>\",\n        \"asset_label\": \"<string>\"\n      }\n    ],\n    \"note\": \"<string>\",\n    \"cohort\": {\n      \"accounts\": \"<long>\",\n      \"live_accounts\": \"<long>\",\n      \"active_30d\": \"<long>\",\n      \"active_90d\": \"<long>\",\n      \"active_365d\": \"<long>\"\n    },\n    \"cycle\": {\n      \"computed_at\": \"<dateTime>\",\n      \"tip_ledger\": \"<long>\"\n    }\n  }\n}",
+                          "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"relation\": \"created\",\n    \"covered\": \"<boolean>\",\n    \"holdings\": [\n      {\n        \"asset\": \"<string>\",\n        \"kind\": \"contract\",\n        \"holders\": \"<long>\",\n        \"balance\": \"<string>\",\n        \"price_usd\": \"<string>\",\n        \"value_usd\": \"<string>\"\n      },\n      {\n        \"asset\": \"<string>\",\n        \"kind\": \"pool_share\",\n        \"holders\": \"<long>\",\n        \"balance\": \"<string>\",\n        \"price_usd\": \"<string>\",\n        \"value_usd\": \"<string>\"\n      }\n    ],\n    \"holdings_truncated\": \"<boolean>\",\n    \"valuation\": {\n      \"priced_holdings\": \"<integer>\",\n      \"unpriced_holdings\": \"<integer>\",\n      \"price_cap\": \"<integer>\",\n      \"unpriced_over_cap\": \"<integer>\",\n      \"basis\": \"live_vwap_current\",\n      \"total_usd\": \"<string>\",\n      \"degraded\": \"<boolean>\"\n    },\n    \"flows\": {\n      \"granularity\": \"1M\",\n      \"assets\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"assets_truncated\": \"<boolean>\",\n      \"points\": [\n        {\n          \"period\": \"<string>\",\n          \"period_start\": \"<dateTime>\",\n          \"movements\": \"<long>\",\n          \"active_accounts\": \"<long>\",\n          \"priced_assets\": \"<long>\",\n          \"by_asset\": [\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            },\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            }\n          ],\n          \"inflow_usd\": \"<string>\",\n          \"outflow_usd\": \"<string>\",\n          \"inflow_usd_then\": \"<string>\",\n          \"outflow_usd_then\": \"<string>\"\n        },\n        {\n          \"period\": \"<string>\",\n          \"period_start\": \"<dateTime>\",\n          \"movements\": \"<long>\",\n          \"active_accounts\": \"<long>\",\n          \"priced_assets\": \"<long>\",\n          \"by_asset\": [\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            },\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            }\n          ],\n          \"inflow_usd\": \"<string>\",\n          \"outflow_usd\": \"<string>\",\n          \"inflow_usd_then\": \"<string>\",\n          \"outflow_usd_then\": \"<string>\"\n        }\n      ]\n    },\n    \"contracts\": [\n      {\n        \"contract_id\": \"<string>\",\n        \"movements\": \"<long>\",\n        \"active_accounts\": \"<long>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"protocol\": \"<string>\",\n        \"label\": \"<string>\"\n      },\n      {\n        \"contract_id\": \"<string>\",\n        \"movements\": \"<long>\",\n        \"active_accounts\": \"<long>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"protocol\": \"<string>\",\n        \"label\": \"<string>\"\n      }\n    ],\n    \"positions\": [\n      {\n        \"protocol\": \"<string>\",\n        \"position_kind\": \"<string>\",\n        \"venue\": \"<string>\",\n        \"holders\": \"<long>\",\n        \"amount\": \"<string>\",\n        \"asset\": \"<string>\",\n        \"asset_label\": \"<string>\"\n      },\n      {\n        \"protocol\": \"<string>\",\n        \"position_kind\": \"<string>\",\n        \"venue\": \"<string>\",\n        \"holders\": \"<long>\",\n        \"amount\": \"<string>\",\n        \"asset\": \"<string>\",\n        \"asset_label\": \"<string>\"\n      }\n    ],\n    \"note\": \"<string>\",\n    \"cohort\": {\n      \"accounts\": \"<long>\",\n      \"live_accounts\": \"<long>\",\n      \"active_30d\": \"<long>\",\n      \"active_90d\": \"<long>\",\n      \"active_365d\": \"<long>\"\n    },\n    \"cycle\": {\n      \"computed_at\": \"<dateTime>\",\n      \"tip_ledger\": \"<long>\"\n    }\n  }\n}",
                           "cookie": [],
                           "_postman_previewlanguage": "json"
                         },
@@ -44819,7 +45054,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"entries\": {\n      \"key_0\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      },\n      \"key_1\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      }\n    }\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"entries\": {\n      \"key_0\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      }\n    }\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -45002,7 +45237,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"asset\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"ledger\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },

@@ -563,26 +563,14 @@ func eventCensusExpected(ctx context.Context, conn driver.Conn, lo, hi uint32) (
 }
 
 func eventCensusPresent(ctx context.Context, conn driver.Conn) (map[uint32]uint64, error) {
-	const q = `
-		SELECT toUInt32(partition) AS p, toUInt64(sum(rows))
-		FROM system.parts
-		WHERE database = 'stellar' AND table = 'contract_events' AND active
-		GROUP BY p`
-	rows, err := conn.Query(ctx, q)
+	m, err := rawCensusPresent(ctx, conn, "contract_events")
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: event census present: %w", err)
+		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-	out := make(map[uint32]uint64)
-	for rows.Next() {
-		var p uint32
-		var n uint64
-		if err := rows.Scan(&p, &n); err != nil {
-			return nil, fmt.Errorf("clickhouse: scan event census present: %w", err)
-		}
-		out[p] = n
+	if m["contract_events"] == nil {
+		return map[uint32]uint64{}, nil
 	}
-	return out, rows.Err()
+	return m["contract_events"], nil
 }
 
 // censusShortfalls keeps each expected partition whose present row count falls

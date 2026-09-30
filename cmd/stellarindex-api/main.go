@@ -56,6 +56,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -282,6 +283,14 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			if err != nil {
 				return fmt.Errorf("redis: ping (%s mode): %w", mode, err)
 			}
+		} else {
+			// A rolled-back binary writes key records without indexing them;
+			// dropping `ready` makes the first lookup rebuild from the records.
+			invCtx, cancelInv := context.WithTimeout(rootCtx, 5*time.Second)
+			if err := auth.NewRedisAPIKeyStore(rdb).InvalidateKeyIndex(invCtx); err != nil {
+				logger.Warn("api-key index not invalidated at startup; lookups trust the existing index", "err", err)
+			}
+			cancelInv()
 		}
 		logger.Info("redis configured", "mode", mode)
 	}
@@ -798,7 +807,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// Wire fx_quotes persistence — every refresh tick writes the
 	// latest rates + 7d history to the hypertable so /v1/currencies
 	// can serve historical charts beyond the in-memory window.
-	forexWorker = forexWorker.WithWriter(&forexQuoteWriter{store: store})
+	forexWorker = forexWorker.WithWriter(&forexQuoteWriter{store: store}).
+		WithReader(&forexQuoteWriter{store: store})
 	// Standby FX source. `massive` is a PAID feed and was the ONLY series
 	// in stellarindex_external_fx_last_quote_unix (measured 2026-08-27),
 	// so a 401/429/subscription lapse silently broke every fiat-quoted
@@ -4184,7 +4194,10 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	}
 	// decimals=7 matches Stellar's default stroop scale. A future
 	// revision reads per-asset decimals from internal/metadata.
-	snap := v1.LastTradeToSnapshot(trades[0], 7)
+	snap, ok := v1.LastTradeToSnapshot(trades[0], 7)
+	if !ok {
+		return v1.PriceSnapshot{}, nil, false, v1.ErrPriceNotFound
+	}
 	return snap, []string{trades[0].Source}, true, nil
 }
 
@@ -6045,9 +6058,9 @@ func selfPrewarmAssetEndpoints(ctx context.Context, logger *slog.Logger, listenA
 	}
 }
 
-// forexQuoteWriter adapts (*timescale.Store) to forex.FXQuoteWriter
-// (the worker can't import timescale without inverting the
-// dependency direction). Translates the per-package FXQuote shape.
+// forexQuoteWriter adapts (*timescale.Store) to forex.FXQuoteWriter and
+// forex.FXQuoteReader (the worker can't import timescale without inverting
+// the dependency direction). Translates the per-package FXQuote shape.
 type forexQuoteWriter struct{ store *timescale.Store }
 
 func (w *forexQuoteWriter) InsertFXQuoteBatch(ctx context.Context, quotes []forex.FXQuote) error {
@@ -6064,6 +6077,24 @@ func (w *forexQuoteWriter) InsertFXQuoteBatch(ctx context.Context, quotes []fore
 		}
 	}
 	return w.store.InsertFXQuoteBatch(ctx, out)
+}
+
+// LatestFXQuotes adapts the store's NUMERIC-text read to forex.FXQuoteReader;
+// the float parse is at the forex cache boundary, which is float end to end.
+func (w *forexQuoteWriter) LatestFXQuotes(ctx context.Context, since time.Time) ([]forex.FXQuote, error) {
+	rows, err := w.store.LatestFXQuotes(ctx, since)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]forex.FXQuote, 0, len(rows))
+	for _, q := range rows {
+		rate, err := strconv.ParseFloat(q.RateUSDText, 64)
+		if err != nil {
+			return nil, fmt.Errorf("fx_quotes %s rate_usd %q: %w", q.Ticker, q.RateUSDText, err)
+		}
+		out = append(out, forex.FXQuote{Bucket: q.Bucket, Ticker: q.Ticker, RateUSD: rate, Source: q.Source})
+	}
+	return out, nil
 }
 
 // fxHistoryReader adapts (*timescale.Store) to v1.FXHistoryReader.

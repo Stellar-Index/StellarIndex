@@ -84,6 +84,16 @@ describe('og function — kill-switch', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
   });
+
+  it('marks the 503 cacheable for a short window', async () => {
+    const res = await onRequest(
+      makeContext('/og/bogus-type/x', { OG_DISABLED: '1' }),
+    );
+    expect(res.status).toBe(503);
+    expect(res.headers.get('cache-control')).toBe(
+      'public, max-age=60, s-maxage=60',
+    );
+  });
 });
 
 describe('og function — type allowlist (SEC-08 / SEC-15)', () => {

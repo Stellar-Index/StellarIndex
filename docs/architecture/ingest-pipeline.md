@@ -90,15 +90,20 @@ deleted in rc.97 / ADR-0032 Phase 5).
 **Projected-source catch-up: `projector-replay` vs `projected-rebuild`
 (ADR-0048 D3).** Both rewind/refill a projected source's per-source
 tables from the same certified lake, through the same decoders, into
-the same idempotent (`ON CONFLICT DO NOTHING`) writes — they differ
-only in mechanism and throughput ceiling:
+the same idempotent writes, each an upsert guarded by
+`derive_generation <= EXCLUDED.derive_generation`. They differ in
+mechanism, throughput ceiling, and the generation they write at:
 
 - **`projector-replay -source <name> -from <ledger>`** rewinds the
   LIVE projector's own cursor and lets its normal tick-cadence
   catch-up walk the range — bound by `Interval` (5s) and
   `PerSourceTimeout` (60s per cycle), roughly a 720k-ledger/hour
-  ceiling. Use it for small rewinds (rule of thumb: under ~1M
-  ledgers) — a post-decoder-fix re-walk, a short outage backfill.
+  ceiling. The live projector writes at `derive_generation` 0, so a
+  replay cannot correct a row that a re-derive (`projected-rebuild`,
+  `ch-rebuild`) already stamped higher. Use it for small rewinds (rule
+  of thumb: under ~1M ledgers) over gen-0 rows — a short outage
+  backfill, a missing range. A post-decoder-fix re-walk must correct
+  stored rows, so it goes through `projected-rebuild -write`.
 - **`stellarindex-ops projected-rebuild -source <name> -from <ledger>
   [-to <ledger>] [-workers K]`** runs K parallel ledger-window workers
   with NO per-cycle deadline, each streaming the ClickHouse lake
@@ -109,7 +114,7 @@ only in mechanism and throughput ceiling:
   motivating case. One-writer discipline is enforced by a live-cursor
   guard: it refuses to run if the live projector's cursor for that
   source is still inside the requested range (two writers racing the
-  same range — row-safe via `ON CONFLICT DO NOTHING`, but wasteful and
+  same range — row-safe via the generation-guarded upsert, but wasteful and
   confusing to operate), unless the operator passes
   `-allow-live-overlap`. It never touches the live projector's own
   cursor — the live tail keeps running at tip throughout; the bulk job
