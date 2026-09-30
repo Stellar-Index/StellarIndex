@@ -183,6 +183,9 @@ backfill_from_ledger  = 0                # 0 = resume from persisted cursor
 # dex_contract = "C…"   # set when enabling reflector-dex
 # cex_contract = "C…"   # set when enabling reflector-cex
 # fx_contract  = "C…"   # set when enabling reflector-fx
+# dex_decimals = 0      # 0 = Reflector default 14; set to the contract's decimals()
+# cex_decimals = 0
+# fx_decimals  = 0
 
 [oracle.redstone]
 # adapter_contract — RedStone's single Adapter contract; its 19

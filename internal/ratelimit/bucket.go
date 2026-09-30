@@ -356,6 +356,12 @@ func (b *Bucket) Charge(ctx context.Context, key string, cost, limit int) (Resul
 		ttlSeconds, effectiveMax, cost,
 	).Result()
 	if err != nil {
+		// A caller abort says nothing about Redis health, so it neither arms the
+		// dwell clock nor breaks a recovery streak. A deadline still counts: a
+		// Redis too slow to answer in time is a failing Redis.
+		if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
+			return Result{}, fmt.Errorf("ratelimit: eval: %w", err)
+		}
 		if b.observeRedisFailure() {
 			return Result{}, ErrThrottleUnavailable
 		}

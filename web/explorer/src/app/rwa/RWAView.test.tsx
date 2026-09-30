@@ -1381,6 +1381,118 @@ describe('RWAView — contract arm', () => {
         screen.getByText(/each row names its own feed/),
       ).toBeInTheDocument();
     });
+
+    it('splits the sources by provenance and drops every oracle claim when the total mixes kinds', async () => {
+      const cnavSource =
+        'Constant NAV money-market fund; issuer NAV page https://example.test/nav (read 2026-09-16; review by 2026-12-15)';
+      const ref = (
+        source: string,
+        provenance: Schemas['RWAReference']['provenance'],
+      ): Schemas['RWAReference'] => ({
+        price_usd: '1.00000000',
+        source,
+        feed: 'rwa:X',
+        quote: 'fiat:USD',
+        as_of: '2026-09-09T15:08:40Z',
+        provenance,
+      });
+      const mixed = view({
+        assets: [
+          asset({ reference: ref('redstone', 'oracle_instrument_nav') }),
+          asset({
+            asset_id: `USDT0-${ISSUER}`,
+            code: 'USDT0',
+            slug: 'usdt0',
+            reference: ref('coingecko', 'listing_platform_price'),
+          }),
+          asset({
+            asset_id: `BENJI-${ISSUER}`,
+            code: 'BENJI',
+            slug: 'benji',
+            reference: ref(cnavSource, 'prospectus_constant_nav'),
+          }),
+        ],
+        funnel: {
+          balanced: true,
+          basis: 'Every served asset.',
+          stages: [
+            {
+              arm: 'valuation',
+              stage: 'assets_reference_valued',
+              unit: 'assets',
+              count: 3,
+            },
+          ],
+        },
+        summary: {
+          ...view().summary,
+          assets: 3,
+          assets_with_reference: 3,
+          reference_valuation: {
+            value_usd: '3974870.07',
+            assets_valued: 3,
+            assets_unvalued: 0,
+            lower_bound: false,
+            sources: ['coingecko', cnavSource, 'redstone'],
+            provenances: [
+              'listing_platform_price',
+              'oracle_instrument_nav',
+              'prospectus_constant_nav',
+            ],
+            basis: LIVE_BASIS,
+          },
+        },
+      });
+      // The history and premium panels answer from their own endpoints; a
+      // rejection keeps them rendered as an error rather than fed this view.
+      apiGetData.mockImplementation((path: string) =>
+        path === '/v1/rwa/history' || path === '/v1/rwa/premium'
+          ? Promise.reject(new Error('unavailable'))
+          : Promise.resolve(mixed),
+      );
+      const { container } = renderView();
+
+      const origin = (
+        await screen.findByText('Where the reference comes from.')
+      ).parentElement;
+      expect(origin).toHaveTextContent(
+        'listing-platform prices for the token: coingecko; oracle feeds: redstone; constant NAV fixed by the fund’s prospectus: 1 asset, each row naming its NAV page',
+      );
+      expect(origin).not.toHaveTextContent('issuer NAV page https://');
+      expect(origin).toHaveTextContent('carry a published reference valuation');
+      expect(origin).not.toHaveTextContent(/independent oracle/);
+      expect(
+        screen.getByText(
+          'Whose backing carries a published reference valuation',
+        ),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText('Whose backing an independent oracle prices'),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryAllByText(/what an independent oracle says/),
+      ).toHaveLength(0);
+      expect(
+        screen.getAllByText(/a listing platform's price for the token/),
+      ).toHaveLength(2);
+
+      await screen.findByText('Where the population went');
+      // The admission rule's "an independent oracle publishes a feed" is about
+      // membership, not the valuation, so only valuation claims are matched.
+      expect(document.body).not.toHaveTextContent(
+        /independent oracle(’s|'s)? (says|valuation|prices)|independently priced|oracle’s valuation of the backing/i,
+      );
+      const titles = [...container.querySelectorAll('[title]')].map(
+        (el) => el.getAttribute('title') ?? '',
+      );
+      expect(titles.some((t) => t.includes('issuer NAV page'))).toBe(false);
+      expect(titles).toContain(
+        'Circulating supply times the NAV fixed by the fund’s prospectus. Not a market capitalisation: nobody was observed paying this, and the liquidity and price gates behind the market-cap column cannot check it.',
+      );
+      expect(
+        titles.some((t) => t.includes('coingecko’s price for the token')),
+      ).toBe(true);
+    });
   });
 });
 

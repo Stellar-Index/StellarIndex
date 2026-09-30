@@ -175,19 +175,14 @@ type Config struct {
 	// strict bounded semantics: any missing file is an error,
 	// matching pre-2026-05-26 behaviour.
 	//
-	// A gap farther than TrailingMissingWindow below To still errors
-	// regardless of this flag. NOTE what that does and does not
-	// promise: the window is measured against THIS walk's To, not the
-	// network tip. When To is the tip, "within the window" means the
-	// trailing 1-2 partitions Galexie hasn't finished uploading — the
-	// failure mode this targets. When To is a chunk boundary, or the
-	// whole request is shorter than the window, EVERY ledger of the
-	// walk is within the window, so a genuine mid-history hole is
-	// tolerated too and the walk returns nil short. A caller that
-	// sets this flag on a bounded range therefore owns the coverage
-	// check — count the delivered ledgers and fail a short walk, as
+	// A gap farther than TrailingMissingWindow below To, or below the
+	// DataStore's own latest ledger (resolved when a miss is seen), still
+	// errors regardless of this flag. The tip check is what refuses a
+	// mid-history hole when To is only a chunk boundary. A caller that
+	// sets this flag on a bounded range still owns the coverage check —
+	// count the delivered ledgers and fail a short walk, as
 	// chops.backfillCoverage, ingest.censusCoverage and
-	// ingest.backfillChunkCoverage do (RLT-266).
+	// ingest.backfillChunkCoverage do.
 	//
 	// Delivery caveat: when the SDK's BufferedStorageBackend hits a
 	// missing file it cancels its internal context, dropping any
@@ -201,9 +196,9 @@ type Config struct {
 	// substitute for tip-aware -to selection.
 	TolerateTrailingMissing bool
 
-	// TrailingMissingWindow — how close to the bounded range's To
-	// the missing-file's sequence must be to qualify as
-	// trailing-edge. Default 65536 (one full Galexie 64k-ledger
+	// TrailingMissingWindow — how close to the bounded range's To, and
+	// to the DataStore's latest ledger, the missing-file's sequence must
+	// be to qualify as trailing-edge. Default 65536 (one full Galexie 64k-ledger
 	// partition plus slack — covers any "Galexie hasn't written
 	// the next partition yet" race plus operator-set To values
 	// that overshoot the tip by hours). Mid-range gaps farther
@@ -332,7 +327,19 @@ func Stream(
 	if to == 0 {
 		err = retryLiveStart(ctx, cfg, &delivered, err, attempt)
 	}
-	return maybeTolerateTrailingMissing(cfg, from, to, delivered, err)
+	return maybeTolerateTrailingMissing(cfg, from, to, delivered, err, func() (uint32, error) {
+		return latestLedger(ctx, cfg.DataStore)
+	})
+}
+
+// latestLedger returns the newest ledger held by the store dsCfg names.
+func latestLedger(ctx context.Context, dsCfg datastore.DataStoreConfig) (uint32, error) {
+	ds, err := datastore.NewDataStore(ctx, dsCfg)
+	if err != nil {
+		return 0, fmt.Errorf("open datastore: %w", err)
+	}
+	defer func() { _ = ds.Close() }()
+	return datastore.FindLatestLedgerSequence(ctx, ds)
 }
 
 // retryLiveStart re-runs a live tail that failed WITHOUT EVER DELIVERING
@@ -564,7 +571,11 @@ func validateRange(r ledgerbackend.Range) error {
 // on prefetch-worker scheduling. Single-ledger is unambiguous: there
 // is only one possible outcome (delivered) and "0" always means
 // "nothing exists here at all", never a race artifact.
-func maybeTolerateTrailingMissing(cfg Config, from, to, delivered uint32, err error) error {
+//
+// resolveTip is consulted only for a miss that passes every cheaper check.
+// To is often a chunk boundary, so only the store's own latest ledger tells
+// an object Galexie has not written yet from a hole with later ledgers on disk.
+func maybeTolerateTrailingMissing(cfg Config, from, to, delivered uint32, err error, resolveTip func() (uint32, error)) error {
 	if err == nil {
 		return nil
 	}
@@ -585,11 +596,20 @@ func maybeTolerateTrailingMissing(cfg Config, from, to, delivered uint32, err er
 	if seq > to || to-seq > window {
 		return err
 	}
+	tip, tipErr := resolveTip()
+	if tipErr != nil {
+		return fmt.Errorf("%w (trailing-missing tolerance refused: datastore tip unresolved: %w)", err, tipErr)
+	}
+	if seq <= tip && tip-seq > window {
+		return fmt.Errorf("%w (trailing-missing tolerance refused: ledger %d is %d below the datastore tip %d, "+
+			"beyond the %d-ledger trailing window — a hole, not the tip)", err, seq, tip-seq, tip, window)
+	}
 	obs.LedgerstreamTrailingMissingToleratedTotal.Inc()
 	if cfg.Logger != nil {
 		cfg.Logger.WithFields(map[string]interface{}{
 			"missing_ledger": seq,
 			"range_to":       to,
+			"datastore_tip":  tip,
 			"delivered":      delivered,
 			"gap_to_tip":     to - seq,
 			"window":         window,

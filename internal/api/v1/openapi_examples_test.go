@@ -117,6 +117,29 @@ func TestOpenAPIExamplesParseAsCanonicalAssets(t *testing.T) {
 	}
 }
 
+// TestOpenAPIOrderbookLegsAreAssetParams keeps /sdex/orderbook's
+// `selling` / `buying` inside the example-drift check above: they are
+// strict canonical asset ids but do not share the usual param names.
+func TestOpenAPIOrderbookLegsAreAssetParams(t *testing.T) {
+	spec := loadOpenAPISpec(t)
+	op := spec.Paths["/sdex/orderbook"]["get"]
+	if op == nil {
+		t.Fatal("openapi: GET /sdex/orderbook not found in spec")
+	}
+	seen := map[string]bool{}
+	for _, p := range op.Parameters {
+		seen[p.Name] = true
+		if (p.Name == "selling" || p.Name == "buying") && !isAssetParam(p.Name) {
+			t.Errorf("isAssetParam(%q) = false; /sdex/orderbook's %s example escapes the drift check", p.Name, p.Name)
+		}
+	}
+	for _, want := range []string{"selling", "buying"} {
+		if !seen[want] {
+			t.Errorf("openapi: GET /sdex/orderbook has no %q parameter", want)
+		}
+	}
+}
+
 // isAssetParam returns true for the parameter names whose values
 // are canonical asset identifiers per the API's strict validators.
 // Excludes `ticker` (ISO-4217), `slug` (loose asset-slug resolver),
@@ -124,7 +147,7 @@ func TestOpenAPIExamplesParseAsCanonicalAssets(t *testing.T) {
 // are not asset identifiers.
 func isAssetParam(name string) bool {
 	switch name {
-	case "asset", "asset_id", "asset_ids", "base", "quote":
+	case "asset", "asset_id", "asset_ids", "base", "quote", "selling", "buying":
 		return true
 	}
 	return false
