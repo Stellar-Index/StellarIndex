@@ -170,7 +170,11 @@ func TestRestampAnchorInheritsTheBound(t *testing.T) {
 	tr := boundAnchorTrade(t, tokenA, big.NewInt(200_000_000_000))
 	poisoned := stubFXResolver{prices: map[string]string{tokenA.String(): "50000"}}
 
-	if got := tradeUSDVolumeViaXLMBaseAnchorFor(context.Background(), tr, poisoned); got != nil {
+	got, err := tradeUSDVolumeViaXLMBaseAnchorFor(context.Background(), tr, poisoned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
 		t.Fatalf("restamp entry point, above-ceiling non-XLM anchor: want NULL, got %q", *got)
 	}
 }

@@ -392,3 +392,114 @@ func TestXLMBaseRestamp_RefusesWithoutResolution(t *testing.T) {
 		t.Fatalf("err = %v, want containing %q", err, want)
 	}
 }
+
+// TestXLMBaseRestamp_SkipsARowMovedAfterThePlan: the apply writes a planned
+// row only while it still holds the amounts, usd_volume and generation the
+// plan derived from. A row another writer moved in between keeps that
+// writer's state, and the shortfall is visible as planned-vs-changed.
+func TestXLMBaseRestamp_SkipsARowMovedAfterThePlan(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const usdcID = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	usdc, err := c.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := c.NewSorobanAsset("CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	xlmUSDC, err := c.NewPair(c.NativeAsset(), usdc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	xlmToken, err := c.NewPair(c.NativeAsset(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := timescale.InstallUSDVolumeResolution(store, []string{usdcID}, nil); err != nil {
+		t.Fatalf("InstallUSDVolumeResolution: %v", err)
+	}
+
+	day := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
+	anchorTS := day.Add(10 * time.Hour)
+	if err := store.InsertTrade(ctx, mkIntegrationTrade("sdex", 1, anchorTS, xlmUSDC, 1_000_000_000, 500_000_000)); err != nil {
+		t.Fatalf("InsertTrade anchor: %v", err)
+	}
+	if _, err := store.DB().ExecContext(ctx, `CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh prices_1m: %v", err)
+	}
+
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := store.DB().ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("exec %q: %v", q, err)
+		}
+	}
+	readUSD := func(l uint32) string {
+		t.Helper()
+		var v sql.NullString
+		if err := store.DB().QueryRowContext(ctx,
+			`SELECT usd_volume::text FROM trades WHERE source = 'sdex' AND ledger = $1`, l).Scan(&v); err != nil {
+			t.Fatalf("read ledger %d: %v", l, err)
+		}
+		return v.String
+	}
+
+	// Three rows the anchor values at $5.00, each stored with a wrong value.
+	names := []string{"untouched", "amount moved", "value moved"}
+	ledger := map[string]uint32{}
+	for i, name := range names {
+		tr := mkIntegrationTrade("sdex", 10+i, anchorTS.Add(time.Duration(5+i)*time.Minute), xlmToken, 100_000_000, 300)
+		if err := store.InsertTrade(ctx, tr); err != nil {
+			t.Fatalf("InsertTrade %s: %v", name, err)
+		}
+		ledger[name] = tr.Ledger
+		exec(`UPDATE trades SET usd_volume = 0.00372265 WHERE source = 'sdex' AND ledger = $1`, tr.Ledger)
+	}
+
+	const gen = int64(1_756_400_000)
+	plan, err := store.PlanXLMBaseUSDVolumeRestamp(ctx, timescale.XLMBaseRestampParams{
+		From: day, To: day.AddDate(0, 0, 1), MaxGeneration: gen,
+	})
+	if err != nil {
+		t.Fatalf("PlanXLMBaseUSDVolumeRestamp: %v", err)
+	}
+	if len(plan.Rows) != 3 || plan.Stats.Changed != 3 {
+		t.Fatalf("planned %d row(s) (Changed %d), want 3; stats %+v", len(plan.Rows), plan.Stats.Changed, plan.Stats)
+	}
+
+	// Another writer, between the plan and the apply, still below gen.
+	exec(`UPDATE trades SET base_amount = 200000000 WHERE source = 'sdex' AND ledger = $1`, ledger["amount moved"])
+	exec(`UPDATE trades SET usd_volume = 7.25 WHERE source = 'sdex' AND ledger = $1`, ledger["value moved"])
+
+	n, err := store.ApplyXLMBaseUSDVolumeRestamp(ctx, plan, gen, 0)
+	if err != nil {
+		t.Fatalf("ApplyXLMBaseUSDVolumeRestamp: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("applied %d row(s), want 1 — only the row still in its planned state (planned %d)", n, plan.Stats.Changed)
+	}
+	if got := readUSD(ledger["untouched"]); got != "5.00000000" {
+		t.Errorf("untouched row = %s, want the anchor value 5.00000000", got)
+	}
+	if got := readUSD(ledger["amount moved"]); got != "0.00372265" {
+		t.Errorf("row whose amount moved after the plan = %s, want it left at 0.00372265 — the planned value was derived from the old amount", got)
+	}
+	if got := readUSD(ledger["value moved"]); got != "7.25" {
+		t.Errorf("row another writer revalued after the plan = %s, want that writer's 7.25 kept", got)
+	}
+	if got := restampLogCount(t, ctx, store.DB(), gen); got != n {
+		t.Errorf("run logged %d before-image(s) but rewrote %d row(s)", got, n)
+	}
+}
