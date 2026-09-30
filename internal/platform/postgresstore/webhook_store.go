@@ -580,6 +580,17 @@ func (c *WebhookStore) SweepFinishedDeliveries(ctx context.Context, olderThan ti
 	return c.s.deleteInBatches(ctx, "postgresstore: SweepFinishedDeliveries", q, olderThan, defaultSweepBatchRows)
 }
 
+// CountDeliveries returns the current webhook_deliveries row count. Feeds
+// the webhook-delivery reaper's [obs.RetentionReaperRows] gauge.
+func (c *WebhookStore) CountDeliveries(ctx context.Context) (int64, error) {
+	var n int64
+	if err := c.s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM webhook_deliveries`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("postgresstore: CountDeliveries: %w", err)
+	}
+	return n, nil
+}
+
 // ─── helpers ────────────────────────────────────────────────────
 
 // rowScanner is the subset of *sql.Row + *sql.Rows that
