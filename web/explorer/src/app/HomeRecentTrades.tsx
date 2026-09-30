@@ -194,7 +194,7 @@ export function HomeRecentTrades() {
                       </Link>
                     </Td>
                     <Td align="right" className="tabular-nums">
-                      {t.price}
+                      {t.price ?? '—'}
                     </Td>
                   </TR>
                 );

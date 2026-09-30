@@ -116,6 +116,14 @@ an event stream that predates the current WASM.
     data but unchanged from stub.
   - 5 real mainnet swaps decode end-to-end
     (`test/fixtures/phoenix/v1-2026-04-23/`).
+- **Map schema (newer pool WASM, `MainnetMapPools`):** `swap`,
+  `provide_liquidity` and `withdraw_liquidity` each emit ONE event with
+  a single `ScvSymbol` topic and an `ScvMap` body keyed by
+  underscore-spelled Symbols. `classifyAny` dispatches on the topic
+  shape; `decodeSwapMap` / `decodeProvideLiquidityMap` /
+  `decodeWithdrawLiquidityMap` read by field name. The withdraw body's
+  `auto_unstake_amount` / `auto_unstake_timestamp` keys are recorded on
+  the wire but unused. Golden fixtures: `internal/sources/phoenix/mapswap_test.go`.
 
 ### Aquarius
 - Contracts have a **`UPGRADE_DELAY = 259200s` (3 days)** governance

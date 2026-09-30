@@ -2,11 +2,14 @@ package v1
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -158,6 +161,8 @@ type AssetDetail struct {
 	//   - "unreachable"    — a fetch WAS attempted and produced nothing
 	//     storable: a 404, a dead name, a TLS failure, or a document
 	//     that would not parse. THEIRS, and the one an issuer can act on.
+	//     Also a held payload past its attestation age whose domain is
+	//     failing now.
 	Sep1Status string `json:"sep1_status"`
 
 	// ─── SEP-1 overlay fields (populated when Sep1Status=="verified") ─
@@ -2557,8 +2562,7 @@ func normaliseAssetClass(raw string) string {
 //     are Stellar-asset-specific and belong on the canonical
 //     /v1/assets/{asset_id} detail route.
 //
-// Pagination via offset cursor — the result set is bounded at
-// ≤45 catalogue rows per class, so a simple offset is sufficient.
+// Paginated by writeCataloguePage.
 //
 // The class IS the query here: this listing serves its whole class and
 // narrows on none of the row filters. `filters` is taken only to name
@@ -2589,7 +2593,7 @@ func (s *Server) handleAssetListFromCatalogue(
 // assets split off /v1/assets (LC-001): fiat currencies (USD, EUR, …) and
 // reference-only coins (BTC, ETH, …) that have no Stellar issuance. An
 // optional ?asset_class=fiat|crypto|stablecoin narrows to one class. Same
-// GlobalAssetView catalogue wire shape + offset-cursor pagination as the
+// GlobalAssetView catalogue wire shape + pagination as the
 // Stellar catalogue-class listing; market_cap_usd is populated per row
 // (fiat via the fxHistory path, others null until crypto-supply lands).
 func (s *Server) handleExternalAssetList(w http.ResponseWriter, r *http.Request) {
@@ -2719,34 +2723,11 @@ func catalogueRowImage(vc *currency.VerifiedCurrency, images map[string]string) 
 	return sep1ImageFor(images, se.Code, se.Issuer)
 }
 
-// parseOffsetCursor parses an offset-style pagination cursor. The
-// cursor is the integer offset emitted as pagination.next by the
-// catalogue listing paths. An empty cursor means "start at page 1".
-//
-// A non-empty, non-integer (or negative) cursor is a client error:
-// we 400 it rather than silently restarting at page 1, matching the
-// opaque-cursor markets.go pattern (G3-08/G3-10). Silently swallowing
-// it made a typo'd cursor look like a successful first page.
-//
-// Reports ok=false after writing a problem+json on parse failure.
-func parseOffsetCursor(w http.ResponseWriter, r *http.Request, cursor string) (int, bool) {
-	if cursor == "" {
-		return 0, true
-	}
-	n, err := strconv.Atoi(cursor)
-	if err != nil || n < 0 {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/invalid-cursor",
-			"Invalid cursor", http.StatusBadRequest,
-			"cursor must be the integer pagination.next value from a prior response, or omitted to start at page 1.")
-		return 0, false
-	}
-	return n, true
-}
-
-// writeCataloguePage ranks the rows by market cap, applies offset-cursor
-// pagination and writes the envelope. Catalogue paging is small (≤45 rows
-// per class) so offset is sufficient.
+// writeCataloguePage ranks the rows by market cap, paginates them and writes
+// the envelope. The cursor names the slugs already served rather than an
+// offset: caps move between requests (live FX, prices), so an offset into a
+// re-ranked list duplicates or skips rows, while "the rest, ranked now" does
+// neither. The catalogue is a few dozen rows, which bounds the cursor.
 //
 // The rows are filled (price, then the twin merge) BEFORE they are ranked
 // and sliced — see [Server.fillAndRankCatalogueRows].
@@ -2759,11 +2740,12 @@ func (s *Server) writeCataloguePage(
 	w http.ResponseWriter, r *http.Request,
 	rows []AssetDetail, limit int, cursor string, flags Flags,
 ) {
-	offset, ok := parseOffsetCursor(w, r, cursor)
+	served, ok := parseCatalogueServedCursor(w, r, cursor)
 	if !ok {
 		return
 	}
-	if offset >= len(rows) {
+	rows = dropServedCatalogueRows(rows, served)
+	if len(rows) == 0 {
 		writeJSON(w, []AssetDetail{}, flags)
 		return
 	}
@@ -2774,18 +2756,61 @@ func (s *Server) writeCataloguePage(
 	if s.fillAndRankCatalogueRows(r.Context(), rows, assetListFilters{}) {
 		flags.Stale = true
 	}
-	end := offset + limit
-	if end > len(rows) {
-		end = len(rows)
-	}
-	page := rows[offset:end]
+	end := min(limit, len(rows))
+	page := rows[:end]
 	s.attachSparkline7dIfRequested(r, page)
 	env := Envelope{Data: page, Flags: flags}
 	if end < len(rows) {
-		next := strconv.Itoa(end)
-		env.Pagination = &Pagination{Next: next}
+		for _, row := range page {
+			served = append(served, row.Slug)
+		}
+		env.Pagination = &Pagination{Next: encodeCatalogueServedCursor(served)}
 	}
 	writeEnvelope(w, env)
+}
+
+// encodeCatalogueServedCursor / parseCatalogueServedCursor are the opaque
+// wire form of the catalogue listings' cursor: base64url of the served slugs
+// as a JSON array, so no slug character can be mistaken for a separator.
+func encodeCatalogueServedCursor(slugs []string) string {
+	raw, _ := json.Marshal(slugs) // a []string always marshals
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+// parseCatalogueServedCursor reports ok=false after writing a problem+json
+// for a cursor this writer did not emit; an empty cursor is page 1.
+func parseCatalogueServedCursor(w http.ResponseWriter, r *http.Request, cursor string) ([]string, bool) {
+	if cursor == "" {
+		return nil, true
+	}
+	var slugs []string
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err == nil {
+		err = json.Unmarshal(raw, &slugs)
+	}
+	if err != nil || len(slugs) == 0 {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-cursor",
+			"Invalid cursor", http.StatusBadRequest,
+			"cursor must be the pagination.next value from a prior response, or omitted to start at page 1.")
+		return nil, false
+	}
+	return slugs, true
+}
+
+// dropServedCatalogueRows removes the rows a prior page served, in place.
+func dropServedCatalogueRows(rows []AssetDetail, served []string) []AssetDetail {
+	if len(served) == 0 {
+		return rows
+	}
+	seen := make(map[string]struct{}, len(served))
+	for _, slug := range served {
+		seen[slug] = struct{}{}
+	}
+	return slices.DeleteFunc(rows, func(row AssetDetail) bool {
+		_, ok := seen[row.Slug]
+		return ok
+	})
 }
 
 // fillAndRankCatalogueRows fills every row's served money — its own price,
@@ -2972,8 +2997,9 @@ func bigFloatFromOptionalString(s *string) *big.Float {
 // classic rows surface first within their phase).
 //
 // Cursor protocol — phase-prefixed:
-//   - empty cursor             → catalogue phase, offset 0.
-//   - "catalogue:<offset>"     → catalogue phase resumed at offset.
+//   - empty cursor             → catalogue phase, page 1.
+//   - "catalogue:<served>"     → catalogue phase minus the rows already
+//     served (writeCataloguePage's served-slug cursor).
 //   - "classic:<inner_cursor>" → classic phase via ListAssetsExt; the
 //     inner cursor is whatever
 //     AssetsOrderVolume24hUSDDesc emits.
@@ -3018,10 +3044,10 @@ func (s *Server) handleAssetListUnified(
 }
 
 // parseUnifiedCursor decodes the phase-prefixed cursor format. An
-// empty cursor maps to catalogue phase offset 0.
+// empty cursor maps to catalogue phase page 1.
 func parseUnifiedCursor(cursor string) (phase, inner string) {
 	if cursor == "" {
-		return "catalogue", "0"
+		return "catalogue", ""
 	}
 	if rest, ok := strings.CutPrefix(cursor, "catalogue:"); ok {
 		return "catalogue", rest
@@ -3035,9 +3061,9 @@ func parseUnifiedCursor(cursor string) (phase, inner string) {
 	return "classic", cursor
 }
 
-// serveCatalogueUnifiedPage projects the catalogue, fills and ranks it by
-// market cap, slices to the requested offset/limit, and writes the
-// envelope with the appropriate next-cursor.
+// serveCatalogueUnifiedPage projects the catalogue minus the rows already
+// served, fills and ranks the rest by market cap, slices to the limit, and
+// writes the envelope with the appropriate next-cursor.
 func (s *Server) serveCatalogueUnifiedPage(
 	w http.ResponseWriter, r *http.Request,
 	filters assetListFilters, limit int, innerCursor string,
@@ -3063,21 +3089,14 @@ func (s *Server) serveCatalogueUnifiedPage(
 	// above, because it also matches the projected name.
 	rows = filterCatalogueRowsByQuery(rows, filters.q)
 
-	// parseOffsetCursor, not a silent Atoi. The old form swallowed every
-	// malformed inner cursor — `catalogue:abc`, `catalogue:-7`, an
-	// Atoi-overflow — and silently served page 1 as though no cursor had
-	// been given, while every sibling paginated surface 400s on exactly
-	// that input (wave-D KP-4).
-	//
-	// This IS a wire-behaviour change (200 → 400 on those inputs), not a
-	// no-op, and it is in the CHANGELOG as one. It is unreachable through
-	// any shipped client: the explorer clamps `limit` to {50,100,200,500}
-	// and a `catalogue:` cursor is only emitted when limit < 11.
-	offset, ok := parseOffsetCursor(w, r, innerCursor)
+	// The same served-slug cursor as writeCataloguePage: the rank below
+	// moves between requests, so an offset into it would duplicate or skip.
+	served, ok := parseCatalogueServedCursor(w, r, innerCursor)
 	if !ok {
 		return
 	}
-	if offset >= len(rows) {
+	rows = dropServedCatalogueRows(rows, served)
+	if len(rows) == 0 {
 		// Catalogue done → transition to classic.
 		s.serveClassicUnifiedPage(w, r, filters, limit, "")
 		return
@@ -3085,15 +3104,15 @@ func (s *Server) serveCatalogueUnifiedPage(
 	// Price + AM-10 twin-stats merge, then the rank, over every catalogue
 	// row BEFORE the slice — writeCataloguePage makes the same call.
 	unmeasured := s.fillAndRankCatalogueRows(r.Context(), rows, filters)
-	end := offset + limit
-	if end > len(rows) {
-		end = len(rows)
-	}
-	page := rows[offset:end]
+	end := min(limit, len(rows))
+	page := rows[:end]
 	s.attachSparkline7dIfRequested(r, page)
 	env := Envelope{Data: page, Flags: Flags{Stale: unmeasured}}
 	if end < len(rows) {
-		env.Pagination = &Pagination{Next: "catalogue:" + strconv.Itoa(end)}
+		for _, row := range page {
+			served = append(served, row.Slug)
+		}
+		env.Pagination = &Pagination{Next: "catalogue:" + encodeCatalogueServedCursor(served)}
 		writeEnvelope(w, env)
 		return
 	}
@@ -4229,6 +4248,10 @@ func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asse
 	}
 	if sep == nil {
 		detail.Sep1Status = s.sep1StatusForNoPayload(ctx, asset.Issuer)
+		return
+	}
+	if sep.OutlivedDomain {
+		detail.Sep1Status = "unreachable"
 		return
 	}
 
