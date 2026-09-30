@@ -3,7 +3,6 @@ package middleware
 import (
 	"context"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -30,9 +29,7 @@ import (
 // Streaming (SSE) endpoints are EXCLUDED: they are long-lived by design
 // and own their lifecycle through r.Context() cancellation on client
 // disconnect. A request deadline would sever the stream mid-flight. The
-// four SSE routes (/v1/ledger/stream, /v1/price/stream, /v1/price/tip/
-// stream, /v1/observations/stream) all use the `/stream` path suffix,
-// which is the codebase convention this middleware keys on.
+// exempt routes are the exact set in streamingPaths.
 func RequestTimeout(d time.Duration) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,16 +56,23 @@ func RequestTimeout(d time.Duration) Middleware {
 	}
 }
 
-// isStreamingPath reports whether p is one of the long-lived SSE
-// endpoints, identified by the `/stream` path suffix convention. Kept
-// suffix-based (not an exact allow-list) so a new SSE route inherits the
-// exclusion without a second edit here — every SSE endpoint in this API
-// already follows the suffix convention.
+// streamingPaths is the exact set of SSE routes. An exact set rather than
+// a `/stream` suffix test: any route ending in a wildcard would otherwise
+// match when a caller sets that wildcard to "stream". A new SSE route must
+// be added here; TestRequestTimeout_StreamExemptionCannotBeForged fails
+// until it is.
+var streamingPaths = map[string]bool{
+	"/v1/ledger/stream":       true,
+	"/v1/price/stream":        true,
+	"/v1/price/tip/stream":    true,
+	"/v1/observations/stream": true,
+}
+
+// isStreamingPath reports whether p is one of the long-lived SSE endpoints.
 //
-// MUST be called with the ESCAPED path. A decoded path lets a percent-
-// encoded slash inside a wildcard segment forge the suffix; the escaped
-// form is what the mux itself routes on, so keying on it means the
-// exemption and the router cannot disagree about what a request is.
+// MUST be called with the ESCAPED path. The escaped form is what the mux
+// itself routes on, so the exemption and the router cannot disagree about
+// what a request is.
 func isStreamingPath(p string) bool {
-	return strings.HasSuffix(p, "/stream")
+	return streamingPaths[p]
 }
