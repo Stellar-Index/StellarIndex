@@ -124,3 +124,113 @@ func TestTransitiveUSDPriceCandidates_RankedHops(t *testing.T) {
 		}
 	}
 }
+
+// TestTransitiveUSDPriceCandidates_LatestBucketAcrossDirections pins that
+// both the asset->hop leg and the hop's XLM price take the LATEST bucket
+// across the two stored directions, the as-is direction winning a tie. A
+// preferred direction that went quiet 20h ago must not outrank the other
+// direction's fresh bucket.
+//
+// Fixture (xlm_usd = 0.40):
+//
+//	HOPA/XLM 2 (-20m)                       → HOPA = 0.80 USD
+//	T1/HOPA 1 (-20h), HOPA/T1 0.5 (-2m)     → T1 = 2 HOPA   = 1.60
+//	T3/HOPA 1, HOPA/T3 0.5 (both -15m)      → T3 = 1 HOPA   = 0.80
+//	HOPC/XLM 2 (-20h), XLM/HOPC 0.25 (-5m)  → HOPC = 4 XLM  = 1.60; T2/HOPC 1 → 1.60
+//	HOPD/XLM 2, XLM/HOPD 0.25 (both -15m)   → HOPD = 2 XLM  = 0.80; T4/HOPD 1 → 0.80
+func TestTransitiveUSDPriceCandidates_LatestBucketAcrossDirections(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const (
+		usdcIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		hopIssuer  = "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+		tgtIssuer  = "GDM4RQUQQUVSKQA7S6EM7XBZP3FCGH4Q7CL6TABQ7B2BEJ5ERARM2M5M"
+	)
+	classic := func(code, issuer string) c.Asset {
+		t.Helper()
+		a, err := c.NewClassicAsset(code, issuer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	pair := func(base, quote c.Asset) c.Pair {
+		t.Helper()
+		p, err := c.NewPair(base, quote)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	xlm := c.NativeAsset()
+	usdc := classic("USDC", usdcIssuer)
+	hopA := classic("HOPA", hopIssuer)
+	hopC := classic("HOPC", hopIssuer)
+	hopD := classic("HOPD", hopIssuer)
+	t1 := classic("T1", tgtIssuer)
+	t2 := classic("T2", tgtIssuer)
+	t3 := classic("T3", tgtIssuer)
+	t4 := classic("T4", tgtIssuer)
+
+	now := time.Now().UTC().Truncate(time.Minute)
+	nonce := 0
+	insert := func(ago time.Duration, p c.Pair, base, quote int64) {
+		t.Helper()
+		nonce++
+		if err := store.InsertTrade(ctx, mkIntegrationTrade("sdex", nonce, now.Add(-ago), p, base, quote)); err != nil {
+			t.Fatalf("InsertTrade %s: %v", p, err)
+		}
+	}
+	insert(10*time.Minute, pair(xlm, usdc), 1_000_000_000, 400_000_000)
+	insert(20*time.Minute, pair(hopA, xlm), 100_000_000, 200_000_000)
+	insert(20*time.Hour, pair(t1, hopA), 100_000_000, 100_000_000)
+	insert(2*time.Minute, pair(hopA, t1), 200_000_000, 100_000_000)
+	insert(15*time.Minute, pair(t3, hopA), 100_000_000, 100_000_000)
+	insert(15*time.Minute, pair(hopA, t3), 200_000_000, 100_000_000)
+	insert(20*time.Hour, pair(hopC, xlm), 100_000_000, 200_000_000)
+	insert(5*time.Minute, pair(xlm, hopC), 400_000_000, 100_000_000)
+	insert(15*time.Minute, pair(t2, hopC), 100_000_000, 100_000_000)
+	insert(15*time.Minute, pair(hopD, xlm), 100_000_000, 200_000_000)
+	insert(15*time.Minute, pair(xlm, hopD), 400_000_000, 100_000_000)
+	insert(15*time.Minute, pair(t4, hopD), 100_000_000, 100_000_000)
+	if _, err := store.DB().ExecContext(ctx,
+		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh prices_1m: %v", err)
+	}
+
+	cases := []struct {
+		name       string
+		asset, hop c.Asset
+		price      string
+	}{
+		{"fresh inverted leg beats stale direct leg", t1, hopA, "1.60"},
+		{"same-bucket leg tie takes the direct row", t3, hopA, "0.80"},
+		{"fresh XLM/hop beats stale hop/XLM", t2, hopC, "1.60"},
+		{"same-bucket hop tie takes hop/XLM", t4, hopD, "0.80"},
+	}
+	for _, tc := range cases {
+		got, err := store.TransitiveUSDPriceCandidates(ctx, tc.asset.String())
+		if err != nil {
+			t.Fatalf("%s: TransitiveUSDPriceCandidates: %v", tc.name, err)
+		}
+		if len(got) != 1 || got[0].Hop != tc.hop.String() {
+			t.Errorf("%s: candidates = %+v, want one via %s", tc.name, got, tc.hop)
+			continue
+		}
+		a, ok := new(big.Rat).SetString(got[0].PriceUSD)
+		b, _ := new(big.Rat).SetString(tc.price)
+		if !ok || a.Cmp(b) != 0 {
+			t.Errorf("%s: price = %s, want %s", tc.name, got[0].PriceUSD, tc.price)
+		}
+	}
+}
