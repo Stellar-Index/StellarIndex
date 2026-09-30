@@ -116,3 +116,72 @@ func TestSetCap67MovementsWatermark_OnlyAdvancesOverAProvenWindow(t *testing.T) 
 		t.Fatalf("watermark = %d after re-deriving [%d,%d], want %d (unchanged)", wm, base, base+5, base+10)
 	}
 }
+
+// TestSetCap67MovementsWatermark_RefusesAnEventShortfall pins the event half
+// of the proof: a window whose ledgers are all present but whose
+// contract_events fall short of Σ soroban_event_count (a dropped or unrestored
+// partition) must not advance, and advances once the events are back.
+func TestSetCap67MovementsWatermark_RefusesAnEventShortfall(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	const base = uint32(160_710_000)
+	cap67TruncateWatermark(t)
+	t.Cleanup(func() { cap67TruncateWatermark(t) })
+
+	sink, err := chstore.Open(ctx, addr, 1000)
+	if err != nil {
+		t.Fatalf("open sink: %v", err)
+	}
+	t.Cleanup(func() { _ = sink.Close(ctx) })
+	closeTime := time.Date(2027, 2, 10, 0, 0, 0, 0, time.UTC)
+	ledger := func(seq, events uint32) chstore.LedgerExtract {
+		ext := chstore.LedgerExtract{Ledger: chstore.LedgerRow{
+			LedgerSeq: seq, CloseTime: closeTime, SorobanEventCount: events,
+			LedgerHash: "aa04", PrevHash: "bb04", ProtocolVersion: 23, BucketListHash: "cc04",
+			TotalCoins: 1, FeePool: 1, BaseFee: 100, BaseReserve: 5_000_000,
+		}}
+		for i := range events {
+			ext.Events = append(ext.Events, chstore.ContractEventRow{
+				LedgerSeq: seq, CloseTime: closeTime, TxHash: "dd04", EventIndex: i,
+				ContractID: "CAAA", EventType: "contract", InSuccessfulCall: 1,
+			})
+		}
+		return ext
+	}
+	flush := func(exts ...chstore.LedgerExtract) {
+		t.Helper()
+		for _, ext := range exts {
+			if err := sink.Add(ctx, ext); err != nil {
+				t.Fatalf("sink add ledger %d: %v", ext.Ledger.LedgerSeq, err)
+			}
+		}
+		if err := sink.Flush(ctx); err != nil {
+			t.Fatalf("flush: %v", err)
+		}
+	}
+
+	// Ledger base+2 declares two events that contract_events does not hold.
+	shortfall := ledger(base+2, 2)
+	shortfall.Events = nil
+	flush(ledger(base, 0), ledger(base+1, 0), shortfall, ledger(base+3, 0))
+
+	err = chstore.SetCap67MovementsWatermark(ctx, addr, base, base+3)
+	if !errors.Is(err, chstore.ErrCap67MovementsEventShortfall) {
+		t.Fatalf("SetCap67MovementsWatermark([%d,%d]) missing ledger %d's events = %v, want ErrCap67MovementsEventShortfall",
+			base, base+3, base+2, err)
+	}
+	if wm, err := chstore.Cap67MovementsWatermark(ctx, addr); err != nil || wm != 0 {
+		t.Fatalf("watermark = %d (%v) after a REFUSED advance, want 0 (unmoved)", wm, err)
+	}
+
+	// Restore the events; the same window is now proven and advances.
+	flush(ledger(base+2, 2))
+	if err := chstore.SetCap67MovementsWatermark(ctx, addr, base, base+3); err != nil {
+		t.Fatalf("SetCap67MovementsWatermark([%d,%d]) with events restored: %v", base, base+3, err)
+	}
+	if wm, err := chstore.Cap67MovementsWatermark(ctx, addr); err != nil || wm != base+3 {
+		t.Fatalf("watermark = %d (%v), want %d", wm, err, base+3)
+	}
+}
