@@ -393,11 +393,14 @@ var ErrNoTradesCompressionPolicy = errors.New("timescale: no compression policy 
 // policy_compression job on the trades hypertable), never by a job id
 // that happened to be 1000 on one host. The lag is read out of the job's
 // config in seconds so the caller never parses an interval's text form.
+// The schema is the one unqualified `trades` resolves to, so QueryRow can
+// only ever see the one hypertable every other statement here touches.
 const tradesCompressionPolicySelect = `
 	SELECT job_id, scheduled,
 	       EXTRACT(EPOCH FROM (config->>'compress_after')::interval)::bigint AS compress_after_seconds
 	  FROM timescaledb_information.jobs
 	 WHERE proc_name = 'policy_compression'
+	   AND hypertable_schema = current_schema()
 	   AND hypertable_name = 'trades'
 `
 

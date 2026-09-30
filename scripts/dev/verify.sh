@@ -245,6 +245,8 @@ echo "=== Vet (linux/arm64 cross) ===" && GOOS=linux GOARCH=arm64 go vet ./inter
 echo "=== golangci config schema ===" && go run ./scripts/ci/lint-golangci-config
 echo "=== Agents file ===" && ./scripts/ci/lint-agents-file.sh
 echo "=== Agents file self-test ===" && ./scripts/ci/lint-agents-file-test.sh
+echo "=== Remote /tmp staging ===" && ./scripts/ci/lint-remote-tmp-staging.sh
+echo "=== Remote /tmp staging self-test ===" && ./scripts/ci/lint-remote-tmp-staging-test.sh
 echo "=== Actions pinning ===" && ./scripts/ci/lint-actions-pinning.sh
 echo "=== Actions pinning self-test ===" && ./scripts/ci/lint-actions-pinning-test.sh
 echo "=== pnpm version pin ===" && ./scripts/ci/lint-pnpm-version-pin.sh
@@ -416,6 +418,7 @@ echo "=== ClickHouse ops-user contract self-test ===" && ./scripts/ops/ch-ops-us
 # enforces the CI-\>verify direction for scripts/ci, so it could not have
 # caught this. Run it here explicitly.
 echo "=== Changed-file dispatcher self-test ===" && ./scripts/dev/lint-changed-test.sh
+echo "=== Doctor self-test ===" && ./scripts/dev/doctor-test.sh
 # GH-775: pins commit-identity-range.sh's new-branch/tag fallback (a
 # detached-HEAD checkout with the branch's own commit also present as a
 # remote-tracking ref) against the exact regression that made the range

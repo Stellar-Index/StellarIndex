@@ -15,7 +15,7 @@ superseded_by: null
 > projections of the ClickHouse `contract_events` lake by default
 > (`storage.clickhouse_projector_source = true`). Postgres
 > `soroban_events` is the legacy FALLBACK source, decommission-pending
-> (#39) — the "sole authoritative store" claim below is historical.
+> (#803) — the "sole authoritative store" claim below is historical.
 > Separately, the replay CLI shipped as `stellarindex-ops
 > projector-replay -source <name> -from <ledger> [-to <ledger>]`
 > (`internal/ops/ingest/projector.go`), NOT as the `projector --source X
