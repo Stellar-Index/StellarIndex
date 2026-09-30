@@ -150,18 +150,22 @@ until such a rule is added:
 
 ### 2.6. Feature flag hygiene
 
-Feature flags are **not** a tech-debt accumulator. Rules:
+There is no feature-flag framework. A behaviour that needs an off
+switch is a config-level kill-switch:
 
-- Every flag has an owner, a default, and a **scheduled removal
-  date** — a labelled issue that expires the flag.
-- Kill-switches (for ops) are a different flavour — they live
-  forever but must be documented in a runbook.
-- **Gap:** a central flag registry (e.g. `internal/config/flags.go`)
-  with age-based CI enforcement (build warning at 90 days past
-  removal, build failure at 180) is not implemented. No such file
-  or CI check exists yet. Until it does, flag age is reviewer
-  vigilance only — track it as a gap to fill, not a standing
-  mechanism.
+- A plain boolean in `internal/config` whose `doc:` struct tag states
+  what it gates and why it exists; its `default:` tag carries the
+  default. `make docs-config` publishes both in
+  `docs/reference/config/README.md`, and `scripts/ci/lint-docs.sh`
+  fails when a config key is missing there.
+- **Gap:** no `internal/config/flags.go` registry, `Remove-by:` dates
+  or age-based CI job exists, by design. A kill-switch has no automatic
+  expiry: once only the "on" path runs in production, remove the switch
+  and its "off" branch.
+- An ops kill-switch meant to be flipped during an incident is also
+  documented in the relevant runbook.
+
+Full policy: [repo-hygiene-plan.md §6](architecture/repo-hygiene-plan.md#6-feature-flags).
 
 ### 2.7. No "temporary" workarounds
 
@@ -645,7 +649,7 @@ mechanism in the codebase.
 | TODO discipline | CI regex check | `scripts/ci/check-todo-tracking.sh` |
 | Deprecation policy | **Gap:** no CI scan implemented | — (see §2.4) |
 | Dependency minimalism | `go mod tidy` + `govulncheck` | `security.yml` |
-| Feature flag hygiene | **Gap:** no flag registry or CI scan implemented | — (see §2.6) |
+| Feature flag hygiene | **Gap** by design: no flag registry or age scan; kill-switches are config booleans, and CI checks each key is in the config reference | `scripts/ci/lint-docs.sh` (see §2.6) |
 | SLOs as code | `internal/obs/slo.go` struct + Prometheus derivation | `docker/prometheus/` |
 | Runbook ↔ alert link | CI bidirectional check | `scripts/ci/check-runbook-links.sh` |
 | Doc freshness | CI scan | `scripts/ci/check-doc-freshness.sh` |
@@ -725,7 +729,7 @@ Quarterly doc-hygiene sweep touches this file too.
 
 - Run `scripts/ci/check-doc-freshness.sh` locally; note anything
   approaching 90-day stale.
-- Skim the flag registry for expired flags.
+- Skim `docs/reference/config/README.md` for dead kill-switches (§2.6).
 - Review any `P0 cleanup` issues opened during the week.
 
 ### 9.2. Monthly (1 h, first Monday)
@@ -781,7 +785,8 @@ unchecked, pause.
 - [ ] New alert has a runbook.
 - [ ] New metric has a docstring and appears in
       `docs/reference/metrics/`.
-- [ ] New feature flag has an expiry.
+- [ ] New kill-switch is an `internal/config` boolean with a `doc:` tag
+      (§2.6).
 
 ### Review-readiness
 
