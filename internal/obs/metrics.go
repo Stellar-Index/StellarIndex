@@ -174,6 +174,7 @@ func registerAPIServingMetrics() {
 		PricingGuardDegradedTotal,
 		APICacheOpsTotal,
 		APICoverageFloorProbesTotal,
+		APILCMHomeDomainFallbackTotal,
 		APISparkline7dRowsTotal,
 		APIStreamSubscribeTotal,
 		APICORSDecisionsTotal,
@@ -5752,4 +5753,14 @@ var APICoverageFloorProbesTotal = prometheus.NewCounterVec(
 		Help: "Coverage-floor lookups behind the API's outside-coverage signal, by outcome (hit|found|absent|error|evicted); only non-hit results reach the database.",
 	},
 	[]string{"result"},
+)
+
+// APILCMHomeDomainFallbackTotal — failed home-domain observation reads,
+// each served as "unobserved" so the next ADR-0021 layer answered instead.
+// A listing page is one read.
+var APILCMHomeDomainFallbackTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_api_lcm_home_domain_fallback_total",
+		Help: "Home-domain observation reads that failed (storage error or timeout) and were served as unobserved, falling through to the next home-domain layer.",
+	},
 )
