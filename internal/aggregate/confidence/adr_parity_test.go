@@ -131,13 +131,18 @@ func TestADR0019PinsTheShippedFactorSet(t *testing.T) {
 
 // TestADR0019PinsTheBootstrapDensityGate — the ADR's warmup rule says
 // "< 30 days of history", but the cap gates on bucket density at
-// [confidence.BootstrapDensityDays]. The 2026-09-28 amendment records
-// that; this fails if it is dropped or the constant moves away from it.
+// [confidence.BootstrapDensityDays], re-engaging below
+// [confidence.BootstrapReengageDensityDays]. The 2026-09-28 amendment
+// records both; this fails if it is dropped or a constant moves away from it.
 func TestADR0019PinsTheBootstrapDensityGate(t *testing.T) {
 	adr := readSquashed(t, adr0019Path)
 	gate := strconv.FormatFloat(confidence.BootstrapDensityDays, 'f', -1, 64)
 	if !strings.Contains(adr, "`BootstrapDensityDays` = "+gate) {
 		t.Errorf("ADR-0019 does not state the shipped bootstrap density gate (%s days-equivalent)", gate)
+	}
+	reengage := strconv.FormatFloat(confidence.BootstrapReengageDensityDays, 'f', -1, 64)
+	if !strings.Contains(adr, "`BootstrapReengageDensityDays` = "+reengage) {
+		t.Errorf("ADR-0019 does not state the bootstrap gate's hysteresis edge (%s days-equivalent)", reengage)
 	}
 	unquoted := strings.ReplaceAll(adr, " > ", " ")
 	if !strings.Contains(unquoted, "`baseline_age_days` and `bootstrap_capped` now ship") {
