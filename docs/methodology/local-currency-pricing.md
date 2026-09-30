@@ -25,11 +25,11 @@ result is a derived value, and we label it as one.
 
 ## When you get an observed price instead
 
-Six currencies have real markets in our data: **USD**, **EUR**,
-**GBP**, **AUD**, **CAD** and **CHF** — Kraken quotes XLM directly in
-all six. USD and EUR also trade on Binance, Bitstamp and Coinbase;
-GBP trades on Bitstamp too (Binance has no XLM/GBP product). AUD,
-CAD and CHF are Kraken-only.
+Three currencies have real markets in our data: **USD**, **EUR** and
+**GBP** — Kraken quotes XLM directly in all three. USD and EUR also
+trade on Binance, Bitstamp and Coinbase; GBP trades on Bitstamp too
+(Binance has no XLM/GBP product). Every other currency, AUD, CAD and
+CHF included, is derived.
 
 Where a market exists, **you get the market** — the derivation never
 overrides an observed print. So `XLM/EUR` is a real volume-weighted
