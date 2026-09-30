@@ -5,13 +5,13 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellarindex_sdex_orderbook_maintain_failing` / `stellarindex_sdex_orderbook_advance_held` / `stellarindex_sdex_orderbook_crossed_book`
+# Runbook — `stellarindex_sdex_orderbook_maintain_failing` / `stellarindex_sdex_orderbook_advance_held` / `stellarindex_sdex_orderbook_reload_failing` / `stellarindex_sdex_orderbook_crossed_book`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `stellarindex_sdex_orderbook_maintain_failing` (ticket), `stellarindex_sdex_orderbook_advance_held` (ticket), `stellarindex_sdex_orderbook_crossed_book` (ticket) |
+| Alerts | `stellarindex_sdex_orderbook_maintain_failing` (ticket), `stellarindex_sdex_orderbook_advance_held` (ticket), `stellarindex_sdex_orderbook_reload_failing` (ticket), `stellarindex_sdex_orderbook_crossed_book` (ticket) |
 | Detected by | Prometheus rules in `deploy/monitoring/rules/api.yml` + `configs/prometheus/rules.r1/api.yml` |
 | Typical MTTR | 5–30 min (ClickHouse reachability, or the initial load exceeding its 30-min cap) |
 | Impact | Five distinct modes — check WHICH outcome or alert is firing. `load_error`: `/v1/sdex/orderbook` serves a 503 warming problem (user-visible outage of the endpoint). `advance_error`: the endpoint answers with increasingly stale depth, honestly timestamped (`as_of_ledger` stops advancing). `advance_held`: the SAME staleness as `advance_error` but never an error — a lake hole (or ingest halt) is holding the cursor at a fixed ledger. `verify_error`: the version-tie quarantine stops draining, so its offers stay out of every served book — visible per side as `ask_offers_withheld` / `bid_offers_withheld`. `crossed_book`: a served pair has best bid > best ask — phantom offers on that market. |
@@ -23,6 +23,8 @@ severity: P3
   `stellarindex_sdex_orderbook_maintain_total{outcome="advance_held"}`
   increasing for 30+ min with NO error outcome ever incrementing
   (`advance_held` — see below).
+- `load_error` rising by one per hour with no `load_ok` for 2+ h
+  (`reload_failing`): the daily re-load keeps failing its hourly retry.
 - `stellarindex_sdex_orderbook_pending_offers` flat and non-zero while
   `verify_error` rises (quarantine wedged), or
   `stellarindex_sdex_orderbook_crossed_pairs` > 0 for 30+ min.
@@ -69,6 +71,12 @@ curl -s localhost:9464/metrics | grep 'sdex_orderbook_maintain_duration_seconds.
    a code/schema issue, not an ops issue. File it; do not raise the
    cap ad hoc (the launch plan tracks initial-load wall-time as an
    acceptance item).
+   `reload_failing` is the same load failing AFTER the book first
+   landed: the daily self-heal re-load retries hourly, not every tick,
+   and the previous book keeps serving and advancing meanwhile, so the
+   endpoint answers 200. What is lost is the self-heal — changes that
+   landed below the cursor stay wrong until a re-load lands. Same
+   checks as above; it clears on the first `load_ok`.
 4. `advance_held` (no error outcome incrementing at all): the cursor is
    held below an unhealed `ledger_entry_changes` hole, or the lake has
    stopped receiving new ledgers entirely — the API journal names
@@ -140,3 +148,5 @@ hitting the cap before it happens.
 - 2026-09-28 (INV-0780): added `advance_held` and its own
   `stellarindex_sdex_orderbook_advance_held` alert — maintain_failing
   is error-only and stayed silent through a lake-hole/cursor hold.
+- 2026-09-30: added `stellarindex_sdex_orderbook_reload_failing` — a
+  re-load failing its hourly retry is too sparse for maintain_failing.
