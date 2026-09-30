@@ -63,8 +63,8 @@ const bespokeRefreshTimeout = time.Minute
 // batteries. The key space is closed (registry × the four whitelisted
 // windows ≈ 80 keys, none of them caller-chosen), but a cold-start burst
 // could still launch one Postgres battery per key at once, so the gate
-// caps it. 8 (class cap 4 — TryAcquireClass allows half the global
-// limit) is a third of timescale.PoolMaxOpenConns, so the detached tier
+// caps it. 8 (class cap 4 — TryAcquireClass allows a server-keyed class
+// half the global limit) is a third of timescale.PoolMaxOpenConns, so the detached tier
 // can never crowd out request-path served-tier reads, while leaving
 // enough headroom that a legitimate burst of never-built keys is served
 // rather than skipped.

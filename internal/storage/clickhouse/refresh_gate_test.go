@@ -11,14 +11,15 @@ import (
 )
 
 // TestRefreshGate_ClassFairness pins the per-class cap (inventory #26
-// item 5, second half): one class saturating its half-of-global cap
-// must NOT stop other classes from acquiring, and the global bound
+// item 5, second half): one client-keyed class saturating its
+// quarter-of-global cap must NOT stop other classes from acquiring, the
+// reserved slot stays out of client-keyed reach, and the global bound
 // must still hold across classes.
 func TestRefreshGate_ClassFairness(t *testing.T) {
-	g := NewRefreshGate(4) // class cap = 2
+	g := NewRefreshGate(8) // client-keyed class cap = 2; client-keyed classes share 7
 
 	if !g.TryAcquireClass("contract_detail") || !g.TryAcquireClass("contract_detail") {
-		t.Fatal("class should admit up to its cap (2 of global 4)")
+		t.Fatal("class should admit up to its cap (2 of global 8)")
 	}
 	if g.TryAcquireClass("contract_detail") {
 		t.Fatal("third same-class acquire must be refused (class cap) — pre-fix one class could hold every global slot")
@@ -27,17 +28,103 @@ func TestRefreshGate_ClassFairness(t *testing.T) {
 	if !g.TryAcquireClass("account_state") {
 		t.Fatal("a different class must still be admitted while another class is saturated")
 	}
-	if !g.TryAcquireClass("asset_holders") {
-		t.Fatal("global slots 4/4 in use across three classes — this acquire fills the last one")
+	for _, c := range []string{"asset_holders", "contract_detail_ch", "contract_detail_ix", "contract_detail_act"} {
+		if !g.TryAcquireClass(c) {
+			t.Fatalf("class %q refused with client-keyed slots still free", c)
+		}
+	}
+	if g.TryAcquireClass("contract_detail_pos") {
+		t.Fatal("client-keyed classes must not take the reserved last slot")
+	}
+	if !g.TryAcquireClass("contracts_dir") {
+		t.Fatal("global slots 8/8 in use — this server-keyed acquire fills the reserved one")
 	}
 	// Global bound holds even for a fresh class.
-	if g.TryAcquireClass("contracts_dir") {
+	if g.TryAcquireClass("network_throughput") {
 		t.Fatal("global bound must still cap the total across classes")
 	}
 	// Release restores both levels.
 	g.ReleaseClass("contract_detail")
-	if !g.TryAcquireClass("contracts_dir") {
+	if !g.TryAcquireClass("network_throughput") {
 		t.Fatal("released global slot must be claimable by another class")
+	}
+}
+
+// TestRefreshGate_TwoDrivenClassesLeaveRoom: two classes whose keys a
+// client can mint, each driven until refused, must not hold the whole
+// production pool — a third class still acquires.
+func TestRefreshGate_TwoDrivenClassesLeaveRoom(t *testing.T) {
+	g := NewRefreshGate(DefaultDetachedRefreshLimit)
+	held := 0
+	for progress := true; progress; {
+		progress = false
+		for _, c := range []string{"contract_detail_ev", "contract_detail_ch"} {
+			if g.TryAcquireClass(c) {
+				held++
+				progress = true
+			}
+		}
+	}
+	if want := 2 * (DefaultDetachedRefreshLimit / 4); held != want {
+		t.Fatalf("two driven classes hold %d of %d slots, want %d",
+			held, DefaultDetachedRefreshLimit, want)
+	}
+	for _, c := range []string{"account_state", "asset_holders", "network_throughput"} {
+		if !g.TryAcquireClass(c) {
+			t.Fatalf("class %q refused while two driven classes hold %d slots", c, held)
+		}
+	}
+}
+
+// contractPagePanels are the client-keyed classes one cold contract page
+// fans out to.
+var contractPagePanels = []string{
+	"contract_detail_ev", "contract_detail_ch", "contract_detail_ix",
+	"contract_detail_act", "contract_detail_pos",
+}
+
+// TestRefreshGate_SecondColdPageUsesFreeSlots: with one cold page holding a
+// slot in each of its five panel classes, a second cold page's fan-out
+// must still land in the free client-keyed slots, not be refused because
+// its classes are already active.
+func TestRefreshGate_SecondColdPageUsesFreeSlots(t *testing.T) {
+	g := NewRefreshGate(DefaultDetachedRefreshLimit)
+	for _, c := range contractPagePanels {
+		if !g.TryAcquireClass(c) {
+			t.Fatalf("first cold page: panel %q refused on an idle gate", c)
+		}
+	}
+	admitted := 0
+	for _, c := range contractPagePanels {
+		if g.TryAcquireClass(c) {
+			admitted++
+		}
+	}
+	// All client-keyed room left: the pool minus the first page and the reserved slot.
+	if want := DefaultDetachedRefreshLimit - 1 - len(contractPagePanels); admitted != want {
+		t.Fatalf("second cold page admitted %d panels, want %d", admitted, want)
+	}
+}
+
+// TestRefreshGate_ClientClassesCannotTakeReserve fills the gate with every
+// client-keyed class in adversarial order — one class to its cap first,
+// then one slot in each of the others — and requires each server-keyed
+// prewarm class to still acquire.
+func TestRefreshGate_ClientClassesCannotTakeReserve(t *testing.T) {
+	for _, prewarm := range []string{"network_throughput", "contracts_dir", "ops_directory"} {
+		g := NewRefreshGate(DefaultDetachedRefreshLimit)
+		clients := append([]string{"account_state", "asset_holders"}, contractPagePanels...)
+		for range DefaultDetachedRefreshLimit {
+			g.TryAcquireClass(clients[0])
+		}
+		for range 2 {
+			for _, c := range clients[1:] {
+				g.TryAcquireClass(c)
+			}
+		}
+		if !g.TryAcquireClass(prewarm) {
+			t.Fatalf("%q refused after client-keyed classes filled the gate", prewarm)
+		}
 	}
 }
 

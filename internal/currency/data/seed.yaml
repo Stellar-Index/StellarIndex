@@ -45,6 +45,15 @@
 #                              asset_id:       precomputed canonical
 #                                              asset_id (Stellar; lets
 #                                              consumers skip parsing).
+#
+# Ticker-only entries (no classic Stellar code, e.g. reference_only
+# BTC/USDT/XRP): every classic asset bearing the ticker is flagged as
+# an impersonator, whoever issues it. There is no ticker-keyed anchor
+# allowlist, and `known_anchors` (fiat only) does not exempt anyone. To
+# vet a genuine anchored or bridged issuance, add it as a
+# `network: stellar` entry on that SAME entry with `code` equal to the
+# ticker; that issuer then stops colliding and every other issuer still
+# does (see indexTickerOnlyEntry in verified.go).
 
 verified_currencies:
   # ─── Stellar native ─────────────────────────────────────────────
