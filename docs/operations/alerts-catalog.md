@@ -817,9 +817,14 @@ register; see #485.
 - **Duplicate alerts are a smell.** If two rules fire on the same
   root cause, consolidate. Oncall shouldn't be paged twice for the
   same incident.
-- **Every alert has a test.** Synthetic fixture → AlertManager →
-  stub receiver → assert the right page fires. CI target
-  `make test-alerts` (TBD) exercises this.
+- **Every alert should have a test.** A promtool unit test in
+  `deploy/monitoring/rule-tests/<area>_test.yml` feeds synthetic
+  series and asserts the alert fires on the state it claims to
+  catch and stays silent otherwise; `make monitoring-check` runs
+  them in CI. Not every rule has one yet and no gate requires it.
+  Routing is checked separately: CI validates the rendered
+  Alertmanager config with amtool, but no test drives a fired
+  alert through Alertmanager to a receiver.
 
 ---
 
@@ -832,17 +837,16 @@ register; see #485.
 3. Write the runbook at `docs/operations/runbooks/<name>.md` —
    copy `_template.md`.
 4. Add a row to this catalogue.
-5. Write an alert-firing test at `test/monitoring/<name>_test.yml`.
+5. Write an alert-firing test in
+   `deploy/monitoring/rule-tests/<area>_test.yml`.
 
 All five in one PR. The lint enforces the most-load-bearing
 piece (`scripts/ci/lint-docs.sh` §9 — every rule's
 `runbook_url` must point at an existing runbook file); the
 metric-doc and catalogue-row checks catch the two next-most
-common drifts. The alert-firing test at
-`test/monitoring/<name>_test.yml` is not yet machine-checked
-(`test/monitoring/` doesn't exist as a directory today) — write
-it anyway as part of the same PR; the convention precedes the
-enforcement.
+common drifts. `make monitoring-check` runs every test in
+`deploy/monitoring/rule-tests/`, but nothing fails a rule that
+has none — write it anyway as part of the same PR.
 
 ---
 
