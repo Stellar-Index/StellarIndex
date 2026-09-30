@@ -172,6 +172,39 @@
         enabled: true
         daemon_reload: true
 
+# ── Bind post-condition (Groups A + B) ────────────────────────
+#
+# ARGS reaches the exporter only through the packaged unit's `$ARGS`;
+# if that ever stops holding, the exporter silently binds every
+# interface and the run stays green. Ask the kernel what is listening.
+# Flush first so a changed env-file's restart has already happened.
+- name: Apply pending exporter restarts before checking their binds
+  ansible.builtin.meta: flush_handlers
+
+- name: Read the exporters' listening sockets
+  when: not ansible_check_mode
+  ansible.builtin.command:
+    argv: [ss, -Hlnt, "sport = :{{ item }}"]
+  loop: "{{ [9121] + ([9187] if run_postgres | bool else []) }}"
+  register: exporter_listeners
+  changed_when: false
+  retries: 10
+  delay: 2
+  until: exporter_listeners.stdout | length > 0
+
+- name: Assert the exporters listen on loopback only
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that:
+      - item.stdout_lines | reject('search', '[ ]127[.]0[.]0[.]1:' ~ item.item ~ '[ ]') | list | length == 0
+    fail_msg: >-
+      Exporter on port {{ item.item }} is not bound to 127.0.0.1 only:
+      {{ item.stdout_lines }}. Its --web.listen-address in ARGS did not
+      take effect.
+  loop: "{{ exporter_listeners.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
 # ── Group C: pgbackrest_exporter (upstream tarball) ───────────
 #
 # No Debian package exists. Pinned upstream release from
