@@ -22,7 +22,7 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [v0.97.0] — 2026-09-30
 
-27 commits since v0.96.0. Operator-visible: `GET /v1/operations` rejects any
+36 commits since v0.96.0. Operator-visible: `GET /v1/operations` rejects any
 `ledger` parameter with a 400 that names the new
 `GET /v1/ledgers/{seq}/operations` route (OpenAPI 1.31.0); two new off-chain
 feeds ship disabled — `[external.openexchangerates]` (`enabled = false`,
@@ -128,6 +128,10 @@ migration.
   worker seeds held tickers from the newest `fx_quotes` row within 7 days,
   so a fiat the upstream has not yet republished no longer drops out of
   `/v1/price` after a restart.
+- **openapi — envelope declared (#1972):** the 38 enveloped 2xx data
+  schemas declare `EnvelopeMeta` (`as_of`, `flags`) as `allOf`; the data
+  subtrees are unchanged, and the 18 session-cookie dashboard/auth
+  operations are named as the bare-on-the-wire exemption.
 - **phoenix (#2002, #2001):** the Map-schema pool's `provide_liquidity` and
   `withdraw_liquidity` events decode into `phoenix_liquidity` rows (replay
   above); a bond-instrument contract that only shares the `"bond"` topic
@@ -145,7 +149,9 @@ migration.
   gains a ClickHouse lake tier (#1767); the design system records the
   Tailwind v4 browser baseline (#1930); the host-down runbook records the
   Hetzner Robot server numbers (#2008); the DNS/email perimeter's
-  owner-side steps are closed (#2014).
+  owner-side steps are closed (#2014); the metrics reference cross-links
+  the monthly-quota fail-closed alert (#2020); the coverage doc cites the
+  commit behind a reused PR number instead of the number (#1901).
 
 ## [v0.96.0] — 2026-09-30
 
