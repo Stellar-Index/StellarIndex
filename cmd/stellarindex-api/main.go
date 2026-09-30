@@ -551,8 +551,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// from the global rate-limit middleware. Default 5/hour/IP —
 	// tight enough to block bulk-mint, loose enough that an
 	// operator onboarding a small team through a single shared
-	// egress completes normally. Operators tune via
-	// `[api].signup_ip_max_per_window` if needed.
+	// egress completes normally. The cap is a compiled default
+	// (auth.SignupIPThrottleOptions), not a config key.
 	var signupIPThrottle v1.SignupIPThrottle
 	if rdb != nil {
 		signupIPThrottle = auth.NewRedisSignupIPThrottle(rdb, auth.SignupIPThrottleOptions{})
