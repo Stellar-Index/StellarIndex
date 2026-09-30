@@ -469,6 +469,7 @@ func TestRWAReferenceDropActors_CoverEveryStatusARowCanCarry(t *testing.T) {
 		RWAPremiumReferenceNotOracle,
 		RWAPremiumReferenceNotOracleCNAV,
 		RWAPremiumReferenceNotOracleCurator,
+		RWAPremiumReferenceNotOracleFundNAV,
 	} {
 		if _, ok := rwaReferenceDropActors[premiumOnly]; ok {
 			t.Errorf("%q is a premium-only status and must not be a reference-valuation drop", premiumOnly)

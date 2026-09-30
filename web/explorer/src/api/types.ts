@@ -8442,7 +8442,7 @@ export interface components {
              *       "oracle_instrument_nav"
              *     ]
              */
-            provenances?: ("oracle_instrument_nav" | "listing_platform_price" | "prospectus_constant_nav")[];
+            provenances?: ("oracle_instrument_nav" | "fund_nav" | "listing_platform_price" | "prospectus_constant_nav")[];
             /** @description Prose statement of what was measured and, as importantly, what it is not. */
             basis: string;
         };
@@ -8892,7 +8892,7 @@ export interface components {
              */
             as_of: string;
             /**
-             * @description WHAT KIND of figure this is. Four are published and they are
+             * @description WHAT KIND of figure this is. Five are published and they are
              *     not the same claim, so this is mandatory on every served
              *     reference rather than defaulted.
              *
@@ -8902,6 +8902,14 @@ export interface components {
              *     rests on the issuer's own domain-bound declaration that one
              *     token is one unit of it. The five rules above govern it, and
              *     a premium may be measured against it.
+             *     `fund_nav` — the fund's own SEC-reported daily NAV per share,
+             *     relayed by Tiingo, for a token bound on the exact
+             *     `(code, issuer)` as one share of that fund. Taken only when
+             *     no oracle binding exists for the row, ahead of any listing
+             *     price or prospectus NAV. Published to the cent
+             *     (`decimals_published: 2`); `as_of` is the business day the
+             *     NAV was struck. Carries no premium: half a cent of rounding
+             *     is a material premium on a one-dollar share.
              *     `listing_platform_price` — an independent listing platform's
              *     own USD price for the TOKEN, published in the same row of
              *     that platform's own map in which it NAMES the token's
@@ -8917,8 +8925,8 @@ export interface components {
              *     `prospectus_constant_nav` — the issuer's own prescribed NAV
              *     for a share class whose fund rules fix it, bound on the
              *     exact `(code, issuer)`. Weaker than the oracle arm — nobody
-             *     independent measured it — and taken only when neither an
-             *     oracle binding nor a listing price exists for the row.
+             *     independent measured it — and taken only when no oracle
+             *     binding, fund NAV or listing price exists for the row.
              *     Carries no premium, for the same reason a listing price
              *     does not.
              *     `curator_uploaded_price` — a curator's own uploaded price
@@ -8927,7 +8935,7 @@ export interface components {
              *     whatever the curator typed. Carries no premium.
              * @enum {string}
              */
-            provenance: "oracle_instrument_nav" | "listing_platform_price" | "curator_uploaded_price" | "prospectus_constant_nav";
+            provenance: "oracle_instrument_nav" | "fund_nav" | "listing_platform_price" | "curator_uploaded_price" | "prospectus_constant_nav";
             /**
              * @description True when the reference is older than 72h — the longest
              *     ordinary gap between two strikes of a real-world instrument's
@@ -8947,6 +8955,22 @@ export interface components {
              *     binding is due for re-verification. Labelled, not withheld.
              */
             stale?: boolean;
+            /**
+             * @description The precision the publisher states the value at, when it is
+             *     coarser than `price_usd` alone suggests. Present on a
+             *     `fund_nav` reference, where it is 2: a NAV published to the
+             *     cent cannot resolve a difference smaller than half a cent.
+             * @example 2
+             */
+            decimals_published?: number;
+            /**
+             * @description True on an `oracle_instrument_nav` reference when the fund's
+             *     own published NAV for the same share is also fresh (at most
+             *     five days old) and differs from the oracle figure by more
+             *     than half a cent. The oracle figure is still the one served;
+             *     the values are never swapped. Absent when false.
+             */
+            nav_disagreement?: boolean;
         };
         /**
          * @description The token's market price measured against the oracle's valuation
@@ -9016,7 +9040,8 @@ export interface components {
              *     `reference_expired` — the bound feed's most recent observation
              *     is older than the seven-day window an active stream is defined
              *     by. Reached only when a snapshot is carried across a sustained
-             *     read failure.
+             *     read failure. On a fund-NAV-bound row, the fund's latest NAV
+             *     is older than five calendar days.
              *     `reference_not_instrument_scoped` — an oracle feed of this
              *     code exists but prices an off-chain quantity in its own unit
              *     (a troy ounce of spot metal, one fund share) rather than one
@@ -9041,9 +9066,13 @@ export interface components {
              *     reference, and it is a curator's uploaded price rather than
              *     an oracle's valuation of the instrument, so no premium may
              *     be computed against it.
+             *     `reference_is_a_fund_nav` — the row carries a fund's
+             *     published NAV, rounded to the cent, so no premium may be
+             *     computed against it: the rounding alone can be half a
+             *     percent on a one-dollar share.
              * @enum {string}
              */
-            status: "published" | "withheld_issuer_flagged" | "reference_not_bound" | "reference_contract_not_bound" | "reference_isin_mismatch" | "no_reference_feed" | "reference_unavailable" | "reference_expired" | "reference_not_instrument_scoped" | "reference_not_usd_denominated" | "no_market_price" | "market_price_not_observed" | "reference_not_positive" | "reference_is_a_listing_price" | "reference_is_a_prospectus_nav" | "reference_is_a_curator_price";
+            status: "published" | "withheld_issuer_flagged" | "reference_not_bound" | "reference_contract_not_bound" | "reference_isin_mismatch" | "no_reference_feed" | "reference_unavailable" | "reference_expired" | "reference_not_instrument_scoped" | "reference_not_usd_denominated" | "no_market_price" | "market_price_not_observed" | "reference_not_positive" | "reference_is_a_listing_price" | "reference_is_a_prospectus_nav" | "reference_is_a_curator_price" | "reference_is_a_fund_nav";
             /**
              * @description (market − reference) ÷ reference × 100 as a decimal string:
              *     POSITIVE when the token trades above the instrument's
