@@ -3052,6 +3052,18 @@ alert when > 1. The alert expression is unchanged (`> 1`, no
 `wrap_class` filter needed) — the false positives are fixed in what
 the value MEANS, not in the alert condition.
 
+### `stellarindex_supply_write_band_breach_total`
+
+Counter, labels `asset_key` + `direction` (`up` / `down`). One increment
+per supply snapshot written whose `total_supply` is more than 10x above
+(`up`) or below (`down`) the previous snapshot the same aggregator
+process wrote for that asset. The row is written regardless: a genuine
+mint can grow a young token tenfold, so a breach is a prompt to check
+the asset's supply against its issuer or contract, not a refusal. The
+comparison is against the refresher's in-memory last write, so the first
+snapshot after a restart and any snapshot following a zero total never
+count. Both directions are seeded to zero per watched asset.
+
 ### `stellarindex_supply_cross_check_total`
 
 Counter, labels `outcome` (`within` / `over` / `missing_snapshot` /
