@@ -438,21 +438,12 @@ func (r *ExplorerReader) SetWealthRefreshErrorHandler(fn func(error)) {
 }
 
 // NewExplorerReader dials ClickHouse (native protocol) with a request-sized
-// pool and pings it, authenticating as the ops-batch user when
-// STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD are set (ops_auth.go) and
-// otherwise as CH's unauthenticated `default` user (empty username/password)
-// — the pre-ADR-0048-D4 behavior. Every non-API caller (the aggregator's
-// explorer reader, stellarindex-ops issuer-enrich / supply-seed) keeps
-// calling this constructor unchanged.
+// pool and pings it, authenticating as the environment's identity
+// ([chAuth]: ops_batch, else live_daemon, else CH's `default` user). Every
+// non-API caller (the aggregator's explorer reader, stellarindex-ops
+// issuer-enrich / supply-seed) uses this constructor.
 func NewExplorerReader(ctx context.Context, addr string) (*ExplorerReader, error) {
-	// Ops-batch identity from the environment (2026-08-28 r1 incident;
-	// see ops_auth.go) — CH `default` user when unset, so every
-	// non-API caller is byte-for-byte unchanged outside the ops env.
-	auth, err := opsAuth()
-	if err != nil {
-		return nil, err
-	}
-	return NewExplorerReaderAuth(ctx, addr, auth.Username, auth.Password)
+	return NewExplorerReaderAuth(ctx, addr, "", "")
 }
 
 // NewExplorerReaderAuth is [NewExplorerReader] with an explicit CH
@@ -463,14 +454,16 @@ func NewExplorerReader(ctx context.Context, addr string) (*ExplorerReader, error
 // ADR-0048 D5) run under the dedicated `api_serving` CH settings profile
 // (bounded threads/memory/execution-time, priority above merges and
 // backfill inserts — configs/ansible/roles/archival-node/tasks/
-// 20-clickhouse-serving-profile.yml) instead of the unbounded `default`
-// user every other CH connection in this repo still uses. Both args empty
-// is byte-for-byte the old NewExplorerReader behavior (clickhouse-go
-// treats an empty Auth.Username as CH's `default` user).
+// 20-clickhouse-serving-profile.yml). Both args empty resolves the
+// environment's identity, exactly as [NewExplorerReader] does.
 func NewExplorerReaderAuth(ctx context.Context, addr, username, password string) (*ExplorerReader, error) {
+	auth, err := authOrEnv(username, password)
+	if err != nil {
+		return nil, err
+	}
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr:        []string{addr},
-		Auth:        clickhouse.Auth{Database: "stellar", Username: username, Password: password},
+		Auth:        auth,
 		Settings:    clickhouse.Settings{"max_execution_time": 30},
 		DialTimeout: 10 * time.Second,
 		ReadTimeout: 30 * time.Second,

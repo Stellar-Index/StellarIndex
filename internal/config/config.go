@@ -1148,15 +1148,16 @@ type StorageConfig struct {
 	// settings profile (bounded threads/memory/execution-time, CH
 	// query-priority + OS nice edge over merges and backfill inserts —
 	// see configs/ansible/roles/archival-node/tasks/20-clickhouse-serving-profile.yml)
-	// instead of CH's unauthenticated `default` user, which every OTHER
-	// CH connection in this repo (the indexer's dual-sink, the
-	// aggregator's explorer reader, stellarindex-ops backfills/gates)
-	// keeps using unchanged. Both empty (the default) preserves the
-	// pre-D4 behavior exactly: connect as `default`, no password — safe
-	// to leave unset on any deployment that hasn't provisioned the CH
-	// profile yet (docs/operations/self-hosting.md's ClickHouse section
-	// is entirely unaffected either way).
-	ClickHouseServingUser string `toml:"clickhouse_serving_user" doc:"ClickHouse username the API's serving reads (explorer endpoints, incl. GET /v1/accounts/{g}/movements) authenticate as (ADR-0048 D4). Empty (default) uses ClickHouse's default user, unchanged from pre-D4 behavior." default:""`
+	// instead of the identity every OTHER CH connection in this repo
+	// (the indexer's dual-sink, the aggregator's readers, stellarindex-ops
+	// backfills/gates) resolves from the environment: ops_batch, else
+	// live_daemon, else CH's unauthenticated `default` user
+	// (internal/storage/clickhouse/ops_auth.go). Both empty (the default)
+	// makes the API resolve the same way — safe to leave unset on any
+	// deployment that hasn't provisioned the CH profile yet
+	// (docs/operations/self-hosting.md's ClickHouse section is entirely
+	// unaffected either way).
+	ClickHouseServingUser string `toml:"clickhouse_serving_user" doc:"ClickHouse username the API's serving reads (explorer endpoints, incl. GET /v1/accounts/{g}/movements) authenticate as (ADR-0048 D4). Empty (default) uses the environment's identity: STELLARINDEX_CLICKHOUSE_LIVE_USER when set, else ClickHouse's default user." default:""`
 	// ClickHouseServingPassword holds the resolved password, not an
 	// env-var NAME (the direct-value `env:` convention, same as
 	// RedisPassword — see that field's doc comment — NOT the
