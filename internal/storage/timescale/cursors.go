@@ -277,24 +277,33 @@ func (s *Store) AdvanceCursorFrom(ctx context.Context, source, sub string, expec
 // the projector's own first cycle for that). Refuses to move FORWARD:
 // fast-forwarding a cursor skips data and has its own deliberate SQL
 // procedures; this method is single-purpose by design.
-func (s *Store) RewindCursor(ctx context.Context, source, sub string, lastLedger uint32) error {
+//
+// Returns the ledger the row held when it was rewound, which can be above
+// the caller's earlier read if a projector cycle committed in between:
+// the re-walked range runs up to it. The FOR UPDATE CTE is what makes it
+// the latest committed value under READ COMMITTED, not the snapshot's.
+func (s *Store) RewindCursor(ctx context.Context, source, sub string, lastLedger uint32) (uint32, error) {
 	const q = `
-        UPDATE ingestion_cursors
+        WITH prior AS (
+            SELECT last_ledger FROM ingestion_cursors
+             WHERE source = $1 AND sub_source = $2 AND last_ledger > $3
+               FOR UPDATE
+        )
+        UPDATE ingestion_cursors c
            SET last_ledger = $3, last_updated = now()
-         WHERE source = $1 AND sub_source = $2 AND last_ledger > $3
+          FROM prior
+         WHERE c.source = $1 AND c.sub_source = $2 AND c.last_ledger > $3
+        RETURNING prior.last_ledger
     `
-	res, err := s.db.ExecContext(ctx, q, source, sub, lastLedger)
+	var prior int64
+	err := s.db.QueryRowContext(ctx, q, source, sub, lastLedger).Scan(&prior)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("timescale: RewindCursor (%s,%s): no row rewound — cursor missing or already at/below ledger %d", source, sub, lastLedger)
+	}
 	if err != nil {
-		return fmt.Errorf("timescale: RewindCursor: %w", err)
+		return 0, fmt.Errorf("timescale: RewindCursor: %w", err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("timescale: RewindCursor rows: %w", err)
-	}
-	if n == 0 {
-		return fmt.Errorf("timescale: RewindCursor (%s,%s): no row rewound — cursor missing or already at/below ledger %d", source, sub, lastLedger)
-	}
-	return nil
+	return uint32(prior), nil //nolint:gosec // ledger seq, bounded by the network head
 }
 
 // ReapCursors deletes ingestion_cursors rows whose last_updated is

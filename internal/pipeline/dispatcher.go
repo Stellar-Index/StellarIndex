@@ -156,7 +156,8 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 					name)
 			}
 			decoders = append(decoders,
-				reflector.NewDecoder(reflector.VariantDEX, oracle.Reflector.DEXContract))
+				reflector.NewDecoder(reflector.VariantDEX, oracle.Reflector.DEXContract,
+					reflector.WithDecoderDecimals(oracle.Reflector.DEXDecimals)))
 			obs.DeclareOracleResolution(reflector.SourceDEX, reflector.DefaultResolutionSeconds)
 		case reflector.SourceCEX:
 			if oracle.Reflector.CEXContract == "" {
@@ -165,7 +166,8 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 					name)
 			}
 			decoders = append(decoders,
-				reflector.NewDecoder(reflector.VariantCEX, oracle.Reflector.CEXContract))
+				reflector.NewDecoder(reflector.VariantCEX, oracle.Reflector.CEXContract,
+					reflector.WithDecoderDecimals(oracle.Reflector.CEXDecimals)))
 			obs.DeclareOracleResolution(reflector.SourceCEX, reflector.DefaultResolutionSeconds)
 		case reflector.SourceFX:
 			if oracle.Reflector.FXContract == "" {
@@ -174,7 +176,8 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 					name)
 			}
 			decoders = append(decoders,
-				reflector.NewDecoder(reflector.VariantFX, oracle.Reflector.FXContract))
+				reflector.NewDecoder(reflector.VariantFX, oracle.Reflector.FXContract,
+					reflector.WithDecoderDecimals(oracle.Reflector.FXDecimals)))
 			obs.DeclareOracleResolution(reflector.SourceFX, reflector.DefaultResolutionSeconds)
 		case redstone.SourceName:
 			if oracle.Redstone.AdapterContract == "" {
