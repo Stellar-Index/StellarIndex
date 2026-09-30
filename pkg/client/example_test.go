@@ -322,8 +322,8 @@ func ExampleClient_Status() {
 	fmt.Printf("%s — p95=%.2fms, %d/%d sources active\n",
 		got.Data.Overall,
 		got.Data.Latency.P95Ms,
-		got.Data.Freshness.ActiveSources,
-		got.Data.Freshness.TotalSources)
+		*got.Data.Freshness.ActiveSources,
+		*got.Data.Freshness.TotalSources)
 
 	// Output: ok — p95=3.85ms, 13/17 sources active
 }

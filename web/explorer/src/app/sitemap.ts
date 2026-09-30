@@ -8,6 +8,7 @@ import { loadArchitectureDocs } from '@/lib/architecture';
 import { loadBlogPosts } from '@/lib/blog';
 import { loadOperationsDocs } from '@/lib/operations';
 import { loadIncidents } from '@/lib/incidents';
+import { hrefFor } from '@/lib/hrefFor';
 import { fiatSlugFor } from '@/lib/fiat-slugs';
 import { PROTOCOLS } from './protocols/registry';
 import { buildConvertParams } from '@/lib/convert-params';
@@ -164,7 +165,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   }));
   // Incident postmortems — one permanent page each under /status.
   const incidentPages: MetadataRoute.Sitemap = loadIncidents().map((inc) => ({
-    url: siteURL(`/status/incident/${inc.slug}`),
+    url: siteURL(`/status/incident/${encodeURIComponent(inc.slug)}`),
     lastModified: now,
     changeFrequency: 'monthly',
     priority: 0.4,
@@ -177,7 +178,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const protocolPages: MetadataRoute.Sitemap = PROTOCOLS.filter(
     (p) => p.name !== 'sdex',
   ).map((p) => ({
-    url: siteURL(`/protocols/${p.name}`),
+    url: siteURL(hrefFor.protocol(p.name)),
     lastModified: now,
     changeFrequency: 'daily',
     priority: 0.7,
@@ -267,14 +268,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const sourcePages: MetadataRoute.Sitemap = [];
   for (const s of sources) {
     sourcePages.push({
-      url: siteURL(`/sources/${s.name}`),
+      url: siteURL(hrefFor.source(s.name)),
       lastModified: now,
       changeFrequency: 'weekly',
       priority: 0.5,
     });
     if (s.class === 'exchange' && s.subclass === 'cex') {
       sourcePages.push({
-        url: siteURL(`/exchanges/${s.name}`),
+        url: siteURL(hrefFor.exchange(s.name)),
         lastModified: now,
         changeFrequency: 'weekly',
         priority: 0.5,

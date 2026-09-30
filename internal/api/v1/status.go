@@ -71,6 +71,36 @@ type StatusResponse struct {
 	// Always present (no omitempty) so consumers never confuse an
 	// omitted field for a zero count.
 	IncidentsStatus string `json:"incidents_status"`
+
+	// FreshnessStatus is the trust signal for the Freshness block, for
+	// the same reason as IncidentsStatus: a failed count query must not
+	// read as a measured zero.
+	//   - "ok":       counts measured, every enabled source active.
+	//   - "degraded": counts measured, active_sources < total_sources.
+	//   - "unknown":  a freshness query FAILED, or no metrics backend is
+	//                 wired — the counts are omitted.
+	// Always present.
+	FreshnessStatus string `json:"freshness_status"`
+}
+
+// Freshness-block trust states for [StatusResponse.FreshnessStatus].
+const (
+	freshnessStatusOK       = "ok"
+	freshnessStatusDegraded = "degraded"
+	freshnessStatusUnknown  = "unknown"
+)
+
+// freshnessStatusFor classifies the freshness block the way
+// incidentsStatusFor classifies the incidents block.
+func freshnessStatusFor(f StatusFreshness, err error) string {
+	switch {
+	case err != nil, f.ActiveSources == nil, f.TotalSources == nil:
+		return freshnessStatusUnknown
+	case *f.ActiveSources < *f.TotalSources:
+		return freshnessStatusDegraded
+	default:
+		return freshnessStatusOK
+	}
 }
 
 // Incident-block trust states for [StatusResponse.IncidentsStatus].
@@ -143,10 +173,12 @@ func (l StatusLatency) breached() bool {
 	return l.P95Ms > statusLatencyP95TargetMs || l.P99Ms > statusLatencyP99TargetMs
 }
 
+// StatusFreshness counts are nil when their query failed, so a served 0
+// stays distinct from an unmeasured one on the wire.
 type StatusFreshness struct {
 	LastAggregatorTick WireTime `json:"last_aggregator_tick,omitempty"`
-	ActiveSources      int      `json:"active_sources"`
-	TotalSources       int      `json:"total_sources"`
+	ActiveSources      *int     `json:"active_sources,omitempty"`
+	TotalSources       *int     `json:"total_sources,omitempty"`
 }
 
 type StatusIncidents struct {
@@ -343,35 +375,52 @@ func (p *PrometheusStatusBackend) Freshness(ctx context.Context) (StatusFreshnes
 	//    reported those as inactive, which is a claim about our ingest
 	//    that is not true. 7 days is long enough that a source appearing
 	//    inactive means something has actually stopped.
-	if res, err := p.queryVector(ctx, activeSourcesQuery); err == nil {
-		for _, s := range res {
-			if v, ok := s.Float(); ok {
-				out.ActiveSources = int(v)
-			}
-		}
+	//
+	// A failed query is returned, not skipped: a skipped one leaves its
+	// count at 0 and never trips backendErr, so it reads as a measured 0.
+	active, err := p.queryCount(ctx, activeSourcesQuery)
+	if err != nil {
+		return StatusFreshness{}, fmt.Errorf("active sources: %w", err)
 	}
+	out.ActiveSources = &active
 
 	// Total sources configured as enabled.
-	if res, err := p.queryVector(ctx, totalSourcesQuery); err == nil {
-		for _, s := range res {
-			if v, ok := s.Float(); ok {
-				out.TotalSources = int(v)
-			}
-		}
+	total, err := p.queryCount(ctx, totalSourcesQuery)
+	if err != nil {
+		return StatusFreshness{}, fmt.Errorf("total sources: %w", err)
 	}
+	out.TotalSources = &total
 
 	// Last aggregator tick — the timestamp of the most recent
 	// vwap-write counter increment.
-	if res, err := p.queryVector(ctx,
-		`max(timestamp(stellarindex_aggregator_vwap_writes_total))`); err == nil {
-		for _, s := range res {
-			if v, ok := s.Float(); ok && v > 0 {
-				out.LastAggregatorTick = WireTime(time.Unix(int64(v), 0).UTC())
-			}
+	res, err := p.queryVector(ctx,
+		`max(timestamp(stellarindex_aggregator_vwap_writes_total))`)
+	if err != nil {
+		return StatusFreshness{}, fmt.Errorf("last aggregator tick: %w", err)
+	}
+	for _, s := range res {
+		if v, ok := s.Float(); ok && v > 0 {
+			out.LastAggregatorTick = WireTime(time.Unix(int64(v), 0).UTC())
 		}
 	}
 
 	return out, nil
+}
+
+// queryCount reads a count(...) query. An empty vector is a served 0:
+// count() over no matching series returns no sample.
+func (p *PrometheusStatusBackend) queryCount(ctx context.Context, q string) (int, error) {
+	res, err := p.queryVector(ctx, q)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, s := range res {
+		if v, ok := s.Float(); ok {
+			n = int(v)
+		}
+	}
+	return n, nil
 }
 
 func (p *PrometheusStatusBackend) Incidents(ctx context.Context) (StatusIncidents, error) {
@@ -576,6 +625,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		// incidents signal: with no Alertmanager query, zero counts
 		// are absence-of-signal, not an all-clear.
 		out.IncidentsStatus = incidentsStatusUnknown
+		out.FreshnessStatus = freshnessStatusUnknown
 		out.Services = append(out.Services, unknownServices(s.statusServices)...)
 		out.Overall = rollupOverall(out.Services, false, false, false)
 		writeJSON(w, out, Flags{Stale: out.Overall != "ok"})
@@ -665,6 +715,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if freErr == nil {
 		out.Freshness = freshness
 	}
+	out.FreshnessStatus = freshnessStatusFor(out.Freshness, freErr)
 	// Incidents block: publish the tri-state explicitly. On a failed
 	// Alertmanager query we leave the counts at their zero value but
 	// mark the block "unknown" so a downstream `?? 0` chain cannot
@@ -767,6 +818,10 @@ const statusHeartbeatStaleAfter = 60 * time.Second
 // above, where a green banner sat over red panels. If `overall` is ever meant
 // to reflect open tickets, that is a change to what "ok" PROMISES on a public
 // surface, not a tuning knob; it belongs in a decision, not a patch.
+// An active_sources < total_sources shortfall is likewise NOT an input: it
+// surfaces as freshness_status "degraded" only, since a low-cadence source
+// can be quiet for a week without customers being affected. A FAILED
+// freshness query does degrade `overall`, through backendErr.
 //
 //   - "unknown": every service is unknown (or has a zero LastSeen).
 //     Distinct from "down" — we have no signal at all, rather than

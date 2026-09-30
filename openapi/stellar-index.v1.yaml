@@ -371,6 +371,7 @@ paths:
                     ticket_count: 0
                     informational_count: 0
                   incidents_status: ok
+                  freshness_status: degraded
                 as_of: "2026-05-05T15:09:00.119Z"
                 flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
 
@@ -18274,6 +18275,9 @@ components:
               description: p99 latency SLO target in milliseconds. See p95_target_ms.
         freshness:
           type: object
+          description: |
+            The counts are omitted when their query failed (see
+            `freshness_status`); a served `0` is present as `0`.
           properties:
             last_aggregator_tick: { type: string, format: date-time }
             active_sources:
@@ -18330,7 +18334,20 @@ components:
                             backend is wired — the counts are NOT
                             trustworthy; render "unknown", not "0 active".
             Always present.
-      required: [overall, region, services, incidents_status]
+        freshness_status:
+          type: string
+          enum: [ok, degraded, unknown]
+          description: |
+            Trust signal for the `freshness` block, so a failed count
+            query cannot read as a measured zero:
+              - "ok":       counts measured, every enabled source active.
+              - "degraded": counts measured, `active_sources` <
+                            `total_sources`. Does not by itself move
+                            `overall`.
+              - "unknown":  a freshness query FAILED, or no metrics
+                            backend is wired — the counts are omitted.
+            Always present.
+      required: [overall, region, services, incidents_status, freshness_status]
 
     ActiveIncident:
       type: object

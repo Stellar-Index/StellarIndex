@@ -1068,8 +1068,8 @@ func TestStatus_HappyPath(t *testing.T) {
 	if got.Data.Latency.P95Ms != 89.1 {
 		t.Errorf("P95Ms = %v", got.Data.Latency.P95Ms)
 	}
-	if got.Data.Freshness.ActiveSources != 13 {
-		t.Errorf("ActiveSources = %d", got.Data.Freshness.ActiveSources)
+	if got.Data.Freshness.ActiveSources == nil || *got.Data.Freshness.ActiveSources != 13 {
+		t.Errorf("ActiveSources = %v", got.Data.Freshness.ActiveSources)
 	}
 }
 

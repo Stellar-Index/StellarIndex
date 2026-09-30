@@ -380,7 +380,11 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     group: 'Catalogue',
     description:
       'Asset directory (every classic asset, with coin-overlay fields)',
-    probe: { kind: 'get', path: '/v1/assets?limit=1', expect: expectNonEmptyArray },
+    probe: {
+      kind: 'get',
+      path: '/v1/assets?limit=1',
+      expect: expectNonEmptyArray,
+    },
   },
   {
     path: '/v1/assets/{id}',
@@ -392,13 +396,21 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     path: '/v1/markets',
     group: 'Catalogue',
     description: 'Trading pairs',
-    probe: { kind: 'get', path: '/v1/markets?limit=1', expect: expectNonEmptyArray },
+    probe: {
+      kind: 'get',
+      path: '/v1/markets?limit=1',
+      expect: expectNonEmptyArray,
+    },
   },
   {
     path: '/v1/issuers',
     group: 'Catalogue',
     description: 'Issuer directory',
-    probe: { kind: 'get', path: '/v1/issuers?limit=1', expect: expectNonEmptyArray },
+    probe: {
+      kind: 'get',
+      path: '/v1/issuers?limit=1',
+      expect: expectNonEmptyArray,
+    },
   },
   {
     path: '/v1/sources',
@@ -772,7 +784,10 @@ export default function StatusPageClient({
               where the real freshness signal is the per-region ledger lag in
               IngestionRegions below. Show it only where the aggregator runs. */}
           {CURRENT_NETWORK.pricing && (
-            <FreshnessRow freshness={status.freshness} />
+            <FreshnessRow
+              freshness={status.freshness}
+              freshnessStatus={status.freshness_status}
+            />
           )}
           <IngestionRegions regions={REGIONS} snapshots={ingestionByRegion} />
           <ActiveIncidents
@@ -810,9 +825,8 @@ function PageHead({ error, asOf }: { error: string | null; asOf: string }) {
         </div>
         <h1 className="text-h1 text-ink font-semibold">Stellar Index status</h1>
         <p className="text-ink-muted mt-2 max-w-prose text-[15px] leading-relaxed">
-          Live service health, request latency, ingest freshness, and a
-          curated public-endpoint matrix — probed independently from your
-          browser.
+          Live service health, request latency, ingest freshness, and a curated
+          public-endpoint matrix — probed independently from your browser.
         </p>
       </div>
       {/* The pulse is a liveness claim: it only pulses green while the
@@ -1253,15 +1267,20 @@ function LatencyCell({
 
 function FreshnessRow({
   freshness,
+  freshnessStatus,
 }: {
   freshness: StatusResponse['freshness'];
+  freshnessStatus?: StatusResponse['freshness_status'];
 }) {
   // Absent counts mean the freshness probe didn't answer. `?? 0` read
   // as "0 / 0 active sources" — total ingest death — on the public
-  // status page. Absent renders '—' instead.
+  // status page. Absent (or freshness_status "unknown") renders '—'.
   const activeSources = freshness?.active_sources ?? null;
   const totalSources = freshness?.total_sources ?? null;
-  const measured = activeSources != null && totalSources != null;
+  const measured =
+    freshnessStatus !== 'unknown' &&
+    activeSources != null &&
+    totalSources != null;
   const sourcePct =
     measured && totalSources > 0 ? (activeSources / totalSources) * 100 : 0;
   return (
@@ -1318,8 +1337,7 @@ function ActiveIncidents({
   // silent collapse W1.1 guards against elsewhere on this page (RLT-465).
   incidentsStatus?: string;
 }) {
-  const trusted =
-    incidentsStatus === 'ok' || incidentsStatus === 'degraded';
+  const trusted = incidentsStatus === 'ok' || incidentsStatus === 'degraded';
   return (
     <section>
       <SectionHead>Active incidents</SectionHead>
