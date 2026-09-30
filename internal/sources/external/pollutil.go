@@ -56,6 +56,11 @@ var errRedirectRefused = errors.New("redirect refused: request URL carries a sec
 // exchangeratesapi serves auth errors as 200 + a success:false
 // field).
 func GetBody(ctx context.Context, r GetRequest) (int, []byte, error) {
+	// A zero cap makes io.LimitReader yield an empty body with no error,
+	// which a caller would parse as "no rates" rather than a config bug.
+	if r.LimitBytes <= 0 {
+		return 0, nil, fmt.Errorf("GetRequest.LimitBytes must be positive, got %d", r.LimitBytes)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.URL, nil)
 	if err != nil {
 		return 0, nil, fmt.Errorf("build request: %w", err)

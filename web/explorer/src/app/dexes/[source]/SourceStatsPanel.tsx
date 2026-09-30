@@ -40,7 +40,7 @@ export function SourceStatsPanel({
   source: string;
   unitsLabel?: string;
 }) {
-  const { data } = useQuery<SourceStats | null>({
+  const { data, isError, isPending } = useQuery<SourceStats | null>({
     queryKey: ['/v1/sources', 'stats+sparkline7d', source],
     queryFn: async () => {
       // 7d (`sparkline7d`) is now cheap: it reads the source_volume_1h
@@ -55,9 +55,13 @@ export function SourceStatsPanel({
     refetchInterval: 60_000,
   });
 
-  const trades = data?.trade_count_24h ?? 0;
-  const volume = data?.volume_24h_usd ? Number(data.volume_24h_usd) : 0;
-  const markets = data?.markets_count_24h ?? 0;
+  // A failed fetch with nothing cached must not read as a quiet source:
+  // only a value the API returned renders as a number, including 0.
+  const failed = isError && data === undefined;
+  const placeholder = isPending ? '…' : '—';
+  const trades = data?.trade_count_24h;
+  const volume = data?.volume_24h_usd ? Number(data.volume_24h_usd) : undefined;
+  const markets = data?.markets_count_24h;
 
   // TVL comes from the /v1/protocols snapshot (background-refreshed
   // server-side). Absent for sources without an absolute reserve
@@ -86,15 +90,21 @@ export function SourceStatsPanel({
       >
         <Stat
           label="24h volume"
-          value={volume > 0 ? `$${formatCompact(volume)}` : '—'}
+          value={
+            volume != null && Number.isFinite(volume)
+              ? `$${formatCompact(volume)}`
+              : placeholder
+          }
         />
         <Stat
           label="24h trades"
-          value={trades > 0 ? formatCompact(trades) : '—'}
+          value={trades != null ? formatCompact(trades) : placeholder}
         />
         <Stat
           label={`24h ${unitsLabel}`}
-          value={markets > 0 ? markets.toLocaleString('en-US') : '—'}
+          value={
+            markets != null ? markets.toLocaleString('en-US') : placeholder
+          }
         />
         {showTvl && tvl && (
           <Stat
@@ -104,6 +114,11 @@ export function SourceStatsPanel({
           />
         )}
       </div>
+      {failed && (
+        <p role="alert" className="text-ink-muted mt-3 text-sm">
+          24h activity unavailable right now.
+        </p>
+      )}
       {data?.volume_history_24h && data.volume_history_24h.length > 0 && (
         <div className="border-line mt-4 border-t pt-3">
           <div className="text-ink-muted flex items-baseline justify-between text-[10px] tracking-wider uppercase">

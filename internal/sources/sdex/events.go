@@ -29,10 +29,14 @@ var (
 	ErrUnknownClaimAtomType = errors.New("sdex: unknown ClaimAtom type")
 
 	// ErrMalformedClaimAtom — claim atom fields don't match the
-	// expected shape (zero amounts, invalid asset, unreachable
+	// expected shape (invalid asset, self-cross, unreachable
 	// account). Usually indicates a protocol bump we haven't
 	// audited.
 	ErrMalformedClaimAtom = errors.New("sdex: malformed ClaimAtom")
+
+	// ErrNoOpClaim — a claim atom with both legs non-positive. Not a decode
+	// failure: the drop is deterministic and mirrored by sdexclaim.IsRealTrade.
+	ErrNoOpClaim = errors.New("sdex: both-zero no-op claim")
 
 	// ErrClaimIndexOverflow — a claim atom's position within its op
 	// reached opIndexFanoutStride. Op-index fanout packs tradeIndex

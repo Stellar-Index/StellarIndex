@@ -259,7 +259,7 @@ fmt.Printf("%s = %s %s (as of %s)\n",
 The SDK returns the full `Envelope[T]` shape so consumers can read
 `env.Flags.Stale`, `env.Flags.DivergenceWarning`, etc. alongside
 `env.Data`. See [`pkg/client/doc.go`](../pkg/client/doc.go) for the
-full surface — 39 typed methods covering pricing (`Price`,
+full surface — 40-plus typed methods covering pricing (`Price`,
 `PriceAt`, `PriceTip`, `PriceBatch`, `OHLC`, `History`,
 `HistorySinceInception`, `VWAP`, `TWAP`), market data (`Markets`,
 `Pair`, `Pools`), the asset catalogue (`Assets`, `Asset`,

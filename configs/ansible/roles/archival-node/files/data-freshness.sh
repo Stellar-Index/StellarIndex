@@ -148,8 +148,20 @@ WITH f AS (
   -- spans a market close, or it measures the calendar rather than our
   -- health. A feed genuinely dead on a Tuesday still trips this within
   -- the day.
+  --
+  -- `frankfurter-historical` is the provenance label of the one-off
+  -- fx-history-backfill tool, not a feed: its newest row never advances.
+  --
+  -- One worker writes fx_quotes, stamping whichever feed answered (the
+  -- primary, or the `ecb` standby during an outage), so only the feed(s)
+  -- behind the newest bucket are expected to advance. Every other label
+  -- is an idle standby or the primary it replaced; a dead worker still
+  -- ages the newest bucket's series.
   SELECT 'fx', source, extract(epoch FROM now()-max(bucket)), 273600
-    FROM fx_quotes GROUP BY source
+    FROM fx_quotes
+   WHERE source <> 'frankfurter-historical'
+     AND bucket = (SELECT max(bucket) FROM fx_quotes WHERE source <> 'frankfurter-historical')
+   GROUP BY source
   UNION ALL
   -- Sparse Soroban AMMs get 24h: phoenix's MEASURED 30-day gap
   -- distribution (2026-08-05, 3,278 trades) is max 8h28m / p99 3h12m,

@@ -462,12 +462,19 @@ type Handler struct {
 	// contract_detail_cache.go.
 	contractDetail contractDetailCache
 
+	// sacNames memoises proven SAC resolutions across requests (movements.go).
+	sacNames sacNameMemo
+
 	// throughput is the single-entry, single-flighted cache in front of
 	// GET /v1/network/throughput — a FINAL scan over up to a year of
 	// stellar.ledgers that ran inline on the 8s request budget and lost
 	// the /network panel whenever it missed it (§2.6b, 2026-08-13). Zero
 	// value ready; see network_throughput_cache.go.
 	throughput networkThroughputCache
+
+	// attribution memoises the contract → protocol registry map read by the
+	// contracts directory, interactions and detail routes. Zero value ready.
+	attribution contractAttributionCache
 
 	// refreshGate bounds this handler's DETACHED cache refreshes globally
 	// across keys AND cache kinds (audit 2026-07-31): per-key
@@ -508,6 +515,15 @@ func (h *Handler) writeJSONAt(w http.ResponseWriter, data any, stale bool, asOf 
 		return
 	}
 	h.WriteJSON(w, data, stale)
+}
+
+// lakeTip is LakeWatermark with an unwired func reading as no lake to judge
+// (not stale, no ledger), the same verdict the server gives an unwired reader.
+func (h *Handler) lakeTip(ctx context.Context) (ledger uint32, stale, ok bool) {
+	if h.LakeWatermark == nil {
+		return 0, false, false
+	}
+	return h.LakeWatermark(ctx)
 }
 
 // unavailable writes the standard 503 when no explorer reader is wired

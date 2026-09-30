@@ -780,3 +780,69 @@ func TestDecode_Settlement_NonParallelLegsNotPromoted(t *testing.T) {
 		t.Errorf("SourceAmountDegradedTotal settled_amount = %v, want %v", after, before+1)
 	}
 }
+
+// TestDecode_NegativeAmountNeverPromoted: every sorocredit amount column
+// CHECKs >= 0, so a negative i128 must be refused at decode (statement,
+// withdrawal) or degraded to a counted NULL (settlement), never promoted.
+func TestDecode_NegativeAmountNeverPromoted(t *testing.T) {
+	neg := i128SV(big.NewInt(-5))
+	stmt := events.Event{
+		LedgerClosedAt: "2026-07-06T00:00:00Z",
+		Topic:          []string{topicSymStatementPublished, b64(t, stringSV("stmt")), b64(t, stringSV("pos"))},
+		Value:          b64(t, vecSV(neg, contractAddrSV(t, contractStrkey(t, 0x01)), u64SV(1))),
+	}
+	if out, err := decodeOne(&stmt); !errors.Is(err, ErrMalformedPayload) {
+		t.Errorf("statement: err = %v Amount = %q, want ErrMalformedPayload", err, out.Amount)
+	}
+	wd := events.Event{
+		LedgerClosedAt: "2026-07-06T00:00:00Z",
+		Topic:          []string{topicSymWithdrawal, b64(t, contractAddrSV(t, contractStrkey(t, 0x03)))},
+		Value:          b64(t, vecSV(contractAddrSV(t, contractStrkey(t, 0x02)), contractAddrSV(t, contractStrkey(t, 0x04)), neg)),
+	}
+	if out, err := decodeOne(&wd); !errors.Is(err, ErrMalformedPayload) {
+		t.Errorf("withdrawal: err = %v Amount = %q, want ErrMalformedPayload", err, out.Amount)
+	}
+
+	before := testutil.ToFloat64(obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount"))
+	ev := settlementEvent(t, vecSV(contractAddrSV(t, contractStrkey(t, 0x02))), vecSV(neg), 4)
+	out, err := decodeOne(&ev)
+	if err != nil {
+		t.Fatalf("settlement: decodeOne: %v", err)
+	}
+	if out.Amount != "" {
+		t.Errorf("settlement: Amount = %q, want empty (negative leg)", out.Amount)
+	}
+	if _, ok := out.Attributes["settled_amount_error"]; !ok {
+		t.Errorf("settlement: Attributes missing settled_amount_error: %v", out.Attributes)
+	}
+	after := testutil.ToFloat64(obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount"))
+	if after != before+1 {
+		t.Errorf("SourceAmountDegradedTotal settled_amount = %v, want %v", after, before+1)
+	}
+}
+
+// TestDecode_Settlement_ExtraLegsRecorded: only leg 0 of a parallel
+// multi-leg settlement is promoted, so the unpromoted legs must be
+// recorded in attributes and counted, never served as a complete total.
+func TestDecode_Settlement_ExtraLegsRecorded(t *testing.T) {
+	before := testutil.ToFloat64(obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount_extra_legs"))
+	debtAsset := contractStrkey(t, 0x02)
+	assets := vecSV(contractAddrSV(t, debtAsset), contractAddrSV(t, contractStrkey(t, 0x04)))
+	amounts := vecSV(i128SV(big.NewInt(213400000)), i128SV(big.NewInt(7)))
+	ev := settlementEvent(t, assets, amounts, 4)
+
+	out, err := decodeOne(&ev)
+	if err != nil {
+		t.Fatalf("decodeOne: %v", err)
+	}
+	if out.Asset != debtAsset || out.Amount != "213400000" {
+		t.Errorf("Asset=%q Amount=%q, want leg 0 %q / 213400000", out.Asset, out.Amount, debtAsset)
+	}
+	if got := out.Attributes["debt_legs"]; got != 2 {
+		t.Errorf("Attributes[debt_legs] = %v, want 2", got)
+	}
+	after := testutil.ToFloat64(obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount_extra_legs"))
+	if after != before+1 {
+		t.Errorf("SourceAmountDegradedTotal settled_amount_extra_legs = %v, want %v", after, before+1)
+	}
+}

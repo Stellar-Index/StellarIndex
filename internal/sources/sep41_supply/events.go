@@ -35,13 +35,13 @@ var (
 
 // Event is one observed mint / burn / clawback event. Routed
 // through the dispatcher → consumer pipeline; the indexer-side
-// sink writes to `sep41_supply_events` (#309).
+// sink writes to `sep41_supply_events`.
 //
 // Amount is always non-negative — Kind discriminates direction
 // for the running sum. Counterparty is the recipient (mint) or
-// holder (burn / clawback); empty when not present (no SEP-41
-// variant emits without one today, but the field is reserved
-// for future-spec robustness).
+// holder (burn / clawback) and is never empty: an event whose
+// topic vector carries no counterparty fails decode (ErrShortTopic)
+// and is dropped rather than written with a blank holder.
 type Event struct {
 	ContractID string
 	Ledger     uint32

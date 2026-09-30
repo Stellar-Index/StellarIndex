@@ -89,10 +89,9 @@ const closedStreamGateSurface = "price_stream"
 // on a timed-out consultation — pricingguard's documented posture, so a
 // DB blip cannot blank every price at once — which means a budget set
 // too tight would silently re-open the very hole this gate closes.
-// Verdicts are TTL-cached per pair inside the gates and closed buckets
-// arrive at most once per window (300 s minimum), so the steady-state
-// cost of the generous budget is nil; only a genuinely stalled DB pays
-// it, and it pays in latency rather than in a re-exposed price.
+// Verdicts are TTL-cached per pair inside the gates, and the forwarder
+// asks once per drained batch rather than per event, so only a genuinely
+// stalled DB pays the budget, in latency rather than a re-exposed price.
 const closedStreamGateBudget = tipStreamTickTimeout
 
 // closedStreamWithheld reports whether an aggregated closed-bucket
@@ -249,6 +248,7 @@ func (s *Server) forwardClosedStream(
 	defer s.recoverStreamProducer("price_stream")
 	defer close(ch)
 
+	var batch []streaming.Event
 	for {
 		select {
 		case <-ctx.Done():
@@ -257,22 +257,33 @@ func (s *Server) forwardClosedStream(
 			if !open {
 				return
 			}
-			if !series.admit(ev.Data) {
+			// One verdict per drained batch, asked after every event in it
+			// arrived: gating each event serially lets a slow gate back the
+			// Hub queue up until Publish evicts this subscriber.
+			batch = series.drainAdmitted(batch[:0], ev, sub)
+			if len(batch) == 0 {
 				continue
 			}
 			if withheld := s.closedStreamWithheld(ctx, asset, quote); withheld != pricingguard.NotWithheld {
-				var ok bool
-				if ev, ok = closedStreamWithheldEvent(ev, asset, quote, withheldReasonFor(withheld)); !ok {
-					continue
-				}
+				batch = closedStreamWithheldBatch(batch, asset, quote, withheldReasonFor(withheld))
 			}
-			select {
-			case <-ctx.Done():
+			if !sendClosedStreamBatch(ctx, ch, batch) {
 				return
-			case ch <- ev:
 			}
 		}
 	}
+}
+
+// closedStreamWithheldBatch replaces every bucket in batch with its
+// price_withheld stand-in, dropping the ones that cannot be rendered.
+func closedStreamWithheldBatch(batch []streaming.Event, asset, quote canonical.Asset, reason PriceWithheldReason) []streaming.Event {
+	kept := batch[:0]
+	for _, ev := range batch {
+		if w, ok := closedStreamWithheldEvent(ev, asset, quote, reason); ok {
+			kept = append(kept, w)
+		}
+	}
+	return kept
 }
 
 // closedStreamWithheldEvent stands in for a refused closed bucket. It keeps
@@ -295,6 +306,34 @@ func closedStreamWithheldEvent(ev streaming.Event, asset, quote canonical.Asset,
 	}
 	ev.Type, ev.Data = "price_withheld", body
 	return ev, true
+}
+
+// drainAdmitted appends first and whatever sub already has queued to
+// batch, keeping the frames admit lets through.
+func (c *closedStreamSeries) drainAdmitted(batch []streaming.Event, first streaming.Event, sub <-chan streaming.Event) []streaming.Event {
+	ev := first
+	for n := len(sub); ; n-- {
+		if c.admit(ev.Data) {
+			batch = append(batch, ev)
+		}
+		if n == 0 {
+			return batch
+		}
+		ev = <-sub
+	}
+}
+
+// sendClosedStreamBatch reports false when ctx ended before the batch
+// was handed over.
+func sendClosedStreamBatch(ctx context.Context, ch chan<- streaming.Event, batch []streaming.Event) bool {
+	for _, ev := range batch {
+		select {
+		case <-ctx.Done():
+			return false
+		case ch <- ev:
+		}
+	}
+	return true
 }
 
 // closedStreamQueueDepth is the forwarder→writer hand-off buffer, the

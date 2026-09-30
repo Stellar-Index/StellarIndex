@@ -178,13 +178,15 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
           <FieldWide label="Previous hash">
             {l.prev_hash ? (
               <span className="inline-flex items-center gap-2">
-                <Link
-                  href={`/ledgers/${sequence - 1}/`}
-                  className="text-brand-600 font-mono text-xs hover:underline"
-                  title={`Ledger #${(sequence - 1).toLocaleString('en-US')}`}
-                >
-                  ← #{(sequence - 1).toLocaleString('en-US')}
-                </Link>
+                {sequence > 1 && (
+                  <Link
+                    href={`/ledgers/${sequence - 1}/`}
+                    className="text-brand-600 font-mono text-xs hover:underline"
+                    title={`Ledger #${(sequence - 1).toLocaleString('en-US')}`}
+                  >
+                    ← #{(sequence - 1).toLocaleString('en-US')}
+                  </Link>
+                )}
                 <CopyHash value={l.prev_hash} head={12} tail={12} />
               </span>
             ) : (
@@ -224,12 +226,22 @@ function Shell({
         />
         {seq != null && (
           <div className="flex items-center gap-3 text-xs">
-            <Link
-              href={`/ledgers/${seq - 1}/`}
-              className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-2.5 py-1"
-            >
-              ← Prev ledger
-            </Link>
+            {/* Ledger 1 is genesis; there is no ledger 0 to navigate to. */}
+            {seq > 1 ? (
+              <Link
+                href={`/ledgers/${seq - 1}/`}
+                className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-2.5 py-1"
+              >
+                ← Prev ledger
+              </Link>
+            ) : (
+              <span
+                aria-disabled="true"
+                className="border-line text-ink-faint cursor-not-allowed rounded-md border px-2.5 py-1"
+              >
+                ← Prev ledger
+              </span>
+            )}
             <Link
               href={`/ledgers/${seq + 1}/`}
               className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-2.5 py-1"

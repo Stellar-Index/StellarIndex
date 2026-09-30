@@ -8,11 +8,19 @@ import { render, screen } from '@testing-library/react';
 
 import { NetworkLivePanel, SystemHealthLivePanel } from './HomeLivePanels';
 
-const { useCursors, useNetworkStats } = vi.hoisted(() => ({
+const { useCoverage, useCursors, useNetworkStats } = vi.hoisted(() => ({
+  useCoverage: vi.fn(),
   useCursors: vi.fn(),
   useNetworkStats: vi.fn(),
 }));
-vi.mock('@/api/hooks', () => ({ useCursors, useNetworkStats }));
+vi.mock('@/api/hooks', () => ({ useCoverage, useCursors, useNetworkStats }));
+
+function dot(label: string) {
+  return screen
+    .getByText(label)
+    .parentElement?.querySelector('[aria-label]')
+    ?.getAttribute('aria-label');
+}
 
 const cursors = [
   {
@@ -47,6 +55,7 @@ describe('HomeLivePanels', () => {
 
   it('rates the indexer on live cursors only', () => {
     useCursors.mockReturnValue({ data: cursors, isLoading: false });
+    useCoverage.mockReturnValue({ data: undefined });
     render(<SystemHealthLivePanel />);
 
     const indexer = screen.getByText('indexer').parentElement;
@@ -55,5 +64,23 @@ describe('HomeLivePanels', () => {
     ).toBe('down');
     expect(screen.getByText(/1 live cursor,/)).toBeTruthy();
     expect(screen.getByText(/2 job cursors/)).toBeTruthy();
+  });
+
+  it.each([
+    ['no verdict', undefined, 'unknown'],
+    ['no sources', { lake_complete_sources: 0, total_sources: 0 }, 'unknown'],
+    ['0/20 lake', { lake_complete_sources: 0, total_sources: 20 }, 'down'],
+    [
+      '17/20 lake',
+      { lake_complete_sources: 17, total_sources: 20 },
+      'degraded',
+    ],
+    ['20/20 lake', { lake_complete_sources: 20, total_sources: 20 }, 'ok'],
+  ])('rates archive completeness from /v1/coverage: %s', (_, data, want) => {
+    useCursors.mockReturnValue({ data: cursors, isLoading: false });
+    useCoverage.mockReturnValue({ data });
+    render(<SystemHealthLivePanel />);
+
+    expect(dot('archive completeness')).toBe(want);
   });
 });

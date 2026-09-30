@@ -17,7 +17,12 @@ import {
   formatSubunitPrice,
   multiplyDecimalStrings,
 } from '@/lib/format';
-import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
+import {
+  serializeJsonLd,
+  datasetJsonLd,
+  ogImageFor,
+  shellMetadata,
+} from '@/lib/seo';
 import { assetHref } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { Badge, Breadcrumbs, Container } from '@/components/ui';
@@ -631,33 +636,13 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { slug } = await params;
-  // The runtime-fallback shell's HTML serves for ARBITRARY long-tail
-  // asset URLs, so its baked metadata must be generic — the literal
-  // param would title every such page "shell". AssetPathView restamps
-  // document.title client-side once the real asset loads.
+  // The runtime-fallback shell's HTML serves for arbitrary long-tail
+  // assets; AssetPathView restamps document.title once the asset loads.
   if (slug.toLowerCase() === 'shell') {
-    return {
-      title: 'Asset',
-      description:
-        'Stellar asset detail, rendered live from the Stellar Index API.',
-      // This one document answers 200 for EVERY unmatched /assets/*
-      // path, garbage included, so indexing it files a soft-404 under
-      // whatever URL the crawler happened to try. noindex is the same
-      // posture the other long-tail shells take route-wide
-      // (/accounts, /contracts, /ledgers, /transactions); follow stays
-      // on so the crawler still walks out through the nav.
-      robots: { index: false, follow: true },
-      // Metadata merges shallowly per top-level key (Next's
-      // mergeMetadata only touches keys present in THIS object), so
-      // omitting `alternates` here does not mean "no canonical" — it
-      // inherits the root layout's `alternates: { canonical: '/' }`
-      // verbatim. Every one of these arbitrary long-tail URLs was
-      // baking a rel=canonical pointing at the homepage; noindex only
-      // stopped it from being indexed under that tag, it didn't remove
-      // the tag. Override with an empty object so no canonical (or
-      // atom-feed `types`) is emitted at all.
-      alternates: {},
-    };
+    return shellMetadata(
+      'Asset',
+      'Stellar asset detail, rendered live from the Stellar Index API.',
+    );
   }
   const metaResults = await Promise.all([
     fetchCoin(slug),
@@ -856,8 +841,8 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
   // schema.org Dataset — Google Dataset Search eligibility. contentUrl points
   // at the real /v1/assets/{slug} endpoint backing this page.
   const datasetLD = datasetJsonLd({
-    name: `${coin.code} price & market data — Stellar Index`,
-    description: `Aggregated price (VWAP), market cap, supply, and trading data for ${coin.code}${coin.issuer ? ` (issuer ${coin.issuer})` : ''} on Stellar, computed by Stellar Index.`,
+    name: `${assetSymbol(coin)} price & market data — Stellar Index`,
+    description: `Aggregated price (VWAP), market cap, supply, and trading data for ${assetSymbol(coin)}${coin.issuer ? ` (issuer ${coin.issuer})` : ''} on Stellar, computed by Stellar Index.`,
     url: `${CURRENT_NETWORK.explorerUrl}/assets/${coin.slug}`,
     keywords: [
       assetSymbol(coin),
@@ -906,7 +891,9 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
           ]}
         />
         <div className="flex flex-wrap items-baseline gap-4">
-          <h1 className="text-h1 text-ink font-semibold">{coin.code}</h1>
+          <h1 className="text-h1 text-ink font-semibold">
+            {assetSymbol(coin)}
+          </h1>
           {globalView?.name && globalView.name !== coin.code && (
             <span className="text-ink-muted text-lg">{globalView.name}</span>
           )}
@@ -971,7 +958,9 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             className="border-warn-300 bg-warn-50 text-warn-700 rounded-md border p-3 text-sm"
           >
             <div className="mb-1 flex items-center gap-2">
-              <strong className="font-semibold">Unverified {coin.code}</strong>
+              <strong className="font-semibold">
+                Unverified {assetSymbol(coin)}
+              </strong>
               <Badge tone="warn">Ticker collision</Badge>
             </div>
             <p>

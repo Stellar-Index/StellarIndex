@@ -570,6 +570,27 @@ func TestValidate_ReflectorSourceRequiresContract(t *testing.T) {
 	}
 }
 
+func TestValidate_ReflectorDecimalsCeiling(t *testing.T) {
+	for name, set := range map[string]func(*config.Config, uint8){
+		"oracle.reflector.dex_decimals": func(c *config.Config, d uint8) { c.Oracle.Reflector.DEXDecimals = d },
+		"oracle.reflector.cex_decimals": func(c *config.Config, d uint8) { c.Oracle.Reflector.CEXDecimals = d },
+		"oracle.reflector.fx_decimals":  func(c *config.Config, d uint8) { c.Oracle.Reflector.FXDecimals = d },
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := config.Default()
+			set(&c, 38)
+			if err := c.Validate(); err != nil {
+				t.Fatalf("%s = 38 should pass: %v", name, err)
+			}
+			set(&c, 39)
+			err := c.Validate()
+			if !errors.Is(err, config.ErrInvalidConfig) || !strings.Contains(err.Error(), name) {
+				t.Fatalf("%s = 39: err = %v, want ErrInvalidConfig naming the key", name, err)
+			}
+		})
+	}
+}
+
 // TestValidate_ClickHouseProjectorSourceRequiresLiveSink locks the
 // ADR-0034 #10 feed-switch dependency (C3-20): the projector reading
 // forward events FROM ClickHouse only makes sense if the dual-sink is

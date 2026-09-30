@@ -50,6 +50,16 @@ func WithDecoderObserver(obs string) DecoderOption {
 	return func(r *Decoder) { r.observer = obs }
 }
 
+// WithDecoderDecimals sets the power-of-10 scale stamped on every
+// emitted OracleUpdate. 0 keeps [DefaultDecimals].
+func WithDecoderDecimals(dec uint8) DecoderOption {
+	return func(r *Decoder) {
+		if dec != 0 {
+			r.decimals = dec
+		}
+	}
+}
+
 // Name implements [dispatcher.Decoder].
 func (d *Decoder) Name() string { return d.variant.SourceName() }
 

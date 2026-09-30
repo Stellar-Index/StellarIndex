@@ -541,20 +541,18 @@ jobs:
         # operator-/local-invoked.
         if: needs.preflight.outputs.go == 'true'
         run: make test-integration-build
-      - name: Coverage floor (report-only)
-        # #340 item 6: coverage.txt has been uploaded since this job
-        # existed and nothing has ever read it. This reads it.
-        #
+      - name: Coverage floor
         # Deliberately a STEP in this job rather than a job of its own:
         # the profile is already on disk here, so the check costs no
         # extra runner minutes — and ci.yml is PR-triggered, where the
         # signal is actually wanted.
         #
-        # Report-only for the coverage VERDICT (a drop warns, it does
-        # not block). NOT report-only for the gate's own liveness: a
-        # missing/empty/unparseable profile, or one whose package count
-        # collapsed, fails hard. See the script header.
+        # Enforced: a total under COVERAGE_FLOOR fails the PR, as does a
+        # missing/empty/unparseable profile or a collapsed package count.
+        # This is a repo-wide total, not a per-changed-package diff.
         if: needs.preflight.outputs.go == 'true'
+        env:
+          COVERAGE_ENFORCE: "1"
         run: bash scripts/ci/coverage-floor.sh
 
       - name: Coverage floor self-test
@@ -770,6 +768,8 @@ jobs:
         # verify.sh: a gate wired into one surface and not its mirror is the
         # defect this repository has shipped twice.
         run: ./scripts/dev/lint-changed-test.sh
+      - name: doctor self-test
+        run: ./scripts/dev/doctor-test.sh
       - name: lint-external-channels
         # A repository setting or DNS name that is switched off cannot be
         # seen from inside the tree, so three published channels shipped
@@ -1254,6 +1254,17 @@ jobs:
         # DefaultClient, exempts _test.go, and FAILS on a root with no Go
         # files rather than passing.
         run: ./scripts/ci/lint-http-timeouts-test.sh
+      - name: lint-apikey-scan
+        # A lookup that walks `apikey:*` costs O(every credential in the
+        # deployment) on the Redis that is also the rate limiter, and open
+        # registration makes that keyspace caller-sized. One sanctioned walk
+        # (the apikey-index build) is allowed; this keeps it at one.
+        run: ./scripts/ci/lint-apikey-scan.sh
+      - name: lint-apikey-scan self-test
+        # Pins the gate non-vacuous: catches a scan in internal/auth and the
+        # wildcard anywhere, honours exactly one `apikey-scan-ok:` marker,
+        # fails a stale marker, and FAILS on a tree with no auth files.
+        run: ./scripts/ci/lint-apikey-scan-test.sh
       - name: lint-unbounded-latest-row
         # #594: a DISTINCT ON over a hypertable with no time or ledger floor
         # reads every row of every chunk. It is fast on a fresh database and
@@ -2323,6 +2334,12 @@ jobs:
         # ClickHouse, no writes outside a temp dir.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-clickhouse-host-gate-test.sh
+      - name: ansible listing-sync pubnet gate
+        # listing-sync caches pubnet-only addresses; on a test net it can
+        # corroborate nothing and fails hourly. Pins the install/enable to
+        # listing_sync_enabled and the retire block to its negation.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-listing-sync-gate-test.sh
       - name: zfs-snapshot dataset coverage
         # NS03 (audit-2026-09-02): the rolling-snapshot job covered
         # data/clickhouse and data/postgres — both DERIVED — while the
