@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -241,9 +242,8 @@ type TradesConfig struct {
 // min-USD-volume eligibility gate. Failing at load also makes the two
 // downstream parsers consistent: the indexer's
 // `timescale.NewUSDVolumeQuoteSpec` already hard-errors on a non-classic
-// peg, while the aggregator's `parseUSDPeggedClassicAssets` used to
-// SILENTLY skip one — this check makes that soft-skip unreachable for a
-// config that loads.
+// peg, while `TradesConfig.USDPeggedClassics` silently skips one —
+// this check makes that soft-skip unreachable for a config that loads.
 func (tc TradesConfig) validate() error {
 	for i, raw := range tc.USDPeggedClassicAssets {
 		if raw == "" {
@@ -262,6 +262,30 @@ func (tc TradesConfig) validate() error {
 		}
 	}
 	return nil
+}
+
+// USDPeggedClassics parses USDPeggedClassicAssets, logging and skipping any
+// entry validate would reject: a missing peg beats refusing to start.
+func (tc TradesConfig) USDPeggedClassics(logger *slog.Logger) []canonical.Asset {
+	if len(tc.USDPeggedClassicAssets) == 0 {
+		return nil
+	}
+	out := make([]canonical.Asset, 0, len(tc.USDPeggedClassicAssets))
+	for _, raw := range tc.USDPeggedClassicAssets {
+		asset, err := canonical.ParseAsset(raw)
+		if err != nil {
+			logger.Warn("usd_pegged_classic_assets: skipping malformed entry",
+				"raw", raw, "err", err)
+			continue
+		}
+		if asset.Type != canonical.AssetClassic {
+			logger.Warn("usd_pegged_classic_assets: ignoring non-classic asset",
+				"raw", raw, "type", asset.Type)
+			continue
+		}
+		out = append(out, asset)
+	}
+	return out
 }
 
 // PricingGuardConfig configures the serving-side price guards in
@@ -1504,7 +1528,7 @@ type DashboardConfig struct {
 
 	EmailFrom string `toml:"email_from" doc:"From: address for transactional emails (e.g. 'Stellar Index <hello@stellarindex.io>'). Must match a domain Resend has verified for the configured API key." default:"Stellar Index <hello@stellarindex.io>"`
 
-	ResendAPIKeyEnv string `toml:"resend_api_key_env" doc:"Environment variable holding the Resend transactional-email API key (re_…). Empty value leaves the dashboard auth flow on a NoopSender — magic-link tokens land in the API logs only, useful for local dev. Production sets this." default:"STELLARINDEX_RESEND_API_KEY"`
+	ResendAPIKeyEnv string `toml:"resend_api_key_env" doc:"Environment variable holding the Resend transactional-email API key (re_…). An unset or empty value wires an unconfigured mail sender: POST /v1/auth/login answers 503 and counts a failed send, and signup reports email_verification_sent:false. Production sets this." default:"STELLARINDEX_RESEND_API_KEY"`
 
 	CodeSecretEnv string `toml:"code_secret_env" doc:"Environment variable holding the server secret that keys the 6-digit email-code derivation (HMAC over the stored token hash — without it a Postgres read would reveal every in-flight sign-in code) AND the WebAuthn passkey-ceremony, magic-link login-intent and login-device cookie MACs. Each consumer MACs under its own HKDF-derived key. Any long random string (32+ bytes). Required while passkeys are wired (the API refuses to start without it); otherwise an unset/empty env falls back to a random per-process secret: still keyed, but in-flight codes, magic links and browsers' login-device markers stop verifying across a restart or another instance." default:"STELLARINDEX_DASHBOARD_CODE_SECRET"`
 
