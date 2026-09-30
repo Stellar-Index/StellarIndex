@@ -146,6 +146,11 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 				if subject, ok := auth.SubjectFrom(reqCtx); ok {
 					if id := UsageKeyForSubject(subject); id != "" {
 						family := endpointFamily(inner)
+						// Cancelled by a tick that finds the monthly quota spent, so the
+						// handler ends the stream exactly as a client disconnect would.
+						streamCtx, endStream := context.WithCancel(inner.Context())
+						defer endStream()
+						inner = inner.WithContext(streamCtx) //nolint:contextcheck // false positive: streamCtx is derived from inner's own request context
 						done := make(chan struct{})
 						exited := make(chan struct{})
 						// Wait for meterOpenStream to actually return, not just observe
@@ -154,7 +159,7 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 						// its counter writes under that same timeout.
 						defer func() { close(done); <-exited }()
 						//nolint:gosec,contextcheck // G118/contextcheck: intentional detach, same rationale (and pattern) as usageTrackerRecord's context.Background() below — ticks must outlive a client-aborted request ctx, not inherit it
-						go meterOpenStream(counter, logger, id, family, rec, once, units, deadlineFired, done, exited)
+						go meterOpenStream(counter, logger, id, family, subject.MonthlyQuota, endStream, rec, once, units, deadlineFired, done, exited)
 					}
 				}
 			}
@@ -374,6 +379,10 @@ func ChargeUsage(r *http.Request, units int) {
 // pool's own drain-for-test Wait() (sync.WaitGroup forbids a
 // concurrent Add once a Wait could observe zero).
 //
+// A billable tick is a fresh purchase of stream time, so it is refused
+// at the same used >= quota ceiling [MonthlyQuota] applies at open:
+// instead of billing, it calls endStream and stops.
+//
 // Stops when done is closed (the request handler returned), and closes
 // exited on its way out so the caller's deferred <-exited can block
 // until this goroutine has genuinely stopped touching rec/once/units —
@@ -381,7 +390,7 @@ func ChargeUsage(r *http.Request, units int) {
 //
 // A panic here would otherwise kill the whole API process; close(exited)
 // still runs on unwind, so the caller's <-exited never wedges.
-func meterOpenStream(counter *usage.Counter, logger *slog.Logger, id, family string, rec *statusRecorder, once *usageRecordOnce, units *usageUnits, deadlineFired *atomic.Bool, done <-chan struct{}, exited chan<- struct{}) {
+func meterOpenStream(counter *usage.Counter, logger *slog.Logger, id, family string, quota int64, endStream context.CancelFunc, rec *statusRecorder, once *usageRecordOnce, units *usageUnits, deadlineFired *atomic.Bool, done <-chan struct{}, exited chan<- struct{}) {
 	defer worker.Recover(logger, "api-usage-stream-meter")
 	defer close(exited)
 	ticker := time.NewTicker(time.Duration(streamMeterInterval.Load()))
@@ -391,7 +400,7 @@ func meterOpenStream(counter *usage.Counter, logger *slog.Logger, id, family str
 		case <-done:
 			return
 		case <-ticker.C:
-			if !meterTick(counter, logger, id, family, rec, once, units, deadlineFired, done) {
+			if !meterTick(counter, logger, id, family, quota, endStream, rec, once, units, deadlineFired, done) {
 				return
 			}
 		}
@@ -400,8 +409,8 @@ func meterOpenStream(counter *usage.Counter, logger *slog.Logger, id, family str
 
 // meterTick runs one [meterOpenStream] tick's re-check-and-bill decision,
 // split out so the caller's loop stays simple. Returns false once the
-// stream has closed, telling meterOpenStream to stop.
-func meterTick(counter *usage.Counter, logger *slog.Logger, id, family string, rec *statusRecorder, once *usageRecordOnce, units *usageUnits, deadlineFired *atomic.Bool, done <-chan struct{}) bool {
+// stream has closed or been ended for quota, telling meterOpenStream to stop.
+func meterTick(counter *usage.Counter, logger *slog.Logger, id, family string, quota int64, endStream context.CancelFunc, rec *statusRecorder, once *usageRecordOnce, units *usageUnits, deadlineFired *atomic.Bool, done <-chan struct{}) bool {
 	// Re-check done, non-blocking: a tick that was already in
 	// ticker.C's single-slot buffer the instant done closed must
 	// not slip through and read once more from rec after the
@@ -423,6 +432,10 @@ func meterTick(counter *usage.Counter, logger *slog.Logger, id, family string, r
 	ctx, cancel := context.WithTimeout(context.Background(), postResponseWriteTimeout)
 	defer cancel()
 	if billable {
+		if streamQuotaExhausted(ctx, counter, logger, id, quota) {
+			endStream()
+			return false
+		}
 		if err := counter.IncrementBy(ctx, id, n); err != nil {
 			obs.UsageUnitsDroppedTotal.WithLabelValues(obs.UsageCounterBillable).Add(float64(n))
 			logger.Debug("usage: stream tick increment failed", "err", err, "subject", id)
@@ -434,6 +447,21 @@ func meterTick(counter *usage.Counter, logger *slog.Logger, id, family string, r
 			"err", err, "subject", id, "endpoint", family, "class", class)
 	}
 	return true
+}
+
+// streamQuotaExhausted reports whether id has reached a positive quota.
+// A read error fails open, as [MonthlyQuota] does inside its dwell window.
+func streamQuotaExhausted(ctx context.Context, counter *usage.Counter, logger *slog.Logger, id string, quota int64) bool {
+	if quota <= 0 {
+		return false
+	}
+	used, err := counter.MonthToDate(ctx, id)
+	if err != nil {
+		obs.MonthlyQuotaFailOpenTotal.Inc()
+		logger.Warn("usage: stream tick quota read failed; failing open", "err", err, "subject", id)
+		return false
+	}
+	return used >= quota
 }
 
 // SetStreamMeterIntervalForTest overrides [streamMeterInterval] for the

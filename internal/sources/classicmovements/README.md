@@ -12,8 +12,8 @@ layer is unchanged, but the archive it feeds is now
 `internal/storage/clickhouse/account_movements.go`), feed-shaped (TWO
 rows per movement, one per participant, a `direction` discriminator).
 ADR-0047 D1's original Postgres `classic_movements` hypertable
-(migration 0105) stays applied but **UNPOPULATED** — see
-`migrations/README.md`'s 0105 row. `stellarindex-ops
+(migration 0105) was never populated and is **dropped** by migration
+0113 — see `migrations/README.md`'s 0105 and 0113 rows. `stellarindex-ops
 classic-movements-backfill` opens no Postgres connection at all
 ("no Postgres in the loop," ADR-0048 D2).
 
@@ -185,8 +185,8 @@ design named in ADR-0047's Phase 3 scope, not a full second pass over
 the whole range.
 
 **Memory-scaling caveat**: the in-run index is bounded at
-`maxCBIndexEntries` (2,000,000, FIFO eviction — oldest create evicted
-first) rather than growing without limit; unbounded growth across the
+`maxCBIndexEntries` (8,000,000, ~3 GB; FIFO eviction — oldest create
+evicted first) rather than growing without limit; unbounded growth across the
 full `CreateClaimableBalance` row count (research §5: ~1.5B) is what
 drove an earlier OOM. Eviction is safe — a miss just falls through to
 the ClickHouse fallback (`FindClaimableBalanceCreates`), same as a

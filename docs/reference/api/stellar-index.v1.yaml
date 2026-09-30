@@ -3757,6 +3757,20 @@ paths:
             `native`, `USDC-G…`, `fiat:USD`). Mutually
             exclusive with `source`.
           schema: { type: string }
+        - name: include
+          in: query
+          required: false
+          description: |
+            Comma-separated opt-in row enrichments, off by default.
+            `sparkline` populates `volume_history_24h` (24 hourly USD
+            buckets, both stored orientations of the pair summed);
+            `inception` populates `first_trade_at` (the pair's first
+            daily bucket). Both are best-effort: a failed enrichment
+            ships the page without the field rather than an error.
+          schema:
+            type: string
+            pattern: '^(sparkline|inception)(,(sparkline|inception))*$'
+          example: sparkline,inception
       responses:
         "200":
           description: Array of markets + optional next cursor.
@@ -6531,14 +6545,18 @@ paths:
           in: query
           required: false
           description: |
-            Opt-in extras. `stats` populates each row's
-            `trade_count_24h` from a single GROUP BY on the trades
-            hypertable — cheap, but a DB hit so opt-in. Absent the
-            param the response stays the all-static-registry
-            projection.
+            Comma-separated opt-in extras. `stats` populates each
+            row's `trade_count_24h`, `volume_24h_usd` and
+            `markets_count_24h` from a single GROUP BY on the trades
+            hypertable — cheap, but a DB hit so opt-in. `sparkline`
+            adds `volume_history_24h` (24 hourly buckets) and
+            `sparkline7d` adds `volume_history_7d` (168 hourly
+            buckets); each implies `stats`. Absent the param the
+            response stays the all-static-registry projection.
           schema:
             type: string
-            enum: [stats]
+            pattern: '^(stats|sparkline|sparkline7d)(,(stats|sparkline|sparkline7d))*$'
+          example: stats,sparkline
       responses:
         "200":
           description: Array of sources, sorted by name.
@@ -8080,6 +8098,10 @@ paths:
         the ceiling returns 409 — revoke a key via
         `DELETE /v1/account/keys/{keyID}` and retry.
 
+        A SEP-10-authenticated caller gets 403 `key-mint-not-available`:
+        an `auth_mode = "sep10"` deployment honours only SEP-10 tokens,
+        so a minted key would have no use there.
+
         The new key inherits the caller's identifier and tier. An
         **operator-tier** caller rotating its own credential here is
         held to the admin-write contract: the `X-Reason` header is
@@ -8140,6 +8162,13 @@ paths:
               schema: { $ref: "#/components/schemas/KeyCreatedEnvelope" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: |
+            The caller authenticated with a SEP-10 token; API keys are
+            not issued to SEP-10 subjects (`key-mint-not-available`).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "409":
           description: |
             Active-key quota reached for this caller identifier. Revoke
@@ -18255,6 +18284,8 @@ components:
                 `count((rate(stellarindex_source_events_total[7d]) > 0)
                 and on (source) (stellarindex_source_enabled == 1))`)
                 — a subset of `total_sources` by construction.
+                Absent (not 0) when the freshness query failed; a
+                failed query also rolls `overall` to "degraded".
             total_sources:
               type: integer
               description: |
@@ -18269,7 +18300,7 @@ components:
                 registered=21, active=15 — before the API binary
                 published the `massive` FX worker's own enabled
                 series; with it, enabled and active each read one
-                higher.
+                higher. Absent (not 0) when the freshness query failed.
         incidents:
           type: object
           properties:

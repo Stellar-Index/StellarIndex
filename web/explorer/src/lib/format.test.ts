@@ -195,6 +195,13 @@ describe('formatSubunitPrice', () => {
     // 1e-18 still renders as an honest plain decimal within the cap —
     // long, but accurate, and monospace columns absorb it.
     expect(formatSubunitPrice(1e-18)).toBe('0.000000000000000001');
+    expect(formatSubunitPrice(1e-20)).toBe('0.00000000000000000001');
+  });
+  it('renders dust below the cap as a signed bound, never "0" or "-0"', () => {
+    expect(formatSubunitPrice(1e-25)).toBe('<0.00000000000000000001');
+    expect(formatSubunitPrice(-1e-25)).toBe('-<0.00000000000000000001');
+    expect(formatPriceSmall(1e-25)).not.toBe('0');
+    expect(formatPriceSmall(-1e-25)).toBe('-<0.00000000000000000001');
   });
 });
 
@@ -275,12 +282,16 @@ describe('formatCompactUnits', () => {
   it('rounds the exact value, not a float that crossed the display boundary', () => {
     // 512,304,999,999,999.966… whole units: 512.3T. Number()-then-divide
     // yields 512305000000000 and so "512.31T".
-    expect(format.formatCompactUnits('5123049999999999660566', 7)).toBe('512.3T');
+    expect(format.formatCompactUnits('5123049999999999660566', 7)).toBe(
+      '512.3T',
+    );
     expect(format.formatCompactUnits('8030049999999999577453', 7)).toBe('803T');
   });
 
   it('keeps an 18-decimal supply above 2^53 base units at its true magnitude', () => {
-    expect(format.formatCompactUnits('1000000000000000000000000000', 18)).toBe('1B');
+    expect(format.formatCompactUnits('1000000000000000000000000000', 18)).toBe(
+      '1B',
+    );
   });
 
   it('formats decimal strings and small values to two exact places', () => {

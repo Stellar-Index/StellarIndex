@@ -2127,6 +2127,7 @@ func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to u
 			// DecodeCounted additionally reports how many claim atoms in
 			// this op failed to decode, so a failure marks the ledger
 			// BLIND (C4-059) instead of silently reading as zero trades.
+			// Both-zero no-op claims are a symmetric drop, not a failure.
 			var outs []consumer.Event
 			var failed int
 			if perr := completeness.Guard(func() {

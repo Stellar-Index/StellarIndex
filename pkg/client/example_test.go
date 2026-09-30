@@ -1089,8 +1089,8 @@ func ExampleClient_AssetMetadata() {
 // the aggregator consumes. Use cases: trade audits, regulatory
 // exports, custom aggregations the server doesn't pre-compute.
 //
-// Pagination via opaque `Cursor`; iterate while
-// `Pagination.Next` is non-empty.
+// Pagination via opaque `Cursor`; iterate while `Pagination` is
+// non-nil and `Pagination.Next` is non-empty.
 func ExampleClient_History() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

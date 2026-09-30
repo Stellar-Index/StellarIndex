@@ -367,15 +367,23 @@ type AssetDetail struct {
 
 	// FDVUSD = max_supply × USD price / 10^Decimals. Null when
 	// max_supply is null (uncapped issuer + no override + no SEP-1
-	// declaration) or when USD price is unavailable.
+	// declaration), when USD price is unavailable, or when suppressed
+	// (see MarketCapLowLiquidity and MarketCapDecimalsMismatch).
 	FDVUSD *string `json:"fdv_usd,omitempty"`
 
-	// MarketCapLowLiquidity is true when market_cap_usd (and fdv_usd) were
-	// deliberately suppressed — served null — because the backing price came
-	// from negligible liquidity (a single venue AND trailing-24h USD volume
-	// below the server's valuation-integrity floor). Distinguishes
-	// "suppressed on purpose" from "no supply/price data"; the price_usd
-	// itself still serves. Omitted (false) when a cap is present.
+	// MarketCapLowLiquidity is true when market_cap_usd or fdv_usd were
+	// deliberately suppressed — served null — by either of two guards:
+	//
+	//   - the floor: the backing price came from negligible liquidity (a
+	//     single venue AND trailing-24h USD volume below the server's
+	//     valuation-integrity floor), or
+	//   - the ceiling: the figure exceeds the server's maximum multiple of
+	//     the asset's own trailing-24h USD volume. FDV (over max_supply, so
+	//     >= the cap) can breach it alone, leaving market_cap_usd served.
+	//
+	// Distinguishes "suppressed on purpose" from "no supply/price data";
+	// the price_usd itself still serves. Omitted (false) when neither
+	// figure was suppressed.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 
 	// MarketCapDecimalsMismatch is true when market_cap_usd (and fdv_usd)
@@ -1501,7 +1509,7 @@ type AssetListingValuation struct {
 }
 
 // VerifiedCurrencyListItem is one row in the response to
-// [Client.AssetsVerified] (`GET /v1/assets/verified`) — a directory
+// `GET /v1/assets/verified` (no Client method yet) — a directory
 // entry from the verified-currency catalogue. Identity-only;
 // pricing requires a per-row fetch via [Client.Asset] with the
 // `Slug` value.

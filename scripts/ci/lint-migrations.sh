@@ -60,8 +60,17 @@
 # migrations/*.up.sql this flags a column definition whose name looks
 # monetary next to a non-NUMERIC numeric type.
 #
+# This pass covers single-line `name type` DDL only: a view/CAGG column
+# typed by its expression (`… ::double precision AS volume_usd`), a type
+# on the next line or a float DOMAIN pass it. The authoritative check is
+# TestMoneyColumnsAreNumeric (test/integration/money_columns_test.go),
+# which reads the resolved type of every column from pg_catalog
+# (domains and array elements resolved) and reuses the `name` stem
+# pattern below.
+#
 # Escape hatch: append `-- lint-money:ok <reason>` on the flagged
-# line. Reasons are mandatory — every escape is a design decision
+# line, and list the column in the test's moneyColumnExceptions.
+# Reasons are mandatory — every escape is a design decision
 # (e.g. SDEX price_n/price_d, a protocol-defined int32 rational pair
 # whose money value lives in the sibling NUMERIC `price` column).
 #

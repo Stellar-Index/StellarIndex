@@ -53,6 +53,7 @@ import (
 	"log/slog"
 	"math/big"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -1423,12 +1424,7 @@ func (o *Orchestrator) decideBucket(
 	now time.Time,
 ) (*publishedBucket, error) {
 	from := bucketEnd.Add(-window)
-	// `_` here is the pre-filter USD total. F-1260 (codex audit-
-	// 2026-05-12) moved the MinUSDVolume gate to a survivor-only sum
-	// computed below from `tradeUSD`, so the pre-filter scalar isn't
-	// the gate input anymore. Kept on the return value for backwards
-	// compatibility with future callers + lint readability.
-	trades, _, tradeUSD, proxied, err := o.fetchForTarget(ctx, pair, from, bucketEnd)
+	trades, tradeUSD, proxied, err := o.fetchForTarget(ctx, pair, from, bucketEnd)
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s %v: %w", pair.String(), window, err)
 	}
@@ -2133,16 +2129,11 @@ func distinctSourceCount(trades []canonical.Trade) int {
 // one backer pair per peg, each backer pair is fetched and its
 // trades are rewritten onto the target pair.
 //
-// The returned `usdVolume` is the correctly-scaled total USD value
-// of every merged trade, computed BEFORE pair rewrites blur the
-// original quote-decimal convention. This is the value the min-
-// volume gate compares against — without it, classic/SAC USD-pegged
-// proxy trades (7-decimal scale) would be summed under the off-chain
-// uniform-1e8 assumption and the gate would see 10× understatement.
-// F-1213 (codex audit-2026-05-12).
-//
-// `tradeUSD` is a parallel per-trade USD-value map keyed by
-// canonical.Trade.ID(). Lets the filter chain drop trades by index
+// `tradeUSD` is a per-trade USD-value map keyed by
+// canonical.Trade.ID(), computed BEFORE pair rewrites blur the
+// original quote-decimal convention (classic/SAC pegs are 7-decimal,
+// off-chain legs 1e8). It feeds the min-volume gate via
+// [survivorUSDVolume] and lets the filter chain drop trades by index
 // while preserving USD attribution: F-1242 (codex audit-2026-05-12)
 // — `flushContributions` sums per-source USD over the post-filter
 // survivors so the persisted `volume_usd` matches the contribution
@@ -2188,23 +2179,21 @@ func (o *Orchestrator) fetchForTarget(
 	ctx context.Context,
 	target canonical.Pair,
 	from, to time.Time,
-) (trades []canonical.Trade, usdVolume float64, tradeUSD map[string]*big.Rat, proxied map[string]struct{}, err error) {
+) (trades []canonical.Trade, tradeUSD map[string]*big.Rat, proxied map[string]struct{}, err error) {
 	if !o.cfg.EnableStablecoinFiatProxy {
 		t, err := o.fetchTradesDetectTruncation(ctx, target, target, from, to)
 		if err != nil {
-			return nil, 0, nil, nil, err
+			return nil, nil, nil, err
 		}
-		total, perTrade := usdVolumeForPairPerTrade(target, t, o.cfg.USDPeggedClassicAssets, o.cfg.USDPeggedSorobanAssets)
-		return t, total, perTrade, nil, nil
+		return t, usdVolumeForPairPerTrade(target, t, o.cfg.USDPeggedClassicAssets, o.cfg.USDPeggedSorobanAssets), nil, nil
 	}
 
 	sources, err := aggregate.ExpandTargetPairWithClassicPegs(target, o.cfg.USDPeggedClassicAssets)
 	if err != nil {
-		return nil, 0, nil, nil, fmt.Errorf("expand target %s: %w", target.String(), err)
+		return nil, nil, nil, fmt.Errorf("expand target %s: %w", target.String(), err)
 	}
 
 	var merged []canonical.Trade
-	var sumUSD float64
 	var fetchErrs []error
 	tradeUSD = map[string]*big.Rat{}
 	proxied = map[string]struct{}{}
@@ -2222,9 +2211,7 @@ func (o *Orchestrator) fetchForTarget(
 		// Per-trade USD value against the SOURCE pair's quote-decimal
 		// convention — captured BEFORE the rewrite below blurs the
 		// original 7-vs-8 decimal.
-		batchTotal, batchPerTrade := usdVolumeForPairPerTrade(src, batch, o.cfg.USDPeggedClassicAssets, o.cfg.USDPeggedSorobanAssets)
-		sumUSD += batchTotal
-		for id, v := range batchPerTrade {
+		for id, v := range usdVolumeForPairPerTrade(src, batch, o.cfg.USDPeggedClassicAssets, o.cfg.USDPeggedSorobanAssets) {
 			tradeUSD[id] = v
 		}
 		if src.Equal(target) {
@@ -2240,33 +2227,18 @@ func (o *Orchestrator) fetchForTarget(
 	// One failing leg is tolerated; every leg failing means nothing was
 	// read, and reporting that as an empty window hides a store outage.
 	if len(fetchErrs) == len(sources) {
-		return nil, 0, nil, nil, fmt.Errorf("all %d source pairs failed: %w", len(sources), errors.Join(fetchErrs...))
+		return nil, nil, nil, fmt.Errorf("all %d source pairs failed: %w", len(sources), errors.Join(fetchErrs...))
 	}
-	return merged, sumUSD, tradeUSD, proxied, nil
+	return merged, tradeUSD, proxied, nil
 }
 
-// usdVolumeForPair was the F-1213 entry point that returned only
-// the windowed total. Superseded by [usdVolumeForPairPerTrade]
-// which exposes the per-trade map needed for F-1242 post-filter
-// per-source attribution. Kept here as a documentation pointer;
-// the implementation lives in usdVolumeForPairPerTrade.
-func usdVolumeForPair(pair canonical.Pair, batch []canonical.Trade, classicUSDPegs, sorobanUSDPegs []canonical.Asset) float64 {
-	total, _ := usdVolumeForPairPerTrade(pair, batch, classicUSDPegs, sorobanUSDPegs)
-	return total
-}
-
-// _ = usdVolumeForPair retains the function as a stable seam in
-// case future code wants the just-the-total signature back.
-var _ = usdVolumeForPair
-
-// usdVolumeForPairPerTrade is the F-1242 (codex audit-2026-05-12)
-// extension of [usdVolumeForPair] — it returns the same total plus
-// a per-trade.ID() → USD-value map. The map is keyed before
+// usdVolumeForPairPerTrade returns a per-trade.ID() → exact USD-value
+// map. The map is keyed before
 // `fetchForTarget` rewrites Pair to the target, so the
 // per-source filter chain can drop trades by index without losing
 // the per-trade USD attribution the contribution sink uses.
 //
-// Returns (0, nil) when the pair's quote isn't a recognised USD
+// Returns nil when the pair's quote isn't a recognised USD
 // surface — the contribution sink stamps NULL `volume_usd` in
 // that case, matching the prior all-NULL posture for unrecognised
 // quotes. Decimal-scale resolution is delegated to
@@ -2274,18 +2246,17 @@ var _ = usdVolumeForPair
 // uses to decide whether the MinUSDVolume floor applies to a given
 // target pair, so the two can never disagree about which quote
 // shapes are USD-valuable (Guard 1, 2026-07-10).
-func usdVolumeForPairPerTrade(pair canonical.Pair, batch []canonical.Trade, classicUSDPegs, sorobanUSDPegs []canonical.Asset) (float64, map[string]*big.Rat) {
+func usdVolumeForPairPerTrade(pair canonical.Pair, batch []canonical.Trade, classicUSDPegs, sorobanUSDPegs []canonical.Asset) map[string]*big.Rat {
 	if len(batch) == 0 {
-		return 0, nil
+		return nil
 	}
 	if _, ok := usdQuoteDecimals(pair.Quote, classicUSDPegs, sorobanUSDPegs); !ok {
-		return 0, nil
+		return nil
 	}
 	// One scale per DISTINCT decimals value, not per trade — a window
 	// carries hundreds of trades across at most three decimal classes.
 	scales := make(map[int]*big.Int, 3)
 	perTrade := make(map[string]*big.Rat, len(batch))
-	sum := new(big.Rat)
 	for i := range batch {
 		amt := batch[i].QuoteAmount.BigInt()
 		if amt == nil || amt.Sign() == 0 {
@@ -2300,12 +2271,9 @@ func usdVolumeForPairPerTrade(pair canonical.Pair, batch []canonical.Trade, clas
 			scale = new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
 			scales[decimals] = scale
 		}
-		rat := new(big.Rat).SetFrac(amt, scale)
-		perTrade[batch[i].ID()] = rat
-		sum.Add(sum, rat)
+		perTrade[batch[i].ID()] = new(big.Rat).SetFrac(amt, scale)
 	}
-	total, _ := sum.Float64() // i128:ok window USD volume for the MinUSDVolume floor gate, not served
-	return total, perTrade
+	return perTrade
 }
 
 // usdQuoteDecimalsForTrade resolves the fixed-point scale for ONE
@@ -2461,18 +2429,25 @@ func isUSDPeggedSoroban(asset canonical.Asset, pegs []canonical.Asset) bool {
 // map is if `usdVolumeForPairPerTrade` decided the source pair's
 // quote isn't a recognised USD surface, in which case the trade
 // doesn't contribute to the USD-volume gate by definition.
-func survivorUSDVolume(trades []canonical.Trade, tradeUSD map[string]*big.Rat) float64 {
-	if len(trades) == 0 || len(tradeUSD) == 0 {
-		return 0
-	}
+func survivorUSDVolume(trades []canonical.Trade, tradeUSD map[string]*big.Rat) *big.Rat {
 	sum := new(big.Rat)
 	for i := range trades {
 		if v, ok := tradeUSD[trades[i].ID()]; ok {
 			sum.Add(sum, v)
 		}
 	}
-	total, _ := sum.Float64() // i128:ok survivor USD volume for the MinUSDVolume floor gate, not served
-	return total
+	return sum
+}
+
+// minUSDVolumeRat is the configured floor as the exact decimal the
+// operator wrote: the shortest float64 round-trip, not its binary expansion.
+// nil for NaN/±Inf, which have no exact value.
+func minUSDVolumeRat(floor float64) *big.Rat {
+	r, ok := new(big.Rat).SetString(strconv.FormatFloat(floor, 'g', -1, 64))
+	if !ok {
+		return nil
+	}
+	return r
 }
 
 // dropForMinUSDVolume returns true (and bumps the matching counters
@@ -2519,7 +2494,7 @@ func survivorUSDVolume(trades []canonical.Trade, tradeUSD map[string]*big.Rat) f
 //     it doesn't need the same loud surfacing).
 //
 // See [Config.MinUSDVolume] for the full threshold semantics.
-func (o *Orchestrator) dropForMinUSDVolume(pair canonical.Pair, trades []canonical.Trade, usdVolume float64) bool {
+func (o *Orchestrator) dropForMinUSDVolume(pair canonical.Pair, trades []canonical.Trade, usdVolume *big.Rat) bool {
 	_ = trades // retained for tracing dimensions if future gates want it
 	if o.cfg.MinUSDVolume <= 0 {
 		return false
@@ -2538,7 +2513,8 @@ func (o *Orchestrator) dropForMinUSDVolume(pair canonical.Pair, trades []canonic
 		}
 		return false
 	}
-	if usdVolume >= o.cfg.MinUSDVolume {
+	// A NaN/+Inf floor can never be met, so it drops (fail-closed).
+	if floor := minUSDVolumeRat(o.cfg.MinUSDVolume); floor != nil && usdVolume.Cmp(floor) >= 0 {
 		return false
 	}
 	obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume").Inc()

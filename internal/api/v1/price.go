@@ -491,6 +491,7 @@ type usdLegFacts struct {
 	sources      []string        // the leg's own venues, without the FX credit
 	served       canonical.Asset // alias the leg's bucket was read under; zero when a fallback answered
 	rate         *big.Rat        // USD→quote rate the leg was converted at
+	fxSource     string          // feed that published rate
 	fxObservedAt time.Time
 }
 
@@ -1545,10 +1546,12 @@ func (s *Server) tryUSDAnchoredFiatCross(
 	}
 	var rate float64
 	var rateUpdatedAt time.Time
+	var rateSource string
 	for _, c := range fx.Currencies {
 		if c.Ticker == quote.Code {
 			rate = c.RateUSD
 			rateUpdatedAt = c.UpdatedAt
+			rateSource = fxSourceOf(c)
 			break
 		}
 	}
@@ -1596,8 +1599,8 @@ func (s *Server) tryUSDAnchoredFiatCross(
 	// USD leg's timestamp alone — the pre-T650 behaviour — hid a stale
 	// FX component behind an observed_at that looked current.
 	out.ObservedAt = WireTime(olderNonZero(time.Time(usdSnap.ObservedAt), fxObservedAt))
-	out.usdLeg = &usdLegFacts{sources: usdSources, served: usdServed, rate: rateRat, fxObservedAt: fxObservedAt}
-	return out, appendFXSource(usdSources), true, false
+	out.usdLeg = &usdLegFacts{sources: usdSources, served: usdServed, rate: rateRat, fxSource: rateSource, fxObservedAt: fxObservedAt}
+	return out, appendFXSource(usdSources, rateSource), true, false
 }
 
 // defaultFXCrossMaxAge is the fallback staleness budget for
@@ -1676,23 +1679,32 @@ func (s *Server) resolveUSDLeg(
 	return PriceSnapshot{}, nil, canonical.Asset{}, false, withheld
 }
 
-// fxSourceName credits the forex feed a derived cross-rate leans on.
-// Matches the label [tryFiatCrossRate] already uses, so one source name
-// covers every FX-derived value on the price surface.
-const fxSourceName = "massive"
+// primaryFXSource is the forex worker's primary feed, credited for an
+// entry that carries no Source of its own.
+const primaryFXSource = "massive"
+
+// fxSourceOf names the feed that published c's rate, so a price
+// converted through the standby credits the standby rather than the
+// primary it replaced.
+func fxSourceOf(c CurrencyEntry) string {
+	if c.Source == "" {
+		return primaryFXSource
+	}
+	return c.Source
+}
 
 // appendFXSource adds the FX feed to the USD leg's own sources without
 // dropping them: a customer auditing a BRL price needs to see both the
 // venues that set the USD price AND the feed that converted it.
-func appendFXSource(sources []string) []string {
+func appendFXSource(sources []string, fxSource string) []string {
 	for _, s := range sources {
-		if s == fxSourceName {
+		if s == fxSource {
 			return sources
 		}
 	}
 	out := make([]string, 0, len(sources)+1)
 	out = append(out, sources...)
-	out = append(out, fxSourceName)
+	out = append(out, fxSource)
 	sort.Strings(out)
 	return out
 }
@@ -2386,7 +2398,7 @@ func (s *Server) declaredPegSnapshot(asset, quote canonical.Asset) PriceSnapshot
 //
 // PriceType is "vwap" because the upstream forex feed is itself a
 // volume-weighted average across the upstream's source set; sources
-// is `["massive"]` to credit the upstream feed.
+// credits the feed(s) that published the two rates.
 func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, []string, bool) {
 	if asset.Type != canonical.AssetFiat || quote.Type != canonical.AssetFiat {
 		return PriceSnapshot{}, nil, false
@@ -2405,6 +2417,7 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 	// allocation — would not pay off.
 	var rateAsset, rateQuote float64
 	var foundAsset, foundQuote bool
+	var sources []string
 	// observedAt starts at the snapshot's publication time and is pulled
 	// BACK to the older leg's own UpdatedAt. The two normally coincide;
 	// they differ exactly when the forex worker is HOLDING a leg's last
@@ -2419,11 +2432,13 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 			rateAsset = c.RateUSD
 			foundAsset = true
 			observedAt = olderNonZero(observedAt, c.UpdatedAt)
+			sources = appendFXSource(sources, fxSourceOf(c))
 		}
 		if c.Ticker == quote.Code {
 			rateQuote = c.RateUSD
 			foundQuote = true
 			observedAt = olderNonZero(observedAt, c.UpdatedAt)
+			sources = appendFXSource(sources, fxSourceOf(c))
 		}
 		if foundAsset && foundQuote {
 			break
@@ -2469,7 +2484,7 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 		Price:      priceStr,
 		PriceType:  "vwap",
 		ObservedAt: WireTime(observedAt),
-	}, []string{"massive"}, true
+	}, sources, true
 }
 
 // olderNonZero returns the earlier of a and b, ignoring a zero b (a
@@ -2804,7 +2819,7 @@ func (s *Server) resolveFrozenServeFor(r *http.Request, snap PriceSnapshot, requ
 	held.snapshot.Quote = quote.String()
 	held.snapshot.Price = formatCrossRate(new(big.Rat).Mul(usdHeld, leg.rate))
 	held.snapshot.ObservedAt = WireTime(olderNonZero(time.Time(held.snapshot.ObservedAt), leg.fxObservedAt))
-	held.sources, held.triangulated = []string{fxSourceName}, true
+	held.sources, held.triangulated = []string{leg.fxSource}, true
 	return held
 }
 

@@ -1209,16 +1209,12 @@ func emitBatchTradeOutcomeMetrics(trades []canonical.Trade, perSourceNew, perSou
 	}
 }
 
-// The statement runs in its own transaction with the TimescaleDB
-// decompression cap lifted (SET LOCAL, so nothing leaks onto the pooled
-// connection). This writer is the fallback for every range whose trades
-// chunks are compressed — the bulk COPY path steps aside on a non-empty
-// range — and an upsert into a compressed chunk decompresses whole
-// segments per conflict: on 2026-09-18 every 5,000-row sub-batch of a
-// Soroban-era SDEX re-derive failed with SQLSTATE 53400 "tuple
-// decompression limit exceeded" and the writer dropped to one INSERT per
-// row, which is exactly the five-hour chunk the sub-batching had just
-// fixed. The restamp and COPY writers already lift the cap the same way.
+// The statement runs in its own transaction. A re-derive store
+// (deriveGeneration > 0) lifts the TimescaleDB decompression cap with SET
+// LOCAL: its upserts into compressed chunks decompress whole segments per
+// conflict and would otherwise fail with SQLSTATE 53400. Live ingest keeps
+// the server cap, so a runaway decompression there surfaces as a 53400
+// retry instead of proceeding unbounded across concurrent persist workers.
 func (s *Store) scanBatchTradeOutcome(ctx context.Context, query string, args []any) (
 	perSourceNew, perSourceUnitRatio map[string]int,
 	seenAssets map[string]registryObservation, err error,
@@ -1233,8 +1229,10 @@ func (s *Store) scanBatchTradeOutcome(ctx context.Context, query string, args []
 			_ = tx.Rollback()
 		}
 	}()
-	if _, err := tx.ExecContext(ctx, batchTradeDecompressionCapSQL); err != nil {
-		return nil, nil, nil, fmt.Errorf("timescale: BatchInsertTrades: decompression cap: %w", err)
+	if s.deriveGeneration > 0 {
+		if _, err := tx.ExecContext(ctx, batchTradeDecompressionCapSQL); err != nil {
+			return nil, nil, nil, fmt.Errorf("timescale: BatchInsertTrades: decompression cap: %w", err)
+		}
 	}
 	perSourceNew, perSourceUnitRatio, seenAssets, err = scanBatchTradeRows(ctx, tx, query, args)
 	if err != nil {
@@ -1248,8 +1246,8 @@ func (s *Store) scanBatchTradeOutcome(ctx context.Context, query string, args []
 }
 
 // batchTradeDecompressionCapSQL lifts the per-transaction cap on tuples a
-// DML statement may decompress (0 = unbounded), for the batch upsert's
-// transaction only. See scanBatchTradeOutcome.
+// DML statement may decompress (0 = unbounded), for a re-derive batch
+// upsert's transaction only. See scanBatchTradeOutcome.
 const batchTradeDecompressionCapSQL = "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"
 
 // scanBatchTradeRows runs the batch statement on tx and folds its RETURNING
