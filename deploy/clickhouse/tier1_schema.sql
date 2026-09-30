@@ -579,8 +579,9 @@ WHERE inner_tx_hash != '';
 
 -- ── account_movements — ADR-0048 D2 feed-shaped account-activity archive ──
 -- Amends ADR-0047 D1 (which planned a Postgres `classic_movements` hypertable,
--- migration 0105 — applied but left UNPOPULATED, see that migration's row in
--- migrations/README.md): "serve by query shape, not by data age." The one
+-- migration 0105 — never populated and dropped by migration 0113; see those
+-- migrations' rows in migrations/README.md): "serve by query shape, not by
+-- data age." The one
 -- genuinely archive-scale story here — "enter an address, see everything it
 -- has ever done" — is `WHERE address = X ORDER BY ledger` over what will
 -- become 10-20B immutable rows; that is a ClickHouse-shaped read, not a
