@@ -11370,14 +11370,14 @@ export interface components {
             trade_count_24h: number;
             /** @description Trailing-24h USD volume summed from prices_1m. Decimal string. Null when no USD-equivalent trades. */
             volume_24h_usd?: string | null;
-            /** @description Most recent quote-per-base price observed for this pair (cross-source) within the trailing 24h. Decimal string. Null when no recent prices_1m bucket has a non-null last_price. */
+            /** @description Most recent quote-per-base price observed for this pair within the trailing 24h: across every source, or that source's own when the request sets `?source=`. Decimal string. Null when none was observed. */
             last_price?: string | null;
             /**
              * Format: date-time
-             * @description The pair's first recorded daily bucket — "since inception = first recorded trade" (RFP), queryable per market. Present only with `?include=inception`; day precision.
+             * @description The pair's first recorded daily bucket — "since inception = first recorded trade" (RFP), queryable per market, across every source. Present only with `?include=inception` and absent when the request sets `?source=`; day precision.
              */
             first_trade_at?: string | null;
-            /** @description Per-hour USD-volume buckets for the trailing 24h, oldest → newest, zero-filled server-side (always 24 entries when present). Populated only when the request sets `?include=sparkline`; absent otherwise. */
+            /** @description Per-hour USD-volume buckets for the trailing 24h, oldest → newest, zero-filled server-side (always 24 entries when present). Summed across every source. Populated only when the request sets `?include=sparkline`; absent otherwise, and absent when the request sets `?source=`. */
             volume_history_24h?: {
                 /** Format: date-time */
                 hour: string;
@@ -15777,6 +15777,9 @@ export interface operations {
                  *     unknown name returns 400 `unknown-source` rather
                  *     than an empty 200 (avoids the silent-empty-page
                  *     anti-pattern). Mutually exclusive with `asset`.
+                 *     Each row's volume, trade count and last price are
+                 *     that source's own; the pair-wide `sparkline` and
+                 *     `inception` enrichments are omitted.
                  */
                 source?: string;
                 /**
