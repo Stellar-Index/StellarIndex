@@ -424,7 +424,7 @@ func (s *Store) resolveRowUSDVolume(
 		errAt[i] = err
 		return
 	}
-	obs.TradeInsertsTotal.WithLabelValues(rows[i].Source, usdPopulatedLabel(v != nil)).Inc()
+	obs.TradeInsertsTotal.WithLabelValues(rows[i].Source, usdPopulatedLabel(rows[i].Pair, v != nil)).Inc()
 	if v != nil {
 		out[i] = sql.NullString{String: *v, Valid: true}
 	}
