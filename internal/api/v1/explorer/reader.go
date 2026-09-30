@@ -472,6 +472,10 @@ type Handler struct {
 	// value ready; see network_throughput_cache.go.
 	throughput networkThroughputCache
 
+	// attribution memoises the contract → protocol registry map read by the
+	// contracts directory, interactions and detail routes. Zero value ready.
+	attribution contractAttributionCache
+
 	// refreshGate bounds this handler's DETACHED cache refreshes globally
 	// across keys AND cache kinds (audit 2026-07-31): per-key
 	// single-flight alone leaves the key space attacker-chosen on these
@@ -511,6 +515,15 @@ func (h *Handler) writeJSONAt(w http.ResponseWriter, data any, stale bool, asOf 
 		return
 	}
 	h.WriteJSON(w, data, stale)
+}
+
+// lakeTip is LakeWatermark with an unwired func reading as no lake to judge
+// (not stale, no ledger), the same verdict the server gives an unwired reader.
+func (h *Handler) lakeTip(ctx context.Context) (ledger uint32, stale, ok bool) {
+	if h.LakeWatermark == nil {
+		return 0, false, false
+	}
+	return h.LakeWatermark(ctx)
 }
 
 // unavailable writes the standard 503 when no explorer reader is wired

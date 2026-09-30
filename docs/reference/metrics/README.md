@@ -4403,7 +4403,10 @@ Counter. Labels: `class` (the refresh class passed to
 `contracts_dir` | `network_throughput` | `ops_directory` |
 `protocol_bespoke` | `contract_detail` / `contract_detail_<key prefix>`;
 `unclassed` for a bare `TryAcquire`), `bound` (`class` = the per-class
-half-of-global cap refused, `global` = the pool-wide limit refused).
+cap refused — a quarter of the global limit for a client-keyed class,
+half for a server-keyed one — `global` = the pool-wide limit refused,
+which for a client-keyed class excludes the one slot reserved for the
+server-keyed prewarm classes).
 
 Detached explorer refreshes the shared `clickhouse.RefreshGate` SKIPPED
 because it was saturated. The gate bounds lake scans that
