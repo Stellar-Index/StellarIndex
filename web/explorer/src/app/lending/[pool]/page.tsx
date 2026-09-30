@@ -6,7 +6,7 @@ import { ExternalLink } from 'lucide-react';
 import { Panel } from '@/components/reveal';
 import { Breadcrumbs, Container } from '@/components/ui';
 import { buildFetchData, failBuild } from '@/lib/buildFetch';
-import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
+import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, shellMetadata } from '@/lib/seo';
 import type { paths } from '@/api/types';
 
 import { LendingPoolPathView } from './LendingPoolPathView';
@@ -119,21 +119,13 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { pool } = await params;
-  // T278: the runtime-fallback shell's baked HTML serves for ARBITRARY
-  // pools outside the build-time pre-render (see LendingPoolPathView),
-  // so its metadata must be generic rather than titled "shell", noindex
-  // (this one document answers 200 for every unmatched /lending/* path),
-  // and must declare its own empty `alternates` — omitting the key would
-  // inherit the root layout's canonical rather than clearing it (same
-  // F095 fix already applied to /assets/shell and /markets/shell).
+  // The runtime-fallback shell's baked HTML serves for arbitrary pools
+  // outside the build-time pre-render (see LendingPoolPathView).
   if (pool.toLowerCase() === 'shell') {
-    return {
-      title: 'Lending pool',
-      description:
-        'Blend lending-pool detail, rendered live from the Stellar Index API.',
-      robots: { index: false, follow: true },
-      alternates: {},
-    };
+    return shellMetadata(
+      'Lending pool',
+      'Blend lending-pool detail, rendered live from the Stellar Index API.',
+    );
   }
   const label =
     BLEND_POOL_LABELS[pool]?.name ?? `${pool.slice(0, 6)}…${pool.slice(-6)}`;
