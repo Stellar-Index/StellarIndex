@@ -98,7 +98,8 @@ func (c Candidate) DedupKey() string {
 // per atomic-arbitrage cycle found. Trades are grouped by (tx_hash,
 // taker) — a cycle must be a single actor inside a single transaction.
 //
-// A group is a cycle when its hop graph (assets = nodes, distinct
+// Each asset-connected component of a group is judged on its own; a
+// component is a cycle when its hop graph (assets = nodes, distinct
 // (venue, unordered asset pair) hops = edges) has at least as many
 // edges as nodes (a graph with edges ≥ nodes contains a cycle; a
 // forest has edges ≤ nodes−1). Trades collapse to hops first because
@@ -147,22 +148,33 @@ func DetectArbitrage(trades []canonical.Trade, usdVolume []string) []Candidate {
 	return out
 }
 
-// buildArbCandidate evaluates one (tx, taker) group: builds the leg
-// set, tests the cycle + venue conditions, and assembles the
-// Candidate. ok=false when the group isn't a qualifying cycle.
+// buildArbCandidate evaluates one (tx, taker) group: splits it into
+// asset-connected components, keeps those that are qualifying cycles,
+// and assembles the Candidate from their legs. ok=false when none is.
 func buildArbCandidate(trades []canonical.Trade, usdVolume []string, idxs []int) (Candidate, bool) {
+	// Judged per component so an unrelated leg cannot lend a cycle its
+	// missing second venue or spare hop.
+	var kept []int
+	for _, comp := range assetComponents(trades, idxs) {
+		if isArbCycle(trades, comp) {
+			kept = append(kept, comp...)
+		}
+	}
+	if len(kept) == 0 {
+		return Candidate{}, false
+	}
+	sort.Ints(kept)
+
 	assetSet := map[string]struct{}{}
 	sourceSet := map[string]struct{}{}
-	hopSet := map[string]struct{}{}
-	legs := make([]Leg, 0, len(idxs))
-	for _, i := range idxs {
+	legs := make([]Leg, 0, len(kept))
+	for _, i := range kept {
 		t := trades[i]
 		base := t.Pair.Base.String()
 		quote := t.Pair.Quote.String()
 		assetSet[base] = struct{}{}
 		assetSet[quote] = struct{}{}
 		sourceSet[t.Source] = struct{}{}
-		hopSet[hopKey(t.Source, base, quote)] = struct{}{}
 		legs = append(legs, Leg{
 			Source:      t.Source,
 			Base:        base,
@@ -173,24 +185,11 @@ func buildArbCandidate(trades []canonical.Trade, usdVolume []string, idxs []int)
 		})
 	}
 
-	nNodes := len(assetSet)
-	// Cycle condition on the hop graph, not the trade multigraph:
-	// parallel claim-atom trades of one hop are not extra edges.
-	if len(hopSet) < nNodes {
-		return Candidate{}, false
-	}
-	// Conservative single-venue rejection, kept on the raw leg count: a
-	// 2-asset round-trip, or a single-venue group with more legs than
-	// assets, is not published as arbitrage.
-	if (nNodes <= 2 || len(legs) > nNodes) && len(sourceSet) < 2 {
-		return Candidate{}, false
-	}
-
 	// Stable evidence ordering: legs in on-chain (operation, position)
 	// order — the packed keys of different sources do not compare.
 	sort.SliceStable(legs, func(a, b int) bool { return legs[a].before(legs[b].OpRef) })
 
-	first := trades[idxs[0]]
+	first := trades[kept[0]]
 	c := Candidate{
 		Kind:             KindArbitrage,
 		Ledger:           first.Ledger,
@@ -201,9 +200,70 @@ func buildArbCandidate(trades []canonical.Trade, usdVolume []string, idxs []int)
 		Assets:           sortedKeys(assetSet),
 		Sources:          sortedKeys(sourceSet),
 		Legs:             legs,
-		NotionalUSD:      sumUSD(usdVolume, idxs),
+		NotionalUSD:      sumUSD(usdVolume, kept),
 	}
 	return c, true
+}
+
+// isArbCycle tests one connected component for the cycle + venue
+// conditions.
+func isArbCycle(trades []canonical.Trade, idxs []int) bool {
+	assetSet := map[string]struct{}{}
+	sourceSet := map[string]struct{}{}
+	hopSet := map[string]struct{}{}
+	for _, i := range idxs {
+		t := trades[i]
+		base := t.Pair.Base.String()
+		quote := t.Pair.Quote.String()
+		assetSet[base] = struct{}{}
+		assetSet[quote] = struct{}{}
+		sourceSet[t.Source] = struct{}{}
+		hopSet[hopKey(t.Source, base, quote)] = struct{}{}
+	}
+	nNodes := len(assetSet)
+	// Cycle condition on the hop graph, not the trade multigraph:
+	// parallel claim-atom trades of one hop are not extra edges.
+	if len(hopSet) < nNodes {
+		return false
+	}
+	// Conservative single-venue rejection, kept on the raw leg count: a
+	// 2-asset round-trip, or a single-venue component with more legs
+	// than assets, is not published as arbitrage.
+	return len(sourceSet) >= 2 || (nNodes > 2 && len(idxs) <= nNodes)
+}
+
+// assetComponents partitions a group's trade indices by the connected
+// components of their asset graph, each in ascending index order.
+func assetComponents(trades []canonical.Trade, idxs []int) [][]int {
+	parent := map[string]string{}
+	var find func(string) string
+	find = func(a string) string {
+		p, ok := parent[a]
+		if !ok || p == a {
+			parent[a] = a
+			return a
+		}
+		r := find(p)
+		parent[a] = r
+		return r
+	}
+	for _, i := range idxs {
+		p := trades[i].Pair
+		parent[find(p.Base.String())] = find(p.Quote.String())
+	}
+	byRoot := map[string]int{}
+	var out [][]int
+	for _, i := range idxs {
+		r := find(trades[i].Pair.Base.String())
+		k, ok := byRoot[r]
+		if !ok {
+			k = len(out)
+			byRoot[r] = k
+			out = append(out, nil)
+		}
+		out[k] = append(out[k], i)
+	}
+	return out
 }
 
 // hopKey names one hop edge: a venue plus an unordered asset pair, so

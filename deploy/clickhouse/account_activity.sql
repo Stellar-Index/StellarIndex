@@ -110,6 +110,12 @@ GROUP BY account_id;
 -- on the invariant holds unconditionally (backfill + MVs jointly cover all
 -- history, and max() only ever rises).
 --
+-- NEWEST window first: a run that stops BETWEEN windows leaves each account
+-- with its exact bound or no row (unbounded scan); oldest-first would leave
+-- it too LOW. A window is three INSERTs, so a stop INSIDE one can still
+-- leave a too-LOW bound for accounts active in it — deploy no reader until
+-- COMPLETE has printed.
+--
 -- FAIL-CLOSED (F112): nothing watches this loop, and the invariant above is
 -- only as good as its coverage, so every way the block can end WITHOUT
 -- having covered every window is made to end non-zero and WITHOUT the final
@@ -146,13 +152,13 @@ GROUP BY account_id;
 --     aa_job() {
 --       AA_MARK="$AA_MARKS/$1-$2.ok"
 --       /usr/local/sbin/run-heavy-job.sh "acct-activity-$1-$2" bash -c 'clickhouse-client --port 9300 -q "$1" && : > "$2"' aa-job "$3" "$AA_MARK" </dev/null \
---         || { if [ $? -eq 75 ]; then echo "account_activity backfill: $1 window $2 DID NOT RUN (the wrapper exited 75 - a lock was held (this job's, or the host-wide one another heavy job holds) and it did not run) - aborting, the watermark is INCOMPLETE from window $2 up"; else echo "account_activity backfill: $1 window $2 FAILED - aborting, the watermark is INCOMPLETE from window $2 up"; fi >&2; exit 1; }
+--         || { if [ $? -eq 75 ]; then echo "account_activity backfill: $1 window $2 DID NOT RUN (the wrapper exited 75 - a lock was held (this job's, or the host-wide one another heavy job holds) and it did not run) - aborting, the watermark is INCOMPLETE from window $2 down"; else echo "account_activity backfill: $1 window $2 FAILED - aborting, the watermark is INCOMPLETE from window $2 down"; fi >&2; exit 1; }
 --       [ -e "$AA_MARK" ] \
---         || { echo "account_activity backfill: $1 window $2 DID NOT RUN (the wrapper exited 0 with no success marker) - aborting, the watermark is INCOMPLETE from window $2 up" >&2; exit 1; }
+--         || { echo "account_activity backfill: $1 window $2 DID NOT RUN (the wrapper exited 0 with no success marker) - aborting, the watermark is INCOMPLETE from window $2 down" >&2; exit 1; }
 --       AA_DONE=$((AA_DONE + 1))
 --     }
---     W=2
---     while [ "$W" -le "$TIP" ]; do
+--     W=$((2 + (TIP - 2) / 2000000 * 2000000))
+--     while [ "$W" -ge 2 ] && [ "$W" -le "$TIP" ]; do
 --       AA_WANT=$((AA_WANT + 3))
 --       aa_job ops "$W" "
 --         INSERT INTO stellar.account_activity
@@ -175,7 +181,7 @@ GROUP BY account_id;
 --         WHERE ledger_seq >= $W AND ledger_seq < $((W + 2000000))
 --         GROUP BY account
 --         SETTINGS max_threads = 4, max_memory_usage = 8000000000"
---       W=$((W + 2000000))
+--       W=$((W - 2000000))
 --     done
 --     echo "account_activity backfill: $AA_DONE of $AA_WANT jobs ran to success"
 --     [ "$AA_WANT" -gt 0 ] && [ "$AA_DONE" -eq "$AA_WANT" ] \

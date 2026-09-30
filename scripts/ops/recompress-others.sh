@@ -6,6 +6,8 @@
 # on every exit a shell can trap (success, failure, TERM/INT/HUP). A SIGKILL cannot
 # be trapped: the pre-run values are logged at OTHERS_START so they can be restored
 # by hand. OTHERS_COMPLETE and exit 0 mean every partition was rewritten.
+# Stopping this script does not stop the in-flight OPTIMIZE (the merge runs
+# server-side); see ops-job-stalled.md "A ClickHouse merge outlives its client".
 set -uo pipefail
 LOG="${RECOMPRESS_LOG:-/var/log/recompress-others.log}"
 # ClickHouse reports an exception as HTTP 500 with the message in the body;

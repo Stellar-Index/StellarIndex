@@ -139,7 +139,8 @@ func (h *Handler) ContractWasm(w http.ResponseWriter, r *http.Request) {
 	view := contractWasmView(info)
 	h.setWasmLiveness(ctx, cid, &view)
 	w.Header().Set("Cache-Control", wasmCacheControl(view))
-	h.WriteJSON(w, view, false)
+	_, stale, _ := h.lakeTip(ctx)
+	h.WriteJSON(w, view, stale)
 }
 
 // contractWasmView maps the reader's ContractWasmInfo to the wire shape,
