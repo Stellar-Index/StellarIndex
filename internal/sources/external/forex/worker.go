@@ -437,6 +437,9 @@ func (w *Worker) refreshOnce(ctx context.Context) {
 	// behind persistSnapshot's nil-writer return, so a cache-only worker
 	// served every upstream bar unbanded.
 	raw := buildSnapshot(rates, names, publishedAt, time.Now().UTC(), w.rawHistory, w.circulation)
+	for i := range raw.Currencies {
+		raw.Currencies[i].Source = source
+	}
 	res := w.guardSnapshot(raw)
 	snap := servedSnapshot(raw, res, w.cache.Latest())
 	w.cache.Set(snap)
