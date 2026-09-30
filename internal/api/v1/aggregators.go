@@ -104,7 +104,14 @@ func aggregatorRowNotes(kind string, autoDiscovered bool) []string {
 // (timescale.TagTradesRoutedVia); otherwise it falls back to the
 // plain router's name. Each row's Notes explain that degrade —
 // see aggregatorRowNotes.
+//
+// Every routers row is a migration-seeded pubnet contract, so a test net
+// serves an empty list rather than routers that do not exist there.
 func (s *Server) handleAggregators(w http.ResponseWriter, r *http.Request) {
+	if !s.servesPubnetReference() {
+		writeJSON(w, []AggregatorRow{}, Flags{})
+		return
+	}
 	if s.aggregators == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/aggregators-unavailable",

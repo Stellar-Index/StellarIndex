@@ -18,7 +18,7 @@
 openapi: 3.1.0
 info:
   title: Stellar Index API
-  version: "1.30.0"
+  version: "1.31.0"
   summary: The Stellar network — explorer, history, supply, analytics, and prices.
   description: |
     The Stellar Index API exposes the Stellar network as one
@@ -690,7 +690,7 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
                 pagination:
-                  next: catalogue:2
+                  next: catalogue:WyJ4bG0iLCJ1c2RjIl0
               schema: { $ref: "#/components/schemas/AssetListEnvelope" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -713,6 +713,9 @@ paths:
         Same wire shape as the catalogue rows on `/assets` (GlobalAssetView:
         `asset_id` = slug, `type` = "global", no issuer/contract_id).
         `market_cap_usd` is populated for fiat (fxHistory-backed).
+
+        Empty on testnet and futurenet, which run none of the off-chain
+        feeds these rows are priced from.
       parameters:
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
@@ -764,7 +767,7 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
                 pagination:
-                  next: '2'
+                  next: WyJjaGluZXNlLXl1YW4iLCJ1cy1kb2xsYXIiXQ
               schema: { $ref: "#/components/schemas/AssetListEnvelope" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -782,7 +785,8 @@ paths:
         counterpart lives on `/assets/{asset_id}`; a Stellar-issued slug
         (usdc, aqua, …) returns **404** here, and a non-Stellar slug
         returns 404 on `/assets/{asset_id}` — each asset resolves on
-        exactly one path (LC-001, no redirect).
+        exactly one path (LC-001, no redirect). Every slug 404s on
+        testnet and futurenet, matching the empty `/external/assets`.
       parameters:
         - name: slug
           in: path
@@ -839,7 +843,8 @@ paths:
         no price block — so it's a cheap directory call suitable for
         building a verified-currencies section on a listing page.
 
-        Order matches the seed-file order (deterministic).
+        Order matches the seed-file order (deterministic). Empty on
+        testnet and futurenet: the catalogue names pubnet issuers.
       responses:
         "200":
           description: List of verified-currency directory entries.
@@ -1108,21 +1113,23 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      asset: { type: string }
-                      holder_count: { type: integer, format: int64 }
-                      holders:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            account_id: { type: string }
-                            balance: { type: string }
-                      as_of_ledger: { type: integer, format: int64, description: "The board snapshot's vintage (ADR-0041): the lake watermark read immediately before the snapshot's scan, paired with the envelope as_of. Omitted when no watermark was available. Pairs with flags.stale." }
+                      data:
+                        type: object
+                        properties:
+                          asset: { type: string }
+                          holder_count: { type: integer, format: int64 }
+                          holders:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                account_id: { type: string }
+                                balance: { type: string }
+                          as_of_ledger: { type: integer, format: int64, description: "The board snapshot's vintage (ADR-0041): the lake watermark read immediately before the snapshot's scan, paired with the envelope as_of. Omitted when no watermark was available. Pairs with flags.stale." }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -3089,22 +3096,24 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        protocol:            { type: string }
-                        pool:                { type: string }
-                        auctions_24h:        { type: integer, format: int64 }
-                        auctions_total:      { type: integer, format: int64 }
-                        unique_users_30d:    { type: integer, format: int64 }
-                        last_seen:           { type: string, format: date-time }
-                        net_supplied_30d:    { type: [string, "null"], description: "Token base-units, 30d net-flow proxy (not TVL); null when the window's flows span more than one reserve asset." }
-                        net_borrowed_30d:    { type: [string, "null"], description: "Token base-units, 30d net-flow proxy; null when the window's flows span more than one reserve asset." }
-                        utilization_30d_pct: { type: [number, "null"], description: "Single-asset window borrow/supply ratio %; null when either net flow is null or net supply ≤ 0." }
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            protocol:            { type: string }
+                            pool:                { type: string }
+                            auctions_24h:        { type: integer, format: int64 }
+                            auctions_total:      { type: integer, format: int64 }
+                            unique_users_30d:    { type: integer, format: int64 }
+                            last_seen:           { type: string, format: date-time }
+                            net_supplied_30d:    { type: [string, "null"], description: "Token base-units, 30d net-flow proxy (not TVL); null when the window's flows span more than one reserve asset." }
+                            net_borrowed_30d:    { type: [string, "null"], description: "Token base-units, 30d net-flow proxy; null when the window's flows span more than one reserve asset." }
+                            utilization_30d_pct: { type: [number, "null"], description: "Single-asset window borrow/supply ratio %; null when either net flow is null or net supply ≤ 0." }
         "400": { $ref: "#/components/responses/BadRequest" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
@@ -3180,29 +3189,31 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      pool:    { type: string }
-                      tvl_usd: { type: [string, "null"], description: "Σ supplied_usd across priced reserves; null when none priced. A lower bound when `lower_bound` is true." }
-                      lower_bound: { type: boolean, description: "True when `tvl_usd` is rendered but leaves out at least one reserve with no USD value — the `reserves[]` entries whose `supplied_usd` is null — so the pool holds at least `tvl_usd`. False when every reserve is priced or when `tvl_usd` is null." }
-                      reserves:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            asset:           { type: string, description: Reserve underlying token (C-strkey). }
-                            decimals:        { type: integer }
-                            supplied:        { type: string, description: "Total supplied, underlying token base units." }
-                            borrowed:        { type: string, description: "Total borrowed, underlying token base units." }
-                            supplied_usd:    { type: [string, "null"] }
-                            borrowed_usd:    { type: [string, "null"] }
-                            utilization_pct: { type: number, description: "Borrowed/supplied, 0..100." }
-                            borrow_apr:      { type: [number, "null"], description: "Borrow APR as a fraction (0.05 = 5%). Null when the reserve's rate-model config isn't in the captured contract-storage window." }
-                            supply_apr:      { type: [number, "null"], description: "Supply APR as a fraction. Null when the rate-model config is uncaptured." }
-                      as_of_ledger: { type: integer, format: int64, description: "Lake watermark this current-state read is fresh to (ADR-0041) — the highest captured ledger at serve time. Omitted when no watermark reader is wired. Pairs with flags.stale." }
+                      data:
+                        type: object
+                        properties:
+                          pool:    { type: string }
+                          tvl_usd: { type: [string, "null"], description: "Σ supplied_usd across priced reserves; null when none priced. A lower bound when `lower_bound` is true." }
+                          lower_bound: { type: boolean, description: "True when `tvl_usd` is rendered but leaves out at least one reserve with no USD value — the `reserves[]` entries whose `supplied_usd` is null — so the pool holds at least `tvl_usd`. False when every reserve is priced or when `tvl_usd` is null." }
+                          reserves:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                asset:           { type: string, description: Reserve underlying token (C-strkey). }
+                                decimals:        { type: integer }
+                                supplied:        { type: string, description: "Total supplied, underlying token base units." }
+                                borrowed:        { type: string, description: "Total borrowed, underlying token base units." }
+                                supplied_usd:    { type: [string, "null"] }
+                                borrowed_usd:    { type: [string, "null"] }
+                                utilization_pct: { type: number, description: "Borrowed/supplied, 0..100." }
+                                borrow_apr:      { type: [number, "null"], description: "Borrow APR as a fraction (0.05 = 5%). Null when the reserve's rate-model config isn't in the captured contract-storage window." }
+                                supply_apr:      { type: [number, "null"], description: "Supply APR as a fraction. Null when the rate-model config is uncaptured." }
+                          as_of_ledger: { type: integer, format: int64, description: "Lake watermark this current-state read is fresh to (ADR-0041) — the highest captured ledger at serve time. Omitted when no watermark reader is wired. Pairs with flags.stale." }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -3301,23 +3312,25 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        event_id:           { type: string, format: uuid }
-                        detected_at:        { type: string, format: date-time }
-                        detected_at_ledger: { type: integer, format: int64 }
-                        kind:               { type: string }
-                        asset_id:           { type: string, description: "Primary asset of a pair-scoped event (sandwich, oracle_sandwich, wash_trade). Omitted for cross-asset kinds (arbitrage, liquidation_cascade)." }
-                        quote_id:           { type: string, description: "Primary quote paired with asset_id; omitted with it." }
-                        tx_hashes:          { type: array, items: { type: string } }
-                        accounts:           { type: array, items: { type: string } }
-                        detail:             { type: object, description: "Pattern evidence: every kind carries assets, sources and a note, plus its own legs / roles / oracle refs / fills." }
-                        profit_usd:         { type: [string, "null"], description: "Reserved attacker-profit estimate; null for every kind (profit is not estimated, and trade notional is in detail.notional_usd)." }
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            event_id:           { type: string, format: uuid }
+                            detected_at:        { type: string, format: date-time }
+                            detected_at_ledger: { type: integer, format: int64 }
+                            kind:               { type: string }
+                            asset_id:           { type: string, description: "Primary asset of a pair-scoped event (sandwich, oracle_sandwich, wash_trade). Omitted for cross-asset kinds (arbitrage, liquidation_cascade)." }
+                            quote_id:           { type: string, description: "Primary quote paired with asset_id; omitted with it." }
+                            tx_hashes:          { type: array, items: { type: string } }
+                            accounts:           { type: array, items: { type: string } }
+                            detail:             { type: object, description: "Pattern evidence: every kind carries assets, sources and a note, plus its own legs / roles / oracle refs / fills." }
+                            profit_usd:         { type: [string, "null"], description: "Reserved attacker-profit estimate; null for every kind (profit is not estimated, and trade notional is in detail.notional_usd)." }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -3370,72 +3383,74 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      firing_count: { type: integer }
-                      reason_tally:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            reason: { type: string }
-                            count:  { type: integer, format: int64 }
-                      events:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            asset_id:            { type: string }
-                            quote_id:            { type: string }
-                            frozen_at:           { type: string, format: date-time }
-                            frozen_at_ledger:    { type: integer, format: int64 }
-                            reason:
-                              type: string
-                              enum: [single_source, divergence, outlier_storm, manual, other]
-                              description: >-
-                                Only `divergence`, `outlier_storm` and `other` are currently
-                                emitted by the automated freeze mapper. `manual` is reserved for
-                                a genuinely operator-initiated freeze (no automated writer exists
-                                yet); `single_source` is reserved for a single-source deviation
-                                freeze, which the current mapper folds into `outlier_storm`.
-                            frozen_value:        { type: string }
-                            recovered_at:        { type: [string, "null"], format: date-time }
-                            recovered_at_ledger: { type: [integer, "null"], format: int64 }
-                            firing:              { type: boolean }
-                            detail:              { type: object }
-                            hold_until:
-                              type: [string, "null"]
-                              format: date-time
-                              description: >-
-                                When the current ADR-0019 hold segment expires and the
-                                freeze re-evaluates (release / extend / escalate). `null`
-                                on a freeze recorded before the lifecycle columns existed.
-                            escalated:
-                              type: [boolean, "null"]
-                              description: >-
-                                True once the extension ladder has run out and the freeze
-                                is awaiting operator review — it does NOT auto-clear on its
-                                own; only `stellarindex-ops freeze-unfreeze` releases it.
-                                `null` on a freeze recorded before the lifecycle columns
-                                existed.
-                      daily:
-                        type: [array, "null"]
-                        description: >-
-                          Per-(UTC day, reason) freeze tally over the same
-                          window as reason_tally — only populated when
-                          `?include=daily` was requested. `null` means "not
-                          requested"; `[]` means "requested, zero freezes in
-                          the window". Days with zero freezes carry no
-                          entries.
-                        items:
-                          type: object
-                          properties:
-                            day:    { type: string, format: date }
-                            reason: { type: string }
-                            count:  { type: integer, format: int64 }
+                      data:
+                        type: object
+                        properties:
+                          firing_count: { type: integer }
+                          reason_tally:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                reason: { type: string }
+                                count:  { type: integer, format: int64 }
+                          events:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                asset_id:            { type: string }
+                                quote_id:            { type: string }
+                                frozen_at:           { type: string, format: date-time }
+                                frozen_at_ledger:    { type: integer, format: int64 }
+                                reason:
+                                  type: string
+                                  enum: [single_source, divergence, outlier_storm, manual, other]
+                                  description: >-
+                                    Only `divergence`, `outlier_storm` and `other` are currently
+                                    emitted by the automated freeze mapper. `manual` is reserved for
+                                    a genuinely operator-initiated freeze (no automated writer exists
+                                    yet); `single_source` is reserved for a single-source deviation
+                                    freeze, which the current mapper folds into `outlier_storm`.
+                                frozen_value:        { type: string }
+                                recovered_at:        { type: [string, "null"], format: date-time }
+                                recovered_at_ledger: { type: [integer, "null"], format: int64 }
+                                firing:              { type: boolean }
+                                detail:              { type: object }
+                                hold_until:
+                                  type: [string, "null"]
+                                  format: date-time
+                                  description: >-
+                                    When the current ADR-0019 hold segment expires and the
+                                    freeze re-evaluates (release / extend / escalate). `null`
+                                    on a freeze recorded before the lifecycle columns existed.
+                                escalated:
+                                  type: [boolean, "null"]
+                                  description: >-
+                                    True once the extension ladder has run out and the freeze
+                                    is awaiting operator review — it does NOT auto-clear on its
+                                    own; only `stellarindex-ops freeze-unfreeze` releases it.
+                                    `null` on a freeze recorded before the lifecycle columns
+                                    existed.
+                          daily:
+                            type: [array, "null"]
+                            description: >-
+                              Per-(UTC day, reason) freeze tally over the same
+                              window as reason_tally — only populated when
+                              `?include=daily` was requested. `null` means "not
+                              requested"; `[]` means "requested, zero freezes in
+                              the window". Days with zero freezes carry no
+                              entries.
+                            items:
+                              type: object
+                              properties:
+                                day:    { type: string, format: date }
+                                reason: { type: string }
+                                count:  { type: integer, format: int64 }
         "400": { $ref: "#/components/responses/BadRequest" }
 
   /divergence:
@@ -3498,26 +3513,28 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      observations:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            asset_id:           { type: string }
-                            quote_id:           { type: string }
-                            reference:          { type: string, enum: [chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band, synthetic-usd-cross] }
-                            observed_at:        { type: string, format: date-time }
-                            observed_at_ledger: { type: integer, format: int64 }
-                            our_price:          { type: string }
-                            ref_price:          { type: string }
-                            delta_pct:          { type: string }
-                            status:             { type: string, enum: [clear, firing] }
-                            ref_observed_at:    { type: [string, "null"], format: date-time, description: "When the reference observed `ref_price` (oracle round time, CoinGecko last_updated_at, on-chain ledger close). `observed_at` is the comparison time, so their difference is the reference's age when compared, at most 1h (76h for fiat/fiat FX pairs, whose quotes pause over market closes). Null on rows recorded before the reference time was stored." }
+                      data:
+                        type: object
+                        properties:
+                          observations:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                asset_id:           { type: string }
+                                quote_id:           { type: string }
+                                reference:          { type: string, enum: [chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band, synthetic-usd-cross] }
+                                observed_at:        { type: string, format: date-time }
+                                observed_at_ledger: { type: integer, format: int64 }
+                                our_price:          { type: string }
+                                ref_price:          { type: string }
+                                delta_pct:          { type: string }
+                                status:             { type: string, enum: [clear, firing] }
+                                ref_observed_at:    { type: [string, "null"], format: date-time, description: "When the reference observed `ref_price` (oracle round time, CoinGecko last_updated_at, on-chain ledger close). `observed_at` is the comparison time, so their difference is the reference's age when compared, at most 1h (76h for fiat/fiat FX pairs, whose quotes pause over market closes). Null on rows recorded before the reference time was stored." }
         "400": { $ref: "#/components/responses/BadRequest" }
 
   /divergence/series:
@@ -3582,42 +3599,44 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      asset_id:       { type: string }
-                      quote_id:       { type: string }
-                      reference:      { type: string, enum: [chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band, synthetic-usd-cross] }
-                      days:           { type: integer }
-                      bucket_seconds:
-                        type: integer
-                        description: >-
-                          Downsampling bucket width. Each point is the last
-                          observation inside its bucket; render the series at
-                          this resolution, not as raw ticks.
-                      threshold_pct:
-                        type: number
-                        description: >-
-                          The operator's divergence alert threshold (percent) —
-                          the same number the worker fires on. Omitted when
-                          unconfigured; draw no band in that case.
-                      points:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            t:         { type: string, format: date-time }
-                            delta_pct: { type: string }
-                            our_price: { type: string }
-                            ref_price: { type: string }
-                            firing:
-                              type: boolean
-                              description: >-
-                                True when ANY observation in the bucket breached
-                                its threshold at observation time. Omitted when
-                                false.
+                      data:
+                        type: object
+                        properties:
+                          asset_id:       { type: string }
+                          quote_id:       { type: string }
+                          reference:      { type: string, enum: [chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band, synthetic-usd-cross] }
+                          days:           { type: integer }
+                          bucket_seconds:
+                            type: integer
+                            description: >-
+                              Downsampling bucket width. Each point is the last
+                              observation inside its bucket; render the series at
+                              this resolution, not as raw ticks.
+                          threshold_pct:
+                            type: number
+                            description: >-
+                              The operator's divergence alert threshold (percent) —
+                              the same number the worker fires on. Omitted when
+                              unconfigured; draw no band in that case.
+                          points:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                t:         { type: string, format: date-time }
+                                delta_pct: { type: string }
+                                our_price: { type: string }
+                                ref_price: { type: string }
+                                firing:
+                                  type: boolean
+                                  description: >-
+                                    True when ANY observation in the bucket breached
+                                    its threshold at observation time. Omitted when
+                                    false.
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
 
@@ -3742,6 +3761,9 @@ paths:
             unknown name returns 400 `unknown-source` rather
             than an empty 200 (avoids the silent-empty-page
             anti-pattern). Mutually exclusive with `asset`.
+            Each row's volume, trade count and last price are
+            that source's own; the pair-wide `sparkline` and
+            `inception` enrichments are omitted.
           schema: { type: string }
         - name: asset
           in: query
@@ -5381,6 +5403,7 @@ paths:
                   lake_complete_sources: 15
                   network: pubnet
                   not_applicable_sources: []
+                  lagging_sources: []
                   total_sources: 15
                 as_of: '2026-07-03T22:38:20.564931481Z'
                 flags:
@@ -5396,7 +5419,7 @@ paths:
                     properties:
                       data:
                         type: object
-                        required: [sources, recognition, complete_sources, lake_complete_sources, total_sources, network, not_applicable_sources, unverified_sources]
+                        required: [sources, recognition, complete_sources, lake_complete_sources, total_sources, network, not_applicable_sources, unverified_sources, lagging_sources]
                         properties:
                           sources:
                             type: array
@@ -5587,6 +5610,21 @@ paths:
                               required: [source, reason]
                               properties:
                                 source: { type: string }
+                                reason: { type: string }
+                          lagging_sources:
+                            type: array
+                            description: >-
+                              Sources whose verdict `tip_ledger` is below the newest source verdict's
+                              tip: the latest audit run wrote no verdict for them (it stopped before
+                              reaching them, or they errored), so the totals above combine verdicts
+                              from more than one run. They still count at their earlier verdict.
+                              Empty when one run wrote every source's row.
+                            items:
+                              type: object
+                              required: [source, tip_ledger, reason]
+                              properties:
+                                source: { type: string }
+                                tip_ledger: { type: integer, format: int64 }
                                 reason: { type: string }
         "503":
           description: No completeness reader wired on this deployment.
@@ -6399,47 +6437,49 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      window_days: { type: integer }
-                      buckets:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            day:     { type: string, format: date }
-                            ledgers: { type: integer, format: int64 }
-                            txs:     { type: integer, format: int64 }
-                            ops:     { type: integer, format: int64 }
-                            events:  { type: integer, format: int64 }
-                            fee_pool:
-                              type: string
-                              description: >-
-                                Cumulative network fee pool at the day's last
-                                ledger, in stroops (decimal string — exceeds
-                                2^53). Daily fee burn = the delta between
-                                consecutive COMPLETE days.
-                            total_coins:
-                              type: string
-                              description: >-
-                                Total XLM in existence at the day's last
-                                ledger, in stroops (decimal string — exceeds
-                                2^53).
-                            protocol_version:
-                              type: integer
-                              description: Protocol version in force at the day's last ledger.
-                            partial:
-                              type: boolean
-                              description: >-
-                                True when this bucket does not cover a whole UTC
-                                day — in practice only today, which is still
-                                accumulating. Render it distinctly and EXCLUDE it
-                                from window totals; every other bucket is a
-                                complete day (the window is day-aligned).
-                                Omitted when false.
+                      data:
+                        type: object
+                        properties:
+                          window_days: { type: integer }
+                          buckets:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                day:     { type: string, format: date }
+                                ledgers: { type: integer, format: int64 }
+                                txs:     { type: integer, format: int64 }
+                                ops:     { type: integer, format: int64 }
+                                events:  { type: integer, format: int64 }
+                                fee_pool:
+                                  type: string
+                                  description: >-
+                                    Cumulative network fee pool at the day's last
+                                    ledger, in stroops (decimal string — exceeds
+                                    2^53). Daily fee burn = the delta between
+                                    consecutive COMPLETE days.
+                                total_coins:
+                                  type: string
+                                  description: >-
+                                    Total XLM in existence at the day's last
+                                    ledger, in stroops (decimal string — exceeds
+                                    2^53).
+                                protocol_version:
+                                  type: integer
+                                  description: Protocol version in force at the day's last ledger.
+                                partial:
+                                  type: boolean
+                                  description: >-
+                                    True when this bucket does not cover a whole UTC
+                                    day — in practice only today, which is still
+                                    accumulating. Render it distinctly and EXCLUDE it
+                                    from window totals; every other bucket is a
+                                    complete day (the window is day-aligned).
+                                    Omitted when false.
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /methodology:
@@ -6531,6 +6571,11 @@ paths:
         `source_classes`. Operators consult this endpoint to confirm a
         venue is recognised before debugging an absence in /v1/markets
         or /v1/vwap.
+
+        Scoped to the running network: on testnet and futurenet only
+        sources that exist there are listed (the pubnet-anchored
+        protocol decoders and the off-chain price feeds are omitted).
+        Pubnet lists the whole registry.
       parameters:
         - name: class
           in: query
@@ -6614,8 +6659,9 @@ paths:
 
         Served from a 15-second background-refreshed snapshot;
         `Cache-Control` is `private, no-cache` accordingly. Unknown
-        source names 404 (the registry is static per deploy — see
-        `/v1/sources` for the catalogue).
+        source names, and sources `/v1/sources` omits on this network,
+        404 (the registry is static per deploy — see `/v1/sources` for
+        the catalogue).
       parameters:
         - name: name
           in: path
@@ -6697,6 +6743,9 @@ paths:
         `kind=router` entries only — vault entries always report
         zero routed trades (their capital state lives on the
         protocol surfaces, not per-tx flow).
+
+        Empty on testnet and futurenet: every registry entry is a
+        pubnet contract.
 
         A router call observed as a SUB-INVOCATION (some other
         contract called the router as part of its own authorized
@@ -6805,12 +6854,14 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    additionalProperties: { type: string }
-                    description: SAC C-strkey → "CODE-ISSUER" or "native".
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        additionalProperties: { type: string }
+                        description: SAC C-strkey → "CODE-ISSUER" or "native".
         "500": { $ref: "#/components/responses/InternalError" }
 
   /rwa/assets:
@@ -7351,10 +7402,12 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                required: [data]
-                properties:
-                  data: { $ref: "#/components/schemas/RWAAssetsView" }
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/RWAAssetsView" }
         "500": { $ref: "#/components/responses/InternalError" }
 
   /rwa/history:
@@ -7479,10 +7532,12 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                required: [data]
-                properties:
-                  data: { $ref: "#/components/schemas/RWAHistoryView" }
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/RWAHistoryView" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503":
@@ -7635,10 +7690,12 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                required: [data]
-                properties:
-                  data: { $ref: "#/components/schemas/RWAPremiumHistoryView" }
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/RWAPremiumHistoryView" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503":
@@ -8111,6 +8168,8 @@ paths:
         Customer-tier callers need no header. A `/v1/signup` key's
         email-verification stamp carries over to the child, so rotated
         keys keep working under `signup_require_email_verification`.
+        Only `apikey` and `operator` callers may mint; a SEP-10 token
+        gets 403.
       security:
         - APIKeyAuth: []
       parameters:
@@ -8165,8 +8224,9 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
           description: |
-            The caller authenticated with a SEP-10 token; API keys are
-            not issued to SEP-10 subjects (`key-mint-not-available`).
+            Caller is not an account tier (`apikey` or `operator`):
+            a SEP-10 wallet token gets `key-mint-not-available`, any
+            other non-account credential `account-tier-required`.
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -10653,13 +10713,15 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      ledgers: { type: array, items: { $ref: "#/components/schemas/Ledger" } }
-                      next_before: { type: integer }
+                      data:
+                        type: object
+                        properties:
+                          ledgers: { type: array, items: { $ref: "#/components/schemas/Ledger" } }
+                          next_before: { type: integer }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /ledgers/{seq}:
@@ -10704,8 +10766,10 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties: { data: { $ref: "#/components/schemas/Ledger" } }
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties: { data: { $ref: "#/components/schemas/Ledger" } }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { description: Ledger not in the indexed range. }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -10724,7 +10788,7 @@ paths:
         A valid but empty ledger returns an empty array. `total` is the
         ledger's exact transaction count from its header; `truncated` is
         true when `total` exceeds the returned page (raise `limit` or
-        fetch `/v1/operations?ledger=` for the rest).
+        fetch `/v1/ledgers/{seq}/operations` for the rest).
       parameters:
         - { name: seq, in: path, required: true, schema: { type: integer }, example: 63000000 }
         - { name: limit, in: query, description: "Maximum transactions to return (1-1000, default 200).", schema: { type: integer, minimum: 1, maximum: 1000, default: 200 } }
@@ -10758,15 +10822,95 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      ledger: { type: integer }
-                      transactions: { type: array, items: { $ref: "#/components/schemas/TxSummary" } }
-                      total: { type: integer, description: "Exact transaction count for this ledger, from its header." }
-                      truncated: { type: boolean, description: "True when total exceeds the returned page." }
+                      data:
+                        type: object
+                        properties:
+                          ledger: { type: integer }
+                          transactions: { type: array, items: { $ref: "#/components/schemas/TxSummary" } }
+                          total: { type: integer, description: "Exact transaction count for this ledger, from its header." }
+                          truncated: { type: boolean, description: "True when total exceeds the returned page." }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /ledgers/{seq}/operations:
+    get:
+      operationId: getLedgerOperations
+      x-stability: experimental
+      tags: [explorer]
+      summary: Operations in a ledger, decoded.
+      description: |
+        Every operation applied in ledger `seq`, each decoded from XDR
+        (partition-pruned). Includes the decoded body (`fields` / `raw_xdr`).
+        `total` is the ledger's exact operation count from its header;
+        `truncated` is true when `total` exceeds the returned page (raise
+        `limit` for the rest).
+      parameters:
+        - { name: seq, in: path, required: true, schema: { type: integer }, example: 63000000 }
+        - { name: limit, in: query, description: "Maximum operations to return (1-2000, default 500).", schema: { type: integer, minimum: 1, maximum: 2000, default: 500 } }
+      responses:
+        "200":
+          description: The ledger's operations.
+          content:
+            application/json:
+              example:
+                data:
+                  ledger: 63316166
+                  operations:
+                  - ledger: 63316166
+                    close_time: '2026-07-03T22:37:01Z'
+                    tx_hash: 5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a
+                    tx_index: 0
+                    op_index: 0
+                    type: payment
+                    source_account: GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP
+                    fields:
+                      amount: '26000000000000'
+                      asset: XLM26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL
+                      destination: GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV
+                  - ledger: 63316166
+                    close_time: '2026-07-03T22:37:01Z'
+                    tx_hash: 5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a
+                    tx_index: 0
+                    op_index: 1
+                    type: payment
+                    source_account: GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP
+                    fields:
+                      amount: '2600000000000'
+                      asset: XRP26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL
+                      destination: GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV
+                  total: 2
+                  truncated: false
+                as_of: '2026-07-03T22:40:10.560512468Z'
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          ledger: { type: integer }
+                          operations: { type: array, items: { $ref: "#/components/schemas/Operation" } }
+                          coverage_note:
+                            type: string
+                            description: |
+                              Present ONLY when the parent-transaction outcome read
+                              failed: operations without `transaction_successful` are
+                              then of UNKNOWN outcome (possibly a FAILED transaction),
+                              not applied. Absent = every operation carries its true
+                              transaction outcome.
+                          total: { type: integer, description: "Exact operation count for this ledger, from its header." }
+                          truncated: { type: boolean, description: "True when total exceeds the returned page." }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /tx/{hash}:
@@ -10819,8 +10963,10 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties: { data: { $ref: "#/components/schemas/TxDetail" } }
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties: { data: { $ref: "#/components/schemas/TxDetail" } }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { description: No transaction with that hash in the indexed range. }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -10830,47 +10976,32 @@ paths:
       operationId: listOperations
       x-stability: experimental
       tags: [explorer]
-      summary: Operations — a ledger's ops, or the network-wide recent directory.
+      summary: Operations — the network-wide recent directory.
       description: |
-        Two shapes on one route:
+        The network-wide recent-operations DIRECTORY: newest first,
+        keyset-paged via `?cursor=<opaque>` (echo back `next_cursor`;
+        composite `ledger.tx_index.op_index`), plus `op_type_stats` — the
+        per-op-type counts over the trailing ~24h of ledgers (first page
+        only). `?limit=` up to 200, default 50. This is a **summary** shape:
+        each op carries its identity + `type` but NOT the decoded body
+        (`fields` / `raw_xdr` are omitted) — decoding every op's body over the
+        multi-billion-row lake made the directory ~10× slower. Fetch the full
+        decoded op from `/v1/ledgers/{seq}/operations` or `/v1/tx/{hash}`.
 
-        - **`?ledger=<seq>`** — that ledger's operations, each decoded from XDR
-          (partition-pruned; `?limit=` up to 2000, default 500). Includes the
-          decoded body (`fields` / `raw_xdr`).
-        - **no `?ledger`** — the network-wide recent-operations DIRECTORY:
-          newest first, keyset-paged via `?cursor=<opaque>` (echo back
-          `next_cursor`; composite `ledger.tx_index.op_index`), plus
-          `op_type_stats` — the per-op-type counts over the trailing ~24h of
-          ledgers (first page only). `?limit=` up to 200, default 50. This is a
-          **summary** shape: each op carries its identity + `type` but NOT the
-          decoded body (`fields` / `raw_xdr` are omitted) — decoding every op's
-          body over the multi-billion-row lake made the directory ~10× slower.
-          Fetch the full decoded op from the per-ledger form above or
-          `/v1/tx/{hash}`.
+        A `ledger` query parameter is refused with 400: one ledger's
+        operations are `GET /v1/ledgers/{seq}/operations` (ADR-0018).
       parameters:
-        - { name: ledger, in: query, description: Ledger sequence. Omit for the network-wide recent directory., schema: { type: integer } }
-        - { name: cursor, in: query, description: Opaque keyset cursor (directory mode only)., schema: { type: string } }
-        - { name: limit, in: query, description: "Page size. Mode-dependent bounds — per-ledger mode: default 500, cap 2000; directory mode: default 50, cap 200.", schema: { type: integer, minimum: 1, maximum: 2000 } }
+        - { name: cursor, in: query, description: Opaque keyset cursor for the next older page., schema: { type: string } }
+        - { name: limit, in: query, description: "Page size: default 50, cap 200 (400 above).", schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
       responses:
         "200":
-          description: Decoded operations (ledger-scoped or the recent directory).
+          description: The recent-operations directory page.
           content:
             application/json:
               example:
                 data:
-                  ledger: 63316166
+                  ledger: 0
                   operations:
-                  - ledger: 63316166
-                    close_time: '2026-07-03T22:37:01Z'
-                    tx_hash: 5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a
-                    tx_index: 0
-                    op_index: 0
-                    type: payment
-                    source_account: GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP
-                    fields:
-                      amount: '26000000000000'
-                      asset: XLM26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL
-                      destination: GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV
                   - ledger: 63316166
                     close_time: '2026-07-03T22:37:01Z'
                     tx_hash: 5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a
@@ -10878,10 +11009,14 @@ paths:
                     op_index: 1
                     type: payment
                     source_account: GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP
-                    fields:
-                      amount: '2600000000000'
-                      asset: XRP26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL
-                      destination: GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV
+                  - ledger: 63316166
+                    close_time: '2026-07-03T22:37:01Z'
+                    tx_hash: 5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a
+                    tx_index: 0
+                    op_index: 0
+                    type: payment
+                    source_account: GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP
+                  next_cursor: '63316166.0.0'
                 as_of: '2026-07-03T22:40:10.560512468Z'
                 flags:
                   stale: false
@@ -10890,36 +11025,32 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      ledger: { type: integer, description: "The ledger (ledger-scoped mode); 0 in directory mode." }
-                      operations: { type: array, items: { $ref: "#/components/schemas/Operation" } }
-                      next_cursor: { type: string, description: "Directory mode: opaque cursor for the next older page; absent on the last page." }
-                      op_type_stats:
-                        type: array
-                        description: "Directory mode, first page only: per-op-type counts over the trailing ~24h."
-                        items:
-                          type: object
-                          properties:
-                            type:  { type: string }
-                            count: { type: integer, format: int64 }
-                      coverage_note:
-                        type: string
-                        description: |
-                          Present ONLY when the parent-transaction outcome read
-                          failed: operations without `transaction_successful` are
-                          then of UNKNOWN outcome (possibly a FAILED transaction),
-                          not applied. Absent = every operation carries its true
-                          transaction outcome.
-                      total:
-                        type: integer
-                        description: "Ledger-scoped mode only: the ledger's exact operation count from its header. Absent in directory mode, which pages instead."
-                      truncated:
-                        type: boolean
-                        description: "Ledger-scoped mode only: true when total exceeds len(operations) — the page was cut at ?limit= with no cursor to continue. Absent in directory mode."
+                      data:
+                        type: object
+                        properties:
+                          ledger: { type: integer, description: "Always 0: the directory spans ledgers." }
+                          operations: { type: array, items: { $ref: "#/components/schemas/Operation" } }
+                          next_cursor: { type: string, description: "Opaque cursor for the next older page; absent on the last page." }
+                          op_type_stats:
+                            type: array
+                            description: "First page only: per-op-type counts over the trailing ~24h."
+                            items:
+                              type: object
+                              properties:
+                                type:  { type: string }
+                                count: { type: integer, format: int64 }
+                          coverage_note:
+                            type: string
+                            description: |
+                              Present ONLY when the parent-transaction outcome read
+                              failed: operations without `transaction_successful` are
+                              then of UNKNOWN outcome (possibly a FAILED transaction),
+                              not applied. Absent = every operation carries its true
+                              transaction outcome.
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -10974,23 +11105,25 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      window_days: { type: integer }
-                      since_ledger: { type: integer, format: int64 }
-                      contracts:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            contract_id: { type: string }
-                            events: { type: integer, format: int64 }
-                            last_ledger: { type: integer, format: int64 }
-                            last_seen: { type: string, format: date-time }
-                            protocol: { type: string, description: Owning protocol when attributed; absent otherwise. }
+                      data:
+                        type: object
+                        properties:
+                          window_days: { type: integer }
+                          since_ledger: { type: integer, format: int64 }
+                          contracts:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                contract_id: { type: string }
+                                events: { type: integer, format: int64 }
+                                last_ledger: { type: integer, format: int64 }
+                                last_seen: { type: string, format: date-time }
+                                protocol: { type: string, description: Owning protocol when attributed; absent otherwise. }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -11046,40 +11179,42 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      contract_id: { type: string }
-                      protocol: { type: string, description: "Registry protocol this contract belongs to (blend, soroswap, …) when attribution is known; absent otherwise." }
-                      events: { type: array, items: { $ref: "#/components/schemas/ContractActivityEvent" } }
-                      next_cursor: { type: string, description: Opaque cursor for the next (older) page; absent on the last page. }
-                      directory: { $ref: "#/components/schemas/DirectoryInfo" }
-                      directory_unavailable: { type: boolean, description: "True when the directory read failed, so an absent `directory` means the contract was NOT checked (a malicious/unsafe label may exist), not that it is unlisted. Omitted on a successful read." }
-                      activity:
+                      data:
                         type: object
-                        description: Liveness card — lifetime bounds + a 30-day daily active-ledger series. Absent when the activity index isn't provisioned.
                         properties:
-                          first_seen: { type: string, format: date-time }
-                          last_seen: { type: string, format: date-time }
-                          active_ledgers_total: { type: integer, format: int64 }
-                          daily:
-                            type: array
-                            items:
-                              type: object
-                              properties:
-                                date: { type: string }
-                                active_ledgers: { type: integer, format: int64 }
-                      exists:
-                        type: boolean
-                        description: |
-                          `false` (still 200, as on `/accounts/{account_id}`) when the lake holds no
-                          evidence the contract was ever deployed — no events, no activity, no
-                          captured instance entry or TTL row: "no such contract / not yet
-                          captured". Absent when the instance read failed and no event evidence
-                          decides it.
-                      ttl: { $ref: "#/components/schemas/ContractTTL" }
+                          contract_id: { type: string }
+                          protocol: { type: string, description: "Registry protocol this contract belongs to (blend, soroswap, …) when attribution is known; absent otherwise." }
+                          events: { type: array, items: { $ref: "#/components/schemas/ContractActivityEvent" } }
+                          next_cursor: { type: string, description: Opaque cursor for the next (older) page; absent on the last page. }
+                          directory: { $ref: "#/components/schemas/DirectoryInfo" }
+                          directory_unavailable: { type: boolean, description: "True when the directory read failed, so an absent `directory` means the contract was NOT checked (a malicious/unsafe label may exist), not that it is unlisted. Omitted on a successful read." }
+                          activity:
+                            type: object
+                            description: Liveness card — lifetime bounds + a 30-day daily active-ledger series. Absent when the activity index isn't provisioned.
+                            properties:
+                              first_seen: { type: string, format: date-time }
+                              last_seen: { type: string, format: date-time }
+                              active_ledgers_total: { type: integer, format: int64 }
+                              daily:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    date: { type: string }
+                                    active_ledgers: { type: integer, format: int64 }
+                          exists:
+                            type: boolean
+                            description: |
+                              `false` (still 200, as on `/accounts/{account_id}`) when the lake holds no
+                              evidence the contract was ever deployed — no events, no activity, no
+                              captured instance entry or TTL row: "no such contract / not yet
+                              captured". Absent when the instance read failed and no event evidence
+                              decides it.
+                          ttl: { $ref: "#/components/schemas/ContractTTL" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -11157,29 +11292,31 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    required: [contract_id, wasm_hash, size_bytes, exports, source_note]
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      contract_id: { type: string, description: C-strkey contract id (echoed). }
-                      wasm_hash: { type: string, description: Hex sha256 of the wasm module (content address). }
-                      size_bytes: { type: integer, description: Size of the wasm module in bytes. }
-                      exports:
-                        type: array
-                        description: Exported functions — the contract's public entry points.
-                        items:
-                          type: object
-                          required: [name, params, results]
-                          properties:
-                            name: { type: string, description: Exported function name. }
-                            params: { type: array, items: { type: string }, description: "Wasm ABI param value types (i32/i64/f32/f64)." }
-                            results: { type: array, items: { type: string }, description: Wasm ABI result value types. }
-                      wat: { type: string, description: WAT disassembly; absent when wabt isn't installed on the server. }
-                      decompiled: { type: string, description: "wasm-decompile pseudocode (C-like, NOT Rust); absent when wabt isn't installed." }
-                      source_note: { type: string, description: "Provenance + any degraded-stage explanation; leads with `ARCHIVED:` when the instance's TTL has lapsed." }
-                      ttl: { $ref: "#/components/schemas/ContractTTL" }
+                      data:
+                        type: object
+                        required: [contract_id, wasm_hash, size_bytes, exports, source_note]
+                        properties:
+                          contract_id: { type: string, description: C-strkey contract id (echoed). }
+                          wasm_hash: { type: string, description: Hex sha256 of the wasm module (content address). }
+                          size_bytes: { type: integer, description: Size of the wasm module in bytes. }
+                          exports:
+                            type: array
+                            description: Exported functions — the contract's public entry points.
+                            items:
+                              type: object
+                              required: [name, params, results]
+                              properties:
+                                name: { type: string, description: Exported function name. }
+                                params: { type: array, items: { type: string }, description: "Wasm ABI param value types (i32/i64/f32/f64)." }
+                                results: { type: array, items: { type: string }, description: Wasm ABI result value types. }
+                          wat: { type: string, description: WAT disassembly; absent when wabt isn't installed on the server. }
+                          decompiled: { type: string, description: "wasm-decompile pseudocode (C-like, NOT Rust); absent when wabt isn't installed." }
+                          source_note: { type: string, description: "Provenance + any degraded-stage explanation; leads with `ARCHIVED:` when the instance's TTL has lapsed." }
+                          ttl: { $ref: "#/components/schemas/ContractTTL" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -11236,39 +11373,41 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      contract_id: { type: string }
-                      window_days: { type: integer }
-                      since_ledger: { type: integer, format: int64 }
-                      interactions:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            contract_id: { type: string }
-                            shared_txs:
-                              type: integer
-                              format: int64
-                              description: >-
-                                Number of DISTINCT transactions in which this
-                                contract and the subject both emitted events,
-                                within the query window.
+                      data:
+                        type: object
+                        properties:
+                          contract_id: { type: string }
+                          window_days: { type: integer }
+                          since_ledger: { type: integer, format: int64 }
+                          interactions:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                contract_id: { type: string }
+                                shared_txs:
+                                  type: integer
+                                  format: int64
+                                  description: >-
+                                    Number of DISTINCT transactions in which this
+                                    contract and the subject both emitted events,
+                                    within the query window.
 
 
-                                Corrected 2026-07-25 (audit DAT-10 / DAT-11):
-                                this previously counted co-occurring EVENTS
-                                rather than transactions, so a contract emitting
-                                many events inside one shared transaction scored
-                                its event count. It also double-counted rows from
-                                a retried partial flush that the ReplacingMergeTree
-                                had not yet merged. Values are therefore LOWER
-                                than before for busy pairs — the old figure was an
-                                event count wearing a transaction count's name.
-                            protocol: { type: string, description: Owning protocol when attributed; absent otherwise. }
+                                    Corrected 2026-07-25 (audit DAT-10 / DAT-11):
+                                    this previously counted co-occurring EVENTS
+                                    rather than transactions, so a contract emitting
+                                    many events inside one shared transaction scored
+                                    its event count. It also double-counted rows from
+                                    a retried partial flush that the ReplacingMergeTree
+                                    had not yet merged. Values are therefore LOWER
+                                    than before for busy pairs — the old figure was an
+                                    event count wearing a transaction count's name.
+                                protocol: { type: string, description: Owning protocol when attributed; absent otherwise. }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -11306,20 +11445,22 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      contract_id: { type: string }
-                      versions:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            ledger: { type: integer, format: int64 }
-                            close_time: { type: string, format: date-time }
-                            wasm_hash: { type: string }
+                      data:
+                        type: object
+                        properties:
+                          contract_id: { type: string }
+                          versions:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                ledger: { type: integer, format: int64 }
+                                close_time: { type: string, format: date-time }
+                                wasm_hash: { type: string }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -11385,25 +11526,27 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      priced_assets: { type: integer, description: "Number of assets that contributed a USD price. 0 on the native_xlm basis." }
-                      ranked_by: { type: string, enum: [usd, native_xlm], description: "Wealth basis for this ranking. usd = holdings valued in USD; native_xlm = ranked by native XLM balance (unpriced networks)." }
-                      accounts:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            account_id: { type: string }
-                            value: { type: string, description: "Ranked wealth in the ranked_by unit — USD dollars (2dp) or whole XLM (decimal string, exact to the stroop, up to 7 decimals)." }
-                            usd_value: { type: string, description: "Backward-compatible alias, populated only on the usd basis (equals value there); omitted on native_xlm." }
-                            locked: { type: boolean, description: "Provably unspendable burn address — master weight 0, all thresholds 0, no signers. The balance is real; no key can move it." }
-                      as_of_ledger: { type: integer, format: int64, description: "The ranking snapshot's vintage (ADR-0041): the lake watermark read immediately before the snapshot's scan, paired with the envelope as_of. Omitted when no watermark was available. Pairs with flags.stale." }
-                      lower_bound: { type: boolean, description: "Always true: each value counts only the holding domains coverage_note names, so it can under-state an account, never over-state it." }
-                      coverage_note: { type: string, description: "The holding domains the ranking counts and the ones it excludes (claimable balances, liquidity-pool shares, Soroban contract and SAC balances)." }
+                      data:
+                        type: object
+                        properties:
+                          priced_assets: { type: integer, description: "Number of assets that contributed a USD price. 0 on the native_xlm basis." }
+                          ranked_by: { type: string, enum: [usd, native_xlm], description: "Wealth basis for this ranking. usd = holdings valued in USD; native_xlm = ranked by native XLM balance (unpriced networks)." }
+                          accounts:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                account_id: { type: string }
+                                value: { type: string, description: "Ranked wealth in the ranked_by unit — USD dollars (2dp) or whole XLM (decimal string, exact to the stroop, up to 7 decimals)." }
+                                usd_value: { type: string, description: "Backward-compatible alias, populated only on the usd basis (equals value there); omitted on native_xlm." }
+                                locked: { type: boolean, description: "Provably unspendable burn address — master weight 0, all thresholds 0, no signers. The balance is real; no key can move it." }
+                          as_of_ledger: { type: integer, format: int64, description: "The ranking snapshot's vintage (ADR-0041): the lake watermark read immediately before the snapshot's scan, paired with the envelope as_of. Omitted when no watermark was available. Pairs with flags.stale." }
+                          lower_bound: { type: boolean, description: "Always true: each value counts only the holding domains coverage_note names, so it can under-state an account, never over-state it." }
+                          coverage_note: { type: string, description: "The holding domains the ranking counts and the ones it excludes (claimable balances, liquidity-pool shares, Soroban contract and SAC balances)." }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /directory:
@@ -11452,16 +11595,18 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    required: [entries]
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      entries:
+                      data:
                         type: object
-                        description: Address → label, present addresses only; always an object, never null.
-                        additionalProperties: { $ref: "#/components/schemas/DirectoryInfo" }
+                        required: [entries]
+                        properties:
+                          entries:
+                            type: object
+                            description: Address → label, present addresses only; always an object, never null.
+                            additionalProperties: { $ref: "#/components/schemas/DirectoryInfo" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -11500,54 +11645,56 @@ paths:
                 as_of: "2026-08-08T19:45:00Z"
                 flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false, divergence_checked: false }
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    required: [totals, balances, concentration, wealth_histogram, trustline_histogram, computed_at]
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      totals:
+                      data:
                         type: object
+                        required: [totals, balances, concentration, wealth_histogram, trustline_histogram, computed_at]
                         properties:
-                          accounts: { type: integer, format: int64 }
-                          trustlines: { type: integer, format: int64 }
-                          trustline_holding_accounts: { type: integer, format: int64 }
-                          xlm_held_stroops: { type: string, description: "Total XLM held by funded accounts, stroops (ADR-0003 string)." }
-                      balances:
-                        type: object
-                        properties:
-                          avg_stroops: { type: string }
-                          median_stroops: { type: string }
-                          p90_stroops: { type: string }
-                          p99_stroops: { type: string }
-                      concentration:
-                        type: object
-                        properties:
-                          top100_xlm_stroops: { type: string }
-                          top100_share_pct: { type: number, description: Display convenience derived from the exact stroops figures. }
-                      wealth_histogram:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            bucket: { type: integer, description: "floor(log10(balance in XLM)), clamped to [-1, 10]." }
-                            accounts: { type: integer, format: int64 }
-                            xlm_stroops: { type: string }
-                      trustline_histogram:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            bucket: { type: string, description: 'Trustlines-per-account band: 0, 1, 2-5, 6-10, 11-50, or 50+.' }
-                            accounts: { type: integer, format: int64 }
-                      top_held_assets:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            asset: { type: string }
-                            holders: { type: integer, format: int64 }
-                      computed_at: { type: string, format: date-time, description: Rollup cycle timestamp — the snapshot's real age. }
+                          totals:
+                            type: object
+                            properties:
+                              accounts: { type: integer, format: int64 }
+                              trustlines: { type: integer, format: int64 }
+                              trustline_holding_accounts: { type: integer, format: int64 }
+                              xlm_held_stroops: { type: string, description: "Total XLM held by funded accounts, stroops (ADR-0003 string)." }
+                          balances:
+                            type: object
+                            properties:
+                              avg_stroops: { type: string }
+                              median_stroops: { type: string }
+                              p90_stroops: { type: string }
+                              p99_stroops: { type: string }
+                          concentration:
+                            type: object
+                            properties:
+                              top100_xlm_stroops: { type: string }
+                              top100_share_pct: { type: number, description: Display convenience derived from the exact stroops figures. }
+                          wealth_histogram:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                bucket: { type: integer, description: "floor(log10(balance in XLM)), clamped to [-1, 10]." }
+                                accounts: { type: integer, format: int64 }
+                                xlm_stroops: { type: string }
+                          trustline_histogram:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                bucket: { type: string, description: 'Trustlines-per-account band: 0, 1, 2-5, 6-10, 11-50, or 50+.' }
+                                accounts: { type: integer, format: int64 }
+                          top_held_assets:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                asset: { type: string }
+                                holders: { type: integer, format: int64 }
+                          computed_at: { type: string, format: date-time, description: Rollup cycle timestamp — the snapshot's real age. }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /accounts/creators:
@@ -11653,46 +11800,48 @@ paths:
                 as_of: "2026-09-15T12:42:19.255109004Z"
                 flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false, divergence_checked: false }
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    required: [creators, totals, coverage, computed_at]
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      creators:
-                        type: array
-                        items:
-                          type: object
-                          required: [rank, account, accounts_created, funded_stroops, live_accounts, live_stroops, first_ledger, last_ledger, first_created_at, last_created_at]
-                          properties:
-                            rank: { type: integer, description: "1-based position on the board, by accounts_created descending." }
-                            account: { type: string, description: The funding account's G-strkey. }
-                            accounts_created: { type: integer, format: int64, description: Successful CreateAccount operations this account was the source of. Immutable history. }
-                            funded_stroops: { type: string, description: "Sum of starting balances paid, stroops (ADR-0003 string). \"0\" is real — sponsored creations fund nothing." }
-                            live_accounts: { type: integer, format: int64, description: "Created accounts that still exist, as of computed_at." }
-                            live_stroops: { type: string, description: "Native XLM held by the surviving created set, stroops (ADR-0003 string). Point-in-time." }
-                            first_ledger: { type: integer, description: "First ledger this creator created an account in, inside the response's coverage span." }
-                            last_ledger: { type: integer, description: Last such ledger. }
-                            first_created_at: { type: string, format: date-time }
-                            last_created_at: { type: string, format: date-time }
-                      totals:
+                      data:
                         type: object
-                        description: Totals over the whole aggregation, not the returned page.
-                        required: [creators, accounts_created, live_accounts]
+                        required: [creators, totals, coverage, computed_at]
                         properties:
-                          creators: { type: integer, format: int64, description: Distinct funding accounts in the covered span. }
-                          accounts_created: { type: integer, format: int64 }
-                          live_accounts: { type: integer, format: int64 }
-                      coverage:
-                        type: object
-                        description: The ledger span the rollup actually aggregated. Data-derived (ADR-0031), not a constant.
-                        required: [from_ledger, thru_ledger, from_time, thru_time]
-                        properties:
-                          from_ledger: { type: integer }
-                          thru_ledger: { type: integer }
-                          from_time: { type: string, format: date-time }
-                          thru_time: { type: string, format: date-time }
-                      computed_at: { type: string, format: date-time, description: Rollup cycle timestamp — the snapshot's real age. }
+                          creators:
+                            type: array
+                            items:
+                              type: object
+                              required: [rank, account, accounts_created, funded_stroops, live_accounts, live_stroops, first_ledger, last_ledger, first_created_at, last_created_at]
+                              properties:
+                                rank: { type: integer, description: "1-based position on the board, by accounts_created descending." }
+                                account: { type: string, description: The funding account's G-strkey. }
+                                accounts_created: { type: integer, format: int64, description: Successful CreateAccount operations this account was the source of. Immutable history. }
+                                funded_stroops: { type: string, description: "Sum of starting balances paid, stroops (ADR-0003 string). \"0\" is real — sponsored creations fund nothing." }
+                                live_accounts: { type: integer, format: int64, description: "Created accounts that still exist, as of computed_at." }
+                                live_stroops: { type: string, description: "Native XLM held by the surviving created set, stroops (ADR-0003 string). Point-in-time." }
+                                first_ledger: { type: integer, description: "First ledger this creator created an account in, inside the response's coverage span." }
+                                last_ledger: { type: integer, description: Last such ledger. }
+                                first_created_at: { type: string, format: date-time }
+                                last_created_at: { type: string, format: date-time }
+                          totals:
+                            type: object
+                            description: Totals over the whole aggregation, not the returned page.
+                            required: [creators, accounts_created, live_accounts]
+                            properties:
+                              creators: { type: integer, format: int64, description: Distinct funding accounts in the covered span. }
+                              accounts_created: { type: integer, format: int64 }
+                              live_accounts: { type: integer, format: int64 }
+                          coverage:
+                            type: object
+                            description: The ledger span the rollup actually aggregated. Data-derived (ADR-0031), not a constant.
+                            required: [from_ledger, thru_ledger, from_time, thru_time]
+                            properties:
+                              from_ledger: { type: integer }
+                              thru_ledger: { type: integer }
+                              from_time: { type: string, format: date-time }
+                              thru_time: { type: string, format: date-time }
+                          computed_at: { type: string, format: date-time, description: Rollup cycle timestamp — the snapshot's real age. }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -11809,47 +11958,49 @@ paths:
                 as_of: "2026-09-15T12:42:19.034838873Z"
                 flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false, divergence_checked: false }
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    required: [sponsors, totals, coverage, computed_at]
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      sponsors:
-                        type: array
-                        items:
-                          type: object
-                          required: [rank, account, sponsorships_started, distinct_sponsored, revocations_issued, first_ledger, last_ledger, first_seen_at, last_seen_at]
-                          properties:
-                            rank: { type: integer, description: "1-based position, by sponsorships_started descending." }
-                            account: { type: string, description: The sponsoring account's G-strkey. }
-                            sponsorships_started: { type: integer, format: int64, description: "Sponsorship arrangements this account began. History, not a live count." }
-                            distinct_sponsored: { type: integer, format: int64, description: Distinct accounts those arrangements covered. }
-                            revocations_issued: { type: integer, format: int64, description: RevokeSponsorship operations sourced by this account. A LOWER BOUND on arrangements that ended. }
-                            first_ledger: { type: integer }
-                            last_ledger: { type: integer }
-                            first_seen_at: { type: string, format: date-time }
-                            last_seen_at: { type: string, format: date-time }
-                      totals:
+                      data:
                         type: object
-                        description: Totals over the whole aggregation, not the returned page.
-                        required: [sponsors, sponsorships_started, distinct_sponsored, revocations_issued]
+                        required: [sponsors, totals, coverage, computed_at]
                         properties:
-                          sponsors: { type: integer, format: int64 }
-                          sponsorships_started: { type: integer, format: int64 }
-                          distinct_sponsored: { type: integer, format: int64, description: "Distinct accounts sponsored across the WHOLE board, counted once each even if sponsored by more than one sponsor. NOT a sum of the per-row distinct_sponsored figures, which over-counts any account with multiple sponsors." }
-                          revocations_issued: { type: integer, format: int64 }
-                      coverage:
-                        type: object
-                        description: The ledger span the rollup aggregated. Data-derived (ADR-0031); its floor is protocol 14, where sponsorship began.
-                        required: [from_ledger, thru_ledger, from_time, thru_time, ambiguous_transactions]
-                        properties:
-                          from_ledger: { type: integer }
-                          thru_ledger: { type: integer }
-                          from_time: { type: string, format: date-time }
-                          thru_time: { type: string, format: date-time }
-                          ambiguous_transactions: { type: integer, format: int64, description: "Transactions with more than one distinct sponsor, excluded from attribution." }
-                      computed_at: { type: string, format: date-time, description: Rollup cycle timestamp — the snapshot's real age. }
+                          sponsors:
+                            type: array
+                            items:
+                              type: object
+                              required: [rank, account, sponsorships_started, distinct_sponsored, revocations_issued, first_ledger, last_ledger, first_seen_at, last_seen_at]
+                              properties:
+                                rank: { type: integer, description: "1-based position, by sponsorships_started descending." }
+                                account: { type: string, description: The sponsoring account's G-strkey. }
+                                sponsorships_started: { type: integer, format: int64, description: "Sponsorship arrangements this account began. History, not a live count." }
+                                distinct_sponsored: { type: integer, format: int64, description: Distinct accounts those arrangements covered. }
+                                revocations_issued: { type: integer, format: int64, description: RevokeSponsorship operations sourced by this account. A LOWER BOUND on arrangements that ended. }
+                                first_ledger: { type: integer }
+                                last_ledger: { type: integer }
+                                first_seen_at: { type: string, format: date-time }
+                                last_seen_at: { type: string, format: date-time }
+                          totals:
+                            type: object
+                            description: Totals over the whole aggregation, not the returned page.
+                            required: [sponsors, sponsorships_started, distinct_sponsored, revocations_issued]
+                            properties:
+                              sponsors: { type: integer, format: int64 }
+                              sponsorships_started: { type: integer, format: int64 }
+                              distinct_sponsored: { type: integer, format: int64, description: "Distinct accounts sponsored across the WHOLE board, counted once each even if sponsored by more than one sponsor. NOT a sum of the per-row distinct_sponsored figures, which over-counts any account with multiple sponsors." }
+                              revocations_issued: { type: integer, format: int64 }
+                          coverage:
+                            type: object
+                            description: The ledger span the rollup aggregated. Data-derived (ADR-0031); its floor is protocol 14, where sponsorship began.
+                            required: [from_ledger, thru_ledger, from_time, thru_time, ambiguous_transactions]
+                            properties:
+                              from_ledger: { type: integer }
+                              thru_ledger: { type: integer }
+                              from_time: { type: string, format: date-time }
+                              thru_time: { type: string, format: date-time }
+                              ambiguous_transactions: { type: integer, format: int64, description: "Transactions with more than one distinct sponsor, excluded from attribution." }
+                          computed_at: { type: string, format: date-time, description: Rollup cycle timestamp — the snapshot's real age. }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -11932,64 +12083,66 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      account_id: { type: string }
-                      exists: { type: boolean }
-                      balance: { type: string, description: Native XLM balance in stroops. }
-                      seq_num: { type: string }
-                      num_subentries: { type: integer, description: "Present (including 0) whenever exists is true." }
-                      flags: { type: integer, description: "Present (including 0) whenever exists is true." }
-                      num_sponsoring: { type: integer, description: "Reserves this account pays for other accounts' entries (AccountEntry ext.v2)." }
-                      num_sponsored: { type: integer, description: "This account's reserves paid by a sponsor (AccountEntry ext.v2). Minimum balance = (2 + num_subentries + num_sponsoring - num_sponsored) × base_reserve; spendable = balance - minimum balance - selling_liabilities." }
-                      buying_liabilities: { type: string, description: "Native XLM buying liabilities from open offers, in stroops." }
-                      selling_liabilities: { type: string, description: "Native XLM locked by open offers, in stroops." }
-                      home_domain: { type: string }
-                      thresholds:
+                      data:
                         type: object
                         properties:
-                          master: { type: integer }
-                          low: { type: integer }
-                          med: { type: integer }
-                          high: { type: integer }
-                      signers:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            key: { type: string }
-                            weight: { type: integer }
-                      trustlines:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            asset: { type: string }
-                            kind: { type: string, enum: [asset, pool_share], description: "pool_share = a liquidity-pool share (asset pool:<hex>), a claim on the pool's two reserves rather than a balance of one asset." }
-                            balance: { type: string }
-                            limit: { type: string }
-                            flags: { type: integer }
-                            buying_liabilities: { type: string, description: "Buying liabilities from open offers, in stroops." }
-                            selling_liabilities: { type: string, description: "Balance locked by open offers, in stroops." }
-                      offers:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            offer_id: { type: integer, format: int64 }
-                            selling: { type: string }
-                            buying: { type: string }
-                            amount: { type: string }
-                            price_n: { type: integer }
-                            price_d: { type: integer }
-                      last_modified_ledger: { type: integer, format: int64 }
-                      as_of_ledger: { type: integer, format: int64, description: "Lake watermark the served state was fresh to WHEN IT WAS CACHED (ADR-0041) — not a serve-time read and not the account's last_modified_ledger; the cache holds this state for up to 30s. Omitted when the watermark was unreadable at fill time. Pairs with flags.stale." }
-                      directory: { $ref: "#/components/schemas/DirectoryInfo" }
-                      coverage_note: { type: string, description: "The holding domains this view serves. Claimable balances and Soroban contract (including SAC) balances are not included, so their absence is not a zero balance. Omitted when exists is false." }
-                      directory_unavailable: { type: boolean, description: "True when the directory read failed, so an absent `directory` means the address was NOT checked (a malicious/unsafe label may exist), not that it is unlisted. Omitted on a successful read." }
+                          account_id: { type: string }
+                          exists: { type: boolean }
+                          balance: { type: string, description: Native XLM balance in stroops. }
+                          seq_num: { type: string }
+                          num_subentries: { type: integer, description: "Present (including 0) whenever exists is true." }
+                          flags: { type: integer, description: "Present (including 0) whenever exists is true." }
+                          num_sponsoring: { type: integer, description: "Reserves this account pays for other accounts' entries (AccountEntry ext.v2)." }
+                          num_sponsored: { type: integer, description: "This account's reserves paid by a sponsor (AccountEntry ext.v2). Minimum balance = (2 + num_subentries + num_sponsoring - num_sponsored) × base_reserve; spendable = balance - minimum balance - selling_liabilities." }
+                          buying_liabilities: { type: string, description: "Native XLM buying liabilities from open offers, in stroops." }
+                          selling_liabilities: { type: string, description: "Native XLM locked by open offers, in stroops." }
+                          home_domain: { type: string }
+                          thresholds:
+                            type: object
+                            properties:
+                              master: { type: integer }
+                              low: { type: integer }
+                              med: { type: integer }
+                              high: { type: integer }
+                          signers:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                key: { type: string }
+                                weight: { type: integer }
+                          trustlines:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                asset: { type: string }
+                                kind: { type: string, enum: [asset, pool_share], description: "pool_share = a liquidity-pool share (asset pool:<hex>), a claim on the pool's two reserves rather than a balance of one asset." }
+                                balance: { type: string }
+                                limit: { type: string }
+                                flags: { type: integer }
+                                buying_liabilities: { type: string, description: "Buying liabilities from open offers, in stroops." }
+                                selling_liabilities: { type: string, description: "Balance locked by open offers, in stroops." }
+                          offers:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                offer_id: { type: integer, format: int64 }
+                                selling: { type: string }
+                                buying: { type: string }
+                                amount: { type: string }
+                                price_n: { type: integer }
+                                price_d: { type: integer }
+                          last_modified_ledger: { type: integer, format: int64 }
+                          as_of_ledger: { type: integer, format: int64, description: "Lake watermark the served state was fresh to WHEN IT WAS CACHED (ADR-0041) — not a serve-time read and not the account's last_modified_ledger; the cache holds this state for up to 30s. Omitted when the watermark was unreadable at fill time. Pairs with flags.stale." }
+                          directory: { $ref: "#/components/schemas/DirectoryInfo" }
+                          coverage_note: { type: string, description: "The holding domains this view serves. Claimable balances and Soroban contract (including SAC) balances are not included, so their absence is not a zero balance. Omitted when exists is false." }
+                          directory_unavailable: { type: boolean, description: "True when the directory read failed, so an absent `directory` means the address was NOT checked (a malicious/unsafe label may exist), not that it is unlisted. Omitted on a successful read." }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -12046,9 +12199,11 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data: { $ref: "#/components/schemas/AccountTransactions" }
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/AccountTransactions" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -12101,9 +12256,11 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data: { $ref: "#/components/schemas/AccountOperations" }
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/AccountOperations" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -12211,9 +12368,11 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data: { $ref: "#/components/schemas/AccountMovements" }
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/AccountMovements" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -12296,9 +12455,11 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data: { $ref: "#/components/schemas/AccountPositions" }
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/AccountPositions" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -12368,9 +12529,11 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data: { $ref: "#/components/schemas/AccountTrades" }
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/AccountTrades" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -12498,9 +12661,11 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data: { $ref: "#/components/schemas/AccountGraph" }
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/AccountGraph" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -12613,9 +12778,11 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data: { $ref: "#/components/schemas/AccountGraphHistory" }
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/AccountGraphHistory" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -12733,13 +12900,13 @@ paths:
                   cycle: { computed_at: '2026-09-17T06:00:00Z', tip_ledger: 64400000 }
                   note: Every figure is the cohort's own ledger footprint as of cycle.computed_at, never the root's. …
                 as_of: '2026-09-17T09:00:00Z'
-                stale: false
-                divergence_warning: false
-                divergence_checked: false
+                flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false, divergence_checked: false }
               schema:
-                type: object
-                properties:
-                  data: { $ref: "#/components/schemas/AccountCohort" }
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/AccountCohort" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -12805,9 +12972,11 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data: { $ref: "#/components/schemas/AccountActivity" }
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/AccountActivity" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -12842,17 +13011,19 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
                     properties:
-                      query: { type: string }
-                      kind: { type: string, enum: [transaction, ledger, account, contract, asset, unknown] }
-                      canonical: { type: string }
-                      href: { type: string }
-                      supported: { type: boolean }
-                      note: { type: string }
+                      data:
+                        type: object
+                        properties:
+                          query: { type: string }
+                          kind: { type: string, enum: [transaction, ledger, account, contract, asset, unknown] }
+                          canonical: { type: string }
+                          href: { type: string }
+                          supported: { type: boolean }
+                          note: { type: string }
         "400": { $ref: "#/components/responses/BadRequest" }
 
 components:
@@ -13336,17 +13507,28 @@ components:
             instance: "/v1/oracle/latest"
             request_id: "e0fca799b0b6d066ed6c928b5cb0d5e6"
     ServiceUnavailable:
-      description: Server is degraded (dependency outage, startup, shutdown).
+      description: Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
-          example:
-            type: "https://api.stellarindex.io/errors/account-store-unavailable"
-            title: "Account store not configured"
-            status: 503
-            detail: "this deployment has no AccountStore wired — typically because Redis is unavailable"
-            instance: "/v1/account/keys"
-            request_id: "70c8017d79651070fd16c2c9f065d846"
+          examples:
+            accountStoreUnavailable:
+              summary: A required dependency is not wired
+              value:
+                type: "https://api.stellarindex.io/errors/account-store-unavailable"
+                title: "Account store not configured"
+                status: 503
+                detail: "this deployment has no AccountStore wired — typically because Redis is unavailable"
+                instance: "/v1/account/keys"
+                request_id: "70c8017d79651070fd16c2c9f065d846"
+            throttleUnavailable:
+              summary: Rate limiter store unreachable past its fail-open dwell window (Retry-After 30)
+              value:
+                type: "https://api.stellarindex.io/errors/throttle-unavailable"
+                title: "Throttle layer unavailable"
+                status: 503
+                detail: "the abuse-prevention layer has been unreachable for an extended period; retry in a moment"
+                instance: "/v1/assets"
 
   schemas:
     PasskeyCredential:
@@ -15030,12 +15212,25 @@ components:
         - `divergence_warning` — anomaly check or cross-reference
           observed a meaningful divergence; treat with caution.
         - `frozen` — anomaly detection refused to publish the new
-          bucket; this response carries the previous bucket's
-          last-known-good value (ADR-0019). Only fires on `/v1/price`,
-          on `/v1/oracle/lastprice` + `/v1/oracle/x_last_price`, and on
-          the 60-second `/v1/price/stream` series' `price_frozen` event
-          (which carries no value); tip + observations surfaces ignore
-          freeze.
+          bucket; this response carries the value the freeze is
+          holding — the aggregator's last-known-good VWAP (ADR-0019),
+          never the refused bucket. A held value is served with its
+          own `observed_at` (when it was observed, not when it was
+          read, so it ages through the hold), the aggregator window
+          it was held at (`window_seconds` 300, 3600 or 86400, not
+          60), empty `sources` (on a fiat quote derived through the
+          USD leg per ADR-0051, the FX feed alone, and `observed_at`
+          is the older of the held value's and the FX rate's), and
+          `stale: true`, since it is below
+          the closed-1-minute-bucket baseline. When a pair is frozen
+          and no value is held, `/v1/price` and the SEP-40 point reads
+          answer 503 `price-unavailable` and `/v1/price/batch` omits
+          the row, rather than publish the refused bucket. Only fires
+          on `/v1/price`, `/v1/price/batch`, `/v1/oracle/lastprice` +
+          `/v1/oracle/x_last_price`, and on the 60-second
+          `/v1/price/stream` series' `price_frozen` event (which
+          carries no value); tip, observations and the `/v1/assets`
+          price columns ignore freeze.
         - `frozen_checked` — true only when the freeze marker was
           actually read (looker wired and the read succeeded). When
           false, `frozen` is NOT meaningful — the check never ran, so
@@ -15052,6 +15247,11 @@ components:
           the composite SUBSTITUTED around a dry configured chain leg
           — the price came via an alternative path, not the documented
           direct chain. Omitted when false.
+        - `pivot_unverified` — set on a TRIANGULATED `/v1/price` response
+          when a leg of the composite was priced only from stablecoin
+          prints taken at par with USD, with no prints in the leg's own
+          quote asset to check a stablecoin de-peg against. Omitted when
+          false.
         - `unverified_ticker_collision` — fires on `/v1/assets/{id}`
           when the asset's code matches a verified currency's
           Stellar ticker but the issuer doesn't. The matching
@@ -15137,6 +15337,14 @@ components:
             substituted around a dry configured chain leg — the price came via
             an alternative path, not the documented direct chain. Omitted when
             false.
+        pivot_unverified:
+          type: boolean
+          default: false
+          description: >
+            Set on a TRIANGULATED /v1/price response when a leg of the
+            composite was priced only from stablecoin prints taken at par with
+            USD, with no prints in the leg's own quote asset to check a
+            stablecoin de-peg against. Omitted when false.
         unverified_ticker_collision: { type: boolean, default: false }
         filters_ignored:
           type: array
@@ -15182,7 +15390,7 @@ components:
 
     EnvelopeMeta:
       type: object
-      description: Every 2xx response carries these.
+      description: "Every 2xx JSON response carries these, except the session-cookie customer-dashboard operations: magic-link and passkey sign-in under /auth, the /dashboard operations, and POST /account/admin/lookup. Those return the bare resource object documented on each operation. The API-key /account/* operations and SEP-10 are enveloped."
       properties:
         as_of: { type: string, format: date-time }
         coverage_from:
@@ -16454,7 +16662,7 @@ components:
             as one omitting a provenance it does.
           items:
             type: string
-            enum: [oracle_instrument_nav, listing_platform_price, prospectus_constant_nav]
+            enum: [oracle_instrument_nav, fund_nav, listing_platform_price, prospectus_constant_nav]
           example: [listing_platform_price, oracle_instrument_nav]
         basis:
           type: string
@@ -16947,9 +17155,9 @@ components:
             separately visible.
         provenance:
           type: string
-          enum: [oracle_instrument_nav, listing_platform_price, curator_uploaded_price, prospectus_constant_nav]
+          enum: [oracle_instrument_nav, fund_nav, listing_platform_price, curator_uploaded_price, prospectus_constant_nav]
           description: |
-            WHAT KIND of figure this is. Four are published and they are
+            WHAT KIND of figure this is. Five are published and they are
             not the same claim, so this is mandatory on every served
             reference rather than defaulted.
 
@@ -16959,6 +17167,14 @@ components:
             rests on the issuer's own domain-bound declaration that one
             token is one unit of it. The five rules above govern it, and
             a premium may be measured against it.
+            `fund_nav` — the fund's own SEC-reported daily NAV per share,
+            relayed by Tiingo, for a token bound on the exact
+            `(code, issuer)` as one share of that fund. Taken only when
+            no oracle binding exists for the row, ahead of any listing
+            price or prospectus NAV. Published to the cent
+            (`decimals_published: 2`); `as_of` is the business day the
+            NAV was struck. Carries no premium: half a cent of rounding
+            is a material premium on a one-dollar share.
             `listing_platform_price` — an independent listing platform's
             own USD price for the TOKEN, published in the same row of
             that platform's own map in which it NAMES the token's
@@ -16974,8 +17190,8 @@ components:
             `prospectus_constant_nav` — the issuer's own prescribed NAV
             for a share class whose fund rules fix it, bound on the
             exact `(code, issuer)`. Weaker than the oracle arm — nobody
-            independent measured it — and taken only when neither an
-            oracle binding nor a listing price exists for the row.
+            independent measured it — and taken only when no oracle
+            binding, fund NAV or listing price exists for the row.
             Carries no premium, for the same reason a listing price
             does not.
             `curator_uploaded_price` — a curator's own uploaded price
@@ -17001,6 +17217,22 @@ components:
             be read again 90 days later — and past that date the same
             figure is served with `stale: true` and `source` saying the
             binding is due for re-verification. Labelled, not withheld.
+        decimals_published:
+          type: integer
+          description: |
+            The precision the publisher states the value at, when it is
+            coarser than `price_usd` alone suggests. Present on a
+            `fund_nav` reference, where it is 2: a NAV published to the
+            cent cannot resolve a difference smaller than half a cent.
+          example: 2
+        nav_disagreement:
+          type: boolean
+          description: |
+            True on an `oracle_instrument_nav` reference when the fund's
+            own published NAV for the same share is also fresh (at most
+            five days old) and differs from the oracle figure by more
+            than half a cent. The oracle figure is still the one served;
+            the values are never swapped. Absent when false.
 
     RWAPremium:
       type: object
@@ -17038,6 +17270,7 @@ components:
             - reference_is_a_listing_price
             - reference_is_a_prospectus_nav
             - reference_is_a_curator_price
+            - reference_is_a_fund_nav
           description: |
             Each value means one thing and only one thing; in particular a
             failed read, an unbound pair and a genuine absence are three
@@ -17091,7 +17324,8 @@ components:
             `reference_expired` — the bound feed's most recent observation
             is older than the seven-day window an active stream is defined
             by. Reached only when a snapshot is carried across a sustained
-            read failure.
+            read failure. On a fund-NAV-bound row, the fund's latest NAV
+            is older than five calendar days.
             `reference_not_instrument_scoped` — an oracle feed of this
             code exists but prices an off-chain quantity in its own unit
             (a troy ounce of spot metal, one fund share) rather than one
@@ -17116,6 +17350,10 @@ components:
             reference, and it is a curator's uploaded price rather than
             an oracle's valuation of the instrument, so no premium may
             be computed against it.
+            `reference_is_a_fund_nav` — the row carries a fund's
+            published NAV, rounded to the cent, so no premium may be
+            computed against it: the rounding alone can be half a
+            percent on a one-dollar share.
         pct:
           type: string
           description: |
@@ -18520,7 +18758,10 @@ components:
             - unreachable:    a fetch WAS attempted and produced nothing
               storable — a 404, a dead name, a TLS failure, or a document
               that would not parse. THEIRS, and the one an issuer can act
-              on.
+              on. Also reported when a held payload is over 30 days old,
+              or of unrecorded age, and the issuer's domain is failing
+              now, so a dead domain's last document is not served as
+              `verified`.
 
             The last two are the distinction worth reading carefully,
             because they were one value until 2026-09-16. An asset
@@ -18786,7 +19027,9 @@ components:
 
             Null for the verified asset itself, for non-classic
             assets (native / Soroban / fiat), and for any code that
-            no verified currency claims on Stellar. See R-018 /
+            no verified currency claims on Stellar. Always null on
+            testnet and futurenet, where the verified issuers (pubnet
+            accounts) do not exist. See R-018 /
             docs/architecture/multi-network-assets-migration.md
             Phase 1.1.
         unverified_ticker_collision:
@@ -18804,7 +19047,8 @@ components:
             so only the real verified row (which carries this false)
             keeps the badge. The detail path stamps the richer
             `unverified_warning` body instead. Omitted (false) for the
-            verified asset and codes no verified currency claims.
+            verified asset, codes no verified currency claims, and every
+            row on testnet and futurenet.
         fiat_code_anchor:
           oneOf:
             - { $ref: "#/components/schemas/FiatCodeAnchor" }
@@ -19491,7 +19735,7 @@ components:
         quote_asset:  { type: string }
         base_amount:  { type: string, description: "Integer stroops, decimal string." }
         quote_amount: { type: string, description: "Integer stroops, decimal string." }
-        price:        { type: string, description: "quote/base, 10-digit decimal." }
+        price:        { type: [string, "null"], description: "quote/base, 10-digit decimal; null (key always present) when one leg is zero, e.g. an SDEX rounding fill." }
         base_decimals:
           type: integer
           description: |
@@ -19971,17 +20215,18 @@ components:
           description: "Trailing-24h USD volume summed from prices_1m. Decimal string. Null when no USD-equivalent trades."
         last_price:
           type: [string, "null"]
-          description: "Most recent quote-per-base price observed for this pair (cross-source) within the trailing 24h. Decimal string. Null when no recent prices_1m bucket has a non-null last_price."
+          description: "Most recent quote-per-base price observed for this pair within the trailing 24h: across every source, or that source's own when the request sets `?source=`. Decimal string. Null when none was observed."
         first_trade_at:
           type: [string, "null"]
           format: date-time
           description: >-
             The pair's first recorded daily bucket — "since inception =
-            first recorded trade" (RFP), queryable per market. Present
-            only with `?include=inception`; day precision.
+            first recorded trade" (RFP), queryable per market, across
+            every source. Present only with `?include=inception` and
+            absent when the request sets `?source=`; day precision.
         volume_history_24h:
           type: array
-          description: "Per-hour USD-volume buckets for the trailing 24h, oldest → newest, zero-filled server-side (always 24 entries when present). Populated only when the request sets `?include=sparkline`; absent otherwise."
+          description: "Per-hour USD-volume buckets for the trailing 24h, oldest → newest, zero-filled server-side (always 24 entries when present). Summed across every source. Populated only when the request sets `?include=sparkline`; absent otherwise, and absent when the request sets `?source=`."
           items:
             type: object
             properties:

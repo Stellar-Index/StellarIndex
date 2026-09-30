@@ -17,9 +17,13 @@ import (
 // churnTopics opens and immediately cancels a subscription on n
 // distinct never-published topics — the shape of a client cycling
 // through made-up pairs.
-func churnTopics(hub *streaming.Hub, n int) {
+func churnTopics(t *testing.T, hub *streaming.Hub, n int) {
+	t.Helper()
 	for i := 0; i < n; i++ {
-		_, cancel := hub.Subscribe([]string{fmt.Sprintf("closed:CHURN%d/USD", i)}, "")
+		_, cancel, err := hub.Subscribe([]string{fmt.Sprintf("closed:CHURN%d/USD", i)}, "")
+		if err != nil {
+			t.Fatalf("Subscribe: %v", err)
+		}
 		cancel()
 	}
 }
@@ -38,7 +42,7 @@ func TestHub_ReapDropsMintedTopicsButKeepsReplayBuffers(t *testing.T) {
 	id1 := hub.Publish("closed:XLM/USD", "price_update", []byte("first"))
 	hub.Publish("closed:XLM/USD", "price_update", []byte("second"))
 
-	churnTopics(hub, 300)
+	churnTopics(t, hub, 300)
 
 	if got := hub.TopicCount(); got > 128 {
 		t.Fatalf("TopicCount = %d after 300 minted topics, want <= 128", got)
@@ -49,7 +53,10 @@ func TestHub_ReapDropsMintedTopicsButKeepsReplayBuffers(t *testing.T) {
 
 	// The real topic kept its buffer: resuming from id1 replays the
 	// event that followed it.
-	sub, cancel := hub.Subscribe([]string{"closed:XLM/USD"}, id1)
+	sub, cancel, err := hub.Subscribe([]string{"closed:XLM/USD"}, id1)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancel()
 	got := drainNonblocking(t, sub, 1, time.Second)
 	if len(got) != 1 || string(got[0].Data) != "second" {
@@ -69,12 +76,15 @@ func TestHub_ReapDropsBufferedTopicPastIdleTTL(t *testing.T) {
 	id1 := hub.Publish("closed:XLM/USD", "price_update", []byte("first"))
 	hub.Publish("closed:XLM/USD", "price_update", []byte("second"))
 
-	churnTopics(hub, 128) // forces at least one sweep
+	churnTopics(t, hub, 128) // forces at least one sweep
 
 	if got := hub.TopicsReaped(); got == 0 {
 		t.Fatal("TopicsReaped = 0, want > 0 (the reaper never ran)")
 	}
-	sub, cancel := hub.Subscribe([]string{"closed:XLM/USD"}, id1)
+	sub, cancel, err := hub.Subscribe([]string{"closed:XLM/USD"}, id1)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancel()
 	if got := drainNonblocking(t, sub, 1, 200*time.Millisecond); len(got) != 0 {
 		t.Fatalf("replay after idle TTL = %v, want none (the buffer should have been released)", got)
@@ -89,10 +99,13 @@ func TestHub_ReapNeverDropsSubscribedTopic(t *testing.T) {
 	hub.SetTopicIdleTTL(time.Nanosecond)
 	hub.SetMaxTopics(4)
 
-	sub, cancel := hub.Subscribe([]string{"closed:XLM/USD"}, "")
+	sub, cancel, err := hub.Subscribe([]string{"closed:XLM/USD"}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
 	defer cancel()
 
-	churnTopics(hub, 300)
+	churnTopics(t, hub, 300)
 
 	hub.Publish("closed:XLM/USD", "price_update", []byte("live"))
 	got := drainNonblocking(t, sub, 1, time.Second)

@@ -310,6 +310,10 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// genesis: the topic simply never fired before 60,903,337, and a
 	// floor at 57M would flag ~3.8M permanently-empty ledgers.
 	{Source: "defindex-fees", CanonicalSource: "defindex", Table: "defindex_fees", LedgerColumn: "ledger", Genesis: 60_903_337, MinGapSizeOverride: 700000},
+	// defindex-admin-events: vault rescues / pause toggles / role
+	// rotations (0192) — 38 lake events in ~6M ledgers, so gaps are the
+	// norm; max override like phoenix-admin-events.
+	{Source: "defindex-admin-events", CanonicalSource: "defindex", Table: "defindex_admin_events", LedgerColumn: "ledger", Genesis: 57_056_338, MinGapSizeOverride: 100000000},
 	// phoenix-liquidity / phoenix-stake: events are user-action-triggered
 	// (provide/withdraw liquidity, bond/unbond stake) — multi-hour
 	// quiet windows are normal protocol behaviour, not data loss.
