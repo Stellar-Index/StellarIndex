@@ -29,7 +29,7 @@ import (
 // reconcile class, the Sink / participant / account-movements /
 // entry-change writers, and the no-credential NewExplorerReader /
 // NewSupplyReader constructors the ops subcommands use) resolves its
-// Auth through [opsAuth], which takes an optional username/password
+// Auth through [chAuth], which takes an optional username/password
 // from the ENVIRONMENT:
 //
 //	STELLARINDEX_CLICKHOUSE_OPS_USER      (e.g. "ops_batch")
@@ -49,51 +49,80 @@ import (
 // subcommands take `-ch` as a bare flag and do not all load the
 // config file.
 //
-// Both unset = byte-for-byte the pre-fix behaviour: clickhouse-go
-// treats an empty Auth.Username as CH's `default` user. This is
-// deliberately the ONLY switch, so the pair must reach ONLY the batch
-// jobs' environment. On the ansible-managed hosts that holds by
-// construction: the templated stellarindex-{indexer,aggregator,api}
-// units source /etc/default/stellarindex (which must never carry the
-// pair) and run-heavy-job.sh imports the pair from
-// /etc/default/stellarindex-ops into every wrapped job. The
-// deploy/systemd self-host reference units DO share the -ops file with
-// the batch one-shots (the indexer reads its MinIO creds and the API
-// its SEP-10 seed out of it), so each of the three live-daemon units
-// strips the pair with `UnsetEnvironment=`, which systemd applies after
-// every Environment=/EnvironmentFile= — a live-ingest sink or the
-// supply refresher running as ops_batch would be demoted to lowest
-// priority, the exact inverse of what this exists for (#292).
-// TestOpsBatchIdentityNeverReachesLiveDaemons pins both halves: the
-// live daemons resolve to CH `default`, the batch units to ops_batch.
+// Live-daemon ClickHouse identity. The indexer, aggregator and API
+// otherwise reach CH as its unauthenticated `default` user; a named
+// `live_daemon` user (provisioned by 20-clickhouse-serving-profile.yml,
+// same `default` settings profile) lets `default` be locked down later
+// without cutting those daemons off. The pair lives in
+// /etc/default/stellarindex, the env file only the live-daemon units
+// source; like the ops pair it is environment rather than config
+// because the connection builders here are shared with the ops CLI,
+// which does not load stellarindex.toml.
+//
+// Precedence ([chAuthFrom]): the ops pair, then the live pair, then CH
+// `default`. Ops first because batch units source both env files and
+// must still run at the batch tier. Every pair unset is byte-for-byte
+// the pre-fix behaviour (clickhouse-go treats an empty Auth.Username as
+// CH's `default` user), which keeps the rollout order-safe: a binary can
+// ship before the CH user and env file exist. The ops pair must reach
+// ONLY the batch jobs' environment; the deploy/systemd reference units
+// share /etc/default/stellarindex-ops with the batch one-shots, so each
+// live-daemon unit strips it with `UnsetEnvironment=` (#292).
+// TestOpsBatchIdentityNeverReachesLiveDaemons pins that live daemons
+// resolve to live_daemon (or `default` when unconfigured) and never to
+// ops_batch, and batch units to ops_batch.
 // See docs/operations/clickhouse-ops-batch-profile.md.
 const (
 	// OpsUserEnv names the env var holding the ops-batch CH username.
 	OpsUserEnv = "STELLARINDEX_CLICKHOUSE_OPS_USER"
 	// OpsPasswordEnv names the env var holding that user's password.
 	OpsPasswordEnv = "STELLARINDEX_CLICKHOUSE_OPS_PASSWORD"
+	// LiveUserEnv names the env var holding the live-daemon CH username.
+	LiveUserEnv = "STELLARINDEX_CLICKHOUSE_LIVE_USER"
+	// LivePasswordEnv names the env var holding that user's password.
+	LivePasswordEnv = "STELLARINDEX_CLICKHOUSE_LIVE_PASSWORD"
 )
 
-// opsAuth resolves the Auth every ops-side connection builder in this
-// package opens with: the `stellar` database, plus the ops-batch
-// username/password from the environment when set.
-func opsAuth() (clickhouse.Auth, error) {
-	return opsAuthFrom(os.Getenv)
+// chAuth resolves the Auth every ClickHouse connection builder in this
+// package opens with when the caller passes no explicit credentials.
+func chAuth() (clickhouse.Auth, error) {
+	return chAuthFrom(os.Getenv)
 }
 
-// opsAuthFrom is [opsAuth] with the environment lookup injected, so
-// the resolution rules are unit-testable without mutating the
-// process environment.
+// chAuthFrom is [chAuth] with the environment lookup injected.
+func chAuthFrom(getenv func(string) string) (clickhouse.Auth, error) {
+	auth, err := opsAuthFrom(getenv)
+	if err != nil || auth.Username != "" {
+		return auth, err
+	}
+	return pairAuth(getenv, LiveUserEnv, LivePasswordEnv, "live_daemon identity")
+}
+
+// authOrEnv is the Auth for an explicit username/password, or [chAuth]'s
+// when both are empty.
+func authOrEnv(username, password string) (clickhouse.Auth, error) {
+	if username == "" && password == "" {
+		return chAuth()
+	}
+	return clickhouse.Auth{Database: "stellar", Username: username, Password: password}, nil
+}
+
+// opsAuthFrom resolves the ops-batch pair alone.
+func opsAuthFrom(getenv func(string) string) (clickhouse.Auth, error) {
+	return pairAuth(getenv, OpsUserEnv, OpsPasswordEnv, "ops_batch identity")
+}
+
+// pairAuth reads one username/password env pair against `stellar`.
 //
 // A password WITHOUT a username is refused rather than silently
 // ignored: clickhouse-go would send it as the `default` user's
 // password, which CH rejects, and a half-set pair is always a
 // templating mistake worth surfacing at open time rather than as a
 // confusing authentication failure.
-func opsAuthFrom(getenv func(string) string) (clickhouse.Auth, error) {
-	user, pass := getenv(OpsUserEnv), getenv(OpsPasswordEnv)
+func pairAuth(getenv func(string) string, userEnv, passEnv, what string) (clickhouse.Auth, error) {
+	user, pass := getenv(userEnv), getenv(passEnv)
 	if user == "" && pass != "" {
-		return clickhouse.Auth{}, fmt.Errorf("clickhouse: %s is set but %s is empty — set both (ops_batch identity) or neither (CH default user)", OpsPasswordEnv, OpsUserEnv)
+		return clickhouse.Auth{}, fmt.Errorf("clickhouse: %s is set but %s is empty — set both (%s) or neither (CH default user)", passEnv, userEnv, what)
 	}
 	return clickhouse.Auth{Database: "stellar", Username: user, Password: pass}, nil
 }

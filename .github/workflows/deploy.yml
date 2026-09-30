@@ -1061,13 +1061,21 @@ jobs:
           DEPLOY_HOST: ${{ steps.region.outputs.host }}
           DEPLOY_USER: ${{ steps.region.outputs.user }}
           DEPLOY_JUMP: ${{ steps.region.outputs.jump }}
+          REGION: ${{ inputs.region }}
+          REGION_SET: ${{ steps.binset.outputs.region_set }}
         run: |
           set -uo pipefail
           proxy=""
           [ -n "${DEPLOY_JUMP:-}" ] && proxy="-o ProxyJump=${DEPLOY_JUMP}"
-          # Lowest version across the managed binaries: config from a
-          # release is unapplied if ANY binary predates it, so the
-          # oldest is the honest baseline.
+          # Lowest version across the binaries the REGION RUNS (the
+          # manifest set, scripts/dev/region-binaries.tsv): config from a
+          # release is unapplied if ANY of them predates it, so the
+          # oldest is the honest baseline. A sidecar for a binary the
+          # manifest excludes at this region is ignored: nothing deploys
+          # it there, so it can only drag the baseline back. testnet's
+          # stellarindex-aggregator (unit disabled, sidecar v0.63.0)
+          # did exactly that on 2026-09-30 — the gate diffed 32 releases
+          # and refuted a cut-over DDL the host had long since finished.
           #
           # `awk 1`, NOT `cat`. The sidecars are written by
           # tasks/deploy-one-binary.yml with `ansible.builtin.copy:
@@ -1117,7 +1125,8 @@ jobs:
                   for f in "$d"/stellarindex-*; do
                     [ -e "$f" ] || continue;
                     case "$f" in *stellarindex-migrate) continue ;; esac;
-                    awk 1 "$f" || exit 3;
+                    v=$(awk 1 "$f") || exit 3;
+                    printf "%s\t%s\n" "${f##*/}" "$v";
                   done;
                   exit 0'
           set +e
@@ -1133,9 +1142,21 @@ jobs:
             echo "::error::config-apply gate: could not reach ${DEPLOY_USER}@${DEPLOY_HOST} to read the deployed-versions sidecar (ssh exit ${rc}). Refusing to fall back to the previous release tag — that fallback silently reports 'no config changes' on a multi-release catch-up. Fix the connection (or pass the host's live version explicitly) and re-run."
             exit 1
           fi
-          live=$(printf '%s\n' "$raw" | tr -d '\r' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' | sort -V | sed -n '1p' || true)
+          # Each record is "<binary>\t<version>". Keep the manifest set's
+          # rows only; an empty set (a manifest row with no binaries)
+          # falls through to every sidecar, which is the old behaviour.
+          versions=""
+          while IFS=$'\t' read -r name ver; do
+            [ -n "$name" ] || continue
+            if [ -n "${REGION_SET:-}" ] && ! grep -qxF -- "$name" <<<"${REGION_SET// /$'\n'}"; then
+              echo "::notice::ignoring sidecar ${name}=${ver}: not in ${REGION}'s manifest set (${REGION_SET})"
+              continue
+            fi
+            versions="${versions}${ver}"$'\n'
+          done < <(printf '%s\n' "$raw" | tr -d '\r')
+          live=$(printf '%s' "$versions" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' | sort -V | sed -n '1p' || true)
           if [ -n "$live" ]; then
-            echo "host live version (lowest across binaries, migrate excluded): $live"
+            echo "host live version (lowest across the region's manifest binaries, migrate excluded): $live"
             echo "live=$live" >> "$GITHUB_OUTPUT"
           else
             echo "::warning::the host has no deployed-versions sidecar (first deploy to this host, or the directory was wiped); the config-apply gate falls back to the previous release tag by ancestry, which is only correct if the fleet is exactly one release behind."

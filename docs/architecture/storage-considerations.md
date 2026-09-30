@@ -462,7 +462,11 @@ This restores all four subdirs in seconds.
 - [x] *Answered 2026-09-29:* no, and it no longer can be: Move A trimmed the mirror, so a local Tier E scan fails by construction and the monthly cron added for it was retired. Tier E is operator-run against a full archive (`-archivist-url`); see `docs/operations/galexie-backfill.md` §Tier E. Original question: has Tier E ever been documented as a routine practice anywhere we haven't searched?
 - [x] *Answered 2026-09-29:* R1 can offer R2/R3 Tier B only; Tier E's subject (the bucket bytes) no longer exists on R1 after Move A. R2/R3 remain deferred. Original question: what's the exact relationship between ADR-0016's "trust R1's Tier B + E verification" promise to R2/R3 and the operational reality that Tier E hasn't been run on R1 either?
 - [x] *Answered 2026-09-29:* only `galexie-archive`. `internal/ops/archive/trim_galexie_archive.go` deletes solely from `cfg.Storage.S3BucketArchive`, and its MinIO identity is scoped to that bucket. Original question: does the trim cover `galexie-live` too, or only `galexie-archive`? (Need to skim; relevant if we ever want to trim live bucket's older partitions.)
-- [ ] Confirm MinIO du for `galexie-archive` vs `galexie-live` per-bucket breakdown (du is slow over 4.96 TB; still pending).
+- [x] *Answered 2026-09-30:* `galexie-archive` 2,336 GiB, `galexie-live` 433 GiB
+  (`du -s --block-size=1G` via the detached `minio-bucket-du.service` on R1, ~2 h; the two
+  sum to 2,769 GiB = 2.70 TiB, the whole `data/minio` dataset per `zfs list -Ho used`,
+  compressratio 1.27x). Original question: confirm MinIO du for `galexie-archive` vs
+  `galexie-live` per-bucket breakdown.
 
 ---
 
