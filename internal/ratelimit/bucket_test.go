@@ -3,6 +3,7 @@ package ratelimit_test
 import (
 	"context"
 	"errors"
+	"net"
 	"strconv"
 	"testing"
 	"time"
@@ -438,6 +439,84 @@ func TestBucket_DwellTime_FlapVsSustainedRecovery(t *testing.T) {
 	}
 	if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
 		t.Fatalf("recovered: a sustained recovery should have cleared the clock — want fail-OPEN, got ErrThrottleUnavailable")
+	}
+}
+
+// TestBucket_DwellTime_CanceledCtxDoesNotArm pins that a caller-cancelled
+// request is neutral: client aborts alone must never walk the throttle into
+// fail-CLOSED.
+func TestBucket_DwellTime_CanceledCtxDoesNotArm(t *testing.T) {
+	rdb, _ := newRedis(t)
+	fi := &faultInjector{Cmdable: rdb}
+	fakeNow := time.Unix(1_750_000_000, 0)
+	b := ratelimit.New(fi, 3, time.Minute,
+		ratelimit.WithClock(func() time.Time { return fakeNow }),
+		ratelimit.WithDwellTime(30*time.Second),
+	)
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := b.Take(canceled, "k")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled ctx: want wrapped context.Canceled, got %v", err)
+	}
+	fakeNow = fakeNow.Add(31 * time.Second)
+	_, err = b.Take(canceled, "k")
+	if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
+		t.Fatal("canceled ctx past dwell-time: cancellations must not arm the clock, got ErrThrottleUnavailable")
+	}
+
+	// A real failure after the cancellations opens a fresh window: fail-OPEN.
+	fi.fail = true
+	_, err = b.Take(context.Background(), "k")
+	if err == nil || errors.Is(err, ratelimit.ErrThrottleUnavailable) {
+		t.Fatalf("first real failure: want wrapped Redis err (fail-open), got %v", err)
+	}
+}
+
+// TestBucket_DwellTime_DeadlineCtxArms pins the other side: a Redis that
+// never answers within the caller's deadline is a failing Redis and must
+// still trip fail-CLOSED after the dwell-time.
+func TestBucket_DwellTime_DeadlineCtxArms(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { _ = c.Close() })
+		}
+	}()
+	rdb := redis.NewClient(&redis.Options{
+		Addr:                  ln.Addr().String(),
+		ContextTimeoutEnabled: true,
+		MaxRetries:            -1,
+	})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	fakeNow := time.Unix(1_750_000_000, 0)
+	b := ratelimit.New(rdb, 3, time.Minute,
+		ratelimit.WithClock(func() time.Time { return fakeNow }),
+		ratelimit.WithDwellTime(30*time.Second),
+	)
+	take := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		_, err := b.Take(ctx, "k")
+		return err
+	}
+
+	if err := take(); err == nil || errors.Is(err, ratelimit.ErrThrottleUnavailable) {
+		t.Fatalf("arm: want wrapped timeout err, got %v", err)
+	}
+	fakeNow = fakeNow.Add(31 * time.Second)
+	if err := take(); !errors.Is(err, ratelimit.ErrThrottleUnavailable) {
+		t.Fatalf("deadline past dwell-time: want ErrThrottleUnavailable, got %v", err)
 	}
 }
 

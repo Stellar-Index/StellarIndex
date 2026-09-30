@@ -147,10 +147,10 @@ post-launch).
 
 1. **CI integration cadence.** Dev-stack chaos against CI's
    ephemeral docker every PR? Nightly only? On-demand via
-   `workflow_dispatch`? Wave 1 ships as on-demand only — the
-   docker-compose start-up cost (~30s) is too high for per-PR
-   runs and the value-density per chaos run is high enough that
-   nightly is enough.
+   `workflow_dispatch`? Resolved: nightly plus on-demand
+   (`chaos-nightly.yml`, cron `17 3 * * *` and
+   `workflow_dispatch`). The docker-compose start-up cost (~30s)
+   is too high for per-PR runs.
 
 2. **Should the chaos suite block a release?** No. The SLA-proof
    report (Task #77) is the per-release artefact; chaos is an

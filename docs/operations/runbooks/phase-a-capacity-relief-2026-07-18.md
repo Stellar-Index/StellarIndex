@@ -105,7 +105,7 @@ clickhouse-client --port 9300 -q "ALTER TABLE stellar.operations MODIFY COLUMN b
 - Codec change is reversible: `MODIFY COLUMN … CODEC(LZ4)` + re-`OPTIMIZE` (needs the space back).
 - pgbackrest prune is not reversible (expired backups are gone) — hence it's the one `[OP]`-gated step; the full + WAL remain.
 - Any `OPTIMIZE` that would overflow errors out (CH space reservation) — safe to retry after freeing more.
-- Abort the loop any time (Ctrl-C / `systemctl stop heavy-recompress-lec.scope`); partitions already done stay done.
+- Abort the loop any time (Ctrl-C / `systemctl stop heavy-recompress-lec-<pid>.scope`); partitions already done stay done. **That stops the loop, not the partition rewrite:** the in-flight merge runs server-side and keeps its ≤ 424 GiB transient after the client dies. To stop the rewrite too, cancel it with `SYSTEM STOP MERGES` and restore merges once `system.merges` is empty — [ops-job-stalled.md § A ClickHouse merge outlives its client](ops-job-stalled.md#a-clickhouse-merge-outlives-its-client).
 
 ## Related
 Master plan: `../production-readiness-master-plan-2026-07-18.md` (Phase A/A0b). Phase D detail: `consolidated-deploy-plan-2026-07-18.md`.

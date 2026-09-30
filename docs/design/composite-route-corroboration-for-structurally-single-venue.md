@@ -33,7 +33,7 @@ Graph nodes: XLM, native, BTC, ETH, USD, EUR, GBP. Edges: 12 crypto/fiat markets
 
 | Venue | XLM | BTC | ETH | crypto/crypto |
 |---|---|---|---|---|
-| kraken | USD EUR GBP AUD CAD CHF | USD EUR GBP | USD EUR GBP | none |
+| kraken | USD EUR GBP | USD EUR GBP | USD EUR GBP | none |
 | coinbase | USD EUR | USD EUR GBP | USD EUR GBP | none |
 | bitstamp | USD EUR GBP **BTC** | USD EUR GBP | USD EUR GBP | XLM/BTC |
 | binance | USDT EUR **BTC** | USDT EUR GBP | USDT EUR GBP | XLM/BTC |
