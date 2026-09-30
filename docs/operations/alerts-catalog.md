@@ -51,8 +51,12 @@ enforces it); any per-alert detail page follows it.
   `severity: informational` but is routed by ALERTNAME to
   Healthchecks.io ahead of the severity matchers, with
   `continue: false`, so it never reaches `silent` — see its runbook.)
-  A `page` inhibits the `ticket`/`informational` alerts sharing its
-  `component` label. Routing:
+  A `page` inhibits only the `ticket`/`informational` alerts sharing
+  both its `component` and its `alert_family` label (the same signal at
+  a milder threshold); a page without a family inhibits nothing. The
+  family map is pinned by
+  [`configs/alertmanager/inhibit-rules-test.sh`](../../configs/alertmanager/inhibit-rules-test.sh).
+  Routing:
   [`configs/alertmanager/alertmanager.r1.yml`](../../configs/alertmanager/alertmanager.r1.yml).
 - **Runbook** — what the responder does (link).
 
@@ -267,9 +271,9 @@ documented 4xx that regressed into a silent 200. Until 2026-09-03 its
 only sink was `HEALTHCHECKS_URL_SMOKE`, empty on r1 since install, so
 the check ran into the journal and nowhere else: no textfile, no series,
 no rule. Both rows below are `ticket` rather than `page` deliberately —
-a `page` on component `api` inhibits every `ticket` sharing that
-component, so a smoke that paged while the API was healthy would mute
-the api-plane tickets it exists to complement.
+a smoke failure while the API is healthy is not SEV-1. A `page` inhibits
+only the tickets in its own `alert_family`; the smoke rows carry none, so
+they neither inhibit nor are inhibited by the api-plane alerts.
 
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |

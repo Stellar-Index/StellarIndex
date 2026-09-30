@@ -164,6 +164,7 @@ groups:
           severity: page
           team: stellarindex
           component: storage
+          alert_family: timescale_disk
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/db-disk-full.md
           summary: "Postgres disk {{ $value | humanize }}% free (SEV-1)"
@@ -180,6 +181,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: storage
+          alert_family: timescale_disk
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/db-disk-full.md
           summary: "Postgres disk {{ $value | humanize }}% free"
@@ -204,6 +206,7 @@ groups:
           severity: page
           team: stellarindex
           component: storage
+          alert_family: node_root_disk
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-full.md
           summary: "Root filesystem on {{ $labels.instance }} {{ $value | humanize }}% free (SEV-1)"
@@ -229,6 +232,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: storage
+          alert_family: node_root_disk
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-warning.md
           summary: "Root filesystem on {{ $labels.instance }} {{ $value | humanize }}% free"
@@ -816,6 +820,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: storage
+          alert_family: "timescale_backup_age/{{ $labels.stanza }}"
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
           summary: "pgBackRest stanza {{ $labels.stanza }} last backup {{ $value | humanizeDuration }} ago"
@@ -833,6 +838,7 @@ groups:
           severity: page
           team: stellarindex
           component: storage
+          alert_family: "timescale_backup_age/{{ $labels.stanza }}"
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
           summary: "No successful Postgres backup in > 24 h (SEV-1)"
