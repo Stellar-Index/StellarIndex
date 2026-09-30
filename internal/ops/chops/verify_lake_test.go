@@ -4,6 +4,10 @@
 package chops
 
 import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -50,7 +54,7 @@ func TestResolveVerifyTo(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := resolveVerifyTo("verify-lake", tc.chMax, tc.independent)
+			got, err := resolveVerifyTo("verify-lake", "ledgerstream cursor", tc.chMax, tc.independent)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("resolveVerifyTo(%d,%d) = %d, <nil>, want an error (truncated lake must fail closed)", tc.chMax, tc.independent, got)
@@ -64,6 +68,92 @@ func TestResolveVerifyTo(t *testing.T) {
 				t.Fatalf("resolveVerifyTo(%d,%d) = %d, want %d", tc.chMax, tc.independent, got, tc.wantTo)
 			}
 		})
+	}
+}
+
+func TestResolveVerifyToTips(t *testing.T) {
+	const chMax = 63_100_000
+	down := errors.New("unreachable")
+	cases := []struct {
+		name    string
+		tips    []independentTip
+		wantErr string
+		wantLog string
+	}{
+		{
+			"cursor stalled with the lake, archive ahead fails closed",
+			[]independentTip{{source: "ledgerstream cursor", seq: chMax}, {source: "history archive", seq: chMax + 10_000}},
+			"history archive", "",
+		},
+		{
+			"archive a checkpoint behind the lake passes",
+			[]independentTip{{source: "ledgerstream cursor", seq: chMax}, {source: "history archive", seq: chMax - 64}},
+			"", "",
+		},
+		{
+			"archive unreachable still checks the cursor",
+			[]independentTip{{source: "ledgerstream cursor", seq: chMax + 5_000}, {source: "history archive", err: down}},
+			"ledgerstream cursor", "",
+		},
+		{
+			"cursor unreachable still checks the archive",
+			[]independentTip{{source: "ledgerstream cursor", err: down}, {source: "history archive", seq: chMax + 5_000}},
+			"history archive", "ledgerstream cursor unavailable",
+		},
+		{
+			"no tip readable falls back to ClickHouse max",
+			[]independentTip{{source: "ledgerstream cursor", err: down}, {source: "history archive", err: down}},
+			"", "no independent tip available",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var warn strings.Builder
+			got, err := resolveVerifyToTips("verify-lake", chMax, tc.tips, &warn)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("resolveVerifyToTips = %d, %v; want an error naming %q", got, err, tc.wantErr)
+				}
+			} else if err != nil || got != chMax {
+				t.Fatalf("resolveVerifyToTips = %d, %v; want %d, <nil>", got, err, chMax)
+			}
+			if tc.wantLog != "" && !strings.Contains(warn.String(), tc.wantLog) {
+				t.Fatalf("warning %q does not contain %q", warn.String(), tc.wantLog)
+			}
+		})
+	}
+}
+
+func TestHistoryArchiveTip(t *testing.T) {
+	serve := func(status int, body string) *httptest.Server {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/archive/.well-known/stellar-history.json" {
+				http.NotFound(w, r)
+				return
+			}
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
+		}))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+
+	srv := serve(http.StatusOK, `{"version":1,"currentLedger":63110015}`)
+	got, err := historyArchiveTip(context.Background(), srv.URL+"/archive")
+	if err != nil || got != 63_110_015 {
+		t.Fatalf("historyArchiveTip = %d, %v; want 63110015, <nil>", got, err)
+	}
+
+	for name, srv := range map[string]*httptest.Server{
+		"zero currentLedger": serve(http.StatusOK, `{}`),
+		"HTTP 503":           serve(http.StatusServiceUnavailable, "down"),
+	} {
+		if got, err := historyArchiveTip(context.Background(), srv.URL+"/archive"); err == nil {
+			t.Fatalf("%s: historyArchiveTip = %d, <nil>; want an error", name, got)
+		}
+	}
+	if _, err := historyArchiveTip(context.Background(), ""); err == nil {
+		t.Fatal(`historyArchiveTip("") = <nil>; want an error`)
 	}
 }
 
