@@ -65,6 +65,10 @@ Default tuning (override via `/etc/default/stellarindex-healthchecks`):
 - `SLA_PROBE_CONCURRENCY=1`
 - `SLA_PROBE_PAIR=native,fiat:USD`
 
+The binary paces itself at `-max-rps 100` (its default; the wrapper
+passes no rate flag) so a run stays under the API key's per-minute rate
+limit — see `docs/operations/sla-probe.md` §"Why an API key is required".
+
 ## Architecture
 
 This complements the existing alerting layer rather than duplicating
