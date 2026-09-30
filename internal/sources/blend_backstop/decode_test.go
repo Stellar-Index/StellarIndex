@@ -313,6 +313,17 @@ func TestGolden_RwZone_V1(t *testing.T) {
 	}
 }
 
+// TestBackstopGenesisPrecedesV1Events holds the genesis at or below the
+// earliest real backstop event pinned here: a later genesis hides the V1
+// era from the gap detector, the reconcile and a fresh projector cursor.
+func TestBackstopGenesisPrecedesV1Events(t *testing.T) {
+	t.Parallel()
+	const earliestV1Event = 51_499_926 // TestGolden_RwZone_V1's lake frame
+	if BackstopGenesisLedger > earliestV1Event {
+		t.Fatalf("BackstopGenesisLedger = %d, above the V1 backstop event at %d", BackstopGenesisLedger, earliestV1Event)
+	}
+}
+
 // TestGolden_RwZoneAdd_V2 pins bug #3 against real lake bytes (ledger
 // 56660710): the body's second element is Option<Address>, not a u32
 // reward-zone index. All 5 real V2 rows carry `void` there, so the

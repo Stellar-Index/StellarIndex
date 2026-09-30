@@ -33,6 +33,11 @@
 -- compression on those needs a deliberate compress_segmentby choice;
 -- tracked in the master plan, out of scope for this pure-policy script.
 --
+-- NOT INCLUDED (segment-by is near-unique per row, so compression stores
+-- about one row per segment and GROWS the chunk): claimable_observations
+-- (0012), sac_balance_observations (0014), soroswap_router_swaps (0049),
+-- trustline_observations (0011). Re-segment on the served predicate first.
+--
 -- REMOVED 2026-09-02 with migration 0152 (#358): aggregator_exposures
 -- (0025), classic_asset_stats_5m (0024) and tvl_observations (0021)
 -- were dropped as never-wired scaffolds. They MUST come out of the list
@@ -64,7 +69,6 @@ DECLARE
         'account_observations',        -- 0010
         'blend_backstop_events',       -- 0063
         'cctp_events',                 -- 0038
-        'claimable_observations',      -- 0012
         'decoder_stats_5m',            -- 0020
         'defindex_flows',              -- 0050
         'divergence_observations',     -- 0019
@@ -72,11 +76,8 @@ DECLARE
         'lp_reserve_observations',     -- 0013
         'price_source_contributions',  -- 0026
         'rozo_events',                 -- 0039
-        'sac_balance_observations',    -- 0014
         'sdex_offer_events',           -- 0026
-        'sep41_supply_events',         -- 0015
-        'soroswap_router_swaps',       -- 0049
-        'trustline_observations'       -- 0011
+        'sep41_supply_events'          -- 0015
     ];
 BEGIN
     FOREACH tbl IN ARRAY tables LOOP

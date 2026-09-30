@@ -154,11 +154,26 @@ stellarindex-ops projector-replay -source sorocredit -from 61620822
 Run it under `/usr/local/sbin/run-heavy-job.sh` (AGENTS.md heavy-job
 doctrine). **Never** a bespoke `sorocredit-backfill` subcommand.
 
-## Future /v1 surface (follow-up, out of scope here)
+## Served surface
 
-This package CAPTURES the protocol faithfully into the served tier. An
-opinionated presentation layer is a separate PR — a future
-`/v1/protocols/sorocredit` could expose: open-position count + total
-credit outstanding, per-position statement/settlement history, the
-scheduled-settlement cadence (explicitly framed as settlements, not
-liquidations), and withdrawal flow. None of it feeds pricing.
+- `GET /v1/protocols/sorocredit` — the `bespoke` block, built by
+  `bespokeCredit` in `internal/storage/timescale/bespoke_lending.go`:
+  positions opened (window and all-time), a window-scoped open-position
+  proxy, unique users, statements published, scheduled settlements
+  (count, volume, series), withdrawals, latest activity and a recent
+  scheduled-settlements table. Settlements are labelled as scheduled
+  settlements, never liquidations. Amounts are base units, not USD.
+- `GET /v1/accounts/{g_strkey}/positions` — one `credit` position per
+  owned position (`basis: stateful`, `amount_semantics:
+  stateful_current`: the latest published statement amount), read by
+  `CreditPositionsByOwner` in `internal/storage/timescale/positions.go`.
+- `GET /v1/accounts/{g_strkey}/activity` — `defi_actions` carries a
+  `sorocredit` `position_opened` count (`credit_positions.owner`;
+  `credit_events` has no owner column).
+
+Not served:
+
+- An aggregate total-credit-outstanding figure.
+- A per-position statement/settlement history view.
+
+None of it feeds pricing.

@@ -11,7 +11,7 @@ severity: P2
 
 | Field | Value |
 | ----- | ----- |
-| Alert | None dedicated — no Prometheus rule watches the explorer's edge (T290 tracks adding an automated stale-deploy diff; until it lands, detection is the sources below). |
+| Alert | None dedicated — no Prometheus rule watches the explorer's edge. The weekly `site-crawl` workflow opens (or comments on) a GitHub issue labelled `site-crawl-drift` when any crawl check fails, including the stale-deploy check, and closes it once the crawl is clean. |
 | Detected by | The weekly `site-crawl` workflow (`scripts/ci/site-crawl-check.sh`, Mondays 06:20 UTC, or `gh workflow run site-crawl.yml`); a Cloudflare dashboard/email alert on the project; a customer report; or a manual `curl -sI https://stellarindex.io`. |
 | Typical MTTR | 5–20 min (rollback is a dashboard click; a stuck deploy needs a re-publish). |
 | Impact | `stellarindex.io` / `www.` / `testnet.` / `futurenet.` serve errors or a stale build. `api.stellarindex.io` is a **separate** Cloudflare Pages/Caddy surface (`docs/operations/cdn-setup.md`) and is unaffected — this is a presentation-layer outage, not a data outage. See `api-down.md` if the API itself is down. |
@@ -52,8 +52,14 @@ severity: P2
   `re-build-time` from `NEXT_PUBLIC_BUILD_SHA` /
   `NEXT_PUBLIC_BUILD_TIME` for exactly this comparison.) A mismatch
   beyond the last intended deploy window is the stale-deploy
-  incident. This check is manual today — T290 is the open finding to
-  automate it.
+  incident. The weekly `site-crawl` workflow automates this as check
+  "9. deployed build freshness" in `scripts/ci/site-crawl-check.sh`: it
+  reads the footer's `title="Built <time> from commit <sha>"` badge on
+  `https://stellarindex.io/` and fails when that commit is more than
+  `STALE_COMMIT_BUDGET` (default 200) commits behind `main` per GitHub's
+  compare API, or the build is older than `STALE_HOURS_BUDGET` (default
+  72) hours. A failure lands in the `site-crawl-drift` issue; between
+  weekly runs, run the comparison above by hand.
 
 ## Quick diagnosis (≤ 10 min)
 
@@ -166,4 +172,4 @@ If this met the customer-visible threshold in
 - [`docs/operations/explorer-deployment.md`](../explorer-deployment.md) — build + local-preview steps
 - [`docs/adr/0044-explorer-edge-rendering.md`](../../adr/0044-explorer-edge-rendering.md) — the 20k-file ceiling, bake-time poisoning, staleness drivers
 - [`scripts/ci/site-crawl-check.sh`](../../../scripts/ci/site-crawl-check.sh) / `.github/workflows/site-crawl.yml` — weekly detection
-- T290 (open) — automated `re-build-sha`-vs-`main` staleness alerting; not yet built, this runbook's stale-deploy check is manual until it lands
+- `scripts/ci/site-crawl-check.sh` check 9 (fixtures in `scripts/ci/site-crawl-check-test.sh`) — the automated deployed-build-vs-`main` staleness check; budgets `STALE_COMMIT_BUDGET` (200 commits) and `STALE_HOURS_BUDGET` (72 h), reported through the `site-crawl-drift` issue

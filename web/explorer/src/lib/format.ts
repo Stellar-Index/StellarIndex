@@ -366,6 +366,19 @@ export function changePct(
   return pctOf(rescale(t, scale) - base, base, places);
 }
 
+/**
+ * compareDecimalStrings — exact sign of `a − b` (-1, 0, 1) over two decimal
+ * strings. Null for a non-decimal input.
+ */
+export function compareDecimalStrings(a: string, b: string): number | null {
+  const x = parseDecimal(a);
+  const y = parseDecimal(b);
+  if (!x || !y) return null;
+  const scale = Math.max(x.frac, y.frac);
+  const d = rescale(x, scale) - rescale(y, scale);
+  return d < 0n ? -1 : d > 0n ? 1 : 0;
+}
+
 interface Decimal {
   units: bigint;
   frac: number;

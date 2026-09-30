@@ -1797,7 +1797,7 @@ func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chAd
 			return nil, completeness.BlindSpots{}, eerr
 		}
 		for _, tgt := range src.targets {
-			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, genesis, hi)
+			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), genesis, hi)
 			if aerr != nil {
 				return nil, completeness.BlindSpots{}, aerr
 			}
@@ -1828,7 +1828,7 @@ func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chAd
 	// findings and the caller's verdict names them apart.
 	for _, tgt := range src.targets {
 		expected := completeness.SumKinds(byKind, tgt.kinds...)
-		actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, genesis, hi)
+		actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), genesis, hi)
 		if aerr != nil {
 			return nil, completeness.BlindSpots{}, aerr
 		}
@@ -1869,7 +1869,7 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 	if lo > hi {
 		return 0, completeness.BlindSpots{}, "", nil // every target's scope is empty
 	}
-	expectedFor, blind, eerr := expectedProjection(ctx, store, chStreamer, chAddr, src, lo, hi)
+	expectedFor, blind, eerr := expectedProjection(ctx, chStreamer, chAddr, src, lo, hi)
 	if eerr != nil {
 		return 0, completeness.BlindSpots{}, "", eerr
 	}
@@ -1908,7 +1908,7 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 // decoder soft-fails inside a single op's claim list and still emits the op,
 // so a malformed claim cannot remove a whole row from the expected side
 // without also removing it from served.
-func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, chAddr string, src reconSource, lo, hi uint32) (func(reconTarget) map[uint32]int, completeness.BlindSpots, error) {
+func expectedProjection(ctx context.Context, chStreamer completeness.EventStreamer, chAddr string, src reconSource, lo, hi uint32) (func(reconTarget) map[uint32]int, completeness.BlindSpots, error) {
 	switch {
 	case src.callDec != nil:
 		// Event-less ContractCall source (band, soroswap-router): re-derive the
@@ -1945,12 +1945,10 @@ func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer 
 		// went STALE as new pools deployed: blend reported complete=false
 		// (expected=0) on windows whose activity was on pools missing from the seed,
 		// while the live decoder (which self-seeds from deploy events) captured them.
-		// Adding it here makes the watchdog self-maintaining. (Reads the Postgres
-		// soroban_events landing zone for the rare, indexed creation events; a
-		// CH-native preseed for full -ch purity is a follow-up.)
+		// Adding it here makes the watchdog self-maintaining.
 		var walkBlind completeness.BlindSpots
 		if len(src.factories) > 0 {
-			pb, err := preseedFactoryChildren(ctx, store, src, lo)
+			pb, err := preseedFactoryChildren(ctx, chStreamer, src, lo)
 			if err != nil {
 				return nil, completeness.BlindSpots{}, fmt.Errorf("%s preseed: %w", src.name, err)
 			}
@@ -1999,7 +1997,7 @@ func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer 
 // ever missed and no undercount (false red) is possible:
 //
 //   - (a) src.dec's gate AFTER its preseed-to-lo = the curated in-code seed ∪
-//     every child preseeded from the Postgres landing zone — i.e. the registry
+//     every child preseeded from the lake's creation events — i.e. the registry
 //     state the stream STARTS from. Read via GatedContractSet().
 //   - (b) every child the SAME certified lake announces through hi, walked from
 //     the factory's creation events on a THROWAWAY decoder — a superset of the
@@ -2088,7 +2086,7 @@ func reconcileTarget(ctx context.Context, store *timescale.Store, src reconSourc
 	if sc.From > sc.To {
 		return 0, "", nil
 	}
-	actual, err := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, sc.From, sc.To)
+	actual, err := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), sc.From, sc.To)
 	if err != nil {
 		return 0, "", err
 	}
@@ -2098,15 +2096,14 @@ func reconcileTarget(ctx context.Context, store *timescale.Store, src reconSourc
 
 // reDeriveSDEXCensusViaDecoder re-derives the expected SDEX trade count per
 // ledger by running the SDEX decoder over the certified CH operations and
-// counting the DISTINCT, Validate-passing trades it emits — mirroring exactly
-// what InsertTrade lands in the served tier (the Validate gate; the served
-// PK has been an ON CONFLICT DO UPDATE since migration 0109, not a de-dup —
-// a colliding op_index overwrites rather than drops). This is the honest
-// projection oracle:
-// census == served by identical write logic, so the residual is exactly the
-// ops the served tier dropped (real coverage gaps) — not a methodology
-// artifact (one-side-zero fills or op_index fanout collisions, both of which
-// the served can't hold but the CH substrate retains) — see sdexServedCensus.
+// counting the DISTINCT, Validate-passing, priceable trades it emits (the
+// served PK has been an ON CONFLICT DO UPDATE since migration 0109, so a
+// colliding op_index overwrites rather than drops). One-side-zero fills are
+// stored by the writer but excluded here AND from the served COUNT
+// (reconTarget.countFilter), because ledgers written before they were
+// admitted hold none; a full-history ch-rebuild -sdex retires both exclusions.
+// The residual is then exactly the ops the served tier dropped (real coverage
+// gaps), not a methodology artifact — see sdexServedCensus.
 // Read-only; windowed so the operations⋈results join stays under the CH
 // memory cap.
 func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to uint32) (map[uint32]int, completeness.BlindSpots, error) {

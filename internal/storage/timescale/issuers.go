@@ -44,12 +44,13 @@ type IssuerRow struct {
 // GetIssuer returns the row for one G-strkey. Returns sql.ErrNoRows
 // when the issuer hasn't been observed yet.
 func (s *Store) GetIssuer(ctx context.Context, gStrkey string) (IssuerRow, error) {
-	const q = `
+	q := `
 		SELECT
 		    g_strkey,
 		    COALESCE(home_domain, ''),
 		    COALESCE(sep1_payload->>'OrgName', '') AS org_name,
-		    COALESCE((sep1_payload->>'OrgVerified')::boolean, false) AS org_verified,
+		    COALESCE((sep1_payload->>'OrgVerified')::boolean, false)
+		        AND NOT ` + sep1PayloadOutlivedSQL + ` AS org_verified,
 		    auth_required,
 		    auth_revocable,
 		    auth_immutable,
@@ -155,11 +156,15 @@ func (s *Store) ListIssuers(ctx context.Context, limit int) ([]IssuerSummary, er
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	const q = `
+	// The outlived predicate reads issuers columns outside the GROUP BY;
+	// grouping on the primary key g_strkey makes that legal.
+	//nolint:gosec // G202: sep1PayloadOutlivedSQL is constant SQL; values bind via $N
+	q := `
         SELECT i.g_strkey,
                COALESCE(i.home_domain, ''),
                COALESCE(i.sep1_payload->>'OrgName', '') AS org_name,
-               COALESCE((i.sep1_payload->>'OrgVerified')::boolean, false) AS org_verified,
+               COALESCE((i.sep1_payload->>'OrgVerified')::boolean, false)
+                   AND NOT ` + sep1PayloadOutlivedSQL + ` AS org_verified,
                count(c.asset_id)::bigint           AS asset_count,
                COALESCE(sum(c.observation_count), 0)::bigint AS total_obs
           FROM issuers i
@@ -303,7 +308,18 @@ type IssuerSep1Cached struct {
 	Documentation map[string]string    `json:"Documentation,omitempty"`
 	Currencies    []IssuerSep1Currency `json:"Currencies,omitempty"`
 	FetchedAt     string               `json:"FetchedAt,omitempty"`
+	// OutlivedDomain is [sep1PayloadOutlivedSQL] for the row, read from the
+	// fetch-state columns rather than the payload's own FetchedAt key.
+	OutlivedDomain bool `json:"-"`
 }
+
+// sep1PayloadOutlivedSQL is true for an issuers row whose held payload is
+// older than [Sep1AttestationMaxAge], or of unrecorded age, while its domain
+// is failing now. A failed fetch keeps the payload, so without it a dead
+// domain's last document vouches for the issuer indefinitely; age alone is
+// our refresh lagging, and a fresh payload on a failing domain is a flake.
+var sep1PayloadOutlivedSQL = `(COALESCE(sep1_consecutive_failures, 0) > 0
+       AND NOT COALESCE(sep1_payload_fetched_at >= NOW() - '` + intervalArg(Sep1AttestationMaxAge) + `'::interval, false))`
 
 // IssuerSep1Currency mirrors [metadata.Currency] — fields the
 // /v1/assets/{id} handler overlays per-asset.
@@ -364,9 +380,12 @@ func (s *Store) IssuerSep1Unreachable(ctx context.Context, gStrkey string) (bool
 }
 
 func (s *Store) GetIssuerSep1Cached(ctx context.Context, gStrkey string) (*IssuerSep1Cached, error) {
-	const q = `SELECT sep1_payload FROM issuers WHERE g_strkey = $1`
-	var payload sql.NullString
-	if err := s.db.QueryRowContext(ctx, q, gStrkey).Scan(&payload); err != nil {
+	q := `SELECT sep1_payload, ` + sep1PayloadOutlivedSQL + ` FROM issuers WHERE g_strkey = $1`
+	var (
+		payload  sql.NullString
+		outlived bool
+	)
+	if err := s.db.QueryRowContext(ctx, q, gStrkey).Scan(&payload, &outlived); err != nil {
 		return nil, err
 	}
 	if !payload.Valid || payload.String == "" {
@@ -376,6 +395,7 @@ func (s *Store) GetIssuerSep1Cached(ctx context.Context, gStrkey string) (*Issue
 	if err := json.Unmarshal([]byte(payload.String), &out); err != nil {
 		return nil, fmt.Errorf("timescale: GetIssuerSep1Cached: parse: %w", err)
 	}
+	out.OutlivedDomain = outlived
 	return &out, nil
 }
 
@@ -474,7 +494,9 @@ func sep1ImageFrom(gStrkey, code, declaredIssuer, image string) (Sep1Image, bool
 // this column and spells every key as a hardcoded Go literal
 // ("Currencies", "Code", "Issuer", "Image"), so attacker-authored TOML
 // supplies values and never keys.
-const allSep1ImagesQuery = `
+//
+//nolint:gosec // G202: sep1PayloadOutlivedSQL is constant SQL; values bind via $N
+var allSep1ImagesQuery = `
 SELECT i.g_strkey,
        c.value ->> 'Code'   AS code,
        c.value ->> 'Issuer' AS issuer,
@@ -486,12 +508,14 @@ SELECT i.g_strkey,
             ELSE '[]'::jsonb
        END) AS c(value)
  WHERE i.sep1_payload IS NOT NULL
+   AND NOT ` + sep1PayloadOutlivedSQL + `
    AND jsonb_typeof(c.value)            = 'object'
    AND jsonb_typeof(c.value -> 'Image') = 'string'
    AND jsonb_typeof(c.value -> 'Code')  = 'string'`
 
 // AllSep1Images returns every populated [[CURRENCIES]] image across all
-// issuers whose sep1_payload is set — the raw material for the
+// issuers whose sep1_payload is set and has not outlived a failing domain
+// ([sep1PayloadOutlivedSQL]) — the raw material for the
 // /v1/assets listing logo overlay.
 //
 // The API layer caches the result behind a TTL and refreshes it on a
