@@ -25,12 +25,11 @@
 # and can never fire, so the loudest failure of a monitoring check would
 # be its quietest signal. `absent_over_time(...[30m])` restores it.
 #
-# Severity is `ticket`, not `page`, on both: a `page` on component `api`
-# inhibits every `ticket`/`informational` alert sharing that component
-# (configs/alertmanager/alertmanager.r1.yml), so a smoke that pages while
-# the API itself is healthy would mute the api-plane tickets it is meant
-# to complement. `ticket` reaches #stellarindex-alerts, which is the
-# whole point — the previous state was zero delivery.
+# Severity is `ticket`, not `page`, on both: a smoke failure while the API
+# itself is healthy is not SEV-1. (A `page` inhibits only the tickets in
+# its own `alert_family`; a smoke page would carry none and inhibit
+# nothing.) `ticket` reaches #stellarindex-alerts, which is the whole
+# point — the previous state was zero delivery.
 
 groups:
   - name: stellarindex.api_smoke

@@ -174,8 +174,14 @@ underscores (`actual_received_amount`), not the legacy spaced String
 | Map | `ScvSymbol("swap")` (disc 15) | 1 | `ScvMap` | `decodeSwapMap` (no buffer) |
 
 `classifyAny` routes on the topic shape; both reconstruct the same
-`canonical.Trade` (QuoteAmount = `return_amount`, per Q3). Map-schema
-pools are gated via `MainnetMapPools`; because gating is by contract
+`canonical.Trade` (QuoteAmount = `return_amount`, per Q3). The Map WASM
+emits `provide_liquidity` and `withdraw_liquidity` the same way — one
+`ScvSymbol` topic, `ScvMap` body — decoded by `decodeProvideLiquidityMap`
+(`actual_received_a` / `actual_received_b` → AmountA / AmountB) and
+`decodeWithdrawLiquidityMap` into the same `LiquidityChange` as the
+String buffers. The withdraw body's Option-typed `auto_unstake_amount` /
+`auto_unstake_timestamp` keys are recorded on the wire but not read.
+Map-schema pools are gated via `MainnetMapPools`; because gating is by contract
 identity, a curated String pool that upgrades to the Map shape in
 place is already covered.
 
@@ -214,8 +220,8 @@ optional event on withdraws is recognised + discarded
 Both on-wire swap shapes are decoded (Q5): the legacy 8-event
 `ScvString` schema (`decodeSwap`) and the newer single-event
 `ScvSymbol("swap")` + `ScvMap` schema (`decodeSwapMap`, gated via
-`MainnetMapPools`). Liquidity decoders cover both pool WASMs'
-identical `provide_liquidity` / `withdraw_liquidity` String shapes.
+`MainnetMapPools`). Liquidity is decoded in both shapes too: the String
+multi-event buffers and the Map single-event decoders.
 
 Swap `QuoteAmount` is `return_amount` (the output the taker received),
 corrected 2026-07-07 from the earlier `actual received amount` which

@@ -58,6 +58,7 @@ tests:
               stack_component: galexie
               severity: page
               team: stellarindex
+              alert_family: stellar_stack_version_lag/galexie
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
               summary: "galexie is a PROTOCOL-MAJOR version behind upstream (P1)"

@@ -10,6 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/rozo"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 // staticOwners builds the contract → sources map the way computeCompleteness
@@ -133,7 +134,7 @@ func TestRecognitionAttribution_EveryPinningSourceCanFail(t *testing.T) {
 			t.Errorf("gap on pinned contract %s fell into unattributed", c)
 		}
 		for _, name := range want {
-			ok, _ := sourceRecognitionOK(sorobanEraGenesis, gapLedger, recBySource[name], false, priorProjection{})
+			ok, _ := sourceRecognitionOK(clickhouse.SorobanGenesisLedger, gapLedger, recBySource[name], false, priorProjection{})
 			if ok {
 				t.Errorf("%s pins %s but recognition_ok stayed true over a gap on it (attributed: %v)",
 					name, c, recBySource)
