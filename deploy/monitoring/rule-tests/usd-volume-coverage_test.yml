@@ -59,7 +59,7 @@ tests:
       exp_annotations:
         runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/usd-volume-coverage-plan.md
         summary: On-chain usd_volume coverage is below the 99.5% bar
-        description: "On-chain sources priced only 0% of their trades\nover the last 6 hours, against a 99.5% bar.\n\nAggregated across venues deliberately: a single thin venue (comet, phoenix)\ncan have a handful of trades in a window, and a per-source ratio there is\nnoise rather than signal.\n\nExpected causes, cheapest first:\n  - The XLM bridge lost its anchor — check XLM/USD exists in prices_1m; if\n    that is missing, tiers 3b and 4b both fail at once and coverage collapses\n    rather than degrades.\n  - A newly active token with no XLM market and no pegged counterparty.\n  - prices_1m materialisation fell behind, so bridge legs are absent within\n    the 24h bridge-freshness window.\n\nFind the offending pairs:\n  SELECT base_asset, quote_asset, count(*) FROM trades\n   WHERE usd_volume IS NULL AND ts > now() - interval '6 hours'\n     AND source IN ('sdex','soroswap','aquarius','phoenix','comet')\n   GROUP BY 1,2 ORDER BY count DESC LIMIT 20;\n\nA residual of obscure tokenised assets (gold/equity wrappers) and pure\nSEP-41/SEP-41 pairs is EXPECTED and is not a regression.\n\nPlan + measurements: docs/operations/usd-volume-coverage-plan.md\n"
+        description: "On-chain sources priced only 0% of their priceable\ntrades over the last 6 hours, against a 99.5% bar.\n\nTrades labelled usd_volume_populated=\"unpriceable\" (no leg has ever had a peg or\nXLM market) are excluded; their share is the recording rule\nstellarindex:onchain_usd_volume_unpriceable_ratio:6h. Everything counted here had\na USD path the resolver failed to use.\n\nAggregated across venues deliberately: a single thin venue (comet, phoenix)\ncan have a handful of trades in a window, and a per-source ratio there is\nnoise rather than signal.\n\nExpected causes, cheapest first:\n  - The XLM bridge lost its anchor — check XLM/USD exists in prices_1m; if\n    that is missing, tiers 3b and 4b both fail at once and coverage collapses\n    rather than degrades.\n  - A token whose only peg or XLM market went stale or dust-only.\n  - prices_1m materialisation fell behind, so bridge legs are absent within\n    the 24h bridge-freshness window.\n\nFind the offending pairs:\n  SELECT base_asset, quote_asset, count(*) FROM trades\n   WHERE usd_volume IS NULL AND ts > now() - interval '6 hours'\n     AND source IN ('sdex','soroswap','aquarius','phoenix','comet')\n   GROUP BY 1,2 ORDER BY count DESC LIMIT 20;\n\nA residual of obscure tokenised assets (gold/equity wrappers) and pure\nSEP-41/SEP-41 pairs is EXPECTED and is not a regression.\n\nPlan + measurements: docs/operations/usd-volume-coverage-plan.md\n"
 - interval: 1m
   name: on-chain sources pricing everything are quiet
   input_series:
@@ -69,3 +69,50 @@ tests:
   - eval_time: 500m
     alertname: stellarindex_onchain_usd_volume_coverage_low
     exp_alerts: []
+
+# One issuer self-trading never-priced tokens (usd_volume_populated=
+# "unpriceable") must not pin the on-chain ratio: half of all inserts are
+# unpriceable, 99.9% of the rest priced. Red against the pre-split rule,
+# whose all-inserts denominator reads 49.95%.
+- interval: 1m
+  name: a large unpriceable share with priceable trades priced is quiet
+  input_series:
+  - series: stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9101",source="sdex",usd_volume_populated="yes"}
+    values: 0+999x600
+  - series: stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9101",source="sdex",usd_volume_populated="no"}
+    values: 0+1x600
+  - series: stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9101",source="sdex",usd_volume_populated="unpriceable"}
+    values: 0+1000x600
+  alert_rule_test:
+  - eval_time: 500m
+    alertname: stellarindex_onchain_usd_volume_coverage_low
+    exp_alerts: []
+  promql_expr_test:
+  - expr: stellarindex:onchain_usd_volume_unpriceable_ratio:6h
+    eval_time: 500m
+    exp_samples:
+    - labels: stellarindex:onchain_usd_volume_unpriceable_ratio:6h
+      value: 0.5
+# A resolver outage beside the same unpriceable flow: misses ("no") match
+# priced inserts, so the priceable ratio is 50% and the alert still fires.
+- interval: 1m
+  name: a stalled resolver still tickets beside unpriceable volume
+  input_series:
+  - series: stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9101",source="sdex",usd_volume_populated="yes"}
+    values: 0+10x600
+  - series: stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9101",source="sdex",usd_volume_populated="no"}
+    values: 0+10x600
+  - series: stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9101",source="sdex",usd_volume_populated="unpriceable"}
+    values: 0+1000x600
+  alert_rule_test:
+  - eval_time: 500m
+    alertname: stellarindex_onchain_usd_volume_coverage_low
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        team: stellarindex
+        component: usd-volume-coverage
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/usd-volume-coverage-plan.md
+        summary: On-chain usd_volume coverage is below the 99.5% bar
+        description: "On-chain sources priced only 50% of their priceable\ntrades over the last 6 hours, against a 99.5% bar.\n\nTrades labelled usd_volume_populated=\"unpriceable\" (no leg has ever had a peg or\nXLM market) are excluded; their share is the recording rule\nstellarindex:onchain_usd_volume_unpriceable_ratio:6h. Everything counted here had\na USD path the resolver failed to use.\n\nAggregated across venues deliberately: a single thin venue (comet, phoenix)\ncan have a handful of trades in a window, and a per-source ratio there is\nnoise rather than signal.\n\nExpected causes, cheapest first:\n  - The XLM bridge lost its anchor — check XLM/USD exists in prices_1m; if\n    that is missing, tiers 3b and 4b both fail at once and coverage collapses\n    rather than degrades.\n  - A token whose only peg or XLM market went stale or dust-only.\n  - prices_1m materialisation fell behind, so bridge legs are absent within\n    the 24h bridge-freshness window.\n\nFind the offending pairs:\n  SELECT base_asset, quote_asset, count(*) FROM trades\n   WHERE usd_volume IS NULL AND ts > now() - interval '6 hours'\n     AND source IN ('sdex','soroswap','aquarius','phoenix','comet')\n   GROUP BY 1,2 ORDER BY count DESC LIMIT 20;\n\nA residual of obscure tokenised assets (gold/equity wrappers) and pure\nSEP-41/SEP-41 pairs is EXPECTED and is not a regression.\n\nPlan + measurements: docs/operations/usd-volume-coverage-plan.md\n"

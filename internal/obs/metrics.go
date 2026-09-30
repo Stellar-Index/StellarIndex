@@ -2990,12 +2990,16 @@ var OracleStreamRowsUnparsedTotal = prometheus.NewCounterVec(
 // operator's classic asset_key doesn't match what the decoder
 // stamps — typically an issuer mismatch or a missing entry.
 //
-// Cardinality: one source × two outcomes per registered source
+// "unpriceable" is a NULL by design: every resolver lookup the waterfall
+// made found no USD path for the asset at all, as opposed to a failed or
+// stale lookup ("no"). Coverage alerts exclude it from their denominator.
+//
+// Cardinality: one source × three outcomes per registered source
 // (low-tens of series at maturity).
 var TradeInsertsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_trade_inserts_total",
-		Help: "Trade-insert attempts, labelled by source and whether usd_volume was populated (yes|no). Counts attempts, not unique-row inserts — on-conflict dedupe AND generation-guarded corrective updates are both invisible to this counter.",
+		Help: "Trade-insert attempts, labelled by source and whether usd_volume was populated (yes|no|unpriceable; unpriceable = no USD path exists for any leg the waterfall consulted). Counts attempts, not unique-row inserts — on-conflict dedupe AND generation-guarded corrective updates are both invisible to this counter.",
 	},
 	[]string{"source", "usd_volume_populated"},
 )

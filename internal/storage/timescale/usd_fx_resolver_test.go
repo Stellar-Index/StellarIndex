@@ -585,3 +585,85 @@ func TestBridgeViaXLM_XLMIsBaseCase(t *testing.T) {
 		}
 	}
 }
+
+// TestVWAPUSDFXResolver_USDPriceOutcomeAt pins the Priced / Miss /
+// Unpriceable split without a database: every DB-reaching branch would
+// panic on the nil *sql.DB, so a pass proves each answer came from a cache.
+func TestVWAPUSDFXResolver_USDPriceOutcomeAt(t *testing.T) {
+	now := time.Date(2026, 9, 30, 1, 56, 0, 0, time.UTC)
+	newResolver := func(t *testing.T) *VWAPUSDFXResolver {
+		t.Helper()
+		r, err := NewVWAPUSDFXResolver(&Store{}, VWAPUSDFXResolverOptions{
+			USDPegs: []string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
+			Clock:   func() time.Time { return now },
+		})
+		if err != nil {
+			t.Fatalf("NewVWAPUSDFXResolver: %v", err)
+		}
+		return r
+	}
+	h1, _ := canonical.NewClassicAsset("H1", "GBGRBCUB6L7LH4JQ6EPDP7REH2DDACMCUQI76M3P6DM52QWU2Z5LIEVW")
+	negative := func(r *VWAPUSDFXResolver, at time.Time) {
+		r.cache[fxCacheKey{asset: h1.String(), bucketMs: at.Truncate(time.Minute).UnixMilli()}] = fxCacheEntry{cachedAt: now}
+	}
+
+	t.Run("priced", func(t *testing.T) {
+		r := newResolver(t)
+		r.cache[fxCacheKey{asset: h1.String(), bucketMs: now.UnixMilli()}] = fxCacheEntry{rate: "0.5", cachedAt: now}
+		rate, outcome, err := r.USDPriceOutcomeAt(context.Background(), h1, now)
+		if err != nil || outcome != USDPricePriced || rate != "0.5" {
+			t.Fatalf("got (%q, %d, %v), want (0.5, Priced, nil)", rate, outcome, err)
+		}
+	})
+
+	t.Run("miss when a USD path exists", func(t *testing.T) {
+		r := newResolver(t)
+		negative(r, now)
+		r.pathCache[h1.String()] = usdPathCacheEntry{unpriceable: false, cachedAt: now}
+		rate, outcome, err := r.USDPriceOutcomeAt(context.Background(), h1, now)
+		if err != nil || outcome != USDPriceMiss || rate != "" {
+			t.Fatalf("got (%q, %d, %v), want ('', Miss, nil)", rate, outcome, err)
+		}
+	})
+
+	t.Run("unpriceable is cached per asset, not per minute", func(t *testing.T) {
+		r := newResolver(t)
+		r.pathCache[h1.String()] = usdPathCacheEntry{unpriceable: true, cachedAt: now}
+		// Two trade minutes an hour apart share the one per-asset answer.
+		for _, at := range []time.Time{now, now.Add(-time.Hour)} {
+			negative(r, at)
+			_, outcome, err := r.USDPriceOutcomeAt(context.Background(), h1, at)
+			if err != nil || outcome != USDPriceUnpriceable {
+				t.Fatalf("at %s: got (%d, %v), want (Unpriceable, nil)", at, outcome, err)
+			}
+		}
+	})
+
+	t.Run("path cache honours the TTL", func(t *testing.T) {
+		r := newResolver(t)
+		r.pathCache[h1.String()] = usdPathCacheEntry{unpriceable: true, cachedAt: now.Add(-r.cacheTTL - time.Second)}
+		if _, ok := r.lookupPathCache(h1.String()); ok {
+			t.Fatal("expired path-cache entry was served")
+		}
+	})
+
+	t.Run("no pegs is a miss, never unpriceable", func(t *testing.T) {
+		r, err := NewVWAPUSDFXResolver(&Store{}, VWAPUSDFXResolverOptions{})
+		if err != nil {
+			t.Fatalf("NewVWAPUSDFXResolver: %v", err)
+		}
+		_, outcome, err := r.USDPriceOutcomeAt(context.Background(), h1, now)
+		if err != nil || outcome != USDPriceMiss {
+			t.Fatalf("got (%d, %v), want (Miss, nil)", outcome, err)
+		}
+	})
+
+	t.Run("fiat USD is priced without a lookup", func(t *testing.T) {
+		r := newResolver(t)
+		usd := canonical.Asset{Type: canonical.AssetFiat, Code: "USD"}
+		rate, outcome, err := r.USDPriceOutcomeAt(context.Background(), usd, now)
+		if err != nil || outcome != USDPricePriced || rate != "1" {
+			t.Fatalf("got (%q, %d, %v), want (1, Priced, nil)", rate, outcome, err)
+		}
+	})
+}
