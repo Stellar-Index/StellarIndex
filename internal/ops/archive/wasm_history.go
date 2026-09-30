@@ -1177,6 +1177,9 @@ func scanLedgerEntryChange(
 		// Restored counts as "the entry exists at this hash again" —
 		// treat like Created for tracking purposes.
 		entry = change.Restored
+	case sdkxdr.LedgerEntryChangeTypeLedgerEntryRemoved:
+		recordInstanceRemoval(change.Removed, watch, state, seq, tlog)
+		return
 	default:
 		return
 	}
@@ -1232,6 +1235,35 @@ func scanLedgerEntryChange(
 	}
 	hashHex := hex.EncodeToString(inst.Executable.WasmHash[:])
 	recordWasmTransition(state, contractHash, hashHex, seq, tlog)
+}
+
+// instanceRemovedMarker closes a watched contract's hash range when its
+// instance entry is deleted, so the timeline does not claim the last WASM
+// stayed live; a later Created/Restored reopens a range.
+const instanceRemovedMarker = "removed"
+
+// recordInstanceRemoval records a watched contract's instance-entry deletion.
+func recordInstanceRemoval(
+	key *sdkxdr.LedgerKey,
+	watch map[sdkxdr.Hash]string,
+	state map[sdkxdr.Hash]*wasmContractState,
+	seq uint32,
+	tlog *transitionLog,
+) {
+	if key == nil || key.Type != sdkxdr.LedgerEntryTypeContractData || key.ContractData == nil {
+		return
+	}
+	kcd := key.ContractData
+	if kcd.Key.Type != sdkxdr.ScValTypeScvLedgerKeyContractInstance ||
+		kcd.Contract.Type != sdkxdr.ScAddressTypeScAddressTypeContract ||
+		kcd.Contract.ContractId == nil {
+		return
+	}
+	contractHash := sdkxdr.Hash(*kcd.Contract.ContractId)
+	if _, watched := watch[contractHash]; !watched {
+		return
+	}
+	recordWasmTransition(state, contractHash, instanceRemovedMarker, seq, tlog)
 }
 
 // recordWasmTransition advances a contract's history when its

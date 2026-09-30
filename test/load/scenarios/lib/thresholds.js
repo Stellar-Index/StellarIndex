@@ -30,7 +30,9 @@ export const sla = {
     // SSE clients are long-lived; we measure first-event latency
     // via a custom Trend, not http_req_duration.
     'sse_first_event_ms': ['p(99)<1000'],
-    'http_req_failed':    ['rate<0.001'],
+    // Not http_req_failed: every subscribe ends in k6's client
+    // timeout by design, so it would read 100 % failed.
+    'sse_subscribe_ok':   ['rate>0.999'],
   },
   mixed: {
     // The canonical proof: weighted mix p95 ≤ 200 ms, 99.9 % success.

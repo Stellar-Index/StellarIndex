@@ -185,8 +185,8 @@ design named in ADR-0047's Phase 3 scope, not a full second pass over
 the whole range.
 
 **Memory-scaling caveat**: the in-run index is bounded at
-`maxCBIndexEntries` (2,000,000, FIFO eviction — oldest create evicted
-first) rather than growing without limit; unbounded growth across the
+`maxCBIndexEntries` (8,000,000, ~3 GB; FIFO eviction — oldest create
+evicted first) rather than growing without limit; unbounded growth across the
 full `CreateClaimableBalance` row count (research §5: ~1.5B) is what
 drove an earlier OOM. Eviction is safe — a miss just falls through to
 the ClickHouse fallback (`FindClaimableBalanceCreates`), same as a
