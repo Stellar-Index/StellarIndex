@@ -13,71 +13,7 @@ import { SourceStatsPanel } from './SourceStatsPanel';
 import { SourceTopChart } from './SourceTopChart';
 import { SourceVolumeHistory } from './SourceVolumeHistory';
 import { CURRENT_NETWORK } from '@/lib/networks';
-
-// Curated list of DEX sources with friendly names + audit links.
-// Mirrors the DEX cards on /dexes; per-DEX detail pages are
-// statically pre-rendered for these slugs only. New DEXes added
-// here automatically get a /dexes/<source> page.
-//
-// A Subclass=DEX source MISSING from this map is not a missing page but
-// a broken one: sitemap.ts emits /dexes/<name> for every subclass=dex
-// source it reads off /v1/sources, so the URL is published and then
-// 404s. scripts/ci/lint-protocol-registry-sync.sh §2 cross-checks this
-// map (and ALL_DEXES in DexesView) against the Go source registry.
-const DEX_INFO: Record<
-  string,
-  {
-    name: string;
-    type: string;
-    status: string;
-    contractsUrl?: string;
-    blurb: string;
-  }
-> = {
-  soroswap: {
-    name: 'Soroswap',
-    type: 'Uniswap V2 clone (Soroban)',
-    status: 'live',
-    contractsUrl: 'https://github.com/soroswap/core',
-    blurb:
-      'Constant-product AMM. Each pool below is a SoroswapPair contract. Click a pool to drill into its trade history and live VWAP.',
-  },
-  phoenix: {
-    name: 'Phoenix',
-    type: 'AMM (Soroban)',
-    status: 'live',
-    blurb:
-      'Soroban AMM with per-field event split. Each pool below is one Phoenix pair contract.',
-  },
-  aquarius: {
-    name: 'Aquarius',
-    type: 'AMM with gauges (Soroban)',
-    status: 'live',
-    blurb:
-      'Curve-style AMM with bribe/gauge layer. Constant-product and stableswap pools render uniformly.',
-  },
-  sdex: {
-    name: 'SDEX',
-    type: 'Native order book (classic)',
-    status: 'native',
-    blurb:
-      'Stellar-native on-chain order book. Each row below is a (base, quote) classic-asset pair that traded on SDEX in the recency window.',
-  },
-  comet: {
-    name: 'Comet',
-    type: 'Balancer V1 fork (Soroban)',
-    status: 'experimental',
-    blurb:
-      'Balancer-style multi-asset pool. Shared ("POOL", <event>) topic across every Comet pool contract.',
-  },
-  sushiswap_v3: {
-    name: 'SushiSwap V3',
-    type: 'Concentrated liquidity (Soroban)',
-    status: 'live',
-    blurb:
-      'Concentrated-liquidity AMM, factory-gated on a single pool factory. Each pool below is one V3 pool contract. Depth sits in per-position tick ranges rather than one two-sided reserve, so this venue carries no reserve or TVL figure — see the note under the table.',
-  },
-};
+import { DEX_INFO } from '../registry';
 
 type Params = Promise<{ source: string }>;
 
@@ -190,7 +126,7 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
         </p>
       )}
       {source === 'sushiswap_v3' && (
-        <p className="text-xs text-ink-muted">
+        <p className="text-ink-muted text-xs">
           No reserve or TVL figure is served for {info.name}, and that is a
           methodology decision rather than a gap: a concentrated-liquidity pool
           spreads its depth across per-position tick ranges, so the pool&apos;s
@@ -198,8 +134,8 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
           answer a different question than the one asked. Running the
           constant-product path over them anyway would put a meaningless number
           on this page, so none is derived —{' '}
-          <code className="font-mono">/v1/protocols/sushiswap_v3/tvl</code>{' '}
-          says the same thing, and the venue is named in the{' '}
+          <code className="font-mono">/v1/protocols/sushiswap_v3/tvl</code> says
+          the same thing, and the venue is named in the{' '}
           <Link href="/dexes" className="text-brand-600 hover:underline">
             headline TVL
           </Link>

@@ -173,23 +173,18 @@ See `events.go` for the typed enum.
   `factory_seed.go` is the only remaining caller and only fires
   once at boot to populate the in-memory pair-token registry.
 
-## Router-level topics — intentionally undecoded
+## Router-level topics — intentionally not decoded
 
 `classify()` only matches `TopicPrefixPair` / `TopicPrefixFactory`
-topics — the Router `CAG5LRYQ…` is deliberately excluded (documented
-as "orchestration only... observed via the router's InvokeContract
-op for the census" in `docs/protocols/soroswap.md`). A read-only
-lake topic census confirms the router DOES emit its own contract
-events, currently 100% undecoded: `swap` (168,557 — its own topic,
-separate from the pair-level `swap`/`sync` this package decodes into
-`trades`), `add` (1,057 — liquidity add), `remove` (219 — liquidity
-remove), `init` (1). Also on the factory contracts specifically:
-`init` (4 — factory contract initialization, distinct from
-`new_pair`). None of these route through any decoder or land in any
-table — they're not silently mis-attributed (Classify simply
-returns "" and the dispatcher skips), but per the EVERY-event
-principle they are acknowledged here with real counts. Router
-`swap`/`add`/`remove` duplicate data already served via `trades`,
-`soroswap_router_swaps` and `soroswap_liquidity`, so decoding them
-would double-count; the decision and its double-count check are in
+topics, so the Router `CAG5LRYQ…`'s own events — `swap` (168,557),
+`add` (1,057), `remove` (219), `init` (1) — and the factories' `init`
+(4) return `""` and the dispatcher skips them; nothing is
+mis-attributed. The router `swap` body is `{ amounts: Vec<i128>,
+path: Vec<Address>, to: Address }`: it carries no fee field, and its
+multi-hop path is already served from op-args in
+`soroswap_router_swaps` (a superset of the router swap events).
+`add` / `remove` are the router view of the pair `deposit` /
+`withdraw` events projected to `soroswap_liquidity`. Decoding any of
+them would double-count; the body shape and the row-count comparison
+are in
 [`docs/protocols/soroswap.md`](../../../docs/protocols/soroswap.md#router-topics--intentionally-not-projected-redundant-would-double-count).

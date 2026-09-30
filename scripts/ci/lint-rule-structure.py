@@ -221,29 +221,73 @@ def declared_label_sets():
     return out
 
 
+# A histogram is only ever scraped as <name>_bucket/_sum/_count, so its
+# fixtures never name the declared metric itself; map them back to it.
+HIST_RE = re.compile(
+    r'NewHistogram(?:Vec)?\(\s*prometheus\.HistogramOpts\{[^}]*?Name:\s*"(stellarindex_[a-z0-9_]+)"',
+    re.S,
+)
+HIST_SUFFIXES = ("_bucket", "_sum", "_count")
+
+
+def declared_histograms():
+    out = set()
+    for path in glob.glob("internal/obs/*.go"):
+        with open(path, encoding="utf-8") as fh:
+            out.update(HIST_RE.findall(fh.read()))
+    return out
+
+
+def fixture_violation(line, declared, histograms):
+    """(series, bogus labels, declared labels) for an unrealistic fixture line, else None."""
+    m = SERIES_RE.match(line)
+    if not m:
+        return None
+    metric, labelblob = m.group(1), m.group(2)
+    base, allowed = metric, set()
+    if metric not in declared:
+        for suffix in HIST_SUFFIXES:
+            if metric.endswith(suffix) and metric[:-len(suffix)] in histograms:
+                base = metric[:-len(suffix)]
+                allowed = {"le"} if suffix == "_bucket" else set()
+                break
+    if base not in declared:
+        return None  # not an obs-declared metric (node_*, textfile, …)
+    used = {kv.split("=", 1)[0].strip() for kv in labelblob.split(",") if "=" in kv}
+    bogus = sorted(used - declared[base] - allowed - SCRAPE_LABELS)
+    return (metric, bogus, declared[base] | allowed) if bogus else None
+
+
+# Run on every invocation: a realism check that has stopped matching
+# histogram series would otherwise report a clean tree.
+_st_declared = {"stellarindex_selftest_seconds": {"source"}}
+_st_hist = {"stellarindex_selftest_seconds"}
+for _line, _want in (
+    ("- series: 'stellarindex_selftest_seconds_bucket{source=\"a\",le=\"1\"}'", []),
+    ("- series: 'stellarindex_selftest_seconds_bucket{source=\"a\",le=\"1\",asset=\"x\"}'", ["asset"]),
+    ("- series: 'stellarindex_selftest_seconds_sum{source=\"a\",le=\"1\"}'", ["le"]),
+    ("- series: 'stellarindex_selftest_seconds_count{source=\"a\",asset=\"x\"}'", ["asset"]),
+):
+    _got = fixture_violation(_line, _st_declared, _st_hist)
+    if (_got[1] if _got else []) != _want:
+        err("lint-rule-structure self-test",
+            f"fixture-realism check returned {_got!r} for {_line!r}, want bogus={_want}")
+
 declared = declared_label_sets()
 if declared:
+    histograms = declared_histograms()
     for path in sorted(glob.glob("deploy/monitoring/rule-tests/*.yml")):
         with open(path, encoding="utf-8") as fh:
             for lineno, line in enumerate(fh, 1):
-                m = SERIES_RE.match(line)
-                if not m:
+                v = fixture_violation(line, declared, histograms)
+                if not v:
                     continue
-                metric, labelblob = m.group(1), m.group(2)
-                if metric not in declared:
-                    continue  # not an obs-declared metric (node_*, textfile, …)
-                used = {
-                    kv.split("=", 1)[0].strip()
-                    for kv in labelblob.split(",")
-                    if "=" in kv
-                }
-                bogus = sorted(used - declared[metric] - SCRAPE_LABELS)
-                if bogus:
-                    err(f"{path}:{lineno}",
-                        f"fixture series for `{metric}` sets label(s) {bogus} that the "
-                        f"emitter does not declare (declared: {sorted(declared[metric]) or 'none'}). "
-                        f"Production cannot produce this series — WithLabelValues would panic — "
-                        f"so any assertion built on it certifies behaviour that cannot occur.")
+                metric, bogus, labels = v
+                err(f"{path}:{lineno}",
+                    f"fixture series for `{metric}` sets label(s) {bogus} that the "
+                    f"emitter does not declare (declared: {sorted(labels) or 'none'}). "
+                    f"Production cannot produce this series — WithLabelValues would panic — "
+                    f"so any assertion built on it certifies behaviour that cannot occur.")
 
 # ─────────────────────────────────────────────────────────────────────
 # `for:` equal to a zero-compared event window (audit Q261).

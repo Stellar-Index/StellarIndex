@@ -125,18 +125,15 @@ not silently dropped:
   visible to the same auth-tree walk, but their arg shape (token
   pair + desired/min amounts, no hop path) does not fit
   `soroswap_router_swaps`' columns (`path` cardinality ≥ 2,
-  `function_name` CHECK). The LP flow they cause is already served
-  from the pair contracts' `deposit` / `withdraw` events in
-  `soroswap_liquidity`, so no router-side liquidity surface is
-  planned.
+  `function_name` CHECK). The lake counts the router's own emitted
+  `add` (1,057) / `remove` (219) events. LP flow is served from the
+  pair `deposit` / `withdraw` events in `soroswap_liquidity`.
 - **The router's own emitted contract events** (`swap` 168,557 /
   `add` / `remove` / `init` — router topics, distinct from pair
-  events): deliberately not decoded. They are a router-level view of
-  data already served via `trades` (pair `swap`),
-  `soroswap_router_swaps` (this source, a superset of the router
-  `swap` events) and `soroswap_liquidity`; projecting them would
-  double-count. Decision and counts:
-  [`docs/protocols/soroswap.md`](../../../docs/protocols/soroswap.md#router-topics--intentionally-not-projected-redundant-would-double-count).
+  events): intentionally not decoded. They duplicate the pair events,
+  `soroswap_router_swaps` and `soroswap_liquidity`, so decoding them
+  would double-count; see
+  [`soroswap/README.md`](../soroswap/README.md#router-level-topics--intentionally-not-decoded).
 - **Admin / read-only functions** (`initialize`, `set_pair_fee`,
   `router_pair_for`, quotes, …): move no tokens; out of scope for
   trade attribution.
