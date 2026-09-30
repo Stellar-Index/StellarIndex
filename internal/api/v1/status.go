@@ -143,10 +143,12 @@ func (l StatusLatency) breached() bool {
 	return l.P95Ms > statusLatencyP95TargetMs || l.P99Ms > statusLatencyP99TargetMs
 }
 
+// StatusFreshness counts are pointers so a failed probe serialises as
+// absent rather than as a measured "0 / 0 active sources".
 type StatusFreshness struct {
 	LastAggregatorTick WireTime `json:"last_aggregator_tick,omitempty"`
-	ActiveSources      int      `json:"active_sources"`
-	TotalSources       int      `json:"total_sources"`
+	ActiveSources      *int     `json:"active_sources,omitempty"`
+	TotalSources       *int     `json:"total_sources,omitempty"`
 }
 
 type StatusIncidents struct {
@@ -316,62 +318,52 @@ const activeSourcesQuery = `count(
 
 const totalSourcesQuery = `count(stellarindex_source_enabled == 1)`
 
+// Freshness returns the first query error rather than a zero count, so a
+// blind probe trips the handler's backend canary instead of reading as
+// ingest death. The active window is 7 days because rozo, phoenix, ecb and
+// band emit only a handful of events per day; a shorter one reads them dark.
 func (p *PrometheusStatusBackend) Freshness(ctx context.Context) (StatusFreshness, error) {
 	var out StatusFreshness
 
-	// Active sources: enabled sources that have emitted an event in the
-	// trailing 7 days.
-	//
-	// Two things were wrong here and they compounded into a headline
-	// that could read "26 / 25" on the public status page.
-	//
-	// 1. POPULATION. The comment already promised an intersection with
-	//    source_enabled, but the query never joined on it — it counted
-	//    ANY source emitting events. six always-on supply observers
-	//    (trustlines, sep41_supply, sep41_transfers, sac_balances,
-	//    liquidity_pools, claimable_balances) emit events but carry no
-	//    `enabled` config flag, because they are wired into the indexer
-	//    rather than configured. They inflated the numerator only. The
-	//    `and on (source)` join makes the numerator a strict subset of
-	//    the denominator, so the ratio cannot exceed 1 by construction.
-	//
-	// 2. WINDOW. 10 minutes is far shorter than the publication cadence
-	//    of several legitimately-enabled sources — rozo, phoenix, ecb
-	//    and band all emit in single or double digits per DAY, and band
-	//    emits nothing on most days by design (its contract publishes no
-	//    events; we observe the relay call instead). A 10-minute window
-	//    reported those as inactive, which is a claim about our ingest
-	//    that is not true. 7 days is long enough that a source appearing
-	//    inactive means something has actually stopped.
-	if res, err := p.queryVector(ctx, activeSourcesQuery); err == nil {
-		for _, s := range res {
-			if v, ok := s.Float(); ok {
-				out.ActiveSources = int(v)
-			}
-		}
+	active, err := p.queryCount(ctx, activeSourcesQuery)
+	if err != nil {
+		return StatusFreshness{}, err
 	}
-
-	// Total sources configured as enabled.
-	if res, err := p.queryVector(ctx, totalSourcesQuery); err == nil {
-		for _, s := range res {
-			if v, ok := s.Float(); ok {
-				out.TotalSources = int(v)
-			}
-		}
+	total, err := p.queryCount(ctx, totalSourcesQuery)
+	if err != nil {
+		return StatusFreshness{}, err
 	}
+	out.ActiveSources, out.TotalSources = &active, &total
 
 	// Last aggregator tick — the timestamp of the most recent
 	// vwap-write counter increment.
-	if res, err := p.queryVector(ctx,
-		`max(timestamp(stellarindex_aggregator_vwap_writes_total))`); err == nil {
-		for _, s := range res {
-			if v, ok := s.Float(); ok && v > 0 {
-				out.LastAggregatorTick = WireTime(time.Unix(int64(v), 0).UTC())
-			}
+	res, err := p.queryVector(ctx, `max(timestamp(stellarindex_aggregator_vwap_writes_total))`)
+	if err != nil {
+		return StatusFreshness{}, err
+	}
+	for _, s := range res {
+		if v, ok := s.Float(); ok && v > 0 {
+			out.LastAggregatorTick = WireTime(time.Unix(int64(v), 0).UTC())
 		}
 	}
 
 	return out, nil
+}
+
+// queryCount evaluates a PromQL count(). count() over an empty set yields an
+// empty vector, which is a measured zero, not a failure.
+func (p *PrometheusStatusBackend) queryCount(ctx context.Context, expr string) (int, error) {
+	res, err := p.queryVector(ctx, expr)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, s := range res {
+		if v, ok := s.Float(); ok {
+			n = int(v)
+		}
+	}
+	return n, nil
 }
 
 func (p *PrometheusStatusBackend) Incidents(ctx context.Context) (StatusIncidents, error) {
@@ -767,6 +759,12 @@ const statusHeartbeatStaleAfter = 60 * time.Second
 // above, where a green banner sat over red panels. If `overall` is ever meant
 // to reflect open tickets, that is a change to what "ok" PROMISES on a public
 // surface, not a tuning knob; it belongs in a decision, not a patch.
+//
+// An active-source SHORTFALL (freshness.active_sources < total_sources) is
+// likewise not an input: the count is over a 7-day window, so it describes
+// ingest coverage, not whether customers are served now, and a stalled source
+// already raises its own alert. A failed freshness QUERY does degrade, via
+// backendErr, like every other panel.
 //
 //   - "unknown": every service is unknown (or has a zero LastSeen).
 //     Distinct from "down" — we have no signal at all, rather than
