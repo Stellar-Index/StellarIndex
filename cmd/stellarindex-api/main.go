@@ -814,7 +814,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// latest rates + 7d history to the hypertable so /v1/currencies
 	// can serve historical charts beyond the in-memory window.
 	forexWorker = forexWorker.WithWriter(&forexQuoteWriter{store: store}).
-		WithReader(&forexQuoteWriter{store: store})
+		WithReader(&forexQuoteWriter{store: store}).
+		WithFixingWriter(&forexQuoteWriter{store: store})
 	// Standby FX source. `massive` is a PAID feed and was the ONLY series
 	// in stellarindex_external_fx_last_quote_unix (measured 2026-08-27),
 	// so a 401/429/subscription lapse silently broke every fiat-quoted
@@ -1486,6 +1487,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// fallbacks (T650) — the in-memory forex cache never expires on
 		// its own.
 		FXCrossMaxAgeHours: cfg.PricingGuard.FXCrossMaxAgeHours,
+		FXFixings:          store,
 		FXHistory:          &fxHistoryReader{store: store},
 		SEP10:              sep10Validator,
 		Hub:                hub,
@@ -6088,6 +6090,20 @@ func (w *forexQuoteWriter) InsertFXQuoteBatch(ctx context.Context, quotes []fore
 		}
 	}
 	return w.store.InsertFXQuoteBatch(ctx, out)
+}
+
+// InsertFXFixingBatch adapts the store's fx_fixings append to
+// forex.FXFixingWriter; the close stays the vendor's decimal text.
+func (w *forexQuoteWriter) InsertFXFixingBatch(ctx context.Context, bars []forex.FXBar) error {
+	out := make([]timescale.FXFixing, len(bars))
+	for i, b := range bars {
+		out[i] = timescale.FXFixing{
+			Ticker: b.Ticker, Grain: b.Grain, BarStart: b.BarStart, BarEnd: b.BarEnd,
+			RateUSD: b.CloseText, Source: b.Source,
+		}
+	}
+	_, err := w.store.InsertFXFixingBatch(ctx, out)
+	return err
 }
 
 // LatestFXQuotes adapts the store's NUMERIC-text read to forex.FXQuoteReader;
