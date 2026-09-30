@@ -9,7 +9,6 @@ superseded_by: null
 
 # ADR-0046 — MAD-based outlier filtering for VWAP inputs
 
-- **Decides:** the replacement design for the Phase-1 σ-threshold
 > **Amendment (2026-09-02, #360).** The DECISION — replace mean/σ with a
 > 50 %-breakdown robust filter — stands. The MECHANISM shipped differently
 > and the rollout plan never ran, so read the sections below as the
@@ -31,6 +30,19 @@ superseded_by: null
 > survives only as the per-request `/v1/vwap?outlier_sigma=` and
 > `/v1/ohlc` semantics. See `docs/methodology/vwap-aggregation.md`.
 
+> **Correction (2026-09-29).** The amendment above misattributes the
+> knob. `aggregate.outlier_sigma_threshold` does not configure the
+> whole-window filter this ADR describes: its only consumer is the
+> time-local layer (`orchestrator.go` → `FilterOutliersLocal`), which is
+> outside this ADR's scope. The whole-window `FilterOutliers` has no
+> config surface. `/v1/vwap` takes a per-request `outlier_sigma` that
+> defaults to 0, so the filter is off unless the caller asks for it.
+> `/v1/ohlc` and `/v1/twap` default to the package constant
+> `ohlcDefaultOutlierSigma` (4.0, `internal/api/v1/ohlc.go`). That
+> constant equals the config default only by convention. Changing the
+> config key does not move it.
+
+- **Decides:** the replacement design for the Phase-1 σ-threshold
   outlier filter (`internal/aggregate/outliers.go`), per BACKLOG #44's
   "write the ADR now — the design needs no traffic, only the
   thresholds do".

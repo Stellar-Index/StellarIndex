@@ -117,11 +117,18 @@ export function OperationsView() {
     !cursor &&
     frame != null &&
     !isFrameStale(clock, frame.receivedAt, LEDGER_LIVE_STALE_MS);
-  const [prevNewest, setPrevNewest] = useState<number | null>(null);
+  const [prev, setPrev] = useState<{ newest: number; cursor: string } | null>(
+    null,
+  );
   const [flashAbove, setFlashAbove] = useState<number | null>(null);
-  if (newestShown != null && newestShown !== prevNewest) {
-    setPrevNewest(newestShown);
-    setFlashAbove(!cursor ? prevNewest : null);
+  if (
+    newestShown != null &&
+    (newestShown !== prev?.newest || cursor !== prev.cursor)
+  ) {
+    setPrev({ newest: newestShown, cursor });
+    // Only a page-1 → page-1 advance is a live update; a paged view's
+    // newest row would flash every row on return to page 1.
+    setFlashAbove(!cursor && prev?.cursor === '' ? prev.newest : null);
   }
 
   return (

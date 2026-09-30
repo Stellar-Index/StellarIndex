@@ -58,7 +58,7 @@ type SEP41KindTotals struct {
 }
 
 // StorageSEP41SupplyReader satisfies [SEP41SupplyReader] by
-// composing the SEP41 event-sum totals (#309) plus the
+// composing the SEP41 event-sum totals (sep41_supply_events) plus the
 // SAC-balance per-contract lookup primitive (#303). Per ADR-0023
 // PR 3/4 — closes the algorithm 3 reader path.
 //

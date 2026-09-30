@@ -442,3 +442,35 @@ func TestPolicyForPath_OperationsSharesTheLedgerListBand(t *testing.T) {
 		t.Errorf("policyForPath(%q) = %q, want the conservative default (the case is an exact match by design)", "/v1/operations/something", sub)
 	}
 }
+
+// TestCacheControl_OperationsBandIgnoresTheQuery pins that /v1/operations is
+// banded on its path alone: the handler refuses every ?ledger= form with a
+// no-store problem, so no query value may lift the page into the
+// closed-ledger band.
+func TestCacheControl_OperationsBandIgnoresTheQuery(t *testing.T) {
+	cases := []struct {
+		target string
+		cdn    bool
+		want   string
+	}{
+		{"/v1/operations?ledger=64000000", true, "public, max-age=10, s-maxage=15"},
+		{"/v1/operations?ledger=64000000&limit=2000", false, "public, max-age=10"},
+		{"/v1/operations", true, "public, max-age=10, s-maxage=15"},
+		{"/v1/operations?ledger=", true, "public, max-age=10, s-maxage=15"},
+		{"/v1/operations?ledger=0", true, "public, max-age=10, s-maxage=15"},
+		{"/v1/operations?cursor=63000000.4.7", true, "public, max-age=10, s-maxage=15"},
+		{"/v1/operations?ledger=abc", true, "public, max-age=10, s-maxage=15"},
+		{"/v1/operations?ledger=4294967296", true, "public, max-age=10, s-maxage=15"},
+		{"/v1/ledgers?ledger=64000000", true, "public, max-age=10, s-maxage=15"},
+	}
+	for _, tc := range cases {
+		mw := CacheControlWithCDN(tc.cdn)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		rec := httptest.NewRecorder()
+		mw.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.target, nil))
+		if got := rec.Header().Get("Cache-Control"); got != tc.want {
+			t.Errorf("GET %s (cdn=%v) Cache-Control = %q, want %q", tc.target, tc.cdn, got, tc.want)
+		}
+	}
+}

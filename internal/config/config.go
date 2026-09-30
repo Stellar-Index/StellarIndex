@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -241,9 +242,8 @@ type TradesConfig struct {
 // min-USD-volume eligibility gate. Failing at load also makes the two
 // downstream parsers consistent: the indexer's
 // `timescale.NewUSDVolumeQuoteSpec` already hard-errors on a non-classic
-// peg, while the aggregator's `parseUSDPeggedClassicAssets` used to
-// SILENTLY skip one — this check makes that soft-skip unreachable for a
-// config that loads.
+// peg, while `TradesConfig.USDPeggedClassics` silently skips one —
+// this check makes that soft-skip unreachable for a config that loads.
 func (tc TradesConfig) validate() error {
 	for i, raw := range tc.USDPeggedClassicAssets {
 		if raw == "" {
@@ -262,6 +262,30 @@ func (tc TradesConfig) validate() error {
 		}
 	}
 	return nil
+}
+
+// USDPeggedClassics parses USDPeggedClassicAssets, logging and skipping any
+// entry validate would reject: a missing peg beats refusing to start.
+func (tc TradesConfig) USDPeggedClassics(logger *slog.Logger) []canonical.Asset {
+	if len(tc.USDPeggedClassicAssets) == 0 {
+		return nil
+	}
+	out := make([]canonical.Asset, 0, len(tc.USDPeggedClassicAssets))
+	for _, raw := range tc.USDPeggedClassicAssets {
+		asset, err := canonical.ParseAsset(raw)
+		if err != nil {
+			logger.Warn("usd_pegged_classic_assets: skipping malformed entry",
+				"raw", raw, "err", err)
+			continue
+		}
+		if asset.Type != canonical.AssetClassic {
+			logger.Warn("usd_pegged_classic_assets: ignoring non-classic asset",
+				"raw", raw, "type", asset.Type)
+			continue
+		}
+		out = append(out, asset)
+	}
+	return out
 }
 
 // PricingGuardConfig configures the serving-side price guards in
@@ -588,7 +612,7 @@ type DivergenceOracleConfig struct {
 // set covering XLM + the major stablecoins we curate.
 type DivergenceCoinGeckoConfig struct {
 	Enabled bool              `toml:"enabled" doc:"Whether the CoinGecko reference is wired into the divergence service." default:"true"`
-	BaseURL string            `toml:"base_url" doc:"CoinGecko API base URL. Empty defaults to https://api.coingecko.com/api/v3." default:""`
+	BaseURL string            `toml:"base_url" doc:"CoinGecko API base URL. Empty defaults to https://api.coingecko.com/api/v3, or https://pro-api.coingecko.com/api/v3 when external.coingecko.api_key is set. The reference authenticates with the external.coingecko keys." default:""`
 	IDMap   map[string]string `toml:"id_map" doc:"Maps canonical asset_id → CoinGecko slug. Operator-curated; empty falls back to the built-in default covering XLM + major stables." default:"{}"`
 	// MaxAgeMinutes is the CS-089 staleness ceiling: a /simple/price
 	// quote whose upstream last_updated_at is older than this (relative
@@ -720,18 +744,20 @@ func (m MetadataConfig) HomeDomainFor(issuer string) (string, bool) {
 // the fleet stabilises; deferred to keep config surface narrow
 // until operators actually ask for it.
 type ExternalConfig struct {
-	Binance          ExternalStreamerConfig      `toml:"binance"          doc:"Binance spot WebSocket aggTrade streamer. Pair list: internal/sources/external/binance/pairs.yaml."`
-	Kraken           ExternalStreamerConfig      `toml:"kraken"           doc:"Kraken v2 WebSocket trade streamer. Pair list: internal/sources/external/kraken/pairs.go."`
-	Bitstamp         ExternalStreamerConfig      `toml:"bitstamp"         doc:"Bitstamp v2 WebSocket live_trades streamer. Pair list: internal/sources/external/bitstamp/pairs.go."`
-	Coinbase         ExternalStreamerConfig      `toml:"coinbase"         doc:"Coinbase Exchange WebSocket matches streamer. Pair list: internal/sources/external/coinbase/pairs.go."`
-	ExchangeRatesApi ExchangeRatesApiVenueConfig `toml:"exchangeratesapi" doc:"ExchangeRatesApi.io REST poller for fiat cross-rates (Professional tier required for USD base + 1-min cadence + redistribution)."`
-	CoinGecko        CoinGeckoVenueConfig        `toml:"coingecko"        doc:"CoinGecko /simple/price poller. Class=aggregator (divergence-only). Its keys are also used by the backfill-index and listing-sync ops commands."`
-	CoinMarketCap    CoinMarketCapVenueConfig    `toml:"coinmarketcap"    doc:"CoinMarketCap /v2 quotes poller. Class=aggregator. Paid API key; Standard tier ($79/mo+) for commercial redistribution."`
-	CryptoCompare    CryptoCompareVenueConfig    `toml:"cryptocompare"    doc:"CryptoCompare /data/pricemultifull poller (rows stamped with upstream LASTUPDATE). Class=aggregator. Paid API key via Authorization header."`
-	ECB              ExternalVenueConfig         `toml:"ecb"              doc:"European Central Bank daily FX reference rates. Class=authority_sanity (daily anchor, not VWAP). Free, no auth."`
-	Chainlink        ChainlinkVenueConfig        `toml:"chainlink"        doc:"Chainlink Data Feeds via EVM JSON-RPC (Alchemy / Infura / public). Class=oracle (no VWAP contribution). Lives parallel to internal/divergence/chainlink.go which is the synchronous cross-check."`
-	Massive          MassiveConfig               `toml:"massive"          doc:"massive.com forex rates behind /v1/currencies, fetched hourly by stellarindex-api."`
-	Dune             DuneConfig                  `toml:"dune"             doc:"Dune API read by the curated-rwa-sync ops command."`
+	Binance           ExternalStreamerConfig      `toml:"binance"          doc:"Binance spot WebSocket aggTrade streamer. Pair list: internal/sources/external/binance/pairs.yaml."`
+	Kraken            ExternalStreamerConfig      `toml:"kraken"           doc:"Kraken v2 WebSocket trade streamer. Pair list: internal/sources/external/kraken/pairs.go."`
+	Bitstamp          ExternalStreamerConfig      `toml:"bitstamp"         doc:"Bitstamp v2 WebSocket live_trades streamer. Pair list: internal/sources/external/bitstamp/pairs.go."`
+	Coinbase          ExternalStreamerConfig      `toml:"coinbase"         doc:"Coinbase Exchange WebSocket matches streamer. Pair list: internal/sources/external/coinbase/pairs.go."`
+	ExchangeRatesApi  ExchangeRatesApiVenueConfig `toml:"exchangeratesapi" doc:"ExchangeRatesApi.io REST poller for fiat cross-rates (Professional tier required for USD base + 1-min cadence + redistribution)."`
+	CoinGecko         CoinGeckoVenueConfig        `toml:"coingecko"        doc:"CoinGecko /simple/price poller. Class=aggregator (divergence-only). Its keys are also used by the divergence price reference and the backfill-index and listing-sync ops commands."`
+	CoinMarketCap     CoinMarketCapVenueConfig    `toml:"coinmarketcap"    doc:"CoinMarketCap /v2 quotes poller. Class=aggregator. Paid API key; Standard tier ($79/mo+) for commercial redistribution."`
+	CryptoCompare     CryptoCompareVenueConfig    `toml:"cryptocompare"    doc:"CryptoCompare /data/pricemultifull poller (rows stamped with upstream LASTUPDATE). Class=aggregator. Paid API key via Authorization header."`
+	ECB               ExternalVenueConfig         `toml:"ecb"              doc:"European Central Bank daily FX reference rates. Class=authority_sanity (daily anchor, not VWAP). Free, no auth."`
+	Chainlink         ChainlinkVenueConfig        `toml:"chainlink"        doc:"Chainlink Data Feeds via EVM JSON-RPC (Alchemy / Infura / public). Class=oracle (no VWAP contribution). Lives parallel to internal/divergence/chainlink.go which is the synchronous cross-check."`
+	Tiingo            TiingoVenueConfig           `toml:"tiingo"           doc:"Tiingo end-of-day poller for the published daily NAV of the bound tokenized funds (tickers come from internal/rwa's fund bindings). Class=oracle, off-chain, no VWAP contribution; read only by the RWA reference surface. Free tier: 50 req/h, 1,000 req/day; hourly polling of 12 tickers is 288/day, 8,928/month."`
+	Massive           MassiveConfig               `toml:"massive"           doc:"massive.com forex rates behind /v1/currencies, fetched every refresh_interval (default hourly) by stellarindex-api."`
+	OpenExchangeRates OpenExchangeRatesConfig     `toml:"openexchangerates" doc:"Open Exchange Rates hourly USD-base board, built by stellarindex-api's forex worker when enabled. Not in the serving chain: the worker holds it but neither fetches nor serves it yet."`
+	Dune              DuneConfig                  `toml:"dune"              doc:"Dune API read by the curated-rwa-sync ops command."`
 }
 
 // ExternalStreamerConfig is the toggle shape for credential-less
@@ -773,6 +799,13 @@ type ExchangeRatesApiVenueConfig struct {
 	Base    string `toml:"base" doc:"Base currency (USD, EUR, GBP, …). Defaults to USD. Free tier locked to EUR; paid tier accepts any allow-listed fiat." default:"USD"`
 }
 
+// TiingoVenueConfig is [ExternalVenueConfig] plus the Tiingo API key.
+type TiingoVenueConfig struct {
+	Enabled      bool          `toml:"enabled" doc:"Whether this connector runs. Off by default — no network egress until operator opts in." default:"false"`
+	PollInterval time.Duration `toml:"poll_interval" doc:"Override the connector's hourly default. One request per bound ticker per poll, so a shorter interval can exceed the free tier's 50 req/h." default:""`
+	APIKey       string        `toml:"api_key" doc:"Tiingo API token, sent as 'Authorization: Token <key>', never in the URL. Required when enabled. Prefer env var." env:"TIINGO_API_KEY" default:""`
+}
+
 // CoinGeckoVenueConfig is [ExternalVenueConfig] plus CoinGecko's two key
 // tiers. Pro wins when both are set.
 type CoinGeckoVenueConfig struct {
@@ -782,9 +815,36 @@ type CoinGeckoVenueConfig struct {
 	DemoAPIKey   string        `toml:"demo_api_key" doc:"CoinGecko Demo API key, sent as x-cg-demo-api-key. With api_key also empty, requests go out anonymously and are heavily 429-throttled. Prefer env var." env:"COINGECKO_DEMO_API_KEY" default:""`
 }
 
-// MassiveConfig carries the massive.com forex API key.
+// MassiveConfig carries the massive.com forex API key and the forex
+// worker's poll cadence.
 type MassiveConfig struct {
-	APIKey string `toml:"api_key" doc:"massive.com API key. Empty still starts the forex worker, but every fetch 401s and /v1/currencies serves warming-up. Prefer env var." env:"MASSIVE_API_KEY" default:""`
+	APIKey          string        `toml:"api_key" doc:"massive.com API key. Empty still starts the forex worker, but every fetch 401s and /v1/currencies serves warming-up. Prefer env var." env:"MASSIVE_API_KEY" default:""`
+	RefreshInterval time.Duration `toml:"refresh_interval" doc:"Forex worker poll cadence. One poll is one request to massive, plus one to each standby it falls through to. Zero uses 1h; values under 10m are raised to 10m and logged. Budget a metered feed against it: the Open Exchange Rates Free plan (1,000 requests/month, hourly updates) spends 720-744/month at 1h." default:"1h"`
+}
+
+// MinMassiveRefreshInterval floors [MassiveConfig.RefreshInterval]: every
+// board in the chain updates at most hourly, so a faster poll only spends
+// metered quota.
+const MinMassiveRefreshInterval = 10 * time.Minute
+
+// EffectiveRefreshInterval returns the forex worker's cadence: 1h when
+// unset, raised to [MinMassiveRefreshInterval] (clamped=true) when below it.
+func (m MassiveConfig) EffectiveRefreshInterval() (d time.Duration, clamped bool) {
+	switch {
+	case m.RefreshInterval <= 0:
+		return time.Hour, false
+	case m.RefreshInterval < MinMassiveRefreshInterval:
+		return MinMassiveRefreshInterval, true
+	default:
+		return m.RefreshInterval, false
+	}
+}
+
+// OpenExchangeRatesConfig carries the Open Exchange Rates app id and toggle.
+type OpenExchangeRatesConfig struct {
+	Enabled  bool   `toml:"enabled" doc:"Construct the Open Exchange Rates provider in stellarindex-api. Off by default; not yet consulted for serving." default:"false"`
+	AppID    string `toml:"app_id" doc:"Open Exchange Rates app id, sent only in the Authorization header. Free plan: 1,000 requests/month, hourly updates, USD base only. Prefer env var." env:"OPENEXCHANGERATES_APP_ID" default:""`
+	Endpoint string `toml:"endpoint" doc:"API root override. Empty uses https://openexchangerates.org/api." default:""`
 }
 
 // DuneConfig carries the Dune API key.
@@ -883,6 +943,9 @@ type ReflectorOracleConfig struct {
 	DEXContract string `toml:"dex_contract" doc:"Reflector DEX contract (C-prefix) on mainnet."`
 	CEXContract string `toml:"cex_contract" doc:"Reflector CEX contract (C-prefix) on mainnet."`
 	FXContract  string `toml:"fx_contract"  doc:"Reflector FX contract (C-prefix) on mainnet."`
+	DEXDecimals uint8  `toml:"dex_decimals" doc:"Price scale (power of 10) of the DEX contract's SEP-40 decimals(). 0 keeps the Reflector default of 14. Not read from the contract: confirm decimals() on-chain before re-pointing dex_contract." default:"0"`
+	CEXDecimals uint8  `toml:"cex_decimals" doc:"Price scale (power of 10) of the CEX contract's SEP-40 decimals(). 0 keeps the Reflector default of 14. Not read from the contract: confirm decimals() on-chain before re-pointing cex_contract." default:"0"`
+	FXDecimals  uint8  `toml:"fx_decimals"  doc:"Price scale (power of 10) of the FX contract's SEP-40 decimals(). 0 keeps the Reflector default of 14. Not read from the contract: confirm decimals() on-chain before re-pointing fx_contract." default:"0"`
 }
 
 // RedstoneOracleConfig carries the mainnet RedStone Adapter address.
@@ -1145,15 +1208,16 @@ type StorageConfig struct {
 	// settings profile (bounded threads/memory/execution-time, CH
 	// query-priority + OS nice edge over merges and backfill inserts —
 	// see configs/ansible/roles/archival-node/tasks/20-clickhouse-serving-profile.yml)
-	// instead of CH's unauthenticated `default` user, which every OTHER
-	// CH connection in this repo (the indexer's dual-sink, the
-	// aggregator's explorer reader, stellarindex-ops backfills/gates)
-	// keeps using unchanged. Both empty (the default) preserves the
-	// pre-D4 behavior exactly: connect as `default`, no password — safe
-	// to leave unset on any deployment that hasn't provisioned the CH
-	// profile yet (docs/operations/self-hosting.md's ClickHouse section
-	// is entirely unaffected either way).
-	ClickHouseServingUser string `toml:"clickhouse_serving_user" doc:"ClickHouse username the API's serving reads (explorer endpoints, incl. GET /v1/accounts/{g}/movements) authenticate as (ADR-0048 D4). Empty (default) uses ClickHouse's default user, unchanged from pre-D4 behavior." default:""`
+	// instead of the identity every OTHER CH connection in this repo
+	// (the indexer's dual-sink, the aggregator's readers, stellarindex-ops
+	// backfills/gates) resolves from the environment: ops_batch, else
+	// live_daemon, else CH's unauthenticated `default` user
+	// (internal/storage/clickhouse/ops_auth.go). Both empty (the default)
+	// makes the API resolve the same way — safe to leave unset on any
+	// deployment that hasn't provisioned the CH profile yet
+	// (docs/operations/self-hosting.md's ClickHouse section is entirely
+	// unaffected either way).
+	ClickHouseServingUser string `toml:"clickhouse_serving_user" doc:"ClickHouse username the API's serving reads (explorer endpoints, incl. GET /v1/accounts/{g}/movements) authenticate as (ADR-0048 D4). Empty (default) uses the environment's identity: STELLARINDEX_CLICKHOUSE_LIVE_USER when set, else ClickHouse's default user." default:""`
 	// ClickHouseServingPassword holds the resolved password, not an
 	// env-var NAME (the direct-value `env:` convention, same as
 	// RedisPassword — see that field's doc comment — NOT the
@@ -1501,7 +1565,7 @@ type DashboardConfig struct {
 
 	EmailFrom string `toml:"email_from" doc:"From: address for transactional emails (e.g. 'Stellar Index <hello@stellarindex.io>'). Must match a domain Resend has verified for the configured API key." default:"Stellar Index <hello@stellarindex.io>"`
 
-	ResendAPIKeyEnv string `toml:"resend_api_key_env" doc:"Environment variable holding the Resend transactional-email API key (re_…). Empty value leaves the dashboard auth flow on a NoopSender — magic-link tokens land in the API logs only, useful for local dev. Production sets this." default:"STELLARINDEX_RESEND_API_KEY"`
+	ResendAPIKeyEnv string `toml:"resend_api_key_env" doc:"Environment variable holding the Resend transactional-email API key (re_…). An unset or empty value wires an unconfigured mail sender: POST /v1/auth/login answers 503 and counts a failed send, and signup reports email_verification_sent:false. Production sets this." default:"STELLARINDEX_RESEND_API_KEY"`
 
 	CodeSecretEnv string `toml:"code_secret_env" doc:"Environment variable holding the server secret that keys the 6-digit email-code derivation (HMAC over the stored token hash — without it a Postgres read would reveal every in-flight sign-in code) AND the WebAuthn passkey-ceremony, magic-link login-intent and login-device cookie MACs. Each consumer MACs under its own HKDF-derived key. Any long random string (32+ bytes). Required while passkeys are wired (the API refuses to start without it); otherwise an unset/empty env falls back to a random per-process secret: still keyed, but in-flight codes, magic links and browsers' login-device markers stop verifying across a restart or another instance." default:"STELLARINDEX_DASHBOARD_CODE_SECRET"`
 
@@ -2417,5 +2481,7 @@ func defaultExternalConfig() ExternalConfig {
 		CryptoCompare:    CryptoCompareVenueConfig{Enabled: false},
 		ECB:              ExternalVenueConfig{Enabled: false},
 		Chainlink:        ChainlinkVenueConfig{Enabled: false, FeedMap: map[string]ChainlinkFeedSetting{}},
+		Massive:          MassiveConfig{RefreshInterval: time.Hour},
+		Tiingo:           TiingoVenueConfig{Enabled: false},
 	}
 }

@@ -1,171 +1,124 @@
-{# users.acl.j2 — Redis 6+ ACL config rendered by the redis-sentinel #}
-{# role when `redis_acl_lockdown: true`. F-1213 audit-2026-05-12. #}
+{# users.acl.j2 — Redis 6+ ACL file rendered by the redis-sentinel role #}
+{# when `redis_acl_lockdown: true`. #}
 {# #}
-{# Pre-F-1213: Redis on R1 ran with the default `requirepass` flow + #}
-{# the legacy `default` user retaining `on nopass ~* &* +@all` — so a #}
-{# password-less client (or any compromised process on the box) could #}
-{# enumerate every key + run admin commands like FLUSHALL or DEBUG. #}
+{# FORMAT: an aclfile takes one `user …` rule per line and nothing else. #}
+{# Redis refuses to start on a `#` comment or a `\` continuation, so every #}
+{# note here is a jinja comment and every rule stays on ONE line. #}
+{# test/integration/redis_acl_template_load_test.go loads the rendered #}
+{# file into a real redis-server. #}
 {# #}
-{# This file closes the legacy default-user surface and replaces it #}
-{# with one narrow per-component user that covers the cache key set #}
-{# the application actually uses. Operators with stricter posture #}
-{# split the per-component user further (aggregator-only / api-only / #}
-{# indexer-only) — each gets its own >password and ~keypattern. #}
-{# Today the application binaries share `redis_password` so a single #}
-{# `stellarindex` user is sufficient. #}
+{# This file closes the legacy default-user surface (`on nopass ~* &* #}
+{# +@all`, i.e. any password-less local client could FLUSHALL or DEBUG) #}
+{# and replaces it with one narrow per-component user that covers the #}
+{# cache key set the application actually uses. Operators with stricter #}
+{# posture split the per-component user further (aggregator-only / #}
+{# api-only / indexer-only) — each gets its own >password and #}
+{# ~keypattern. Today the application binaries share `redis_password` #}
+{# so a single `stellarindex` user is sufficient. #}
 
-# Disable the legacy default user. `off` means it cannot AUTH at all
-# — every connection MUST authenticate as one of the named users
-# below. Combined with `protected-mode yes` in redis.conf this
-# eliminates the "compromised local process gets everything" path.
+{# Disable the legacy default user. `off` means it cannot AUTH at all #}
+{# — every connection MUST authenticate as one of the named users #}
+{# below. Combined with `protected-mode yes` in redis.conf this #}
+{# eliminates the "compromised local process gets everything" path. #}
 user default off nopass nocommands
 
-# Application user. ONE password shared with every application
-# binary today (aggregator + indexer + api + customerwebhook
-# worker); future per-component split adds parallel users with
-# their own >password lines.
-#
-# Command surface (`+@read +@write +@scripting +@pubsub` minus the
-# admin/dangerous families):
-#
-#   - @read       — GET / HGET / LRANGE / SMEMBERS / ZRANGE / EXISTS
-#   - @write      — SET / DEL / EXPIRE / HSET / SADD / ZADD / INCR
-#   - @scripting  — EVAL / EVALSHA (rate-limit token bucket)
-#   - @pubsub     — SUBSCRIBE / PUBLISH (closed-bucket stream)
-#   - @connection — AUTH / PING / SELECT / HELLO (everyone needs these)
-#
-# Explicitly DENIED (each `-cmd` overrides the `+@write`-default
-# permission):
-#
-#   - @admin      — CONFIG SET / DEBUG / SHUTDOWN / FLUSHALL / FLUSHDB
-#   - @dangerous  — KEYS (full-keyspace scan), MIGRATE, MODULE,
-#                   CLUSTER, REPLICAOF, SLAVEOF, FAILOVER, RESET,
-#                   FUNCTION, ACL, CLIENT KILL, LATENCY, MEMORY
-#                   DOCTOR, OBJECT, SLOWLOG, MONITOR, COMMAND COUNT
-#
-# Key-pattern allow-list (`~`) restricts the user to the cache key
-# prefixes the application actually uses. Anything outside the list
-# (operator scratch keys, third-party tool spillover) is invisible.
-user stellarindex on >{{ redis_password }} \
-  -@all +@read +@write +@scripting +@pubsub +@connection \
-  -@admin -@dangerous \
-  ~vwap:* ~confidence:* ~freeze:* ~div:* \
-  ~rl:* ~signup-ip:* ~signup:email:* ~signup:lock:* ~signup:verify:* ~touch:apikey:* \
-  ~toml:* ~meta:* ~price:* ~apikey:* ~apikey-index:* ~apikey-cache:* \
-  ~health:* ~oracle:* \
-  ~sub:* ~sep10:seen:* ~usage:* ~passkey:ceremony:* \
-  ~assets:list:* ~markets:list:* \
-  &closed-bucket-* &stream-*
-# `apikey-cache:*` is the auth_backend=postgres validator's read-through
-# cache of api_keys rows (TTL-bounded), kept outside `apikey:` so the
-# redis-backend validator can never serve a cache row as a credential.
-# Omit it under lockdown and the postgres backend still authenticates,
-# but every cache read and write is NOPERM, so each request reaches
-# Postgres.
-#
-# F057 / K051 (reverification 2026-09-18): `apikey-index:*` is the
-# API-key lookup index (one HASH, `apikey-index:v1`, plus its SETNX
-# build lock) that replaces the per-request `SCAN apikey:*` behind
-# /v1/account/keys. `~apikey:*` does NOT cover it — the family is kept
-# outside `apikey:` so the record walk never GETs a hash. Omit this
-# pattern under lockdown and nothing breaks: every index access is
-# NOPERM, issuance writes the record alone, and lookups keep walking
-# the keyspace — i.e. the cost defect stays live until this template
-# is APPLIED (an ansible run; a binary deploy does not carry it). The
-# API builds the index itself on the first lookup after that.
-#
-# F-1254 (codex audit-2026-05-12): the previous allow-list named
-# `~ratelimit:*` (code writes `rl:*`) and `~subscriber:*` (code
-# writes `sub:*`), and omitted `~signup:email:*`, `~sep10:seen:*`,
-# `~usage:*`, `~assets:list:*`, `~markets:list:*` entirely. A
-# lockdown-on deployment would have authenticated successfully and
-# then ACL-denied at runtime on rate-limit / signup duplicate /
-# SEP-10 replay / usage accounting / catalogue cache writes. The
-# canonical list is in `internal/cachekeys/keys.go` plus the per-
-# component WithKeyPrefix sites in ratelimit, signup_tracker,
-# sep10/redisreplay, and usage/counter. Update this allow-list
-# in lockstep when a new namespace lands.
-#
-# F-1255 (codex audit-2026-05-12): `signup:lock:*` is the SETNX
-# per-email serialisation namespace the dashboardauth callback
-# acquires before Account.Create to keep concurrent first-login
-# callbacks from racing.
-#
-# F-1226 wave 39 (codex audit-2026-05-12): `touch:apikey:*` is
-# the SETNX-debounce namespace the api-key TouchUsage middleware
-# uses to gate hot-row UPDATEs on the api_keys table.
-#
-# audit-2026-08-13: `passkey:ceremony:*` is the SETNX spent-set that
-# makes each WebAuthn ceremony challenge single-use, so a captured
-# `/v1/auth/passkey/finish-login` request cannot be replayed into a
-# second session. The handler FAILS CLOSED when the SETNX errors —
-# omit this pattern under lockdown and passkey sign-in stops working
-# entirely (email-code sign-in keeps working).
-#
-# F-1218 wave 42 (codex audit-2026-05-12): `signup:verify:*` is
-# the email-ownership-proof token namespace. The signup handler
-# Reserves a hashed token after minting; the /v1/signup/verify
-# endpoint Consumes it via GETDEL. Disjoint from `signup:email:`
-# (the F-1218 prior-signup reservation) and `signup:lock:` (the
-# F-1255 per-email serialisation lock).
+{# Application user. ONE password shared with every application #}
+{# binary today (aggregator + indexer + api + customerwebhook #}
+{# worker); future per-component split adds parallel users with #}
+{# their own >password lines. #}
+{# #}
+{# Command surface (`+@read +@write +@scripting +@pubsub` minus the #}
+{# admin/dangerous families): #}
+{# #}
+{#   - @read       — GET / HGET / LRANGE / SMEMBERS / ZRANGE / EXISTS #}
+{#   - @write      — SET / DEL / EXPIRE / HSET / SADD / ZADD / INCR #}
+{#   - @scripting  — EVAL / EVALSHA (rate-limit token bucket) #}
+{#   - @pubsub     — SUBSCRIBE / PUBLISH (closed-bucket stream) #}
+{#   - @connection — AUTH / PING / SELECT / HELLO (everyone needs these) #}
+{# #}
+{# Explicitly DENIED (each `-cmd` overrides the `+@write`-default #}
+{# permission): #}
+{# #}
+{#   - @admin      — CONFIG SET / DEBUG / SHUTDOWN / FLUSHALL / FLUSHDB #}
+{#   - @dangerous  — KEYS (full-keyspace scan), MIGRATE, MODULE, #}
+{#                   CLUSTER, REPLICAOF, SLAVEOF, FAILOVER, RESET, #}
+{#                   FUNCTION, ACL, CLIENT KILL, LATENCY, MEMORY #}
+{#                   DOCTOR, OBJECT, SLOWLOG, MONITOR, COMMAND COUNT #}
+{# #}
+{# Key-pattern allow-list (`~`) restricts the user to the cache key #}
+{# prefixes the application actually uses. Anything outside the list #}
+{# (operator scratch keys, third-party tool spillover) is invisible. #}
+{# A missing pattern authenticates fine and then ACL-denies at runtime. #}
+{# The canonical list is in `internal/cachekeys/keys.go` plus the per- #}
+{# component WithKeyPrefix sites in ratelimit, signup_tracker, #}
+{# sep10/redisreplay, and usage/counter. Update this allow-list #}
+{# in lockstep when a new namespace lands. #}
+{# #}
+{# - `apikey-cache:*` is the auth_backend=postgres validator's read-through #}
+{#   cache of api_keys rows (TTL-bounded), kept outside `apikey:` so the #}
+{#   redis-backend validator can never serve a cache row as a credential. #}
+{#   Omit it and the postgres backend still authenticates, but every cache #}
+{#   read and write is NOPERM, so each request reaches Postgres. #}
+{# - `apikey-index:*` is the API-key lookup index (one HASH, #}
+{#   `apikey-index:v1`, plus its SETNX build lock) that replaces the #}
+{#   per-request `SCAN apikey:*` behind /v1/account/keys. `~apikey:*` does #}
+{#   NOT cover it — the family is kept outside `apikey:` so the record walk #}
+{#   never GETs a hash. Omit it and every index access is NOPERM: issuance #}
+{#   writes the record alone and lookups keep walking the keyspace. The API #}
+{#   builds the index itself on the first lookup after this is applied. #}
+{# - `signup:lock:*` is the SETNX per-email serialisation namespace the #}
+{#   dashboardauth callback acquires before Account.Create to keep #}
+{#   concurrent first-login callbacks from racing. #}
+{# - `touch:apikey:*` is the SETNX-debounce namespace the api-key #}
+{#   TouchUsage middleware uses to gate hot-row UPDATEs on api_keys. #}
+{# - `passkey:ceremony:*` is the SETNX spent-set that makes each WebAuthn #}
+{#   ceremony challenge single-use. The handler FAILS CLOSED when the #}
+{#   SETNX errors — omit it and passkey sign-in stops working entirely #}
+{#   (email-code sign-in keeps working). #}
+{# - `signup:verify:*` is the email-ownership-proof token namespace: the #}
+{#   signup handler Reserves a hashed token, /v1/signup/verify Consumes it #}
+{#   via GETDEL. Disjoint from `signup:email:` (prior-signup reservation) #}
+{#   and `signup:lock:` (per-email serialisation lock). #}
+user stellarindex on >{{ redis_password }} -@all +@read +@write +@scripting +@pubsub +@connection -@admin -@dangerous ~vwap:* ~confidence:* ~freeze:* ~div:* ~rl:* ~signup-ip:* ~signup:email:* ~signup:lock:* ~signup:verify:* ~touch:apikey:* ~toml:* ~meta:* ~price:* ~apikey:* ~apikey-index:* ~apikey-cache:* ~health:* ~oracle:* ~sub:* ~sep10:seen:* ~usage:* ~passkey:ceremony:* ~assets:list:* ~markets:list:* &closed-bucket-* &stream-*
 
-# Exporter user — narrow command set the oliver006/redis_exporter
-# binary needs for INFO / CLIENT / CLUSTER / CONFIG GET / DBSIZE /
-# SLOWLOG GET metric gathering. Cannot reuse the `stellarindex`
-# application user because that user has `-@admin -@dangerous` to
-# deny FLUSHALL / DEBUG / etc., and INFO / CLIENT / CLUSTER /
-# CONFIG / SLOWLOG all live in those denied categories.
-#
-# Same `redis_password` so the vault rotation is one-shot across
-# every named user; the username is what differentiates the ACL
-# roles. The exporter's systemd unit at
-# `tasks/07-monitoring.yml` passes `-redis.user=redis_exporter`
-# so the exporter sends `AUTH redis_exporter <pass>` instead of
-# the legacy single-arg AUTH that would resolve as `default` and
-# be rejected under lockdown.
-#
-# F-1272 (codex audit-2026-05-13): wave-106 adds this user
-# specifically because the wave-106 exporter wiring referenced
-# `-redis.user=redis_exporter`; without the matching ACL entry
-# the exporter would fail under lockdown.
-user redis_exporter on >{{ redis_password }} \
-  -@all +@connection \
-  +info +client +cluster|info +config|get +dbsize +slowlog|get +latency \
-  ~* &*
+{# Exporter user — narrow command set the oliver006/redis_exporter #}
+{# binary needs for INFO / CLIENT / CLUSTER / CONFIG GET / DBSIZE / #}
+{# SLOWLOG GET metric gathering. Cannot reuse the `stellarindex` #}
+{# application user because that user has `-@admin -@dangerous` to #}
+{# deny FLUSHALL / DEBUG / etc., and INFO / CLIENT / CLUSTER / #}
+{# CONFIG / SLOWLOG all live in those denied categories. #}
+{# #}
+{# Same `redis_password` so the vault rotation is one-shot across #}
+{# every named user; the username is what differentiates the ACL #}
+{# roles. The exporter's systemd unit at `tasks/07-monitoring.yml` #}
+{# passes `-redis.user=redis_exporter` so the exporter sends #}
+{# `AUTH redis_exporter <pass>` instead of the single-arg AUTH that #}
+{# would resolve as `default` and be rejected under lockdown. #}
+user redis_exporter on >{{ redis_password }} -@all +@connection +info +client +cluster|info +config|get +dbsize +slowlog|get +latency ~* &*
 
-# Sentinel monitoring/failover user (SL03, reverification 2026-09-18).
-# sentinel.conf.j2's `sentinel auth-user` points here instead of the
-# disabled `default` user. Sentinel needs PING/INFO to poll instance
-# state, PUBLISH/SUBSCRIBE on `__sentinel__:hello` for Sentinel-to-
-# Sentinel gossip, CONFIG GET/SET/REWRITE to persist `replicaof`
-# across restarts, and REPLICAOF/SLAVEOF itself to promote/demote on
-# failover — the last two live in `@dangerous`/`@admin`, which is why
-# this can't reuse the `stellarindex` application user.
-user sentinel on >{{ redis_password }} \
-  -@all +auth +ping +info +subscribe +publish \
-  +config|get +config|set +config|rewrite +replicaof +slaveof +role \
-  +client|setname +client|getname +client|id +client|list \
-  ~* &*
+{# Sentinel monitoring/failover user. sentinel.conf.j2's `sentinel #}
+{# auth-user` points here instead of the disabled `default` user. #}
+{# Sentinel needs PING/INFO to poll instance state, PUBLISH/SUBSCRIBE #}
+{# on `__sentinel__:hello` for Sentinel-to-Sentinel gossip, CONFIG #}
+{# GET/SET/REWRITE to persist `replicaof` across restarts, and #}
+{# REPLICAOF/SLAVEOF itself to promote/demote on failover — the last #}
+{# two live in `@dangerous`/`@admin`, which is why this can't reuse #}
+{# the `stellarindex` application user. #}
+user sentinel on >{{ redis_password }} -@all +auth +ping +info +subscribe +publish +config|get +config|set +config|rewrite +replicaof +slaveof +role +client|setname +client|getname +client|id +client|list ~* &*
 
-# Replication user (SL02, reverification 2026-09-18). redis.conf.j2's
-# `masteruser` points here instead of the disabled `default` user, so a
-# replica's masterauth AUTH resolves. Replication needs PSYNC/REPLCONF
-# to stream the RDB + command backlog and PING for the master/replica
-# heartbeat — none of which fit the `stellarindex` application user's
-# key-pattern-scoped @read/@write surface.
-user replication on >{{ redis_password }} \
-  -@all +psync +replconf +ping \
-  ~* &*
+{# Replication user. redis.conf.j2's `masteruser` points here instead #}
+{# of the disabled `default` user, so a replica's masterauth AUTH #}
+{# resolves. Replication needs PSYNC/REPLCONF to stream the RDB + #}
+{# command backlog and PING for the master/replica heartbeat — none of #}
+{# which fit the `stellarindex` application user's key-pattern-scoped #}
+{# @read/@write surface. #}
+user replication on >{{ redis_password }} -@all +psync +replconf +ping ~* &*
 
 {# When the operator wants per-component lockdown they uncomment #}
 {# the three users below (rotating distinct passwords through the #}
 {# vault) and stop the API / aggregator / indexer binaries with #}
-{# their own narrower `REDIS_PASSWORD` env vars: #}
+{# their own narrower `REDIS_PASSWORD` env vars. Each stays ONE line: #}
 {# #}
-{# user re_aggregator on >$pass_aggregator -@all +@read +@write -@admin -@dangerous \ #}
-{#   ~vwap:* ~confidence:* ~freeze:* ~div:* ~health:* &closed-bucket-* #}
-{# user re_api        on >$pass_api        -@all +@read +@write +@pubsub -@admin -@dangerous \ #}
-{#   ~vwap:* ~confidence:* ~freeze:* ~div:* ~ratelimit:* ~signup-ip:* \ #}
-{#   ~toml:* ~meta:* ~price:* ~apikey:* ~oracle:* ~subscriber:* &closed-bucket-* &stream-* #}
-{# user re_indexer    on >$pass_indexer    -@all +@read +@write -@admin -@dangerous \ #}
-{#   ~health:* #}
+{# user re_aggregator on >$pass_aggregator -@all +@read +@write -@admin -@dangerous ~vwap:* ~confidence:* ~freeze:* ~div:* ~health:* &closed-bucket-* #}
+{# user re_api        on >$pass_api        -@all +@read +@write +@pubsub -@admin -@dangerous ~vwap:* ~confidence:* ~freeze:* ~div:* ~ratelimit:* ~signup-ip:* ~toml:* ~meta:* ~price:* ~apikey:* ~oracle:* ~subscriber:* &closed-bucket-* &stream-* #}
+{# user re_indexer    on >$pass_indexer    -@all +@read +@write -@admin -@dangerous ~health:* #}

@@ -16,6 +16,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
+// replayGenerationNote is printed on every rewind and dry-run: the live
+// projector writes at derive_generation 0, and the writers' ON CONFLICT
+// guard refuses to overwrite a row a re-derive stamped higher.
+const replayGenerationNote = "note: the projector re-writes at derive_generation 0 — rows in this range that a re-derive " +
+	"(projected-rebuild, ch-rebuild) already stamped with a higher generation keep their stored values; " +
+	"to correct those, re-derive the range with projected-rebuild -write instead.\n"
+
 const replayNotReachedMsg = "projector cursor for source=%q is at ledger %d, which has not yet passed requested ledger %d — " +
 	"nothing to rewind; the live projector's forward pass will project it (%d ledgers still ahead of the cursor).\n"
 
@@ -33,8 +40,9 @@ const replayNotReachedMsg = "projector cursor for source=%q is at ledger %d, whi
 //     bound and tails forward to the live tip.
 //   - If `-from` is already at or below the cursor, no-op (operator
 //     is asking for ground that's already been re-walked).
-//   - `INSERT … ON CONFLICT DO NOTHING` in every per-source table
-//     makes the re-walk idempotent.
+//   - Every per-source writer's generation-guarded upsert makes the
+//     re-walk idempotent in row count; it overwrites gen-0 rows only, so
+//     a row a re-derive stamped higher is not corrected by a replay.
 //
 // The rewind itself is one SQL operation — the projector goroutine in
 // `stellarindex-indexer` does the re-walk. The command then STAYS to
@@ -145,7 +153,7 @@ func projectorReplay(w io.Writer, args []string) error {
 	}
 	if dryRun {
 		_, _ = fmt.Fprintf(w,
-			"dry-run: would RecordProjectionDirtyWindow(%q, [%d,%d]) then UpsertCursor(projector, %q, %d)\n",
+			"dry-run: would RecordProjectionDirtyWindow(%q, [%d,%d]) then RewindCursor(projector, %q, %d)\n",
 			*source, target, currentLedger, *source, rewindTo)
 		if *refreshCAGGs && *catchUp {
 			_, _ = fmt.Fprintf(w,
@@ -153,42 +161,13 @@ func projectorReplay(w io.Writer, args []string) error {
 				*catchUpTimeout, currentLedger, target, currentLedger)
 		}
 		printSEP41ReplayDryRunNote(w, *source)
+		_, _ = fmt.Fprint(w, replayGenerationNote)
 		return nil
 	}
-	// Record the dirty window BEFORE the rewind, and FAIL the replay if the
-	// record cannot be written. This closes the carried-claim invalidation
-	// gap (2026-07-31): the daily compute-completeness driver reconciles
-	// only [watermark, tip] and CARRIES the prior clean projection claim for
-	// the older prefix — a rewind that rewrites served rows below the
-	// watermark silently invalidates that carried claim, which is exactly
-	// how the 07-30 cctp replay's 19,366 event_index-0 twins at
-	// 62.27M–63.55M escaped the verifier. The window [target, currentLedger]
-	// is the below-cursor range about to be rewritten; compute-completeness
-	// extends its reconcile floor to cover it and clears it only on a clean
-	// verdict. Record-then-rewind is the fail-closed order: a crash between
-	// the two leaves a spurious window (one clean verify clears it), never a
-	// rewind with no record.
-	if err := store.RecordProjectionDirtyWindow(ctx, timescale.ProjectionDirtyWindow{
-		Source: *source,
-		From:   target,
-		To:     currentLedger,
-		Reason: timescale.ProjectorReplayReason(currentLedger, target),
-	}); err != nil {
-		return fmt.Errorf("record dirty window (refusing to rewind without it — the completeness verifier would carry a stale claim over the rewritten range): %w", err)
+	rewoundFrom, err := rewindRecordingDirtyWindow(ctx, w, store, *source, target, currentLedger)
+	if err != nil {
+		return err
 	}
-	_, _ = fmt.Fprintf(w,
-		"recorded projection dirty window source=%q [%d,%d] — compute-completeness will force a re-reconcile of this range before carrying any projection claim over it\n",
-		*source, target, currentLedger)
-	// RewindCursor, NOT UpsertCursor: the upsert path carries a
-	// monotonic-forward guard (F-0020) that silently no-ops on a
-	// backward write — which made this whole subcommand a no-op that
-	// printed success (caught 2026-06-12).
-	if err := store.RewindCursor(ctx, "projector", *source, rewindTo); err != nil {
-		return fmt.Errorf("rewind cursor: %w", err)
-	}
-	_, _ = fmt.Fprintf(w,
-		"projector cursor rewound — next projector cycle (≤ 5s) will start re-projecting from ledger %d\n",
-		target)
 
 	if err := reportSEP41RollupReset(ctx, w, store, *source); err != nil {
 		return err
@@ -196,9 +175,63 @@ func projectorReplay(w io.Writer, args []string) error {
 
 	return rematerializeReplayedRange(
 		w, slog.New(slog.NewTextHandler(w, nil)), store, *source,
-		chunkRange{from: target, to: currentLedger},
+		chunkRange{from: target, to: rewoundFrom},
 		replayFollowUp{refreshCAGGs: *refreshCAGGs, wait: *catchUp, waitTimeout: *catchUpTimeout},
 	)
+}
+
+// replayRewinder is the slice of the store the record-then-rewind step needs.
+type replayRewinder interface {
+	RecordProjectionDirtyWindow(ctx context.Context, w timescale.ProjectionDirtyWindow) error
+	RewindCursor(ctx context.Context, source, sub string, lastLedger uint32) (uint32, error)
+}
+
+// rewindRecordingDirtyWindow records the dirty window [target, readLedger],
+// rewinds the projector cursor to target-1, and returns the ledger the
+// cursor actually held when rewound (the upper bound of the re-walk).
+//
+// Record-then-rewind is the fail-closed order: a crash between the two
+// leaves a spurious window (one clean verify clears it), never a rewind with
+// no record. The window forces compute-completeness to re-reconcile the
+// rewritten range instead of carrying its prior clean claim over it.
+func rewindRecordingDirtyWindow(ctx context.Context, w io.Writer, store replayRewinder, source string, target, readLedger uint32) (uint32, error) {
+	if err := store.RecordProjectionDirtyWindow(ctx, timescale.ProjectionDirtyWindow{
+		Source: source,
+		From:   target,
+		To:     readLedger,
+		Reason: timescale.ProjectorReplayReason(readLedger, target),
+	}); err != nil {
+		return 0, fmt.Errorf("record dirty window (refusing to rewind without it — the completeness verifier would carry a stale claim over the rewritten range): %w", err)
+	}
+	_, _ = fmt.Fprintf(w,
+		"recorded projection dirty window source=%q [%d,%d] — compute-completeness will force a re-reconcile of this range before carrying any projection claim over it\n",
+		source, target, readLedger)
+	// RewindCursor, NOT UpsertCursor: the upsert path's monotonic-forward
+	// guard silently no-ops on a backward write.
+	rewoundFrom, err := store.RewindCursor(ctx, "projector", source, target-1)
+	if err != nil {
+		return 0, fmt.Errorf("rewind cursor: %w", err)
+	}
+	// A projector cycle that committed after the read moved the cursor past
+	// readLedger, so the re-walk rewrites more than the window recorded.
+	if rewoundFrom > readLedger {
+		if err := store.RecordProjectionDirtyWindow(ctx, timescale.ProjectionDirtyWindow{
+			Source: source,
+			From:   target,
+			To:     rewoundFrom,
+			Reason: timescale.ProjectorReplayReason(rewoundFrom, target),
+		}); err != nil {
+			return 0, fmt.Errorf("widen dirty window to [%d,%d] (the cursor is ALREADY rewound; re-record it before the next compute-completeness run): %w", target, rewoundFrom, err)
+		}
+		_, _ = fmt.Fprintf(w,
+			"projector advanced to %d during the replay; widened dirty window source=%q to [%d,%d]\n",
+			rewoundFrom, source, target, rewoundFrom)
+	}
+	_, _ = fmt.Fprintf(w,
+		"projector cursor rewound from %d — next projector cycle (≤ 5s) will start re-projecting from ledger %d\n",
+		rewoundFrom, target)
+	_, _ = fmt.Fprint(w, replayGenerationNote)
+	return rewoundFrom, nil
 }
 
 // projectorRefreshOnly is projector-replay's -refresh-only recovery path:

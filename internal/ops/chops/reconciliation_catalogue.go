@@ -55,6 +55,27 @@ type reconTarget struct {
 	kinds       []string // EventKind() values routing here; nil for census (sdex)
 }
 
+// sdexTradesFilter is the sdex target's whereFilter. It is also the persisted
+// completeness_target_floors key (timescale.TargetFloorKey), so it never changes.
+const sdexTradesFilter = "source = 'sdex'"
+
+// sdexPriceableFilter scopes the sdex served COUNT to the rows the census
+// counts: the census still excludes one-side-zero fills, because ledgers
+// written before they were admitted hold none. Once a full-history
+// ch-rebuild -sdex lands them, this filter goes with the census one.
+const sdexPriceableFilter = "base_amount > 0 AND quote_amount > 0"
+
+// countFilter is the predicate for the served-side row COUNT. It equals
+// whereFilter except for the sdex target, where it adds sdexPriceableFilter.
+// Use it only for CountRowsByLedger; floor identity (TargetFloorKey, MinLedger,
+// the floor upsert) stays on whereFilter.
+func (t reconTarget) countFilter() string {
+	if t.table == "trades" && t.whereFilter == sdexTradesFilter {
+		return t.whereFilter + " AND " + sdexPriceableFilter
+	}
+	return t.whereFilter
+}
+
 // reconSource is one source's reconciliation spec (ADR-0033 Claim 2b).
 type reconSource struct {
 	name        string
@@ -558,7 +579,7 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			},
 		},
 		{name: "sdex", genesis: 2, census: true, targets: []reconTarget{
-			{"trades", "source = 'sdex'", nil},
+			{"trades", sdexTradesFilter, nil},
 		}},
 	}
 
@@ -568,21 +589,21 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 	if a := cfg.Oracle.Reflector.DEXContract; a != "" {
 		cat = append(cat, reconSource{
 			name:               "reflector-dex",
-			aggregateReconcile: "oracle_updates ledger keying differs across write vintages (legacy backfills keyed by oracle-timestamp ledger; live keys by event ledger) — strict per-ledger would false-flag the vintage boundary; aggregate accepts the CS-084 netting residual on this source", genesis: 50_644_229, dec: reflector.NewDecoder(reflector.VariantDEX, a), contractIDs: []string{a},
+			aggregateReconcile: "oracle_updates ledger keying differs across write vintages (legacy backfills keyed by oracle-timestamp ledger; live keys by event ledger) — strict per-ledger would false-flag the vintage boundary; aggregate accepts the CS-084 netting residual on this source", genesis: 50_644_229, dec: reflector.NewDecoder(reflector.VariantDEX, a, reflector.WithDecoderDecimals(cfg.Oracle.Reflector.DEXDecimals)), contractIDs: []string{a},
 			targets: []reconTarget{{"oracle_updates", "source = 'reflector-dex'", []string{"reflector.update"}}},
 		})
 	}
 	if a := cfg.Oracle.Reflector.CEXContract; a != "" {
 		cat = append(cat, reconSource{
 			name:               "reflector-cex",
-			aggregateReconcile: "oracle_updates ledger keying differs across write vintages (legacy backfills keyed by oracle-timestamp ledger; live keys by event ledger) — strict per-ledger would false-flag the vintage boundary; aggregate accepts the CS-084 netting residual on this source", genesis: 50_644_239, dec: reflector.NewDecoder(reflector.VariantCEX, a), contractIDs: []string{a},
+			aggregateReconcile: "oracle_updates ledger keying differs across write vintages (legacy backfills keyed by oracle-timestamp ledger; live keys by event ledger) — strict per-ledger would false-flag the vintage boundary; aggregate accepts the CS-084 netting residual on this source", genesis: 50_644_239, dec: reflector.NewDecoder(reflector.VariantCEX, a, reflector.WithDecoderDecimals(cfg.Oracle.Reflector.CEXDecimals)), contractIDs: []string{a},
 			targets: []reconTarget{{"oracle_updates", "source = 'reflector-cex'", []string{"reflector.update"}}},
 		})
 	}
 	if a := cfg.Oracle.Reflector.FXContract; a != "" {
 		cat = append(cat, reconSource{
 			name:               "reflector-fx",
-			aggregateReconcile: "oracle_updates ledger keying differs across write vintages (legacy backfills keyed by oracle-timestamp ledger; live keys by event ledger) — strict per-ledger would false-flag the vintage boundary; aggregate accepts the CS-084 netting residual on this source", genesis: 56_733_481, dec: reflector.NewDecoder(reflector.VariantFX, a), contractIDs: []string{a},
+			aggregateReconcile: "oracle_updates ledger keying differs across write vintages (legacy backfills keyed by oracle-timestamp ledger; live keys by event ledger) — strict per-ledger would false-flag the vintage boundary; aggregate accepts the CS-084 netting residual on this source", genesis: 56_733_481, dec: reflector.NewDecoder(reflector.VariantFX, a, reflector.WithDecoderDecimals(cfg.Oracle.Reflector.FXDecimals)), contractIDs: []string{a},
 			targets: []reconTarget{{"oracle_updates", "source = 'reflector-fx'", []string{"reflector.update"}}},
 		})
 	}
@@ -876,6 +897,7 @@ func validateSourceFilter(only string, cat []reconSource) error {
 // ever hitting this by checking non-emptiness itself first.
 func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 	watched := cfg.Supply.WatchedSEP41Contracts
+	floor := sorobanEraFloor(cfg)
 	tdec, err := sep41transfers.NewDecoder(watched)
 	if err != nil {
 		return nil, fmt.Errorf("sep41_transfers decoder: %w", err)
@@ -911,7 +933,7 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 	// ~35 of the full verify's ~37 minutes (measured 2026-07-27).
 	return []reconSource{
 		{
-			name: sep41transfers.SourceName, genesis: sorobanEraGenesis,
+			name: sep41transfers.SourceName, genesis: floor,
 			dec: tdec, contractIDs: watched,
 			topic0Syms: []string{
 				sep41transfers.SymbolTransfer,
@@ -922,7 +944,7 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 			targets: []reconTarget{{"sep41_transfers", filter, []string{sep41transfers.EventKind}}},
 		},
 		{
-			name: sep41supply.SourceName, genesis: sorobanEraGenesis,
+			name: sep41supply.SourceName, genesis: floor,
 			dec: sdec, contractIDs: watched,
 			topic0Syms: []string{
 				sep41supply.SymbolMint,

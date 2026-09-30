@@ -1049,8 +1049,8 @@
     - sep1-refresh.timer
     - directory-sync.service
     - directory-sync.timer
-    - listing-sync.service
-    - listing-sync.timer
+    # listing-sync is NOT in this loop — pubnet only, installed
+    # conditionally below (listing_sync_enabled).
     - curated-rwa-sync.service
     - curated-rwa-sync.timer
     # cap67-movements: a continuous FOLLOW DAEMON now (5.3), not a
@@ -1068,6 +1068,8 @@
     - census-rollup.timer
     - compute-completeness.service
     - compute-completeness.timer
+    - verify-lake.service
+    - verify-lake.timer
     - data-freshness.service
     - data-freshness.timer
     - ch-supply.service
@@ -1109,7 +1111,7 @@
     - supply-snapshot.timer
     - sep1-refresh.timer
     - directory-sync.timer
-    - listing-sync.timer
+    # listing-sync.timer is enabled in its own conditional block below.
     - curated-rwa-sync.timer
     - holders-rollup.timer
     - creators-rollup.timer
@@ -1117,6 +1119,7 @@
     - cohort-rollup.timer
     - census-rollup.timer
     - compute-completeness.timer
+    - verify-lake.timer
     - data-freshness.timer
     - ch-supply.timer
     - issuer-flags.timer
@@ -1262,6 +1265,65 @@
     - name: Clear the failed state left by earlier verify-served-values runs
       ansible.builtin.command:
         cmd: systemctl reset-failed verify-served-values.service
+      changed_when: false
+      failed_when: false
+
+# ── listing-sync — pubnet only ────────────────────────────────────────
+# See listing_sync_enabled in defaults/main.yml: the directory it caches
+# holds only pubnet addresses.
+- name: Install + enable listing-sync (pubnet)
+  tags: [ops-jobs]
+  when: listing_sync_enabled | bool
+  block:
+    - name: Install listing-sync unit + timer
+      ansible.builtin.template:
+        src: "systemd/{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+      loop:
+        - listing-sync.service
+        - listing-sync.timer
+      notify: Reload systemd
+      register: listing_sync_units
+
+    - name: Enable + start listing-sync.timer
+      ansible.builtin.systemd:
+        name: listing-sync.timer
+        state: started
+        enabled: true
+        daemon_reload: true
+      when:
+        # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+        - not (ansible_check_mode and listing_sync_units is changed)
+
+# Tagged alongside the install block so `--tags ops-jobs` also retires the
+# units from a test net that received them before the gate existed.
+- name: Remove listing-sync where its directory has nothing to corroborate
+  tags: [ops-jobs]
+  when: not (listing_sync_enabled | bool)
+  block:
+    - name: Stop + disable listing-sync timer and service
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - listing-sync.timer
+        - listing-sync.service
+      failed_when: false
+
+    - name: Remove listing-sync unit files
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      loop:
+        - listing-sync.timer
+        - listing-sync.service
+      notify: Reload systemd
+
+    - name: Clear the failed state left by earlier listing-sync runs
+      ansible.builtin.command:
+        cmd: systemctl reset-failed listing-sync.service
       changed_when: false
       failed_when: false
 

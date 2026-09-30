@@ -34,6 +34,17 @@ const TOP_PAIRS = 3;
 const PER_PAIR_LIMIT = 12;
 const DISPLAY_LIMIT = 30;
 
+// Returns 0 on equal ts: a comparator that never ties is inconsistent, so
+// Array.sort may reorder same-ledger trades differently on every refetch.
+export function compareTradeTsDesc(a: Trade, b: Trade): number {
+  return a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0;
+}
+
+/** Merges per-pair fan-outs newest-first; ties keep fan-out order. */
+export function mergeRecentTrades(fanouts: Trade[][], limit: number): Trade[] {
+  return fanouts.flat().sort(compareTradeTsDesc).slice(0, limit);
+}
+
 /**
  * HomeRecentTrades — rolling feed of the most recent trades
  * across the top-3 pairs by 24h volume. Pulls from
@@ -83,10 +94,7 @@ export function HomeRecentTrades() {
           }),
         ),
       );
-      return fanouts
-        .flat()
-        .sort((a, b) => (a.ts < b.ts ? 1 : -1))
-        .slice(0, DISPLAY_LIMIT);
+      return mergeRecentTrades(fanouts, DISPLAY_LIMIT);
     },
   });
   const trades = q.data ?? [];
@@ -186,7 +194,7 @@ export function HomeRecentTrades() {
                       </Link>
                     </Td>
                     <Td align="right" className="tabular-nums">
-                      {t.price}
+                      {t.price ?? '—'}
                     </Td>
                   </TR>
                 );

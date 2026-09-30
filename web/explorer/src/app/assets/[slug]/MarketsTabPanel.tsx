@@ -124,19 +124,14 @@ function Row({ m, assetID }: { m: Market; assetID: string }) {
   // asset_ids, so strict equality against the slug never matched and
   // rows where the asset IS the base rendered "quote · vs itself".
   // Match by expanded-form prefix: the asset's code appears at the
-  // start of its expanded ids ("USDC-GA5Z…"), and "native"/"XLM"
-  // alias each other.
+  // start of its expanded ids ("USDC-GA5Z…"), CEX/FX ids carry it after
+  // a crypto:/fiat: namespace, and "native"/"XLM" alias each other.
+  const want = sideTicker(assetID);
   const matches = (side: string) => {
     if (side === assetID) return true;
-    const up = assetID.toUpperCase();
-    if (
-      (side === 'native' || /^\d+$/.test(side)) &&
-      (up === 'XLM' || up === 'NATIVE')
-    )
-      return true;
+    const got = sideTicker(side);
     return (
-      side.toUpperCase().startsWith(`${up}-`) ||
-      side.toUpperCase().startsWith(`${up}:`)
+      got === want || got.startsWith(`${want}-`) || got.startsWith(`${want}:`)
     );
   };
   const isBase = matches(m.base ?? '');
@@ -183,6 +178,12 @@ function Row({ m, assetID }: { m: Market; assetID: string }) {
       </Td>
     </tr>
   );
+}
+
+function sideTicker(id: string): string {
+  const up = id.toUpperCase();
+  if (up === 'NATIVE' || /^\d+$/.test(up)) return 'XLM';
+  return up.replace(/^(CRYPTO|FIAT):/, '');
 }
 
 function shortAsset(canonical: string): string {

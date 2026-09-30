@@ -36,7 +36,10 @@ const SyntheticCrossName = "synthetic-usd-cross"
 // reference exists — so the same underlying feed cannot contribute
 // twice to one pair's reference set. If a leg source ever learns to
 // answer such pairs directly, revisit this before keeping both (a
-// doubled source would overweight it in the median).
+// doubled source would overweight it in the median). The two legs must
+// also come from different publishers (see [referencePublisher]): a
+// cross of one publisher's feeds shares its failure modes, so it is no
+// second opinion; with no independent leg pair the cross is unavailable.
 //
 // The composite is only as good as its weaker leg: both legs must be
 // fresh (each leg's own MaxAge discipline applies — this type adds no
@@ -53,10 +56,11 @@ type SyntheticCrossReference struct {
 // SyntheticCrossOptions configures NewSyntheticCrossReference.
 type SyntheticCrossOptions struct {
 	// USDLegs are tried in order for the base-in-USD leg; the first
-	// that answers wins. Typically the on-chain oracle references
+	// that answers and has an independent FX leg wins. Typically the on-chain oracle references
 	// (reflector-cex, chainlink, redstone, band).
 	USDLegs []Reference
-	// FXLegs are tried in order for the fiat-in-USD leg. Typically
+	// FXLegs are tried in order for the fiat-in-USD leg, skipping any
+	// from the base leg's publisher. Typically
 	// reflector-fx first (on-chain rows, no extra RPC) with chainlink's
 	// direct fiat/USD feeds as fallback — the proven GBP/USD source.
 	FXLegs []Reference
@@ -97,63 +101,140 @@ func (s *SyntheticCrossReference) LookupQuote(ctx context.Context, pair canonica
 			ErrAssetUnsupported, SyntheticCrossName)
 	}
 
-	baseUSD, err := s.lookupLeg(ctx, s.usdLegs, canonical.Pair{Base: pair.Base, Quote: s.usd}, observedAt)
-	if err != nil {
-		return Quote{}, fmt.Errorf("%s: base leg %s/USD: %w", SyntheticCrossName, pair.Base.String(), err)
-	}
-	fiatUSD, err := s.lookupLeg(ctx, s.fxLegs, canonical.Pair{Base: pair.Quote, Quote: s.usd}, observedAt)
-	if err != nil {
-		return Quote{}, fmt.Errorf("%s: fx leg %s/USD: %w", SyntheticCrossName, pair.Quote.String(), err)
-	}
-
-	price := baseUSD.Price / fiatUSD.Price
-	if !isUsablePrice(price) {
-		return Quote{}, fmt.Errorf("%w: %s: cross %v/%v is not a usable price",
-			ErrPriceUnavailable, SyntheticCrossName, baseUSD.Price, fiatUSD.Price)
-	}
-	return Quote{Price: price, AsOf: baseUSD.AsOf}, nil
-}
-
-// lookupLeg tries each candidate in order and returns the first usable
-// answer; one older than the leg pair's [MaxComparableAge] counts as
-// unavailable, so a stale first candidate falls through to the next. Error semantics preserve Compare's unsupported-vs-degraded
-// distinction: if ANY leg failed transiently the leg is "unavailable"
-// (a reading should have existed); only when every candidate reports
-// unsupported is the leg — and so the cross — unsupported for the pair.
-func (s *SyntheticCrossReference) lookupLeg(ctx context.Context, legs []Reference, pair canonical.Pair, observedAt time.Time) (Quote, error) {
-	sawTransient := false
-	var lastErr error
-	for _, ref := range legs {
-		q, err := ref.LookupQuote(ctx, pair, observedAt)
-		if err == nil {
-			if !isUsablePrice(q.Price) {
-				sawTransient = true
-				lastErr = fmt.Errorf("%s returned unusable %v", ref.Name(), q.Price)
-				continue
-			}
-			if err := checkComparable(q, pair, observedAt); err != nil {
-				sawTransient = true
-				lastErr = fmt.Errorf("%s: %w", ref.Name(), err)
-				continue
-			}
-			return q, nil
-		}
-		if errors.Is(err, ErrAssetUnsupported) {
-			lastErr = err
+	basePair := canonical.Pair{Base: pair.Base, Quote: s.usd}
+	fx := newLegCandidates(s.fxLegs, canonical.Pair{Base: pair.Quote, Quote: s.usd})
+	var baseFailures legFailures
+	baseAnswered := false
+	for _, baseRef := range s.usdLegs {
+		baseUSD, err := lookupLeg(ctx, baseRef, basePair, observedAt)
+		if err != nil {
+			baseFailures.record(err)
 			continue
 		}
-		sawTransient = true
-		lastErr = err
+		baseAnswered = true
+		fiatUSD, ok := fx.firstIndependentOf(ctx, referencePublisher(baseRef.Name()), observedAt)
+		if !ok {
+			continue
+		}
+		price := baseUSD.Price / fiatUSD.Price
+		if !isUsablePrice(price) {
+			return Quote{}, fmt.Errorf("%w: %s: cross %v/%v is not a usable price",
+				ErrPriceUnavailable, SyntheticCrossName, baseUSD.Price, fiatUSD.Price)
+		}
+		return Quote{Price: price, AsOf: baseUSD.AsOf}, nil
 	}
-	if sawTransient {
+
+	switch {
+	case !baseAnswered:
+		return Quote{}, fmt.Errorf("%s: base leg %s/USD: %w", SyntheticCrossName, pair.Base.String(), baseFailures.err(basePair))
+	case fx.sawDependent:
+		return Quote{}, fmt.Errorf("%w: %s: every usable leg pair for %s shares one publisher",
+			ErrPriceUnavailable, SyntheticCrossName, pair.String())
+	default:
+		return Quote{}, fmt.Errorf("%s: fx leg %s/USD: %w", SyntheticCrossName, pair.Quote.String(), fx.failures.err(fx.pair))
+	}
+}
+
+// referencePublisher maps a reference label to the organisation that
+// publishes it. The Reflector variants are one publisher's contracts and
+// share its operator, so two of them are not independent readings.
+func referencePublisher(name string) string {
+	switch name {
+	case OracleSourceReflectorDEX, OracleSourceReflectorCEX, OracleSourceReflectorFX:
+		return "reflector"
+	default:
+		return name
+	}
+}
+
+// legCandidates evaluates one leg's candidates lazily and at most once
+// each, since several base legs may be paired against the same FX legs.
+type legCandidates struct {
+	refs         []Reference
+	pair         canonical.Pair
+	quotes       []Quote
+	errs         []error
+	done         []bool
+	failures     legFailures
+	sawDependent bool // a usable candidate was skipped as same-publisher
+}
+
+func newLegCandidates(refs []Reference, pair canonical.Pair) *legCandidates {
+	return &legCandidates{
+		refs:   refs,
+		pair:   pair,
+		quotes: make([]Quote, len(refs)),
+		errs:   make([]error, len(refs)),
+		done:   make([]bool, len(refs)),
+	}
+}
+
+// firstIndependentOf returns the first usable candidate whose publisher
+// differs from publisher.
+func (c *legCandidates) firstIndependentOf(ctx context.Context, publisher string, observedAt time.Time) (Quote, bool) {
+	for i, ref := range c.refs {
+		if !c.done[i] {
+			c.quotes[i], c.errs[i] = lookupLeg(ctx, ref, c.pair, observedAt)
+			c.done[i] = true
+			if c.errs[i] != nil {
+				c.failures.record(c.errs[i])
+			}
+		}
+		if c.errs[i] != nil {
+			continue
+		}
+		if referencePublisher(ref.Name()) == publisher {
+			c.sawDependent = true
+			continue
+		}
+		return c.quotes[i], true
+	}
+	return Quote{}, false
+}
+
+// lookupLeg asks one candidate for a leg; an unusable price or one older
+// than the leg pair's [MaxComparableAge] is a transient failure, so a
+// stale candidate falls through to the next.
+func lookupLeg(ctx context.Context, ref Reference, pair canonical.Pair, observedAt time.Time) (Quote, error) {
+	q, err := ref.LookupQuote(ctx, pair, observedAt)
+	if err != nil {
+		return Quote{}, err
+	}
+	if !isUsablePrice(q.Price) {
+		return Quote{}, fmt.Errorf("%s returned unusable %v", ref.Name(), q.Price)
+	}
+	if err := checkComparable(q, pair, observedAt); err != nil {
+		return Quote{}, fmt.Errorf("%s: %w", ref.Name(), err)
+	}
+	return q, nil
+}
+
+// legFailures preserves Compare's unsupported-vs-degraded distinction for
+// an exhausted leg: if ANY candidate failed transiently the leg is
+// "unavailable" (a reading should have existed); only when every
+// candidate reports unsupported is the leg unsupported for the pair.
+type legFailures struct {
+	sawTransient bool
+	lastErr      error
+}
+
+func (f *legFailures) record(err error) {
+	f.lastErr = err
+	if !errors.Is(err, ErrAssetUnsupported) {
+		f.sawTransient = true
+	}
+}
+
+func (f *legFailures) err(pair canonical.Pair) error {
+	if f.sawTransient {
 		// Deliberately NOT %w on lastErr (errorlint appeased via
 		// .Error()): the leg's last error may itself wrap
 		// ErrAssetUnsupported, and double-wrapping would make this
 		// error match BOTH sentinels — Compare's unsupported-vs-
 		// degraded classification must see exactly ErrPriceUnavailable.
-		return Quote{}, fmt.Errorf("%w: %s", ErrPriceUnavailable, lastErr.Error())
+		return fmt.Errorf("%w: %s", ErrPriceUnavailable, f.lastErr.Error())
 	}
-	return Quote{}, fmt.Errorf("%w: no leg lists %s", ErrAssetUnsupported, pair.String())
+	return fmt.Errorf("%w: no leg lists %s", ErrAssetUnsupported, pair.String())
 }
 
 // isUsablePrice rejects the values that would poison a division or a

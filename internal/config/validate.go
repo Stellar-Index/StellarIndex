@@ -518,6 +518,17 @@ func (o OracleConfig) validate() error {
 				ErrInvalidConfig, name, addr)
 		}
 	}
+	// 38 is canonical.OracleUpdate.Validate's per-row ceiling; failing here
+	// beats rejecting every decoded row at runtime.
+	for name, dec := range map[string]uint8{
+		"oracle.reflector.dex_decimals": o.Reflector.DEXDecimals,
+		"oracle.reflector.cex_decimals": o.Reflector.CEXDecimals,
+		"oracle.reflector.fx_decimals":  o.Reflector.FXDecimals,
+	} {
+		if dec > 38 {
+			return fmt.Errorf("%w: %s %d exceeds 38", ErrInvalidConfig, name, dec)
+		}
+	}
 	return o.validateStalenessOverrides()
 }
 
@@ -547,6 +558,7 @@ var OracleSourceNames = map[string]struct{}{
 	"cryptocompare":    {},
 	"ecb":              {},
 	"exchangeratesapi": {},
+	"tiingo":           {},
 }
 
 // validateStalenessOverrides rejects the ways a per-asset staleness

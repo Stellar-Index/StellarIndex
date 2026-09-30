@@ -53,7 +53,20 @@ var (
 
 	// `DROP TABLE [IF EXISTS] name` at the start of a statement.
 	dropTableRe = regexp.MustCompile(`(?m)^\s*DROP\s+TABLE(?:\s+IF\s+EXISTS)?\s+([a-z][a-z0-9_]*)`)
+
+	// `ALTER TABLE name SET ( timescaledb.compress, timescaledb.compress_segmentby = '…'`.
+	segmentByRe = regexp.MustCompile(`(?s)ALTER\s+TABLE\s+([a-z][a-z0-9_]*)\s+SET\s*\(\s*timescaledb\.compress\s*,\s*timescaledb\.compress_segmentby\s*=\s*'([^']*)'`)
 )
+
+// nearUniqueSegmentBy lists want-list candidates whose segment-by carries a
+// per-row identity (one claimable, one trustline, one holder, one recipient),
+// so compression writes about one row per segment and grows the chunk.
+var nearUniqueSegmentBy = map[string]string{
+	"claimable_observations":   "asset_key, claimable_id",
+	"sac_balance_observations": "asset_key, holder",
+	"soroswap_router_swaps":    "recipient",
+	"trustline_observations":   "asset_key, account_id",
+}
 
 // sliceBetween returns the text of s between the first occurrence of start
 // and the first occurrence of end after it. Fails the test if either marker
@@ -202,6 +215,59 @@ func TestCompressionPolicyEnumerationsTrackTheSchema(t *testing.T) {
 				"config-assertions.sh's compression_policies_applied want-list in the "+
 				"same change as the drop: the script aborts mid-list, and the "+
 				"assertion fails forever on a table that is gone on purpose.", tbl)
+		}
+	}
+}
+
+// latestSegmentBy returns each table's compress_segmentby as set by the
+// highest-numbered migration that sets it.
+func latestSegmentBy(t *testing.T) map[string]string {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(findRepoRoot(t), "migrations", "*.up.sql"))
+	if err != nil {
+		t.Fatalf("glob migrations: %v", err)
+	}
+	sort.Strings(paths)
+	seg := make(map[string]string)
+	for _, p := range paths {
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			t.Fatalf("read %s: %v", p, rerr)
+		}
+		for _, m := range segmentByRe.FindAllStringSubmatch(stripSQLComments(string(b)), -1) {
+			seg[m[1]] = m[2]
+		}
+	}
+	return seg
+}
+
+func TestCompressionPolicyWantListExcludesNearUniqueSegmentBy(t *testing.T) {
+	t.Parallel()
+
+	seg := latestSegmentBy(t)
+	listed := make(map[string]bool)
+	for _, tbl := range compressionPolicyScriptTables(t) {
+		listed[tbl] = true
+	}
+	for _, tbl := range configAssertionTables(t) {
+		listed[tbl] = true
+	}
+
+	for tbl, want := range nearUniqueSegmentBy {
+		got, ok := seg[tbl]
+		switch {
+		case !ok:
+			t.Errorf("%s: no compress_segmentby parsed from migrations — the parse "+
+				"went vacuous or the table lost compression eligibility", tbl)
+		case got != want:
+			// Re-segmented: the exclusion may no longer hold, so make someone decide.
+			t.Errorf("%s: compress_segmentby is now %q (was %q). Re-check the "+
+				"compression ratio, then drop it from nearUniqueSegmentBy and add it "+
+				"back to both want-lists.", tbl, got, want)
+		case listed[tbl]:
+			t.Errorf("%s is on the compression want-list but segments by %q, which "+
+				"is near-unique per row: compression grows its chunks instead of "+
+				"shrinking them.", tbl, got)
 		}
 	}
 }

@@ -104,53 +104,17 @@ for the Cloudflare Pages hosts.
 
 ---
 
-## Open: two things only the account owner can finish
+## Closed: the two owner-side steps
 
-**1. Confirm the published mailboxes deliver.** Inbound moved from
-Cloudflare Email Routing to Google Workspace, and DNS can only show that
-mail is routed there — not that a mailbox exists behind it. The check
-asserts the MX destination and stops, because the next assertion would
-have to send mail. Confirm from the Workspace console that `security@`,
-`hello@`, `dmarc@`, `abuse@` and `postmaster@` each resolve to a real
-mailbox or group.
+**Mailboxes deliver.** Inbound moved from Cloudflare Email Routing to
+Google Workspace. On 2026-09-30 the account owner sent test mail to
+`security@` and `abuse@` and both landed in the Workspace groups, so the
+RFC 9116 `Contact:` on the live `.well-known/security.txt` is a real
+channel. `hello@`, `dmarc@` and `postmaster@` are routed the same way and
+are checked in the Workspace console, not by delivery.
 
-This is the sharpest half of #334: `security@stellarindex.io` is the
-RFC 9116 `Contact:` on the live `.well-known/security.txt`, so a
-researcher following the published disclosure channel has nowhere else
-to go. `SECURITY.md` hedges that the mailbox may not be provisioned;
-`security.txt` makes no such hedge and cannot.
-
-**2. Publish the DS record at the registrar.** DNSSEC is enabled in
-Cloudflare and is **inert** until the registrar publishes this:
-
-```
-stellarindex.io. 3600 IN DS 2371 13 2 E6A7D241A651639E6F9745CB217768DDE50451AED12616EC8D84CA24681D22B4
-```
-
-Algorithm 13 (ECDSA P-256 SHA-256), digest type 2 (SHA-256), key tag
-2371. A wrong DS takes the entire domain unresolvable, so paste it, do
-not retype it, and check with `dig DS stellarindex.io @1.1.1.1`
-afterwards. The check script reports the missing DS as a note rather than
-a failure, and will start asserting it once it is published.
-
----
-
-## Sending-domain settings DNS cannot show
-
-**Click and open tracking stay off.** With click tracking on, the
-provider rewrites every link in a message through its own redirector.
-In sign-in mail that link carries the magic-link token, so the token
-would pass through, and be logged by, a third party before the user
-reaches us. Open tracking adds a pixel to every message. Both are
-per-domain settings in the Resend dashboard (Domains → `stellarindex.io`
-→ Configuration), and neither is visible in DNS, so
-`dns-perimeter-check.sh` cannot assert them. To check, open a received
-sign-in email: the link must point straight at the dashboard host's
-`/auth/callback`, not at a provider domain.
-
-**Bounce and complaint feedback is not consumed.** The `send` MX routes
-feedback to the provider, and nothing in this service ingests it: there
-is no webhook receiver and no suppression list, so a hard-bouncing
-address keeps getting login mail up to its per-inbox throttle (#738).
-Until that exists, watch bounce and complaint rates in the provider
-dashboard.
+**DS record published.** The registrar carries
+`2371 13 2 E6A7D241…681D22B4` and the chain validates:
+`dig +dnssec stellarindex.io @1.1.1.1` returns the `ad` flag
+(2026-09-30). A wrong DS takes the entire domain unresolvable, so change
+it only by pasting the value Cloudflare shows, never by retyping.

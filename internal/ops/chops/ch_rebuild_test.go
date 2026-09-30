@@ -69,7 +69,7 @@ func TestDrainAndWriteCountsOnlyWritten(t *testing.T) {
 		w := okWriter()
 		w.handle = func(context.Context, consumer.Event) error { return errInsert }
 
-		written, failed, _ := drainAndWrite(ctx, logger, w, buf, true)
+		written, failed := drainAndWrite(ctx, logger, w, buf, true)
 		if written["reflector"] != 0 {
 			t.Errorf("written[reflector] = %d, want 0 (all inserts failed)", written["reflector"])
 		}
@@ -80,7 +80,7 @@ func TestDrainAndWriteCountsOnlyWritten(t *testing.T) {
 
 	t.Run("HandleEvent success counts as written", func(t *testing.T) {
 		buf := []consumer.Event{fakeProtoEvent{src: "reflector"}, fakeProtoEvent{src: "reflector"}}
-		written, failed, _ := drainAndWrite(ctx, logger, okWriter(), buf, true)
+		written, failed := drainAndWrite(ctx, logger, okWriter(), buf, true)
 		if written["reflector"] != 2 {
 			t.Errorf("written[reflector] = %d, want 2", written["reflector"])
 		}
@@ -95,7 +95,7 @@ func TestDrainAndWriteCountsOnlyWritten(t *testing.T) {
 		w.batchTrades = func(context.Context, []canonical.Trade) error { return errInsert }
 		w.insertTrade = func(context.Context, canonical.Trade) error { return errInsert }
 
-		written, failed, _ := drainAndWrite(ctx, logger, w, buf, true)
+		written, failed := drainAndWrite(ctx, logger, w, buf, true)
 		src := soroswap.SourceName
 		if written[src] != 0 {
 			t.Errorf("written[%s] = %d, want 0 (batch + per-row both failed)", src, written[src])
@@ -110,7 +110,7 @@ func TestDrainAndWriteCountsOnlyWritten(t *testing.T) {
 		w := okWriter()
 		w.batchTrades = func(context.Context, []canonical.Trade) error { return errInsert }
 		// insertTrade stays nil (succeeds)
-		written, failed, _ := drainAndWrite(ctx, logger, w, buf, true)
+		written, failed := drainAndWrite(ctx, logger, w, buf, true)
 		src := soroswap.SourceName
 		if written[src] != 2 {
 			t.Errorf("written[%s] = %d, want 2 (per-row fallback recovered)", src, written[src])
@@ -125,7 +125,7 @@ func TestDrainAndWriteCountsOnlyWritten(t *testing.T) {
 		handleCalls := 0
 		w := okWriter()
 		w.handle = func(context.Context, consumer.Event) error { handleCalls++; return nil }
-		written, failed, _ := drainAndWrite(ctx, logger, w, buf, false)
+		written, failed := drainAndWrite(ctx, logger, w, buf, false)
 		if handleCalls != 0 {
 			t.Errorf("handle called %d times in dry-run, want 0", handleCalls)
 		}
@@ -167,7 +167,7 @@ func storableTradeEvent(t *testing.T, ledger, op uint32) soroswap.TradeEvent {
 }
 
 // oneSideZeroTradeEvent is the SDEX-style fill whose quote leg rounded to 0:
-// the store's filterStorableTrades drops it before the INSERT.
+// it passes Validate and the store persists it.
 func oneSideZeroTradeEvent(t *testing.T, ledger, op uint32) soroswap.TradeEvent {
 	t.Helper()
 	ev := storableTradeEvent(t, ledger, op)
@@ -175,8 +175,7 @@ func oneSideZeroTradeEvent(t *testing.T, ledger, op uint32) soroswap.TradeEvent 
 	return ev
 }
 
-// negativeTradeEvent is invalid for a reason other than one-side-zero: a
-// decoder bug the run must report as failed, never as an expected drop.
+// negativeTradeEvent is invalid: a decoder bug the run must report as failed.
 func negativeTradeEvent(t *testing.T, ledger, op uint32) soroswap.TradeEvent {
 	t.Helper()
 	ev := storableTradeEvent(t, ledger, op)
@@ -184,10 +183,10 @@ func negativeTradeEvent(t *testing.T, ledger, op uint32) soroswap.TradeEvent {
 	return ev
 }
 
-// TestDrainAndWriteCountsDroppedTradesSeparately pins that a trade the served
-// tier refuses (filterStorableTrades drops it inside a SUCCESSFUL batch call)
-// is reported as dropped, never as written, and any other invalid trade fails.
-func TestDrainAndWriteCountsDroppedTradesSeparately(t *testing.T) {
+// TestDrainAndWriteCountsOneSideZeroAsWritten pins that a one-side-zero fill
+// is tallied as written (the store persists it) on every path, and that a
+// Validate-failing trade is tallied as failed.
+func TestDrainAndWriteCountsOneSideZeroAsWritten(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctx := context.Background()
 	src := soroswap.SourceName
@@ -199,16 +198,14 @@ func TestDrainAndWriteCountsDroppedTradesSeparately(t *testing.T) {
 	}
 
 	cases := []struct {
-		name        string
-		batchErr    error
-		write       bool
-		wantWritten int
-		wantDropped int
-		wantPerRow  int // insertTrade calls
+		name       string
+		batchErr   error
+		write      bool
+		wantPerRow int // insertTrade calls
 	}{
-		{name: "batch succeeds", write: true, wantWritten: 2, wantDropped: 1},
-		{name: "batch fails, per-row fallback skips the unstorable row", batchErr: errInsert, write: true, wantWritten: 2, wantDropped: 1, wantPerRow: 3},
-		{name: "dry-run predicts the same split", wantWritten: 2, wantDropped: 1},
+		{name: "batch succeeds", write: true},
+		{name: "batch fails, per-row fallback", batchErr: errInsert, write: true, wantPerRow: 4},
+		{name: "dry-run predicts the same split"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -219,13 +216,97 @@ func TestDrainAndWriteCountsDroppedTradesSeparately(t *testing.T) {
 				perRow++
 				return tr.Validate()
 			}
-			written, failed, dropped := drainAndWrite(ctx, logger, w, buf, tc.write)
-			if written[src] != tc.wantWritten || dropped[src] != tc.wantDropped || failed[src] != 1 {
-				t.Errorf("written=%d dropped=%d failed=%d, want %d/%d/1",
-					written[src], dropped[src], failed[src], tc.wantWritten, tc.wantDropped)
+			written, failed := drainAndWrite(ctx, logger, w, buf, tc.write)
+			if written[src] != 3 || failed[src] != 1 {
+				t.Errorf("written=%d failed=%d, want 3/1 (the one-side-zero fill is written)", written[src], failed[src])
 			}
 			if perRow != tc.wantPerRow {
 				t.Errorf("insertTrade calls = %d, want %d", perRow, tc.wantPerRow)
+			}
+		})
+	}
+}
+
+// TestReportCHRebuildCountsListsEveryReDerivedSource pins that a re-derived
+// source that produced no row still gets a report row and is named, while a
+// source outside the run stays out of the report.
+func TestReportCHRebuildCountsListsEveryReDerivedSource(t *testing.T) {
+	cat := []reconSource{{name: "aquarius"}, {name: "blend"}, {name: "reflector"}}
+	var out strings.Builder
+	err := reportCHRebuildCounts(&out, cat, []string{"aquarius", "blend"}, nil,
+		map[string]int{"aquarius": 5}, map[string]int{"aquarius": 1})
+	if err == nil || !strings.Contains(err.Error(), "1 event(s) failed") {
+		t.Errorf("err = %v, want the 1-failed error", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		fmt.Sprintf("%-16s %14d %14d\n", "aquarius", 5, 1),
+		fmt.Sprintf("%-16s %14d %14d\n", "blend", 0, 0),
+		"re-derived NO rows for: blend ",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("report missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "reflector") {
+		t.Errorf("report lists a source outside the run:\n%s", got)
+	}
+}
+
+// TestReportCHRebuildCountsFailsARequiredSourceThatWroteNothing pins the exit
+// gate for an emptied window: a -require-rows source that re-derived no row
+// fails the run, even when all it produced failed to write, while an
+// unrequired quiet source does not.
+func TestReportCHRebuildCountsFailsARequiredSourceThatWroteNothing(t *testing.T) {
+	cat := []reconSource{{name: "aquarius"}, {name: "blend"}, {name: "cctp"}}
+	reDerived := []string{"aquarius", "blend", "cctp"}
+	for _, tc := range []struct {
+		name     string
+		required []string
+		written  map[string]int
+		failed   map[string]int
+		wantErr  string
+	}{
+		{"required source empty", []string{"aquarius", "blend"}, map[string]int{"aquarius": 3}, map[string]int{}, "wrote no row for blend,"},
+		{"required source only failed", []string{"aquarius"}, map[string]int{}, map[string]int{"aquarius": 2}, "2 event(s) failed to write"},
+		{"nothing required, all empty", nil, map[string]int{}, map[string]int{}, ""},
+		{"required sources wrote", []string{"aquarius", "blend"}, map[string]int{"aquarius": 3, "blend": 1}, map[string]int{}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := reportCHRebuildCounts(io.Discard, cat, reDerived, tc.required, tc.written, tc.failed)
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Errorf("err = %v, want nil — a quiet unrequired source must not fail the run", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Errorf("err = %v, want one containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestCHRebuildUnstorableTradeFailsTheRun pins the drain-to-report path for an
+// emptied window: a trade the store refuses fails the run from any source,
+// while a one-side-zero fill is stored and so counts as written.
+func TestCHRebuildUnstorableTradeFailsTheRun(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	src := soroswap.SourceName
+	cat := []reconSource{{name: src}}
+	for _, tc := range []struct {
+		name    string
+		buf     []consumer.Event
+		wantErr string
+	}{
+		{"one-side-zero fill is written", []consumer.Event{storableTradeEvent(t, 1, 0), oneSideZeroTradeEvent(t, 1, 1)}, ""},
+		{"invalid trade fails the run", []consumer.Event{storableTradeEvent(t, 1, 0), negativeTradeEvent(t, 1, 1)}, "1 event(s) failed to write"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			written, failed := drainAndWrite(context.Background(), logger, okWriter(), tc.buf, true)
+			err := reportCHRebuildCounts(io.Discard, cat, []string{src}, []string{src}, written, failed)
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Errorf("err = %v, want nil — a stored one-side-zero fill is not a lost row", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Errorf("err = %v, want one containing %q — a refused row in an emptied window would exit 0", err, tc.wantErr)
 			}
 		})
 	}
@@ -267,7 +348,7 @@ func TestDrainAndWriteCutsTradeBatchesOnLedgerBoundary(t *testing.T) {
 					return timescale.BulkBackfillResult{Path: timescale.BulkBackfillPathCopy}, nil
 				}
 			}
-			written, failed, _ := drainAndWrite(ctx, logger, w, buf, true)
+			written, failed := drainAndWrite(ctx, logger, w, buf, true)
 			if written[soroswap.SourceName] != len(buf) || len(failed) != 0 {
 				t.Fatalf("written=%v failed=%v, want all %d written", written, failed, len(buf))
 			}

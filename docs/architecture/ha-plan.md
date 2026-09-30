@@ -1,7 +1,7 @@
 ---
 title: High-Availability Infrastructure Plan
 last_verified: 2026-07-25
-status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for ClickHouse (§4.3's hardware-expansion claim corrected 2026-07-24, §8/§3.3's backup deployment status corrected 2026-07-25, audit-2026-07-23 DOC-05/DOC-06). 2026-09-02 (#361): §2 diagram, §3.4, §3.8, §6 and the §8/restore-drill "reality check" blocks corrected against code — those blocks had INVERTED (repo2 + restore drill are live). §3 still lacks a CH tier (see top amendment); cost/RTO tables NOT re-verified. 2026-09-03: §3.3's retention block no longer claims daily OHLC back to 2015 — `prices_1d` starts 2018-07-01. 2026-09-20 (HO-361): every `file:line` citation in this doc re-checked against HEAD; two had drifted from code moving underneath them (§0 availability banner's `sla-probe.sh` line, §3.3's `18-pgbackrest-backup.yml` restore-drill-enable range) and are corrected — no prose claim changed. 2026-09-24 (T639): the §2 diagram and the §5 failure-matrix aggregator row still showed the leader-elected active/standby aggregator that §3.7 had retracted; both now match §3.7 (one instance, Postgres instance lock, no standby)
+status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for ClickHouse (§4.3's hardware-expansion claim corrected 2026-07-24, §8/§3.3's backup deployment status corrected 2026-07-25, audit-2026-07-23 DOC-05/DOC-06). 2026-09-02 (#361): §2 diagram, §3.4, §3.8, §6 and the §8/restore-drill "reality check" blocks corrected against code — those blocks had INVERTED (repo2 + restore drill are live). §3.11 now covers the ClickHouse tier; cost/RTO tables NOT re-verified. 2026-09-03: §3.3's retention block no longer claims daily OHLC back to 2015 — `prices_1d` starts 2018-07-01. 2026-09-20 (HO-361): every `file:line` citation in this doc re-checked against HEAD; two had drifted from code moving underneath them (§0 availability banner's `sla-probe.sh` line, §3.3's `18-pgbackrest-backup.yml` restore-drill-enable range) and are corrected — no prose claim changed. 2026-09-24 (T639): the §2 diagram and the §5 failure-matrix aggregator row still showed the leader-elected active/standby aggregator that §3.7 had retracted; both now match §3.7 (one instance, Postgres instance lock, no standby)
 ---
 
 > ⚠️ **Multi-region content superseded by ADR-0050 / [`multi-region-ha.md`](multi-region-ha.md) (2026-08-21).** This plan's multi-region framing (and its "active/active out of scope for v1" stance) is overturned. The **single-region HA design** below (HAProxy / Patroni / Redis-Sentinel) remains current and is **Phase 1** of the multi-region plan — read it for that, not for the multi-region shape.
@@ -29,11 +29,10 @@ status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for Clic
 > **⚠️ ARCHITECTURE-STALENESS AMENDMENT (2026-07-18).** This plan predates the ADR-0034
 > **ClickHouse tier-1 lake** — now the largest store (8.6 TiB) and the primary serving
 > path. **§4.3 (storage/capacity) and §8 (backup) have been rewritten** to current
-> reality. **Still stale / TODO:** §3 (component-by-component HA) has **no ClickHouse
-> tier** — deploying the HA design as-written would leave ClickHouse a SPOF. The HA/DR
-> re-evaluation (bootstrap-from-snapshot model, R2/R3 sequencing) is in
-> `docs/operations/production-readiness-master-plan-2026-07-18.md` §6b (the campaign
-> source of truth) + `docs/operations/off-site-backup-plan.md`.
+> reality. §3.11 adds the ClickHouse tier: one instance per region, cross-region
+> failover per ADR-0050, and snapshot-restore bootstrap. The in-region lake is still a
+> SPOF by design. Background: `docs/operations/production-readiness-master-plan-2026-07-18.md`
+> §6b + `docs/operations/off-site-backup-plan.md`.
 
 # High-Availability Infrastructure Plan
 
@@ -492,6 +491,42 @@ operator runbooks under
 specific subcommand each playbook needs (e.g. `runbooks/all-ingestion-down.md`
 references `stellarindex-ops backfill`).
 
+### 3.11 ClickHouse lake
+
+- **Topology:** **one** ClickHouse instance per region, not a cluster.
+  Every lake table uses a non-replicated MergeTree-family engine
+  (`MergeTree`, `ReplacingMergeTree`, `AggregatingMergeTree`) on a single
+  local disk; there are no `Replicated*` tables and no Keeper. Within a region
+  the lake is a single point of failure by design: ADR-0050 gets HA from
+  cross-region failover, one box per region, not from per-region
+  clusters ([`multi-region-ha.md`](multi-region-ha.md) §8).
+- **Blast radius:** the API's ClickHouse readiness check is
+  non-critical (`clickhouseChecker.Critical()` in
+  `cmd/stellarindex-api/main.go`). With ClickHouse down, `/readyz`
+  returns 200 `degraded`, pricing keeps serving from Timescale + Redis,
+  and the lake routes return 503. `GET /v1/livez/lake` is the
+  lake-specific signal. It returns 503 while ClickHouse is unreachable,
+  so a load balancer can steer lake routes away without pulling pricing
+  out of the pool.
+- **Cross-region shape:** R1 holds the full lake and is the lake
+  authority. R2 may hold a hot recent set; R3 holds none. Both proxy
+  cold reads to R1, and fall back to object storage only while R1 is
+  unreachable ([`multi-region-ha.md`](multi-region-ha.md) §3b). A lake
+  outage on R1 therefore degrades deep-history reads everywhere. It
+  does not take them down.
+- **Recovery and region bootstrap:** restore a snapshot, don't
+  re-derive. A new or rebuilt lake restores the latest backup chain
+  from `scripts/ops/ch-lake-backup.sh` (native `BACKUP DATABASE` to an
+  off-site `s3_plain` disk, ADR-0043 §2.4). It must pass `stellarindex-ops
+  verify-lake` before it serves, then follows live ingest. Re-walking
+  the archive (~1–2 weeks per region, with divergence risk) is the last
+  resort. Restore steps are in
+  [`runbooks/ch-lake-backup.md`](../operations/runbooks/ch-lake-backup.md).
+  §8 records whether the chain is running.
+- **Sequencing:** R2/R3 lakes are bootstrapped from R1's verified
+  snapshot only after R1's lake is complete and verified. A region
+  seeded from an unverified lake would carry the same gaps as R1.
+
 ---
 
 ## 4. Capacity planning — napkin math
@@ -639,18 +674,18 @@ Alerts already sketched in `docs/operations/alerts-catalog.md` (Week 9).
 > **UPDATED 2026-09-02 — the Postgres half of this block is no longer true.** During an incident, plan recovery from what is actually on the box, not from this table. **What exists today on R1:** pgBackRest `repo1` at `/var/lib/pgbackrest` — a ZFS dataset on the *same* `data` pool as the database it protects (`templates/pgbackrest.conf.j2`), full Sunday + differential Mon–Sat at 02:00 UTC with continuous WAL archiving — **plus `repo2`, an encrypted off-site S3 repo provisioned 2026-08-29** (ADR-0043 §2.2). Backups run per-repo nightly and staleness is alerted (`stellarindex_backup_offsite_stale`, `deploy/monitoring/rules/backup-offsite.yml`); the role gates repo2 rendering on `pgbackrest_repo2_s3_bucket` being set (`configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:132`), and the `pgbackrest_offsite_ack: true` escape hatch is no longer what r1 relies on. So a pool/box loss no longer takes Postgres with it. Still not provisioned:
 >
 > - **ClickHouse — no DATA backup running yet.** The job exists (`scripts/ops/ch-lake-backup.sh`, ADR-0043 §2.4: native `BACKUP DATABASE` to an off-site `s3_plain` disk, installed by `tasks/18-pgbackrest-backup.yml`) but backs nothing up until `ch_lake_backup_s3_endpoint` and its vault key pair are set; `stellarindex_ch_lake_backup_stale` tickets each lake host until then. Until a chain exists the lake's only recovery path is re-derivation from the galexie archive (~1–2 weeks).
-> - **Galexie archive off-site — still not configured.** Galexie exports to the box's own MinIO (`galexie_s3_endpoint: http://127.0.0.1:9000`) and the only `mc mirror` job, `galexie-archive-fill.sh`, runs *inbound* (AWS public blockchain dataset → `local/galexie-archive`). Nothing copies the archive **out**, and ADR-0027's cold-S3 tier is not enabled on r1 (`s3_cold_bucket_archive` unset). The only off-site credential on the box is pgBackRest's, which is scoped to its own repo2 bucket. **What DID change (2026-09-19, NS03): the archive is now in the local ZFS auto-snapshot net.** `data/minio` was measured at 2.64 TB with *zero* snapshots while `data/clickhouse` and `data/postgres` — the two tiers derived *from* it — had 4 and 8; it is now the third entry in `zfs_snapshot_datasets` (7-day retention; the archive is append-mostly, so a retained day pins only what that day deleted). That closes the fast operator-mistake hole (`mc rm --recursive` against the wrong prefix is now a `zfs clone`), and closes nothing else: a pool or box loss still takes the archive with it. **Be precise about the blast radius when arguing the off-site spend** — the archive is *reconstructible* by re-ingesting the public Stellar history archives, so total loss is a very long recovery (days–weeks, no third-party SLA), not an unrecoverable loss.
+> - **Galexie archive off-site — still not configured.** Galexie exports to the box's own MinIO (`galexie_s3_endpoint: http://127.0.0.1:9000`). The outbound mirror is committed (`scripts/ops/galexie-archive-mirror.sh`, runbook `docs/operations/runbooks/galexie-archive-mirror.md`) but backs nothing up until its B2 target exists; `galexie-archive-fill.sh` runs *inbound* (AWS public blockchain dataset → `local/galexie-archive`). Nothing copies the archive **out** yet, and ADR-0027's cold-S3 tier is not enabled on r1 (`s3_cold_bucket_archive` unset). The only off-site credential on the box is pgBackRest's, which is scoped to its own repo2 bucket. **What DID change (2026-09-19, NS03): the archive is now in the local ZFS auto-snapshot net.** `data/minio` was measured at 2.64 TB with *zero* snapshots while `data/clickhouse` and `data/postgres` — the two tiers derived *from* it — had 4 and 8; it is now the third entry in `zfs_snapshot_datasets` (7-day retention; the archive is append-mostly, so a retained day pins only what that day deleted). That closes the fast operator-mistake hole (`mc rm --recursive` against the wrong prefix is now a `zfs clone`), and closes nothing else: a pool or box loss still takes the archive with it. **Be precise about the blast radius when arguing the off-site spend** — the archive is *reconstructible* by re-ingesting the public Stellar history archives, so total loss is a very long recovery (days–weeks, no third-party SLA), not an unrecoverable loss.
 > - **Config / vault / secrets tarball — no such job exists.**
 >
-> Design, provider choice, cost and sequencing: **`docs/operations/off-site-backup-plan.md` (status: proposed — execute after Phase A/D).** Anything below is the target that plan builds toward.
+> Design, provider choice, cost and sequencing: **`docs/operations/off-site-backup-plan.md` (status: §2 Postgres repo2 live; §1 archive mirror and §4 lake backup committed, waiting on their targets; BX41 + B2 decided, not yet provisioned).** Anything below is the target that plan builds toward.
 
 > ⚠️ The original table (in git history) had two gaps that make it unsafe as-is: **(1) no ClickHouse** — the largest store and primary serving path, omitted because this predates ADR-0034; **(2) backups landed on the *same box's* MinIO**, so a single ZFS-pool/box loss takes the data *and* its backups. The design below corrects both; note that gap (2) is still the LIVE situation until the streams above are provisioned.
 
 | Asset | Tool (PLANNED) | Off-site target (PLANNED — none provisioned) | RPO (target) | Restore (RTO, target) |
 | --- | --- | --- | --- | --- |
-| **ClickHouse lake (~7 TiB post-ZSTD)** | `clickhouse-backup` (part-level incremental) | S3 (Cloudflare R2 / B2) | daily | **~2–16 h restore.** Re-derive from the archive is the *last resort* (~1–2 wk), NOT the plan |
-| Postgres (served money state) | pgBackRest **`repo2-type=s3`** (off-site) + `repo1` local | S3 | 5 min (WAL) | ~1–3 h |
-| Galexie archive (source of truth) | `mc mirror` / `rclone` (append-only, incremental) | S3 | continuous | hours |
+| **ClickHouse lake (14.6 TiB ≈ 16.1 TB, `bytes_on_disk`)** | native `BACKUP DATABASE` (`scripts/ops/ch-lake-backup.sh`; 28-day full + daily incrementals) | Hetzner Storage Box BX41 — no S3 API and 20 TB < two rolling fulls; both open, see [off-site-backup-plan.md §Provider](../operations/off-site-backup-plan.md#provider) | daily | **~4–36 h restore** (10 Gbps / 1 Gbps). Re-derive from the archive is the *last resort* (~1–2 wk), NOT the plan |
+| Postgres (served money state) | pgBackRest **`repo2-type=s3`** (off-site) + `repo1` local | Backblaze B2 (repo2 moves there from its current S3 bucket) | 5 min (WAL) | ~1–3 h |
+| Galexie archive (source of truth) | `mc mirror` / `rclone` (append-only, incremental) | Backblaze B2 | continuous | hours |
 | Config / vault / secrets / systemd | encrypted tarball (`age`/`gpg`) | S3 | daily | minutes; **keep the vault passphrase off-R1** |
 | Redis | AOF (cache only — not backed up) | — | — | rehydrates from CH/PG |
 

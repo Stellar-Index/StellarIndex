@@ -617,6 +617,25 @@ clickhouse_ops_batch_os_thread_priority: 5
 # /etc/default/stellarindex-ops, mode 0640 root:stellarindex).
 clickhouse_ops_batch_password: "{{ vault_clickhouse_ops_batch_password | default('') }}"
 
+# ───── ClickHouse live-daemon identity ─────────────────────────────────
+# A named user for the indexer / aggregator / API connections that still
+# reach CH as its unauthenticated `default` user, so `default` can later
+# be locked down without cutting them off. Same `default` settings
+# profile, so the switch is priority- and limit-neutral. Defaults FALSE
+# for the same ansible-drift reason as ops_batch above: enabling asserts
+# a vault password. Flip per inventory together with that inventory's
+# vault_clickhouse_live_daemon_password. Two halves move together —
+# the CH user (--tags clickhouse-live-daemon-profile) and the env pair in
+# /etc/default/stellarindex (--tags stellarindex); the pair is rendered
+# only when both the flag and the password are set, and while it is
+# absent internal/storage/clickhouse/ops_auth.go falls back to `default`.
+clickhouse_live_daemon_profile_enabled: false
+clickhouse_live_daemon_user: "live_daemon"
+# clickhouse_live_daemon_password ← ansible-vault, vault_clickhouse_live_daemon_password
+# (SHA-256-hashed into the users.d drop-in; plaintext only in
+# /etc/default/stellarindex, mode 0640 root:stellarindex).
+clickhouse_live_daemon_password: "{{ vault_clickhouse_live_daemon_password | default('') }}"
+
 # ───── ClickHouse destructive-DDL size guard (2026-08-29 r1 audit) ─────
 # ClickHouse refuses DROP TABLE / TRUNCATE / DROP|REPLACE PARTITION on
 # anything larger than max_table_size_to_drop / max_partition_size_to_drop
@@ -950,6 +969,11 @@ archive_completeness_enabled: "{{ (stellar_network | default('pubnet')) == 'pubn
 # testnet's ledger range. Derived from the network so a fresh test net is
 # correct before anyone writes an inventory line.
 verify_served_values_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
+
+# listing-sync caches CoinGecko's Stellar platform→address map, and every
+# address in it is a PUBNET asset: on a test net the table can corroborate
+# nothing, and the keyless fetch is answered 403 from a datacenter address.
+listing_sync_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
 
 # supply-verify-rollup — daily SEP-41 supply-rollup reconciliation. Only
 # meaningful where the SEP-41 supply pipeline runs, i.e. where contracts are

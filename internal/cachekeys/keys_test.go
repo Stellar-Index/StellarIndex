@@ -164,16 +164,6 @@ func TestMetadata(t *testing.T) {
 	}
 }
 
-func TestSubscriber(t *testing.T) {
-	k := cachekeys.Subscriber("price:XLM", "conn-42")
-	if k.String() != "sub:price:XLM:conn-42" {
-		t.Errorf("Subscriber = %q", k.String())
-	}
-	if cachekeys.SubscriberTTL != 60*time.Second {
-		t.Errorf("SubscriberTTL = %v", cachekeys.SubscriberTTL)
-	}
-}
-
 func TestDivergence(t *testing.T) {
 	xlm := canonical.NativeAsset()
 	usd, err := canonical.ParseAsset("fiat:USD")
@@ -338,7 +328,7 @@ func TestAPIKey(t *testing.T) {
 		t.Errorf("APIKey = %q, want %q", got.String(), want)
 	}
 	if cachekeys.APIKeyTTL != 0 {
-		t.Errorf("APIKeyTTL = %v, want 0 (revocation in payload, not Redis TTL)",
+		t.Errorf("APIKeyTTL = %v, want 0 (operator-issued keys are persistent; revocation in payload, not Redis TTL)",
 			cachekeys.APIKeyTTL)
 	}
 }
@@ -368,7 +358,6 @@ func TestAllKeysHaveDistinctPrefixes(t *testing.T) {
 		"ohlc":       cachekeys.OHLC(xlm, usdc, "1m", now).String(),
 		"rl":         cachekeys.RateLimitKey("x", now, time.Minute).String(),
 		"meta":       cachekeys.Metadata(xlm).String(),
-		"sub":        cachekeys.Subscriber("c", "s").String(),
 		"div":        cachekeys.Divergence(canonical.Pair{Base: xlm, Quote: usdc}).String(),
 		"freeze":     cachekeys.Freeze(xlm, usdc).String(),
 		"health":     cachekeys.Health("src").String(),

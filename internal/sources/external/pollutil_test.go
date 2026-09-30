@@ -116,6 +116,27 @@ func TestGetBody(t *testing.T) {
 	}
 }
 
+// An unset LimitBytes must fail loudly before any request is sent, not
+// return an empty body that parses as "no data".
+func TestGetBody_rejectsNonPositiveLimit(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		_, _ = w.Write([]byte("payload"))
+	}))
+	defer srv.Close()
+
+	for _, limit := range []int64{0, -1} {
+		_, body, err := GetBody(context.Background(), GetRequest{URL: srv.URL, LimitBytes: limit})
+		if err == nil {
+			t.Errorf("LimitBytes=%d: got body %q and nil error, want an error", limit, body)
+		}
+	}
+	if hits != 0 {
+		t.Errorf("server was requested %d time(s), want 0", hits)
+	}
+}
+
 // A transport error with RedactURL set must not echo the request
 // URL's query string (the query param is where key-only vendors
 // carry the API key — G10-04).

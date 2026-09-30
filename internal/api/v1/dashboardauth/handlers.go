@@ -143,6 +143,9 @@ type Config struct {
 	// days, fixed: TouchSession records activity but never extends
 	// expires_at.
 	SessionTTL time.Duration
+	// SessionIdleTimeout — a session unused for this long is revoked
+	// before SessionTTL. Default [defaultSessionIdleTimeout].
+	SessionIdleTimeout time.Duration
 	// CookieSecure — Secure flag on the session-presence hint.
 	// Credential cookies are always Secure (see [credentialCookie]).
 	CookieSecure bool
@@ -243,6 +246,9 @@ func (c *Config) validate() error {
 	}
 	if c.SessionTTL == 0 {
 		c.SessionTTL = 30 * 24 * time.Hour
+	}
+	if c.SessionIdleTimeout == 0 {
+		c.SessionIdleTimeout = defaultSessionIdleTimeout
 	}
 	if c.accountActions == nil {
 		c.accountActions = ratelimit.NewLocalFixedWindowCounter(accountActionWindow, c.Now)
@@ -942,6 +948,10 @@ func (h *Handlers) startSessionForEmail(w http.ResponseWriter, r *http.Request, 
 	return h.mintSession(w, r, user)
 }
 
+// maxLiveSessionsPerUser is how many signed-in devices a user keeps;
+// minting one more revokes the oldest.
+const maxLiveSessionsPerUser = 10
+
 // mintSession bumps last_login, creates the DB session row, and
 // writes the session cookie for an ALREADY-AUTHENTICATED user. It is
 // the single session-issuance path — magic link, email code, and
@@ -988,6 +998,11 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 	})
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
+	}
+	// Bounds the live-session row count per user however fast a door
+	// mints. Best-effort like the replaced-session revoke above.
+	if err := h.cfg.Users.CapUserSessions(r.Context(), user.ID, sess.ID, maxLiveSessionsPerUser); err != nil {
+		h.cfg.Logger.Warn("cap live sessions at login", "err", err, "user_id", user.ID)
 	}
 
 	sc := credentialCookie(SessionCookieName, token)

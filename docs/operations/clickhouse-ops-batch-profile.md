@@ -184,7 +184,7 @@ every inventory had the password. Enable per host, in one PR:
 
    ```
    clickhouse-client --port 9300 --user ops_batch --password "$(sed -n 's/^STELLARINDEX_CLICKHOUSE_OPS_PASSWORD=//p' /etc/default/stellarindex-ops)" -q "SELECT currentUser()"
-   run-heavy-job.sh ops-batch-probe stellarindex-ops ch-gate -ch 127.0.0.1:9300 ...   # any ops read; stderr names the identity
+   run-heavy-job.sh ops-batch-probe stellarindex-ops ch-gate -config /etc/stellarindex.toml -ch-addr 127.0.0.1:9300 -from <n> -to <n>   # any ops read; stderr names the identity
    clickhouse-client --port 9300 -q "SELECT user, priority, query_id FROM system.processes WHERE user = 'ops_batch'"
    ```
 
@@ -206,8 +206,12 @@ bounds what it can do to ClickHouse's other users. If the wrapper's
 first stderr line says `WARNING ... CH 'default' user`, stop and apply
 the profile before running a multi-hour scan.
 
-Not yet covered: the heavy shell scripts that call `clickhouse-client`
-directly (`scripts/ops/ch-supply-flows-seed.sh`, `ch-live-catchup.sh`,
-`d3-lecur-v2-rebuild.sh`, `d2-ordinal-reproject.sh`) still run as
-`default` — the pair is in their environment, but they do not pass
-`--user/--password` to `clickhouse-client`. Follow-up.
+The heavy shell scripts that call `clickhouse-client` directly
+(`scripts/ops/ch-supply-flows-seed.sh`, `ch-live-catchup.sh`,
+`d3-lecur-v2-rebuild.sh`, and `ch-backfill-monitor.sh` on the far side
+of its ssh) run as the ops-batch user too: when
+`STELLARINDEX_CLICKHOUSE_OPS_USER` is set they export it and its
+password as `CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD`, which
+`clickhouse-client` reads from its environment. They never put the
+password on argv, where `ps` and the journal would show it.
+`scripts/ops/ch-ops-user-test.sh` (CI) holds them to that contract.

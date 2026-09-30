@@ -27,7 +27,8 @@ import (
 //
 // Validation: at least 2 legs; Legs[0].Base must equal Target.Base;
 // Legs[N-1].Quote must equal Target.Quote; adjacent legs must share
-// their pivot asset (Legs[i].Quote == Legs[i+1].Base). Caller-side
+// their pivot asset (Legs[i].Quote == Legs[i+1].Base); a fiat/fiat leg
+// must have fiat:USD on one side. Caller-side
 // validation lives in [ValidateTriangulationChain].
 type TriangulationChain struct {
 	Target canonical.Pair
@@ -59,6 +60,14 @@ func ValidateTriangulationChain(chain TriangulationChain) error {
 				chain.Target.String(),
 				i, chain.Legs[i].Quote.String(),
 				i+1, chain.Legs[i+1].Base.String())
+		}
+	}
+	for i, leg := range chain.Legs {
+		// fx_quotes stores one rate_usd per ticker, so EUR/GBP is USD/GBP ÷ USD/EUR:
+		// a route over it shares its data row with the USD pivot yet counts as disjoint.
+		if isFXLeg(leg) && leg.Base.Code != "USD" && leg.Quote.Code != "USD" {
+			return fmt.Errorf("triangulation: chain for %s — leg[%d] %s is a fiat/fiat leg without USD; route it through fiat:USD",
+				chain.Target.String(), i, leg.String())
 		}
 	}
 	return nil
@@ -623,6 +632,10 @@ type compositeMeta struct {
 	// prints disagree, so the pivot is not the USD the FX leg multiplies.
 	PivotProxyShare     map[string]float64 `json:"pivot_proxy_share,omitempty"`
 	PivotSurfaceRefusal string             `json:"pivot_surface_refusal,omitempty"`
+	// PivotUnverified marks a published composite with a priced leg made
+	// only of stablecoin-proxy prints: no own-quote prints to check the
+	// par assumption against, so a de-peg there cannot be refused.
+	PivotUnverified bool `json:"pivot_unverified,omitempty"`
 }
 
 // outcomeProxyPivot is the triangulation outcome for a composite refused
@@ -631,10 +644,11 @@ type compositeMeta struct {
 const outcomeProxyPivot = "proxy_pivot"
 
 // pivotComposition reports, for this tick's publish of each priced chain
-// leg, the stablecoin-proxy share of its volume and the first leg whose
-// two quote surfaces disagree ("" when none do). A leg not published
-// this tick carries no composition and is not judged here.
-func (o *Orchestrator) pivotComposition(chain TriangulationChain, window time.Duration) (shares map[string]float64, refusal string) {
+// leg, the stablecoin-proxy share of its volume, the first leg whose
+// two quote surfaces disagree ("" when none do), and whether any leg had
+// no own-quote surface to compare against. A leg not published this tick
+// carries no composition and is not judged here.
+func (o *Orchestrator) pivotComposition(chain TriangulationChain, window time.Duration) (shares map[string]float64, refusal string, unverified bool) {
 	maxBps := o.cfg.CompositeReference.withDefaults().LegDispersionBps
 	for _, leg := range chain.Legs {
 		lr, ok := o.tickLegRefs[window][leg.String()]
@@ -645,11 +659,14 @@ func (o *Orchestrator) pivotComposition(chain TriangulationChain, window time.Du
 			shares = make(map[string]float64, len(chain.Legs))
 		}
 		shares[leg.String()] = lr.proxyShare
+		if lr.surfaceDivergence == nil && !lr.surfaceUncomputable {
+			unverified = true
+		}
 		if why := lr.quoteSurfaceRefusal(maxBps); why != "" && refusal == "" {
 			refusal = leg.String() + " " + why
 		}
 	}
-	return shares, refusal
+	return shares, refusal, unverified
 }
 
 // refuseProxyPivot withholds a composite whose pivot leg is two
@@ -657,7 +674,7 @@ func (o *Orchestrator) pivotComposition(chain TriangulationChain, window time.Du
 // that disagree — rather than let it overwrite the direct print. Writes
 // the flags for Step 3 and reports whether it refused.
 func (o *Orchestrator) refuseProxyPivot(ctx context.Context, chain TriangulationChain, window time.Duration, meta compositeMeta) bool {
-	shares, refusal := o.pivotComposition(chain, window)
+	shares, refusal, _ := o.pivotComposition(chain, window)
 	if refusal == "" {
 		return false
 	}
@@ -683,10 +700,10 @@ func (o *Orchestrator) withCorroborationBasis(target canonical.Pair, window time
 	return meta
 }
 
-// withPivotComposition stamps the chain legs' stablecoin-proxy share onto
-// a composite_meta before it is written.
+// withPivotComposition stamps the chain legs' stablecoin-proxy share and
+// unverified-pivot flag onto a composite_meta before it is written.
 func (o *Orchestrator) withPivotComposition(chain TriangulationChain, window time.Duration, meta compositeMeta) compositeMeta {
-	meta.PivotProxyShare, _ = o.pivotComposition(chain, window)
+	meta.PivotProxyShare, _, meta.PivotUnverified = o.pivotComposition(chain, window)
 	return meta
 }
 

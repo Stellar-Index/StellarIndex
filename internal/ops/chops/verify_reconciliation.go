@@ -12,6 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -43,7 +44,7 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 	to := fs.Uint("to", 0, "Last ledger sequence (inclusive, required)")
 	only := fs.String("source", "", "Limit to one source (soroswap|aquarius|phoenix|comet|sushiswap_v3|upshift|sdex); default: all")
 	maxList := fs.Int("max-list", 50, "Max gap ledgers to print per source")
-	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address (the sdex re-derive reads the lake's operations)")
+	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address (the sdex re-derive reads the lake's operations; factory preseeds read its contract_events)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -123,7 +124,7 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 			// from the factory's creation events [genesis, lo) before the
 			// re-derive, so a custom -from sub-range doesn't drop the events
 			// of children deployed before the range (false-delta guard).
-			pblind, perr := preseedFactoryChildren(ctx, store, src, lo)
+			pblind, perr := preseedFactoryChildren(ctx, clickhouse.ReconcileEventStreamer{Addr: *chAddr}, src, lo)
 			if perr != nil {
 				return fmt.Errorf("%s: %w", src.name, perr)
 			}
@@ -149,7 +150,7 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 			if !src.census {
 				expected = completeness.SumKinds(byKind, tgt.kinds...)
 			}
-			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, lo, hi)
+			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), lo, hi)
 			if aerr != nil {
 				return fmt.Errorf("%s/%s: actual counts: %w", src.name, tgt.table, aerr)
 			}
