@@ -419,12 +419,12 @@ const (
 func (s *Store) resolveRowUSDVolume(
 	ctx context.Context, rows []canonical.Trade, out []sql.NullString, errAt []error, i int,
 ) {
-	v := tradeUSDVolume(ctx, rows[i], s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
+	v, unpriceable := tradeUSDVolumeWithOutcome(ctx, rows[i], s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
 	if err := s.reDeriveNullVolumeGuard(rows[i], v); err != nil {
 		errAt[i] = err
 		return
 	}
-	obs.TradeInsertsTotal.WithLabelValues(rows[i].Source, usdPopulatedLabel(v != nil)).Inc()
+	obs.TradeInsertsTotal.WithLabelValues(rows[i].Source, usdPopulatedLabel(v, unpriceable)).Inc()
 	if v != nil {
 		out[i] = sql.NullString{String: *v, Valid: true}
 	}

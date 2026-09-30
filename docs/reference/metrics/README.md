@@ -1294,11 +1294,17 @@ Two alerts read it, and only one of them can fire for that series:
 
 ### `stellarindex_trade_inserts_total`
 
-Counter, labels `source`, `usd_volume_populated` (`yes` | `no`).
+Counter, labels `source`, `usd_volume_populated` (`yes` | `no` |
+`unpriceable`).
 
 Per-source attempt counter for `Store.InsertTrade`, broken out by
 whether `usd_volume` was populated at insert time (per L2.2 phase 1
 — see `internal/storage/timescale.Store.WouldPopulateUSDVolume`).
+`no` is a resolver miss: a leg has a USD path (a peg or XLM market
+in `prices_1m`, or an `fx_quotes` ticker) but no usable rate was
+found — stale, dust-only, or an I/O error. `unpriceable` is NULL by
+design: every leg the waterfall consulted has no such path at all,
+ever. The coverage alerts divide `yes` by `yes + no`.
 Operators flipping on `[trades].usd_pegged_classic_assets` use this
 to verify their allow-list actually covers what the indexer is
 seeing. Counts attempts; the trades hypertable's `ON CONFLICT DO
