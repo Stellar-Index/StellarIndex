@@ -338,8 +338,10 @@ honest ceiling of "independent", and it is written here so it is not re-derived.
 > **6. Carried out of the tail-triage pass (owner: agent unless noted):**
 > C1-041 residual — `sep41_total_only` missing from the `supply_basis` spec
 > enum since v0.21.0; C6-081 — six Dockerfiles `FROM` by tag, not digest;
-> C2-038/C4-086 — the PG pipeline sink's undrained-on-exit is log-only
-> (counter + alert, like #368's CH half); C6-056 — ADR-0011 lacks the
+> ~~C2-038/C4-086 — the PG pipeline sink's undrained-on-exit is log-only
+> (counter + alert, like #368's CH half)~~ **fixed** for on-chain trades: once
+> the producer has stopped, shutdown rewinds the ledgerstream cursor below the
+> lowest abandoned trade; ledger-less rows stay counter + ERROR; C6-056 — ADR-0011 lacks the
 > amendment for the diagnostic-only over-mint leg; C2-049 — the chainlink
 > source takes feed decimals from config and never reads `decimals()` (r1
 > runs the EUR/USD feed enabled — LIVE, fix in flight); C4-069 —
