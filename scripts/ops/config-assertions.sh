@@ -20,7 +20,8 @@
 set -u
 
 OUT="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}/config_assertions.prom"
-TMP="$(mktemp)"
+# Temp beside $OUT so the mv is a same-filesystem rename the collector never sees half-written.
+TMP="$(mktemp "$OUT.tmp.XXXXXX")" || exit 1
 fails=0
 
 emit() { # emit <assertion> <ok:0|1>
@@ -459,7 +460,7 @@ else
   skip minio_prometheus_token_present
 fi
 
+chmod 644 "$TMP"
 mv "$TMP" "$OUT"
-chmod 644 "$OUT"
 echo "config-assertions: $fails failure(s)" >&2
 exit "$fails"
