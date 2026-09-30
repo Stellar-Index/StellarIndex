@@ -131,8 +131,9 @@ FROM=${FROM:-50000000}; TO=${TO:-62894000}; WIN=${WIN:-1000000}
 STATE=${STATE:-/var/lib/ch-backfill/rebuild-done-windows.txt}
 DIRTY=${DIRTY:-"$STATE.dirty"}
 STALE=${STALE:-"$STATE.caggs"}
+REQUIRED=${REQUIRED:-"$STATE.required"}
 LOG=${LOG:-/var/log/ch-rebuild-projected.log}
-mkdir -p "$(dirname "$STATE")"; touch "$STATE" "$DIRTY" "$STALE"
+mkdir -p "$(dirname "$STATE")"; touch "$STATE" "$DIRTY" "$STALE" "$REQUIRED"
 exec >>"$LOG" 2>&1
 
 # The sources window_delete_sql has a DELETE map for. Pinned against the
@@ -163,47 +164,63 @@ unknown_in() {
   done
 }
 
+# source_delete_sql SRC LO HI → the DELETEs for one source's non-trades tables.
+source_delete_sql() {
+  local s="$1" lo="$2" hi="$3"
+  case "$s" in
+    aquarius)
+      echo "DELETE FROM aquarius_rewards_events WHERE ledger BETWEEN $lo AND $hi;"
+      echo "DELETE FROM aquarius_admin WHERE ledger BETWEEN $lo AND $hi;"
+      echo "DELETE FROM aquarius_protocol_fee WHERE ledger BETWEEN $lo AND $hi;"
+      echo "DELETE FROM aquarius_kill_switches WHERE ledger BETWEEN $lo AND $hi;" ;;
+    soroswap)
+      echo "DELETE FROM soroswap_skim_events WHERE ledger BETWEEN $lo AND $hi;"
+      echo "DELETE FROM soroswap_liquidity WHERE ledger BETWEEN $lo AND $hi;" ;;
+    phoenix)
+      echo "DELETE FROM phoenix_liquidity WHERE ledger BETWEEN $lo AND $hi;"
+      echo "DELETE FROM phoenix_stake_events WHERE ledger BETWEEN $lo AND $hi;"
+      echo "DELETE FROM phoenix_initialize WHERE ledger BETWEEN $lo AND $hi;"
+      echo "DELETE FROM phoenix_admin_events WHERE ledger BETWEEN $lo AND $hi;" ;;
+    comet) echo "DELETE FROM comet_liquidity WHERE ledger BETWEEN $lo AND $hi;" ;;
+    cctp) echo "DELETE FROM cctp_events WHERE ledger BETWEEN $lo AND $hi;" ;;
+    rozo) echo "DELETE FROM rozo_events WHERE ledger BETWEEN $lo AND $hi;" ;;
+    defindex)
+      echo "DELETE FROM defindex_flows WHERE ledger BETWEEN $lo AND $hi;"
+      echo "DELETE FROM defindex_fees WHERE ledger BETWEEN $lo AND $hi;" ;;
+    blend)
+      echo "DELETE FROM blend_auctions WHERE ledger BETWEEN $lo AND $hi;"
+      echo "DELETE FROM blend_positions WHERE ledger BETWEEN $lo AND $hi;"
+      echo "DELETE FROM blend_emissions WHERE ledger BETWEEN $lo AND $hi;"
+      echo "DELETE FROM blend_admin WHERE ledger BETWEEN $lo AND $hi;" ;;
+  esac
+}
+
 # window_delete_sql CSV LO HI → the DELETE batch for exactly those sources.
 # Every argument has been validated (is_source_csv + KNOWN_SOURCES, is_ledger)
 # before it gets here. The trades IN list is the ceiling of what this script
 # may ever delete from trades; the ANY list narrows it to this run.
+# Ahead of each DELETE, a probe prints `occupied=SRC` when the window holds
+# that source's rows, so the re-derive can be required to put rows back.
 window_delete_sql() {
-  local csv="$1" lo="$2" hi="$3" s names trade_csv=""
+  local csv="$1" lo="$2" hi="$3" s names tsrcs trade_csv="" dels probe
   IFS=, read -r -a names <<<"$csv"
   for s in "${names[@]}"; do
     in_words "$s" "$TRADE_SOURCES" && trade_csv="${trade_csv:+$trade_csv,}$s"
   done
   echo "BEGIN;"
   if [ -n "$trade_csv" ]; then
+    IFS=, read -r -a tsrcs <<<"$trade_csv"
+    for s in "${tsrcs[@]}"; do
+      echo "SELECT 'occupied=$s' WHERE EXISTS (SELECT 1 FROM trades WHERE source = '$s' AND ledger BETWEEN $lo AND $hi);"
+    done
     echo "DELETE FROM trades WHERE source IN ('aquarius','soroswap','phoenix','comet') AND source = ANY (string_to_array('$trade_csv', ',')) AND ledger BETWEEN $lo AND $hi;"
   fi
   for s in "${names[@]}"; do
-    case "$s" in
-      aquarius)
-        echo "DELETE FROM aquarius_rewards_events WHERE ledger BETWEEN $lo AND $hi;"
-        echo "DELETE FROM aquarius_admin WHERE ledger BETWEEN $lo AND $hi;"
-        echo "DELETE FROM aquarius_protocol_fee WHERE ledger BETWEEN $lo AND $hi;"
-        echo "DELETE FROM aquarius_kill_switches WHERE ledger BETWEEN $lo AND $hi;" ;;
-      soroswap)
-        echo "DELETE FROM soroswap_skim_events WHERE ledger BETWEEN $lo AND $hi;"
-        echo "DELETE FROM soroswap_liquidity WHERE ledger BETWEEN $lo AND $hi;" ;;
-      phoenix)
-        echo "DELETE FROM phoenix_liquidity WHERE ledger BETWEEN $lo AND $hi;"
-        echo "DELETE FROM phoenix_stake_events WHERE ledger BETWEEN $lo AND $hi;"
-        echo "DELETE FROM phoenix_initialize WHERE ledger BETWEEN $lo AND $hi;"
-        echo "DELETE FROM phoenix_admin_events WHERE ledger BETWEEN $lo AND $hi;" ;;
-      comet) echo "DELETE FROM comet_liquidity WHERE ledger BETWEEN $lo AND $hi;" ;;
-      cctp) echo "DELETE FROM cctp_events WHERE ledger BETWEEN $lo AND $hi;" ;;
-      rozo) echo "DELETE FROM rozo_events WHERE ledger BETWEEN $lo AND $hi;" ;;
-      defindex)
-        echo "DELETE FROM defindex_flows WHERE ledger BETWEEN $lo AND $hi;"
-        echo "DELETE FROM defindex_fees WHERE ledger BETWEEN $lo AND $hi;" ;;
-      blend)
-        echo "DELETE FROM blend_auctions WHERE ledger BETWEEN $lo AND $hi;"
-        echo "DELETE FROM blend_positions WHERE ledger BETWEEN $lo AND $hi;"
-        echo "DELETE FROM blend_emissions WHERE ledger BETWEEN $lo AND $hi;"
-        echo "DELETE FROM blend_admin WHERE ledger BETWEEN $lo AND $hi;" ;;
-    esac
+    dels=$(source_delete_sql "$s" "$lo" "$hi")
+    # The probe is built from the arm's own DELETEs so the two cannot drift.
+    probe=$(sed -n 's/^DELETE FROM \(.*\);$/EXISTS (SELECT 1 FROM \1)/p' <<<"$dels" | paste -sd'|' - | sed 's/|/ OR /g')
+    echo "SELECT 'occupied=$s' WHERE $probe;"
+    printf '%s\n' "$dels"
   done
   echo "COMMIT;"
 }
@@ -255,6 +272,19 @@ drop_line() {  # FILE LINE
 }
 clear_dirty() { drop_line "$DIRTY" "$1 $2 $3"; }  # LO HI CSV
 
+# $REQUIRED holds `LO HI CSV REQ` for an emptied window: REQ is what its
+# DELETE found occupied. A recovery's own probe sees the emptied window, so
+# only this record holds its re-derive to putting those rows back.
+sorted_csv() { tr , '\n' <<<"$1" | sort -u | paste -sd, -; }
+required_rows() { awk -v k="$1 $2 $(sorted_csv "$3")" '$1" "$2" "$3 == k {print $4}' "$REQUIRED"; }  # LO HI CSV
+set_required_rows() {  # LO HI CSV REQ — an empty REQ drops the record
+  local k
+  k="$1 $2 $(sorted_csv "$3")"
+  awk -v k="$k" '$1" "$2" "$3 != k' "$REQUIRED" > "$REQUIRED.tmp" || return 1
+  if [ -n "$4" ]; then echo "$k $4" >> "$REQUIRED.tmp" || return 1; fi
+  mv "$REQUIRED.tmp" "$REQUIRED"
+}
+
 mark_stale() { grep -qxF "$1 $2" "$STALE" || echo "$1 $2" >> "$STALE"; }  # LO HI
 
 # refresh_window LO HI — rule 5. Idempotent, so a retry only costs time.
@@ -269,7 +299,7 @@ refresh_window() {
 # run_window LO HI CSV MODE — MODE is `normal` or `recover`. In recover mode
 # CSV is what an earlier run DELETED, so all of it must be re-derivable now.
 run_window() {
-  local lo="$1" hi="$2" want="$3" mode="$4" pf verdict rederive s names bad skipped="" sql
+  local lo="$1" hi="$2" want="$3" mode="$4" pf verdict rederive s names bad skipped="" sql out occupied rc=0
   echo "--- window [$lo,$hi] PREFLIGHT sources=$want $(date -u) ---"
   pf=$($OPS ch-rebuild -config "$CFG" -from "$lo" -to "$hi" -sources "$want" -write -preflight) \
     || { echo "PREFLIGHT REFUSED [$lo,$hi] — nothing was deleted for this window"; exit 1; }
@@ -324,17 +354,28 @@ run_window() {
   # the first error, before COMMIT, and the open transaction rolls back. The
   # dirty marker stays regardless: a failure ON the COMMIT is ambiguous, and
   # redoing a window that turned out intact costs only time.
-  psql "$DSN" -v ON_ERROR_STOP=1 <<<"$sql" \
-    || { echo "DELETE FAILED [$lo,$hi] — one transaction, so rolled back unless the failure was the COMMIT itself. Recorded in $DIRTY; the next run redoes this window first."
-         # Ambiguous by construction: a failure ON the COMMIT deleted the
-         # rows. So the verdict is told the range may be emptied — a
-         # spurious window costs one re-reconcile, the other way round
-         # costs a certified hole.
+  out=$(psql "$DSN" -v ON_ERROR_STOP=1 -At <<<"$sql") || rc=$?
+  printf '%s\n' "$out"
+  # A source whose window held rows must get rows back: a re-derive that
+  # yields none for it (empty registry, lake gap) is a loss, not a quiet window.
+  occupied=$({ sed -n 's/^occupied=//p' <<<"$out"; required_rows "$lo" "$hi" "$rederive" | tr , '\n'; } \
+    | sed '/^$/d' | sort -u | paste -sd, -)
+  set_required_rows "$lo" "$hi" "$rederive" "$occupied" \
+    || { echo "CANNOT RECORD [$lo,$hi] require-rows=$occupied in $REQUIRED — a recovery could then pass an empty re-derive."
          file_dirty_window "$lo" "$hi" "$rederive"
          exit 1; }
+  if [ "$rc" -ne 0 ]; then
+    echo "DELETE FAILED [$lo,$hi] — one transaction, so rolled back unless the failure was the COMMIT itself. Recorded in $DIRTY; the next run redoes this window first."
+    # Ambiguous by construction: a failure ON the COMMIT deleted the
+    # rows. So the verdict is told the range may be emptied — a
+    # spurious window costs one re-reconcile, the other way round
+    # costs a certified hole.
+    file_dirty_window "$lo" "$hi" "$rederive"
+    exit 1
+  fi
 
-  echo "--- window [$lo,$hi] REBUILD sources=$rederive $(date -u) ---"
-  $OPS ch-rebuild -config "$CFG" -from "$lo" -to "$hi" -sources "$rederive" -write \
+  echo "--- window [$lo,$hi] REBUILD sources=$rederive require-rows=$occupied $(date -u) ---"
+  $OPS ch-rebuild -config "$CFG" -from "$lo" -to "$hi" -sources "$rederive" -require-rows="$occupied" -write \
     || { echo "REBUILD FAILED [$lo,$hi] — WINDOW LEFT EMPTIED for sources=$rederive. Recorded in $DIRTY. Re-run this script: it rebuilds this window first, for exactly these sources, whatever SRC/FROM/TO it is given. Do not hand-edit $STATE or $DIRTY."
          file_dirty_window "$lo" "$hi" "$rederive"
          exit 1; }
@@ -342,6 +383,8 @@ run_window() {
   IFS=, read -r -a names <<<"$rederive"
   for s in "${names[@]}"; do echo "$s $lo $hi" >> "$STATE"; done
   clear_dirty "$lo" "$hi" "$rederive"
+  set_required_rows "$lo" "$hi" "$rederive" "" \
+    || echo "cannot drop [$lo,$hi] from $REQUIRED — harmless: a later rebuild of this window is only held to rows it did hold"
   if has_trade_source "$rederive"; then refresh_window "$lo" "$hi"; fi
   echo "window [$lo,$hi] DONE sources=$rederive $(date -u)"
 }

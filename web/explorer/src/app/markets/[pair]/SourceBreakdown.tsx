@@ -75,8 +75,9 @@ export function SourceBreakdown({
     ) ?? '0';
 
   // No priced volume → nothing meaningful to chart; stay quiet rather
-  // than render an empty frame.
-  if (!isLoading && slices.length === 0) return null;
+  // than render an empty frame. A failed fetch also has no slices, so it
+  // must fall through to the error message instead of reading as "no volume".
+  if (!isLoading && !isError && slices.length === 0) return null;
 
   return (
     <Panel
