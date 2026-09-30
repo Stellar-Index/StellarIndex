@@ -84,6 +84,7 @@ export function ChartPanel({ assetID }: { assetID: string }) {
         quoteLabel={label}
         height={420}
         liveTip
+        volatilityBand
       />
     </Panel>
   );

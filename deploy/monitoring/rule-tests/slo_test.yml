@@ -83,6 +83,7 @@ tests:
               team: stellarindex
               component: api
               slo: api_availability_3_nines
+              alert_family: slo_availability_burn
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
               summary: "SLOW burn — sustained availability SLO budget consumption"
@@ -111,6 +112,7 @@ tests:
               team: stellarindex
               component: api
               slo: api_availability_3_nines
+              alert_family: slo_availability_burn
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
               summary: "FAST burn — availability SLO budget consuming at >14.4× rate"
@@ -126,6 +128,7 @@ tests:
               team: stellarindex
               component: api
               slo: api_availability_3_nines
+              alert_family: slo_availability_burn
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
               summary: "MEDIUM burn — availability SLO budget consuming at >6× rate"
@@ -141,6 +144,7 @@ tests:
               team: stellarindex
               component: api
               slo: api_availability_3_nines
+              alert_family: slo_availability_burn
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
               summary: "SLOW burn — sustained availability SLO budget consumption"
@@ -319,6 +323,7 @@ tests:
               team: stellarindex
               component: api
               slo: api_latency_p95_under_200ms
+              alert_family: slo_latency_burn
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
               summary: "FAST burn — consuming SLO budget at >14.4× rate"
@@ -376,6 +381,7 @@ tests:
               team: stellarindex
               component: api
               slo: api_latency_p95_under_200ms
+              alert_family: slo_latency_burn
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
               summary: "MEDIUM burn — consuming SLO budget at >6× rate"

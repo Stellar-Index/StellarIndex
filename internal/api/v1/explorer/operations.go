@@ -411,12 +411,13 @@ func (h *Handler) refreshOpTypeStats() {
 	}()
 }
 
-// OperationsView is the wire response for GET /v1/operations.
+// OperationsView is the wire response for GET /v1/operations and
+// GET /v1/ledgers/{seq}/operations.
 //
-// Two shapes on one route: with ?ledger=<seq> it's that ledger's ops
-// (Ledger set, no cursor/stats); without it it's the network-wide
-// recent-operations directory (Ledger 0, NextCursor for paging, and
-// OpTypeStats — the trailing-24h per-type breakdown).
+// Two shapes: the per-ledger form (Ledger set, no cursor/stats) is served by
+// /v1/ledgers/{seq}/operations and its deprecated alias /v1/operations?ledger=;
+// the network-wide recent-operations directory (Ledger 0, NextCursor for
+// paging, and OpTypeStats — the trailing-24h per-type breakdown) by /v1/operations.
 type OperationsView struct {
 	Ledger      uint32        `json:"ledger"`
 	Operations  []OpView      `json:"operations"`
@@ -426,7 +427,7 @@ type OperationsView struct {
 	// while assembling this page, so operations without transaction_successful
 	// are of UNKNOWN outcome rather than known-applied (opsOutcomeCoverageNote).
 	CoverageNote string `json:"coverage_note,omitempty"`
-	// Total and Truncated are set only on the ?ledger= arm (GH-1135): the
+	// Total and Truncated are set only on the per-ledger form (GH-1135): the
 	// ledger header's exact operation count vs len(Operations), the same
 	// shape LedgerTransactionsView already gives /v1/ledgers/{seq}/transactions.
 	// Zero/false on the no-cursor directory arm, which pages instead.
@@ -442,7 +443,7 @@ type OpTypeStatV struct {
 
 // Operations serves GET /v1/operations.
 //
-//   - ?ledger=<seq>: that ledger's operations, decoded (partition-pruned).
+//   - ?ledger=<seq>: deprecated alias of GET /v1/ledgers/{seq}/operations.
 //   - no ?ledger: the network-wide recent-operations DIRECTORY — newest
 //     first, keyset-paged via ?cursor=<opaque> (echo back next_cursor;
 //     composite ledger.tx_index.op_index), plus op_type_stats (per-type
@@ -460,6 +461,24 @@ func (h *Handler) Operations(w http.ResponseWriter, r *http.Request) {
 		h.operationsDirectory(w, r)
 		return
 	}
+	h.ledgerOperations(w, r, seq)
+}
+
+// LedgerOperations serves GET /v1/ledgers/{seq}/operations.
+func (h *Handler) LedgerOperations(w http.ResponseWriter, r *http.Request) {
+	if h.Reader == nil {
+		h.unavailable(w, r)
+		return
+	}
+	seq, ok := h.parseLedgerSeq(w, r)
+	if !ok {
+		return
+	}
+	h.ledgerOperations(w, r, seq)
+}
+
+// ledgerOperations is one ledger's operations, decoded (partition-pruned).
+func (h *Handler) ledgerOperations(w http.ResponseWriter, r *http.Request, seq uint32) {
 	limit, ok := h.ParseLimit(w, r, 500, 2000)
 	if !ok {
 		return
@@ -676,7 +695,7 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 			h.Logger.Warn("explorer RecentOperations refused a too-deep cursor")
 			h.WriteProblem(w, r, "https://api.stellarindex.io/errors/cursor-too-deep",
 				"Cursor too deep", http.StatusBadRequest,
-				"the supplied cursor would require scanning an unbounded portion of the table; page forward from a more recent cursor, or use ?ledger= to address a specific ledger")
+				"the supplied cursor would require scanning an unbounded portion of the table; page forward from a more recent cursor, or use /v1/ledgers/{seq}/operations to address a specific ledger")
 			return
 		}
 		if retryableColdMiss(ctx, err) {

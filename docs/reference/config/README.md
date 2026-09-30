@@ -288,7 +288,7 @@ the `env:` column.
 | `divergence.min_sources_for_warning` | `int` | `2` | — | Minimum successful references before warning_fired can be true. |
 | `divergence.per_reference_timeout_seconds` | `int` | `5` | — | Bound for each reference call. Default 5. |
 | `divergence.coingecko.enabled` | `bool` | `true` | — | Whether the CoinGecko reference is wired into the divergence service. |
-| `divergence.coingecko.base_url` | `string` | `` | — | CoinGecko API base URL. Empty defaults to https://api.coingecko.com/api/v3. |
+| `divergence.coingecko.base_url` | `string` | `` | — | CoinGecko API base URL. Empty defaults to https://api.coingecko.com/api/v3, or https://pro-api.coingecko.com/api/v3 when external.coingecko.api_key is set. The reference authenticates with the external.coingecko keys. |
 | `divergence.coingecko.id_map` | `map` | `{}` | — | Maps canonical asset_id → CoinGecko slug. Operator-curated; empty falls back to the built-in default covering XLM + major stables. |
 | `divergence.coingecko.max_age_minutes` | `int` | `0` | — | Staleness ceiling in minutes for the CoinGecko quote's upstream last_updated_at; older quotes are rejected as reference-unavailable (CS-089). 0 = 30-minute default. |
 | `divergence.chainlink.enabled` | `bool` | `false` | — | Whether the Chainlink reference is wired into the divergence service. |

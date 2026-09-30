@@ -754,6 +754,12 @@ jobs:
       - name: lint-agents-file self-test
         # Proves each of those five assertions can still go red.
         run: ./scripts/ci/lint-agents-file-test.sh
+      - name: lint-remote-tmp-staging
+        # No workflow may scp to a fixed /tmp path on a remote host; a
+        # predictable name there can be pre-planted before a privileged run.
+        run: ./scripts/ci/lint-remote-tmp-staging.sh
+      - name: lint-remote-tmp-staging self-test
+        run: ./scripts/ci/lint-remote-tmp-staging-test.sh
       - name: lint-doc-links
         # Every relative markdown link must resolve. A broken link in a
         # runbook is an operational defect: the operator follows the
@@ -1653,6 +1659,12 @@ jobs:
         # grandfathered `Coin*` vocabulary and non-canonical
         # constructor shapes. See docs/architecture/lexicon.md.
         run: ./scripts/ci/lint-lexicon.sh
+      - name: check-deprecations
+        # engineering-standards §2.4: every `// Deprecated:` names its
+        # scheduled removal version.
+        run: ./scripts/ci/check-deprecations.sh
+      - name: check-deprecations self-test
+        run: bash scripts/ci/check-deprecations-test.sh
       - name: lint-baseline-growth
         # CS-098: lint baselines/allowlists are shrink-only. Growing
         # scripts/ci/*.baseline or the KNOWN_INERT allowlist in the
@@ -1840,6 +1852,7 @@ jobs:
           python3 -m pip install --quiet 'Jinja2==3.1.6' 'PyYAML==6.0.2'
           ./scripts/ci/check-alertmanager-parity.sh
           ./scripts/ci/check-alertmanager-parity-test.sh
+          bash configs/alertmanager/inhibit-rules-test.sh
       - name: validate the rules-apply script (and that it still counts alerts)
         # apply-rules.sh verifies a deploy by asserting every alert it
         # extracted from the repo actually loaded on the host. That check
@@ -2370,6 +2383,12 @@ jobs:
         # Renders the shipped env template with hostile credentials.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-postgres-dsn-test.sh
+      - name: Postgres WAL archiving render test
+        # A rebuilt archival node must render archive_mode/archive_command,
+        # or pgBackRest silently loses point-in-time recovery; hosts without
+        # pgBackRest must not, or a failing archive_command fills pg_wal.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-postgres-archive-test.sh
       - name: nftables per-source SSH rate-limit test
         # Every role that renders /etc/nftables.conf must limit new SSH per
         # source address: a single shared bucket lets one scanner starve the

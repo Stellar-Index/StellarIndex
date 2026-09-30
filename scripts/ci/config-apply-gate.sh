@@ -190,6 +190,18 @@ surface_payload() {
 # above. Exit 1 (printing nothing) whenever object existence would not
 # prove this diff applied.
 ddl_objects() {
+  # A cut-over DDL declares its CREATEd objects transient (si-cutover-object):
+  # they exist only until the operator renames the new half onto the
+  # canonical name and drops the old. Their absence is therefore the
+  # FINISHED state as much as the never-run one, so existence proves
+  # nothing either way — the surface stays with the operator's
+  # acknowledgement. testnet was refuted on 2026-09-30 for a cut-over it
+  # had completed weeks earlier.
+  local body
+  body=$(git show "$2:$3" 2>/dev/null || true)
+  if grep -q '^-- si-cutover-object:' <<<"$body"; then
+    return 1
+  fi
   diff_body "$1" "$2" "$3" | awk '
     function substantive(s) { return (s ~ /^[[:space:]]*$/ || s ~ /^[[:space:]]*--/) ? 0 : 1 }
     /^@$/ { at_hunk_start = 1; next }
