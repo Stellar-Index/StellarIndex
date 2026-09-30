@@ -89,6 +89,16 @@ regexes = [
 ]
 
 [[rules.allowlists]]
+description = "Test-only Tiingo token fixture (`tk_` + 32 hex) used by the fund-NAV poller test to check the Authorization header is sent. Fabricated; trips the generic-api-key heuristic but is not a credential."
+condition = "AND"
+paths = [
+  '''internal/sources/external/tiingo/poller_test\.go''',
+]
+regexes = [
+  '''^tk_0123456789abcdef0123456789abcdef$''',
+]
+
+[[rules.allowlists]]
 description = "Redacted third-party NODE_SEED quoted in a security-finding writeup for the legacy Dash k8s cluster. Not our credential; documentation of a known violation."
 paths = [
   '''docs/architecture/infrastructure/existing-k8s-assessment\.md''',

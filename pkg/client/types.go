@@ -2132,10 +2132,16 @@ type RWAReference struct {
 	// Stale marks a reference older than 72h — labelled, not withheld.
 	Stale bool `json:"stale,omitempty"`
 	// Provenance names what kind of figure PriceUSD is:
-	// "oracle_instrument_nav", "listing_platform_price",
+	// "oracle_instrument_nav", "fund_nav", "listing_platform_price",
 	// "prospectus_constant_nav" or "curator_uploaded_price". Only the
 	// first is a statement about the backing instrument.
 	Provenance string `json:"provenance"`
+	// DecimalsPublished is the publisher's stated precision; 2 on a
+	// "fund_nav" reference.
+	DecimalsPublished *int `json:"decimals_published,omitempty"`
+	// NAVDisagreement marks an oracle reference that the fund's own
+	// fresh NAV differs from by more than half a cent.
+	NAVDisagreement bool `json:"nav_disagreement,omitempty"`
 }
 
 // RWAPremium is the token's market price measured against the oracle's

@@ -2309,6 +2309,8 @@ func rwaSummariseReference(assets []RWAAsset) RWAReferenceSummary {
 //     about the backing at all — which is weaker in one way (nobody
 //     independent has said what is behind the token) and stronger in
 //     another (no unstated one-for-one assumption sits inside it);
+//   - a FUND NAV is a registered fund's own published daily value per
+//     share, for a token that is one share of it;
 //   - a PROSPECTUS CONSTANT NAV is the issuer's own statement of a
 //     value its fund rules prescribe, which nobody independent measured.
 //
@@ -2339,7 +2341,7 @@ func rwaReferenceProvenanceProse(provenances []string) string {
 		strings.Join(kinds, "")
 }
 
-var rwaReferenceKindCount = map[int]string{2: "TWO", 3: "THREE"}
+var rwaReferenceKindCount = map[int]string{2: "TWO", 3: "THREE", 4: "FOUR"}
 
 // rwaReferenceProvenanceProseOrder is every provenance a verified row
 // can carry into the summary total, in the order the basis describes
@@ -2350,6 +2352,11 @@ var rwaReferenceProvenanceProseOrder = []struct{ provenance, prose string }{
 		"of the BACKING is worth, multiplied by the tokens in circulation, resting on the issuer's own domain-bound " +
 		"declaration that one token is one unit of that instrument. On those rows nobody was seen paying it: it is an " +
 		"assertion about the value of the backing, and no gate on this platform can corroborate an assertion. "},
+	{RWAReferenceFundNAV, "Fund-NAV rows (`provenance: fund_nav`) are the net asset value per share a registered fund publishes daily, " +
+		"relayed by a market-data vendor, for a token bound on the exact (code, issuer) as one share of that fund, " +
+		"multiplied by the tokens in circulation. It is the fund's own statement of its value, published to the cent " +
+		"(`decimals_published: 2`) and dated the business day it was struck; nobody independent measured it. No premium " +
+		"is published against it, because half a cent of rounding is a material premium on a one-dollar share. "},
 	{RWAReferenceListingPrice, "Listing-priced rows (`provenance: listing_platform_price`) are an independent listing platform's own USD price " +
 		"for the TOKEN, bound to the exact address it was published against and never matched on a code. On a " +
 		"contract-issued row it comes from the same source that corroborated the address at C2; on a classic row it " +
@@ -2363,7 +2370,7 @@ var rwaReferenceProvenanceProseOrder = []struct{ provenance, prose string }{
 	{RWAReferenceProspectusCNAV, "Prospectus-priced rows (`provenance: prospectus_constant_nav`) are the net asset value a constant-NAV " +
 		"share class's authorised prospectus fixes, as the issuer publishes it, bound on the exact (code, issuer) and " +
 		"multiplied by the tokens in circulation. Nobody independent measured it: it is the issuer's own statement of a " +
-		"value its fund rules prescribe, used only where neither an oracle nor a usable listing price exists for the row, " +
+		"value its fund rules prescribe, used only where no oracle, fund NAV or usable listing price exists for the row, " +
 		"and served `stale: true` once the binding is past its review date. No premium is published against it, because " +
 		"it is not an independent valuation of the instrument. "},
 }
