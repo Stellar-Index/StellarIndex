@@ -1313,3 +1313,88 @@ func TestTradeUSDVolumeViaFX_SingleLegBaseUnresolvableBound(t *testing.T) {
 		t.Fatalf("legitimate single-leg print: got %q, want %q", *got, want)
 	}
 }
+
+// outcomeFXResolver implements USDVolumeFXResolver AND the optional
+// USDPriceOutcomeAt extension. Assets absent from both maps are misses.
+type outcomeFXResolver struct {
+	prices      map[string]string
+	unpriceable map[string]bool
+}
+
+func (s outcomeFXResolver) USDPriceAt(ctx context.Context, asset canonical.Asset, at time.Time) (string, bool, error) {
+	rate, outcome, err := s.USDPriceOutcomeAt(ctx, asset, at)
+	return rate, outcome == USDPricePriced, err
+}
+
+func (s outcomeFXResolver) USDPriceOutcomeAt(_ context.Context, asset canonical.Asset, _ time.Time) (string, USDPriceOutcome, error) {
+	if p, ok := s.prices[asset.String()]; ok {
+		return p, USDPricePriced, nil
+	}
+	if s.unpriceable[asset.String()] {
+		return "", USDPriceUnpriceable, nil
+	}
+	return "", USDPriceMiss, nil
+}
+
+// TestTradeUSDVolumeWithOutcome pins the trade-level label: "unpriceable"
+// only when every resolver consultation the waterfall made was
+// Unpriceable; the stored value is always exactly tradeUSDVolume's.
+func TestTradeUSDVolumeWithOutcome(t *testing.T) {
+	t.Parallel()
+	const issuer = "GBGRBCUB6L7LH4JQ6EPDP7REH2DDACMCUQI76M3P6DM52QWU2Z5LIEVW"
+	h1, _ := canonical.NewClassicAsset("H1", issuer)
+	h2, _ := canonical.NewClassicAsset("H2", issuer)
+	spec, err := NewUSDVolumeQuoteSpec([]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"}, nil)
+	if err != nil {
+		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
+	}
+	selfPair := canonical.Trade{
+		Source:      "sdex",
+		Timestamp:   time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC),
+		Pair:        canonical.Pair{Base: h1, Quote: h2},
+		BaseAmount:  canonical.NewAmount(big.NewInt(10_000_000)),
+		QuoteAmount: canonical.NewAmount(big.NewInt(20_000_000)),
+	}
+	zeroQuote := selfPair
+	zeroQuote.QuoteAmount = canonical.NewAmount(big.NewInt(0))
+	both := map[string]bool{h1.String(): true, h2.String(): true}
+
+	cases := []struct {
+		name            string
+		tr              canonical.Trade
+		r               USDVolumeFXResolver
+		wantV           string // "" = nil
+		wantUnpriceable bool
+		wantLabel       string
+	}{
+		{"both legs unpriceable", selfPair, outcomeFXResolver{unpriceable: both}, "", true, "unpriceable"},
+		{"quote unpriceable, base a miss", selfPair, outcomeFXResolver{unpriceable: map[string]bool{h2.String(): true}}, "", false, "no"},
+		{"base unpriceable, quote a miss", selfPair, outcomeFXResolver{unpriceable: map[string]bool{h1.String(): true}}, "", false, "no"},
+		// 2 H2 x $1e9 = $2e9, over the single-leg ceiling with H1 unresolvable:
+		// the bound refuses a PRICED leg, which is a miss, not by design.
+		{"priced leg refused by the bound", selfPair, outcomeFXResolver{prices: map[string]string{h2.String(): "1000000000"}, unpriceable: map[string]bool{h1.String(): true}}, "", false, "no"},
+		{"priced", selfPair, outcomeFXResolver{prices: map[string]string{h2.String(): "0.5"}, unpriceable: map[string]bool{h1.String(): true}}, "1.00000000", false, "yes"},
+		{"resolver without the extension", selfPair, stubFXResolver{}, "", false, "no"},
+		{"no resolver", selfPair, nil, "", false, "no"},
+		{"no consultation", zeroQuote, outcomeFXResolver{unpriceable: both}, "", false, "no"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v, unpriceable := tradeUSDVolumeWithOutcome(context.Background(), tc.tr, spec, tc.r)
+			got := ""
+			if v != nil {
+				got = *v
+			}
+			if got != tc.wantV || unpriceable != tc.wantUnpriceable {
+				t.Fatalf("got (%q, %t), want (%q, %t)", got, unpriceable, tc.wantV, tc.wantUnpriceable)
+			}
+			if label := usdPopulatedLabel(v, unpriceable); label != tc.wantLabel {
+				t.Errorf("label = %q, want %q", label, tc.wantLabel)
+			}
+			// Money invariant: the outcome wrapper never changes the value.
+			if plain := tradeUSDVolume(context.Background(), tc.tr, spec, tc.r); (plain == nil) != (v == nil) || (plain != nil && *plain != *v) {
+				t.Errorf("tradeUSDVolume = %v, wrapper = %v; values must match", plain, v)
+			}
+		})
+	}
+}

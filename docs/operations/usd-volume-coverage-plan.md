@@ -161,6 +161,32 @@ Alerts `stellarindex_cex_usd_volume_coverage_low` and
 `stellarindex_onchain_usd_volume_coverage_low` enforce the two bars —
 `configs/prometheus/rules.r1/usd-volume-coverage.yml`.
 
+The `usd_volume_populated` label has three values:
+
+| Value | Meaning |
+|---|---|
+| `yes` | `usd_volume` was stored. |
+| `no` | A resolver miss: some leg the waterfall consulted has a USD path (a peg or XLM market in `prices_1m`, or an `fx_quotes` ticker for fiat) but no usable rate was found — stale, dust-only, a missing XLM/USD anchor, or an I/O error. |
+| `unpriceable` | NULL by design: every leg the waterfall consulted has no USD path at all, ever. |
+
+`unpriceable` comes from `VWAPUSDFXResolver.USDPriceOutcomeAt`, which on a
+miss runs one unwindowed existence probe per asset (cached per asset for
+the resolver's cache TTL). The invariant is that a stalled or stale price
+source reads as `no`, never as `unpriceable`: the probe has no freshness
+window, no dust floor and no time bound, so any `prices_1m` row ever
+materialised for the asset against a peg or XLM form makes it priceable.
+A single `no` consultation, or a priced leg refused by a bound, makes the
+whole trade `no`.
+
+The on-chain alert divides `yes` by `yes + no`, so one issuer
+self-trading never-priced tokens cannot hold the ratio below the bar (as
+it did at 0.757 from 2026-09-29 while every other pair was 99.83% priced),
+and a real resolver outage is not hidden underneath it. The excluded share
+is recorded as `stellarindex:onchain_usd_volume_unpriceable_ratio:6h`. The
+external-exchange alert keeps `unpriceable` in its denominator: a fiat
+ticker absent from `fx_quotes` is `unpriceable`, and that is one of the
+failures that alert exists to catch.
+
 ⬜ Still to do: fold the unpriced ratio into the completeness/verdict
 surface so it gates go-live rather than sitting beside it.
 

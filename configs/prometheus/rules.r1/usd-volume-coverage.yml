@@ -83,6 +83,14 @@ groups:
       # decimals are not plumbed through the insert path (valuing them at an
       # assumed 1e7 would be a silent money bug, strictly worse than a NULL).
       # 99.5% is the operator bar; the residual should be dust-scale tokens only.
+      #
+      # The denominator excludes usd_volume_populated="unpriceable": trades
+      # where every leg the waterfall consulted has NEVER had a peg or XLM
+      # market in prices_1m (VWAPUSDFXResolver.USDPriceOutcomeAt). Without the
+      # exclusion one issuer self-trading its own never-priced tokens pins the
+      # ratio low, and a real resolver outage becomes invisible beneath it. A
+      # stale or stalled price source is still a miss ("no") by construction,
+      # so an outage keeps firing this alert.
       - alert: stellarindex_onchain_usd_volume_coverage_low
         # `or vector(0)` for the same reason as the CEX arm above: with
         # no priced insert in the window the numerator is the EMPTY
@@ -97,7 +105,7 @@ groups:
               or vector(0)
             )
             /
-            sum (increase(stellarindex_trade_inserts_total{source=~"sdex|soroswap|aquarius|phoenix|comet"}[6h]))
+            sum (increase(stellarindex_trade_inserts_total{source=~"sdex|soroswap|aquarius|phoenix|comet",usd_volume_populated!="unpriceable"}[6h]))
           ) < 0.995
         for: 1h
         labels:
@@ -108,8 +116,13 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/usd-volume-coverage-plan.md
           summary: "On-chain usd_volume coverage is below the 99.5% bar"
           description: |
-            On-chain sources priced only {{ $value | humanizePercentage }} of their trades
-            over the last 6 hours, against a 99.5% bar.
+            On-chain sources priced only {{ $value | humanizePercentage }} of their priceable
+            trades over the last 6 hours, against a 99.5% bar.
+
+            Trades labelled usd_volume_populated="unpriceable" (no leg has ever had a peg or
+            XLM market) are excluded; their share is the recording rule
+            stellarindex:onchain_usd_volume_unpriceable_ratio:6h. Everything counted here had
+            a USD path the resolver failed to use.
 
             Aggregated across venues deliberately: a single thin venue (comet, phoenix)
             can have a handful of trades in a window, and a per-source ratio there is
@@ -119,7 +132,7 @@ groups:
               - The XLM bridge lost its anchor — check XLM/USD exists in prices_1m; if
                 that is missing, tiers 3b and 4b both fail at once and coverage collapses
                 rather than degrades.
-              - A newly active token with no XLM market and no pegged counterparty.
+              - A token whose only peg or XLM market went stale or dust-only.
               - prices_1m materialisation fell behind, so bridge legs are absent within
                 the 24h bridge-freshness window.
 
@@ -133,3 +146,15 @@ groups:
             SEP-41/SEP-41 pairs is EXPECTED and is not a regression.
 
             Plan + measurements: docs/operations/usd-volume-coverage-plan.md
+
+      # The share of on-chain inserts that are NULL by design — excluded from the
+      # alert above, surfaced here so the exclusion stays visible. A jump means a
+      # new never-priced asset family is trading, not that pricing broke.
+      - record: stellarindex:onchain_usd_volume_unpriceable_ratio:6h
+        expr: |
+          (
+            sum (increase(stellarindex_trade_inserts_total{source=~"sdex|soroswap|aquarius|phoenix|comet",usd_volume_populated="unpriceable"}[6h]))
+            or vector(0)
+          )
+          /
+          sum (increase(stellarindex_trade_inserts_total{source=~"sdex|soroswap|aquarius|phoenix|comet"}[6h]))
