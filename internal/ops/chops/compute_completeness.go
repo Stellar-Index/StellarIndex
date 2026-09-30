@@ -2491,11 +2491,12 @@ var recognitionGlobalExcludeSyms = clickhouse.FirehoseExcludeSyms
 // surfaces the Blend/Comet pool-level set_admin collision on the shared
 // "POOL" topic. watchedSep41RecognitionShapes re-adds exactly those excluded
 // topics, scoped to the watched contract set, so both stay auditable without
-// the firehose cost.
+// the firehose cost. Those watched shapes are recognised only because
+// buildCensusDispatcher also registers the sep41 event decoders.
 func computeRecognitionGapsCH(ctx context.Context, cfg config.Config, chAddr string, gated map[string][]contractid.Option, from, tip uint32, soroswapOpts ...soroswap.DecoderOption) ([]completeness.RecognitionGap, error) {
-	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gated, soroswapOpts...)
+	disp, err := buildCensusDispatcher(cfg, gated, soroswapOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("build dispatcher: %w", err)
+		return nil, err
 	}
 	shapes, err := clickhouse.DistinctTopicShapes(ctx, chAddr, from, tip, recognitionGlobalExcludeSyms)
 	if err != nil {
@@ -2527,6 +2528,20 @@ func computeRecognitionGapsCH(ctx context.Context, cfg config.Config, chAddr str
 	return gaps, nil
 }
 
+// buildCensusDispatcher builds the recognition census's decoder chain the
+// way the indexer does: the enabled sources plus the watched-set-gated
+// sep41 event decoders, which BuildDispatcher alone does not register.
+func buildCensusDispatcher(cfg config.Config, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (*dispatcher.Dispatcher, error) {
+	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gated, soroswapOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("build dispatcher: %w", err)
+	}
+	if _, err := pipeline.RegisterSupplyEventDecoders(disp, cfg.Supply); err != nil {
+		return nil, fmt.Errorf("register supply event decoders: %w", err)
+	}
+	return disp, nil
+}
+
 // watchedSep41RecognitionShapes is the watched-set-scoped half of the
 // recognition census (GH-1295): the CAP-67 topics FirehoseExcludeSyms drops
 // from the global scan, restricted to the operator-curated
@@ -2543,9 +2558,9 @@ func watchedSep41RecognitionShapes(ctx context.Context, cfg config.Config, chAdd
 // computeRecognitionGaps runs the global recognition audit over the
 // Soroban era and returns every unrecognized event shape.
 func computeRecognitionGaps(ctx context.Context, store *timescale.Store, cfg config.Config, gated map[string][]contractid.Option, tip uint32, soroswapOpts ...soroswap.DecoderOption) ([]completeness.RecognitionGap, error) {
-	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gated, soroswapOpts...)
+	disp, err := buildCensusDispatcher(cfg, gated, soroswapOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("build dispatcher: %w", err)
+		return nil, err
 	}
 	samples, err := store.DistinctSorobanTopicSamples(ctx, sorobanEraGenesis, tip)
 	if err != nil {
