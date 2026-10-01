@@ -235,6 +235,7 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	// the 0142 lesson applied at creation time. Asserted so a future
 	// re-add of the table can't reintroduce the 2038 int4 cliff.
 	assertColumnType(t, db, ctx, "defindex_fees", "derive_generation", "bigint")
+	assertColumnType(t, db, ctx, "defindex_admin_events", "derive_generation", "bigint")
 
 	// ─── Down: roll everything back ─────────────────────────────
 	// 0191's down refuses (LOUD) while any trades row has a zero leg;

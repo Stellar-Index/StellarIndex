@@ -37,6 +37,7 @@ package projector
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -67,6 +68,10 @@ const Interval = 5 * time.Second
 // small enough that dense protocol ranges, notably Aquarius reserve
 // updates, finish inside PerSourceTimeout.
 const BatchLimit = 1_000
+
+// reconstructErrLogEvery throttles the per-row malformed-row warning within a
+// cycle: a systematically broken landing-zone shape fails every row it touches.
+const reconstructErrLogEvery = 20
 
 // MinBatchLimit is the floor for the adaptive per-source window (see
 // cycleOneSource): when a cycle exceeds PerSourceTimeout the window
@@ -1106,10 +1111,11 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	}
 
 	var (
-		rowsScanned    int
-		eventsEmitted  int
-		decodeErrors   int
-		lastSeenLedger uint32
+		rowsScanned       int
+		eventsEmitted     int
+		decodeErrors      int
+		reconstructErrors int
+		lastSeenLedger    uint32
 
 		// Sink-durability tracking (audit-2026-07-16 C2-1). A sink write
 		// failure that is NOT a positively-identified permanent data fault
@@ -1270,8 +1276,15 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 				if rerr != nil {
 					// Skip a malformed row but keep the cursor advancing; the
 					// row is unrecoverable so re-reading it next cycle would
-					// just re-fail. Count it for visibility.
-					decodeErrors++
+					// just re-fail. Count it, and log its identity so the
+					// dropped population can be found without re-scanning.
+					reconstructErrors++
+					if reconstructErrors == 1 || reconstructErrors%reconstructErrLogEvery == 0 {
+						p.logger.Warn("projector: malformed landing-zone row — skipped (cursor advances past it)",
+							"source", src.Name, "ledger", row.Ledger, "tx", hex.EncodeToString(row.TxHash),
+							"op_index", row.OpIndex, "event_index", row.EventIndex,
+							"contract", row.ContractID, "failures_this_cycle", reconstructErrors, "err", rerr)
+					}
 					return nil //nolint:nilerr // intentional soft-fail; see comment.
 				}
 				process(ev)
@@ -1462,6 +1475,9 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	if decodeErrors > 0 {
 		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "decode_error").Add(float64(decodeErrors))
 	}
+	if reconstructErrors > 0 {
+		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "reconstruct_error").Add(float64(reconstructErrors))
+	}
 	if sinkTransientFails > 0 {
 		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_retry").Add(float64(sinkTransientFails))
 	}
@@ -1505,13 +1521,13 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	switch {
 	case sinkTransientFails > 0 || sinkPoisonHeld > 0:
 		runOutcome = "sink_retry"
-	case decodeErrors > 0:
+	case decodeErrors > 0 || reconstructErrors > 0:
 		runOutcome = "decode_degraded"
 	}
 	obs.ProjectorRunsTotal.WithLabelValues(src.Name, runOutcome).Inc()
 	obs.ProjectorCycleDurationSeconds.WithLabelValues(src.Name).Observe(time.Since(start).Seconds())
 
-	if eventsEmitted > 0 || decodeErrors > 0 || sinkTransientFails > 0 || sinkPermanentFails > 0 ||
+	if eventsEmitted > 0 || decodeErrors > 0 || reconstructErrors > 0 || sinkTransientFails > 0 || sinkPermanentFails > 0 ||
 		sinkI128Overflows > 0 ||
 		sinkPoisonHeld > 0 || sinkQuarantined > 0 {
 		p.logger.Info("projector cycle",
@@ -1520,6 +1536,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 			"rows_scanned", rowsScanned,
 			"events_emitted", eventsEmitted,
 			"decode_errors", decodeErrors,
+			"reconstruct_errors", reconstructErrors,
 			"sink_transient_fails", sinkTransientFails,
 			"sink_permanent_fails", sinkPermanentFails,
 			"sink_i128_overflows", sinkI128Overflows,

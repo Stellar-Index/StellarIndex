@@ -75,8 +75,11 @@ ansible-playbook -i configs/ansible/inventory/r2.yml \
 ```
 
 Watch for:
-- Galexie config points at `aws-public-blockchain` (operator-set
-  per `r2.example.yml`'s `galexie_archive_endpoint`).
+- Archive reads point at `aws-public-blockchain` through the
+  cold-tier knobs `stellarindex_s3_cold_endpoint` / `_region` /
+  `_bucket_archive` (rendered as `[storage] s3_cold_*`). The role
+  has no separate archive endpoint: `galexie_s3_bucket_archive` is
+  read from the same `galexie_s3_endpoint` as galexie-live.
 - Patroni starts in REPLICA mode (R1 is the primary; R2 is the
   sync replica per `multi-region-topology.md` §5.1).
 - `verify-archive -tier=chain` runs as a post-install gate.
@@ -105,8 +108,9 @@ L4.14 ✅ when these all pass + the row in
    128 GB DDR4 ECC) + 2 × 1.92 TB local NVMe per ADR-0016
    §"R3 — Vultr-hybrid".
 2. **Vultr Object Storage bucket.** Region-local Singapore;
-   ~$25/mo for 5 TB. Set `r3.yml`'s
-   `galexie_archive_endpoint` to the bucket URL.
+   ~$25/mo for 5 TB. Point `r3.yml`'s cold-tier knobs
+   (`stellarindex_s3_cold_endpoint`, `_region`, `_bucket_archive`)
+   at the bucket.
 3. **ZFS mirror across the 2 NVMes** — single-drive failure
    tolerance, acceptable for an async DR replica. R1 is the
    integrity leader by verification coverage, not by parity: its

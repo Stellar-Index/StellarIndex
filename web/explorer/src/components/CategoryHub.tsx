@@ -34,7 +34,7 @@ export function CategoryHub({
       '@type': 'ListItem',
       position: i + 1,
       name: p.label,
-      url: `${CURRENT_NETWORK.explorerUrl}/protocols/${p.name}`,
+      url: `${CURRENT_NETWORK.explorerUrl}${hrefFor.protocol(p.name)}`,
     })),
   };
 

@@ -15,7 +15,8 @@ Blend autocompound **strategy** contracts (WASM `11329c24…988`), the
 | `("DeFindexVault","deposit")` | `Map{ depositor, amounts: Vec<i128>, df_tokens_minted: i128 }` | `VaultEvent{VaultFlow}` |
 | `("DeFindexVault","withdraw")` | `Map{ withdrawer, amounts_withdrawn: Vec<i128>, df_tokens_burned: i128 }` | `VaultEvent{VaultFlow}` |
 | `("DeFindexVault","dfees")` | `Map{ distributed_fees: Vec[(token, amount i128)] }` | one `DFeesEvent` per entry (see below) |
-| `("DeFindexVault", rebalance\|rescue\|paused\|unpaused\|nreceiver\|nmanager\|nemanager\|rbmanager\|n_wasm)` | — | recognised, not modelled |
+| `("DeFindexVault", rescue\|paused\|unpaused\|nreceiver\|nmanager\|nemanager\|rbmanager)` | per-kind `Map` (see below) | `AdminEvent{VaultAdmin}` |
+| `("DeFindexVault", rebalance\|n_wasm)` | — | recognised, not modelled |
 | `("DeFindexFactory","create"\|"n_fee")` | — | recognised, body never decoded (see below) |
 
 - `topic[0]` is an `ScvString` on every layer (each prefix exceeds
@@ -44,17 +45,18 @@ unregistered emitter fail-closes into an ADR-0033 recognition gap.
 ## Files
 
 ```
-events.go              — source name, topic prefixes/symbols, StrategyFlow / VaultFlow / DFee and their Event wrappers, curated contract sets
-decode.go              — classify / classifyVault / classifyFactory, decodeFlow / decodeVaultFlow / decodeDFees, DecodeRebalanceMethod
+events.go              — source name, topic prefixes/symbols, StrategyFlow / VaultFlow / DFee / VaultAdmin and their Event wrappers, curated contract sets
+decode.go              — classify / classifyVault / classifyFactory, decodeFlow / decodeVaultFlow / decodeDFees / decodeVaultAdmin, DecodeRebalanceMethod
 dispatcher_adapter.go  — implements dispatcher.Decoder (topic-matched + contract-identity gated)
 README.md              — this file
 ```
 
 `defindex` is a projected source (ADR-0031/0032): `internal/projector`
 is its only writer, through the `defindex.Event` / `VaultEvent` /
-`DFeesEvent` cases in `internal/pipeline/sink.go`. Flows land in
-`defindex_flows` (migration 0050) at the `strategy` and `vault`
-layers; `dfees` entries land in `defindex_fees` (migration 0146).
+`DFeesEvent` / `AdminEvent` cases in `internal/pipeline/sink.go`. Flows
+land in `defindex_flows` (migration 0050) at the `strategy` and `vault`
+layers; `dfees` entries land in `defindex_fees` (migration 0146); admin
+events land in `defindex_admin_events` (migration 0192).
 
 ## Current scope (shipped)
 
@@ -133,6 +135,28 @@ of a third `defindex_flows` layer. The decoder (`decodeDFees`) emits
 ONE `DFeesEvent` per Vec entry so the ADR-0033 projection reconcile
 counts 1:1; kind `defindex.vault.dfees`. Historical fill:
 `stellarindex-ops projector-replay -source defindex` (ADR-0034).
+
+## Vault admin events — MODELLED
+
+Seven vault-layer admin topics decode by field name into one
+`AdminEvent` each (kind `defindex.vault.admin`, table
+`defindex_admin_events`):
+
+| topic[1] | body fields | columns |
+|---|---|---|
+| `rescue` | `caller`, `strategy_address`, `amount_withdrawn: i128` | caller, strategy, amount |
+| `paused` / `unpaused` | `caller`, `strategy_address` | caller, strategy |
+| `nreceiver` | `caller`, `new_fee_receiver` | caller, new_address |
+| `nmanager` | `new_manager` | new_address |
+| `nemanager` | `new_emergency_manager` | new_address |
+| `rbmanager` | `new_rebalance_manager` | new_address |
+
+Every listed field is required: a body missing one is
+`ErrMalformedPayload`, never a row with a hole. `rescue`'s amount is in
+the strategy's underlying-asset base units. Shapes are pinned by
+`golden_admin_test.go` against the lake rows in
+`test/fixtures/defindex/vault-admin-2026-09-30/`. `rebalance` stays
+unmodelled: only the `invest` method has a sample.
 
 ## `n_wasm` — HANDLED as classify-only (ROADMAP #89, 2026-07-10)
 
