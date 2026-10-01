@@ -22,10 +22,10 @@ vi.mock('@/api/client', async () => ({
 
 import { SourcePathView } from './SourcePathView';
 
-function serve(onChain: boolean) {
+function serve(selectable: boolean) {
   apiGet.mockImplementation(async (path: string) =>
     path === '/v1/sources'
-      ? { data: [{ name: 'newvenue', class: 'exchange', on_chain: onChain }] }
+      ? { data: [{ name: 'newvenue', class: 'exchange', selectable }] }
       : { data: [] },
   );
 }
@@ -52,7 +52,7 @@ describe('SourcePathView', () => {
     window.history.pushState({}, '', '/sources/newvenue/');
   });
 
-  it('renders every live panel for an on-chain name read from the URL', async () => {
+  it('renders every live panel for a selectable name read from the URL', async () => {
     serve(true);
     renderView();
     expect(
@@ -63,7 +63,7 @@ describe('SourcePathView', () => {
     expect(marketCalls()[0][1]).toMatchObject({ source: 'newvenue' });
   });
 
-  it('never selects an off-chain source on /v1/markets', async () => {
+  it('never selects a data-vendor source on /v1/markets', async () => {
     serve(false);
     renderView();
     await waitFor(() =>
@@ -71,7 +71,7 @@ describe('SourcePathView', () => {
         true,
       ),
     );
-    // Give the registry answer the same time the on-chain case needs to
+    // Give the registry answer the same time the selectable case needs to
     // reach /v1/markets, so absence is not just "not yet".
     await new Promise((r) => setTimeout(r, 50));
     expect(marketCalls()).toEqual([]);

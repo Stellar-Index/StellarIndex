@@ -789,6 +789,9 @@ type Source struct {
 	// directly (dispatcher-path ingest) rather than an off-chain
 	// vendor API. False for CEX / FX / aggregators / Chainlink.
 	OnChain bool `json:"on_chain"`
+	// Selectable is true when `source=` accepts this name: on-chain
+	// sources and CEX venues. False for data vendors, which 400.
+	Selectable bool `json:"selectable"`
 	// Stats columns — populated only when the request used
 	// `?include=stats`; zero values otherwise.
 	TradeCount24h   int64  `json:"trade_count_24h,omitempty"`

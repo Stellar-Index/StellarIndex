@@ -308,10 +308,11 @@ small mechanical change (add to `gatedSources`, make the decoder
 contractid-aware, gate `Matches()` on `reg.Has(contractID)`).
 
 ## Legal / vendor (before commercial launch — CS-115/116)
-- [ ] **Vendor-ToS review of raw CEX data redistribution** — `/v1/history` and unfiltered
-  `/v1/observations` serve per-trade source-attributed records (an off-chain `source=` filter
-  returns 400); Binance/Kraken/Coinbase terms generally prohibit this. Blended outputs
-  (`/v1/price|vwap|…`) are defensible. Decide whether those remaining source-attributed
+- [ ] **Vendor-ToS review of raw CEX data redistribution** — `/v1/history` and
+  `/v1/observations?source=<cex>` serve per-trade source-attributed records (data-vendor
+  `source=` filters return 400; exchange venues stay selectable by owner decision);
+  Binance/Kraken/Coinbase terms generally prohibit this. Blended outputs
+  (`/v1/price|vwap|…`) are defensible. Decide whether those source-attributed
   surfaces stay for restricted venues.
 - [ ] **External security review** booking (P2-3).
 - [ ] Confirm CoinGecko Pro redistribution terms at purchase. (`github.com/xdrpp/goxdr`, pulled in

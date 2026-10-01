@@ -11693,6 +11693,8 @@ export interface components {
             default_weight: number;
             /** @description Whether the source observes the Stellar network directly (dispatcher-path ingest) rather than reading an off-chain vendor API. `false` for CEX / FX / aggregators / Chainlink (an Ethereum oracle). The explorer's Stellar-network surfaces filter on this. */
             on_chain: boolean;
+            /** @description Whether `source=` accepts this name on the single-source routes (/v1/markets, /v1/oracle/latest, /v1/observations): on-chain sources and CEX venues. `false` for data vendors (aggregators, FX providers, Chainlink, Tiingo, sovereign anchors), which those routes refuse with 400 `off-chain-source-filter`. */
+            selectable: boolean;
             /** @description Trailing-24h trade count for this source. Populated only when the request used `?include=stats`; absent (omitted) otherwise. */
             trade_count_24h?: number;
             /** @description Trailing-24h USD volume for this source. Decimal string. Populated only with `?include=stats`; absent otherwise (empty when the source had no priced trades). */
@@ -14031,7 +14033,7 @@ export interface operations {
                  * @example fiat:USD
                  */
                 quote?: components["parameters"]["Quote"];
-                /** @description Restrict to one on-chain source's most-recent trade (0/1 row). An off-chain source (CEX, FX provider, aggregator, Chainlink, Tiingo; `on_chain: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. An unregistered name returns 400 `unknown-source`. */
+                /** @description Restrict to one on-chain source's or CEX venue's most-recent trade (0/1 row). A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`. */
                 source?: string;
                 /**
                  * @description `latest` collapses to the single most-recent trade across
@@ -14112,7 +14114,7 @@ export interface operations {
                  * @example fiat:USD
                  */
                 quote?: components["parameters"]["Quote"];
-                /** @description Restrict to one on-chain source's most-recent trade. An off-chain source (CEX, FX provider, aggregator, Chainlink, Tiingo; `on_chain: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. An unregistered name returns 400 `unknown-source`. */
+                /** @description Restrict to one on-chain source's or CEX venue's most-recent trade. A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`. */
                 source?: string;
                 /**
                  * @description `latest` collapses to the single most-recent trade across
@@ -14916,7 +14918,7 @@ export interface operations {
                  * @example native
                  */
                 asset: components["parameters"]["AssetQuery"];
-                /** @description Optional. Restrict to a single on-chain source (reflector-dex, reflector-cex, reflector-fx, redstone, band). An off-chain source (CEX, FX provider, aggregator, Chainlink, Tiingo; `on_chain: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. An unregistered name returns 400 `unknown-source`. */
+                /** @description Optional. Restrict to a single on-chain source (reflector-dex, reflector-cex, reflector-fx, redstone, band). A data-vendor source (aggregator, FX provider, Chainlink, Tiingo, sovereign anchor; `selectable: false` in `/v1/sources`) returns 400 `off-chain-source-filter`: its data is served only alongside other sources. CEX venues are selectable. An unregistered name returns 400 `unknown-source`. */
                 source?: string;
                 /** @description Optional. Restrict to a single quote asset id (e.g. `fiat:USD`, `fiat:EUR`) — disambiguates a source that publishes the same base asset against more than one live quote. */
                 quote?: string;
@@ -15980,14 +15982,15 @@ export interface operations {
                 order_by?: "pair" | "volume_24h_usd_desc";
                 /**
                  * @description Restrict the listing to markets a single on-chain
-                 *     source observed in the recency window. Must match a
-                 *     registered source name (see `/v1/sources`); an
-                 *     unknown name returns 400 `unknown-source` rather
-                 *     than an empty 200 (avoids the silent-empty-page
-                 *     anti-pattern), and an off-chain venue (CEX, FX
-                 *     provider, aggregator; `on_chain: false`) returns 400
+                 *     source or CEX venue observed in the recency window.
+                 *     Must match a registered source name (see
+                 *     `/v1/sources`); an unknown name returns 400
+                 *     `unknown-source` rather than an empty 200 (avoids
+                 *     the silent-empty-page anti-pattern), and a
+                 *     data-vendor source (aggregator, FX provider,
+                 *     oracle vendor; `selectable: false`) returns 400
                  *     `off-chain-source-filter` — its markets are served
-                 *     only alongside other sources'. Mutually exclusive
+                 *     only alongside other sources. Mutually exclusive
                  *     with `asset`.
                  *     Each row's volume, trade count and last price are
                  *     that source's own; the pair-wide `sparkline` and

@@ -17,9 +17,10 @@ import { SourceHealthPanel } from './SourceHealthPanel';
 export function SourcePathView() {
   const name = useLastPathSegment();
   const sources = useSources();
-  // The top-pair chart selects by source, which the API serves only for
-  // on-chain sources; wait for the registry rather than guess.
-  const onChain = sources.data?.find((s) => s.name === name)?.on_chain === true;
+  // The top-pair chart selects by source, which the API refuses for data
+  // vendors; wait for the registry's `selectable` flag rather than guess.
+  const selectable =
+    sources.data?.find((s) => s.name === name)?.selectable === true;
 
   return (
     <div className="space-y-6">
@@ -42,7 +43,7 @@ export function SourcePathView() {
         <>
           <SourceHealthPanel source={name} />
           <SourceStatsPanel source={name} />
-          {onChain && <SourceTopChart source={name} sourceName={name} />}
+          {selectable && <SourceTopChart source={name} sourceName={name} />}
         </>
       )}
     </div>

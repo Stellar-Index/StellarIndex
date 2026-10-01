@@ -5511,6 +5511,15 @@ func prewarmLight(
 		}
 	}
 
+	// Per-CEX markets prewarm: the explorer's /exchanges/{name} pairs table
+	// fires `/v1/markets?source=<src>&limit=200` (volume-desc default), a
+	// SourceMarkets slot distinct from the unfiltered DistinctPairsExt above.
+	for _, src := range v1.CexSourceNames() {
+		if _, _, err := markets.SourceMarkets(mkCtx, src, "", 200, timescale.MarketsOrderVolume24hDesc); err != nil {
+			logger.Debug("prewarm per-source markets failed", "source", src, "err", err)
+		}
+	}
+
 	// /v1/issuers had NO prewarm at all, while CachedIssuersReader's TTL
 	// is 5 minutes — so the slot expired every 5 min and the next caller
 	// paid the full cold fill. Measured on r1 2026-09-01: 1.212s cold vs

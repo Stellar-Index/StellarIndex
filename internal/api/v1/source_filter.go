@@ -6,11 +6,26 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
+// isCEXVenue reports whether name is a centralised exchange venue: a
+// market in its own right, not a vendor reselling other venues' data.
+func isCEXVenue(name string) bool {
+	md, ok := external.Registry[name]
+	return ok && md.Class == external.ClassExchange && md.Subclass == external.SubclassCEX
+}
+
+// sourceSelectable reports whether a single-source selector may name this
+// source: on-chain sources and CEX venues. Off-chain data vendors
+// (aggregators, FX providers, Tiingo, Chainlink, sovereign anchors) are
+// served only beside other sources. /v1/sources exposes it as `selectable`
+// so clients gate on the same predicate the 400 uses.
+func sourceSelectable(name string) bool {
+	return external.IsOnChain(name) || isCEXVenue(name)
+}
+
 // sourceFilterOK validates an optional single-source selector: it must
-// name a registered source, and that source must be on-chain. An off-chain
-// provider (CEX, FX, aggregator, sovereign anchor, Chainlink, Tiingo) is
-// served only beside other sources, never selected on its own, so a route
-// cannot act as a proxy for one vendor's API. Writes the 400 on refusal.
+// name a registered, selectable source (see sourceSelectable). A data
+// vendor selected alone would make a route a proxy for that vendor's API.
+// Writes the 400 on refusal.
 func sourceFilterOK(w http.ResponseWriter, r *http.Request, source string) bool {
 	if source == "" {
 		return true
@@ -24,11 +39,11 @@ func sourceFilterOK(w http.ResponseWriter, r *http.Request, source string) bool 
 			"source must be a registered source name (see /v1/sources for the canonical list); got "+source)
 		return false
 	}
-	if !external.IsOnChain(source) {
+	if !sourceSelectable(source) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/off-chain-source-filter",
-			"Off-chain source cannot be selected alone", http.StatusBadRequest,
-			"source="+source+" names an off-chain provider; its data is served only alongside other sources. Omit source for the multi-source response, or select an on-chain source (see /v1/sources, on_chain=true).")
+			"Data-vendor source cannot be selected alone", http.StatusBadRequest,
+			"source="+source+" is an off-chain data vendor (aggregator, FX, oracle or sovereign anchor); its data is served only alongside other sources. Omit source for the multi-source response, or select an on-chain source or exchange venue (see /v1/sources, selectable=true).")
 		return false
 	}
 	return true

@@ -628,8 +628,9 @@ type MarketsOptions struct {
 	// query param; empty omits both.
 	Include []string
 	// Source restricts the listing to markets a single registered
-	// on-chain source observed in the recency window; an off-chain venue
-	// 400s `off-chain-source-filter`. Mutually exclusive with
+	// on-chain source or CEX venue observed in the recency window; a data
+	// vendor (aggregator, FX, oracle) 400s `off-chain-source-filter`.
+	// Mutually exclusive with
 	// Asset — the server 400s `unknown-source` / `invalid-asset-id`
 	// rather than silently ignoring one, same posture as [PoolsQuery].
 	Source string
@@ -1027,7 +1028,7 @@ func (c *Client) NetworkStats(ctx context.Context) (*Envelope[NetworkStats], err
 
 // ObservationsQuery selects the input for [Client.Observations].
 // Asset is required; Quote defaults to fiat:USD; optional Source
-// restricts to a single on-chain source (an off-chain one 400s
+// restricts to a single on-chain source or CEX venue (a data vendor 400s
 // `off-chain-source-filter`); Aggregate="latest" collapses the
 // per-source array to a 0/1-element slice of the most-recent.
 type ObservationsQuery struct {
