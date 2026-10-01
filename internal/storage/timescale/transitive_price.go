@@ -143,11 +143,10 @@ hops AS (
 --      satisfy arm 2 or 3; without this arm an asset whose only market
 --      is against the XLM SAC had no route (r1 2026-08-28, CBIJ…).
 --   2. direct against a USD proxy;
---   3. base-side against XLM, times xlm_usd;
---   4. the INVERTED XLM market (XLM as base, hop as quote) — the shape
---      swap-direction sources (aquarius) write for a token bought with
---      XLM. Inverted, then times xlm_usd. Last so an asset already
---      priced through arm 2/3 keeps exactly the value it had.
+--   3. against XLM, times xlm_usd: the hop's latest bucket in EITHER
+--      stored direction (hop/XLM as is, XLM/hop inverted — the shape
+--      swap-direction sources such as aquarius write). A stale direction
+--      must not outrank a fresher one; the hop/XLM row wins a tied bucket.
 hop_usd AS (
     SELECT h.hop,
            h.hop_vol,
@@ -162,45 +161,53 @@ hop_usd AS (
                  AND p.bucket >= now() - INTERVAL '24 hours'
                  AND p.vwap IS NOT NULL
                ORDER BY p.bucket DESC LIMIT 1),
-             (SELECT p.vwap FROM prices_1m p
-               WHERE p.base_asset = h.hop
-                 AND p.quote_asset IN (` + xlmQuotes + `)
-                 AND p.bucket <= now() - INTERVAL '1 minute'
-                 AND p.bucket >= now() - INTERVAL '24 hours'
-                 AND p.vwap IS NOT NULL
-               ORDER BY p.bucket DESC LIMIT 1)
-             * (SELECT vwap FROM xlm_usd),
-             1 / NULLIF((SELECT p.vwap FROM prices_1m p
-               WHERE p.base_asset IN (` + xlmQuotes + `)
-                 AND p.quote_asset = h.hop
-                 AND p.bucket <= now() - INTERVAL '1 minute'
-                 AND p.bucket >= now() - INTERVAL '24 hours'
-                 AND p.vwap IS NOT NULL
-               ORDER BY p.bucket DESC LIMIT 1), 0)
+             (SELECT e.v FROM (
+                (SELECT p.vwap AS v, p.bucket, 1 AS pref FROM prices_1m p
+                  WHERE p.base_asset = h.hop
+                    AND p.quote_asset IN (` + xlmQuotes + `)
+                    AND p.bucket <= now() - INTERVAL '1 minute'
+                    AND p.bucket >= now() - INTERVAL '24 hours'
+                    AND p.vwap IS NOT NULL
+                  ORDER BY p.bucket DESC LIMIT 1)
+                UNION ALL
+                (SELECT 1 / NULLIF(p.vwap, 0), p.bucket, 2 FROM prices_1m p
+                  WHERE p.base_asset IN (` + xlmQuotes + `)
+                    AND p.quote_asset = h.hop
+                    AND p.bucket <= now() - INTERVAL '1 minute'
+                    AND p.bucket >= now() - INTERVAL '24 hours'
+                    AND p.vwap IS NOT NULL
+                  ORDER BY p.bucket DESC LIMIT 1)
+              ) e
+              WHERE e.v IS NOT NULL
+              ORDER BY e.bucket DESC, e.pref LIMIT 1)
              * (SELECT vwap FROM xlm_usd)
            ) AS hop_usd
       FROM hops h
 ),
--- This asset's price IN the hop. Prefer the (asset, hop) direction;
--- fall back to inverting (hop, asset).
+-- This asset's price IN the hop: the latest bucket in either direction,
+-- (asset, hop) as is or (hop, asset) inverted, so a stale row in one
+-- direction cannot outrank a fresh one in the other. (asset, hop) wins a tie.
 leg AS (
     SELECT hu.hop,
            hu.hop_vol,
            hu.hop_usd,
-           COALESCE(
-             (SELECT p.vwap FROM prices_1m p
-               WHERE p.base_asset = $1 AND p.quote_asset = hu.hop
-                 AND p.bucket <= now() - INTERVAL '1 minute'
-                 AND p.bucket >= now() - INTERVAL '24 hours'
-                 AND p.vwap IS NOT NULL
-               ORDER BY p.bucket DESC LIMIT 1),
-             1 / NULLIF((SELECT p.vwap FROM prices_1m p
-               WHERE p.base_asset = hu.hop AND p.quote_asset = $1
-                 AND p.bucket <= now() - INTERVAL '1 minute'
-                 AND p.bucket >= now() - INTERVAL '24 hours'
-                 AND p.vwap IS NOT NULL
-               ORDER BY p.bucket DESC LIMIT 1), 0)
-           ) AS leg_vwap
+           (SELECT e.v FROM (
+              (SELECT p.vwap AS v, p.bucket, 1 AS pref FROM prices_1m p
+                WHERE p.base_asset = $1 AND p.quote_asset = hu.hop
+                  AND p.bucket <= now() - INTERVAL '1 minute'
+                  AND p.bucket >= now() - INTERVAL '24 hours'
+                  AND p.vwap IS NOT NULL
+                ORDER BY p.bucket DESC LIMIT 1)
+              UNION ALL
+              (SELECT 1 / NULLIF(p.vwap, 0), p.bucket, 2 FROM prices_1m p
+                WHERE p.base_asset = hu.hop AND p.quote_asset = $1
+                  AND p.bucket <= now() - INTERVAL '1 minute'
+                  AND p.bucket >= now() - INTERVAL '24 hours'
+                  AND p.vwap IS NOT NULL
+                ORDER BY p.bucket DESC LIMIT 1)
+            ) e
+            WHERE e.v IS NOT NULL
+            ORDER BY e.bucket DESC, e.pref LIMIT 1) AS leg_vwap
       FROM hop_usd hu
      WHERE hu.hop_usd IS NOT NULL AND hu.hop_usd > 0
 )
