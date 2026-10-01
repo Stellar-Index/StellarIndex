@@ -382,6 +382,13 @@ stale_patterns=(
                                   # ATH/day-VWAP fix. Bare pattern (not scoped
                                   # to "R-008") so it also catches a citation
                                   # reappearing in the header list alone
+  "#1270\b"                      # dangling ref (RSWP-143) — coverage-matrix.md's
+                                  # 2026-05-11 entry cited R-016's fix as
+                                  # "#1270" in the row and the header list;
+                                  # the number is pre-migration, so it now
+                                  # resolves to an unrelated item. Cite the
+                                  # commit (4ab6b818d) instead. Bare pattern
+                                  # for the same reason as #1263
   "#1268\b"                      # coverage-matrix.md's 2026-05-11 entry cited
                                   # the R-001/R-002 prewarm fix as #1268; that
                                   # number now resolves to an unrelated item,
