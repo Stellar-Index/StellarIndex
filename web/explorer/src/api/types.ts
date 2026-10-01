@@ -940,10 +940,15 @@ export interface paths {
          *       connect time — the same verdict `/v1/price` would answer
          *       404 for. The gate is re-checked on every closed bucket
          *       too: a pair withheld PARTWAY through an open connection is
-         *       not disconnected — its buckets are silently dropped and
-         *       heartbeats continue, so a client must treat prolonged
-         *       silence with no error as "possibly withheld", not "still
-         *       healthy".
+         *       not disconnected — each bucket it would have received is
+         *       replaced by a `price_withheld` event (same `id`), with data
+         *       `{"asset_id","quote","reason","as_of"}` as on
+         *       `/v1/price/tip/stream`; `as_of` is the refused bucket's.
+         *       The 60-second series also publishes one `price_withheld`
+         *       when its pair becomes withheld (or the reason changes),
+         *       and republishes the current bucket as `price_update` once
+         *       the pair is served again. Heartbeats alone therefore never
+         *       mean the price is being withheld.
          */
         get: operations["streamPrices"];
         put?: never;
@@ -1289,6 +1294,18 @@ export interface paths {
          *        see `internal/storage/timescale/ohlc_routes.go`'s
          *        `OHLCRoutes` table, the single declaration this list must
          *        track.
+         *
+         *     **Open and close inside one ledger (both modes).** On-chain
+         *     trades carry the whole-second ledger close time and the
+         *     network's apply order is not recorded, so when several
+         *     transactions in one ledger trade the pair inside one bar,
+         *     `open` and `close` are picked by a tie-break on
+         *     `(ts, ledger, tx_hash, op_index, source)` — `tx_hash` order
+         *     between transactions, which is NOT execution order; `op_index`
+         *     order within one transaction. The bar is stable, but `open` or
+         *     `close` can be another real trade from that ledger, off by at
+         *     most the price movement inside one ledger (~5 s); `high`,
+         *     `low`, VWAP and volume are unaffected.
          */
         get: operations["getOhlc"];
         put?: never;
@@ -3158,9 +3175,13 @@ export interface paths {
          * SEP-40 lastprice-equivalent passthrough.
          * @description HTTP mirror of the SEP-40 oracle contract call
          *     `lastprice(asset) -> Option<PriceData>` — for integrators
-         *     that already speak Reflector's on-chain interface and want
-         *     the identical shape over REST. The response is
-         *     deliberately minimal (`price`, `timestamp`); the richer
+         *     that already speak Reflector's on-chain interface. It mirrors
+         *     the method name and semantics, not the wire types: on-chain
+         *     `PriceData` carries `price` as a fixed-point `i128` and
+         *     `timestamp` as `u64` seconds, while this response carries
+         *     `price` as an exact decimal string (already scaled, no
+         *     `decimals()` call needed) and `timestamp` as RFC 3339. The
+         *     response is deliberately minimal (`price`, `timestamp`); the richer
          *     source/confidence view lives on `/v1/oracle/latest` and
          *     `/v1/price`. Quote is fixed at USD, matching the on-chain
          *     contract's fixed-quote semantic — for other quotes use
@@ -10023,6 +10044,10 @@ export interface components {
                 /** @description p99 latency SLO target in milliseconds. See p95_target_ms. */
                 p99_target_ms?: number;
             };
+            /**
+             * @description The counts are omitted when their query failed (see
+             *     `freshness_status`); a served `0` is present as `0`.
+             */
             freshness?: {
                 /** Format: date-time */
                 last_aggregator_tick?: string;
@@ -10081,6 +10106,19 @@ export interface components {
              * @enum {string}
              */
             incidents_status: "ok" | "degraded" | "unknown";
+            /**
+             * @description Trust signal for the `freshness` block, so a failed count
+             *     query cannot read as a measured zero:
+             *       - "ok":       counts measured, every enabled source active.
+             *       - "degraded": counts measured, `active_sources` <
+             *                     `total_sources`. Does not by itself move
+             *                     `overall`.
+             *       - "unknown":  a freshness query FAILED, or no metrics
+             *                     backend is wired — the counts are omitted.
+             *     Always present.
+             * @enum {string}
+             */
+            freshness_status: "ok" | "degraded" | "unknown";
         };
         ActiveIncident: {
             /** @description Alertmanager `alertname` label. */
@@ -12653,7 +12691,8 @@ export interface operations {
                      *           "ticket_count": 0,
                      *           "informational_count": 0
                      *         },
-                     *         "incidents_status": "ok"
+                     *         "incidents_status": "ok",
+                     *         "freshness_status": "degraded"
                      *       },
                      *       "as_of": "2026-05-05T15:09:00.119Z",
                      *       "flags": {
@@ -14095,7 +14134,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE stream of price_update events. */
+            /** @description SSE stream of price_update (and price_frozen / price_withheld) events. */
             200: {
                 headers: {
                     [name: string]: unknown;

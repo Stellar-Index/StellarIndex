@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/rozo"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -22,6 +23,7 @@ func TestCCTPRozoGenesisLocksStepAcrossRegistries(t *testing.T) {
 	}{
 		{source: "cctp", wantGen: cctp.GenesisLedger},
 		{source: "rozo", wantGen: rozo.GenesisLedger},
+		{source: "defindex", wantGen: defindex.GenesisLedger},
 	}
 
 	for _, tc := range cases {

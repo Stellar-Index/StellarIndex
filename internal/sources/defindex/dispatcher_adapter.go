@@ -97,12 +97,12 @@ func (d *Decoder) Matches(ev events.Event) bool {
 
 // Decode implements [dispatcher.Decoder]. Emits one Event per
 // matched flow — Event (strategy layer), VaultEvent (vault wrapper
-// layer), or DFeesEvent (one per dfees distributed_fees entry, W5.2)
-// — for the events we model. Every OTHER recognised topic (vault
-// rebalance + the seven remaining admin events; factory `create` /
+// layer), DFeesEvent (one per dfees distributed_fees entry) or
+// AdminEvent (vault admin topics) — for the events we model. Every
+// OTHER recognised topic (vault rebalance / n_wasm; factory `create` /
 // `n_fee`) drops cleanly with (nil, nil): "match, nothing to emit".
 // Returning an ERROR is a "skip + count-as-decode-error" signal,
-// reserved for genuinely malformed deposit/withdraw bodies — NOT for
+// reserved for genuinely malformed bodies of modelled topics — NOT for
 // topics we recognise but intentionally don't model yet (BACKLOG #58),
 // and NOT for factory bodies (their contents are untrusted and never
 // decoded — task #34, W8 recon 6c). Filing those as decode errors
@@ -168,16 +168,19 @@ func (d *Decoder) decodeStrategy(ev *events.Event, kind string) ([]consumer.Even
 
 // decodeVault handles a classified DeFindexVault event.
 // deposit/withdraw model a VaultFlow; dfees models per-asset [DFee]
-// entries (W5.2 — body shape proven from real lake blobs, one
-// DFeesEvent per distributed_fees Vec entry so reconcile
-// expected-counts equal served rows). `rebalance` and the seven other
-// admin topics (rescue / paused / unpaused / nreceiver / nmanager /
-// nemanager / rbmanager, plus n_wasm) remain recognised but NOT
-// modelled — their bodies have never been observed on-chain, so they
-// drop cleanly. The rebalance discriminator scaffolding lives in
-// [DecodeRebalanceMethod]; the per-method payload decode is blocked on
-// real samples (BACKLOG #58).
+// entries (one DFeesEvent per distributed_fees Vec entry so reconcile
+// expected-counts equal served rows); the seven admin topics model one
+// [VaultAdmin] each. `rebalance` and n_wasm remain recognised but NOT
+// modelled and drop cleanly.
 func (d *Decoder) decodeVault(ev *events.Event, kind string) ([]consumer.Event, error) {
+	if _, ok := vaultAdminFields[kind]; ok {
+		admin, err := decodeVaultAdmin(ev, kind)
+		if err != nil {
+			return nil, err
+		}
+		admin.EventIndex = uint32(ev.EventIndex) //nolint:gosec // event index is small, non-negative
+		return []consumer.Event{AdminEvent{Admin: admin}}, nil
+	}
 	if kind == EventDFees {
 		fees, err := decodeDFees(ev)
 		if err != nil {
@@ -197,7 +200,7 @@ func (d *Decoder) decodeVault(ev *events.Event, kind string) ([]consumer.Event, 
 		return out, nil
 	}
 	if kind != EventDeposit && kind != EventWithdraw {
-		return nil, nil // rebalance / admin (unmodelled)
+		return nil, nil // rebalance / n_wasm (unmodelled)
 	}
 	flow, err := decodeVaultFlow(ev, kind)
 	if err != nil {
