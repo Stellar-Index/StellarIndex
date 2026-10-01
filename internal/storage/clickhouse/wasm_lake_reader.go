@@ -88,19 +88,9 @@ type ContractWasmInfo struct {
 // the captured window — historical deploy-time entries are largely outside the
 // live ledger_entry_changes capture (extract.go G12-03 note).
 func (r *ExplorerReader) ContractWasm(ctx context.Context, contractID string) (ContractWasmInfo, error) {
-	dec, err := strkey.Decode(strkey.VersionByteContract, contractID)
-	if err != nil {
-		return ContractWasmInfo{}, fmt.Errorf("clickhouse: bad contract id %q: %w", contractID, err)
-	}
-	var cidHash xdr.Hash
-	copy(cidHash[:], dec)
-
-	wasmHash, ok, err := r.contractWasmHash(ctx, cidHash)
+	wasmHash, err := r.resolveContractWasmHash(ctx, contractID)
 	if err != nil {
 		return ContractWasmInfo{}, err
-	}
-	if !ok {
-		return ContractWasmInfo{}, ErrContractWasmUnresolved
 	}
 
 	info, err := r.wasmModuleView(ctx, wasmHash)
@@ -109,6 +99,35 @@ func (r *ExplorerReader) ContractWasm(ctx context.Context, contractID string) (C
 	}
 	info.ContractID = contractID
 	return info, nil
+}
+
+// ContractWasmHash is ContractWasm's first hop alone: the contract's CURRENT
+// wasm hash as lower hex, without reading or disassembling the module.
+// Returns ErrContractIsSAC / ErrContractWasmUnresolved exactly as ContractWasm.
+func (r *ExplorerReader) ContractWasmHash(ctx context.Context, contractID string) (string, error) {
+	h, err := r.resolveContractWasmHash(ctx, contractID)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h[:]), nil
+}
+
+func (r *ExplorerReader) resolveContractWasmHash(ctx context.Context, contractID string) (xdr.Hash, error) {
+	dec, err := strkey.Decode(strkey.VersionByteContract, contractID)
+	if err != nil {
+		return xdr.Hash{}, fmt.Errorf("clickhouse: bad contract id %q: %w", contractID, err)
+	}
+	var cidHash xdr.Hash
+	copy(cidHash[:], dec)
+
+	wasmHash, ok, err := r.contractWasmHash(ctx, cidHash)
+	if err != nil {
+		return xdr.Hash{}, err
+	}
+	if !ok {
+		return xdr.Hash{}, ErrContractWasmUnresolved
+	}
+	return wasmHash, nil
 }
 
 // wasmModuleFlightTimeout bounds one shared per-hash fill: the code read plus

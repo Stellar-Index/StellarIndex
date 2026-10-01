@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -75,7 +77,7 @@ func TestRunProbe_PassPath(t *testing.T) {
 		{Name: "healthz", Path: "/healthz"},
 		{Name: "price", Path: "/price", Query: map[string]string{"asset": "native", "quote": "fiat:USD"}},
 	}
-	rep := runProbe(srv.URL, "", endpoints, 200*time.Millisecond, 2, slaTargets{
+	rep := runProbe(srv.URL, "", endpoints, 200*time.Millisecond, 2, 0, slaTargets{
 		P95MS:           500, // very generous so the test isn't flaky
 		P99MS:           1000,
 		FreshnessSec:    30,
@@ -106,7 +108,7 @@ func TestRunProbe_FailsOnSlowEndpoint(t *testing.T) {
 	defer srv.Close()
 
 	endpoints := []endpoint{{Name: "healthz", Path: "/healthz"}}
-	rep := runProbe(srv.URL, "", endpoints, 200*time.Millisecond, 2, slaTargets{
+	rep := runProbe(srv.URL, "", endpoints, 200*time.Millisecond, 2, 0, slaTargets{
 		P95MS:           1, // 1ms target — we'll definitely exceed
 		P99MS:           1,
 		FreshnessSec:    30,
@@ -127,7 +129,7 @@ func TestRunProbe_FailsOn5xx(t *testing.T) {
 	defer srv.Close()
 
 	endpoints := []endpoint{{Name: "healthz", Path: "/healthz"}}
-	rep := runProbe(srv.URL, "", endpoints, 100*time.Millisecond, 1, slaTargets{
+	rep := runProbe(srv.URL, "", endpoints, 100*time.Millisecond, 1, 0, slaTargets{
 		P95MS:           1000,
 		P99MS:           5000,
 		FreshnessSec:    300,
@@ -163,7 +165,7 @@ func TestRunProbe_DeadlineCancelledSamplesNotCountedAsFailures(t *testing.T) {
 	defer srv.Close()
 
 	endpoints := []endpoint{{Name: "healthz", Path: "/healthz"}}
-	rep := runProbe(srv.URL, "", endpoints, 150*time.Millisecond, 4, slaTargets{
+	rep := runProbe(srv.URL, "", endpoints, 150*time.Millisecond, 4, 0, slaTargets{
 		P95MS:           10000, // generous — this test is about availability, not latency
 		P99MS:           10000,
 		FreshnessSec:    30,
@@ -190,9 +192,9 @@ func TestHit_ParsesObservedAt(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &http.Client{Timeout: time.Second}
-	_, ok, observed := hit(context.Background(), c, srv.URL, "", endpoint{Path: "/x"})
-	if !ok {
-		t.Fatal("hit returned not-ok")
+	_, failure, observed := hit(context.Background(), c, srv.URL, "", endpoint{Path: "/x"})
+	if failure != "" {
+		t.Fatalf("hit returned not-ok: %s", failure)
 	}
 	if !observed.Equal(now) {
 		t.Errorf("observed=%v want %v", observed, now)
@@ -205,9 +207,9 @@ func TestHit_NoObservedAt(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &http.Client{Timeout: time.Second}
-	_, ok, observed := hit(context.Background(), c, srv.URL, "", endpoint{Path: "/x"})
-	if !ok {
-		t.Fatal("hit returned not-ok on 200")
+	_, failure, observed := hit(context.Background(), c, srv.URL, "", endpoint{Path: "/x"})
+	if failure != "" {
+		t.Fatalf("hit returned not-ok on 200: %s", failure)
 	}
 	if !observed.IsZero() {
 		t.Errorf("observed=%v want zero", observed)
@@ -222,8 +224,8 @@ func TestHit_AttachesAuthorizationWhenAPIKeySet(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &http.Client{Timeout: time.Second}
-	_, ok, _ := hit(context.Background(), c, srv.URL, "sip_test_xyz", endpoint{Path: "/x"})
-	if !ok {
+	_, failure, _ := hit(context.Background(), c, srv.URL, "sip_test_xyz", endpoint{Path: "/x"})
+	if failure != "" {
 		t.Fatal("hit returned not-ok")
 	}
 	if sawAuth != "Bearer sip_test_xyz" {
@@ -428,7 +430,7 @@ func TestRunProbe_FreshnessMeasuredAtSampleTime(t *testing.T) {
 
 	const runFor = 2 * time.Second
 	rep := runProbe(srv.URL, "", []endpoint{{Name: "price-tip", Path: "/price/tip"}},
-		runFor, 2, slaTargets{P95MS: 5000, P99MS: 5000, FreshnessSec: 30, AvailabilityPct: 99.0})
+		runFor, 2, 0, slaTargets{P95MS: 5000, P99MS: 5000, FreshnessSec: 30, AvailabilityPct: 99.0})
 
 	if len(rep.PerEndpoint) != 1 {
 		t.Fatalf("PerEndpoint len=%d want 1", len(rep.PerEndpoint))
@@ -511,7 +513,7 @@ func TestRunProbe_HardOutageEmitsNoLatency(t *testing.T) {
 	srv.Close()
 
 	rep := runProbe(deadURL, "", []endpoint{{Name: "price", Path: "/price"}},
-		100*time.Millisecond, 1, slaTargets{P95MS: 200, P99MS: 500, FreshnessSec: 30, AvailabilityPct: 99.9})
+		100*time.Millisecond, 1, 0, slaTargets{P95MS: 200, P99MS: 500, FreshnessSec: 30, AvailabilityPct: 99.9})
 	if rep.Verdict == "pass" {
 		t.Fatal("verdict=pass against a refused port")
 	}
@@ -552,7 +554,7 @@ func TestRunProbe_RequestHangingAtDeadlineIsAFailure(t *testing.T) {
 	defer close(release)
 
 	rep := runProbe(srv.URL, "", []endpoint{{Name: "price", Path: "/price"}},
-		300*time.Millisecond, 1, slaTargets{P95MS: 5000, P99MS: 5000, FreshnessSec: 30, AvailabilityPct: 99.9})
+		300*time.Millisecond, 1, 0, slaTargets{P95MS: 5000, P99MS: 5000, FreshnessSec: 30, AvailabilityPct: 99.9})
 	st := rep.PerEndpoint[0]
 	// Errors may be 2: a second hung request can start if the first one's
 	// client timer fires a tick before the run deadline's.
@@ -613,7 +615,7 @@ func TestRunProbe_PairEndpointsRejectBodiesThatBreakTheirContract(t *testing.T) 
 	defer srv.Close()
 
 	eps := pairEndpoints("native", "fiat:USD", defaultClosedBucketFreshTarget)
-	rep := runProbe(srv.URL, "", eps, 150*time.Millisecond, 1, slaTargets{
+	rep := runProbe(srv.URL, "", eps, 150*time.Millisecond, 1, 0, slaTargets{
 		P95MS: 5000, P99MS: 5000, FreshnessSec: 30, AvailabilityPct: 99.9,
 	})
 	if rep.Verdict == "pass" {
@@ -663,6 +665,8 @@ func TestMain_RejectsOutOfRangeNumericFlags(t *testing.T) {
 		{"availability over 100", "-availability-target 100.5", "-availability-target"},
 		{"NaN availability", "-availability-target NaN", "-availability-target"},
 		{"zero concurrency", "-concurrency 0", "-concurrency"},
+		{"negative max-rps", "-max-rps -1", "-max-rps"},
+		{"NaN max-rps", "-max-rps NaN", "-max-rps"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -697,7 +701,7 @@ func TestHit_OracleWithReadingsIsASuccess(t *testing.T) {
 	if oracle.Name != "oracle-latest" {
 		t.Fatalf("last pair endpoint = %q, want oracle-latest", oracle.Name)
 	}
-	if _, ok, _ := hit(context.Background(), &http.Client{Timeout: time.Second}, srv.URL, "", oracle); !ok {
+	if _, failure, _ := hit(context.Background(), &http.Client{Timeout: time.Second}, srv.URL, "", oracle); failure != "" {
 		t.Error("an oracle response with one reading was rejected")
 	}
 }
@@ -736,7 +740,7 @@ func TestRunProbe_MultiPairDoesNotMergeSamples(t *testing.T) {
 	// concurrency == len(endpoints): each worker starts on a distinct
 	// endpoint (collectSamples' round-robin), guaranteeing every one of
 	// the 6 endpoints gets sampled at least once within the short run.
-	rep := runProbe(srv.URL, "", endpoints, 500*time.Millisecond, len(endpoints),
+	rep := runProbe(srv.URL, "", endpoints, 500*time.Millisecond, len(endpoints), 0,
 		slaTargets{P95MS: 5000, P99MS: 5000, FreshnessSec: 30, AvailabilityPct: 99.0})
 
 	if len(rep.PerEndpoint) != 6 {
@@ -834,5 +838,90 @@ func TestResolveAPIKey_FallsBackToEnv(t *testing.T) {
 	t.Setenv("STELLARINDEX_PROBE_API_KEY", "")
 	if got := resolveAPIKey(""); got != "" {
 		t.Errorf("resolveAPIKey with no env or flag = %q, want empty", got)
+	}
+}
+
+// TestRunProbe_MaxRPSPacesRequests pins the rate cap: unpaced, a local stub
+// answers thousands of requests a second, the way a fast API outruns its
+// own per-key rate limit and fails the run on 429s.
+func TestRunProbe_MaxRPSPacesRequests(t *testing.T) {
+	var n atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n.Add(1)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	rep := runProbe(srv.URL, "", []endpoint{{Name: "healthz", Path: "/healthz"}},
+		time.Second, 2, 20, slaTargets{P95MS: 5000, P99MS: 5000, FreshnessSec: 30, AvailabilityPct: 99.0})
+	// 20 rps over 1 s plus a burst of 2 (one token per worker) is ~22.
+	if got := n.Load(); got < 10 || got > 30 {
+		t.Errorf("server saw %d requests in a 1 s run at -max-rps 20, want 10..30", got)
+	}
+	if rep.MaxRPS != 20 {
+		t.Errorf("report max_rps = %v, want 20", rep.MaxRPS)
+	}
+}
+
+// TestRunProbe_NamesRateLimitedFailures: a failed run must say why, so a
+// rate-limited probe reads as 429s rather than as an unexplained outage.
+func TestRunProbe_NamesRateLimitedFailures(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/assets" {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	eps := []endpoint{{Name: "healthz", Path: "/healthz"}, {Name: "assets", Path: "/assets"}}
+	rep := runProbe(srv.URL, "", eps, 150*time.Millisecond, 1, 0,
+		slaTargets{P95MS: 5000, P99MS: 5000, FreshnessSec: 30, AvailabilityPct: 99.9})
+	var assets stats
+	for _, st := range rep.PerEndpoint {
+		if st.Endpoint == "assets" {
+			assets = st
+		}
+	}
+	if assets.Samples == 0 {
+		t.Fatal("assets: no samples")
+	}
+	if got := assets.FailedByStatus["429"]; got != assets.Samples {
+		t.Errorf("assets failed_by_status[429] = %d, want every sample (%d); map=%v", got, assets.Samples, assets.FailedByStatus)
+	}
+	want := fmt.Sprintf("assets: availability=0.00%% < target 99.90%% (429 x %d)", assets.Samples)
+	if !slices.Contains(rep.FailedReasons, want) {
+		t.Errorf("failed_reasons = %q, want to contain %q", rep.FailedReasons, want)
+	}
+}
+
+func TestHit_ClassifiesFailures(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/503":
+			w.WriteHeader(http.StatusServiceUnavailable)
+		case "/404":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			_, _ = w.Write([]byte(`{"data":null}`))
+		}
+	}))
+	c := &http.Client{Timeout: time.Second}
+	for _, tc := range []struct {
+		ep   endpoint
+		want string
+	}{
+		{endpoint{Path: "/503"}, "5xx"},
+		{endpoint{Path: "/404"}, "4xx"},
+		{endpoint{Path: "/x", WantData: true}, "body"},
+	} {
+		if _, got, _ := hit(context.Background(), c, srv.URL, "", tc.ep); got != tc.want {
+			t.Errorf("%s: failure = %q, want %q", tc.ep.Path, got, tc.want)
+		}
+	}
+	srv.Close()
+	if _, got, _ := hit(context.Background(), c, srv.URL, "", endpoint{Path: "/x"}); got != "conn" {
+		t.Errorf("closed server: failure = %q, want conn", got)
 	}
 }

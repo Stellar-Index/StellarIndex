@@ -14,6 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
@@ -195,6 +196,23 @@ func TestBuildSEP41ReconSources_OptIn(t *testing.T) {
 	}
 	for name := range want {
 		t.Errorf("missing source %q", name)
+	}
+}
+
+// TestBuildSEP41ReconSources_TestNetGenesis — on a test net the sep41
+// sources' genesis is the configured Soroban floor, not the pubnet boundary.
+func TestBuildSEP41ReconSources_TestNetGenesis(t *testing.T) {
+	cfg := config.Default()
+	cfg.Stellar.SorobanGenesisLedger = 1
+	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
+	cat, err := buildSEP41ReconSources(cfg)
+	if err != nil {
+		t.Fatalf("buildSEP41ReconSources: %v", err)
+	}
+	for _, src := range cat {
+		if src.genesis != 1 {
+			t.Errorf("%s: genesis = %d, want 1 (soroban_genesis_ledger)", src.name, src.genesis)
+		}
 	}
 }
 
@@ -637,6 +655,7 @@ var packageGenesis = map[string]uint32{
 	"sorocredit":     sorocredit.GenesisLedger,
 	"sushiswap_v3":   sushiswap_v3.FactoryGenesisLedger,
 	"upshift":        upshift.GenesisLedger,
+	"defindex":       defindex.GenesisLedger,
 }
 
 // TestCatalogueGenesisLocksStepWithGapDetectorTargets pins every

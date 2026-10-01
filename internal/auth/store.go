@@ -93,6 +93,11 @@ type CreateAPIKeyRequest struct {
 	// set, Create refuses a request exceeding it ([ClampToMinter]). Nil
 	// only for mints with no HTTP subject: signup and the operator CLI.
 	MintedBy *Subject
+
+	// SelfService writes the record with the sliding [MirroredKeyIdleTTL]
+	// instead of no expiry: a caller-minted child must age out once
+	// abandoned, while operator-issued keys stay persistent.
+	SelfService bool
 }
 
 // ErrMintExceedsCaller is [ClampToMinter]'s refusal: the request asked
@@ -159,6 +164,7 @@ func ChildKeyRequest(parent Subject, label string, scopes []string) CreateAPIKey
 		MonthlyQuota:    parent.MonthlyQuota,
 		ExpiresAt:       parent.ExpiresAt,
 		EmailVerifiedAt: parent.EmailVerifiedAt,
+		SelfService:     true,
 	}
 }
 
@@ -253,7 +259,8 @@ func (s *RedisAPIKeyStore) GetByKeyID(ctx context.Context, keyID string) (APIKey
 //     MonthlyQuota from the identifier's existing credentials.
 //  2. Generate KeyID (`kid_<16-hex>`) and plaintext (`sip_<64-hex>`).
 //  3. Build APIKeyRecord with stamped CreatedAt and tier-defaulted Tier.
-//  4. SET apikey:<sha256(plaintext)> JSON. SETNX semantics aren't
+//  4. SET apikey:<sha256(plaintext)> JSON, with [MirroredKeyIdleTTL]
+//     when req.SelfService, else no expiry. SETNX semantics aren't
 //     needed — the SHA-256 collision domain is astronomical and
 //     the KeyID is independently unique.
 //  5. Return (record, plaintext).
@@ -266,6 +273,13 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 	}
 	if err := ValidateKeyBounds(req.RateLimitPerMin, req.Scopes); err != nil {
 		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: %w", err)
+	}
+	tier := req.Tier
+	if tier == "" {
+		tier = TierAPIKey
+	}
+	if !mintableTier(tier) {
+		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: tier %q cannot hold a key (want %s, %s or %s)", tier, TierAPIKey, TierSEP10, TierOperator)
 	}
 	if req.MintedBy != nil {
 		scopes, err := ClampToMinter(*req.MintedBy, req.Scopes, req.RateLimitPerMin)
@@ -300,11 +314,6 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: generate plaintext: %w", err)
 	}
 
-	tier := req.Tier
-	if tier == "" {
-		tier = TierAPIKey
-	}
-
 	rec := APIKeyRecord{
 		KeyID:           keyID,
 		Identifier:      req.Identifier,
@@ -334,16 +343,33 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 	}
 
 	hash := hashAPIKey(plaintext)
-	// No TTL: keys live until explicitly deleted. Expiry +
-	// revocation are encoded in the JSON record so the validator
-	// can return the right sentinel error.
+	// Expiry and revocation live in the JSON record; the Redis TTL only
+	// bounds how long an unused self-service key occupies the keyspace.
+	// The validator slides it on every successful Lookup.
 	//
 	// The record and its lookup-index entries land as one atomic write
 	// ([RedisAPIKeyStore.writeRecord]); on failure nothing was written.
-	if err := s.writeRecord(ctx, hash, rec, body, cachekeys.APIKeyTTL); err != nil {
+	ttl := cachekeys.APIKeyTTL
+	if req.SelfService {
+		ttl = MirroredKeyIdleTTL
+	}
+	if err := s.writeRecord(ctx, hash, rec, body, ttl); err != nil {
 		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: redis set: %w", err)
 	}
 	return rec, plaintext, nil
+}
+
+// mintableTier reports whether a minted record may carry t. Anonymous is
+// not a credential tier, and an unrecognised one has no rate-limit policy.
+func mintableTier(t Tier) bool {
+	switch t {
+	case TierAPIKey, TierSEP10, TierOperator:
+		return true
+	case TierAnonymous:
+		return false
+	default:
+		return false
+	}
 }
 
 // KeyQuotaExceededError is [RedisAPIKeyStore.CreateCapped]'s refusal:

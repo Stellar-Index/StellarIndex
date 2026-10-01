@@ -166,6 +166,15 @@ mid-release wastes a tag and forces a `.N+1` cut.
    one-release transition courtesy (dual-publish) — don't rely on
    `.sig`/`.pem` still being there on the *next* tag; see the CHANGELOG
    `[Unreleased]` entry for the deprecation note.
+
+   **Verify the build provenance.** Each binary and `migrations.tar.gz`
+   also carries a SLSA provenance attestation (from the
+   `Attest build provenance` step), tying it to the tagged commit and
+   the `release.yml` run that built it (releases cut before that step
+   existed carry none):
+   ```sh
+   gh attestation verify /tmp/v.bin --repo Stellar-Index/StellarIndex
+   ```
 6. **Optional manual edits to the Release page.** The auto-generated
    notes pull from the CHANGELOG block. Add the "Tested against
    protocol XX" line **by hand** — `release.yml` has no protocol

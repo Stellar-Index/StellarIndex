@@ -200,6 +200,29 @@ own workstream** (a small, replicated/shared control-plane Postgres — logical
 replication or a managed global store — separate from the pricing/lake data path).
 Until it lands, only *anonymous* traffic fails over cleanly.
 
+### 3d. Rate limit and monthly quota — **counted per region (open decision)**
+Both limits count in the serving region's local Redis, keyed per principal with no
+region dimension: the rate limit (`internal/api/v1/middleware/ratelimit.go`) and the
+monthly quota's month-to-date read (`internal/api/v1/middleware/monthly_quota.go`).
+Active/active therefore makes the effective global ceiling **N regions × the limit**:
+a caller spread across three regions gets 3× its rate limit and 3× its monthly quota.
+The fail-closed dwell is per region too — one region's Redis outage 429s only there.
+
+With one serving region N = 1 and the published limits are exact. The mitigation is
+an **open decision** (ADR-0050 amendment), due before a second region serves
+authenticated traffic — which §3c already gates. Options:
+- **Publish the limits as per-region.** No code; the tier docs and the 429 body must
+  say "per region", or the number we publish is not the number we enforce.
+- **Configure limit ÷ N in each region.** Keeps the global ceiling, but a failover
+  that concentrates a caller on one region cuts them to 1/N of their tier exactly
+  when they need it.
+- **Reconcile the monthly quota through the replicated control plane (§3c).** Each
+  region flushes month-to-date increments there and reads the global total with
+  bounded lag; overshoot is at most N × one reconciliation interval of traffic. The
+  rate limit stays per region.
+- **Rejected for the rate limit: a synchronous cross-region counter.** It puts a
+  cross-region round trip on every request and breaks the §3a invariant.
+
 ## 4. Per-region shapes (amends ADR-0016)
 
 | | **R1 — Falkenstein (FSN1) / Hetzner** | **R2 — US / Vultr** | **R3 — Singapore / Vultr** |

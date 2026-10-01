@@ -35,7 +35,7 @@
 //     `compute-completeness`, `verify-served-values`, `verify-usd-volume`,
 //     `usd-volume-restamp`, `sdex-claim-audit`, `classic-movements-backfill`,
 //     `projected-rebuild`, `reconcile-balances`, `verify-contiguity`,
-//     `verify-hashchain`, `verify-lake`.
+//     `verify-hashchain`, `verify-lake`, `wasm-drift`.
 //   - Doc generation: `docs-config` (regenerates the config
 //     reference from struct tags; called by `make docs-config`).
 //   - Billing/usage recovery: `usage-rollup-backfill` (re-folds the
@@ -201,6 +201,7 @@ var subcommands = map[string]func(args []string) error{
 	"verify-contiguity":          chops.Run,
 	"verify-hashchain":           chops.Run,
 	"verify-lake":                chops.Run,
+	"wasm-drift":                 chops.Run,
 }
 
 // leaf adapts a flags-only handler to the dispatch table's full-argv
@@ -880,10 +881,11 @@ Subcommands:
                           range by replaying the soroswap-router
                           ContractCallDecoder over raw Galexie ledger
                           metadata (the router emits no Soroban events, so
-                          the projector cannot rebuild it). Idempotent
-                          (ON CONFLICT DO NOTHING); checkpoints into
-                          ingestion_cursors for resume. Superseded on the
-                          lake path by ch-rebuild -contract-calls.
+                          the projector cannot rebuild it). Idempotent;
+                          stamps a derive_generation so a re-walk corrects
+                          stored rows; checkpoints into ingestion_cursors
+                          for resume. Superseded on the lake path by
+                          ch-rebuild -contract-calls.
   resume-stalled -config PATH [-min-lag DUR] [-max-resumes N] [-source-filter S] [-parallel N] [-write]
                           Resume every stalled backfill cursor that still
                           has a remaining range, marching each toward the
@@ -905,7 +907,7 @@ Subcommands:
                           persisted soroswap_router_swaps row (migration
                           0025 Phase B). SQL-only join — no Galexie walk;
                           run AFTER the router record itself is complete
-                          (backfill-router / ch-rebuild -contract-calls).
+                          (ch-rebuild -contract-calls or backfill-router).
                           Defaults to the full extent of
                           soroswap_router_swaps; windowed by ledger
                           (default 500k) so each UPDATE prunes trades
@@ -974,7 +976,7 @@ Subcommands:
                           non-zero on any divergence. soroswap is re-derived
                           without pair seeding, so a range holding pairs
                           created before -from diverges by construction.
-  ch-rebuild -config PATH -from N -to N [-ch-addr H:P] [-sources CSV] [-sdex] [-sep41] [-contract-calls] [-contracts CSV] [-bulk-trades]
+  ch-rebuild -config PATH -from N -to N [-write] [-ch-addr H:P] [-sources CSV] [-sdex] [-sep41] [-contract-calls] [-contracts CSV] [-bulk-trades]
                           Re-derive event-based served tables (Timescale)
                           from the ClickHouse lake for a range by re-running
                           the production decoders — the ADR-0034 lake-replay
@@ -1111,8 +1113,9 @@ Subcommands:
                           historical range from soroban_events (ADR-0032
                           Phase 5 replacement for the retired *-backfill
                           subcommands). One-shot cursor SQL — the running
-                          indexer does the work; idempotent per-source
-                          ON CONFLICT DO NOTHING. -source names: see
+                          indexer does the work at derive_generation 0,
+                          so rows a re-derive stamped higher are NOT
+                          corrected (use projected-rebuild). -source names: see
                           internal/projector/registry.go. Referenced by the
                           migration 0137/0139 operator follow-ups.
   projected-rebuild -config PATH -source NAME -from N [-to N] [-workers K] [-window N] [-resume] [-write] [-ch-addr H:P] [-heartbeat PATH] [-allow-live-overlap]
@@ -1305,6 +1308,20 @@ Subcommands:
                           different shape; run it separately. Example:
                             stellarindex-ops verify-lake \
                               -ch-addr 127.0.0.1:9300
+  wasm-drift [-config PATH] [-ch-addr H:P] [-source NAME] [-textfile PATH]
+                          Every contract of a gated source that has an
+                          audit log (curated set + factories + children
+                          walked from the lake's creation events) must
+                          run a WASM hash in the embedded audited-hash
+                          manifest (internal/ops/chops/audited_wasm.json).
+                          A hash absent from it is drift; a SAC or a
+                          contract with no lake instance entry is
+                          reported, not drift; a gated source with no
+                          audit log is reported unaudited. -textfile
+                          writes wasm_drift.prom for node_exporter.
+                          Read-only; touches ClickHouse only. Exit code
+                          = drifting contracts (capped at 255). Runbook:
+                          docs/operations/runbooks/wasm-drift.md.
   ch-recognition -config PATH [-from N] [-to N] [-ch-addr H:P] [-include-firehose] [-top N]
                           ADR-0033 Claim 2a recognition audit: pull every
                           distinct (contract_id, topic_0_sym) shape from the

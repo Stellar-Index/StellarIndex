@@ -164,6 +164,7 @@ groups:
           severity: page
           team: stellarindex
           component: storage
+          alert_family: timescale_disk
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/db-disk-full.md
           summary: "Postgres disk {{ $value | humanize }}% free (SEV-1)"
@@ -180,6 +181,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: storage
+          alert_family: timescale_disk
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/db-disk-full.md
           summary: "Postgres disk {{ $value | humanize }}% free"
@@ -204,6 +206,7 @@ groups:
           severity: page
           team: stellarindex
           component: storage
+          alert_family: node_root_disk
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-full.md
           summary: "Root filesystem on {{ $labels.instance }} {{ $value | humanize }}% free (SEV-1)"
@@ -229,6 +232,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: storage
+          alert_family: node_root_disk
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-warning.md
           summary: "Root filesystem on {{ $labels.instance }} {{ $value | humanize }}% free"
@@ -816,6 +820,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: storage
+          alert_family: "timescale_backup_age/{{ $labels.stanza }}"
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
           summary: "pgBackRest stanza {{ $labels.stanza }} last backup {{ $value | humanizeDuration }} ago"
@@ -833,6 +838,7 @@ groups:
           severity: page
           team: stellarindex
           component: storage
+          alert_family: "timescale_backup_age/{{ $labels.stanza }}"
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
           summary: "No successful Postgres backup in > 24 h (SEV-1)"
@@ -1104,6 +1110,38 @@ groups:
           description: |
             Per-check triage is in the runbook; `journalctl -u verify-lake -n 300`
             holds the gap / deficiency / SHORT lines of the last run.
+
+      # wasm-drift (internal/ops/chops/wasm_drift.go): a gated contract
+      # running a hash its audit log never string-checked. No never-ran
+      # arm: the timer is not deployed everywhere yet.
+      - alert: stellarindex_wasm_drift
+        expr: max by (source, contract) (stellarindex_wasm_drift) > 0
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/wasm-drift.md
+          summary: "{{ $labels.source }} contract {{ $labels.contract }} runs a WASM hash no audit log has string-checked"
+          description: |
+            The decoder was audited against other bytes. String-check the new
+            hash, record it in the source's audit log, then add it to
+            internal/ops/chops/audited_wasm.json.
+
+      - alert: stellarindex_wasm_drift_stale
+        expr: (time() - stellarindex_wasm_drift_last_run_unix) > 172800
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/wasm-drift.md
+          summary: "wasm-drift has not completed a run on {{ $labels.instance }} in 2 days"
+          description: |
+            A run that errors writes no textfile — check the unit's journal
+            for the wasm-drift error line.
 
       # off-site-backup-plan.md §1 (NS03) — same inert-mechanism-first
       # shape as ch_lake_backup_stale above: the `configured` gauge is

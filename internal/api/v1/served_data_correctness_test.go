@@ -69,6 +69,24 @@ func TestStampListingCollisionsNilCatalogue(t *testing.T) {
 	}
 }
 
+// TestStampListingCollisionsTestNet pins that listing rows on a test net
+// are not stamped against the catalogue's pubnet issuers.
+func TestStampListingCollisionsTestNet(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
+	for _, network := range []string{"testnet", "futurenet"} {
+		s := &Server{verifiedCurrencies: cat, network: network}
+		fakeIss := fakeIssuerStrkey
+		rows := []AssetDetail{{Code: "USDC", Issuer: &fakeIss, Slug: "USDC"}}
+		s.stampListingCollisions(rows)
+		if rows[0].UnverifiedTickerCollision {
+			t.Errorf("%s: USDC row stamped against a pubnet issuer", network)
+		}
+	}
+}
+
 // TestApplyAssetRowYieldsToCanonicalPrice pins the FIX-2 precedence: the
 // asset-catalogue overlay (listing query, which for native mixes SDEX + CEX pairs)
 // must NOT clobber a PriceUSD already set by the canonical /v1/price
