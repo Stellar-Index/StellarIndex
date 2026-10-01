@@ -393,3 +393,28 @@ func TestMonthlyQuota_RecoversToNormalMetering(t *testing.T) {
 		t.Errorf("post-recovery blip status = %d, want 200 (dwell clock must have reset)", status)
 	}
 }
+
+// TestMonthlyQuota_StaleFailureDoesNotFailClosed pins that an outage long
+// past cannot make the first error of a fresh blip fail closed: a success
+// after a failure-free dwell window clears the clock even without a
+// sustained streak.
+func TestMonthlyQuota_StaleFailureDoesNotFailClosed(t *testing.T) {
+	clock := newManualClock()
+	reader := &mutableMTDReader{err: errors.New("redis blip")}
+	mw := middleware.MonthlyQuota(reader, nil, middleware.WithMonthlyQuotaClock(clock.now))
+	sub := auth.Subject{Tier: auth.TierAPIKey, KeyID: "K1", MonthlyQuota: 100}
+
+	if status, _, _ := runWithSubject(t, mw, sub); status != http.StatusOK {
+		t.Fatalf("arming error status = %d, want 200", status)
+	}
+	clock.advance(40 * time.Minute)
+	reader.heal(5)
+	if status, _, _ := runWithSubject(t, mw, sub); status != http.StatusOK {
+		t.Fatalf("lone success status = %d, want 200", status)
+	}
+	clock.advance(time.Second)
+	reader.fail(errors.New("new blip"))
+	if status, _, _ := runWithSubject(t, mw, sub); status != http.StatusOK {
+		t.Errorf("new blip status = %d, want 200 (a stale failure must not trip the dwell clock)", status)
+	}
+}

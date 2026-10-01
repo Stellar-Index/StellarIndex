@@ -34,6 +34,35 @@ func TestPreseedFactoryChildrenSkipsEmptyOrInvertedWindow(t *testing.T) {
 	}
 }
 
+// A -ch reconcile over a window that starts after a child's deploy must seed
+// that child from the lake it re-derives from. The streamer is the only event
+// source handed in, so a preseed still reading Postgres would count nothing.
+func TestExpectedProjectionPreseedsFactoryChildFromTheLake(t *testing.T) {
+	const lo, hi = uint32(100), uint32(200)
+	const preLoChild = "CPRELOCHILDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	lake := countingEventStreamer{evs: []events.Event{
+		mockCreate(50, prefFactory, preLoChild, 0), // deployed before the window
+		mockBiz(150, preLoChild, 1),
+	}}
+	src := reconSource{
+		name:        "mockgated",
+		genesis:     1,
+		dec:         newMockGatedDecoder(),
+		factories:   []string{prefFactory},
+		creationSym: "create",
+	}
+	expectedFor, blind, err := expectedProjection(context.Background(), lake, "", src, lo, hi)
+	if err != nil {
+		t.Fatalf("expectedProjection: %v", err)
+	}
+	if blind.Any() {
+		t.Fatalf("unexpected blind spots: %s", blind.Detail())
+	}
+	if got := expectedFor(reconTarget{kinds: []string{"mock.biz"}})[150]; got != 1 {
+		t.Fatalf("expected[150] = %d, want 1: the pre-window child was not seeded from the lake", got)
+	}
+}
+
 // RLT-395: a preseed walk over a real, non-empty window that finds zero
 // factory children must not go silent — an empty gate registry then makes
 // every pre-existing pool's events look like a real projection gap for the

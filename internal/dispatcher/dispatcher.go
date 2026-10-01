@@ -231,6 +231,21 @@ type ExecutionCorroborationRequirer interface {
 	RequiresExecutionCorroboration() bool
 }
 
+// RefusesUncorroborated reports whether dec must skip a matched call whose
+// ExecutionCorroborated flag is false. Shared by the live dispatcher and the
+// lake re-derive so both apply the same gate.
+func RefusesUncorroborated(dec ContractCallDecoder, corroborated bool) bool {
+	r, ok := dec.(ExecutionCorroborationRequirer)
+	return ok && r.RequiresExecutionCorroboration() && !corroborated
+}
+
+// executionCorroborated reports whether call is the op's top-level executed
+// invocation (top; nil for a non-InvokeContract op) rather than an auth-tree
+// declaration that may never have run.
+func executionCorroborated(top, call *invokeCall) bool {
+	return top != nil && sameInvocation(top, call)
+}
+
 // ContractCallContext carries everything a ContractCallDecoder
 // needs to decode one Soroban InvokeContract call: identity of the
 // contract + function, base64-encoded argument slice, and tx-level
@@ -1002,8 +1017,7 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 					topCall = invokeCalls[opIdx]
 				}
 				for _, call := range calls {
-					corroborated := topCall != nil &&
-						containsCall([]*invokeCall{topCall}, call)
+					corroborated := executionCorroborated(topCall, call)
 					ccCtx := ContractCallContext{
 						Ledger:                ledgerSeq,
 						ClosedAt:              parsedClosedAt,
@@ -1451,8 +1465,7 @@ func (d *Dispatcher) dispatchContractCall(ctx ContractCallContext) (outs []consu
 		// executing; refuse it here — before Decode reads the args as a
 		// price — and count the rejection so a manipulation attempt (or a
 		// legitimate routing-shape change) is visible instead of silent.
-		if r, ok := ccd.(ExecutionCorroborationRequirer); ok &&
-			r.RequiresExecutionCorroboration() && !ctx.ExecutionCorroborated {
+		if RefusesUncorroborated(ccd, ctx.ExecutionCorroborated) {
 			d.bumpUncorroborated(ccd.Name())
 			return nil, nil
 		}
