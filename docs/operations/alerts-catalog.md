@@ -403,7 +403,7 @@ without anyone maintaining a list.
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_binary_version_skew` | `stellarindex_binary_version_skew` | > 0 for 45 m | ticket | [binary-version-skew](runbooks/binary-version-skew.md) |
 | `stellarindex_binary_version_probe_degraded` | `stellarindex_binary_version_probe_success` | == 0 for 2 h | ticket | [binary-version-skew](runbooks/binary-version-skew.md) |
-| `stellarindex_binary_version_probe_stale` | `stellarindex_binary_version_probe_success` | absent for 90 m, for 10 m | ticket | [binary-version-skew](runbooks/binary-version-skew.md) |
+| `stellarindex_binary_version_probe_stale` | `node_textfile_mtime_seconds`, `stellarindex_binary_version_probe_success` | textfile mtime > 90 m old or probe_success absent for 90 m, for 10 m | ticket | [binary-version-skew](runbooks/binary-version-skew.md) |
 
 Impact is indirect but one-way: `stellarindex-ops` backs the
 data-integrity gates (`verify-archive` tier-a/b, `archive-completeness`,
