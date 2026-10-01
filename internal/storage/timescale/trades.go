@@ -1739,6 +1739,10 @@ type registryObservation struct {
 // itself under a keyset cursor. It carries the sole entry in
 // [directionExempt].
 
+// maxLatestTradesForPair caps [Store.LatestTradesForPair]: each arm is a
+// time-unbounded walk, so an unclamped limit could materialise the market.
+const maxLatestTradesForPair = 1000
+
 // LatestTradesForPair returns up to `limit` most-recent trades for the
 // market the pair names — in EITHER stored direction, each returned in
 // the requested orientation. Returns an empty slice + nil error if the
@@ -1761,9 +1765,13 @@ type registryObservation struct {
 // /v1/price's last-trade arm, so a window here would stop serving a
 // price for a quiet market rather than merely slow it down. Zero-leg
 // (unpriceable) rows are excluded so the last trade is always a price.
+// `limit` is clamped to [maxLatestTradesForPair].
 func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit int) ([]canonical.Trade, error) {
 	if limit <= 0 {
 		limit = 100
+	}
+	if limit > maxLatestTradesForPair {
+		limit = maxLatestTradesForPair
 	}
 	const q = `
         (SELECT source, ledger, tx_hash, op_index, ts,
