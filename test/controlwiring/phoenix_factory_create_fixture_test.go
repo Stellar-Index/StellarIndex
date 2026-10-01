@@ -212,9 +212,9 @@ func TestPhoenixFactoryCreateFixture_Shape(t *testing.T) {
 
 // TestPhoenixFactoryCreateFixture_UpdatedConfigIsNotACreate guards the
 // one non-creation row in the 2026 capture: ("Factory","Updated Config")
-// with a Void body (data_xdr AAAAAQ== is SCV type 1, not a Bool).
-// Anything that later classifies factory events must
-// not read it as a pool announcement.
+// with a Void body (data_xdr AAAAAQ== is SCV type 1, not a Bool). It is
+// recorded as a factory admin event and must never read as a pool
+// announcement.
 func TestPhoenixFactoryCreateFixture_UpdatedConfigIsNotACreate(t *testing.T) {
 	t.Parallel()
 	var other []lakeContractEventRow
@@ -233,7 +233,28 @@ func TestPhoenixFactoryCreateFixture_UpdatedConfigIsNotACreate(t *testing.T) {
 	if body.Type != xdr.ScValTypeScvVoid {
 		t.Errorf("the Updated Config body is %s, want ScvVoid; it must not be mistakable for a pool announcement", body.Type)
 	}
-	if dec := phoenix.NewDecoder(); dec.Matches(other[0].event()) {
-		t.Errorf("phoenix.Decoder matches the factory's (\"Factory\",\"Updated Config\") event")
+	dec := phoenix.NewDecoder()
+	ev := other[0].event()
+	if !dec.Matches(ev) {
+		t.Fatalf("phoenix.Decoder does not match the factory's (\"Factory\",\"Updated Config\") event")
+	}
+	gated := len(dec.GatedContractSet())
+	out, err := dec.Decode(ev)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("Decode emitted %d events, want 1", len(out))
+	}
+	if ae, ok := out[0].(phoenix.AdminEvent); !ok || ae.AdminAction != phoenix.AdminActionFactoryConfigUpdated || ae.Pool != phoenix.MainnetFactory {
+		t.Errorf("Decode emitted %#v, want a factory_config_updated AdminEvent from the factory", out[0])
+	}
+	if got := len(dec.GatedContractSet()); got != gated {
+		t.Errorf("the Updated Config event changed the gated set %d → %d; it must admit no pool", gated, got)
+	}
+	forged := ev
+	forged.ContractID = phoenix.MainnetMapPools[0]
+	if dec.Matches(forged) {
+		t.Errorf("a gated pool publishing (\"Factory\",\"Updated Config\") is attributed to phoenix")
 	}
 }
