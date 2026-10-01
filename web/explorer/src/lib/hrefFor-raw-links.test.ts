@@ -28,14 +28,20 @@ function walk(dir: string, out: string[] = []): string[] {
 
 // A raw href template for one of the four prefixes, NOT wrapped in
 // encodeURIComponent and NOT routed through hrefFor.*(...).
-const RAW_HREF = /href=\{`\/(sources|exchanges|protocols|status\/incident)\/\$\{(?!\s*encodeURIComponent\()[^}]+\}/;
+const RAW_HREF =
+  /href=\{`\/(sources|exchanges|protocols|status\/incident)\/\$\{(?!\s*encodeURIComponent\()[^}]+\}/;
+// The same raw path as an absolute URL, canonical or sitemap entry (an
+// optional `${origin}` prefix allowed), which crawlers follow like a link.
+const RAW_URL =
+  /(url:\s*|canonical:\s*|siteURL\()`(\$\{[^}]+\})?\/(sources|exchanges|protocols|status\/incident)\/\$\{(?!\s*encodeURIComponent\()[^}]+\}/;
 
 function offenders(): string[] {
   const bad: string[] = [];
   for (const file of walk(SRC)) {
     const rel = relative(SRC, file).split('\\').join('/');
     if (rel === 'lib/hrefFor.ts' || isTest(rel)) continue;
-    if (RAW_HREF.test(readFileSync(file, 'utf8'))) bad.push(rel);
+    const text = readFileSync(file, 'utf8');
+    if (RAW_HREF.test(text) || RAW_URL.test(text)) bad.push(rel);
   }
   return bad.sort();
 }
@@ -43,5 +49,15 @@ function offenders(): string[] {
 describe('no raw (unencoded, non-hrefFor) source/exchange/protocol/incident links', () => {
   it('every /sources|exchanges|protocols|status/incident href is encoded or routed through hrefFor', () => {
     expect(offenders()).toEqual([]);
+  });
+
+  it('the url/canonical/sitemap pattern catches a raw interpolation and passes an encoded one', () => {
+    expect(RAW_URL.test('url: `${origin}/protocols/${p.name}`')).toBe(true);
+    expect(RAW_URL.test('canonical: `/status/incident/${slug}`')).toBe(true);
+    expect(RAW_URL.test('siteURL(`/sources/${s.name}`)')).toBe(true);
+    expect(
+      RAW_URL.test('canonical: `/status/incident/${encodeURIComponent(slug)}`'),
+    ).toBe(false);
+    expect(RAW_URL.test('asExample(`/v1/protocols/${name}`)')).toBe(false);
   });
 });

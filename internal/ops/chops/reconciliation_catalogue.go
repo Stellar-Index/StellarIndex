@@ -81,10 +81,14 @@ type reconSource struct {
 	name        string
 	dec         completeness.Decoder // nil for census-only sources (sdex)
 	contractIDs []string             // SQL prefilter (oracles); empty = match-by-topic
-	topic0Syms  []string
-	targets     []reconTarget
-	census      bool   // sdex: expected = decoder re-derive over the lake's SDEX ops
-	genesis     uint32 // first-possible-data ledger; mirrors DefaultGapDetectorTargets (WASM-audit sourced)
+	// firehoseTopics marks a contract-scoped source whose decoder consumes a
+	// clickhouse.FirehoseExcludeSyms topic, so ch-rebuild must read it by
+	// contractIDs with no topic exclusion (as the projector does).
+	firehoseTopics bool
+	topic0Syms     []string
+	targets        []reconTarget
+	census         bool   // sdex: expected = decoder re-derive over the lake's SDEX ops
+	genesis        uint32 // first-possible-data ledger; mirrors DefaultGapDetectorTargets (WASM-audit sourced)
 
 	// Factory-anchored gating (ADR-0035): when factories is non-empty, dec
 	// gates Matches() on a registry of factory-deployed children, so the
@@ -410,10 +414,11 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			// (custody / governance / allowance) decode to zero rows, which
 			// is what lets their ledgers count as expected-zero rather than
 			// blind.
-			name:        "upshift",
-			genesis:     upshift.GenesisLedger,
-			dec:         upshift.NewDecoder(),
-			contractIDs: upshift.MainnetGatedSet(),
+			name:           "upshift",
+			genesis:        upshift.GenesisLedger,
+			dec:            upshift.NewDecoder(),
+			contractIDs:    upshift.MainnetGatedSet(),
+			firehoseTopics: true, // share `transfer`
 			targets: []reconTarget{
 				{"upshift_vault_events", "", []string{upshift.EventKind}},
 			},
@@ -530,7 +535,7 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				{"blend_backstop_events", "", []string{"blend_backstop.event"}},
 			},
 		},
-		{name: "defindex", genesis: 57_056_338, dec: defindex.NewDecoder(), targets: []reconTarget{
+		{name: "defindex", genesis: defindex.GenesisLedger, dec: defindex.NewDecoder(), targets: []reconTarget{
 			// ADR-0035/0040 contract-gated (curated set): the bare
 			// NewDecoder() carries the in-code evidence-verified seed
 			// (defindex.MainnetGatedSet), which is the trust root — the

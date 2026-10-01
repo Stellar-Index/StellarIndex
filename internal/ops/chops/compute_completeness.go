@@ -2349,19 +2349,26 @@ func decodeContractCall(op clickhouse.ContractCallOp, call dispatcher.ContractCa
 		if matched = dec.Matches(call.ContractID, call.FunctionName); !matched {
 			return
 		}
+		// The live dispatcher refuses these before Decode; mirror it so the census and
+		// ch-rebuild neither expect nor write a row the served tier never gets.
+		if dispatcher.RefusesUncorroborated(dec, call.ExecutionCorroborated) {
+			matched = false
+			return
+		}
 		evs, err = dec.Decode(dispatcher.ContractCallContext{
-			Ledger:            op.Ledger,
-			ClosedAt:          op.ClosedAt,
-			TxHash:            op.TxHash,
-			TxSource:          op.Source,
-			OpSource:          op.Source,
-			OpIndex:           int(op.OpIndex),
-			ContractID:        call.ContractID,
-			FunctionName:      call.FunctionName,
-			Args:              call.Args,
-			CallPath:          call.CallPath,
-			CallPathContracts: call.CallPathContracts,
-			AuthOccurrence:    call.AuthOccurrence,
+			Ledger:                op.Ledger,
+			ClosedAt:              op.ClosedAt,
+			TxHash:                op.TxHash,
+			TxSource:              op.Source,
+			OpSource:              op.Source,
+			OpIndex:               int(op.OpIndex),
+			ContractID:            call.ContractID,
+			FunctionName:          call.FunctionName,
+			Args:                  call.Args,
+			CallPath:              call.CallPath,
+			CallPathContracts:     call.CallPathContracts,
+			AuthOccurrence:        call.AuthOccurrence,
+			ExecutionCorroborated: call.ExecutionCorroborated,
 		})
 	}); perr != nil {
 		return nil, true, fmt.Errorf("decoder panicked: %w", perr)

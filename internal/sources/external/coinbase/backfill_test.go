@@ -116,6 +116,36 @@ func TestCoinbaseBackfill_HappyPath(t *testing.T) {
 	}
 }
 
+// A candle still open at now carries partial volume, and one closing after
+// -to would be stamped outside the requested window; neither is emitted.
+func TestCoinbaseBackfill_SkipsCandleNotClosedByToOrNow(t *testing.T) {
+	const hourSec = int64(3_600)
+	openNow := time.Now().Truncate(time.Hour).Unix() - 2*hourSec
+	m, err := DefaultPairs()
+	if err != nil {
+		t.Fatalf("DefaultPairs: %v", err)
+	}
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	pair, _ := canonical.NewPair(xlm, usd)
+	for name, c := range map[string]struct{ startSec, toSec int64 }{
+		"open at now":   {openNow, openNow + 24*hourSec},
+		"straddles -to": {1_745_000_000, 1_745_000_000 + 2*hourSec + hourSec/2},
+	} {
+		srv := newTestCoinbaseREST(t, "XLM-USD", synthesiseCoinbaseCandles(3, c.startSec, hourSec))
+		s := NewStreamer(m)
+		s.Endpoint = srv.URL
+		trades, err := s.Backfill(context.Background(), pair, time.Unix(c.startSec, 0), time.Unix(c.toSec, 0), time.Hour)
+		srv.Close()
+		if err != nil {
+			t.Fatalf("%s: Backfill: %v", name, err)
+		}
+		if len(trades) != 2 {
+			t.Errorf("%s: got %d trades, want 2 (unclosed candle dropped)", name, len(trades))
+		}
+	}
+}
+
 func TestCoinbaseBackfill_UnsupportedGranularity(t *testing.T) {
 	m, _ := DefaultPairs()
 	s := NewStreamer(m)

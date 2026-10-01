@@ -1059,13 +1059,14 @@ var ProjectorRunsTotal = prometheus.NewCounterVec(
 
 // ProjectorEventsDecoded counts events the projector emitted
 // through the sink (or that failed decode). `outcome` ∈ {ok,
-// decode_error}. Operators chart `rate(ok[5m])` against the
+// decode_error, reconstruct_error (a landing-zone row too malformed to
+// rebuild into an event), sink_*}. Operators chart `rate(ok[5m])` against the
 // equivalent dispatcher counter during Phase 3 parallel mode to
 // verify the projector keeps pace with live ingest.
 var ProjectorEventsDecoded = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_projector_events_decoded_total",
-		Help: "Per-source events the projector decoded + emitted (ok) or failed to decode (decode_error). Compare ok-rate against dispatcher equivalent to gauge parallel-mode parity.",
+		Help: "Per-source events the projector decoded + emitted (ok) or failed to decode (decode_error, reconstruct_error). Compare ok-rate against dispatcher equivalent to gauge parallel-mode parity.",
 	},
 	[]string{"source", "outcome"},
 )
