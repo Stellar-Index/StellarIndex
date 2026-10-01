@@ -785,7 +785,10 @@ export default function StatusPageClient({
               where the real freshness signal is the per-region ledger lag in
               IngestionRegions below. Show it only where the aggregator runs. */}
           {CURRENT_NETWORK.pricing && (
-            <FreshnessRow freshness={status.freshness} />
+            <FreshnessRow
+              freshness={status.freshness}
+              freshnessStatus={status.freshness_status}
+            />
           )}
           <IngestionRegions regions={REGIONS} snapshots={ingestionByRegion} />
           <ActiveIncidents
@@ -1265,15 +1268,20 @@ function LatencyCell({
 
 function FreshnessRow({
   freshness,
+  freshnessStatus,
 }: {
   freshness: StatusResponse['freshness'];
+  freshnessStatus?: StatusResponse['freshness_status'];
 }) {
   // Absent counts mean the freshness probe didn't answer. `?? 0` read
   // as "0 / 0 active sources" — total ingest death — on the public
-  // status page. Absent renders '—' instead.
+  // status page. Absent (or freshness_status "unknown") renders '—'.
   const activeSources = freshness?.active_sources ?? null;
   const totalSources = freshness?.total_sources ?? null;
-  const measured = activeSources != null && totalSources != null;
+  const measured =
+    freshnessStatus !== 'unknown' &&
+    activeSources != null &&
+    totalSources != null;
   const sourcePct =
     measured && totalSources > 0 ? (activeSources / totalSources) * 100 : 0;
   return (
