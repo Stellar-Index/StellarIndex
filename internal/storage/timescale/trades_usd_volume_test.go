@@ -608,7 +608,10 @@ func TestTradeUSDVolume_XLMLegIsOrientationSymmetric(t *testing.T) {
 		if !isXLMAsset(tr.Pair.Quote) {
 			continue
 		}
-		restamp := tradeUSDVolumeViaXLMQuoteAnchorFor(context.Background(), tr, resolver)
+		restamp, err := tradeUSDVolumeViaXLMQuoteAnchorFor(context.Background(), tr, resolver)
+		if err != nil {
+			t.Fatalf("%s: xlm-quote re-derive: %v", name, err)
+		}
 		if restamp == nil || got == nil || *restamp != *got {
 			t.Errorf("%s: insert wrote %v but the xlm-quote re-derive writes %v", name, usdVolumeOrNil(got), usdVolumeOrNil(restamp))
 		}

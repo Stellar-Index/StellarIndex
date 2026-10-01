@@ -202,7 +202,7 @@ func tradeUSDVolume(ctx context.Context, t canonical.Trade, quoteSpec *USDVolume
 	// Same anchor when the pool stored XLM as the QUOTE leg: orientation is
 	// the pool's token order, so both sides of one economic swap must value alike.
 	if isXLMAsset(t.Pair.Quote) && !isXLMAsset(t.Pair.Base) {
-		if v := tradeUSDVolumeViaXLMQuoteAnchorFor(ctx, t, fxResolver); v != nil {
+		if v, _ := tradeUSDVolumeViaXLMQuoteAnchorFor(ctx, t, fxResolver); v != nil {
 			return v
 		}
 	}
