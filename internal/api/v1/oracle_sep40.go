@@ -110,16 +110,16 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		// state because prices_1m has no literal native/fiat:USD
 		// bucket, while /v1/price?asset=native&quote=fiat:USD succeeds
 		// via the same fallback. Caught by the 2026-05-08 prod audit.
-		var ok bool
 		viaFallback = true
-		var withheld bool
-		snapshot, sources, served, triangulated, ok, withheld = s.priceFallback(ctx, asset, defaultPriceQuote)
+		fb := s.priceFallback(ctx, asset, defaultPriceQuote)
+		snapshot, sources, served, triangulated = fb.snap, fb.sources, fb.served, fb.triangulated
+		ok := fb.ok
 		// MSP-06: a withheld verdict reached from the proxy leg must be
 		// reported as withheld, not as "no price data" — the two are
 		// different answers, and only the withheld problem names the raw
 		// surfaces where the data IS available.
-		if !ok && withheld {
-			writePriceWithheldProblem(w, r, asset, defaultPriceQuote, PriceWithheldUnattributed)
+		if !ok && (fb.withheld != "" || fb.err != nil) {
+			s.writeFallbackMiss(w, r, asset, defaultPriceQuote, fb)
 			return
 		}
 		// F-1339 (G2-02): every fallback degradation is below the
@@ -127,7 +127,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		// be true — the chain itself is the staleness signal (F-1254).
 		// /v1/price does this; the SEP-40 surfaces used to force
 		// stale=false here, shipping stale data with stale=false.
-		stale = ok
+		stale = fb.stale
 		if !ok || isDeclaredPeg(snapshot) {
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/price-not-found",
@@ -483,19 +483,19 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		// cache → read-time stablecoin-fiat proxy → fiat-vs-fiat
 		// cross-rate. Companion to the equivalent fix on
 		// /v1/oracle/lastprice — see that handler's comment.
-		var ok bool
 		viaFallback = true
-		var withheld bool
-		snapshot, sources, served, triangulated, ok, withheld = s.priceFallback(ctx, base, quote)
+		fb := s.priceFallback(ctx, base, quote)
+		snapshot, sources, served, triangulated = fb.snap, fb.sources, fb.served, fb.triangulated
+		ok := fb.ok
 		// MSP-06, as above.
-		if !ok && withheld {
-			writePriceWithheldProblem(w, r, base, quote, PriceWithheldUnattributed)
+		if !ok && (fb.withheld != "" || fb.err != nil) {
+			s.writeFallbackMiss(w, r, base, quote, fb)
 			return
 		}
 		// F-1339 (G2-02): fallback responses surface flags.stale=true
 		// — the chain itself is the staleness signal (F-1254). The
 		// SEP-40 surface used to force stale=false here.
-		stale = ok
+		stale = fb.stale
 		if !ok || isDeclaredPeg(snapshot) {
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/price-not-found",

@@ -969,6 +969,59 @@ a ticker is wedged on its last accepted rate while the upstream keeps
 disagreeing; that is what `stellarindex_external_fx_rate_rejections`
 alerts on.
 
+### `stellarindex_fx_fixings_last_refresh_unix`
+
+Gauge, no labels.
+
+UNIX seconds of the forex worker's last completed `fx_fixings` append
+cycle, stamped even when the cycle wrote nothing. Stale means the
+appender stopped; `stellarindex_fx_fixings_refresh_stale` fires at 3 h.
+
+### `stellarindex_fx_fixings_newest_bar_end_unix`
+
+Gauge, no labels.
+
+UNIX seconds of the newest `bar_end` this process committed to
+`fx_fixings`. Closed fiat crosses bind a bar at bucket end minus 3 h, so
+while the market trades a gap here becomes `fx_leg_unavailable`
+withholds; `stellarindex_fx_fixings_series_stale` fires at 4 h outside
+the weekend close.
+
+### `stellarindex_fx_fixings_quote_disagrees`
+
+Gauge, label `ticker`.
+
+1 when an accepted hourly bar sits outside [0.5, 1.5] of the worker's
+guarded daily rate for the same ticker and day. The two series should
+agree; `stellarindex_fx_fixings_quote_disagreement` fires after 2 h.
+
+### `stellarindex_fx_fixings_bars_refused_total`
+
+Counter, label `ticker`.
+
+Vendor hourly bars the `fx_fixings` gate refused because the close sat
+outside [0.5, 1.5] of the median of the preceding 96 h of raw bars.
+
+### `stellarindex_fx_fixings_fetch_errors_total`
+
+Counter, label `ticker`.
+
+Per-ticker hourly-bar fetches from the FX vendor that failed. Every
+cycle refetches the trailing 48 h, so an isolated increment loses nothing.
+
+### `stellarindex_fx_fixings_write_errors_total`
+
+Counter, no labels.
+
+`fx_fixings` batch inserts that failed. The next cycle re-offers the
+same bars from its trailing 48 h fetch.
+
+### `stellarindex_fx_fixings_write_tx_seconds`
+
+Histogram, no labels.
+
+Duration of one `fx_fixings` batch insert transaction.
+
 ### `stellarindex_amm_self_pair_swap_total`
 
 Counter, label `source`.

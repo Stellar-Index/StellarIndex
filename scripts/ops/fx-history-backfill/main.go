@@ -33,6 +33,12 @@
 //	--dry-run              fetch + print row counts but skip the DB write
 //	--ticker=USD,EUR,...   restrict to a subset (default: all
 //	                       Frankfurter-supported currencies)
+//	--series=fixings       backfill fx_fixings from Massive instead
+//	                       (MASSIVE_API_KEY): hourly bars from the first
+//	                       the vendor has, daily bars below it; tickers
+//	                       default to every fx_quotes ticker
+//	--generation=N         fixings only: write at correction generation N
+//	                       (default 0, the live appender's generation)
 //
 // The script logs one line per chunk to stderr; final summary writes
 // total rows + elapsed. Exit status is non-zero if any chunk failed or the
@@ -65,6 +71,10 @@ func run() int {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	if cfg.series == seriesFixings {
+		return runFixingsMain(ctx, logger, cfg)
+	}
 
 	client := frankfurter.NewClient()
 
@@ -117,7 +127,14 @@ type backfillConfig struct {
 	chunkYears   int
 	dryRun       bool
 	tickerFilter map[string]struct{}
+	series       string
+	generation   int64
 }
+
+const (
+	seriesQuotes  = "quotes"
+	seriesFixings = "fixings"
+)
 
 // parseFlags pulls all CLI + env config and validates it. Exits the
 // process on validation failure.
@@ -129,6 +146,8 @@ func parseFlags() (backfillConfig, *slog.Logger) {
 		chunkYears int
 		dryRun     bool
 		tickerCSV  string
+		series     string
+		generation int64
 	)
 	flag.IntVar(&years, "years", 25, "trailing window depth in years (default 25)")
 	flag.StringVar(&fromStr, "from", "", "window start date YYYY-MM-DD (overrides --years)")
@@ -136,6 +155,8 @@ func parseFlags() (backfillConfig, *slog.Logger) {
 	flag.IntVar(&chunkYears, "chunk-years", 5, "split the fetch into N-year chunks (default 5)")
 	flag.BoolVar(&dryRun, "dry-run", false, "skip DB writes; report row counts only")
 	flag.StringVar(&tickerCSV, "ticker", "", "comma-separated ticker subset (default: all)")
+	flag.StringVar(&series, "series", seriesQuotes, "quotes (Frankfurter → fx_quotes) or fixings (Massive → fx_fixings)")
+	flag.Int64Var(&generation, "generation", 0, "fixings only: correction generation to write at (default 0)")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -171,6 +192,14 @@ func parseFlags() (backfillConfig, *slog.Logger) {
 	if chunkYears < 1 {
 		chunkYears = 1
 	}
+	if series != seriesQuotes && series != seriesFixings {
+		logger.Error("invalid --series", "series", series)
+		os.Exit(1)
+	}
+	if generation < 0 || (generation > 0 && series != seriesFixings) {
+		logger.Error("--generation must be non-negative and applies to --series=fixings only")
+		os.Exit(1)
+	}
 
 	tickerFilter := map[string]struct{}{}
 	if tickerCSV != "" {
@@ -186,6 +215,8 @@ func parseFlags() (backfillConfig, *slog.Logger) {
 		chunkYears:   chunkYears,
 		dryRun:       dryRun,
 		tickerFilter: tickerFilter,
+		series:       series,
+		generation:   generation,
 	}, logger
 }
 

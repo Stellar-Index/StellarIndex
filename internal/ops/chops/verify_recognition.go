@@ -66,9 +66,9 @@ func verifyRecognition(args []string) error {
 		return err
 	}
 
-	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gatedOpts, seedOpt)
+	disp, err := buildCensusDispatcher(cfg, gatedOpts, seedOpt)
 	if err != nil {
-		return fmt.Errorf("build dispatcher: %w", err)
+		return err
 	}
 
 	samples, err := store.DistinctSorobanTopicSamples(ctx, uint32(*from), uint32(*to))
