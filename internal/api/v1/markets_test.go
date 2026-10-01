@@ -500,15 +500,12 @@ func TestMarkets_UnknownSource400(t *testing.T) {
 }
 
 // TestMarkets_KnownSource200 — guards the inverse: a registered
-// source name passes the validation gate. We can't depend on a
-// specific name surviving registry refactors, so iterate any-one
-// from the known set ("binance" is registered for the lifetime of
-// this codebase per docs/discovery/external-refs/cex-feeds.md).
+// on-chain source passes the validation gate.
 func TestMarkets_KnownSource200(t *testing.T) {
 	srv := v1.New(v1.Options{Markets: &stubMarketsReader{}})
 	ts := httpTestServer(t, srv)
 
-	resp := mustGet(t, ts.URL+"/v1/markets?source=binance")
+	resp := mustGet(t, ts.URL+"/v1/markets?source=sdex")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -563,7 +560,7 @@ func TestMarkets_SourceAndAssetTogether400(t *testing.T) {
 	srv := v1.New(v1.Options{Markets: &stubMarketsReader{}})
 	ts := httpTestServer(t, srv)
 
-	resp := mustGet(t, ts.URL+"/v1/markets?source=binance&asset=native")
+	resp := mustGet(t, ts.URL+"/v1/markets?source=sdex&asset=native")
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
@@ -756,7 +753,7 @@ func TestMarkets_SourceFilterOmitsPairWideEnrichments(t *testing.T) {
 	// The stub hands out its own slice, which the first request enriched in place.
 	reader.pairs = []v1.Market{{Base: "native", Quote: "fiat:USD", TradeCount24h: 2, Volume24hUSD: &vol}}
 	reader.sparkPairs, reader.firstPairs = nil, nil
-	resp = mustGet(t, ts.URL+"/v1/markets?source=binance&include=sparkline,inception")
+	resp = mustGet(t, ts.URL+"/v1/markets?source=sdex&include=sparkline,inception")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}

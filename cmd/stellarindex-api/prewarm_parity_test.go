@@ -190,11 +190,6 @@ var hotRequests = []struct {
 		path: "/v1/markets?limit=100&order_by=pair",
 		why:  "stable-keyset order a full-catalogue walker passes explicitly",
 	},
-	{
-		name: "markets-per-cex",
-		path: "/v1/markets?source=binance&limit=200",
-		why:  "explorer /exchanges/{name} PairsTable.tsx (R-002: 8s ceiling per cold visit)",
-	},
 }
 
 // TestPrewarmLight_WarmsEveryKeyTheHotHandlersLookUp is the drift guard.

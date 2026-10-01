@@ -127,9 +127,9 @@ curl -s "https://api.stellarindex.io/v1/price?asset=<base>&quote=<quote>" \
 
 # 3) What do the cross-oracle references say right now?
 curl -s "https://api.stellarindex.io/v1/divergence?limit=50" \
-  | jq '.observations[] | select(.asset_id=="<base>")'
+  | jq '.data.pairs[] | select(.asset_id=="<base>")'
 # References: reflector-dex/cex/fx, redstone, band (on-chain) +
-# coingecko, chainlink. status=firing rows disagree with us.
+# coingecko, chainlink. status=firing references disagree with us.
 
 # 4) Raw per-source observations — which venue moved?
 curl -s "https://api.stellarindex.io/v1/observations?asset=<base>&quote=<quote>" | jq

@@ -6,8 +6,6 @@ import { ExternalLink } from 'lucide-react';
 
 import { SourceStatsPanel } from '@/app/dexes/[source]/SourceStatsPanel';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
-import { PairsTable } from './PairsTable';
-import { VenueChart } from './VenueChart';
 
 import { Container, PageHeader } from '@/components/ui';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -28,8 +26,8 @@ export async function generateMetadata({
   const info = CEX_INFO[name];
   if (!info) return { title: 'Exchange not found' };
   const canonical = `${CURRENT_NETWORK.explorerUrl}/exchanges/${encodeURIComponent(name)}`;
-  const title = `${info.name} — every pair, live`;
-  const description = `All ${info.name} pairs observed in the last 14 days, with per-pair 24h trade count + last trade. Source: /v1/markets?source=${name}.`;
+  const title = `${info.name} — venue activity`;
+  const description = `${info.name} as a Stellar Index price source: the pairs we subscribe to and our 24h ingest activity. Its prices are served blended with every other source, never as its feed alone.`;
   return {
     title,
     description,
@@ -92,10 +90,6 @@ export default async function ExchangeDetailPage({
       </header>
 
       <SourceStatsPanel source={name} unitsLabel="pairs" />
-
-      <VenueChart venue={name} />
-
-      <PairsTable source={name} exchangeName={info.name} />
 
       <div className="flex flex-wrap gap-3 text-xs">
         <Link

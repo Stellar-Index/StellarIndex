@@ -319,7 +319,7 @@ func TestObservations_EmptyDoesNotHintWhenSourceFiltered(t *testing.T) {
 	srv := v1.New(v1.Options{History: hist, Triangulated: looker})
 	tsv := startHTTPTest(t, srv.Handler())
 
-	resp := mustGet(t, tsv.URL+"/v1/observations?asset=native&quote=fiat:USD&source=binance")
+	resp := mustGet(t, tsv.URL+"/v1/observations?asset=native&quote=fiat:USD&source=sdex")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}

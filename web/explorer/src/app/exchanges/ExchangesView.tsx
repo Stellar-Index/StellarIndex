@@ -9,7 +9,6 @@ import { apiGet, asExample } from '@/api/client';
 import {
   formatCompact,
   formatCompactUnits,
-  formatPairPrice,
   ratioPct,
   sumDecimalStrings,
 } from '@/lib/format';
@@ -29,9 +28,9 @@ import {
   THead,
 } from '@/components/ui';
 
-// /v1/sources + /v1/markets rows from the generated OpenAPI contract,
-// via the shared aliases in src/api/hooks.ts.
-import type { Market, Source as SourceRow } from '@/api/hooks';
+// /v1/sources rows from the generated OpenAPI contract, via the shared
+// alias in src/api/hooks.ts.
+import type { Source as SourceRow } from '@/api/hooks';
 
 const LABEL: Record<string, string> = {
   binance: 'Binance',
@@ -251,192 +250,15 @@ export function ExchangesView() {
         </div>
       </Panel>
 
-      <AllCEXMarkets
-        venues={registryAvailable ? rows.map((r) => r.name) : undefined}
-        registryLoading={q.isLoading}
-      />
-
       <p className="text-ink-muted text-xs">
         Sources are pulled from the static venue registry; per-venue 24h
         activity is aggregated from{' '}
         <code className="font-mono text-[11px]">trades</code> in TimescaleDB. We
         deliberately subscribe to a curated set of pairs per venue (the
         top-liquidity XLM markets and the crypto anchors that triangulate into
-        them); see the per-venue page for the full list. Reach the per-pair
-        candlestick view via any pair link below.
+        them). Venue prices appear only blended with the other sources on the
+        market pages, never as one venue&apos;s feed alone.
       </p>
     </Container>
-  );
-}
-
-// /v1/markets row (MarketRow via the hooks Market alias) plus the
-// client-side `source` tag AllCEXMarkets stamps on each row when it
-// merges the per-venue fetches.
-type CEXMarket = Market & {
-  // Client-side: which venue the row was fetched for (the /v1/markets
-  // wire row itself carries no source column).
-  source?: string;
-};
-
-// AllCEXMarkets surfaces every CEX pair we observed in the last
-// 14 days, sorted by 24h USD volume. The venue-scoped fetches run
-// concurrently and merge client-side — no new API endpoint required,
-// and matches the volume-sort across venues. `venues` is the registry
-// table's CEX list, so a newly registered venue appears in both tables.
-function AllCEXMarkets({
-  venues,
-  registryLoading,
-}: {
-  // undefined = registry fetch failed; the pair list is then unknowable.
-  venues: string[] | undefined;
-  registryLoading: boolean;
-}) {
-  const queries = useQuery<CEXMarket[]>({
-    queryKey: ['/v1/markets', 'all-cex', venues],
-    enabled: venues != null,
-    queryFn: async () => {
-      const all = await Promise.all(
-        (venues ?? []).map(async (v) => {
-          const env = await apiGet<{ data: CEXMarket[] }>('/v1/markets', {
-            source: v,
-            limit: 200,
-            order_by: 'volume_24h_usd_desc',
-          });
-          return (env.data ?? []).map((m) => ({ ...m, source: v }));
-        }),
-      );
-      const merged = all.flat();
-      return merged.sort((a, b) => {
-        const av = a.volume_24h_usd ? Number(a.volume_24h_usd) : 0;
-        const bv = b.volume_24h_usd ? Number(b.volume_24h_usd) : 0;
-        return bv - av;
-      });
-    },
-  });
-
-  // The queryFn is a Promise.all over the venue-scoped /v1/markets
-  // calls — ONE 503 rejects the whole query. `queries.data` is then
-  // undefined, and `?? []` would headline "0 CEX pairs" plus "No CEX
-  // pairs reporting.". Keep the absence.
-  const markets = queries.data ?? [];
-  const marketsAvailable = queries.data != null;
-  const loading = registryLoading || queries.isLoading;
-
-  return (
-    <Panel
-      headingLevel={2}
-      title={
-        marketsAvailable
-          ? `${markets.length} CEX pairs · sorted by 24h volume`
-          : 'CEX pairs · sorted by 24h volume'
-      }
-      hint="One row per (venue, base, quote) tuple — every pair we observed across all registered CEXes in the last 14 days"
-      source={asExample('/v1/markets', { source: 'binance', limit: 200 })}
-      bodyClassName="-mx-4"
-    >
-      <div className="overflow-x-auto">
-        <Table>
-          <THead>
-            <tr>
-              <Th>#</Th>
-              <Th>Venue</Th>
-              <Th>Pair</Th>
-              <Th align="right">Last price</Th>
-              <Th align="right">24h volume</Th>
-              <Th align="right">24h trades</Th>
-            </tr>
-          </THead>
-          <TBody>
-            {loading && (
-              <tr>
-                <td
-                  colSpan={6}
-                  className="text-ink-muted px-4 py-6 text-center text-sm"
-                >
-                  Loading pairs…
-                </td>
-              </tr>
-            )}
-            {!loading && !marketsAvailable && (
-              <tr>
-                <td
-                  colSpan={6}
-                  className="text-ink-muted px-4 py-6 text-center text-sm"
-                >
-                  Pair list unavailable right now — the venue registry or at
-                  least one venue query didn&apos;t return. Retry shortly.
-                </td>
-              </tr>
-            )}
-            {!loading && marketsAvailable && markets.length === 0 && (
-              <tr>
-                <td
-                  colSpan={6}
-                  className="text-ink-muted px-4 py-6 text-center text-sm"
-                >
-                  No CEX pairs reporting.
-                </td>
-              </tr>
-            )}
-            {markets.map((m, i) => {
-              const slug = `${m.base}~${m.quote}`;
-              const vol = m.volume_24h_usd ? Number(m.volume_24h_usd) : null;
-              const tone = sourceToneClass(m.source ?? '');
-              return (
-                <TR key={`${m.source}|${m.base}|${m.quote}`}>
-                  <Td>
-                    <span className="text-ink-faint font-mono text-[11px]">
-                      {i + 1}
-                    </span>
-                  </Td>
-                  <Td>
-                    <Link
-                      href={hrefFor.exchange(m.source ?? '')}
-                      className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase hover:underline ${tone}`}
-                    >
-                      {LABEL[m.source ?? ''] ?? m.source}
-                    </Link>
-                  </Td>
-                  <Td>
-                    <Link
-                      href={`/markets/${encodeURIComponent(slug)}`}
-                      className="hover:text-brand-600 font-mono text-xs"
-                    >
-                      {m.base.replace('crypto:', '')} /{' '}
-                      {m.quote.replace('crypto:', '').replace('fiat:', '')}
-                    </Link>
-                  </Td>
-                  <Td align="right">
-                    {m.last_price && Number.isFinite(Number(m.last_price)) ? (
-                      <span className="text-ink-body font-mono tabular-nums">
-                        {formatPairPrice(Number(m.last_price))}
-                      </span>
-                    ) : (
-                      <span className="text-ink-faint">—</span>
-                    )}
-                  </Td>
-                  <Td align="right">
-                    {vol != null && Number.isFinite(vol) && vol > 0 ? (
-                      <span className="font-mono tabular-nums">
-                        ${formatCompact(vol)}
-                      </span>
-                    ) : (
-                      <span className="text-ink-faint">—</span>
-                    )}
-                  </Td>
-                  <Td align="right">
-                    <span className="text-ink-body font-mono tabular-nums">
-                      {m.trade_count_24h > 0
-                        ? formatCompact(m.trade_count_24h)
-                        : '0'}
-                    </span>
-                  </Td>
-                </TR>
-              );
-            })}
-          </TBody>
-        </Table>
-      </div>
-    </Panel>
   );
 }

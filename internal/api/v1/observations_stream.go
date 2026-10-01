@@ -10,7 +10,6 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // Observations-stream tunables. interval_seconds is the per-connection
@@ -94,21 +93,8 @@ func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request
 	}
 
 	source := r.URL.Query().Get("source")
-	if source != "" {
-		// Same fail-fast guard the request handler applies. Without it
-		// this endpoint accepted ANY source string — returning a
-		// forever-empty 200 for a typo instead of the sibling's 400,
-		// and minting an unbounded cache key per distinct value, all
-		// with no validation whatsoever. The OpenAPI text promises
-		// "same compute logic" as /v1/observations (cold audit
-		// 2026-08-03).
-		if _, ok := external.Registry[source]; !ok {
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/unknown-source",
-				"Unknown source", http.StatusBadRequest,
-				"source must be a registered source name (see /v1/sources for the canonical list); got "+source)
-			return
-		}
+	if !sourceFilterOK(w, r, "source", source) {
+		return
 	}
 
 	aggregate := r.URL.Query().Get("aggregate")

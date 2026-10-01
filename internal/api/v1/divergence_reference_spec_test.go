@@ -1,8 +1,6 @@
 package v1
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"sort"
 	"strings"
 	"testing"
@@ -10,10 +8,23 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/divergence"
 )
 
+// divergenceReferences is every reference name the divergence worker
+// records (cmd/stellarindex-api wiring + divergence.SyntheticCrossName).
+var divergenceReferences = map[string]bool{
+	"chainlink":                   true,
+	"coingecko":                   true,
+	"reflector-cex":               true,
+	"reflector-fx":                true,
+	"reflector-dex":               true,
+	"redstone":                    true,
+	"band":                        true,
+	divergence.SyntheticCrossName: true,
+}
+
 // TestDivergenceReferenceSpecEnumsMatchAllowList pins every OpenAPI
 // `reference` enum under /divergence* to divergenceReferences: a
-// source the handler serves but the spec omits makes a generated
-// client reject a valid response or refuse to send a valid query.
+// source the worker records but the spec omits makes a generated
+// client reject a valid response.
 func TestDivergenceReferenceSpecEnumsMatchAllowList(t *testing.T) {
 	want := make([]string, 0, len(divergenceReferences))
 	for ref := range divergenceReferences {
@@ -31,33 +42,21 @@ func TestDivergenceReferenceSpecEnumsMatchAllowList(t *testing.T) {
 			enums++
 			sort.Strings(got)
 			if strings.Join(got, ",") != strings.Join(want, ",") {
-				t.Errorf("%s: reference enum %v, want %v (anomalies.go divergenceReferences)", path, got, want)
+				t.Errorf("%s: reference enum %v, want %v (divergenceReferences)", path, got, want)
 			}
 		})
 	}
-	// board observations[].reference, series ?reference=, series response reference
-	if enums != 3 {
-		t.Fatalf("found %d reference enums under /divergence*, want 3", enums)
+	// board pairs[].references[].reference, series points[].references[].reference
+	if enums != 2 {
+		t.Fatalf("found %d reference enums under /divergence*, want 2", enums)
 	}
 }
 
 // TestDivergenceReferenceAllowListCoversSyntheticCross keeps the
-// served synthetic reference admissible to /v1/divergence/series and
-// named in its 400 message.
+// served synthetic reference in the spec's enum.
 func TestDivergenceReferenceAllowListCoversSyntheticCross(t *testing.T) {
 	if !divergenceReferences[divergence.SyntheticCrossName] {
 		t.Errorf("divergenceReferences lacks %q", divergence.SyntheticCrossName)
-	}
-	rec := httptest.NewRecorder()
-	newSeriesServer(nil, 0).handleDivergenceSeries(rec, httptest.NewRequest(http.MethodGet,
-		"/v1/divergence/series?pair=crypto:BTC~fiat:USD&reference=bogus", nil))
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", rec.Code)
-	}
-	for ref := range divergenceReferences {
-		if !strings.Contains(rec.Body.String(), ref) {
-			t.Errorf("invalid-reference 400 does not name %q: %s", ref, rec.Body.String())
-		}
 	}
 }
 

@@ -5513,20 +5513,6 @@ func prewarmLight(
 		}
 	}
 
-	// Per-CEX/source markets prewarm — the explorer's /exchanges/{name}
-	// PairsTable.tsx fires `/v1/markets?source=<src>&limit=200`
-	// (volume-desc default). Each maps to a SourceMarkets cache slot
-	// distinct from the unfiltered DistinctPairsExt warmed above, so
-	// every cold visit to /exchanges/binance, /exchanges/coinbase, etc.
-	// previously paid the full 8s ceiling (R-002). One pass per
-	// registered source on each cycle keeps the typical pageload at
-	// sub-100ms.
-	for _, src := range v1.CexSourceNames() {
-		if _, _, err := markets.SourceMarkets(mkCtx, src, "", 200, timescale.MarketsOrderVolume24hDesc); err != nil {
-			logger.Debug("prewarm per-source markets failed", "source", src, "err", err)
-		}
-	}
-
 	// /v1/issuers had NO prewarm at all, while CachedIssuersReader's TTL
 	// is 5 minutes — so the slot expired every 5 min and the next caller
 	// paid the full cold fill. Measured on r1 2026-09-01: 1.212s cold vs
