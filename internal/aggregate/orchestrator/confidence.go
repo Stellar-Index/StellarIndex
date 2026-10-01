@@ -192,7 +192,9 @@ func (o *Orchestrator) computeConfidence(
 		TriangulationChecked:       triChecked,
 		TriangulationDivergencePct: triPct,
 		BaselineAgeDays:            baselineAgeDays(multi),
+		BootstrapReleased:          o.bootstrapReleased[pair.String()],
 	}, confidence.DefaultWeights())
+	o.bootstrapReleased[pair.String()] = !score.Factors.BootstrapCapped
 	exportBootstrapState(pair, score.Factors)
 
 	// ZScore carries the OBSERVATION-based score to the Phase 2

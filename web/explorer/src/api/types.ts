@@ -10909,9 +10909,9 @@ export interface components {
                 triangulation_agreement?: number;
                 /** @description True only when a fresh composite existed to compare against. False means no chain is configured or the composite was stale - NOT "the composite agrees". The factor carries zero weight in the confidence score when unchecked, so unchecked pairs score exactly as they did before this factor existed. */
                 triangulation_checked?: boolean;
-                /** @description Density of the pair's 30-day volatility baseline in days-equivalent of 1-minute buckets (buckets / 1440), at most 30; negative when no usable 30-day baseline exists. This is sample density, NOT calendar age - a pair that trades in 200 minutes a day reads about 4.2 however long it has existed. The bootstrap cap releases at 28.5 (ADR-0019 amendment 2026-09-28). */
+                /** @description Density of the pair's 30-day volatility baseline in days-equivalent of 1-minute buckets (buckets / 1440), at most 30; negative when no usable 30-day baseline exists. This is sample density, NOT calendar age - a pair that trades in 200 minutes a day reads about 4.2 however long it has existed. The bootstrap cap releases at 28.5 and, once released, re-engages below 27 (ADR-0019 amendment 2026-09-28). */
                 baseline_age_days?: number;
-                /** @description True when the ADR-0019 bootstrap ceiling (0.5) bounded confidence because baseline_age_days is below 28.5 (or no baseline exists), so a confidence of 0.5 may be the cap rather than the evidence. False means the multi-factor score was served without the ceiling. */
+                /** @description True when the ADR-0019 bootstrap ceiling (0.5) bounded confidence because baseline_age_days is below 28.5 (below 27 for a pair already released, or no baseline exists), so a confidence of 0.5 may be the cap rather than the evidence. False means the multi-factor score was served without the ceiling. */
                 bootstrap_capped?: boolean;
             } | null;
         };

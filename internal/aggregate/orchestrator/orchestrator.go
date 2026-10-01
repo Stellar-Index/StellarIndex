@@ -1011,6 +1011,14 @@ type Orchestrator struct {
 	// first. See prevVWAPs.
 	freezeStates map[string]freeze.State
 
+	// bootstrapReleased is each pair's last bootstrap-cap gate state,
+	// keyed by pair string: true once its score cleared the cap. It is
+	// the prior state the gate's hysteresis band reads
+	// ([confidence.BootstrapReengageDensityDays]). In-memory only, so a
+	// restart falls back to the stricter upper gate. Same
+	// single-Tick-at-a-time invariant as prevVWAPs, so no lock is needed.
+	bootstrapReleased map[string]bool
+
 	// windowedFreeze is [Config.FreezeWriter] when it can scope a
 	// marker's ladder to the window that owns it
 	// ([WindowedFreezeMarker]), nil otherwise. Resolved once in [New]
@@ -1067,18 +1075,19 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 		logger = slog.Default()
 	}
 	o := &Orchestrator{
-		store:           store,
-		cache:           cache,
-		cfg:             cfg,
-		logger:          logger,
-		prevVWAPs:       make(map[string]*big.Rat, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
-		frozenPrevVWAPs: make(map[string]*big.Rat),
-		lastWriteAt:     make(map[string]time.Time, len(cfg.Pairs)),
-		lastComposites:  make(map[string]compositeSample, len(cfg.Triangulations)*max(len(cfg.Windows), 1)),
-		freezeStates:    make(map[string]freeze.State, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
-		decidedBuckets:  make(map[string]decidedBucket, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
-		refreshOrder:    refreshOrder(cfg),
-		clock:           time.Now,
+		store:             store,
+		cache:             cache,
+		cfg:               cfg,
+		logger:            logger,
+		prevVWAPs:         make(map[string]*big.Rat, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
+		frozenPrevVWAPs:   make(map[string]*big.Rat),
+		lastWriteAt:       make(map[string]time.Time, len(cfg.Pairs)),
+		lastComposites:    make(map[string]compositeSample, len(cfg.Triangulations)*max(len(cfg.Windows), 1)),
+		freezeStates:      make(map[string]freeze.State, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
+		bootstrapReleased: make(map[string]bool, len(cfg.Pairs)),
+		decidedBuckets:    make(map[string]decidedBucket, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
+		refreshOrder:      refreshOrder(cfg),
+		clock:             time.Now,
 	}
 	// A freeze writer that records which window owns each ladder lets
 	// every window rehydrate ITS OWN freeze on a cold key instead of a

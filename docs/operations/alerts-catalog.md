@@ -29,7 +29,7 @@ enforces it); any per-alert detail page follows it.
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 66 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 243 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 244 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -600,6 +600,7 @@ auto-unfreeze at all. Rules in
 | `stellarindex_aggregator_class_drop_spike` | `rate(stellarindex_aggregator_dropped_trades_total{reason="class"}[10m])` | > 10× baseline (offset 1h) for > 15 min | ticket | [aggregator-class-drop-spike](runbooks/aggregator-class-drop-spike.md) |
 | `stellarindex_aggregator_fx_snap_fallback_dominant` | `rate(stellarindex_aggregator_fx_snap_fallback_total[15m]) / rate(stellarindex_aggregator_triangulations_total{outcome="ok"}[15m])` | > 0.5 for > 30 min | ticket | [aggregator-fx-snap-fallback-dominant](runbooks/aggregator-fx-snap-fallback-dominant.md) |
 | `stellarindex_aggregator_triangulation_chains_dry` | `rate(stellarindex_aggregator_triangulations_total{outcome="missing_leg"}[15m])` > 0 **and** `rate(...{outcome="ok"}[15m])` == 0 | for > 30 min | ticket | [aggregator-triangulation-chains-dry](runbooks/aggregator-triangulation-chains-dry.md) |
+| `stellarindex_aggregator_bootstrap_cap_reengaged` | `count((stellarindex_aggregator_bootstrap_capped == 1) and (last_over_time(stellarindex_aggregator_bootstrap_capped[2d] offset 1h) == 0))` | ≥ 3 pairs re-entered the ADR-0019 bootstrap cap within 1 h, for 10 min — a shared gap in the 30-day baseline window, including a re-cap on restart after an outage of up to 2 d; one pair re-capping alone stays silent | ticket | [aggregator-bootstrap-cap-reengaged](runbooks/aggregator-bootstrap-cap-reengaged.md) |
 | `stellarindex_aggregator_cache_write_errors` | `rate(stellarindex_aggregator_vwap_cache_write_errors_total[5m])` | > 0 for ≥ 2 min | page | [redis-write-blocked-disk-full](runbooks/redis-write-blocked-disk-full.md) |
 | `stellarindex_customer_webhook_delivery_failing` | `rate(stellarindex_customer_webhook_delivery_attempts_total{outcome=~"server_error\|network_error"}[5m])` | > 0.05/s for ≥ 15 min | ticket | [customer-webhook-delivery-failing](runbooks/customer-webhook-delivery-failing.md) |
 | `stellarindex_customer_webhook_delivery_exhausted` | `rate(stellarindex_customer_webhook_delivery_attempts_total{outcome="exhausted"}[1h])` | > 0, `for: 0m` — ONE terminally failed delivery tickets at once and stays up for the 1 h window (was `for: 1h`, which a single exhaustion could never satisfy) | ticket | [customer-webhook-delivery-failing](runbooks/customer-webhook-delivery-failing.md) |
