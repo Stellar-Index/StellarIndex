@@ -1495,6 +1495,10 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 	// isolate-on-non-infra-error fallback in
 	// internal/pipeline/trade_sink.go::flushTradeBatch stays as
 	// belt-and-braces for whatever this doesn't catch.
+	//
+	// Clone first: filterStorableTrades returns the caller's slice when every
+	// row is valid, and callers replay that slice in their own order on error.
+	storable = slices.Clone(storable)
 	sortTradesByConflictKey(storable)
 
 	// Collapse intra-batch PK duplicates BEFORE building the statement.
