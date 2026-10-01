@@ -262,7 +262,7 @@ finished from the repository.**
 
 | Identity | Intended authority | Codified? | State |
 | --- | --- | --- | --- |
-| MinIO root (`minio_root_user`, still named `ratesengine-admin` from the pre-rename era) | full admin. Bootstrap + `mc admin` only; **no service should ever run as this** | env file + `local` alias | ✅ the 2026-07-25 exposure is closed: root is now `stellarindex-admin` (since 2026-07-27); verified 2026-09-28 that the old access key is rejected and the stored old secret differs from the live one. Still the identity the hourly archive-fill job writes as — moving services to least-privilege users is open |
+| MinIO root (`minio_root_user`, still named `ratesengine-admin` from the pre-rename era) | full admin. Bootstrap + `mc admin` only; **no service should ever run as this** | env file + `local` alias | ✅ the 2026-07-25 exposure is closed: root is now `stellarindex-admin` (since 2026-07-27); verified 2026-09-28 that the old access key is rejected and the stored old secret differs from the live one. The hourly archive-fill job no longer uses it (it writes as `galexie-archive-writer`); only its operator-run `PARTIALS` delete does |
 | `galexie-writer` | write on `galexie-live` | ✅ policy + user + attach | healthy; hourly auth-probe backstop |
 | `galexie-archive-writer` | write (no delete) on `galexie-archive` | ✅ **as of 2026-07-25** — previously the vault var and the env file existed but no MinIO user, policy, or attach was ever created | the `archivewriter` mc alias fails `SignatureDoesNotMatch`; repaired by the next `--tags minio` apply, which re-syncs the secret from vault |
 | `stellarindex-reader` | read-only on both buckets | ✅ policy + user + attach | codified policy grants **no** `s3:DeleteObject`, but the 2026-07-25 live test observed this identity successfully DELETING from `galexie-archive` — i.e. the live policy has drifted from the codified one. Verify with `mc admin policy info local stellarindex-reader` and re-apply if it disagrees |
@@ -290,8 +290,9 @@ handler) — a short write outage for galexie. Then, in the same window:
 - re-point the `local` mc alias: `mc alias set local
   http://127.0.0.1:9000 <new root> <new secret>` (the ansible task does
   this, but any operator's own `~/.mc/config.json` needs it too);
-- confirm the hourly `galexie-archive-fill.timer` run after the
-  rotation succeeded — it authenticates via the `local` alias.
+- the hourly `galexie-archive-fill.timer` run is unaffected — it
+  authenticates via `archivewriter`; only an operator run with
+  `PARTIALS=…` uses `local`, for its delete.
 
 Take the opportunity to rename the user off `ratesengine-admin` while
 you are creating a new one; the old brand name in an admin credential
@@ -312,16 +313,14 @@ mc alias set archivewriter http://127.0.0.1:9000 galexie-archive-writer <vaulted
 mc ls archivewriter/galexie-archive/ | head        # must list, not 403
 ```
 
-**3. The hourly fill job still writes as root — least-privilege gap,
-deliberately left open in this change.**
-`galexie-archive-fill.sh` mirrors AWS→MinIO and sweeps empty partitions
-using the `local` (root) alias, including `mc rm --recursive --force`.
-Switching it to `galexie-archive-writer` needs the identity to exist on
-the host first (step 2) and needs the delete sweep separated from the
-mirror, since the writer policy grants no delete — a live cutover with a
-verification step, not a config edit that can be proven in CI. Do it as
-a follow-up after step 2 lands, and confirm one full timer cycle before
-walking away.
+**3. The hourly fill job writes as `galexie-archive-writer`.**
+`galexie-archive-fill.sh` lists and mirrors through `ARCHIVE_DEST`
+(`archivewriter/galexie-archive`, set in `/etc/default/galexie-archive-fill`;
+`--tags minio` persists the alias for root) and exits 1 if it cannot
+list it. The writer grants no delete, so the only delete — the
+operator-run `PARTIALS=…` sweep — goes through `ARCHIVE_DELETE_ALIAS`
+(`local`, same file), and the run stops before deleting if that alias is
+not configured. After deploying, confirm one full timer cycle.
 
 ## Related
 

@@ -1011,13 +1011,11 @@ func TestTradeUSDVolume_Tier2bDoesNotDisplaceQuoteSidePeg(t *testing.T) {
 	}
 }
 
-// ─── tier 4b: widened base anchor (2026-07-22) ───────────────────────
+// ─── tier 4b: widened base anchor ─────────────────────────────────────
 
-// TestBaseAnchorEligible — the 1e7 divisor in the base anchor is only
-// valid for assets known to sit at the Stellar classic scale. A pure
-// SEP-41 token's decimals() is per-contract and is NOT plumbed through
-// the trade-insert path, so admitting one here would silently
-// mis-scale its value — a money bug, strictly worse than a NULL.
+// TestBaseAnchorEligible pins which asset forms the base anchor admits: every
+// on-chain form, including pure SEP-41, whose scale cancels in the raw-VWAP
+// product (see baseAnchorEligible); off-chain shapes are declined.
 func TestBaseAnchorEligible(t *testing.T) {
 	t.Parallel()
 	classic, err := canonical.NewClassicAsset("6T", "GBGRBCUB6L7LH4JQ6EPDP7REH2DDACMCUQI76M3P6DM52QWU2Z5LIEVW")

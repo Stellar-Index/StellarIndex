@@ -1,7 +1,7 @@
 ---
 title: Redstone WASM-history audit
-last_verified: 2026-05-03
-status: ratified — v2 walk confirms two-hash inventory
+last_verified: 2026-09-30
+status: ratified — archived hashes are code-identical and emit no events; the event-emitting successor hash is not yet archived
 source: redstone
 backfill_safe: true
 ---
@@ -11,12 +11,46 @@ backfill_safe: true
 Audit log for the `redstone` source's `BackfillSafe` flag. See
 `README.md` for the full procedure.
 
+> **2026-09-30 update — byte-level comparison of the archived hashes.**
+> Offline disassembly of both archived WASMs (`wasm-objdump -h/-x/-d`,
+> `stellar contract info interface|meta --wasm`, a per-section byte
+> compare) shows:
+>
+> 1. **`b400f7a8…` and `5e93d22c…` are the same program.** Every
+>    section except `contractspecv0` is byte-identical — Code (34,400
+>    bytes), Data (4,449 bytes), imports, exports, `contractmetav0`
+>    (rustc 1.85.0, soroban-sdk 22.0.8). The only spec difference is
+>    `upgrade`'s argument type: the `WasmHash` alias (an undeclared UDT
+>    name) in `b400f7a8…`, `BytesN<32>` in `5e93d22c…` — the whole 8-byte
+>    size delta. `write_prices(updater: Address, feed_ids: Vec<String>,
+>    payload: Bytes)` and `PriceData {package_timestamp: u64, price: U256,
+>    write_timestamp: u64}` are identical in both.
+> 2. **Neither hash can emit the REDSTONE event.** Both lack the
+>    `contract_event` host import (`x.1`) — which 47 of the 52 archived
+>    WASMs import, and which Band's `6cdb9a3c…` (no events, per
+>    [band.md](band.md)) also lacks — and neither contains the
+>    `updated_feeds` body key anywhere in its bytes. The `REDSTONE`
+>    topic is an 8-char small symbol, so its absence from the ASCII
+>    strings is expected and proves nothing either way.
+>
+> Consequences: the decoder is event-driven (`classify` requires
+> topic[0] `REDSTONE`), so no redstone row can come from either hash
+> and the first-deploy window is empty by construction. The walk JSONs'
+> timeline is wrong past that point: `internal/sources/redstone/subset_test.go`
+> is a real lake REDSTONE event from the same `CA526Y2N…` address at
+> L59,258,375 — inside the range the walk JSONs give `5e93d22c…`
+> (ending L59,336,871 / L59,301,651) — so an event-emitting WASM was
+> already active there and the walk missed at least one upgrade. The
+> 2026-05-03 "no further upgrades through L62,249,727" below is
+> contradicted by the same evidence. That successor hash is not in the
+> byte archive and still needs a per-hash entry (see [Caveats](#caveats)).
+>
 > **2026-05-03 update — v2 walk confirms two-hash inventory.**
 > The 2026-04-30 wide-net r1 walk re-observed the 35-min
 > first-deploy hotfix (`b400f7a8…` at L58,758,722-L58,759,141)
 > followed by the production hash (`5e93d22c…` from L58,759,142).
 > No further upgrades observed through the walk's upper bound
-> (L62,249,727). Bytes preserved + SHA-256-verified for both
+> (L62,249,727) — contradicted since; see the 2026-09-30 update. Bytes preserved + SHA-256-verified for both
 > hashes at `evidence/r1-walk-2026-05-01/wasm-bytes/`. With both
 > hashes' bytes now archived, the prior caveat about not having
 > bytes for `b400f7a8…` is closed: a future deeper audit can
@@ -35,9 +69,10 @@ Audit log for the `redstone` source's `BackfillSafe` flag. See
 `internal/sources/external/registry.go` in the same PR as this
 audit. Two WASM hashes observed across the post-Soroban scan
 window — a 420-ledger (~35 min) hotfix immediately after first
-deploy, then the current production hash that has been stable
-for ~543K ledgers (~36 days) through scan-end. Per-hash review +
-hotfix-window analysis below.
+deploy, then `5e93d22c…`, which the walk records through scan-end.
+A real REDSTONE event at L59,258,375 shows the walk missed an
+upgrade to a later event-emitting hash inside that range (see
+Caveats). Per-hash review + hotfix-window analysis below.
 
 ## Contracts under audit
 
@@ -187,12 +222,12 @@ Two distinct hashes:
   represents the **first-deploy** WASM. The 35-min lifetime is the
   unmistakable signature of a deploy-then-hotfix pattern (Redstone
   dev pushed v1, found a bug within 35 min, pushed v2).
-- **`5e93d22c…`** active from L58,759,142 → L59,301,651
-  (walk-end; ~543K ledgers, ~36 days). Live ingest from walk-end
-  through r1's current tip (L62,342,614 as of 2026-04-29) confirms
-  no further upgrade events: the decoder is still firing correctly,
-  no `ContractCallDecoder` registration errors. This is the
-  **production** hash and the one our live decoder targets.
+- **`5e93d22c…`** recorded from L58,759,142 → L59,336,871
+  (walk-end in `per-source-final/redstone.json`). That end is wrong:
+  this hash emits no events, yet a real REDSTONE event from this
+  address exists at L59,258,375, so the walk missed an upgrade to an
+  event-emitting, unarchived WASM somewhere in L58,759,142 →
+  L59,258,375. `5e93d22c…`'s true end is unknown (see Caveats).
 
 The contract did not exist on mainnet before L58,758,722
 (2025-08-29 ± a day): no `CreateContract` or
@@ -203,93 +238,81 @@ worker chunk before that ledger.
 
 | hash (first 16) | role | active range | reviewer | finding |
 | --- | --- | --- | --- | --- |
-| `b400f7a8ac121022` | Adapter (first-deploy hotfix) | L58,758,722 → L58,759,141 (420 ledgers, ~35 min) | maintainer@2026-04-29 | conditionally safe — see notes |
-| `5e93d22c9e19b254` | Adapter (production) | L58,759,142 → L59,301,651 (walk-end; ~36 days, still current per live ingest) | maintainer@2026-04-29 | matches current decoder |
+| `b400f7a8ac121022` | Adapter (first-deploy hotfix) | L58,758,722 → L58,759,141 (420 ledgers, ~35 min) | maintainer@2026-04-29; bytes 2026-09-30 | safe — code-identical to `5e93d22c…`; emits no events |
+| `5e93d22c9e19b254` | Adapter | from L58,759,142; true end unknown, before L59,258,375 (the walk JSONs' L59,336,871 / L59,301,651 end is contradicted by a real REDSTONE event at L59,258,375) | maintainer@2026-04-29; bytes 2026-09-30 | safe — emits no events; NOT the decoder's event source |
 
-### `5e93d22c9e19b254` — production, current decoder target
+### `5e93d22c9e19b254` — second deploy, no events
 
-- Live decoder fixtures in `internal/sources/redstone/decode_test.go`
-  + `real_fixture_test.go` are captured from this WASM's emitted
-  events. Topic `("REDSTONE")`, body `{updater, updated_feeds}`,
-  and inner `PriceData {price, package_timestamp, write_timestamp}`
-  match the by-name extraction.
+- The bytes contradict the original reading of this hash as the
+  decoder target: it has no `contract_event` import and no
+  `updated_feeds` key (see the 2026-09-30 update above). The decoder
+  fixtures in `internal/sources/redstone/*_test.go` (L59,258,375 and
+  later) were emitted by a successor WASM on the same address.
 - `write_prices(updater, feed_ids, payload)` op-args signature
-  matches the positional reader in `decode.go`.
+  matches the positional reader in `decode.go` (from the embedded
+  `contractspecv0`).
 - U256 price type matches `scval.AsU256ToBigInt`.
 - **Live ingest health**: 0 `ErrFeedIDCountMismatch` /
   `ErrWrongFunctionCall` / `ErrUnknownFeedID` rate spikes since
   the ContractCallDecoder hook landed (commit `ee0360da4`, "wire
-  band + comet + redstone decoders").
-- No `update_current_contract_wasm` events for ~36 days through
-  scan-end rule out further drift.
+  band + comet + redstone decoders") — a property of the successor
+  WASM's events, not of this hash.
+- The adapter was upgraded at least once after this hash: an
+  event-emitting WASM was live no later than L59,258,375 (the real
+  event in `subset_test.go`), inside the range the walk JSONs
+  attribute to `5e93d22c…`. The walk missed that upgrade.
 
 ### `b400f7a8ac121022` — first-deploy hotfix, 35-min lifetime
 
 This hash was on chain for 420 ledgers (~35 min) before being
-replaced by the current production hash. The pattern is
+replaced by `5e93d22c…`. The pattern is
 unambiguous:
 
 - Brand-new contract address (no prior deploy in the entire
   post-Soroban scan window — 8.3M ledgers / ~18 months of
   pre-deploy emptiness).
 - 35-min lifetime to the next `update_current_contract_wasm`.
-- Replaced by a hash that has been stable for ~36 days.
+- Replaced by `5e93d22c…`, itself later replaced by an unrecorded
+  event-emitting hash (see Caveats).
 
-This is the **standard "pushed v1 → caught a bug → pushed v2"**
-deploy pattern. A 35-min window is too short for material
-production traffic on a brand-new oracle that wasn't yet wired
-into any consumer's price-feed registry.
+The bytes settle what the hotfix was: a **spec-only redeploy**. The
+Code and Data sections are byte-identical to `5e93d22c…`; only
+`upgrade`'s spec argument type changed (`WasmHash` → `BytesN<32>`).
+Neither hash imports `contract_event`, so neither emits the REDSTONE
+event, and the event-driven decoder yields no rows for this window
+regardless of wire format.
 
-**Database check (recommended pre-backfill)**: before any
-backfill replay overlapping L58,758,722 → L58,759,141, verify
-that range is empty of redstone trades on r1:
+**Database check (sanity, pre-backfill)**: redstone rows land in
+`oracle_updates`, not `trades`. Before a replay overlapping
+L58,758,722 → L58,759,141 the count is expected to be `0`:
 
     psql -h localhost stellarindex -c "
-      SELECT count(*) FROM trades
+      SELECT count(*) FROM oracle_updates
        WHERE source = 'redstone'
          AND ledger BETWEEN 58758722 AND 58759141"
 
-The expected result is `0` — Redstone consumers had not yet wired
-the new contract address into their pipelines during the 35-min
-hotfix window. If the count is non-zero, the b400f7a8 WASM bytes
-should be disassembled and reviewed before the backfill proceeds.
-
-**Decoder-shape risk**: schema-level changes (event-body field
-names, PriceData field shape, `write_prices` signature) are part
-of the integration contract. Redstone tests these against
-consumers BEFORE the first mainnet deploy — a 35-min hotfix is
-overwhelmingly more likely to be a constant / config / retry-loop
-fix than a wire-format change. We cannot disassemble the WASM
-bytes inline (no `stellar-core dump-wasm` access from this
-session), but the deploy-pattern + zero-traffic + no-decoder-error
-combination puts the residual risk at "very low".
-
-**Conditional decision for this hash**: backfill replays whose
-range overlaps L58,758,722 → L58,759,141 should run the database
-check above first. The expected result is empty (deploy-pattern
-+ no consumer wired up yet), in which case the backfill produces
-no redstone rows from that window and the b400f7a8 hash is
-practically irrelevant to output. If the b400f7a8 WASM had a
-different wire format from `5e93d22c…`, the decoder's strict
-by-name + by-position extraction would fail-loud per event —
-not silently mis-attribute. This matches the audit's fail-closed
-posture.
+A non-zero count would mean the WASM timeline for this address is
+wrong (an event-emitting hash active inside the window), not that
+`b400f7a8…` decodes differently — re-walk the address before the
+replay proceeds.
 
 ## Caveats
 
-- **WASM bytes archived; deeper disassembly deferred.** The
-  2026-04-30 r1 walk preserved bytes for both hashes at
-  `evidence/r1-walk-2026-05-01/wasm-bytes/{b400f7a8…,5e93d22c…}.wasm`
-  with SHA-256 verification. A future deeper audit can compare
-  the b400f7a8 event-publish + write_prices signatures against
-  the current decoder using the archived bytes alone (no public
-  RPC dependency). The current audit's load-bearing safety claim
-  remains the deploy-pattern + zero-traffic argument; the byte
-  archive is defence-in-depth.
+- **Walk timeline wrong; successor adapter WASM not archived or
+  audited.** The events the decoder consumes come from a hash newer
+  than `5e93d22c…`, live no later than L59,258,375 — inside the range
+  the walk JSONs give `5e93d22c…`, so the recorded end (L59,336,871 /
+  L59,301,651) and the "no upgrades through L62,249,727" claim are
+  both wrong. A `wasm-history` walk of `CA526Y2N…` from L58,759,142
+  (`5e93d22c…`'s first ledger) to the archive tip must record the real
+  upgrade ledger(s), hash(es) and ranges and archive the bytes, and
+  each needs a per-hash entry above. Until then the decoder's match to
+  that WASM rests on the real-event fixtures in
+  `internal/sources/redstone/*_test.go`.
 - **Database emptiness check is point-in-time.** If a future
   Redstone backdated correction lands events into the
-  L58,758,722 → L58,759,141 range, those would be subject to the
-  v1 WASM's schema. Re-verify the database-emptiness invariant
+  L58,758,722 → L58,759,141 range, they cannot come from
+  `b400f7a8…` (it emits no events). Re-verify the database-emptiness invariant
   before any backfill that targets that exact window.
 
 ## Decision
@@ -299,15 +322,16 @@ posture.
 
 Rationale:
 
-- Production hash `5e93d22c…` matches the current decoder; no
-  upgrade in ~36 days; live ingest healthy.
-- First-deploy hotfix hash `b400f7a8…` ran for 35 min on a
-  brand-new contract address. Deploy-pattern analysis indicates
-  an internal-bug hotfix, not a wire-format change. Even in the
-  worst case, schema drift produces fail-loud per-entry errors
-  via strict by-name + by-position extraction — not silent
-  attribution errors. Pre-backfill database check (see Caveats)
-  is the additional defence-in-depth.
+- Both archived hashes (`b400f7a8…`, `5e93d22c…`) are the same
+  code and emit no events, so a replay yields no redstone rows for
+  `b400f7a8…`'s window or for the part of `5e93d22c…`'s range before
+  the real (unrecorded) upgrade, and cannot mis-attribute any there.
+  The first-deploy window needs no wire-format argument. The rest of
+  `5e93d22c…`'s recorded range contains real REDSTONE events from the
+  successor WASM and is covered by the point below, not this one.
+- The event-emitting successor WASM (see Caveats) is the one the
+  decoder targets; the real-event fixtures pass against it and live
+  ingest is healthy, but it still owes a per-hash entry.
 
 If a future Redstone upgrade lands, the audit gets a per-hash
 entry + decoder verification and the flag stays at `true` (or
