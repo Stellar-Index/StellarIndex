@@ -36,6 +36,7 @@ interface Source {
   backfill_safe: boolean;
   default_weight?: number;
   on_chain?: boolean;
+  selectable?: boolean;
   trade_count_24h?: number;
   volume_24h_usd?: string | null;
   markets_count_24h?: number;
@@ -202,10 +203,10 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
   };
   const cursors = allCursors.filter((c) => cursorVenue(c) === name);
 
-  // /v1/markets?source= refuses an off-chain source (its prices are served
-  // only blended), so the per-source market panels are on-chain only.
-  const onChain = source.on_chain === true;
-  const topMarkets = onChain ? await fetchSourceMarkets(name) : null;
+  // /v1/markets?source= refuses data vendors (their prices are served only
+  // blended); the API says which sources it accepts via `selectable`.
+  const selectable = source.selectable === true;
+  const topMarkets = selectable ? await fetchSourceMarkets(name) : null;
 
   // FEC A1-6: BreadcrumbList JSON-LD derives from the visible Crumb[]
   // inside Breadcrumbs below — no hand-rolled LD.
@@ -311,7 +312,7 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
         }
       />
 
-      {onChain && <SourceTopChart source={name} sourceName={name} />}
+      {selectable && <SourceTopChart source={name} sourceName={name} />}
 
       <Panel
         title="Ingest cursors"
@@ -365,7 +366,7 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
         )}
       </Panel>
 
-      {onChain && (
+      {selectable && (
         <Panel
           title="Top markets via this source"
           subtitle={`${topMarkets ? topMarkets.length : '—'} pairs · ranked by 24h USD volume · /v1/markets?source=${name}`}

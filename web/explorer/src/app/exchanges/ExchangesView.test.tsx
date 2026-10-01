@@ -11,9 +11,11 @@ vi.mock('@/api/client', async () => {
 import { apiGet } from '@/api/client';
 import { ExchangesView } from './ExchangesView';
 
-// Frontend-honesty sweep: the registry table coalesced a failed fetch to
-// `[]` and claimed "No CEX sources reporting.". Absent must read as
-// unavailable.
+// Frontend-honesty sweep: both tables on /exchanges coalesced a failed
+// fetch to `[]`. The registry table then claimed "No CEX sources
+// reporting."; the pair table (a Promise.all over four venue-scoped
+// /v1/markets calls, so ONE 503 rejects the lot) headlined "0 CEX pairs"
+// and "No CEX pairs reporting.". Absent must read as unavailable.
 describe('ExchangesView', () => {
   function renderView() {
     const client = new QueryClient({
@@ -35,12 +37,19 @@ describe('ExchangesView', () => {
       ).toBeInTheDocument(),
     );
     expect(
+      screen.getByText(/Pair list unavailable right now/),
+    ).toBeInTheDocument();
+    expect(
       screen.queryByText(/No CEX sources reporting/),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/No CEX pairs reporting/),
     ).not.toBeInTheDocument();
     // The panel headings must not assert a count either.
     expect(
       screen.queryByText(/0 centralised exchanges/),
     ).not.toBeInTheDocument();
+    expect(screen.queryByText(/0 CEX pairs/)).not.toBeInTheDocument();
   });
 
   it('renders the genuine empty states when the API answers with no rows', async () => {
@@ -49,27 +58,51 @@ describe('ExchangesView', () => {
     await waitFor(() =>
       expect(screen.getByText(/No CEX sources reporting/)).toBeInTheDocument(),
     );
+    // The pair query waits on the registry's venue list, so it settles later.
+    expect(
+      await screen.findByText(/No CEX pairs reporting/),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/unavailable right now/)).not.toBeInTheDocument();
     expect(screen.getByText(/0 centralised exchanges/)).toBeInTheDocument();
   });
 
-  // A CEX's markets are never fetched on their own: /v1/markets refuses an
-  // off-chain source filter, and the page must not depend on one.
-  it("never requests a single venue's markets", async () => {
+  it('fetches pairs for every registered CEX, not a fixed venue list', async () => {
+    const cex = ['binance', 'coinbase', 'kraken', 'bitstamp', 'okx'];
     vi.mocked(apiGet).mockReset();
-    vi.mocked(apiGet).mockResolvedValue({
-      data: [{ name: 'binance', class: 'exchange', subclass: 'cex' }],
+    vi.mocked(apiGet).mockImplementation(async (path, params) => {
+      if (path === '/v1/sources') {
+        return {
+          data: [
+            ...cex.map((name) => ({
+              name,
+              class: 'exchange',
+              subclass: 'cex',
+            })),
+            { name: 'soroswap', class: 'exchange', subclass: 'amm' },
+          ],
+        };
+      }
+      const source = (params as { source?: string } | undefined)?.source;
+      return {
+        data: [
+          {
+            base: `crypto:${source?.toUpperCase()}COIN`,
+            quote: 'fiat:USD',
+            trade_count_24h: 1,
+          },
+        ],
+      };
     });
     renderView();
     await waitFor(() =>
-      expect(screen.getByText(/1 centralised exchange/)).toBeInTheDocument(),
+      expect(screen.getByText(/5 CEX pairs/)).toBeInTheDocument(),
     );
-    const sourceScoped = vi
+    expect(screen.getByText(/OKXCOIN/)).toBeInTheDocument();
+    const marketSources = vi
       .mocked(apiGet)
-      .mock.calls.filter(
-        ([p, q]) =>
-          p === '/v1/markets' && (q as { source?: string } | undefined)?.source,
-      );
-    expect(sourceScoped).toEqual([]);
+      .mock.calls.filter(([p]) => p === '/v1/markets')
+      .map(([, q]) => (q as { source: string }).source)
+      .sort();
+    expect(marketSources).toEqual([...cex].sort());
   });
 });

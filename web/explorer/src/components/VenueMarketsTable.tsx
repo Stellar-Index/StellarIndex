@@ -25,8 +25,9 @@ const PAGE_LIMIT = 100;
 /**
  * VenueMarketsTable — every (base, quote) pair a venue observed in the
  * trailing 14d, from /v1/markets?source= with cursor pagination. That
- * filter answers only for on-chain sources, so the venue must be one.
- * The caller supplies title + rowNoun ("SDEX markets" vs pools).
+ * filter refuses data vendors, so the venue must be an on-chain source or
+ * an exchange. The caller supplies title + rowNoun ("SDEX markets" vs
+ * pools; PairsTable supplies the exchange wording).
  */
 export function VenueMarketsTable({
   source,

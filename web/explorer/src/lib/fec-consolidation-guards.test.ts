@@ -191,11 +191,14 @@ describe('FEC guards (repo-walk)', () => {
     expect(offenders).toEqual([]);
   });
 
-  // A3-F8: the venue markets table is ONE component. PoolsTable was half
-  // of a 300-line whole-component fork that had already drifted once
-  // (LastPriceCell); it must stay a thin wrapper.
-  it('PoolsTable stays a thin wrapper over VenueMarketsTable', () => {
-    for (const rel of ['app/dexes/[source]/PoolsTable.tsx']) {
+  // A3-F8: the venue markets table is ONE component. PoolsTable and
+  // PairsTable were a 300-line whole-component fork that had already
+  // drifted once (LastPriceCell); they must stay thin wrappers.
+  it('PoolsTable and PairsTable stay thin wrappers over VenueMarketsTable', () => {
+    for (const rel of [
+      'app/dexes/[source]/PoolsTable.tsx',
+      'app/exchanges/[name]/PairsTable.tsx',
+    ]) {
       const f = sources.find((x) => x.rel === rel)!;
       expect(f.text).toContain('VenueMarketsTable');
       expect(f.text).not.toMatch(/(const|function)\s+(Th|Td|SortPill)\b/);
